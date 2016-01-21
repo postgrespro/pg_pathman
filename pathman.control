@@ -1,0 +1,4 @@
+# pathman extension
+comment 'Partitioning tool'
+default_version = '0.1'
+module_pathname='$libdir/pathman'
