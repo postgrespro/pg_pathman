@@ -13,8 +13,9 @@ Partitioning refers to splitting one large table into smaller pieces. Each row i
 PostgreSQL supports partitioning via table inheritance. Each partition must be created as child table with CHECK CONSTRAINT. For example:
 
 ```
-CHECK ( id >= 100 AND id < 200 )
-CHECK ( id >= 200 AND id < 300 )
+CREATE TABLE test (id SERIAL PRIMARY KEY, title TEXT);
+CREATE TABLE test_1 (CHECK ( id >= 100 AND id < 200 )) INHERITS (test);
+CREATE TABLE test_2 (CHECK ( id >= 200 AND id < 300 )) INHERITS (test);
 ```
 
 Despite the flexibility of this approach it has weakness. If query uses filtering the optimizer forced to perform an exhaustive search and check constraints for each partition to determine partitions from which it should select data. If the number of partitions is large the overhead may be significant.
@@ -34,16 +35,19 @@ Based on partitioning type and operator the `pathman` searches corresponding par
 
 ## Installation
 
-To install pathman run in psql:
+To install pathman run in pathman directory:
+```
+make install
+```
+Modify shared_preload_libraries parameter in postgres.conf as following:
+```
+shared_preload_libraries = 'pathman'
+```
+It will require to restart the PostgreSQL instance. Then execute following query in psql:
 ```
 CREATE SCHEMA pathman;
 CREATE EXTENSION pathman SCHEMA pathman;
 ```
-Then modify shared_preload_libraries parameter in postgres.conf as following:
-```
-shared_preload_libraries = 'pathman'
-```
-It will require to restart the PostgreSQL instance.
 
 ## Pathman Functions
 

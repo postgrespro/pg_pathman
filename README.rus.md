@@ -13,8 +13,9 @@
 Секционирование в postgres основано на механизме наследования. Каждому наследнику задается условие CHECK CONSTRAINT. Например:
 
 ```
-CHECK ( id >= 100 AND id < 200 )
-CHECK ( id >= 200 AND id < 300 )
+CREATE TABLE test (id SERIAL PRIMARY KEY, title TEXT);
+CREATE TABLE test_1 (CHECK ( id >= 100 AND id < 200 )) INHERITS (test);
+CREATE TABLE test_2 (CHECK ( id >= 200 AND id < 300 )) INHERITS (test);
 ```
 
 Несмотря на гибкость, этот механизм обладает недостатками. Так при фильтрации данных оптимизатор вынужден перебирать все дочерние секции и сравнивать условие запроса с CHECK CONSTRAINT-ами секции, чтобы определить из каких секций ему следует загружать данные. При большом количестве секций это создает дополнительные накладные расходы, которые могут свести на нет выигрыш в производительности от применения секционирования.
@@ -35,17 +36,19 @@ WHERE id = 150
 
 ## Installation
 
-Для установки pathman выполните в командной строке:
+Для установки pathman выполните в директории модуля команду:
 ```
-CREATE SCHEMA pathman;
-CREATE EXTENSION pathman SCHEMA pathman;
-
+make install
 ```
-Затем модифицируйте параметр shared_preload_libraries в конфигурационном файле postgres.conf:
+Модифицируйте параметр shared_preload_libraries в конфигурационном файле postgres.conf:
 ```
 shared_preload_libraries = 'pathman'
 ```
-Для вступления изменений в силу потребуется перезагрузка сервера PostgreSQL.
+Для вступления изменений в силу потребуется перезагрузка сервера PostgreSQL. Затем выполните в psql:
+```
+CREATE SCHEMA pathman;
+CREATE EXTENSION pathman SCHEMA pathman;
+```
 
 ## Функции pathman
 
