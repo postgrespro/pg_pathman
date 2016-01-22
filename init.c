@@ -64,6 +64,9 @@ get_extension_schema()
 	return NULL;
 }
 
+/*
+ * Loads partitioned tables structure to hashtable
+ */
 void
 load_relations_hashtable(bool reinitialize)
 {
@@ -85,14 +88,14 @@ load_relations_hashtable(bool reinitialize)
 	SPI_connect();
 	schema = get_extension_schema();
 
-	/* if extension doesn't exist then just quit */
+	/* If extension isn't exist then just quit */
 	if (!schema)
 	{
 		SPI_finish();
 		return;
 	}
 
-	/* put schema name to the query */
+	/* Put schema name to the query */
 	query = psprintf(sql, schema);
 	ret = SPI_exec(query, 0);
 	proc = SPI_processed;
@@ -115,14 +118,11 @@ load_relations_hashtable(bool reinitialize)
 			prel->atttype = DatumGetObjectId(SPI_getbinval(tuple, tupdesc, 4, &isnull));
 
 			part_oids = lappend_int(part_oids, oid);
-
-			/* children will be filled in later */
-			// prinfo->children = NIL;
 		}
 	}
 	pfree(query);
 
-	/* load children information */
+	/* Load children information */
 	foreach(lc, part_oids)
 	{
 		Oid oid = (int) lfirst_int(lc);
@@ -130,12 +130,9 @@ load_relations_hashtable(bool reinitialize)
 		prel = (PartRelationInfo*)
 			hash_search(relations, (const void *)&oid, HASH_FIND, NULL);	
 
-		// load_check_constraints(oid);
-
 		switch(prel->parttype)
 		{
 			case PT_RANGE:
-				// load_range_restrictions(oid);
 				if (reinitialize && prel->children.length > 0)
 				{
 					RangeRelation *rangerel = (RangeRelation *)
@@ -168,7 +165,7 @@ create_relations_hashtable()
 	ctl.keysize = sizeof(int);
 	ctl.entrysize = sizeof(PartRelationInfo);
 
-	/* already exists, recreate */
+	/* Already exists, recreate */
 	if (relations != NULL)
 		hash_destroy(relations);
 
@@ -196,7 +193,7 @@ load_check_constraints(Oid parent_oid)
 	prel = (PartRelationInfo*)
 		hash_search(relations, (const void *) &parent_oid, HASH_FIND, &found);
 
-	/* skip if already loaded */
+	/* Skip if already loaded */
 	if (prel->children.length > 0)
 		return;
 
@@ -237,8 +234,6 @@ load_check_constraints(Oid parent_oid)
 			char	   *conbin;
 			Expr	   *expr;
 
-			// HeapTuple	reltuple;
-			// Form_pg_class pg_class_tuple;
 			Form_pg_constraint con;
 
 			con = (Form_pg_constraint) GETSTRUCT(tuple);
@@ -255,8 +250,12 @@ load_check_constraints(Oid parent_oid)
 			{
 				case PT_RANGE:
 					if (!validate_range_constraint(expr, prel, &min, &max))
-						/* TODO: elog() */
+					{
+						elog(WARNING, "Range constraint for relation %u MUST have exact format: "
+									  "VARIABLE >= CONST AND VARIABLE < CONST. Skipping...",
+							 (Oid) con->conrelid);
 						continue;
+					}
 
 					re.child_oid = con->conrelid;
 					re.min = min;
@@ -267,8 +266,12 @@ load_check_constraints(Oid parent_oid)
 			
 				case PT_HASH:
 					if (!validate_hash_constraint(expr, prel, &hash))
-						/* TODO: elog() */
+					{
+						elog(WARNING, "Hash constraint for relation %u MUST have exact format: "
+									  "VARIABLE %% CONST = CONST. Skipping...",
+							 (Oid) con->conrelid);
 						continue;
+					}
 					children[hash] = con->conrelid;
 			}
 		}
@@ -276,15 +279,24 @@ load_check_constraints(Oid parent_oid)
 
 		if (prel->parttype == PT_RANGE)
 		{
-			/* sort ascending */
+			/* Sort ascending */
 			qsort(ranges, proc, sizeof(RangeEntry), cmp_range_entries);
 
-			/* copy oids to prel */
+			/* Copy oids to prel */
 			for(i=0; i < proc; i++)
 				children[i] = ranges[i].child_oid;
 		}
 
-		/* TODO: check if some ranges overlap! */
+		/* Check if some ranges overlap */
+		for(i=0; i < proc-1; i++)
+		{
+			if (ranges[i].max > ranges[i+1].min)
+			{
+				elog(WARNING, "Partitions %u and %u overlap. Disabling pathman for relation %u..",
+					 ranges[i].child_oid, ranges[i+1].child_oid, parent_oid);
+				hash_search(relations, (const void *) &parent_oid, HASH_REMOVE, &found);
+			}
+		}
 	}
 }
 
@@ -303,7 +315,10 @@ cmp_range_entries(const void *p1, const void *p2)
 	return 0;
 }
 
-
+/*
+ * Validates range constraint. It MUST have the exact format:
+ * VARIABLE >= CONST AND VARIABLE < CONST
+ */
 static bool
 validate_range_constraint(Expr *expr, PartRelationInfo *prel, Datum *min, Datum *max)
 {
@@ -349,12 +364,15 @@ validate_range_constraint(Expr *expr, PartRelationInfo *prel, Datum *min, Datum 
 			return false;
 		*max = ((Const*) right)->constvalue;
 	}
+	else
+		return false;
 
 	return true;
 }
 
 /*
- * Validate hash constraint. It should look like "Var % Const = Const"
+ * Validate hash constraint. It MUST have the exact format
+ * VARIABLE % CONST = CONST
  */
 static bool
 validate_hash_constraint(Expr *expr, PartRelationInfo *prel, int *hash)
@@ -366,14 +384,14 @@ validate_hash_constraint(Expr *expr, PartRelationInfo *prel, int *hash)
 		return false;
 	eqexpr = (OpExpr *) expr;
 
-	/* is this an equality operator? */
+	/* Is this an equality operator? */
 	if (eqexpr->opno != Int4EqualOperator)
 		return false;
 
 	if (!IsA(linitial(eqexpr->args), OpExpr))
 		return false;
 
-	/* is this a modulus operator? */
+	/* Is this a modulus operator? */
 	modexpr = (OpExpr *) linitial(eqexpr->args);
 	if (modexpr->opno != 530)
 		return false;
@@ -424,25 +442,19 @@ void
 remove_relation_info(Oid relid)
 {
 	PartRelationInfo   *prel;
-	// HashRelationKey		key;
 	RangeRelation	   *rangerel;
 
 	prel = (PartRelationInfo *)
 		hash_search(relations, (const void *) &relid, HASH_FIND, 0);
 
-	/* if there is nothing to remove then just return */
+	/* If there is nothing to remove then just return */
 	if (!prel)
 		return;
 
-	/* remove children relations */
+	/* Remove children relations */
 	switch (prel->parttype)
 	{
 		case PT_HASH:
-			// for (i=0; i<prel->children_count; i++)
-			// {
-			// 	key.parent_oid = relid;
-			// 	key.hash = i;
-			// }
 			free_dsm_array(&prel->children);
 			break;
 		case PT_RANGE:

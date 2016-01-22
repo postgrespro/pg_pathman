@@ -43,34 +43,38 @@ static set_rel_pathlist_hook_type set_rel_pathlist_hook_original = NULL;
 static shmem_startup_hook_type shmem_startup_hook_original = NULL;
 static planner_hook_type planner_hook_original = NULL;
 
+/* pg module functions */
 void _PG_init(void);
 void _PG_fini(void);
+
+/* Hook functions */
 static void pathman_shmem_startup(void);
 static void pathman_set_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTblEntry *rte);
 static PlannedStmt * pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams);
 
+/* Utility functions */
 static void append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
 				RangeTblEntry *rte, int index, Oid childOID, List *wrappers);
 static Node *wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue);
-static void set_pathkeys(PlannerInfo *root, RelOptInfo *childrel, Path *path);
 static void disable_inheritance(Query *parse);
 bool inheritance_disabled;
 
+/* Expression tree handlers */
 static WrapperNode *walk_expr_tree(Expr *expr, const PartRelationInfo *prel);
 static int make_hash(const PartRelationInfo *prel, int value);
 static void handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result, const Var *v, const Const *c);
 static WrapperNode *handle_opexpr(const OpExpr *expr, const PartRelationInfo *prel);
 static WrapperNode *handle_boolexpr(const BoolExpr *expr, const PartRelationInfo *prel);
 static WrapperNode *handle_arrexpr(const ScalarArrayOpExpr *expr, const PartRelationInfo *prel);
-
-static void set_plain_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte);
-static void set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTblEntry *rte);
-static List *accumulate_append_subpath(List *subpaths, Path *path);
-
 static void change_varnos_in_restrinct_info(RestrictInfo *rinfo, change_varno_context *context);
 static void change_varnos(Node *node, Oid old_varno, Oid new_varno);
 static bool change_varno_walker(Node *node, change_varno_context *context);
 
+/* copied from allpaths.h */
+static void set_plain_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte);
+static void set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTblEntry *rte);
+static List *accumulate_append_subpath(List *subpaths, Path *path);
+static void set_pathkeys(PlannerInfo *root, RelOptInfo *childrel, Path *path);
 
 /*
  * Compare two Datums with the given comarison function
@@ -109,9 +113,14 @@ _PG_fini(void)
 {
 	set_rel_pathlist_hook = set_rel_pathlist_hook_original;
 	shmem_startup_hook = shmem_startup_hook_original;
+	planner_hook = planner_hook_original;
 }
 
-/* TODO: rename and write a descritption */
+/*
+ * Planner hook. It disables inheritance for tables that have been partitioned
+ * by pathman to prevent standart PostgreSQL partitioning mechanism from
+ * handling that tables.
+ */
 PlannedStmt *
 pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 {
@@ -151,7 +160,7 @@ disable_inheritance(Query *parse)
 			case RTE_RELATION:
 				if (rte->inh)
 				{
-					/* look up this relation in pathman relations */
+					/* Look up this relation in pathman relations */
 					prel = (PartRelationInfo *)
 						hash_search(relations, (const void *) &rte->relid, HASH_FIND, 0);
 					if (prel != NULL)
@@ -168,7 +177,7 @@ disable_inheritance(Query *parse)
 				}
 				break;
 			case RTE_SUBQUERY:
-				/* recursively disable inheritance for subqueries */
+				/* Recursively disable inheritance for subqueries */
 				disable_inheritance(rte->subquery);
 				break;
 			default:
@@ -183,14 +192,14 @@ disable_inheritance(Query *parse)
 static void
 pathman_shmem_startup(void)
 {
-	/* initialize locks */
+	/* Initialize locks */
 	RequestAddinLWLocks(2);
 	load_config_lock = LWLockAssign();
 	dsm_init_lock    = LWLockAssign();
 
 	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
 
-	/* allocate shared memory objects */
+	/* Allocate shared memory objects */
 	alloc_dsm_table();
 	create_relations_hashtable();
 	create_range_restrictions_hashtable();
@@ -220,19 +229,14 @@ pathman_set_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, Ran
 
 	if (prel != NULL)
 	{
-		List		   *ranges,
-					   *wrappers;
-		ListCell	   *lc;
-		int	i;
-		Oid *dsm_arr;
+		ListCell   *lc;
+		int			i;
+		Oid		   *dsm_arr;
+		List	   *ranges,
+				   *wrappers;
 
 		rte->inh = true;
-
 		dsm_arr = (Oid *) dsm_array_get_pointer(&prel->children);
-		// for (i=0; i<prel->children_count; i++)
-		// 	// children = lappend_int(children, prel->children[i]);
-		// 	children = lappend_int(children, dsm_arr[i]);
-
 		ranges = list_make1_int(make_irange(0, prel->children_count - 1, false));
 
 		/* Make wrappers over restrictions and collect final rangeset */
@@ -248,7 +252,9 @@ pathman_set_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, Ran
 			ranges = irange_list_intersect(ranges, wrap->rangeset);
 		}
 
-		/* expand simple_rte_array and simple_rel_array */
+		/*
+		 * Expand simple_rte_array and simple_rel_array
+		 */
 		if (list_length(ranges) > 0)
 		{
 			RelOptInfo **new_rel_array;
@@ -256,8 +262,6 @@ pathman_set_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, Ran
 			int len = irange_list_length(ranges);
 
 			/* Expand simple_rel_array and simple_rte_array */
-			ereport(LOG, (errmsg("Expanding simple_rel_array")));
-
 			new_rel_array = (RelOptInfo **)
 				palloc0((root->simple_rel_array_size + len) * sizeof(RelOptInfo *));
 
@@ -265,17 +269,20 @@ pathman_set_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, Ran
 			new_rte_array = (RangeTblEntry **)
 				palloc0((root->simple_rel_array_size + len) * sizeof(RangeTblEntry *));
 
-			/* TODO: use memcpy */
-			for (i = 0; i < root->simple_rel_array_size; i++)
-			{
-				new_rel_array[i] = root->simple_rel_array[i];
-				new_rte_array[i] = root->simple_rte_array[i];
-			}
+			/* Copy relations to the new arrays */
+            for (i = 0; i < root->simple_rel_array_size; i++)
+            {
+                    new_rel_array[i] = root->simple_rel_array[i];
+                    new_rte_array[i] = root->simple_rte_array[i];
+            }
+
+			/* Free old arrays */
+			pfree(root->simple_rel_array);
+			pfree(root->simple_rte_array);
 
 			root->simple_rel_array_size += len;
 			root->simple_rel_array = new_rel_array;
 			root->simple_rte_array = new_rte_array;
-			/* TODO: free old arrays */
 		}
 
 		/*
@@ -294,7 +301,8 @@ pathman_set_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, Ran
 			}
 		}
 
-		/* TODO: clear old path list */
+		/* Clear old path list */
+		list_free(rel->pathlist);
 		rel->pathlist = NIL;
 		set_append_rel_pathlist(root, rel, rti, rte);
 	}
@@ -335,9 +343,8 @@ append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
 
 	/* Create RelOptInfo */
 	childrel = build_simple_rel(root, childRTindex, RELOPT_OTHER_MEMBER_REL);
-	// childrel = build_simple_rel(root, childRTindex, RELOPT_BASEREL);
 
-	/* copy targetlist */
+	/* Copy targetlist */
 	childrel->reltargetlist = NIL;
 	foreach(lc, rel->reltargetlist)
 	{
@@ -349,7 +356,7 @@ append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		childrel->reltargetlist = lappend(childrel->reltargetlist, new_target);
 	}
 
-	/* copy restrictions */
+	/* Copy restrictions */
 	childrel->baserestrictinfo = NIL;
 	forboth(lc, wrappers, lc2, rel->baserestrictinfo)
 	{
@@ -360,7 +367,9 @@ append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
 					 *new_rinfo;
 
 		if (alwaysTrue)
+		{
 			continue;
+		}
 		Assert(new_clause);
 
 		new_rinfo = make_restrictinfo((Expr *) new_clause,
@@ -371,7 +380,7 @@ append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
 									  old_rinfo->outer_relids,
 									  old_rinfo->nullable_relids);
 
-		/* replace old relids with new ones */
+		/* Replace old relids with new ones */
 		change_varnos((Node *)new_rinfo, rel->relid, childrel->relid);
 
 		childrel->baserestrictinfo = lappend(childrel->baserestrictinfo,
@@ -387,9 +396,6 @@ append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	root->total_table_pages += (double) childrel->pages;
 
 	heap_close(newrelation, NoLock);
-
-	// ereport(LOG,
-	// 		(errmsg("Relation %u appended", childOid)));
 }
 
 /* Convert wrapper into expression for given index */
@@ -467,7 +473,9 @@ wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue)
 	}
 }
 
-
+/*
+ * Changes varno attribute in RestrictInfo objects
+ */
 static void
 change_varnos(Node *node, Oid old_varno, Oid new_varno)
 {
@@ -516,22 +524,19 @@ change_varnos_in_restrinct_info(RestrictInfo *rinfo, change_varno_context *conte
 {
 	ListCell *lc;
 
-	// change_varnos((Node *) rinfo->clause, old_varno, new_varno);
 	change_varno_walker((Node *) rinfo->clause, context);
 	if (rinfo->left_em)
-		// change_varnos((Node *) rinfo->left_em->em_expr, old_varno, new_varno);
+	{
 		change_varno_walker((Node *) rinfo->left_em->em_expr, context);
+	}
 	if (rinfo->right_em)
-		// change_varnos((Node *) rinfo->right_em->em_expr, old_varno, new_varno);
+	{
 		change_varno_walker((Node *) rinfo->right_em->em_expr, context);
+	}
 	if (rinfo->orclause)
 		foreach(lc, ((BoolExpr *) rinfo->orclause)->args)
 		{
-			// RestrictInfo *rinfo2 = (RestrictInfo *) lfirst(lc);
 			Node *node = (Node *) lfirst(lc);
-			// if (IsA(node, BoolExpr))
-			// {}
-			// change_varnos_in_restrinct_info(node, context);
 			change_varno_walker(node, context);
 		}
 
@@ -606,7 +611,7 @@ handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result,
 	const OpExpr	   *expr = (const OpExpr *)result->orig;
 	TypeCacheEntry	   *tce;
 
-	/* determine operator type */
+	/* Determine operator type */
 	tce = lookup_type_cache(v->vartype,
 		TYPECACHE_EQ_OPR | TYPECACHE_LT_OPR | TYPECACHE_GT_OPR | TYPECACHE_CMP_PROC | TYPECACHE_CMP_PROC_FINFO);
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
@@ -638,7 +643,7 @@ handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result,
 							endidx = rangerel->ranges.length - 1;
 				RangeEntry *ranges = dsm_array_get_pointer(&rangerel->ranges);
 
-				/* check boundaries */
+				/* Check boundaries */
 				if (rangerel->ranges.length == 0)
 				{
 					result->rangeset = NIL;
@@ -679,9 +684,7 @@ handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result,
 					}
 				}
 
-				/* binary search */
-				// pos = range_binary_search(rangerel, cmp_func, value, &found);
-				// re = &ranges[pos];
+				/* Binary search */
 				while (true)
 				{
 					i = startidx + (endidx - startidx) / 2;
@@ -716,13 +719,13 @@ handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result,
 					else if (is_greater)
 						startidx = i + 1;
 
-					/* for debug's sake */
+					/* For debug's sake */
 					Assert(++counter < 100);
 				}
 
 				Assert(found);
 
-				/* filter partitions */
+				/* Filter partitions */
 				switch(strategy)
 				{
 					case BTLessStrategyNumber:
@@ -816,7 +819,7 @@ range_binary_search(const RangeRelation *rangerel, FmgrInfo *cmp_func, Datum val
 		else if (cmp_max >= 0)
 			startidx = i + 1;
 
-		/* for debug's sake */
+		/* For debug's sake */
 		Assert(++counter < 100);
 	}
 
@@ -824,7 +827,7 @@ range_binary_search(const RangeRelation *rangerel, FmgrInfo *cmp_func, Datum val
 }
 
 /*
- *
+ * Operator expression handler
  */
 static WrapperNode *
 handle_opexpr(const OpExpr *expr, const PartRelationInfo *prel)
@@ -860,7 +863,7 @@ handle_opexpr(const OpExpr *expr, const PartRelationInfo *prel)
 }
 
 /*
- *
+ * Boolean expression handler
  */
 static WrapperNode *
 handle_boolexpr(const BoolExpr *expr, const PartRelationInfo *prel)
@@ -900,7 +903,7 @@ handle_boolexpr(const BoolExpr *expr, const PartRelationInfo *prel)
 }
 
 /*
- *
+ * Scalar array expression
  */
 static WrapperNode *
 handle_arrexpr(const ScalarArrayOpExpr *expr, const PartRelationInfo *prel)
@@ -931,7 +934,7 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, const PartRelationInfo *prel)
 		bool	   *elem_nulls;
 		int			i;
 
-		/* extract values from array */
+		/* Extract values from array */
 		arrayval = DatumGetArrayTypeP(((Const *) arraynode)->constvalue);
 		get_typlenbyvalalign(ARR_ELEMTYPE(arrayval),
 							 &elmlen, &elmbyval, &elmalign);
@@ -942,7 +945,7 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, const PartRelationInfo *prel)
 
 		result->rangeset = NIL;
 
-		/* construct OIDs list */
+		/* Construct OIDs list */
 		for (i = 0; i < num_elems; i++)
 		{
 			hash = make_hash(prel, elem_values[i]);
@@ -950,7 +953,7 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, const PartRelationInfo *prel)
 						list_make1_irange(make_irange(hash, hash, true)));
 		}
 
-		/* free resources */
+		/* Free resources */
 		pfree(elem_values);
 		pfree(elem_nulls);
 
@@ -962,7 +965,8 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, const PartRelationInfo *prel)
 }
 
 /*
- * Copy-paste functions from allpaths.c with (or without) some modifications
+ * Theres are functions below copied from allpaths.c with (or without) some
+ * modifications. Couldn't use original because of 'static' modifier.
  */
 
 /*
@@ -983,11 +987,11 @@ set_plain_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 	required_outer = rel->lateral_relids;
 
 	/* Consider sequential scan */
+#if PG_VERSION_NUM >= 90600
+	path = create_seqscan_path(root, rel, required_outer, 0);
+#else
 	path = create_seqscan_path(root, rel, required_outer);
-	/*
-	 * 9.6 version:
-	 * path = create_seqscan_path(root, rel, required_outer, 0);
-	 */
+#endif
 	add_path(rel, path);
 	set_pathkeys(root, rel, path);
 

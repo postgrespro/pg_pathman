@@ -34,7 +34,7 @@ on_partitions_updated(PG_FUNCTION_ARGS)
 	Oid					relid;
 	PartRelationInfo   *prel;
 
-	/* parent relation oid */
+	/* Parent relation oid */
 	relid = DatumGetInt32(PG_GETARG_DATUM(0));
 	prel = (PartRelationInfo *)
 		hash_search(relations, (const void *) &relid, HASH_FIND, 0);
@@ -135,7 +135,7 @@ get_partition_range(PG_FUNCTION_ARGS)
 	ranges = dsm_array_get_pointer(&rangerel->ranges);
 	tce = lookup_type_cache(prel->atttype, 0);
 
-	/* looking for specified partition */
+	/* Looking for specified partition */
 	for(i=0; i<rangerel->ranges.length; i++)
 		if (ranges[i].child_oid == child_oid)
 		{
