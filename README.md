@@ -37,7 +37,7 @@ Based on partitioning type and operator the `pathman` searches corresponding par
 
 To install pathman run in pathman directory:
 ```
-make install
+make install USE_PGXS=1
 ```
 Modify shared_preload_libraries parameter in postgres.conf as following:
 ```

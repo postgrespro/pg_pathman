@@ -38,7 +38,7 @@ WHERE id = 150
 
 Для установки pathman выполните в директории модуля команду:
 ```
-make install
+make install USE_PGXS=1
 ```
 Модифицируйте параметр shared_preload_libraries в конфигурационном файле postgres.conf:
 ```
