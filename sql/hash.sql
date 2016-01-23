@@ -108,11 +108,17 @@ DECLARE
     rec RECORD;
     num INTEGER := 0;
 BEGIN
+    relation := @extschema@.validate_relname(relation);
+
     /* Drop trigger first */
     PERFORM @extschema@.drop_hash_triggers(relation);
     DELETE FROM @extschema@.pathman_config WHERE relname = relation;
-    -- EXECUTE format('DROP TABLE %s CASCADE', relation);
-    
+
+    FOR rec in (SELECT * FROM pg_inherits WHERE inhparent = relation::regclass::oid)
+    LOOP
+        EXECUTE format('DROP TABLE %s', rec.inhrelid::regclass::text);
+    END LOOP;
+
     -- FOR rec in (SELECT * FROM pg_inherits WHERE inhparent = relation::regclass::oid)
     -- LOOP
     --     EXECUTE format('DROP FUNCTION IF EXISTS %s_hash_update_trigger_func() CASCADE'

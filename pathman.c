@@ -1,6 +1,7 @@
 #include "pathman.h"
 #include "postgres.h"
 #include "fmgr.h"
+#include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
 #include "nodes/pg_list.h"
 #include "nodes/relation.h"
@@ -100,6 +101,14 @@ static void set_pathkeys(PlannerInfo *root, RelOptInfo *childrel, Path *path);
 void
 _PG_init(void)
 {
+	if (IsUnderPostmaster)
+	{
+		elog(ERROR, "Pathman module must be initialized in postmaster. "
+					"Put the following line to configuration file: "
+					"shared_preload_library = 'pathman'");
+		initialization_needed = false;
+	}
+
 	set_rel_pathlist_hook_original = set_rel_pathlist_hook;
 	set_rel_pathlist_hook = pathman_set_rel_pathlist_hook;
 	shmem_startup_hook_original = shmem_startup_hook;

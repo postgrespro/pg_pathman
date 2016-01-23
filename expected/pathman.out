@@ -333,7 +333,6 @@ NOTICE:  function test.hash_rel_hash_update_trigger_func() does not exist, skipp
 (1 row)
 
 DROP TABLE test.hash_rel CASCADE;
-NOTICE:  drop cascades to 3 other objects
 SELECT pathman.drop_range_partitions('test.num_range_rel');
  drop_range_partitions 
 -----------------------

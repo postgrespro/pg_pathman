@@ -110,26 +110,23 @@ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION @extschema@.validate_relname(relname TEXT)
 RETURNS TEXT AS
 $$
-DECLARE
-    ret TEXT := lower(relname);
 BEGIN
-    IF NOT ret ~ '^([a-z_]+[a-z0-9_]*)\.([a-z_]+[a-z0-9_]*)$' THEN
-        RAISE EXCEPTION 'Incorrect relation name. It must be fully qualified: <schema>.<relname>';
-    END IF;
-    RETURN ret;
+    RETURN @extschema@.get_schema_qualified_name(relname::regclass, '.');
 END
 $$
 LANGUAGE plpgsql;
 
 
 /*
- *
+ * Returns schema-qualified name for table
  */
-CREATE OR REPLACE FUNCTION @extschema@.get_schema_qualified_name(cls regclass)
+CREATE OR REPLACE FUNCTION @extschema@.get_schema_qualified_name(
+    cls REGCLASS
+    , delimiter TEXT DEFAULT '_')
 RETURNS TEXT AS
 $$
 BEGIN
-    RETURN relnamespace::regnamespace || '_' || relname FROM pg_class WHERE oid = cls::oid;
+    RETURN relnamespace::regnamespace || delimiter || relname FROM pg_class WHERE oid = cls::oid;
 END
 $$
 LANGUAGE plpgsql;

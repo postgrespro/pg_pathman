@@ -477,7 +477,7 @@ DECLARE
                     EXECUTE format(''INSERT INTO %%s SELECT $1.*'', v_part_relid::regclass)
                     USING NEW;
                 ELSE
-                    RAISE EXCEPTION ''ERROR: Cannot determine approprite partition'';
+                    RAISE EXCEPTION ''ERROR: Cannot find partition'';
                 END IF;
             END IF;
             RETURN NULL;
