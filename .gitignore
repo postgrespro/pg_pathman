@@ -1,3 +1,3 @@
 *.o
 *.so
-pathman--*.sql
+pg_pathman--*.sql

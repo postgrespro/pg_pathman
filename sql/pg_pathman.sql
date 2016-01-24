@@ -1,7 +1,7 @@
 \set VERBOSITY terse
 
 CREATE SCHEMA pathman;
-CREATE EXTENSION pathman SCHEMA pathman;
+CREATE EXTENSION pg_pathman SCHEMA pathman;
 CREATE SCHEMA test;
 
 CREATE TABLE test.hash_rel (
@@ -13,14 +13,19 @@ CREATE TABLE test.range_rel (
     id SERIAL PRIMARY KEY,
     dt TIMESTAMP,
     txt TEXT);
+CREATE INDEX ON test.range_rel (dt);
 SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL, 3);
 
 CREATE TABLE test.num_range_rel (
     id SERIAL PRIMARY KEY,
     txt TEXT);
 SELECT pathman.create_range_partitions('test.num_range_rel', 'id', 0, 1000, 3);
-INSERT INTO test.num_range_rel SELECT g, md5(g::TEXT) FROM generate_series(1, 3000) as g;
-VACUUM;
+
+INSERT INTO test.num_range_rel
+SELECT g, md5(g::TEXT) FROM generate_series(1, 3000) as g;
+
+INSERT INTO test.range_rel (dt, txt)
+SELECT g, md5(g::TEXT) FROM generate_series('2015-01-01', '2015-04-30', '1 day'::interval) as g;
 
 INSERT INTO test.hash_rel VALUES (1, 1);
 INSERT INTO test.hash_rel VALUES (2, 2);
@@ -28,6 +33,8 @@ INSERT INTO test.hash_rel VALUES (3, 3);
 INSERT INTO test.hash_rel VALUES (4, 4);
 INSERT INTO test.hash_rel VALUES (5, 5);
 INSERT INTO test.hash_rel VALUES (6, 6);
+
+VACUUM;
 
 /* update triggers test */
 SELECT pathman.create_hash_update_trigger('test.hash_rel');
@@ -51,6 +58,11 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > 2500;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 1000 AND id < 3000;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 1500 AND id < 2500;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE (id >= 500 AND id < 1500) OR (id > 2500);
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt > '2015-02-15';
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-02-01' AND dt < '2015-03-01';
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-02-15' AND dt < '2015-03-15';
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE (dt >= '2015-01-15' AND dt < '2015-02-15') OR (dt > '2015-03-15');
+
 
 SET enable_indexscan = ON;
 SET enable_bitmapscan = OFF;
@@ -63,6 +75,10 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > 2500;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 1000 AND id < 3000;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 1500 AND id < 2500;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE (id >= 500 AND id < 1500) OR (id > 2500);
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt > '2015-02-15';
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-02-01' AND dt < '2015-03-01';
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-02-15' AND dt < '2015-03-15';
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE (dt >= '2015-01-15' AND dt < '2015-02-15') OR (dt > '2015-03-15');
 
 /*
  * Test split and merge
@@ -96,4 +112,4 @@ DROP TABLE test.hash_rel CASCADE;
 SELECT pathman.drop_range_partitions('test.num_range_rel');
 DROP TABLE test.num_range_rel CASCADE;
 
-DROP EXTENSION pathman;
+DROP EXTENSION pg_pathman;

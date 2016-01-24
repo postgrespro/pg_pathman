@@ -105,7 +105,7 @@ _PG_init(void)
 	{
 		elog(ERROR, "Pathman module must be initialized in postmaster. "
 					"Put the following line to configuration file: "
-					"shared_preload_library = 'pathman'");
+					"shared_preload_library = 'pg_pathman'");
 		initialization_needed = false;
 	}
 
@@ -664,7 +664,9 @@ handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result,
 					cmp_min = FunctionCall2(cmp_func, value, ranges[0].min),
 					cmp_max = FunctionCall2(cmp_func, value, ranges[rangerel->ranges.length - 1].max);
 
-					if ((cmp_min < 0 && strategy == BTLessEqualStrategyNumber) || 
+					if ((cmp_min < 0 &&
+						 (strategy == BTLessEqualStrategyNumber ||
+						  strategy == BTEqualStrategyNumber)) || 
 						(cmp_min <= 0 && strategy == BTLessStrategyNumber))
 					{
 						result->rangeset = NIL;
@@ -672,7 +674,8 @@ handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result,
 					}
 
 					if (cmp_max >= 0 && (strategy == BTGreaterEqualStrategyNumber || 
-						strategy == BTGreaterStrategyNumber))
+						strategy == BTGreaterStrategyNumber ||
+						strategy == BTEqualStrategyNumber))
 					{
 						result->rangeset = NIL;
 						return;
@@ -800,12 +803,21 @@ range_binary_search(const RangeRelation *rangerel, FmgrInfo *cmp_func, Datum val
 	RangeEntry *re;
 	int			cmp_min,
 				cmp_max,
-				i,
+				i = 0,
 				startidx = 0,
 				endidx = rangerel->ranges.length-1,
 				counter = 0;
 
 	*foundPtr = false;
+
+	/* Check boundaries */
+	cmp_min = FunctionCall2(cmp_func, value, ranges[0].min),
+	cmp_max = FunctionCall2(cmp_func, value, ranges[rangerel->ranges.length - 1].max);
+	if (cmp_min < 0 || cmp_max >0)
+	{
+		return i;
+	}
+
 	while (true)
 	{
 		i = startidx + (endidx - startidx) / 2;

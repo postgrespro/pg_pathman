@@ -1,14 +1,14 @@
-# contrib/pathman/Makefile
+# contrib/pg_pathman/Makefile
 
-MODULE_big = pathman
-OBJS = init.o pathman.o dsm_array.o rangeset.o pl_funcs.o $(WIN32RES)
+MODULE_big = pg_pathman
+OBJS = init.o pg_pathman.o dsm_array.o rangeset.o pl_funcs.o $(WIN32RES)
 
-EXTENSION = pathman
+EXTENSION = pg_pathman
 EXTVERSION = 0.1
 DATA_built = $(EXTENSION)--$(EXTVERSION).sql
-PGFILEDESC = "pathman - partitioning tool"
+PGFILEDESC = "pg_pathman - partitioning tool"
 
-REGRESS = pathman
+REGRESS = pg_pathman
 EXTRA_CLEAN = $(EXTENSION)--$(EXTVERSION).sql
 
 ifdef USE_PGXS
@@ -16,7 +16,7 @@ PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
 else
-subdir = contrib/pathman
+subdir = contrib/pg_pathman
 top_builddir = ../..
 include $(top_builddir)/src/Makefile.global
 include $(top_srcdir)/contrib/contrib-global.mk

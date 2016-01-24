@@ -48,7 +48,7 @@ get_extension_schema()
 	int ret;
 	bool isnull;
 
-	ret = SPI_exec("SELECT extnamespace::regnamespace::text FROM pg_extension WHERE extname = 'pathman'", 0);
+	ret = SPI_exec("SELECT extnamespace::regnamespace::text FROM pg_extension WHERE extname = 'pg_pathman'", 0);
 	if (ret > 0 && SPI_tuptable != NULL && SPI_processed > 0)
 	{
 		TupleDesc tupdesc = SPI_tuptable->tupdesc;
@@ -78,10 +78,10 @@ load_relations_hashtable(bool reinitialize)
 	ListCell   *lc;
 	char	   *schema;
 	PartRelationInfo *prel;
-	char		sql[] = "SELECT pg_class.relfilenode, pg_attribute.attnum, pathman_config.parttype, pg_attribute.atttypid "
-						"FROM %s.pathman_config "
-						"JOIN pg_class ON pg_class.relfilenode = pathman_config.relname::regclass::oid "
-						"JOIN pg_attribute ON pg_attribute.attname = pathman_config.attname "
+	char		sql[] = "SELECT pg_class.relfilenode, pg_attribute.attnum, cfg.parttype, pg_attribute.atttypid "
+						"FROM %s.pathman_config as cfg "
+						"JOIN pg_class ON pg_class.relfilenode = cfg.relname::regclass::oid "
+						"JOIN pg_attribute ON pg_attribute.attname = cfg.attname "
 						"AND attrelid = pg_class.relfilenode";
 	char *query;
 
@@ -288,16 +288,16 @@ load_check_constraints(Oid parent_oid)
 			/* Copy oids to prel */
 			for(i=0; i < proc; i++)
 				children[i] = ranges[i].child_oid;
-		}
 
-		/* Check if some ranges overlap */
-		for(i=0; i < proc-1; i++)
-		{
-			if (ranges[i].max > ranges[i+1].min)
+			/* Check if some ranges overlap */
+			for(i=0; i < proc-1; i++)
 			{
-				elog(WARNING, "Partitions %u and %u overlap. Disabling pathman for relation %u...",
-					 ranges[i].child_oid, ranges[i+1].child_oid, parent_oid);
-				hash_search(relations, (const void *) &parent_oid, HASH_REMOVE, &found);
+				if (ranges[i].max > ranges[i+1].min)
+				{
+					elog(WARNING, "Partitions %u and %u overlap. Disabling pathman for relation %u...",
+						 ranges[i].child_oid, ranges[i+1].child_oid, parent_oid);
+					hash_search(relations, (const void *) &parent_oid, HASH_REMOVE, &found);
+				}
 			}
 		}
 	}

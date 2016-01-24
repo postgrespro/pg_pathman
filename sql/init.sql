@@ -10,16 +10,16 @@ CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
 
 
 CREATE OR REPLACE FUNCTION @extschema@.on_create_partitions(relid OID)
-RETURNS VOID AS 'pathman', 'on_partitions_created' LANGUAGE C STRICT;
+RETURNS VOID AS 'pg_pathman', 'on_partitions_created' LANGUAGE C STRICT;
 
 CREATE OR REPLACE FUNCTION @extschema@.on_update_partitions(relid OID)
-RETURNS VOID AS 'pathman', 'on_partitions_updated' LANGUAGE C STRICT;
+RETURNS VOID AS 'pg_pathman', 'on_partitions_updated' LANGUAGE C STRICT;
 
 CREATE OR REPLACE FUNCTION @extschema@.on_remove_partitions(relid OID)
-RETURNS VOID AS 'pathman', 'on_partitions_removed' LANGUAGE C STRICT;
+RETURNS VOID AS 'pg_pathman', 'on_partitions_removed' LANGUAGE C STRICT;
 
 CREATE OR REPLACE FUNCTION @extschema@.find_range_partition(relid OID, value ANYELEMENT)
-RETURNS OID AS 'pathman', 'find_range_partition' LANGUAGE C STRICT;
+RETURNS OID AS 'pg_pathman', 'find_range_partition' LANGUAGE C STRICT;
 
 
 /*
@@ -27,7 +27,7 @@ RETURNS OID AS 'pathman', 'find_range_partition' LANGUAGE C STRICT;
  */
 CREATE OR REPLACE FUNCTION @extschema@.get_partition_range(
     parent_relid OID, partition_relid OID, dummy ANYELEMENT)
-RETURNS ANYARRAY AS 'pathman', 'get_partition_range' LANGUAGE C STRICT;
+RETURNS ANYARRAY AS 'pg_pathman', 'get_partition_range' LANGUAGE C STRICT;
 
 
 /*
@@ -35,7 +35,7 @@ RETURNS ANYARRAY AS 'pathman', 'get_partition_range' LANGUAGE C STRICT;
  */
 CREATE OR REPLACE FUNCTION @extschema@.get_range_by_idx(
     parent_relid OID, idx INTEGER, dummy ANYELEMENT)
-RETURNS ANYARRAY AS 'pathman', 'get_range_by_idx' LANGUAGE C STRICT;
+RETURNS ANYARRAY AS 'pg_pathman', 'get_range_by_idx' LANGUAGE C STRICT;
 
 
 /*

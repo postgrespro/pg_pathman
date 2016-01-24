@@ -1,6 +1,6 @@
 \set VERBOSITY terse
 CREATE SCHEMA pathman;
-CREATE EXTENSION pathman SCHEMA pathman;
+CREATE EXTENSION pg_pathman SCHEMA pathman;
 CREATE SCHEMA test;
 CREATE TABLE test.hash_rel (
     id      SERIAL PRIMARY KEY,
@@ -17,6 +17,7 @@ CREATE TABLE test.range_rel (
     id SERIAL PRIMARY KEY,
     dt TIMESTAMP,
     txt TEXT);
+CREATE INDEX ON test.range_rel (dt);
 SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL, 3);
 NOTICE:  sequence "range_rel_seq" does not exist, skipping
  create_range_partitions 
@@ -34,14 +35,17 @@ NOTICE:  sequence "num_range_rel_seq" does not exist, skipping
  
 (1 row)
 
-INSERT INTO test.num_range_rel SELECT g, md5(g::TEXT) FROM generate_series(1, 3000) as g;
-VACUUM;
+INSERT INTO test.num_range_rel
+SELECT g, md5(g::TEXT) FROM generate_series(1, 3000) as g;
+INSERT INTO test.range_rel (dt, txt)
+SELECT g, md5(g::TEXT) FROM generate_series('2015-01-01', '2015-04-30', '1 day'::interval) as g;
 INSERT INTO test.hash_rel VALUES (1, 1);
 INSERT INTO test.hash_rel VALUES (2, 2);
 INSERT INTO test.hash_rel VALUES (3, 3);
 INSERT INTO test.hash_rel VALUES (4, 4);
 INSERT INTO test.hash_rel VALUES (5, 5);
 INSERT INTO test.hash_rel VALUES (6, 6);
+VACUUM;
 /* update triggers test */
 SELECT pathman.create_hash_update_trigger('test.hash_rel');
  create_hash_update_trigger 
@@ -155,6 +159,46 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE (id >= 500 AND id < 1
    ->  Seq Scan on num_range_rel_4
 (8 rows)
 
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt > '2015-02-15';
+                                   QUERY PLAN                                   
+--------------------------------------------------------------------------------
+ Append
+   ->  Seq Scan on range_rel_2
+         Filter: (dt > 'Sun Feb 15 00:00:00 2015'::timestamp without time zone)
+   ->  Seq Scan on range_rel_3
+   ->  Seq Scan on range_rel_4
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-02-01' AND dt < '2015-03-01';
+          QUERY PLAN           
+-------------------------------
+ Append
+   ->  Seq Scan on range_rel_2
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-02-15' AND dt < '2015-03-15';
+                                   QUERY PLAN                                    
+---------------------------------------------------------------------------------
+ Append
+   ->  Seq Scan on range_rel_2
+         Filter: (dt >= 'Sun Feb 15 00:00:00 2015'::timestamp without time zone)
+   ->  Seq Scan on range_rel_3
+         Filter: (dt < 'Sun Mar 15 00:00:00 2015'::timestamp without time zone)
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE (dt >= '2015-01-15' AND dt < '2015-02-15') OR (dt > '2015-03-15');
+                                   QUERY PLAN                                    
+---------------------------------------------------------------------------------
+ Append
+   ->  Seq Scan on range_rel_1
+         Filter: (dt >= 'Thu Jan 15 00:00:00 2015'::timestamp without time zone)
+   ->  Seq Scan on range_rel_2
+         Filter: (dt < 'Sun Feb 15 00:00:00 2015'::timestamp without time zone)
+   ->  Seq Scan on range_rel_3
+         Filter: (dt > 'Sun Mar 15 00:00:00 2015'::timestamp without time zone)
+   ->  Seq Scan on range_rel_4
+(8 rows)
+
 SET enable_indexscan = ON;
 SET enable_bitmapscan = OFF;
 SET enable_seqscan = OFF;
@@ -223,6 +267,46 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE (id >= 500 AND id < 1
    ->  Index Scan using num_range_rel_3_pkey on num_range_rel_3
          Index Cond: (id > 2500)
    ->  Seq Scan on num_range_rel_4
+(8 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt > '2015-02-15';
+                                     QUERY PLAN                                     
+------------------------------------------------------------------------------------
+ Append
+   ->  Index Scan using range_rel_2_dt_idx on range_rel_2
+         Index Cond: (dt > 'Sun Feb 15 00:00:00 2015'::timestamp without time zone)
+   ->  Seq Scan on range_rel_3
+   ->  Seq Scan on range_rel_4
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-02-01' AND dt < '2015-03-01';
+          QUERY PLAN           
+-------------------------------
+ Append
+   ->  Seq Scan on range_rel_2
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-02-15' AND dt < '2015-03-15';
+                                     QUERY PLAN                                      
+-------------------------------------------------------------------------------------
+ Append
+   ->  Index Scan using range_rel_2_dt_idx on range_rel_2
+         Index Cond: (dt >= 'Sun Feb 15 00:00:00 2015'::timestamp without time zone)
+   ->  Index Scan using range_rel_3_dt_idx on range_rel_3
+         Index Cond: (dt < 'Sun Mar 15 00:00:00 2015'::timestamp without time zone)
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE (dt >= '2015-01-15' AND dt < '2015-02-15') OR (dt > '2015-03-15');
+                                     QUERY PLAN                                      
+-------------------------------------------------------------------------------------
+ Append
+   ->  Index Scan using range_rel_1_dt_idx on range_rel_1
+         Index Cond: (dt >= 'Thu Jan 15 00:00:00 2015'::timestamp without time zone)
+   ->  Index Scan using range_rel_2_dt_idx on range_rel_2
+         Index Cond: (dt < 'Sun Feb 15 00:00:00 2015'::timestamp without time zone)
+   ->  Index Scan using range_rel_3_dt_idx on range_rel_3
+         Index Cond: (dt > 'Sun Mar 15 00:00:00 2015'::timestamp without time zone)
+   ->  Seq Scan on range_rel_4
 (8 rows)
 
 /*
@@ -340,4 +424,4 @@ SELECT pathman.drop_range_partitions('test.num_range_rel');
 (1 row)
 
 DROP TABLE test.num_range_rel CASCADE;
-DROP EXTENSION pathman;
+DROP EXTENSION pg_pathman;

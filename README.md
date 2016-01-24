@@ -1,8 +1,8 @@
-# pathman
+# pg_pathman
 
-The `pathman` module provides optimized partitioning mechanism and functions to manage partitions.
+The `pg_pathman` module provides optimized partitioning mechanism and functions to manage partitions.
 
-## pathman Concepts
+## pg_pathman Concepts
 
 Partitioning refers to splitting one large table into smaller pieces. Each row in such table assigns to a single partition based on partitioning key. Common partitioning strategies are:
 
@@ -20,7 +20,7 @@ CREATE TABLE test_2 (CHECK ( id >= 200 AND id < 300 )) INHERITS (test);
 
 Despite the flexibility of this approach it has weakness. If query uses filtering the optimizer forced to perform an exhaustive search and check constraints for each partition to determine partitions from which it should select data. If the number of partitions is large the overhead may be significant.
 
-The `pathman` module provides functions to manage partitions and partitioning mechanism optimized based on knowledge of the partitions structure. It stores partitioning configuration in the `pathman_config` table, each row of which contains single entry for partitioned table (relation name, partitioning key and type). During initialization the `pathman` module caches information about child partitions in shared memory in form convenient to perform rapid search. When user executes SELECT query pathman analyzes conditions tree looking for conditions like:
+The `pg_pathman` module provides functions to manage partitions and partitioning mechanism optimized based on knowledge of the partitions structure. It stores partitioning configuration in the `pathman_config` table, each row of which contains single entry for partitioned table (relation name, partitioning key and type). During initialization the `pg_pathman` module caches information about child partitions in shared memory in form convenient to perform rapid search. When user executes SELECT query pg_pathman analyzes conditions tree looking for conditions like:
 
 ```
 VARIABLE OP CONST
@@ -31,25 +31,25 @@ where `VARIABLE` is partitioning key, `OP` is comparison operator (supported ope
 WHERE id = 150
 ```
 
-Based on partitioning type and operator the `pathman` searches corresponding partitions and builds the plan.
+Based on partitioning type and operator the `pg_pathman` searches corresponding partitions and builds the plan.
 
 ## Installation
 
-To install pathman run in pathman directory:
+To install pg_pathman run in pg_pathman directory:
 ```
 make install USE_PGXS=1
 ```
 Modify shared_preload_libraries parameter in postgres.conf as following:
 ```
-shared_preload_libraries = 'pathman'
+shared_preload_libraries = 'pg_pathman'
 ```
 It will require to restart the PostgreSQL instance. Then execute following query in psql:
 ```
 CREATE SCHEMA pathman;
-CREATE EXTENSION pathman SCHEMA pathman;
+CREATE EXTENSION pg_pathman SCHEMA pathman;
 ```
 
-## Pathman Functions
+## pg_pathman Functions
 
 ### Partitions Creation
 ```
@@ -113,7 +113,7 @@ Prepends new partition with the range equal to the range of the first partition.
 ```
 disable_partitioning(relation TEXT)
 ```
-Disables `pathman` partitioning mechanism for the specified parent table and removes an insert trigger. Partitions itself remain unchanged.
+Disables `pg_pathman` partitioning mechanism for the specified parent table and removes an insert trigger. Partitions itself remain unchanged.
 
 ## Examples
 ### HASH
