@@ -119,14 +119,6 @@ BEGIN
         EXECUTE format('DROP TABLE %s', rec.inhrelid::regclass::text);
     END LOOP;
 
-    -- FOR rec in (SELECT * FROM pg_inherits WHERE inhparent = relation::regclass::oid)
-    -- LOOP
-    --     EXECUTE format('DROP FUNCTION IF EXISTS %s_hash_update_trigger_func() CASCADE'
-    --                    , @extschema@.get_schema_qualified_name(relation::regclass)
-    --                    , num);
-    --     num := num + 1;
-    -- END LOOP;
-
     /* Notify backend about changes */
     PERFORM @extschema@.on_remove_partitions(relation::regclass::oid);
 END

@@ -576,6 +576,8 @@ $$
 DECLARE
     v_rec   RECORD;
 BEGIN
+    relation := @extschema@.validate_relname(relation);
+
     /* Drop trigger first */
     PERFORM @extschema@.drop_range_triggers(relation);
 

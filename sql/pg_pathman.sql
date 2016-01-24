@@ -112,4 +112,9 @@ DROP TABLE test.hash_rel CASCADE;
 SELECT pathman.drop_range_partitions('test.num_range_rel');
 DROP TABLE test.num_range_rel CASCADE;
 
+SELECT pathman.drop_range_partitions('test.range_rel');
+DROP TABLE test.range_rel CASCADE;
+
+SELECT * FROM pathman.pathman_config;
+
 DROP EXTENSION pg_pathman;

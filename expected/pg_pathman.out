@@ -424,4 +424,16 @@ SELECT pathman.drop_range_partitions('test.num_range_rel');
 (1 row)
 
 DROP TABLE test.num_range_rel CASCADE;
+SELECT pathman.drop_range_partitions('test.range_rel');
+ drop_range_partitions 
+-----------------------
+ 
+(1 row)
+
+DROP TABLE test.range_rel CASCADE;
+SELECT * FROM pathman.pathman_config;
+ id | relname | attname | parttype 
+----+---------+---------+----------
+(0 rows)
+
 DROP EXTENSION pg_pathman;
