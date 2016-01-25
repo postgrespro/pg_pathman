@@ -161,7 +161,46 @@ Now let's create new partition. You can use append_partition() or prepend_partit
 SELECT append_partition('range_rel');
 SELECT prepend_partition('range_rel');
 ```
+### Disable pg_pathman
+To disable pg_pathman for some previously partitioned table use disable_pathman() function:
+```
+SELECT disable_pathman('range_rel');
+```
+All sections and data will stay available and will be handled by standard PostgreSQL partitioning mechanism.
+### Manual partitions management
+It is possible to manage partitions manually. After creating or removing child tables it's necessary to invoke function:
+```
+on_update_partitions(oid),
+```
+which updates internal structures in memory of `pg_pathman module`. For example, let's create new section for the `range_rel` from above:
+```
+CREATE TABLE range_rel_archive (CHECK (dt >= '2000-01-01' AND dt < '2010-01-01')) INHERITS (range_rel);
+SELECT on_update_partitions('range_rel'::regclass::oid);
+```
+CHECK CONSTRAINT must have the exact format:
+* (VARIABLE >= CONST AND VARIABLE < CONST) for RANGE partitioned tables;
+* (VARIABLE % CONST = CONST) for HASH partitioned tables.
+
+It is possible to create partition from foreign table as well:
+```
+CREATE FOREIGN TABLE range_rel_archive (
+    id INTEGER NOT NULL,
+    dt TIMESTAMP)
+SERVER archive_server;
+ALTER TABLE range_rel_archive INHERIT range_rel;
+ALTER TABLE range_rel_archive ADD CHECK (dt >= '2000-01-01' AND dt < '2010-01-01');
+SELECT on_update_partitions('range_rel'::regclass::oid);
+```
+Foreign table structure must exactly match the parent table.
+
+In case when parent table is being dropped by DROP TABLE, you should invoke on_remove_partitions() function and delete particular entry from `pathman_config` table:
+```
+SELECT on_remove_partitions('range_rel'::regclass::oid);
+DROP TABLE range_rel CASCADE;
+DELETE FROM pathman_config WHERE relname = 'public.range_rel';
+```
 
 ## Author
 Ildar Musin <i.musin@postgrespro.ru> Postgres Professional Ltd., Russia
+
 This module is sponsored by Postgres Professional Ltd., Russia

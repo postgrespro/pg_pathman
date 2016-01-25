@@ -552,18 +552,18 @@ change_varnos_in_restrinct_info(RestrictInfo *rinfo, change_varno_context *conte
 	/* TODO: find some elegant way to do this */
 	if (bms_is_member(context->old_varno, rinfo->clause_relids))
 	{
-		bms_del_member(rinfo->clause_relids, context->old_varno);
-		bms_add_member(rinfo->clause_relids, context->new_varno);
+		rinfo->clause_relids = bms_del_member(rinfo->clause_relids, context->old_varno);
+		rinfo->clause_relids = bms_add_member(rinfo->clause_relids, context->new_varno);
 	}
 	if (bms_is_member(context->old_varno, rinfo->left_relids))
 	{
-		bms_del_member(rinfo->left_relids, context->old_varno);
-		bms_add_member(rinfo->left_relids, context->new_varno);
+		rinfo->left_relids = bms_del_member(rinfo->left_relids, context->old_varno);
+		rinfo->left_relids = bms_add_member(rinfo->left_relids, context->new_varno);
 	}
 	if (bms_is_member(context->old_varno, rinfo->right_relids))
 	{
-		bms_del_member(rinfo->right_relids, context->old_varno);
-		bms_add_member(rinfo->right_relids, context->new_varno);
+		rinfo->right_relids = bms_del_member(rinfo->right_relids, context->old_varno);
+		rinfo->right_relids = bms_add_member(rinfo->right_relids, context->new_varno);
 	}
 }
 
