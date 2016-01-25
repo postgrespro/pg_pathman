@@ -382,13 +382,15 @@ validate_hash_constraint(Expr *expr, PartRelationInfo *prel, int *hash)
 {
 	OpExpr *eqexpr;
 	OpExpr *modexpr;
+	TypeCacheEntry *tce;
 
 	if (!IsA(expr, OpExpr))
 		return false;
 	eqexpr = (OpExpr *) expr;
 
 	/* Is this an equality operator? */
-	if (eqexpr->opno != Int4EqualOperator)
+	tce = lookup_type_cache(prel->atttype, TYPECACHE_EQ_OPR);
+	if (get_op_opfamily_strategy(eqexpr->opno, tce->btree_opf) != BTEqualStrategyNumber)
 		return false;
 
 	if (!IsA(linitial(eqexpr->args), OpExpr))
@@ -396,7 +398,7 @@ validate_hash_constraint(Expr *expr, PartRelationInfo *prel, int *hash)
 
 	/* Is this a modulus operator? */
 	modexpr = (OpExpr *) linitial(eqexpr->args);
-	if (modexpr->opno != 530)
+	if (modexpr->opno != 530 && modexpr->opno != 439 && modexpr->opno && modexpr->opno != 529)
 		return false;
 
 	if (list_length(modexpr->args) == 2)

@@ -437,3 +437,142 @@ SELECT * FROM pathman.pathman_config;
 (0 rows)
 
 DROP EXTENSION pg_pathman;
+/* Test that everithing works fine without schemas */
+CREATE EXTENSION pg_pathman;
+/* Hash */
+CREATE TABLE hash_rel (
+    id      SERIAL PRIMARY KEY,
+    value   INTEGER);
+INSERT INTO hash_rel (value) SELECT g FROM generate_series(1, 10000) as g;
+SELECT create_hash_partitions('hash_rel', 'value', 3);
+NOTICE:  function hash_rel_hash_insert_trigger_func() does not exist, skipping
+NOTICE:  function hash_rel_hash_update_trigger_func() does not exist, skipping
+ create_hash_partitions 
+------------------------
+ 
+(1 row)
+
+SELECT partition_data('hash_rel');
+NOTICE:  Copying data to hash_rel_0 (condition: ((value % 3) = 0))
+NOTICE:  Copying data to hash_rel_1 (condition: ((value % 3) = 1))
+NOTICE:  Copying data to hash_rel_2 (condition: ((value % 3) = 2))
+ partition_data 
+----------------
+              0
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM hash_rel WHERE id = 1234;
+                      QUERY PLAN                      
+------------------------------------------------------
+ Append
+   ->  Index Scan using hash_rel_0_pkey on hash_rel_0
+         Index Cond: (id = 1234)
+   ->  Index Scan using hash_rel_1_pkey on hash_rel_1
+         Index Cond: (id = 1234)
+   ->  Index Scan using hash_rel_2_pkey on hash_rel_2
+         Index Cond: (id = 1234)
+(7 rows)
+
+/* Range */
+CREATE TABLE range_rel (
+    id SERIAL PRIMARY KEY,
+    dt TIMESTAMP);
+INSERT INTO range_rel (dt) SELECT g FROM generate_series('2010-01-01'::date, '2010-12-31'::date, '1 day') as g;
+SELECT create_range_partitions('range_rel', 'dt', '2010-01-01'::date, '1 month'::interval, 12);
+NOTICE:  sequence "range_rel_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+ 
+(1 row)
+
+SELECT partition_data('range_rel');
+NOTICE:  Copying data to range_rel_1 (condition: ((dt >= 'Fri Jan 01 00:00:00 2010'::timestamp without time zone) AND (dt < 'Mon Feb 01 00:00:00 2010'::timestamp without time zone)))
+NOTICE:  Copying data to range_rel_2 (condition: ((dt >= 'Mon Feb 01 00:00:00 2010'::timestamp without time zone) AND (dt < 'Mon Mar 01 00:00:00 2010'::timestamp without time zone)))
+NOTICE:  Copying data to range_rel_3 (condition: ((dt >= 'Mon Mar 01 00:00:00 2010'::timestamp without time zone) AND (dt < 'Thu Apr 01 00:00:00 2010'::timestamp without time zone)))
+NOTICE:  Copying data to range_rel_4 (condition: ((dt >= 'Thu Apr 01 00:00:00 2010'::timestamp without time zone) AND (dt < 'Sat May 01 00:00:00 2010'::timestamp without time zone)))
+NOTICE:  Copying data to range_rel_5 (condition: ((dt >= 'Sat May 01 00:00:00 2010'::timestamp without time zone) AND (dt < 'Tue Jun 01 00:00:00 2010'::timestamp without time zone)))
+NOTICE:  Copying data to range_rel_6 (condition: ((dt >= 'Tue Jun 01 00:00:00 2010'::timestamp without time zone) AND (dt < 'Thu Jul 01 00:00:00 2010'::timestamp without time zone)))
+NOTICE:  Copying data to range_rel_7 (condition: ((dt >= 'Thu Jul 01 00:00:00 2010'::timestamp without time zone) AND (dt < 'Sun Aug 01 00:00:00 2010'::timestamp without time zone)))
+NOTICE:  Copying data to range_rel_8 (condition: ((dt >= 'Sun Aug 01 00:00:00 2010'::timestamp without time zone) AND (dt < 'Wed Sep 01 00:00:00 2010'::timestamp without time zone)))
+NOTICE:  Copying data to range_rel_9 (condition: ((dt >= 'Wed Sep 01 00:00:00 2010'::timestamp without time zone) AND (dt < 'Fri Oct 01 00:00:00 2010'::timestamp without time zone)))
+NOTICE:  Copying data to range_rel_10 (condition: ((dt >= 'Fri Oct 01 00:00:00 2010'::timestamp without time zone) AND (dt < 'Mon Nov 01 00:00:00 2010'::timestamp without time zone)))
+NOTICE:  Copying data to range_rel_11 (condition: ((dt >= 'Mon Nov 01 00:00:00 2010'::timestamp without time zone) AND (dt < 'Wed Dec 01 00:00:00 2010'::timestamp without time zone)))
+NOTICE:  Copying data to range_rel_12 (condition: ((dt >= 'Wed Dec 01 00:00:00 2010'::timestamp without time zone) AND (dt < 'Sat Jan 01 00:00:00 2011'::timestamp without time zone)))
+NOTICE:  Copying data to range_rel_13 (condition: ((dt >= 'Sat Jan 01 00:00:00 2011'::timestamp without time zone) AND (dt < 'Tue Feb 01 00:00:00 2011'::timestamp without time zone)))
+ partition_data 
+----------------
+              0
+(1 row)
+
+SELECT merge_range_partitions('range_rel_1', 'range_rel_2');
+NOTICE:  Altering first partition...
+NOTICE:  Copying data...
+NOTICE:  Dropping second partition...
+NOTICE:  Done!
+ merge_range_partitions 
+------------------------
+ 
+(1 row)
+
+SELECT split_range_partition('range_rel_1', '2010-02-15'::date);
+NOTICE:  Creating new partition...
+NOTICE:  Copying data to new partition...
+NOTICE:  Altering original partition...
+NOTICE:  Done!
+  split_range_partition  
+-------------------------
+ {01-01-2010,03-01-2010}
+(1 row)
+
+SELECT append_partition('range_rel');
+NOTICE:  Appending new partition...
+NOTICE:  Done!
+ append_partition 
+------------------
+ 
+(1 row)
+
+SELECT prepend_partition('range_rel');
+NOTICE:  Prepending new partition...
+NOTICE:  Done!
+ prepend_partition 
+-------------------
+ 
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM range_rel WHERE dt < '2010-03-01';
+           QUERY PLAN           
+--------------------------------
+ Append
+   ->  Seq Scan on range_rel_1
+   ->  Seq Scan on range_rel_14
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM range_rel WHERE dt > '2010-12-15';
+                                   QUERY PLAN                                   
+--------------------------------------------------------------------------------
+ Append
+   ->  Seq Scan on range_rel_12
+         Filter: (dt > 'Wed Dec 15 00:00:00 2010'::timestamp without time zone)
+   ->  Seq Scan on range_rel_13
+(4 rows)
+
+/* Manual partitions creation */
+CREATE TABLE range_rel_archive (CHECK (dt >= '2000-01-01' AND dt < '2005-01-01')) INHERITS (range_rel);
+SELECT on_update_partitions('range_rel'::regclass::oid);
+ on_update_partitions 
+----------------------
+ 
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM range_rel WHERE dt < '2010-03-01';
+             QUERY PLAN              
+-------------------------------------
+ Append
+   ->  Seq Scan on range_rel_archive
+   ->  Seq Scan on range_rel_16
+   ->  Seq Scan on range_rel_1
+   ->  Seq Scan on range_rel_14
+(5 rows)
+
+DROP EXTENSION pg_pathman;

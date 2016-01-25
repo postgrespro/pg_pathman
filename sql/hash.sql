@@ -173,6 +173,7 @@ DECLARE
     partitions_count INTEGER;
     attr        TEXT;
 BEGIN
+    relation := @extschema@.validate_relname(relation);
     relid := relation::regclass::oid;
     SELECT string_agg(attname, ', '),
            string_agg('OLD.' || attname, ', '),

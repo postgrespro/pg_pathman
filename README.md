@@ -138,7 +138,7 @@ Consider an example of RANGE partitioning. Create a table with numerical or date
 CREATE TABLE range_rel (
     id SERIAL PRIMARY KEY,
     dt TIMESTAMP);
-INSERT INTO range_rel (dt) SELECT g FROM generate_series('2010-01-01'::date, '2015-12-31'::date, '1 day') as g;
+INSERT INTO range_rel (dt) SELECT g FROM generate_series('2010-01-01'::date, '2014-12-31'::date, '1 day') as g;
 ```
 Run create_range_partitions() function to create partitions so that each partition would contain data for one month:
 ```
@@ -159,7 +159,7 @@ SELECT split_range_partition('range_rel_1', '2010-02-15'::date);
 Now let's create new partition. You can use append_partition() or prepend_partition() functions:
 ```
 SELECT append_partition('range_rel');
-SELECT append_partition('range_rel');
+SELECT prepend_partition('range_rel');
 ```
 
 ## Author

@@ -139,7 +139,7 @@ SELECT partition_data('hash_rel');
 CREATE TABLE range_rel (
     id SERIAL PRIMARY KEY,
     dt TIMESTAMP);
-INSERT INTO range_rel (dt) SELECT g FROM generate_series('2010-01-01'::date, '2015-12-31'::date, '1 day') as g;
+INSERT INTO range_rel (dt) SELECT g FROM generate_series('2010-01-01'::date, '2014-12-31'::date, '1 day') as g;
 ```
 Разобьем таблицу на 60 секций так, чтобы каждая секция содержала данные за один месяц:
 ```
@@ -162,4 +162,42 @@ SELECT split_range_partition('range_rel_1', '2010-02-15'::date);
 Добавим новую секцию в конец списка секций:
 ```
 SELECT append_partition('range_rel')
+```
+### Деакцивация pathman
+Деактивировать pathman для некоторой ранее разделенной таблицы можно следующей командой disable_pathman():
+```
+SELECT disable_pathman('range_rel');
+```
+Все созданные секции и данные останутся по прежнему доступны и будут обрабатываться стандартным планировщиком PostgreSQL.
+### Ручное управление секциями
+Когда набора функций pg_pathman недостаточно для управления секциями, предусмотрено ручное управление. Можно создавать или удалять дочерние таблицы вручную, но после этого необходимо вызывать функцию:
+```
+on_update_partitions(oid),
+```
+которая обновит внутреннее представление структуры секций в памяти pg_pathman. Например, добавим новую секцию к ранее созданной range_rel:
+```
+CREATE TABLE range_rel_archive (CHECK (dt >= '2000-01-01' AND dt < '2010-01-01')) INHERITS (range_rel);
+SELECT on_update_partitions('range_rel'::regclass::oid);
+```
+CHECK CONSTRAINT должен иметь строго определенный формат:
+* (VARIABLE >= CONST AND VARIABLE < CONST) для RANGE секционированных таблиц;
+* (VARIABLE % CONST = CONST) для HASH секционированных таблиц.
+
+Также можно добавить секцию, расположенную на удаленном сервере:
+```
+CREATE FOREIGN TABLE range_rel_archive (
+    id INTEGER NOT NULL,
+    dt TIMESTAMP)
+SERVER archive_server;
+ALTER TABLE range_rel_archive INHERIT range_rel;
+ALTER TABLE range_rel_archive ADD CHECK (dt >= '2000-01-01' AND dt < '2010-01-01');
+SELECT on_update_partitions('range_rel'::regclass::oid);
+```
+Структура таблицы должна полностью совпадать с родительской.
+
+В случае, если родительская таблица была удалена вручную с использованием инструкции DROP TABLE, необходимо удалить соответствующую строку из таблицы pathman_config и вызывать on_remove_partitions():
+```
+SELECT on_remove_partitions('range_rel'::regclass::oid);
+DROP TABLE range_rel CASCADE;
+DELETE FROM pathman_config WHERE relname = 'public.range_rel';
 ```

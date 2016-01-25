@@ -47,13 +47,14 @@ $$
 DECLARE
     rec RECORD;
 BEGIN
+    p_parent := @extschema@.validate_relname(p_parent);
     FOR rec IN  (SELECT child.relname, pg_constraint.consrc
-                 FROM @extschema@.pathman_config
-                 JOIN pg_class AS parent ON parent.relname = @extschema@.pathman_config.relname
+                 FROM @extschema@.pathman_config as cfg
+                 JOIN pg_class AS parent ON parent.relfilenode = cfg.relname::regclass::oid
                  JOIN pg_inherits ON inhparent = parent.relfilenode
                  JOIN pg_constraint ON conrelid = inhrelid AND contype='c'
                  JOIN pg_class AS child ON child.relfilenode = inhrelid
-                 WHERE @extschema@.pathman_config.relname = p_parent)
+                 WHERE cfg.relname = p_parent)
     LOOP
         RAISE NOTICE 'Copying data to % (condition: %)', rec.relname, rec.consrc;
         EXECUTE format('WITH part_data AS (

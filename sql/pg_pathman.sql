@@ -118,3 +118,36 @@ DROP TABLE test.range_rel CASCADE;
 SELECT * FROM pathman.pathman_config;
 
 DROP EXTENSION pg_pathman;
+
+/* Test that everithing works fine without schemas */
+CREATE EXTENSION pg_pathman;
+
+/* Hash */
+CREATE TABLE hash_rel (
+    id      SERIAL PRIMARY KEY,
+    value   INTEGER);
+INSERT INTO hash_rel (value) SELECT g FROM generate_series(1, 10000) as g;
+SELECT create_hash_partitions('hash_rel', 'value', 3);
+SELECT partition_data('hash_rel');
+EXPLAIN (COSTS OFF) SELECT * FROM hash_rel WHERE id = 1234;
+
+/* Range */
+CREATE TABLE range_rel (
+    id SERIAL PRIMARY KEY,
+    dt TIMESTAMP);
+INSERT INTO range_rel (dt) SELECT g FROM generate_series('2010-01-01'::date, '2010-12-31'::date, '1 day') as g;
+SELECT create_range_partitions('range_rel', 'dt', '2010-01-01'::date, '1 month'::interval, 12);
+SELECT partition_data('range_rel');
+SELECT merge_range_partitions('range_rel_1', 'range_rel_2');
+SELECT split_range_partition('range_rel_1', '2010-02-15'::date);
+SELECT append_partition('range_rel');
+SELECT prepend_partition('range_rel');
+EXPLAIN (COSTS OFF) SELECT * FROM range_rel WHERE dt < '2010-03-01';
+EXPLAIN (COSTS OFF) SELECT * FROM range_rel WHERE dt > '2010-12-15';
+
+/* Manual partitions creation */
+CREATE TABLE range_rel_archive (CHECK (dt >= '2000-01-01' AND dt < '2005-01-01')) INHERITS (range_rel);
+SELECT on_update_partitions('range_rel'::regclass::oid);
+EXPLAIN (COSTS OFF) SELECT * FROM range_rel WHERE dt < '2010-03-01';
+
+DROP EXTENSION pg_pathman;

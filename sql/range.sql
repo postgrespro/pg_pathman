@@ -196,7 +196,7 @@ BEGIN
 
     SELECT attname, parttype INTO v_attname, v_part_type
     FROM @extschema@.pathman_config
-    WHERE relname = v_parent_relid::regclass::text;
+    WHERE relname = @extschema@.get_schema_qualified_name(v_parent_relid::regclass, '.');
 
     /* Check if this is RANGE partition */
     IF v_part_type != 2 THEN
@@ -218,9 +218,10 @@ BEGIN
 
     /* Create new partition */
     RAISE NOTICE 'Creating new partition...';
-    v_new_partition := @extschema@.create_single_range_partition(v_parent_relid::regclass::text,
-                                                                 p_value,
-                                                                 p_range[2]);
+    v_new_partition := @extschema@.create_single_range_partition(
+                            @extschema@.get_schema_qualified_name(v_parent_relid::regclass, '.'),
+                            p_value,
+                            p_range[2]);
 
     /* Copy data */
     RAISE NOTICE 'Copying data to new partition...';
@@ -286,14 +287,14 @@ BEGIN
 
     SELECT attname, parttype INTO v_attname, v_part_type
     FROM @extschema@.pathman_config
-    WHERE relname = v_parent_relid1::regclass::text;
+    WHERE relname = @extschema@.get_schema_qualified_name(v_parent_relid1::regclass, '.');
 
     /* Check if this is RANGE partition */
     IF v_part_type != 2 THEN
         RAISE EXCEPTION 'Specified partitions aren''t RANGE partitions';
     END IF;
 
-    v_atttype := @extschema@.get_attribute_type_name(v_parent_relid1::regclass::text, v_attname);
+    v_atttype := @extschema@.get_attribute_type_name(p_partition1, v_attname);
 
     EXECUTE format('SELECT @extschema@.merge_range_partitions_internal($1, $2 , $3, NULL::%s)', v_atttype)
     USING v_parent_relid1, v_part1_relid , v_part2_relid;
@@ -327,7 +328,7 @@ DECLARE
     v_cond TEXT;
 BEGIN
     SELECT attname INTO v_attname FROM @extschema@.pathman_config
-    WHERE relname = p_parent_relid::regclass::text;
+    WHERE relname = @extschema@.get_schema_qualified_name(p_parent_relid::regclass, '.');
 
     /*
      * Get ranges
