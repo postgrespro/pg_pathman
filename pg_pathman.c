@@ -808,8 +808,10 @@ range_binary_search(const RangeRelation *rangerel, FmgrInfo *cmp_func, Datum val
 				cmp_max,
 				i = 0,
 				startidx = 0,
-				endidx = rangerel->ranges.length-1,
-				counter = 0;
+				endidx = rangerel->ranges.length-1;
+#ifdef USE_ASSERT_CHECKING
+	int			counter = 0;
+#endif
 
 	*foundPtr = false;
 
