@@ -133,6 +133,28 @@ SELECT create_hash_partitions('hash_rel', 'value', 100);
 ```
 SELECT partition_data('hash_rel');
 ```
+Пример построения плана для запроса с фильтрацией по ключевому полю:
+```
+SELECT * FROM hash_rel WHERE value = 1234;
+  id  | value 
+------+-------
+ 1234 |  1234
+
+EXPLAIN SELECT * FROM hash_rel WHERE value = 1234;
+                           QUERY PLAN                            
+-----------------------------------------------------------------
+ Append  (cost=0.00..2.00 rows=0 width=0)
+   ->  Seq Scan on hash_rel_34  (cost=0.00..2.00 rows=0 width=0)
+         Filter: (value = 1234)
+```
+Стоит отметить, что pg_pathman исключает из плана запроса родительскую таблицу, и чтобы получить данные из нее, следует использовать модификатор ONLY:
+```
+EXPLAIN SELECT * FROM ONLY hash_rel;
+                       QUERY PLAN                       
+--------------------------------------------------------
+ Seq Scan on hash_rel  (cost=0.00..0.00 rows=1 width=8)
+```
+
 ### RANGE
 Пример секционирования таблицы с использованием стратегии RANGE.
 ```
@@ -161,12 +183,30 @@ SELECT split_range_partition('range_rel_1', '2010-02-15'::date);
 ```
 Добавим новую секцию в конец списка секций:
 ```
-SELECT append_partition('range_rel')
+SELECT append_partition('range_rel');
 ```
+Пример построения плана для запроса с фильтрацией по ключевому полю:
+```
+SELECT * FROM range_rel WHERE dt >= '2012-04-30' AND dt <= '2012-05-01';
+ id  |         dt          
+-----+---------------------
+ 851 | 2012-04-30 00:00:00
+ 852 | 2012-05-01 00:00:00
+
+EXPLAIN SELECT * FROM range_rel WHERE dt >= '2012-04-30' AND dt <= '2012-05-01';
+                                 QUERY PLAN                                 
+----------------------------------------------------------------------------
+ Append  (cost=0.00..60.80 rows=0 width=0)
+   ->  Seq Scan on range_rel_28  (cost=0.00..30.40 rows=0 width=0)
+         Filter: (dt >= '2012-04-30 00:00:00'::timestamp without time zone)
+   ->  Seq Scan on range_rel_29  (cost=0.00..30.40 rows=0 width=0)
+         Filter: (dt <= '2012-05-01 00:00:00'::timestamp without time zone)
+```
+
 ### Деакцивация pathman
-Деактивировать pathman для некоторой ранее разделенной таблицы можно следующей командой disable_pathman():
+Деактивировать pathman для некоторой ранее разделенной таблицы можно следующей командой disable_partitioning():
 ```
-SELECT disable_pathman('range_rel');
+SELECT disable_partitioning('range_rel');
 ```
 Все созданные секции и данные останутся по прежнему доступны и будут обрабатываться стандартным планировщиком PostgreSQL.
 ### Ручное управление секциями

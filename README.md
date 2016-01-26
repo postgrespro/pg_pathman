@@ -132,6 +132,27 @@ This will create new partitions but data will still be in the parent table. To m
 ```
 SELECT partition_data('hash_rel');
 ```
+Here is an example of the query with filtering by partitioning key and its plan:
+```
+SELECT * FROM hash_rel WHERE value = 1234;
+  id  | value 
+------+-------
+ 1234 |  1234
+
+EXPLAIN SELECT * FROM hash_rel WHERE value = 1234;
+                           QUERY PLAN                            
+-----------------------------------------------------------------
+ Append  (cost=0.00..2.00 rows=0 width=0)
+   ->  Seq Scan on hash_rel_34  (cost=0.00..2.00 rows=0 width=0)
+         Filter: (value = 1234)
+```
+Note that pg_pathman exludes parent table from the query plan. To access parent table use ONLY modifier:
+```
+EXPLAIN SELECT * FROM ONLY hash_rel;
+                       QUERY PLAN                       
+--------------------------------------------------------
+ Seq Scan on hash_rel  (cost=0.00..0.00 rows=1 width=8)
+```
 ### RANGE
 Consider an example of RANGE partitioning. Create a table with numerical or date or timestamp column:
 ```
@@ -159,12 +180,29 @@ SELECT split_range_partition('range_rel_1', '2010-02-15'::date);
 Now let's create new partition. You can use append_partition() or prepend_partition() functions:
 ```
 SELECT append_partition('range_rel');
-SELECT prepend_partition('range_rel');
 ```
+Here is an example of the query with filtering by partitioning key and its plan:
+```
+SELECT * FROM range_rel WHERE dt >= '2012-04-30' AND dt <= '2012-05-01';
+ id  |         dt          
+-----+---------------------
+ 851 | 2012-04-30 00:00:00
+ 852 | 2012-05-01 00:00:00
+
+EXPLAIN SELECT * FROM range_rel WHERE dt >= '2012-04-30' AND dt <= '2012-05-01';
+                                 QUERY PLAN                                 
+----------------------------------------------------------------------------
+ Append  (cost=0.00..60.80 rows=0 width=0)
+   ->  Seq Scan on range_rel_28  (cost=0.00..30.40 rows=0 width=0)
+         Filter: (dt >= '2012-04-30 00:00:00'::timestamp without time zone)
+   ->  Seq Scan on range_rel_29  (cost=0.00..30.40 rows=0 width=0)
+         Filter: (dt <= '2012-05-01 00:00:00'::timestamp without time zone)
+```
+
 ### Disable pg_pathman
-To disable pg_pathman for some previously partitioned table use disable_pathman() function:
+To disable pg_pathman for some previously partitioned table use disable_partitioning() function:
 ```
-SELECT disable_pathman('range_rel');
+SELECT disable_partitioning('range_rel');
 ```
 All sections and data will stay available and will be handled by standard PostgreSQL partitioning mechanism.
 ### Manual partitions management
