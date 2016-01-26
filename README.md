@@ -123,7 +123,7 @@ CREATE TABLE hash_rel (
     value   INTEGER);
 INSERT INTO hash_rel (value) SELECT g FROM generate_series(1, 10000) as g;
 ```
-Then run create_hash_partitions() function with appropriate arguments:
+If partitions are supposed to have indexes, then they should be created for parent table before partitioning. In this case pg_pathman will automaticaly create indexes for partitions. Then run create_hash_partitions() function with appropriate arguments:
 ```
 SELECT create_hash_partitions('hash_rel', 'value', 100);
 ```

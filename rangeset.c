@@ -52,7 +52,7 @@ irange_list_union(List *a, List *b)
 
 	while (ca || cb)
 	{
-		IndexRange	next;
+		IndexRange	next = 0;
 
 		/* Fetch next range with lesser lower bound */
 		if (ca && cb)
