@@ -10,6 +10,7 @@
 #include "optimizer/pathnode.h"
 #include "optimizer/planner.h"
 #include "optimizer/restrictinfo.h"
+#include "optimizer/cost.h"
 #include "utils/hsearch.h"
 #include "utils/tqual.h"
 #include "utils/rel.h"
@@ -105,7 +106,7 @@ _PG_init(void)
 	{
 		elog(ERROR, "Pathman module must be initialized in postmaster. "
 					"Put the following line to configuration file: "
-					"shared_preload_library = 'pg_pathman'");
+					"shared_preload_libraries='pg_pathman'");
 		initialization_needed = false;
 	}
 
@@ -645,8 +646,10 @@ handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result,
 				RangeEntry *re;
 				bool		found = false,
 							lossy = false;
-				int			counter = 0,
-							startidx = 0,
+#ifdef USE_ASSERT_CHECKING
+				int			counter = 0;
+#endif
+				int			startidx = 0,
 							cmp_min,
 							cmp_max,
 							endidx = rangerel->ranges.length - 1;
