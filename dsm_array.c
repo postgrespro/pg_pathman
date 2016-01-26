@@ -2,7 +2,7 @@
 #include "storage/shmem.h"
 #include "storage/dsm.h"
 #include "storage/lwlock.h"
-
+#include <stdint.h>
 
 static Table *table;
 static dsm_segment *segment = NULL;
