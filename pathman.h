@@ -139,7 +139,7 @@ LWLock *dsm_init_lock;
 /* Dynamic shared memory functions */
 void alloc_dsm_table(void);
 bool init_dsm_segment(size_t block_size);
-void init_dsm_table(Table *tbl, dsm_handle h, size_t block_size);
+void init_dsm_table(size_t block_size);
 void alloc_dsm_array(DsmArray *arr, size_t entry_size, size_t length);
 void free_dsm_array(DsmArray *arr);
 void *dsm_array_get_pointer(const DsmArray* arr);

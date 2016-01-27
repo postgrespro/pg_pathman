@@ -78,10 +78,10 @@ RETURNS VOID AS
 $$
 BEGIN
     DELETE FROM @extschema@.pathman_config WHERE relname = relation;
-    EXECUTE format('DROP TRIGGER %s_insert_trigger_func ON %1$s', relation);
+    EXECUTE format('DROP FUNCTION IF EXISTS %s_insert_trigger_func() CASCADE', relation);
 
     /* Notify backend about changes */
-    PERFORM pg_pathman_on_remove_partitions(relation::regclass::integer);
+    PERFORM on_remove_partitions(relation::regclass::integer);
 END
 $$
 LANGUAGE plpgsql;

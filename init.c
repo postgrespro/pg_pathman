@@ -211,7 +211,7 @@ load_check_constraints(Oid parent_oid)
 	{
 		SPITupleTable *tuptable = SPI_tuptable;
 		Oid *children;
-		RangeEntry *ranges;
+		RangeEntry *ranges = NULL;
 		Datum min;
 		Datum max;
 		int hash;

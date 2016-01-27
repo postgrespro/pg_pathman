@@ -7,7 +7,7 @@ CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions(
     , p_start_value ANYELEMENT
     , p_interval INTERVAL
     , p_premake INTEGER)
-RETURNS VOID AS
+RETURNS INTEGER AS
 $$
 DECLARE
     v_value     TEXT;
@@ -16,7 +16,7 @@ BEGIN
     p_relation := @extschema@.validate_relname(p_relation);
 
     IF EXISTS (SELECT * FROM @extschema@.pathman_config WHERE relname = p_relation) THEN
-        RAISE EXCEPTION 'Reltion "%" has already been partitioned', p_relation;
+        RAISE EXCEPTION 'Relation "%" has already been partitioned', p_relation;
     END IF;
 
     EXECUTE format('DROP SEQUENCE IF EXISTS %s_seq', p_relation);
@@ -39,6 +39,8 @@ BEGIN
     -- PERFORM create_hash_update_trigger(relation, attribute, partitions_count);
     /* Notify backend about changes */
     PERFORM @extschema@.on_create_partitions(p_relation::regclass::oid);
+
+    RETURN p_premake+1;
 END
 $$ LANGUAGE plpgsql;
 
@@ -51,7 +53,7 @@ CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions(
     , p_start_value ANYELEMENT
     , p_interval ANYELEMENT
     , p_premake INTEGER)
-RETURNS VOID AS
+RETURNS INTEGER AS
 $$
 DECLARE
     v_value     TEXT;
@@ -60,7 +62,7 @@ BEGIN
     p_relation := @extschema@.validate_relname(p_relation);
 
     IF EXISTS (SELECT * FROM @extschema@.pathman_config WHERE relname = p_relation) THEN
-        RAISE EXCEPTION 'Reltion "%" has already been partitioned', p_relation;
+        RAISE EXCEPTION 'Relation "%" has already been partitioned', p_relation;
     END IF;
 
     EXECUTE format('DROP SEQUENCE IF EXISTS %s_seq', p_relation);
@@ -83,6 +85,8 @@ BEGIN
     -- PERFORM create_hash_update_trigger(relation, attribute, partitions_count);
     /* Notify backend about changes */
     PERFORM @extschema@.on_create_partitions(p_relation::regclass::oid);
+
+    RETURN p_premake+1;
 END
 $$ LANGUAGE plpgsql;
 

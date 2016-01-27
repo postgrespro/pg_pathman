@@ -5,13 +5,13 @@ CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions(
     relation TEXT
     , attribute TEXT
     , partitions_count INTEGER
-) RETURNS VOID AS
+) RETURNS INTEGER AS
 $$
 BEGIN
     relation := @extschema@.validate_relname(relation);
 
     IF EXISTS (SELECT * FROM @extschema@.pathman_config WHERE relname = relation) THEN
-        RAISE EXCEPTION 'Reltion "%s" has already been partitioned', relation;
+        RAISE EXCEPTION 'Relation "%s" has already been partitioned', relation;
     END IF;
 
     /* Create partitions and update pg_pathman configuration */
@@ -42,6 +42,8 @@ BEGIN
 
     /* Notify backend about changes */
     PERFORM @extschema@.on_create_partitions(relation::regclass::oid);
+
+    RETURN partitions_count;
 END
 $$ LANGUAGE plpgsql;
 

@@ -10,6 +10,7 @@
 #include "optimizer/pathnode.h"
 #include "optimizer/planner.h"
 #include "optimizer/restrictinfo.h"
+#include "optimizer/cost.h"
 #include "utils/hsearch.h"
 #include "utils/tqual.h"
 #include "utils/rel.h"
@@ -105,7 +106,7 @@ _PG_init(void)
 	{
 		elog(ERROR, "Pathman module must be initialized in postmaster. "
 					"Put the following line to configuration file: "
-					"shared_preload_library = 'pg_pathman'");
+					"shared_preload_libraries='pg_pathman'");
 		initialization_needed = false;
 	}
 
@@ -136,7 +137,9 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	PlannedStmt	  *result;
 
 	if (initialization_needed)
+	{
 		load_config();
+	}
 
 	inheritance_disabled = false;
 	disable_inheritance(parse);
@@ -643,10 +646,12 @@ handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result,
 			if (rangerel != NULL)
 			{
 				RangeEntry *re;
-				bool		found = false,
-							lossy = false;
-				int			counter = 0,
-							startidx = 0,
+				bool		lossy = false;
+#ifdef USE_ASSERT_CHECKING
+				bool		found = false;
+				int			counter = 0;
+#endif
+				int			startidx = 0,
 							cmp_min,
 							cmp_max,
 							endidx = rangerel->ranges.length - 1;
@@ -715,7 +720,9 @@ handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result,
 							lossy = false;
 						else
 							lossy = true;
+#ifdef USE_ASSERT_CHECKING
 						found = true;
+#endif
 						break;
 					}
 
@@ -805,8 +812,10 @@ range_binary_search(const RangeRelation *rangerel, FmgrInfo *cmp_func, Datum val
 				cmp_max,
 				i = 0,
 				startidx = 0,
-				endidx = rangerel->ranges.length-1,
-				counter = 0;
+				endidx = rangerel->ranges.length-1;
+#ifdef USE_ASSERT_CHECKING
+	int			counter = 0;
+#endif
 
 	*foundPtr = false;
 

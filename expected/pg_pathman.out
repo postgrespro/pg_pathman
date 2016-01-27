@@ -10,7 +10,7 @@ NOTICE:  function test.hash_rel_hash_insert_trigger_func() does not exist, skipp
 NOTICE:  function test.hash_rel_hash_update_trigger_func() does not exist, skipping
  create_hash_partitions 
 ------------------------
- 
+                      3
 (1 row)
 
 CREATE TABLE test.range_rel (
@@ -22,7 +22,7 @@ SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DAT
 NOTICE:  sequence "range_rel_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
- 
+                       4
 (1 row)
 
 CREATE TABLE test.num_range_rel (
@@ -32,7 +32,7 @@ SELECT pathman.create_range_partitions('test.num_range_rel', 'id', 0, 1000, 3);
 NOTICE:  sequence "num_range_rel_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
- 
+                       4
 (1 row)
 
 INSERT INTO test.num_range_rel
@@ -449,7 +449,7 @@ NOTICE:  function hash_rel_hash_insert_trigger_func() does not exist, skipping
 NOTICE:  function hash_rel_hash_update_trigger_func() does not exist, skipping
  create_hash_partitions 
 ------------------------
- 
+                      3
 (1 row)
 
 SELECT partition_data('hash_rel');
@@ -482,7 +482,7 @@ SELECT create_range_partitions('range_rel', 'dt', '2010-01-01'::date, '1 month':
 NOTICE:  sequence "range_rel_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
- 
+                      13
 (1 row)
 
 SELECT partition_data('range_rel');

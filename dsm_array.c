@@ -2,19 +2,36 @@
 #include "storage/shmem.h"
 #include "storage/dsm.h"
 #include "storage/lwlock.h"
+#include <stdint.h>
 
-
-static Table *table;
+// static Table *table;
 static dsm_segment *segment = NULL;
+static dsm_handle *segment_handle = 0;
+static size_t _first_free = 0;
+static size_t _block_size = 0;
 
+typedef int BlockHeader;
+typedef BlockHeader* BlockHeaderPtr;
+
+#define FREE_BIT 0x80000000
+#define is_free(header) \
+	((*header) & FREE_BIT)
+#define set_free(header) \
+	((*header) | FREE_BIT)
+#define set_used(header) \
+	((*header) & ~FREE_BIT)
+#define get_length(header) \
+	((*header) & ~FREE_BIT)
+#define set_length(header, length) \
+	((length) | ((*header) & FREE_BIT))
 
 void
 alloc_dsm_table()
 {
 	bool found;
-	table = (Table *) ShmemInitStruct("dsm table", sizeof(Table), &found);
+	segment_handle = ShmemInitStruct("dsm table", sizeof(dsm_handle), &found);
 	if (!found)
-		table->segment_handle = 0;
+		*segment_handle = 0;
 }
 
 
@@ -26,30 +43,30 @@ bool
 init_dsm_segment(size_t block_size)
 {
 	bool ret;
-	dsm_handle handle;
 
 	/* lock here */
 	LWLockAcquire(dsm_init_lock, LW_EXCLUSIVE);
 
 	/* if there is already an existing segment then attach to it */
-	if (table->segment_handle != 0)
+	if (*segment_handle != 0)
 	{
 		ret = false;
-		segment = dsm_attach(table->segment_handle);
+		segment = dsm_attach(*segment_handle);
 	}
 	
 	/*
 	 * If segment hasn't been created yet or has already been destroyed
 	 * (it happens when last session detaches segment) then create new one
 	 */
-	if (table->segment_handle == 0 || segment == NULL)
+	if (*segment_handle == 0 || segment == NULL)
 	{
 		/* create segment */
 		segment = dsm_create(block_size * BLOCKS_COUNT, 0);
-		handle = dsm_segment_handle(segment);
-		init_dsm_table(table, handle, block_size);
+		*segment_handle = dsm_segment_handle(segment);
+		init_dsm_table(block_size);
 		ret = true;
 	}
+	_block_size = block_size;
 
 	/*
 	 * Keep mapping till the end of the session. Otherwise it would be
@@ -63,25 +80,24 @@ init_dsm_segment(size_t block_size)
 	return ret;
 }
 
+/*
+ * Initialize allocated segment with block structure
+ */
 void
-init_dsm_table(Table *tbl, dsm_handle h, size_t block_size)
+init_dsm_table(size_t block_size)
 {
 	int i;
-	Block *block;
-
-	memset(table, 0, sizeof(Table));
-	table->segment_handle = h;
-	table->block_size = block_size;
-	table->first_free = 0;
+	BlockHeaderPtr header;
+	char *ptr = dsm_segment_address(segment);
 
 	/* create blocks */
 	for (i=0; i<BLOCKS_COUNT; i++)
 	{
-		block = &table->blocks[i];
-		block->segment = h;
-		block->offset = i * block_size;
-		block->is_free = true;
+		header = (BlockHeaderPtr) &ptr[i * block_size];
+		*header = set_free(header);
+		*header = set_length(header, 1);
 	}
+	_first_free = 0;
 
 	return;
 }
@@ -93,51 +109,68 @@ void
 alloc_dsm_array(DsmArray *arr, size_t entry_size, size_t length)
 {
 	int		i = 0;
-	Block   *block = NULL;
-	int		free_count = 0;
 	int		size_requested = entry_size * length;
 	int min_pos = 0;
 	int max_pos = 0;
+	size_t offset = 0;
+	size_t total_length = 0;
+	char *ptr = dsm_segment_address(segment);
+	BlockHeaderPtr header;
 
-	for (i = table->first_free; i<BLOCKS_COUNT; i++)
+	for (i = _first_free; i<BLOCKS_COUNT; )
 	{
-		if (table->blocks[i].is_free)
+		header = (BlockHeaderPtr) &ptr[i * _block_size];
+		if (is_free(header))
 		{
-			if (!block)
+			if (!offset)
 			{
-				block = &table->blocks[i];
+				offset = i * _block_size;
+				total_length = _block_size - sizeof(BlockHeader);
 				min_pos = i;
 			}
-			free_count++;
+			else
+			{
+				total_length += _block_size;
+			}
+			i++;
 		}
 		else
 		{
-			free_count = 0;
-			block = NULL;
+			offset = 0;
+			total_length = 0;
+			i += get_length(header);
 		}
 
-		if (free_count * table->block_size >= size_requested)
+		if (total_length >= size_requested)
 		{
-			// return block->offset;
-			max_pos = i;
+			max_pos = i-1;
 			break;
 		}
 	}
 
 	/* look up for first free block */
-	for (i = i+1; i<BLOCKS_COUNT; i++)
-		if (table->blocks[i].is_free == true)
+	for (; i<BLOCKS_COUNT; )
+	{
+		header = (BlockHeaderPtr) &ptr[i * _block_size];
+		if (is_free(header))
 		{
-			table->first_free = i;
+			_first_free = i;
 			break;
 		}
+		else
+		{
+			i += get_length(header);
+		}
+	}
 
 	/* if we found enough of space */
-	if (free_count * table->block_size >= size_requested)
+	if (total_length >= size_requested)
 	{
-		for(i=min_pos; i<=max_pos; i++)
-			table->blocks[i].is_free = false;
-		arr->offset = block->offset;
+		header = (BlockHeaderPtr) &ptr[min_pos * _block_size];
+		*header = set_used(header);
+		*header = set_length(header, max_pos - min_pos + 1);
+
+		arr->offset = offset;
 		arr->length = length;
 	}
 }
@@ -145,19 +178,22 @@ alloc_dsm_array(DsmArray *arr, size_t entry_size, size_t length)
 void
 free_dsm_array(DsmArray *arr)
 {
-	int start = arr->offset / table->block_size;
+	int start = arr->offset / _block_size;
 	int i = 0;
+	char *ptr = dsm_segment_address(segment);
+	BlockHeaderPtr header = (BlockHeaderPtr) &ptr[start * _block_size];
+	size_t blocks_count = get_length(header);
 
 	/* set blocks free */
-	for(;; i++)
+	for(; i < blocks_count; i++)
 	{
-		table->blocks[start + i].is_free = true;
-		if (i * table->block_size >= arr->length)
-			break;
+		header = (BlockHeaderPtr) &ptr[(start + i) * _block_size];
+		*header = set_free(header);
+		*header = set_length(header, 1);
 	}
 
-	if (arr->offset < table->first_free)
-		table->first_free = arr->offset;
+	if (start < _first_free)
+		_first_free = start;
 
 	arr->offset = 0;
 	arr->length = 0;
@@ -166,5 +202,5 @@ free_dsm_array(DsmArray *arr)
 void *
 dsm_array_get_pointer(const DsmArray* arr)
 {
-	return (uint8_t *) dsm_segment_address(segment) + arr->offset;
+	return (char *) dsm_segment_address(segment) + arr->offset + sizeof(BlockHeader);
 }
