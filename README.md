@@ -45,8 +45,7 @@ shared_preload_libraries = 'pg_pathman'
 ```
 It will require to restart the PostgreSQL instance. Then execute following query in psql:
 ```
-CREATE SCHEMA pathman;
-CREATE EXTENSION pg_pathman SCHEMA pathman;
+CREATE EXTENSION pg_pathman;
 ```
 
 ## pg_pathman Functions

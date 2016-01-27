@@ -46,8 +46,7 @@ shared_preload_libraries = 'pg_pathman'
 ```
 Для вступления изменений в силу потребуется перезагрузка сервера PostgreSQL. Затем выполните в psql:
 ```
-CREATE SCHEMA pathman;
-CREATE EXTENSION pg_pathman SCHEMA pathman;
+CREATE EXTENSION pg_pathman;
 ```
 
 ## Функции pathman

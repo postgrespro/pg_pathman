@@ -8,6 +8,7 @@ EXTVERSION = 0.1
 DATA_built = $(EXTENSION)--$(EXTVERSION).sql
 PGFILEDESC = "pg_pathman - partitioning tool"
 
+EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add
 REGRESS = pg_pathman
 EXTRA_CLEAN = $(EXTENSION)--$(EXTVERSION).sql
 
@@ -24,4 +25,7 @@ endif
 
 $(EXTENSION)--$(EXTVERSION).sql: sql/init.sql sql/hash.sql sql/range.sql
 	cat $^ > $@
-check: EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add
+EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add
+
+installcheck:
+	true
