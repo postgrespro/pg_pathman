@@ -82,6 +82,8 @@ CREATE OR REPLACE FUNCTION @extschema@.disable_partitioning(IN relation TEXT)
 RETURNS VOID AS
 $$
 BEGIN
+    relation := @extschema@.validate_relname(relation);
+
     DELETE FROM @extschema@.pathman_config WHERE relname = relation;
     EXECUTE format('DROP FUNCTION IF EXISTS %s_insert_trigger_func() CASCADE', relation);
 

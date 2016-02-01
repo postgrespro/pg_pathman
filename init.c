@@ -488,9 +488,8 @@ remove_relation_info(Oid relid)
 			free_dsm_array(&rangerel->ranges);
 			free_dsm_array(&prel->children);
 			hash_search(range_restrictions, (const void *) &key, HASH_REMOVE, NULL);
-			hash_search(relations, (const void *) &key, HASH_REMOVE, NULL);
 			break;
 	}
 	prel->children_count = 0;
-	hash_search(relations, (const void *) &relid, HASH_REMOVE, 0);
+	hash_search(relations, (const void *) &key, HASH_REMOVE, 0);
 }
