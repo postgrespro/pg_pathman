@@ -181,6 +181,7 @@ disable_inheritance(Query *parse)
 	RangeTblEntry *rte;
 	ListCell	  *lc;
 	PartRelationInfo *prel;
+	bool found;
 
 	if (parse->commandType != CMD_SELECT)
 		return;
@@ -194,8 +195,8 @@ disable_inheritance(Query *parse)
 				if (rte->inh)
 				{
 					/* Look up this relation in pathman relations */
-					prel = get_pathman_relation_info(rte->relid, NULL);
-					if (prel != NULL)
+					prel = get_pathman_relation_info(rte->relid, &found);
+					if (prel != NULL && found)
 					{
 						rte->inh = false;
 						/*
@@ -253,15 +254,16 @@ pathman_set_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, Ran
 	RelOptInfo **new_rel_array;
 	RangeTblEntry **new_rte_array;
 	int len;
+	bool found;
 
 	/* This works only for SELECT queries */
 	if (root->parse->commandType != CMD_SELECT || !inheritance_disabled)
 		return;
 
 	/* Lookup partitioning information for parent relation */
-	prel = get_pathman_relation_info(rte->relid, NULL);
+	prel = get_pathman_relation_info(rte->relid, &found);
 
-	if (prel != NULL)
+	if (prel != NULL && found)
 	{
 		ListCell   *lc;
 		int			i;

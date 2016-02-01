@@ -18,8 +18,8 @@ RETURNS VOID AS 'pg_pathman', 'on_partitions_updated' LANGUAGE C STRICT;
 CREATE OR REPLACE FUNCTION @extschema@.on_remove_partitions(relid OID)
 RETURNS VOID AS 'pg_pathman', 'on_partitions_removed' LANGUAGE C STRICT;
 
-CREATE OR REPLACE FUNCTION @extschema@.find_range_partition(relid OID, value ANYELEMENT)
-RETURNS OID AS 'pg_pathman', 'find_range_partition' LANGUAGE C STRICT;
+CREATE OR REPLACE FUNCTION @extschema@.find_or_create_range_partition(relid OID, value ANYELEMENT)
+RETURNS OID AS 'pg_pathman', 'find_or_create_range_partition' LANGUAGE C STRICT;
 
 
 /*
@@ -41,30 +41,35 @@ RETURNS ANYARRAY AS 'pg_pathman', 'get_range_by_idx' LANGUAGE C STRICT;
 /*
  * Copy rows to partitions
  */
-CREATE OR REPLACE FUNCTION @extschema@.partition_data(p_parent text)
-RETURNS bigint AS
+CREATE OR REPLACE FUNCTION @extschema@.partition_data(
+    p_parent text
+    , p_invalidate_cache_on_error BOOLEAN DEFAULT FALSE
+    , OUT p_total BIGINT)
+AS
 $$
 DECLARE
     rec RECORD;
+    cnt BIGINT := 0;
 BEGIN
     p_parent := @extschema@.validate_relname(p_parent);
-    FOR rec IN  (SELECT child.relname, pg_constraint.consrc
-                 FROM @extschema@.pathman_config as cfg
-                 JOIN pg_class AS parent ON parent.relfilenode = cfg.relname::regclass::oid
-                 JOIN pg_inherits ON inhparent = parent.relfilenode
-                 JOIN pg_constraint ON conrelid = inhrelid AND contype='c'
-                 JOIN pg_class AS child ON child.relfilenode = inhrelid
-                 WHERE cfg.relname = p_parent)
-    LOOP
-        RAISE NOTICE 'Copying data to % (condition: %)', rec.relname, rec.consrc;
-        EXECUTE format('WITH part_data AS (
-                            DELETE FROM ONLY %s WHERE %s RETURNING *)
-                        INSERT INTO %s SELECT * FROM part_data'
-                        , p_parent
-                        , rec.consrc
-                        , rec.relname);
-    END LOOP;
-    RETURN 0;
+
+    p_total := 0;
+
+    /* Create partitions and copy rest of the data */
+    RAISE NOTICE 'Copying data to partitions...';
+    EXECUTE format('
+                WITH part_data AS (
+                    DELETE FROM ONLY %s RETURNING *)
+                INSERT INTO %s SELECT * FROM part_data'
+                , p_parent
+                , p_parent);
+    GET DIAGNOSTICS p_total = ROW_COUNT;
+    -- RAISE NOTICE '% rows have been copied', p_total;
+    RETURN;
+
+EXCEPTION WHEN others THEN
+    PERFORM on_remove_partitions(p_parent::regclass::integer);
+    RAISE EXCEPTION '% %', SQLERRM, SQLSTATE;
 END
 $$
 LANGUAGE plpgsql;
@@ -131,3 +136,28 @@ BEGIN
 END
 $$
 LANGUAGE plpgsql;
+
+/*
+ * DDL trigger that deletes entry from pathman_config
+ */
+CREATE OR REPLACE FUNCTION @extschema@.pathman_ddl_trigger_func()
+RETURNS event_trigger AS
+$$
+DECLARE
+    obj record;
+BEGIN
+    FOR obj IN SELECT * FROM pg_event_trigger_dropped_objects() as events
+               JOIN @extschema@.pathman_config as cfg ON cfg.relname = events.object_identity
+    LOOP
+        IF obj.object_type = 'table' THEN
+            EXECUTE 'DELETE FROM @extschema@.pathman_config WHERE relname = $1'
+            USING obj.object_identity;
+        END IF;
+    END LOOP;
+END
+$$
+LANGUAGE plpgsql;
+
+CREATE EVENT TRIGGER pathman_ddl_trigger
+ON sql_drop
+EXECUTE PROCEDURE @extschema@.pathman_ddl_trigger_func();

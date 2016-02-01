@@ -11,6 +11,8 @@
 #include "utils/typcache.h"
 #include "utils/lsyscache.h"
 #include "utils/bytea.h"
+#include "utils/snapmgr.h"
+
 
 HTAB   *relations = NULL;
 HTAB   *range_restrictions = NULL;
@@ -141,7 +143,7 @@ load_relations_hashtable(bool reinitialize)
 					free_dsm_array(&rangerel->ranges);
 					prel->children_count = 0;
 				}
-				load_check_constraints(oid, InvalidSnapshot);
+				load_check_constraints(oid, GetCatalogSnapshot(oid));
 				break;
 			case PT_HASH:
 				if (reinitialize && prel->children.length > 0)
@@ -149,7 +151,7 @@ load_relations_hashtable(bool reinitialize)
 					free_dsm_array(&prel->children);
 					prel->children_count = 0;
 				}
-				load_check_constraints(oid, InvalidSnapshot);
+				load_check_constraints(oid, GetCatalogSnapshot(oid));
 				break;
 		}
 	}
@@ -169,9 +171,9 @@ create_relations_hashtable()
 	if (relations != NULL)
 		hash_destroy(relations);
 #if PG_VERSION_NUM >= 90600
-	relations = ShmemInitHash("Partitioning relation info", 1024, &ctl, HASH_ELEM);
+	relations = ShmemInitHash("Partitioning relation info", 1024, &ctl, HASH_ELEM | HASH_BLOBS);
 #else
-	relations = ShmemInitHash("Partitioning relation info", 1024, 1024, &ctl, HASH_ELEM);
+	relations = ShmemInitHash("Partitioning relation info", 1024, 1024, &ctl, HASH_ELEM | HASH_BLOBS);
 #endif
 }
 
@@ -485,7 +487,8 @@ remove_relation_info(Oid relid)
 			rangerel = get_pathman_range_relation(relid, NULL);
 			free_dsm_array(&rangerel->ranges);
 			free_dsm_array(&prel->children);
-			hash_search(range_restrictions, (const void *) &key, HASH_REMOVE, 0);
+			hash_search(range_restrictions, (const void *) &key, HASH_REMOVE, NULL);
+			hash_search(relations, (const void *) &key, HASH_REMOVE, NULL);
 			break;
 	}
 	prel->children_count = 0;

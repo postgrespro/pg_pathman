@@ -1,3 +1,5 @@
+/* TODO: function that subdivide specified period with specivied interval */
+
 /*
  * Creates RANGE partitions for specified relation based on datetime attribute
  */
@@ -6,7 +8,7 @@ CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions(
     , p_attribute TEXT
     , p_start_value ANYELEMENT
     , p_interval INTERVAL
-    , p_premake INTEGER)
+    , p_count INTEGER)
 RETURNS INTEGER AS
 $$
 DECLARE
@@ -14,6 +16,10 @@ DECLARE
     i INTEGER;
 BEGIN
     p_relation := @extschema@.validate_relname(p_relation);
+
+    IF p_count <= 0 THEN
+        RAISE EXCEPTION 'Partitions count must be greater than zero';
+    END IF;
 
     IF EXISTS (SELECT * FROM @extschema@.pathman_config WHERE relname = p_relation) THEN
         RAISE EXCEPTION 'Relation "%" has already been partitioned', p_relation;
@@ -26,7 +32,7 @@ BEGIN
     VALUES (p_relation, p_attribute, 2);
 
     /* create first partition */
-    FOR i IN 1..p_premake+1
+    FOR i IN 1..p_count
     LOOP
         EXECUTE format('SELECT @extschema@.create_single_range_partition($1, $2, $3::%s);', pg_typeof(p_start_value))
         USING p_relation, p_start_value, p_start_value + p_interval;
@@ -40,7 +46,10 @@ BEGIN
     /* Notify backend about changes */
     PERFORM @extschema@.on_create_partitions(p_relation::regclass::oid);
 
-    RETURN p_premake+1;
+    /* Copy data */
+    PERFORM @extschema@.partition_data(p_relation);
+
+    RETURN p_count;
 END
 $$ LANGUAGE plpgsql;
 
@@ -52,7 +61,7 @@ CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions(
     , p_attribute TEXT
     , p_start_value ANYELEMENT
     , p_interval ANYELEMENT
-    , p_premake INTEGER)
+    , p_count INTEGER)
 RETURNS INTEGER AS
 $$
 DECLARE
@@ -60,6 +69,10 @@ DECLARE
     i INTEGER;
 BEGIN
     p_relation := @extschema@.validate_relname(p_relation);
+
+    IF p_count <= 0 THEN
+        RAISE EXCEPTION 'Partitions count must be greater than zero';
+    END IF;
 
     IF EXISTS (SELECT * FROM @extschema@.pathman_config WHERE relname = p_relation) THEN
         RAISE EXCEPTION 'Relation "%" has already been partitioned', p_relation;
@@ -72,7 +85,7 @@ BEGIN
     VALUES (p_relation, p_attribute, 2);
 
     /* create first partition */
-    FOR i IN 1..p_premake+1
+    FOR i IN 1..p_count
     LOOP
         PERFORM @extschema@.create_single_range_partition(p_relation
                                                           , p_start_value
@@ -86,10 +99,121 @@ BEGIN
     /* Notify backend about changes */
     PERFORM @extschema@.on_create_partitions(p_relation::regclass::oid);
 
-    RETURN p_premake+1;
+    /* Copy data */
+    PERFORM @extschema@.partition_data(p_relation);
+
+    RETURN p_count;
 END
 $$ LANGUAGE plpgsql;
 
+/*
+ * Creates RANGE partitions for specified range
+ */
+CREATE OR REPLACE FUNCTION @extschema@.create_partitions_from_range(
+    p_relation TEXT
+    , p_attribute TEXT
+    , p_start_value ANYELEMENT
+    , p_end_value ANYELEMENT
+    , p_interval ANYELEMENT)
+RETURNS INTEGER AS
+$$
+DECLARE
+    v_value     TEXT;
+    v_interval  DOUBLE PRECISION;
+    v_dt_interval INTERVAL;
+    v_type      REGTYPE;
+    v_is_date   BOOL;
+    i INTEGER := 0;
+BEGIN
+    p_relation := @extschema@.validate_relname(p_relation);
+
+    IF p_interval <= 0 THEN
+        RAISE EXCEPTION 'Interval must be positive';
+    END IF;
+
+    IF EXISTS (SELECT * FROM @extschema@.pathman_config WHERE relname = p_relation) THEN
+        RAISE EXCEPTION 'Relation "%" has already been partitioned', p_relation;
+    END IF;
+
+    EXECUTE format('DROP SEQUENCE IF EXISTS %s_seq', p_relation);
+    EXECUTE format('CREATE SEQUENCE %s_seq START 1', p_relation);
+
+    INSERT INTO @extschema@.pathman_config (relname, attname, parttype)
+    VALUES (p_relation, p_attribute, 2);
+
+    WHILE p_start_value <= p_end_value
+    LOOP
+        PERFORM @extschema@.create_single_range_partition(p_relation
+                                                         , p_start_value
+                                                         , p_start_value + p_interval);
+        p_start_value := p_start_value + p_interval;
+        i := i + 1;
+    END LOOP;
+
+    /* Create triggers */
+    PERFORM @extschema@.create_range_insert_trigger(p_relation, p_attribute);
+
+    /* Notify backend about changes */
+    PERFORM @extschema@.on_create_partitions(p_relation::regclass::oid);
+
+    /* Copy data */
+    PERFORM @extschema@.partition_data(p_relation);
+
+    RETURN i;
+END
+$$ LANGUAGE plpgsql;
+
+/*
+ * Creates RANGE partitions for specified range based on datetime attribute
+ */
+CREATE OR REPLACE FUNCTION @extschema@.create_partitions_from_range(
+    p_relation TEXT
+    , p_attribute TEXT
+    , p_start_value ANYELEMENT
+    , p_end_value ANYELEMENT
+    , p_interval INTERVAL)
+RETURNS INTEGER AS
+$$
+DECLARE
+    v_value     TEXT;
+    v_interval  DOUBLE PRECISION;
+    v_dt_interval INTERVAL;
+    v_type      REGTYPE;
+    v_is_date   BOOL;
+    i INTEGER := 0;
+BEGIN
+    p_relation := @extschema@.validate_relname(p_relation);
+
+    IF EXISTS (SELECT * FROM @extschema@.pathman_config WHERE relname = p_relation) THEN
+        RAISE EXCEPTION 'Relation "%" has already been partitioned', p_relation;
+    END IF;
+
+    EXECUTE format('DROP SEQUENCE IF EXISTS %s_seq', p_relation);
+    EXECUTE format('CREATE SEQUENCE %s_seq START 1', p_relation);
+
+    INSERT INTO @extschema@.pathman_config (relname, attname, parttype)
+    VALUES (p_relation, p_attribute, 2);
+
+    WHILE p_start_value <= p_end_value
+    LOOP
+        EXECUTE format('SELECT @extschema@.create_single_range_partition($1, $2, $3::%s);', pg_typeof(p_start_value))
+        USING p_relation, p_start_value, p_start_value + p_interval;
+        p_start_value := p_start_value + p_interval;
+        i := i + 1;
+    END LOOP;
+
+    /* Create triggers */
+    PERFORM @extschema@.create_range_insert_trigger(p_relation, p_attribute);
+
+    /* Notify backend about changes */
+    PERFORM @extschema@.on_create_partitions(p_relation::regclass::oid);
+
+    /* Copy data */
+    PERFORM @extschema@.partition_data(p_relation);
+
+    RETURN i;
+END
+$$ LANGUAGE plpgsql;
 
 /*
  * Formats range condition. Utility function.
@@ -170,10 +294,10 @@ BEGIN
                     , v_cond);
 
     EXECUTE v_sql;
+    -- RAISE NOTICE 'partition % created', v_child_relname;
     RETURN v_child_relname;
 END
 $$ LANGUAGE plpgsql;
-
 
 /*
  * Split RANGE partition
@@ -379,19 +503,25 @@ $$ LANGUAGE plpgsql;
 /*
  * Append new partition
  */
-CREATE OR REPLACE FUNCTION @extschema@.append_partition(p_relation TEXT)
-RETURNS VOID AS
+CREATE OR REPLACE FUNCTION @extschema@.append_partition(
+    p_relation TEXT)
+RETURNS TEXT AS
 $$
 DECLARE
     v_attname TEXT;
     v_atttype TEXT;
+    v_part_name TEXT;
 BEGIN
     p_relation := @extschema@.validate_relname(p_relation);
 
     v_attname := attname FROM @extschema@.pathman_config WHERE relname = p_relation;
     v_atttype := @extschema@.get_attribute_type_name(p_relation, v_attname);
-    EXECUTE format('SELECT @extschema@.append_partition_internal($1, NULL::%s)', v_atttype)
+    EXECUTE format('SELECT @extschema@.append_partition_internal($1, ARRAY[]::%s[])'
+                   , v_atttype)
+    INTO v_part_name
     USING p_relation;
+
+    RETURN v_part_name;
 END
 $$
 LANGUAGE plpgsql;
@@ -399,20 +529,22 @@ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION @extschema@.append_partition_internal(
     p_relation TEXT
-    , dummy ANYELEMENT
-    , OUT p_range ANYARRAY)
-RETURNS ANYARRAY AS
+    , p_range ANYARRAY DEFAULT NULL)
+RETURNS TEXT AS
 $$
+DECLARE
+    v_part_name TEXT;
 BEGIN
     p_range := @extschema@.get_range_by_idx(p_relation::regclass::oid, -1, 0);
     RAISE NOTICE 'Appending new partition...';
-    PERFORM @extschema@.create_single_range_partition(p_relation
-                                                      , p_range[2]
-                                                      , p_range[2] + (p_range[2] - p_range[1]));
+    v_part_name := @extschema@.create_single_range_partition(p_relation
+                                                             , p_range[2]
+                                                             , p_range[2] + (p_range[2] - p_range[1]));
 
     /* Tell backend to reload configuration */
     PERFORM @extschema@.on_create_partitions(p_relation::regclass::oid);
     RAISE NOTICE 'Done!';
+    RETURN v_part_name;
 END
 $$
 LANGUAGE plpgsql;
@@ -422,18 +554,23 @@ LANGUAGE plpgsql;
  * Append new partition
  */
 CREATE OR REPLACE FUNCTION @extschema@.prepend_partition(p_relation TEXT)
-RETURNS VOID AS
+RETURNS TEXT AS
 $$
 DECLARE
     v_attname TEXT;
     v_atttype TEXT;
+    v_part_name TEXT;
 BEGIN
     p_relation := @extschema@.validate_relname(p_relation);
 
     v_attname := attname FROM @extschema@.pathman_config WHERE relname = p_relation;
     v_atttype := @extschema@.get_attribute_type_name(p_relation, v_attname);
-    EXECUTE format('SELECT @extschema@.prepend_partition_internal($1, NULL::%s)', v_atttype)
+    EXECUTE format('SELECT @extschema@.prepend_partition_internal($1, ARRAY[]::%s[])'
+                   , v_atttype)
+    INTO v_part_name
     USING p_relation;
+
+    RETURN v_part_name;
 END
 $$
 LANGUAGE plpgsql;
@@ -441,20 +578,23 @@ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION @extschema@.prepend_partition_internal(
     p_relation TEXT
-    , dummy ANYELEMENT
-    , OUT p_range ANYARRAY)
-RETURNS ANYARRAY AS
+    , p_range ANYARRAY DEFAULT NULL)
+RETURNS TEXT AS
 $$
+DECLARE
+    v_part_name TEXT;
 BEGIN
     p_range := @extschema@.get_range_by_idx(p_relation::regclass::oid, 0, 0);
     RAISE NOTICE 'Prepending new partition...';
-    PERFORM @extschema@.create_single_range_partition(p_relation
-                                                      , p_range[1] - (p_range[2] - p_range[1])
-                                                      , p_range[1]);
+    v_part_name := @extschema@.create_single_range_partition(p_relation
+                                                             , p_range[1] - (p_range[2] - p_range[1])
+                                                             , p_range[1]);
 
     /* Tell backend to reload configuration */
     PERFORM @extschema@.on_create_partitions(p_relation::regclass::oid);
     RAISE NOTICE 'Done!';
+
+    RETURN v_part_name;
 END
 $$
 LANGUAGE plpgsql;
@@ -477,7 +617,7 @@ DECLARE
             v_part_relid OID;
         BEGIN
             IF TG_OP = ''INSERT'' THEN
-                v_part_relid := @extschema@.find_range_partition(TG_RELID, NEW.%s);
+                v_part_relid := @extschema@.find_or_create_range_partition(TG_RELID, NEW.%s);
                 IF NOT v_part_relid IS NULL THEN
                     EXECUTE format(''INSERT INTO %%s SELECT $1.*'', v_part_relid::regclass)
                     USING NEW;
@@ -508,7 +648,7 @@ $$ LANGUAGE plpgsql;
  */
 CREATE OR REPLACE FUNCTION @extschema@.create_range_update_trigger(
     IN relation TEXT)
-RETURNS VOID AS
+RETURNS TEXT AS
 $$
 DECLARE
     func TEXT := '
@@ -521,7 +661,7 @@ DECLARE
             q TEXT;
         BEGIN
             old_oid := TG_RELID;
-            new_oid := @extschema@.find_range_partition(''%1$s''::regclass::oid, NEW.%2$s);
+            new_oid := @extschema@.find_or_create_range_partition(''%1$s''::regclass::oid, NEW.%2$s);
             IF old_oid = new_oid THEN RETURN NEW; END IF;
             q := format(''DELETE FROM %%s WHERE %4$s'', old_oid::regclass::text);
             EXECUTE q USING %5$s;
@@ -542,6 +682,7 @@ DECLARE
     num         INTEGER := 0;
     attr        TEXT;
 BEGIN
+    relation := @extschema@.validate_relname(relation);
     relid := relation::regclass::oid;
     SELECT string_agg(attname, ', '),
            string_agg('OLD.' || attname, ', '),
@@ -568,6 +709,8 @@ BEGIN
                        , relation);
         num := num + 1;
     END LOOP;
+
+    RETURN format('%s_update_trigger_func()', relation);
 END
 $$ LANGUAGE plpgsql;
 
@@ -611,5 +754,54 @@ BEGIN
     EXECUTE format('DROP TRIGGER IF EXISTS %s_insert_trigger ON %s CASCADE'
                    , @extschema@.get_schema_qualified_name(relation::regclass)
                    , relation);
+END
+$$ LANGUAGE plpgsql;
+
+
+/*
+ * Internal function used to create new partitions on insert or update trigger.
+ * Invoked from C-function find_or_create_range_partition().
+ */
+CREATE OR REPLACE FUNCTION @extschema@.append_partitions_on_demand_internal(
+    p_relid OID
+    , p_min ANYELEMENT
+    , p_max ANYELEMENT
+    , p_new_value ANYELEMENT)
+RETURNS OID AS
+$$
+DECLARE
+    v_cnt INTEGER := 0;
+    i INTEGER := 0;
+    v_part TEXT;
+BEGIN
+    IF p_new_value >= p_max THEN
+        WHILE (p_max + i * (p_max - p_min)) <= p_new_value OR i > 1000
+        LOOP
+            v_part := @extschema@.create_single_range_partition(
+                            @extschema@.get_schema_qualified_name(p_relid::regclass, '.')
+                            , p_max + (i * (p_max - p_min))
+                            , p_max + ((i+1) * (p_max - p_min)));
+            i := i + 1;
+            RAISE NOTICE 'partition % created', v_part;
+        END LOOP;
+    ELSIF p_new_value <= p_min THEN
+
+        WHILE (p_min - i * (p_max - p_min)) >= p_new_value OR i > 1000
+        LOOP
+            v_part := @extschema@.create_single_range_partition(
+                            @extschema@.get_schema_qualified_name(p_relid::regclass, '.')
+                            , p_min - ((i+1) * (p_max - p_min))
+                            , p_min - (i * (p_max - p_min)));
+            i := i + 1;
+            RAISE NOTICE 'partition % created', v_part;
+        END LOOP;
+    ELSE
+        RAISE NOTICE 'Not implemented yet';
+    END IF;
+
+    IF i > 0 THEN
+        RETURN v_part::regclass::oid;
+    END IF;
+    RETURN NULL;
 END
 $$ LANGUAGE plpgsql;

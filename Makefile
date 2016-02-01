@@ -23,7 +23,7 @@ include $(top_builddir)/src/Makefile.global
 include $(top_srcdir)/contrib/contrib-global.mk
 endif
 
-$(EXTENSION)--$(EXTVERSION).sql: sql/init.sql sql/hash.sql sql/range.sql
+$(EXTENSION)--$(EXTVERSION).sql: init.sql hash.sql range.sql
 	cat $^ > $@
 EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add
 

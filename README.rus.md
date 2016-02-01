@@ -58,7 +58,7 @@ create_hash_partitions(
     attribute TEXT,
     partitions_count INTEGER)
 ```
-Выполняет HASH-секционирование таблицы `relation` по целочисленному полю `attribute`. Создает `partitions_count` дочерних секций, а также триггер на вставку. Данные из родительской таблицы не копируются автоматически в дочерние. Миграцию данных можно выполнить с помощью функции `partition_data()` (см. ниже), либо вручную.
+Выполняет HASH-секционирование таблицы `relation` по целочисленному полю `attribute`. Создает `partitions_count` дочерних секций, а также триггер на вставку. Данные из родительской таблицы будут автоматически скопированы в дочерние.
 
 ```
 create_range_partitions(
@@ -75,7 +75,7 @@ create_range_partitions(
     interval INTERVAL,
     premake INTEGER)
 ```
-Выполняет RANGE-секционирование таблицы `relation` по полю `attribute`. Аргумент `start_value` задает начальное значение, `interval` -- диапазон значений внутри одной секции, `premake` -- количество заранее создаваемых секций.
+Выполняет RANGE-секционирование таблицы `relation` по полю `attribute`. Аргумент `start_value` задает начальное значение, `interval` -- диапазон значений внутри одной секции, `premake` -- количество заранее создаваемых секций. Данные из родительской таблицы будут автоматически скопированы в дочерние.
 
 ```
 create_partitions_from_range(
@@ -92,19 +92,15 @@ create_partitions_from_range(
     end_value ANYELEMENT,
     interval INTERVAL)
 ```
-Выполняет RANGE-секционирование для заданного диапазона таблицы `relation` по полю `attribute`.
+Выполняет RANGE-секционирование для заданного диапазона таблицы `relation` по полю `attribute`. Данные также будут скопированы в дочерние секции.
 
 ### Утилиты
-```
-partition_data(parent text)
-```
-Копирует данные из родительской таблицы `parent` в дочерние секции.
 ```
 create_hash_update_trigger(parent TEXT)
 ```
 Создает триггер на UPDATE для HASH секций. По-умолчанию триггер на обновление данных не создается, т.к. это создает дополнительные накладные расходы. Триггер полезен только в том случае, когда меняется значение ключевого аттрибута.
 ```
-create_hash_update_trigger(parent TEXT)
+create_range_update_trigger(parent TEXT)
 ```
 Аналогично предыдущей, но для RANGE секций.
 
@@ -143,10 +139,6 @@ INSERT INTO hash_rel (value) SELECT g FROM generate_series(1, 10000) as g;
 ```
 SELECT create_hash_partitions('hash_rel', 'value', 100);
 ```
-Перенесем данные из родительской таблицы в дочерние секции.
-```
-SELECT partition_data('hash_rel');
-```
 Пример построения плана для запроса с фильтрацией по ключевому полю:
 ```
 SELECT * FROM hash_rel WHERE value = 1234;
@@ -180,11 +172,6 @@ INSERT INTO range_rel (dt) SELECT g FROM generate_series('2010-01-01'::date, '20
 Разобьем таблицу на 60 секций так, чтобы каждая секция содержала данные за один месяц:
 ```
 SELECT create_range_partitions('range_rel', 'dt', '2010-01-01'::date, '1 month'::interval, 60);
-```
-
-Перенесем данные из родительской таблицы в дочерние секции.
-```
-SELECT partition_data('range_rel');
 ```
 Объединим секции первые две секции:
 ```
