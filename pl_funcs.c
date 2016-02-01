@@ -1,13 +1,20 @@
 #include "pathman.h"
+#include "utils/lsyscache.h"
 #include "utils/typcache.h"
 #include "utils/array.h"
+#include "utils/snapmgr.h"
+#include "access/nbtree.h"
+#include "access/xact.h"
+#include "catalog/pg_type.h"
+#include "executor/spi.h"
+#include "storage/lmgr.h"
 
 
 /* declarations */
 PG_FUNCTION_INFO_V1( on_partitions_created );
 PG_FUNCTION_INFO_V1( on_partitions_updated );
 PG_FUNCTION_INFO_V1( on_partitions_removed );
-PG_FUNCTION_INFO_V1( find_range_partition );
+PG_FUNCTION_INFO_V1( find_or_create_range_partition);
 PG_FUNCTION_INFO_V1( get_range_by_idx );
 PG_FUNCTION_INFO_V1( get_partition_range );
 
@@ -36,8 +43,7 @@ on_partitions_updated(PG_FUNCTION_ARGS)
 
 	/* Parent relation oid */
 	relid = DatumGetInt32(PG_GETARG_DATUM(0));
-	prel = (PartRelationInfo *)
-		hash_search(relations, (const void *) &relid, HASH_FIND, 0);
+	prel = get_pathman_relation_info(relid, NULL);
 	if (prel != NULL)
 	{
 		LWLockAcquire(load_config_lock, LW_EXCLUSIVE);
@@ -66,10 +72,11 @@ on_partitions_removed(PG_FUNCTION_ARGS)
 }
 
 /*
- * Returns partition oid for specified parent relid and value
+ * Returns partition oid for specified parent relid and value.
+ * In case when partition isn't exist try to create one.
  */
 Datum
-find_range_partition(PG_FUNCTION_ARGS)
+find_or_create_range_partition(PG_FUNCTION_ARGS)
 {
 	int		relid = DatumGetInt32(PG_GETARG_DATUM(0));
 	Datum	value = PG_GETARG_DATUM(1);
@@ -79,24 +86,99 @@ find_range_partition(PG_FUNCTION_ARGS)
 	RangeRelation	*rangerel;
 	RangeEntry		*ranges;
 	TypeCacheEntry	*tce;
-	FmgrInfo		*cmp_func;
+	PartRelationInfo *prel;
+	Oid				 cmp_proc_oid;
+	FmgrInfo		 cmp_func;
 
 	tce = lookup_type_cache(value_type,
 		TYPECACHE_EQ_OPR | TYPECACHE_LT_OPR | TYPECACHE_GT_OPR |
 		TYPECACHE_CMP_PROC | TYPECACHE_CMP_PROC_FINFO);
-	cmp_func = &tce->cmp_proc_finfo;
 
-	rangerel = (RangeRelation *)
-		hash_search(range_restrictions, (const void *) &relid, HASH_FIND, NULL);
+	prel = get_pathman_relation_info(relid, NULL);
+	cmp_proc_oid = get_opfamily_proc(tce->btree_opf,
+									 value_type,
+									 prel->atttype,
+									 BTORDER_PROC);
+	fmgr_info(cmp_proc_oid, &cmp_func);
 
-	if (!rangerel)
+	rangerel = get_pathman_range_relation(relid, NULL);
+
+	if (!rangerel || rangerel->ranges.length == 0)
 		PG_RETURN_NULL();
 
 	ranges = dsm_array_get_pointer(&rangerel->ranges);
-	pos = range_binary_search(rangerel, cmp_func, value, &found);
+	pos = range_binary_search(rangerel, &cmp_func, value, &found);
 
+	/*
+	 * If found then just return oid. Else create new partitions
+	 */
 	if (found)
 		PG_RETURN_OID(ranges[pos].child_oid);
+	else
+	{
+		int 		ret;
+		Datum		vals[4];
+		Oid			oids[] = {OIDOID, value_type, value_type, value_type};
+		bool		nulls[] = {false, false, false, false};
+		RangeEntry *re = &ranges[rangerel->ranges.length-1];
+		int 		cmp_upper = FunctionCall2(&cmp_func, value, ranges[rangerel->ranges.length-1].max);
+		int 		cmp_lower = FunctionCall2(&cmp_func, value, ranges[0].min);
+		char	   *sql;
+
+		/* Lock relation before appending new partitions */
+		LWLockAcquire(load_config_lock, LW_EXCLUSIVE);
+
+		/*
+		 * Check if someone else has already created partition.
+		 */
+		ranges = dsm_array_get_pointer(&rangerel->ranges);
+		pos = range_binary_search(rangerel, &cmp_func, value, &found);
+		if (found)
+		{
+			LWLockRelease(load_config_lock);
+			PG_RETURN_OID(ranges[pos].child_oid);
+		}
+
+		/* Determine nearest range partition */
+		if (cmp_upper > 0)
+			re = &ranges[rangerel->ranges.length-1];
+		else if (cmp_lower < 0)
+			re = &ranges[0];
+
+		vals[0] = ObjectIdGetDatum(relid);
+		vals[1] = re->min;
+		vals[2] = re->max;
+		vals[3] = value;
+
+		/* Create new partitions */
+		SPI_connect();
+		sql = psprintf("SELECT %s.append_partitions_on_demand_internal($1, $2, $3, $4)",
+					   get_extension_schema());
+		ret = SPI_execute_with_args(sql, 4, oids, vals, nulls, false, 0);
+		// ret = SPI_execute_with_args("SELECT append_partitions_on_demand_internal($1, $2, $3, $4)",
+		// 							4, oids, vals, nulls, false, 0);
+		if (ret > 0)
+		{
+			/* Update relation info */
+			free_dsm_array(&rangerel->ranges);
+			free_dsm_array(&prel->children);
+			load_check_constraints(relid, GetCatalogSnapshot(relid));
+		}
+		else
+			elog(WARNING, "Attempt to create new partitions failed");
+
+		SPI_finish();
+
+		/* Release locks */
+		LWLockRelease(load_config_lock);
+		// pfree(sql);
+
+		/* Repeat binary search */
+		ranges = dsm_array_get_pointer(&rangerel->ranges);
+		pos = range_binary_search(rangerel, &cmp_func, value, &found);
+		if (found)
+			PG_RETURN_OID(ranges[pos].child_oid);
+	}
 
 	PG_RETURN_NULL();
 }
@@ -123,11 +205,9 @@ get_partition_range(PG_FUNCTION_ARGS)
 	TypeCacheEntry	   *tce;
 	ArrayType		   *arr;
 
-	prel = (PartRelationInfo *)
-		hash_search(relations, (const void *) &parent_oid, HASH_FIND, NULL);
+	prel = get_pathman_relation_info(parent_oid, NULL);
 	
-	rangerel = (RangeRelation *)
-		hash_search(range_restrictions, (const void *) &parent_oid, HASH_FIND, NULL);
+	rangerel = get_pathman_range_relation(parent_oid, NULL);
 
 	if (!prel || !rangerel)
 		PG_RETURN_NULL();
@@ -177,11 +257,9 @@ get_range_by_idx(PG_FUNCTION_ARGS)
 	Datum			*elems;
 	TypeCacheEntry	*tce;
 
-	prel = (PartRelationInfo *)
-		hash_search(relations, (const void *) &parent_oid, HASH_FIND, NULL);
+	prel = get_pathman_relation_info(parent_oid, NULL);
 
-	rangerel = (RangeRelation *)
-		hash_search(range_restrictions, (const void *) &parent_oid, HASH_FIND, NULL);
+	rangerel = get_pathman_range_relation(parent_oid, NULL);
 
 	if (!prel || !rangerel || idx >= (int)rangerel->ranges.length)
 		PG_RETURN_NULL();

@@ -66,9 +66,7 @@ create_range_partitions(
     start_value ANYELEMENT,
     interval ANYELEMENT,
     premake INTEGER)
-```
-Performs RANGE partitioning for `relation` by partitioning key `attribute`. `start_value` argument specifies initial value, `interval` sets the range of values in a single partition, `premake` is the number of premade partitions (the only one partition will be created if `premake` is 0).
-```
+
 create_range_partitions(
     relation TEXT,
     attribute TEXT,
@@ -76,7 +74,24 @@ create_range_partitions(
     interval INTERVAL,
     premake INTEGER)
 ```
-Same as above but suitable for `DATE` and `TIMESTAMP` partitioning keys.
+Performs RANGE partitioning for `relation` by partitioning key `attribute`. `start_value` argument specifies initial value, `interval` sets the range of values in a single partition, `premake` is the number of premade partitions.
+
+```
+create_partitions_from_range(
+    relation TEXT,
+    attribute TEXT,
+    start_value ANYELEMENT,
+    end_value ANYELEMENT,
+    interval ANYELEMENT)
+
+create_partitions_from_range(
+    relation TEXT,
+    attribute TEXT,
+    start_value ANYELEMENT,
+    end_value ANYELEMENT,
+    interval INTERVAL)
+```
+Performs RANGE-partitioning from specified range for `relation` by partitioning key `attribute`.
 
 ### Utilities
 ```
@@ -162,9 +177,9 @@ INSERT INTO range_rel (dt) SELECT g FROM generate_series('2010-01-01'::date, '20
 ```
 Run create_range_partitions() function to create partitions so that each partition would contain data for one month:
 ```
-SELECT create_range_partitions('range_rel', 'dt', '2010-01-01'::date, '1 month'::interval, 59);
+SELECT create_range_partitions('range_rel', 'dt', '2010-01-01'::date, '1 month'::interval, 60);
 ```
-It will create 60 partitions (one partition is created regardless of `premake` parameter). Now move data from the parent to partitions.
+It will create 60 partitions. Now let's move data from the parent to partitions.
 ```
 SELECT partition_data('range_rel');
 ```

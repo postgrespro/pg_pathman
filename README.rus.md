@@ -67,9 +67,7 @@ create_range_partitions(
     start_value ANYELEMENT,
     interval ANYELEMENT,
     premake INTEGER)
-```
-Выполняет RANGE-секционирование таблицы `relation` по полю `attribute`. Аргумент `start_value` задает начальное значение, `interval` -- диапазон значений внутри одной секции, `premake` -- количество заранее создаваемых секций (если 0, то будет создана единственная секция).
-```
+
 create_range_partitions(
     relation TEXT,
     attribute TEXT,
@@ -77,7 +75,24 @@ create_range_partitions(
     interval INTERVAL,
     premake INTEGER)
 ```
-Аналогично предыдущей с тем лишь отличием, что данная функция предназначена для секционирования по полю типа `DATE` или `TIMESTAMP`.
+Выполняет RANGE-секционирование таблицы `relation` по полю `attribute`. Аргумент `start_value` задает начальное значение, `interval` -- диапазон значений внутри одной секции, `premake` -- количество заранее создаваемых секций.
+
+```
+create_partitions_from_range(
+    relation TEXT,
+    attribute TEXT,
+    start_value ANYELEMENT,
+    end_value ANYELEMENT,
+    interval ANYELEMENT)
+
+create_partitions_from_range(
+    relation TEXT,
+    attribute TEXT,
+    start_value ANYELEMENT,
+    end_value ANYELEMENT,
+    interval INTERVAL)
+```
+Выполняет RANGE-секционирование для заданного диапазона таблицы `relation` по полю `attribute`.
 
 ### Утилиты
 ```
@@ -164,9 +179,8 @@ INSERT INTO range_rel (dt) SELECT g FROM generate_series('2010-01-01'::date, '20
 ```
 Разобьем таблицу на 60 секций так, чтобы каждая секция содержала данные за один месяц:
 ```
-SELECT create_range_partitions('range_rel', 'dt', '2010-01-01'::date, '1 month'::interval, 59);
+SELECT create_range_partitions('range_rel', 'dt', '2010-01-01'::date, '1 month'::interval, 60);
 ```
-> Значение `premake` равно 59, а не 60, т.к. 1 секция создается независимо от значения `premake`
 
 Перенесем данные из родительской таблицы в дочерние секции.
 ```

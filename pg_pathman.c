@@ -20,6 +20,7 @@
 #include "utils/typcache.h"
 #include "utils/lsyscache.h"
 #include "access/heapam.h"
+#include "access/nbtree.h"
 #include "storage/ipc.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_type.h"
@@ -126,6 +127,26 @@ _PG_fini(void)
 	planner_hook = planner_hook_original;
 }
 
+PartRelationInfo *
+get_pathman_relation_info(Oid relid, bool *found)
+{
+	RelationKey key;
+
+	key.dbid = MyDatabaseId;
+	key.relid = relid;
+	return hash_search(relations, (const void *) &key, HASH_FIND, found);
+}
+
+RangeRelation *
+get_pathman_range_relation(Oid relid, bool *found)
+{
+	RelationKey key;
+
+	key.dbid = MyDatabaseId;
+	key.relid = relid;
+	return hash_search(range_restrictions, (const void *) &key, HASH_FIND, found);
+}
+
 /*
  * Planner hook. It disables inheritance for tables that have been partitioned
  * by pathman to prevent standart PostgreSQL partitioning mechanism from
@@ -173,8 +194,7 @@ disable_inheritance(Query *parse)
 				if (rte->inh)
 				{
 					/* Look up this relation in pathman relations */
-					prel = (PartRelationInfo *)
-						hash_search(relations, (const void *) &rte->relid, HASH_FIND, 0);
+					prel = get_pathman_relation_info(rte->relid, NULL);
 					if (prel != NULL)
 					{
 						rte->inh = false;
@@ -230,14 +250,16 @@ void
 pathman_set_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTblEntry *rte)
 {
 	PartRelationInfo *prel = NULL;
+	RelOptInfo **new_rel_array;
+	RangeTblEntry **new_rte_array;
+	int len;
 
 	/* This works only for SELECT queries */
 	if (root->parse->commandType != CMD_SELECT || !inheritance_disabled)
 		return;
 
 	/* Lookup partitioning information for parent relation */
-	prel = (PartRelationInfo *)
-		hash_search(relations, (const void *) &rte->relid, HASH_FIND, 0);
+	prel = get_pathman_relation_info(rte->relid, NULL);
 
 	if (prel != NULL)
 	{
@@ -267,11 +289,10 @@ pathman_set_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, Ran
 		/*
 		 * Expand simple_rte_array and simple_rel_array
 		 */
-		if (list_length(ranges) > 0)
-		{
-			RelOptInfo **new_rel_array;
-			RangeTblEntry **new_rte_array;
-			int len = irange_list_length(ranges);
+
+		 if (ranges)
+		 {
+			len = irange_list_length(ranges);
 
 			/* Expand simple_rel_array and simple_rte_array */
 			new_rel_array = (RelOptInfo **)
@@ -282,11 +303,11 @@ pathman_set_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, Ran
 				palloc0((root->simple_rel_array_size + len) * sizeof(RangeTblEntry *));
 
 			/* Copy relations to the new arrays */
-            for (i = 0; i < root->simple_rel_array_size; i++)
-            {
-                    new_rel_array[i] = root->simple_rel_array[i];
-                    new_rte_array[i] = root->simple_rte_array[i];
-            }
+	        for (i = 0; i < root->simple_rel_array_size; i++)
+	        {
+	                new_rel_array[i] = root->simple_rel_array[i];
+	                new_rte_array[i] = root->simple_rte_array[i];
+	        }
 
 			/* Free old arrays */
 			pfree(root->simple_rel_array);
@@ -619,7 +640,8 @@ handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result,
 						strategy;
 	bool				is_less,
 						is_greater;
-	FmgrInfo		   *cmp_func;
+	FmgrInfo		    cmp_func;
+	Oid					cmp_proc_oid;
 	const OpExpr	   *expr = (const OpExpr *)result->orig;
 	TypeCacheEntry	   *tce;
 
@@ -627,7 +649,11 @@ handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result,
 	tce = lookup_type_cache(v->vartype,
 		TYPECACHE_EQ_OPR | TYPECACHE_LT_OPR | TYPECACHE_GT_OPR | TYPECACHE_CMP_PROC | TYPECACHE_CMP_PROC_FINFO);
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
-	cmp_func = &tce->cmp_proc_finfo;
+	cmp_proc_oid = get_opfamily_proc(tce->btree_opf,
+									 c->consttype,
+									 prel->atttype,
+									 BTORDER_PROC);
+	fmgr_info(cmp_proc_oid, &cmp_func);
 
 	switch (prel->parttype)
 	{
@@ -641,8 +667,7 @@ handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result,
 			}
 		case PT_RANGE:
 			value = c->constvalue;
-			rangerel = (RangeRelation *)
-				hash_search(range_restrictions, (const void *)&prel->oid, HASH_FIND, NULL);
+			rangerel = get_pathman_range_relation(prel->key.relid, NULL);
 			if (rangerel != NULL)
 			{
 				RangeEntry *re;
@@ -666,8 +691,8 @@ handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result,
 				else
 				{
 					/* Corner cases */
-					cmp_min = FunctionCall2(cmp_func, value, ranges[0].min),
-					cmp_max = FunctionCall2(cmp_func, value, ranges[rangerel->ranges.length - 1].max);
+					cmp_min = FunctionCall2(&cmp_func, value, ranges[0].min),
+					cmp_max = FunctionCall2(&cmp_func, value, ranges[rangerel->ranges.length - 1].max);
 
 					if ((cmp_min < 0 &&
 						 (strategy == BTLessEqualStrategyNumber ||
@@ -707,8 +732,8 @@ handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result,
 					i = startidx + (endidx - startidx) / 2;
 					Assert(i >= 0 && i < rangerel->ranges.length);
 					re = &ranges[i];
-					cmp_min = FunctionCall2(cmp_func, value, re->min);
-					cmp_max = FunctionCall2(cmp_func, value, re->max);
+					cmp_min = FunctionCall2(&cmp_func, value, re->min);
+					cmp_max = FunctionCall2(&cmp_func, value, re->max);
 					is_less = (cmp_min < 0 || (cmp_min == 0 && strategy == BTLessStrategyNumber));
 					is_greater = (cmp_max > 0 || (cmp_max >= 0 && strategy != BTLessStrategyNumber));
 
