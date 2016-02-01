@@ -27,5 +27,5 @@ $(EXTENSION)--$(EXTVERSION).sql: init.sql hash.sql range.sql
 	cat $^ > $@
 EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add
 
-installcheck:
-	true
+# installcheck:
+# 	true
