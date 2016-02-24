@@ -233,6 +233,7 @@ CREATE FOREIGN TABLE journal_archive (
 ) SERVER archive_server;
 ```
 > Важно: структура подключаемой таблицы должна полностью совпадать с родительской.
+
 Подключим ее к имеющемуся разбиению:
 ```
 SELECT attach_range_partition('journal', 'journal_archive', '2014-01-01'::date, '2015-01-01'::date);
@@ -245,7 +246,7 @@ SELECT merge_range_partitions('journal_archive', 'journal_1');
 ```
 SELECT split_range_partition('journal_366', '2016-01-03'::date);
 ```
-Чтобы отсоединить ранее созданную или присоединенную секцию воспользуйтесь функцией:
+Чтобы отсоединить ранее созданную секцию, воспользуйтесь функцией:
 ```
 SELECT detach_range_partition('journal_archive');
 ```

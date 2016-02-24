@@ -163,9 +163,6 @@ create_partitions(Oid relid, Datum value, Oid value_type)
 	FmgrInfo   cmp_func;
 	char *schema;
 
-	// elog(WARNING, "WORKER PID >>>%d<<<", MyProcPid);
-	// sleep(10);
-
 	schema = get_extension_schema();
 
 	prel = get_pathman_relation_info(relid, NULL);
