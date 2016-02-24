@@ -1,11 +1,18 @@
 /*
- * Relations using partitioning
+ * Pathman config
+ *  relname - schema qualified relation name
+ *  attname - partitioning key
+ *  parttype - partitioning type:
+ *      1 - HASH
+ *      2 - RANGE
+ *  range_interval - base interval for RANGE partitioning in string representation
  */
 CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
-    id         SERIAL PRIMARY KEY,
-    relname    VARCHAR(127),
-    attname    VARCHAR(127),
-    parttype   INTEGER
+    id             SERIAL PRIMARY KEY,
+    relname        VARCHAR(127),
+    attname        VARCHAR(127),
+    parttype       INTEGER,
+    range_interval TEXT
 );
 
 
@@ -37,6 +44,27 @@ CREATE OR REPLACE FUNCTION @extschema@.get_range_by_idx(
     parent_relid OID, idx INTEGER, dummy ANYELEMENT)
 RETURNS ANYARRAY AS 'pg_pathman', 'get_range_by_idx' LANGUAGE C STRICT;
 
+/*
+ * Returns min value of the first range for relation
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_min_range_value(
+    parent_relid OID, dummy ANYELEMENT)
+RETURNS ANYELEMENT AS 'pg_pathman', 'get_min_range_value' LANGUAGE C STRICT;
+
+/*
+ * Returns max value of the last range for relation
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_max_range_value(
+    parent_relid OID, dummy ANYELEMENT)
+RETURNS ANYELEMENT AS 'pg_pathman', 'get_max_range_value' LANGUAGE C STRICT;
+
+/*
+ * Checks if range overlaps with existing partitions.
+ * Returns TRUE if overlaps and FALSE otherwise.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.check_overlap(
+    parent_relid OID, range_min ANYELEMENT, range_max ANYELEMENT)
+RETURNS BOOLEAN AS 'pg_pathman', 'check_overlap' LANGUAGE C STRICT;
 
 /*
  * Copy rows to partitions
@@ -67,9 +95,9 @@ BEGIN
     -- RAISE NOTICE '% rows have been copied', p_total;
     RETURN;
 
-EXCEPTION WHEN others THEN
-    PERFORM on_remove_partitions(p_parent::regclass::integer);
-    RAISE EXCEPTION '% %', SQLERRM, SQLSTATE;
+-- EXCEPTION WHEN others THEN
+--     PERFORM on_remove_partitions(p_parent::regclass::integer);
+--     RAISE EXCEPTION '% %', SQLERRM, SQLSTATE;
 END
 $$
 LANGUAGE plpgsql;
@@ -113,6 +141,62 @@ LANGUAGE plpgsql;
 
 
 /*
+ * Checks if attribute is nullable
+ */
+CREATE OR REPLACE FUNCTION @extschema@.is_attribute_nullable(
+    p_relation TEXT
+    , p_attname TEXT
+    , OUT p_nullable BOOLEAN)
+RETURNS BOOLEAN AS
+$$
+BEGIN
+    SELECT NOT attnotnull INTO p_nullable
+    FROM pg_type JOIN pg_attribute on atttypid = "oid"
+    WHERE attrelid = p_relation::regclass::oid and attname = lower(p_attname);
+END
+$$
+LANGUAGE plpgsql;
+
+
+/*
+ * Aggregates several common relation checks before partitioning. Suitable for every partitioning type.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.common_relation_checks(
+    p_relation TEXT
+    , p_attribute TEXT)
+RETURNS BOOLEAN AS
+$$
+DECLARE
+    v_rec RECORD;
+    is_referenced BOOLEAN;
+BEGIN
+    IF EXISTS (SELECT * FROM @extschema@.pathman_config WHERE relname = p_relation) THEN
+        RAISE EXCEPTION 'Relation "%" has already been partitioned', p_relation;
+    END IF;
+
+    IF @extschema@.is_attribute_nullable(p_relation, p_attribute) THEN
+        RAISE EXCEPTION 'Partitioning key ''%'' must be NOT NULL', p_attribute;
+    END IF;
+
+    /* Check if there are foreign keys reference to the relation */
+    FOR v_rec IN (SELECT *
+                  FROM pg_constraint WHERE confrelid = p_relation::regclass::oid)
+    LOOP
+        is_referenced := TRUE;
+        RAISE WARNING 'Foreign key ''%'' references to the relation ''%''', v_rec.conname, p_relation;
+    END LOOP;
+
+    IF is_referenced THEN
+        RAISE EXCEPTION 'Relation ''%'' is referenced from other relations', p_relation;
+    END IF;
+
+    RETURN TRUE;
+END
+$$
+LANGUAGE plpgsql;
+
+
+/*
  * Validates relation name. It must be schema qualified
  */
 CREATE OR REPLACE FUNCTION @extschema@.validate_relname(relname TEXT)
@@ -135,6 +219,18 @@ RETURNS TEXT AS
 $$
 BEGIN
     RETURN relnamespace::regnamespace || delimiter || relname FROM pg_class WHERE oid = cls::oid;
+END
+$$
+LANGUAGE plpgsql;
+
+/*
+ * Check if regclass if date or timestamp
+ */
+CREATE OR REPLACE FUNCTION @extschema@.is_date(cls REGTYPE)
+RETURNS BOOLEAN AS
+$$
+BEGIN
+    RETURN cls IN ('timestamp'::regtype, 'timestamptz'::regtype, 'date'::regtype);
 END
 $$
 LANGUAGE plpgsql;
@@ -163,3 +259,15 @@ LANGUAGE plpgsql;
 CREATE EVENT TRIGGER pathman_ddl_trigger
 ON sql_drop
 EXECUTE PROCEDURE @extschema@.pathman_ddl_trigger_func();
+
+/*
+ * Acquire partitions lock to prevent concurrent partitions creation
+ */
+CREATE OR REPLACE FUNCTION @extschema@.acquire_partitions_lock()
+RETURNS VOID AS 'pg_pathman', 'acquire_partitions_lock' LANGUAGE C STRICT;
+
+/*
+ * Release partitions lock
+ */
+CREATE OR REPLACE FUNCTION @extschema@.release_partitions_lock()
+RETURNS VOID AS 'pg_pathman', 'release_partitions_lock' LANGUAGE C STRICT;

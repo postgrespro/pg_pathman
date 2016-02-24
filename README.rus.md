@@ -4,12 +4,7 @@
 
 ## Концепция pg_pathman
 
-Секционирование -- это способ разбиения одной большой таблицы на множество меньших по размеру. Для каждой записи можно однозначно определить секцию, в которой она должна храниться посредством вычисления ключа. Традиционно выделяют три стратегии секционирования:
-
-* HASH - данные равномерно распределяются по секциям в соответствии со значениями hash-функции, вычисленными по некоторому атрибуту;
-* RANGE - данные распределяются по секциям, каждая из которых ответственна за заданный диапазон значений аттрибута;
-* LIST - для каждой секции определяется набор конкретных значений атрибута.
-
+Секционирование -- это способ разбиения одной большой таблицы на множество меньших по размеру. Для каждой записи можно однозначно определить секцию, в которой она должна храниться посредством вычисления ключа.
 Секционирование в postgres основано на механизме наследования. Каждому наследнику задается условие CHECK CONSTRAINT. Например:
 
 ```
@@ -20,9 +15,7 @@ CREATE TABLE test_2 (CHECK ( id >= 200 AND id < 300 )) INHERITS (test);
 
 Несмотря на гибкость, этот механизм обладает недостатками. Так при фильтрации данных оптимизатор вынужден перебирать все дочерние секции и сравнивать условие запроса с CHECK CONSTRAINT-ами секции, чтобы определить из каких секций ему следует загружать данные. При большом количестве секций это создает дополнительные накладные расходы, которые могут свести на нет выигрыш в производительности от применения секционирования.
 
-Модуль `pg_pathman` предоставляет функции для создания и управления
-секциями (см. следующий раздел) и механизм секционирования,
-оптимизированный с учетом знания о структуре дочерних таблиц. Конфигурация сохраняется таблице `pathman_config`, каждая строка которой содержит запись для одной секционированной таблицы (название таблицы, атрибут и тип разбиения). В процессе инициализации модуля в разделяемую память сохраняется конфигурация дочерних таблиц в удобном для поиска формате. Получив запрос типа `SELECT` к секционированной таблице, `pg_pathman` анализирует дерево условий запроса и выделяет из него условия вида:
+Модуль `pg_pathman` предоставляет функции для создания и управления секциями, а также механизм секционирования, оптимизированный с учетом знания о структуре дочерних таблиц. Конфигурация сохраняется таблице `pathman_config`, каждая строка которой содержит запись для одной секционированной таблицы (название таблицы, атрибут и тип разбиения). В процессе инициализации `pg_pathman` кеширует конфигурацию дочерних таблиц в формате, удобном для быстрого поиска. Получив запрос типа `SELECT` к секционированной таблице, `pg_pathman` анализирует дерево условий запроса и выделяет из него условия вида:
 
 ```
 ПЕРЕМЕННАЯ ОПЕРАТОР КОНСТАНТА
@@ -32,9 +25,20 @@ CREATE TABLE test_2 (CHECK ( id >= 200 AND id < 300 )) INHERITS (test);
 ```
 WHERE id = 150
 ```
-Затем основываясь на стратегии секционирования и условиях запроса `pg_pathman` выбирает соответствующие секции и строит план.
+Затем основываясь на стратегии секционирования и условиях запроса `pg_pathman` находит в кеше соответствующие секции и строит план.
 
-## Installation
+В текущей версии `pg_pathman` поддерживает следующие типы секционирования:
+
+* RANGE - разбивает таблицу на секции по диапазонам ключевого аттрибута; для оптимизации построения плана используется метод бинарного поиска.
+* HASH - данные равномерно распределяются по секциям в соответствии со значениями hash-функции, вычисленными по заданному целочисленному атрибуту.
+
+## Roadmap
+
+* Оптимизация поиска секции для соединения (join) таблиц методом NestedLoop;
+* LIST-секционирование;
+* HASH-секционирование по ключевому аттрибуту с типом, отличным от INTEGER.
+
+## Установка
 
 Для установки pg_pathman выполните в директории модуля команду:
 ```
@@ -49,7 +53,7 @@ shared_preload_libraries = 'pg_pathman'
 CREATE EXTENSION pg_pathman;
 ```
 
-## Функции pathman
+## Функции pg_pathman
 
 ### Создание секций
 ```
@@ -66,16 +70,16 @@ create_range_partitions(
     attribute TEXT,
     start_value ANYELEMENT,
     interval ANYELEMENT,
-    premake INTEGER)
+    premake INTEGER DEFAULT NULL)
 
 create_range_partitions(
     relation TEXT,
     attribute TEXT,
     start_value ANYELEMENT,
     interval INTERVAL,
-    premake INTEGER)
+    premake INTEGER DEFAULT NULL)
 ```
-Выполняет RANGE-секционирование таблицы `relation` по полю `attribute`. Аргумент `start_value` задает начальное значение, `interval` -- диапазон значений внутри одной секции, `premake` -- количество заранее создаваемых секций. Данные из родительской таблицы будут автоматически скопированы в дочерние.
+Выполняет RANGE-секционирование таблицы `relation` по полю `attribute`. Аргумент `start_value` задает начальное значение, `interval` -- диапазон значений внутри одной секции, `premake` -- количество заранее создаваемых секций (если не задано, то pathman попытается определить количество секций на основе значений аттрибута). Данные из родительской таблицы будут автоматически скопированы в дочерние.
 
 ```
 create_partitions_from_range(
@@ -114,13 +118,41 @@ merge_range_partitions(partition1 TEXT, partition2 TEXT)
 ```
 Объединяет две смежные RANGE секции. Данные из `partition2` копируются в `partition1`, после чего секция `partition2` удаляется.
 ```
-append_partition(p_relation TEXT)
+append_range_partition(p_relation TEXT)
 ```
-Добавляет новую секцию в конец списка секций. Диапазон значений устанавливается равным последней секции.
+Добавляет новую RANGE секцию в конец списка секций.
 ```
-prepend_partition(p_relation TEXT)
+prepend_range_partition(p_relation TEXT)
 ```
-Добавляет новую секцию в начало списка секций.
+Добавляет новую RANGE секцию в начало списка секций.
+
+```
+add_range_partition(
+    relation TEXT,
+    start_value ANYELEMENT,
+    end_value ANYELEMENT)
+```
+Добавляет новую RANGE секцию с заданным диапазоном к секционированной таблице `relation`.
+
+```
+drop_range_partition(partition TEXT)
+```
+Удаляет RANGE секцию вместе с содержащимися в ней данными.
+
+```
+attach_range_partition(
+    relation TEXT,
+    partition TEXT,
+    start_value ANYELEMENT,
+    end_value ANYELEMENT)
+```
+Присоединяет существующую таблицу `partition` в качестве секции к ранее секционированной таблице `relation`. Структура присоединяемой таблицы должна в точности повторять структуру родительской.
+
+```
+detach_range_partition(partition TEXT)
+```
+Отсоединяет секцию `partition`, после чего она становится независимой таблицей.
+
 ```
 disable_partitioning(relation TEXT)
 ```
@@ -128,116 +160,119 @@ disable_partitioning(relation TEXT)
 
 ## Примеры использования
 ### HASH
-Рассмотрим пример секционирования таблицы, используя HASH-стратегию на примере таблицы.
+Рассмотрим пример секционирования таблицы, используя HASH-стратегию на примере таблицы товаров.
 ```
-CREATE TABLE hash_rel (
-    id      SERIAL PRIMARY KEY,
-    value   INTEGER);
-INSERT INTO hash_rel (value) SELECT g FROM generate_series(1, 10000) as g;
+CREATE TABLE items (
+    id       SERIAL PRIMARY KEY,
+    name     TEXT,
+    code     BIGINT);
+
+INSERT INTO items (id, name, code)
+SELECT g, md5(g::text), random() * 100000
+FROM generate_series(1, 100000) as g;
 ```
 Если дочерние секции подразумевают наличие индексов, то стоит их создать в родительской таблице до разбиения. Тогда при разбиении pg_pathman автоматически создаст соответствующие индексы в дочерних.таблицах. Разобьем таблицу `hash_rel` на 100 секций по полю `value`:
 ```
-SELECT create_hash_partitions('hash_rel', 'value', 100);
+SELECT create_hash_partitions('items', 'id', 100);
 ```
 Пример построения плана для запроса с фильтрацией по ключевому полю:
 ```
-SELECT * FROM hash_rel WHERE value = 1234;
-  id  | value 
-------+-------
- 1234 |  1234
+SELECT * FROM items WHERE id = 1234;
+  id  |               name               | code 
+------+----------------------------------+------
+ 1234 | 81dc9bdb52d04dc20036dbd8313ed055 | 1855
+(1 row)
 
-EXPLAIN SELECT * FROM hash_rel WHERE value = 1234;
-                           QUERY PLAN                            
------------------------------------------------------------------
- Append  (cost=0.00..2.00 rows=0 width=0)
-   ->  Seq Scan on hash_rel_34  (cost=0.00..2.00 rows=0 width=0)
-         Filter: (value = 1234)
+EXPLAIN SELECT * FROM items WHERE id = 1234;
+                                     QUERY PLAN                                     
+------------------------------------------------------------------------------------
+ Append  (cost=0.28..8.29 rows=0 width=0)
+   ->  Index Scan using items_34_pkey on items_34  (cost=0.28..8.29 rows=0 width=0)
+         Index Cond: (id = 1234)
 ```
 Стоит отметить, что pg_pathman исключает из плана запроса родительскую таблицу, и чтобы получить данные из нее, следует использовать модификатор ONLY:
 ```
-EXPLAIN SELECT * FROM ONLY hash_rel;
-                       QUERY PLAN                       
---------------------------------------------------------
- Seq Scan on hash_rel  (cost=0.00..0.00 rows=1 width=8)
+EXPLAIN SELECT * FROM ONLY items;
+                      QUERY PLAN                      
+------------------------------------------------------
+ Seq Scan on items  (cost=0.00..0.00 rows=1 width=45)
 ```
 
 ### RANGE
-Пример секционирования таблицы с использованием стратегии RANGE.
+Рассмотрим пример разбиения таблицы по диапазону дат. Пусть у нас имеется таблица логов:
 ```
-CREATE TABLE range_rel (
-    id SERIAL PRIMARY KEY,
-    dt TIMESTAMP);
-INSERT INTO range_rel (dt) SELECT g FROM generate_series('2010-01-01'::date, '2014-12-31'::date, '1 day') as g;
+CREATE TABLE journal (
+    id      SERIAL,
+    dt      TIMESTAMP NOT NULL,
+    level   INTEGER,
+    msg     TEXT
+);
+CREATE INDEX ON journal(dt);
+
+INSERT INTO journal (dt, level, msg)
+SELECT g, random()*6, md5(g::text)
+FROM generate_series('2015-01-01'::date, '2015-12-31'::date, '1 minute') as g;
 ```
-Разобьем таблицу на 60 секций так, чтобы каждая секция содержала данные за один месяц:
+Разобьем таблицу на 365 секций так, чтобы каждая секция содержала данные за один день:
 ```
-SELECT create_range_partitions('range_rel', 'dt', '2010-01-01'::date, '1 month'::interval, 60);
+SELECT create_range_partitions('journal', 'dt', '2015-01-01'::date, '1 day'::interval);
 ```
-Объединим секции первые две секции:
+Новые секции добавляются автоматически при вставке новых записей в непокрытую область. Однако есть возможность добавлять секции вручную. Для этого можно воспользоваться следующими функциями:
 ```
-SELECT merge_range_partitions('range_rel_1', 'range_rel_2');
+SELECT add_range_partition('journal', '2016-01-01'::date, '2016-01-07'::date);
+SELECT append_range_partition('journal');
 ```
-Разделим первую секцию на две по дате '2010-02-15':
+Первая создает новую секцию с заданным диапазоном. Вторая создает новую секцию с интервалом, заданным при первоначальном разбиении, и добавляет ее в конец списка секций. Также можно присоеднинить существующую таблицу в качестве секции. Например, это может быть таблица с архивными данными, расположенная на другом сервере и подключенная с помощью fdw:
+
 ```
-SELECT split_range_partition('range_rel_1', '2010-02-15'::date);
+CREATE FOREIGN TABLE journal_archive (
+    id      INTEGER NOT NULL,
+    dt      TIMESTAMP NOT NULL,
+    level   INTEGER,
+    msg     TEXT
+) SERVER archive_server;
 ```
-Добавим новую секцию в конец списка секций:
+> Важно: структура подключаемой таблицы должна полностью совпадать с родительской.
+Подключим ее к имеющемуся разбиению:
 ```
-SELECT append_partition('range_rel');
+SELECT attach_range_partition('journal', 'journal_archive', '2014-01-01'::date, '2015-01-01'::date);
 ```
+Устаревшие секции можно сливать с архивной:
+```
+SELECT merge_range_partitions('journal_archive', 'journal_1');
+```
+Разделить ранее созданную секцию на две можно с помощью следующей функции, указав точку деления:
+```
+SELECT split_range_partition('journal_366', '2016-01-03'::date);
+```
+Чтобы отсоединить ранее созданную или присоединенную секцию воспользуйтесь функцией:
+```
+SELECT detach_range_partition('journal_archive');
+```
+
 Пример построения плана для запроса с фильтрацией по ключевому полю:
 ```
-SELECT * FROM range_rel WHERE dt >= '2012-04-30' AND dt <= '2012-05-01';
- id  |         dt          
------+---------------------
- 851 | 2012-04-30 00:00:00
- 852 | 2012-05-01 00:00:00
+SELECT * FROM journal WHERE dt >= '2015-06-01' AND dt < '2015-06-03';
+   id   |         dt          | level |               msg
+--------+---------------------+-------+----------------------------------
+ 217441 | 2015-06-01 00:00:00 |     2 | 15053892d993ce19f580a128f87e3dbf
+ 217442 | 2015-06-01 00:01:00 |     1 | 3a7c46f18a952d62ce5418ac2056010c
+ 217443 | 2015-06-01 00:02:00 |     0 | 92c8de8f82faf0b139a3d99f2792311d
+ ...
+(2880 rows)
 
-EXPLAIN SELECT * FROM range_rel WHERE dt >= '2012-04-30' AND dt <= '2012-05-01';
-                                 QUERY PLAN                                 
-----------------------------------------------------------------------------
- Append  (cost=0.00..60.80 rows=0 width=0)
-   ->  Seq Scan on range_rel_28  (cost=0.00..30.40 rows=0 width=0)
-         Filter: (dt >= '2012-04-30 00:00:00'::timestamp without time zone)
-   ->  Seq Scan on range_rel_29  (cost=0.00..30.40 rows=0 width=0)
-         Filter: (dt <= '2012-05-01 00:00:00'::timestamp without time zone)
+EXPLAIN SELECT * FROM journal WHERE dt >= '2015-06-01' AND dt < '2015-06-03';
+                            QUERY PLAN
+------------------------------------------------------------------
+ Append  (cost=0.00..58.80 rows=0 width=0)
+   ->  Seq Scan on journal_152  (cost=0.00..29.40 rows=0 width=0)
+   ->  Seq Scan on journal_153  (cost=0.00..29.40 rows=0 width=0)
+(3 rows)
 ```
 
-### Деакцивация pathman
-Деактивировать pathman для некоторой ранее разделенной таблицы можно следующей командой disable_partitioning():
+### Деакцивация pg_pathman
+Деактивировать механизм pg_pathman для некоторой ранее разделенной таблицы можно следующей командой disable_partitioning():
 ```
-SELECT disable_partitioning('range_rel');
+SELECT disable_partitioning('journal');
 ```
 Все созданные секции и данные останутся по прежнему доступны и будут обрабатываться стандартным планировщиком PostgreSQL.
-### Ручное управление секциями
-Когда набора функций pg_pathman недостаточно для управления секциями, предусмотрено ручное управление. Можно создавать или удалять дочерние таблицы вручную, но после этого необходимо вызывать функцию:
-```
-on_update_partitions(oid),
-```
-которая обновит внутреннее представление структуры секций в памяти pg_pathman. Например, добавим новую секцию к ранее созданной range_rel:
-```
-CREATE TABLE range_rel_archive (CHECK (dt >= '2000-01-01' AND dt < '2010-01-01')) INHERITS (range_rel);
-SELECT on_update_partitions('range_rel'::regclass::oid);
-```
-CHECK CONSTRAINT должен иметь строго определенный формат:
-* (VARIABLE >= CONST AND VARIABLE < CONST) для RANGE секционированных таблиц;
-* (VARIABLE % CONST = CONST) для HASH секционированных таблиц.
-
-Также можно добавить секцию, расположенную на удаленном сервере:
-```
-CREATE FOREIGN TABLE range_rel_archive (
-    id INTEGER NOT NULL,
-    dt TIMESTAMP)
-SERVER archive_server;
-ALTER TABLE range_rel_archive INHERIT range_rel;
-ALTER TABLE range_rel_archive ADD CHECK (dt >= '2000-01-01' AND dt < '2010-01-01');
-SELECT on_update_partitions('range_rel'::regclass::oid);
-```
-Структура таблицы должна полностью совпадать с родительской.
-
-В случае, если родительская таблица была удалена вручную с использованием инструкции DROP TABLE, необходимо удалить соответствующую строку из таблицы pathman_config и вызывать on_remove_partitions():
-```
-SELECT on_remove_partitions('range_rel'::regclass::oid);
-DROP TABLE range_rel CASCADE;
-DELETE FROM pathman_config WHERE relname = 'public.range_rel';
-```

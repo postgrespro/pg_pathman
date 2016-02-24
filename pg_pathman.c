@@ -147,6 +147,25 @@ get_pathman_range_relation(Oid relid, bool *found)
 	return hash_search(range_restrictions, (const void *) &key, HASH_FIND, found);
 }
 
+FmgrInfo *
+get_cmp_func(Oid type1, Oid type2)
+{
+	FmgrInfo   *cmp_func;
+	Oid			cmp_proc_oid;
+	TypeCacheEntry	*tce;
+
+	cmp_func = palloc(sizeof(FmgrInfo));
+	tce = lookup_type_cache(type1,
+							TYPECACHE_EQ_OPR | TYPECACHE_LT_OPR | TYPECACHE_GT_OPR |
+							TYPECACHE_CMP_PROC | TYPECACHE_CMP_PROC_FINFO);
+	cmp_proc_oid = get_opfamily_proc(tce->btree_opf,
+									 type1,
+									 type2,
+									 BTORDER_PROC);
+	fmgr_info(cmp_proc_oid, cmp_func);
+	return cmp_func;
+}
+
 /*
  * Planner hook. It disables inheritance for tables that have been partitioned
  * by pathman to prevent standart PostgreSQL partitioning mechanism from
@@ -226,16 +245,16 @@ static void
 pathman_shmem_startup(void)
 {
 	/* Initialize locks */
-	RequestAddinLWLocks(2);
+	RequestAddinLWLocks(3);
 	load_config_lock = LWLockAssign();
 	dsm_init_lock    = LWLockAssign();
+	edit_partitions_lock = LWLockAssign();
 
 	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
 
 	/* Allocate shared memory objects */
-	alloc_dsm_table();
-	create_relations_hashtable();
-	create_range_restrictions_hashtable();
+	init_dsm_config();
+	init_shmem_config();
 
 	LWLockRelease(AddinShmemInitLock);
 
@@ -683,6 +702,7 @@ handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result,
 							cmp_max,
 							endidx = rangerel->ranges.length - 1;
 				RangeEntry *ranges = dsm_array_get_pointer(&rangerel->ranges);
+				bool byVal = rangerel->by_val;
 
 				/* Check boundaries */
 				if (rangerel->ranges.length == 0)
@@ -693,8 +713,10 @@ handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result,
 				else
 				{
 					/* Corner cases */
-					cmp_min = FunctionCall2(&cmp_func, value, ranges[0].min),
-					cmp_max = FunctionCall2(&cmp_func, value, ranges[rangerel->ranges.length - 1].max);
+					cmp_min = FunctionCall2(&cmp_func, value,
+											PATHMAN_GET_DATUM(ranges[0].min, byVal)),
+					cmp_max = FunctionCall2(&cmp_func, value,
+											PATHMAN_GET_DATUM(ranges[rangerel->ranges.length - 1].max, byVal));
 
 					if ((cmp_min < 0 &&
 						 (strategy == BTLessEqualStrategyNumber ||
@@ -734,8 +756,9 @@ handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result,
 					i = startidx + (endidx - startidx) / 2;
 					Assert(i >= 0 && i < rangerel->ranges.length);
 					re = &ranges[i];
-					cmp_min = FunctionCall2(&cmp_func, value, re->min);
-					cmp_max = FunctionCall2(&cmp_func, value, re->max);
+					cmp_min = FunctionCall2(&cmp_func, value, PATHMAN_GET_DATUM(re->min, byVal));
+					cmp_max = FunctionCall2(&cmp_func, value, PATHMAN_GET_DATUM(re->max, byVal));
+
 					is_less = (cmp_min < 0 || (cmp_min == 0 && strategy == BTLessStrategyNumber));
 					is_greater = (cmp_max > 0 || (cmp_max >= 0 && strategy != BTLessStrategyNumber));
 
@@ -754,7 +777,7 @@ handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result,
 					}
 
 					/* If we still didn't find partition then it doesn't exist */
-					if (startidx == endidx)
+					if (startidx >= endidx)
 					{
 						result->rangeset = NIL;
 						return;
@@ -828,13 +851,15 @@ make_hash(const PartRelationInfo *prel, int value)
 /*
  * Search for range section. Returns position of the item in array.
  * If item wasn't found then function returns closest position and sets
- * foundPtr to false.
+ * foundPtr to false. If value is outside the range covered by partitions
+ * then returns -1.
  */
 int
 range_binary_search(const RangeRelation *rangerel, FmgrInfo *cmp_func, Datum value, bool *foundPtr)
 {
 	RangeEntry *ranges = dsm_array_get_pointer(&rangerel->ranges);
 	RangeEntry *re;
+	bool		byVal = rangerel->by_val;
 	int			cmp_min,
 				cmp_max,
 				i = 0,
@@ -847,11 +872,12 @@ range_binary_search(const RangeRelation *rangerel, FmgrInfo *cmp_func, Datum val
 	*foundPtr = false;
 
 	/* Check boundaries */
-	cmp_min = FunctionCall2(cmp_func, value, ranges[0].min),
-	cmp_max = FunctionCall2(cmp_func, value, ranges[rangerel->ranges.length - 1].max);
-	if (cmp_min < 0 || cmp_max >0)
+	cmp_min = FunctionCall2(cmp_func, value, PATHMAN_GET_DATUM(ranges[0].min, byVal)),
+	cmp_max = FunctionCall2(cmp_func, value, PATHMAN_GET_DATUM(ranges[rangerel->ranges.length - 1].max, byVal));
+
+	if (cmp_min < 0 || cmp_max >= 0)
 	{
-		return i;
+		return -1;
 	}
 
 	while (true)
@@ -859,8 +885,8 @@ range_binary_search(const RangeRelation *rangerel, FmgrInfo *cmp_func, Datum val
 		i = startidx + (endidx - startidx) / 2;
 		Assert(i >= 0 && i < rangerel->ranges.length);
 		re = &ranges[i];
-		cmp_min = FunctionCall2(cmp_func, value, re->min);
-		cmp_max = FunctionCall2(cmp_func, value, re->max);
+		cmp_min = FunctionCall2(cmp_func, value, PATHMAN_GET_DATUM(re->min, byVal));
+		cmp_max = FunctionCall2(cmp_func, value, PATHMAN_GET_DATUM(re->max, byVal));
 
 		if (cmp_min >= 0 && cmp_max < 0)
 		{
@@ -868,7 +894,7 @@ range_binary_search(const RangeRelation *rangerel, FmgrInfo *cmp_func, Datum val
 			break;
 		}
 
-		if (startidx == endidx)
+		if (startidx >= endidx)
 			return i;
 
 		if (cmp_min < 0)

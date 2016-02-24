@@ -65,16 +65,16 @@ create_range_partitions(
     attribute TEXT,
     start_value ANYELEMENT,
     interval ANYELEMENT,
-    premake INTEGER)
+    premake INTEGER DEFAULT NULL)
 
 create_range_partitions(
     relation TEXT,
     attribute TEXT,
     start_value ANYELEMENT,
     interval INTERVAL,
-    premake INTEGER)
+    premake INTEGER DEFAULT NULL)
 ```
-Performs RANGE partitioning for `relation` by partitioning key `attribute`. `start_value` argument specifies initial value, `interval` sets the range of values in a single partition, `premake` is the number of premade partitions. All the data will be automatically copied from the parent to partitions.
+Performs RANGE partitioning for `relation` by partitioning key `attribute`. `start_value` argument specifies initial value, `interval` sets the range of values in a single partition, `premake` is the number of premade partitions (if not set then pathman tries to determine it based on attribute values). All the data will be automatically copied from the parent to partitions.
 
 ```
 create_partitions_from_range(
@@ -93,7 +93,7 @@ create_partitions_from_range(
 ```
 Performs RANGE-partitioning from specified range for `relation` by partitioning key `attribute`. Data will be copied to partitions as well.
 
-### Utilities
+### Triggers
 ```
 create_hash_update_trigger(parent TEXT)
 ```
@@ -101,7 +101,7 @@ Creates the trigger on UPDATE for HASH partitions. The UPDATE trigger isn't crea
 ```
 create_range_update_trigger(parent TEXT)
 ```
-Same as above for RANGE sections.
+Same as above for RANGE partitioned table.
 
 ### Partitions management
 ```
@@ -113,13 +113,42 @@ merge_range_partitions(partition1 TEXT, partition2 TEXT)
 ```
 Merge two adjacent RANGE partitions. Data from `partition2` is copied to `partition1`. Then the `partition2` is removed.
 ```
-append_partition(p_relation TEXT)
+append_range_partition(p_relation TEXT)
 ```
-Appends new partition with the range equal to the range of the previous partition.
+Appends new RANGE partition and returns 
 ```
-prepend_partition(p_relation TEXT)
+prepend_range_partition(p_relation TEXT)
 ```
-Prepends new partition with the range equal to the range of the first partition.
+Prepends new RANGE partition.
+
+```
+add_range_partition(
+    relation TEXT,
+    start_value ANYELEMENT,
+    end_value ANYELEMENT)
+```
+Creates new RANGE partition for `relation` with specified values range.
+
+```
+drop_range_partition(partition TEXT)
+```
+Drops RANGE partition and all its data.
+
+```
+attach_range_partition(
+    relation TEXT,
+    partition TEXT,
+    start_value ANYELEMENT,
+    end_value ANYELEMENT)
+```
+Attaches partition to existing RANGE partitioned relation. The table being attached must have exact same structure as the parent one.
+
+```
+detach_range_partition(partition TEXT)
+```
+Detaches partition from existing RANGE partitioned relation.
+
+
 ```
 disable_partitioning(relation TEXT)
 ```

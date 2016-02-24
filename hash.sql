@@ -11,12 +11,9 @@ DECLARE
     v_type TEXT;
 BEGIN
     relation := @extschema@.validate_relname(relation);
+    PERFORM @extschema@.common_relation_checks(relation, attribute);
+
     v_type := @extschema@.get_attribute_type_name(relation, attribute);
-
-    IF EXISTS (SELECT * FROM @extschema@.pathman_config WHERE relname = relation) THEN
-        RAISE EXCEPTION 'Relation "%" has already been partitioned', relation;
-    END IF;
-
     IF v_type::regtype != 'integer'::regtype THEN
         RAISE EXCEPTION 'Attribute type must be INTEGER';
     END IF;
@@ -111,14 +108,15 @@ $$ LANGUAGE plpgsql;
 /*
  * Drops all partitions for specified relation
  */
-CREATE OR REPLACE FUNCTION @extschema@.drop_hash_partitions(IN relation TEXT)
-RETURNS VOID AS
+CREATE OR REPLACE FUNCTION @extschema@.drop_hash_partitions(
+    IN relation TEXT
+    , delete_data BOOLEAN DEFAULT FALSE)
+RETURNS INTEGER AS
 $$
 DECLARE
-    relid INTEGER;
-    partitions_count INTEGER;
-    rec RECORD;
-    num INTEGER := 0;
+    v_rec RECORD;
+    v_rows INTEGER;
+    v_part_count INTEGER := 0;
 BEGIN
     relation := @extschema@.validate_relname(relation);
 
@@ -126,13 +124,25 @@ BEGIN
     PERFORM @extschema@.drop_hash_triggers(relation);
     DELETE FROM @extschema@.pathman_config WHERE relname = relation;
 
-    FOR rec in (SELECT * FROM pg_inherits WHERE inhparent = relation::regclass::oid)
+    FOR v_rec in (SELECT inhrelid::regclass::text AS tbl
+                FROM pg_inherits WHERE inhparent = relation::regclass::oid)
     LOOP
-        EXECUTE format('DROP TABLE %s', rec.inhrelid::regclass::text);
+        IF NOT delete_data THEN
+            EXECUTE format('WITH part_data AS (DELETE FROM %s RETURNING *)
+                            INSERT INTO %s SELECT * FROM part_data'
+                           , v_rec.tbl
+                           , relation);
+            GET DIAGNOSTICS v_rows = ROW_COUNT;
+            RAISE NOTICE '% rows copied from %', v_rows, v_rec.tbl;
+        END IF;
+        EXECUTE format('DROP TABLE %s', v_rec.tbl);
+        v_part_count := v_part_count + 1;
     END LOOP;
 
     /* Notify backend about changes */
     PERFORM @extschema@.on_remove_partitions(relation::regclass::oid);
+
+    RETURN v_part_count;
 END
 $$ LANGUAGE plpgsql;
 

@@ -11,6 +11,8 @@ INSERT INTO test.hash_rel VALUES (1, 1);
 INSERT INTO test.hash_rel VALUES (2, 2);
 INSERT INTO test.hash_rel VALUES (3, 3);
 SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3);
+ALTER TABLE test.hash_rel ALTER COLUMN value SET NOT NULL;
+SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3);
 SELECT COUNT(*) FROM test.hash_rel;
 SELECT COUNT(*) FROM ONLY test.hash_rel;
 INSERT INTO test.hash_rel VALUES (4, 4);
@@ -26,7 +28,10 @@ CREATE TABLE test.range_rel (
 CREATE INDEX ON test.range_rel (dt);
 INSERT INTO test.range_rel (dt, txt)
 SELECT g, md5(g::TEXT) FROM generate_series('2015-01-01', '2015-04-30', '1 day'::interval) as g;
-SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL, 4);
+SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL, 2);
+ALTER TABLE test.range_rel ALTER COLUMN dt SET NOT NULL;
+SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL, 2);
+SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL);
 SELECT COUNT(*) FROM test.range_rel;
 SELECT COUNT(*) FROM ONLY test.range_rel;
 
@@ -104,16 +109,33 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id BETWEEN 100 AND 70
 SELECT pathman.merge_range_partitions('test.range_rel_1', 'test.range_rel_' || currval('test.range_rel_seq'));
 
 /* Append and prepend partitions */
-SELECT pathman.append_partition('test.num_range_rel');
-SELECT pathman.prepend_partition('test.num_range_rel');
+SELECT pathman.append_range_partition('test.num_range_rel');
+SELECT pathman.prepend_range_partition('test.num_range_rel');
+SELECT pathman.drop_range_partition('test.num_range_rel_7');
 
-SELECT pathman.append_partition('test.range_rel');
-SELECT pathman.prepend_partition('test.range_rel');
+SELECT pathman.append_range_partition('test.range_rel');
+SELECT pathman.prepend_range_partition('test.range_rel');
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt BETWEEN '2014-12-15' AND '2015-01-15';
+SELECT pathman.drop_range_partition('test.range_rel_7');
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt BETWEEN '2014-12-15' AND '2015-01-15';
+SELECT pathman.add_range_partition('test.range_rel', '2014-12-01'::DATE, '2015-01-02'::DATE);
+SELECT pathman.add_range_partition('test.range_rel', '2014-12-01'::DATE, '2015-01-01'::DATE);
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt BETWEEN '2014-12-15' AND '2015-01-15';
+CREATE TABLE test.range_rel_archive (LIKE test.range_rel INCLUDING ALL);
+SELECT pathman.attach_range_partition('test.range_rel', 'test.range_rel_archive', '2014-01-01'::DATE, '2015-01-01'::DATE);
+SELECT pathman.attach_range_partition('test.range_rel', 'test.range_rel_archive', '2014-01-01'::DATE, '2014-12-01'::DATE);
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt BETWEEN '2014-11-15' AND '2015-01-15';
+SELECT pathman.detach_range_partition('test.range_rel_archive');
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt BETWEEN '2014-11-15' AND '2015-01-15';
 
 /*
  * Clean up
  */
 SELECT pathman.drop_hash_partitions('test.hash_rel');
+SELECT COUNT(*) FROM ONLY test.hash_rel;
+SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3);
+SELECT pathman.drop_hash_partitions('test.hash_rel', TRUE);
+SELECT COUNT(*) FROM ONLY test.hash_rel;
 DROP TABLE test.hash_rel CASCADE;
 
 SELECT pathman.drop_range_partitions('test.num_range_rel');
@@ -124,7 +146,7 @@ DROP TABLE test.range_rel CASCADE;
 /* Test automatic partition creation */
 CREATE TABLE test.range_rel (
     id SERIAL PRIMARY KEY,
-    dt TIMESTAMP);
+    dt TIMESTAMP NOT NULL);
 SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '10 days'::INTERVAL, 1);
 INSERT INTO test.range_rel (dt)
 SELECT generate_series('2015-01-01', '2015-04-30', '1 day'::interval);
@@ -140,6 +162,19 @@ SELECT * FROM test.range_rel WHERE dt = '2015-03-15';
 DROP TABLE test.range_rel CASCADE;
 SELECT * FROM pathman.pathman_config;
 
+/* Check overlaps */
+CREATE TABLE test.num_range_rel (
+    id SERIAL PRIMARY KEY,
+    txt TEXT);
+SELECT pathman.create_range_partitions('test.num_range_rel', 'id', 1000, 1000, 4);
+SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 4001, 5000);
+SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 4000, 5000);
+SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 3999, 5000);
+SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 3000, 3500);
+SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 0, 999);
+SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 0, 1000);
+SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 0, 1001);
+
 DROP EXTENSION pg_pathman;
 
 /* Test that everithing works fine without schemas */
@@ -148,7 +183,7 @@ CREATE EXTENSION pg_pathman;
 /* Hash */
 CREATE TABLE hash_rel (
     id      SERIAL PRIMARY KEY,
-    value   INTEGER);
+    value   INTEGER NOT NULL);
 INSERT INTO hash_rel (value) SELECT g FROM generate_series(1, 10000) as g;
 SELECT create_hash_partitions('hash_rel', 'value', 3);
 EXPLAIN (COSTS OFF) SELECT * FROM hash_rel WHERE id = 1234;
@@ -156,33 +191,29 @@ EXPLAIN (COSTS OFF) SELECT * FROM hash_rel WHERE id = 1234;
 /* Range */
 CREATE TABLE range_rel (
     id SERIAL PRIMARY KEY,
-    dt TIMESTAMP);
+    dt TIMESTAMP NOT NULL);
 INSERT INTO range_rel (dt) SELECT g FROM generate_series('2010-01-01'::date, '2010-12-31'::date, '1 day') as g;
 SELECT create_range_partitions('range_rel', 'dt', '2010-01-01'::date, '1 month'::interval, 12);
 SELECT merge_range_partitions('range_rel_1', 'range_rel_2');
 SELECT split_range_partition('range_rel_1', '2010-02-15'::date);
-SELECT append_partition('range_rel');
-SELECT prepend_partition('range_rel');
+SELECT append_range_partition('range_rel');
+SELECT prepend_range_partition('range_rel');
 EXPLAIN (COSTS OFF) SELECT * FROM range_rel WHERE dt < '2010-03-01';
 EXPLAIN (COSTS OFF) SELECT * FROM range_rel WHERE dt > '2010-12-15';
-
-/* Manual partitions creation */
-CREATE TABLE range_rel_archive (CHECK (dt >= '2000-01-01' AND dt < '2005-01-01')) INHERITS (range_rel);
-SELECT on_update_partitions('range_rel'::regclass::oid);
-EXPLAIN (COSTS OFF) SELECT * FROM range_rel WHERE dt < '2010-03-01';
 
 /* Create range partitions from whole range */
 SELECT drop_range_partitions('range_rel');
 SELECT create_partitions_from_range('range_rel', 'id', 1, 1000, 100);
-SELECT drop_range_partitions('range_rel');
+SELECT drop_range_partitions('range_rel', TRUE);
 SELECT create_partitions_from_range('range_rel', 'dt', '2015-01-01'::date, '2015-12-01'::date, '1 month'::interval);
 EXPLAIN (COSTS OFF) SELECT * FROM range_rel WHERE dt = '2015-12-15';
 
-/* Test exception handling on partitioning */
 CREATE TABLE messages(id SERIAL PRIMARY KEY, msg TEXT);
 CREATE TABLE replies(id SERIAL PRIMARY KEY, message_id INTEGER REFERENCES messages(id),  msg TEXT);
 INSERT INTO messages SELECT g, md5(g::text) FROM generate_series(1, 10) as g;
 INSERT INTO replies SELECT g, g, md5(g::text) FROM generate_series(1, 10) as g;
+SELECT create_range_partitions('messages', 'id', 1, 100, 2);
+ALTER TABLE replies DROP CONSTRAINT replies_message_id_fkey;
 SELECT create_range_partitions('messages', 'id', 1, 100, 2);
 EXPLAIN (COSTS OFF) SELECT * FROM messages;
 

@@ -32,11 +32,14 @@ typedef BlockHeader* BlockHeaderPtr;
 #define set_length(header, length) \
 	((length) | ((*header) & FREE_BIT))
 
+/*
+ * Initialize dsm config for arrays
+ */
 void
-alloc_dsm_table()
+init_dsm_config()
 {
 	bool found;
-	dsm_cfg = ShmemInitStruct("dsm config", sizeof(DsmConfig), &found);
+	dsm_cfg = ShmemInitStruct("pathman dsm_array config", sizeof(DsmConfig), &found);
 	if (!found)
 	{
 		dsm_cfg->segment_handle = 0;
@@ -46,6 +49,15 @@ alloc_dsm_table()
 	}
 }
 
+/*
+ * Attach process to dsm_array segment. This function is used for
+ * background workers only. Use init_dsm_segment() in backend processes.
+ */
+void
+attach_dsm_array_segment()
+{
+	segment = dsm_attach(dsm_cfg->segment_handle);
+}
 
 /*
  * Initialize dsm segment. Returns true if new segment was created and

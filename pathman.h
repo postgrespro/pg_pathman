@@ -82,16 +82,23 @@ typedef struct HashRelation
 typedef struct RangeEntry
 {
 	Oid		child_oid;
-	Datum	min;
-	Datum	max;
+	#ifdef HAVE_INT64_TIMESTAMP
+	int64		min;
+	int64		max;
+	#else
+	double		min;
+	double		max;
+	#endif
 } RangeEntry;
 
 typedef struct RangeRelation
 {
 	RelationKey	key;
+	bool        by_val;
 	DsmArray    ranges;
 } RangeRelation;
 
+#define PATHMAN_GET_DATUM(value, by_val) ( (by_val) ? (value) : PointerGetDatum(&value) )
 
 typedef int IndexRange;
 #define RANGE_INFINITY 0x7FFF
@@ -128,22 +135,25 @@ bool irange_list_find(List *rangeset, int index, bool *lossy);
 
 LWLock *load_config_lock;
 LWLock *dsm_init_lock;
+LWLock *edit_partitions_lock;
 
 
 /* Dynamic shared memory functions */
-void alloc_dsm_table(void);
+void init_dsm_config(void);
 bool init_dsm_segment(size_t blocks_count, size_t block_size);
 void init_dsm_table(size_t block_size, size_t start, size_t end);
 void alloc_dsm_array(DsmArray *arr, size_t entry_size, size_t length);
 void free_dsm_array(DsmArray *arr);
 void *dsm_array_get_pointer(const DsmArray* arr);
-
+dsm_handle get_dsm_array_segment(void);
+void attach_dsm_array_segment(void);
 
 HTAB *relations;
 HTAB *range_restrictions;
 bool initialization_needed;
 
 /* initialization functions */
+void init_shmem_config(void);
 void load_config(void);
 void create_relations_hashtable(void);
 void create_hash_restrictions_hashtable(void);
@@ -157,5 +167,8 @@ PartRelationInfo *get_pathman_relation_info(Oid relid, bool *found);
 RangeRelation *get_pathman_range_relation(Oid relid, bool *found);
 int range_binary_search(const RangeRelation *rangerel, FmgrInfo *cmp_func, Datum value, bool *fountPtr);
 char *get_extension_schema(void);
+FmgrInfo *get_cmp_func(Oid type1, Oid type2);
+Oid create_partitions_bg_worker(Oid relid, Datum value, Oid value_type);
+Oid create_partitions(Oid relid, Datum value, Oid value_type);
 
 #endif   /* PATHMAN_H */
