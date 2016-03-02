@@ -18,12 +18,6 @@ HTAB   *relations = NULL;
 HTAB   *range_restrictions = NULL;
 bool	initialization_needed = true;
 
-typedef struct ShmemConfig
-{
-	bool config_loaded;
-} ShmemConfig;
-ShmemConfig *shmem_cfg;
-
 static FmgrInfo *qsort_type_cmp_func;
 static bool globalByVal;
 
@@ -34,12 +28,8 @@ static int cmp_range_entries(const void *p1, const void *p2);
 void
 init_shmem_config()
 {
-	bool found;
 	create_relations_hashtable();
 	create_range_restrictions_hashtable();
-	shmem_cfg = (ShmemConfig *)
-		ShmemInitStruct("pathman shmem config", sizeof(ShmemConfig), &found);
-	shmem_cfg->config_loaded = false;
 }
 
 /*
@@ -54,12 +44,11 @@ load_config(void)
 	new_segment_created = init_dsm_segment(INITIAL_BLOCKS_COUNT, 32);
 
 	/* if config is not loaded */
-	if (shmem_cfg && !shmem_cfg->config_loaded)
+	if (new_segment_created)
 	{
 		LWLockAcquire(load_config_lock, LW_EXCLUSIVE);
 		load_relations_hashtable(new_segment_created);
 		LWLockRelease(load_config_lock);
-		shmem_cfg->config_loaded = true;
 	}
 }
 
