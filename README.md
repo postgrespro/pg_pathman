@@ -32,9 +32,11 @@ Based on partitioning type and operator the `pg_pathman` searches corresponding 
 
 ## Roadmap
 
-* Optimize the execution of the NestedLoop join method;
-* LIST-partitioning;
-* HASH-partitioning for non integer attributes.
+ * Execute time sections selections (useful for nested loops and prepared statements);
+ * Optimization of ordering output from patitioned tables (useful for merge join and order by);
+ * Optimization of hash join when both tables are patitioned by join key;
+ * LIST-patitioning;
+ * HASH-patitioning by non integer attribtes.
 
 ## Installation
 
