@@ -276,3 +276,9 @@ To disable pg_pathman for some previously partitioned table use disable_partitio
 SELECT disable_partitioning('range_rel');
 ```
 All sections and data will stay available and will be handled by standard PostgreSQL partitioning mechanism.
+
+## Authors
+
+Ildar Musin <i.musin@postgrespro.ru> Postgres Professional Ltd., Russia
+
+Alexander Korotkov <a.korotkov@postgrespro.ru> Postgres Professional Ltd., Russia

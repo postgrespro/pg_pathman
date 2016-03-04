@@ -277,3 +277,9 @@ EXPLAIN SELECT * FROM journal WHERE dt >= '2015-06-01' AND dt < '2015-06-03';
 SELECT disable_partitioning('journal');
 ```
 Все созданные секции и данные останутся по прежнему доступны и будут обрабатываться стандартным планировщиком PostgreSQL.
+
+## Авторы
+
+Ильдар Мусин <i.musin@postgrespro.ru> Postgres Professional, Россия
+
+Александр Коротков <a.korotkov@postgrespro.ru> Postgres Professional, Россия
