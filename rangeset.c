@@ -4,7 +4,7 @@
 bool
 irange_intersects(IndexRange a, IndexRange b)
 {
-	return (irange_lower(a) <= irange_upper(b)) ||
+	return (irange_lower(a) <= irange_upper(b)) &&
 		   (irange_lower(b) <= irange_upper(a));
 }
 
@@ -12,7 +12,7 @@ irange_intersects(IndexRange a, IndexRange b)
 bool
 irange_conjuncted(IndexRange a, IndexRange b)
 {
-	return (irange_lower(a) - 1 <= irange_upper(b)) ||
+	return (irange_lower(a) - 1 <= irange_upper(b)) &&
 		   (irange_lower(b) - 1 <= irange_upper(a));
 }
 
@@ -34,6 +34,27 @@ irange_intersect(IndexRange a, IndexRange b)
 					   Min(irange_upper(a), irange_upper(b)),
 					   irange_is_lossy(a) || irange_is_lossy(b));
 }
+
+#ifdef NOT_USED
+/* Print range list in debug purposes */
+static char *
+print_irange(List *l)
+{
+	ListCell   *c;
+	StringInfoData str;
+
+	initStringInfo(&str);
+
+	foreach (c, l)
+	{
+		IndexRange ir = lfirst_irange(c);
+
+		appendStringInfo(&str, "[%d,%d]%c ", irange_lower(ir), irange_upper(ir),
+			irange_is_lossy(ir) ? 'l' : 'e');
+	}
+	return str.data;
+}
+#endif
 
 /*
  * Make union of two index rage lists.
@@ -192,6 +213,7 @@ irange_list_intersect(List *a, List *b)
 		if (irange_upper(ra) >= irange_upper(rb))
 			cb = lnext(cb);
 	}
+
 	return result;
 }
 
