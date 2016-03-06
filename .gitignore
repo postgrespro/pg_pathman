@@ -1,3 +1,4 @@
+.deps
 *.o
 *.so
 pg_pathman--*.sql
