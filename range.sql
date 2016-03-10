@@ -1,3 +1,13 @@
+/* ------------------------------------------------------------------------
+ *
+ * range.sql
+ *      RANGE partitioning functions
+ *
+ * Copyright (c) 2015-2016, Postgres Professional
+ *
+ * ------------------------------------------------------------------------
+ */
+
 /*
  * Creates RANGE partitions for specified relation based on datetime attribute
  */

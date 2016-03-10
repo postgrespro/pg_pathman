@@ -1,3 +1,13 @@
+/* ------------------------------------------------------------------------
+ *
+ * hash.sql
+ *      HASH partitioning functions
+ *
+ * Copyright (c) 2015-2016, Postgres Professional
+ *
+ * ------------------------------------------------------------------------
+ */
+
 /*
  * Creates hash partitions for specified relation
  */

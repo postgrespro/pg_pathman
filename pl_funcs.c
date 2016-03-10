@@ -1,3 +1,12 @@
+/* ------------------------------------------------------------------------
+ *
+ * pl_funcs.c
+ *		Utility C functions for stored procedures
+ *
+ * Copyright (c) 2015-2016, Postgres Professional
+ *
+ * ------------------------------------------------------------------------
+ */
 #include "pathman.h"
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"
@@ -29,13 +38,13 @@ PG_FUNCTION_INFO_V1( get_max_range_value );
 Datum
 on_partitions_created(PG_FUNCTION_ARGS)
 {
-	LWLockAcquire(load_config_lock, LW_EXCLUSIVE);
+	LWLockAcquire(pmstate->load_config_lock, LW_EXCLUSIVE);
 
 	/* Reload config */
 	/* TODO: reload just the specified relation */
 	load_relations_hashtable(false);
 
-	LWLockRelease(load_config_lock);
+	LWLockRelease(pmstate->load_config_lock);
 
 	PG_RETURN_NULL();
 }
@@ -51,10 +60,10 @@ on_partitions_updated(PG_FUNCTION_ARGS)
 	prel = get_pathman_relation_info(relid, NULL);
 	if (prel != NULL)
 	{
-		LWLockAcquire(load_config_lock, LW_EXCLUSIVE);
+		LWLockAcquire(pmstate->load_config_lock, LW_EXCLUSIVE);
 		remove_relation_info(relid);
 		load_relations_hashtable(false);
-		LWLockRelease(load_config_lock);
+		LWLockRelease(pmstate->load_config_lock);
 	}
 
 	PG_RETURN_NULL();
@@ -65,13 +74,13 @@ on_partitions_removed(PG_FUNCTION_ARGS)
 {
 	Oid		relid;
 
-	LWLockAcquire(load_config_lock, LW_EXCLUSIVE);
+	LWLockAcquire(pmstate->load_config_lock, LW_EXCLUSIVE);
 
 	/* parent relation oid */
 	relid = DatumGetInt32(PG_GETARG_DATUM(0));
 	remove_relation_info(relid);
 
-	LWLockRelease(load_config_lock);
+	LWLockRelease(pmstate->load_config_lock);
 
 	PG_RETURN_NULL();
 }
@@ -129,10 +138,10 @@ find_or_create_range_partition(PG_FUNCTION_ARGS)
 		Oid child_oid;
 
 		/* Lock config before appending new partitions */
-		LWLockAcquire(load_config_lock, LW_EXCLUSIVE);
+		LWLockAcquire(pmstate->load_config_lock, LW_EXCLUSIVE);
 
 		/* Restrict concurrent partition creation */
-		LWLockAcquire(edit_partitions_lock, LW_EXCLUSIVE);
+		LWLockAcquire(pmstate->edit_partitions_lock, LW_EXCLUSIVE);
 
 		/*
 		 * Check if someone else has already created partition.
@@ -141,8 +150,8 @@ find_or_create_range_partition(PG_FUNCTION_ARGS)
 		pos = range_binary_search(rangerel, &cmp_func, value, &found);
 		if (found)
 		{
-			LWLockRelease(edit_partitions_lock);
-			LWLockRelease(load_config_lock);
+			LWLockRelease(pmstate->edit_partitions_lock);
+			LWLockRelease(pmstate->load_config_lock);
 			PG_RETURN_OID(ranges[pos].child_oid);
 		}
 
@@ -155,8 +164,8 @@ find_or_create_range_partition(PG_FUNCTION_ARGS)
 		// elog(WARNING, "Worker finished");
 
 		/* Release locks */
-		LWLockRelease(edit_partitions_lock);
-		LWLockRelease(load_config_lock);
+		LWLockRelease(pmstate->edit_partitions_lock);
+		LWLockRelease(pmstate->load_config_lock);
 
 		/* Repeat binary search */
 		ranges = dsm_array_get_pointer(&rangerel->ranges);
@@ -361,17 +370,13 @@ check_overlap(PG_FUNCTION_ARGS)
 Datum
 acquire_partitions_lock(PG_FUNCTION_ARGS)
 {
-	// int relid = DatumGetInt32(PG_GETARG_DATUM(0));
-	// LockRelationOid(relid, AccessExclusiveLock);
-	LWLockAcquire(edit_partitions_lock, LW_EXCLUSIVE);
+	LWLockAcquire(pmstate->edit_partitions_lock, LW_EXCLUSIVE);
 	PG_RETURN_NULL();
 }
 
 Datum
 release_partitions_lock(PG_FUNCTION_ARGS)
 {
-	// int relid = DatumGetInt32(PG_GETARG_DATUM(0));
-	// UnlockRelationOid(relid, AccessExclusiveLock);
-	LWLockRelease(edit_partitions_lock);
+	LWLockRelease(pmstate->edit_partitions_lock);
 	PG_RETURN_NULL();
 }

@@ -1,3 +1,13 @@
+/* ------------------------------------------------------------------------
+ *
+ * pg_pathman.c
+ *		This module sets planner hooks, handles SELECT queries and produces
+ *		paths for partitioned tables
+ *
+ * Copyright (c) 2015-2016, Postgres Professional
+ *
+ * ------------------------------------------------------------------------
+ */
 #include "pathman.h"
 #include "postgres.h"
 #include "fmgr.h"
@@ -103,13 +113,15 @@ static void set_pathkeys(PlannerInfo *root, RelOptInfo *childrel, Path *path);
 void
 _PG_init(void)
 {
+#ifndef WIN32
 	if (IsUnderPostmaster)
 	{
 		elog(ERROR, "Pathman module must be initialized in postmaster. "
 					"Put the following line to configuration file: "
 					"shared_preload_libraries='pg_pathman'");
-		initialization_needed = false;
+	        initialization_needed = false;
 	}
+#endif
 
 	set_rel_pathlist_hook_original = set_rel_pathlist_hook;
 	set_rel_pathlist_hook = pathman_set_rel_pathlist_hook;
@@ -246,16 +258,11 @@ pathman_shmem_startup(void)
 {
 	/* Initialize locks */
 	RequestAddinLWLocks(3);
-	load_config_lock = LWLockAssign();
-	dsm_init_lock    = LWLockAssign();
-	edit_partitions_lock = LWLockAssign();
-
-	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
 
 	/* Allocate shared memory objects */
+	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
 	init_dsm_config();
 	init_shmem_config();
-
 	LWLockRelease(AddinShmemInitLock);
 
 	/* Invoke original hook if needed */

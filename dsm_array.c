@@ -1,3 +1,14 @@
+/* ------------------------------------------------------------------------
+ *
+ * init.c
+ *		This module allocates large DSM segment to store arrays,
+ *		initializes it with block structure and provides functions to
+ *		allocate and free arrays
+ *
+ * Copyright (c) 2015-2016, Postgres Professional
+ *
+ * ------------------------------------------------------------------------
+ */
 #include "pathman.h"
 #include "storage/shmem.h"
 #include "storage/dsm.h"
@@ -69,7 +80,7 @@ init_dsm_segment(size_t blocks_count, size_t block_size)
 	bool ret;
 
 	/* lock here */
-	LWLockAcquire(dsm_init_lock, LW_EXCLUSIVE);
+	LWLockAcquire(pmstate->dsm_init_lock, LW_EXCLUSIVE);
 
 	/* if there is already an existing segment then attach to it */
 	if (dsm_cfg->segment_handle != 0)
@@ -99,9 +110,8 @@ init_dsm_segment(size_t blocks_count, size_t block_size)
 	 * destroyed by the end of transaction
 	 */
 	dsm_pin_mapping(segment);
-
 	/* unlock here */
-	LWLockRelease(dsm_init_lock);
+	LWLockRelease(pmstate->dsm_init_lock);
 
 	return ret;
 }

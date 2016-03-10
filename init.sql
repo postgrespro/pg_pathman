@@ -1,3 +1,13 @@
+/* ------------------------------------------------------------------------
+ *
+ * init.sql
+ *      Creates config table and provides common utility functions
+ *
+ * Copyright (c) 2015-2016, Postgres Professional
+ *
+ * ------------------------------------------------------------------------
+ */
+
 /*
  * Pathman config
  *  relname - schema qualified relation name
