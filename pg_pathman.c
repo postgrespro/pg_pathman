@@ -195,9 +195,12 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 
 	inheritance_disabled = false;
 	disable_inheritance(parse);
-	result = standard_planner(parse, cursorOptions, boundParams);
 
-	/* TODO: invoke original hook */
+	/* Invoke original hook */
+	if (planner_hook_original)
+		result = planner_hook_original(parse, cursorOptions, boundParams);
+	else
+		result = standard_planner(parse, cursorOptions, boundParams);
 
 	return result;
 }
