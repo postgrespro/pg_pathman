@@ -352,9 +352,9 @@ check_overlap(PG_FUNCTION_ARGS)
 	ranges = (RangeEntry *) dsm_array_get_pointer(&rangerel->ranges);
 	for (i=0; i<rangerel->ranges.length; i++)
 	{
-		bool c1 = FunctionCall2(&cmp_func_1, p1,
+		int c1 = FunctionCall2(&cmp_func_1, p1,
 								PATHMAN_GET_DATUM(ranges[i].max, byVal));
-		bool c2 = FunctionCall2(&cmp_func_2, p2,
+		int c2 = FunctionCall2(&cmp_func_2, p2,
 								PATHMAN_GET_DATUM(ranges[i].min, byVal));
 
 		if (c1 < 0 && c2 > 0)
