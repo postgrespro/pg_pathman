@@ -75,17 +75,58 @@ void
 load_config(void)
 {
 	bool new_segment_created;
+	Oid *databases;
 
 	initialization_needed = false;
 	new_segment_created = init_dsm_segment(INITIAL_BLOCKS_COUNT, 32);
 
-	/* if config is not loaded */
+	/* If dsm segment just created */
 	if (new_segment_created)
 	{
-		LWLockAcquire(pmstate->load_config_lock, LW_EXCLUSIVE);
-		load_relations_hashtable(new_segment_created);
-		LWLockRelease(pmstate->load_config_lock);
+		/*
+		 * Allocate databases array and put current database
+		 * oid into it. This array contains databases oids
+		 * that have already been cached (to prevent repeat caching)
+		 */
+		LWLockAcquire(pmstate->dsm_init_lock, LW_EXCLUSIVE);
+
+		if (&pmstate->databases.length > 0)
+			free_dsm_array(&pmstate->databases);
+		alloc_dsm_array(&pmstate->databases, sizeof(Oid), 1);
+		databases = (Oid *) dsm_array_get_pointer(&pmstate->databases);
+		databases[0] = MyDatabaseId;
+
+		LWLockRelease(pmstate->dsm_init_lock);
 	}
+	else
+	{
+		int databases_count = pmstate->databases.length;
+		int i;
+
+		/* Check if we already cached config for current database */
+		LWLockAcquire(pmstate->dsm_init_lock, LW_EXCLUSIVE);
+
+		databases = (Oid *) dsm_array_get_pointer(&pmstate->databases);
+		for(i=0; i<databases_count; i++)
+			if (databases[i] == MyDatabaseId)
+			{
+				// LWLockRelease(pmstate->load_config_lock);
+				LWLockRelease(pmstate->dsm_init_lock);
+				return;
+			}
+
+		/* Put current database oid to databases list */
+		resize_dsm_array(&pmstate->databases, sizeof(Oid), databases_count + 1);
+		databases = (Oid *) dsm_array_get_pointer(&pmstate->databases);
+		databases[databases_count] = MyDatabaseId;
+
+		LWLockRelease(pmstate->dsm_init_lock);
+	}
+
+	/* Load cache */
+	LWLockAcquire(pmstate->load_config_lock, LW_EXCLUSIVE);
+	load_relations_hashtable(new_segment_created);
+	LWLockRelease(pmstate->load_config_lock);
 }
 
 /*

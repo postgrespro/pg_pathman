@@ -109,9 +109,10 @@ typedef struct RangeRelation
 
 typedef struct PathmanState
 {
-	LWLock   *load_config_lock;
-	LWLock   *dsm_init_lock;
-	LWLock   *edit_partitions_lock;
+	LWLock	   *load_config_lock;
+	LWLock	   *dsm_init_lock;
+	LWLock	   *edit_partitions_lock;
+	DsmArray	databases;
 } PathmanState;
 
 PathmanState *pmstate;
@@ -156,6 +157,7 @@ bool init_dsm_segment(size_t blocks_count, size_t block_size);
 void init_dsm_table(size_t block_size, size_t start, size_t end);
 void alloc_dsm_array(DsmArray *arr, size_t entry_size, size_t length);
 void free_dsm_array(DsmArray *arr);
+void resize_dsm_array(DsmArray *arr, size_t entry_size, size_t length);
 void *dsm_array_get_pointer(const DsmArray* arr);
 dsm_handle get_dsm_array_segment(void);
 void attach_dsm_array_segment(void);

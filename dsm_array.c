@@ -258,6 +258,32 @@ free_dsm_array(DsmArray *arr)
 	arr->length = 0;
 }
 
+void
+resize_dsm_array(DsmArray *arr, size_t entry_size, size_t length)
+{
+	void *array_data;
+	size_t array_data_size;
+	void *buffer;
+
+	/* Copy data from array to temporary buffer */
+	array_data = dsm_array_get_pointer(arr);
+	array_data_size = arr->length * entry_size;
+	buffer = palloc(array_data_size);
+	memcpy(buffer, array_data, array_data_size);
+
+	/* Free array */
+	free_dsm_array(arr);
+
+	/* Allocate new array */
+	alloc_dsm_array(arr, entry_size, length);
+
+	/* Copy data to new array */
+	array_data = dsm_array_get_pointer(arr);
+	memcpy(array_data, buffer, array_data_size);
+
+	pfree(buffer);
+}
+
 void *
 dsm_array_get_pointer(const DsmArray* arr)
 {
