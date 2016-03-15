@@ -187,6 +187,7 @@ PlannedStmt *
 pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 {
 	PlannedStmt	  *result;
+	ListCell	  *lc;
 
 	if (initialization_needed)
 	{
@@ -195,6 +196,15 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 
 	inheritance_disabled = false;
 	disable_inheritance(parse);
+
+	/* If query contains CTE (WITH statement) then handle subqueries too */
+	foreach(lc, parse->cteList)
+	{
+		CommonTableExpr *cte = (CommonTableExpr*) lfirst(lc);
+
+		if (IsA(cte->ctequery, Query))
+			disable_inheritance((Query *)cte->ctequery);
+	}
 
 	/* Invoke original hook */
 	if (planner_hook_original)
