@@ -135,7 +135,8 @@ find_or_create_range_partition(PG_FUNCTION_ARGS)
 		PG_RETURN_NULL();
 	else
 	{
-		Oid child_oid;
+		Oid		child_oid;
+		bool	crashed = false;
 
 		/* Lock config before appending new partitions */
 		LWLockAcquire(pmstate->load_config_lock, LW_EXCLUSIVE);
@@ -156,16 +157,19 @@ find_or_create_range_partition(PG_FUNCTION_ARGS)
 		}
 
 		/* Start background worker to create new partitions */
-		child_oid = create_partitions_bg_worker(relid, value, value_type);
+		child_oid = create_partitions_bg_worker(relid, value, value_type, &crashed);
 
 		// SPI_connect();
-		// child_oid = create_partitions(relid, value, value_type);
+		// child_oid = create_partitions(relid, value, value_type, &crashed);
 		// SPI_finish();
 		// elog(WARNING, "Worker finished");
 
 		/* Release locks */
-		LWLockRelease(pmstate->edit_partitions_lock);
-		LWLockRelease(pmstate->load_config_lock);
+		if (!crashed)
+		{
+			LWLockRelease(pmstate->edit_partitions_lock);
+			LWLockRelease(pmstate->load_config_lock);
+		}
 
 		/* Repeat binary search */
 		ranges = dsm_array_get_pointer(&rangerel->ranges);
