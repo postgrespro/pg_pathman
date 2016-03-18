@@ -9,6 +9,10 @@
 #include "storage/dsm.h"
 #include "storage/lwlock.h"
 
+/* Check PostgreSQL version */
+#if PG_VERSION_NUM < 90500
+	#error "You are trying to build pg_pathman with PostgreSQL version lower than 9.5.  Please, check you environment."
+#endif
 
 #define ALL NIL
 #define INITIAL_BLOCKS_COUNT 8192
