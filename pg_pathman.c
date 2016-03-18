@@ -1,3 +1,13 @@
+/* ------------------------------------------------------------------------
+ *
+ * pg_pathman.c
+ *		This module sets planner hooks, handles SELECT queries and produces
+ *		paths for partitioned tables
+ *
+ * Copyright (c) 2015-2016, Postgres Professional
+ *
+ * ------------------------------------------------------------------------
+ */
 #include "pathman.h"
 #include "postgres.h"
 #include "fmgr.h"
@@ -6,11 +16,13 @@
 #include "nodes/pg_list.h"
 #include "nodes/relation.h"
 #include "nodes/primnodes.h"
+#include "optimizer/clauses.h"
 #include "optimizer/paths.h"
 #include "optimizer/pathnode.h"
 #include "optimizer/planner.h"
 #include "optimizer/restrictinfo.h"
 #include "optimizer/cost.h"
+#include "parser/parsetree.h"
 #include "utils/hsearch.h"
 #include "utils/tqual.h"
 #include "utils/rel.h"
@@ -56,6 +68,7 @@ static void pathman_set_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, In
 static PlannedStmt * pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams);
 
 /* Utility functions */
+static void handle_modification_query(Query *parse);
 static void append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
 				RangeTblEntry *rte, int index, Oid childOID, List *wrappers);
 static Node *wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue);
@@ -78,6 +91,7 @@ static void set_plain_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblE
 static void set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTblEntry *rte);
 static List *accumulate_append_subpath(List *subpaths, Path *path);
 static void set_pathkeys(PlannerInfo *root, RelOptInfo *childrel, Path *path);
+
 
 /*
  * Compare two Datums with the given comarison function
@@ -103,13 +117,15 @@ static void set_pathkeys(PlannerInfo *root, RelOptInfo *childrel, Path *path);
 void
 _PG_init(void)
 {
+#ifndef WIN32
 	if (IsUnderPostmaster)
 	{
 		elog(ERROR, "Pathman module must be initialized in postmaster. "
 					"Put the following line to configuration file: "
 					"shared_preload_libraries='pg_pathman'");
-		initialization_needed = false;
+	        initialization_needed = false;
 	}
+#endif
 
 	set_rel_pathlist_hook_original = set_rel_pathlist_hook;
 	set_rel_pathlist_hook = pathman_set_rel_pathlist_hook;
@@ -175,6 +191,7 @@ PlannedStmt *
 pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 {
 	PlannedStmt	  *result;
+	ListCell	  *lc;
 
 	if (initialization_needed)
 	{
@@ -182,10 +199,33 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	}
 
 	inheritance_disabled = false;
-	disable_inheritance(parse);
-	result = standard_planner(parse, cursorOptions, boundParams);
+	switch(parse->commandType)
+	{
+		case CMD_SELECT:
+			disable_inheritance(parse);
+			break;
+		case CMD_UPDATE:
+		case CMD_DELETE:
+			handle_modification_query(parse);
+			break;
+		default:
+			break;
+	}
 
-	/* TODO: invoke original hook */
+	/* If query contains CTE (WITH statement) then handle subqueries too */
+	foreach(lc, parse->cteList)
+	{
+		CommonTableExpr *cte = (CommonTableExpr*) lfirst(lc);
+
+		if (IsA(cte->ctequery, Query))
+			disable_inheritance((Query *)cte->ctequery);
+	}
+
+	/* Invoke original hook */
+	if (planner_hook_original)
+		result = planner_hook_original(parse, cursorOptions, boundParams);
+	else
+		result = standard_planner(parse, cursorOptions, boundParams);
 
 	return result;
 }
@@ -201,9 +241,6 @@ disable_inheritance(Query *parse)
 	ListCell	  *lc;
 	PartRelationInfo *prel;
 	bool found;
-
-	if (parse->commandType != CMD_SELECT)
-		return;
 
 	foreach(lc, parse->rtable)
 	{
@@ -239,6 +276,50 @@ disable_inheritance(Query *parse)
 }
 
 /*
+ * Checks if query is affects only one partition. If true then substitute
+ */
+static void
+handle_modification_query(Query *parse)
+{
+	PartRelationInfo *prel;
+	List	   *ranges,
+			   *wrappers = NIL;
+	RangeTblEntry *rte;
+	WrapperNode *wrap;
+	bool found;
+
+	Assert(parse->commandType == CMD_UPDATE ||
+		   parse->commandType == CMD_DELETE);
+	Assert(parse->resultRelation > 0);
+
+	rte = rt_fetch(parse->resultRelation, parse->rtable);
+	prel = get_pathman_relation_info(rte->relid, &found);
+
+	if (!found)
+		return;
+
+	/* Parse syntax tree and extract partition ranges */
+	ranges = list_make1_int(make_irange(0, prel->children_count - 1, false));
+	wrap = walk_expr_tree((Expr *) eval_const_expressions(NULL, parse->jointree->quals), prel);
+	wrappers = lappend(wrappers, wrap);
+	ranges = irange_list_intersect(ranges, wrap->rangeset);
+
+	/* If only one partition is affected then substitute parent table with partition */
+	if (irange_list_length(ranges) == 1)
+	{
+		IndexRange irange = (IndexRange) linitial_oid(ranges);
+		if (irange_lower(irange) == irange_upper(irange))
+		{
+			Oid *children = (Oid *) dsm_array_get_pointer(&prel->children);
+			rte->relid = children[irange_lower(irange)];
+			rte->inh = false;
+		}
+	}
+
+	return;
+}
+
+/*
  * Shared memory startup hook
  */
 static void
@@ -246,16 +327,11 @@ pathman_shmem_startup(void)
 {
 	/* Initialize locks */
 	RequestAddinLWLocks(3);
-	load_config_lock = LWLockAssign();
-	dsm_init_lock    = LWLockAssign();
-	edit_partitions_lock = LWLockAssign();
-
-	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
 
 	/* Allocate shared memory objects */
+	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
 	init_dsm_config();
 	init_shmem_config();
-
 	LWLockRelease(AddinShmemInitLock);
 
 	/* Invoke original hook if needed */

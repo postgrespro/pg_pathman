@@ -1,3 +1,12 @@
+/* ------------------------------------------------------------------------
+ *
+ * pathman.h
+ *		structures and prototypes for pathman functions
+ *
+ * Copyright (c) 2015-2016, Postgres Professional
+ *
+ * ------------------------------------------------------------------------
+ */
 #ifndef PATHMAN_H
 #define PATHMAN_H
 
@@ -102,6 +111,16 @@ typedef struct RangeRelation
 	DsmArray    ranges;
 } RangeRelation;
 
+typedef struct PathmanState
+{
+	LWLock	   *load_config_lock;
+	LWLock	   *dsm_init_lock;
+	LWLock	   *edit_partitions_lock;
+	DsmArray	databases;
+} PathmanState;
+
+PathmanState *pmstate;
+
 #define PATHMAN_GET_DATUM(value, by_val) ( (by_val) ? (value) : PointerGetDatum(&value) )
 
 typedef int IndexRange;
@@ -136,18 +155,13 @@ List *irange_list_intersect(List *a, List *b);
 int irange_list_length(List *rangeset);
 bool irange_list_find(List *rangeset, int index, bool *lossy);
 
-
-LWLock *load_config_lock;
-LWLock *dsm_init_lock;
-LWLock *edit_partitions_lock;
-
-
 /* Dynamic shared memory functions */
 void init_dsm_config(void);
 bool init_dsm_segment(size_t blocks_count, size_t block_size);
 void init_dsm_table(size_t block_size, size_t start, size_t end);
 void alloc_dsm_array(DsmArray *arr, size_t entry_size, size_t length);
 void free_dsm_array(DsmArray *arr);
+void resize_dsm_array(DsmArray *arr, size_t entry_size, size_t length);
 void *dsm_array_get_pointer(const DsmArray* arr);
 dsm_handle get_dsm_array_segment(void);
 void attach_dsm_array_segment(void);
@@ -172,7 +186,7 @@ RangeRelation *get_pathman_range_relation(Oid relid, bool *found);
 int range_binary_search(const RangeRelation *rangerel, FmgrInfo *cmp_func, Datum value, bool *fountPtr);
 char *get_extension_schema(void);
 FmgrInfo *get_cmp_func(Oid type1, Oid type2);
-Oid create_partitions_bg_worker(Oid relid, Datum value, Oid value_type);
-Oid create_partitions(Oid relid, Datum value, Oid value_type);
+Oid create_partitions_bg_worker(Oid relid, Datum value, Oid value_type, bool *crashed);
+Oid create_partitions(Oid relid, Datum value, Oid value_type, bool *crashed);
 
 #endif   /* PATHMAN_H */

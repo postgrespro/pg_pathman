@@ -1,3 +1,12 @@
+/* ------------------------------------------------------------------------
+ *
+ * init.c
+ *		Initialization functions
+ *
+ * Copyright (c) 2015-2016, Postgres Professional
+ *
+ * ------------------------------------------------------------------------
+ */
 #include "pathman.h"
 #include "miscadmin.h"
 #include "executor/spi.h"
@@ -28,6 +37,33 @@ static int cmp_range_entries(const void *p1, const void *p2);
 void
 init_shmem_config()
 {
+	bool found;
+
+	/* Check if module was initialized in postmaster */
+	pmstate = ShmemInitStruct("pathman state", sizeof(PathmanState), &found);
+	if (!found)
+	{
+		/*
+		 * Initialize locks in postmaster
+		 */
+		if (!IsUnderPostmaster)
+		{
+			/* Initialize locks */
+			pmstate->load_config_lock = LWLockAssign();
+			pmstate->dsm_init_lock    = LWLockAssign();
+			pmstate->edit_partitions_lock = LWLockAssign();
+		}
+#ifdef WIN32
+		else
+		{
+			elog(ERROR, "Pathman module must be initialized in postmaster. "
+						"Put the following line to configuration file: "
+						"shared_preload_libraries='pg_pathman'");
+			initialization_needed = false;
+		}
+#endif
+	}
+
 	create_relations_hashtable();
 	create_range_restrictions_hashtable();
 }
@@ -39,17 +75,52 @@ void
 load_config(void)
 {
 	bool new_segment_created;
+	Oid *databases;
 
 	initialization_needed = false;
+
+	LWLockAcquire(pmstate->dsm_init_lock, LW_EXCLUSIVE);
 	new_segment_created = init_dsm_segment(INITIAL_BLOCKS_COUNT, 32);
 
-	/* if config is not loaded */
+	/* If dsm segment just created */
 	if (new_segment_created)
 	{
-		LWLockAcquire(load_config_lock, LW_EXCLUSIVE);
-		load_relations_hashtable(new_segment_created);
-		LWLockRelease(load_config_lock);
+		/*
+		 * Allocate databases array and put current database
+		 * oid into it. This array contains databases oids
+		 * that have already been cached (to prevent repeat caching)
+		 */
+		if (&pmstate->databases.length > 0)
+			free_dsm_array(&pmstate->databases);
+		alloc_dsm_array(&pmstate->databases, sizeof(Oid), 1);
+		databases = (Oid *) dsm_array_get_pointer(&pmstate->databases);
+		databases[0] = MyDatabaseId;
 	}
+	else
+	{
+		int databases_count = pmstate->databases.length;
+		int i;
+
+		/* Check if we already cached config for current database */
+		databases = (Oid *) dsm_array_get_pointer(&pmstate->databases);
+		for(i=0; i<databases_count; i++)
+			if (databases[i] == MyDatabaseId)
+			{
+				LWLockRelease(pmstate->dsm_init_lock);
+				return;
+			}
+
+		/* Put current database oid to databases list */
+		resize_dsm_array(&pmstate->databases, sizeof(Oid), databases_count + 1);
+		databases = (Oid *) dsm_array_get_pointer(&pmstate->databases);
+		databases[databases_count] = MyDatabaseId;
+	}
+
+	/* Load cache */
+	LWLockAcquire(pmstate->load_config_lock, LW_EXCLUSIVE);
+	load_relations_hashtable(new_segment_created);
+	LWLockRelease(pmstate->load_config_lock);
+	LWLockRelease(pmstate->dsm_init_lock);
 }
 
 /*
@@ -195,8 +266,8 @@ create_relations_hashtable()
 void
 load_check_constraints(Oid parent_oid, Snapshot snapshot)
 {
-	PartRelationInfo *prel;
-	RangeRelation *rangerel;
+	PartRelationInfo *prel = NULL;
+	RangeRelation *rangerel = NULL;
 	SPIPlanPtr plan;
 	bool	found;
 	int		ret,
@@ -227,7 +298,7 @@ load_check_constraints(Oid parent_oid, Snapshot snapshot)
 	{
 		SPITupleTable *tuptable = SPI_tuptable;
 		Oid *children;
-		RangeEntry *ranges;
+		RangeEntry *ranges = NULL;
 		Datum min;
 		Datum max;
 		int hash;

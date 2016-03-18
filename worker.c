@@ -26,16 +26,17 @@ static void bg_worker_main(Datum main_arg);
 
 typedef struct PartitionArgs
 {
-	Oid	dbid;
-	Oid	relid;
+	Oid		dbid;
+	Oid		relid;
 	#ifdef HAVE_INT64_TIMESTAMP
 	int64	value;
 	#else
 	double	value;
 	#endif
-	Oid	value_type;
+	Oid		value_type;
 	bool	by_val;
-	Oid	result;
+	Oid		result;
+	bool	crashed;
 } PartitionArgs;
 
 /*
@@ -43,7 +44,7 @@ typedef struct PartitionArgs
  * waits till it finishes the job and returns the result (new partition oid)
  */
 Oid
-create_partitions_bg_worker(Oid relid, Datum value, Oid value_type)
+create_partitions_bg_worker(Oid relid, Datum value, Oid value_type, bool *crashed)
 {
 	BackgroundWorker		worker;
 	BackgroundWorkerHandle *worker_handle;
@@ -51,9 +52,9 @@ create_partitions_bg_worker(Oid relid, Datum value, Oid value_type)
 	dsm_segment	   *segment;
 	dsm_handle		segment_handle;
 	pid_t 			pid;
-	PartitionArgs	   *args;
+	PartitionArgs  *args;
 	Oid 			child_oid;
-	TypeCacheEntry	   *tce;
+	TypeCacheEntry *tce;
 
 	/* Create a dsm segment for the worker to pass arguments */
 	segment = dsm_create(sizeof(PartitionArgs), 0);
@@ -98,6 +99,7 @@ create_partitions_bg_worker(Oid relid, Datum value, Oid value_type)
 
 	/* Wait till the worker finishes its job */
 	status = WaitForBackgroundWorkerShutdown(worker_handle);
+	*crashed = args->crashed;
 	child_oid = args->result;
 
 	/* Free dsm segment */
@@ -112,7 +114,7 @@ create_partitions_bg_worker(Oid relid, Datum value, Oid value_type)
 static void
 bg_worker_main(Datum main_arg)
 {
-	PartitionArgs *args;
+	PartitionArgs  *args;
 	dsm_handle		handle = DatumGetInt32(main_arg);
 
 	/* Create resource owner */
@@ -134,7 +136,7 @@ bg_worker_main(Datum main_arg)
 	PushActiveSnapshot(GetTransactionSnapshot());
 
 	/* Create partitions */
-	args->result = create_partitions(args->relid, PATHMAN_GET_DATUM(args->value, args->by_val), args->value_type);
+	args->result = create_partitions(args->relid, PATHMAN_GET_DATUM(args->value, args->by_val), args->value_type, &args->crashed);
 
 	/* Cleanup */
 	SPI_finish();
@@ -148,7 +150,7 @@ bg_worker_main(Datum main_arg)
  * Create partitions and return an OID of the partition that contain value
  */
 Oid
-create_partitions(Oid relid, Datum value, Oid value_type)
+create_partitions(Oid relid, Datum value, Oid value_type, bool *crashed)
 {
 	int 		ret;
 	RangeEntry *ranges;
@@ -163,6 +165,7 @@ create_partitions(Oid relid, Datum value, Oid value_type)
 	FmgrInfo   cmp_func;
 	char *schema;
 
+	*crashed = false;
 	schema = get_extension_schema();
 
 	prel = get_pathman_relation_info(relid, NULL);
@@ -178,16 +181,25 @@ create_partitions(Oid relid, Datum value, Oid value_type)
 	/* Perform PL procedure */
 	sql = psprintf("SELECT %s.append_partitions_on_demand_internal($1, $2)",
 				   schema);
-	ret = SPI_execute_with_args(sql, 2, oids, vals, nulls, false, 0);
-	if (ret > 0)
+	PG_TRY();
 	{
-		/* Update relation info */
-		free_dsm_array(&rangerel->ranges);
-		free_dsm_array(&prel->children);
-		load_check_constraints(relid, GetCatalogSnapshot(relid));
+		ret = SPI_execute_with_args(sql, 2, oids, vals, nulls, false, 0);
+		if (ret > 0)
+		{
+			/* Update relation info */
+			free_dsm_array(&rangerel->ranges);
+			free_dsm_array(&prel->children);
+			load_check_constraints(relid, GetCatalogSnapshot(relid));
+		}
 	}
-	else
+	PG_CATCH();
+	{
 		elog(WARNING, "Attempt to create new partitions failed");
+		if (crashed != NULL)
+			*crashed = true;
+		return 0;
+	}
+	PG_END_TRY();
 
 	/* Repeat binary search */
 	ranges = dsm_array_get_pointer(&rangerel->ranges);

@@ -1,3 +1,12 @@
+/* ------------------------------------------------------------------------
+ *
+ * rangeset.c
+ *		Index range functions
+ *
+ * Copyright (c) 2015-2016, Postgres Professional
+ *
+ * ------------------------------------------------------------------------
+ */
 #include "pathman.h"
 
 /* Check if two ranges are intersecting */
@@ -213,7 +222,6 @@ irange_list_intersect(List *a, List *b)
 		if (irange_upper(ra) >= irange_upper(rb))
 			cb = lnext(cb);
 	}
-
 	return result;
 }
 

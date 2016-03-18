@@ -1,3 +1,14 @@
+/* ------------------------------------------------------------------------
+ *
+ * init.c
+ *		This module allocates large DSM segment to store arrays,
+ *		initializes it with block structure and provides functions to
+ *		allocate and free arrays
+ *
+ * Copyright (c) 2015-2016, Postgres Professional
+ *
+ * ------------------------------------------------------------------------
+ */
 #include "pathman.h"
 #include "storage/shmem.h"
 #include "storage/dsm.h"
@@ -68,9 +79,6 @@ init_dsm_segment(size_t blocks_count, size_t block_size)
 {
 	bool ret;
 
-	/* lock here */
-	LWLockAcquire(dsm_init_lock, LW_EXCLUSIVE);
-
 	/* if there is already an existing segment then attach to it */
 	if (dsm_cfg->segment_handle != 0)
 	{
@@ -99,9 +107,6 @@ init_dsm_segment(size_t blocks_count, size_t block_size)
 	 * destroyed by the end of transaction
 	 */
 	dsm_pin_mapping(segment);
-
-	/* unlock here */
-	LWLockRelease(dsm_init_lock);
 
 	return ret;
 }
@@ -246,6 +251,32 @@ free_dsm_array(DsmArray *arr)
 
 	arr->offset = 0;
 	arr->length = 0;
+}
+
+void
+resize_dsm_array(DsmArray *arr, size_t entry_size, size_t length)
+{
+	void *array_data;
+	size_t array_data_size;
+	void *buffer;
+
+	/* Copy data from array to temporary buffer */
+	array_data = dsm_array_get_pointer(arr);
+	array_data_size = arr->length * entry_size;
+	buffer = palloc(array_data_size);
+	memcpy(buffer, array_data, array_data_size);
+
+	/* Free array */
+	free_dsm_array(arr);
+
+	/* Allocate new array */
+	alloc_dsm_array(arr, entry_size, length);
+
+	/* Copy data to new array */
+	array_data = dsm_array_get_pointer(arr);
+	memcpy(array_data, buffer, array_data_size);
+
+	pfree(buffer);
 }
 
 void *
