@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
 	parttype		INTEGER,
 	range_interval	TEXT
 );
-
+SELECT pg_catalog.pg_extension_config_dump('@extschema@.pathman_config', '');
 
 CREATE OR REPLACE FUNCTION @extschema@.on_create_partitions(relid OID)
 RETURNS VOID AS 'pg_pathman', 'on_partitions_created' LANGUAGE C STRICT;
