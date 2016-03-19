@@ -156,6 +156,7 @@ int irange_list_length(List *rangeset);
 bool irange_list_find(List *rangeset, int index, bool *lossy);
 
 /* Dynamic shared memory functions */
+Size get_dsm_shared_size(void);
 void init_dsm_config(void);
 bool init_dsm_segment(size_t blocks_count, size_t block_size);
 void init_dsm_table(size_t block_size, size_t start, size_t end);
@@ -171,6 +172,7 @@ HTAB *range_restrictions;
 bool initialization_needed;
 
 /* initialization functions */
+Size pathman_memsize(void);
 void init_shmem_config(void);
 void load_config(void);
 void create_relations_hashtable(void);

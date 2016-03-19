@@ -127,6 +127,10 @@ _PG_init(void)
 	}
 #endif
 
+	/* Request additional shared resources */
+	RequestAddinShmemSpace(pathman_memsize());
+	RequestAddinLWLocks(3);
+
 	set_rel_pathlist_hook_original = set_rel_pathlist_hook;
 	set_rel_pathlist_hook = pathman_set_rel_pathlist_hook;
 	shmem_startup_hook_original = shmem_startup_hook;
@@ -325,8 +329,6 @@ handle_modification_query(Query *parse)
 static void
 pathman_shmem_startup(void)
 {
-	/* Initialize locks */
-	RequestAddinLWLocks(3);
 
 	/* Allocate shared memory objects */
 	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);

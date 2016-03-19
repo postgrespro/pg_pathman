@@ -34,6 +34,15 @@ static bool validate_range_constraint(Expr *, PartRelationInfo *, Datum *, Datum
 static bool validate_hash_constraint(Expr *expr, PartRelationInfo *prel, int *hash);
 static int cmp_range_entries(const void *p1, const void *p2);
 
+Size
+pathman_memsize()
+{
+	Size size;
+
+	size = get_dsm_shared_size() + MAXALIGN(sizeof(PathmanState));
+	return size;
+}
+
 void
 init_shmem_config()
 {

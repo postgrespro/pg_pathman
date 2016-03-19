@@ -44,6 +44,16 @@ typedef BlockHeader* BlockHeaderPtr;
 	((length) | ((*header) & FREE_BIT))
 
 /*
+ * Amount of memory that need to be requested in shared memory to store dsm
+ * config
+ */
+Size
+get_dsm_shared_size()
+{
+	return (Size) MAXALIGN(sizeof(DsmConfig));
+}
+
+/*
  * Initialize dsm config for arrays
  */
 void
