@@ -22,6 +22,7 @@
 #include "optimizer/planner.h"
 #include "optimizer/restrictinfo.h"
 #include "optimizer/cost.h"
+#include "parser/analyze.h"
 #include "parser/parsetree.h"
 #include "utils/hsearch.h"
 #include "utils/tqual.h"
@@ -56,6 +57,7 @@ typedef struct
 /* Original hooks */
 static set_rel_pathlist_hook_type set_rel_pathlist_hook_original = NULL;
 static shmem_startup_hook_type shmem_startup_hook_original = NULL;
+static post_parse_analyze_hook_type post_parse_analyze_hook_original = NULL;
 static planner_hook_type planner_hook_original = NULL;
 
 /* pg module functions */
@@ -65,6 +67,7 @@ void _PG_fini(void);
 /* Hook functions */
 static void pathman_shmem_startup(void);
 static void pathman_set_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTblEntry *rte);
+void pathman_post_parse_analysis_hook(ParseState *pstate, Query *query);
 static PlannedStmt * pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams);
 
 /* Utility functions */
@@ -135,6 +138,8 @@ _PG_init(void)
 	set_rel_pathlist_hook = pathman_set_rel_pathlist_hook;
 	shmem_startup_hook_original = shmem_startup_hook;
 	shmem_startup_hook = pathman_shmem_startup;
+	post_parse_analyze_hook_original = post_parse_analyze_hook;
+	post_parse_analyze_hook = pathman_post_parse_analysis_hook;
 	planner_hook_original = planner_hook;
 	planner_hook = pathman_planner_hook;
 }
@@ -144,6 +149,7 @@ _PG_fini(void)
 {
 	set_rel_pathlist_hook = set_rel_pathlist_hook_original;
 	shmem_startup_hook = shmem_startup_hook_original;
+	post_parse_analyze_hook = post_parse_analyze_hook_original;
 	planner_hook = planner_hook_original;
 }
 
@@ -187,6 +193,20 @@ get_cmp_func(Oid type1, Oid type2)
 }
 
 /*
+ * Post parse analysis hook. It makes sure the config is loaded before executing
+ * any statement, including utility commands
+ */
+void
+pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
+{
+	if (initialization_needed)
+		load_config();
+
+	if (post_parse_analyze_hook_original)
+		post_parse_analyze_hook_original(pstate, query);
+}
+
+/*
  * Planner hook. It disables inheritance for tables that have been partitioned
  * by pathman to prevent standart PostgreSQL partitioning mechanism from
  * handling that tables.
@@ -196,11 +216,6 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 {
 	PlannedStmt	  *result;
 	ListCell	  *lc;
-
-	if (initialization_needed)
-	{
-		load_config();
-	}
 
 	inheritance_disabled = false;
 	switch(parse->commandType)
