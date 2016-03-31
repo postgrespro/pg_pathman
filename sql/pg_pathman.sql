@@ -12,7 +12,7 @@ INSERT INTO test.hash_rel VALUES (2, 2);
 INSERT INTO test.hash_rel VALUES (3, 3);
 SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3);
 ALTER TABLE test.hash_rel ALTER COLUMN value SET NOT NULL;
-SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3);
+SELECT pathman.create_hash_partitions('test.hash_rel', 'Value', 3);
 SELECT COUNT(*) FROM test.hash_rel;
 SELECT COUNT(*) FROM ONLY test.hash_rel;
 INSERT INTO test.hash_rel VALUES (4, 4);
@@ -31,7 +31,7 @@ SELECT g, md5(g::TEXT) FROM generate_series('2015-01-01', '2015-04-30', '1 day':
 SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL, 2);
 ALTER TABLE test.range_rel ALTER COLUMN dt SET NOT NULL;
 SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL, 2);
-SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL);
+SELECT pathman.create_range_partitions('test.range_rel', 'DT', '2015-01-01'::DATE, '1 month'::INTERVAL);
 SELECT COUNT(*) FROM test.range_rel;
 SELECT COUNT(*) FROM ONLY test.range_rel;
 

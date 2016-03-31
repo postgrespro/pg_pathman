@@ -21,6 +21,7 @@ DECLARE
 	v_type TEXT;
 BEGIN
 	relation := @extschema@.validate_relname(relation);
+	attribute := lower(attribute);
 	PERFORM @extschema@.common_relation_checks(relation, attribute);
 
 	v_type := @extschema@.get_attribute_type_name(relation, attribute);

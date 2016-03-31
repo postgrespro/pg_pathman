@@ -11,7 +11,7 @@ INSERT INTO test.hash_rel VALUES (3, 3);
 SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3);
 ERROR:  Partitioning key 'value' must be NOT NULL
 ALTER TABLE test.hash_rel ALTER COLUMN value SET NOT NULL;
-SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3);
+SELECT pathman.create_hash_partitions('test.hash_rel', 'Value', 3);
 NOTICE:  function test.hash_rel_hash_insert_trigger_func() does not exist, skipping
 NOTICE:  function test.hash_rel_hash_update_trigger_func() does not exist, skipping
 NOTICE:  Copying data to partitions...
@@ -59,7 +59,7 @@ ERROR:  Partitioning key 'dt' must be NOT NULL P0001
 ALTER TABLE test.range_rel ALTER COLUMN dt SET NOT NULL;
 SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL, 2);
 ERROR:  Not enough partitions to fit all the values of 'dt' P0001
-SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL);
+SELECT pathman.create_range_partitions('test.range_rel', 'DT', '2015-01-01'::DATE, '1 month'::INTERVAL);
 NOTICE:  sequence "range_rel_seq" does not exist, skipping
 NOTICE:  Copying data to partitions...
  create_range_partitions 

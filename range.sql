@@ -26,6 +26,7 @@ DECLARE
 	i INTEGER;
 BEGIN
 	p_relation := @extschema@.validate_relname(p_relation);
+	p_attribute := lower(p_attribute);
 	PERFORM @extschema@.common_relation_checks(p_relation, p_attribute);
 
 	/* Try to determine partitions count if not set */
@@ -110,6 +111,7 @@ DECLARE
 	i INTEGER;
 BEGIN
 	p_relation := @extschema@.validate_relname(p_relation);
+	p_attribute := lower(p_attribute);
 	PERFORM @extschema@.common_relation_checks(p_relation, p_attribute);
 
 	IF p_count <= 0 THEN
@@ -195,6 +197,7 @@ DECLARE
 	i INTEGER := 0;
 BEGIN
 	p_relation := @extschema@.validate_relname(p_relation);
+	p_attribute := lower(p_attribute);
 	PERFORM @extschema@.common_relation_checks(p_relation, p_attribute);
 
 	IF p_interval <= 0 THEN
@@ -258,6 +261,7 @@ DECLARE
 	i INTEGER := 0;
 BEGIN
 	p_relation := @extschema@.validate_relname(p_relation);
+	p_attribute := lower(p_attribute);
 	PERFORM @extschema@.common_relation_checks(p_relation, p_attribute);
 
 	EXECUTE format('DROP SEQUENCE IF EXISTS %s_seq', p_relation);
