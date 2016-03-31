@@ -124,7 +124,7 @@ bg_worker_main(Datum main_arg)
 	if (!handle)
 	{
 		ereport(WARNING,
-                (errmsg("pg_pathman worker: ivalid dsm_handle")));
+                (errmsg("pg_pathman worker: invalid dsm_handle")));
 	}
 	segment = dsm_attach(handle);
 	args = dsm_segment_address(segment);
