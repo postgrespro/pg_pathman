@@ -11,9 +11,9 @@ INSERT INTO test.hash_rel VALUES (3, 3);
 SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3);
 ERROR:  Partitioning key 'value' must be NOT NULL
 ALTER TABLE test.hash_rel ALTER COLUMN value SET NOT NULL;
-SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3);
-NOTICE:  function test.hash_rel_hash_insert_trigger_func() does not exist, skipping
-NOTICE:  function test.hash_rel_hash_update_trigger_func() does not exist, skipping
+SELECT pathman.create_hash_partitions('test.hash_rel', 'Value', 3);
+NOTICE:  function test.hash_rel_insert_trigger_func() does not exist, skipping
+NOTICE:  function test.hash_rel_update_trigger_func() does not exist, skipping
 NOTICE:  Copying data to partitions...
  create_hash_partitions 
 ------------------------
@@ -59,7 +59,7 @@ ERROR:  Partitioning key 'dt' must be NOT NULL P0001
 ALTER TABLE test.range_rel ALTER COLUMN dt SET NOT NULL;
 SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL, 2);
 ERROR:  Not enough partitions to fit all the values of 'dt' P0001
-SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL);
+SELECT pathman.create_range_partitions('test.range_rel', 'DT', '2015-01-01'::DATE, '1 month'::INTERVAL);
 NOTICE:  sequence "range_rel_seq" does not exist, skipping
 NOTICE:  Copying data to partitions...
  create_range_partitions 
@@ -601,14 +601,25 @@ CREATE TABLE test.range_rel_test2 (
 SELECT pathman.attach_range_partition('test.range_rel', 'test.range_rel_test2', '2013-01-01'::DATE, '2014-01-01'::DATE);
 ERROR:  Partition must have the exact same structure as parent P0001
 /*
+ * Check that altering table columns doesn't break trigger
+ */
+ALTER TABLE test.hash_rel ADD COLUMN abc int;
+INSERT INTO test.hash_rel (id, value, abc) VALUES (123, 456, 789);
+SELECT * FROM test.hash_rel WHERE id = 123;
+ id  | value | abc 
+-----+-------+-----
+ 123 |   456 | 789
+(1 row)
+
+/*
  * Clean up
  */
 SELECT pathman.drop_hash_partitions('test.hash_rel');
 NOTICE:  drop cascades to trigger test_hash_rel_insert_trigger on table test.hash_rel
-NOTICE:  function test.hash_rel_hash_update_trigger_func() does not exist, skipping
+NOTICE:  drop cascades to 3 other objects
 NOTICE:  2 rows copied from test.hash_rel_2
 NOTICE:  3 rows copied from test.hash_rel_1
-NOTICE:  1 rows copied from test.hash_rel_0
+NOTICE:  2 rows copied from test.hash_rel_0
  drop_hash_partitions 
 ----------------------
                     3
@@ -617,12 +628,12 @@ NOTICE:  1 rows copied from test.hash_rel_0
 SELECT COUNT(*) FROM ONLY test.hash_rel;
  count 
 -------
-     6
+     7
 (1 row)
 
 SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3);
-NOTICE:  function test.hash_rel_hash_insert_trigger_func() does not exist, skipping
-NOTICE:  function test.hash_rel_hash_update_trigger_func() does not exist, skipping
+NOTICE:  function test.hash_rel_insert_trigger_func() does not exist, skipping
+NOTICE:  function test.hash_rel_update_trigger_func() does not exist, skipping
 NOTICE:  Copying data to partitions...
  create_hash_partitions 
 ------------------------
@@ -631,7 +642,7 @@ NOTICE:  Copying data to partitions...
 
 SELECT pathman.drop_hash_partitions('test.hash_rel', TRUE);
 NOTICE:  drop cascades to trigger test_hash_rel_insert_trigger on table test.hash_rel
-NOTICE:  function test.hash_rel_hash_update_trigger_func() does not exist, skipping
+NOTICE:  function test.hash_rel_update_trigger_func() does not exist, skipping
  drop_hash_partitions 
 ----------------------
                     3
@@ -770,8 +781,8 @@ CREATE TABLE hash_rel (
 	value	INTEGER NOT NULL);
 INSERT INTO hash_rel (value) SELECT g FROM generate_series(1, 10000) as g;
 SELECT create_hash_partitions('hash_rel', 'value', 3);
-NOTICE:  function hash_rel_hash_insert_trigger_func() does not exist, skipping
-NOTICE:  function hash_rel_hash_update_trigger_func() does not exist, skipping
+NOTICE:  function hash_rel_insert_trigger_func() does not exist, skipping
+NOTICE:  function hash_rel_update_trigger_func() does not exist, skipping
 NOTICE:  Copying data to partitions...
  create_hash_partitions 
 ------------------------

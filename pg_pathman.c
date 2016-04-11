@@ -359,7 +359,6 @@ handle_modification_query(Query *parse)
 static void
 pathman_shmem_startup(void)
 {
-
 	/* Allocate shared memory objects */
 	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
 	init_dsm_config();
