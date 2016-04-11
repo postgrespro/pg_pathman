@@ -150,6 +150,13 @@ CREATE TABLE test.range_rel_test2 (
 SELECT pathman.attach_range_partition('test.range_rel', 'test.range_rel_test2', '2013-01-01'::DATE, '2014-01-01'::DATE);
 
 /*
+ * Check that altering table columns doesn't break trigger
+ */
+ALTER TABLE test.hash_rel ADD COLUMN abc int;
+INSERT INTO test.hash_rel (id, value, abc) VALUES (123, 456, 789);
+SELECT * FROM test.hash_rel WHERE id = 123;
+
+/*
  * Clean up
  */
 SELECT pathman.drop_hash_partitions('test.hash_rel');

@@ -406,9 +406,6 @@ BEGIN
                                   LIMIT 1;
         EXIT WHEN v_child_relname_exists = 0;
     END LOOP;
-    -- v_child_relname := format('%s_%s'
-    --                           , p_parent_relname
-    --                           , regexp_replace(p_start_value::text, '[ :-]*', '', 'g'));
 
     /* Skip existing partitions */
     IF EXISTS (SELECT * FROM pg_tables WHERE tablename = v_child_relname) THEN
@@ -431,7 +428,6 @@ BEGIN
                     , v_cond);
 
     EXECUTE v_sql;
-    -- RAISE NOTICE 'partition % created', v_child_relname;
     RETURN v_child_relname;
 END
 $$ LANGUAGE plpgsql;
@@ -763,9 +759,6 @@ DECLARE
 BEGIN
 	p_range := @extschema@.get_range_by_idx(p_relation::regclass::oid, 0, 0);
 	RAISE NOTICE 'Prepending new partition...';
-	-- v_part_name := @extschema@.create_single_range_partition(p_relation
-	--                                                          , p_range[1] - (p_range[2] - p_range[1])
-	--                                                          , p_range[1]);
 
 	IF @extschema@.is_date(p_atttype::regtype) THEN
 		v_part_name := @extschema@.create_single_range_partition(p_relation
@@ -1117,7 +1110,6 @@ BEGIN
 	END LOOP;
 
 	DELETE FROM @extschema@.pathman_config WHERE relname = relation;
-	-- DELETE FROM pg_pathman_range_rels WHERE parent = relation;
 
 	/* Notify backend about changes */
 	PERFORM @extschema@.on_remove_partitions(relation::regclass::oid);

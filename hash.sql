@@ -76,7 +76,7 @@ RETURNS VOID AS
 $$
 DECLARE
 	func TEXT := '
-		CREATE OR REPLACE FUNCTION %s_hash_insert_trigger_func()
+		CREATE OR REPLACE FUNCTION %s_insert_trigger_func()
 		RETURNS TRIGGER AS $body$
 		DECLARE
 			hash INTEGER;
@@ -88,7 +88,7 @@ DECLARE
 	trigger TEXT := '
 		CREATE TRIGGER %s_insert_trigger
 		BEFORE INSERT ON %s
-		FOR EACH ROW EXECUTE PROCEDURE %2$s_hash_insert_trigger_func();';
+		FOR EACH ROW EXECUTE PROCEDURE %2$s_insert_trigger_func();';
 	fields TEXT;
 	fields_format TEXT;
 	insert_stmt TEXT;
@@ -103,10 +103,8 @@ BEGIN
 	INTO fields, fields_format;
 
 	/* generate INSERT statement for trigger */
-	insert_stmt = format('EXECUTE format(''INSERT INTO %s_%%s VALUES (%s)'', hash) USING %s;'
-						 , relation
-						 , fields_format
-						 , fields);
+	insert_stmt = format('EXECUTE format(''INSERT INTO %s_%%s SELECT $1.*'', hash) USING NEW;'
+						 , relation);
 
 	/* format and create new trigger for relation */
 	func := format(func, relation, attr, partitions_count, insert_stmt);
@@ -164,9 +162,9 @@ CREATE OR REPLACE FUNCTION @extschema@.drop_hash_triggers(IN relation TEXT)
 RETURNS VOID AS
 $$
 BEGIN
-	EXECUTE format('DROP FUNCTION IF EXISTS %s_hash_insert_trigger_func() CASCADE'
+	EXECUTE format('DROP FUNCTION IF EXISTS %s_insert_trigger_func() CASCADE'
 				   , relation::regclass::text);
-	EXECUTE format('DROP FUNCTION IF EXISTS %s_hash_update_trigger_func() CASCADE'
+	EXECUTE format('DROP FUNCTION IF EXISTS %s_update_trigger_func() CASCADE'
 				   , relation::regclass::text);
 END
 $$ LANGUAGE plpgsql;
