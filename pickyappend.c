@@ -82,6 +82,7 @@ create_pickyappend_path(PlannerInfo *root,
 
 	/* Set 'partitioned column'-related clauses */
 	result->cpath.custom_private = joinclauses;
+	result->cpath.custom_paths = NIL;
 
 	Assert(inner_entry->relid != 0);
 	result->relid = inner_entry->relid;
@@ -98,13 +99,18 @@ create_pickyappend_path(PlannerInfo *root,
 		child->content_type = CHILD_PATH;
 		child->content.path = path;
 		child->relid = root->simple_rte_array[relindex]->relid;
-
 		Assert(child->relid != InvalidOid);
 
 		result->children[i++] = child;
 	}
+
 	qsort(result->children, result->nchildren,
 		  sizeof(ChildScanCommon), cmp_child_scan_common);
+
+	/* Fill 'custom_paths' with paths in sort order */
+	for (i = 0; i < result->nchildren; i++)
+		result->cpath.custom_paths = lappend(result->cpath.custom_paths,
+											 result->children[i]->content.path);
 
 	return &result->cpath.path;
 }
@@ -177,14 +183,10 @@ save_pickyappend_private(CustomScan *cscan, PickyAppendPath *path, PlannerInfo *
 	List			   *custom_oids = NIL;
 	int					i;
 
-	cscan->custom_plans = NIL;
-
 	for (i = 0; i < nchildren; i++)
 	{
+		/* We've already filled 'custom_paths' in create_pickyappend_path */
 		custom_oids = lappend_oid(custom_oids, children[i]->relid);
-		cscan->custom_plans = lappend(cscan->custom_plans,
-									  create_plan(root, children[i]->content.path));
-
 		pfree(children[i]);
 	}
 
@@ -233,7 +235,6 @@ create_pickyappend_plan(PlannerInfo *root, RelOptInfo *rel,
 	cscan->scan.scanrelid = 0;
 
 	cscan->custom_exprs = gpath->cpath.custom_private;
-	//cscan->custom_exprs = NIL; /* TODO: fix */
 
 	cscan->methods = &pickyappend_plan_methods;
 
@@ -299,9 +300,9 @@ pickyappend_rescan(CustomScanState *node)
 
 	foreach (lc, ranges)
 	{
-		/*elog(LOG, "lower: %d, upper: %d",
+		elog(LOG, "lower: %d, upper: %d",
 			 irange_lower(lfirst_irange(lc)),
-			 irange_upper(lfirst_irange(lc)));*/
+			 irange_upper(lfirst_irange(lc)));
 	}
 }
 
