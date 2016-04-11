@@ -15,6 +15,7 @@
 #include "nodes/nodeFuncs.h"
 #include "nodes/pg_list.h"
 #include "nodes/relation.h"
+#include "nodes/makefuncs.h"
 #include "nodes/primnodes.h"
 #include "optimizer/clauses.h"
 #include "optimizer/paths.h"
@@ -38,6 +39,7 @@
 #include "catalog/pg_operator.h"
 #include "catalog/pg_type.h"
 #include "foreign/fdwapi.h"
+#include "pickyappend.h"
 
 PG_MODULE_MAGIC;
 
@@ -46,13 +48,6 @@ typedef struct
 	Oid old_varno;
 	Oid new_varno;
 } change_varno_context;
-
-typedef struct
-{
-	const Node	   *orig;
-	List		   *args;
-	List		   *rangeset;
-} WrapperNode;
 
 /* Original hooks */
 static set_rel_pathlist_hook_type set_rel_pathlist_hook_original = NULL;
@@ -79,12 +74,11 @@ static void disable_inheritance(Query *parse);
 bool inheritance_disabled;
 
 /* Expression tree handlers */
-static WrapperNode *walk_expr_tree(Expr *expr, const PartRelationInfo *prel);
 static int make_hash(const PartRelationInfo *prel, int value);
 static void handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result, const Var *v, const Const *c);
-static WrapperNode *handle_opexpr(const OpExpr *expr, const PartRelationInfo *prel);
-static WrapperNode *handle_boolexpr(const BoolExpr *expr, const PartRelationInfo *prel);
-static WrapperNode *handle_arrexpr(const ScalarArrayOpExpr *expr, const PartRelationInfo *prel);
+static WrapperNode *handle_opexpr(WalkerContext *wcxt, const OpExpr *expr, const PartRelationInfo *prel);
+static WrapperNode *handle_boolexpr(WalkerContext *wcxt, const BoolExpr *expr, const PartRelationInfo *prel);
+static WrapperNode *handle_arrexpr(WalkerContext *wcxt, const ScalarArrayOpExpr *expr, const PartRelationInfo *prel);
 static void change_varnos_in_restrinct_info(RestrictInfo *rinfo, change_varno_context *context);
 static void change_varnos(Node *node, Oid old_varno, Oid new_varno);
 static bool change_varno_walker(Node *node, change_varno_context *context);
@@ -113,6 +107,10 @@ static void set_pathkeys(PlannerInfo *root, RelOptInfo *childrel, Path *path);
 #define check_gt(flinfo, arg1, arg2) \
 	((int) FunctionCall2(cmp_func, arg1, arg2) > 0)
 
+#define IsConstValue(node) \
+	( IsA((node), Const) || IsA((node), Param) )
+#define ExtractConst(wcxt, node) \
+	( IsA((node), Param) ? extract_const((wcxt), (Param *) (node)) : ((Const *) (node)) )
 
 /*
  * Entry point
@@ -136,12 +134,29 @@ _PG_init(void)
 
 	set_rel_pathlist_hook_original = set_rel_pathlist_hook;
 	set_rel_pathlist_hook = pathman_set_rel_pathlist_hook;
+	set_join_pathlist_next = set_join_pathlist_hook;
+	set_join_pathlist_hook = pathman_join_pathlist_hook;
 	shmem_startup_hook_original = shmem_startup_hook;
 	shmem_startup_hook = pathman_shmem_startup;
 	post_parse_analyze_hook_original = post_parse_analyze_hook;
 	post_parse_analyze_hook = pathman_post_parse_analysis_hook;
 	planner_hook_original = planner_hook;
 	planner_hook = pathman_planner_hook;
+
+	pickyappend_path_methods.CustomName				= "PickyAppend";
+	pickyappend_path_methods.PlanCustomPath			= create_pickyappend_plan;
+
+	pickyappend_plan_methods.CustomName 			= "PickyAppend";
+	pickyappend_plan_methods.CreateCustomScanState	= pickyappend_create_scan_state;
+
+	pickyappend_exec_methods.CustomName				= "PickyAppend";
+	pickyappend_exec_methods.BeginCustomScan		= pickyappend_begin;
+	pickyappend_exec_methods.ExecCustomScan			= pickyappend_exec;
+	pickyappend_exec_methods.EndCustomScan			= pickyappend_end;
+	pickyappend_exec_methods.ReScanCustomScan		= pickyappend_rescan;
+	pickyappend_exec_methods.MarkPosCustomScan		= NULL;
+	pickyappend_exec_methods.RestrPosCustomScan		= NULL;
+	pickyappend_exec_methods.ExplainCustomScan		= pickyppend_explain;
 }
 
 void
@@ -319,7 +334,7 @@ handle_modification_query(Query *parse)
 
 	/* Parse syntax tree and extract partition ranges */
 	ranges = list_make1_int(make_irange(0, prel->children_count - 1, false));
-	wrap = walk_expr_tree((Expr *) eval_const_expressions(NULL, parse->jointree->quals), prel);
+	wrap = walk_expr_tree(NULL, (Expr *) eval_const_expressions(NULL, parse->jointree->quals), prel);
 	wrappers = lappend(wrappers, wrap);
 	ranges = irange_list_intersect(ranges, wrap->rangeset);
 
@@ -395,7 +410,7 @@ pathman_set_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, Ran
 
 			RestrictInfo *rinfo = (RestrictInfo*) lfirst(lc);
 
-			wrap = walk_expr_tree(rinfo->clause, prel);
+			wrap = walk_expr_tree(NULL, rinfo->clause, prel);
 			wrappers = lappend(wrappers, wrap);
 			ranges = irange_list_intersect(ranges, wrap->rangeset);
 		}
@@ -708,8 +723,8 @@ change_varnos_in_restrinct_info(RestrictInfo *rinfo, change_varno_context *conte
 /*
  * Recursive function to walk through conditions tree
  */
-static WrapperNode *
-walk_expr_tree(Expr *expr, const PartRelationInfo *prel)
+WrapperNode *
+walk_expr_tree(WalkerContext *wcxt, Expr *expr, const PartRelationInfo *prel)
 {
 	BoolExpr		   *boolexpr;
 	OpExpr			   *opexpr;
@@ -721,15 +736,15 @@ walk_expr_tree(Expr *expr, const PartRelationInfo *prel)
 		/* AND, OR, NOT expressions */
 		case T_BoolExpr:
 			boolexpr = (BoolExpr *) expr;
-			return handle_boolexpr(boolexpr, prel);
+			return handle_boolexpr(wcxt, boolexpr, prel);
 		/* =, !=, <, > etc. */
 		case T_OpExpr:
 			opexpr = (OpExpr *) expr;
-			return handle_opexpr(opexpr, prel);
+			return handle_opexpr(wcxt, opexpr, prel);
 		/* IN expression */
 		case T_ScalarArrayOpExpr:
 			arrexpr = (ScalarArrayOpExpr *) expr;
-			return handle_arrexpr(arrexpr, prel);
+			return handle_arrexpr(wcxt, arrexpr, prel);
 		default:
 			result = (WrapperNode *)palloc(sizeof(WrapperNode));
 			result->orig = (const Node *)expr;
@@ -813,14 +828,14 @@ handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result,
 
 					if ((cmp_min < 0 &&
 						 (strategy == BTLessEqualStrategyNumber ||
-						  strategy == BTEqualStrategyNumber)) || 
+						  strategy == BTEqualStrategyNumber)) ||
 						(cmp_min <= 0 && strategy == BTLessStrategyNumber))
 					{
 						result->rangeset = NIL;
 						return;
 					}
 
-					if (cmp_max >= 0 && (strategy == BTGreaterEqualStrategyNumber || 
+					if (cmp_max >= 0 && (strategy == BTGreaterEqualStrategyNumber ||
 						strategy == BTGreaterStrategyNumber ||
 						strategy == BTEqualStrategyNumber))
 					{
@@ -828,14 +843,14 @@ handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result,
 						return;
 					}
 
-					if ((cmp_min < 0 && strategy == BTGreaterStrategyNumber) || 
+					if ((cmp_min < 0 && strategy == BTGreaterStrategyNumber) ||
 						(cmp_min <= 0 && strategy == BTGreaterEqualStrategyNumber))
 					{
 						result->rangeset = list_make1_irange(make_irange(startidx, endidx, false));
 						return;
 					}
 
-					if (cmp_max >= 0 && (strategy == BTLessEqualStrategyNumber || 
+					if (cmp_max >= 0 && (strategy == BTLessEqualStrategyNumber ||
 						strategy == BTLessStrategyNumber))
 					{
 						result->rangeset = list_make1_irange(make_irange(startidx, endidx, false));
@@ -1002,11 +1017,23 @@ range_binary_search(const RangeRelation *rangerel, FmgrInfo *cmp_func, Datum val
 	return i;
 }
 
+static Const *
+extract_const(WalkerContext *wcxt, Param *param)
+{
+	ExprState  *estate = ExecInitExpr((Expr *) param, NULL);
+	bool		isnull;
+	Datum		value = ExecEvalExpr(estate, wcxt->econtext, &isnull, NULL);
+
+	return makeConst(param->paramtype, param->paramtypmod,
+					 param->paramcollid, get_typlen(param->paramtype),
+					 value, isnull, get_typbyval(param->paramtype));
+}
+
 /*
  * Operator expression handler
  */
 static WrapperNode *
-handle_opexpr(const OpExpr *expr, const PartRelationInfo *prel)
+handle_opexpr(WalkerContext *wcxt, const OpExpr *expr, const PartRelationInfo *prel)
 {
 	WrapperNode	*result = (WrapperNode *)palloc(sizeof(WrapperNode));
 	Node		*firstarg = NULL,
@@ -1020,16 +1047,16 @@ handle_opexpr(const OpExpr *expr, const PartRelationInfo *prel)
 		firstarg = (Node *) linitial(expr->args);
 		secondarg = (Node *) lsecond(expr->args);
 
-		if (IsA(firstarg, Var) && IsA(secondarg, Const) &&
+		if (IsA(firstarg, Var) && IsConstValue(secondarg) &&
 			((Var *)firstarg)->varattno == prel->attnum)
 		{
-			handle_binary_opexpr(prel, result, (Var *)firstarg, (Const *)secondarg);
+			handle_binary_opexpr(prel, result, (Var *)firstarg, ExtractConst(wcxt, secondarg));
 			return result;
 		}
-		else if (IsA(secondarg, Var) && IsA(firstarg, Const) &&
+		else if (IsA(secondarg, Var) && IsConstValue(firstarg) &&
 				 ((Var *)secondarg)->varattno == prel->attnum)
 		{
-			handle_binary_opexpr(prel, result, (Var *)secondarg, (Const *)firstarg);
+			handle_binary_opexpr(prel, result, (Var *)secondarg, ExtractConst(wcxt, firstarg));
 			return result;
 		}
 	}
@@ -1042,7 +1069,7 @@ handle_opexpr(const OpExpr *expr, const PartRelationInfo *prel)
  * Boolean expression handler
  */
 static WrapperNode *
-handle_boolexpr(const BoolExpr *expr, const PartRelationInfo *prel)
+handle_boolexpr(WalkerContext *wcxt, const BoolExpr *expr, const PartRelationInfo *prel)
 {
 	WrapperNode	*result = (WrapperNode *)palloc(sizeof(WrapperNode));
 	ListCell	*lc;
@@ -1059,7 +1086,7 @@ handle_boolexpr(const BoolExpr *expr, const PartRelationInfo *prel)
 	{
 		WrapperNode *arg;
 
-		arg = walk_expr_tree((Expr *)lfirst(lc), prel);
+		arg = walk_expr_tree(wcxt, (Expr *)lfirst(lc), prel);
 		result->args = lappend(result->args, arg);
 		switch(expr->boolop)
 		{
@@ -1082,7 +1109,7 @@ handle_boolexpr(const BoolExpr *expr, const PartRelationInfo *prel)
  * Scalar array expression
  */
 static WrapperNode *
-handle_arrexpr(const ScalarArrayOpExpr *expr, const PartRelationInfo *prel)
+handle_arrexpr(WalkerContext *wcxt, const ScalarArrayOpExpr *expr, const PartRelationInfo *prel)
 {
 	WrapperNode *result = (WrapperNode *)palloc(sizeof(WrapperNode));
 	Node		*varnode = (Node *) linitial(expr->args);

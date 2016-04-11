@@ -17,6 +17,8 @@
 #include "nodes/pg_list.h"
 #include "storage/dsm.h"
 #include "storage/lwlock.h"
+#include "nodes/primnodes.h"
+#include "nodes/execnodes.h"
 
 /* Check PostgreSQL version */
 #if PG_VERSION_NUM < 90500
@@ -190,5 +192,20 @@ char *get_extension_schema(void);
 FmgrInfo *get_cmp_func(Oid type1, Oid type2);
 Oid create_partitions_bg_worker(Oid relid, Datum value, Oid value_type, bool *crashed);
 Oid create_partitions(Oid relid, Datum value, Oid value_type, bool *crashed);
+
+typedef struct
+{
+	const Node	   *orig;
+	List		   *args;
+	List		   *rangeset;
+} WrapperNode;
+
+typedef struct
+{
+	PlanState	   *pstate;
+	ExprContext	   *econtext;
+} WalkerContext;
+
+WrapperNode *walk_expr_tree(WalkerContext *wcxt, Expr *expr, const PartRelationInfo *prel);
 
 #endif   /* PATHMAN_H */
