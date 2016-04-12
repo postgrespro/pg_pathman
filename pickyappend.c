@@ -56,7 +56,10 @@ transform_plans_into_states(PickyAppendState *scan_state,
 												 HASH_ENTER, &pps_found);
 
 		if (!pps_found)
+		{
 			pps->ps = ExecInitNode(child->content.plan, estate, 0);
+			scan_state->css.custom_ps = lappend(scan_state->css.custom_ps, pps->ps);
+		}
 		else
 			ExecReScan(pps->ps);
 
@@ -512,6 +515,4 @@ pickyappend_rescan(CustomScanState *node)
 void
 pickyppend_explain(CustomScanState *node, List *ancestors, ExplainState *es)
 {
-	PickyAppendState   *scan_state = (PickyAppendState *) node;
-	StringInfoData		str;
 }
