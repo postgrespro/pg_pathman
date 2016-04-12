@@ -17,33 +17,51 @@ CustomScanMethods				pickyappend_plan_methods;
 CustomExecMethods				pickyappend_exec_methods;
 
 
-static void
-clear_plan_states(ChildScanCommon *selected_plans, int n)
+typedef struct
 {
-	int i;
+	Oid			relid; /* relid of the corresponding partition */
+	PlanState  *ps;
+} PreservedPlanState;
 
-	if (!selected_plans)
-		return;
 
-	for (i = 0; i < n; i++)
+static void
+clear_plan_states(PickyAppendState *scan_state)
+{
+	PreservedPlanState *pps;
+	HASH_SEQ_STATUS		seqstat;
+
+	hash_seq_init(&seqstat, scan_state->plan_state_table);
+
+	while ((pps = (PreservedPlanState *) hash_seq_search(&seqstat)))
 	{
-		ChildScanCommon child = selected_plans[i];
-
-		ExecEndNode(child->content.plan_state);
+		ExecEndNode(pps->ps);
 	}
 }
 
 static void
-transform_plans_into_states(ChildScanCommon *selected_plans, int n, EState *estate)
+transform_plans_into_states(PickyAppendState *scan_state,
+							ChildScanCommon *selected_plans, int n,
+							EState *estate)
 {
 	int i;
 
 	for (i = 0; i < n; i++)
 	{
-		ChildScanCommon child = selected_plans[i];
+		ChildScanCommon		child = selected_plans[i];
+		PreservedPlanState *pps;
+		bool				pps_found;
+
+		pps = (PreservedPlanState *) hash_search(scan_state->plan_state_table,
+												 (const void *) &child->relid,
+												 HASH_ENTER, &pps_found);
+
+		if (!pps_found)
+			pps->ps = ExecInitNode(child->content.plan, estate, 0);
+		else
+			ExecReScan(pps->ps);
 
 		child->content_type = CHILD_PLAN_STATE;
-		child->content.plan_state = ExecInitNode(child->content.plan, estate, 0);
+		child->content.plan_state = pps->ps;
 	}
 }
 
@@ -158,8 +176,7 @@ create_pickyappend_path(PlannerInfo *root,
 					    RelOptInfo *outerrel,
 					    RelOptInfo *innerrel,
 					    ParamPathInfo *param_info,
-					    JoinPathExtraData *extra,
-						PartRelationInfo *inner_prel)
+					    JoinPathExtraData *extra)
 {
 	AppendPath	   *inner_append = (AppendPath *) innerrel->cheapest_total_path;
 	List		   *joinrestrictclauses = extra->restrictlist;
@@ -279,7 +296,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	inner = create_pickyappend_path(root, joinrel, outerrel, innerrel,
 									get_appendrel_parampathinfo(innerrel,
 																inner_required),
-									extra, inner_prel);
+									extra);
 
 	initial_cost_nestloop(root, &workspace, jointype,
 						  outer, inner,
@@ -393,7 +410,17 @@ void
 pickyappend_begin(CustomScanState *node, EState *estate, int eflags)
 {
 	PickyAppendState   *scan_state = (PickyAppendState *) node;
+	HTAB			   *plan_state_table = scan_state->plan_state_table;
+	HASHCTL			   *plan_state_table_config = &scan_state->plan_state_table_config;
 
+	memset(plan_state_table_config, 0, sizeof(HASHCTL));
+	plan_state_table_config->keysize = sizeof(Oid);
+	plan_state_table_config->entrysize = sizeof(PreservedPlanState);
+
+	plan_state_table = hash_create("PlanState storage", 128,
+								   plan_state_table_config, HASH_ELEM | HASH_BLOBS);
+
+	scan_state->plan_state_table = plan_state_table;
 	scan_state->custom_expr_states = (List *) ExecInitExpr((Expr *) scan_state->custom_exprs,
 														   (PlanState *) scan_state);
 }
@@ -436,7 +463,8 @@ pickyappend_end(CustomScanState *node)
 {
 	PickyAppendState   *scan_state = (PickyAppendState *) node;
 
-	clear_plan_states(scan_state->cur_plans, scan_state->ncur_plans);
+	clear_plan_states(scan_state);
+	hash_destroy(scan_state->plan_state_table);
 }
 
 void
@@ -465,15 +493,15 @@ pickyappend_rescan(CustomScanState *node)
 
 	parts = get_partition_oids(ranges, &nparts, prel);
 
-	clear_plan_states(scan_state->cur_plans, scan_state->ncur_plans);
-
 	scan_state->cur_plans = select_required_plans(scan_state->children,
 												  scan_state->nchildren,
 												  parts, nparts,
 												  &scan_state->ncur_plans);
 	pfree(parts);
 
-	transform_plans_into_states(scan_state->cur_plans, scan_state->ncur_plans,
+	transform_plans_into_states(scan_state,
+								scan_state->cur_plans,
+								scan_state->ncur_plans,
 								scan_state->css.ss.ps.state);
 
 	scan_state->running_idx = 0;
@@ -484,4 +512,6 @@ pickyappend_rescan(CustomScanState *node)
 void
 pickyppend_explain(CustomScanState *node, List *ancestors, ExplainState *es)
 {
+	PickyAppendState   *scan_state = (PickyAppendState *) node;
+	StringInfoData		str;
 }

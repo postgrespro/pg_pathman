@@ -51,6 +51,9 @@ typedef struct
 	ChildScanCommon	   *cur_plans;
 	int					ncur_plans;
 	int					running_idx;
+
+	HTAB			   *plan_state_table;
+	HASHCTL				plan_state_table_config;
 } PickyAppendState;
 
 extern set_join_pathlist_hook_type	set_join_pathlist_next;
