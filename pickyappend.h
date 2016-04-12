@@ -41,10 +41,16 @@ typedef struct
 	CustomScanState		css;
 	Oid					relid;
 	PartRelationInfo   *prel;
-	List			   *custom_exprs;
 
-	ChildScanCommon	   *chilren;
+	List			   *custom_exprs;
+	List			   *custom_expr_states;
+
+	ChildScanCommon	   *children;
 	int					nchildren;
+
+	ChildScanCommon	   *cur_plans;
+	int					ncur_plans;
+	int					running_idx;
 } PickyAppendState;
 
 extern set_join_pathlist_hook_type	set_join_pathlist_next;

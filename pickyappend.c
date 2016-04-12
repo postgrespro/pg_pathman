@@ -16,6 +16,128 @@ CustomPathMethods				pickyappend_path_methods;
 CustomScanMethods				pickyappend_plan_methods;
 CustomExecMethods				pickyappend_exec_methods;
 
+
+static void
+clear_plan_states(ChildScanCommon *selected_plans, int n)
+{
+	int i;
+
+	if (!selected_plans)
+		return;
+
+	for (i = 0; i < n; i++)
+	{
+		ChildScanCommon child = selected_plans[i];
+
+		ExecEndNode(child->content.plan_state);
+	}
+}
+
+static void
+transform_plans_into_states(ChildScanCommon *selected_plans, int n, EState *estate)
+{
+	int i;
+
+	for (i = 0; i < n; i++)
+	{
+		ChildScanCommon child = selected_plans[i];
+
+		child->content_type = CHILD_PLAN_STATE;
+		child->content.plan_state = ExecInitNode(child->content.plan, estate, 0);
+	}
+}
+
+static ChildScanCommon *
+select_required_plans(ChildScanCommon *children, int nchildren,
+					  Oid *parts, int nparts,
+					  int *nres)
+{
+	ChildScanCommon	   *children_end = children + nchildren;
+	Oid				   *parts_end = parts + nparts;
+	int					allocated = 10;
+	int					used = 0;
+	ChildScanCommon	   *result = palloc(10 * sizeof(ChildScanCommon));
+
+	while (children < children_end && parts < parts_end)
+	{
+		if ((*children)->relid < *parts)
+			children++;
+		else
+		{
+			if (!(*parts < (*children)->relid))
+			{
+				ChildScanCommon child = palloc(sizeof(ChildScanCommonData));
+
+				if (allocated <= used)
+				{
+					allocated *= 2;
+					result = repalloc(result, allocated * sizeof(ChildScanCommon));
+				}
+
+				child->content_type = CHILD_PLAN;
+				child->content.plan = (*children)->content.plan;
+				child->relid = (*children)->relid;
+
+				result[used++] = child;
+				children++;
+			}
+			parts++;
+		}
+	}
+
+	*nres = used;
+	return result;
+}
+
+/* qsort comparison function for oids */
+static int
+oid_cmp(const void *p1, const void *p2)
+{
+	Oid			v1 = *((const Oid *) p1);
+	Oid			v2 = *((const Oid *) p2);
+
+	if (v1 < v2)
+		return -1;
+	if (v1 > v2)
+		return 1;
+	return 0;
+}
+
+static Oid *
+get_partition_oids(List *ranges, int *n, PartRelationInfo *prel)
+{
+	ListCell   *range_cell;
+	int			allocated = 10;
+	int			used = 0;
+	Oid		   *result = palloc(allocated * sizeof(Oid));
+	Oid		   *children = dsm_array_get_pointer(&prel->children);
+
+	foreach (range_cell, ranges)
+	{
+		int i;
+		int a = irange_lower(lfirst_irange(range_cell));
+		int b = irange_upper(lfirst_irange(range_cell));
+
+		for (i = a; i <= b; i++)
+		{
+			if (allocated <= used)
+			{
+				allocated *= 2;
+				result = repalloc(result, allocated * sizeof(Oid));
+			}
+
+			Assert(i < prel->children_count);
+			result[used++] = children[i];
+		}
+	}
+
+	if (used > 1)
+		qsort(result, used, sizeof(Oid), oid_cmp);
+
+	*n = used;
+	return result;
+}
+
 static int
 cmp_child_scan_common(const void *a, const void *b)
 {
@@ -175,7 +297,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 }
 
 static void
-save_pickyappend_private(CustomScan *cscan, PickyAppendPath *path, PlannerInfo *root)
+save_pickyappend_private(CustomScan *cscan, PickyAppendPath *path)
 {
 	ChildScanCommon    *children = path->children;
 	int					nchildren = path->nchildren;
@@ -205,8 +327,6 @@ unpack_pickyappend_private(PickyAppendState *scan_state, CustomScan *cscan)
 	ListCell		   *cur_plan;
 	int					i;
 
-	scan_state->relid = linitial_oid(linitial(cscan->custom_private));
-
 	i = 0;
 	forboth (cur_oid, custom_oids, cur_plan, cscan->custom_plans)
 	{
@@ -218,6 +338,10 @@ unpack_pickyappend_private(PickyAppendState *scan_state, CustomScan *cscan)
 
 		children[i++] = child;
 	}
+
+	scan_state->relid = linitial_oid(linitial(cscan->custom_private));
+	scan_state->children = children;
+	scan_state->nchildren = nchildren;
 }
 
 Plan *
@@ -235,10 +359,11 @@ create_pickyappend_plan(PlannerInfo *root, RelOptInfo *rel,
 	cscan->scan.scanrelid = 0;
 
 	cscan->custom_exprs = gpath->cpath.custom_private;
+	cscan->custom_plans = custom_plans;
 
 	cscan->methods = &pickyappend_plan_methods;
 
-	save_pickyappend_private(cscan, gpath, root);
+	save_pickyappend_private(cscan, gpath);
 
 	return &cscan->scan.plan;
 }
@@ -257,23 +382,61 @@ pickyappend_create_scan_state(CustomScan *node)
 
 	scan_state->prel = get_pathman_relation_info(scan_state->relid, NULL);
 
+	scan_state->cur_plans = NULL;
+	scan_state->ncur_plans = 0;
+	scan_state->running_idx = 0;
+
 	return (Node *) scan_state;
 }
 
 void
 pickyappend_begin(CustomScanState *node, EState *estate, int eflags)
 {
+	PickyAppendState   *scan_state = (PickyAppendState *) node;
+
+	scan_state->custom_expr_states = (List *) ExecInitExpr((Expr *) scan_state->custom_exprs,
+														   (PlanState *) scan_state);
 }
 
 TupleTableSlot *
 pickyappend_exec(CustomScanState *node)
 {
+	PickyAppendState   *scan_state = (PickyAppendState *) node;
+
+	while (scan_state->running_idx < scan_state->ncur_plans)
+	{
+		ChildScanCommon		child = scan_state->cur_plans[scan_state->running_idx];
+		PlanState		   *state = child->content.plan_state;
+		TupleTableSlot	   *slot = NULL;
+		bool				quals;
+
+		for (;;)
+		{
+			slot = ExecProcNode(state);
+
+			if (TupIsNull(slot))
+				break;
+
+			node->ss.ps.ps_ExprContext->ecxt_scantuple = slot;
+			quals = ExecQual(scan_state->custom_expr_states,
+							 node->ss.ps.ps_ExprContext, false);
+
+			if (quals)
+				return slot;
+		}
+
+		scan_state->running_idx++;
+	}
+
 	return NULL;
 }
 
 void
 pickyappend_end(CustomScanState *node)
 {
+	PickyAppendState   *scan_state = (PickyAppendState *) node;
+
+	clear_plan_states(scan_state->cur_plans, scan_state->ncur_plans);
 }
 
 void
@@ -284,13 +447,15 @@ pickyappend_rescan(CustomScanState *node)
 	PartRelationInfo   *prel = scan_state->prel;
 	List			   *ranges;
 	ListCell		   *lc;
+	Oid				   *parts;
+	int					nparts;
 
 	ranges = list_make1_int(make_irange(0, prel->children_count - 1, false));
 
 	foreach (lc, scan_state->custom_exprs)
 	{
-		WrapperNode		   *wn;
-		WalkerContext		wcxt;
+		WrapperNode	   *wn;
+		WalkerContext	wcxt;
 
 		wcxt.econtext = econtext;
 		wn = walk_expr_tree(&wcxt, (Expr *) lfirst(lc), prel);
@@ -298,12 +463,22 @@ pickyappend_rescan(CustomScanState *node)
 		ranges = irange_list_intersect(ranges, wn->rangeset);
 	}
 
-	foreach (lc, ranges)
-	{
-		elog(LOG, "lower: %d, upper: %d",
-			 irange_lower(lfirst_irange(lc)),
-			 irange_upper(lfirst_irange(lc)));
-	}
+	parts = get_partition_oids(ranges, &nparts, prel);
+
+	clear_plan_states(scan_state->cur_plans, scan_state->ncur_plans);
+
+	scan_state->cur_plans = select_required_plans(scan_state->children,
+												  scan_state->nchildren,
+												  parts, nparts,
+												  &scan_state->ncur_plans);
+	pfree(parts);
+
+	transform_plans_into_states(scan_state->cur_plans, scan_state->ncur_plans,
+								scan_state->css.ss.ps.state);
+
+	scan_state->running_idx = 0;
+
+	/* elog(LOG, "nparts: %d, plans: %d", nparts, nplans); */
 }
 
 void
