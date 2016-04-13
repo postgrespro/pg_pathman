@@ -311,8 +311,7 @@ static void
 handle_modification_query(Query *parse)
 {
 	PartRelationInfo *prel;
-	List	   *ranges,
-			   *wrappers = NIL;
+	List	   *ranges;
 	RangeTblEntry *rte;
 	WrapperNode *wrap;
 	Expr *expr;
@@ -336,7 +335,6 @@ handle_modification_query(Query *parse)
 
 	/* Parse syntax tree and extract partition ranges */
 	wrap = walk_expr_tree(expr, prel);
-	wrappers = lappend(wrappers, wrap);
 	ranges = irange_list_intersect(ranges, wrap->rangeset);
 
 	/* If only one partition is affected then substitute parent table with partition */
