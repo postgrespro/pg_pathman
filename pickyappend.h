@@ -45,13 +45,18 @@ typedef struct
 	List			   *custom_exprs;
 	List			   *custom_expr_states;
 
+	/* All available plans */
 	ChildScanCommon	   *children;
 	int					nchildren;
 
+	/* Currently selected plans \ plan states */
 	ChildScanCommon	   *cur_plans;
 	int					ncur_plans;
+
+	/* Index of the selected plan state */
 	int					running_idx;
 
+	/* Contains reusable PlanStates */
 	HTAB			   *plan_state_table;
 	HASHCTL				plan_state_table_config;
 } PickyAppendState;

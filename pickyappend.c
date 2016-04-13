@@ -25,6 +25,21 @@ typedef struct
 
 
 static void
+free_child_scan_common_array(ChildScanCommon *cur_plans, int n)
+{
+	int i;
+
+	if (!cur_plans)
+		return;
+
+	/* We shouldn't free inner objects e.g. Plans here */
+	for (i = 0; i < n; i++)
+		pfree(cur_plans[i]);
+
+	pfree(cur_plans);
+}
+
+static void
 clear_plan_states(PickyAppendState *scan_state)
 {
 	PreservedPlanState *pps;
@@ -286,8 +301,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		IsA(innerrel->cheapest_total_path, AppendPath) &&
 		(inner_prel = get_pathman_relation_info(inner_entry->relid, NULL)))
 	{
-		elog(LOG, "adding new path !!!");
-		//pprint(innerrel->cheapest_total_path);
+		elog(LOG, "adding new nestloop path with pickyappend");
 	}
 	else return;
 
@@ -496,12 +510,15 @@ pickyappend_rescan(CustomScanState *node)
 
 	parts = get_partition_oids(ranges, &nparts, prel);
 
+	/* Select new plans for this pass */
+	free_child_scan_common_array(scan_state->cur_plans, scan_state->ncur_plans);
 	scan_state->cur_plans = select_required_plans(scan_state->children,
 												  scan_state->nchildren,
 												  parts, nparts,
 												  &scan_state->ncur_plans);
 	pfree(parts);
 
+	/* Transform selected plans into executable plan states */
 	transform_plans_into_states(scan_state,
 								scan_state->cur_plans,
 								scan_state->ncur_plans,
