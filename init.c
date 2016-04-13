@@ -21,6 +21,7 @@
 #include "utils/lsyscache.h"
 #include "utils/bytea.h"
 #include "utils/snapmgr.h"
+#include "optimizer/clauses.h"
 
 
 HTAB   *relations = NULL;
@@ -32,6 +33,7 @@ static bool globalByVal;
 
 static bool validate_range_constraint(Expr *, PartRelationInfo *, Datum *, Datum *);
 static bool validate_hash_constraint(Expr *expr, PartRelationInfo *prel, int *hash);
+static bool read_opexpr_const(OpExpr *opexpr, int varattno, Datum *val);
 static int cmp_range_entries(const void *p1, const void *p2);
 
 Size
@@ -453,11 +455,7 @@ validate_range_constraint(Expr *expr, PartRelationInfo *prel, Datum *min, Datum 
 	OpExpr *opexpr;
 
 	/* it should be an AND operator on top */
-	if ( !(IsA(expr, BoolExpr) && boolexpr->boolop == AND_EXPR) )
-		return false;
-
-	/* and it should have exactly two operands */
-	if (list_length(boolexpr->args) != 2)
+	if (!and_clause((Node *) expr))
 		return false;
 
 	tce = lookup_type_cache(prel->atttype, TYPECACHE_EQ_OPR | TYPECACHE_LT_OPR | TYPECACHE_GT_OPR);
@@ -466,32 +464,39 @@ validate_range_constraint(Expr *expr, PartRelationInfo *prel, Datum *min, Datum 
 	opexpr = (OpExpr *) linitial(boolexpr->args);
 	if (get_op_opfamily_strategy(opexpr->opno, tce->btree_opf) == BTGreaterEqualStrategyNumber)
 	{
-		Node *left = linitial(opexpr->args);
-		Node *right = lsecond(opexpr->args);
-		if ( !IsA(left, Var) || !IsA(right, Const) )
+		if (!read_opexpr_const(opexpr, prel->attnum, min))
 			return false;
-		if ( ((Var*) left)->varattno != prel->attnum )
-			return false;
-		*min = ((Const*) right)->constvalue;
 	}
 	else
 		return false;
 
-	/* TODO: rewrite this */
 	/* check that right operand is < operator */
 	opexpr = (OpExpr *) lsecond(boolexpr->args);
 	if (get_op_opfamily_strategy(opexpr->opno, tce->btree_opf) == BTLessStrategyNumber)
 	{
-		Node *left = linitial(opexpr->args);
-		Node *right = lsecond(opexpr->args);
-		if ( !IsA(left, Var) || !IsA(right, Const) )
+		if (!read_opexpr_const(opexpr, prel->attnum, max))
 			return false;
-		if ( ((Var*) left)->varattno != prel->attnum )
-			return false;
-		*max = ((Const*) right)->constvalue;
 	}
 	else
 		return false;
+
+	return true;
+}
+
+/*
+ * Reads const value from expressions of kind: VAR >= CONST or VAR < CONST
+ */
+static bool
+read_opexpr_const(OpExpr *opexpr, int varattno, Datum *val)
+{
+	Node *left = linitial(opexpr->args);
+	Node *right = lsecond(opexpr->args);
+
+	if ( !IsA(left, Var) || !IsA(right, Const) )
+		return false;
+	if ( ((Var*) left)->varattno != varattno )
+		return false;
+	*val = ((Const*) right)->constvalue;
 
 	return true;
 }
