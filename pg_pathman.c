@@ -88,6 +88,7 @@ static WrapperNode *handle_arrexpr(const ScalarArrayOpExpr *expr, const PartRela
 static void change_varnos_in_restrinct_info(RestrictInfo *rinfo, change_varno_context *context);
 static void change_varnos(Node *node, Oid old_varno, Oid new_varno);
 static bool change_varno_walker(Node *node, change_varno_context *context);
+static RestrictInfo *rebuild_restrictinfo(Node *clause, RestrictInfo *old_rinfo);
 
 /* copied from allpaths.h */
 static void set_plain_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte);
@@ -509,8 +510,7 @@ append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		bool alwaysTrue;
 		WrapperNode *wrap = (WrapperNode *) lfirst(lc);
 		Node *new_clause = wrapper_make_expression(wrap, index, &alwaysTrue);
-		RestrictInfo *old_rinfo = (RestrictInfo *) lfirst(lc2),
-					 *new_rinfo;
+		RestrictInfo *old_rinfo = (RestrictInfo *) lfirst(lc2);
 
 		if (alwaysTrue)
 		{
@@ -518,19 +518,30 @@ append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		}
 		Assert(new_clause);
 
-		new_rinfo = make_restrictinfo((Expr *) new_clause,
-									  old_rinfo->is_pushed_down,
-									  old_rinfo->outerjoin_delayed,
-									  old_rinfo->pseudoconstant,
-									  old_rinfo->required_relids,
-									  old_rinfo->outer_relids,
-									  old_rinfo->nullable_relids);
+		if (and_clause((Node *) new_clause))
+		{
+			ListCell *alc;
 
-		/* Replace old relids with new ones */
-		change_varnos((Node *)new_rinfo, rel->relid, childrel->relid);
+			foreach(alc, ((BoolExpr *) new_clause)->args)
+			{
+				Node *arg = (Node *) lfirst(alc);
+				RestrictInfo *new_rinfo = rebuild_restrictinfo(arg, old_rinfo);
 
-		childrel->baserestrictinfo = lappend(childrel->baserestrictinfo,
-											 (void *) new_rinfo);
+				change_varnos((Node *)new_rinfo, rel->relid, childrel->relid);
+				childrel->baserestrictinfo = lappend(childrel->baserestrictinfo,
+													 new_rinfo);
+			}
+		}
+		else
+		{
+			RestrictInfo *new_rinfo = rebuild_restrictinfo(new_clause, old_rinfo);
+
+			/* Replace old relids with new ones */
+			change_varnos((Node *)new_rinfo, rel->relid, childrel->relid);
+
+			childrel->baserestrictinfo = lappend(childrel->baserestrictinfo,
+												 (void *) new_rinfo);
+		}
 	}
 
 	/* Build an AppendRelInfo for this parent and child */
@@ -542,6 +553,19 @@ append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	root->total_table_pages += (double) childrel->pages;
 
 	heap_close(newrelation, NoLock);
+}
+
+/* Create new restriction based on clause */
+static RestrictInfo *
+rebuild_restrictinfo(Node *clause, RestrictInfo *old_rinfo)
+{
+	return make_restrictinfo((Expr *) clause,
+							 old_rinfo->is_pushed_down,
+							 old_rinfo->outerjoin_delayed,
+							 old_rinfo->pseudoconstant,
+							 old_rinfo->required_relids,
+							 old_rinfo->outer_relids,
+							 old_rinfo->nullable_relids);
 }
 
 /* Convert wrapper into expression for given index */
