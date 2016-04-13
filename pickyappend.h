@@ -6,6 +6,9 @@
 
 #include "pathman.h"
 
+
+extern bool pg_pathman_enable_pickyappend;
+
 typedef struct
 {
 	Oid		relid;

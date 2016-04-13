@@ -10,6 +10,9 @@
 #include "optimizer/tlist.h"
 #include "optimizer/var.h"
 
+
+bool pg_pathman_enable_pickyappend = true;
+
 set_join_pathlist_hook_type		set_join_pathlist_next = NULL;
 
 CustomPathMethods				pickyappend_path_methods;
@@ -293,7 +296,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		set_join_pathlist_next(root, joinrel, outerrel,
 							   innerrel, jointype, extra);
 
-	if (jointype == JOIN_FULL)
+	if (jointype == JOIN_FULL || !pg_pathman_enable_pickyappend)
 		return;
 
 	if (innerrel->reloptkind == RELOPT_BASEREL &&

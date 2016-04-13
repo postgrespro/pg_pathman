@@ -33,6 +33,7 @@
 #include "utils/date.h"
 #include "utils/typcache.h"
 #include "utils/lsyscache.h"
+#include "utils/guc.h"
 #include "access/heapam.h"
 #include "access/nbtree.h"
 #include "storage/ipc.h"
@@ -157,6 +158,17 @@ _PG_init(void)
 	pickyappend_exec_methods.MarkPosCustomScan		= NULL;
 	pickyappend_exec_methods.RestrPosCustomScan		= NULL;
 	pickyappend_exec_methods.ExplainCustomScan		= pickyppend_explain;
+
+	DefineCustomBoolVariable("pg_pathman.enable_pickyappend",
+							 "Enables the planner's use of PickyAppend custom node.",
+							 NULL,
+							 &pg_pathman_enable_pickyappend,
+							 true,
+							 PGC_USERSET,
+							 0,
+							 NULL,
+							 NULL,
+							 NULL);
 }
 
 void
