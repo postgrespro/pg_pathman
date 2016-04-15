@@ -48,9 +48,8 @@ typedef struct
 	List			   *custom_exprs;
 	List			   *custom_expr_states;
 
-	/* All available plans */
-	ChildScanCommon	   *children;
-	int					nchildren;
+	HTAB			   *children_table;
+	HASHCTL				children_table_config;
 
 	/* Currently selected plans \ plan states */
 	ChildScanCommon	   *cur_plans;

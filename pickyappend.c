@@ -87,59 +87,36 @@ transform_plans_into_states(PickyAppendState *scan_state,
 }
 
 static ChildScanCommon *
-select_required_plans(ChildScanCommon *children, int nchildren,
-					  Oid *parts, int nparts,
-					  int *nres)
+select_required_plans(HTAB *children_table, Oid *parts, int nparts, int *nres)
 {
-	ChildScanCommon	   *children_end = children + nchildren;
-	Oid				   *parts_end = parts + nparts;
 	int					allocated = 10;
 	int					used = 0;
 	ChildScanCommon	   *result = palloc(10 * sizeof(ChildScanCommon));
+	int					i;
 
-	while (children < children_end && parts < parts_end)
+	for (i = 0; i < nparts; i++)
 	{
-		if ((*children)->relid < *parts)
-			children++;
-		else
+		ChildScanCommon child_copy;
+		ChildScanCommon child = hash_search(children_table,
+											(const void *) &parts[i],
+											HASH_FIND, NULL);
+		if (!child)
+			continue;
+
+		if (allocated <= used)
 		{
-			if (!(*parts < (*children)->relid))
-			{
-				ChildScanCommon child = palloc(sizeof(ChildScanCommonData));
-
-				if (allocated <= used)
-				{
-					allocated *= 2;
-					result = repalloc(result, allocated * sizeof(ChildScanCommon));
-				}
-
-				child->content_type = CHILD_PLAN;
-				child->content.plan = (*children)->content.plan;
-				child->relid = (*children)->relid;
-
-				result[used++] = child;
-				children++;
-			}
-			parts++;
+			allocated *= 2;
+			result = repalloc(result, allocated * sizeof(ChildScanCommon));
 		}
+
+		child_copy = palloc(sizeof(ChildScanCommonData));
+		memcpy(child_copy, child, sizeof(ChildScanCommonData));
+
+		result[used++] = child_copy;
 	}
 
 	*nres = used;
 	return result;
-}
-
-/* qsort comparison function for oids */
-static int
-oid_cmp(const void *p1, const void *p2)
-{
-	Oid			v1 = *((const Oid *) p1);
-	Oid			v2 = *((const Oid *) p2);
-
-	if (v1 < v2)
-		return -1;
-	if (v1 > v2)
-		return 1;
-	return 0;
 }
 
 static Oid *
@@ -170,25 +147,8 @@ get_partition_oids(List *ranges, int *n, PartRelationInfo *prel)
 		}
 	}
 
-	if (used > 1)
-		qsort(result, used, sizeof(Oid), oid_cmp);
-
 	*n = used;
 	return result;
-}
-
-static int
-cmp_child_scan_common(const void *a, const void *b)
-{
-	ChildScanCommon child_a = *(ChildScanCommon *) a;
-	ChildScanCommon child_b = *(ChildScanCommon *) b;
-
-	if (child_a->relid > child_b->relid)
-		return 1;
-	else if (child_a->relid < child_b->relid)
-		return -1;
-	else
-		return 0;
 }
 
 static Path *
@@ -261,16 +221,12 @@ create_pickyappend_path(PlannerInfo *root,
 		child->relid = root->simple_rte_array[relindex]->relid;
 		Assert(child->relid != InvalidOid);
 
-		result->children[i++] = child;
-	}
-
-	qsort(result->children, result->nchildren,
-		  sizeof(ChildScanCommon), cmp_child_scan_common);
-
-	/* Fill 'custom_paths' with paths in sort order */
-	for (i = 0; i < result->nchildren; i++)
 		result->cpath.custom_paths = lappend(result->cpath.custom_paths,
-											 result->children[i]->content.path);
+											 child->content.path);
+		result->children[i] = child;
+
+		i++;
+	}
 
 	return &result->cpath.path;
 }
@@ -357,28 +313,34 @@ save_pickyappend_private(CustomScan *cscan, PickyAppendPath *path)
 static void
 unpack_pickyappend_private(PickyAppendState *scan_state, CustomScan *cscan)
 {
-	List			   *custom_oids = (List *) lsecond(cscan->custom_private);
-	int					nchildren = list_length(custom_oids);
-	ChildScanCommon    *children = palloc(nchildren * sizeof(ChildScanCommon));
-	ListCell		   *cur_oid;
-	ListCell		   *cur_plan;
-	int					i;
+	ListCell   *oid_cell;
+	ListCell   *plan_cell;
+	List	   *custom_oids = (List *) lsecond(cscan->custom_private);
+	int			nchildren = list_length(custom_oids);
+	HTAB	   *children_table = scan_state->children_table;
+	HASHCTL	   *children_table_config = &scan_state->children_table_config;
 
-	i = 0;
-	forboth (cur_oid, custom_oids, cur_plan, cscan->custom_plans)
+	memset(children_table_config, 0, sizeof(HASHCTL));
+	children_table_config->keysize = sizeof(Oid);
+	children_table_config->entrysize = sizeof(ChildScanCommonData);
+
+	children_table = hash_create("Plan storage", nchildren,
+								   children_table_config, HASH_ELEM | HASH_BLOBS);
+
+	forboth (oid_cell, custom_oids, plan_cell, cscan->custom_plans)
 	{
-		ChildScanCommon child = palloc(sizeof(ChildScanCommonData));
+		Oid cur_oid = lfirst_oid(oid_cell);
+
+		ChildScanCommon child = hash_search(children_table,
+											(const void *) &cur_oid,
+											HASH_ENTER, NULL);
 
 		child->content_type = CHILD_PLAN;
-		child->content.plan = (Plan *) lfirst(cur_plan);
-		child->relid = lfirst_oid(cur_oid);
-
-		children[i++] = child;
+		child->content.plan = (Plan *) lfirst(plan_cell);
 	}
 
+	scan_state->children_table = children_table;
 	scan_state->relid = linitial_oid(linitial(cscan->custom_private));
-	scan_state->children = children;
-	scan_state->nchildren = nchildren;
 }
 
 Plan *
@@ -485,6 +447,7 @@ pickyappend_end(CustomScanState *node)
 
 	clear_plan_states(scan_state);
 	hash_destroy(scan_state->plan_state_table);
+	hash_destroy(scan_state->children_table);
 }
 
 void
@@ -515,8 +478,7 @@ pickyappend_rescan(CustomScanState *node)
 
 	/* Select new plans for this pass */
 	free_child_scan_common_array(scan_state->cur_plans, scan_state->ncur_plans);
-	scan_state->cur_plans = select_required_plans(scan_state->children,
-												  scan_state->nchildren,
+	scan_state->cur_plans = select_required_plans(scan_state->children_table,
 												  parts, nparts,
 												  &scan_state->ncur_plans);
 	pfree(parts);
