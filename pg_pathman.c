@@ -123,20 +123,6 @@ static void generate_mergeappend_paths(PlannerInfo *root, RelOptInfo *rel,
 #define ExtractConst(wcxt, node) \
 	( IsA((node), Param) ? extract_const((wcxt), (Param *) (node)) : ((Const *) (node)) )
 
-char *
-bms_print(Bitmapset *bms)
-{
-	StringInfoData str;
-	int x;
-
-	initStringInfo(&str);
-	x = -1;
-	while ((x = bms_next_member(bms, x)) >= 0)
-		appendStringInfo(&str, " %d", x);
-
-	return str.data;
-}
-
 /*
  * Entry point
  */
