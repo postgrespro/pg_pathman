@@ -11,14 +11,7 @@ extern bool pg_pathman_enable_pickyappend;
 
 typedef struct
 {
-	Oid		relid;
-
-	enum
-	{
-		CHILD_PATH = 0,
-		CHILD_PLAN,
-		CHILD_PLAN_STATE
-	}		content_type;
+	Oid		relid;					/* partition relid */
 
 	union
 	{
@@ -26,6 +19,8 @@ typedef struct
 		Plan	   *plan;
 		PlanState  *plan_state;
 	}		content;
+
+	int		original_order;			/* for sorting in EXPLAIN */
 } ChildScanCommonData;
 
 typedef ChildScanCommonData *ChildScanCommon;
@@ -33,21 +28,23 @@ typedef ChildScanCommonData *ChildScanCommon;
 typedef struct
 {
 	CustomPath			cpath;
-	Oid					relid;
+	Oid					relid;		/* relid of the partitioned table */
 
-	ChildScanCommon	   *children;
+	ChildScanCommon	   *children;	/* all available plans */
 	int					nchildren;
 } PickyAppendPath;
 
 typedef struct
 {
 	CustomScanState		css;
-	Oid					relid;
+	Oid					relid;		/* relid of the partitioned table */
 	PartRelationInfo   *prel;
 
+	/* Restrictions to be checked during ReScan and Exec */
 	List			   *custom_exprs;
 	List			   *custom_expr_states;
 
+	/* All available plans */
 	HTAB			   *children_table;
 	HASHCTL				children_table_config;
 
