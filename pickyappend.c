@@ -185,7 +185,7 @@ create_pickyappend_path(PlannerInfo *root,
 					    ParamPathInfo *param_info,
 					    JoinPathExtraData *extra)
 {
-	AppendPath	   *inner_append = (AppendPath *) innerrel->cheapest_total_path;
+	AppendPath	   *inner_append = (AppendPath *) linitial(innerrel->cheapest_parameterized_paths);
 	List		   *joinrestrictclauses = extra->restrictlist;
 	List		   *joinclauses;
 	List		   *otherclauses;
@@ -282,7 +282,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 
 	if (innerrel->reloptkind == RELOPT_BASEREL &&
 		inner_entry->inh &&
-		IsA(innerrel->cheapest_total_path, AppendPath) &&
+		IsA(linitial(innerrel->cheapest_parameterized_paths), AppendPath) &&
 		(inner_prel = get_pathman_relation_info(inner_entry->relid, NULL)))
 	{
 		elog(LOG, "adding new nestloop path with pickyappend");
@@ -291,7 +291,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 
 	outer = outerrel->cheapest_total_path;
 
-	inner_required = bms_union(PATH_REQ_OUTER(innerrel->cheapest_total_path),
+	inner_required = bms_union(PATH_REQ_OUTER((Path*)linitial(innerrel->cheapest_parameterized_paths)),
 							   bms_make_singleton(outerrel->relid));
 
 	inner = create_pickyappend_path(root, joinrel, outerrel, innerrel,
