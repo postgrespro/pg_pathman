@@ -179,18 +179,16 @@ get_partition_oids(List *ranges, int *n, PartRelationInfo *prel)
 
 static Path *
 create_pickyappend_path(PlannerInfo *root,
-					    RelOptInfo *joinrel,
-					    RelOptInfo *outerrel,
-					    RelOptInfo *innerrel,
-					    ParamPathInfo *param_info,
-					    JoinPathExtraData *extra)
+						AppendPath *inner_append,
+						ParamPathInfo *param_info,
+						JoinPathExtraData *extra)
 {
-	AppendPath	   *inner_append = (AppendPath *) linitial(innerrel->cheapest_parameterized_paths);
-	List		   *joinrestrictclauses = extra->restrictlist;
-	List		   *joinclauses;
-	List		   *otherclauses;
-	ListCell	   *lc;
-	int				i;
+	RelOptInfo *innerrel = inner_append->path.parent;
+	List	   *joinrestrictclauses = extra->restrictlist;
+	List	   *joinclauses;
+	List	   *otherclauses;
+	ListCell   *lc;
+	int			i;
 
 	RangeTblEntry  *inner_entry = root->simple_rte_array[innerrel->relid];
 
@@ -272,6 +270,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	PartRelationInfo   *inner_prel;
 	NestPath		   *nest_path;
 	List			   *pathkeys = NIL;
+	ListCell		   *lc;
 
 	if (set_join_pathlist_next)
 		set_join_pathlist_next(root, joinrel, outerrel,
@@ -280,38 +279,44 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	if (jointype == JOIN_FULL || !pg_pathman_enable_pickyappend)
 		return;
 
-	if (innerrel->reloptkind == RELOPT_BASEREL &&
-		inner_entry->inh &&
-		IsA(linitial(innerrel->cheapest_parameterized_paths), AppendPath) &&
-		(inner_prel = get_pathman_relation_info(inner_entry->relid, NULL)))
+	if (innerrel->reloptkind != RELOPT_BASEREL ||
+		!inner_entry->inh ||
+		!(inner_prel = get_pathman_relation_info(inner_entry->relid, NULL)))
 	{
-		elog(LOG, "adding new nestloop path with pickyappend");
+		return; /* Obviously not our case */
 	}
-	else return;
 
-	outer = outerrel->cheapest_total_path;
+	foreach (lc, innerrel->pathlist)
+	{
+		AppendPath *cur_inner_path = (AppendPath *) lfirst(lc);
 
-	inner_required = bms_union(PATH_REQ_OUTER((Path*)linitial(innerrel->cheapest_parameterized_paths)),
-							   bms_make_singleton(outerrel->relid));
+		if (!IsA(cur_inner_path, AppendPath))
+			continue;
 
-	inner = create_pickyappend_path(root, joinrel, outerrel, innerrel,
-									get_appendrel_parampathinfo(innerrel,
-																inner_required),
-									extra);
+		outer = outerrel->cheapest_total_path;
 
-	initial_cost_nestloop(root, &workspace, jointype,
-						  outer, inner,
-						  extra->sjinfo, &extra->semifactors);
+		inner_required = bms_union(PATH_REQ_OUTER((Path *) cur_inner_path),
+								   bms_make_singleton(outerrel->relid));
 
-	pathkeys = build_join_pathkeys(root, joinrel, jointype, outer->pathkeys);
+		inner = create_pickyappend_path(root, cur_inner_path,
+										get_appendrel_parampathinfo(innerrel,
+																	inner_required),
+										extra);
 
-	nest_path = create_nestloop_path(root, joinrel, jointype, &workspace,
-									 extra->sjinfo, &extra->semifactors,
-									 outer, inner, extra->restrictlist,
-									 pathkeys,
-									 calc_nestloop_required_outer(outer, inner));
+		initial_cost_nestloop(root, &workspace, jointype,
+							outer, inner,
+							extra->sjinfo, &extra->semifactors);
 
-	add_path(joinrel, (Path *) nest_path);
+		pathkeys = build_join_pathkeys(root, joinrel, jointype, outer->pathkeys);
+
+		nest_path = create_nestloop_path(root, joinrel, jointype, &workspace,
+										extra->sjinfo, &extra->semifactors,
+										outer, inner, extra->restrictlist,
+										pathkeys,
+										calc_nestloop_required_outer(outer, inner));
+
+		add_path(joinrel, (Path *) nest_path);
+	}
 }
 
 static void
