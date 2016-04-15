@@ -87,10 +87,44 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > 2500;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 1000 AND id < 3000;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 1500 AND id < 2500;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE (id >= 500 AND id < 1500) OR (id > 2500);
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel ORDER BY id;
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id <= 2500 ORDER BY id;
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt > '2015-02-15';
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-02-01' AND dt < '2015-03-01';
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-02-15' AND dt < '2015-03-15';
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE (dt >= '2015-01-15' AND dt < '2015-02-15') OR (dt > '2015-03-15');
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel ORDER BY dt;
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-01-15' ORDER BY dt DESC;
+
+/*
+ * Sorting
+ */
+SET enable_indexscan = OFF;
+SET enable_seqscan = ON;
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt < '2015-03-01' ORDER BY dt;
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel_1 UNION ALL SELECT * FROM test.range_rel_2 ORDER BY dt;
+SET enable_indexscan = ON;
+SET enable_seqscan = OFF;
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt < '2015-03-01' ORDER BY dt;
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel_1 UNION ALL SELECT * FROM test.range_rel_2 ORDER BY dt;
+
+/*
+ * Join
+ */
+SET enable_hashjoin = OFF;
+SET enable_mergejoin = ON;
+EXPLAIN (COSTS OFF)
+SELECT * FROM test.range_rel j1
+JOIN test.range_rel j2 on j2.id = j1.id
+JOIN test.num_range_rel j3 on j3.id = j1.id
+WHERE j1.dt < '2015-03-01' AND j2.dt >= '2015-02-01' ORDER BY j2.dt;
+SET enable_hashjoin = ON;
+SET enable_mergejoin = OFF;
+EXPLAIN (COSTS OFF)
+SELECT * FROM test.range_rel j1
+JOIN test.range_rel j2 on j2.id = j1.id
+JOIN test.num_range_rel j3 on j3.id = j1.id
+WHERE j1.dt < '2015-03-01' AND j2.dt >= '2015-02-01' ORDER BY j2.dt;
 
 /*
  * Test CTE query
