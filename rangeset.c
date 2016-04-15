@@ -74,7 +74,7 @@ irange_list_union(List *a, List *b)
 	ListCell   *ca,
 			   *cb;
 	List	   *result = NIL;
-	IndexRange	cur;
+	IndexRange	cur = 0;
 	bool		have_cur = false;
 
 	ca = list_head(a);

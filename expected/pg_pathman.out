@@ -340,6 +340,26 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE (id >= 500 AND id < 1
    ->  Seq Scan on num_range_rel_4
 (8 rows)
 
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel ORDER BY id;
+                           QUERY PLAN                           
+----------------------------------------------------------------
+ Append
+   ->  Index Scan using num_range_rel_1_pkey on num_range_rel_1
+   ->  Index Scan using num_range_rel_2_pkey on num_range_rel_2
+   ->  Index Scan using num_range_rel_3_pkey on num_range_rel_3
+   ->  Index Scan using num_range_rel_4_pkey on num_range_rel_4
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id <= 2500 ORDER BY id;
+                           QUERY PLAN                           
+----------------------------------------------------------------
+ Append
+   ->  Index Scan using num_range_rel_1_pkey on num_range_rel_1
+   ->  Index Scan using num_range_rel_2_pkey on num_range_rel_2
+   ->  Index Scan using num_range_rel_3_pkey on num_range_rel_3
+         Index Cond: (id <= 2500)
+(5 rows)
+
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt > '2015-02-15';
                                      QUERY PLAN                                     
 ------------------------------------------------------------------------------------
@@ -379,6 +399,138 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE (dt >= '2015-01-15' AND d
          Index Cond: (dt > 'Sun Mar 15 00:00:00 2015'::timestamp without time zone)
    ->  Seq Scan on range_rel_4
 (8 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel ORDER BY dt;
+                        QUERY PLAN                        
+----------------------------------------------------------
+ Append
+   ->  Index Scan using range_rel_1_dt_idx on range_rel_1
+   ->  Index Scan using range_rel_2_dt_idx on range_rel_2
+   ->  Index Scan using range_rel_3_dt_idx on range_rel_3
+   ->  Index Scan using range_rel_4_dt_idx on range_rel_4
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-01-15' ORDER BY dt DESC;
+                                     QUERY PLAN                                      
+-------------------------------------------------------------------------------------
+ Append
+   ->  Index Scan Backward using range_rel_4_dt_idx on range_rel_4
+   ->  Index Scan Backward using range_rel_3_dt_idx on range_rel_3
+   ->  Index Scan Backward using range_rel_2_dt_idx on range_rel_2
+   ->  Index Scan Backward using range_rel_1_dt_idx on range_rel_1
+         Index Cond: (dt >= 'Thu Jan 15 00:00:00 2015'::timestamp without time zone)
+(6 rows)
+
+/*
+ * Sorting
+ */
+SET enable_indexscan = OFF;
+SET enable_seqscan = ON;
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt < '2015-03-01' ORDER BY dt;
+             QUERY PLAN              
+-------------------------------------
+ Sort
+   Sort Key: range_rel_1.dt
+   ->  Append
+         ->  Seq Scan on range_rel_1
+         ->  Seq Scan on range_rel_2
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel_1 UNION ALL SELECT * FROM test.range_rel_2 ORDER BY dt;
+             QUERY PLAN              
+-------------------------------------
+ Sort
+   Sort Key: range_rel_1.dt
+   ->  Append
+         ->  Seq Scan on range_rel_1
+         ->  Seq Scan on range_rel_2
+(5 rows)
+
+SET enable_indexscan = ON;
+SET enable_seqscan = OFF;
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt < '2015-03-01' ORDER BY dt;
+                        QUERY PLAN                        
+----------------------------------------------------------
+ Append
+   ->  Index Scan using range_rel_1_dt_idx on range_rel_1
+   ->  Index Scan using range_rel_2_dt_idx on range_rel_2
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel_1 UNION ALL SELECT * FROM test.range_rel_2 ORDER BY dt;
+                        QUERY PLAN                        
+----------------------------------------------------------
+ Merge Append
+   Sort Key: range_rel_1.dt
+   ->  Index Scan using range_rel_1_dt_idx on range_rel_1
+   ->  Index Scan using range_rel_2_dt_idx on range_rel_2
+(4 rows)
+
+/*
+ * Join
+ */
+SET enable_hashjoin = OFF;
+SET enable_mergejoin = ON;
+EXPLAIN (COSTS OFF)
+SELECT * FROM test.range_rel j1
+JOIN test.range_rel j2 on j2.id = j1.id
+JOIN test.num_range_rel j3 on j3.id = j1.id
+WHERE j1.dt < '2015-03-01' AND j2.dt >= '2015-02-01' ORDER BY j2.dt;
+                                        QUERY PLAN                                         
+-------------------------------------------------------------------------------------------
+ Sort
+   Sort Key: j2.dt
+   ->  Merge Join
+         Merge Cond: (j3.id = j2.id)
+         ->  Append
+               ->  Index Scan using num_range_rel_1_pkey on num_range_rel_1 j3
+               ->  Index Scan using num_range_rel_2_pkey on num_range_rel_2 j3_1
+               ->  Index Scan using num_range_rel_3_pkey on num_range_rel_3 j3_2
+               ->  Index Scan using num_range_rel_4_pkey on num_range_rel_4 j3_3
+         ->  Materialize
+               ->  Merge Join
+                     Merge Cond: (j1.id = j2.id)
+                     ->  Merge Append
+                           Sort Key: j1.id
+                           ->  Index Scan using range_rel_1_pkey on range_rel_1 j1
+                           ->  Index Scan using range_rel_2_pkey on range_rel_2 j1_1
+                     ->  Materialize
+                           ->  Merge Append
+                                 Sort Key: j2.id
+                                 ->  Index Scan using range_rel_2_pkey on range_rel_2 j2
+                                 ->  Index Scan using range_rel_3_pkey on range_rel_3 j2_1
+                                 ->  Index Scan using range_rel_4_pkey on range_rel_4 j2_2
+(22 rows)
+
+SET enable_hashjoin = ON;
+SET enable_mergejoin = OFF;
+EXPLAIN (COSTS OFF)
+SELECT * FROM test.range_rel j1
+JOIN test.range_rel j2 on j2.id = j1.id
+JOIN test.num_range_rel j3 on j3.id = j1.id
+WHERE j1.dt < '2015-03-01' AND j2.dt >= '2015-02-01' ORDER BY j2.dt;
+                                      QUERY PLAN                                       
+---------------------------------------------------------------------------------------
+ Sort
+   Sort Key: j2.dt
+   ->  Hash Join
+         Hash Cond: (j1.id = j2.id)
+         ->  Hash Join
+               Hash Cond: (j3.id = j1.id)
+               ->  Append
+                     ->  Index Scan using num_range_rel_1_pkey on num_range_rel_1 j3
+                     ->  Index Scan using num_range_rel_2_pkey on num_range_rel_2 j3_1
+                     ->  Index Scan using num_range_rel_3_pkey on num_range_rel_3 j3_2
+                     ->  Index Scan using num_range_rel_4_pkey on num_range_rel_4 j3_3
+               ->  Hash
+                     ->  Append
+                           ->  Index Scan using range_rel_1_pkey on range_rel_1 j1
+                           ->  Index Scan using range_rel_2_pkey on range_rel_2 j1_1
+         ->  Hash
+               ->  Append
+                     ->  Index Scan using range_rel_2_dt_idx on range_rel_2 j2
+                     ->  Index Scan using range_rel_3_dt_idx on range_rel_3 j2_1
+                     ->  Index Scan using range_rel_4_dt_idx on range_rel_4 j2_2
+(20 rows)
 
 /*
  * Test CTE query
