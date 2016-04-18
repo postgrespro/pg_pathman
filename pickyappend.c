@@ -3,11 +3,11 @@
 #include "pathman.h"
 
 
-bool pg_pathman_enable_pickyappend = true;
+bool				pg_pathman_enable_pickyappend = true;
 
-CustomPathMethods				pickyappend_path_methods;
-CustomScanMethods				pickyappend_plan_methods;
-CustomExecMethods				pickyappend_exec_methods;
+CustomPathMethods	pickyappend_path_methods;
+CustomScanMethods	pickyappend_plan_methods;
+CustomExecMethods	pickyappend_exec_methods;
 
 
 static void

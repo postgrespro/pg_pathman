@@ -45,11 +45,11 @@ typedef struct
 	HASHCTL				plan_state_table_config;
 } PickyAppendState;
 
-extern bool							pg_pathman_enable_pickyappend;
+extern bool					pg_pathman_enable_pickyappend;
 
-extern CustomPathMethods			pickyappend_path_methods;
-extern CustomScanMethods			pickyappend_plan_methods;
-extern CustomExecMethods			pickyappend_exec_methods;
+extern CustomPathMethods	pickyappend_path_methods;
+extern CustomScanMethods	pickyappend_plan_methods;
+extern CustomExecMethods	pickyappend_exec_methods;
 
 Path * create_pickyappend_path(PlannerInfo *root, AppendPath *inner_append,
 							   ParamPathInfo *param_info, List *picky_clauses);
