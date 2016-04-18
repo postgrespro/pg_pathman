@@ -33,6 +33,7 @@
 #include "utils/date.h"
 #include "utils/typcache.h"
 #include "utils/lsyscache.h"
+#include "utils/guc.h"
 #include "access/heapam.h"
 #include "access/nbtree.h"
 #include "storage/ipc.h"
@@ -54,6 +55,9 @@ typedef struct
 	List		   *args;
 	List		   *rangeset;
 } WrapperNode;
+
+bool pg_pathman_enable;
+PathmanState *pmstate;
 
 /* Original hooks */
 static set_rel_pathlist_hook_type set_rel_pathlist_hook_original = NULL;
@@ -152,6 +156,17 @@ _PG_init(void)
 	post_parse_analyze_hook = pathman_post_parse_analysis_hook;
 	planner_hook_original = planner_hook;
 	planner_hook = pathman_planner_hook;
+
+	DefineCustomBoolVariable("pg_pathman.enable",
+							 "Enables pg_pathman's optimizations during the planner stage",
+							 NULL,
+							 &pg_pathman_enable,
+							 true,
+							 PGC_USERSET,
+							 0,
+							 NULL,
+							 NULL,
+							 NULL);
 }
 
 void
@@ -227,27 +242,30 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	PlannedStmt	  *result;
 	ListCell	  *lc;
 
-	inheritance_disabled = false;
-	switch(parse->commandType)
+	if (pg_pathman_enable)
 	{
-		case CMD_SELECT:
-			disable_inheritance(parse);
-			break;
-		case CMD_UPDATE:
-		case CMD_DELETE:
-			handle_modification_query(parse);
-			break;
-		default:
-			break;
-	}
+		inheritance_disabled = false;
+		switch(parse->commandType)
+		{
+			case CMD_SELECT:
+				disable_inheritance(parse);
+				break;
+			case CMD_UPDATE:
+			case CMD_DELETE:
+				handle_modification_query(parse);
+				break;
+			default:
+				break;
+		}
 
-	/* If query contains CTE (WITH statement) then handle subqueries too */
-	foreach(lc, parse->cteList)
-	{
-		CommonTableExpr *cte = (CommonTableExpr*) lfirst(lc);
+		/* If query contains CTE (WITH statement) then handle subqueries too */
+		foreach(lc, parse->cteList)
+		{
+			CommonTableExpr *cte = (CommonTableExpr*) lfirst(lc);
 
-		if (IsA(cte->ctequery, Query))
-			disable_inheritance((Query *)cte->ctequery);
+			if (IsA(cte->ctequery, Query))
+				disable_inheritance((Query *)cte->ctequery);
+		}
 	}
 
 	/* Invoke original hook */
@@ -381,6 +399,9 @@ pathman_set_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, Ran
 	int len;
 	bool found;
 	int first_child_relid = 0;
+
+	if (!pg_pathman_enable)
+		return;
 
 	/* This works only for SELECT queries */
 	if (root->parse->commandType != CMD_SELECT || !inheritance_disabled)
@@ -1017,14 +1038,14 @@ handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result,
 
 					if ((cmp_min < 0 &&
 						 (strategy == BTLessEqualStrategyNumber ||
-						  strategy == BTEqualStrategyNumber)) || 
+						  strategy == BTEqualStrategyNumber)) ||
 						(cmp_min <= 0 && strategy == BTLessStrategyNumber))
 					{
 						result->rangeset = NIL;
 						return;
 					}
 
-					if (cmp_max >= 0 && (strategy == BTGreaterEqualStrategyNumber || 
+					if (cmp_max >= 0 && (strategy == BTGreaterEqualStrategyNumber ||
 						strategy == BTGreaterStrategyNumber ||
 						strategy == BTEqualStrategyNumber))
 					{
@@ -1032,14 +1053,14 @@ handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result,
 						return;
 					}
 
-					if ((cmp_min < 0 && strategy == BTGreaterStrategyNumber) || 
+					if ((cmp_min < 0 && strategy == BTGreaterStrategyNumber) ||
 						(cmp_min <= 0 && strategy == BTGreaterEqualStrategyNumber))
 					{
 						result->rangeset = list_make1_irange(make_irange(startidx, endidx, false));
 						return;
 					}
 
-					if (cmp_max >= 0 && (strategy == BTLessEqualStrategyNumber || 
+					if (cmp_max >= 0 && (strategy == BTLessEqualStrategyNumber ||
 						strategy == BTLessStrategyNumber))
 					{
 						result->rangeset = list_make1_irange(make_irange(startidx, endidx, false));
