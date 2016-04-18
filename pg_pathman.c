@@ -122,8 +122,12 @@ static Path *get_cheapest_parameterized_child_path(PlannerInfo *root, RelOptInfo
 #define check_gt(flinfo, arg1, arg2) \
 	((int) FunctionCall2(cmp_func, arg1, arg2) > 0)
 
-#define IsConstValue(node) \
-	( IsA((node), Const) || IsA((node), Param) )
+#define WcxtHasExprContext(wcxt) ( (wcxt) && (wcxt)->econtext )
+
+/* We can transform Param into Const provided that 'econtext' is available */
+#define IsConstValue(wcxt, node) \
+	( IsA((node), Const) || (WcxtHasExprContext(wcxt) ? IsA((node), Param) : false) )
+
 #define ExtractConst(wcxt, node) \
 	( IsA((node), Param) ? extract_const((wcxt), (Param *) (node)) : ((Const *) (node)) )
 
@@ -1276,13 +1280,13 @@ handle_opexpr(WalkerContext *wcxt, const OpExpr *expr, const PartRelationInfo *p
 		firstarg = (Node *) linitial(expr->args);
 		secondarg = (Node *) lsecond(expr->args);
 
-		if (IsA(firstarg, Var) && IsConstValue(secondarg) &&
+		if (IsA(firstarg, Var) && IsConstValue(wcxt, secondarg) &&
 			((Var *)firstarg)->varattno == prel->attnum)
 		{
 			handle_binary_opexpr(prel, result, (Var *)firstarg, ExtractConst(wcxt, secondarg));
 			return result;
 		}
-		else if (IsA(secondarg, Var) && IsConstValue(firstarg) &&
+		else if (IsA(secondarg, Var) && IsConstValue(wcxt, firstarg) &&
 				 ((Var *)secondarg)->varattno == prel->attnum)
 		{
 			handle_binary_opexpr(prel, result, (Var *)secondarg, ExtractConst(wcxt, firstarg));
