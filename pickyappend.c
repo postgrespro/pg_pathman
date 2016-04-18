@@ -1,49 +1,14 @@
 #include "postgres.h"
 #include "pickyappend.h"
-
 #include "pathman.h"
-
-#include "optimizer/clauses.h"
-#include "optimizer/cost.h"
-#include "optimizer/restrictinfo.h"
-#include "optimizer/planmain.h"
-#include "optimizer/tlist.h"
-#include "optimizer/var.h"
 
 
 bool pg_pathman_enable_pickyappend = true;
-
-set_join_pathlist_hook_type		set_join_pathlist_next = NULL;
 
 CustomPathMethods				pickyappend_path_methods;
 CustomScanMethods				pickyappend_plan_methods;
 CustomExecMethods				pickyappend_exec_methods;
 
-
-/*
- * Element of the plan_state_table
- */
-typedef struct
-{
-	Oid			relid; /* relid of the corresponding partition */
-	PlanState  *ps;
-} PreservedPlanState;
-
-/* Compare plans by 'original_order' */
-static int
-cmp_child_scan_common_by_orig_order(const void *ap,
-									const void *bp)
-{
-	ChildScanCommon a = *(ChildScanCommon *) ap;
-	ChildScanCommon b = *(ChildScanCommon *) bp;
-
-	if (a->original_order > b->original_order)
-		return 1;
-	else if (a->original_order < b->original_order)
-		return -1;
-	else
-		return 0;
-}
 
 static void
 free_child_scan_common_array(ChildScanCommon *cur_plans, int n)
@@ -58,17 +23,6 @@ free_child_scan_common_array(ChildScanCommon *cur_plans, int n)
 		pfree(cur_plans[i]);
 
 	pfree(cur_plans);
-}
-
-static void
-clear_plan_states(PickyAppendState *scan_state)
-{
-	ListCell *state_cell;
-
-	foreach (state_cell, scan_state->css.custom_ps)
-	{
-		ExecEndNode((PlanState *) lfirst(state_cell));
-	}
 }
 
 static void
@@ -177,7 +131,7 @@ get_partition_oids(List *ranges, int *n, PartRelationInfo *prel)
 	return result;
 }
 
-static Path *
+Path *
 create_pickyappend_path(PlannerInfo *root,
 						AppendPath *inner_append,
 						ParamPathInfo *param_info,
@@ -237,87 +191,6 @@ create_pickyappend_path(PlannerInfo *root,
 	}
 
 	return &result->cpath.path;
-}
-
-void
-pathman_join_pathlist_hook(PlannerInfo *root,
-						   RelOptInfo *joinrel,
-						   RelOptInfo *outerrel,
-						   RelOptInfo *innerrel,
-						   JoinType jointype,
-						   JoinPathExtraData *extra)
-{
-	JoinCostWorkspace	workspace;
-	Path			   *outer,
-					   *inner;
-	Relids				inner_required;
-	RangeTblEntry	   *inner_entry = root->simple_rte_array[innerrel->relid];
-	PartRelationInfo   *inner_prel;
-	NestPath		   *nest_path;
-	List			   *pathkeys = NIL;
-	List			   *joinrestrictclauses = extra->restrictlist;
-	List			   *joinclauses,
-					   *otherclauses;
-	ListCell		   *lc;
-
-	if (set_join_pathlist_next)
-		set_join_pathlist_next(root, joinrel, outerrel,
-							   innerrel, jointype, extra);
-
-	if (jointype == JOIN_FULL || !pg_pathman_enable_pickyappend)
-		return;
-
-	if (innerrel->reloptkind != RELOPT_BASEREL ||
-		!inner_entry->inh ||
-		!(inner_prel = get_pathman_relation_info(inner_entry->relid, NULL)))
-	{
-		return; /* Obviously not our case */
-	}
-
-	/* Extract join clauses which will separate partitions */
-	if (IS_OUTER_JOIN(extra->sjinfo->jointype))
-	{
-		extract_actual_join_clauses(joinrestrictclauses,
-									&joinclauses, &otherclauses);
-	}
-	else
-	{
-		/* We can treat all clauses alike for an inner join */
-		joinclauses = extract_actual_clauses(joinrestrictclauses, false);
-		otherclauses = NIL;
-	}
-
-	foreach (lc, innerrel->pathlist)
-	{
-		AppendPath *cur_inner_path = (AppendPath *) lfirst(lc);
-
-		if (!IsA(cur_inner_path, AppendPath))
-			continue;
-
-		outer = outerrel->cheapest_total_path;
-
-		inner_required = bms_union(PATH_REQ_OUTER((Path *) cur_inner_path),
-								   bms_make_singleton(outerrel->relid));
-
-		inner = create_pickyappend_path(root, cur_inner_path,
-										get_appendrel_parampathinfo(innerrel,
-																	inner_required),
-										joinclauses);
-
-		initial_cost_nestloop(root, &workspace, jointype,
-							  outer, inner,
-							  extra->sjinfo, &extra->semifactors);
-
-		pathkeys = build_join_pathkeys(root, joinrel, jointype, outer->pathkeys);
-
-		nest_path = create_nestloop_path(root, joinrel, jointype, &workspace,
-										 extra->sjinfo, &extra->semifactors,
-										 outer, inner, extra->restrictlist,
-										 pathkeys,
-										 calc_nestloop_required_outer(outer, inner));
-
-		add_path(joinrel, (Path *) nest_path);
-	}
 }
 
 static void
@@ -486,7 +359,7 @@ pickyappend_end(CustomScanState *node)
 {
 	PickyAppendState   *scan_state = (PickyAppendState *) node;
 
-	clear_plan_states(scan_state);
+	clear_plan_states(&scan_state->css);
 	hash_destroy(scan_state->plan_state_table);
 	hash_destroy(scan_state->children_table);
 }
@@ -539,47 +412,5 @@ pickyppend_explain(CustomScanState *node, List *ancestors, ExplainState *es)
 {
 	PickyAppendState   *scan_state = (PickyAppendState *) node;
 
-	/* Construct excess PlanStates */
-	if (!es->analyze)
-	{
-		int					allocated = 10;
-		int					used = 0;
-		ChildScanCommon	   *custom_ps = palloc(allocated * sizeof(ChildScanCommon));
-		ChildScanCommon		child;
-		HASH_SEQ_STATUS		seqstat;
-		int					i;
-
-		/* There can't be any nodes since we're not scanning anything */
-		Assert(!node->custom_ps);
-
-		hash_seq_init(&seqstat, scan_state->children_table);
-
-		while ((child = (ChildScanCommon) hash_seq_search(&seqstat)))
-		{
-			if (allocated <= used)
-			{
-				allocated *= 2;
-				custom_ps = repalloc(custom_ps, allocated * sizeof(ChildScanCommon));
-			}
-
-			custom_ps[used++] = child;
-		}
-
-		/*
-		 * We have to restore the original plan order
-		 * which has been lost within the hash table
-		 */
-		qsort(custom_ps, used, sizeof(ChildScanCommon),
-			  cmp_child_scan_common_by_orig_order);
-
-		/*
-		 * These PlanStates will be used by EXPLAIN,
-		 * pickyappend_end will destroy them eventually
-		 */
-		for (i = 0; i < used; i++)
-			node->custom_ps = lappend(node->custom_ps,
-									  ExecInitNode(custom_ps[i]->content.plan,
-												   node->ss.ps.state,
-												   0));
-	}
+	explain_common(node, scan_state->children_table, es);
 }

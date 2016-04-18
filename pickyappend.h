@@ -1,29 +1,14 @@
+#ifndef PICKYAPPEND_H
+#define PICKYAPPEND_H
+
 #include "postgres.h"
 #include "optimizer/paths.h"
 #include "optimizer/pathnode.h"
-
 #include "commands/explain.h"
 
 #include "pathman.h"
+#include "nodes_common.h"
 
-
-extern bool pg_pathman_enable_pickyappend;
-
-typedef struct
-{
-	Oid		relid;					/* partition relid */
-
-	union
-	{
-		Path	   *path;
-		Plan	   *plan;
-		PlanState  *plan_state;
-	}		content;
-
-	int		original_order;			/* for sorting in EXPLAIN */
-} ChildScanCommonData;
-
-typedef ChildScanCommonData *ChildScanCommon;
 
 typedef struct
 {
@@ -60,17 +45,18 @@ typedef struct
 	HASHCTL				plan_state_table_config;
 } PickyAppendState;
 
-extern set_join_pathlist_hook_type	set_join_pathlist_next;
+extern bool							pg_pathman_enable_pickyappend;
 
 extern CustomPathMethods			pickyappend_path_methods;
 extern CustomScanMethods			pickyappend_plan_methods;
 extern CustomExecMethods			pickyappend_exec_methods;
 
-void pathman_join_pathlist_hook(PlannerInfo *root, RelOptInfo *joinrel, RelOptInfo *outerrel,
-								RelOptInfo *innerrel, JoinType jointype, JoinPathExtraData *extra);
+Path * create_pickyappend_path(PlannerInfo *root, AppendPath *inner_append,
+							   ParamPathInfo *param_info, List *picky_clauses);
 
-Plan * create_pickyappend_plan(PlannerInfo *root, RelOptInfo *rel, CustomPath *best_path,
-							   List *tlist, List *clauses, List *custom_plans);
+Plan * create_pickyappend_plan(PlannerInfo *root, RelOptInfo *rel,
+							   CustomPath *best_path, List *tlist,
+							   List *clauses, List *custom_plans);
 
 Node * pickyappend_create_scan_state(CustomScan *node);
 
@@ -83,3 +69,5 @@ void pickyappend_end(CustomScanState *node);
 void pickyappend_rescan(CustomScanState *node);
 
 void pickyppend_explain(CustomScanState *node, List *ancestors, ExplainState *es);
+
+#endif

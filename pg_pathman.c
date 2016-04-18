@@ -41,6 +41,7 @@
 #include "catalog/pg_operator.h"
 #include "catalog/pg_type.h"
 #include "foreign/fdwapi.h"
+#include "join_hook.h"
 #include "pickyappend.h"
 
 PG_MODULE_MAGIC;
