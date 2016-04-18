@@ -181,12 +181,9 @@ static Path *
 create_pickyappend_path(PlannerInfo *root,
 						AppendPath *inner_append,
 						ParamPathInfo *param_info,
-						JoinPathExtraData *extra)
+						List *picky_clauses)
 {
 	RelOptInfo *innerrel = inner_append->path.parent;
-	List	   *joinrestrictclauses = extra->restrictlist;
-	List	   *joinclauses;
-	List	   *otherclauses;
 	ListCell   *lc;
 	int			i;
 
@@ -196,18 +193,6 @@ create_pickyappend_path(PlannerInfo *root,
 
 	result = palloc0(sizeof(PickyAppendPath));
 	NodeSetTag(result, T_CustomPath);
-
-	if (IS_OUTER_JOIN(extra->sjinfo->jointype))
-	{
-		extract_actual_join_clauses(joinrestrictclauses,
-									&joinclauses, &otherclauses);
-	}
-	else
-	{
-		/* We can treat all clauses alike for an inner join */
-		joinclauses = extract_actual_clauses(joinrestrictclauses, false);
-		otherclauses = NIL;
-	}
 
 	result->cpath.path.pathtype = T_CustomScan;
 	result->cpath.path.parent = innerrel;
@@ -225,7 +210,7 @@ create_pickyappend_path(PlannerInfo *root,
 	result->cpath.path.total_cost = 0;
 
 	/* Set 'partitioned column'-related clauses */
-	result->cpath.custom_private = joinclauses;
+	result->cpath.custom_private = picky_clauses;
 	result->cpath.custom_paths = NIL;
 
 	Assert(inner_entry->relid != 0);
@@ -270,6 +255,9 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	PartRelationInfo   *inner_prel;
 	NestPath		   *nest_path;
 	List			   *pathkeys = NIL;
+	List			   *joinrestrictclauses = extra->restrictlist;
+	List			   *joinclauses,
+					   *otherclauses;
 	ListCell		   *lc;
 
 	if (set_join_pathlist_next)
@@ -284,6 +272,19 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		!(inner_prel = get_pathman_relation_info(inner_entry->relid, NULL)))
 	{
 		return; /* Obviously not our case */
+	}
+
+	/* Extract join clauses which will separate partitions */
+	if (IS_OUTER_JOIN(extra->sjinfo->jointype))
+	{
+		extract_actual_join_clauses(joinrestrictclauses,
+									&joinclauses, &otherclauses);
+	}
+	else
+	{
+		/* We can treat all clauses alike for an inner join */
+		joinclauses = extract_actual_clauses(joinrestrictclauses, false);
+		otherclauses = NIL;
 	}
 
 	foreach (lc, innerrel->pathlist)
@@ -301,19 +302,19 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		inner = create_pickyappend_path(root, cur_inner_path,
 										get_appendrel_parampathinfo(innerrel,
 																	inner_required),
-										extra);
+										joinclauses);
 
 		initial_cost_nestloop(root, &workspace, jointype,
-							outer, inner,
-							extra->sjinfo, &extra->semifactors);
+							  outer, inner,
+							  extra->sjinfo, &extra->semifactors);
 
 		pathkeys = build_join_pathkeys(root, joinrel, jointype, outer->pathkeys);
 
 		nest_path = create_nestloop_path(root, joinrel, jointype, &workspace,
-										extra->sjinfo, &extra->semifactors,
-										outer, inner, extra->restrictlist,
-										pathkeys,
-										calc_nestloop_required_outer(outer, inner));
+										 extra->sjinfo, &extra->semifactors,
+										 outer, inner, extra->restrictlist,
+										 pathkeys,
+										 calc_nestloop_required_outer(outer, inner));
 
 		add_path(joinrel, (Path *) nest_path);
 	}
