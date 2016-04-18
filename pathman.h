@@ -121,7 +121,8 @@ typedef struct PathmanState
 	DsmArray	databases;
 } PathmanState;
 
-PathmanState *pmstate;
+extern bool pg_pathman_enable;
+extern PathmanState *pmstate;
 
 #define PATHMAN_GET_DATUM(value, by_val) ( (by_val) ? (value) : PointerGetDatum(&value) )
 

@@ -51,6 +51,9 @@ typedef struct
 	Oid new_varno;
 } change_varno_context;
 
+bool pg_pathman_enable;
+PathmanState *pmstate;
+
 /* Original hooks */
 static set_rel_pathlist_hook_type set_rel_pathlist_hook_original = NULL;
 static shmem_startup_hook_type shmem_startup_hook_original = NULL;
@@ -170,6 +173,17 @@ _PG_init(void)
 	pickyappend_exec_methods.RestrPosCustomScan		= NULL;
 	pickyappend_exec_methods.ExplainCustomScan		= pickyppend_explain;
 
+	DefineCustomBoolVariable("pg_pathman.enable",
+							 "Enables pg_pathman's optimizations during the planner stage",
+							 NULL,
+							 &pg_pathman_enable,
+							 true,
+							 PGC_USERSET,
+							 0,
+							 NULL,
+							 NULL,
+							 NULL);
+
 	DefineCustomBoolVariable("pg_pathman.enable_pickyappend",
 							 "Enables the planner's use of PickyAppend custom node.",
 							 NULL,
@@ -255,27 +269,30 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	PlannedStmt	  *result;
 	ListCell	  *lc;
 
-	inheritance_disabled = false;
-	switch(parse->commandType)
+	if (pg_pathman_enable)
 	{
-		case CMD_SELECT:
-			disable_inheritance(parse);
-			break;
-		case CMD_UPDATE:
-		case CMD_DELETE:
-			handle_modification_query(parse);
-			break;
-		default:
-			break;
-	}
+		inheritance_disabled = false;
+		switch(parse->commandType)
+		{
+			case CMD_SELECT:
+				disable_inheritance(parse);
+				break;
+			case CMD_UPDATE:
+			case CMD_DELETE:
+				handle_modification_query(parse);
+				break;
+			default:
+				break;
+		}
 
-	/* If query contains CTE (WITH statement) then handle subqueries too */
-	foreach(lc, parse->cteList)
-	{
-		CommonTableExpr *cte = (CommonTableExpr*) lfirst(lc);
+		/* If query contains CTE (WITH statement) then handle subqueries too */
+		foreach(lc, parse->cteList)
+		{
+			CommonTableExpr *cte = (CommonTableExpr*) lfirst(lc);
 
-		if (IsA(cte->ctequery, Query))
-			disable_inheritance((Query *)cte->ctequery);
+			if (IsA(cte->ctequery, Query))
+				disable_inheritance((Query *)cte->ctequery);
+		}
 	}
 
 	/* Invoke original hook */
@@ -410,6 +427,9 @@ pathman_set_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, Ran
 	int len;
 	bool found;
 	int first_child_relid = 0;
+
+	if (!pg_pathman_enable)
+		return;
 
 	/* This works only for SELECT queries */
 	if (root->parse->commandType != CMD_SELECT || !inheritance_disabled)
