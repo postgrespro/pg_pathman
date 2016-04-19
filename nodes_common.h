@@ -16,16 +16,16 @@ typedef struct
 
 typedef struct
 {
-	Oid		relid;					/* partition relid */
+	Oid			relid;				/* partition relid */
 
 	union
 	{
 		Path	   *path;
 		Plan	   *plan;
 		PlanState  *plan_state;
-	}		content;
+	}			content;
 
-	int		original_order;			/* for sorting in EXPLAIN */
+	int			original_order;		/* for sorting in EXPLAIN */
 } ChildScanCommonData;
 
 typedef ChildScanCommonData *ChildScanCommon;

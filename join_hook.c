@@ -32,6 +32,12 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		set_join_pathlist_next(root, joinrel, outerrel,
 							   innerrel, jointype, extra);
 
+	if (jointype == JOIN_UNIQUE_OUTER ||
+		jointype == JOIN_UNIQUE_INNER)
+	{
+		jointype = JOIN_INNER;
+	}
+
 	if (jointype == JOIN_FULL || !pg_pathman_enable_pickyappend)
 		return;
 
