@@ -33,16 +33,16 @@ typedef struct
 	HTAB			   *children_table;
 	HASHCTL				children_table_config;
 
+	/* Contains reusable PlanStates */
+	HTAB			   *plan_state_table;
+	HASHCTL				plan_state_table_config;
+
 	/* Currently selected plans \ plan states */
 	ChildScanCommon	   *cur_plans;
 	int					ncur_plans;
 
 	/* Index of the selected plan state */
 	int					running_idx;
-
-	/* Contains reusable PlanStates */
-	HTAB			   *plan_state_table;
-	HASHCTL				plan_state_table_config;
 } PickyAppendState;
 
 extern bool					pg_pathman_enable_pickyappend;

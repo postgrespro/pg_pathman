@@ -44,7 +44,29 @@ clear_plan_states(CustomScanState *scan_state)
 	}
 }
 
-void
-explain_common(CustomScanState *node, HTAB *children_table, ExplainState *es);
+Path * create_append_path_common(PlannerInfo *root,
+								 AppendPath *inner_append,
+								 ParamPathInfo *param_info,
+								 List *picky_clauses,
+								 CustomPathMethods *path_methods);
+
+Plan * create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
+								 CustomPath *best_path, List *tlist,
+								 List *clauses, List *custom_plans,
+								 CustomScanMethods *scan_methods);
+
+Node * create_append_scan_state_common(CustomScan *node,
+									   CustomExecMethods *exec_methods,
+									   uint32 size);
+
+void begin_append_common(CustomScanState *node, EState *estate, int eflags);
+
+void end_append_common(CustomScanState *node);
+
+void rescan_append_common(CustomScanState *node);
+
+void explain_append_common(CustomScanState *node,
+						   HTAB *children_table,
+						   ExplainState *es);
 
 #endif
