@@ -714,7 +714,6 @@ append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
 
 	/* Add child to relids */
 	rel->relids = bms_add_member(rel->relids, childRTindex);
-	root->all_baserels = bms_add_member(root->all_baserels, childRTindex);
 
 	/* Recalc parent relation tuples count */
 	rel->tuples += childrel->tuples;
