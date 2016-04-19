@@ -526,15 +526,6 @@ pathman_set_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, Ran
 		/* Clear old path list */
 		list_free(rel->pathlist);
 
-		/* Set apropriate varnos */
-		if (first_child_relid)
-		{
-			change_varnos((Node *) root->canon_pathkeys, rti, first_child_relid);
-			change_varnos((Node *) root->eq_classes, rti, first_child_relid);
-			change_varnos((Node *) root->parse->targetList, rti, first_child_relid);
-			change_varnos((Node *) rel->reltargetlist, rti, first_child_relid);
-		}
-
 		rel->pathlist = NIL;
 		set_append_rel_pathlist(root, rel, rti, rte, pathkeyAsc, pathkeyDesc);
 		set_append_rel_size(root, rel, rti, rte);
@@ -711,9 +702,6 @@ append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		}
 	}
 	childrel->has_eclass_joins = rel->has_eclass_joins;
-
-	/* Add child to relids */
-	rel->relids = bms_add_member(rel->relids, childRTindex);
 
 	/* Recalc parent relation tuples count */
 	rel->tuples += childrel->tuples;
