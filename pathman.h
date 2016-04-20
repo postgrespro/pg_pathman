@@ -14,11 +14,15 @@
 #include "utils/date.h"
 #include "utils/hsearch.h"
 #include "utils/snapshot.h"
+#include "utils/typcache.h"
 #include "nodes/pg_list.h"
-#include "storage/dsm.h"
-#include "storage/lwlock.h"
+#include "nodes/makefuncs.h"
 #include "nodes/primnodes.h"
 #include "nodes/execnodes.h"
+#include "optimizer/planner.h"
+#include "parser/parsetree.h"
+#include "storage/dsm.h"
+#include "storage/lwlock.h"
 
 /* Check PostgreSQL version */
 #if PG_VERSION_NUM < 90500
@@ -121,8 +125,9 @@ typedef struct PathmanState
 	DsmArray	databases;
 } PathmanState;
 
-extern bool pg_pathman_enable;
-extern PathmanState *pmstate;
+extern bool				inheritance_disabled;
+extern bool 			pg_pathman_enable;
+extern PathmanState    *pmstate;
 
 #define PATHMAN_GET_DATUM(value, by_val) ( (by_val) ? (value) : PointerGetDatum(&value) )
 
@@ -186,6 +191,8 @@ void load_check_constraints(Oid parent_oid, Snapshot snapshot);
 void remove_relation_info(Oid relid);
 
 /* utility functions */
+int append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
+						  RangeTblEntry *rte, int index, Oid childOID, List *wrappers);
 PartRelationInfo *get_pathman_relation_info(Oid relid, bool *found);
 RangeRelation *get_pathman_range_relation(Oid relid, bool *found);
 int range_binary_search(const RangeRelation *rangerel, FmgrInfo *cmp_func, Datum value, bool *fountPtr);
@@ -193,6 +200,12 @@ char *get_extension_schema(void);
 FmgrInfo *get_cmp_func(Oid type1, Oid type2);
 Oid create_partitions_bg_worker(Oid relid, Datum value, Oid value_type, bool *crashed);
 Oid create_partitions(Oid relid, Datum value, Oid value_type, bool *crashed);
+
+/* copied from allpaths.h */
+void set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
+						 Index rti, RangeTblEntry *rte);
+void set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTblEntry *rte,
+							 PathKey *pathkeyAsc, PathKey *pathkeyDesc);
 
 typedef struct
 {

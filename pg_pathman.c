@@ -16,7 +16,6 @@
 #include "nodes/nodeFuncs.h"
 #include "nodes/pg_list.h"
 #include "nodes/relation.h"
-#include "nodes/makefuncs.h"
 #include "nodes/primnodes.h"
 #include "optimizer/clauses.h"
 #include "optimizer/paths.h"
@@ -25,14 +24,12 @@
 #include "optimizer/restrictinfo.h"
 #include "optimizer/cost.h"
 #include "parser/analyze.h"
-#include "parser/parsetree.h"
 #include "utils/hsearch.h"
 #include "utils/tqual.h"
 #include "utils/rel.h"
 #include "utils/elog.h"
 #include "utils/array.h"
 #include "utils/date.h"
-#include "utils/typcache.h"
 #include "utils/lsyscache.h"
 #include "utils/guc.h"
 #include "access/heapam.h"
@@ -41,7 +38,7 @@
 #include "catalog/pg_operator.h"
 #include "catalog/pg_type.h"
 #include "foreign/fdwapi.h"
-#include "join_hook.h"
+#include "hooks.h"
 #include "pickyappend.h"
 
 PG_MODULE_MAGIC;
@@ -52,32 +49,27 @@ typedef struct
 	Oid new_varno;
 } change_varno_context;
 
-bool pg_pathman_enable;
-PathmanState *pmstate;
+bool			inheritance_disabled;
+bool			pg_pathman_enable;
+PathmanState   *pmstate;
 
 /* Original hooks */
-static set_rel_pathlist_hook_type set_rel_pathlist_hook_original = NULL;
 static shmem_startup_hook_type shmem_startup_hook_original = NULL;
 static post_parse_analyze_hook_type post_parse_analyze_hook_original = NULL;
 static planner_hook_type planner_hook_original = NULL;
 
 /* pg module functions */
 void _PG_init(void);
-void _PG_fini(void);
 
 /* Hook functions */
 static void pathman_shmem_startup(void);
-static void pathman_set_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTblEntry *rte);
 void pathman_post_parse_analysis_hook(ParseState *pstate, Query *query);
 static PlannedStmt * pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams);
 
 /* Utility functions */
 static void handle_modification_query(Query *parse);
-static int append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
-				RangeTblEntry *rte, int index, Oid childOID, List *wrappers);
 static Node *wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue);
 static void disable_inheritance(Query *parse);
-bool inheritance_disabled;
 
 /* Expression tree handlers */
 static int make_hash(const PartRelationInfo *prel, int value);
@@ -94,9 +86,6 @@ static RestrictInfo *rebuild_restrictinfo(Node *clause, RestrictInfo *old_rinfo)
 static void set_plain_rel_size(PlannerInfo *root, RelOptInfo *rel,
 				   RangeTblEntry *rte);
 static void set_plain_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte);
-static void set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
-					Index rti, RangeTblEntry *rte);
-static void set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTblEntry *rte, PathKey *pathkeyAsc, PathKey *pathkeyDesc);
 static List *accumulate_append_subpath(List *subpaths, Path *path);
 static void generate_mergeappend_paths(PlannerInfo *root, RelOptInfo *rel,
 						   List *live_childrels,
@@ -152,8 +141,8 @@ _PG_init(void)
 	RequestAddinShmemSpace(pathman_memsize());
 	RequestAddinLWLocks(3);
 
-	set_rel_pathlist_hook_original = set_rel_pathlist_hook;
-	set_rel_pathlist_hook = pathman_set_rel_pathlist_hook;
+	set_rel_pathlist_hook_next = set_rel_pathlist_hook;
+	set_rel_pathlist_hook = pathman_rel_pathlist_hook;
 	set_join_pathlist_next = set_join_pathlist_hook;
 	set_join_pathlist_hook = pathman_join_pathlist_hook;
 	shmem_startup_hook_original = shmem_startup_hook;
@@ -199,15 +188,6 @@ _PG_init(void)
 							 NULL,
 							 NULL,
 							 NULL);
-}
-
-void
-_PG_fini(void)
-{
-	set_rel_pathlist_hook = set_rel_pathlist_hook_original;
-	shmem_startup_hook = shmem_startup_hook_original;
-	post_parse_analyze_hook = post_parse_analyze_hook_original;
-	planner_hook = planner_hook_original;
 }
 
 PartRelationInfo *
@@ -420,158 +400,7 @@ pathman_shmem_startup(void)
 		shmem_startup_hook_original();
 }
 
-/*
- * Main hook. All the magic goes here
- */
 void
-pathman_set_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTblEntry *rte)
-{
-	PartRelationInfo *prel = NULL;
-	RelOptInfo **new_rel_array;
-	RangeTblEntry **new_rte_array;
-	int len;
-	bool found;
-	int first_child_relid = 0;
-
-	if (!pg_pathman_enable)
-		return;
-
-	/* This works only for SELECT queries */
-	if (root->parse->commandType != CMD_SELECT || !inheritance_disabled)
-		return;
-
-	/* Lookup partitioning information for parent relation */
-	prel = get_pathman_relation_info(rte->relid, &found);
-
-	if (prel != NULL && found)
-	{
-		ListCell   *lc;
-		int			i;
-		Oid		   *dsm_arr;
-		List	   *ranges,
-				   *wrappers;
-		PathKey	   *pathkeyAsc = NULL,
-				   *pathkeyDesc = NULL;
-
-		if (prel->parttype == PT_RANGE)
-		{
-			/*
-			 * Get pathkeys for ascending and descending sort by partition
-			 * column
-			 */
-			List		   *pathkeys;
-			Var			   *var;
-			Oid				vartypeid,
-							varcollid;
-			int32			type_mod;
-			TypeCacheEntry *tce;
-
-			/* Make Var from patition column */
-			get_rte_attribute_type(rte, prel->attnum,
-								   &vartypeid, &type_mod, &varcollid);
-			var = makeVar(rti, prel->attnum, vartypeid, type_mod, varcollid, 0);
-			var->location = -1;
-
-			/* Determine operator type */
-			tce = lookup_type_cache(var->vartype, TYPECACHE_LT_OPR | TYPECACHE_GT_OPR);
-
-			/* Make pathkeys */
-			pathkeys = build_expression_pathkey(root, (Expr *)var, NULL,
-												tce->lt_opr, NULL, false);
-			if (pathkeys)
-				pathkeyAsc = (PathKey *) linitial(pathkeys);
-			pathkeys = build_expression_pathkey(root, (Expr *)var, NULL,
-												tce->gt_opr, NULL, false);
-			if (pathkeys)
-				pathkeyDesc = (PathKey *) linitial(pathkeys);
-		}
-
-		rte->inh = true;
-		dsm_arr = (Oid *) dsm_array_get_pointer(&prel->children);
-		ranges = list_make1_int(make_irange(0, prel->children_count - 1, false));
-
-		/* Make wrappers over restrictions and collect final rangeset */
-		wrappers = NIL;
-		foreach(lc, rel->baserestrictinfo)
-		{
-			WrapperNode *wrap;
-
-			RestrictInfo *rinfo = (RestrictInfo*) lfirst(lc);
-
-			wrap = walk_expr_tree(NULL, rinfo->clause, prel);
-			wrappers = lappend(wrappers, wrap);
-			ranges = irange_list_intersect(ranges, wrap->rangeset);
-		}
-
-		/*
-		 * Expand simple_rte_array and simple_rel_array
-		 */
-
-		if (ranges)
-		{
-			len = irange_list_length(ranges);
-
-			/* Expand simple_rel_array and simple_rte_array */
-			new_rel_array = (RelOptInfo **)
-				palloc0((root->simple_rel_array_size + len) * sizeof(RelOptInfo *));
-
-			/* simple_rte_array is an array equivalent of the rtable list */
-			new_rte_array = (RangeTblEntry **)
-				palloc0((root->simple_rel_array_size + len) * sizeof(RangeTblEntry *));
-
-			/* Copy relations to the new arrays */
-	        for (i = 0; i < root->simple_rel_array_size; i++)
-	        {
-	                new_rel_array[i] = root->simple_rel_array[i];
-	                new_rte_array[i] = root->simple_rte_array[i];
-	        }
-
-			/* Free old arrays */
-			pfree(root->simple_rel_array);
-			pfree(root->simple_rte_array);
-
-			root->simple_rel_array_size += len;
-			root->simple_rel_array = new_rel_array;
-			root->simple_rte_array = new_rte_array;
-		}
-
-		/*
-		 * Iterate all indexes in rangeset and append corresponding child
-		 * relations.
-		 */
-		foreach(lc, ranges)
-		{
-			IndexRange	irange = lfirst_irange(lc);
-			Oid			childOid;
-
-			for (i = irange_lower(irange); i <= irange_upper(irange); i++)
-			{
-				int idx;
-
-				childOid = dsm_arr[i];
-				idx = append_child_relation(root, rel, rti, rte, i, childOid, wrappers);
-
-				if (!first_child_relid)
-					first_child_relid = idx;
-			}
-		}
-
-		/* Clear old path list */
-		list_free(rel->pathlist);
-
-		rel->pathlist = NIL;
-		set_append_rel_pathlist(root, rel, rti, rte, pathkeyAsc, pathkeyDesc);
-		set_append_rel_size(root, rel, rti, rte);
-	}
-
-	/* Invoke original hook if needed */
-	if (set_rel_pathlist_hook_original != NULL)
-	{
-		set_rel_pathlist_hook_original(root, rel, rti, rte);
-	}
-}
-
-static void
 set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
 					Index rti, RangeTblEntry *rte)
 {
@@ -615,7 +444,7 @@ set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
  * Creates child relation and adds it to root.
  * Returns child index in simple_rel_array
  */
-static int
+int
 append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	RangeTblEntry *rte, int index, Oid childOid, List *wrappers)
 {
@@ -1484,7 +1313,7 @@ set_foreign_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
  * set_append_rel_pathlist
  *	  Build access paths for an "append relation"
  */
-static void
+void
 set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel,
 						Index rti, RangeTblEntry *rte,
 						PathKey *pathkeyAsc, PathKey *pathkeyDesc)
