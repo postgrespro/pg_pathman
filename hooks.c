@@ -272,8 +272,11 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 				quals = extract_actual_clauses(child_rel->baserestrictinfo, false);
 
 				/* Do not proceed if there's a rel containing quals without params */
-				if (!clause_contains_extern_params((Node *) quals))
+				if (!clause_contains_params((Node *) quals))
+				{
+					picky_quals = NIL; /* skip this path */
 					break;
+				}
 
 				/* Replace child Vars with a parent rel's Var */
 				quals = (List *) replace_child_vars_with_parent_var((Node *) quals,

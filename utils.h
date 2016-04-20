@@ -12,7 +12,7 @@ typedef struct
 	int			sublevels_up;
 } ReplaceVarsContext;
 
-bool clause_contains_extern_params(Node *clause);
+bool clause_contains_params(Node *clause);
 
 Node * replace_child_vars_with_parent_var(Node *node,
 										  ReplaceVarsContext *context);
