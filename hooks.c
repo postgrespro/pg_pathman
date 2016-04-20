@@ -2,6 +2,7 @@
 #include "optimizer/cost.h"
 #include "optimizer/restrictinfo.h"
 #include "hooks.h"
+#include "utils.h"
 #include "pathman.h"
 #include "pickyappend.h"
 
@@ -239,6 +240,63 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 		rel->pathlist = NIL;
 		set_append_rel_pathlist(root, rel, rti, rte, pathkeyAsc, pathkeyDesc);
 		set_append_rel_size(root, rel, rti, rte);
+
+		foreach (lc, rel->pathlist)
+		{
+			AppendPath	   *cur_path = (AppendPath *) lfirst(lc);
+			Relids			inner_required = PATH_REQ_OUTER((Path *) cur_path);
+			ParamPathInfo  *ppi = get_appendrel_parampathinfo(rel, inner_required);
+			Path		   *inner_path;
+			ListCell	   *subpath_cell;
+			List		   *picky_quals = NIL;
+
+			if (!IsA(cur_path, AppendPath) ||
+				rel->has_eclass_joins ||
+				rel->joininfo)
+			{
+				continue;
+			}
+
+			foreach (subpath_cell, cur_path->subpaths)
+			{
+				Path			   *subpath = (Path *) lfirst(subpath_cell);
+				RelOptInfo		   *child_rel = subpath->parent;
+				List			   *quals;
+				ListCell		   *qual_cell;
+				ReplaceVarsContext	repl_var_cxt;
+
+				repl_var_cxt.child = subpath->parent;
+				repl_var_cxt.parent = rel;
+				repl_var_cxt.sublevels_up = 0;
+
+				quals = extract_actual_clauses(child_rel->baserestrictinfo, false);
+
+				/* Do not proceed if there's a rel containing quals without params */
+				if (!clause_contains_extern_params((Node *) quals))
+					break;
+
+				/* Replace child Vars with a parent rel's Var */
+				quals = (List *) replace_child_vars_with_parent_var((Node *) quals,
+																	&repl_var_cxt);
+
+				/* Combine unique 'picky' quals */
+				foreach (qual_cell, quals)
+					picky_quals = list_append_unique(picky_quals,
+													 (Node *) lfirst(qual_cell));
+			}
+
+			/*
+			 * Dismiss PickyAppend if there
+			 * are no parameterized quals
+			 */
+			if (picky_quals == NIL)
+				continue;
+
+			inner_path = create_pickyappend_path(root, cur_path,
+												 ppi, picky_quals);
+
+			add_path(rel, inner_path);
+		}
 	}
 
 	/* Invoke original hook if needed */
