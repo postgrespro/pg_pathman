@@ -1316,7 +1316,7 @@ handle_arrexpr(WalkerContext *wcxt, const ScalarArrayOpExpr *expr, const PartRel
 		return result;
 	}
 
-	if (IsA(arraynode, Param))
+	if (arraynode && IsA(arraynode, Param))
 	{
 		result->paramsel = DEFAULT_INEQ_SEL;
 	}
