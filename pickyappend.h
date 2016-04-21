@@ -1,3 +1,12 @@
+/* ------------------------------------------------------------------------
+ *
+ * pickyappend.h
+ *		PickyAppend node's function prototypes and structures
+ *
+ * Copyright (c) 2016, Postgres Professional
+ *
+ * ------------------------------------------------------------------------
+ */
 #ifndef PICKYAPPEND_H
 #define PICKYAPPEND_H
 

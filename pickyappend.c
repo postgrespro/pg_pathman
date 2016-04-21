@@ -1,3 +1,12 @@
+/* ------------------------------------------------------------------------
+ *
+ * pickyappend.c
+ *		PickyAppend node's function definitions and global variables
+ *
+ * Copyright (c) 2016, Postgres Professional
+ *
+ * ------------------------------------------------------------------------
+ */
 #include "postgres.h"
 #include "pickyappend.h"
 #include "pathman.h"

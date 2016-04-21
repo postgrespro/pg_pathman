@@ -1,3 +1,12 @@
+/* ------------------------------------------------------------------------
+ *
+ * nodes_common.h
+ *		Common function prototypes and structs for custom nodes
+ *
+ * Copyright (c) 2016, Postgres Professional
+ *
+ * ------------------------------------------------------------------------
+ */
 #ifndef NODES_COMMON_H
 #define NODES_COMMON_H
 

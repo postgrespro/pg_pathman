@@ -1,3 +1,12 @@
+/* ------------------------------------------------------------------------
+ *
+ * utils.c
+ *		definitions of various support functions
+ *
+ * Copyright (c) 2016, Postgres Professional
+ *
+ * ------------------------------------------------------------------------
+ */
 #include "utils.h"
 #include "nodes/nodeFuncs.h"
 #include "parser/parse_param.h"

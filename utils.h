@@ -1,3 +1,12 @@
+/* ------------------------------------------------------------------------
+ *
+ * utils.h
+ *		prototypes of various support functions
+ *
+ * Copyright (c) 2016, Postgres Professional
+ *
+ * ------------------------------------------------------------------------
+ */
 #ifndef UTILS_H
 #define UTILS_H
 

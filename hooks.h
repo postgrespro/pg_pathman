@@ -1,3 +1,12 @@
+/* ------------------------------------------------------------------------
+ *
+ * hooks.h
+ *		prototypes of rel_pathlist and join_pathlist hooks
+ *
+ * Copyright (c) 2016, Postgres Professional
+ *
+ * ------------------------------------------------------------------------
+ */
 #ifndef JOIN_HOOK_H
 #define JOIN_HOOK_H
 

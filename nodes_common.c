@@ -1,3 +1,12 @@
+/* ------------------------------------------------------------------------
+ *
+ * nodes_common.c
+ *		Common code for custom nodes
+ *
+ * Copyright (c) 2016, Postgres Professional
+ *
+ * ------------------------------------------------------------------------
+ */
 #include "postgres.h"
 #include "optimizer/paths.h"
 #include "nodes_common.h"

@@ -1,3 +1,12 @@
+/* ------------------------------------------------------------------------
+ *
+ * hooks.c
+ *		definitions of rel_pathlist and join_pathlist hooks
+ *
+ * Copyright (c) 2016, Postgres Professional
+ *
+ * ------------------------------------------------------------------------
+ */
 #include "postgres.h"
 #include "optimizer/cost.h"
 #include "optimizer/restrictinfo.h"
