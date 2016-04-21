@@ -61,7 +61,8 @@ extern CustomScanMethods	pickyappend_plan_methods;
 extern CustomExecMethods	pickyappend_exec_methods;
 
 Path * create_pickyappend_path(PlannerInfo *root, AppendPath *inner_append,
-							   ParamPathInfo *param_info, List *picky_clauses);
+							   ParamPathInfo *param_info, List *picky_clauses,
+							   double sel);
 
 Plan * create_pickyappend_plan(PlannerInfo *root, RelOptInfo *rel,
 							   CustomPath *best_path, List *tlist,

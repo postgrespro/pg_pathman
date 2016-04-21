@@ -217,7 +217,8 @@ create_append_path_common(PlannerInfo *root,
 						  AppendPath *inner_append,
 						  ParamPathInfo *param_info,
 						  List *picky_clauses,
-						  CustomPathMethods *path_methods)
+						  CustomPathMethods *path_methods,
+						  double sel)
 {
 	RelOptInfo *innerrel = inner_append->path.parent;
 	ListCell   *lc;
@@ -237,13 +238,13 @@ create_append_path_common(PlannerInfo *root,
 #if PG_VERSION_NUM >= 90600
 	result->cpath.path.pathtarget = inner_append->path.pathtarget;
 #endif
-	result->cpath.path.rows = inner_append->path.rows;
+	result->cpath.path.rows = inner_append->path.rows * sel;
 	result->cpath.flags = 0;
 	result->cpath.methods = path_methods;
 
 	/* TODO: real costs */
-	result->cpath.path.startup_cost = 0;
-	result->cpath.path.total_cost = 0;
+	result->cpath.path.startup_cost = 0.0;
+	result->cpath.path.total_cost = 0.0;
 
 	/* Set 'partitioned column'-related clauses */
 	result->cpath.custom_private = picky_clauses;
@@ -261,6 +262,9 @@ create_append_path_common(PlannerInfo *root,
 		Index			relindex = path->parent->relid;
 		ChildScanCommon	child = palloc(sizeof(ChildScanCommonData));
 
+		result->cpath.path.startup_cost += path->startup_cost;
+		result->cpath.path.total_cost += path->total_cost;
+
 		child->content.path = path;
 		child->relid = root->simple_rte_array[relindex]->relid;
 		Assert(child->relid != InvalidOid);
@@ -271,6 +275,9 @@ create_append_path_common(PlannerInfo *root,
 
 		i++;
 	}
+
+	result->cpath.path.startup_cost *= sel;
+	result->cpath.path.total_cost *= sel;
 
 	return &result->cpath.path;
 }

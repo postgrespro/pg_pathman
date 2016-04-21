@@ -212,6 +212,7 @@ typedef struct
 	const Node	   *orig;
 	List		   *args;
 	List		   *rangeset;
+	double			paramsel;
 } WrapperNode;
 
 typedef struct
