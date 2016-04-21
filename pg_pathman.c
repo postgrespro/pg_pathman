@@ -70,6 +70,8 @@ static PlannedStmt * pathman_planner_hook(Query *parse, int cursorOptions, Param
 static void handle_modification_query(Query *parse);
 static Node *wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue);
 static void disable_inheritance(Query *parse);
+static void disable_inheritance_cte(Query *parse);
+static void disable_inheritance_subselect(Query *parse);
 
 /* Expression tree handlers */
 static int make_hash(const PartRelationInfo *prel, int value);
@@ -252,7 +254,6 @@ PlannedStmt *
 pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 {
 	PlannedStmt	  *result;
-	ListCell	  *lc;
 
 	if (pg_pathman_enable)
 	{
@@ -264,19 +265,12 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 				break;
 			case CMD_UPDATE:
 			case CMD_DELETE:
+				disable_inheritance_cte(parse);
+				disable_inheritance_subselect(parse);
 				handle_modification_query(parse);
 				break;
 			default:
 				break;
-		}
-
-		/* If query contains CTE (WITH statement) then handle subqueries too */
-		foreach(lc, parse->cteList)
-		{
-			CommonTableExpr *cte = (CommonTableExpr*) lfirst(lc);
-
-			if (IsA(cte->ctequery, Query))
-				disable_inheritance((Query *)cte->ctequery);
 		}
 	}
 
@@ -296,10 +290,16 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 static void
 disable_inheritance(Query *parse)
 {
-	RangeTblEntry *rte;
-	ListCell	  *lc;
+	ListCell		 *lc;
+	RangeTblEntry	 *rte;
 	PartRelationInfo *prel;
-	bool found;
+	bool	found;
+
+	/* If query contains CTE (WITH statement) then handle subqueries too */
+	disable_inheritance_cte(parse);
+
+	/* If query contains subselects */
+	disable_inheritance_subselect(parse);
 
 	foreach(lc, parse->rtable)
 	{
@@ -332,6 +332,38 @@ disable_inheritance(Query *parse)
 				break;
 		}
 	}
+}
+
+static void
+disable_inheritance_cte(Query *parse)
+{
+	ListCell	  *lc;
+
+	foreach(lc, parse->cteList)
+	{
+		CommonTableExpr *cte = (CommonTableExpr*) lfirst(lc);
+
+		if (IsA(cte->ctequery, Query))
+			disable_inheritance((Query *) cte->ctequery);
+	}
+}
+
+static void
+disable_inheritance_subselect(Query *parse)
+{
+	Node		*quals;
+
+	if (!parse->jointree || !parse->jointree->quals)
+		return;
+
+	quals = parse->jointree->quals;
+	if (!IsA(quals, SubLink))
+		return;
+
+	if (!IsA(((SubLink *) quals)->subselect, Query))
+		return;
+
+	disable_inheritance((Query *) (((SubLink *) quals)->subselect));
 }
 
 /*
