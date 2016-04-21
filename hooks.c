@@ -40,6 +40,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	List			   *joinclauses,
 					   *otherclauses;
 	ListCell		   *lc;
+	double				paramsel;
 
 	if (set_join_pathlist_next)
 		set_join_pathlist_next(root, joinrel, outerrel,
@@ -74,6 +75,15 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		otherclauses = NIL;
 	}
 
+	paramsel = 1.0;
+	foreach (lc, joinclauses)
+	{
+		WrapperNode	   *wrap;
+
+		wrap = walk_expr_tree(NULL, (Expr *) lfirst(lc), inner_prel);
+		paramsel *= wrap->paramsel;
+	}
+
 	foreach (lc, innerrel->pathlist)
 	{
 		AppendPath *cur_inner_path = (AppendPath *) lfirst(lc);
@@ -89,7 +99,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		inner = create_pickyappend_path(root, cur_inner_path,
 										get_appendrel_parampathinfo(innerrel,
 																	inner_required),
-										joinclauses);
+										joinclauses, paramsel);
 
 		initial_cost_nestloop(root, &workspace, jointype,
 							  outer, inner,
@@ -139,6 +149,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 				   *wrappers;
 		PathKey	   *pathkeyAsc = NULL,
 				   *pathkeyDesc = NULL;
+		double		paramsel = 1.0;
 
 		if (prel->parttype == PT_RANGE)
 		{
@@ -186,6 +197,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 			RestrictInfo *rinfo = (RestrictInfo*) lfirst(lc);
 
 			wrap = walk_expr_tree(NULL, rinfo->clause, prel);
+			paramsel *= wrap->paramsel;
 			wrappers = lappend(wrappers, wrap);
 			ranges = irange_list_intersect(ranges, wrap->rangeset);
 		}
@@ -305,7 +317,8 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 				continue;
 
 			inner_path = create_pickyappend_path(root, cur_path,
-												 ppi, picky_quals);
+												 ppi, picky_quals,
+												 paramsel);
 
 			add_path(rel, inner_path);
 		}

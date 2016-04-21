@@ -30,8 +30,9 @@
 #include "utils/elog.h"
 #include "utils/array.h"
 #include "utils/date.h"
-#include "utils/lsyscache.h"
 #include "utils/guc.h"
+#include "utils/lsyscache.h"
+#include "utils/selfuncs.h"
 #include "access/heapam.h"
 #include "access/nbtree.h"
 #include "storage/ipc.h"
@@ -841,6 +842,7 @@ walk_expr_tree(WalkerContext *wcxt, Expr *expr, const PartRelationInfo *prel)
 			result->orig = (const Node *)expr;
 			result->args = NIL;
 			result->rangeset = list_make1_irange(make_irange(0, prel->children_count - 1, true));
+			result->paramsel = 1.0;
 			return result;
 	}
 }
@@ -866,8 +868,7 @@ handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result,
 	TypeCacheEntry	   *tce;
 
 	/* Determine operator type */
-	tce = lookup_type_cache(v->vartype,
-		TYPECACHE_EQ_OPR | TYPECACHE_LT_OPR | TYPECACHE_GT_OPR | TYPECACHE_CMP_PROC | TYPECACHE_CMP_PROC_FINFO);
+	tce = lookup_type_cache(v->vartype, TYPECACHE_BTREE_OPFAMILY | TYPECACHE_CMP_PROC | TYPECACHE_CMP_PROC_FINFO);
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
 	cmp_proc_oid = get_opfamily_proc(tce->btree_opf,
 									 c->consttype,
@@ -1036,6 +1037,38 @@ handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result,
 	}
 
 	result->rangeset = list_make1_irange(make_irange(0, prel->children_count - 1, true));
+	result->paramsel = 1.0;
+}
+
+/*
+ *	Estimate selectivity of parametrized quals.
+ */
+static void
+handle_binary_opexpr_param(const PartRelationInfo *prel,
+						   WrapperNode *result, const Var *v)
+{
+	const OpExpr	   *expr = (const OpExpr *)result->orig;
+	TypeCacheEntry	   *tce;
+	int					strategy;
+
+	/* Determine operator type */
+	tce = lookup_type_cache(v->vartype, TYPECACHE_BTREE_OPFAMILY);
+	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
+
+	result->rangeset = list_make1_irange(make_irange(0, prel->children_count - 1, true));
+
+	if (strategy == BTEqualStrategyNumber)
+	{
+		result->paramsel = 1.0 / (double) prel->children_count;
+	}
+	else if (prel->parttype == PT_RANGE && strategy > 0)
+	{
+		result->paramsel = DEFAULT_INEQ_SEL;
+	}
+	else
+	{
+		result->paramsel = 1.0;
+	}
 }
 
 /*
@@ -1135,24 +1168,36 @@ handle_opexpr(WalkerContext *wcxt, const OpExpr *expr, const PartRelationInfo *p
 
 	if (list_length(expr->args) == 2)
 	{
-		firstarg = (Node *) linitial(expr->args);
-		secondarg = (Node *) lsecond(expr->args);
-
-		if (IsA(firstarg, Var) && IsConstValue(wcxt, secondarg) &&
-			((Var *)firstarg)->varattno == prel->attnum)
+		if (IsA(linitial(expr->args), Var)
+			&& ((Var *)linitial(expr->args))->varattno == prel->attnum)
 		{
-			handle_binary_opexpr(prel, result, (Var *)firstarg, ExtractConst(wcxt, secondarg));
-			return result;
+			firstarg = (Node *) linitial(expr->args);
+			secondarg = (Node *) lsecond(expr->args);
 		}
-		else if (IsA(secondarg, Var) && IsConstValue(wcxt, firstarg) &&
-				 ((Var *)secondarg)->varattno == prel->attnum)
+		else if (IsA(lsecond(expr->args), Var)
+			&& ((Var *)lsecond(expr->args))->varattno == prel->attnum)
 		{
-			handle_binary_opexpr(prel, result, (Var *)secondarg, ExtractConst(wcxt, firstarg));
-			return result;
+			firstarg = (Node *) lsecond(expr->args);
+			secondarg = (Node *) linitial(expr->args);
+		}
+
+		if (firstarg && secondarg)
+		{
+			if (IsConstValue(wcxt, secondarg))
+			{
+				handle_binary_opexpr(prel, result, (Var *)firstarg, ExtractConst(wcxt, secondarg));
+				return result;
+			}
+			else if (IsA(secondarg, Param) || IsA(secondarg, Var))
+			{
+				handle_binary_opexpr_param(prel, result, (Var *)firstarg);
+				return result;
+			}
 		}
 	}
 
 	result->rangeset = list_make1_irange(make_irange(0, prel->children_count - 1, true));
+	result->paramsel = 1.0;
 	return result;
 }
 
@@ -1167,6 +1212,7 @@ handle_boolexpr(WalkerContext *wcxt, const BoolExpr *expr, const PartRelationInf
 
 	result->orig = (const Node *)expr;
 	result->args = NIL;
+	result->paramsel = 1.0;
 
 	if (expr->boolop == AND_EXPR)
 		result->rangeset = list_make1_irange(make_irange(0, prel->children_count - 1, false));
@@ -1186,11 +1232,26 @@ handle_boolexpr(WalkerContext *wcxt, const BoolExpr *expr, const PartRelationInf
 				break;
 			case AND_EXPR:
 				result->rangeset = irange_list_intersect(result->rangeset, arg->rangeset);
+				result->paramsel *= arg->paramsel;
 				break;
 			default:
 				result->rangeset = list_make1_irange(make_irange(0, prel->children_count - 1, false));
 				break;
 		}
+	}
+
+	if (expr->boolop == OR_EXPR)
+	{
+		int totallen = irange_list_length(result->rangeset);
+
+		foreach (lc, result->args)
+		{
+			WrapperNode *arg = (WrapperNode *) lfirst(lc);
+			int len = irange_list_length(arg->rangeset);
+
+			result->paramsel *= (1.0 - arg->paramsel * (double)len / (double)totallen);
+		}
+		result->paramsel = 1.0 - result->paramsel;
 	}
 
 	return result;
@@ -1209,6 +1270,7 @@ handle_arrexpr(WalkerContext *wcxt, const ScalarArrayOpExpr *expr, const PartRel
 
 	result->orig = (const Node *)expr;
 	result->args = NIL;
+	result->paramsel = 1.0;
 
 	if (varnode == NULL || !IsA(varnode, Var))
 	{
@@ -1252,6 +1314,11 @@ handle_arrexpr(WalkerContext *wcxt, const ScalarArrayOpExpr *expr, const PartRel
 		pfree(elem_nulls);
 
 		return result;
+	}
+
+	if (IsA(arraynode, Param))
+	{
+		result->paramsel = DEFAULT_INEQ_SEL;
 	}
 
 	result->rangeset = list_make1_irange(make_irange(0, prel->children_count - 1, true));

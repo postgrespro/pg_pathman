@@ -23,11 +23,12 @@ Path *
 create_pickyappend_path(PlannerInfo *root,
 						AppendPath *inner_append,
 						ParamPathInfo *param_info,
-						List *picky_clauses)
+						List *picky_clauses,
+						double sel)
 {
 	return create_append_path_common(root, inner_append,
 									 param_info, picky_clauses,
-									 &pickyappend_path_methods);
+									 &pickyappend_path_methods, sel);
 }
 
 Plan *

@@ -57,7 +57,8 @@ Path * create_append_path_common(PlannerInfo *root,
 								 AppendPath *inner_append,
 								 ParamPathInfo *param_info,
 								 List *picky_clauses,
-								 CustomPathMethods *path_methods);
+								 CustomPathMethods *path_methods,
+								 double sel);
 
 Plan * create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 								 CustomPath *best_path, List *tlist,
