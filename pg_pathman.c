@@ -339,16 +339,19 @@ disable_inheritance_cte(Query *parse)
 static void
 disable_inheritance_subselect(Query *parse)
 {
-	SubLink *sublink;
+	Node		*quals;
 
 	if (!parse->jointree || !parse->jointree->quals)
 		return;
 
-	sublink = (SubLink *) parse->jointree->quals;
-	if (!IsA(sublink->subselect, Query))
+	quals = parse->jointree->quals;
+	if (!IsA(quals, SubLink))
 		return;
 
-	disable_inheritance((Query *) sublink->subselect);
+	if (!IsA(((SubLink *) quals)->subselect, Query))
+		return;
+
+	disable_inheritance((Query *) (((SubLink *) quals)->subselect));
 }
 
 /*
