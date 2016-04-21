@@ -60,6 +60,9 @@ pickyappend_exec(CustomScanState *node)
 {
 	PickyAppendState   *scan_state = (PickyAppendState *) node;
 
+	if (scan_state->ncur_plans == 0)
+		ExecReScan(&node->ss.ps);
+
 	while (scan_state->running_idx < scan_state->ncur_plans)
 	{
 		ChildScanCommon		child = scan_state->cur_plans[scan_state->running_idx];
@@ -85,6 +88,8 @@ pickyappend_exec(CustomScanState *node)
 		scan_state->running_idx++;
 	}
 
+	/* Force ReScan */
+	scan_state->ncur_plans = 0;
 	return NULL;
 }
 

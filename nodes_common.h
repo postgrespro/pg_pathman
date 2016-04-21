@@ -33,6 +33,8 @@ typedef struct
 		Plan	   *plan;
 		PlanState  *plan_state;
 	}			content;
+
+	int		original_order;			/* for sorting in EXPLAIN */
 } ChildScanCommonData;
 
 typedef ChildScanCommonData *ChildScanCommon;
