@@ -180,7 +180,7 @@ unpack_pickyappend_private(PickyAppendState *scan_state, CustomScan *cscan)
 	ListCell   *plan_cell;
 	List	   *custom_oids = (List *) lsecond(cscan->custom_private);
 	int			nchildren = list_length(custom_oids);
-	HTAB	   *children_table = scan_state->children_table;
+	HTAB	   *children_table;
 	HASHCTL	   *children_table_config = &scan_state->children_table_config;
 	int			i;
 
@@ -276,9 +276,9 @@ create_append_path_common(PlannerInfo *root,
 }
 
 Plan *
-create_append_plan_common(PlannerInfo* root, RelOptInfo* rel,
-						  CustomPath* best_path, List* tlist,
-						  List* clauses, List* custom_plans,
+create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
+						  CustomPath *best_path, List *tlist,
+						  List *clauses, List *custom_plans,
 						  CustomScanMethods *scan_methods)
 {
 	PickyAppendPath    *gpath = (PickyAppendPath *) best_path;
@@ -301,7 +301,7 @@ create_append_plan_common(PlannerInfo* root, RelOptInfo* rel,
 }
 
 Node *
-create_append_scan_state_common(CustomScan* node,
+create_append_scan_state_common(CustomScan *node,
 								CustomExecMethods *exec_methods,
 								uint32 size)
 {
@@ -329,7 +329,7 @@ void
 begin_append_common(CustomScanState *node, EState *estate, int eflags)
 {
 	PickyAppendState   *scan_state = (PickyAppendState *) node;
-	HTAB			   *plan_state_table = scan_state->plan_state_table;
+	HTAB			   *plan_state_table;
 	HASHCTL			   *plan_state_table_config = &scan_state->plan_state_table_config;
 
 	memset(plan_state_table_config, 0, sizeof(HASHCTL));
@@ -341,8 +341,9 @@ begin_append_common(CustomScanState *node, EState *estate, int eflags)
 								   HASH_ELEM | HASH_BLOBS);
 
 	scan_state->plan_state_table = plan_state_table;
-	scan_state->custom_expr_states = (List *) ExecInitExpr((Expr *) scan_state->custom_exprs,
-														   (PlanState *) scan_state);
+	scan_state->custom_expr_states =
+		(List *) ExecInitExpr((Expr *) scan_state->custom_exprs,
+							  (PlanState *) scan_state);
 }
 
 void
@@ -399,10 +400,8 @@ rescan_append_common(CustomScanState *node)
 }
 
 void
-explain_append_common(CustomScanState *node, HTAB* children_table, ExplainState *es)
+explain_append_common(CustomScanState *node, HTAB *children_table, ExplainState *es)
 {
-	PickyAppendState   *scan_state = (PickyAppendState *) node;
-
 	/* Construct excess PlanStates */
 	if (!es->analyze)
 	{
@@ -416,7 +415,8 @@ explain_append_common(CustomScanState *node, HTAB* children_table, ExplainState 
 		/* There can't be any nodes since we're not scanning anything */
 		Assert(!node->custom_ps);
 
-		hash_seq_init(&seqstat, scan_state->children_table);
+		/* Iterate through node's ChildScanCommon table */
+		hash_seq_init(&seqstat, children_table);
 
 		while ((child = (ChildScanCommon) hash_seq_search(&seqstat)))
 		{
@@ -438,7 +438,7 @@ explain_append_common(CustomScanState *node, HTAB* children_table, ExplainState 
 
 		/*
 		 * These PlanStates will be used by EXPLAIN,
-		 * pickyappend_end will destroy them eventually
+		 * end_append_common will destroy them eventually
 		 */
 		for (i = 0; i < used; i++)
 			node->custom_ps = lappend(node->custom_ps,
