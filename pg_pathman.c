@@ -429,14 +429,19 @@ pathman_set_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, Ran
 	RangeTblEntry **new_rte_array;
 	int len;
 	bool found;
-	int first_child_relid = 0;
+
+	/* Invoke original hook if needed */
+	if (set_rel_pathlist_hook_original != NULL)
+	{
+		set_rel_pathlist_hook_original(root, rel, rti, rte);
+	}
 
 	if (!pg_pathman_enable)
-		goto original_hook;
+		return;
 
 	/* This works only for SELECT queries */
 	if (root->parse->commandType != CMD_SELECT || !inheritance_disabled)
-		goto original_hook;
+		return;
 
 	/* Lookup partitioning information for parent relation */
 	prel = get_pathman_relation_info(rte->relid, &found);
@@ -540,18 +545,10 @@ pathman_set_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, Ran
 		foreach(lc, ranges)
 		{
 			IndexRange	irange = lfirst_irange(lc);
-			Oid			childOid;
 
 			for (i = irange_lower(irange); i <= irange_upper(irange); i++)
-			{
-				int idx;
+				append_child_relation(root, rel, rti, rte, i, dsm_arr[i], wrappers);
 
-				childOid = dsm_arr[i];
-				idx = append_child_relation(root, rel, rti, rte, i, childOid, wrappers);
-
-				if (!first_child_relid)
-					first_child_relid = idx;
-			}
 		}
 
 		/* Clear old path list */
@@ -560,14 +557,6 @@ pathman_set_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, Ran
 		rel->pathlist = NIL;
 		set_append_rel_pathlist(root, rel, rti, rte, pathkeyAsc, pathkeyDesc);
 		set_append_rel_size(root, rel, rti, rte);
-	}
-
-original_hook:
-
-	/* Invoke original hook if needed */
-	if (set_rel_pathlist_hook_original != NULL)
-	{
-		set_rel_pathlist_hook_original(root, rel, rti, rte);
 	}
 }
 
