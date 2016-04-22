@@ -123,12 +123,16 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 void
 pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTblEntry *rte)
 {
-	PartRelationInfo *prel = NULL;
-	RelOptInfo **new_rel_array;
-	RangeTblEntry **new_rte_array;
-	int len;
-	bool found;
-	int first_child_relid = 0;
+	PartRelationInfo   *prel = NULL;
+	RangeTblEntry	  **new_rte_array;
+	RelOptInfo		  **new_rel_array;
+	bool				found;
+	int					len;
+	int					first_child_relid = 0;
+	
+	/* Invoke original hook if needed */
+	if (set_rel_pathlist_hook_next != NULL)
+		set_rel_pathlist_hook_next(root, rel, rti, rte);
 
 	if (!pg_pathman_enable)
 		return;
@@ -262,6 +266,9 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 		set_append_rel_pathlist(root, rel, rti, rte, pathkeyAsc, pathkeyDesc);
 		set_append_rel_size(root, rel, rti, rte);
 
+		if (!pg_pathman_enable_pickyappend)
+			return;
+		
 		foreach (lc, rel->pathlist)
 		{
 			AppendPath	   *cur_path = (AppendPath *) lfirst(lc);
@@ -277,7 +284,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 			{
 				continue;
 			}
-
+			
 			foreach (subpath_cell, cur_path->subpaths)
 			{
 				Path			   *subpath = (Path *) lfirst(subpath_cell);
@@ -323,9 +330,4 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 			add_path(rel, inner_path);
 		}
 	}
-
-	/* Invoke original hook if needed */
-	if (set_rel_pathlist_hook_next != NULL)
-		set_rel_pathlist_hook_next(root, rel, rti, rte);
 }
-
