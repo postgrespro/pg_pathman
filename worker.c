@@ -99,6 +99,12 @@ create_partitions_bg_worker(Oid relid, Datum value, Oid value_type, bool *crashe
 
 	/* Wait till the worker finishes its job */
 	status = WaitForBackgroundWorkerShutdown(worker_handle);
+	if (status == BGWH_POSTMASTER_DIED)
+	{
+		ereport(WARNING,
+                (errmsg("Postmaster died during the pg_pathman background worker process"),
+                 errhint("More details may be available in the server log.")));
+	}
 	*crashed = args->crashed;
 	child_oid = args->result;
 
@@ -170,7 +176,6 @@ create_partitions(Oid relid, Datum value, Oid value_type, bool *crashed)
 
 	prel = get_pathman_relation_info(relid, NULL);
 	rangerel = get_pathman_range_relation(relid, NULL);
-	ranges = dsm_array_get_pointer(&rangerel->ranges);
 
 	/* Comparison function */
 	cmp_func = *get_cmp_func(value_type, prel->atttype);
