@@ -290,7 +290,7 @@ resize_dsm_array(DsmArray *arr, size_t entry_size, size_t length)
 }
 
 void *
-dsm_array_get_pointer(const DsmArray* arr)
+dsm_array_get_pointer(const DsmArray *arr)
 {
 	return (char *) dsm_segment_address(segment) + arr->offset + sizeof(BlockHeader);
 }
