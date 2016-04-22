@@ -222,8 +222,7 @@ get_cmp_func(Oid type1, Oid type2)
 
 	cmp_func = palloc(sizeof(FmgrInfo));
 	tce = lookup_type_cache(type1,
-							TYPECACHE_EQ_OPR | TYPECACHE_LT_OPR | TYPECACHE_GT_OPR |
-							TYPECACHE_CMP_PROC | TYPECACHE_CMP_PROC_FINFO);
+				TYPECACHE_BTREE_OPFAMILY | TYPECACHE_CMP_PROC | TYPECACHE_CMP_PROC_FINFO);
 	cmp_proc_oid = get_opfamily_proc(tce->btree_opf,
 									 type1,
 									 type2,
@@ -868,7 +867,9 @@ handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result,
 	TypeCacheEntry	   *tce;
 
 	/* Determine operator type */
-	tce = lookup_type_cache(v->vartype, TYPECACHE_BTREE_OPFAMILY | TYPECACHE_CMP_PROC | TYPECACHE_CMP_PROC_FINFO);
+	tce = lookup_type_cache(v->vartype,
+							TYPECACHE_BTREE_OPFAMILY | TYPECACHE_CMP_PROC | TYPECACHE_CMP_PROC_FINFO);
+
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
 	cmp_proc_oid = get_opfamily_proc(tce->btree_opf,
 									 c->consttype,
