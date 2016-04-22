@@ -432,11 +432,11 @@ pathman_set_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, Ran
 	int first_child_relid = 0;
 
 	if (!pg_pathman_enable)
-		return;
+		goto original_hook;
 
 	/* This works only for SELECT queries */
 	if (root->parse->commandType != CMD_SELECT || !inheritance_disabled)
-		return;
+		goto original_hook;
 
 	/* Lookup partitioning information for parent relation */
 	prel = get_pathman_relation_info(rte->relid, &found);
@@ -561,6 +561,8 @@ pathman_set_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, Ran
 		set_append_rel_pathlist(root, rel, rti, rte, pathkeyAsc, pathkeyDesc);
 		set_append_rel_size(root, rel, rti, rte);
 	}
+
+original_hook:
 
 	/* Invoke original hook if needed */
 	if (set_rel_pathlist_hook_original != NULL)
