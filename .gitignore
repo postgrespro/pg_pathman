@@ -1,4 +1,7 @@
 .deps
+results/pg_pathman.out
+regression.diffs
+regression.out
 *.o
 *.so
 pg_pathman--*.sql
