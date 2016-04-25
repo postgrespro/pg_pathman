@@ -1,65 +1,65 @@
 /* ------------------------------------------------------------------------
  *
- * pickyappend.c
- *		PickyAppend node's function definitions and global variables
+ * runtimeappend.c
+ *		RuntimeAppend node's function definitions and global variables
  *
  * Copyright (c) 2016, Postgres Professional
  *
  * ------------------------------------------------------------------------
  */
 #include "postgres.h"
-#include "pickyappend.h"
+#include "runtimeappend.h"
 #include "pathman.h"
 
 
-bool				pg_pathman_enable_pickyappend = true;
+bool				pg_pathman_enable_runtimeappend = true;
 
-CustomPathMethods	pickyappend_path_methods;
-CustomScanMethods	pickyappend_plan_methods;
-CustomExecMethods	pickyappend_exec_methods;
+CustomPathMethods	runtimeappend_path_methods;
+CustomScanMethods	runtimeappend_plan_methods;
+CustomExecMethods	runtimeppend_exec_methods;
 
 
 Path *
-create_pickyappend_path(PlannerInfo *root,
-						AppendPath *inner_append,
-						ParamPathInfo *param_info,
-						List *picky_clauses,
-						double sel)
+create_runtimeappend_path(PlannerInfo *root,
+						  AppendPath *inner_append,
+						  ParamPathInfo *param_info,
+						  List *runtime_clauses,
+						  double sel)
 {
 	return create_append_path_common(root, inner_append,
-									 param_info, picky_clauses,
-									 &pickyappend_path_methods, sel);
+									 param_info, runtime_clauses,
+									 &runtimeappend_path_methods, sel);
 }
 
 Plan *
-create_pickyappend_plan(PlannerInfo *root, RelOptInfo *rel,
-						CustomPath *best_path, List *tlist,
-						List *clauses, List *custom_plans)
+create_runtimeappend_plan(PlannerInfo *root, RelOptInfo *rel,
+						  CustomPath *best_path, List *tlist,
+						  List *clauses, List *custom_plans)
 {
 	return create_append_plan_common(root, rel,
 									 best_path, tlist,
 									 clauses, custom_plans,
-									 &pickyappend_plan_methods);
+									 &runtimeappend_plan_methods);
 }
 
 Node *
-pickyappend_create_scan_state(CustomScan *node)
+runtimeappend_create_scan_state(CustomScan *node)
 {
 	return create_append_scan_state_common(node,
-										   &pickyappend_exec_methods,
-										   sizeof(PickyAppendState));
+										   &runtimeppend_exec_methods,
+										   sizeof(RuntimeAppendState));
 }
 
 void
-pickyappend_begin(CustomScanState *node, EState *estate, int eflags)
+runtimeappend_begin(CustomScanState *node, EState *estate, int eflags)
 {
 	begin_append_common(node, estate, eflags);
 }
 
 TupleTableSlot *
-pickyappend_exec(CustomScanState *node)
+runtimeappend_exec(CustomScanState *node)
 {
-	PickyAppendState   *scan_state = (PickyAppendState *) node;
+	RuntimeAppendState	   *scan_state = (RuntimeAppendState *) node;
 
 	if (scan_state->ncur_plans == 0)
 		ExecReScan(&node->ss.ps);
@@ -95,21 +95,21 @@ pickyappend_exec(CustomScanState *node)
 }
 
 void
-pickyappend_end(CustomScanState *node)
+runtimeappend_end(CustomScanState *node)
 {
 	end_append_common(node);
 }
 
 void
-pickyappend_rescan(CustomScanState *node)
+runtimeappend_rescan(CustomScanState *node)
 {
 	rescan_append_common(node);
 }
 
 void
-pickyppend_explain(CustomScanState *node, List *ancestors, ExplainState *es)
+runtimeppend_explain(CustomScanState *node, List *ancestors, ExplainState *es)
 {
-	PickyAppendState   *scan_state = (PickyAppendState *) node;
+	RuntimeAppendState *scan_state = (RuntimeAppendState *) node;
 
 	explain_append_common(node, scan_state->children_table, es);
 }

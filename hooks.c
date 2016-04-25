@@ -13,7 +13,7 @@
 #include "hooks.h"
 #include "utils.h"
 #include "pathman.h"
-#include "pickyappend.h"
+#include "runtimeappend.h"
 
 
 set_join_pathlist_hook_type		set_join_pathlist_next = NULL;
@@ -52,7 +52,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		jointype = JOIN_INNER;
 	}
 
-	if (jointype == JOIN_FULL || !pg_pathman_enable_pickyappend)
+	if (jointype == JOIN_FULL || !pg_pathman_enable_runtimeappend)
 		return;
 
 	if (innerrel->reloptkind != RELOPT_BASEREL ||
@@ -96,10 +96,10 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		inner_required = bms_union(PATH_REQ_OUTER((Path *) cur_inner_path),
 								   bms_make_singleton(outerrel->relid));
 
-		inner = create_pickyappend_path(root, cur_inner_path,
-										get_appendrel_parampathinfo(innerrel,
-																	inner_required),
-										joinclauses, paramsel);
+		inner = create_runtimeappend_path(root, cur_inner_path,
+										  get_appendrel_parampathinfo(innerrel,
+																	  inner_required),
+										  joinclauses, paramsel);
 
 		initial_cost_nestloop(root, &workspace, jointype,
 							  outer, inner,
@@ -266,7 +266,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 		set_append_rel_pathlist(root, rel, rti, rte, pathkeyAsc, pathkeyDesc);
 		set_append_rel_size(root, rel, rti, rte);
 
-		if (!pg_pathman_enable_pickyappend)
+		if (!pg_pathman_enable_runtimeappend)
 			return;
 		
 		foreach (lc, rel->pathlist)
@@ -276,7 +276,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 			ParamPathInfo  *ppi = get_appendrel_parampathinfo(rel, inner_required);
 			Path		   *inner_path;
 			ListCell	   *subpath_cell;
-			List		   *picky_quals = NIL;
+			List		   *runtime_quals = NIL;
 
 			if (!IsA(cur_path, AppendPath) ||
 				rel->has_eclass_joins ||
@@ -302,7 +302,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 				/* Do not proceed if there's a rel containing quals without params */
 				if (!clause_contains_params((Node *) quals))
 				{
-					picky_quals = NIL; /* skip this path */
+					runtime_quals = NIL; /* skip this path */
 					break;
 				}
 
@@ -310,22 +310,22 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 				quals = (List *) replace_child_vars_with_parent_var((Node *) quals,
 																	&repl_var_cxt);
 
-				/* Combine unique 'picky' quals */
+				/* Combine unique quals for RuntimeAppend */
 				foreach (qual_cell, quals)
-					picky_quals = list_append_unique(picky_quals,
-													 (Node *) lfirst(qual_cell));
+					runtime_quals = list_append_unique(runtime_quals,
+													   (Node *) lfirst(qual_cell));
 			}
 
 			/*
-			 * Dismiss PickyAppend if there
+			 * Dismiss RuntimeAppend if there
 			 * are no parameterized quals
 			 */
-			if (picky_quals == NIL)
+			if (runtime_quals == NIL)
 				continue;
 
-			inner_path = create_pickyappend_path(root, cur_path,
-												 ppi, picky_quals,
-												 paramsel);
+			inner_path = create_runtimeappend_path(root, cur_path,
+												   ppi, runtime_quals,
+												   paramsel);
 
 			add_path(rel, inner_path);
 		}

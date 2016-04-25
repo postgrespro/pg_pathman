@@ -10,7 +10,7 @@
 #include "postgres.h"
 #include "optimizer/paths.h"
 #include "nodes_common.h"
-#include "pickyappend.h"
+#include "runtimeappend.h"
 
 
 
@@ -46,7 +46,7 @@ free_child_scan_common_array(ChildScanCommon *cur_plans, int n)
 }
 
 static void
-transform_plans_into_states(PickyAppendState *scan_state,
+transform_plans_into_states(RuntimeAppendState *scan_state,
 							ChildScanCommon *selected_plans, int n,
 							EState *estate)
 {
@@ -152,7 +152,7 @@ get_partition_oids(List *ranges, int *n, PartRelationInfo *prel)
 }
 
 static void
-pack_pickyappend_private(CustomScan *cscan, PickyAppendPath *path)
+pack_runtimeappend_private(CustomScan *cscan, RuntimeAppendPath *path)
 {
 	ChildScanCommon    *children = path->children;
 	int					nchildren = path->nchildren;
@@ -162,7 +162,7 @@ pack_pickyappend_private(CustomScan *cscan, PickyAppendPath *path)
 
 	for (i = 0; i < nchildren; i++)
 	{
-		/* We've already filled 'custom_paths' in create_pickyappend_path */
+		/* We've already filled 'custom_paths' in create_runtimeappend_path */
 		custom_oids = lappend_oid(custom_oids, children[i]->relid);
 		pfree(children[i]);
 	}
@@ -174,7 +174,7 @@ pack_pickyappend_private(CustomScan *cscan, PickyAppendPath *path)
 }
 
 static void
-unpack_pickyappend_private(PickyAppendState *scan_state, CustomScan *cscan)
+unpack_runtimeappend_private(RuntimeAppendState *scan_state, CustomScan *cscan)
 {
 	ListCell   *oid_cell;
 	ListCell   *plan_cell;
@@ -216,19 +216,19 @@ Path *
 create_append_path_common(PlannerInfo *root,
 						  AppendPath *inner_append,
 						  ParamPathInfo *param_info,
-						  List *picky_clauses,
+						  List *runtime_clauses,
 						  CustomPathMethods *path_methods,
 						  double sel)
 {
-	RelOptInfo *innerrel = inner_append->path.parent;
-	ListCell   *lc;
-	int			i;
+	RelOptInfo		   *innerrel = inner_append->path.parent;
+	ListCell		   *lc;
+	int					i;
 
-	RangeTblEntry  *inner_entry = root->simple_rte_array[innerrel->relid];
+	RangeTblEntry	   *inner_entry = root->simple_rte_array[innerrel->relid];
 
-	PickyAppendPath *result;
+	RuntimeAppendPath  *result;
 
-	result = palloc0(sizeof(PickyAppendPath));
+	result = palloc0(sizeof(RuntimeAppendPath));
 	NodeSetTag(result, T_CustomPath);
 
 	result->cpath.path.pathtype = T_CustomScan;
@@ -247,7 +247,7 @@ create_append_path_common(PlannerInfo *root,
 	result->cpath.path.total_cost = 0.0;
 
 	/* Set 'partitioned column'-related clauses */
-	result->cpath.custom_private = picky_clauses;
+	result->cpath.custom_private = runtime_clauses;
 	result->cpath.custom_paths = NIL;
 
 	Assert(inner_entry->relid != 0);
@@ -258,9 +258,9 @@ create_append_path_common(PlannerInfo *root,
 	i = 0;
 	foreach (lc, inner_append->subpaths)
 	{
-		Path		   *path = lfirst(lc);
-		Index			relindex = path->parent->relid;
-		ChildScanCommon	child = palloc(sizeof(ChildScanCommonData));
+		Path			   *path = lfirst(lc);
+		Index				relindex = path->parent->relid;
+		ChildScanCommon		child = palloc(sizeof(ChildScanCommonData));
 
 		result->cpath.path.startup_cost += path->startup_cost;
 		result->cpath.path.total_cost += path->total_cost;
@@ -288,7 +288,7 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 						  List *clauses, List *custom_plans,
 						  CustomScanMethods *scan_methods)
 {
-	PickyAppendPath    *gpath = (PickyAppendPath *) best_path;
+	RuntimeAppendPath  *gpath = (RuntimeAppendPath *) best_path;
 	CustomScan		   *cscan;
 
 	cscan = makeNode(CustomScan);
@@ -302,7 +302,7 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 
 	cscan->methods = scan_methods;
 
-	pack_pickyappend_private(cscan, gpath);
+	pack_runtimeappend_private(cscan, gpath);
 
 	return &cscan->scan.plan;
 }
@@ -312,14 +312,14 @@ create_append_scan_state_common(CustomScan *node,
 								CustomExecMethods *exec_methods,
 								uint32 size)
 {
-	PickyAppendState *scan_state = palloc0(size);
+	RuntimeAppendState *scan_state = palloc0(size);
 
 	NodeSetTag(scan_state, T_CustomScanState);
 	scan_state->css.flags = node->flags;
 	scan_state->css.methods = exec_methods;
 	scan_state->custom_exprs = node->custom_exprs;
 
-	unpack_pickyappend_private(scan_state, node);
+	unpack_runtimeappend_private(scan_state, node);
 
 	/* Fill in relation info using main table's relid */
 	scan_state->prel = get_pathman_relation_info(scan_state->relid, NULL);
@@ -335,7 +335,7 @@ create_append_scan_state_common(CustomScan *node,
 void
 begin_append_common(CustomScanState *node, EState *estate, int eflags)
 {
-	PickyAppendState   *scan_state = (PickyAppendState *) node;
+	RuntimeAppendState *scan_state = (RuntimeAppendState *) node;
 	HTAB			   *plan_state_table;
 	HASHCTL			   *plan_state_table_config = &scan_state->plan_state_table_config;
 
@@ -356,7 +356,7 @@ begin_append_common(CustomScanState *node, EState *estate, int eflags)
 void
 end_append_common(CustomScanState *node)
 {
-	PickyAppendState   *scan_state = (PickyAppendState *) node;
+	RuntimeAppendState *scan_state = (RuntimeAppendState *) node;
 
 	clear_plan_states(&scan_state->css);
 	hash_destroy(scan_state->plan_state_table);
@@ -366,7 +366,7 @@ end_append_common(CustomScanState *node)
 void
 rescan_append_common(CustomScanState *node)
 {
-	PickyAppendState   *scan_state = (PickyAppendState *) node;
+	RuntimeAppendState *scan_state = (RuntimeAppendState *) node;
 	ExprContext		   *econtext = node->ss.ps.ps_ExprContext;
 	PartRelationInfo   *prel = scan_state->prel;
 	List			   *ranges;

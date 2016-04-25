@@ -47,7 +47,7 @@ replace_child_var(Var *var, replace_rte_variables_context *context)
 
 	/*
 	 * Replace a partition's Var with a Var
-	 * pointing to the PickyAppend's results
+	 * pointing to the RuntimeAppend's results
 	 */
 	new_var->varno = cxt->parent->relid;
 	new_var->location = -1;

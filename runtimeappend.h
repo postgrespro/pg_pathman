@@ -1,7 +1,7 @@
 /* ------------------------------------------------------------------------
  *
- * pickyappend.h
- *		PickyAppend node's function prototypes and structures
+ * runtimeappend.h
+ *		RuntimeAppend node's function prototypes and structures
  *
  * Copyright (c) 2016, Postgres Professional
  *
@@ -26,7 +26,7 @@ typedef struct
 
 	ChildScanCommon	   *children;	/* all available plans */
 	int					nchildren;
-} PickyAppendPath;
+} RuntimeAppendPath;
 
 typedef struct
 {
@@ -52,32 +52,32 @@ typedef struct
 
 	/* Index of the selected plan state */
 	int					running_idx;
-} PickyAppendState;
+} RuntimeAppendState;
 
-extern bool					pg_pathman_enable_pickyappend;
+extern bool					pg_pathman_enable_runtimeappend;
 
-extern CustomPathMethods	pickyappend_path_methods;
-extern CustomScanMethods	pickyappend_plan_methods;
-extern CustomExecMethods	pickyappend_exec_methods;
+extern CustomPathMethods	runtimeappend_path_methods;
+extern CustomScanMethods	runtimeappend_plan_methods;
+extern CustomExecMethods	runtimeppend_exec_methods;
 
-Path * create_pickyappend_path(PlannerInfo *root, AppendPath *inner_append,
-							   ParamPathInfo *param_info, List *picky_clauses,
-							   double sel);
+Path * create_runtimeappend_path(PlannerInfo *root, AppendPath *inner_append,
+								 ParamPathInfo *param_info, List *runtime_clauses,
+								 double sel);
 
-Plan * create_pickyappend_plan(PlannerInfo *root, RelOptInfo *rel,
-							   CustomPath *best_path, List *tlist,
-							   List *clauses, List *custom_plans);
+Plan * create_runtimeappend_plan(PlannerInfo *root, RelOptInfo *rel,
+								 CustomPath *best_path, List *tlist,
+								 List *clauses, List *custom_plans);
 
-Node * pickyappend_create_scan_state(CustomScan *node);
+Node * runtimeappend_create_scan_state(CustomScan *node);
 
-void pickyappend_begin(CustomScanState *node, EState *estate, int eflags);
+void runtimeappend_begin(CustomScanState *node, EState *estate, int eflags);
 
-TupleTableSlot * pickyappend_exec(CustomScanState *node);
+TupleTableSlot * runtimeappend_exec(CustomScanState *node);
 
-void pickyappend_end(CustomScanState *node);
+void runtimeappend_end(CustomScanState *node);
 
-void pickyappend_rescan(CustomScanState *node);
+void runtimeappend_rescan(CustomScanState *node);
 
-void pickyppend_explain(CustomScanState *node, List *ancestors, ExplainState *es);
+void runtimeppend_explain(CustomScanState *node, List *ancestors, ExplainState *es);
 
 #endif

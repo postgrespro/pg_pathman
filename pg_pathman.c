@@ -40,7 +40,7 @@
 #include "catalog/pg_type.h"
 #include "foreign/fdwapi.h"
 #include "hooks.h"
-#include "pickyappend.h"
+#include "runtimeappend.h"
 
 PG_MODULE_MAGIC;
 
@@ -155,20 +155,20 @@ _PG_init(void)
 	planner_hook_original = planner_hook;
 	planner_hook = pathman_planner_hook;
 
-	pickyappend_path_methods.CustomName				= "PickyAppend";
-	pickyappend_path_methods.PlanCustomPath			= create_pickyappend_plan;
+	runtimeappend_path_methods.CustomName				= "RuntimeAppend";
+	runtimeappend_path_methods.PlanCustomPath			= create_runtimeappend_plan;
 
-	pickyappend_plan_methods.CustomName 			= "PickyAppend";
-	pickyappend_plan_methods.CreateCustomScanState	= pickyappend_create_scan_state;
+	runtimeappend_plan_methods.CustomName 				= "RuntimeAppend";
+	runtimeappend_plan_methods.CreateCustomScanState	= runtimeappend_create_scan_state;
 
-	pickyappend_exec_methods.CustomName				= "PickyAppend";
-	pickyappend_exec_methods.BeginCustomScan		= pickyappend_begin;
-	pickyappend_exec_methods.ExecCustomScan			= pickyappend_exec;
-	pickyappend_exec_methods.EndCustomScan			= pickyappend_end;
-	pickyappend_exec_methods.ReScanCustomScan		= pickyappend_rescan;
-	pickyappend_exec_methods.MarkPosCustomScan		= NULL;
-	pickyappend_exec_methods.RestrPosCustomScan		= NULL;
-	pickyappend_exec_methods.ExplainCustomScan		= pickyppend_explain;
+	runtimeppend_exec_methods.CustomName				= "RuntimeAppend";
+	runtimeppend_exec_methods.BeginCustomScan			= runtimeappend_begin;
+	runtimeppend_exec_methods.ExecCustomScan			= runtimeappend_exec;
+	runtimeppend_exec_methods.EndCustomScan				= runtimeappend_end;
+	runtimeppend_exec_methods.ReScanCustomScan			= runtimeappend_rescan;
+	runtimeppend_exec_methods.MarkPosCustomScan			= NULL;
+	runtimeppend_exec_methods.RestrPosCustomScan		= NULL;
+	runtimeppend_exec_methods.ExplainCustomScan			= runtimeppend_explain;
 
 	DefineCustomBoolVariable("pg_pathman.enable",
 							 "Enables pg_pathman's optimizations during the planner stage",
@@ -181,10 +181,10 @@ _PG_init(void)
 							 NULL,
 							 NULL);
 
-	DefineCustomBoolVariable("pg_pathman.enable_pickyappend",
-							 "Enables the planner's use of PickyAppend custom node.",
+	DefineCustomBoolVariable("pg_pathman.enable_runtimeappend",
+							 "Enables the planner's use of RuntimeAppend custom node.",
 							 NULL,
-							 &pg_pathman_enable_pickyappend,
+							 &pg_pathman_enable_runtimeappend,
 							 true,
 							 PGC_USERSET,
 							 0,

@@ -56,7 +56,7 @@ clear_plan_states(CustomScanState *scan_state)
 Path * create_append_path_common(PlannerInfo *root,
 								 AppendPath *inner_append,
 								 ParamPathInfo *param_info,
-								 List *picky_clauses,
+								 List *runtime_clauses,
 								 CustomPathMethods *path_methods,
 								 double sel);
 
