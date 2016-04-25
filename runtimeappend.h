@@ -38,13 +38,9 @@ typedef struct
 	List			   *custom_exprs;
 	List			   *custom_expr_states;
 
-	/* All available plans */
+	/* All available plans \ plan states */
 	HTAB			   *children_table;
 	HASHCTL				children_table_config;
-
-	/* Contains reusable PlanStates */
-	HTAB			   *plan_state_table;
-	HASHCTL				plan_state_table_config;
 
 	/* Currently selected plans \ plan states */
 	ChildScanCommon	   *cur_plans;

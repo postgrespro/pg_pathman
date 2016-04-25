@@ -27,6 +27,13 @@ typedef struct
 {
 	Oid			relid;				/* partition relid */
 
+	enum
+	{
+		CHILD_PATH = 0,
+		CHILD_PLAN,
+		CHILD_PLAN_STATE
+	}		content_type;
+	
 	union
 	{
 		Path	   *path;
