@@ -16,7 +16,6 @@
 #include "nodes/nodeFuncs.h"
 #include "nodes/pg_list.h"
 #include "nodes/relation.h"
-#include "nodes/makefuncs.h"
 #include "nodes/primnodes.h"
 #include "optimizer/clauses.h"
 #include "optimizer/paths.h"
@@ -25,24 +24,23 @@
 #include "optimizer/restrictinfo.h"
 #include "optimizer/cost.h"
 #include "parser/analyze.h"
-#include "parser/parsetree.h"
 #include "utils/hsearch.h"
 #include "utils/tqual.h"
 #include "utils/rel.h"
 #include "utils/elog.h"
 #include "utils/array.h"
 #include "utils/date.h"
-#include "utils/typcache.h"
-#include "utils/lsyscache.h"
 #include "utils/guc.h"
+#include "utils/lsyscache.h"
+#include "utils/selfuncs.h"
 #include "access/heapam.h"
 #include "access/nbtree.h"
 #include "storage/ipc.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_type.h"
 #include "foreign/fdwapi.h"
-#include "join_hook.h"
-#include "pickyappend.h"
+#include "hooks.h"
+#include "runtimeappend.h"
 
 PG_MODULE_MAGIC;
 
@@ -52,32 +50,29 @@ typedef struct
 	Oid new_varno;
 } change_varno_context;
 
-bool pg_pathman_enable;
-PathmanState *pmstate;
+bool			inheritance_disabled;
+bool			pg_pathman_enable;
+PathmanState   *pmstate;
 
 /* Original hooks */
-static set_rel_pathlist_hook_type set_rel_pathlist_hook_original = NULL;
 static shmem_startup_hook_type shmem_startup_hook_original = NULL;
 static post_parse_analyze_hook_type post_parse_analyze_hook_original = NULL;
 static planner_hook_type planner_hook_original = NULL;
 
 /* pg module functions */
 void _PG_init(void);
-void _PG_fini(void);
 
 /* Hook functions */
 static void pathman_shmem_startup(void);
-static void pathman_set_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTblEntry *rte);
 void pathman_post_parse_analysis_hook(ParseState *pstate, Query *query);
 static PlannedStmt * pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams);
 
 /* Utility functions */
 static void handle_modification_query(Query *parse);
-static int append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
-				RangeTblEntry *rte, int index, Oid childOID, List *wrappers);
 static Node *wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue);
 static void disable_inheritance(Query *parse);
-bool inheritance_disabled;
+static void disable_inheritance_cte(Query *parse);
+static void disable_inheritance_subselect(Query *parse);
 
 /* Expression tree handlers */
 static int make_hash(const PartRelationInfo *prel, int value);
@@ -94,9 +89,6 @@ static RestrictInfo *rebuild_restrictinfo(Node *clause, RestrictInfo *old_rinfo)
 static void set_plain_rel_size(PlannerInfo *root, RelOptInfo *rel,
 				   RangeTblEntry *rte);
 static void set_plain_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte);
-static void set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
-					Index rti, RangeTblEntry *rte);
-static void set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTblEntry *rte, PathKey *pathkeyAsc, PathKey *pathkeyDesc);
 static List *accumulate_append_subpath(List *subpaths, Path *path);
 static void generate_mergeappend_paths(PlannerInfo *root, RelOptInfo *rel,
 						   List *live_childrels,
@@ -152,8 +144,8 @@ _PG_init(void)
 	RequestAddinShmemSpace(pathman_memsize());
 	RequestAddinLWLocks(3);
 
-	set_rel_pathlist_hook_original = set_rel_pathlist_hook;
-	set_rel_pathlist_hook = pathman_set_rel_pathlist_hook;
+	set_rel_pathlist_hook_next = set_rel_pathlist_hook;
+	set_rel_pathlist_hook = pathman_rel_pathlist_hook;
 	set_join_pathlist_next = set_join_pathlist_hook;
 	set_join_pathlist_hook = pathman_join_pathlist_hook;
 	shmem_startup_hook_original = shmem_startup_hook;
@@ -163,20 +155,20 @@ _PG_init(void)
 	planner_hook_original = planner_hook;
 	planner_hook = pathman_planner_hook;
 
-	pickyappend_path_methods.CustomName				= "PickyAppend";
-	pickyappend_path_methods.PlanCustomPath			= create_pickyappend_plan;
+	runtimeappend_path_methods.CustomName				= "RuntimeAppend";
+	runtimeappend_path_methods.PlanCustomPath			= create_runtimeappend_plan;
 
-	pickyappend_plan_methods.CustomName 			= "PickyAppend";
-	pickyappend_plan_methods.CreateCustomScanState	= pickyappend_create_scan_state;
+	runtimeappend_plan_methods.CustomName 				= "RuntimeAppend";
+	runtimeappend_plan_methods.CreateCustomScanState	= runtimeappend_create_scan_state;
 
-	pickyappend_exec_methods.CustomName				= "PickyAppend";
-	pickyappend_exec_methods.BeginCustomScan		= pickyappend_begin;
-	pickyappend_exec_methods.ExecCustomScan			= pickyappend_exec;
-	pickyappend_exec_methods.EndCustomScan			= pickyappend_end;
-	pickyappend_exec_methods.ReScanCustomScan		= pickyappend_rescan;
-	pickyappend_exec_methods.MarkPosCustomScan		= NULL;
-	pickyappend_exec_methods.RestrPosCustomScan		= NULL;
-	pickyappend_exec_methods.ExplainCustomScan		= pickyppend_explain;
+	runtimeppend_exec_methods.CustomName				= "RuntimeAppend";
+	runtimeppend_exec_methods.BeginCustomScan			= runtimeappend_begin;
+	runtimeppend_exec_methods.ExecCustomScan			= runtimeappend_exec;
+	runtimeppend_exec_methods.EndCustomScan				= runtimeappend_end;
+	runtimeppend_exec_methods.ReScanCustomScan			= runtimeappend_rescan;
+	runtimeppend_exec_methods.MarkPosCustomScan			= NULL;
+	runtimeppend_exec_methods.RestrPosCustomScan		= NULL;
+	runtimeppend_exec_methods.ExplainCustomScan			= runtimeppend_explain;
 
 	DefineCustomBoolVariable("pg_pathman.enable",
 							 "Enables pg_pathman's optimizations during the planner stage",
@@ -189,25 +181,16 @@ _PG_init(void)
 							 NULL,
 							 NULL);
 
-	DefineCustomBoolVariable("pg_pathman.enable_pickyappend",
-							 "Enables the planner's use of PickyAppend custom node.",
+	DefineCustomBoolVariable("pg_pathman.enable_runtimeappend",
+							 "Enables the planner's use of RuntimeAppend custom node.",
 							 NULL,
-							 &pg_pathman_enable_pickyappend,
+							 &pg_pathman_enable_runtimeappend,
 							 true,
 							 PGC_USERSET,
 							 0,
 							 NULL,
 							 NULL,
 							 NULL);
-}
-
-void
-_PG_fini(void)
-{
-	set_rel_pathlist_hook = set_rel_pathlist_hook_original;
-	shmem_startup_hook = shmem_startup_hook_original;
-	post_parse_analyze_hook = post_parse_analyze_hook_original;
-	planner_hook = planner_hook_original;
 }
 
 PartRelationInfo *
@@ -239,8 +222,7 @@ get_cmp_func(Oid type1, Oid type2)
 
 	cmp_func = palloc(sizeof(FmgrInfo));
 	tce = lookup_type_cache(type1,
-							TYPECACHE_EQ_OPR | TYPECACHE_LT_OPR | TYPECACHE_GT_OPR |
-							TYPECACHE_CMP_PROC | TYPECACHE_CMP_PROC_FINFO);
+				TYPECACHE_BTREE_OPFAMILY | TYPECACHE_CMP_PROC | TYPECACHE_CMP_PROC_FINFO);
 	cmp_proc_oid = get_opfamily_proc(tce->btree_opf,
 									 type1,
 									 type2,
@@ -272,7 +254,6 @@ PlannedStmt *
 pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 {
 	PlannedStmt	  *result;
-	ListCell	  *lc;
 
 	if (pg_pathman_enable)
 	{
@@ -284,19 +265,12 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 				break;
 			case CMD_UPDATE:
 			case CMD_DELETE:
+				disable_inheritance_cte(parse);
+				disable_inheritance_subselect(parse);
 				handle_modification_query(parse);
 				break;
 			default:
 				break;
-		}
-
-		/* If query contains CTE (WITH statement) then handle subqueries too */
-		foreach(lc, parse->cteList)
-		{
-			CommonTableExpr *cte = (CommonTableExpr*) lfirst(lc);
-
-			if (IsA(cte->ctequery, Query))
-				disable_inheritance((Query *)cte->ctequery);
 		}
 	}
 
@@ -316,10 +290,16 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 static void
 disable_inheritance(Query *parse)
 {
-	RangeTblEntry *rte;
-	ListCell	  *lc;
+	ListCell		 *lc;
+	RangeTblEntry	 *rte;
 	PartRelationInfo *prel;
-	bool found;
+	bool	found;
+
+	/* If query contains CTE (WITH statement) then handle subqueries too */
+	disable_inheritance_cte(parse);
+
+	/* If query contains subselects */
+	disable_inheritance_subselect(parse);
 
 	foreach(lc, parse->rtable)
 	{
@@ -352,6 +332,38 @@ disable_inheritance(Query *parse)
 				break;
 		}
 	}
+}
+
+static void
+disable_inheritance_cte(Query *parse)
+{
+	ListCell	  *lc;
+
+	foreach(lc, parse->cteList)
+	{
+		CommonTableExpr *cte = (CommonTableExpr*) lfirst(lc);
+
+		if (IsA(cte->ctequery, Query))
+			disable_inheritance((Query *) cte->ctequery);
+	}
+}
+
+static void
+disable_inheritance_subselect(Query *parse)
+{
+	Node		*quals;
+
+	if (!parse->jointree || !parse->jointree->quals)
+		return;
+
+	quals = parse->jointree->quals;
+	if (!IsA(quals, SubLink))
+		return;
+
+	if (!IsA(((SubLink *) quals)->subselect, Query))
+		return;
+
+	disable_inheritance((Query *) (((SubLink *) quals)->subselect));
 }
 
 /*
@@ -420,158 +432,7 @@ pathman_shmem_startup(void)
 		shmem_startup_hook_original();
 }
 
-/*
- * Main hook. All the magic goes here
- */
 void
-pathman_set_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTblEntry *rte)
-{
-	PartRelationInfo *prel = NULL;
-	RelOptInfo **new_rel_array;
-	RangeTblEntry **new_rte_array;
-	int len;
-	bool found;
-	int first_child_relid = 0;
-
-	if (!pg_pathman_enable)
-		return;
-
-	/* This works only for SELECT queries */
-	if (root->parse->commandType != CMD_SELECT || !inheritance_disabled)
-		return;
-
-	/* Lookup partitioning information for parent relation */
-	prel = get_pathman_relation_info(rte->relid, &found);
-
-	if (prel != NULL && found)
-	{
-		ListCell   *lc;
-		int			i;
-		Oid		   *dsm_arr;
-		List	   *ranges,
-				   *wrappers;
-		PathKey	   *pathkeyAsc = NULL,
-				   *pathkeyDesc = NULL;
-
-		if (prel->parttype == PT_RANGE)
-		{
-			/*
-			 * Get pathkeys for ascending and descending sort by partition
-			 * column
-			 */
-			List		   *pathkeys;
-			Var			   *var;
-			Oid				vartypeid,
-							varcollid;
-			int32			type_mod;
-			TypeCacheEntry *tce;
-
-			/* Make Var from patition column */
-			get_rte_attribute_type(rte, prel->attnum,
-								   &vartypeid, &type_mod, &varcollid);
-			var = makeVar(rti, prel->attnum, vartypeid, type_mod, varcollid, 0);
-			var->location = -1;
-
-			/* Determine operator type */
-			tce = lookup_type_cache(var->vartype, TYPECACHE_LT_OPR | TYPECACHE_GT_OPR);
-
-			/* Make pathkeys */
-			pathkeys = build_expression_pathkey(root, (Expr *)var, NULL,
-												tce->lt_opr, NULL, false);
-			if (pathkeys)
-				pathkeyAsc = (PathKey *) linitial(pathkeys);
-			pathkeys = build_expression_pathkey(root, (Expr *)var, NULL,
-												tce->gt_opr, NULL, false);
-			if (pathkeys)
-				pathkeyDesc = (PathKey *) linitial(pathkeys);
-		}
-
-		rte->inh = true;
-		dsm_arr = (Oid *) dsm_array_get_pointer(&prel->children);
-		ranges = list_make1_int(make_irange(0, prel->children_count - 1, false));
-
-		/* Make wrappers over restrictions and collect final rangeset */
-		wrappers = NIL;
-		foreach(lc, rel->baserestrictinfo)
-		{
-			WrapperNode *wrap;
-
-			RestrictInfo *rinfo = (RestrictInfo*) lfirst(lc);
-
-			wrap = walk_expr_tree(NULL, rinfo->clause, prel);
-			wrappers = lappend(wrappers, wrap);
-			ranges = irange_list_intersect(ranges, wrap->rangeset);
-		}
-
-		/*
-		 * Expand simple_rte_array and simple_rel_array
-		 */
-
-		if (ranges)
-		{
-			len = irange_list_length(ranges);
-
-			/* Expand simple_rel_array and simple_rte_array */
-			new_rel_array = (RelOptInfo **)
-				palloc0((root->simple_rel_array_size + len) * sizeof(RelOptInfo *));
-
-			/* simple_rte_array is an array equivalent of the rtable list */
-			new_rte_array = (RangeTblEntry **)
-				palloc0((root->simple_rel_array_size + len) * sizeof(RangeTblEntry *));
-
-			/* Copy relations to the new arrays */
-	        for (i = 0; i < root->simple_rel_array_size; i++)
-	        {
-	                new_rel_array[i] = root->simple_rel_array[i];
-	                new_rte_array[i] = root->simple_rte_array[i];
-	        }
-
-			/* Free old arrays */
-			pfree(root->simple_rel_array);
-			pfree(root->simple_rte_array);
-
-			root->simple_rel_array_size += len;
-			root->simple_rel_array = new_rel_array;
-			root->simple_rte_array = new_rte_array;
-		}
-
-		/*
-		 * Iterate all indexes in rangeset and append corresponding child
-		 * relations.
-		 */
-		foreach(lc, ranges)
-		{
-			IndexRange	irange = lfirst_irange(lc);
-			Oid			childOid;
-
-			for (i = irange_lower(irange); i <= irange_upper(irange); i++)
-			{
-				int idx;
-
-				childOid = dsm_arr[i];
-				idx = append_child_relation(root, rel, rti, rte, i, childOid, wrappers);
-
-				if (!first_child_relid)
-					first_child_relid = idx;
-			}
-		}
-
-		/* Clear old path list */
-		list_free(rel->pathlist);
-
-		rel->pathlist = NIL;
-		set_append_rel_pathlist(root, rel, rti, rte, pathkeyAsc, pathkeyDesc);
-		set_append_rel_size(root, rel, rti, rte);
-	}
-
-	/* Invoke original hook if needed */
-	if (set_rel_pathlist_hook_original != NULL)
-	{
-		set_rel_pathlist_hook_original(root, rel, rti, rte);
-	}
-}
-
-static void
 set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
 					Index rti, RangeTblEntry *rte)
 {
@@ -615,7 +476,7 @@ set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
  * Creates child relation and adds it to root.
  * Returns child index in simple_rel_array
  */
-static int
+int
 append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	RangeTblEntry *rte, int index, Oid childOid, List *wrappers)
 {
@@ -980,6 +841,7 @@ walk_expr_tree(WalkerContext *wcxt, Expr *expr, const PartRelationInfo *prel)
 			result->orig = (const Node *)expr;
 			result->args = NIL;
 			result->rangeset = list_make1_irange(make_irange(0, prel->children_count - 1, true));
+			result->paramsel = 1.0;
 			return result;
 	}
 }
@@ -1006,7 +868,8 @@ handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result,
 
 	/* Determine operator type */
 	tce = lookup_type_cache(v->vartype,
-		TYPECACHE_EQ_OPR | TYPECACHE_LT_OPR | TYPECACHE_GT_OPR | TYPECACHE_CMP_PROC | TYPECACHE_CMP_PROC_FINFO);
+							TYPECACHE_BTREE_OPFAMILY | TYPECACHE_CMP_PROC | TYPECACHE_CMP_PROC_FINFO);
+
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
 	cmp_proc_oid = get_opfamily_proc(tce->btree_opf,
 									 c->consttype,
@@ -1175,6 +1038,38 @@ handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result,
 	}
 
 	result->rangeset = list_make1_irange(make_irange(0, prel->children_count - 1, true));
+	result->paramsel = 1.0;
+}
+
+/*
+ *	Estimate selectivity of parametrized quals.
+ */
+static void
+handle_binary_opexpr_param(const PartRelationInfo *prel,
+						   WrapperNode *result, const Var *v)
+{
+	const OpExpr	   *expr = (const OpExpr *)result->orig;
+	TypeCacheEntry	   *tce;
+	int					strategy;
+
+	/* Determine operator type */
+	tce = lookup_type_cache(v->vartype, TYPECACHE_BTREE_OPFAMILY);
+	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
+
+	result->rangeset = list_make1_irange(make_irange(0, prel->children_count - 1, true));
+
+	if (strategy == BTEqualStrategyNumber)
+	{
+		result->paramsel = 1.0 / (double) prel->children_count;
+	}
+	else if (prel->parttype == PT_RANGE && strategy > 0)
+	{
+		result->paramsel = DEFAULT_INEQ_SEL;
+	}
+	else
+	{
+		result->paramsel = 1.0;
+	}
 }
 
 /*
@@ -1274,24 +1169,36 @@ handle_opexpr(WalkerContext *wcxt, const OpExpr *expr, const PartRelationInfo *p
 
 	if (list_length(expr->args) == 2)
 	{
-		firstarg = (Node *) linitial(expr->args);
-		secondarg = (Node *) lsecond(expr->args);
-
-		if (IsA(firstarg, Var) && IsConstValue(wcxt, secondarg) &&
-			((Var *)firstarg)->varattno == prel->attnum)
+		if (IsA(linitial(expr->args), Var)
+			&& ((Var *)linitial(expr->args))->varattno == prel->attnum)
 		{
-			handle_binary_opexpr(prel, result, (Var *)firstarg, ExtractConst(wcxt, secondarg));
-			return result;
+			firstarg = (Node *) linitial(expr->args);
+			secondarg = (Node *) lsecond(expr->args);
 		}
-		else if (IsA(secondarg, Var) && IsConstValue(wcxt, firstarg) &&
-				 ((Var *)secondarg)->varattno == prel->attnum)
+		else if (IsA(lsecond(expr->args), Var)
+			&& ((Var *)lsecond(expr->args))->varattno == prel->attnum)
 		{
-			handle_binary_opexpr(prel, result, (Var *)secondarg, ExtractConst(wcxt, firstarg));
-			return result;
+			firstarg = (Node *) lsecond(expr->args);
+			secondarg = (Node *) linitial(expr->args);
+		}
+
+		if (firstarg && secondarg)
+		{
+			if (IsConstValue(wcxt, secondarg))
+			{
+				handle_binary_opexpr(prel, result, (Var *)firstarg, ExtractConst(wcxt, secondarg));
+				return result;
+			}
+			else if (IsA(secondarg, Param) || IsA(secondarg, Var))
+			{
+				handle_binary_opexpr_param(prel, result, (Var *)firstarg);
+				return result;
+			}
 		}
 	}
 
 	result->rangeset = list_make1_irange(make_irange(0, prel->children_count - 1, true));
+	result->paramsel = 1.0;
 	return result;
 }
 
@@ -1306,6 +1213,7 @@ handle_boolexpr(WalkerContext *wcxt, const BoolExpr *expr, const PartRelationInf
 
 	result->orig = (const Node *)expr;
 	result->args = NIL;
+	result->paramsel = 1.0;
 
 	if (expr->boolop == AND_EXPR)
 		result->rangeset = list_make1_irange(make_irange(0, prel->children_count - 1, false));
@@ -1325,11 +1233,26 @@ handle_boolexpr(WalkerContext *wcxt, const BoolExpr *expr, const PartRelationInf
 				break;
 			case AND_EXPR:
 				result->rangeset = irange_list_intersect(result->rangeset, arg->rangeset);
+				result->paramsel *= arg->paramsel;
 				break;
 			default:
 				result->rangeset = list_make1_irange(make_irange(0, prel->children_count - 1, false));
 				break;
 		}
+	}
+
+	if (expr->boolop == OR_EXPR)
+	{
+		int totallen = irange_list_length(result->rangeset);
+
+		foreach (lc, result->args)
+		{
+			WrapperNode *arg = (WrapperNode *) lfirst(lc);
+			int len = irange_list_length(arg->rangeset);
+
+			result->paramsel *= (1.0 - arg->paramsel * (double)len / (double)totallen);
+		}
+		result->paramsel = 1.0 - result->paramsel;
 	}
 
 	return result;
@@ -1348,6 +1271,7 @@ handle_arrexpr(WalkerContext *wcxt, const ScalarArrayOpExpr *expr, const PartRel
 
 	result->orig = (const Node *)expr;
 	result->args = NIL;
+	result->paramsel = 1.0;
 
 	if (varnode == NULL || !IsA(varnode, Var))
 	{
@@ -1391,6 +1315,11 @@ handle_arrexpr(WalkerContext *wcxt, const ScalarArrayOpExpr *expr, const PartRel
 		pfree(elem_nulls);
 
 		return result;
+	}
+
+	if (arraynode && IsA(arraynode, Param))
+	{
+		result->paramsel = DEFAULT_INEQ_SEL;
 	}
 
 	result->rangeset = list_make1_irange(make_irange(0, prel->children_count - 1, true));
@@ -1484,7 +1413,7 @@ set_foreign_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
  * set_append_rel_pathlist
  *	  Build access paths for an "append relation"
  */
-static void
+void
 set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel,
 						Index rti, RangeTblEntry *rte,
 						PathKey *pathkeyAsc, PathKey *pathkeyDesc)

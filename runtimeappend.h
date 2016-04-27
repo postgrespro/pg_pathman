@@ -1,0 +1,79 @@
+/* ------------------------------------------------------------------------
+ *
+ * runtimeappend.h
+ *		RuntimeAppend node's function prototypes and structures
+ *
+ * Copyright (c) 2016, Postgres Professional
+ *
+ * ------------------------------------------------------------------------
+ */
+#ifndef PICKYAPPEND_H
+#define PICKYAPPEND_H
+
+#include "postgres.h"
+#include "optimizer/paths.h"
+#include "optimizer/pathnode.h"
+#include "commands/explain.h"
+
+#include "pathman.h"
+#include "nodes_common.h"
+
+
+typedef struct
+{
+	CustomPath			cpath;
+	Oid					relid;		/* relid of the partitioned table */
+
+	ChildScanCommon	   *children;	/* all available plans */
+	int					nchildren;
+} RuntimeAppendPath;
+
+typedef struct
+{
+	CustomScanState		css;
+	Oid					relid;		/* relid of the partitioned table */
+	PartRelationInfo   *prel;
+
+	/* Restrictions to be checked during ReScan and Exec */
+	List			   *custom_exprs;
+	List			   *custom_expr_states;
+
+	/* All available plans \ plan states */
+	HTAB			   *children_table;
+	HASHCTL				children_table_config;
+
+	/* Currently selected plans \ plan states */
+	ChildScanCommon	   *cur_plans;
+	int					ncur_plans;
+
+	/* Index of the selected plan state */
+	int					running_idx;
+} RuntimeAppendState;
+
+extern bool					pg_pathman_enable_runtimeappend;
+
+extern CustomPathMethods	runtimeappend_path_methods;
+extern CustomScanMethods	runtimeappend_plan_methods;
+extern CustomExecMethods	runtimeppend_exec_methods;
+
+Path * create_runtimeappend_path(PlannerInfo *root, AppendPath *inner_append,
+								 ParamPathInfo *param_info, List *runtime_clauses,
+								 double sel);
+
+Plan * create_runtimeappend_plan(PlannerInfo *root, RelOptInfo *rel,
+								 CustomPath *best_path, List *tlist,
+								 List *clauses, List *custom_plans);
+
+Node * runtimeappend_create_scan_state(CustomScan *node);
+
+void runtimeappend_begin(CustomScanState *node, EState *estate, int eflags);
+
+TupleTableSlot * runtimeappend_exec(CustomScanState *node);
+
+void runtimeappend_end(CustomScanState *node);
+
+void runtimeappend_rescan(CustomScanState *node);
+
+void runtimeppend_explain(CustomScanState *node, List *ancestors, ExplainState *es);
+
+#endif

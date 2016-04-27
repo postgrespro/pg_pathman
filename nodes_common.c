@@ -1,26 +1,37 @@
+/* ------------------------------------------------------------------------
+ *
+ * nodes_common.c
+ *		Common code for custom nodes
+ *
+ * Copyright (c) 2016, Postgres Professional
+ *
+ * ------------------------------------------------------------------------
+ */
 #include "postgres.h"
 #include "optimizer/paths.h"
 #include "nodes_common.h"
-#include "pickyappend.h"
+#include "runtimeappend.h"
 
 
-static void
-free_child_scan_common_array(ChildScanCommon *cur_plans, int n)
+
+/* Compare plans by 'original_order' */
+static int
+cmp_child_scan_common_by_orig_order(const void *ap,
+									const void *bp)
 {
-	int i;
+	ChildScanCommon a = *(ChildScanCommon *) ap;
+	ChildScanCommon b = *(ChildScanCommon *) bp;
 
-	if (!cur_plans)
-		return;
-
-	/* We shouldn't free inner objects e.g. Plans here */
-	for (i = 0; i < n; i++)
-		pfree(cur_plans[i]);
-
-	pfree(cur_plans);
+	if (a->original_order > b->original_order)
+		return 1;
+	else if (a->original_order < b->original_order)
+		return -1;
+	else
+		return 0;
 }
 
 static void
-transform_plans_into_states(PickyAppendState *scan_state,
+transform_plans_into_states(RuntimeAppendState *scan_state,
 							ChildScanCommon *selected_plans, int n,
 							EState *estate)
 {
@@ -29,33 +40,35 @@ transform_plans_into_states(PickyAppendState *scan_state,
 	for (i = 0; i < n; i++)
 	{
 		ChildScanCommon		child = selected_plans[i];
-		PreservedPlanState *pps;
-		bool				pps_found;
-
-		pps = (PreservedPlanState *) hash_search(scan_state->plan_state_table,
-												 (const void *) &child->relid,
-												 HASH_ENTER, &pps_found);
+		PlanState		   *ps;
 
 		/* Create new node since this plan hasn't been used yet */
-		if (!pps_found)
+		if (child->content_type != CHILD_PLAN_STATE)
 		{
-			pps->ps = ExecInitNode(child->content.plan, estate, 0);
-			/* Explain and clear_plan_states rely on this list */
-			scan_state->css.custom_ps = lappend(scan_state->css.custom_ps, pps->ps);
-		}
+			Assert(child->content_type == CHILD_PLAN); /* no paths allowed */
 
+			ps = ExecInitNode(child->content.plan, estate, 0);
+			child->content.plan_state = ps;
+			child->content_type = CHILD_PLAN_STATE; /* update content type */
+			
+			/* Explain and clear_plan_states rely on this list */
+			scan_state->css.custom_ps = lappend(scan_state->css.custom_ps, ps);
+		}
+		else
+			ps = child->content.plan_state;
+		
 		/* Node with params will be ReScanned */
 		if (scan_state->css.ss.ps.chgParam)
-			UpdateChangedParamSet(pps->ps, scan_state->css.ss.ps.chgParam);
+			UpdateChangedParamSet(ps, scan_state->css.ss.ps.chgParam);
 
 		/*
 		 * We should ReScan this node manually since
 		 * ExecProcNode won't do this for us in this case.
 		 */
-		if (!pps->ps->chgParam)
-			ExecReScan(pps->ps);
+		if (bms_is_empty(ps->chgParam))
+			ExecReScan(ps);
 
-		child->content.plan_state = pps->ps;
+		child->content.plan_state = ps;
 	}
 }
 
@@ -69,12 +82,11 @@ select_required_plans(HTAB *children_table, Oid *parts, int nparts, int *nres)
 
 	for (i = 0; i < nparts; i++)
 	{
-		ChildScanCommon child_copy;
 		ChildScanCommon child = hash_search(children_table,
 											(const void *) &parts[i],
 											HASH_FIND, NULL);
 		if (!child)
-			continue;
+			continue; /* no plan for this partition */
 
 		if (allocated <= used)
 		{
@@ -82,10 +94,7 @@ select_required_plans(HTAB *children_table, Oid *parts, int nparts, int *nres)
 			result = repalloc(result, allocated * sizeof(ChildScanCommon));
 		}
 
-		child_copy = palloc(sizeof(ChildScanCommonData));
-		memcpy(child_copy, child, sizeof(ChildScanCommonData));
-
-		result[used++] = child_copy;
+		result[used++] = child;
 	}
 
 	*nres = used;
@@ -125,24 +134,8 @@ get_partition_oids(List *ranges, int *n, PartRelationInfo *prel)
 	return result;
 }
 
-/* Compare plans by 'original_order' */
-static int
-cmp_child_scan_common_by_orig_order(const void *ap,
-									const void *bp)
-{
-	ChildScanCommon a = *(ChildScanCommon *) ap;
-	ChildScanCommon b = *(ChildScanCommon *) bp;
-
-	if (a->original_order > b->original_order)
-		return 1;
-	else if (a->original_order < b->original_order)
-		return -1;
-	else
-		return 0;
-}
-
 static void
-pack_pickyappend_private(CustomScan *cscan, PickyAppendPath *path)
+pack_runtimeappend_private(CustomScan *cscan, RuntimeAppendPath *path)
 {
 	ChildScanCommon    *children = path->children;
 	int					nchildren = path->nchildren;
@@ -152,7 +145,7 @@ pack_pickyappend_private(CustomScan *cscan, PickyAppendPath *path)
 
 	for (i = 0; i < nchildren; i++)
 	{
-		/* We've already filled 'custom_paths' in create_pickyappend_path */
+		/* We've already filled 'custom_paths' in create_runtimeappend_path */
 		custom_oids = lappend_oid(custom_oids, children[i]->relid);
 		pfree(children[i]);
 	}
@@ -164,13 +157,13 @@ pack_pickyappend_private(CustomScan *cscan, PickyAppendPath *path)
 }
 
 static void
-unpack_pickyappend_private(PickyAppendState *scan_state, CustomScan *cscan)
+unpack_runtimeappend_private(RuntimeAppendState *scan_state, CustomScan *cscan)
 {
 	ListCell   *oid_cell;
 	ListCell   *plan_cell;
 	List	   *custom_oids = (List *) lsecond(cscan->custom_private);
 	int			nchildren = list_length(custom_oids);
-	HTAB	   *children_table = scan_state->children_table;
+	HTAB	   *children_table;
 	HASHCTL	   *children_table_config = &scan_state->children_table_config;
 	int			i;
 
@@ -194,6 +187,7 @@ unpack_pickyappend_private(PickyAppendState *scan_state, CustomScan *cscan)
 
 		Assert(!child_found); /* there should be no collisions */
 
+		child->content_type = CHILD_PLAN;
 		child->content.plan = (Plan *) lfirst(plan_cell);
 		child->original_order = i++; /* will be used in EXPLAIN */
 	}
@@ -206,18 +200,19 @@ Path *
 create_append_path_common(PlannerInfo *root,
 						  AppendPath *inner_append,
 						  ParamPathInfo *param_info,
-						  List *picky_clauses,
-						  CustomPathMethods *path_methods)
+						  List *runtime_clauses,
+						  CustomPathMethods *path_methods,
+						  double sel)
 {
-	RelOptInfo *innerrel = inner_append->path.parent;
-	ListCell   *lc;
-	int			i;
+	RelOptInfo		   *innerrel = inner_append->path.parent;
+	ListCell		   *lc;
+	int					i;
 
-	RangeTblEntry  *inner_entry = root->simple_rte_array[innerrel->relid];
+	RangeTblEntry	   *inner_entry = root->simple_rte_array[innerrel->relid];
 
-	PickyAppendPath *result;
+	RuntimeAppendPath  *result;
 
-	result = palloc0(sizeof(PickyAppendPath));
+	result = palloc0(sizeof(RuntimeAppendPath));
 	NodeSetTag(result, T_CustomPath);
 
 	result->cpath.path.pathtype = T_CustomScan;
@@ -227,16 +222,16 @@ create_append_path_common(PlannerInfo *root,
 #if PG_VERSION_NUM >= 90600
 	result->cpath.path.pathtarget = inner_append->path.pathtarget;
 #endif
-	result->cpath.path.rows = inner_append->path.rows;
+	result->cpath.path.rows = inner_append->path.rows * sel;
 	result->cpath.flags = 0;
 	result->cpath.methods = path_methods;
 
 	/* TODO: real costs */
-	result->cpath.path.startup_cost = 0;
-	result->cpath.path.total_cost = 0;
+	result->cpath.path.startup_cost = 0.0;
+	result->cpath.path.total_cost = 0.0;
 
 	/* Set 'partitioned column'-related clauses */
-	result->cpath.custom_private = picky_clauses;
+	result->cpath.custom_private = runtime_clauses;
 	result->cpath.custom_paths = NIL;
 
 	Assert(inner_entry->relid != 0);
@@ -247,10 +242,14 @@ create_append_path_common(PlannerInfo *root,
 	i = 0;
 	foreach (lc, inner_append->subpaths)
 	{
-		Path		   *path = lfirst(lc);
-		Index			relindex = path->parent->relid;
-		ChildScanCommon	child = palloc(sizeof(ChildScanCommonData));
+		Path			   *path = lfirst(lc);
+		Index				relindex = path->parent->relid;
+		ChildScanCommon		child = palloc(sizeof(ChildScanCommonData));
 
+		result->cpath.path.startup_cost += path->startup_cost;
+		result->cpath.path.total_cost += path->total_cost;
+
+		child->content_type = CHILD_PATH;
 		child->content.path = path;
 		child->relid = root->simple_rte_array[relindex]->relid;
 		Assert(child->relid != InvalidOid);
@@ -262,16 +261,19 @@ create_append_path_common(PlannerInfo *root,
 		i++;
 	}
 
+	result->cpath.path.startup_cost *= sel;
+	result->cpath.path.total_cost *= sel;
+
 	return &result->cpath.path;
 }
 
 Plan *
-create_append_plan_common(PlannerInfo* root, RelOptInfo* rel,
-						  CustomPath* best_path, List* tlist,
-						  List* clauses, List* custom_plans,
+create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
+						  CustomPath *best_path, List *tlist,
+						  List *clauses, List *custom_plans,
 						  CustomScanMethods *scan_methods)
 {
-	PickyAppendPath    *gpath = (PickyAppendPath *) best_path;
+	RuntimeAppendPath  *gpath = (RuntimeAppendPath *) best_path;
 	CustomScan		   *cscan;
 
 	cscan = makeNode(CustomScan);
@@ -285,24 +287,24 @@ create_append_plan_common(PlannerInfo* root, RelOptInfo* rel,
 
 	cscan->methods = scan_methods;
 
-	pack_pickyappend_private(cscan, gpath);
+	pack_runtimeappend_private(cscan, gpath);
 
 	return &cscan->scan.plan;
 }
 
 Node *
-create_append_scan_state_common(CustomScan* node,
+create_append_scan_state_common(CustomScan *node,
 								CustomExecMethods *exec_methods,
 								uint32 size)
 {
-	PickyAppendState *scan_state = palloc0(size);
+	RuntimeAppendState *scan_state = palloc0(size);
 
 	NodeSetTag(scan_state, T_CustomScanState);
 	scan_state->css.flags = node->flags;
 	scan_state->css.methods = exec_methods;
 	scan_state->custom_exprs = node->custom_exprs;
 
-	unpack_pickyappend_private(scan_state, node);
+	unpack_runtimeappend_private(scan_state, node);
 
 	/* Fill in relation info using main table's relid */
 	scan_state->prel = get_pathman_relation_info(scan_state->relid, NULL);
@@ -318,37 +320,26 @@ create_append_scan_state_common(CustomScan* node,
 void
 begin_append_common(CustomScanState *node, EState *estate, int eflags)
 {
-	PickyAppendState   *scan_state = (PickyAppendState *) node;
-	HTAB			   *plan_state_table = scan_state->plan_state_table;
-	HASHCTL			   *plan_state_table_config = &scan_state->plan_state_table_config;
+	RuntimeAppendState *scan_state = (RuntimeAppendState *) node;
 
-	memset(plan_state_table_config, 0, sizeof(HASHCTL));
-	plan_state_table_config->keysize = sizeof(Oid);
-	plan_state_table_config->entrysize = sizeof(PreservedPlanState);
-
-	plan_state_table = hash_create("PlanState storage", 128,
-								   plan_state_table_config,
-								   HASH_ELEM | HASH_BLOBS);
-
-	scan_state->plan_state_table = plan_state_table;
-	scan_state->custom_expr_states = (List *) ExecInitExpr((Expr *) scan_state->custom_exprs,
-														   (PlanState *) scan_state);
+	scan_state->custom_expr_states =
+		(List *) ExecInitExpr((Expr *) scan_state->custom_exprs,
+							  (PlanState *) scan_state);
 }
 
 void
 end_append_common(CustomScanState *node)
 {
-	PickyAppendState   *scan_state = (PickyAppendState *) node;
+	RuntimeAppendState *scan_state = (RuntimeAppendState *) node;
 
 	clear_plan_states(&scan_state->css);
-	hash_destroy(scan_state->plan_state_table);
 	hash_destroy(scan_state->children_table);
 }
 
 void
 rescan_append_common(CustomScanState *node)
 {
-	PickyAppendState   *scan_state = (PickyAppendState *) node;
+	RuntimeAppendState *scan_state = (RuntimeAppendState *) node;
 	ExprContext		   *econtext = node->ss.ps.ps_ExprContext;
 	PartRelationInfo   *prel = scan_state->prel;
 	List			   *ranges;
@@ -373,7 +364,9 @@ rescan_append_common(CustomScanState *node)
 	parts = get_partition_oids(ranges, &nparts, prel);
 
 	/* Select new plans for this run using 'parts' */
-	free_child_scan_common_array(scan_state->cur_plans, scan_state->ncur_plans);
+	if (scan_state->cur_plans)
+		pfree(scan_state->cur_plans); /* shallow free since cur_plans
+									   * belong to children_table  */
 	scan_state->cur_plans = select_required_plans(scan_state->children_table,
 												  parts, nparts,
 												  &scan_state->ncur_plans);
@@ -389,7 +382,7 @@ rescan_append_common(CustomScanState *node)
 }
 
 void
-explain_append_common(CustomScanState *node, HTAB* children_table, ExplainState *es)
+explain_append_common(CustomScanState *node, HTAB *children_table, ExplainState *es)
 {
 	/* Construct excess PlanStates */
 	if (!es->analyze)
@@ -404,6 +397,7 @@ explain_append_common(CustomScanState *node, HTAB* children_table, ExplainState 
 		/* There can't be any nodes since we're not scanning anything */
 		Assert(!node->custom_ps);
 
+		/* Iterate through node's ChildScanCommon table */
 		hash_seq_init(&seqstat, children_table);
 
 		while ((child = (ChildScanCommon) hash_seq_search(&seqstat)))
@@ -426,7 +420,7 @@ explain_append_common(CustomScanState *node, HTAB* children_table, ExplainState 
 
 		/*
 		 * These PlanStates will be used by EXPLAIN,
-		 * arrangeappend_end will destroy them eventually
+		 * end_append_common will destroy them eventually
 		 */
 		for (i = 0; i < used; i++)
 			node->custom_ps = lappend(node->custom_ps,

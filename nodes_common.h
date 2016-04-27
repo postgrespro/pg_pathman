@@ -1,3 +1,12 @@
+/* ------------------------------------------------------------------------
+ *
+ * nodes_common.h
+ *		Common function prototypes and structs for custom nodes
+ *
+ * Copyright (c) 2016, Postgres Professional
+ *
+ * ------------------------------------------------------------------------
+ */
 #ifndef NODES_COMMON_H
 #define NODES_COMMON_H
 
@@ -18,6 +27,13 @@ typedef struct
 {
 	Oid			relid;				/* partition relid */
 
+	enum
+	{
+		CHILD_PATH = 0,
+		CHILD_PLAN,
+		CHILD_PLAN_STATE
+	}		content_type;
+	
 	union
 	{
 		Path	   *path;
@@ -25,7 +41,7 @@ typedef struct
 		PlanState  *plan_state;
 	}			content;
 
-	int			original_order;		/* for sorting in EXPLAIN */
+	int		original_order;			/* for sorting in EXPLAIN */
 } ChildScanCommonData;
 
 typedef ChildScanCommonData *ChildScanCommon;
@@ -47,8 +63,9 @@ clear_plan_states(CustomScanState *scan_state)
 Path * create_append_path_common(PlannerInfo *root,
 								 AppendPath *inner_append,
 								 ParamPathInfo *param_info,
-								 List *picky_clauses,
-								 CustomPathMethods *path_methods);
+								 List *runtime_clauses,
+								 CustomPathMethods *path_methods,
+								 double sel);
 
 Plan * create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 								 CustomPath *best_path, List *tlist,
