@@ -1,6 +1,16 @@
+/* ------------------------------------------------------------------------
+ *
+ * arrangeappend.h
+ *		ArrangeAppend node's function prototypes and structures
+ *
+ * Copyright (c) 2016, Postgres Professional
+ * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1994, Regents of the University of California
+ *
+ * ------------------------------------------------------------------------
+ */
 #include "postgres.h"
 #include "arrangeappend.h"
-#include "pickyappend.h"
 
 #include "pathman.h"
 
@@ -10,6 +20,8 @@
 #include "optimizer/planmain.h"
 #include "optimizer/tlist.h"
 #include "optimizer/var.h"
+#include "miscadmin.h"
+#include "utils/lsyscache.h"
 
 #include "lib/binaryheap.h"
 
@@ -20,6 +32,27 @@ CustomPathMethods	arrangeappend_path_methods;
 CustomScanMethods	arrangeappend_plan_methods;
 CustomExecMethods	arrangeappend_exec_methods;
 
+typedef struct
+{
+	int			numCols;
+	AttrNumber *sortColIdx;
+	Oid		   *sortOperators;
+	Oid		   *collations;
+	bool	   *nullsFirst;
+} MergeAppendGuts;
+
+static Plan * prepare_sort_from_pathkeys(PlannerInfo *root, Plan *lefttree, List *pathkeys,
+										 Relids relids, const AttrNumber *reqColIdx,
+										 bool adjust_tlist_in_place, int *p_numsortkeys,
+										 AttrNumber **p_sortColIdx, Oid **p_sortOperators,
+										 Oid **p_collations, bool **p_nullsFirst);
+
+static Sort * make_sort(PlannerInfo *root, Plan *lefttree, int numCols,
+						AttrNumber *sortColIdx, Oid *sortOperators,
+						Oid *collations, bool *nullsFirst,
+						double limit_tuples);
+
+static void copy_plan_costsize(Plan *dest, Plan *src);
 
 /*
  * We have one slot for each item in the heap array.  We use SlotNumber
@@ -67,34 +100,200 @@ heap_compare_slots(Datum a, Datum b, void *arg)
 	return 0;
 }
 
+static void
+pack_arrangeappend_private(CustomScan *cscan, MergeAppendGuts *mag)
+{
+	List   *arrangeappend_private = NIL;
+	List   *sortColIdx,
+		   *sortOperators,
+		   *collations,
+		   *nullsFirst;
+	int		i;
+
+	for (i = 0; i < mag->numCols; i++)
+	{
+		sortColIdx    = lappend_int(sortColIdx, mag->sortColIdx[i]);
+		sortOperators = lappend_oid(sortOperators, mag->sortOperators[i]);
+		collations    = lappend_oid(collations, mag->collations[i]);
+		nullsFirst    = lappend_int(nullsFirst, mag->nullsFirst[i]);
+	}
+
+	arrangeappend_private = list_make2(makeInteger(mag->numCols),
+									   list_make4(sortColIdx,
+												  sortOperators,
+												  collations,
+												  nullsFirst));
+
+	cscan->custom_private = lappend(cscan->custom_private,
+									arrangeappend_private);
+}
+
+static void
+unpack_arrangeappend_private(ArrangeAppendState *scan_state, CustomScan *cscan)
+{
+#define FillStateField(name, type, method) \
+	do \
+	{ \
+		ListCell *lc; \
+		int i = 0; \
+		Assert(scan_state->numCols == list_length(name)); \
+		scan_state->name = palloc(scan_state->numCols * sizeof(type)); \
+		foreach (lc, name) \
+			scan_state->name[i] = lfirst_int(lc); \
+	} \
+	while (0)
+
+	List   *arrangeappend_private = NIL;
+	List   *sortColIdx,
+		   *sortOperators,
+		   *collations,
+		   *nullsFirst;
+
+	scan_state->numCols = intVal(linitial(cscan->custom_private));
+	arrangeappend_private = lsecond(cscan->custom_private);
+
+	sortColIdx    = linitial(arrangeappend_private);
+	sortOperators = lsecond(arrangeappend_private);
+	collations    = lthird(arrangeappend_private);
+	nullsFirst    = lfourth(arrangeappend_private);
+
+	FillStateField(sortColIdx,    AttrNumber, lfirst_int);
+	FillStateField(sortOperators, Oid,        lfirst_oid);
+	FillStateField(collations,    Oid,        lfirst_oid);
+	FillStateField(nullsFirst,    bool,       lfirst_int);
+}
+
 Path *
 create_arrangeappend_path(PlannerInfo *root,
-						AppendPath *inner_append,
-						ParamPathInfo *param_info,
-						List *picky_clauses)
+						  AppendPath *inner_append,
+						  ParamPathInfo *param_info,
+						  List *picky_clauses, double sel)
 {
-	return create_append_path_common(root, inner_append,
+	RelOptInfo *rel = inner_append->path.parent;
+	Path	   *path;
+	double		limit_tuples;
+
+	path = create_append_path_common(root, inner_append,
 									 param_info, picky_clauses,
-									 &arrangeappend_path_methods);
+									 &arrangeappend_path_methods,
+									 sizeof(ArrangeAppendPath),
+									 sel);
+
+	if (bms_equal(rel->relids, root->all_baserels))
+		limit_tuples = root->limit_tuples;
+	else
+		limit_tuples = -1.0;
+
+	((ArrangeAppendPath *) path)->limit_tuples = limit_tuples;
+
+	return path;
 }
 
 Plan *
 create_arrangeappend_plan(PlannerInfo *root, RelOptInfo *rel,
-						CustomPath *best_path, List *tlist,
-						List *clauses, List *custom_plans)
+						  CustomPath *best_path, List *tlist,
+						  List *clauses, List *custom_plans)
 {
-	return create_append_plan_common(root, rel,
+	CustomScan	   *node;
+	Plan		   *plan;
+	List		   *pathkeys = best_path->path.pathkeys;
+	double			limit_tuples = ((ArrangeAppendPath *) best_path)->limit_tuples;
+
+	MergeAppendGuts	mag;
+
+	ListCell	   *path_cell;
+	ListCell	   *plan_cell;
+
+	plan = create_append_plan_common(root, rel,
 									 best_path, tlist,
 									 clauses, custom_plans,
 									 &arrangeappend_plan_methods);
+
+	node = (CustomScan *) plan;
+
+	(void) prepare_sort_from_pathkeys(root, plan, pathkeys,
+									  best_path->path.parent->relids,
+									  NULL,
+									  true,
+									  &mag.numCols,
+									  &mag.sortColIdx,
+									  &mag.sortOperators,
+									  &mag.collations,
+									  &mag.nullsFirst);
+
+	/*
+	 * Now prepare the child plans.  We must apply prepare_sort_from_pathkeys
+	 * even to subplans that don't need an explicit sort, to make sure they
+	 * are returning the same sort key columns the MergeAppend expects.
+	 */
+	forboth(path_cell, best_path->custom_paths, plan_cell, custom_plans)
+	{
+		Path	   *subpath = (Path *) lfirst(path_cell);
+		Plan	   *subplan = (Plan *) lfirst(plan_cell);
+
+		int			numsortkeys;
+		AttrNumber *sortColIdx;
+		Oid		   *sortOperators;
+		Oid		   *collations;
+		bool	   *nullsFirst;
+
+		/* Compute sort column info, and adjust subplan's tlist as needed */
+		subplan = prepare_sort_from_pathkeys(root, subplan, pathkeys,
+											 subpath->parent->relids,
+											 mag.sortColIdx,
+											 false,
+											 &numsortkeys,
+											 &sortColIdx,
+											 &sortOperators,
+											 &collations,
+											 &nullsFirst);
+
+		/*
+		 * Check that we got the same sort key information.  We just Assert
+		 * that the sortops match, since those depend only on the pathkeys;
+		 * but it seems like a good idea to check the sort column numbers
+		 * explicitly, to ensure the tlists really do match up.
+		 */
+		Assert(numsortkeys == node_numCols);
+		if (memcmp(sortColIdx, mag.sortColIdx,
+				   numsortkeys * sizeof(AttrNumber)) != 0)
+			elog(ERROR, "ArrangeAppend child's targetlist doesn't match ArrangeAppend");
+		Assert(memcmp(sortOperators, node_sortOperators,
+					  numsortkeys * sizeof(Oid)) == 0);
+		Assert(memcmp(collations, node_collations,
+					  numsortkeys * sizeof(Oid)) == 0);
+		Assert(memcmp(nullsFirst, node_nullsFirst,
+					  numsortkeys * sizeof(bool)) == 0);
+
+		/* Now, insert a Sort node if subplan isn't sufficiently ordered */
+		if (!pathkeys_contained_in(pathkeys, subpath->pathkeys))
+			subplan = (Plan *) make_sort(root, subplan, numsortkeys,
+										 sortColIdx, sortOperators,
+										 collations, nullsFirst,
+										 limit_tuples);
+
+		/* Replace subpath with subplan */
+		lfirst(plan_cell) = subplan;
+	}
+
+	/* TODO: write node_XXX wariables to custom_private */
+
+	pack_arrangeappend_private(node, NULL);
+
+	return plan;
 }
 
 Node *
 arrangeappend_create_scan_state(CustomScan *node)
 {
-	return create_append_scan_state_common(node,
-										   &arrangeappend_exec_methods,
-										   sizeof(ArrangeAppendState));
+	Node *state;
+	state = create_append_scan_state_common(node,
+											&arrangeappend_exec_methods,
+											sizeof(ArrangeAppendState));
+
+	unpack_arrangeappend_private((ArrangeAppendState *) state, node);
+
+	return state;
 }
 
 void
@@ -109,10 +308,14 @@ TupleTableSlot *
 arrangeappend_exec(CustomScanState *node)
 {
 	ArrangeAppendState   *scan_state = (ArrangeAppendState *) node;
+	RuntimeAppendState	 *rstate = &scan_state->rstate;
 
-	while (scan_state->running_idx < scan_state->ncur_plans)
+	if (scan_state->rstate.ncur_plans == 0)
+		ExecReScan(&node->ss.ps);
+
+	while (rstate->running_idx < rstate->ncur_plans)
 	{
-		ChildScanCommon		child = scan_state->cur_plans[scan_state->running_idx];
+		ChildScanCommon		child = rstate->cur_plans[rstate->running_idx];
 		PlanState		   *state = child->content.plan_state;
 		TupleTableSlot	   *slot = NULL;
 		bool				quals;
@@ -125,14 +328,14 @@ arrangeappend_exec(CustomScanState *node)
 				break;
 
 			node->ss.ps.ps_ExprContext->ecxt_scantuple = slot;
-			quals = ExecQual(scan_state->custom_expr_states,
+			quals = ExecQual(rstate->custom_expr_states,
 							 node->ss.ps.ps_ExprContext, false);
 
 			if (quals)
 				return slot;
 		}
 
-		scan_state->running_idx++;
+		rstate->running_idx++;
 	}
 
 	return NULL;
@@ -141,7 +344,7 @@ arrangeappend_exec(CustomScanState *node)
 void
 arrangeappend_end(CustomScanState *node)
 {
-	ArrangeAppendState   *scan_state = (ArrangeAppendState *) node;
+	ArrangeAppendState *scan_state = (ArrangeAppendState *) node;
 
 	end_append_common(node);
 }
@@ -150,7 +353,7 @@ void
 arrangeappend_rescan(CustomScanState *node)
 {
 	ArrangeAppendState *scan_state = (ArrangeAppendState *) node;
-	int					nplans = scan_state->picky_base.ncur_plans;
+	int					nplans = scan_state->rstate.ncur_plans;
 	int					i;
 
 	rescan_append_common(node);
@@ -158,7 +361,7 @@ arrangeappend_rescan(CustomScanState *node)
 	scan_state->ms_slots = (TupleTableSlot **) palloc0(sizeof(TupleTableSlot *) * nplans);
 	scan_state->ms_heap = binaryheap_allocate(nplans, heap_compare_slots, scan_state);
 
-		/*
+	/*
 	 * initialize sort-key information
 	 */
 	scan_state->ms_nkeys = scan_state->numCols;
@@ -187,9 +390,330 @@ arrangeappend_rescan(CustomScanState *node)
 }
 
 void
-pickyppend_explain(CustomScanState *node, List *ancestors, ExplainState *es)
+arrangeappend_explain(CustomScanState *node, List *ancestors, ExplainState *es)
 {
-	ArrangeAppendState   *scan_state = (ArrangeAppendState *) node;
+	ArrangeAppendState *scan_state = (ArrangeAppendState *) node;
 
-	explain_append_common(node, scan_state->picky_base.children_table, es);
+	explain_append_common(node, scan_state->rstate.children_table, es);
+}
+
+
+/*
+ * Copied from createplan.c
+ */
+
+static void
+copy_plan_costsize(Plan *dest, Plan *src)
+{
+	if (src)
+	{
+		dest->startup_cost = src->startup_cost;
+		dest->total_cost = src->total_cost;
+		dest->plan_rows = src->plan_rows;
+		dest->plan_width = src->plan_width;
+	}
+	else
+	{
+		dest->startup_cost = 0;
+		dest->total_cost = 0;
+		dest->plan_rows = 0;
+		dest->plan_width = 0;
+	}
+}
+
+/* Copied from createplan.c */
+static Sort *
+make_sort(PlannerInfo *root, Plan *lefttree, int numCols,
+		  AttrNumber *sortColIdx, Oid *sortOperators,
+		  Oid *collations, bool *nullsFirst,
+		  double limit_tuples)
+{
+	Sort	   *node = makeNode(Sort);
+	Plan	   *plan = &node->plan;
+	Path		sort_path;		/* dummy for result of cost_sort */
+
+	copy_plan_costsize(plan, lefttree); /* only care about copying size */
+	cost_sort(&sort_path, root, NIL,
+			  lefttree->total_cost,
+			  lefttree->plan_rows,
+			  lefttree->plan_width,
+			  0.0,
+			  work_mem,
+			  limit_tuples);
+	plan->startup_cost = sort_path.startup_cost;
+	plan->total_cost = sort_path.total_cost;
+	plan->targetlist = lefttree->targetlist;
+	plan->qual = NIL;
+	plan->lefttree = lefttree;
+	plan->righttree = NULL;
+	node->numCols = numCols;
+	node->sortColIdx = sortColIdx;
+	node->sortOperators = sortOperators;
+	node->collations = collations;
+	node->nullsFirst = nullsFirst;
+
+	return node;
+}
+
+static EquivalenceMember *
+find_ec_member_for_tle(EquivalenceClass *ec,
+					   TargetEntry *tle,
+					   Relids relids)
+{
+	Expr	   *tlexpr;
+	ListCell   *lc;
+
+	/* We ignore binary-compatible relabeling on both ends */
+	tlexpr = tle->expr;
+	while (tlexpr && IsA(tlexpr, RelabelType))
+		tlexpr = ((RelabelType *) tlexpr)->arg;
+
+	foreach(lc, ec->ec_members)
+	{
+		EquivalenceMember *em = (EquivalenceMember *) lfirst(lc);
+		Expr	   *emexpr;
+
+		/*
+		 * We shouldn't be trying to sort by an equivalence class that
+		 * contains a constant, so no need to consider such cases any further.
+		 */
+		if (em->em_is_const)
+			continue;
+
+		/*
+		 * Ignore child members unless they match the rel being sorted.
+		 */
+		if (em->em_is_child &&
+			!bms_equal(em->em_relids, relids))
+			continue;
+
+		/* Match if same expression (after stripping relabel) */
+		emexpr = em->em_expr;
+		while (emexpr && IsA(emexpr, RelabelType))
+			emexpr = ((RelabelType *) emexpr)->arg;
+
+		if (equal(emexpr, tlexpr))
+			return em;
+	}
+
+	return NULL;
+}
+
+static Plan *
+prepare_sort_from_pathkeys(PlannerInfo *root, Plan *lefttree, List *pathkeys,
+						   Relids relids,
+						   const AttrNumber *reqColIdx,
+						   bool adjust_tlist_in_place,
+						   int *p_numsortkeys,
+						   AttrNumber **p_sortColIdx,
+						   Oid **p_sortOperators,
+						   Oid **p_collations,
+						   bool **p_nullsFirst)
+{
+	List	   *tlist = lefttree->targetlist;
+	ListCell   *i;
+	int			numsortkeys;
+	AttrNumber *sortColIdx;
+	Oid		   *sortOperators;
+	Oid		   *collations;
+	bool	   *nullsFirst;
+
+	/*
+	 * We will need at most list_length(pathkeys) sort columns; possibly less
+	 */
+	numsortkeys = list_length(pathkeys);
+	sortColIdx = (AttrNumber *) palloc(numsortkeys * sizeof(AttrNumber));
+	sortOperators = (Oid *) palloc(numsortkeys * sizeof(Oid));
+	collations = (Oid *) palloc(numsortkeys * sizeof(Oid));
+	nullsFirst = (bool *) palloc(numsortkeys * sizeof(bool));
+
+	numsortkeys = 0;
+
+	foreach(i, pathkeys)
+	{
+		PathKey    *pathkey = (PathKey *) lfirst(i);
+		EquivalenceClass *ec = pathkey->pk_eclass;
+		EquivalenceMember *em;
+		TargetEntry *tle = NULL;
+		Oid			pk_datatype = InvalidOid;
+		Oid			sortop;
+		ListCell   *j;
+
+		if (ec->ec_has_volatile)
+		{
+			/*
+			 * If the pathkey's EquivalenceClass is volatile, then it must
+			 * have come from an ORDER BY clause, and we have to match it to
+			 * that same targetlist entry.
+			 */
+			if (ec->ec_sortref == 0)	/* can't happen */
+				elog(ERROR, "volatile EquivalenceClass has no sortref");
+			tle = get_sortgroupref_tle(ec->ec_sortref, tlist);
+			Assert(tle);
+			Assert(list_length(ec->ec_members) == 1);
+			pk_datatype = ((EquivalenceMember *) linitial(ec->ec_members))->em_datatype;
+		}
+		else if (reqColIdx != NULL)
+		{
+			/*
+			 * If we are given a sort column number to match, only consider
+			 * the single TLE at that position.  It's possible that there is
+			 * no such TLE, in which case fall through and generate a resjunk
+			 * targetentry (we assume this must have happened in the parent
+			 * plan as well).  If there is a TLE but it doesn't match the
+			 * pathkey's EC, we do the same, which is probably the wrong thing
+			 * but we'll leave it to caller to complain about the mismatch.
+			 */
+			tle = get_tle_by_resno(tlist, reqColIdx[numsortkeys]);
+			if (tle)
+			{
+				em = find_ec_member_for_tle(ec, tle, relids);
+				if (em)
+				{
+					/* found expr at right place in tlist */
+					pk_datatype = em->em_datatype;
+				}
+				else
+					tle = NULL;
+			}
+		}
+		else
+		{
+			/*
+			 * Otherwise, we can sort by any non-constant expression listed in
+			 * the pathkey's EquivalenceClass.  For now, we take the first
+			 * tlist item found in the EC. If there's no match, we'll generate
+			 * a resjunk entry using the first EC member that is an expression
+			 * in the input's vars.  (The non-const restriction only matters
+			 * if the EC is below_outer_join; but if it isn't, it won't
+			 * contain consts anyway, else we'd have discarded the pathkey as
+			 * redundant.)
+			 *
+			 * XXX if we have a choice, is there any way of figuring out which
+			 * might be cheapest to execute?  (For example, int4lt is likely
+			 * much cheaper to execute than numericlt, but both might appear
+			 * in the same equivalence class...)  Not clear that we ever will
+			 * have an interesting choice in practice, so it may not matter.
+			 */
+			foreach(j, tlist)
+			{
+				tle = (TargetEntry *) lfirst(j);
+				em = find_ec_member_for_tle(ec, tle, relids);
+				if (em)
+				{
+					/* found expr already in tlist */
+					pk_datatype = em->em_datatype;
+					break;
+				}
+				tle = NULL;
+			}
+		}
+
+		if (!tle)
+		{
+			/*
+			 * No matching tlist item; look for a computable expression. Note
+			 * that we treat Aggrefs as if they were variables; this is
+			 * necessary when attempting to sort the output from an Agg node
+			 * for use in a WindowFunc (since grouping_planner will have
+			 * treated the Aggrefs as variables, too).
+			 */
+			Expr	   *sortexpr = NULL;
+
+			foreach(j, ec->ec_members)
+			{
+				EquivalenceMember *em = (EquivalenceMember *) lfirst(j);
+				List	   *exprvars;
+				ListCell   *k;
+
+				/*
+				 * We shouldn't be trying to sort by an equivalence class that
+				 * contains a constant, so no need to consider such cases any
+				 * further.
+				 */
+				if (em->em_is_const)
+					continue;
+
+				/*
+				 * Ignore child members unless they match the rel being
+				 * sorted.
+				 */
+				if (em->em_is_child &&
+					!bms_equal(em->em_relids, relids))
+					continue;
+
+				sortexpr = em->em_expr;
+				exprvars = pull_var_clause((Node *) sortexpr,
+										   PVC_INCLUDE_AGGREGATES,
+										   PVC_INCLUDE_PLACEHOLDERS);
+				foreach(k, exprvars)
+				{
+					if (!tlist_member_ignore_relabel(lfirst(k), tlist))
+						break;
+				}
+				list_free(exprvars);
+				if (!k)
+				{
+					pk_datatype = em->em_datatype;
+					break;		/* found usable expression */
+				}
+			}
+			if (!j)
+				elog(ERROR, "could not find pathkey item to sort");
+
+			/*
+			 * Do we need to insert a Result node?
+			 */
+			if (!adjust_tlist_in_place &&
+				!is_projection_capable_plan(lefttree))
+			{
+				/* copy needed so we don't modify input's tlist below */
+				tlist = copyObject(tlist);
+				lefttree = (Plan *) make_result(root, tlist, NULL,
+												lefttree);
+			}
+
+			/* Don't bother testing is_projection_capable_plan again */
+			adjust_tlist_in_place = true;
+
+			/*
+			 * Add resjunk entry to input's tlist
+			 */
+			tle = makeTargetEntry(sortexpr,
+								  list_length(tlist) + 1,
+								  NULL,
+								  true);
+			tlist = lappend(tlist, tle);
+			lefttree->targetlist = tlist;		/* just in case NIL before */
+		}
+
+		/*
+		 * Look up the correct sort operator from the PathKey's slightly
+		 * abstracted representation.
+		 */
+		sortop = get_opfamily_member(pathkey->pk_opfamily,
+									 pk_datatype,
+									 pk_datatype,
+									 pathkey->pk_strategy);
+		if (!OidIsValid(sortop))	/* should not happen */
+			elog(ERROR, "could not find member %d(%u,%u) of opfamily %u",
+				 pathkey->pk_strategy, pk_datatype, pk_datatype,
+				 pathkey->pk_opfamily);
+
+		/* Add the column to the sort arrays */
+		sortColIdx[numsortkeys] = tle->resno;
+		sortOperators[numsortkeys] = sortop;
+		collations[numsortkeys] = ec->ec_collation;
+		nullsFirst[numsortkeys] = pathkey->pk_nulls_first;
+		numsortkeys++;
+	}
+
+	/* Return results */
+	*p_numsortkeys = numsortkeys;
+	*p_sortColIdx = sortColIdx;
+	*p_sortOperators = sortOperators;
+	*p_collations = collations;
+	*p_nullsFirst = nullsFirst;
+
+	return lefttree;
 }

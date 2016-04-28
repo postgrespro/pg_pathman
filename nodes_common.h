@@ -33,7 +33,7 @@ typedef struct
 		CHILD_PLAN,
 		CHILD_PLAN_STATE
 	}		content_type;
-	
+
 	union
 	{
 		Path	   *path;
@@ -65,6 +65,7 @@ Path * create_append_path_common(PlannerInfo *root,
 								 ParamPathInfo *param_info,
 								 List *runtime_clauses,
 								 CustomPathMethods *path_methods,
+								 uint32 size,
 								 double sel);
 
 Plan * create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,

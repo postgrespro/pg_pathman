@@ -2,22 +2,20 @@
 #define ARRANGEAPPEND_H
 
 #include "postgres.h"
-#include "pickyappend.h"
+#include "runtimeappend.h"
 #include "pathman.h"
 
 
 typedef struct
 {
-	CustomPath			cpath;
-	Oid					relid;		/* relid of the partitioned table */
+	RuntimeAppendPath	rpath;
 
-	ChildScanCommon	   *children;	/* all available plans */
-	int					nchildren;
+	double				limit_tuples;
 } ArrangeAppendPath;
 
 typedef struct
 {
-	PickyAppendState	picky_base;
+	RuntimeAppendState	rstate;
 
 	int					numCols;		/* number of sort-key columns */
 	AttrNumber		   *sortColIdx;		/* their indexes in the target list */
@@ -32,11 +30,16 @@ typedef struct
 } ArrangeAppendState;
 
 
-extern bool							pg_pathman_enable_arrangeappend;
+extern bool					pg_pathman_enable_arrangeappend;
 
-extern CustomPathMethods			arrangeappend_path_methods;
-extern CustomScanMethods			arrangeappend_plan_methods;
-extern CustomExecMethods			arrangeappend_exec_methods;
+extern CustomPathMethods	arrangeappend_path_methods;
+extern CustomScanMethods	arrangeappend_plan_methods;
+extern CustomExecMethods	arrangeappend_exec_methods;
+
+
+Path * create_arrangeappend_path(PlannerInfo *root, AppendPath *inner_append,
+								 ParamPathInfo *param_info, List *runtime_clauses,
+								 double sel);
 
 Plan * create_arrangeappend_plan(PlannerInfo *root, RelOptInfo *rel,
 								 CustomPath *best_path, List *tlist,

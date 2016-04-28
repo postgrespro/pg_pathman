@@ -28,7 +28,9 @@ create_runtimeappend_path(PlannerInfo *root,
 {
 	return create_append_path_common(root, inner_append,
 									 param_info, runtime_clauses,
-									 &runtimeappend_path_methods, sel);
+									 &runtimeappend_path_methods,
+									 sizeof(RuntimeAppendPath),
+									 sel);
 }
 
 Plan *

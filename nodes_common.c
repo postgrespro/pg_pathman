@@ -50,13 +50,13 @@ transform_plans_into_states(RuntimeAppendState *scan_state,
 			ps = ExecInitNode(child->content.plan, estate, 0);
 			child->content.plan_state = ps;
 			child->content_type = CHILD_PLAN_STATE; /* update content type */
-			
+
 			/* Explain and clear_plan_states rely on this list */
 			scan_state->css.custom_ps = lappend(scan_state->css.custom_ps, ps);
 		}
 		else
 			ps = child->content.plan_state;
-		
+
 		/* Node with params will be ReScanned */
 		if (scan_state->css.ss.ps.chgParam)
 			UpdateChangedParamSet(ps, scan_state->css.ss.ps.chgParam);
@@ -151,7 +151,9 @@ pack_runtimeappend_private(CustomScan *cscan, RuntimeAppendPath *path)
 	}
 
 	/* Save main table and partition relids */
-	custom_private = list_make2(list_make1_oid(path->relid), custom_oids);
+	custom_private = lappend(custom_private,
+							 list_make2(list_make1_oid(path->relid),
+										custom_oids));
 
 	cscan->custom_private = custom_private;
 }
@@ -161,7 +163,8 @@ unpack_runtimeappend_private(RuntimeAppendState *scan_state, CustomScan *cscan)
 {
 	ListCell   *oid_cell;
 	ListCell   *plan_cell;
-	List	   *custom_oids = (List *) lsecond(cscan->custom_private);
+	List	   *runtimeappend_private = linitial(cscan->custom_private);
+	List	   *custom_oids = (List *) lsecond(runtimeappend_private);
 	int			nchildren = list_length(custom_oids);
 	HTAB	   *children_table;
 	HASHCTL	   *children_table_config = &scan_state->children_table_config;
@@ -193,7 +196,10 @@ unpack_runtimeappend_private(RuntimeAppendState *scan_state, CustomScan *cscan)
 	}
 
 	scan_state->children_table = children_table;
-	scan_state->relid = linitial_oid(linitial(cscan->custom_private));
+	scan_state->relid = linitial_oid(linitial(runtimeappend_private));
+
+	/* Delete items that belong to RuntimeAppend */
+	cscan->custom_private = list_delete_first(cscan->custom_private);
 }
 
 Path *
@@ -202,6 +208,7 @@ create_append_path_common(PlannerInfo *root,
 						  ParamPathInfo *param_info,
 						  List *runtime_clauses,
 						  CustomPathMethods *path_methods,
+						  uint32 size,
 						  double sel)
 {
 	RelOptInfo		   *innerrel = inner_append->path.parent;
@@ -212,13 +219,13 @@ create_append_path_common(PlannerInfo *root,
 
 	RuntimeAppendPath  *result;
 
-	result = palloc0(sizeof(RuntimeAppendPath));
+	result = palloc0(size);
 	NodeSetTag(result, T_CustomPath);
 
 	result->cpath.path.pathtype = T_CustomScan;
 	result->cpath.path.parent = innerrel;
 	result->cpath.path.param_info = param_info;
-	result->cpath.path.pathkeys = NIL;
+	result->cpath.path.pathkeys = inner_append->path.pathkeys;
 #if PG_VERSION_NUM >= 90600
 	result->cpath.path.pathtarget = inner_append->path.pathtarget;
 #endif
