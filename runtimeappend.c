@@ -8,6 +8,7 @@
  * ------------------------------------------------------------------------
  */
 #include "postgres.h"
+#include "utils/memutils.h"
 #include "runtimeappend.h"
 #include "pathman.h"
 
@@ -81,6 +82,8 @@ runtimeappend_exec(CustomScanState *node)
 			node->ss.ps.ps_ExprContext->ecxt_scantuple = slot;
 			quals = ExecQual(scan_state->custom_expr_states,
 							 node->ss.ps.ps_ExprContext, false);
+
+			ResetExprContext(node->ss.ps.ps_ExprContext);
 
 			if (quals)
 				return slot;
