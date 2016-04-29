@@ -54,7 +54,7 @@ extern bool					pg_pathman_enable_runtimeappend;
 
 extern CustomPathMethods	runtimeappend_path_methods;
 extern CustomScanMethods	runtimeappend_plan_methods;
-extern CustomExecMethods	runtimeppend_exec_methods;
+extern CustomExecMethods	runtimeappend_exec_methods;
 
 Path * create_runtimeappend_path(PlannerInfo *root, AppendPath *inner_append,
 								 ParamPathInfo *param_info, List *runtime_clauses,
@@ -74,6 +74,6 @@ void runtimeappend_end(CustomScanState *node);
 
 void runtimeappend_rescan(CustomScanState *node);
 
-void runtimeppend_explain(CustomScanState *node, List *ancestors, ExplainState *es);
+void runtimeappend_explain(CustomScanState *node, List *ancestors, ExplainState *es);
 
 #endif
