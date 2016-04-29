@@ -14,6 +14,7 @@
 #include "utils.h"
 #include "pathman.h"
 #include "runtimeappend.h"
+#include "arrangeappend.h"
 
 
 set_join_pathlist_hook_type		set_join_pathlist_next = NULL;
@@ -129,7 +130,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 	bool				found;
 	int					len;
 	int					first_child_relid = 0;
-	
+
 	/* Invoke original hook if needed */
 	if (set_rel_pathlist_hook_next != NULL)
 		set_rel_pathlist_hook_next(root, rel, rti, rte);
@@ -268,7 +269,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 
 		if (!pg_pathman_enable_runtimeappend)
 			return;
-		
+
 		foreach (lc, rel->pathlist)
 		{
 			AppendPath	   *cur_path = (AppendPath *) lfirst(lc);
@@ -278,13 +279,13 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 			ListCell	   *subpath_cell;
 			List		   *runtime_quals = NIL;
 
-			if (!IsA(cur_path, AppendPath) ||
+			if (!(IsA(cur_path, AppendPath) || IsA(cur_path, MergeAppendPath)) ||
 				rel->has_eclass_joins ||
 				rel->joininfo)
 			{
 				continue;
 			}
-			
+
 			foreach (subpath_cell, cur_path->subpaths)
 			{
 				Path			   *subpath = (Path *) lfirst(subpath_cell);
@@ -323,9 +324,14 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 			if (runtime_quals == NIL)
 				continue;
 
-			inner_path = create_runtimeappend_path(root, cur_path,
-												   ppi, runtime_quals,
-												   paramsel);
+			if (IsA(cur_path, AppendPath))
+				inner_path = create_runtimeappend_path(root, cur_path,
+													   ppi, runtime_quals,
+													   paramsel);
+			else
+				inner_path = create_arrangeappend_path(root, cur_path,
+													   ppi, runtime_quals,
+													   paramsel);
 
 			add_path(rel, inner_path);
 		}

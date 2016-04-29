@@ -104,10 +104,10 @@ static void
 pack_arrangeappend_private(CustomScan *cscan, MergeAppendGuts *mag)
 {
 	List   *arrangeappend_private = NIL;
-	List   *sortColIdx,
-		   *sortOperators,
-		   *collations,
-		   *nullsFirst;
+	List   *sortColIdx    = NIL,
+		   *sortOperators = NIL,
+		   *collations    = NIL,
+		   *nullsFirst    = NIL;
 	int		i;
 
 	for (i = 0; i < mag->numCols; i++)
@@ -149,13 +149,13 @@ unpack_arrangeappend_private(ArrangeAppendState *scan_state, CustomScan *cscan)
 		   *collations,
 		   *nullsFirst;
 
-	scan_state->numCols = intVal(linitial(cscan->custom_private));
-	arrangeappend_private = lsecond(cscan->custom_private);
+	arrangeappend_private = linitial(cscan->custom_private);
+	scan_state->numCols = intVal(linitial(arrangeappend_private));
 
-	sortColIdx    = linitial(arrangeappend_private);
-	sortOperators = lsecond(arrangeappend_private);
-	collations    = lthird(arrangeappend_private);
-	nullsFirst    = lfourth(arrangeappend_private);
+	sortColIdx    = linitial(lsecond(arrangeappend_private));
+	sortOperators = lsecond(lsecond(arrangeappend_private));
+	collations    = lthird(lsecond(arrangeappend_private));
+	nullsFirst    = lfourth(lsecond(arrangeappend_private));
 
 	FillStateField(sortColIdx,    AttrNumber, lfirst_int);
 	FillStateField(sortOperators, Oid,        lfirst_oid);
@@ -278,7 +278,7 @@ create_arrangeappend_plan(PlannerInfo *root, RelOptInfo *rel,
 
 	/* TODO: write node_XXX wariables to custom_private */
 
-	pack_arrangeappend_private(node, NULL);
+	pack_arrangeappend_private(node, &mag);
 
 	return plan;
 }

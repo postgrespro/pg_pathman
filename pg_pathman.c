@@ -41,6 +41,7 @@
 #include "foreign/fdwapi.h"
 #include "hooks.h"
 #include "runtimeappend.h"
+#include "arrangeappend.h"
 
 PG_MODULE_MAGIC;
 
@@ -155,6 +156,7 @@ _PG_init(void)
 	planner_hook_original = planner_hook;
 	planner_hook = pathman_planner_hook;
 
+	/* RuntimeAppend */
 	runtimeappend_path_methods.CustomName				= "RuntimeAppend";
 	runtimeappend_path_methods.PlanCustomPath			= create_runtimeappend_plan;
 
@@ -169,6 +171,22 @@ _PG_init(void)
 	runtimeappend_exec_methods.MarkPosCustomScan		= NULL;
 	runtimeappend_exec_methods.RestrPosCustomScan		= NULL;
 	runtimeappend_exec_methods.ExplainCustomScan		= runtimeappend_explain;
+
+	/* RuntimeMergeAppend */
+	arrangeappend_path_methods.CustomName				= "RuntimeMergeAppend";
+	arrangeappend_path_methods.PlanCustomPath			= create_arrangeappend_plan;
+
+	arrangeappend_plan_methods.CustomName 				= "RuntimeMergeAppend";
+	arrangeappend_plan_methods.CreateCustomScanState	= arrangeappend_create_scan_state;
+
+	arrangeappend_exec_methods.CustomName				= "RuntimeMergeAppend";
+	arrangeappend_exec_methods.BeginCustomScan			= arrangeappend_begin;
+	arrangeappend_exec_methods.ExecCustomScan			= arrangeappend_exec;
+	arrangeappend_exec_methods.EndCustomScan			= arrangeappend_end;
+	arrangeappend_exec_methods.ReScanCustomScan			= arrangeappend_rescan;
+	arrangeappend_exec_methods.MarkPosCustomScan		= NULL;
+	arrangeappend_exec_methods.RestrPosCustomScan		= NULL;
+	arrangeappend_exec_methods.ExplainCustomScan		= arrangeappend_explain;
 
 	DefineCustomBoolVariable("pg_pathman.enable",
 							 "Enables pg_pathman's optimizations during the planner stage",
