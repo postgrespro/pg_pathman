@@ -17,7 +17,7 @@ bool				pg_pathman_enable_runtimeappend = true;
 
 CustomPathMethods	runtimeappend_path_methods;
 CustomScanMethods	runtimeappend_plan_methods;
-CustomExecMethods	runtimeppend_exec_methods;
+CustomExecMethods	runtimeappend_exec_methods;
 
 
 Path *
@@ -47,7 +47,7 @@ Node *
 runtimeappend_create_scan_state(CustomScan *node)
 {
 	return create_append_scan_state_common(node,
-										   &runtimeppend_exec_methods,
+										   &runtimeappend_exec_methods,
 										   sizeof(RuntimeAppendState));
 }
 
@@ -110,7 +110,7 @@ runtimeappend_rescan(CustomScanState *node)
 }
 
 void
-runtimeppend_explain(CustomScanState *node, List *ancestors, ExplainState *es)
+runtimeappend_explain(CustomScanState *node, List *ancestors, ExplainState *es)
 {
 	RuntimeAppendState *scan_state = (RuntimeAppendState *) node;
 

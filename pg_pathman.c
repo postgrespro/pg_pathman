@@ -161,14 +161,14 @@ _PG_init(void)
 	runtimeappend_plan_methods.CustomName 				= "RuntimeAppend";
 	runtimeappend_plan_methods.CreateCustomScanState	= runtimeappend_create_scan_state;
 
-	runtimeppend_exec_methods.CustomName				= "RuntimeAppend";
-	runtimeppend_exec_methods.BeginCustomScan			= runtimeappend_begin;
-	runtimeppend_exec_methods.ExecCustomScan			= runtimeappend_exec;
-	runtimeppend_exec_methods.EndCustomScan				= runtimeappend_end;
-	runtimeppend_exec_methods.ReScanCustomScan			= runtimeappend_rescan;
-	runtimeppend_exec_methods.MarkPosCustomScan			= NULL;
-	runtimeppend_exec_methods.RestrPosCustomScan		= NULL;
-	runtimeppend_exec_methods.ExplainCustomScan			= runtimeppend_explain;
+	runtimeappend_exec_methods.CustomName				= "RuntimeAppend";
+	runtimeappend_exec_methods.BeginCustomScan			= runtimeappend_begin;
+	runtimeappend_exec_methods.ExecCustomScan			= runtimeappend_exec;
+	runtimeappend_exec_methods.EndCustomScan			= runtimeappend_end;
+	runtimeappend_exec_methods.ReScanCustomScan			= runtimeappend_rescan;
+	runtimeappend_exec_methods.MarkPosCustomScan		= NULL;
+	runtimeappend_exec_methods.RestrPosCustomScan		= NULL;
+	runtimeappend_exec_methods.ExplainCustomScan		= runtimeappend_explain;
 
 	DefineCustomBoolVariable("pg_pathman.enable",
 							 "Enables pg_pathman's optimizations during the planner stage",
