@@ -488,17 +488,17 @@ WHERE j1.dt < '2015-03-01' AND j2.dt >= '2015-02-01' ORDER BY j2.dt;
                ->  Index Scan using num_range_rel_4_pkey on num_range_rel_4 j3_3
          ->  Materialize
                ->  Merge Join
-                     Merge Cond: (j1.id = j2.id)
+                     Merge Cond: (j2.id = j1.id)
                      ->  Merge Append
-                           Sort Key: j1.id
-                           ->  Index Scan using range_rel_1_pkey on range_rel_1 j1
-                           ->  Index Scan using range_rel_2_pkey on range_rel_2 j1_1
+                           Sort Key: j2.id
+                           ->  Index Scan using range_rel_2_pkey on range_rel_2 j2
+                           ->  Index Scan using range_rel_3_pkey on range_rel_3 j2_1
+                           ->  Index Scan using range_rel_4_pkey on range_rel_4 j2_2
                      ->  Materialize
                            ->  Merge Append
-                                 Sort Key: j2.id
-                                 ->  Index Scan using range_rel_2_pkey on range_rel_2 j2
-                                 ->  Index Scan using range_rel_3_pkey on range_rel_3 j2_1
-                                 ->  Index Scan using range_rel_4_pkey on range_rel_4 j2_2
+                                 Sort Key: j1.id
+                                 ->  Index Scan using range_rel_1_pkey on range_rel_1 j1
+                                 ->  Index Scan using range_rel_2_pkey on range_rel_2 j1_1
 (22 rows)
 
 SET enable_hashjoin = ON;
@@ -508,28 +508,28 @@ SELECT * FROM test.range_rel j1
 JOIN test.range_rel j2 on j2.id = j1.id
 JOIN test.num_range_rel j3 on j3.id = j1.id
 WHERE j1.dt < '2015-03-01' AND j2.dt >= '2015-02-01' ORDER BY j2.dt;
-                                      QUERY PLAN                                       
----------------------------------------------------------------------------------------
+                                        QUERY PLAN                                         
+-------------------------------------------------------------------------------------------
  Sort
    Sort Key: j2.dt
    ->  Hash Join
-         Hash Cond: (j1.id = j2.id)
-         ->  Hash Join
-               Hash Cond: (j3.id = j1.id)
-               ->  Append
-                     ->  Index Scan using num_range_rel_1_pkey on num_range_rel_1 j3
-                     ->  Index Scan using num_range_rel_2_pkey on num_range_rel_2 j3_1
-                     ->  Index Scan using num_range_rel_3_pkey on num_range_rel_3 j3_2
-                     ->  Index Scan using num_range_rel_4_pkey on num_range_rel_4 j3_3
-               ->  Hash
-                     ->  Append
-                           ->  Index Scan using range_rel_1_pkey on range_rel_1 j1
-                           ->  Index Scan using range_rel_2_pkey on range_rel_2 j1_1
+         Hash Cond: (j3.id = j2.id)
+         ->  Append
+               ->  Index Scan using num_range_rel_1_pkey on num_range_rel_1 j3
+               ->  Index Scan using num_range_rel_2_pkey on num_range_rel_2 j3_1
+               ->  Index Scan using num_range_rel_3_pkey on num_range_rel_3 j3_2
+               ->  Index Scan using num_range_rel_4_pkey on num_range_rel_4 j3_3
          ->  Hash
-               ->  Append
-                     ->  Index Scan using range_rel_2_dt_idx on range_rel_2 j2
-                     ->  Index Scan using range_rel_3_dt_idx on range_rel_3 j2_1
-                     ->  Index Scan using range_rel_4_dt_idx on range_rel_4 j2_2
+               ->  Hash Join
+                     Hash Cond: (j2.id = j1.id)
+                     ->  Append
+                           ->  Index Scan using range_rel_2_dt_idx on range_rel_2 j2
+                           ->  Index Scan using range_rel_3_dt_idx on range_rel_3 j2_1
+                           ->  Index Scan using range_rel_4_dt_idx on range_rel_4 j2_2
+                     ->  Hash
+                           ->  Append
+                                 ->  Index Scan using range_rel_1_pkey on range_rel_1 j1
+                                 ->  Index Scan using range_rel_2_pkey on range_rel_2 j1_1
 (20 rows)
 
 /*
@@ -924,6 +924,185 @@ SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 0, 1001);
  t
 (1 row)
 
+/* CaMeL cAsE table names and attributes */
+CREATE TABLE test."TeSt" (a INT NOT NULL, b INT);
+SELECT pathman.create_hash_partitions('test.TeSt', 'a', 3);
+ERROR:  relation "test.test" does not exist at character 39
+SELECT pathman.create_hash_partitions('test."TeSt"', 'a', 3);
+NOTICE:  function test.TeSt_insert_trigger_func() does not exist, skipping
+NOTICE:  function test.TeSt_update_trigger_func() does not exist, skipping
+NOTICE:  Copying data to partitions...
+ create_hash_partitions 
+------------------------
+                      3
+(1 row)
+
+INSERT INTO test."TeSt" VALUES (1, 1);
+INSERT INTO test."TeSt" VALUES (2, 2);
+INSERT INTO test."TeSt" VALUES (3, 3);
+SELECT * FROM test."TeSt";
+ a | b 
+---+---
+ 3 | 3
+ 1 | 1
+ 2 | 2
+(3 rows)
+
+SELECT pathman.create_hash_update_trigger('test."TeSt"');
+ create_hash_update_trigger 
+----------------------------
+ 
+(1 row)
+
+UPDATE test."TeSt" SET a = 1;
+SELECT * FROM test."TeSt";
+ a | b 
+---+---
+ 1 | 3
+ 1 | 1
+ 1 | 2
+(3 rows)
+
+SELECT * FROM test."TeSt" WHERE a = 1;
+ a | b 
+---+---
+ 1 | 3
+ 1 | 1
+ 1 | 2
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test."TeSt" WHERE a = 1;
+         QUERY PLAN         
+----------------------------
+ Append
+   ->  Seq Scan on "TeSt_1"
+         Filter: (a = 1)
+(3 rows)
+
+SELECT pathman.drop_hash_partitions('test."TeSt"');
+NOTICE:  drop cascades to trigger test_TeSt_insert_trigger on table test."TeSt"
+NOTICE:  drop cascades to 3 other objects
+NOTICE:  0 rows copied from test."TeSt_2"
+NOTICE:  3 rows copied from test."TeSt_1"
+NOTICE:  0 rows copied from test."TeSt_0"
+ drop_hash_partitions 
+----------------------
+                    3
+(1 row)
+
+SELECT * FROM test."TeSt";
+ a | b 
+---+---
+ 1 | 3
+ 1 | 1
+ 1 | 2
+(3 rows)
+
+CREATE TABLE test."RangeRel" (
+	id	SERIAL PRIMARY KEY,
+	dt	TIMESTAMP NOT NULL,
+	txt	TEXT);
+INSERT INTO test."RangeRel" (dt, txt)
+SELECT g, md5(g::TEXT) FROM generate_series('2015-01-01', '2015-01-03', '1 day'::interval) as g;
+SELECT pathman.create_range_partitions('test."RangeRel"', 'dt', '2015-01-01'::DATE, '1 day'::INTERVAL);
+NOTICE:  sequence "RangeRel_seq" does not exist, skipping
+NOTICE:  Copying data to partitions...
+ create_range_partitions 
+-------------------------
+                       3
+(1 row)
+
+SELECT pathman.append_range_partition('test."RangeRel"');
+NOTICE:  Appending new partition...
+NOTICE:  Done!
+ append_range_partition 
+------------------------
+ test."RangeRel_4"
+(1 row)
+
+SELECT pathman.prepend_range_partition('test."RangeRel"');
+NOTICE:  Prepending new partition...
+NOTICE:  Done!
+ prepend_range_partition 
+-------------------------
+ test."RangeRel_5"
+(1 row)
+
+SELECT pathman.merge_range_partitions('test."RangeRel_1"', 'test."RangeRel_' || currval('test."RangeRel_seq"') || '"');
+NOTICE:  Altering first partition...
+NOTICE:  Copying data...
+NOTICE:  Dropping second partition...
+NOTICE:  Done!
+ merge_range_partitions 
+------------------------
+ 
+(1 row)
+
+SELECT pathman.split_range_partition('test."RangeRel_1"', '2015-01-01'::DATE);
+NOTICE:  Creating new partition...
+NOTICE:  Copying data to new partition...
+NOTICE:  Altering original partition...
+NOTICE:  Done!
+  split_range_partition  
+-------------------------
+ {12-31-2014,01-02-2015}
+(1 row)
+
+SELECT pathman.drop_range_partitions('test."RangeRel"');
+NOTICE:  1 rows copied from test."RangeRel_6"
+NOTICE:  0 rows copied from test."RangeRel_4"
+NOTICE:  1 rows copied from test."RangeRel_3"
+NOTICE:  1 rows copied from test."RangeRel_2"
+NOTICE:  0 rows copied from test."RangeRel_1"
+ drop_range_partitions 
+-----------------------
+                     5
+(1 row)
+
+SELECT pathman.create_partitions_from_range('test."RangeRel"', 'dt', '2015-01-01'::DATE, '2015-01-05'::DATE, '1 day'::INTERVAL);
+NOTICE:  Copying data to partitions...
+ create_partitions_from_range 
+------------------------------
+                            5
+(1 row)
+
+DROP TABLE test."RangeRel" CASCADE;
+NOTICE:  drop cascades to 5 other objects
+SELECT * FROM pathman.pathman_config;
+ id |      relname       | attname | parttype | range_interval 
+----+--------------------+---------+----------+----------------
+  6 | test.num_range_rel | id      |        2 | 1000
+(1 row)
+
+CREATE TABLE test."RangeRel" (
+	id	SERIAL PRIMARY KEY,
+	dt	TIMESTAMP NOT NULL,
+	txt	TEXT);
+SELECT pathman.create_range_partitions('test."RangeRel"', 'id', 1, 100, 3);
+NOTICE:  Copying data to partitions...
+ create_range_partitions 
+-------------------------
+                       3
+(1 row)
+
+SELECT pathman.drop_range_partitions('test."RangeRel"');
+NOTICE:  0 rows copied from test."RangeRel_3"
+NOTICE:  0 rows copied from test."RangeRel_2"
+NOTICE:  0 rows copied from test."RangeRel_1"
+ drop_range_partitions 
+-----------------------
+                     3
+(1 row)
+
+SELECT pathman.create_partitions_from_range('test."RangeRel"', 'id', 1, 300, 100);
+NOTICE:  Copying data to partitions...
+ create_partitions_from_range 
+------------------------------
+                            3
+(1 row)
+
+DROP TABLE test."RangeRel" CASCADE;
+NOTICE:  drop cascades to 3 other objects
 DROP EXTENSION pg_pathman;
 /* Test that everithing works fine without schemas */
 CREATE EXTENSION pg_pathman;
@@ -933,8 +1112,8 @@ CREATE TABLE hash_rel (
 	value	INTEGER NOT NULL);
 INSERT INTO hash_rel (value) SELECT g FROM generate_series(1, 10000) as g;
 SELECT create_hash_partitions('hash_rel', 'value', 3);
-NOTICE:  function hash_rel_insert_trigger_func() does not exist, skipping
-NOTICE:  function hash_rel_update_trigger_func() does not exist, skipping
+NOTICE:  function public.hash_rel_insert_trigger_func() does not exist, skipping
+NOTICE:  function public.hash_rel_update_trigger_func() does not exist, skipping
 NOTICE:  Copying data to partitions...
  create_hash_partitions 
 ------------------------
@@ -1134,8 +1313,8 @@ CREATE TABLE replies(id SERIAL PRIMARY KEY, message_id INTEGER REFERENCES messag
 INSERT INTO messages SELECT g, md5(g::text) FROM generate_series(1, 10) as g;
 INSERT INTO replies SELECT g, g, md5(g::text) FROM generate_series(1, 10) as g;
 SELECT create_range_partitions('messages', 'id', 1, 100, 2);
-WARNING:  Foreign key 'replies_message_id_fkey' references to the relation 'public.messages'
-ERROR:  Relation 'public.messages' is referenced from other relations P0001
+WARNING:  Foreign key 'replies_message_id_fkey' references to the relation 'messages'
+ERROR:  Relation 'messages' is referenced from other relations P0001
 ALTER TABLE replies DROP CONSTRAINT replies_message_id_fkey;
 SELECT create_range_partitions('messages', 'id', 1, 100, 2);
 NOTICE:  sequence "messages_seq" does not exist, skipping
