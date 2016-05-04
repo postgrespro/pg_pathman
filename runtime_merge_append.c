@@ -1,7 +1,7 @@
 /* ------------------------------------------------------------------------
  *
- * runtimeappend.c
- *		RuntimeAppend node's function definitions and global variables
+ * runtime_merge_append.c
+ *		RuntimeMergeAppend node's function definitions and global variables
  *
  * Copyright (c) 2016, Postgres Professional
  *
