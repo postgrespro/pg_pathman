@@ -1,16 +1,14 @@
 /* ------------------------------------------------------------------------
  *
- * arrangeappend.h
- *		ArrangeAppend node's function prototypes and structures
+ * runtimeappend.c
+ *		RuntimeAppend node's function definitions and global variables
  *
  * Copyright (c) 2016, Postgres Professional
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
- * Portions Copyright (c) 1994, Regents of the University of California
  *
  * ------------------------------------------------------------------------
  */
 #include "postgres.h"
-#include "arrangeappend.h"
+#include "runtime_merge_append.h"
 
 #include "pathman.h"
 
@@ -26,11 +24,11 @@
 #include "lib/binaryheap.h"
 
 
-bool				pg_pathman_enable_arrangeappend = true;
+bool				pg_pathman_enable_runtime_merge_append = true;
 
-CustomPathMethods	arrangeappend_path_methods;
-CustomScanMethods	arrangeappend_plan_methods;
-CustomExecMethods	arrangeappend_exec_methods;
+CustomPathMethods	runtime_merge_append_path_methods;
+CustomScanMethods	runtime_merge_append_plan_methods;
+CustomExecMethods	runtime_merge_append_exec_methods;
 
 typedef struct
 {
@@ -67,12 +65,12 @@ typedef int32 SlotNumber;
 static int32
 heap_compare_slots(Datum a, Datum b, void *arg)
 {
-	ArrangeAppendState *node = (ArrangeAppendState *) arg;
-	SlotNumber			slot1 = DatumGetInt32(a);
-	SlotNumber			slot2 = DatumGetInt32(b);
+	RuntimeMergeAppendState	   *node = (RuntimeMergeAppendState *) arg;
+	SlotNumber					slot1 = DatumGetInt32(a);
+	SlotNumber				 	slot2 = DatumGetInt32(b);
 
-	TupleTableSlot	   *s1 = node->ms_slots[slot1];
-	TupleTableSlot	   *s2 = node->ms_slots[slot2];
+	TupleTableSlot			   *s1 = node->ms_slots[slot1];
+	TupleTableSlot			   *s2 = node->ms_slots[slot2];
 	int			nkey;
 
 	Assert(!TupIsNull(s1));
@@ -101,9 +99,9 @@ heap_compare_slots(Datum a, Datum b, void *arg)
 }
 
 static void
-pack_arrangeappend_private(CustomScan *cscan, MergeAppendGuts *mag)
+pack_runtimemergeappend_private(CustomScan *cscan, MergeAppendGuts *mag)
 {
-	List   *arrangeappend_private = NIL;
+	List   *runtimemergeappend_private = NIL;
 	List   *sortColIdx    = NIL,
 		   *sortOperators = NIL,
 		   *collations    = NIL,
@@ -118,18 +116,19 @@ pack_arrangeappend_private(CustomScan *cscan, MergeAppendGuts *mag)
 		nullsFirst    = lappend_int(nullsFirst, mag->nullsFirst[i]);
 	}
 
-	arrangeappend_private = list_make2(makeInteger(mag->numCols),
-									   list_make4(sortColIdx,
-												  sortOperators,
-												  collations,
-												  nullsFirst));
+	runtimemergeappend_private = list_make2(makeInteger(mag->numCols),
+											list_make4(sortColIdx,
+													   sortOperators,
+													   collations,
+													   nullsFirst));
 
 	cscan->custom_private = lappend(cscan->custom_private,
-									arrangeappend_private);
+									runtimemergeappend_private);
 }
 
 static void
-unpack_arrangeappend_private(ArrangeAppendState *scan_state, CustomScan *cscan)
+unpack_runtimemergeappend_private(RuntimeMergeAppendState *scan_state,
+								  CustomScan *cscan)
 {
 #define FillStateField(name, type, method) \
 	do \
@@ -143,19 +142,19 @@ unpack_arrangeappend_private(ArrangeAppendState *scan_state, CustomScan *cscan)
 	} \
 	while (0)
 
-	List   *arrangeappend_private = NIL;
+	List   *runtimemergeappend_private = NIL;
 	List   *sortColIdx,
 		   *sortOperators,
 		   *collations,
 		   *nullsFirst;
 
-	arrangeappend_private = linitial(cscan->custom_private);
-	scan_state->numCols = intVal(linitial(arrangeappend_private));
+	runtimemergeappend_private = linitial(cscan->custom_private);
+	scan_state->numCols = intVal(linitial(runtimemergeappend_private));
 
-	sortColIdx    = linitial(lsecond(arrangeappend_private));
-	sortOperators = lsecond(lsecond(arrangeappend_private));
-	collations    = lthird(lsecond(arrangeappend_private));
-	nullsFirst    = lfourth(lsecond(arrangeappend_private));
+	sortColIdx    = linitial(lsecond(runtimemergeappend_private));
+	sortOperators = lsecond(lsecond(runtimemergeappend_private));
+	collations    = lthird(lsecond(runtimemergeappend_private));
+	nullsFirst    = lfourth(lsecond(runtimemergeappend_private));
 
 	FillStateField(sortColIdx,    AttrNumber, lfirst_int);
 	FillStateField(sortOperators, Oid,        lfirst_oid);
@@ -164,7 +163,7 @@ unpack_arrangeappend_private(ArrangeAppendState *scan_state, CustomScan *cscan)
 }
 
 Path *
-create_arrangeappend_path(PlannerInfo *root,
+create_runtimemergeappend_path(PlannerInfo *root,
 						  AppendPath *inner_append,
 						  ParamPathInfo *param_info,
 						  List *picky_clauses, double sel)
@@ -175,8 +174,8 @@ create_arrangeappend_path(PlannerInfo *root,
 
 	path = create_append_path_common(root, inner_append,
 									 param_info, picky_clauses,
-									 &arrangeappend_path_methods,
-									 sizeof(ArrangeAppendPath),
+									 &runtime_merge_append_path_methods,
+									 sizeof(RuntimeMergeAppendPath),
 									 sel);
 
 	if (bms_equal(rel->relids, root->all_baserels))
@@ -184,22 +183,22 @@ create_arrangeappend_path(PlannerInfo *root,
 	else
 		limit_tuples = -1.0;
 
-	((ArrangeAppendPath *) path)->limit_tuples = limit_tuples;
+	((RuntimeMergeAppendPath *) path)->limit_tuples = limit_tuples;
 
 	return path;
 }
 
 Plan *
-create_arrangeappend_plan(PlannerInfo *root, RelOptInfo *rel,
+create_runtimemergeappend_plan(PlannerInfo *root, RelOptInfo *rel,
 						  CustomPath *best_path, List *tlist,
 						  List *clauses, List *custom_plans)
 {
 	CustomScan	   *node;
 	Plan		   *plan;
 	List		   *pathkeys = best_path->path.pathkeys;
-	double			limit_tuples = ((ArrangeAppendPath *) best_path)->limit_tuples;
+	double			limit_tuples = ((RuntimeMergeAppendPath *) best_path)->limit_tuples;
 
-	MergeAppendGuts	mag;
+	MergeAppendGuts mag;
 
 	ListCell	   *path_cell;
 	ListCell	   *plan_cell;
@@ -207,7 +206,7 @@ create_arrangeappend_plan(PlannerInfo *root, RelOptInfo *rel,
 	plan = create_append_plan_common(root, rel,
 									 best_path, tlist,
 									 clauses, custom_plans,
-									 &arrangeappend_plan_methods);
+									 &runtime_merge_append_plan_methods);
 
 	node = (CustomScan *) plan;
 
@@ -257,7 +256,7 @@ create_arrangeappend_plan(PlannerInfo *root, RelOptInfo *rel,
 		Assert(numsortkeys == node_numCols);
 		if (memcmp(sortColIdx, mag.sortColIdx,
 				   numsortkeys * sizeof(AttrNumber)) != 0)
-			elog(ERROR, "ArrangeAppend child's targetlist doesn't match ArrangeAppend");
+			elog(ERROR, "RuntimeMergeAppend child's targetlist doesn't match RuntimeMergeAppend");
 		Assert(memcmp(sortOperators, node_sortOperators,
 					  numsortkeys * sizeof(Oid)) == 0);
 		Assert(memcmp(collations, node_collations,
@@ -276,37 +275,37 @@ create_arrangeappend_plan(PlannerInfo *root, RelOptInfo *rel,
 		lfirst(plan_cell) = subplan;
 	}
 
-	pack_arrangeappend_private(node, &mag);
+	pack_runtimemergeappend_private(node, &mag);
 
 	return plan;
 }
 
 Node *
-arrangeappend_create_scan_state(CustomScan *node)
+runtimemergeappend_create_scan_state(CustomScan *node)
 {
 	Node *state;
 	state = create_append_scan_state_common(node,
-											&arrangeappend_exec_methods,
-											sizeof(ArrangeAppendState));
+											&runtime_merge_append_exec_methods,
+											sizeof(RuntimeMergeAppendState));
 
-	unpack_arrangeappend_private((ArrangeAppendState *) state, node);
+	unpack_runtimemergeappend_private((RuntimeMergeAppendState *) state, node);
 
 	return state;
 }
 
 void
-arrangeappend_begin(CustomScanState *node, EState *estate, int eflags)
+runtimemergeappend_begin(CustomScanState *node, EState *estate, int eflags)
 {
 	begin_append_common(node, estate, eflags);
 }
 
 TupleTableSlot *
-arrangeappend_exec(CustomScanState *node)
+runtimemergeappend_exec(CustomScanState *node)
 {
-	ArrangeAppendState *scan_state = (ArrangeAppendState *) node;
-	RuntimeAppendState *rstate = &scan_state->rstate;
-	PlanState		   *ps;
-	int					i;
+	RuntimeMergeAppendState	   *scan_state = (RuntimeMergeAppendState *) node;
+	RuntimeAppendState		   *rstate = &scan_state->rstate;
+	PlanState				   *ps;
+	int							i;
 
 	if (scan_state->rstate.ncur_plans == 0)
 		ExecReScan(&node->ss.ps);
@@ -369,9 +368,9 @@ arrangeappend_exec(CustomScanState *node)
 }
 
 void
-arrangeappend_end(CustomScanState *node)
+runtimemergeappend_end(CustomScanState *node)
 {
-	ArrangeAppendState *scan_state = (ArrangeAppendState *) node;
+	RuntimeMergeAppendState	   *scan_state = (RuntimeMergeAppendState *) node;
 
 	end_append_common(node);
 
@@ -380,11 +379,11 @@ arrangeappend_end(CustomScanState *node)
 }
 
 void
-arrangeappend_rescan(CustomScanState *node)
+runtimemergeappend_rescan(CustomScanState *node)
 {
-	ArrangeAppendState *scan_state = (ArrangeAppendState *) node;
-	int					nplans;
-	int					i;
+	RuntimeMergeAppendState	   *scan_state = (RuntimeMergeAppendState *) node;
+	int							nplans;
+	int							i;
 
 	rescan_append_common(node);
 
@@ -425,9 +424,9 @@ arrangeappend_rescan(CustomScanState *node)
 }
 
 void
-arrangeappend_explain(CustomScanState *node, List *ancestors, ExplainState *es)
+runtimemergeappend_explain(CustomScanState *node, List *ancestors, ExplainState *es)
 {
-	ArrangeAppendState *scan_state = (ArrangeAppendState *) node;
+	RuntimeMergeAppendState *scan_state = (RuntimeMergeAppendState *) node;
 
 	explain_append_common(node, scan_state->rstate.children_table, es);
 }

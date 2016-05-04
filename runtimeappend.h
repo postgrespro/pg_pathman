@@ -7,8 +7,8 @@
  *
  * ------------------------------------------------------------------------
  */
-#ifndef PICKYAPPEND_H
-#define PICKYAPPEND_H
+#ifndef RUNTIME_APPEND_H
+#define RUNTIME_APPEND_H
 
 #include "postgres.h"
 #include "optimizer/paths.h"
