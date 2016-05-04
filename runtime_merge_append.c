@@ -123,6 +123,7 @@ pack_runtimemergeappend_private(CustomScan *cscan, MergeAppendGuts *mag)
 													   collations,
 													   nullsFirst));
 
+	/* Append RuntimeMergeAppend's data to the 'custom_private' */
 	cscan->custom_private = lappend(cscan->custom_private,
 									runtimemergeappend_private);
 }
@@ -149,7 +150,12 @@ unpack_runtimemergeappend_private(RuntimeMergeAppendState *scan_state,
 		   *collations,
 		   *nullsFirst;
 
-	runtimemergeappend_private = linitial(cscan->custom_private);
+	/*
+	 * RuntimeMergeAppend node's private data is stored in
+	 * second element of the 'custom_private' list, right after
+	 * the RuntimeAppend node's private data
+	 */
+	runtimemergeappend_private = lsecond(cscan->custom_private);
 	scan_state->numCols = intVal(linitial(runtimemergeappend_private));
 
 	sortColIdx    = linitial(lsecond(runtimemergeappend_private));

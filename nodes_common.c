@@ -150,7 +150,7 @@ pack_runtimeappend_private(CustomScan *cscan, RuntimeAppendPath *path)
 		pfree(children[i]);
 	}
 
-	/* Save main table and partition relids */
+	/* Save main table and partition relids as first element of 'custom_private' */
 	custom_private = lappend(custom_private,
 							 list_make2(list_make1_oid(path->relid),
 										custom_oids));
@@ -197,9 +197,6 @@ unpack_runtimeappend_private(RuntimeAppendState *scan_state, CustomScan *cscan)
 
 	scan_state->children_table = children_table;
 	scan_state->relid = linitial_oid(linitial(runtimeappend_private));
-
-	/* Delete items that belong to RuntimeAppend */
-	cscan->custom_private = list_delete_first(cscan->custom_private);
 }
 
 Path *
