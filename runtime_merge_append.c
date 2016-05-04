@@ -20,6 +20,7 @@
 #include "optimizer/var.h"
 #include "miscadmin.h"
 #include "utils/lsyscache.h"
+#include "utils/memutils.h"
 
 #include "lib/binaryheap.h"
 
@@ -346,6 +347,8 @@ runtimemergeappend_exec(CustomScanState *node)
 			node->ss.ps.ps_ExprContext->ecxt_scantuple = scan_state->ms_slots[i];
 			quals = ExecQual(rstate->custom_expr_states,
 							 node->ss.ps.ps_ExprContext, false);
+
+			ResetExprContext(node->ss.ps.ps_ExprContext);
 
 			if (quals)
 			{
