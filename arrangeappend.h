@@ -27,6 +27,7 @@ typedef struct
 	SortSupport			ms_sortkeys;
 	TupleTableSlot	  **ms_slots;
 	struct binaryheap  *ms_heap;
+	bool				ms_initialized;
 } ArrangeAppendState;
 
 

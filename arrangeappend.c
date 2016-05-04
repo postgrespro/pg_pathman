@@ -276,8 +276,6 @@ create_arrangeappend_plan(PlannerInfo *root, RelOptInfo *rel,
 		lfirst(plan_cell) = subplan;
 	}
 
-	/* TODO: write node_XXX wariables to custom_private */
-
 	pack_arrangeappend_private(node, &mag);
 
 	return plan;
@@ -299,46 +297,75 @@ arrangeappend_create_scan_state(CustomScan *node)
 void
 arrangeappend_begin(CustomScanState *node, EState *estate, int eflags)
 {
-	ArrangeAppendState   *scan_state = (ArrangeAppendState *) node;
-
 	begin_append_common(node, estate, eflags);
 }
 
 TupleTableSlot *
 arrangeappend_exec(CustomScanState *node)
 {
-	ArrangeAppendState   *scan_state = (ArrangeAppendState *) node;
-	RuntimeAppendState	 *rstate = &scan_state->rstate;
+	ArrangeAppendState *scan_state = (ArrangeAppendState *) node;
+	RuntimeAppendState *rstate = &scan_state->rstate;
+	PlanState		   *ps;
+	int					i;
 
 	if (scan_state->rstate.ncur_plans == 0)
 		ExecReScan(&node->ss.ps);
 
-	while (rstate->running_idx < rstate->ncur_plans)
+	if (!scan_state->ms_initialized)
 	{
-		ChildScanCommon		child = rstate->cur_plans[rstate->running_idx];
-		PlanState		   *state = child->content.plan_state;
-		TupleTableSlot	   *slot = NULL;
-		bool				quals;
+		for (i = 0; i < scan_state->rstate.ncur_plans; i++)
+		{
+			ChildScanCommon		child = scan_state->rstate.cur_plans[i];
+			PlanState		   *ps = child->content.plan_state;
+
+			Assert(child->content_type == CHILD_PLAN_STATE);
+
+			scan_state->ms_slots[i] = ExecProcNode(ps);
+			if (!TupIsNull(scan_state->ms_slots[i]))
+				binaryheap_add_unordered(scan_state->ms_heap, Int32GetDatum(i));
+		}
+		binaryheap_build(scan_state->ms_heap);
+		scan_state->ms_initialized = true;
+	}
+	else
+	{
+		i = DatumGetInt32(binaryheap_first(scan_state->ms_heap));
+		ps = scan_state->rstate.cur_plans[i]->content.plan_state;
 
 		for (;;)
 		{
-			slot = ExecProcNode(state);
+			bool quals;
 
-			if (TupIsNull(slot))
+			scan_state->ms_slots[i] = ExecProcNode(ps);
+
+			if (TupIsNull(scan_state->ms_slots[i]))
+			{
+				(void) binaryheap_remove_first(scan_state->ms_heap);
 				break;
+			}
 
-			node->ss.ps.ps_ExprContext->ecxt_scantuple = slot;
+			node->ss.ps.ps_ExprContext->ecxt_scantuple = scan_state->ms_slots[i];
 			quals = ExecQual(rstate->custom_expr_states,
 							 node->ss.ps.ps_ExprContext, false);
 
 			if (quals)
-				return slot;
+			{
+				binaryheap_replace_first(scan_state->ms_heap, Int32GetDatum(i));
+				break;
+			}
 		}
-
-		rstate->running_idx++;
 	}
 
-	return NULL;
+	if (binaryheap_empty(scan_state->ms_heap))
+	{
+		/* All the subplans are exhausted, and so is the heap */
+		return NULL;
+	}
+	else
+	{
+		i = DatumGetInt32(binaryheap_first(scan_state->ms_heap));
+		return scan_state->ms_slots[i];
+	}
 }
 
 void
@@ -347,16 +374,21 @@ arrangeappend_end(CustomScanState *node)
 	ArrangeAppendState *scan_state = (ArrangeAppendState *) node;
 
 	end_append_common(node);
+
+	if (scan_state->ms_heap)
+		binaryheap_free(scan_state->ms_heap);
 }
 
 void
 arrangeappend_rescan(CustomScanState *node)
 {
 	ArrangeAppendState *scan_state = (ArrangeAppendState *) node;
-	int					nplans = scan_state->rstate.ncur_plans;
+	int					nplans;
 	int					i;
 
 	rescan_append_common(node);
+
+	nplans = scan_state->rstate.ncur_plans;
 
 	scan_state->ms_slots = (TupleTableSlot **) palloc0(sizeof(TupleTableSlot *) * nplans);
 	scan_state->ms_heap = binaryheap_allocate(nplans, heap_compare_slots, scan_state);
@@ -387,6 +419,9 @@ arrangeappend_rescan(CustomScanState *node)
 
 		PrepareSortSupportFromOrderingOp(scan_state->sortOperators[i], sortKey);
 	}
+
+	binaryheap_reset(scan_state->ms_heap);
+	scan_state->ms_initialized = false;
 }
 
 void
