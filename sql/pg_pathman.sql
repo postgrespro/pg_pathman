@@ -112,7 +112,10 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel_1 UNION ALL SELECT * FROM test.
  * Join
  */
 SET enable_hashjoin = OFF;
+set enable_nestloop = OFF;
 SET enable_mergejoin = ON;
+SET pg_pathman.enable_runtimeappend = OFF;
+SET pg_pathman.enable_runtimemergeappend = OFF;
 EXPLAIN (COSTS OFF)
 SELECT * FROM test.range_rel j1
 JOIN test.range_rel j2 on j2.id = j1.id
@@ -136,6 +139,149 @@ SELECT * FROM ttt;
 EXPLAIN (COSTS OFF)
     WITH ttt AS (SELECT * FROM test.hash_rel WHERE value = 2)
 SELECT * FROM ttt;
+
+
+/*
+ * Test RuntimeAppend
+ */
+
+create or replace function test.pathman_assert(smt bool, error_msg text) returns text as $$
+begin
+	if not smt then
+		raise exception '%', error_msg;
+	end if;
+
+	return 'ok';
+end;
+$$ language plpgsql;
+
+create or replace function test.pathman_equal(a text, b text, error_msg text) returns text as $$
+begin
+	if a != b then
+		raise exception '''%'' is not equal to ''%'', %', a, b, error_msg;
+	end if;
+
+	return 'equal';
+end;
+$$ language plpgsql;
+
+create or replace function test.pathman_test(query text) returns jsonb as $$
+declare
+	plan jsonb;
+begin
+	execute 'explain (analyze, format json)' || query into plan;
+
+	return plan;
+end;
+$$ language plpgsql;
+
+create or replace function test.pathman_test_1() returns text as $$
+declare
+	plan jsonb;
+	num int;
+begin
+	plan = test.pathman_test('select * from test.runtime_test_1 where id = (select * from test.run_values limit 1)');
+
+	perform test.pathman_equal((plan->0->'Plan'->'Node Type')::text,
+							   '"Custom Scan"',
+							   'wrong plan type');
+
+	perform test.pathman_equal((plan->0->'Plan'->'Custom Plan Provider')::text,
+							   '"RuntimeAppend"',
+							   'wrong plan provider');
+
+	perform test.pathman_equal((plan->0->'Plan'->'Plans'->1->'Relation Name')::text,
+							   '"runtime_test_1_1"',
+							   'wrong partition');
+	return 'ok';
+end;
+$$ language plpgsql;
+
+create or replace function test.pathman_test_2() returns text as $$
+declare
+	plan jsonb;
+	num int;
+begin
+	plan = test.pathman_test('select * from test.runtime_test_1 where id = any (select * from test.run_values limit 6)');
+
+	perform test.pathman_equal((plan->0->'Plan'->'Node Type')::text,
+							   '"Nested Loop"',
+							   'wrong plan type');
+
+	perform test.pathman_equal((plan->0->'Plan'->'Plans'->1->'Node Type')::text,
+							   '"Custom Scan"',
+							   'wrong plan type');
+
+	perform test.pathman_equal((plan->0->'Plan'->'Plans'->1->'Custom Plan Provider')::text,
+							   '"RuntimeAppend"',
+							   'wrong plan provider');
+
+	select count(*) from jsonb_array_elements_text(plan->0->'Plan'->'Plans'->1->'Plans') into num;
+	perform test.pathman_equal(num::text, '6', 'expected 6 child plans for custom scan');
+
+	for i in 0..5 loop
+		perform test.pathman_equal((plan->0->'Plan'->'Plans'->1->'Plans'->i->'Relation Name')::text,
+								   format('"runtime_test_1_%s"', i + 1),
+								   'wrong partition');
+
+		num = plan->0->'Plan'->'Plans'->1->'Plans'->i->'Actual Loops';
+		perform test.pathman_equal(num::text, '1', 'expected 1 loop');
+	end loop;
+
+	return 'ok';
+end;
+$$ language plpgsql;
+
+create or replace function test.pathman_test_3() returns text as $$
+declare
+	plan jsonb;
+	num int;
+begin
+	plan = test.pathman_test('select * from test.runtime_test_1 a join test.run_values b on a.id = b.val');
+
+	perform test.pathman_equal((plan->0->'Plan'->'Node Type')::text,
+							   '"Nested Loop"',
+							   'wrong plan type');
+
+	perform test.pathman_equal((plan->0->'Plan'->'Plans'->1->'Node Type')::text,
+							   '"Custom Scan"',
+							   'wrong plan type');
+
+	perform test.pathman_equal((plan->0->'Plan'->'Plans'->1->'Custom Plan Provider')::text,
+							   '"RuntimeAppend"',
+							   'wrong plan provider');
+
+	select count(*) from jsonb_array_elements_text(plan->0->'Plan'->'Plans'->1->'Plans') into num;
+	perform test.pathman_equal(num::text, '128', 'expected 128 child plans for custom scan');
+
+	for i in 0..127 loop
+		num = plan->0->'Plan'->'Plans'->1->'Plans'->i->'Actual Loops';
+		perform test.pathman_assert(num <= 79, 'expected no more than 79 loops');
+	end loop;
+
+	return 'ok';
+end;
+$$ language plpgsql;
+
+
+create table test.run_values as select generate_series(1, 10000) val;
+create table test.runtime_test_1(id serial primary key, val real);
+insert into test.runtime_test_1 select generate_series(1, 10000), random();
+select pathman.create_hash_partitions('test.runtime_test_1', 'id', 128);
+
+analyze test.run_values;
+analyze test.runtime_test_1;
+
+set enable_mergejoin = off;
+set enable_hashjoin = off;
+set pg_pathman.enable_runtimeappend = on;
+select test.pathman_test_1(); /* RuntimeAppend (select ... where id = (subquery)) */
+select test.pathman_test_2(); /* RuntimeAppend (select ... where id = any(subquery)) */
+select test.pathman_test_3(); /* RuntimeAppend (a join b on a.id = b.val) */
+set enable_mergejoin = on;
+set enable_hashjoin = on;
+
+drop table test.run_values, test.runtime_test_1 cascade;
 
 /*
  * Test split and merge

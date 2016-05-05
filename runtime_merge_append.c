@@ -152,8 +152,8 @@ unpack_runtimemergeappend_private(RuntimeMergeAppendState *scan_state,
 
 	/*
 	 * RuntimeMergeAppend node's private data is stored in
-	 * second element of the 'custom_private' list, right after
-	 * the RuntimeAppend node's private data
+	 * second element of the 'custom_private' list, right
+	 * after the RuntimeAppend node's private data (2nd)
 	 */
 	runtimemergeappend_private = lsecond(cscan->custom_private);
 	scan_state->numCols = intVal(linitial(runtimemergeappend_private));
