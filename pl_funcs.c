@@ -378,3 +378,13 @@ release_partitions_lock(PG_FUNCTION_ARGS)
 	LWLockRelease(pmstate->edit_partitions_lock);
 	PG_RETURN_NULL();
 }
+
+
+// Datum
+
+// names = stringToQualifiedNameList(class_name_or_oid);
+
+// ident 
+// bool
+// SplitIdentifierString(char *rawstring, char separator,
+// 					  List **namelist)

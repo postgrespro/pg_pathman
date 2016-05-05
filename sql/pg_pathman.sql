@@ -237,6 +237,46 @@ SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 0, 999);
 SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 0, 1000);
 SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 0, 1001);
 
+/* CaMeL cAsE table names and attributes */
+CREATE TABLE test."TeSt" (a INT NOT NULL, b INT);
+SELECT pathman.create_hash_partitions('test.TeSt', 'a', 3);
+SELECT pathman.create_hash_partitions('test."TeSt"', 'a', 3);
+INSERT INTO test."TeSt" VALUES (1, 1);
+INSERT INTO test."TeSt" VALUES (2, 2);
+INSERT INTO test."TeSt" VALUES (3, 3);
+SELECT * FROM test."TeSt";
+SELECT pathman.create_hash_update_trigger('test."TeSt"');
+UPDATE test."TeSt" SET a = 1;
+SELECT * FROM test."TeSt";
+SELECT * FROM test."TeSt" WHERE a = 1;
+EXPLAIN (COSTS OFF) SELECT * FROM test."TeSt" WHERE a = 1;
+SELECT pathman.drop_hash_partitions('test."TeSt"');
+SELECT * FROM test."TeSt";
+
+CREATE TABLE test."RangeRel" (
+	id	SERIAL PRIMARY KEY,
+	dt	TIMESTAMP NOT NULL,
+	txt	TEXT);
+INSERT INTO test."RangeRel" (dt, txt)
+SELECT g, md5(g::TEXT) FROM generate_series('2015-01-01', '2015-01-03', '1 day'::interval) as g;
+SELECT pathman.create_range_partitions('test."RangeRel"', 'dt', '2015-01-01'::DATE, '1 day'::INTERVAL);
+SELECT pathman.append_range_partition('test."RangeRel"');
+SELECT pathman.prepend_range_partition('test."RangeRel"');
+SELECT pathman.merge_range_partitions('test."RangeRel_1"', 'test."RangeRel_' || currval('test."RangeRel_seq"') || '"');
+SELECT pathman.split_range_partition('test."RangeRel_1"', '2015-01-01'::DATE);
+SELECT pathman.drop_range_partitions('test."RangeRel"');
+SELECT pathman.create_partitions_from_range('test."RangeRel"', 'dt', '2015-01-01'::DATE, '2015-01-05'::DATE, '1 day'::INTERVAL);
+DROP TABLE test."RangeRel" CASCADE;
+SELECT * FROM pathman.pathman_config;
+CREATE TABLE test."RangeRel" (
+	id	SERIAL PRIMARY KEY,
+	dt	TIMESTAMP NOT NULL,
+	txt	TEXT);
+SELECT pathman.create_range_partitions('test."RangeRel"', 'id', 1, 100, 3);
+SELECT pathman.drop_range_partitions('test."RangeRel"');
+SELECT pathman.create_partitions_from_range('test."RangeRel"', 'id', 1, 300, 100);
+DROP TABLE test."RangeRel" CASCADE;
+
 DROP EXTENSION pg_pathman;
 
 /* Test that everithing works fine without schemas */

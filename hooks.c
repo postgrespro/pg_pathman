@@ -129,7 +129,6 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 	RelOptInfo		  **new_rel_array;
 	bool				found;
 	int					len;
-	int					first_child_relid = 0;
 
 	/* Invoke original hook if needed */
 	if (set_rel_pathlist_hook_next != NULL)
@@ -246,18 +245,10 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 		foreach(lc, ranges)
 		{
 			IndexRange	irange = lfirst_irange(lc);
-			Oid			childOid;
 
 			for (i = irange_lower(irange); i <= irange_upper(irange); i++)
-			{
-				int idx;
+				append_child_relation(root, rel, rti, rte, i, dsm_arr[i], wrappers);
 
-				childOid = dsm_arr[i];
-				idx = append_child_relation(root, rel, rti, rte, i, childOid, wrappers);
-
-				if (!first_child_relid)
-					first_child_relid = idx;
-			}
 		}
 
 		/* Clear old path list */
