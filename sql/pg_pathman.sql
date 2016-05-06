@@ -155,7 +155,9 @@ SELECT pathman.merge_range_partitions('test.range_rel_1', 'test.range_rel_' || c
 
 /* Append and prepend partitions */
 SELECT pathman.append_range_partition('test.num_range_rel');
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 4000;
 SELECT pathman.prepend_range_partition('test.num_range_rel');
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id < 0;
 SELECT pathman.drop_range_partition('test.num_range_rel_7');
 
 SELECT pathman.append_range_partition('test.range_rel');

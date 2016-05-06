@@ -690,7 +690,7 @@ $$ LANGUAGE plpgsql;
  * Append new partition
  */
 CREATE OR REPLACE FUNCTION @extschema@.append_range_partition(
-	p_relation TEXT)
+	p_relation REGCLASS)
 RETURNS TEXT AS
 $$
 DECLARE
@@ -699,10 +699,8 @@ DECLARE
 	v_part_name TEXT;
 	v_interval TEXT;
 BEGIN
-	p_relation := @extschema@.validate_relname(p_relation);
-	
 	SELECT attname, range_interval INTO v_attname, v_interval
-	FROM @extschema@.pathman_config WHERE relname = p_relation;
+	FROM @extschema@.pathman_config WHERE relname::regclass = p_relation;
 
 	v_atttype := @extschema@.get_attribute_type_name(p_relation, v_attname);
 
@@ -714,7 +712,7 @@ BEGIN
 	USING p_relation, v_atttype, v_interval;
 
 	/* Invalidate cache */
-	PERFORM @extschema@.on_update_partitions(p_relation::regclass::oid);
+	PERFORM @extschema@.on_update_partitions(p_relation::oid);
 
 	/* Release lock */
 	PERFORM @extschema@.release_partitions_lock();
@@ -731,7 +729,7 @@ LANGUAGE plpgsql;
 
 
 CREATE OR REPLACE FUNCTION @extschema@.append_partition_internal(
-	p_relation TEXT
+	p_relation REGCLASS
 	, p_atttype TEXT
 	, p_interval TEXT
 	, p_range ANYARRAY DEFAULT NULL)
@@ -740,7 +738,7 @@ $$
 DECLARE
 	v_part_name TEXT;
 BEGIN
-	p_range := @extschema@.get_range_by_idx(p_relation::regclass::oid, -1, 0);
+	p_range := @extschema@.get_range_by_idx(p_relation::oid, -1, 0);
 	RAISE NOTICE 'Appending new partition...';
 	IF @extschema@.is_date(p_atttype::regtype) THEN
 		v_part_name := @extschema@.create_single_range_partition(p_relation
@@ -761,7 +759,7 @@ LANGUAGE plpgsql;
 /*
  * Prepend new partition
  */
-CREATE OR REPLACE FUNCTION @extschema@.prepend_range_partition(p_relation TEXT)
+CREATE OR REPLACE FUNCTION @extschema@.prepend_range_partition(p_relation REGCLASS)
 RETURNS TEXT AS
 $$
 DECLARE
@@ -770,10 +768,8 @@ DECLARE
 	v_part_name TEXT;
 	v_interval TEXT;
 BEGIN
-	p_relation := @extschema@.validate_relname(p_relation);
-
 	SELECT attname, range_interval INTO v_attname, v_interval
-	FROM @extschema@.pathman_config WHERE relname = p_relation;
+	FROM @extschema@.pathman_config WHERE relname::regclass = p_relation;
 	v_atttype := @extschema@.get_attribute_type_name(p_relation, v_attname);
 
 	/* Prevent concurrent partition creation */
@@ -784,7 +780,7 @@ BEGIN
 	USING p_relation, v_atttype, v_interval;
 
 	/* Invalidate cache */
-	PERFORM @extschema@.on_update_partitions(p_relation::regclass::oid);
+	PERFORM @extschema@.on_update_partitions(p_relation::oid);
 
 	/* Release lock */
 	PERFORM @extschema@.release_partitions_lock();
@@ -801,7 +797,7 @@ LANGUAGE plpgsql;
 
 
 CREATE OR REPLACE FUNCTION @extschema@.prepend_partition_internal(
-	p_relation TEXT
+	p_relation REGCLASS
 	, p_atttype TEXT
 	, p_interval TEXT
 	, p_range ANYARRAY DEFAULT NULL)
@@ -810,7 +806,7 @@ $$
 DECLARE
 	v_part_name TEXT;
 BEGIN
-	p_range := @extschema@.get_range_by_idx(p_relation::regclass::oid, 0, 0);
+	p_range := @extschema@.get_range_by_idx(p_relation::oid, 0, 0);
 	RAISE NOTICE 'Prepending new partition...';
 
 	IF @extschema@.is_date(p_atttype::regtype) THEN
@@ -818,7 +814,7 @@ BEGIN
 																 , p_range[1] - p_interval::interval
 																 , p_range[1]);
 	ELSE
-		EXECUTE format('SELECT @extschema@.create_single_range_partition($1, $2, $2 - $3::%s)', p_atttype)
+		EXECUTE format('SELECT @extschema@.create_single_range_partition($1, $2 - $3::%s, $2)', p_atttype)
 		USING p_relation, p_range[1], p_interval
 		INTO v_part_name;
 	END IF;
@@ -833,7 +829,7 @@ LANGUAGE plpgsql;
  * Add new partition
  */
 CREATE OR REPLACE FUNCTION @extschema@.add_range_partition(
-	p_relation TEXT
+	p_relation REGCLASS
 	, p_start_value ANYELEMENT
 	, p_end_value ANYELEMENT)
 RETURNS TEXT AS
@@ -844,10 +840,8 @@ BEGIN
 	/* Prevent concurrent partition creation */
 	PERFORM @extschema@.acquire_partitions_lock();
 
-	p_relation := @extschema@.validate_relname(p_relation);
-
 	/* check range overlap */
-	IF @extschema@.check_overlap(p_relation::regclass::oid, p_start_value, p_end_value) != FALSE THEN
+	IF @extschema@.check_overlap(p_relation::oid, p_start_value, p_end_value) != FALSE THEN
 		RAISE EXCEPTION 'Specified range overlaps with existing partitions';
 	END IF;
 
@@ -857,7 +851,7 @@ BEGIN
 
 	/* Create new partition */
 	v_part_name := @extschema@.create_single_range_partition(p_relation, p_start_value, p_end_value);
-	PERFORM @extschema@.on_update_partitions(p_relation::regclass::oid);
+	PERFORM @extschema@.on_update_partitions(p_relation::oid);
 
 	/* Release lock */
 	PERFORM @extschema@.release_partitions_lock();
@@ -917,26 +911,28 @@ LANGUAGE plpgsql;
  * Attach range partition
  */
 CREATE OR REPLACE FUNCTION @extschema@.attach_range_partition(
-	p_relation TEXT
-	, p_partition TEXT
-	, p_start_value ANYELEMENT
-	, p_end_value ANYELEMENT)
+	p_relation       REGCLASS
+	, p_partition    REGCLASS
+	, p_start_value  ANYELEMENT
+	, p_end_value    ANYELEMENT)
 RETURNS TEXT AS
 $$
 DECLARE
-	v_attname TEXT;
-	v_cond TEXT;
+	v_attname        TEXT;
+	v_cond           TEXT;
+	v_plain_partname TEXT;
+	v_plain_schema   TEXT;
 BEGIN
 	/* Prevent concurrent partition management */
 	PERFORM @extschema@.acquire_partitions_lock();
 
-	p_relation := @extschema@.validate_relname(p_relation);
+	-- p_relation := @extschema@.validate_relname(p_relation);
 
-	IF @extschema@.check_overlap(p_relation::regclass::oid, p_start_value, p_end_value) != FALSE THEN
+	IF @extschema@.check_overlap(p_relation::oid, p_start_value, p_end_value) != FALSE THEN
 		RAISE EXCEPTION 'Specified range overlaps with existing partitions';
 	END IF;
 
-    IF NOT @extschema@.validate_relations_equality(p_relation::regclass, p_partition::regclass) THEN
+    IF NOT @extschema@.validate_relations_equality(p_relation, p_partition) THEN
         RAISE EXCEPTION 'Partition must have the exact same structure as parent';
     END IF;
 
@@ -946,15 +942,19 @@ BEGIN
 				   , p_relation);
 
 	/* Set check constraint */
-	v_attname := attname FROM @extschema@.pathman_config WHERE relname = p_relation;
+	v_attname := attname FROM @extschema@.pathman_config WHERE relname::regclass = p_relation;
 	v_cond := @extschema@.get_range_condition(v_attname, p_start_value, p_end_value);
-	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s_check CHECK (%s)'
+
+	/* Plain partition name and schema */
+	SELECT * INTO v_plain_schema, v_plain_partname FROM @extschema@.get_plain_schema_and_relname(p_partition);
+
+	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)'
 				   , p_partition
-				   , @extschema@.get_schema_qualified_name(p_partition::regclass)
+				   , v_plain_schema || '_' || quote_ident(v_plain_partname || '_check')
 				   , v_cond);
 
 	/* Invalidate cache */
-	PERFORM @extschema@.on_update_partitions(p_relation::regclass::oid);
+	PERFORM @extschema@.on_update_partitions(p_relation::oid);
 
 	/* Release lock */
 	PERFORM @extschema@.release_partitions_lock();
