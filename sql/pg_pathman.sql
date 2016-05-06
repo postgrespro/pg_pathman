@@ -263,11 +263,54 @@ begin
 end;
 $$ language plpgsql;
 
+create or replace function test.pathman_test_4() returns text as $$
+declare
+	plan jsonb;
+	num int;
+begin
+	plan = test.pathman_test('select * from test.category c, lateral' ||
+							 '(select * from test.runtime_test_2 g where g.category_id = c.id order by rating limit 10) as tg');
+
+	perform test.pathman_equal((plan->0->'Plan'->'Node Type')::text,
+							   '"Nested Loop"',
+							   'wrong plan type');
+
+														/* Limit -> Custom Scan */
+	perform test.pathman_equal((plan->0->'Plan'->'Plans'->1->0->'Node Type')::text,
+							   '"Custom Scan"',
+							   'wrong plan type');
+
+	perform test.pathman_equal((plan->0->'Plan'->'Plans'->1->0->'Custom Plan Provider')::text,
+							   '"RuntimeMergeAppend"',
+							   'wrong plan provider');
+
+	select count(*) from jsonb_array_elements_text(plan->0->'Plan'->'Plans'->1->'Plans'->0->'Plans') into num;
+	perform test.pathman_equal(num::text, '10', 'expected 10 child plans for custom scan');
+
+	for i in 0..9 loop
+		perform test.pathman_equal((plan->0->'Plan'->'Plans'->1->'Plans'->0->'Plans'->i->'Relation Name')::text,
+								   format('"runtime_test_2_%s"', i + 1),
+								   'wrong partition');
+								   
+		num = plan->0->'Plan'->'Plans'->1->'Plans'->0->'Plans'->i->'Actual Loops';
+		perform test.pathman_assert(num = 1, 'expected no more than 1 loops');
+	end loop;
+
+	return 'ok';
+end;
+$$ language plpgsql;
+
 
 create table test.run_values as select generate_series(1, 10000) val;
 create table test.runtime_test_1(id serial primary key, val real);
 insert into test.runtime_test_1 select generate_series(1, 10000), random();
 select pathman.create_hash_partitions('test.runtime_test_1', 'id', 128);
+
+create table test.category as (select id, 'cat' || id::text as name from generate_series(1, 10) id);
+create table test.runtime_test_2 (id serial, category_id int not null, name text, rating real);
+insert into test.runtime_test_2 (select id, (id % 10) + 1 as category_id, 'good' || id::text as name, random() as rating from generate_series(1, 1000000) id);
+create index on test.runtime_test_2 (category_id, rating);
+select pathman.create_hash_partitions('test.runtime_test_2', 'category_id', 128);
 
 analyze test.run_values;
 analyze test.runtime_test_1;
@@ -275,13 +318,18 @@ analyze test.runtime_test_1;
 set enable_mergejoin = off;
 set enable_hashjoin = off;
 set pg_pathman.enable_runtimeappend = on;
+set pg_pathman.enable_runtimemergeappend = on;
 select test.pathman_test_1(); /* RuntimeAppend (select ... where id = (subquery)) */
 select test.pathman_test_2(); /* RuntimeAppend (select ... where id = any(subquery)) */
 select test.pathman_test_3(); /* RuntimeAppend (a join b on a.id = b.val) */
+select test.pathman_test_4(); /* RuntimeMergeAppend (lateral) */
+
+set pg_pathman.enable_runtimeappend = off;
+set pg_pathman.enable_runtimemergeappend = off;
 set enable_mergejoin = on;
 set enable_hashjoin = on;
 
-drop table test.run_values, test.runtime_test_1 cascade;
+drop table test.run_values, test.runtime_test_1, test.runtime_test_2 cascade;
 
 /*
  * Test split and merge
@@ -301,7 +349,9 @@ SELECT pathman.merge_range_partitions('test.range_rel_1', 'test.range_rel_' || c
 
 /* Append and prepend partitions */
 SELECT pathman.append_range_partition('test.num_range_rel');
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 4000;
 SELECT pathman.prepend_range_partition('test.num_range_rel');
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id < 0;
 SELECT pathman.drop_range_partition('test.num_range_rel_7');
 
 SELECT pathman.append_range_partition('test.range_rel');
