@@ -190,6 +190,16 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2 OR value = 1;
          Filter: (value = 2)
 (5 rows)
 
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value BETWEEN 1 AND 2;
+                   QUERY PLAN                    
+-------------------------------------------------
+ Append
+   ->  Seq Scan on hash_rel_1
+         Filter: ((value >= 1) AND (value <= 2))
+   ->  Seq Scan on hash_rel_2
+         Filter: ((value >= 1) AND (value <= 2))
+(5 rows)
+
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > 2500;
             QUERY PLAN             
 -----------------------------------
