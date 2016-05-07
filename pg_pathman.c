@@ -59,8 +59,10 @@ typedef struct
 typedef struct
 {
 	const PartRelationInfo *prel;
-	Datum					least;
-	Datum					greatest;
+	bool					hasLeast,
+							hasGreatest;
+	Datum					least,
+							greatest;
 } WalkerContext;
 
 bool pg_pathman_enable;
@@ -94,6 +96,9 @@ bool inheritance_disabled;
 
 /* Expression tree handlers */
 static WrapperNode *walk_expr_tree(Expr *expr, WalkerContext *context);
+static void finish_least_greatest(WrapperNode *wrap, WalkerContext *context);
+static Datum increase_hashable_value(const PartRelationInfo *prel, Datum value);
+static Datum decrease_hashable_value(const PartRelationInfo *prel, Datum value);
 static int make_hash(const PartRelationInfo *prel, int value);
 static void handle_binary_opexpr(WalkerContext *context, WrapperNode *result, const Var *v, const Const *c);
 static WrapperNode *handle_opexpr(const OpExpr *expr, WalkerContext *context);
@@ -392,7 +397,10 @@ handle_modification_query(Query *parse)
 
 	/* Parse syntax tree and extract partition ranges */
 	context.prel = prel;
+	context.hasLeast = false;
+	context.hasGreatest = false;
 	wrap = walk_expr_tree(expr, &context);
+	finish_least_greatest(wrap, &context);
 	ranges = irange_list_intersect(ranges, wrap->rangeset);
 
 	/* If only one partition is affected then substitute parent table with partition */
@@ -457,13 +465,14 @@ pathman_set_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, Ran
 
 	if (prel != NULL && found)
 	{
-		ListCell   *lc;
-		int			i;
-		Oid		   *dsm_arr;
-		List	   *ranges,
-				   *wrappers;
-		PathKey	   *pathkeyAsc = NULL,
-				   *pathkeyDesc = NULL;
+		ListCell	   *lc;
+		int				i;
+		Oid			   *dsm_arr;
+		List		   *ranges,
+					   *wrappers;
+		PathKey		   *pathkeyAsc = NULL,
+					   *pathkeyDesc = NULL;
+		WalkerContext	context;
 
 		if (prel->parttype == PT_RANGE)
 		{
@@ -503,16 +512,18 @@ pathman_set_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, Ran
 		ranges = list_make1_int(make_irange(0, prel->children_count - 1, false));
 
 		/* Make wrappers over restrictions and collect final rangeset */
+		context.prel = prel;
+		context.hasLeast = false;
+		context.hasGreatest = false;
 		wrappers = NIL;
 		foreach(lc, rel->baserestrictinfo)
 		{
 			WrapperNode	   *wrap;
-			WalkerContext	context;
+			RestrictInfo   *rinfo = (RestrictInfo*) lfirst(lc);
 
-			RestrictInfo *rinfo = (RestrictInfo*) lfirst(lc);
-
-			context.prel = prel;
 			wrap = walk_expr_tree(rinfo->clause, &context);
+			if (!lc->next)
+				finish_least_greatest(wrap, &context);
 			wrappers = lappend(wrappers, wrap);
 			ranges = irange_list_intersect(ranges, wrap->rangeset);
 		}
@@ -984,6 +995,74 @@ walk_expr_tree(Expr *expr, WalkerContext *context)
 	}
 }
 
+static void
+finish_least_greatest(WrapperNode *wrap, WalkerContext *context)
+{
+	if (context->hasLeast && context->hasGreatest)
+	{
+		switch (context->prel->atttype)
+		{
+			case INT4OID:
+				{
+					int		least = DatumGetInt32(context->least),
+							greatest = DatumGetInt32(context->greatest);
+					List   *rangeset = NIL;
+
+					if (greatest - least + 1 < context->prel->children_count)
+					{
+						int	value,
+							hash;
+						for (value = least; value <= greatest; value++)
+						{
+							hash = make_hash(context->prel, value);
+							rangeset = irange_list_union(rangeset,
+								list_make1_irange(make_irange(hash, hash, true)));
+						}
+					}
+					wrap->rangeset = irange_list_intersect(wrap->rangeset,
+														   rangeset);
+				}
+				break;
+			default:
+				elog(ERROR, "Invalid datatype: %u", context->prel->atttype);
+		}
+	}
+	context->hasLeast = false;
+	context->hasGreatest = false;
+}
+
+/*
+ * Increase value of hash partitioned column.
+ */
+static Datum
+increase_hashable_value(const PartRelationInfo *prel, Datum value)
+{
+	switch (prel->atttype)
+	{
+		case INT4OID:
+			return Int32GetDatum(DatumGetInt32(value) + 1);
+		default:
+			elog(ERROR, "Invalid datatype: %u", prel->atttype);
+			return (Datum)0;
+	}
+}
+
+/*
+ * Decrease value of hash partitioned column.
+ */
+static Datum
+decrease_hashable_value(const PartRelationInfo *prel, Datum value)
+{
+	switch (prel->atttype)
+	{
+		case INT4OID:
+			return Int32GetDatum(DatumGetInt32(value) - 1);
+		default:
+			elog(ERROR, "Invalid datatype: %u", prel->atttype);
+			return (Datum)0;
+	}
+}
+
 /*
  *	This function determines which partitions should appear in query plan
  */
@@ -1018,7 +1097,33 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 	switch (prel->parttype)
 	{
 		case PT_HASH:
-			if (strategy == BTEqualStrategyNumber)
+			if (strategy == BTLessStrategyNumber ||
+				strategy == BTLessEqualStrategyNumber)
+			{
+				Datum value = c->constvalue;
+
+				if (strategy == BTLessStrategyNumber)
+					value = decrease_hashable_value(prel, value);
+				if (!context->hasGreatest || DatumGetInt32(FunctionCall2(&cmp_func, value, context->greatest)) < 0)
+				{
+					context->greatest = value;
+					context->hasGreatest = true;
+				}
+			}
+			else if (strategy == BTGreaterStrategyNumber ||
+					 strategy == BTGreaterEqualStrategyNumber)
+			{
+				Datum value = c->constvalue;
+
+				if (strategy == BTGreaterStrategyNumber)
+					value = increase_hashable_value(prel, value);
+				if (!context->hasLeast || DatumGetInt32(FunctionCall2(&cmp_func, value, context->least)) > 0)
+				{
+					context->least = value;
+					context->hasLeast = true;
+				}
+			}
+			else if (strategy == BTEqualStrategyNumber)
 			{
 				int_value = DatumGetInt32(c->constvalue);
 				key.hash = make_hash(prel, int_value);
@@ -1309,9 +1414,10 @@ handle_boolexpr(const BoolExpr *expr, WalkerContext *context)
 
 		arg = walk_expr_tree((Expr *)lfirst(lc), context);
 		result->args = lappend(result->args, arg);
-		switch(expr->boolop)
+		switch (expr->boolop)
 		{
 			case OR_EXPR:
+				finish_least_greatest(arg, context);
 				result->rangeset = irange_list_union(result->rangeset, arg->rangeset);
 				break;
 			case AND_EXPR:
