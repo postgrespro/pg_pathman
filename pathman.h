@@ -217,10 +217,17 @@ typedef struct
 
 typedef struct
 {
-	PlanState	   *pstate;
-	ExprContext	   *econtext;
+	const PartRelationInfo *prel;
+	bool					hasLeast,
+							hasGreatest;
+	Datum					least,
+							greatest;
+
+	PlanState			   *pstate;
+	ExprContext			   *econtext;
 } WalkerContext;
 
-WrapperNode *walk_expr_tree(WalkerContext *wcxt, Expr *expr, const PartRelationInfo *prel);
+WrapperNode *walk_expr_tree(Expr *expr, WalkerContext *context);
+void finish_least_greatest(WrapperNode *wrap, WalkerContext *context);
 
 #endif   /* PATHMAN_H */

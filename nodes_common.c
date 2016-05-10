@@ -350,16 +350,20 @@ rescan_append_common(CustomScanState *node)
 	ListCell		   *lc;
 	Oid				   *parts;
 	int					nparts;
+	WalkerContext		wcxt;
 
 	ranges = list_make1_int(make_irange(0, prel->children_count - 1, false));
+
+	wcxt.prel = prel;
+	wcxt.econtext = econtext;
+	wcxt.hasLeast = false;
+	wcxt.hasGreatest = false;
 
 	foreach (lc, scan_state->custom_exprs)
 	{
 		WrapperNode	   *wn;
-		WalkerContext	wcxt;
 
-		wcxt.econtext = econtext;
-		wn = walk_expr_tree(&wcxt, (Expr *) lfirst(lc), prel);
+		wn = walk_expr_tree((Expr *) lfirst(lc), &wcxt);
 
 		ranges = irange_list_intersect(ranges, wn->rangeset);
 	}

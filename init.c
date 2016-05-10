@@ -284,7 +284,7 @@ load_check_constraints(Oid parent_oid, Snapshot snapshot)
 	Datum	vals[1];
 	Oid		oids[1] = {INT4OID};
 	bool	nulls[1] = {false};
-	
+
 	vals[0] = Int32GetDatum(parent_oid);
 	prel = get_pathman_relation_info(parent_oid, NULL);
 
@@ -351,7 +351,7 @@ load_check_constraints(Oid parent_oid, Snapshot snapshot)
 					 HeapTupleGetOid(tuple));
 			conbin = TextDatumGetCString(val);
 			expr = (Expr *) stringToNode(conbin);
-			
+
 			switch(prel->parttype)
 			{
 				case PT_RANGE:
@@ -378,7 +378,7 @@ load_check_constraints(Oid parent_oid, Snapshot snapshot)
 					re.child_oid = con->conrelid;
 					ranges[i] = re;
 					break;
-			
+
 				case PT_HASH:
 					if (!validate_hash_constraint(expr, prel, &hash))
 					{

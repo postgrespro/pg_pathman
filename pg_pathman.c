@@ -76,11 +76,13 @@ static void disable_inheritance_cte(Query *parse);
 static void disable_inheritance_subselect(Query *parse);
 
 /* Expression tree handlers */
+static Datum increase_hashable_value(const PartRelationInfo *prel, Datum value);
+static Datum decrease_hashable_value(const PartRelationInfo *prel, Datum value);
 static int make_hash(const PartRelationInfo *prel, int value);
-static void handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result, const Var *v, const Const *c);
-static WrapperNode *handle_opexpr(WalkerContext *wcxt, const OpExpr *expr, const PartRelationInfo *prel);
-static WrapperNode *handle_boolexpr(WalkerContext *wcxt, const BoolExpr *expr, const PartRelationInfo *prel);
-static WrapperNode *handle_arrexpr(WalkerContext *wcxt, const ScalarArrayOpExpr *expr, const PartRelationInfo *prel);
+static void handle_binary_opexpr(WalkerContext *context, WrapperNode *result, const Var *v, const Const *c);
+static WrapperNode *handle_opexpr(const OpExpr *expr, WalkerContext *context);
+static WrapperNode *handle_boolexpr(const BoolExpr *expr, WalkerContext *context);
+static WrapperNode *handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context);
 static void change_varnos_in_restrinct_info(RestrictInfo *rinfo, change_varno_context *context);
 static void change_varnos(Node *node, Oid old_varno, Oid new_varno);
 static bool change_varno_walker(Node *node, change_varno_context *context);
@@ -116,7 +118,7 @@ static Path *get_cheapest_parameterized_child_path(PlannerInfo *root, RelOptInfo
 #define check_gt(flinfo, arg1, arg2) \
 	((int) FunctionCall2(cmp_func, arg1, arg2) > 0)
 
-#define WcxtHasExprContext(wcxt) ( (wcxt) && (wcxt)->econtext )
+#define WcxtHasExprContext(wcxt) ( (wcxt)->econtext )
 
 /* We can transform Param into Const provided that 'econtext' is available */
 #define IsConstValue(wcxt, node) \
@@ -401,12 +403,13 @@ disable_inheritance_subselect(Query *parse)
 static void
 handle_modification_query(Query *parse)
 {
-	PartRelationInfo *prel;
-	List	   *ranges;
-	RangeTblEntry *rte;
-	WrapperNode *wrap;
-	Expr *expr;
-	bool found;
+	PartRelationInfo   *prel;
+	List			   *ranges;
+	RangeTblEntry	   *rte;
+	WrapperNode		   *wrap;
+	Expr			   *expr;
+	bool				found;
+	WalkerContext		context;
 
 	Assert(parse->commandType == CMD_UPDATE ||
 		   parse->commandType == CMD_DELETE);
@@ -425,7 +428,12 @@ handle_modification_query(Query *parse)
 		return;
 
 	/* Parse syntax tree and extract partition ranges */
-	wrap = walk_expr_tree(NULL, expr, prel);
+	context.prel = prel;
+	context.econtext = NULL;
+	context.hasLeast = false;
+	context.hasGreatest = false;
+	wrap = walk_expr_tree(expr, &context);
+	finish_least_greatest(wrap, &context);
 
 	ranges = irange_list_intersect(ranges, wrap->rangeset);
 
@@ -465,8 +473,8 @@ void
 set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
 					Index rti, RangeTblEntry *rte)
 {
-	double parent_rows = 0;
-	double parent_size = 0;
+	double		parent_rows = 0;
+	double		parent_size = 0;
 	ListCell   *l;
 
 	foreach(l, root->append_rel_list)
@@ -844,7 +852,7 @@ change_varnos_in_restrinct_info(RestrictInfo *rinfo, change_varno_context *conte
  * Recursive function to walk through conditions tree
  */
 WrapperNode *
-walk_expr_tree(WalkerContext *wcxt, Expr *expr, const PartRelationInfo *prel)
+walk_expr_tree(Expr *expr, WalkerContext *context)
 {
 	BoolExpr		   *boolexpr;
 	OpExpr			   *opexpr;
@@ -856,22 +864,90 @@ walk_expr_tree(WalkerContext *wcxt, Expr *expr, const PartRelationInfo *prel)
 		/* AND, OR, NOT expressions */
 		case T_BoolExpr:
 			boolexpr = (BoolExpr *) expr;
-			return handle_boolexpr(wcxt, boolexpr, prel);
+			return handle_boolexpr(boolexpr, context);
 		/* =, !=, <, > etc. */
 		case T_OpExpr:
 			opexpr = (OpExpr *) expr;
-			return handle_opexpr(wcxt, opexpr, prel);
+			return handle_opexpr(opexpr, context);
 		/* IN expression */
 		case T_ScalarArrayOpExpr:
 			arrexpr = (ScalarArrayOpExpr *) expr;
-			return handle_arrexpr(wcxt, arrexpr, prel);
+			return handle_arrexpr(arrexpr, context);
 		default:
 			result = (WrapperNode *)palloc(sizeof(WrapperNode));
 			result->orig = (const Node *)expr;
 			result->args = NIL;
-			result->rangeset = list_make1_irange(make_irange(0, prel->children_count - 1, true));
+			result->rangeset = list_make1_irange(make_irange(0, context->prel->children_count - 1, true));
 			result->paramsel = 1.0;
 			return result;
+	}
+}
+
+void
+finish_least_greatest(WrapperNode *wrap, WalkerContext *context)
+{
+	if (context->hasLeast && context->hasGreatest)
+	{
+		switch (context->prel->atttype)
+		{
+			case INT4OID:
+				{
+					int		least = DatumGetInt32(context->least),
+							greatest = DatumGetInt32(context->greatest);
+					List   *rangeset = NIL;
+
+					if (greatest - least + 1 < context->prel->children_count)
+					{
+						int	value,
+							hash;
+						for (value = least; value <= greatest; value++)
+						{
+							hash = make_hash(context->prel, value);
+							rangeset = irange_list_union(rangeset,
+								list_make1_irange(make_irange(hash, hash, true)));
+						}
+					}
+					wrap->rangeset = irange_list_intersect(wrap->rangeset,
+														   rangeset);
+				}
+				break;
+			default:
+				elog(ERROR, "Invalid datatype: %u", context->prel->atttype);
+		}
+	}
+	context->hasLeast = false;
+	context->hasGreatest = false;
+}
+
+/*
+ * Increase value of hash partitioned column.
+ */
+static Datum
+increase_hashable_value(const PartRelationInfo *prel, Datum value)
+{
+	switch (prel->atttype)
+	{
+		case INT4OID:
+			return Int32GetDatum(DatumGetInt32(value) + 1);
+		default:
+			elog(ERROR, "Invalid datatype: %u", prel->atttype);
+			return (Datum)0;
+	}
+}
+
+/*
+ * Decrease value of hash partitioned column.
+ */
+static Datum
+decrease_hashable_value(const PartRelationInfo *prel, Datum value)
+{
+	switch (prel->atttype)
+	{
+		case INT4OID:
+			return Int32GetDatum(DatumGetInt32(value) - 1);
+		default:
+			elog(ERROR, "Invalid datatype: %u", prel->atttype);
+			return (Datum)0;
 	}
 }
 
@@ -879,7 +955,7 @@ walk_expr_tree(WalkerContext *wcxt, Expr *expr, const PartRelationInfo *prel)
  *	This function determines which partitions should appear in query plan
  */
 static void
-handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result,
+handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 					 const Var *v, const Const *c)
 {
 	HashRelationKey		key;
@@ -894,6 +970,7 @@ handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result,
 	Oid					cmp_proc_oid;
 	const OpExpr	   *expr = (const OpExpr *)result->orig;
 	TypeCacheEntry	   *tce;
+	const PartRelationInfo *prel = context->prel;
 
 	/* Determine operator type */
 	tce = lookup_type_cache(v->vartype,
@@ -909,7 +986,33 @@ handle_binary_opexpr(const PartRelationInfo *prel, WrapperNode *result,
 	switch (prel->parttype)
 	{
 		case PT_HASH:
-			if (strategy == BTEqualStrategyNumber)
+			if (strategy == BTLessStrategyNumber ||
+				strategy == BTLessEqualStrategyNumber)
+			{
+				Datum value = c->constvalue;
+
+				if (strategy == BTLessStrategyNumber)
+					value = decrease_hashable_value(prel, value);
+				if (!context->hasGreatest || DatumGetInt32(FunctionCall2(&cmp_func, value, context->greatest)) < 0)
+				{
+					context->greatest = value;
+					context->hasGreatest = true;
+				}
+			}
+			else if (strategy == BTGreaterStrategyNumber ||
+					 strategy == BTGreaterEqualStrategyNumber)
+			{
+				Datum value = c->constvalue;
+
+				if (strategy == BTGreaterStrategyNumber)
+					value = increase_hashable_value(prel, value);
+				if (!context->hasLeast || DatumGetInt32(FunctionCall2(&cmp_func, value, context->least)) > 0)
+				{
+					context->least = value;
+					context->hasLeast = true;
+				}
+			}
+			else if (strategy == BTEqualStrategyNumber)
 			{
 				int_value = DatumGetInt32(c->constvalue);
 				key.hash = make_hash(prel, int_value);
@@ -1187,11 +1290,12 @@ extract_const(WalkerContext *wcxt, Param *param)
  * Operator expression handler
  */
 static WrapperNode *
-handle_opexpr(WalkerContext *wcxt, const OpExpr *expr, const PartRelationInfo *prel)
+handle_opexpr(const OpExpr *expr, WalkerContext *context)
 {
 	WrapperNode	*result = (WrapperNode *)palloc(sizeof(WrapperNode));
 	Node		*firstarg = NULL,
 				*secondarg = NULL;
+	const PartRelationInfo *prel = context->prel;
 
 	result->orig = (const Node *)expr;
 	result->args = NIL;
@@ -1213,9 +1317,9 @@ handle_opexpr(WalkerContext *wcxt, const OpExpr *expr, const PartRelationInfo *p
 
 		if (firstarg && secondarg)
 		{
-			if (IsConstValue(wcxt, secondarg))
+			if (IsConstValue(context, secondarg))
 			{
-				handle_binary_opexpr(prel, result, (Var *)firstarg, ExtractConst(wcxt, secondarg));
+				handle_binary_opexpr(context, result, (Var *)firstarg, ExtractConst(context, secondarg));
 				return result;
 			}
 			else if (IsA(secondarg, Param) || IsA(secondarg, Var))
@@ -1235,10 +1339,11 @@ handle_opexpr(WalkerContext *wcxt, const OpExpr *expr, const PartRelationInfo *p
  * Boolean expression handler
  */
 static WrapperNode *
-handle_boolexpr(WalkerContext *wcxt, const BoolExpr *expr, const PartRelationInfo *prel)
+handle_boolexpr(const BoolExpr *expr, WalkerContext *context)
 {
 	WrapperNode	*result = (WrapperNode *)palloc(sizeof(WrapperNode));
 	ListCell	*lc;
+	const PartRelationInfo *prel = context->prel;
 
 	result->orig = (const Node *)expr;
 	result->args = NIL;
@@ -1252,12 +1357,13 @@ handle_boolexpr(WalkerContext *wcxt, const BoolExpr *expr, const PartRelationInf
 	foreach (lc, expr->args)
 	{
 		WrapperNode *arg;
-
-		arg = walk_expr_tree(wcxt, (Expr *)lfirst(lc), prel);
+		
+		arg = walk_expr_tree((Expr *)lfirst(lc), context);
 		result->args = lappend(result->args, arg);
-		switch(expr->boolop)
+		switch (expr->boolop)
 		{
 			case OR_EXPR:
+				finish_least_greatest(arg, context);
 				result->rangeset = irange_list_union(result->rangeset, arg->rangeset);
 				break;
 			case AND_EXPR:
@@ -1291,12 +1397,13 @@ handle_boolexpr(WalkerContext *wcxt, const BoolExpr *expr, const PartRelationInf
  * Scalar array expression
  */
 static WrapperNode *
-handle_arrexpr(WalkerContext *wcxt, const ScalarArrayOpExpr *expr, const PartRelationInfo *prel)
+handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 {
 	WrapperNode *result = (WrapperNode *)palloc(sizeof(WrapperNode));
 	Node		*varnode = (Node *) linitial(expr->args);
 	Node		*arraynode = (Node *) lsecond(expr->args);
 	int			 hash;
+	const PartRelationInfo *prel = context->prel;
 
 	result->orig = (const Node *)expr;
 	result->args = NIL;

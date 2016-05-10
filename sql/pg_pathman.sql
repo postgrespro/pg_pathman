@@ -66,6 +66,7 @@ SET enable_seqscan = ON;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2 OR value = 1;
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value BETWEEN 1 AND 2;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > 2500;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 1000 AND id < 3000;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 1500 AND id < 2500;
