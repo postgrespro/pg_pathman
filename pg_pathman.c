@@ -1447,11 +1447,9 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 	result->orig = (const Node *)expr;
 	result->args = NIL;
 
-	if (varnode == NULL || !IsA(varnode, Var))
-	{
-		result->rangeset = list_make1_irange(make_irange(0, prel->children_count - 1, true));
-		return result;
-	}
+	/* If variable is not the partition key then skip it */
+	if (!varnode || !IsA(varnode, Var) || ((Var *) varnode)->varattno != prel->attnum)
+		goto handle_arrexpr_return;
 
 	if (arraynode && IsA(arraynode, Const) &&
 		!((Const *) arraynode)->constisnull)
@@ -1491,6 +1489,7 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 		return result;
 	}
 
+handle_arrexpr_return:
 	result->rangeset = list_make1_irange(make_irange(0, prel->children_count - 1, true));
 	return result;
 }
