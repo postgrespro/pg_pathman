@@ -24,11 +24,10 @@ Path *
 create_runtimeappend_path(PlannerInfo *root,
 						  AppendPath *inner_append,
 						  ParamPathInfo *param_info,
-						  List *runtime_clauses,
 						  double sel)
 {
 	return create_append_path_common(root, inner_append,
-									 param_info, runtime_clauses,
+									 param_info,
 									 &runtimeappend_path_methods,
 									 sizeof(RuntimeAppendPath),
 									 sel);

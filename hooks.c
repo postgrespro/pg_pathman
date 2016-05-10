@@ -10,6 +10,7 @@
 #include "postgres.h"
 #include "optimizer/cost.h"
 #include "optimizer/restrictinfo.h"
+#include "utils/guc.h"
 #include "hooks.h"
 #include "utils.h"
 #include "pathman.h"
@@ -106,7 +107,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		inner = create_runtimeappend_path(root, cur_inner_path,
 										  get_appendrel_parampathinfo(innerrel,
 																	  inner_required),
-										  joinclauses, paramsel);
+										  paramsel);
 
 		initial_cost_nestloop(root, &workspace, jointype,
 							  outer, inner,
@@ -262,7 +263,6 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 
 			for (i = irange_lower(irange); i <= irange_upper(irange); i++)
 				append_child_relation(root, rel, rti, rte, i, dsm_arr[i], wrappers);
-
 		}
 
 		/* Clear old path list */
@@ -282,8 +282,6 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 			Relids			inner_required = PATH_REQ_OUTER((Path *) cur_path);
 			ParamPathInfo  *ppi = get_appendrel_parampathinfo(rel, inner_required);
 			Path		   *inner_path = NULL;
-			ListCell	   *subpath_cell;
-			List		   *runtime_quals = NIL;
 
 			if (!(IsA(cur_path, AppendPath) || IsA(cur_path, MergeAppendPath)) ||
 				rel->has_eclass_joins ||
@@ -292,56 +290,29 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 				continue;
 			}
 
-			foreach (subpath_cell, cur_path->subpaths)
-			{
-				Path			   *subpath = (Path *) lfirst(subpath_cell);
-				RelOptInfo		   *child_rel = subpath->parent;
-				List			   *quals;
-				ListCell		   *qual_cell;
-				ReplaceVarsContext	repl_var_cxt;
-
-				repl_var_cxt.child = subpath->parent;
-				repl_var_cxt.parent = rel;
-				repl_var_cxt.sublevels_up = 0;
-
-				quals = extract_actual_clauses(child_rel->baserestrictinfo, false);
-
-				/* Do not proceed if there's a rel containing quals without params */
-				if (!clause_contains_params((Node *) quals))
-				{
-					runtime_quals = NIL; /* skip this path */
-					break;
-				}
-
-				/* Replace child Vars with a parent rel's Var */
-				quals = (List *) replace_child_vars_with_parent_var((Node *) quals,
-																	&repl_var_cxt);
-
-				/* Combine unique quals for RuntimeAppend */
-				foreach (qual_cell, quals)
-					runtime_quals = list_append_unique(runtime_quals,
-													   (Node *) lfirst(qual_cell));
-			}
-
-			/*
-			 * Dismiss RuntimeAppend if there
-			 * are no parameterized quals
-			 */
-			if (runtime_quals == NIL)
-				continue;
-
 			if (IsA(cur_path, AppendPath) && pg_pathman_enable_runtimeappend)
 				inner_path = create_runtimeappend_path(root, cur_path,
-													   ppi, runtime_quals,
-													   paramsel);
+													   ppi, paramsel);
 			else if (IsA(cur_path, MergeAppendPath) &&
 					 pg_pathman_enable_runtime_merge_append)
 				inner_path = create_runtimemergeappend_path(root, cur_path,
-															ppi, runtime_quals,
-															paramsel);
+															ppi, paramsel);
 
 			if (inner_path)
 				add_path(rel, inner_path);
 		}
 	}
+}
+
+void pg_pathman_enable_assign_hook(bool newval, void *extra)
+{
+	if (pg_pathman_enable == newval)
+		return;
+
+	pg_pathman_enable_runtime_merge_append = newval;
+	pg_pathman_enable_runtimeappend = newval;
+
+	elog(NOTICE,
+		 "RuntimeAppend and RuntimeMergeAppend nodes have been %s",
+		 newval ? "enabled" : "disabled");
 }

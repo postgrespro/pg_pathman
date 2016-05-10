@@ -21,4 +21,6 @@ void pathman_join_pathlist_hook(PlannerInfo *root, RelOptInfo *joinrel, RelOptIn
 
 void pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTblEntry *rte);
 
+void pg_pathman_enable_assign_hook(char newval, void *extra);
+
 #endif

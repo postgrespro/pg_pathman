@@ -50,7 +50,7 @@ extern CustomExecMethods	runtime_merge_append_exec_methods;
 
 
 Path * create_runtimemergeappend_path(PlannerInfo *root, AppendPath *inner_append,
-									  ParamPathInfo *param_info, List *runtime_clauses,
+									  ParamPathInfo *param_info,
 									  double sel);
 
 Plan * create_runtimemergeappend_plan(PlannerInfo *root, RelOptInfo *rel,

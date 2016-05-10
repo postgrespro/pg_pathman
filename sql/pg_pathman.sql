@@ -46,6 +46,9 @@ INSERT INTO test.num_range_rel
 SELECT COUNT(*) FROM test.num_range_rel;
 SELECT COUNT(*) FROM ONLY test.num_range_rel;
 
+SET pg_pathman.enable_runtimeappend = OFF;
+SET pg_pathman.enable_runtimemergeappend = OFF;
+
 VACUUM;
 
 /* update triggers test */
@@ -115,8 +118,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel_1 UNION ALL SELECT * FROM test.
 SET enable_hashjoin = OFF;
 set enable_nestloop = OFF;
 SET enable_mergejoin = ON;
-SET pg_pathman.enable_runtimeappend = OFF;
-SET pg_pathman.enable_runtimemergeappend = OFF;
+
 EXPLAIN (COSTS OFF)
 SELECT * FROM test.range_rel j1
 JOIN test.range_rel j2 on j2.id = j1.id
@@ -292,7 +294,7 @@ begin
 		perform test.pathman_equal((plan->0->'Plan'->'Plans'->1->'Plans'->0->'Plans'->i->'Relation Name')::text,
 								   format('"runtime_test_2_%s"', i + 1),
 								   'wrong partition');
-								   
+
 		num = plan->0->'Plan'->'Plans'->1->'Plans'->0->'Plans'->i->'Actual Loops';
 		perform test.pathman_assert(num = 1, 'expected no more than 1 loops');
 	end loop;

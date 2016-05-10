@@ -198,7 +198,7 @@ _PG_init(void)
 							 PGC_USERSET,
 							 0,
 							 NULL,
-							 NULL,
+							 pg_pathman_enable_assign_hook,
 							 NULL);
 
 	DefineCustomBoolVariable("pg_pathman.enable_runtimeappend",
@@ -1357,7 +1357,7 @@ handle_boolexpr(const BoolExpr *expr, WalkerContext *context)
 	foreach (lc, expr->args)
 	{
 		WrapperNode *arg;
-		
+
 		arg = walk_expr_tree((Expr *)lfirst(lc), context);
 		result->args = lappend(result->args, arg);
 		switch (expr->boolop)

@@ -57,7 +57,7 @@ extern CustomScanMethods	runtimeappend_plan_methods;
 extern CustomExecMethods	runtimeappend_exec_methods;
 
 Path * create_runtimeappend_path(PlannerInfo *root, AppendPath *inner_append,
-								 ParamPathInfo *param_info, List *runtime_clauses,
+								 ParamPathInfo *param_info,
 								 double sel);
 
 Plan * create_runtimeappend_plan(PlannerInfo *root, RelOptInfo *rel,

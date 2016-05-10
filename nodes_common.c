@@ -11,6 +11,7 @@
 #include "optimizer/paths.h"
 #include "nodes_common.h"
 #include "runtimeappend.h"
+#include "optimizer/restrictinfo.h"
 
 
 
@@ -203,7 +204,6 @@ Path *
 create_append_path_common(PlannerInfo *root,
 						  AppendPath *inner_append,
 						  ParamPathInfo *param_info,
-						  List *runtime_clauses,
 						  CustomPathMethods *path_methods,
 						  uint32 size,
 						  double sel)
@@ -233,10 +233,6 @@ create_append_path_common(PlannerInfo *root,
 	/* TODO: real costs */
 	result->cpath.path.startup_cost = 0.0;
 	result->cpath.path.total_cost = 0.0;
-
-	/* Set 'partitioned column'-related clauses */
-	result->cpath.custom_private = runtime_clauses;
-	result->cpath.custom_paths = NIL;
 
 	Assert(inner_entry->relid != 0);
 	result->relid = inner_entry->relid;
@@ -286,7 +282,7 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 	cscan->custom_scan_tlist = tlist;
 	cscan->scan.scanrelid = 0;
 
-	cscan->custom_exprs = gpath->cpath.custom_private;
+	cscan->custom_exprs = get_actual_clauses(clauses);
 	cscan->custom_plans = custom_plans;
 
 	cscan->methods = scan_methods;

@@ -171,16 +171,16 @@ unpack_runtimemergeappend_private(RuntimeMergeAppendState *scan_state,
 
 Path *
 create_runtimemergeappend_path(PlannerInfo *root,
-						  AppendPath *inner_append,
-						  ParamPathInfo *param_info,
-						  List *picky_clauses, double sel)
+							   AppendPath *inner_append,
+							   ParamPathInfo *param_info,
+							   double sel)
 {
 	RelOptInfo *rel = inner_append->path.parent;
 	Path	   *path;
 	double		limit_tuples;
 
 	path = create_append_path_common(root, inner_append,
-									 param_info, picky_clauses,
+									 param_info,
 									 &runtime_merge_append_path_methods,
 									 sizeof(RuntimeMergeAppendPath),
 									 sel);
