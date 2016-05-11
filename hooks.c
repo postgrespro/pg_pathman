@@ -15,10 +15,8 @@
 #include "pathman.h"
 #include "runtimeappend.h"
 #include "runtime_merge_append.h"
+#include "utils.h"
 
-
-static int cmp_tlist_vars(const void *a, const void *b);
-static List * sort_rel_tlist(List *tlist);
 
 set_join_pathlist_hook_type		set_join_pathlist_next = NULL;
 set_rel_pathlist_hook_type		set_rel_pathlist_hook_next = NULL;
@@ -279,6 +277,10 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 			  pg_pathman_enable_runtime_merge_append))
 			return;
 
+		/* RuntimeAppend is pointless if there are no params in clauses */
+		if (!clause_contains_params((Node *) get_actual_clauses(rel->baserestrictinfo)))
+			return;
+
 		foreach (lc, rel->pathlist)
 		{
 			AppendPath	   *cur_path = (AppendPath *) lfirst(lc);
@@ -324,50 +326,3 @@ void pg_pathman_enable_assign_hook(bool newval, void *extra)
 		 newval ? "enabled" : "disabled");
 }
 
-/*
- * Sorts reltargetlist by Var's varattno (physical order) since
- * we can't use static build_path_tlist() for our custom nodes.
- *
- * See create_scan_plan & use_physical_tlist for more details.
- */
-static List *
-sort_rel_tlist(List *tlist)
-{
-	int			i;
-	int			plain_tlist_size = list_length(tlist);
-	Var		  **plain_tlist = palloc(plain_tlist_size * sizeof(Var *));
-	ListCell   *tlist_cell;
-	List	   *result = NIL;
-
-	i = 0;
-	foreach (tlist_cell, tlist)
-		plain_tlist[i++] = lfirst(tlist_cell);
-
-	qsort(plain_tlist, plain_tlist_size, sizeof(Var *), cmp_tlist_vars);
-
-	for (i = 0; i < plain_tlist_size; i++)
-		result = lappend(result, plain_tlist[i]);
-
-	return result;
-}
-
-/* Compare Vars by varattno */
-static int
-cmp_tlist_vars(const void *a, const void *b)
-{
-	Var *v1 = *(Var **) a;
-	Var *v2 = *(Var **) b;
-
-	Assert(IsA(v1, Var) && IsA(v2, Var));
-
-	if (v1->varattno > v2->varattno)
-		return 1;
-	else if (v1->varattno < v2->varattno)
-		return -1;
-	else
-	{
-		/* XXX: I really doubt this case is ok */
-		Assert(v1->varattno != v2->varattno);
-		return 0;
-	}
-}

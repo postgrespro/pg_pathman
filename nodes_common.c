@@ -230,7 +230,6 @@ create_append_path_common(PlannerInfo *root,
 	result->cpath.flags = 0;
 	result->cpath.methods = path_methods;
 
-	/* TODO: real costs */
 	result->cpath.path.startup_cost = 0.0;
 	result->cpath.path.total_cost = 0.0;
 
