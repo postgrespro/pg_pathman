@@ -12,7 +12,6 @@
 #include "optimizer/restrictinfo.h"
 #include "utils/guc.h"
 #include "hooks.h"
-#include "utils.h"
 #include "pathman.h"
 #include "runtimeappend.h"
 #include "runtime_merge_append.h"
