@@ -879,6 +879,7 @@ walk_expr_tree(Expr *expr, WalkerContext *context)
 			result->args = NIL;
 			result->rangeset = list_make1_irange(make_irange(0, context->prel->children_count - 1, true));
 			result->paramsel = 1.0;
+
 			return result;
 	}
 }
@@ -1452,9 +1453,7 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 	}
 
 	if (arraynode && IsA(arraynode, Param))
-	{
 		result->paramsel = DEFAULT_INEQ_SEL;
-	}
 
 handle_arrexpr_return:
 	result->rangeset = list_make1_irange(make_irange(0, prel->children_count - 1, true));

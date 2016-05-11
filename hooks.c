@@ -200,12 +200,11 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 		dsm_arr = (Oid *) dsm_array_get_pointer(&prel->children);
 		ranges = list_make1_int(make_irange(0, prel->children_count - 1, false));
 
+		/* Make wrappers over restrictions and collect final rangeset */
 		context.prel = prel;
 		context.econtext = NULL;
 		context.hasLeast = false;
 		context.hasGreatest = false;
-
-		/* Make wrappers over restrictions and collect final rangeset */
 		wrappers = NIL;
 		foreach(lc, rel->baserestrictinfo)
 		{
