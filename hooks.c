@@ -305,7 +305,10 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 
 void pg_pathman_enable_assign_hook(bool newval, void *extra)
 {
-	if (pg_pathman_enable == newval)
+	/* Return quickly if nothing has changed */
+	if (newval == (pg_pathman_enable &&
+				   pg_pathman_enable_runtimeappend &&
+				   pg_pathman_enable_runtime_merge_append))
 		return;
 
 	pg_pathman_enable_runtime_merge_append = newval;
