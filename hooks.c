@@ -17,10 +17,13 @@
 #include "runtime_merge_append.h"
 
 
+static int cmp_tlist_vars(const void *a, const void *b);
+static List * sort_rel_tlist(List *tlist);
+
 set_join_pathlist_hook_type		set_join_pathlist_next = NULL;
 set_rel_pathlist_hook_type		set_rel_pathlist_hook_next = NULL;
 
-
+/* Take care of joins */
 void
 pathman_join_pathlist_hook(PlannerInfo *root,
 						   RelOptInfo *joinrel,
@@ -124,9 +127,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	}
 }
 
-/*
- * Main hook. All the magic goes here
- */
+/* Cope with simple relations */
 void
 pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTblEntry *rte)
 {
@@ -143,7 +144,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 	if (!pg_pathman_enable)
 		return;
 
-	/* This works only for SELECT queries */
+	/* This works only for SELECT queries (at least for now) */
 	if (root->parse->commandType != CMD_SELECT || !inheritance_disabled)
 		return;
 
@@ -153,7 +154,6 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 	if (prel != NULL && found)
 	{
 		ListCell	   *lc;
-		int				i;
 		Oid			   *dsm_arr;
 		List		   *ranges,
 					   *wrappers;
@@ -161,6 +161,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 					   *pathkeyDesc = NULL;
 		double			paramsel = 1.0;
 		WalkerContext	context;
+		int				i;
 
 		if (prel->parttype == PT_RANGE)
 		{
@@ -252,6 +253,9 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 			root->simple_rte_array = new_rte_array;
 		}
 
+		/* Target list should be sorted in physical order for custom nodes to work */
+		rel->reltargetlist = sort_rel_tlist(rel->reltargetlist);
+
 		/*
 		 * Iterate all indexes in rangeset and append corresponding child
 		 * relations.
@@ -271,6 +275,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 		set_append_rel_pathlist(root, rel, rti, rte, pathkeyAsc, pathkeyDesc);
 		set_append_rel_size(root, rel, rti, rte);
 
+		/* No need to go further, return */
 		if (!(pg_pathman_enable_runtimeappend ||
 			  pg_pathman_enable_runtime_merge_append))
 			return;
@@ -282,6 +287,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 			ParamPathInfo  *ppi = get_appendrel_parampathinfo(rel, inner_required);
 			Path		   *inner_path = NULL;
 
+			/* Skip if rel contains some join-related stuff or path type mismatched */
 			if (!(IsA(cur_path, AppendPath) || IsA(cur_path, MergeAppendPath)) ||
 				rel->has_eclass_joins ||
 				rel->joininfo)
@@ -317,4 +323,52 @@ void pg_pathman_enable_assign_hook(bool newval, void *extra)
 	elog(NOTICE,
 		 "RuntimeAppend and RuntimeMergeAppend nodes have been %s",
 		 newval ? "enabled" : "disabled");
+}
+
+/*
+ * Sorts reltargetlist by Var's varattno (physical order) since
+ * we can't use static build_path_tlist() for our custom nodes.
+ *
+ * See create_scan_plan & use_physical_tlist for more details.
+ */
+static List *
+sort_rel_tlist(List *tlist)
+{
+	int			i;
+	int			plain_tlist_size = list_length(tlist);
+	Var		  **plain_tlist = palloc(plain_tlist_size * sizeof(Var *));
+	ListCell   *tlist_cell;
+	List	   *result = NIL;
+
+	i = 0;
+	foreach (tlist_cell, tlist)
+		plain_tlist[i++] = lfirst(tlist_cell);
+
+	qsort(plain_tlist, plain_tlist_size, sizeof(Var *), cmp_tlist_vars);
+
+	for (i = 0; i < plain_tlist_size; i++)
+		result = lappend(result, plain_tlist[i]);
+
+	return result;
+}
+
+/* Compare Vars by varattno */
+static int
+cmp_tlist_vars(const void *a, const void *b)
+{
+	Var *v1 = *(Var **) a;
+	Var *v2 = *(Var **) b;
+
+	Assert(IsA(v1, Var) && IsA(v2, Var));
+
+	if (v1->varattno > v2->varattno)
+		return 1;
+	else if (v1->varattno < v2->varattno)
+		return -1;
+	else
+	{
+		/* XXX: I really doubt this case is ok */
+		Assert(v1->varattno != v2->varattno);
+		return 0;
+	}
 }
