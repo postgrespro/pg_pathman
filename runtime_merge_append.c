@@ -306,16 +306,13 @@ runtimemergeappend_begin(CustomScanState *node, EState *estate, int eflags)
 	begin_append_common(node, estate, eflags);
 }
 
-TupleTableSlot *
-runtimemergeappend_exec(CustomScanState *node)
+static void
+fetch_next_tuple(CustomScanState *node)
 {
 	RuntimeMergeAppendState	   *scan_state = (RuntimeMergeAppendState *) node;
 	RuntimeAppendState		   *rstate = &scan_state->rstate;
 	PlanState				   *ps;
 	int							i;
-
-	if (scan_state->rstate.ncur_plans == 0)
-		ExecReScan(&node->ss.ps);
 
 	if (!scan_state->ms_initialized)
 	{
@@ -367,13 +364,21 @@ runtimemergeappend_exec(CustomScanState *node)
 	if (binaryheap_empty(scan_state->ms_heap))
 	{
 		/* All the subplans are exhausted, and so is the heap */
-		return NULL;
+		rstate->slot = NULL;
+		return;
 	}
 	else
 	{
 		i = DatumGetInt32(binaryheap_first(scan_state->ms_heap));
-		return scan_state->ms_slots[i];
+		rstate->slot = scan_state->ms_slots[i];
+		return;
 	}
+}
+
+TupleTableSlot *
+runtimemergeappend_exec(CustomScanState *node)
+{
+	return exec_append_common(node, fetch_next_tuple);
 }
 
 void

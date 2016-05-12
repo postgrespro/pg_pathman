@@ -23,9 +23,6 @@ typedef struct
 
 bool clause_contains_params(Node *clause);
 
-Node * replace_child_vars_with_parent_var(Node *node,
-										  ReplaceVarsContext *context);
-
 int cmp_tlist_vars(const void *a, const void *b);
 List * sort_rel_tlist(List *tlist);
 

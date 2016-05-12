@@ -12,7 +12,9 @@
 #include "nodes_common.h"
 #include "runtimeappend.h"
 #include "optimizer/restrictinfo.h"
-
+#include "optimizer/plancat.h"
+#include "utils/memutils.h"
+#include "utils.h"
 
 
 /* Compare plans by 'original_order' */
@@ -275,6 +277,21 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 	RuntimeAppendPath  *gpath = (RuntimeAppendPath *) best_path;
 	CustomScan		   *cscan;
 
+	/* HACK: kill me plz, it severely breaks IndexOnlyScan */
+	if (custom_plans)
+	{
+		ListCell   *lc1,
+				   *lc2;
+
+		forboth (lc1, gpath->cpath.custom_paths, lc2, custom_plans)
+		{
+			Plan	   *child_plan = (Plan *) lfirst(lc2);
+			RelOptInfo *child_rel = ((Path *) lfirst(lc1))->parent;
+
+			child_plan->targetlist = build_physical_tlist(root, child_rel);
+		}
+	}
+
 	cscan = makeNode(CustomScan);
 	cscan->scan.plan.qual = NIL;
 	cscan->scan.plan.targetlist = tlist;
@@ -324,6 +341,51 @@ begin_append_common(CustomScanState *node, EState *estate, int eflags)
 	scan_state->custom_expr_states =
 		(List *) ExecInitExpr((Expr *) scan_state->custom_exprs,
 							  (PlanState *) scan_state);
+
+	node->ss.ps.ps_TupFromTlist = false;
+}
+
+TupleTableSlot *
+exec_append_common(CustomScanState *node,
+				   void (*fetch_next_tuple) (CustomScanState *node))
+{
+	RuntimeAppendState	   *scan_state = (RuntimeAppendState *) node;
+
+	if (scan_state->ncur_plans == 0)
+		ExecReScan(&node->ss.ps);
+
+	for (;;)
+	{
+		if (!node->ss.ps.ps_TupFromTlist)
+		{
+			fetch_next_tuple(node);
+
+			if (TupIsNull(scan_state->slot))
+				return NULL;
+		}
+
+		if (node->ss.ps.ps_ProjInfo)
+		{
+			ExprDoneCond	isDone;
+			TupleTableSlot *result;
+
+			ResetExprContext(node->ss.ps.ps_ExprContext);
+
+			node->ss.ps.ps_ProjInfo->pi_exprContext->ecxt_scantuple = scan_state->slot;
+			result = ExecProject(node->ss.ps.ps_ProjInfo, &isDone);
+
+			if (isDone != ExprEndResult)
+			{
+				node->ss.ps.ps_TupFromTlist = (isDone == ExprMultipleResult);
+
+				return result;
+			}
+			else
+				node->ss.ps.ps_TupFromTlist = false;
+		}
+		else
+			return scan_state->slot;
+	}
 }
 
 void

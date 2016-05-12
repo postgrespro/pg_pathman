@@ -250,9 +250,6 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 			root->simple_rte_array = new_rte_array;
 		}
 
-		/* Target list should be sorted in physical order for custom nodes to work */
-		rel->reltargetlist = sort_rel_tlist(rel->reltargetlist);
-
 		/*
 		 * Iterate all indexes in rangeset and append corresponding child
 		 * relations.

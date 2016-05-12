@@ -78,6 +78,9 @@ Node * create_append_scan_state_common(CustomScan *node,
 
 void begin_append_common(CustomScanState *node, EState *estate, int eflags);
 
+TupleTableSlot * exec_append_common(CustomScanState *node,
+									void (*fetch_next_tuple) (CustomScanState *node));
+
 void end_append_common(CustomScanState *node);
 
 void rescan_append_common(CustomScanState *node);

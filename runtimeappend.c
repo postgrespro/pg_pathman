@@ -58,19 +58,16 @@ runtimeappend_begin(CustomScanState *node, EState *estate, int eflags)
 	begin_append_common(node, estate, eflags);
 }
 
-TupleTableSlot *
-runtimeappend_exec(CustomScanState *node)
+static void
+fetch_next_tuple(CustomScanState *node)
 {
 	RuntimeAppendState	   *scan_state = (RuntimeAppendState *) node;
-
-	if (scan_state->ncur_plans == 0)
-		ExecReScan(&node->ss.ps);
+	TupleTableSlot		   *slot = NULL;
 
 	while (scan_state->running_idx < scan_state->ncur_plans)
 	{
 		ChildScanCommon		child = scan_state->cur_plans[scan_state->running_idx];
 		PlanState		   *state = child->content.plan_state;
-		TupleTableSlot	   *slot = NULL;
 		bool				quals;
 
 		for (;;)
@@ -87,15 +84,23 @@ runtimeappend_exec(CustomScanState *node)
 			ResetExprContext(node->ss.ps.ps_ExprContext);
 
 			if (quals)
-				return slot;
+			{
+				scan_state->slot = slot;
+				return;
+			}
 		}
 
 		scan_state->running_idx++;
 	}
 
-	/* Force ReScan */
-	scan_state->ncur_plans = 0;
-	return NULL;
+	scan_state->slot = slot;
+	return;
+}
+
+TupleTableSlot *
+runtimeappend_exec(CustomScanState *node)
+{
+	return exec_append_common(node, fetch_next_tuple);
 }
 
 void

@@ -48,6 +48,9 @@ typedef struct
 
 	/* Index of the selected plan state */
 	int					running_idx;
+
+	/* Last saved tuple (for SRF projections) */
+	TupleTableSlot	   *slot;
 } RuntimeAppendState;
 
 extern bool					pg_pathman_enable_runtimeappend;
