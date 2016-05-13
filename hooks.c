@@ -94,7 +94,8 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 
 	foreach (lc, innerrel->pathlist)
 	{
-		AppendPath *cur_inner_path = (AppendPath *) lfirst(lc);
+		AppendPath	   *cur_inner_path = (AppendPath *) lfirst(lc);
+		ParamPathInfo  *ppi;
 
 		if (!IsA(cur_inner_path, AppendPath))
 			continue;
@@ -104,9 +105,10 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		inner_required = bms_union(PATH_REQ_OUTER((Path *) cur_inner_path),
 								   bms_make_singleton(outerrel->relid));
 
+		ppi = get_baserel_parampathinfo(root, innerrel, inner_required);
+
 		inner = create_runtimeappend_path(root, cur_inner_path,
-										  get_appendrel_parampathinfo(innerrel,
-																	  inner_required),
+										  ppi,
 										  paramsel);
 
 		initial_cost_nestloop(root, &workspace, jointype,

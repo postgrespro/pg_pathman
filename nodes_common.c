@@ -340,7 +340,8 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 					tlist = cscan->custom_scan_tlist;
 				}
 			}
-			else
+			/* Don't generate useless physical tlists that will be replaced */
+			else if (!cscan->custom_scan_tlist)
 				child_plan->targetlist = build_physical_tlist(root, child_rel);
 		}
 
