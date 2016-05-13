@@ -137,6 +137,33 @@ get_partition_oids(List *ranges, int *n, PartRelationInfo *prel)
 	return result;
 }
 
+/* Replace Vars' varnos with the value provided by 'parent' */
+static List *
+replace_tlist_varnos(List *child_tlist, RelOptInfo *parent)
+{
+	ListCell   *lc;
+	List	   *result = NIL;
+	int			i = 1; /* resnos begin with 1 */
+
+	foreach (lc, child_tlist)
+	{
+		Var *var = (Var *) ((TargetEntry *) lfirst(lc))->expr;
+		Var *newvar = palloc(sizeof(Var));
+
+		Assert(IsA(var, Var));
+
+		*newvar = *var;
+		newvar->varno = parent->relid;
+		newvar->varnoold = parent->relid;
+
+		result = lappend(result, makeTargetEntry((Expr *) newvar,
+												 i++, /* item's index */
+												 NULL, false));
+	}
+
+	return result;
+}
+
 static void
 pack_runtimeappend_private(CustomScan *cscan, RuntimeAppendPath *path)
 {
@@ -277,7 +304,9 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 	RuntimeAppendPath  *gpath = (RuntimeAppendPath *) best_path;
 	CustomScan		   *cscan;
 
-	/* HACK: kill me plz, it severely breaks IndexOnlyScan */
+	cscan = makeNode(CustomScan);
+	cscan->custom_scan_tlist = NIL;
+
 	if (custom_plans)
 	{
 		ListCell   *lc1,
@@ -285,17 +314,62 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 
 		forboth (lc1, gpath->cpath.custom_paths, lc2, custom_plans)
 		{
-			Plan	   *child_plan = (Plan *) lfirst(lc2);
-			RelOptInfo *child_rel = ((Path *) lfirst(lc1))->parent;
+			Plan		   *child_plan = (Plan *) lfirst(lc2);
+			RelOptInfo 	   *child_rel = ((Path *) lfirst(lc1))->parent;
 
-			child_plan->targetlist = build_physical_tlist(root, child_rel);
+			/* We inforce IndexOnlyScans to return all available columns */
+			if (IsA(child_plan, IndexOnlyScan))
+			{
+				IndexOptInfo   *indexinfo = ((IndexPath *) lfirst(lc1))->indexinfo;
+				RangeTblEntry  *rentry = root->simple_rte_array[child_rel->relid];
+				Relation		child_relation;
+
+				/* TODO: find out whether we need locks or not */
+				child_relation = heap_open(rentry->relid, NoLock);
+				child_plan->targetlist = build_index_tlist(root, indexinfo,
+														   child_relation);
+				heap_close(child_relation, NoLock);
+
+				if (!cscan->custom_scan_tlist)
+				{
+					/* Set appropriate tlist for child scans */
+					cscan->custom_scan_tlist =
+						replace_tlist_varnos(child_plan->targetlist, rel);
+
+					/* Replace parent's tlist as well */
+					tlist = cscan->custom_scan_tlist;
+				}
+			}
+			else
+				child_plan->targetlist = build_physical_tlist(root, child_rel);
 		}
+
+		/*
+		 * Go through the other (non-IOS) plans and replace their
+		 * physical tlists with the new 'custom_scan_tlist'.
+		 */
+		if (cscan->custom_scan_tlist)
+			forboth (lc1, gpath->cpath.custom_paths, lc2, custom_plans)
+			{
+				Plan		   *child_plan = (Plan *) lfirst(lc2);
+				RelOptInfo 	   *child_rel = ((Path *) lfirst(lc1))->parent;
+
+				if (!IsA(child_plan, IndexOnlyScan))
+					child_plan->targetlist =
+						replace_tlist_varnos(cscan->custom_scan_tlist, child_rel);
+			}
 	}
 
-	cscan = makeNode(CustomScan);
 	cscan->scan.plan.qual = NIL;
 	cscan->scan.plan.targetlist = tlist;
-	cscan->custom_scan_tlist = tlist;
+
+	/*
+	 * Initialize custom_scan_tlist if it's not
+	 * ready yet (there are no IndexOnlyScans).
+	 */
+	if (!cscan->custom_scan_tlist)
+		cscan->custom_scan_tlist = tlist;
+
 	cscan->scan.scanrelid = 0;
 
 	cscan->custom_exprs = get_actual_clauses(clauses);

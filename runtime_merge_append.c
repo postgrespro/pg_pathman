@@ -260,15 +260,15 @@ create_runtimemergeappend_plan(PlannerInfo *root, RelOptInfo *rel,
 		 * but it seems like a good idea to check the sort column numbers
 		 * explicitly, to ensure the tlists really do match up.
 		 */
-		Assert(numsortkeys == node_numCols);
+		Assert(numsortkeys == mag.numCols);
 		if (memcmp(sortColIdx, mag.sortColIdx,
 				   numsortkeys * sizeof(AttrNumber)) != 0)
 			elog(ERROR, "RuntimeMergeAppend child's targetlist doesn't match RuntimeMergeAppend");
-		Assert(memcmp(sortOperators, node_sortOperators,
+		Assert(memcmp(sortOperators, mag.sortOperators,
 					  numsortkeys * sizeof(Oid)) == 0);
-		Assert(memcmp(collations, node_collations,
+		Assert(memcmp(collations, mag.collations,
 					  numsortkeys * sizeof(Oid)) == 0);
-		Assert(memcmp(nullsFirst, node_nullsFirst,
+		Assert(memcmp(nullsFirst, mag.nullsFirst,
 					  numsortkeys * sizeof(bool)) == 0);
 
 		/* Now, insert a Sort node if subplan isn't sufficiently ordered */

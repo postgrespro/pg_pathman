@@ -1304,13 +1304,13 @@ handle_opexpr(const OpExpr *expr, WalkerContext *context)
 	if (list_length(expr->args) == 2)
 	{
 		if (IsA(linitial(expr->args), Var)
-			&& ((Var *)linitial(expr->args))->varattno == prel->attnum)
+			&& ((Var *)linitial(expr->args))->varoattno == prel->attnum)
 		{
 			firstarg = (Node *) linitial(expr->args);
 			secondarg = (Node *) lsecond(expr->args);
 		}
 		else if (IsA(lsecond(expr->args), Var)
-			&& ((Var *)lsecond(expr->args))->varattno == prel->attnum)
+			&& ((Var *)lsecond(expr->args))->varoattno == prel->attnum)
 		{
 			firstarg = (Node *) lsecond(expr->args);
 			secondarg = (Node *) linitial(expr->args);

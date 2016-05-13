@@ -11,6 +11,7 @@
 #define UTILS_H
 
 #include "postgres.h"
+#include "utils/rel.h"
 #include "nodes/relation.h"
 #include "nodes/nodeFuncs.h"
 
@@ -23,7 +24,7 @@ typedef struct
 
 bool clause_contains_params(Node *clause);
 
-int cmp_tlist_vars(const void *a, const void *b);
-List * sort_rel_tlist(List *tlist);
+List * build_index_tlist(PlannerInfo *root, IndexOptInfo *index,
+						 Relation heapRelation);
 
 #endif
