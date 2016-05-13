@@ -917,9 +917,9 @@ finish_least_greatest(WrapperNode *wrap, WalkerContext *context)
 							rangeset = irange_list_union(rangeset,
 								list_make1_irange(make_irange(hash, hash, true)));
 						}
+						wrap->rangeset = irange_list_intersect(wrap->rangeset,
+															   rangeset);
 					}
-					wrap->rangeset = irange_list_intersect(wrap->rangeset,
-														   rangeset);
 				}
 				break;
 			default:
