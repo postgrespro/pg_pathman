@@ -74,6 +74,7 @@ static Node *wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysT
 static void disable_inheritance(Query *parse);
 static void disable_inheritance_cte(Query *parse);
 static void disable_inheritance_subselect(Query *parse);
+static bool disable_inheritance_subselect_walker(Node *node, void *context);
 
 /* Expression tree handlers */
 static Datum increase_hashable_value(const PartRelationInfo *prel, Datum value);
@@ -388,13 +389,22 @@ disable_inheritance_subselect(Query *parse)
 		return;
 
 	quals = parse->jointree->quals;
-	if (!IsA(quals, SubLink))
-		return;
+	disable_inheritance_subselect_walker(quals, NULL);
+}
 
-	if (!IsA(((SubLink *) quals)->subselect, Query))
-		return;
+static bool
+disable_inheritance_subselect_walker(Node *node, void *context)
+{
+	if (node == NULL)
+		return false;
 
-	disable_inheritance((Query *) (((SubLink *) quals)->subselect));
+	if (IsA(node, SubLink))
+	{
+		disable_inheritance((Query *) (((SubLink *) node)->subselect));
+		return false;
+	}
+
+	return expression_tree_walker(node, disable_inheritance_subselect_walker, (void *) context);
 }
 
 /*
