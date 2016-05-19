@@ -1,8 +1,8 @@
 # contrib/pg_pathman/Makefile
 
 MODULE_big = pg_pathman
-OBJS = init.o utils.o runtimeappend.o runtime_merge_append.o pg_pathman.o dsm_array.o \
-	rangeset.o pl_funcs.o worker.o hooks.o nodes_common.o $(WIN32RES)
+OBJS = src/init.o src/utils.o src/runtimeappend.o src/runtime_merge_append.o src/pg_pathman.o src/dsm_array.o \
+	src/rangeset.o src/pl_funcs.o src/worker.o src/hooks.o src/nodes_common.o $(WIN32RES)
 
 EXTENSION = pg_pathman
 EXTVERSION = 0.1
