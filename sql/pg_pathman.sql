@@ -196,6 +196,10 @@ begin
 	perform test.pathman_equal((plan->0->'Plan'->'Plans'->1->'Relation Name')::text,
 							   '"runtime_test_1_1"',
 							   'wrong partition');
+
+	select count(*) from jsonb_array_elements_text(plan->0->'Plan'->'Plans') into num;
+	perform test.pathman_equal(num::text, '2', 'expected 2 child plans for custom scan');
+
 	return 'ok';
 end;
 $$ language plpgsql;
@@ -205,7 +209,7 @@ declare
 	plan jsonb;
 	num int;
 begin
-	plan = test.pathman_test('select * from test.runtime_test_1 where id = any (select * from test.run_values limit 6)');
+	plan = test.pathman_test('select * from test.runtime_test_1 where id = any (select * from test.run_values limit 4)');
 
 	perform test.pathman_equal((plan->0->'Plan'->'Node Type')::text,
 							   '"Nested Loop"',
@@ -220,9 +224,9 @@ begin
 							   'wrong plan provider');
 
 	select count(*) from jsonb_array_elements_text(plan->0->'Plan'->'Plans'->1->'Plans') into num;
-	perform test.pathman_equal(num::text, '6', 'expected 6 child plans for custom scan');
+	perform test.pathman_equal(num::text, '4', 'expected 4 child plans for custom scan');
 
-	for i in 0..5 loop
+	for i in 0..3 loop
 		perform test.pathman_equal((plan->0->'Plan'->'Plans'->1->'Plans'->i->'Relation Name')::text,
 								   format('"runtime_test_1_%s"', i + 1),
 								   'wrong partition');
@@ -255,11 +259,11 @@ begin
 							   'wrong plan provider');
 
 	select count(*) from jsonb_array_elements_text(plan->0->'Plan'->'Plans'->1->'Plans') into num;
-	perform test.pathman_equal(num::text, '128', 'expected 128 child plans for custom scan');
+	perform test.pathman_equal(num::text, '6', 'expected 6 child plans for custom scan');
 
-	for i in 0..127 loop
+	for i in 0..5 loop
 		num = plan->0->'Plan'->'Plans'->1->'Plans'->i->'Actual Loops';
-		perform test.pathman_assert(num <= 79, 'expected no more than 79 loops');
+		perform test.pathman_assert(num > 0 and num <= 1667, 'expected no more than 1667 loops');
 	end loop;
 
 	return 'ok';
@@ -272,7 +276,7 @@ declare
 	num int;
 begin
 	plan = test.pathman_test('select * from test.category c, lateral' ||
-							 '(select * from test.runtime_test_2 g where g.category_id = c.id order by rating limit 10) as tg');
+							 '(select * from test.runtime_test_2 g where g.category_id = c.id order by rating limit 4) as tg');
 
 	perform test.pathman_equal((plan->0->'Plan'->'Node Type')::text,
 							   '"Nested Loop"',
@@ -288,9 +292,9 @@ begin
 							   'wrong plan provider');
 
 	select count(*) from jsonb_array_elements_text(plan->0->'Plan'->'Plans'->1->'Plans'->0->'Plans') into num;
-	perform test.pathman_equal(num::text, '10', 'expected 10 child plans for custom scan');
+	perform test.pathman_equal(num::text, '4', 'expected 4 child plans for custom scan');
 
-	for i in 0..9 loop
+	for i in 0..3 loop
 		perform test.pathman_equal((plan->0->'Plan'->'Plans'->1->'Plans'->0->'Plans'->i->'Relation Name')::text,
 								   format('"runtime_test_2_%s"', i + 1),
 								   'wrong partition');
@@ -307,13 +311,13 @@ $$ language plpgsql;
 create table test.run_values as select generate_series(1, 10000) val;
 create table test.runtime_test_1(id serial primary key, val real);
 insert into test.runtime_test_1 select generate_series(1, 10000), random();
-select pathman.create_hash_partitions('test.runtime_test_1', 'id', 128);
+select pathman.create_hash_partitions('test.runtime_test_1', 'id', 6);
 
-create table test.category as (select id, 'cat' || id::text as name from generate_series(1, 10) id);
+create table test.category as (select id, 'cat' || id::text as name from generate_series(1, 4) id);
 create table test.runtime_test_2 (id serial, category_id int not null, name text, rating real);
-insert into test.runtime_test_2 (select id, (id % 10) + 1 as category_id, 'good' || id::text as name, random() as rating from generate_series(1, 1000000) id);
+insert into test.runtime_test_2 (select id, (id % 6) + 1 as category_id, 'good' || id::text as name, random() as rating from generate_series(1, 100000) id);
 create index on test.runtime_test_2 (category_id, rating);
-select pathman.create_hash_partitions('test.runtime_test_2', 'category_id', 128);
+select pathman.create_hash_partitions('test.runtime_test_2', 'category_id', 6);
 
 analyze test.run_values;
 analyze test.runtime_test_1;
