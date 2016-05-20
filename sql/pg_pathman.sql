@@ -547,5 +547,3 @@ SELECT create_range_partitions('messages', 'id', 1, 100, 2);
 ALTER TABLE replies DROP CONSTRAINT replies_message_id_fkey;
 SELECT create_range_partitions('messages', 'id', 1, 100, 2);
 EXPLAIN (COSTS OFF) SELECT * FROM messages;
-
-DROP EXTENSION pg_pathman;
