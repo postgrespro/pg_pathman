@@ -10,6 +10,8 @@
 #include "utils.h"
 #include "nodes/nodeFuncs.h"
 #include "nodes/makefuncs.h"
+#include "optimizer/var.h"
+#include "optimizer/restrictinfo.h"
 #include "parser/parse_param.h"
 #include "utils/builtins.h"
 #include "rewrite/rewriteManip.h"
@@ -108,4 +110,34 @@ build_index_tlist(PlannerInfo *root, IndexOptInfo *index,
 		elog(ERROR, "wrong number of index expressions");
 
 	return tlist;
+}
+
+/*
+ * We should ensure that 'rel->baserestrictinfo' or 'ppi->ppi_clauses' contain
+ * Var which corresponds to partition attribute before creating RuntimeXXX
+ * paths since they are used by create_scan_plan() to form 'scan_clauses'
+ * that are passed to create_customscan_plan().
+ */
+bool
+check_rinfo_for_partitioned_attr(List *rinfo, Index varno, AttrNumber varattno)
+{
+	List	   *vars;
+	List	   *clauses;
+	ListCell   *lc;
+
+	clauses = get_actual_clauses(rinfo);
+
+	vars = pull_var_clause((Node *) clauses,
+						   PVC_REJECT_AGGREGATES,
+						   PVC_REJECT_PLACEHOLDERS);
+
+	foreach (lc, vars)
+	{
+		Var *var = (Var *) lfirst(lc);
+
+		if (var->varno == varno && var->varoattno == varattno)
+			return true;
+	}
+
+	return false;
 }
