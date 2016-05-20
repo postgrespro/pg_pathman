@@ -31,6 +31,8 @@ PG_FUNCTION_INFO_V1( release_partitions_lock );
 PG_FUNCTION_INFO_V1( check_overlap );
 PG_FUNCTION_INFO_V1( get_min_range_value );
 PG_FUNCTION_INFO_V1( get_max_range_value );
+PG_FUNCTION_INFO_V1( get_type_hash_func );
+PG_FUNCTION_INFO_V1( get_hash );
 
 /*
  * Callbacks
@@ -325,9 +327,9 @@ check_overlap(PG_FUNCTION_ARGS)
 {
 	int parent_oid = DatumGetInt32(PG_GETARG_DATUM(0));
 	Datum p1 = PG_GETARG_DATUM(1);
-	Oid	  p1_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
+	Oid	p1_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
 	Datum p2 = PG_GETARG_DATUM(2);
-	Oid	  p2_type = get_fn_expr_argtype(fcinfo->flinfo, 2);
+	Oid p2_type = get_fn_expr_argtype(fcinfo->flinfo, 2);
 	PartRelationInfo *prel;
 	RangeRelation	 *rangerel;
 	RangeEntry		 *ranges;
@@ -379,6 +381,27 @@ release_partitions_lock(PG_FUNCTION_ARGS)
 	PG_RETURN_NULL();
 }
 
+/*
+ * Returns hash function OID for specified type
+ */
+Datum
+get_type_hash_func(PG_FUNCTION_ARGS)
+{
+	TypeCacheEntry *tce;
+	int 			type_oid = DatumGetInt32(PG_GETARG_DATUM(0));
+
+	tce = lookup_type_cache(type_oid, TYPECACHE_HASH_PROC);
+	PG_RETURN_OID(tce->hash_proc);
+}
+
+Datum
+get_hash(PG_FUNCTION_ARGS)
+{
+	uint32 value = DatumGetUInt32(PG_GETARG_DATUM(0));
+	uint32 part_count = DatumGetUInt32(PG_GETARG_DATUM(1));
+
+	PG_RETURN_UINT32(make_hash(value, part_count));
+}
 
 // Datum
 

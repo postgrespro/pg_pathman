@@ -77,7 +77,8 @@ typedef struct PartRelationInfo
 	PartType	parttype;
 	Index		attnum;
 	Oid			atttype;
-
+	Oid			cmp_proc;
+	Oid			hash_proc;
 } PartRelationInfo;
 
 /*
@@ -200,6 +201,7 @@ char *get_extension_schema(void);
 FmgrInfo *get_cmp_func(Oid type1, Oid type2);
 Oid create_partitions_bg_worker(Oid relid, Datum value, Oid value_type, bool *crashed);
 Oid create_partitions(Oid relid, Datum value, Oid value_type, bool *crashed);
+uint32 make_hash(uint32 value, uint32 partitions);
 
 /* copied from allpaths.h */
 void set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,

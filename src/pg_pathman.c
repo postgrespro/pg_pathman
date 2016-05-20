@@ -79,7 +79,6 @@ static bool disable_inheritance_subselect_walker(Node *node, void *context);
 /* Expression tree handlers */
 static Datum increase_hashable_value(const PartRelationInfo *prel, Datum value);
 static Datum decrease_hashable_value(const PartRelationInfo *prel, Datum value);
-static int make_hash(const PartRelationInfo *prel, int value);
 static void handle_binary_opexpr(WalkerContext *context, WrapperNode *result, const Var *v, const Const *c);
 static WrapperNode *handle_opexpr(const OpExpr *expr, WalkerContext *context);
 static WrapperNode *handle_boolexpr(const BoolExpr *expr, WalkerContext *context);
@@ -913,7 +912,7 @@ finish_least_greatest(WrapperNode *wrap, WalkerContext *context)
 							hash;
 						for (value = least; value <= greatest; value++)
 						{
-							hash = make_hash(context->prel, value);
+							hash = make_hash(value, context->prel->children_count);
 							rangeset = irange_list_union(rangeset,
 								list_make1_irange(make_irange(hash, hash, true)));
 						}
@@ -973,8 +972,8 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 	RangeRelation	   *rangerel;
 	Datum				value;
 	int					i,
-						int_value,
 						strategy;
+	uint32				int_value;
 	bool				is_less,
 						is_greater;
 	FmgrInfo		    cmp_func;
@@ -997,36 +996,39 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 	switch (prel->parttype)
 	{
 		case PT_HASH:
-			if (strategy == BTLessStrategyNumber ||
-				strategy == BTLessEqualStrategyNumber)
-			{
-				Datum value = c->constvalue;
+			// value = OidFunctionCall1(prel->hash_proc, c->constvalue);
+			// if (strategy == BTLessStrategyNumber ||
+			// 	strategy == BTLessEqualStrategyNumber)
+			// {
+			// 	// Datum value = c->constvalue;
 
-				if (strategy == BTLessStrategyNumber)
-					value = decrease_hashable_value(prel, value);
-				if (!context->hasGreatest || DatumGetInt32(FunctionCall2(&cmp_func, value, context->greatest)) < 0)
-				{
-					context->greatest = value;
-					context->hasGreatest = true;
-				}
-			}
-			else if (strategy == BTGreaterStrategyNumber ||
-					 strategy == BTGreaterEqualStrategyNumber)
-			{
-				Datum value = c->constvalue;
+			// 	if (strategy == BTLessStrategyNumber)
+			// 		value = decrease_hashable_value(prel, value);
+			// 	if (!context->hasGreatest || DatumGetInt32(FunctionCall2(&cmp_func, value, context->greatest)) < 0)
+			// 	{
+			// 		context->greatest = value;
+			// 		context->hasGreatest = true;
+			// 	}
+			// }
+			// else if (strategy == BTGreaterStrategyNumber ||
+			// 		 strategy == BTGreaterEqualStrategyNumber)
+			// {
+			// 	// Datum value = c->constvalue;
 
-				if (strategy == BTGreaterStrategyNumber)
-					value = increase_hashable_value(prel, value);
-				if (!context->hasLeast || DatumGetInt32(FunctionCall2(&cmp_func, value, context->least)) > 0)
-				{
-					context->least = value;
-					context->hasLeast = true;
-				}
-			}
-			else if (strategy == BTEqualStrategyNumber)
+			// 	if (strategy == BTGreaterStrategyNumber)
+			// 		value = increase_hashable_value(prel, value);
+			// 	if (!context->hasLeast || DatumGetInt32(FunctionCall2(&cmp_func, value, context->least)) > 0)
+			// 	{
+			// 		context->least = value;
+			// 		context->hasLeast = true;
+			// 	}
+			// }
+			// else
+			if (strategy == BTEqualStrategyNumber)
 			{
-				int_value = DatumGetInt32(c->constvalue);
-				key.hash = make_hash(prel, int_value);
+				value = OidFunctionCall1(prel->hash_proc, c->constvalue);
+				int_value = DatumGetUInt32(value);
+				key.hash = make_hash(int_value, prel->children_count);
 				result->rangeset = list_make1_irange(make_irange(key.hash, key.hash, true));
 				return;
 			}
@@ -1218,10 +1220,10 @@ handle_binary_opexpr_param(const PartRelationInfo *prel,
 /*
  * Calculates hash value
  */
-static int
-make_hash(const PartRelationInfo *prel, int value)
+uint32
+make_hash(uint32 value, uint32 partitions)
 {
-	return value % prel->children_count;
+	return value % partitions;
 }
 
 /*
@@ -1374,7 +1376,7 @@ handle_boolexpr(const BoolExpr *expr, WalkerContext *context)
 		switch (expr->boolop)
 		{
 			case OR_EXPR:
-				finish_least_greatest(arg, context);
+				// finish_least_greatest(arg, context);
 				result->rangeset = irange_list_union(result->rangeset, arg->rangeset);
 				break;
 			case AND_EXPR:
@@ -1450,7 +1452,7 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 		/* Construct OIDs list */
 		for (i = 0; i < num_elems; i++)
 		{
-			hash = make_hash(prel, elem_values[i]);
+			hash = make_hash(elem_values[i], prel->children_count);
 			result->rangeset = irange_list_union(result->rangeset,
 						list_make1_irange(make_irange(hash, hash, true)));
 		}
