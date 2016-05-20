@@ -44,6 +44,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	ListCell		   *lc;
 	double				paramsel;
 	WalkerContext		context;
+	bool				innerrel_rinfo_contains_part_attr;
 
 	if (set_join_pathlist_next)
 		set_join_pathlist_next(root, joinrel, outerrel,
@@ -92,6 +93,11 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		paramsel *= wrap->paramsel;
 	}
 
+	innerrel_rinfo_contains_part_attr =
+		check_rinfo_for_partitioned_attr(innerrel->baserestrictinfo,
+										 innerrel->relid,
+										 inner_prel->attnum);
+
 	foreach (lc, innerrel->pathlist)
 	{
 		AppendPath	   *cur_inner_path = (AppendPath *) lfirst(lc);
@@ -106,6 +112,16 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 								   bms_make_singleton(outerrel->relid));
 
 		ppi = get_baserel_parampathinfo(root, innerrel, inner_required);
+
+		/*
+		 * Skip if neither rel->baserestrictinfo nor
+		 * ppi->ppi_clauses reference partition attribute
+		 */
+		if (!(innerrel_rinfo_contains_part_attr ||
+			  (ppi && check_rinfo_for_partitioned_attr(ppi->ppi_clauses,
+													   innerrel->relid,
+													   inner_prel->attnum))))
+			continue;
 
 		inner = create_runtimeappend_path(root, cur_inner_path,
 										  ppi,
@@ -162,6 +178,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 		double			paramsel = 1.0;
 		WalkerContext	context;
 		int				i;
+		bool			rel_rinfo_contains_part_attr = false;
 
 		if (prel->parttype == PT_RANGE)
 		{
@@ -280,6 +297,11 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 		if (!clause_contains_params((Node *) get_actual_clauses(rel->baserestrictinfo)))
 			return;
 
+		rel_rinfo_contains_part_attr =
+			check_rinfo_for_partitioned_attr(rel->baserestrictinfo,
+											 rel->relid,
+											 prel->attnum);
+
 		foreach (lc, rel->pathlist)
 		{
 			AppendPath	   *cur_path = (AppendPath *) lfirst(lc);
@@ -294,6 +316,16 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 			{
 				continue;
 			}
+
+			/*
+			 * Skip if neither rel->baserestrictinfo nor
+			 * ppi->ppi_clauses reference partition attribute
+			 */
+			if (!(rel_rinfo_contains_part_attr ||
+				  (ppi && check_rinfo_for_partitioned_attr(ppi->ppi_clauses,
+														   rel->relid,
+														   prel->attnum))))
+				continue;
 
 			if (IsA(cur_path, AppendPath) && pg_pathman_enable_runtimeappend)
 				inner_path = create_runtimeappend_path(root, cur_path,

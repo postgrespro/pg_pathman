@@ -27,4 +27,8 @@ bool clause_contains_params(Node *clause);
 List * build_index_tlist(PlannerInfo *root, IndexOptInfo *index,
 						 Relation heapRelation);
 
+bool check_rinfo_for_partitioned_attr(List *rinfo,
+									  Index varno,
+									  AttrNumber varattno);
+
 #endif
