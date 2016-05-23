@@ -14,15 +14,6 @@
 #include "pathman.h"
 
 
-/*
- * Element of the plan_state_table
- */
-typedef struct
-{
-	Oid			relid;				/* partition relid (key) */
-	PlanState  *ps;					/* reusable plan state */
-} PreservedPlanState;
-
 typedef struct
 {
 	Oid			relid;				/* partition relid */
