@@ -194,7 +194,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2 OR value = 1;
 
 -- Temporarily commented out
 -- EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value BETWEEN 1 AND 2;
---                    QUERY PLAN                    
+--                    QUERY PLAN
 -- -------------------------------------------------
 --  Append
 --    ->  Seq Scan on hash_rel_1
@@ -619,7 +619,7 @@ begin
 							   'wrong plan provider');
 
 	perform test.pathman_equal((plan->0->'Plan'->'Plans'->1->'Relation Name')::text,
-							   '"runtime_test_1_1"',
+							   format('"runtime_test_1_%s"', pathman.get_hash(hashint4(1), 6)),
 							   'wrong partition');
 
 	select count(*) from jsonb_array_elements_text(plan->0->'Plan'->'Plans') into num;
@@ -652,7 +652,7 @@ begin
 
 	for i in 0..3 loop
 		perform test.pathman_equal((plan->0->'Plan'->'Plans'->1->'Plans'->i->'Relation Name')::text,
-								   format('"runtime_test_1_%s"', i + 1),
+								   format('"runtime_test_1_%s"', pathman.get_hash(hashint4(i + 1), 6)),
 								   'wrong partition');
 
 		num = plan->0->'Plan'->'Plans'->1->'Plans'->i->'Actual Loops';
@@ -686,7 +686,7 @@ begin
 
 	for i in 0..5 loop
 		num = plan->0->'Plan'->'Plans'->1->'Plans'->i->'Actual Loops';
-		perform test.pathman_assert(num > 0 and num <= 1667, 'expected no more than 1667 loops');
+		perform test.pathman_assert(num > 0 and num <= 1718, 'expected no more than 1718 loops');
 	end loop;
 
 	return 'ok';
@@ -718,7 +718,7 @@ begin
 
 	for i in 0..3 loop
 		perform test.pathman_equal((plan->0->'Plan'->'Plans'->1->'Plans'->0->'Plans'->i->'Relation Name')::text,
-								   format('"runtime_test_2_%s"', i + 1),
+								   format('"runtime_test_2_%s"', pathman.get_hash(hashint4(i + 1), 6)),
 								   'wrong partition');
 
 		num = plan->0->'Plan'->'Plans'->1->'Plans'->0->'Plans'->i->'Actual Loops';
