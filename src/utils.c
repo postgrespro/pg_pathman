@@ -19,6 +19,24 @@
 
 
 static bool clause_contains_params_walker(Node *node, void *context);
+static void change_varnos_in_restrinct_info(RestrictInfo *rinfo, change_varno_context *context);
+static bool change_varno_walker(Node *node, change_varno_context *context);
+
+/*
+ * Returns the same list in reversed order.
+ */
+List *
+list_reverse(List *l)
+{
+	List *result = NIL;
+	ListCell *lc;
+
+	foreach (lc, l)
+	{
+		result = lcons(lfirst(lc), result);
+	}
+	return result;
+}
 
 bool
 clause_contains_params(Node *clause)
@@ -140,4 +158,122 @@ check_rinfo_for_partitioned_attr(List *rinfo, Index varno, AttrNumber varattno)
 	}
 
 	return false;
+}
+
+/*
+ * Changes varno attribute in all variables nested in the node
+ */
+void
+change_varnos(Node *node, Oid old_varno, Oid new_varno)
+{
+	change_varno_context context;
+	context.old_varno = old_varno;
+	context.new_varno = new_varno;
+
+	change_varno_walker(node, &context);
+}
+
+static bool
+change_varno_walker(Node *node, change_varno_context *context)
+{
+	ListCell   *lc;
+	Var		   *var;
+	EquivalenceClass *ec;
+	EquivalenceMember *em;
+
+	if (node == NULL)
+		return false;
+
+	switch(node->type)
+	{
+		case T_Var:
+			var = (Var *) node;
+			if (var->varno == context->old_varno)
+			{
+				var->varno = context->new_varno;
+				var->varnoold = context->new_varno;
+			}
+			return false;
+
+		case T_RestrictInfo:
+			change_varnos_in_restrinct_info((RestrictInfo *) node, context);
+			return false;
+
+		case T_PathKey:
+			change_varno_walker((Node *) ((PathKey *) node)->pk_eclass, context);
+			return false;
+
+		case T_EquivalenceClass:
+			ec = (EquivalenceClass *) node;
+
+			foreach(lc, ec->ec_members)
+				change_varno_walker((Node *) lfirst(lc), context);
+			foreach(lc, ec->ec_derives)
+				change_varno_walker((Node *) lfirst(lc), context);
+			return false;
+
+		case T_EquivalenceMember:
+			em = (EquivalenceMember *) node;
+			change_varno_walker((Node *) em->em_expr, context);
+			if (bms_is_member(context->old_varno, em->em_relids))
+			{
+				em->em_relids = bms_del_member(em->em_relids, context->old_varno);
+				em->em_relids = bms_add_member(em->em_relids, context->new_varno);
+			}
+			return false;
+
+		case T_TargetEntry:
+			change_varno_walker((Node *) ((TargetEntry *) node)->expr, context);
+			return false;
+
+		case T_List:
+			foreach(lc, (List *) node)
+				change_varno_walker((Node *) lfirst(lc), context);
+			return false;
+
+		default:
+			break;
+	}
+
+	/* Should not find an unplanned subquery */
+	Assert(!IsA(node, Query));
+
+	return expression_tree_walker(node, change_varno_walker, (void *) context);
+}
+
+static void
+change_varnos_in_restrinct_info(RestrictInfo *rinfo, change_varno_context *context)
+{
+	ListCell *lc;
+
+	change_varno_walker((Node *) rinfo->clause, context);
+	if (rinfo->left_em)
+		change_varno_walker((Node *) rinfo->left_em->em_expr, context);
+
+	if (rinfo->right_em)
+		change_varno_walker((Node *) rinfo->right_em->em_expr, context);
+
+	if (rinfo->orclause)
+		foreach(lc, ((BoolExpr *) rinfo->orclause)->args)
+		{
+			Node *node = (Node *) lfirst(lc);
+			change_varno_walker(node, context);
+		}
+
+	/* TODO: find some elegant way to do this */
+	if (bms_is_member(context->old_varno, rinfo->clause_relids))
+	{
+		rinfo->clause_relids = bms_del_member(rinfo->clause_relids, context->old_varno);
+		rinfo->clause_relids = bms_add_member(rinfo->clause_relids, context->new_varno);
+	}
+	if (bms_is_member(context->old_varno, rinfo->left_relids))
+	{
+		rinfo->left_relids = bms_del_member(rinfo->left_relids, context->old_varno);
+		rinfo->left_relids = bms_add_member(rinfo->left_relids, context->new_varno);
+	}
+	if (bms_is_member(context->old_varno, rinfo->right_relids))
+	{
+		rinfo->right_relids = bms_del_member(rinfo->right_relids, context->old_varno);
+		rinfo->right_relids = bms_add_member(rinfo->right_relids, context->new_varno);
+	}
 }

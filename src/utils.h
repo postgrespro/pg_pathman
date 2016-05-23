@@ -15,12 +15,22 @@
 #include "nodes/relation.h"
 #include "nodes/nodeFuncs.h"
 
+
 typedef struct
 {
 	RelOptInfo *child;
 	RelOptInfo *parent;
 	int			sublevels_up;
 } ReplaceVarsContext;
+
+typedef struct
+{
+	Oid			old_varno;
+	Oid			new_varno;
+} change_varno_context;
+
+
+List * list_reverse(List *l);
 
 bool clause_contains_params(Node *clause);
 
@@ -30,5 +40,7 @@ List * build_index_tlist(PlannerInfo *root, IndexOptInfo *index,
 bool check_rinfo_for_partitioned_attr(List *rinfo,
 									  Index varno,
 									  AttrNumber varattno);
+
+void change_varnos(Node *node, Oid old_varno, Oid new_varno);
 
 #endif
