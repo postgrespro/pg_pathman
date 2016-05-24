@@ -79,7 +79,8 @@ static bool disable_inheritance_subselect_walker(Node *node, void *context);
 /* Expression tree handlers */
 static Datum increase_hashable_value(const PartRelationInfo *prel, Datum value);
 static Datum decrease_hashable_value(const PartRelationInfo *prel, Datum value);
-static void handle_binary_opexpr(WalkerContext *context, WrapperNode *result, const Var *v, const Const *c);
+static void handle_binary_opexpr(WalkerContext *context, WrapperNode *result, const Node *varnode, const Const *c);
+static void handle_binary_opexpr_param(const PartRelationInfo *prel, WrapperNode *result, const Node *varnode);
 static WrapperNode *handle_opexpr(const OpExpr *expr, WalkerContext *context);
 static WrapperNode *handle_boolexpr(const BoolExpr *expr, WalkerContext *context);
 static WrapperNode *handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context);
@@ -87,6 +88,7 @@ static void change_varnos_in_restrinct_info(RestrictInfo *rinfo, change_varno_co
 static void change_varnos(Node *node, Oid old_varno, Oid new_varno);
 static bool change_varno_walker(Node *node, change_varno_context *context);
 static RestrictInfo *rebuild_restrictinfo(Node *clause, RestrictInfo *old_rinfo);
+static bool pull_var_param(const WalkerContext *ctx, const OpExpr *expr, Node **var_ptr, Node **param_ptr);
 
 /* copied from allpaths.h */
 static void set_plain_rel_size(PlannerInfo *root, RelOptInfo *rel,
@@ -966,7 +968,7 @@ decrease_hashable_value(const PartRelationInfo *prel, Datum value)
  */
 static void
 handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
-					 const Var *v, const Const *c)
+					 const Node *varnode, const Const *c)
 {
 	HashRelationKey		key;
 	RangeRelation	   *rangerel;
@@ -978,18 +980,25 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 						is_greater;
 	FmgrInfo		    cmp_func;
 	Oid					cmp_proc_oid;
+	Oid					vartype;
 	const OpExpr	   *expr = (const OpExpr *)result->orig;
 	TypeCacheEntry	   *tce;
 	const PartRelationInfo *prel = context->prel;
 
+	Assert(IsA(varnode, Var) || IsA(varnode, RelableType));
+
+	vartype = !IsA(varnode, RelabelType) ?
+			((Var *) varnode)->vartype :
+			((RelabelType *) varnode)->resulttype;
+
 	/* Determine operator type */
-	tce = lookup_type_cache(v->vartype,
+	tce = lookup_type_cache(vartype,
 							TYPECACHE_BTREE_OPFAMILY | TYPECACHE_CMP_PROC | TYPECACHE_CMP_PROC_FINFO);
 
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
 	cmp_proc_oid = get_opfamily_proc(tce->btree_opf,
+									 vartype,
 									 c->consttype,
-									 prel->atttype,
 									 BTORDER_PROC);
 	fmgr_info(cmp_proc_oid, &cmp_func);
 
@@ -1032,6 +1041,7 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 				result->rangeset = list_make1_irange(make_irange(key.hash, key.hash, true));
 				return;
 			}
+			break;
 		case PT_RANGE:
 			value = c->constvalue;
 			rangerel = get_pathman_range_relation(prel->key.relid, NULL);
@@ -1191,14 +1201,21 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
  */
 static void
 handle_binary_opexpr_param(const PartRelationInfo *prel,
-						   WrapperNode *result, const Var *v)
+						   WrapperNode *result, const Node *varnode)
 {
 	const OpExpr	   *expr = (const OpExpr *)result->orig;
 	TypeCacheEntry	   *tce;
 	int					strategy;
+	Oid					vartype;
+
+	Assert(IsA(varnode, Var) || IsA(varnode, RelableType));
+
+	vartype = !IsA(varnode, RelabelType) ?
+			((Var *) varnode)->vartype :
+			((RelabelType *) varnode)->resulttype;
 
 	/* Determine operator type */
-	tce = lookup_type_cache(v->vartype, TYPECACHE_BTREE_OPFAMILY);
+	tce = lookup_type_cache(vartype, TYPECACHE_BTREE_OPFAMILY);
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
 
 	result->rangeset = list_make1_irange(make_irange(0, prel->children_count - 1, true));
@@ -1306,8 +1323,7 @@ static WrapperNode *
 handle_opexpr(const OpExpr *expr, WalkerContext *context)
 {
 	WrapperNode	*result = (WrapperNode *)palloc(sizeof(WrapperNode));
-	Node		*firstarg = NULL,
-				*secondarg = NULL;
+	Node		*var, *param;
 	const PartRelationInfo *prel = context->prel;
 
 	result->orig = (const Node *)expr;
@@ -1315,29 +1331,16 @@ handle_opexpr(const OpExpr *expr, WalkerContext *context)
 
 	if (list_length(expr->args) == 2)
 	{
-		if (IsA(linitial(expr->args), Var)
-			&& ((Var *)linitial(expr->args))->varoattno == prel->attnum)
+		if (pull_var_param(context, expr, &var, &param))
 		{
-			firstarg = (Node *) linitial(expr->args);
-			secondarg = (Node *) lsecond(expr->args);
-		}
-		else if (IsA(lsecond(expr->args), Var)
-			&& ((Var *)lsecond(expr->args))->varoattno == prel->attnum)
-		{
-			firstarg = (Node *) lsecond(expr->args);
-			secondarg = (Node *) linitial(expr->args);
-		}
-
-		if (firstarg && secondarg)
-		{
-			if (IsConstValue(context, secondarg))
+			if (IsConstValue(context, param))
 			{
-				handle_binary_opexpr(context, result, (Var *)firstarg, ExtractConst(context, secondarg));
+				handle_binary_opexpr(context, result, var, ExtractConst(context, param));
 				return result;
 			}
-			else if (IsA(secondarg, Param) || IsA(secondarg, Var))
+			else if (IsA(param, Param) || IsA(param, Var))
 			{
-				handle_binary_opexpr_param(prel, result, (Var *)firstarg);
+				handle_binary_opexpr_param(prel, result, var);
 				return result;
 			}
 		}
@@ -1346,6 +1349,54 @@ handle_opexpr(const OpExpr *expr, WalkerContext *context)
 	result->rangeset = list_make1_irange(make_irange(0, prel->children_count - 1, true));
 	result->paramsel = 1.0;
 	return result;
+}
+
+/*
+ * Checks if expression is a KEY OP PARAM or PARAM OP KEY,
+ * where KEY is partition key (it could be Var or RelableType) and PARAM is
+ * whatever. Function returns variable (or RelableType) and param via var_ptr 
+ * and param_ptr pointers. If partition key isn't in expression then function
+ * returns false.
+ */
+static bool
+pull_var_param(const WalkerContext *ctx, const OpExpr *expr, Node **var_ptr, Node **param_ptr)
+{
+	Node   *left = linitial(expr->args),
+		   *right = lsecond(expr->args);
+	Var	   *v = NULL;
+
+	/* Check the case when variable is on the left side */
+	if (IsA(left, Var) || IsA(left, RelabelType))
+	{
+		v = !IsA(left, RelabelType) ?
+						(Var *) left :
+						(Var *) ((RelabelType *) left)->arg;
+
+		if (v->varattno == ctx->prel->attnum)
+		{
+			*var_ptr = left;
+			*param_ptr = right;
+			return true;
+		}
+	}
+	
+	/* ... variable is on the right side */
+	if (IsA(right, Var) || IsA(right, RelabelType))
+	{
+		v = !IsA(right, RelabelType) ?
+						(Var *) right :
+						(Var *) ((RelabelType *) right)->arg;
+
+		if (v->varattno == ctx->prel->attnum)
+		{
+			*var_ptr = right;
+			*param_ptr = left;
+			return true;
+		}
+	}
+
+	/* Variable isn't a partitionig key */
+	return false;
 }
 
 /*
@@ -1414,6 +1465,7 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 {
 	WrapperNode *result = (WrapperNode *)palloc(sizeof(WrapperNode));
 	Node		*varnode = (Node *) linitial(expr->args);
+	Var			*var;
 	Node		*arraynode = (Node *) lsecond(expr->args);
 	int			 hash;
 	const PartRelationInfo *prel = context->prel;
@@ -1422,8 +1474,18 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 	result->args = NIL;
 	result->paramsel = 1.0;
 
+	Assert(varnode != NULL);
+
 	/* If variable is not the partition key then skip it */
-	if (!varnode || !IsA(varnode, Var) || ((Var *) varnode)->varattno != prel->attnum)
+	if (IsA(varnode, Var) || IsA(varnode, RelabelType))
+	{
+		var = !IsA(varnode, RelabelType) ?
+			(Var *) varnode :
+			(Var *) ((RelabelType *) varnode)->arg;
+		if (var->varattno != prel->attnum)
+			goto handle_arrexpr_return;
+	}
+	else
 		goto handle_arrexpr_return;
 
 	if (arraynode && IsA(arraynode, Const) &&
@@ -1437,6 +1499,8 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 		Datum	   *elem_values;
 		bool	   *elem_nulls;
 		int			i;
+		Datum		value;
+		uint32		int_value;
 
 		/* Extract values from array */
 		arrayval = DatumGetArrayTypeP(((Const *) arraynode)->constvalue);
@@ -1452,7 +1516,10 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 		/* Construct OIDs list */
 		for (i = 0; i < num_elems; i++)
 		{
-			hash = make_hash(elem_values[i], prel->children_count);
+			/* Invoke base hash function for value type */
+			value = OidFunctionCall1(prel->hash_proc, elem_values[i]);
+			int_value = DatumGetUInt32(value);
+			hash = make_hash(int_value, prel->children_count);
 			result->rangeset = irange_list_union(result->rangeset,
 						list_make1_irange(make_irange(hash, hash, true)));
 		}

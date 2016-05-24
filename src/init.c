@@ -362,9 +362,10 @@ load_check_constraints(Oid parent_oid, Snapshot snapshot)
 				case PT_RANGE:
 					if (!validate_range_constraint(expr, prel, &min, &max))
 					{
-						elog(WARNING, "Range constraint for relation %u MUST have exact format: "
+						elog(WARNING, "Wrong CHECK constraint for relation '%s'. "
+									  "It MUST have exact format: "
 									  "VARIABLE >= CONST AND VARIABLE < CONST. Skipping...",
-							 (Oid) con->conrelid);
+							 get_rel_name(con->conrelid));
 						continue;
 					}
 
@@ -387,9 +388,9 @@ load_check_constraints(Oid parent_oid, Snapshot snapshot)
 				case PT_HASH:
 					if (!validate_hash_constraint(expr, prel, &hash))
 					{
-						elog(WARNING, "Hash constraint for relation %u MUST have exact format: "
-									  "VARIABLE %% CONST = CONST. Skipping...",
-							 (Oid) con->conrelid);
+						elog(WARNING, "Wrong CHECK constraint format for relation '%s'. "
+									  "Skipping...",
+							 get_rel_name(con->conrelid));
 						continue;
 					}
 					children[hash] = con->conrelid;
@@ -546,11 +547,15 @@ validate_hash_constraint(Expr *expr, PartRelationInfo *prel, int *hash)
 
 		/* Check that function is the base hash function for the type  */
 		funcexpr = (FuncExpr *) first;
-		if (funcexpr->funcid != prel->hash_proc || !IsA(linitial(funcexpr->args), Var))
+		if (funcexpr->funcid != prel->hash_proc ||
+			(!IsA(linitial(funcexpr->args), Var) && !IsA(linitial(funcexpr->args), RelabelType)))
 			return false;
 
 		/* Check that argument is partitioning key attribute */
-		var = (Var *) linitial(funcexpr->args);
+		if (IsA(linitial(funcexpr->args), RelabelType))
+			var = (Var *) ((RelabelType *) linitial(funcexpr->args))->arg;
+		else
+			var = (Var *) linitial(funcexpr->args);
 		if (var->varattno != prel->attnum)
 			return false;
 
