@@ -42,6 +42,7 @@
 #include "hooks.h"
 #include "runtimeappend.h"
 #include "runtime_merge_append.h"
+#include "partition_filter.h"
 
 PG_MODULE_MAGIC;
 
@@ -159,37 +160,9 @@ _PG_init(void)
 	planner_hook_original = planner_hook;
 	planner_hook = pathman_planner_hook;
 
-	/* RuntimeAppend */
-	runtimeappend_path_methods.CustomName				= "RuntimeAppend";
-	runtimeappend_path_methods.PlanCustomPath			= create_runtimeappend_plan;
-
-	runtimeappend_plan_methods.CustomName 				= "RuntimeAppend";
-	runtimeappend_plan_methods.CreateCustomScanState	= runtimeappend_create_scan_state;
-
-	runtimeappend_exec_methods.CustomName				= "RuntimeAppend";
-	runtimeappend_exec_methods.BeginCustomScan			= runtimeappend_begin;
-	runtimeappend_exec_methods.ExecCustomScan			= runtimeappend_exec;
-	runtimeappend_exec_methods.EndCustomScan			= runtimeappend_end;
-	runtimeappend_exec_methods.ReScanCustomScan			= runtimeappend_rescan;
-	runtimeappend_exec_methods.MarkPosCustomScan		= NULL;
-	runtimeappend_exec_methods.RestrPosCustomScan		= NULL;
-	runtimeappend_exec_methods.ExplainCustomScan		= runtimeappend_explain;
-
-	/* RuntimeMergeAppend */
-	runtime_merge_append_path_methods.CustomName			= "RuntimeMergeAppend";
-	runtime_merge_append_path_methods.PlanCustomPath		= create_runtimemergeappend_plan;
-
-	runtime_merge_append_plan_methods.CustomName 			= "RuntimeMergeAppend";
-	runtime_merge_append_plan_methods.CreateCustomScanState	= runtimemergeappend_create_scan_state;
-
-	runtime_merge_append_exec_methods.CustomName			= "RuntimeMergeAppend";
-	runtime_merge_append_exec_methods.BeginCustomScan		= runtimemergeappend_begin;
-	runtime_merge_append_exec_methods.ExecCustomScan		= runtimemergeappend_exec;
-	runtime_merge_append_exec_methods.EndCustomScan			= runtimemergeappend_end;
-	runtime_merge_append_exec_methods.ReScanCustomScan		= runtimemergeappend_rescan;
-	runtime_merge_append_exec_methods.MarkPosCustomScan		= NULL;
-	runtime_merge_append_exec_methods.RestrPosCustomScan	= NULL;
-	runtime_merge_append_exec_methods.ExplainCustomScan		= runtimemergeappend_explain;
+	init_runtimeappend_static_data();
+	init_runtime_merge_append_static_data();
+	init_partition_filter_static_data();
 
 	DefineCustomBoolVariable("pg_pathman.enable",
 							 "Enables pg_pathman's optimizations during the planner stage",
@@ -200,28 +173,6 @@ _PG_init(void)
 							 0,
 							 NULL,
 							 pg_pathman_enable_assign_hook,
-							 NULL);
-
-	DefineCustomBoolVariable("pg_pathman.enable_runtimeappend",
-							 "Enables the planner's use of RuntimeAppend custom node.",
-							 NULL,
-							 &pg_pathman_enable_runtimeappend,
-							 true,
-							 PGC_USERSET,
-							 0,
-							 NULL,
-							 NULL,
-							 NULL);
-
-	DefineCustomBoolVariable("pg_pathman.enable_runtimemergeappend",
-							 "Enables the planner's use of RuntimeMergeAppend custom node.",
-							 NULL,
-							 &pg_pathman_enable_runtime_merge_append,
-							 true,
-							 PGC_USERSET,
-							 0,
-							 NULL,
-							 NULL,
 							 NULL);
 }
 
@@ -301,6 +252,11 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 				disable_inheritance_subselect(parse);
 				handle_modification_query(parse);
 				break;
+			case CMD_INSERT:
+				result = standard_planner(parse, cursorOptions, boundParams);
+				add_partition_filters(result->rtable,
+									  (ModifyTable *) result->planTree);
+				return result;
 			default:
 				break;
 		}

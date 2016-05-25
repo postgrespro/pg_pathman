@@ -53,11 +53,15 @@ typedef struct
 	TupleTableSlot	   *slot;
 } RuntimeAppendState;
 
+
 extern bool					pg_pathman_enable_runtimeappend;
 
 extern CustomPathMethods	runtimeappend_path_methods;
 extern CustomScanMethods	runtimeappend_plan_methods;
 extern CustomExecMethods	runtimeappend_exec_methods;
+
+
+void init_runtimeappend_static_data(void);
 
 Path * create_runtimeappend_path(PlannerInfo *root, AppendPath *inner_append,
 								 ParamPathInfo *param_info,

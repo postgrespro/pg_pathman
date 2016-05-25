@@ -21,6 +21,7 @@
 #include "miscadmin.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
+#include "utils/guc.h"
 
 #include "lib/binaryheap.h"
 
@@ -167,6 +168,36 @@ unpack_runtimemergeappend_private(RuntimeMergeAppendState *scan_state,
 	FillStateField(sortOperators, Oid,        lfirst_oid);
 	FillStateField(collations,    Oid,        lfirst_oid);
 	FillStateField(nullsFirst,    bool,       lfirst_int);
+}
+
+void
+init_runtime_merge_append_static_data(void)
+{
+	runtime_merge_append_path_methods.CustomName			= "RuntimeMergeAppend";
+	runtime_merge_append_path_methods.PlanCustomPath		= create_runtimemergeappend_plan;
+
+	runtime_merge_append_plan_methods.CustomName 			= "RuntimeMergeAppend";
+	runtime_merge_append_plan_methods.CreateCustomScanState	= runtimemergeappend_create_scan_state;
+
+	runtime_merge_append_exec_methods.CustomName			= "RuntimeMergeAppend";
+	runtime_merge_append_exec_methods.BeginCustomScan		= runtimemergeappend_begin;
+	runtime_merge_append_exec_methods.ExecCustomScan		= runtimemergeappend_exec;
+	runtime_merge_append_exec_methods.EndCustomScan			= runtimemergeappend_end;
+	runtime_merge_append_exec_methods.ReScanCustomScan		= runtimemergeappend_rescan;
+	runtime_merge_append_exec_methods.MarkPosCustomScan		= NULL;
+	runtime_merge_append_exec_methods.RestrPosCustomScan	= NULL;
+	runtime_merge_append_exec_methods.ExplainCustomScan		= runtimemergeappend_explain;
+
+	DefineCustomBoolVariable("pg_pathman.enable_runtimemergeappend",
+							 "Enables the planner's use of RuntimeMergeAppend custom node.",
+							 NULL,
+							 &pg_pathman_enable_runtime_merge_append,
+							 true,
+							 PGC_USERSET,
+							 0,
+							 NULL,
+							 NULL,
+							 NULL);
 }
 
 Path *

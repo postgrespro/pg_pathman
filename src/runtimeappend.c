@@ -9,6 +9,7 @@
  */
 #include "postgres.h"
 #include "utils/memutils.h"
+#include "utils/guc.h"
 #include "runtimeappend.h"
 #include "pathman.h"
 
@@ -19,6 +20,36 @@ CustomPathMethods	runtimeappend_path_methods;
 CustomScanMethods	runtimeappend_plan_methods;
 CustomExecMethods	runtimeappend_exec_methods;
 
+
+void
+init_runtimeappend_static_data(void)
+{
+	runtimeappend_path_methods.CustomName				= "RuntimeAppend";
+	runtimeappend_path_methods.PlanCustomPath			= create_runtimeappend_plan;
+
+	runtimeappend_plan_methods.CustomName 				= "RuntimeAppend";
+	runtimeappend_plan_methods.CreateCustomScanState	= runtimeappend_create_scan_state;
+
+	runtimeappend_exec_methods.CustomName				= "RuntimeAppend";
+	runtimeappend_exec_methods.BeginCustomScan			= runtimeappend_begin;
+	runtimeappend_exec_methods.ExecCustomScan			= runtimeappend_exec;
+	runtimeappend_exec_methods.EndCustomScan			= runtimeappend_end;
+	runtimeappend_exec_methods.ReScanCustomScan			= runtimeappend_rescan;
+	runtimeappend_exec_methods.MarkPosCustomScan		= NULL;
+	runtimeappend_exec_methods.RestrPosCustomScan		= NULL;
+	runtimeappend_exec_methods.ExplainCustomScan		= runtimeappend_explain;
+
+	DefineCustomBoolVariable("pg_pathman.enable_runtimeappend",
+							 "Enables the planner's use of RuntimeAppend custom node.",
+							 NULL,
+							 &pg_pathman_enable_runtimeappend,
+							 true,
+							 PGC_USERSET,
+							 0,
+							 NULL,
+							 NULL,
+							 NULL);
+}
 
 Path *
 create_runtimeappend_path(PlannerInfo *root,

@@ -49,6 +49,8 @@ extern CustomScanMethods	runtime_merge_append_plan_methods;
 extern CustomExecMethods	runtime_merge_append_exec_methods;
 
 
+void init_runtime_merge_append_static_data(void);
+
 Path * create_runtimemergeappend_path(PlannerInfo *root, AppendPath *inner_append,
 									  ParamPathInfo *param_info,
 									  double sel);

@@ -15,6 +15,7 @@
 #include "pathman.h"
 #include "runtimeappend.h"
 #include "runtime_merge_append.h"
+#include "partition_filter.h"
 #include "utils.h"
 
 
@@ -346,14 +347,16 @@ void pg_pathman_enable_assign_hook(bool newval, void *extra)
 	/* Return quickly if nothing has changed */
 	if (newval == (pg_pathman_enable &&
 				   pg_pathman_enable_runtimeappend &&
-				   pg_pathman_enable_runtime_merge_append))
+				   pg_pathman_enable_runtime_merge_append &&
+				   pg_pathman_enable_partition_filter))
 		return;
 
 	pg_pathman_enable_runtime_merge_append = newval;
 	pg_pathman_enable_runtimeappend = newval;
+	pg_pathman_enable_partition_filter = newval;
 
 	elog(NOTICE,
-		 "RuntimeAppend and RuntimeMergeAppend nodes have been %s",
+		 "RuntimeAppend, RuntimeMergeAppend and PartitionFilter nodes have been %s",
 		 newval ? "enabled" : "disabled");
 }
 
