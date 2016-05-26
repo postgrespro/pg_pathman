@@ -40,7 +40,7 @@ init_partition_filter_static_data(void)
 }
 
 Plan *
-make_partition_filter_plan(Plan *subplan, Oid partitioned_table,
+make_partition_filter(Plan *subplan, Oid partitioned_table,
 						   OnConflictAction	conflict_action)
 {
 	CustomScan *cscan = makeNode(CustomScan);
@@ -265,27 +265,73 @@ pfilter_build_tlist(List *tlist)
 	return result_tlist;
 }
 
-/* Add proxy PartitionFilter nodes to subplans of ModifyTable node */
 void
-add_partition_filters(List *rtable, ModifyTable *modify_table)
+add_partition_filters(List *rtable, Plan *plan)
 {
-	ListCell *lc1,
-			 *lc2;
+	ListCell   *l;
 
-	Assert(IsA(modify_table, ModifyTable));
-
-	if (!pg_pathman_enable_partition_filter)
+	if (plan == NULL || !pg_pathman_enable_partition_filter)
 		return;
 
-	forboth (lc1, modify_table->plans, lc2, modify_table->resultRelations)
+	/* Plan-type-specific fixes*/
+	switch (nodeTag(plan))
 	{
-		Index				rindex = lfirst_int(lc2);
-		Oid					relid = getrelid(rindex, rtable);
-		PartRelationInfo   *prel = get_pathman_relation_info(relid, NULL);
+		case T_SubqueryScan:
+			add_partition_filters(rtable, ((SubqueryScan *) plan)->subplan);
+			break;
 
-		if (prel)
-			lfirst(lc1) = make_partition_filter_plan((Plan *) lfirst(lc1),
-													 relid,
-													 modify_table->onConflictAction);
+		case T_CustomScan:
+			foreach(l, ((CustomScan *) plan)->custom_plans)
+				add_partition_filters(rtable, (Plan *) lfirst(l));
+			break;
+
+		/*
+		 * Add proxy PartitionFilter nodes
+		 * to subplans of ModifyTable node
+		 */
+		case T_ModifyTable:
+			{
+				ModifyTable	   *modify_table = ((ModifyTable *) plan);
+				ListCell	   *lc1,
+							   *lc2;
+
+				forboth (lc1, modify_table->plans, lc2, modify_table->resultRelations)
+				{
+					Index				rindex = lfirst_int(lc2);
+					Oid					relid = getrelid(rindex, rtable);
+					PartRelationInfo   *prel = get_pathman_relation_info(relid, NULL);
+
+					add_partition_filters(rtable, (Plan *) lfirst(lc1));
+
+					if (prel)
+						lfirst(lc1) = make_partition_filter((Plan *) lfirst(lc1),
+															relid,
+															modify_table->onConflictAction);
+				}
+			}
+			break;
+
+		/* Since they look alike */
+		case T_MergeAppend:
+		case T_Append:
+			foreach(l, ((Append *) plan)->appendplans)
+				add_partition_filters(rtable, (Plan *) lfirst(l));
+			break;
+
+		case T_BitmapAnd:
+			foreach(l, ((BitmapAnd *) plan)->bitmapplans)
+				add_partition_filters(rtable, (Plan *) lfirst(l));
+			break;
+
+		case T_BitmapOr:
+			foreach(l, ((BitmapOr *) plan)->bitmapplans)
+				add_partition_filters(rtable, (Plan *) lfirst(l));
+			break;
+
+		default:
+			break;
 	}
+
+	add_partition_filters(rtable, plan->lefttree);
+	add_partition_filters(rtable, plan->righttree);
 }

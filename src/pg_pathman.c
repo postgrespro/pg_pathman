@@ -254,10 +254,17 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 				handle_modification_query(parse);
 				break;
 			case CMD_INSERT:
+			{
+				ListCell *lc;
+
 				result = standard_planner(parse, cursorOptions, boundParams);
-				add_partition_filters(result->rtable,
-									  (ModifyTable *) result->planTree);
+
+				add_partition_filters(result->rtable, result->planTree);
+				foreach (lc, result->subplans)
+					add_partition_filters(result->rtable, (Plan *) lfirst(lc));
+
 				return result;
+			}
 			default:
 				break;
 		}
