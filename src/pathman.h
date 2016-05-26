@@ -227,6 +227,10 @@ typedef struct
 	ExprContext			   *econtext;
 } WalkerContext;
 
+bool search_range_partition(Datum value,
+							const PartRelationInfo *prel, const RangeRelation *rangerel,
+							int strategy, FmgrInfo *cmp_func, WrapperNode *result);
+
 WrapperNode *walk_expr_tree(Expr *expr, WalkerContext *context);
 void finish_least_greatest(WrapperNode *wrap, WalkerContext *context);
 

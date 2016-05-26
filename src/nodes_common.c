@@ -105,7 +105,7 @@ select_required_plans(HTAB *children_table, Oid *parts, int nparts, int *nres)
 }
 
 /* Transform partition ranges into plain array of partition Oids */
-static Oid *
+Oid *
 get_partition_oids(List *ranges, int *n, PartRelationInfo *prel)
 {
 	ListCell   *range_cell;

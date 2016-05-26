@@ -10,6 +10,7 @@ CustomExecMethods	partition_filter_exec_methods;
 
 
 static List * pfilter_build_tlist(List *tlist);
+static ResultRelInfo * getResultRelInfo(Oid partid, PartitionFilterState *state);
 
 void
 init_partition_filter_static_data(void)
@@ -39,7 +40,8 @@ init_partition_filter_static_data(void)
 }
 
 Plan *
-make_partition_filter_plan(Plan *subplan, PartRelationInfo *prel)
+make_partition_filter_plan(Plan *subplan, Oid partitioned_table,
+						   OnConflictAction	conflict_action)
 {
 	CustomScan *cscan = makeNode(CustomScan);
 
@@ -57,8 +59,9 @@ make_partition_filter_plan(Plan *subplan, PartRelationInfo *prel)
 	cscan->scan.scanrelid = 0;
 	cscan->custom_scan_tlist = subplan->targetlist;
 
-	/* Save partitioned table's Oid */
-	cscan->custom_private = list_make1_int(prel->key.relid);
+	/* Pack partitioned table's Oid and conflict_action */
+	cscan->custom_private = list_make2_int(partitioned_table,
+										   conflict_action);
 
 	return &cscan->scan.plan;
 }
@@ -76,6 +79,11 @@ partition_filter_create_scan_state(CustomScan *node)
 	/* Extract necessary variables */
 	state->subplan = (Plan *) linitial(node->custom_plans);
 	state->partitioned_table = linitial_int(node->custom_private);
+	state->onConflictAction = lsecond_int(node->custom_private);
+
+	/* Check boundaries */
+	Assert(state->onConflictAction >= ONCONFLICT_NONE ||
+		   state->onConflictAction <= ONCONFLICT_UPDATE);
 
 	/* Prepare dummy Const node */
 	NodeSetTag(&state->temp_const, T_Const);
@@ -89,9 +97,21 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 {
 	PartitionFilterState   *state = (PartitionFilterState *) node;
 
+	HTAB	   *result_rels_table;
+	HASHCTL	   *result_rels_table_config = &state->result_rels_table_config;
+
 	node->custom_ps = list_make1(ExecInitNode(state->subplan, estate, eflags));
 	state->prel = get_pathman_relation_info(state->partitioned_table, NULL);
-	state->firstStart = true;
+
+	memset(result_rels_table_config, 0, sizeof(HASHCTL));
+	result_rels_table_config->keysize = sizeof(Oid);
+	result_rels_table_config->entrysize = sizeof(ResultRelInfoHandle);
+
+	result_rels_table = hash_create("ResultRelInfo storage", 10,
+									result_rels_table_config,
+									HASH_ELEM | HASH_BLOBS);
+
+	state->result_rels_table = result_rels_table;
 }
 
 TupleTableSlot *
@@ -107,14 +127,15 @@ partition_filter_exec(CustomScanState *node)
 	PlanState			   *child_ps = (PlanState *) linitial(node->custom_ps);
 	TupleTableSlot		   *slot;
 
-	if (state->firstStart)
-		state->savedRelInfo = estate->es_result_relation_info;
-
 	slot = ExecProcNode(child_ps);
 
 	if (!TupIsNull(slot))
 	{
 		WalkerContext	wcxt;
+		List		   *ranges;
+		int				nparts;
+		Oid			   *parts;
+
 		bool			isnull;
 		AttrNumber		attnum = state->prel->attnum;
 		Datum			value = slot_getattr(slot, attnum, &isnull);
@@ -133,9 +154,11 @@ partition_filter_exec(CustomScanState *node)
 		wcxt.hasLeast = false;
 		wcxt.hasGreatest = false;
 
-		walk_expr_tree((Expr *) &state->temp_const, &wcxt);
+		ranges = walk_expr_tree((Expr *) &state->temp_const, &wcxt)->rangeset;
+		parts = get_partition_oids(ranges, &nparts, state->prel);
+		Assert(nparts == 1); /* there has to be only 1 partition */
 
-		/* estate->es_result_relation_info = NULL; */
+		estate->es_result_relation_info = getResultRelInfo(parts[0], state);
 
 		return slot;
 	}
@@ -146,8 +169,22 @@ partition_filter_exec(CustomScanState *node)
 void
 partition_filter_end(CustomScanState *node)
 {
-	Assert(list_length(node->custom_ps) == 1);
+	PartitionFilterState   *state = (PartitionFilterState *) node;
 
+	HASH_SEQ_STATUS			stat;
+	ResultRelInfoHandle	   *rri_handle;
+
+	hash_seq_init(&stat, state->result_rels_table);
+	while ((rri_handle = (ResultRelInfoHandle *) hash_seq_search(&stat)) != NULL)
+	{
+		ExecCloseIndices(rri_handle->resultRelInfo);
+		heap_close(rri_handle->resultRelInfo->ri_RelationDesc,
+				   RowExclusiveLock);
+	}
+
+	hash_destroy(state->result_rels_table);
+
+	Assert(list_length(node->custom_ps) == 1);
 	ExecEndNode((PlanState *) linitial(node->custom_ps));
 }
 
@@ -163,6 +200,34 @@ void
 partition_filter_explain(CustomScanState *node, List *ancestors, ExplainState *es)
 {
 	/* Nothing to do here now */
+}
+
+
+static ResultRelInfo *
+getResultRelInfo(Oid partid, PartitionFilterState *state)
+{
+	ResultRelInfoHandle	   *resultRelInfoHandle;
+	bool					found;
+
+	resultRelInfoHandle = hash_search(state->result_rels_table,
+									  (const void *) &partid,
+									  HASH_ENTER, &found);
+
+	if (!found)
+	{
+		ResultRelInfo *resultRelInfo = (ResultRelInfo *) palloc(sizeof(ResultRelInfo));
+		InitResultRelInfo(resultRelInfo,
+						  heap_open(partid, RowExclusiveLock),
+						  0,
+						  state->css.ss.ps.state->es_instrument);
+
+		ExecOpenIndices(resultRelInfo, state->onConflictAction != ONCONFLICT_NONE);
+
+		resultRelInfoHandle->partid = partid;
+		resultRelInfoHandle->resultRelInfo = resultRelInfo;
+	}
+
+	return resultRelInfoHandle->resultRelInfo;
 }
 
 /*
@@ -212,9 +277,12 @@ add_partition_filters(List *rtable, ModifyTable *modify_table)
 	forboth (lc1, modify_table->plans, lc2, modify_table->resultRelations)
 	{
 		Index				rindex = lfirst_int(lc2);
-		PartRelationInfo   *prel = get_pathman_relation_info(getrelid(rindex, rtable),
-															 NULL);
+		Oid					relid = getrelid(rindex, rtable);
+		PartRelationInfo   *prel = get_pathman_relation_info(relid, NULL);
+
 		if (prel)
-			lfirst(lc1) = make_partition_filter_plan((Plan *) lfirst(lc1), prel);
+			lfirst(lc1) = make_partition_filter_plan((Plan *) lfirst(lc1),
+													 relid,
+													 modify_table->onConflictAction);
 	}
 }

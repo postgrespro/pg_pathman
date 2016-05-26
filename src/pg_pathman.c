@@ -82,6 +82,7 @@ static Datum increase_hashable_value(const PartRelationInfo *prel, Datum value);
 static Datum decrease_hashable_value(const PartRelationInfo *prel, Datum value);
 static int make_hash(const PartRelationInfo *prel, int value);
 static void handle_binary_opexpr(WalkerContext *context, WrapperNode *result, const Var *v, const Const *c);
+static WrapperNode *handle_const(const Const *c, WalkerContext *context);
 static WrapperNode *handle_opexpr(const OpExpr *expr, WalkerContext *context);
 static WrapperNode *handle_boolexpr(const BoolExpr *expr, WalkerContext *context);
 static WrapperNode *handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context);
@@ -827,6 +828,10 @@ walk_expr_tree(Expr *expr, WalkerContext *context)
 
 	switch (expr->type)
 	{
+		/* Useful for INSERT optimization */
+		case T_Const:
+			return handle_const((Const *) expr, context);
+
 		/* AND, OR, NOT expressions */
 		case T_BoolExpr:
 			boolexpr = (BoolExpr *) expr;
@@ -918,6 +923,167 @@ decrease_hashable_value(const PartRelationInfo *prel, Datum value)
 	}
 }
 
+bool
+search_range_partition(Datum value,
+					   const PartRelationInfo *prel, const RangeRelation *rangerel,
+					   int strategy, FmgrInfo *cmp_func, WrapperNode *result)
+{
+	if (rangerel != NULL)
+	{
+		RangeEntry *re;
+		bool		lossy = false,
+					is_less,
+					is_greater;
+#ifdef USE_ASSERT_CHECKING
+		bool		found = false;
+		int			counter = 0;
+#endif
+		int			i,
+					startidx = 0,
+					cmp_min,
+					cmp_max,
+					endidx = rangerel->ranges.length - 1;
+		RangeEntry *ranges = dsm_array_get_pointer(&rangerel->ranges);
+		bool byVal = rangerel->by_val;
+
+		/* Check boundaries */
+		if (rangerel->ranges.length == 0)
+		{
+			result->rangeset = NIL;
+			return true;
+		}
+		else
+		{
+			Assert(cmp_func);
+
+			/* Corner cases */
+			cmp_min = FunctionCall2(cmp_func, value,
+									PATHMAN_GET_DATUM(ranges[0].min, byVal)),
+			cmp_max = FunctionCall2(cmp_func, value,
+									PATHMAN_GET_DATUM(ranges[rangerel->ranges.length - 1].max, byVal));
+
+			if ((cmp_min < 0 &&
+				 (strategy == BTLessEqualStrategyNumber ||
+				  strategy == BTEqualStrategyNumber)) ||
+				(cmp_min <= 0 && strategy == BTLessStrategyNumber))
+			{
+				result->rangeset = NIL;
+				return true;
+			}
+
+			if (cmp_max >= 0 && (strategy == BTGreaterEqualStrategyNumber ||
+				strategy == BTGreaterStrategyNumber ||
+				strategy == BTEqualStrategyNumber))
+			{
+				result->rangeset = NIL;
+				return true;
+			}
+
+			if ((cmp_min < 0 && strategy == BTGreaterStrategyNumber) ||
+				(cmp_min <= 0 && strategy == BTGreaterEqualStrategyNumber))
+			{
+				result->rangeset = list_make1_irange(make_irange(startidx, endidx, false));
+				return true;
+			}
+
+			if (cmp_max >= 0 && (strategy == BTLessEqualStrategyNumber ||
+				strategy == BTLessStrategyNumber))
+			{
+				result->rangeset = list_make1_irange(make_irange(startidx, endidx, false));
+				return true;
+			}
+		}
+
+		/* Binary search */
+		while (true)
+		{
+			Assert(cmp_func);
+
+			i = startidx + (endidx - startidx) / 2;
+			Assert(i >= 0 && i < rangerel->ranges.length);
+			re = &ranges[i];
+			cmp_min = FunctionCall2(cmp_func, value, PATHMAN_GET_DATUM(re->min, byVal));
+			cmp_max = FunctionCall2(cmp_func, value, PATHMAN_GET_DATUM(re->max, byVal));
+
+			is_less = (cmp_min < 0 || (cmp_min == 0 && strategy == BTLessStrategyNumber));
+			is_greater = (cmp_max > 0 || (cmp_max >= 0 && strategy != BTLessStrategyNumber));
+
+			if (!is_less && !is_greater)
+			{
+				if (strategy == BTGreaterEqualStrategyNumber && cmp_min == 0)
+					lossy = false;
+				else if (strategy == BTLessStrategyNumber && cmp_max == 0)
+					lossy = false;
+				else
+					lossy = true;
+#ifdef USE_ASSERT_CHECKING
+				found = true;
+#endif
+				break;
+			}
+
+			/* If we still didn't find partition then it doesn't exist */
+			if (startidx >= endidx)
+			{
+				result->rangeset = NIL;
+				return true;
+			}
+
+			if (is_less)
+				endidx = i - 1;
+			else if (is_greater)
+				startidx = i + 1;
+
+			/* For debug's sake */
+			Assert(++counter < 100);
+		}
+
+		Assert(found);
+
+		/* Filter partitions */
+		switch(strategy)
+		{
+			case BTLessStrategyNumber:
+			case BTLessEqualStrategyNumber:
+				if (lossy)
+				{
+					result->rangeset = list_make1_irange(make_irange(i, i, true));
+					if (i > 0)
+						result->rangeset = lcons_irange(
+							make_irange(0, i - 1, false), result->rangeset);
+				}
+				else
+				{
+					result->rangeset = list_make1_irange(
+						make_irange(0, i, false));
+				}
+				return true;
+			case BTEqualStrategyNumber:
+				result->rangeset = list_make1_irange(make_irange(i, i, true));
+				return true;
+			case BTGreaterEqualStrategyNumber:
+			case BTGreaterStrategyNumber:
+				if (lossy)
+				{
+					result->rangeset = list_make1_irange(make_irange(i, i, true));
+					if (i < prel->children_count - 1)
+						result->rangeset = lappend_irange(result->rangeset,
+							make_irange(i + 1, prel->children_count - 1, false));
+				}
+				else
+				{
+					result->rangeset = list_make1_irange(
+						make_irange(i, prel->children_count - 1, false));
+				}
+				return true;
+		}
+		result->rangeset = list_make1_irange(make_irange(startidx, endidx, true));
+		return true;
+	}
+
+	return false;
+}
+
 /*
  *	This function determines which partitions should appear in query plan
  */
@@ -928,11 +1094,8 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 	HashRelationKey		key;
 	RangeRelation	   *rangerel;
 	Datum				value;
-	int					i,
-						int_value,
+	int					int_value,
 						strategy;
-	bool				is_less,
-						is_greater;
 	FmgrInfo		    cmp_func;
 	Oid					cmp_proc_oid;
 	const OpExpr	   *expr = (const OpExpr *)result->orig;
@@ -989,151 +1152,8 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 		case PT_RANGE:
 			value = c->constvalue;
 			rangerel = get_pathman_range_relation(prel->key.relid, NULL);
-			if (rangerel != NULL)
-			{
-				RangeEntry *re;
-				bool		lossy = false;
-#ifdef USE_ASSERT_CHECKING
-				bool		found = false;
-				int			counter = 0;
-#endif
-				int			startidx = 0,
-							cmp_min,
-							cmp_max,
-							endidx = rangerel->ranges.length - 1;
-				RangeEntry *ranges = dsm_array_get_pointer(&rangerel->ranges);
-				bool byVal = rangerel->by_val;
-
-				/* Check boundaries */
-				if (rangerel->ranges.length == 0)
-				{
-					result->rangeset = NIL;
-					return;
-				}
-				else
-				{
-					/* Corner cases */
-					cmp_min = FunctionCall2(&cmp_func, value,
-											PATHMAN_GET_DATUM(ranges[0].min, byVal)),
-					cmp_max = FunctionCall2(&cmp_func, value,
-											PATHMAN_GET_DATUM(ranges[rangerel->ranges.length - 1].max, byVal));
-
-					if ((cmp_min < 0 &&
-						 (strategy == BTLessEqualStrategyNumber ||
-						  strategy == BTEqualStrategyNumber)) ||
-						(cmp_min <= 0 && strategy == BTLessStrategyNumber))
-					{
-						result->rangeset = NIL;
-						return;
-					}
-
-					if (cmp_max >= 0 && (strategy == BTGreaterEqualStrategyNumber ||
-						strategy == BTGreaterStrategyNumber ||
-						strategy == BTEqualStrategyNumber))
-					{
-						result->rangeset = NIL;
-						return;
-					}
-
-					if ((cmp_min < 0 && strategy == BTGreaterStrategyNumber) ||
-						(cmp_min <= 0 && strategy == BTGreaterEqualStrategyNumber))
-					{
-						result->rangeset = list_make1_irange(make_irange(startidx, endidx, false));
-						return;
-					}
-
-					if (cmp_max >= 0 && (strategy == BTLessEqualStrategyNumber ||
-						strategy == BTLessStrategyNumber))
-					{
-						result->rangeset = list_make1_irange(make_irange(startidx, endidx, false));
-						return;
-					}
-				}
-
-				/* Binary search */
-				while (true)
-				{
-					i = startidx + (endidx - startidx) / 2;
-					Assert(i >= 0 && i < rangerel->ranges.length);
-					re = &ranges[i];
-					cmp_min = FunctionCall2(&cmp_func, value, PATHMAN_GET_DATUM(re->min, byVal));
-					cmp_max = FunctionCall2(&cmp_func, value, PATHMAN_GET_DATUM(re->max, byVal));
-
-					is_less = (cmp_min < 0 || (cmp_min == 0 && strategy == BTLessStrategyNumber));
-					is_greater = (cmp_max > 0 || (cmp_max >= 0 && strategy != BTLessStrategyNumber));
-
-					if (!is_less && !is_greater)
-					{
-						if (strategy == BTGreaterEqualStrategyNumber && cmp_min == 0)
-							lossy = false;
-						else if (strategy == BTLessStrategyNumber && cmp_max == 0)
-							lossy = false;
-						else
-							lossy = true;
-#ifdef USE_ASSERT_CHECKING
-						found = true;
-#endif
-						break;
-					}
-
-					/* If we still didn't find partition then it doesn't exist */
-					if (startidx >= endidx)
-					{
-						result->rangeset = NIL;
-						return;
-					}
-
-					if (is_less)
-						endidx = i - 1;
-					else if (is_greater)
-						startidx = i + 1;
-
-					/* For debug's sake */
-					Assert(++counter < 100);
-				}
-
-				Assert(found);
-
-				/* Filter partitions */
-				switch(strategy)
-				{
-					case BTLessStrategyNumber:
-					case BTLessEqualStrategyNumber:
-						if (lossy)
-						{
-							result->rangeset = list_make1_irange(make_irange(i, i, true));
-							if (i > 0)
-								result->rangeset = lcons_irange(
-									make_irange(0, i - 1, false), result->rangeset);
-						}
-						else
-						{
-							result->rangeset = list_make1_irange(
-								make_irange(0, i, false));
-						}
-						return;
-					case BTEqualStrategyNumber:
-						result->rangeset = list_make1_irange(make_irange(i, i, true));
-						return;
-					case BTGreaterEqualStrategyNumber:
-					case BTGreaterStrategyNumber:
-						if (lossy)
-						{
-							result->rangeset = list_make1_irange(make_irange(i, i, true));
-							if (i < prel->children_count - 1)
-								result->rangeset = lappend_irange(result->rangeset,
-									make_irange(i + 1, prel->children_count - 1, false));
-						}
-						else
-						{
-							result->rangeset = list_make1_irange(
-								make_irange(i, prel->children_count - 1, false));
-						}
-						return;
-				}
-				result->rangeset = list_make1_irange(make_irange(startidx, endidx, true));
+			if (search_range_partition(value, prel, rangerel, strategy, &cmp_func, result))
 				return;
-			}
 	}
 
 	result->rangeset = list_make1_irange(make_irange(0, prel->children_count - 1, true));
@@ -1251,6 +1271,53 @@ extract_const(WalkerContext *wcxt, Param *param)
 	return makeConst(param->paramtype, param->paramtypmod,
 					 param->paramcollid, get_typlen(param->paramtype),
 					 value, isnull, get_typbyval(param->paramtype));
+}
+
+static WrapperNode *
+handle_const(const Const *c, WalkerContext *context)
+{
+	const PartRelationInfo *prel = context->prel;
+
+	WrapperNode			   *result = (WrapperNode *)palloc(sizeof(WrapperNode));
+
+	switch (prel->parttype)
+	{
+		case PT_HASH:
+		{
+			HashRelationKey	key;
+			int				int_value = DatumGetInt32(c->constvalue);
+
+			key.hash = make_hash(prel, int_value);
+			result->rangeset = list_make1_irange(make_irange(key.hash, key.hash, true));
+
+			return result;
+		}
+
+		case PT_RANGE:
+		{
+			Oid				cmp_proc_oid;
+			FmgrInfo		cmp_func;
+			RangeRelation  *rangerel;
+			TypeCacheEntry *tce;
+
+			tce = lookup_type_cache(c->consttype, 0);
+			cmp_proc_oid = get_opfamily_proc(tce->btree_opf,
+											 c->consttype,
+											 c->consttype,
+											 BTORDER_PROC);
+			fmgr_info(cmp_proc_oid, &cmp_func);
+			rangerel = get_pathman_range_relation(prel->key.relid, NULL);
+			if (search_range_partition(c->constvalue, prel, rangerel,
+									   BTEqualStrategyNumber, &cmp_func, result))
+				return result;
+			/* else fallhrough */
+		}
+
+		default:
+			result->rangeset = list_make1_irange(make_irange(0, prel->children_count - 1, true));
+			result->paramsel = 1.0;
+			return result;
+	}
 }
 
 /*

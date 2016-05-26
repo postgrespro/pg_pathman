@@ -11,16 +11,23 @@
 
 typedef struct
 {
+	Oid					partid;
+	ResultRelInfo	   *resultRelInfo;
+} ResultRelInfoHandle;
+
+typedef struct
+{
 	CustomScanState		css;
-	bool				firstStart;
-	ResultRelInfo	   *savedRelInfo;
 
 	Oid					partitioned_table;
 	PartRelationInfo   *prel;
+	OnConflictAction	onConflictAction;
 
 	Plan			   *subplan;
 	Const				temp_const; /* temporary const for expr walker */
 
+	HTAB			   *result_rels_table;
+	HASHCTL				result_rels_table_config;
 } PartitionFilterState;
 
 
@@ -34,7 +41,8 @@ void add_partition_filters(List *rtable, ModifyTable *modify_table);
 
 void init_partition_filter_static_data(void);
 
-Plan * make_partition_filter_plan(Plan *subplan, PartRelationInfo *prel);
+Plan * make_partition_filter_plan(Plan *subplan, Oid partitioned_table,
+								  OnConflictAction	conflict_action);
 
 Node * partition_filter_create_scan_state(CustomScan *node);
 
