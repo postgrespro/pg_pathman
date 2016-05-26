@@ -14,7 +14,13 @@ typedef struct
 	CustomScanState		css;
 	bool				firstStart;
 	ResultRelInfo	   *savedRelInfo;
+
+	Oid					partitioned_table;
+	PartRelationInfo   *prel;
+
 	Plan			   *subplan;
+	Const				temp_const; /* temporary const for expr walker */
+
 } PartitionFilterState;
 
 
@@ -28,7 +34,7 @@ void add_partition_filters(List *rtable, ModifyTable *modify_table);
 
 void init_partition_filter_static_data(void);
 
-Plan * create_partition_filter_plan(Plan *subplan, PartRelationInfo *prel);
+Plan * make_partition_filter_plan(Plan *subplan, PartRelationInfo *prel);
 
 Node * partition_filter_create_scan_state(CustomScan *node);
 
