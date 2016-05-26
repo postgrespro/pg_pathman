@@ -156,7 +156,11 @@ partition_filter_exec(CustomScanState *node)
 
 		ranges = walk_expr_tree((Expr *) &state->temp_const, &wcxt)->rangeset;
 		parts = get_partition_oids(ranges, &nparts, state->prel);
-		Assert(nparts == 1); /* there has to be only 1 partition */
+
+		if (nparts > 1)
+			elog(ERROR, "PartitionFilter selected more than one partition");
+		else if (nparts == 0)
+			elog(ERROR, "PartitionFilter could not select suitable partition");
 
 		estate->es_result_relation_info = getResultRelInfo(parts[0], state);
 
@@ -192,7 +196,6 @@ void
 partition_filter_rescan(CustomScanState *node)
 {
 	Assert(list_length(node->custom_ps) == 1);
-
 	ExecReScan((PlanState *) linitial(node->custom_ps));
 }
 
