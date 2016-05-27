@@ -31,4 +31,8 @@ bool check_rinfo_for_partitioned_attr(List *rinfo,
 									  Index varno,
 									  AttrNumber varattno);
 
+TriggerDesc * append_trigger_descs(TriggerDesc *src,
+								  TriggerDesc *more,
+								  bool *grown_up);
+
 #endif
