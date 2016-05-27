@@ -102,6 +102,7 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 
 	node->custom_ps = list_make1(ExecInitNode(state->subplan, estate, eflags));
 	state->prel = get_pathman_relation_info(state->partitioned_table, NULL);
+	state->savedRelInfo = NULL;
 
 	memset(result_rels_table_config, 0, sizeof(HASHCTL));
 	result_rels_table_config->keysize = sizeof(Oid);
@@ -129,6 +130,10 @@ partition_filter_exec(CustomScanState *node)
 
 	slot = ExecProcNode(child_ps);
 
+	/* Save original ResultRelInfo */
+	if (!state->savedRelInfo)
+		state->savedRelInfo = estate->es_result_relation_info;
+
 	if (!TupIsNull(slot))
 	{
 		WalkerContext	wcxt;
@@ -140,9 +145,11 @@ partition_filter_exec(CustomScanState *node)
 		AttrNumber		attnum = state->prel->attnum;
 		Datum			value = slot_getattr(slot, attnum, &isnull);
 
+		/* Fill const with value ... */
 		state->temp_const.constvalue = value;
 		state->temp_const.constisnull = isnull;
 
+		/* ... and some other important data */
 		CopyToTempConst(consttype,   atttypid);
 		CopyToTempConst(consttypmod, atttypmod);
 		CopyToTempConst(constcollid, attcollation);
@@ -162,6 +169,7 @@ partition_filter_exec(CustomScanState *node)
 		else if (nparts == 0)
 			elog(ERROR, "PartitionFilter could not select suitable partition");
 
+		/* Replace main table with suitable partition */
 		estate->es_result_relation_info = getResultRelInfo(parts[0], state);
 
 		return slot;
@@ -209,6 +217,9 @@ partition_filter_explain(CustomScanState *node, List *ancestors, ExplainState *e
 static ResultRelInfo *
 getResultRelInfo(Oid partid, PartitionFilterState *state)
 {
+#define CopyToResultRelInfo(field_name) \
+	( resultRelInfo->field_name = state->savedRelInfo->field_name )
+
 	ResultRelInfoHandle	   *resultRelInfoHandle;
 	bool					found;
 
@@ -225,6 +236,17 @@ getResultRelInfo(Oid partid, PartitionFilterState *state)
 						  state->css.ss.ps.state->es_instrument);
 
 		ExecOpenIndices(resultRelInfo, state->onConflictAction != ONCONFLICT_NONE);
+
+		/* Copy necessary fields from saved ResultRelInfo */
+		CopyToResultRelInfo(ri_WithCheckOptions);
+		CopyToResultRelInfo(ri_WithCheckOptionExprs);
+		CopyToResultRelInfo(ri_junkFilter);
+		CopyToResultRelInfo(ri_projectReturning);
+		CopyToResultRelInfo(ri_onConflictSetProj);
+		CopyToResultRelInfo(ri_onConflictSetWhere);
+
+		/* ri_ConstraintExprs will be initialized by ExecRelCheck() */
+		resultRelInfo->ri_ConstraintExprs = NULL;
 
 		resultRelInfoHandle->partid = partid;
 		resultRelInfoHandle->resultRelInfo = resultRelInfo;

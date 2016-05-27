@@ -22,6 +22,7 @@ typedef struct
 	Oid					partitioned_table;
 	PartRelationInfo   *prel;
 	OnConflictAction	onConflictAction;
+	ResultRelInfo	   *savedRelInfo;
 
 	Plan			   *subplan;
 	Const				temp_const; /* temporary const for expr walker */
