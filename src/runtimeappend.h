@@ -63,7 +63,8 @@ extern CustomExecMethods	runtimeappend_exec_methods;
 
 void init_runtimeappend_static_data(void);
 
-Path * create_runtimeappend_path(PlannerInfo *root, AppendPath *inner_append,
+Path * create_runtimeappend_path(PlannerInfo *root,
+								 AppendPath *inner_append,
 								 ParamPathInfo *param_info,
 								 double sel);
 
@@ -73,7 +74,9 @@ Plan * create_runtimeappend_plan(PlannerInfo *root, RelOptInfo *rel,
 
 Node * runtimeappend_create_scan_state(CustomScan *node);
 
-void runtimeappend_begin(CustomScanState *node, EState *estate, int eflags);
+void runtimeappend_begin(CustomScanState *node,
+						 EState *estate,
+						 int eflags);
 
 TupleTableSlot * runtimeappend_exec(CustomScanState *node);
 
@@ -81,6 +84,8 @@ void runtimeappend_end(CustomScanState *node);
 
 void runtimeappend_rescan(CustomScanState *node);
 
-void runtimeappend_explain(CustomScanState *node, List *ancestors, ExplainState *es);
+void runtimeappend_explain(CustomScanState *node,
+						   List *ancestors,
+						   ExplainState *es);
 
 #endif

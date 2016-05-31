@@ -17,6 +17,11 @@
 #include "utils.h"
 
 
+/* Allocation settings */
+#define INITIAL_ALLOC_NUM	10
+#define ALLOC_EXP			2
+
+
 /* Compare plans by 'original_order' */
 static int
 cmp_child_scan_common_by_orig_order(const void *ap,
@@ -78,10 +83,12 @@ transform_plans_into_states(RuntimeAppendState *scan_state,
 static ChildScanCommon *
 select_required_plans(HTAB *children_table, Oid *parts, int nparts, int *nres)
 {
-	int					allocated = 10;
+	int					allocated = INITIAL_ALLOC_NUM;
 	int					used = 0;
-	ChildScanCommon	   *result = palloc(10 * sizeof(ChildScanCommon));
+	ChildScanCommon	   *result;
 	int					i;
+
+	result = (ChildScanCommon *) palloc(allocated * sizeof(ChildScanCommon));
 
 	for (i = 0; i < nparts; i++)
 	{
@@ -93,7 +100,7 @@ select_required_plans(HTAB *children_table, Oid *parts, int nparts, int *nres)
 
 		if (allocated <= used)
 		{
-			allocated *= 2;
+			allocated *= ALLOC_EXP;
 			result = repalloc(result, allocated * sizeof(ChildScanCommon));
 		}
 
@@ -101,39 +108,6 @@ select_required_plans(HTAB *children_table, Oid *parts, int nparts, int *nres)
 	}
 
 	*nres = used;
-	return result;
-}
-
-/* Transform partition ranges into plain array of partition Oids */
-Oid *
-get_partition_oids(List *ranges, int *n, PartRelationInfo *prel)
-{
-	ListCell   *range_cell;
-	int			allocated = 10;
-	int			used = 0;
-	Oid		   *result = palloc(allocated * sizeof(Oid));
-	Oid		   *children = dsm_array_get_pointer(&prel->children);
-
-	foreach (range_cell, ranges)
-	{
-		int i;
-		int a = irange_lower(lfirst_irange(range_cell));
-		int b = irange_upper(lfirst_irange(range_cell));
-
-		for (i = a; i <= b; i++)
-		{
-			if (allocated <= used)
-			{
-				allocated *= 2;
-				result = repalloc(result, allocated * sizeof(Oid));
-			}
-
-			Assert(i < prel->children_count);
-			result[used++] = children[i];
-		}
-	}
-
-	*n = used;
 	return result;
 }
 
@@ -148,7 +122,7 @@ replace_tlist_varnos(List *child_tlist, RelOptInfo *parent)
 	foreach (lc, child_tlist)
 	{
 		Var *var = (Var *) ((TargetEntry *) lfirst(lc))->expr;
-		Var *newvar = palloc(sizeof(Var));
+		Var *newvar = (Var *) palloc(sizeof(Var));
 
 		Assert(IsA(var, Var));
 
@@ -229,6 +203,40 @@ unpack_runtimeappend_private(RuntimeAppendState *scan_state, CustomScan *cscan)
 	scan_state->relid = linitial_oid(linitial(runtimeappend_private));
 }
 
+
+/* Transform partition ranges into plain array of partition Oids */
+Oid *
+get_partition_oids(List *ranges, int *n, PartRelationInfo *prel)
+{
+	ListCell   *range_cell;
+	int			allocated = INITIAL_ALLOC_NUM;
+	int			used = 0;
+	Oid		   *result = (Oid *) palloc(allocated * sizeof(Oid));
+	Oid		   *children = dsm_array_get_pointer(&prel->children);
+
+	foreach (range_cell, ranges)
+	{
+		int i;
+		int a = irange_lower(lfirst_irange(range_cell));
+		int b = irange_upper(lfirst_irange(range_cell));
+
+		for (i = a; i <= b; i++)
+		{
+			if (allocated <= used)
+			{
+				allocated *= ALLOC_EXP;
+				result = repalloc(result, allocated * sizeof(Oid));
+			}
+
+			Assert(i < prel->children_count);
+			result[used++] = children[i];
+		}
+	}
+
+	*n = used;
+	return result;
+}
+
 Path *
 create_append_path_common(PlannerInfo *root,
 						  AppendPath *inner_append,
@@ -245,7 +253,7 @@ create_append_path_common(PlannerInfo *root,
 
 	RuntimeAppendPath  *result;
 
-	result = palloc0(size);
+	result = (RuntimeAppendPath *) palloc0(size);
 	NodeSetTag(result, T_CustomPath);
 
 	result->cpath.path.pathtype = T_CustomScan;
@@ -266,13 +274,16 @@ create_append_path_common(PlannerInfo *root,
 	result->relid = inner_entry->relid;
 
 	result->nchildren = list_length(inner_append->subpaths);
-	result->children = palloc(result->nchildren * sizeof(ChildScanCommon));
+	result->children = (ChildScanCommon *)
+			palloc(result->nchildren * sizeof(ChildScanCommon));
 	i = 0;
 	foreach (lc, inner_append->subpaths)
 	{
 		Path			   *path = lfirst(lc);
 		Index				relindex = path->parent->relid;
-		ChildScanCommon		child = palloc(sizeof(ChildScanCommonData));
+		ChildScanCommon		child;
+
+		child = (ChildScanCommon) palloc(sizeof(ChildScanCommonData));
 
 		result->cpath.path.startup_cost += path->startup_cost;
 		result->cpath.path.total_cost += path->total_cost;
@@ -301,30 +312,29 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 						  List *clauses, List *custom_plans,
 						  CustomScanMethods *scan_methods)
 {
-	RuntimeAppendPath  *gpath = (RuntimeAppendPath *) best_path;
+	RuntimeAppendPath  *rpath = (RuntimeAppendPath *) best_path;
 	CustomScan		   *cscan;
 
 	cscan = makeNode(CustomScan);
-	cscan->custom_scan_tlist = NIL;
+	cscan->custom_scan_tlist = NIL; /* initial value (empty list) */
 
 	if (custom_plans)
 	{
 		ListCell   *lc1,
 				   *lc2;
 
-		forboth (lc1, gpath->cpath.custom_paths, lc2, custom_plans)
+		forboth (lc1, rpath->cpath.custom_paths, lc2, custom_plans)
 		{
 			Plan		   *child_plan = (Plan *) lfirst(lc2);
 			RelOptInfo 	   *child_rel = ((Path *) lfirst(lc1))->parent;
 
-			/* We inforce IndexOnlyScans to return all available columns */
+			/* We enforce IndexOnlyScans to return all available columns */
 			if (IsA(child_plan, IndexOnlyScan))
 			{
 				IndexOptInfo   *indexinfo = ((IndexPath *) lfirst(lc1))->indexinfo;
 				RangeTblEntry  *rentry = root->simple_rte_array[child_rel->relid];
 				Relation		child_relation;
 
-				/* TODO: find out whether we need locks or not */
 				child_relation = heap_open(rentry->relid, NoLock);
 				child_plan->targetlist = build_index_tlist(root, indexinfo,
 														   child_relation);
@@ -350,7 +360,7 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 		 * physical tlists with the new 'custom_scan_tlist'.
 		 */
 		if (cscan->custom_scan_tlist)
-			forboth (lc1, gpath->cpath.custom_paths, lc2, custom_plans)
+			forboth (lc1, rpath->cpath.custom_paths, lc2, custom_plans)
 			{
 				Plan		   *child_plan = (Plan *) lfirst(lc2);
 				RelOptInfo 	   *child_rel = ((Path *) lfirst(lc1))->parent;
@@ -371,14 +381,14 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 	if (!cscan->custom_scan_tlist)
 		cscan->custom_scan_tlist = tlist;
 
+	/* Since we're not scanning any real table directly */
 	cscan->scan.scanrelid = 0;
 
 	cscan->custom_exprs = get_actual_clauses(clauses);
 	cscan->custom_plans = custom_plans;
-
 	cscan->methods = scan_methods;
 
-	pack_runtimeappend_private(cscan, gpath);
+	pack_runtimeappend_private(cscan, rpath);
 
 	return &cscan->scan.plan;
 }
@@ -388,9 +398,11 @@ create_append_scan_state_common(CustomScan *node,
 								CustomExecMethods *exec_methods,
 								uint32 size)
 {
-	RuntimeAppendState *scan_state = palloc0(size);
+	RuntimeAppendState *scan_state;
 
+	scan_state = (RuntimeAppendState *) palloc0(size);
 	NodeSetTag(scan_state, T_CustomScanState);
+
 	scan_state->css.flags = node->flags;
 	scan_state->css.methods = exec_methods;
 	scan_state->custom_exprs = node->custom_exprs;
@@ -426,14 +438,16 @@ exec_append_common(CustomScanState *node,
 {
 	RuntimeAppendState	   *scan_state = (RuntimeAppendState *) node;
 
+	/* ReScan if no plans are selected */
 	if (scan_state->ncur_plans == 0)
 		ExecReScan(&node->ss.ps);
 
 	for (;;)
 	{
+		/* Fetch next tuple if we're done with Projections */
 		if (!node->ss.ps.ps_TupFromTlist)
 		{
-			fetch_next_tuple(node);
+			fetch_next_tuple(node); /* use specific callback */
 
 			if (TupIsNull(scan_state->slot))
 				return NULL;
@@ -527,12 +541,14 @@ explain_append_common(CustomScanState *node, HTAB *children_table, ExplainState 
 	/* Construct excess PlanStates */
 	if (!es->analyze)
 	{
-		int					allocated = 10;
+		int					allocated = INITIAL_ALLOC_NUM;
 		int					used = 0;
-		ChildScanCommon	   *custom_ps = palloc(allocated * sizeof(ChildScanCommon));
+		ChildScanCommon	   *custom_ps;
 		ChildScanCommon		child;
 		HASH_SEQ_STATUS		seqstat;
 		int					i;
+
+		custom_ps = (ChildScanCommon *) palloc(allocated * sizeof(ChildScanCommon));
 
 		/* There can't be any nodes since we're not scanning anything */
 		Assert(!node->custom_ps);
@@ -544,7 +560,7 @@ explain_append_common(CustomScanState *node, HTAB *children_table, ExplainState 
 		{
 			if (allocated <= used)
 			{
-				allocated *= 2;
+				allocated *= ALLOC_EXP;
 				custom_ps = repalloc(custom_ps, allocated * sizeof(ChildScanCommon));
 			}
 

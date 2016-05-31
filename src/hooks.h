@@ -11,16 +11,40 @@
 #define JOIN_HOOK_H
 
 #include "postgres.h"
+#include "optimizer/planner.h"
 #include "optimizer/paths.h"
+#include "parser/analyze.h"
+#include "storage/ipc.h"
+
 
 extern set_join_pathlist_hook_type		set_join_pathlist_next;
 extern set_rel_pathlist_hook_type		set_rel_pathlist_hook_next;
+extern planner_hook_type				planner_hook_next;
+extern post_parse_analyze_hook_type		post_parse_analyze_hook_next;
+extern shmem_startup_hook_type			shmem_startup_hook_next;
 
-void pathman_join_pathlist_hook(PlannerInfo *root, RelOptInfo *joinrel, RelOptInfo *outerrel,
-								RelOptInfo *innerrel, JoinType jointype, JoinPathExtraData *extra);
 
-void pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTblEntry *rte);
+void pathman_join_pathlist_hook(PlannerInfo *root,
+								RelOptInfo *joinrel,
+								RelOptInfo *outerrel,
+								RelOptInfo *innerrel,
+								JoinType jointype,
+								JoinPathExtraData *extra);
+
+void pathman_rel_pathlist_hook(PlannerInfo *root,
+							   RelOptInfo *rel,
+							   Index rti,
+							   RangeTblEntry *rte);
 
 void pg_pathman_enable_assign_hook(char newval, void *extra);
+
+PlannedStmt * pathman_planner_hook(Query *parse,
+								   int cursorOptions,
+								   ParamListInfo boundParams);
+
+void pathman_post_parse_analysis_hook(ParseState *pstate,
+									  Query *query);
+
+void pathman_shmem_startup_hook(void);
 
 #endif

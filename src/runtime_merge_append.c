@@ -441,7 +441,8 @@ runtimemergeappend_rescan(CustomScanState *node)
 	 * initialize sort-key information
 	 */
 	scan_state->ms_nkeys = scan_state->numCols;
-	scan_state->ms_sortkeys = palloc0(sizeof(SortSupportData) * scan_state->numCols);
+	scan_state->ms_sortkeys = (SortSupport)
+			palloc0(sizeof(SortSupportData) * scan_state->numCols);
 
 	for (i = 0; i < scan_state->numCols; i++)
 	{

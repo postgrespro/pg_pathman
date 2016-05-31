@@ -26,7 +26,7 @@
 
 /* Check PostgreSQL version */
 #if PG_VERSION_NUM < 90500
-	#error "You are trying to build pg_pathman with PostgreSQL version lower than 9.5.  Please, check you environment."
+	#error "You are trying to build pg_pathman with PostgreSQL version lower than 9.5.  Please, check your environment."
 #endif
 
 #define ALL NIL
@@ -46,9 +46,9 @@ typedef enum PartType
  */
 typedef struct DsmArray
 {
-	dsm_handle	segment;
-	size_t		offset;
-	size_t		length;
+	dsm_handle		segment;
+	size_t			offset;
+	size_t			length;
 } DsmArray;
 
 /*
@@ -56,27 +56,27 @@ typedef struct DsmArray
  */
 typedef struct RelationKey
 {
-	Oid		dbid;
-	Oid		relid;
+	Oid				dbid;
+	Oid				relid;
 } RelationKey;
 
 /*
  * PartRelationInfo
  *		Per-relation partitioning information
  *
- *		oid - parent table oid
- *		children - list of children oids
+ *		oid - parent table's Oid
+ *		children - list of children's Oids
  *		parttype - partitioning type (HASH, LIST or RANGE)
- *		attnum - attribute number of parent relation
+ *		attnum - attribute number of parent relation's column
  */
 typedef struct PartRelationInfo
 {
-	RelationKey	key;
-	DsmArray	children;
-	int			children_count;
-	PartType	parttype;
-	Index		attnum;
-	Oid			atttype;
+	RelationKey		key;
+	DsmArray		children;
+	int				children_count;
+	PartType		parttype;
+	Index			attnum;
+	Oid				atttype;
 
 } PartRelationInfo;
 
@@ -85,14 +85,14 @@ typedef struct PartRelationInfo
  */
 typedef struct HashRelationKey
 {
-	int		hash;
-	Oid		parent_oid;
+	uint32			hash;
+	Oid				parent_oid;
 } HashRelationKey;
 
 typedef struct HashRelation
 {
-	HashRelationKey key;
-	Oid		child_oid;
+	HashRelationKey	key;
+	Oid				child_oid;
 } HashRelation;
 
 /*
@@ -100,30 +100,38 @@ typedef struct HashRelation
  */
 typedef struct RangeEntry
 {
-	Oid		child_oid;
-	#ifdef HAVE_INT64_TIMESTAMP
-	int64		min;
-	int64		max;
-	#else
-	double		min;
-	double		max;
-	#endif
+	Oid				child_oid;
+
+#ifdef HAVE_INT64_TIMESTAMP
+	int64			min;
+	int64			max;
+#else
+	double			min;
+	double			max;
+#endif
 } RangeEntry;
 
 typedef struct RangeRelation
 {
-	RelationKey	key;
-	bool        by_val;
-	DsmArray    ranges;
+	RelationKey		key;
+	bool			by_val;
+	DsmArray		ranges;
 } RangeRelation;
 
 typedef struct PathmanState
 {
-	LWLock	   *load_config_lock;
-	LWLock	   *dsm_init_lock;
-	LWLock	   *edit_partitions_lock;
-	DsmArray	databases;
+	LWLock		   *load_config_lock;
+	LWLock		   *dsm_init_lock;
+	LWLock		   *edit_partitions_lock;
+	DsmArray		databases;
 } PathmanState;
+
+typedef enum
+{
+	SEARCH_RANGEREL_OUT_OF_RANGE = 0,
+	SEARCH_RANGEREL_GAP,
+	SEARCH_RANGEREL_FOUND
+} search_rangerel_result;
 
 extern bool				inheritance_disabled;
 extern bool 			pg_pathman_enable;
@@ -131,9 +139,9 @@ extern PathmanState    *pmstate;
 
 #define PATHMAN_GET_DATUM(value, by_val) ( (by_val) ? (value) : PointerGetDatum(&value) )
 
-typedef int IndexRange;
-#define RANGE_INFINITY 0x7FFF
-#define RANGE_LOSSY 0x80000000
+typedef uint32 IndexRange;
+#define RANGE_INFINITY	0x7FFF
+#define RANGE_LOSSY		0x80000000
 
 #define make_irange(lower, upper, lossy) \
 	(((lower) & RANGE_INFINITY) << 15 | ((upper) & RANGE_INFINITY) | ((lossy) ? RANGE_LOSSY : 0))
@@ -195,11 +203,18 @@ int append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
 						  RangeTblEntry *rte, int index, Oid childOID, List *wrappers);
 PartRelationInfo *get_pathman_relation_info(Oid relid, bool *found);
 RangeRelation *get_pathman_range_relation(Oid relid, bool *found);
-int range_binary_search(const RangeRelation *rangerel, FmgrInfo *cmp_func, Datum value, bool *fountPtr);
+search_rangerel_result search_range_partition_eq(Datum value,
+												 const RangeRelation *rangerel,
+												 FmgrInfo *cmp_func,
+												 int *part_idx);
 char *get_extension_schema(void);
-FmgrInfo *get_cmp_func(Oid type1, Oid type2);
 Oid create_partitions_bg_worker(Oid relid, Datum value, Oid value_type, bool *crashed);
 Oid create_partitions(Oid relid, Datum value, Oid value_type, bool *crashed);
+
+void handle_modification_query(Query *parse);
+void disable_inheritance(Query *parse);
+void disable_inheritance_cte(Query *parse);
+void disable_inheritance_subselect(Query *parse);
 
 /* copied from allpaths.h */
 void set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
@@ -209,10 +224,11 @@ void set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti, Rang
 
 typedef struct
 {
-	const Node	   *orig;
-	List		   *args;
-	List		   *rangeset;
-	double			paramsel;
+	const Node			   *orig;
+	List				   *args;
+	List				   *rangeset;
+	bool					found_gap;
+	double					paramsel;
 } WrapperNode;
 
 typedef struct
@@ -227,9 +243,11 @@ typedef struct
 	ExprContext			   *econtext;
 } WalkerContext;
 
-bool search_range_partition(Datum value,
-							const PartRelationInfo *prel, const RangeRelation *rangerel,
-							int strategy, FmgrInfo *cmp_func, WrapperNode *result);
+void select_range_partitions(const Datum value,
+							 const RangeRelation *rangerel,
+							 const int strategy,
+							 FmgrInfo *cmp_func,
+							 WrapperNode *result);
 
 WrapperNode *walk_expr_tree(Expr *expr, WalkerContext *context);
 void finish_least_greatest(WrapperNode *wrap, WalkerContext *context);

@@ -14,6 +14,11 @@
 #include "pathman.h"
 
 
+/*
+ * Common structure for storing selected
+ * Paths/Plans/PlanStates in a hash table
+ * or its slice.
+ */
 typedef struct
 {
 	Oid			relid;				/* partition relid */
@@ -23,7 +28,7 @@ typedef struct
 		CHILD_PATH = 0,
 		CHILD_PLAN,
 		CHILD_PLAN_STATE
-	}		content_type;
+	}			content_type;
 
 	union
 	{
@@ -32,7 +37,7 @@ typedef struct
 		PlanState  *plan_state;
 	}			content;
 
-	int		original_order;			/* for sorting in EXPLAIN */
+	int			original_order;		/* for sorting in EXPLAIN */
 } ChildScanCommonData;
 
 typedef ChildScanCommonData *ChildScanCommon;

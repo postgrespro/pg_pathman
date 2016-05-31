@@ -1,6 +1,7 @@
 #include "partition_filter.h"
 #include "utils.h"
 #include "utils/guc.h"
+#include "utils/lsyscache.h"
 #include "nodes/nodeFuncs.h"
 
 
@@ -70,8 +71,9 @@ make_partition_filter(Plan *subplan, Oid partitioned_table,
 Node *
 partition_filter_create_scan_state(CustomScan *node)
 {
-	PartitionFilterState   *state = palloc0(sizeof(PartitionFilterState));
+	PartitionFilterState   *state;
 
+	state = (PartitionFilterState *) palloc0(sizeof(PartitionFilterState));
 	NodeSetTag(state, T_CustomScanState);
 
 	state->css.flags = node->flags;
@@ -141,6 +143,7 @@ partition_filter_exec(CustomScanState *node)
 		List		   *ranges;
 		int				nparts;
 		Oid			   *parts;
+		Oid				selected_partid;
 
 		bool			isnull;
 		AttrNumber		attnum = state->prel->attnum;
@@ -168,10 +171,14 @@ partition_filter_exec(CustomScanState *node)
 		if (nparts > 1)
 			elog(ERROR, "PartitionFilter selected more than one partition");
 		else if (nparts == 0)
-			elog(ERROR, "PartitionFilter could not select suitable partition");
+			selected_partid = add_missing_partition(state->partitioned_table,
+													&state->temp_const);
+		else
+			selected_partid = parts[0];
 
 		/* Replace main table with suitable partition */
-		estate->es_result_relation_info = getResultRelInfo(parts[0], state);
+		estate->es_result_relation_info = getResultRelInfo(selected_partid,
+														   state);
 
 		return slot;
 	}
@@ -225,7 +232,6 @@ getResultRelInfo(Oid partid, PartitionFilterState *state)
 	do { \
 		if (resultRelInfo->field_name) \
 			pfree(resultRelInfo->field_name); \
-		/* palloc0() is necessary here */ \
 		resultRelInfo->field_name = (field_type *) \
 			palloc0(resultRelInfo->ri_TrigDesc->numtriggers * sizeof(field_type)); \
 	} while (0)
@@ -317,6 +323,9 @@ pfilter_build_tlist(List *tlist)
 	return result_tlist;
 }
 
+/*
+ * Add PartitionFilter nodes to the plan tree
+ */
 void
 add_partition_filters(List *rtable, Plan *plan)
 {
@@ -346,6 +355,9 @@ add_partition_filters(List *rtable, Plan *plan)
 				ModifyTable	   *modify_table = ((ModifyTable *) plan);
 				ListCell	   *lc1,
 							   *lc2;
+
+				if (modify_table->operation != CMD_INSERT)
+					break;
 
 				forboth (lc1, modify_table->plans, lc2, modify_table->resultRelations)
 				{

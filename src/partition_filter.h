@@ -42,12 +42,15 @@ void add_partition_filters(List *rtable, Plan *plan);
 
 void init_partition_filter_static_data(void);
 
-Plan * make_partition_filter(Plan *subplan, Oid partitioned_table,
+Plan * make_partition_filter(Plan *subplan,
+							 Oid partitioned_table,
 							 OnConflictAction conflict_action);
 
 Node * partition_filter_create_scan_state(CustomScan *node);
 
-void partition_filter_begin(CustomScanState *node, EState *estate, int eflags);
+void partition_filter_begin(CustomScanState *node,
+							EState *estate,
+							int eflags);
 
 TupleTableSlot * partition_filter_exec(CustomScanState *node);
 
@@ -55,6 +58,8 @@ void partition_filter_end(CustomScanState *node);
 
 void partition_filter_rescan(CustomScanState *node);
 
-void partition_filter_explain(CustomScanState *node, List *ancestors, ExplainState *es);
+void partition_filter_explain(CustomScanState *node,
+							  List *ancestors,
+							  ExplainState *es);
 
 #endif

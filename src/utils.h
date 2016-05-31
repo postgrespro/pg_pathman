@@ -14,17 +14,13 @@
 #include "utils/rel.h"
 #include "nodes/relation.h"
 #include "nodes/nodeFuncs.h"
+#include "pathman.h"
 
-typedef struct
-{
-	RelOptInfo *child;
-	RelOptInfo *parent;
-	int			sublevels_up;
-} ReplaceVarsContext;
 
 bool clause_contains_params(Node *clause);
 
-List * build_index_tlist(PlannerInfo *root, IndexOptInfo *index,
+List * build_index_tlist(PlannerInfo *root,
+						 IndexOptInfo *index,
 						 Relation heapRelation);
 
 bool check_rinfo_for_partitioned_attr(List *rinfo,
@@ -32,7 +28,15 @@ bool check_rinfo_for_partitioned_attr(List *rinfo,
 									  AttrNumber varattno);
 
 TriggerDesc * append_trigger_descs(TriggerDesc *src,
-								  TriggerDesc *more,
-								  bool *grown_up);
+								   TriggerDesc *more,
+								   bool *grown_up);
+
+Oid add_missing_partition(Oid partitioned_table, Const *value);
+
+void fill_type_cmp_fmgr_info(FmgrInfo *finfo,
+							 Oid type1,
+							 Oid type2);
+
+List * list_reverse(List *l);
 
 #endif

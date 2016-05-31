@@ -17,6 +17,7 @@
 #include "catalog/pg_type.h"
 #include "executor/spi.h"
 #include "storage/lmgr.h"
+#include "utils.h"
 
 
 /* declarations */
@@ -92,17 +93,17 @@ on_partitions_removed(PG_FUNCTION_ARGS)
 Datum
 find_or_create_range_partition(PG_FUNCTION_ARGS)
 {
-	int		relid = DatumGetInt32(PG_GETARG_DATUM(0));
-	Datum	value = PG_GETARG_DATUM(1);
-	Oid		value_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
-	int		pos;
-	bool	found;
-	RangeRelation	*rangerel;
-	RangeEntry		*ranges;
-	TypeCacheEntry	*tce;
-	PartRelationInfo *prel;
-	Oid				 cmp_proc_oid;
-	FmgrInfo		 cmp_func;
+	int					relid = DatumGetInt32(PG_GETARG_DATUM(0));
+	Datum				value = PG_GETARG_DATUM(1);
+	Oid					value_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
+	int					pos;
+	RangeRelation	   *rangerel;
+	RangeEntry		   *ranges;
+	TypeCacheEntry	   *tce;
+	PartRelationInfo   *prel;
+	Oid					cmp_proc_oid;
+	FmgrInfo			cmp_func;
+	search_rangerel_result search_state;
 
 	tce = lookup_type_cache(value_type,
 		TYPECACHE_EQ_OPR | TYPECACHE_LT_OPR | TYPECACHE_GT_OPR |
@@ -121,17 +122,18 @@ find_or_create_range_partition(PG_FUNCTION_ARGS)
 	fmgr_info(cmp_proc_oid, &cmp_func);
 
 	ranges = dsm_array_get_pointer(&rangerel->ranges);
-	pos = range_binary_search(rangerel, &cmp_func, value, &found);
+	search_state = search_range_partition_eq(value, rangerel,
+											 &cmp_func, &pos);
 
 	/*
-	 * If found then just return oid. Else create new partitions
+	 * If found then just return oid, else create new partitions
 	 */
-	if (found)
+	if (search_state == SEARCH_RANGEREL_FOUND)
 		PG_RETURN_OID(ranges[pos].child_oid);
 	/*
 	 * If not found and value is between first and last partitions
-	*/
-	if (!found && pos >= 0)
+	 */
+	else if (search_state == SEARCH_RANGEREL_GAP)
 		PG_RETURN_NULL();
 	else
 	{
@@ -148,13 +150,16 @@ find_or_create_range_partition(PG_FUNCTION_ARGS)
 		 * Check if someone else has already created partition.
 		 */
 		ranges = dsm_array_get_pointer(&rangerel->ranges);
-		pos = range_binary_search(rangerel, &cmp_func, value, &found);
-		if (found)
+		search_state = search_range_partition_eq(value, rangerel,
+												 &cmp_func, &pos);
+		if (search_state == SEARCH_RANGEREL_FOUND)
 		{
 			LWLockRelease(pmstate->edit_partitions_lock);
 			LWLockRelease(pmstate->load_config_lock);
 			PG_RETURN_OID(ranges[pos].child_oid);
 		}
+		else
+			Assert(search_state != SEARCH_RANGEREL_GAP);
 
 		/* Start background worker to create new partitions */
 		child_oid = create_partitions_bg_worker(relid, value, value_type, &crashed);
@@ -167,12 +172,12 @@ find_or_create_range_partition(PG_FUNCTION_ARGS)
 		}
 
 		/* Repeat binary search */
-		(void) range_binary_search(rangerel, &cmp_func, value, &found);
-		if (found)
-			PG_RETURN_OID(child_oid);
+		Assert(SEARCH_RANGEREL_FOUND == search_range_partition_eq(value,
+																  rangerel,
+																  &cmp_func,
+																  &pos));
+		PG_RETURN_OID(child_oid);
 	}
-
-	PG_RETURN_NULL();
 }
 
 /*
@@ -198,7 +203,7 @@ get_partition_range(PG_FUNCTION_ARGS)
 	ArrayType		   *arr;
 
 	prel = get_pathman_relation_info(parent_oid, NULL);
-	
+
 	rangerel = get_pathman_range_relation(parent_oid, NULL);
 
 	if (!prel || !rangerel)
@@ -331,8 +336,8 @@ check_overlap(PG_FUNCTION_ARGS)
 	PartRelationInfo *prel;
 	RangeRelation	 *rangerel;
 	RangeEntry		 *ranges;
-	FmgrInfo		  cmp_func_1;
-	FmgrInfo		  cmp_func_2;
+	FmgrInfo			cmp_func_1;
+	FmgrInfo			cmp_func_2;
 	int i;
 	bool byVal;
 
@@ -343,8 +348,8 @@ check_overlap(PG_FUNCTION_ARGS)
 		PG_RETURN_NULL();
 
 	/* comparison functions */
-	cmp_func_1 = *get_cmp_func(p1_type, prel->atttype);
-	cmp_func_2 = *get_cmp_func(p2_type, prel->atttype);
+	fill_type_cmp_fmgr_info(&cmp_func_1, p1_type, prel->atttype);
+	fill_type_cmp_fmgr_info(&cmp_func_2, p2_type, prel->atttype);
 
 	byVal = rangerel->by_val;
 	ranges = (RangeEntry *) dsm_array_get_pointer(&rangerel->ranges);
@@ -379,12 +384,3 @@ release_partitions_lock(PG_FUNCTION_ARGS)
 	PG_RETURN_NULL();
 }
 
-
-// Datum
-
-// names = stringToQualifiedNameList(class_name_or_oid);
-
-// ident 
-// bool
-// SplitIdentifierString(char *rawstring, char separator,
-// 					  List **namelist)

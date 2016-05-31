@@ -53,7 +53,6 @@ BEGIN
 	VALUES (v_relname, attribute, 1);
 
 	/* Create triggers */
-	PERFORM @extschema@.create_hash_insert_trigger(v_relname, attribute, partitions_count);
 	/* Do not create update trigger by default */
 	-- PERFORM @extschema@.create_hash_update_trigger(relation, attribute, partitions_count);
 
@@ -64,59 +63,6 @@ BEGIN
 	PERFORM @extschema@.partition_data(relation);
 
 	RETURN partitions_count;
-END
-$$ LANGUAGE plpgsql;
-
-/*
- * Creates hash trigger for specified relation
- */
-CREATE OR REPLACE FUNCTION @extschema@.create_hash_insert_trigger(
-	IN relation REGCLASS
-	, IN attr TEXT
-	, IN partitions_count INTEGER)
-RETURNS VOID AS
-$$
-DECLARE
-	func TEXT := '
-		CREATE OR REPLACE FUNCTION %s()
-		RETURNS TRIGGER AS $body$
-		DECLARE
-			hash INTEGER;
-		BEGIN
-			hash := NEW.%s %% %s;
-			%s
-			RETURN NULL;
-		END $body$ LANGUAGE plpgsql;';
-	funcname TEXT;
-	trigger TEXT := '
-		CREATE TRIGGER %s
-		BEFORE INSERT ON %s
-		FOR EACH ROW EXECUTE PROCEDURE %s();';
-	triggername TEXT;
-	-- fields TEXT;
-	-- fields_format TEXT;
-	insert_stmt TEXT;
-	relname TEXT;
-	schema TEXT;
-BEGIN
-	/* drop trigger and corresponding function */
-	PERFORM @extschema@.drop_hash_triggers(relation);
-
-	SELECT * INTO schema, relname
-	FROM @extschema@.get_plain_schema_and_relname(relation);
-
-	/* generate INSERT statement for trigger */
-	insert_stmt = format('EXECUTE format(''INSERT INTO %s.%s SELECT $1.*'', hash) USING NEW;'
-						 , schema, quote_ident(relname || '_%s'));
-
-	/* format and create new trigger for relation */
-	funcname := schema || '.' || quote_ident(format('%s_insert_trigger_func', relname));
-	triggername := quote_ident(format('%s_%s_insert_trigger', schema, relname));
-
-	func := format(func, funcname, attr, partitions_count, insert_stmt);
-	trigger := format(trigger, triggername, relation, funcname);
-	EXECUTE func;
-	EXECUTE trigger;
 END
 $$ LANGUAGE plpgsql;
 

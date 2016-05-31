@@ -60,9 +60,9 @@ init_shmem_config()
 		if (!IsUnderPostmaster)
 		{
 			/* Initialize locks */
-			pmstate->load_config_lock = LWLockAssign();
-			pmstate->dsm_init_lock    = LWLockAssign();
-			pmstate->edit_partitions_lock = LWLockAssign();
+			pmstate->load_config_lock		= LWLockAssign();
+			pmstate->dsm_init_lock			= LWLockAssign();
+			pmstate->edit_partitions_lock	= LWLockAssign();
 		}
 #ifdef WIN32
 		else
@@ -114,7 +114,7 @@ load_config(void)
 
 		/* Check if we already cached config for current database */
 		databases = (Oid *) dsm_array_get_pointer(&pmstate->databases);
-		for(i=0; i<databases_count; i++)
+		for(i = 0; i < databases_count; i++)
 			if (databases[i] == MyDatabaseId)
 			{
 				LWLockRelease(pmstate->dsm_init_lock);
@@ -331,7 +331,7 @@ load_check_constraints(Oid parent_oid, Snapshot snapshot)
 			rangerel->by_val = tce->typbyval;
 		}
 
-		for (i=0; i<proc; i++)
+		for (i = 0; i < proc; i++)
 		{
 			RangeEntry	re;
 			HeapTuple	tuple = tuptable->vals[i];
@@ -575,7 +575,7 @@ remove_relation_info(Oid relid)
 {
 	PartRelationInfo   *prel;
 	RangeRelation	   *rangerel;
-	RelationKey key;
+	RelationKey			key;
 
 	key.dbid = MyDatabaseId;
 	key.relid = relid;

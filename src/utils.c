@@ -8,12 +8,16 @@
  * ------------------------------------------------------------------------
  */
 #include "utils.h"
+#include "access/nbtree.h"
+#include "executor/spi.h"
 #include "nodes/nodeFuncs.h"
 #include "nodes/makefuncs.h"
 #include "optimizer/var.h"
 #include "optimizer/restrictinfo.h"
 #include "parser/parse_param.h"
 #include "utils/builtins.h"
+#include "utils/snapmgr.h"
+#include "utils/lsyscache.h"
 #include "rewrite/rewriteManip.h"
 #include "catalog/heap.h"
 
@@ -171,7 +175,7 @@ append_trigger_descs(TriggerDesc *src, TriggerDesc *more, bool *grown_up)
 
 	*grown_up = true;
 	new_desc->numtriggers = src->numtriggers + more->numtriggers;
-	new_desc->triggers = palloc(new_desc->numtriggers * sizeof(Trigger));
+	new_desc->triggers = (Trigger *) palloc(new_desc->numtriggers * sizeof(Trigger));
 
 	cur_trigger = new_desc->triggers;
 
@@ -209,4 +213,59 @@ append_trigger_descs(TriggerDesc *src, TriggerDesc *more, bool *grown_up)
 	CopyToTriggerDesc(trig_truncate_after_statement);
 
 	return new_desc;
+}
+
+Oid
+add_missing_partition(Oid partitioned_table, Const *value)
+{
+	bool	crashed;
+	Oid		result = InvalidOid;
+
+	SPI_connect();
+	PushActiveSnapshot(GetTransactionSnapshot());
+
+	/* Create partitions */
+	result = create_partitions(partitioned_table,
+							   value->constvalue,
+							   value->consttype,
+							   &crashed);
+
+	/* Cleanup */
+	SPI_finish();
+	PopActiveSnapshot();
+
+	return result;
+}
+
+void
+fill_type_cmp_fmgr_info(FmgrInfo *finfo, Oid type1, Oid type2)
+{
+	Oid				cmp_proc_oid;
+	TypeCacheEntry *tce;
+
+	tce = lookup_type_cache(type1,
+							TYPECACHE_BTREE_OPFAMILY |
+								TYPECACHE_CMP_PROC |
+								TYPECACHE_CMP_PROC_FINFO);
+
+	cmp_proc_oid = get_opfamily_proc(tce->btree_opf,
+									 type1,
+									 type2,
+									 BTORDER_PROC);
+	fmgr_info(cmp_proc_oid, finfo);
+
+	return;
+}
+
+List *
+list_reverse(List *l)
+{
+	List *result = NIL;
+	ListCell *lc;
+
+	foreach (lc, l)
+	{
+		result = lcons(lfirst(lc), result);
+	}
+	return result;
 }
