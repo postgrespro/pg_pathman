@@ -25,18 +25,15 @@
 #include "optimizer/cost.h"
 #include "parser/analyze.h"
 #include "utils/hsearch.h"
-#include "utils/tqual.h"
 #include "utils/rel.h"
 #include "utils/elog.h"
 #include "utils/array.h"
-#include "utils/date.h"
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
 #include "utils/selfuncs.h"
 #include "access/heapam.h"
 #include "access/nbtree.h"
 #include "storage/ipc.h"
-#include "catalog/pg_operator.h"
 #include "catalog/pg_type.h"
 #include "foreign/fdwapi.h"
 #include "hooks.h"
@@ -47,15 +44,18 @@
 
 PG_MODULE_MAGIC;
 
+
 typedef struct
 {
 	Oid old_varno;
 	Oid new_varno;
 } change_varno_context;
 
+
 bool			inheritance_disabled;
 bool			pg_pathman_enable;
 PathmanState   *pmstate;
+
 
 /* pg module functions */
 void _PG_init(void);

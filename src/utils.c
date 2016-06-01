@@ -14,11 +14,8 @@
 #include "nodes/makefuncs.h"
 #include "optimizer/var.h"
 #include "optimizer/restrictinfo.h"
-#include "parser/parse_param.h"
-#include "utils/builtins.h"
 #include "utils/snapmgr.h"
 #include "utils/lsyscache.h"
-#include "rewrite/rewriteManip.h"
 #include "catalog/heap.h"
 
 

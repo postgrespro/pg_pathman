@@ -8,7 +8,6 @@
  * ------------------------------------------------------------------------
  */
 #include "postgres.h"
-#include "optimizer/paths.h"
 #include "nodes_common.h"
 #include "runtimeappend.h"
 #include "optimizer/restrictinfo.h"

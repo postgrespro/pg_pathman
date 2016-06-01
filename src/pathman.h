@@ -180,6 +180,12 @@ alloc_irange(IndexRange irange)
 #define llast_irange(list)				( lfirst_irange(list_tail(list)) )
 #define linitial_irange(list)			( lfirst_irange(list_head(list)) )
 
+
+extern HTAB	   *relations;
+extern HTAB	   *range_restrictions;
+extern bool		initialization_needed;
+
+
 /* rangeset.c */
 bool irange_intersects(IndexRange a, IndexRange b);
 bool irange_conjuncted(IndexRange a, IndexRange b);
@@ -201,10 +207,6 @@ void resize_dsm_array(DsmArray *arr, size_t entry_size, size_t length);
 void *dsm_array_get_pointer(const DsmArray* arr);
 dsm_handle get_dsm_array_segment(void);
 void attach_dsm_array_segment(void);
-
-HTAB *relations;
-HTAB *range_restrictions;
-bool initialization_needed;
 
 /* initialization functions */
 Size pathman_memsize(void);

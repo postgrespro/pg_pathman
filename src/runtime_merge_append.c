@@ -12,9 +12,7 @@
 
 #include "pathman.h"
 
-#include "optimizer/clauses.h"
 #include "optimizer/cost.h"
-#include "optimizer/restrictinfo.h"
 #include "optimizer/planmain.h"
 #include "optimizer/tlist.h"
 #include "optimizer/var.h"

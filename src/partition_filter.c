@@ -1,7 +1,6 @@
 #include "partition_filter.h"
 #include "utils.h"
 #include "utils/guc.h"
-#include "utils/lsyscache.h"
 #include "nodes/nodeFuncs.h"
 
 

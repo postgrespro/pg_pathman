@@ -2,8 +2,6 @@
 #define RUNTIME_INSERT_H
 
 #include "postgres.h"
-#include "optimizer/paths.h"
-#include "optimizer/pathnode.h"
 
 #include "pathman.h"
 #include "nodes_common.h"

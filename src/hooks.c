@@ -10,7 +10,6 @@
 #include "postgres.h"
 #include "optimizer/cost.h"
 #include "optimizer/restrictinfo.h"
-#include "utils/guc.h"
 #include "pathman.h"
 #include "hooks.h"
 #include "partition_filter.h"

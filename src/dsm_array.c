@@ -12,8 +12,6 @@
 #include "pathman.h"
 #include "storage/shmem.h"
 #include "storage/dsm.h"
-#include "storage/lwlock.h"
-#include <stdint.h>
 
 
 static dsm_segment *segment = NULL;
@@ -95,7 +93,7 @@ init_dsm_segment(size_t blocks_count, size_t block_size)
 		ret = false;
 		segment = dsm_attach(dsm_cfg->segment_handle);
 	}
-	
+
 	/*
 	 * If segment hasn't been created yet or has already been destroyed
 	 * (it happens when last session detaches segment) then create new one
