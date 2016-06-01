@@ -26,7 +26,14 @@ typedef struct DsmConfig
 
 static DsmConfig *dsm_cfg = NULL;
 
-typedef int BlockHeader;
+
+/*
+ * Block header
+ *
+ * Its size must be 4 bytes for 32bit and 8 bytes for 64bit.
+ * Otherwise it could screw up an alignment (for example on Sparc9)
+ */
+typedef uintptr_t BlockHeader;
 typedef BlockHeader* BlockHeaderPtr;
 
 #define FREE_BIT 0x80000000
@@ -144,20 +151,22 @@ init_dsm_table(size_t block_size, size_t start, size_t end)
  * Allocate array inside dsm_segment
  */
 void
-alloc_dsm_array(DsmArray *arr, size_t entry_size, size_t length)
+alloc_dsm_array(DsmArray *arr, size_t entry_size, size_t elem_count)
 {
-	int		i = 0;
-	int		size_requested = entry_size * length;
-	int min_pos = 0;
-	int max_pos = 0;
-	bool found = false;
-	bool collecting_blocks = false;
-	size_t offset = -1;
-	size_t total_length = 0;
+	size_t	i = 0;
+	size_t	size_requested = entry_size * elem_count;
+	size_t	min_pos = 0;
+	size_t	max_pos = 0;
+	bool	found = false;
+	bool	collecting_blocks = false;
+	size_t	offset = -1;
+	size_t	total_length = 0;
 	BlockHeaderPtr header;
-	char *ptr = dsm_segment_address(segment);
+	char   *ptr = dsm_segment_address(segment);
 
-	for (i = dsm_cfg->first_free; i<dsm_cfg->blocks_count; )
+	arr->entry_size = entry_size;
+
+	for (i = dsm_cfg->first_free; i < dsm_cfg->blocks_count; )
 	{
 		header = (BlockHeaderPtr) &ptr[i * dsm_cfg->block_size];
 		if (is_free(header))
@@ -204,7 +213,7 @@ alloc_dsm_array(DsmArray *arr, size_t entry_size, size_t length)
 		dsm_cfg->blocks_count = new_blocks_count;
 
 		/* try again */
-		return alloc_dsm_array(arr, entry_size, length);
+		return alloc_dsm_array(arr, entry_size, elem_count);
 	}
 
 	/* look up for first free block */
@@ -233,7 +242,7 @@ alloc_dsm_array(DsmArray *arr, size_t entry_size, size_t length)
 		*header = set_length(header, max_pos - min_pos + 1);
 
 		arr->offset = offset;
-		arr->length = length;
+		arr->elem_count = elem_count;
 	}
 }
 
@@ -258,19 +267,19 @@ free_dsm_array(DsmArray *arr)
 		dsm_cfg->first_free = start;
 
 	arr->offset = 0;
-	arr->length = 0;
+	arr->elem_count = 0;
 }
 
 void
-resize_dsm_array(DsmArray *arr, size_t entry_size, size_t length)
+resize_dsm_array(DsmArray *arr, size_t entry_size, size_t elem_count)
 {
 	void *array_data;
 	size_t array_data_size;
 	void *buffer;
 
 	/* Copy data from array to temporary buffer */
-	array_data = dsm_array_get_pointer(arr);
-	array_data_size = arr->length * entry_size;
+	array_data = dsm_array_get_pointer(arr, false);
+	array_data_size = arr->elem_count * entry_size;
 	buffer = palloc(array_data_size);
 	memcpy(buffer, array_data, array_data_size);
 
@@ -278,17 +287,34 @@ resize_dsm_array(DsmArray *arr, size_t entry_size, size_t length)
 	free_dsm_array(arr);
 
 	/* Allocate new array */
-	alloc_dsm_array(arr, entry_size, length);
+	alloc_dsm_array(arr, entry_size, elem_count);
 
 	/* Copy data to new array */
-	array_data = dsm_array_get_pointer(arr);
+	array_data = dsm_array_get_pointer(arr, false);
 	memcpy(array_data, buffer, array_data_size);
 
 	pfree(buffer);
 }
 
 void *
-dsm_array_get_pointer(const DsmArray *arr)
+dsm_array_get_pointer(const DsmArray *arr, bool copy)
 {
-	return (char *) dsm_segment_address(segment) + arr->offset + sizeof(BlockHeader);
+	uint8  *segment_address,
+	       *dsm_array,
+	       *result;
+	size_t	size;
+
+	segment_address = (uint8 *) dsm_segment_address(segment);
+	dsm_array = segment_address + arr->offset + sizeof(BlockHeader);
+
+	if (copy)
+	{
+		size = arr->elem_count * arr->entry_size;
+		result = palloc(size);
+		memcpy((void *) result, (void *) dsm_array, size);
+	}
+	else
+		result = dsm_array;
+
+	return result;
 }

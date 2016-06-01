@@ -211,7 +211,7 @@ get_partition_oids(List *ranges, int *n, PartRelationInfo *prel)
 	int			allocated = INITIAL_ALLOC_NUM;
 	int			used = 0;
 	Oid		   *result = (Oid *) palloc(allocated * sizeof(Oid));
-	Oid		   *children = dsm_array_get_pointer(&prel->children);
+	Oid		   *children = dsm_array_get_pointer(&prel->children, true);
 
 	foreach (range_cell, ranges)
 	{
@@ -495,20 +495,30 @@ rescan_append_common(CustomScanState *node)
 	ListCell		   *lc;
 	Oid				   *parts;
 	int					nparts;
-	WalkerContext		wcxt;
 
 	ranges = list_make1_irange(make_irange(0, prel->children_count - 1, false));
 
-	wcxt.prel = prel;
-	wcxt.econtext = econtext;
-	wcxt.hasLeast = false;
-	wcxt.hasGreatest = false;
+	/*
+	 * We'd like to persist RangeEntry array
+	 * in case of range partitioning, so 'wcxt'
+	 * is stored inside of RuntimeAppendState
+	 */
+	if (!scan_state->wcxt_cached)
+	{
+		scan_state->wcxt.prel = prel;
+		scan_state->wcxt.econtext = econtext;
+		scan_state->wcxt.ranges = NULL;
+
+		scan_state->wcxt_cached = true;
+	}
+	scan_state->wcxt.hasLeast = false;		/* refresh runtime values */
+	scan_state->wcxt.hasGreatest = false;
 
 	foreach (lc, scan_state->custom_exprs)
 	{
 		WrapperNode	   *wn;
 
-		wn = walk_expr_tree((Expr *) lfirst(lc), &wcxt);
+		wn = walk_expr_tree((Expr *) lfirst(lc), &scan_state->wcxt);
 
 		ranges = irange_list_intersect(ranges, wn->rangeset);
 	}

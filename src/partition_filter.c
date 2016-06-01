@@ -126,6 +126,7 @@ partition_filter_exec(CustomScanState *node)
 
 	PartitionFilterState   *state = (PartitionFilterState *) node;
 
+	ExprContext			   *econtext = node->ss.ps.ps_ExprContext;
 	EState				   *estate = node->ss.ps.state;
 	PlanState			   *child_ps = (PlanState *) linitial(node->custom_ps);
 	TupleTableSlot		   *slot;
@@ -138,7 +139,6 @@ partition_filter_exec(CustomScanState *node)
 
 	if (!TupIsNull(slot))
 	{
-		WalkerContext	wcxt;
 		List		   *ranges;
 		int				nparts;
 		Oid			   *parts;
@@ -159,20 +159,34 @@ partition_filter_exec(CustomScanState *node)
 		CopyToTempConst(constlen,    attlen);
 		CopyToTempConst(constbyval,  attbyval);
 
-		wcxt.prel = state->prel;
-		wcxt.econtext = NULL;
-		wcxt.hasLeast = false;
-		wcxt.hasGreatest = false;
+		/*
+		 * We'd like to persist RangeEntry array
+		 * in case of range partitioning, so 'wcxt'
+		 * is stored inside of PartitionFilterState
+		 */
+		if (!state->wcxt_cached)
+		{
+			state->wcxt.prel = state->prel;
+			state->wcxt.econtext = econtext;
+			state->wcxt.ranges = NULL;
 
-		ranges = walk_expr_tree((Expr *) &state->temp_const, &wcxt)->rangeset;
+			state->wcxt_cached = true;
+		}
+		state->wcxt.hasLeast = false;		/* refresh runtime values */
+		state->wcxt.hasGreatest = false;
+
+		ranges = walk_expr_tree((Expr *) &state->temp_const, &state->wcxt)->rangeset;
 		parts = get_partition_oids(ranges, &nparts, state->prel);
 
 		if (nparts > 1)
 			elog(ERROR, "PartitionFilter selected more than one partition");
 		else if (nparts == 0)
+		{
 			selected_partid = add_missing_partition(state->partitioned_table,
 													&state->temp_const);
 
+			refresh_walker_context_ranges(&state->wcxt);
+		}
 		else
 			selected_partid = parts[0];
 

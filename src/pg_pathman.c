@@ -310,10 +310,7 @@ handle_modification_query(Query *parse)
 		return;
 
 	/* Parse syntax tree and extract partition ranges */
-	context.prel = prel;
-	context.econtext = NULL;
-	context.hasLeast = false;
-	context.hasGreatest = false;
+	InitWalkerContext(&context, prel, NULL);
 	wrap = walk_expr_tree(expr, &context);
 	finish_least_greatest(wrap, &context);
 
@@ -325,7 +322,7 @@ handle_modification_query(Query *parse)
 		IndexRange irange = linitial_irange(ranges);
 		if (irange.ir_lower == irange.ir_upper)
 		{
-			Oid *children = (Oid *) dsm_array_get_pointer(&prel->children);
+			Oid *children = (Oid *) dsm_array_get_pointer(&prel->children, true);
 			rte->relid = children[irange.ir_lower];
 			rte->inh = false;
 		}
@@ -713,6 +710,27 @@ change_varnos_in_restrinct_info(RestrictInfo *rinfo, change_varno_context *conte
 	}
 }
 
+void
+refresh_walker_context_ranges(WalkerContext *context)
+{
+	RangeRelation *rangerel;
+
+	rangerel = get_pathman_range_relation(context->prel->key.relid, NULL);
+
+	context->ranges = dsm_array_get_pointer(&rangerel->ranges, true);
+	context->nranges = rangerel->ranges.elem_count;
+}
+
+void
+clear_walker_context(WalkerContext *context)
+{
+	if (context->ranges)
+	{
+		pfree(context->ranges);
+		context->ranges = NULL;
+	}
+}
+
 /*
  * Recursive function to walk through conditions tree
  */
@@ -729,25 +747,28 @@ walk_expr_tree(Expr *expr, WalkerContext *context)
 		/* Useful for INSERT optimization */
 		case T_Const:
 			return handle_const((Const *) expr, context);
+
 		/* AND, OR, NOT expressions */
 		case T_BoolExpr:
 			boolexpr = (BoolExpr *) expr;
 			return handle_boolexpr(boolexpr, context);
+
 		/* =, !=, <, > etc. */
 		case T_OpExpr:
 			opexpr = (OpExpr *) expr;
 			return handle_opexpr(opexpr, context);
+
 		/* IN expression */
 		case T_ScalarArrayOpExpr:
 			arrexpr = (ScalarArrayOpExpr *) expr;
 			return handle_arrexpr(arrexpr, context);
+
 		default:
-			result = (WrapperNode *)palloc(sizeof(WrapperNode));
-			result->orig = (const Node *)expr;
+			result = (WrapperNode *) palloc(sizeof(WrapperNode));
+			result->orig = (const Node *) expr;
 			result->args = NIL;
 			result->rangeset = list_make1_irange(make_irange(0, context->prel->children_count - 1, true));
 			result->paramsel = 1.0;
-
 			return result;
 	}
 }
@@ -822,34 +843,34 @@ decrease_hashable_value(const PartRelationInfo *prel, Datum value)
 
 void
 select_range_partitions(const Datum value,
-						const RangeRelation *rangerel,
-						const int strategy,
+						const bool byVal,
 						FmgrInfo *cmp_func,
+						const RangeEntry *ranges,
+						const size_t nranges,
+						const int strategy,
 						WrapperNode *result)
 {
-	RangeEntry *current_re;
-	bool		lossy = false,
-				is_less,
-				is_greater;
+	const RangeEntry   *current_re;
+	bool				lossy = false,
+						is_less,
+						is_greater;
 
 #ifdef USE_ASSERT_CHECKING
-	bool		found = false;
-	int			counter = 0;
+	bool				found = false;
+	int					counter = 0;
 #endif
 
-	int			i,
-				startidx = 0,
-				endidx = rangerel->ranges.length - 1,
-				cmp_min,
-				cmp_max;
+	int					i,
+						startidx = 0,
+						endidx = nranges - 1,
+						cmp_min,
+						cmp_max;
 
-	RangeEntry *ranges = dsm_array_get_pointer(&rangerel->ranges);
-	bool		byVal = rangerel->by_val;
-
+	/* Initial value (no missing partitions found) */
 	result->found_gap = false;
 
 	/* Check boundaries */
-	if (rangerel->ranges.length == 0)
+	if (nranges == 0)
 	{
 		result->rangeset = NIL;
 		return;
@@ -901,7 +922,7 @@ select_range_partitions(const Datum value,
 		Assert(cmp_func);
 
 		i = startidx + (endidx - startidx) / 2;
-		Assert(i >= 0 && i < rangerel->ranges.length);
+		Assert(i >= 0 && i < nranges);
 
 		current_re = &ranges[i];
 
@@ -973,18 +994,18 @@ select_range_partitions(const Datum value,
 			if (lossy)
 			{
 				result->rangeset = list_make1_irange(make_irange(i, i, true));
-				if (i < rangerel->ranges.length - 1)
+				if (i < nranges - 1)
 					result->rangeset =
 							lappend_irange(result->rangeset,
 										   make_irange(i + 1,
-													   rangerel->ranges.length - 1,
+													   nranges - 1,
 													   false));
 			}
 			else
 			{
 				result->rangeset =
 						list_make1_irange(make_irange(i,
-													  rangerel->ranges.length - 1,
+													  nranges - 1,
 													  false));
 			}
 			break;
@@ -1003,15 +1024,13 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 					 const Var *v, const Const *c)
 {
 	HashRelationKey		key;
-	RangeRelation	   *rangerel;
-	Datum				value;
 	int					int_value,
 						strategy;
 	FmgrInfo		    cmp_func;
 	Oid					cmp_proc_oid;
 	const OpExpr	   *expr = (const OpExpr *)result->orig;
 	TypeCacheEntry	   *tce;
-	const PartRelationInfo *prel = context->prel;
+	PartRelationInfo   *prel = context->prel;
 
 	/* Determine operator type */
 	tce = lookup_type_cache(v->vartype,
@@ -1064,11 +1083,18 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 			}
 
 		case PT_RANGE:
-			value = c->constvalue;
-			rangerel = get_pathman_range_relation(prel->key.relid, NULL);
-			if (rangerel)
+			if (get_pathman_range_relation(context->prel->key.relid, NULL))
 			{
-				select_range_partitions(value, rangerel, strategy, &cmp_func, result);
+				if (!context->ranges)
+					refresh_walker_context_ranges(context);
+
+				select_range_partitions(c->constvalue,
+										c->constbyval,
+										&cmp_func,
+										context->ranges,
+										context->nranges,
+										strategy,
+										result);
 				return;
 			}
 	}
@@ -1119,26 +1145,35 @@ make_hash(const PartRelationInfo *prel, int value)
 
 search_rangerel_result
 search_range_partition_eq(const Datum value,
-						  const RangeRelation *rangerel,
 						  FmgrInfo *cmp_func,
-						  int *part_idx)
+						  const RangeRelation *rangerel,
+						  RangeEntry *out_rentry) /* actual result */
 {
+	RangeEntry *ranges;
+	size_t		nranges;
 	WrapperNode result;
 
 	Assert(rangerel);
 
-	select_range_partitions(value, rangerel,
+	ranges = dsm_array_get_pointer(&rangerel->ranges, true);
+	nranges = rangerel->ranges.elem_count;
+
+	select_range_partitions(value,
+							rangerel->by_val,
+							cmp_func,
+							ranges,
+							nranges,
 							BTEqualStrategyNumber,
-							cmp_func, &result);
+							&result);
 
 	if (result.found_gap)
 	{
-		*part_idx = -1;
+		pfree(ranges);
 		return SEARCH_RANGEREL_GAP;
 	}
 	else if (result.rangeset == NIL)
 	{
-		*part_idx = -1;
+		pfree(ranges);
 		return SEARCH_RANGEREL_OUT_OF_RANGE;
 	}
 	else
@@ -1149,7 +1184,13 @@ search_range_partition_eq(const Datum value,
 		Assert(irange.ir_lower == irange.ir_upper);
 		Assert(irange.ir_valid);
 
-		*part_idx = irange.ir_lower;
+		/* Write result to the 'out_rentry' if necessary */
+		if (out_rentry)
+			memcpy((void *) out_rentry,
+				   (void *) &ranges[irange.ir_lower],
+				   sizeof(RangeEntry));
+
+		pfree(ranges);
 		return SEARCH_RANGEREL_FOUND;
 	}
 }
@@ -1188,7 +1229,6 @@ handle_const(const Const *c, WalkerContext *context)
 			{
 				Oid				cmp_proc_oid;
 				FmgrInfo		cmp_func;
-				RangeRelation  *rangerel;
 				TypeCacheEntry *tce;
 
 				tce = lookup_type_cache(c->consttype, 0);
@@ -1197,11 +1237,17 @@ handle_const(const Const *c, WalkerContext *context)
 												 c->consttype,
 												 BTORDER_PROC);
 				fmgr_info(cmp_proc_oid, &cmp_func);
-				rangerel = get_pathman_range_relation(prel->key.relid, NULL);
-				select_range_partitions(c->constvalue, rangerel,
-										BTEqualStrategyNumber,
-										&cmp_func, result);
 
+				if (!context->ranges)
+					refresh_walker_context_ranges(context);
+
+				select_range_partitions(c->constvalue,
+										c->constbyval,
+										&cmp_func,
+										context->ranges,
+										context->nranges,
+										BTEqualStrategyNumber,
+										result);
 			}
 			break;
 

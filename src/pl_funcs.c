@@ -88,17 +88,16 @@ on_partitions_removed(PG_FUNCTION_ARGS)
 Datum
 find_or_create_range_partition(PG_FUNCTION_ARGS)
 {
-	int					relid = DatumGetInt32(PG_GETARG_DATUM(0));
+	Oid					relid = DatumGetObjectId(PG_GETARG_DATUM(0));
 	Datum				value = PG_GETARG_DATUM(1);
 	Oid					value_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
-	int					pos;
 	RangeRelation	   *rangerel;
-	RangeEntry		   *ranges;
 	TypeCacheEntry	   *tce;
 	PartRelationInfo   *prel;
 	Oid					cmp_proc_oid;
 	FmgrInfo			cmp_func;
 	search_rangerel_result search_state;
+	RangeEntry			found_re;
 
 	tce = lookup_type_cache(value_type,
 		TYPECACHE_EQ_OPR | TYPECACHE_LT_OPR | TYPECACHE_GT_OPR |
@@ -116,15 +115,14 @@ find_or_create_range_partition(PG_FUNCTION_ARGS)
 									 BTORDER_PROC);
 	fmgr_info(cmp_proc_oid, &cmp_func);
 
-	ranges = dsm_array_get_pointer(&rangerel->ranges);
-	search_state = search_range_partition_eq(value, rangerel,
-											 &cmp_func, &pos);
+	search_state = search_range_partition_eq(value, &cmp_func,
+											 rangerel, &found_re);
 
 	/*
 	 * If found then just return oid, else create new partitions
 	 */
 	if (search_state == SEARCH_RANGEREL_FOUND)
-		PG_RETURN_OID(ranges[pos].child_oid);
+		PG_RETURN_OID(found_re.child_oid);
 	/*
 	 * If not found and value is between first and last partitions
 	 */
@@ -144,14 +142,13 @@ find_or_create_range_partition(PG_FUNCTION_ARGS)
 		/*
 		 * Check if someone else has already created partition.
 		 */
-		ranges = dsm_array_get_pointer(&rangerel->ranges);
-		search_state = search_range_partition_eq(value, rangerel,
-												 &cmp_func, &pos);
+		search_state = search_range_partition_eq(value, &cmp_func,
+												 rangerel, &found_re);
 		if (search_state == SEARCH_RANGEREL_FOUND)
 		{
 			LWLockRelease(pmstate->edit_partitions_lock);
 			LWLockRelease(pmstate->load_config_lock);
-			PG_RETURN_OID(ranges[pos].child_oid);
+			PG_RETURN_OID(found_re.child_oid);
 		}
 		else
 			Assert(search_state != SEARCH_RANGEREL_GAP);
@@ -167,10 +164,8 @@ find_or_create_range_partition(PG_FUNCTION_ARGS)
 		}
 
 		/* Repeat binary search */
-		Assert(SEARCH_RANGEREL_FOUND == search_range_partition_eq(value,
-																  rangerel,
-																  &cmp_func,
-																  &pos));
+		Assert(SEARCH_RANGEREL_FOUND == search_range_partition_eq(value, &cmp_func,
+																  rangerel, NULL));
 		PG_RETURN_OID(child_oid);
 	}
 }
@@ -185,11 +180,11 @@ find_or_create_range_partition(PG_FUNCTION_ARGS)
 Datum
 get_partition_range(PG_FUNCTION_ARGS)
 {
-	int		parent_oid = DatumGetInt32(PG_GETARG_DATUM(0));
-	int		child_oid = DatumGetInt32(PG_GETARG_DATUM(1));
-	int		nelems = 2;
-	int 	i;
-	bool	found = false;
+	Oid					parent_oid = DatumGetObjectId(PG_GETARG_DATUM(0));
+	Oid					child_oid = DatumGetObjectId(PG_GETARG_DATUM(1));
+	int					nelems = 2;
+	int					i;
+	bool				found = false;
 	Datum			   *elems;
 	PartRelationInfo   *prel;
 	RangeRelation	   *rangerel;
@@ -204,11 +199,11 @@ get_partition_range(PG_FUNCTION_ARGS)
 	if (!prel || !rangerel)
 		PG_RETURN_NULL();
 
-	ranges = dsm_array_get_pointer(&rangerel->ranges);
+	ranges = dsm_array_get_pointer(&rangerel->ranges, true);
 	tce = lookup_type_cache(prel->atttype, 0);
 
 	/* Looking for specified partition */
-	for(i=0; i<rangerel->ranges.length; i++)
+	for (i = 0; i < rangerel->ranges.elem_count; i++)
 		if (ranges[i].child_oid == child_oid)
 		{
 			found = true;
@@ -242,32 +237,34 @@ get_partition_range(PG_FUNCTION_ARGS)
 Datum
 get_range_by_idx(PG_FUNCTION_ARGS)
 {
-	int parent_oid = DatumGetInt32(PG_GETARG_DATUM(0));
-	int idx = DatumGetInt32(PG_GETARG_DATUM(1));
-	PartRelationInfo *prel;
-	RangeRelation	*rangerel;
-	RangeEntry		*ranges;
-	RangeEntry		*re;
-	Datum			*elems;
-	TypeCacheEntry	*tce;
+	Oid					parent_oid = DatumGetObjectId(PG_GETARG_DATUM(0));
+	int					idx = DatumGetInt32(PG_GETARG_DATUM(1));
+	PartRelationInfo   *prel;
+	RangeRelation	   *rangerel;
+	RangeEntry		   *ranges;
+	RangeEntry			re;
+	Datum			   *elems;
+	TypeCacheEntry	   *tce;
 
 	prel = get_pathman_relation_info(parent_oid, NULL);
 
 	rangerel = get_pathman_range_relation(parent_oid, NULL);
 
-	if (!prel || !rangerel || idx >= (int)rangerel->ranges.length)
+	if (!prel || !rangerel || idx >= (int)rangerel->ranges.elem_count)
 		PG_RETURN_NULL();
 
 	tce = lookup_type_cache(prel->atttype, 0);
-	ranges = dsm_array_get_pointer(&rangerel->ranges);
+	ranges = dsm_array_get_pointer(&rangerel->ranges, true);
 	if (idx >= 0)
-		re = &ranges[idx];
+		re = ranges[idx];
 	else
-		re = &ranges[rangerel->ranges.length - 1];
+		re = ranges[rangerel->ranges.elem_count - 1];
 
 	elems = palloc(2 * sizeof(Datum));
-	elems[0] = PATHMAN_GET_DATUM(re->min, rangerel->by_val);
-	elems[1] = PATHMAN_GET_DATUM(re->max, rangerel->by_val);
+	elems[0] = PATHMAN_GET_DATUM(re.min, rangerel->by_val);
+	elems[1] = PATHMAN_GET_DATUM(re.max, rangerel->by_val);
+
+	pfree(ranges);
 
 	PG_RETURN_ARRAYTYPE_P(
 		construct_array(elems, 2, prel->atttype,
@@ -280,18 +277,19 @@ get_range_by_idx(PG_FUNCTION_ARGS)
 Datum
 get_min_range_value(PG_FUNCTION_ARGS)
 {
-	int parent_oid = DatumGetInt32(PG_GETARG_DATUM(0));
-	PartRelationInfo *prel;
-	RangeRelation	*rangerel;
-	RangeEntry		*ranges;
+	Oid					parent_oid = DatumGetObjectId(PG_GETARG_DATUM(0));
+	PartRelationInfo   *prel;
+	RangeRelation	   *rangerel;
+	RangeEntry		   *ranges;
 
 	prel = get_pathman_relation_info(parent_oid, NULL);
 	rangerel = get_pathman_range_relation(parent_oid, NULL);
 
-	if (!prel || !rangerel || prel->parttype != PT_RANGE || rangerel->ranges.length == 0)
+	if (!prel || !rangerel || prel->parttype != PT_RANGE || rangerel->ranges.elem_count == 0)
 		PG_RETURN_NULL();
 
-	ranges = dsm_array_get_pointer(&rangerel->ranges);
+	ranges = dsm_array_get_pointer(&rangerel->ranges, true);
+
 	PG_RETURN_DATUM(PATHMAN_GET_DATUM(ranges[0].min, rangerel->by_val));
 }
 
@@ -301,19 +299,20 @@ get_min_range_value(PG_FUNCTION_ARGS)
 Datum
 get_max_range_value(PG_FUNCTION_ARGS)
 {
-	int parent_oid = DatumGetInt32(PG_GETARG_DATUM(0));
-	PartRelationInfo *prel;
-	RangeRelation	 *rangerel;
-	RangeEntry		 *ranges;
+	Oid					parent_oid = DatumGetObjectId(PG_GETARG_DATUM(0));
+	PartRelationInfo   *prel;
+	RangeRelation	   *rangerel;
+	RangeEntry		   *ranges;
 
 	prel = get_pathman_relation_info(parent_oid, NULL);
 	rangerel = get_pathman_range_relation(parent_oid, NULL);
 
-	if (!prel || !rangerel || prel->parttype != PT_RANGE || rangerel->ranges.length == 0)
+	if (!prel || !rangerel || prel->parttype != PT_RANGE || rangerel->ranges.elem_count == 0)
 		PG_RETURN_NULL();
 
-	ranges = dsm_array_get_pointer(&rangerel->ranges);
-	PG_RETURN_DATUM(PATHMAN_GET_DATUM(ranges[rangerel->ranges.length-1].max, rangerel->by_val));
+	ranges = dsm_array_get_pointer(&rangerel->ranges, true);
+
+	PG_RETURN_DATUM(PATHMAN_GET_DATUM(ranges[rangerel->ranges.elem_count - 1].max, rangerel->by_val));
 }
 
 /*
@@ -323,14 +322,14 @@ get_max_range_value(PG_FUNCTION_ARGS)
 Datum
 check_overlap(PG_FUNCTION_ARGS)
 {
-	int parent_oid = DatumGetInt32(PG_GETARG_DATUM(0));
-	Datum p1 = PG_GETARG_DATUM(1);
-	Oid	  p1_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
-	Datum p2 = PG_GETARG_DATUM(2);
-	Oid	  p2_type = get_fn_expr_argtype(fcinfo->flinfo, 2);
-	PartRelationInfo *prel;
-	RangeRelation	 *rangerel;
-	RangeEntry		 *ranges;
+	Oid					parent_oid = DatumGetObjectId(PG_GETARG_DATUM(0));
+	Datum				p1 = PG_GETARG_DATUM(1);
+	Oid					p1_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
+	Datum				p2 = PG_GETARG_DATUM(2);
+	Oid					p2_type = get_fn_expr_argtype(fcinfo->flinfo, 2);
+	PartRelationInfo   *prel;
+	RangeRelation	   *rangerel;
+	RangeEntry		   *ranges;
 	FmgrInfo			cmp_func_1;
 	FmgrInfo			cmp_func_2;
 	int i;
@@ -347,18 +346,22 @@ check_overlap(PG_FUNCTION_ARGS)
 	fill_type_cmp_fmgr_info(&cmp_func_2, p2_type, prel->atttype);
 
 	byVal = rangerel->by_val;
-	ranges = (RangeEntry *) dsm_array_get_pointer(&rangerel->ranges);
-	for (i=0; i<rangerel->ranges.length; i++)
+	ranges = (RangeEntry *) dsm_array_get_pointer(&rangerel->ranges, true);
+	for (i = 0; i < rangerel->ranges.elem_count; i++)
 	{
 		int c1 = FunctionCall2(&cmp_func_1, p1,
-								PATHMAN_GET_DATUM(ranges[i].max, byVal));
+							   PATHMAN_GET_DATUM(ranges[i].max, byVal));
 		int c2 = FunctionCall2(&cmp_func_2, p2,
-								PATHMAN_GET_DATUM(ranges[i].min, byVal));
+							   PATHMAN_GET_DATUM(ranges[i].min, byVal));
 
 		if (c1 < 0 && c2 > 0)
+		{
+			pfree(ranges);
 			PG_RETURN_BOOL(true);
+		}
 	}
 
+	pfree(ranges);
 	PG_RETURN_BOOL(false);
 }
 

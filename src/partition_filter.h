@@ -27,6 +27,9 @@ typedef struct
 
 	HTAB			   *result_rels_table;
 	HASHCTL				result_rels_table_config;
+
+	WalkerContext		wcxt;
+	bool				wcxt_cached;
 } PartitionFilterState;
 
 

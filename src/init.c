@@ -98,19 +98,19 @@ load_config(void)
 		 * oid into it. This array contains databases oids
 		 * that have already been cached (to prevent repeat caching)
 		 */
-		if (&pmstate->databases.length > 0)
+		if (&pmstate->databases.elem_count > 0)
 			free_dsm_array(&pmstate->databases);
 		alloc_dsm_array(&pmstate->databases, sizeof(Oid), 1);
-		databases = (Oid *) dsm_array_get_pointer(&pmstate->databases);
+		databases = (Oid *) dsm_array_get_pointer(&pmstate->databases, false);
 		databases[0] = MyDatabaseId;
 	}
 	else
 	{
-		int databases_count = pmstate->databases.length;
+		int databases_count = pmstate->databases.elem_count;
 		int i;
 
 		/* Check if we already cached config for current database */
-		databases = (Oid *) dsm_array_get_pointer(&pmstate->databases);
+		databases = (Oid *) dsm_array_get_pointer(&pmstate->databases, false);
 		for(i = 0; i < databases_count; i++)
 			if (databases[i] == MyDatabaseId)
 			{
@@ -120,7 +120,7 @@ load_config(void)
 
 		/* Put current database oid to databases list */
 		resize_dsm_array(&pmstate->databases, sizeof(Oid), databases_count + 1);
-		databases = (Oid *) dsm_array_get_pointer(&pmstate->databases);
+		databases = (Oid *) dsm_array_get_pointer(&pmstate->databases, false);
 		databases[databases_count] = MyDatabaseId;
 	}
 
@@ -227,7 +227,7 @@ load_relations_hashtable(bool reinitialize)
 		switch(prel->parttype)
 		{
 			case PT_RANGE:
-				if (reinitialize && prel->children.length > 0)
+				if (reinitialize && prel->children.elem_count > 0)
 				{
 					RangeRelation *rangerel = get_pathman_range_relation(oid, NULL);
 					free_dsm_array(&prel->children);
@@ -237,7 +237,7 @@ load_relations_hashtable(bool reinitialize)
 				load_check_constraints(oid, GetCatalogSnapshot(oid));
 				break;
 			case PT_HASH:
-				if (reinitialize && prel->children.length > 0)
+				if (reinitialize && prel->children.elem_count > 0)
 				{
 					free_dsm_array(&prel->children);
 					prel->children_count = 0;
@@ -286,7 +286,7 @@ load_check_constraints(Oid parent_oid, Snapshot snapshot)
 	prel = get_pathman_relation_info(parent_oid, NULL);
 
 	/* Skip if already loaded */
-	if (prel->children.length > 0)
+	if (prel->children.elem_count > 0)
 		return;
 
 	plan = SPI_prepare("select pg_constraint.* "
@@ -309,7 +309,7 @@ load_check_constraints(Oid parent_oid, Snapshot snapshot)
 		int hash;
 
 		alloc_dsm_array(&prel->children, sizeof(Oid), proc);
-		children = (Oid *) dsm_array_get_pointer(&prel->children);
+		children = (Oid *) dsm_array_get_pointer(&prel->children, false);
 
 		if (prel->parttype == PT_RANGE)
 		{
@@ -322,7 +322,7 @@ load_check_constraints(Oid parent_oid, Snapshot snapshot)
 				hash_search(range_restrictions, (void *) &key, HASH_ENTER, &found);
 
 			alloc_dsm_array(&rangerel->ranges, sizeof(RangeEntry), proc);
-			ranges = (RangeEntry *) dsm_array_get_pointer(&rangerel->ranges);
+			ranges = (RangeEntry *) dsm_array_get_pointer(&rangerel->ranges, false);
 
 			tce = lookup_type_cache(prel->atttype, 0);
 			rangerel->by_val = tce->typbyval;
@@ -535,7 +535,7 @@ validate_hash_constraint(Expr *expr, PartRelationInfo *prel, int *hash)
 			return false;
 		if ( ((Var*) left)->varattno != prel->attnum )
 			return false;
-		if (DatumGetInt32(((Const*) right)->constvalue) != prel->children.length)
+		if (DatumGetInt32(((Const*) right)->constvalue) != prel->children.elem_count)
 			return false;
 
 		if ( !IsA(lsecond(eqexpr->args), Const) )

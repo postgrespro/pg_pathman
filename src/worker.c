@@ -164,17 +164,16 @@ Oid
 create_partitions(Oid relid, Datum value, Oid value_type, bool *crashed)
 {
 	int					ret;
-	RangeEntry		   *ranges;
 	Datum				vals[2];
 	Oid					oids[] = {OIDOID, value_type};
 	bool				nulls[] = {false, false};
 	char			   *sql;
-	int					pos;
 	PartRelationInfo   *prel;
 	RangeRelation	   *rangerel;
 	FmgrInfo			cmp_func;
 	char			   *schema;
 	search_rangerel_result search_state;
+	RangeEntry			found_re;
 
 	*crashed = false;
 	schema = get_extension_schema();
@@ -211,12 +210,10 @@ create_partitions(Oid relid, Datum value, Oid value_type, bool *crashed)
 	}
 	PG_END_TRY();
 
-	/* Repeat binary search */
-	ranges = dsm_array_get_pointer(&rangerel->ranges);
-	search_state = search_range_partition_eq(value, rangerel,
-											 &cmp_func, &pos);
+	search_state = search_range_partition_eq(value, &cmp_func,
+											 rangerel, &found_re);
 	if (search_state == SEARCH_RANGEREL_FOUND)
-		return ranges[pos].child_oid;
+		return found_re.child_oid;
 
 	return 0;
 }

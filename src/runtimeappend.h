@@ -51,6 +51,10 @@ typedef struct
 
 	/* Last saved tuple (for SRF projections) */
 	TupleTableSlot	   *slot;
+
+	/* Cached walker context */
+	WalkerContext		wcxt;
+	bool				wcxt_cached;
 } RuntimeAppendState;
 
 

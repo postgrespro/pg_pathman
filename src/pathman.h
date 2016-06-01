@@ -48,7 +48,8 @@ typedef struct DsmArray
 {
 	dsm_handle		segment;
 	size_t			offset;
-	size_t			length;
+	size_t			elem_count;
+	size_t			entry_size;
 } DsmArray;
 
 /*
@@ -201,10 +202,10 @@ Size get_dsm_shared_size(void);
 void init_dsm_config(void);
 bool init_dsm_segment(size_t blocks_count, size_t block_size);
 void init_dsm_table(size_t block_size, size_t start, size_t end);
-void alloc_dsm_array(DsmArray *arr, size_t entry_size, size_t length);
+void alloc_dsm_array(DsmArray *arr, size_t entry_size, size_t elem_count);
 void free_dsm_array(DsmArray *arr);
-void resize_dsm_array(DsmArray *arr, size_t entry_size, size_t length);
-void *dsm_array_get_pointer(const DsmArray* arr);
+void resize_dsm_array(DsmArray *arr, size_t entry_size, size_t elem_count);
+void *dsm_array_get_pointer(const DsmArray *arr, bool copy);
 dsm_handle get_dsm_array_segment(void);
 void attach_dsm_array_segment(void);
 
@@ -224,10 +225,10 @@ int append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
 						  RangeTblEntry *rte, int index, Oid childOID, List *wrappers);
 PartRelationInfo *get_pathman_relation_info(Oid relid, bool *found);
 RangeRelation *get_pathman_range_relation(Oid relid, bool *found);
-search_rangerel_result search_range_partition_eq(Datum value,
-												 const RangeRelation *rangerel,
+search_rangerel_result search_range_partition_eq(const Datum value,
 												 FmgrInfo *cmp_func,
-												 int *part_idx);
+												 const RangeRelation *rangerel,
+												 RangeEntry *out_rentry);
 char *get_extension_schema(void);
 Oid create_partitions_bg_worker(Oid relid, Datum value, Oid value_type, bool *crashed);
 Oid create_partitions(Oid relid, Datum value, Oid value_type, bool *crashed);
@@ -254,23 +255,41 @@ typedef struct
 
 typedef struct
 {
-	const PartRelationInfo *prel;
+	/* Main partitioning structure */
+	PartRelationInfo	   *prel;
+
+	/* Cached values */
+	RangeEntry			   *ranges;		/*cached RangeEntry array */
+	size_t					nranges;
+	ExprContext			   *econtext;
+
+	/* Runtime values */
 	bool					hasLeast,
 							hasGreatest;
 	Datum					least,
 							greatest;
-
-	PlanState			   *pstate;
-	ExprContext			   *econtext;
 } WalkerContext;
 
+#define InitWalkerContext(context, prel_info, ecxt) \
+	do { \
+		(context)->prel = (prel_info); \
+		(context)->econtext = (ecxt); \
+		(context)->ranges = NULL; \
+		(context)->hasLeast = false; \
+		(context)->hasGreatest = false; \
+	} while (0)
+
 void select_range_partitions(const Datum value,
-							 const RangeRelation *rangerel,
-							 const int strategy,
+							 const bool byVal,
 							 FmgrInfo *cmp_func,
+							 const RangeEntry *ranges,
+							 const size_t nranges,
+							 const int strategy,
 							 WrapperNode *result);
 
 WrapperNode *walk_expr_tree(Expr *expr, WalkerContext *context);
 void finish_least_greatest(WrapperNode *wrap, WalkerContext *context);
+void refresh_walker_context_ranges(WalkerContext *context);
+void clear_walker_context(WalkerContext *context);
 
 #endif   /* PATHMAN_H */
