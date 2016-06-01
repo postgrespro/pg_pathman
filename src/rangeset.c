@@ -13,57 +13,36 @@
 bool
 irange_intersects(IndexRange a, IndexRange b)
 {
-	return (irange_lower(a) <= irange_upper(b)) &&
-		   (irange_lower(b) <= irange_upper(a));
+	return (a.ir_lower <= b.ir_upper) &&
+		   (b.ir_lower <= a.ir_upper);
 }
 
 /* Check if two ranges are conjuncted */
 bool
 irange_conjuncted(IndexRange a, IndexRange b)
 {
-	return (irange_lower(a) - 1 <= irange_upper(b)) &&
-		   (irange_lower(b) - 1 <= irange_upper(a));
+	return (a.ir_lower - 1 <= b.ir_upper) &&
+		   (b.ir_lower - 1 <= a.ir_upper);
 }
 
 /* Make union of two ranges. They should have the same lossiness. */
 IndexRange
 irange_union(IndexRange a, IndexRange b)
 {
-	Assert(irange_is_lossy(a) == irange_is_lossy(b));
-	return make_irange(Min(irange_lower(a), irange_lower(b)),
-					   Max(irange_upper(a), irange_upper(b)),
-					   irange_is_lossy(a));
+	Assert(a.ir_lossy == b.ir_lossy);
+	return make_irange(Min(a.ir_lower, b.ir_lower),
+					   Max(a.ir_upper, b.ir_upper),
+					   a.ir_lossy);
 }
 
 /* Get intersection of two ranges */
 IndexRange
 irange_intersect(IndexRange a, IndexRange b)
 {
-	return make_irange(Max(irange_lower(a), irange_lower(b)),
-					   Min(irange_upper(a), irange_upper(b)),
-					   irange_is_lossy(a) || irange_is_lossy(b));
+	return make_irange(Max(a.ir_lower, b.ir_lower),
+					   Min(a.ir_upper, b.ir_upper),
+					   a.ir_lossy || b.ir_lossy);
 }
-
-#ifdef NOT_USED
-/* Print range list in debug purposes */
-static char *
-print_irange(List *l)
-{
-	ListCell   *c;
-	StringInfoData str;
-
-	initStringInfo(&str);
-
-	foreach (c, l)
-	{
-		IndexRange ir = lfirst_irange(c);
-
-		appendStringInfo(&str, "[%d,%d]%c ", irange_lower(ir), irange_upper(ir),
-			irange_is_lossy(ir) ? 'l' : 'e');
-	}
-	return str.data;
-}
-#endif
 
 /*
  * Make union of two index rage lists.
@@ -74,7 +53,7 @@ irange_list_union(List *a, List *b)
 	ListCell   *ca,
 			   *cb;
 	List	   *result = NIL;
-	IndexRange	cur = 0;
+	IndexRange	cur = InvalidIndexRange;
 	bool		have_cur = false;
 
 	ca = list_head(a);
@@ -82,12 +61,12 @@ irange_list_union(List *a, List *b)
 
 	while (ca || cb)
 	{
-		IndexRange	next = 0;
+		IndexRange next = InvalidIndexRange;
 
 		/* Fetch next range with lesser lower bound */
 		if (ca && cb)
 		{
-			if (irange_lower(lfirst_irange(ca)) <= irange_lower(lfirst_irange(cb)))
+			if (lfirst_irange(ca).ir_lower <= lfirst_irange(cb).ir_lower)
 			{
 				next = lfirst_irange(ca);
 				ca = lnext(ca);
@@ -122,25 +101,25 @@ irange_list_union(List *a, List *b)
 				/*
 				 * Ranges are conjuncted, try to unify them.
 				 */
-				if (irange_is_lossy(next) == irange_is_lossy(cur))
+				if (next.ir_lossy == cur.ir_lossy)
 				{
 					cur = irange_union(next, cur);
 				}
 				else
 				{
-					if (!irange_is_lossy(cur))
+					if (!cur.ir_lossy)
 					{
 						result = lappend_irange(result, cur);
-						cur = make_irange(irange_upper(cur) + 1,
-												 irange_upper(next),
-												 irange_is_lossy(next));
+						cur = make_irange(cur.ir_upper + 1,
+										  next.ir_upper,
+										  next.ir_lossy);
 					}
 					else
 					{
-						result = lappend_irange(result, 
-									make_irange(irange_lower(cur),
-												irange_lower(next) - 1,
-												irange_is_lossy(cur)));
+						result = lappend_irange(result,
+												make_irange(cur.ir_lower,
+															next.ir_lower - 1,
+															cur.ir_lossy));
 						cur = next;
 					}
 				}
@@ -196,10 +175,10 @@ irange_list_intersect(List *a, List *b)
 			if (result != NIL)
 			{
 				last = llast_irange(result);
-				if (irange_conjuncted(last, intersect) && 
-					irange_is_lossy(last) == irange_is_lossy(intersect))
+				if (irange_conjuncted(last, intersect) &&
+					last.ir_lossy == intersect.ir_lossy)
 				{
-					llast_int(result) = irange_union(last, intersect);
+					llast(result) = alloc_irange(irange_union(last, intersect));
 				}
 				else
 				{
@@ -217,9 +196,9 @@ irange_list_intersect(List *a, List *b)
 		 * which lists to fetch, since lower bound of next range is greater (or
 		 * equal) to upper bound of current.
 		 */
-		if (irange_upper(ra) <= irange_upper(rb))
+		if (ra.ir_upper <= rb.ir_upper)
 			ca = lnext(ca);
-		if (irange_upper(ra) >= irange_upper(rb))
+		if (ra.ir_upper >= rb.ir_upper)
 			cb = lnext(cb);
 	}
 	return result;
@@ -235,7 +214,7 @@ irange_list_length(List *rangeset)
 	foreach (lc, rangeset)
 	{
 		IndexRange irange = lfirst_irange(lc);
-		result += irange_upper(irange) - irange_lower(irange) + 1;
+		result += irange.ir_upper - irange.ir_lower + 1;
 	}
 	return result;
 }
@@ -249,10 +228,10 @@ irange_list_find(List *rangeset, int index, bool *lossy)
 	foreach (lc, rangeset)
 	{
 		IndexRange irange = lfirst_irange(lc);
-		if (index >= irange_lower(irange) && index <= irange_upper(irange))
+		if (index >= irange.ir_lower && index <= irange.ir_upper)
 		{
 			if (lossy)
-				*lossy = irange_is_lossy(irange) ? true : false;
+				*lossy = irange.ir_lossy;
 			return true;
 		}
 	}

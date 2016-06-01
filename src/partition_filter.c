@@ -173,6 +173,7 @@ partition_filter_exec(CustomScanState *node)
 		else if (nparts == 0)
 			selected_partid = add_missing_partition(state->partitioned_table,
 													&state->temp_const);
+
 		else
 			selected_partid = parts[0];
 

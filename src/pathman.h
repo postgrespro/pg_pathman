@@ -139,27 +139,46 @@ extern PathmanState    *pmstate;
 
 #define PATHMAN_GET_DATUM(value, by_val) ( (by_val) ? (value) : PointerGetDatum(&value) )
 
-typedef uint32 IndexRange;
-#define RANGE_INFINITY	0x7FFF
-#define RANGE_LOSSY		0x80000000
+typedef struct {
+	bool	ir_valid : 1;
+	bool	ir_lossy : 1;
+	uint32	ir_lower : 31;
+	uint32	ir_upper : 31;
+} IndexRange;
 
-#define make_irange(lower, upper, lossy) \
-	(((lower) & RANGE_INFINITY) << 15 | ((upper) & RANGE_INFINITY) | ((lossy) ? RANGE_LOSSY : 0))
+#define RANGE_MASK			0xEFFFFFFF
 
-#define irange_lower(irange) \
-	(((irange) >> 15) & RANGE_INFINITY)
+#define InvalidIndexRange	{ false, false, 0, 0 }
 
-#define irange_upper(irange) \
-	((irange) & RANGE_INFINITY)
+inline static IndexRange
+make_irange(uint32 lower, uint32 upper, bool lossy)
+{
+	IndexRange result;
 
-#define irange_is_lossy(irange) \
-	((irange) & RANGE_LOSSY)
+	result.ir_valid = true;
+	result.ir_lossy = lossy;
+	result.ir_lower = (lower & RANGE_MASK);
+	result.ir_upper = (upper & RANGE_MASK);
 
-#define lfirst_irange(lc)				((IndexRange)(lc)->data.int_value)
-#define lappend_irange(list, irange)	(lappend_int((list), (int)(irange)))
-#define lcons_irange(irange, list)		lcons_int((int)(irange), (list))
-#define list_make1_irange(irange)		lcons_int((int)(irange), NIL)
-#define llast_irange(l)					(IndexRange)lfirst_int(list_tail(l))
+	return result;
+}
+
+inline static IndexRange *
+alloc_irange(IndexRange irange)
+{
+	IndexRange *result = (IndexRange *) palloc(sizeof(IndexRange));
+
+	memcpy((void *) result, (void *) &irange, sizeof(IndexRange));
+
+	return result;
+}
+
+#define lfirst_irange(lc)				( *(IndexRange *) lfirst(lc) )
+#define lappend_irange(list, irange)	( lappend((list), alloc_irange(irange)) )
+#define lcons_irange(irange, list)		( lcons(alloc_irange(irange), (list)) )
+#define list_make1_irange(irange)		( lcons(alloc_irange(irange), NIL) )
+#define llast_irange(list)				( lfirst_irange(list_tail(list)) )
+#define linitial_irange(list)			( lfirst_irange(list_head(list)) )
 
 /* rangeset.c */
 bool irange_intersects(IndexRange a, IndexRange b);

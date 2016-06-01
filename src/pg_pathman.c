@@ -304,7 +304,7 @@ handle_modification_query(Query *parse)
 		return;
 
 	/* Parse syntax tree and extract partition ranges */
-	ranges = list_make1_int(make_irange(0, prel->children_count - 1, false));
+	ranges = list_make1_irange(make_irange(0, prel->children_count - 1, false));
 	expr = (Expr *) eval_const_expressions(NULL, parse->jointree->quals);
 	if (!expr)
 		return;
@@ -322,11 +322,11 @@ handle_modification_query(Query *parse)
 	/* If only one partition is affected then substitute parent table with partition */
 	if (irange_list_length(ranges) == 1)
 	{
-		IndexRange irange = (IndexRange) linitial_oid(ranges);
-		if (irange_lower(irange) == irange_upper(irange))
+		IndexRange irange = linitial_irange(ranges);
+		if (irange.ir_lower == irange.ir_upper)
 		{
 			Oid *children = (Oid *) dsm_array_get_pointer(&prel->children);
-			rte->relid = children[irange_lower(irange)];
+			rte->relid = children[irange.ir_lower];
 			rte->inh = false;
 		}
 	}
@@ -1143,12 +1143,13 @@ search_range_partition_eq(const Datum value,
 	}
 	else
 	{
-		IndexRange irange = lfirst_irange(list_head(result.rangeset));
+		IndexRange irange = linitial_irange(result.rangeset);
 
 		Assert(list_length(result.rangeset) == 1);
-		Assert(irange_lower(irange) == irange_upper(irange));
+		Assert(irange.ir_lower == irange.ir_upper);
+		Assert(irange.ir_valid);
 
-		*part_idx = irange_lower(irange);
+		*part_idx = irange.ir_lower;
 		return SEARCH_RANGEREL_FOUND;
 	}
 }

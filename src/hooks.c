@@ -220,7 +220,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 
 		rte->inh = true;
 		dsm_arr = (Oid *) dsm_array_get_pointer(&prel->children);
-		ranges = list_make1_int(make_irange(0, prel->children_count - 1, false));
+		ranges = list_make1_irange(make_irange(0, prel->children_count - 1, false));
 
 		/* Make wrappers over restrictions and collect final rangeset */
 		context.prel = prel;
@@ -282,7 +282,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 		{
 			IndexRange	irange = lfirst_irange(lc);
 
-			for (i = irange_lower(irange); i <= irange_upper(irange); i++)
+			for (i = irange.ir_lower; i <= irange.ir_upper; i++)
 				append_child_relation(root, rel, rti, rte, i, dsm_arr[i], wrappers);
 		}
 

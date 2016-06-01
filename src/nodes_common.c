@@ -217,8 +217,8 @@ get_partition_oids(List *ranges, int *n, PartRelationInfo *prel)
 	foreach (range_cell, ranges)
 	{
 		int i;
-		int a = irange_lower(lfirst_irange(range_cell));
-		int b = irange_upper(lfirst_irange(range_cell));
+		int a = lfirst_irange(range_cell).ir_lower;
+		int b = lfirst_irange(range_cell).ir_upper;
 
 		for (i = a; i <= b; i++)
 		{
@@ -498,7 +498,7 @@ rescan_append_common(CustomScanState *node)
 	int					nparts;
 	WalkerContext		wcxt;
 
-	ranges = list_make1_int(make_irange(0, prel->children_count - 1, false));
+	ranges = list_make1_irange(make_irange(0, prel->children_count - 1, false));
 
 	wcxt.prel = prel;
 	wcxt.econtext = econtext;
