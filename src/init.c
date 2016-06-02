@@ -395,7 +395,7 @@ load_check_constraints(Oid parent_oid, Snapshot snapshot)
 			bool byVal = rangerel->by_val;
 
 			/* Sort ascending */
-			tce = lookup_type_cache(prel->atttype, TYPECACHE_CMP_PROC | TYPECACHE_CMP_PROC_FINFO);
+			tce = lookup_type_cache(prel->atttype, TYPECACHE_CMP_PROC_FINFO);
 			qsort_type_cmp_func = &tce->cmp_proc_finfo;
 			globalByVal = byVal;
 			qsort(ranges, proc, sizeof(RangeEntry), cmp_range_entries);

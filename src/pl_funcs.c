@@ -92,16 +92,10 @@ find_or_create_range_partition(PG_FUNCTION_ARGS)
 	Datum				value = PG_GETARG_DATUM(1);
 	Oid					value_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
 	RangeRelation	   *rangerel;
-	TypeCacheEntry	   *tce;
 	PartRelationInfo   *prel;
-	Oid					cmp_proc_oid;
 	FmgrInfo			cmp_func;
 	search_rangerel_result search_state;
 	RangeEntry			found_re;
-
-	tce = lookup_type_cache(value_type,
-		TYPECACHE_EQ_OPR | TYPECACHE_LT_OPR | TYPECACHE_GT_OPR |
-		TYPECACHE_CMP_PROC | TYPECACHE_CMP_PROC_FINFO);
 
 	prel = get_pathman_relation_info(relid, NULL);
 	rangerel = get_pathman_range_relation(relid, NULL);
@@ -109,11 +103,7 @@ find_or_create_range_partition(PG_FUNCTION_ARGS)
 	if (!prel || !rangerel)
 		PG_RETURN_NULL();
 
-	cmp_proc_oid = get_opfamily_proc(tce->btree_opf,
-									 value_type,
-									 prel->atttype,
-									 BTORDER_PROC);
-	fmgr_info(cmp_proc_oid, &cmp_func);
+	fill_type_cmp_fmgr_info(&cmp_func, value_type, prel->atttype);
 
 	search_state = search_range_partition_eq(value, &cmp_func,
 											 rangerel, &found_re);

@@ -1038,20 +1038,12 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 							strategy;
 	TypeCacheEntry		   *tce;
 	FmgrInfo				cmp_func;
-	Oid						cmp_proc_oid;
 	const OpExpr		   *expr = (const OpExpr *) result->orig;
 	const PartRelationInfo *prel = context->prel;
 
-	/* Determine operator type */
-	tce = lookup_type_cache(v->vartype,
-							TYPECACHE_BTREE_OPFAMILY | TYPECACHE_CMP_PROC | TYPECACHE_CMP_PROC_FINFO);
-
+	tce = lookup_type_cache(v->vartype, TYPECACHE_BTREE_OPFAMILY);
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
-	cmp_proc_oid = get_opfamily_proc(tce->btree_opf,
-									 c->consttype,
-									 prel->atttype,
-									 BTORDER_PROC);
-	fmgr_info(cmp_proc_oid, &cmp_func);
+	fill_type_cmp_fmgr_info(&cmp_func, c->consttype, prel->atttype);
 
 	switch (prel->parttype)
 	{
@@ -1237,23 +1229,16 @@ handle_const(const Const *c, WalkerContext *context)
 
 		case PT_RANGE:
 			{
-				Oid				cmp_proc_oid;
-				FmgrInfo		cmp_func;
 				TypeCacheEntry *tce;
 
-				tce = lookup_type_cache(c->consttype, 0);
-				cmp_proc_oid = get_opfamily_proc(tce->btree_opf,
-												 c->consttype,
-												 c->consttype,
-												 BTORDER_PROC);
-				fmgr_info(cmp_proc_oid, &cmp_func);
+				tce = lookup_type_cache(c->consttype, TYPECACHE_CMP_PROC_FINFO);
 
 				if (!context->ranges)
 					refresh_walker_context_ranges(context);
 
 				select_range_partitions(c->constvalue,
 										c->constbyval,
-										&cmp_func,
+										&tce->cmp_proc_finfo,
 										context->ranges,
 										context->nranges,
 										BTEqualStrategyNumber,

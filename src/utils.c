@@ -258,10 +258,7 @@ fill_type_cmp_fmgr_info(FmgrInfo *finfo, Oid type1, Oid type2)
 	Oid				cmp_proc_oid;
 	TypeCacheEntry *tce;
 
-	tce = lookup_type_cache(type1,
-							TYPECACHE_BTREE_OPFAMILY |
-								TYPECACHE_CMP_PROC |
-								TYPECACHE_CMP_PROC_FINFO);
+	tce = lookup_type_cache(type1, TYPECACHE_BTREE_OPFAMILY);
 
 	cmp_proc_oid = get_opfamily_proc(tce->btree_opf,
 									 type1,

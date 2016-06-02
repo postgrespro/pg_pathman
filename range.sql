@@ -1134,9 +1134,9 @@ BEGIN
 	SELECT * INTO schema, relname
 	FROM @extschema@.get_plain_schema_and_relname(relation);
 
-	EXECUTE format('DROP TRIGGER IF EXISTS %s ON %s CASCADE'
-				   , format('"%s_%s_insert_trigger"', schema, relname)
-				   , relation::TEXT);
+	--EXECUTE format('DROP TRIGGER IF EXISTS %s ON %s CASCADE'
+	--			   , format('"%s_%s_insert_trigger"', schema, relname)
+	--			   , relation::TEXT);
 END
 $$ LANGUAGE plpgsql;
 
