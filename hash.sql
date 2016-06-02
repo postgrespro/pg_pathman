@@ -83,7 +83,7 @@ BEGIN
 	v_relname := @extschema@.validate_relname(relation);
 
 	/* Drop trigger first */
-	PERFORM @extschema@.drop_hash_triggers(relation);
+	PERFORM @extschema@.drop_triggers(relation);
 	DELETE FROM @extschema@.pathman_config WHERE relname::regclass = relation;
 
 	FOR v_rec in (SELECT inhrelid::regclass::text AS tbl
@@ -105,27 +105,6 @@ BEGIN
 	PERFORM @extschema@.on_remove_partitions(relation::oid);
 
 	RETURN v_part_count;
-END
-$$ LANGUAGE plpgsql;
-
-/*
- * Drops hash trigger
- */
-CREATE OR REPLACE FUNCTION @extschema@.drop_hash_triggers(IN relation REGCLASS)
-RETURNS VOID AS
-$$
-DECLARE
-	relname TEXT;
-	schema  TEXT;
-	funcname      TEXT;
-BEGIN
-	SELECT * INTO schema, relname
-	FROM @extschema@.get_plain_schema_and_relname(relation);
-
-	funcname := schema || '.' || quote_ident(format('%s_insert_trigger_func', relname));
-	EXECUTE format('DROP FUNCTION IF EXISTS %s() CASCADE', funcname);
-	funcname := schema || '.' || quote_ident(format('%s_update_trigger_func', relname));
-	EXECUTE format('DROP FUNCTION IF EXISTS %s() CASCADE', funcname);
 END
 $$ LANGUAGE plpgsql;
 

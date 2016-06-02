@@ -127,9 +127,9 @@ BEGIN
 
 	DELETE FROM @extschema@.pathman_config WHERE relname = relation;
 	IF parttype = 1 THEN
-		PERFORM @extschema@.drop_hash_triggers(relation);
+		PERFORM @extschema@.drop_triggers(relation);
 	ELSIF parttype = 2 THEN
-		PERFORM @extschema@.drop_range_triggers(relation);
+		PERFORM @extschema@.drop_triggers(relation);
 	END IF;
 
 	/* Notify backend about changes */
@@ -340,3 +340,22 @@ RETURNS VOID AS 'pg_pathman', 'acquire_partitions_lock' LANGUAGE C STRICT;
  */
 CREATE OR REPLACE FUNCTION @extschema@.release_partitions_lock()
 RETURNS VOID AS 'pg_pathman', 'release_partitions_lock' LANGUAGE C STRICT;
+
+/*
+ * Drop trigger
+ */
+CREATE OR REPLACE FUNCTION @extschema@.drop_triggers(IN relation REGCLASS)
+RETURNS VOID AS
+$$
+DECLARE
+	relname		TEXT;
+	schema		TEXT;
+	funcname	TEXT;
+BEGIN
+	SELECT * INTO schema, relname
+	FROM @extschema@.get_plain_schema_and_relname(relation);
+
+	funcname := schema || '.' || quote_ident(format('%s_update_trigger_func', relname));
+	EXECUTE format('DROP FUNCTION IF EXISTS %s() CASCADE', funcname);
+END
+$$ LANGUAGE plpgsql;

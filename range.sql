@@ -1094,7 +1094,7 @@ BEGIN
 	v_relname := @extschema@.validate_relname(relation);
 
 	/* Drop trigger first */
-	PERFORM @extschema@.drop_range_triggers(relation);
+	PERFORM @extschema@.drop_triggers(relation);
 
 	FOR v_rec IN (SELECT inhrelid::regclass::text AS tbl
 				  FROM pg_inherits WHERE inhparent::regclass = relation)
@@ -1119,27 +1119,6 @@ BEGIN
 	RETURN v_part_count;
 END
 $$ LANGUAGE plpgsql;
-
-
-/*
- * Drop trigger
- */
-CREATE OR REPLACE FUNCTION @extschema@.drop_range_triggers(IN relation REGCLASS)
-RETURNS VOID AS
-$$
-DECLARE
-	schema  TEXT;
-	relname TEXT;
-BEGIN
-	SELECT * INTO schema, relname
-	FROM @extschema@.get_plain_schema_and_relname(relation);
-
-	--EXECUTE format('DROP TRIGGER IF EXISTS %s ON %s CASCADE'
-	--			   , format('"%s_%s_insert_trigger"', schema, relname)
-	--			   , relation::TEXT);
-END
-$$ LANGUAGE plpgsql;
-
 
 /*
  * Internal function used to create new partitions on insert or update trigger.
