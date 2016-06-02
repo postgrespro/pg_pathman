@@ -78,7 +78,6 @@ typedef struct PartRelationInfo
 	PartType		parttype;
 	Index			attnum;
 	Oid				atttype;
-
 } PartRelationInfo;
 
 /*
@@ -256,12 +255,12 @@ typedef struct
 typedef struct
 {
 	/* Main partitioning structure */
-	PartRelationInfo	   *prel;
+	const PartRelationInfo *prel;
 
 	/* Cached values */
-	RangeEntry			   *ranges;		/*cached RangeEntry array */
-	size_t					nranges;
-	ExprContext			   *econtext;
+	const RangeEntry	   *ranges;		/* cached RangeEntry array (copy) */
+	size_t					nranges;	/* number of RangeEntries */
+	ExprContext			   *econtext;	/* for ExecEvalExpr() */
 
 	/* Runtime values */
 	bool					hasLeast,
@@ -270,11 +269,32 @@ typedef struct
 							greatest;
 } WalkerContext;
 
+/*
+ * Usual initialization procedure for WalkerContext
+ */
 #define InitWalkerContext(context, prel_info, ecxt) \
 	do { \
 		(context)->prel = (prel_info); \
 		(context)->econtext = (ecxt); \
 		(context)->ranges = NULL; \
+		(context)->hasLeast = false; \
+		(context)->hasGreatest = false; \
+	} while (0)
+
+/*
+ * We'd like to persist RangeEntry (ranges) array
+ * in case of range partitioning, so 'wcxt' is stored
+ * inside of Custom Node
+ */
+#define InitWalkerContextCustomNode(context, prel_info, ecxt, isCached) \
+	do { \
+		if (!*isCached) \
+		{ \
+			(context)->prel = prel_info; \
+			(context)->econtext = ecxt; \
+			(context)->ranges = NULL; \
+			*isCached = true; \
+		} \
 		(context)->hasLeast = false; \
 		(context)->hasGreatest = false; \
 	} while (0)

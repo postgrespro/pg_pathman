@@ -381,4 +381,3 @@ release_partitions_lock(PG_FUNCTION_ARGS)
 	LWLockRelease(pmstate->edit_partitions_lock);
 	PG_RETURN_NULL();
 }
-

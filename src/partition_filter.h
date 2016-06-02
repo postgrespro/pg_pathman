@@ -23,13 +23,14 @@ typedef struct
 	ResultRelInfo	   *savedRelInfo;
 
 	Plan			   *subplan;
-	Const				temp_const; /* temporary const for expr walker */
+	Const				temp_const;		/* temporary const for expr walker */
 
 	HTAB			   *result_rels_table;
 	HASHCTL				result_rels_table_config;
 
 	WalkerContext		wcxt;
-	bool				wcxt_cached;
+	bool				wcxt_cached;	/* does wcxt contain cached data,
+										   e.g. RangeEntry array? */
 } PartitionFilterState;
 
 

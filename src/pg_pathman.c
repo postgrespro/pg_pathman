@@ -313,6 +313,7 @@ handle_modification_query(Query *parse)
 	InitWalkerContext(&context, prel, NULL);
 	wrap = walk_expr_tree(expr, &context);
 	finish_least_greatest(wrap, &context);
+	clear_walker_context(&context);
 
 	ranges = irange_list_intersect(ranges, wrap->rangeset);
 
@@ -710,6 +711,12 @@ change_varnos_in_restrinct_info(RestrictInfo *rinfo, change_varno_context *conte
 	}
 }
 
+/*
+ * Refresh cached RangeEntry array within WalkerContext
+ *
+ * This is essential when we add new partitions
+ * while executing INSERT query on partitioned table.
+ */
 void
 refresh_walker_context_ranges(WalkerContext *context)
 {
@@ -721,12 +728,15 @@ refresh_walker_context_ranges(WalkerContext *context)
 	context->nranges = rangerel->ranges.elem_count;
 }
 
+/*
+ * Free all temporary data cached by WalkerContext
+ */
 void
 clear_walker_context(WalkerContext *context)
 {
 	if (context->ranges)
 	{
-		pfree(context->ranges);
+		pfree((void *) context->ranges);
 		context->ranges = NULL;
 	}
 }
@@ -1023,14 +1033,14 @@ static void
 handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 					 const Var *v, const Const *c)
 {
-	HashRelationKey		key;
-	int					int_value,
-						strategy;
-	FmgrInfo		    cmp_func;
-	Oid					cmp_proc_oid;
-	const OpExpr	   *expr = (const OpExpr *)result->orig;
-	TypeCacheEntry	   *tce;
-	PartRelationInfo   *prel = context->prel;
+	HashRelationKey			key;
+	int						int_value,
+							strategy;
+	TypeCacheEntry		   *tce;
+	FmgrInfo				cmp_func;
+	Oid						cmp_proc_oid;
+	const OpExpr		   *expr = (const OpExpr *) result->orig;
+	const PartRelationInfo *prel = context->prel;
 
 	/* Determine operator type */
 	tce = lookup_type_cache(v->vartype,

@@ -159,21 +159,8 @@ partition_filter_exec(CustomScanState *node)
 		CopyToTempConst(constlen,    attlen);
 		CopyToTempConst(constbyval,  attbyval);
 
-		/*
-		 * We'd like to persist RangeEntry array
-		 * in case of range partitioning, so 'wcxt'
-		 * is stored inside of PartitionFilterState
-		 */
-		if (!state->wcxt_cached)
-		{
-			state->wcxt.prel = state->prel;
-			state->wcxt.econtext = econtext;
-			state->wcxt.ranges = NULL;
-
-			state->wcxt_cached = true;
-		}
-		state->wcxt.hasLeast = false;		/* refresh runtime values */
-		state->wcxt.hasGreatest = false;
+		InitWalkerContextCustomNode(&state->wcxt, state->prel,
+									econtext, &state->wcxt_cached);
 
 		ranges = walk_expr_tree((Expr *) &state->temp_const, &state->wcxt)->rangeset;
 		parts = get_partition_oids(ranges, &nparts, state->prel);
@@ -215,11 +202,12 @@ partition_filter_end(CustomScanState *node)
 		heap_close(rri_handle->resultRelInfo->ri_RelationDesc,
 				   RowExclusiveLock);
 	}
-
 	hash_destroy(state->result_rels_table);
 
 	Assert(list_length(node->custom_ps) == 1);
 	ExecEndNode((PlanState *) linitial(node->custom_ps));
+
+	clear_walker_context(&state->wcxt);
 }
 
 void

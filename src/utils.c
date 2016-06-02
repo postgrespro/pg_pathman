@@ -21,6 +21,10 @@
 
 static bool clause_contains_params_walker(Node *node, void *context);
 
+
+/*
+ * Check whether clause contains PARAMs or not
+ */
 bool
 clause_contains_params(Node *clause)
 {
@@ -59,6 +63,11 @@ bms_print(Bitmapset *bms)
   return str.data;
 }
 
+/*
+ * Copied from util/plancat.c
+ *
+ * Build a targetlist representing the columns of the specified index.
+ */
 List *
 build_index_tlist(PlannerInfo *root, IndexOptInfo *index,
 				  Relation heapRelation)
@@ -143,6 +152,12 @@ check_rinfo_for_partitioned_attr(List *rinfo, Index varno, AttrNumber varattno)
 	return false;
 }
 
+/*
+ * Append trigger info contained in 'more' to 'src'.
+ *
+ * This allows us to execute some of main table's triggers on children.
+ * See ExecInsert() for more details.
+ */
 TriggerDesc *
 append_trigger_descs(TriggerDesc *src, TriggerDesc *more, bool *grown_up)
 {
@@ -234,6 +249,9 @@ add_missing_partition(Oid partitioned_table, Const *value)
 	return result;
 }
 
+/*
+ * Get BTORDER_PROC for two types described by Oids
+ */
 void
 fill_type_cmp_fmgr_info(FmgrInfo *finfo, Oid type1, Oid type2)
 {

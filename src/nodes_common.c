@@ -481,6 +481,7 @@ end_append_common(CustomScanState *node)
 {
 	RuntimeAppendState *scan_state = (RuntimeAppendState *) node;
 
+	clear_walker_context(&scan_state->wcxt);
 	clear_plan_states(&scan_state->css);
 	hash_destroy(scan_state->children_table);
 }
@@ -498,21 +499,8 @@ rescan_append_common(CustomScanState *node)
 
 	ranges = list_make1_irange(make_irange(0, prel->children_count - 1, false));
 
-	/*
-	 * We'd like to persist RangeEntry array
-	 * in case of range partitioning, so 'wcxt'
-	 * is stored inside of RuntimeAppendState
-	 */
-	if (!scan_state->wcxt_cached)
-	{
-		scan_state->wcxt.prel = prel;
-		scan_state->wcxt.econtext = econtext;
-		scan_state->wcxt.ranges = NULL;
-
-		scan_state->wcxt_cached = true;
-	}
-	scan_state->wcxt.hasLeast = false;		/* refresh runtime values */
-	scan_state->wcxt.hasGreatest = false;
+	InitWalkerContextCustomNode(&scan_state->wcxt, scan_state->prel,
+								econtext, &scan_state->wcxt_cached);
 
 	foreach (lc, scan_state->custom_exprs)
 	{
