@@ -997,6 +997,24 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 					/* If we still didn't find partition then it doesn't exist */
 					if (startidx >= endidx)
 					{
+						/* Handle case when we hit the gap between partitions */
+						if (strategy != BTEqualStrategyNumber)
+						{
+							if (strategy == BTLessStrategyNumber ||
+								strategy == BTLessEqualStrategyNumber)
+							{
+								if (is_less && i > 0)
+									i--;
+							}
+							if (strategy == BTGreaterStrategyNumber ||
+								strategy == BTGreaterEqualStrategyNumber)
+							{
+								if (is_greater && i < rangerel->ranges.length - 1)
+									i++;
+							}
+							lossy = false;
+							break;
+						}
 						result->rangeset = NIL;
 						return;
 					}
