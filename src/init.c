@@ -198,11 +198,11 @@ load_relations_hashtable(bool reinitialize)
 		TupleDesc tupdesc = SPI_tuptable->tupdesc;
 		SPITupleTable *tuptable = SPI_tuptable;
 
-		for (i=0; i<proc; i++)
+		for (i = 0; i < proc; i++)
 		{
 			RelationKey key;
 			HeapTuple tuple = tuptable->vals[i];
-			int oid = DatumGetObjectId(SPI_getbinval(tuple, tupdesc, 1, &isnull));
+			Oid oid = DatumGetObjectId(SPI_getbinval(tuple, tupdesc, 1, &isnull));
 
 			key.dbid = MyDatabaseId;
 			key.relid = oid;

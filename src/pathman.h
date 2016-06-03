@@ -229,7 +229,7 @@ search_rangerel_result search_range_partition_eq(const Datum value,
 												 const RangeRelation *rangerel,
 												 RangeEntry *out_rentry);
 char *get_extension_schema(void);
-Oid create_partitions_bg_worker(Oid relid, Datum value, Oid value_type, bool *crashed);
+Oid create_partitions_bg_worker(Oid relid, Datum value, Oid value_type);
 Oid create_partitions(Oid relid, Datum value, Oid value_type, bool *crashed);
 
 void handle_modification_query(Query *parse);

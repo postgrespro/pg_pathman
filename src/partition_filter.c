@@ -169,8 +169,9 @@ partition_filter_exec(CustomScanState *node)
 			elog(ERROR, "PartitionFilter selected more than one partition");
 		else if (nparts == 0)
 		{
-			selected_partid = add_missing_partition(state->partitioned_table,
-													&state->temp_const);
+			selected_partid = create_partitions_bg_worker(state->partitioned_table,
+														  state->temp_const.constvalue,
+														  state->temp_const.consttype);
 
 			refresh_walker_context_ranges(&state->wcxt);
 		}

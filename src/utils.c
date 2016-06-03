@@ -153,7 +153,7 @@ check_rinfo_for_partitioned_attr(List *rinfo, Index varno, AttrNumber varattno)
 }
 
 /*
- * Append trigger info contained in 'more' to 'src'.
+ * Append trigger info contained in 'more' to 'src', both remain unmodified.
  *
  * This allows us to execute some of main table's triggers on children.
  * See ExecInsert() for more details.
@@ -225,28 +225,6 @@ append_trigger_descs(TriggerDesc *src, TriggerDesc *more, bool *grown_up)
 	CopyToTriggerDesc(trig_truncate_after_statement);
 
 	return new_desc;
-}
-
-Oid
-add_missing_partition(Oid partitioned_table, Const *value)
-{
-	bool	crashed;
-	Oid		result = InvalidOid;
-
-	SPI_connect();
-	PushActiveSnapshot(GetTransactionSnapshot());
-
-	/* Create partitions */
-	result = create_partitions(partitioned_table,
-							   value->constvalue,
-							   value->consttype,
-							   &crashed);
-
-	/* Cleanup */
-	SPI_finish();
-	PopActiveSnapshot();
-
-	return result;
 }
 
 /*

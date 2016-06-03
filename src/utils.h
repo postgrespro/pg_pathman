@@ -31,8 +31,6 @@ TriggerDesc * append_trigger_descs(TriggerDesc *src,
 								   TriggerDesc *more,
 								   bool *grown_up);
 
-Oid add_missing_partition(Oid partitioned_table, Const *value);
-
 void fill_type_cmp_fmgr_info(FmgrInfo *finfo,
 							 Oid type1,
 							 Oid type2);

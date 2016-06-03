@@ -1194,7 +1194,7 @@ BEGIN
 			RAISE NOTICE 'partition % created', v_part;
 		END LOOP;
 	ELSE
-		RAISE NOTICE 'Not implemented yet';
+		RAISE EXCEPTION 'Could not create partition';
 	END IF;
 
 	IF i > 0 THEN

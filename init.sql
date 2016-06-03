@@ -119,18 +119,11 @@ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION @extschema@.disable_partitioning(IN relation TEXT)
 RETURNS VOID AS
 $$
-DECLARE
-	parttype INTEGER;
 BEGIN
 	relation := @extschema@.validate_relname(relation);
-	parttype := parttype FROM pathman_config WHERE relname = relation;
 
 	DELETE FROM @extschema@.pathman_config WHERE relname = relation;
-	IF parttype = 1 THEN
-		PERFORM @extschema@.drop_triggers(relation);
-	ELSIF parttype = 2 THEN
-		PERFORM @extschema@.drop_triggers(relation);
-	END IF;
+	PERFORM @extschema@.drop_triggers(relation);
 
 	/* Notify backend about changes */
 	PERFORM on_remove_partitions(relation::regclass::integer);

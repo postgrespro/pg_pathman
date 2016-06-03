@@ -121,13 +121,6 @@ find_or_create_range_partition(PG_FUNCTION_ARGS)
 	else
 	{
 		Oid		child_oid;
-		bool	crashed = false;
-
-		/* Lock config before appending new partitions */
-		LWLockAcquire(pmstate->load_config_lock, LW_EXCLUSIVE);
-
-		/* Restrict concurrent partition creation */
-		LWLockAcquire(pmstate->edit_partitions_lock, LW_EXCLUSIVE);
 
 		/*
 		 * Check if someone else has already created partition.
@@ -136,26 +129,12 @@ find_or_create_range_partition(PG_FUNCTION_ARGS)
 												 rangerel, &found_re);
 		if (search_state == SEARCH_RANGEREL_FOUND)
 		{
-			LWLockRelease(pmstate->edit_partitions_lock);
-			LWLockRelease(pmstate->load_config_lock);
 			PG_RETURN_OID(found_re.child_oid);
 		}
-		else
-			Assert(search_state != SEARCH_RANGEREL_GAP);
 
 		/* Start background worker to create new partitions */
-		child_oid = create_partitions_bg_worker(relid, value, value_type, &crashed);
+		child_oid = create_partitions_bg_worker(relid, value, value_type);
 
-		/* Release locks */
-		if (!crashed)
-		{
-			LWLockRelease(pmstate->edit_partitions_lock);
-			LWLockRelease(pmstate->load_config_lock);
-		}
-
-		/* Repeat binary search */
-		Assert(SEARCH_RANGEREL_FOUND == search_range_partition_eq(value, &cmp_func,
-																  rangerel, NULL));
 		PG_RETURN_OID(child_oid);
 	}
 }
