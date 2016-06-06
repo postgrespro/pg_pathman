@@ -72,8 +72,6 @@ static void disable_inheritance_subselect(Query *parse);
 static bool disable_inheritance_subselect_walker(Node *node, void *context);
 
 /* Expression tree handlers */
-static Datum increase_hashable_value(const PartRelationInfo *prel, Datum value);
-static Datum decrease_hashable_value(const PartRelationInfo *prel, Datum value);
 static void handle_binary_opexpr(WalkerContext *context, WrapperNode *result, const Node *varnode, const Const *c);
 static void handle_binary_opexpr_param(const PartRelationInfo *prel, WrapperNode *result, const Node *varnode);
 static WrapperNode *handle_opexpr(const OpExpr *expr, WalkerContext *context);
@@ -806,38 +804,6 @@ finish_least_greatest(WrapperNode *wrap, WalkerContext *context)
 }
 
 /*
- * Increase value of hash partitioned column.
- */
-static Datum
-increase_hashable_value(const PartRelationInfo *prel, Datum value)
-{
-	switch (prel->atttype)
-	{
-		case INT4OID:
-			return Int32GetDatum(DatumGetInt32(value) + 1);
-		default:
-			elog(ERROR, "Invalid datatype: %u", prel->atttype);
-			return (Datum)0;
-	}
-}
-
-/*
- * Decrease value of hash partitioned column.
- */
-static Datum
-decrease_hashable_value(const PartRelationInfo *prel, Datum value)
-{
-	switch (prel->atttype)
-	{
-		case INT4OID:
-			return Int32GetDatum(DatumGetInt32(value) - 1);
-		default:
-			elog(ERROR, "Invalid datatype: %u", prel->atttype);
-			return (Datum)0;
-	}
-}
-
-/*
  *	This function determines which partitions should appear in query plan
  */
 static void
@@ -879,34 +845,6 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 	switch (prel->parttype)
 	{
 		case PT_HASH:
-			// value = OidFunctionCall1(prel->hash_proc, c->constvalue);
-			// if (strategy == BTLessStrategyNumber ||
-			// 	strategy == BTLessEqualStrategyNumber)
-			// {
-			// 	// Datum value = c->constvalue;
-
-			// 	if (strategy == BTLessStrategyNumber)
-			// 		value = decrease_hashable_value(prel, value);
-			// 	if (!context->hasGreatest || DatumGetInt32(FunctionCall2(&cmp_func, value, context->greatest)) < 0)
-			// 	{
-			// 		context->greatest = value;
-			// 		context->hasGreatest = true;
-			// 	}
-			// }
-			// else if (strategy == BTGreaterStrategyNumber ||
-			// 		 strategy == BTGreaterEqualStrategyNumber)
-			// {
-			// 	// Datum value = c->constvalue;
-
-			// 	if (strategy == BTGreaterStrategyNumber)
-			// 		value = increase_hashable_value(prel, value);
-			// 	if (!context->hasLeast || DatumGetInt32(FunctionCall2(&cmp_func, value, context->least)) > 0)
-			// 	{
-			// 		context->least = value;
-			// 		context->hasLeast = true;
-			// 	}
-			// }
-			// else
 			if (strategy == BTEqualStrategyNumber)
 			{
 				value = OidFunctionCall1(prel->hash_proc, c->constvalue);
