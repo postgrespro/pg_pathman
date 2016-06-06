@@ -120,15 +120,15 @@ CREATE OR REPLACE FUNCTION @extschema@.disable_partitioning(IN relation TEXT)
 RETURNS VOID AS
 $$
 DECLARE
-	parttype INTEGER;
+	v_parttype INTEGER;
 BEGIN
 	relation := @extschema@.validate_relname(relation);
-	parttype := parttype FROM pathman_config WHERE relname = relation;
+	v_parttype := parttype FROM pathman_config WHERE relname = relation;
 
 	DELETE FROM @extschema@.pathman_config WHERE relname = relation;
-	IF parttype = 1 THEN
+	IF v_parttype = 1 THEN
 		PERFORM @extschema@.drop_hash_triggers(relation);
-	ELSIF parttype = 2 THEN
+	ELSIF v_parttype = 2 THEN
 		PERFORM @extschema@.drop_range_triggers(relation);
 	END IF;
 
@@ -340,3 +340,15 @@ RETURNS VOID AS 'pg_pathman', 'acquire_partitions_lock' LANGUAGE C STRICT;
  */
 CREATE OR REPLACE FUNCTION @extschema@.release_partitions_lock()
 RETURNS VOID AS 'pg_pathman', 'release_partitions_lock' LANGUAGE C STRICT;
+
+/*
+ * Returns hash function OID for specified type
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_type_hash_func(OID)
+RETURNS OID AS 'pg_pathman', 'get_type_hash_func' LANGUAGE C STRICT;
+
+/*
+ * Calculates hash for integer value
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_hash(INTEGER, INTEGER)
+RETURNS INTEGER AS 'pg_pathman', 'get_hash' LANGUAGE C STRICT;
