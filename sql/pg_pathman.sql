@@ -396,14 +396,14 @@ SELECT * FROM test.hash_rel WHERE id = 123;
 /*
  * Clean up
  */
-SELECT pathman.drop_hash_partitions('test.hash_rel');
+SELECT pathman.drop_partitions('test.hash_rel');
 SELECT COUNT(*) FROM ONLY test.hash_rel;
 SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3);
-SELECT pathman.drop_hash_partitions('test.hash_rel', TRUE);
+SELECT pathman.drop_partitions('test.hash_rel', TRUE);
 SELECT COUNT(*) FROM ONLY test.hash_rel;
 DROP TABLE test.hash_rel CASCADE;
 
-SELECT pathman.drop_range_partitions('test.num_range_rel');
+SELECT pathman.drop_partitions('test.num_range_rel');
 DROP TABLE test.num_range_rel CASCADE;
 
 DROP TABLE test.range_rel CASCADE;
@@ -453,7 +453,7 @@ UPDATE test."TeSt" SET a = 1;
 SELECT * FROM test."TeSt";
 SELECT * FROM test."TeSt" WHERE a = 1;
 EXPLAIN (COSTS OFF) SELECT * FROM test."TeSt" WHERE a = 1;
-SELECT pathman.drop_hash_partitions('test."TeSt"');
+SELECT pathman.drop_partitions('test."TeSt"');
 SELECT * FROM test."TeSt";
 
 CREATE TABLE test."RangeRel" (
@@ -467,7 +467,7 @@ SELECT pathman.append_range_partition('test."RangeRel"');
 SELECT pathman.prepend_range_partition('test."RangeRel"');
 SELECT pathman.merge_range_partitions('test."RangeRel_1"', 'test."RangeRel_' || currval('test."RangeRel_seq"') || '"');
 SELECT pathman.split_range_partition('test."RangeRel_1"', '2015-01-01'::DATE);
-SELECT pathman.drop_range_partitions('test."RangeRel"');
+SELECT pathman.drop_partitions('test."RangeRel"');
 SELECT pathman.create_partitions_from_range('test."RangeRel"', 'dt', '2015-01-01'::DATE, '2015-01-05'::DATE, '1 day'::INTERVAL);
 DROP TABLE test."RangeRel" CASCADE;
 SELECT * FROM pathman.pathman_config;
@@ -476,7 +476,7 @@ CREATE TABLE test."RangeRel" (
 	dt	TIMESTAMP NOT NULL,
 	txt	TEXT);
 SELECT pathman.create_range_partitions('test."RangeRel"', 'id', 1, 100, 3);
-SELECT pathman.drop_range_partitions('test."RangeRel"');
+SELECT pathman.drop_partitions('test."RangeRel"');
 SELECT pathman.create_partitions_from_range('test."RangeRel"', 'id', 1, 300, 100);
 DROP TABLE test."RangeRel" CASCADE;
 
@@ -524,9 +524,9 @@ EXPLAIN (COSTS OFF) DELETE FROM range_rel r USING tmp t WHERE r.dt = '2010-01-02
 DELETE FROM range_rel r USING tmp t WHERE r.dt = '2010-01-02' AND r.id = t.id;
 
 /* Create range partitions from whole range */
-SELECT drop_range_partitions('range_rel');
+SELECT drop_partitions('range_rel');
 SELECT create_partitions_from_range('range_rel', 'id', 1, 1000, 100);
-SELECT drop_range_partitions('range_rel', TRUE);
+SELECT drop_partitions('range_rel', TRUE);
 SELECT create_partitions_from_range('range_rel', 'dt', '2015-01-01'::date, '2015-12-01'::date, '1 month'::interval);
 EXPLAIN (COSTS OFF) SELECT * FROM range_rel WHERE dt = '2015-12-15';
 

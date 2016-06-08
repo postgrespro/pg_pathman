@@ -67,48 +67,6 @@ END
 $$ LANGUAGE plpgsql;
 
 /*
- * Drops all partitions for specified relation
- */
-CREATE OR REPLACE FUNCTION @extschema@.drop_hash_partitions(
-	IN relation REGCLASS
-	, delete_data BOOLEAN DEFAULT FALSE)
-RETURNS INTEGER AS
-$$
-DECLARE
-	v_relname    TEXT;
-	v_rec        RECORD;
-	v_rows       INTEGER;
-	v_part_count INTEGER := 0;
-BEGIN
-	v_relname := @extschema@.validate_relname(relation);
-
-	/* Drop trigger first */
-	PERFORM @extschema@.drop_triggers(relation);
-	DELETE FROM @extschema@.pathman_config WHERE relname::regclass = relation;
-
-	FOR v_rec in (SELECT inhrelid::regclass::text AS tbl
-				FROM pg_inherits WHERE inhparent = relation::oid)
-	LOOP
-		IF NOT delete_data THEN
-			EXECUTE format('WITH part_data AS (DELETE FROM %s RETURNING *)
-							INSERT INTO %s SELECT * FROM part_data'
-						   , v_rec.tbl
-						   , relation::text);
-			GET DIAGNOSTICS v_rows = ROW_COUNT;
-			RAISE NOTICE '% rows copied from %', v_rows, v_rec.tbl;
-		END IF;
-		EXECUTE format('DROP TABLE %s', v_rec.tbl);
-		v_part_count := v_part_count + 1;
-	END LOOP;
-
-	/* Notify backend about changes */
-	PERFORM @extschema@.on_remove_partitions(relation::oid);
-
-	RETURN v_part_count;
-END
-$$ LANGUAGE plpgsql;
-
-/*
  * Creates an update trigger
  */
 CREATE OR REPLACE FUNCTION @extschema@.create_hash_update_trigger(

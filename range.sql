@@ -1075,51 +1075,6 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
-
-/*
- * Drop partitions
- * If delete_data set to TRUE then partitions will be dropped with all the data
- */
-CREATE OR REPLACE FUNCTION @extschema@.drop_range_partitions(
-	relation REGCLASS
-	, delete_data BOOLEAN DEFAULT FALSE)
-RETURNS INTEGER AS
-$$
-DECLARE
-	v_rec        RECORD;
-	v_rows       INTEGER;
-	v_part_count INTEGER := 0;
-	v_relname    TEXT;
-BEGIN
-	v_relname := @extschema@.validate_relname(relation);
-
-	/* Drop trigger first */
-	PERFORM @extschema@.drop_triggers(relation);
-
-	FOR v_rec IN (SELECT inhrelid::regclass::text AS tbl
-				  FROM pg_inherits WHERE inhparent::regclass = relation)
-	LOOP
-		IF NOT delete_data THEN
-			EXECUTE format('WITH part_data AS (DELETE FROM %s RETURNING *)
-							INSERT INTO %s SELECT * FROM part_data'
-						   , v_rec.tbl
-						   , relation::text);
-			GET DIAGNOSTICS v_rows = ROW_COUNT;
-			RAISE NOTICE '% rows copied from %', v_rows, v_rec.tbl;
-		END IF;
-		EXECUTE format('DROP TABLE %s', v_rec.tbl);
-		v_part_count := v_part_count + 1;
-	END LOOP;
-
-	DELETE FROM @extschema@.pathman_config WHERE relname::regclass = relation;
-
-	/* Notify backend about changes */
-	PERFORM @extschema@.on_remove_partitions(relation::oid);
-
-	RETURN v_part_count;
-END
-$$ LANGUAGE plpgsql;
-
 /*
  * Internal function used to create new partitions on insert or update trigger.
  * Invoked from C-function find_or_create_range_partition().
