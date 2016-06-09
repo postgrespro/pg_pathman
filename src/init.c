@@ -171,7 +171,8 @@ load_relations_hashtable(bool reinitialize)
 	ListCell   *lc;
 	char	   *schema;
 	PartRelationInfo *prel;
-	char		sql[] = "SELECT pg_class.oid, pg_attribute.attnum, cfg.parttype, pg_attribute.atttypid "
+	char		sql[] = "SELECT pg_class.oid, pg_attribute.attnum,"
+								"cfg.parttype, pg_attribute.atttypid, pg_attribute.atttypmod "
 						"FROM %s.pathman_config as cfg "
 						"JOIN pg_class ON pg_class.oid = cfg.relname::regclass::oid "
 						"JOIN pg_attribute ON pg_attribute.attname = lower(cfg.attname) "
@@ -212,6 +213,7 @@ load_relations_hashtable(bool reinitialize)
 			prel->attnum = DatumGetInt32(SPI_getbinval(tuple, tupdesc, 2, &isnull));
 			prel->parttype = DatumGetInt32(SPI_getbinval(tuple, tupdesc, 3, &isnull));
 			prel->atttype = DatumGetObjectId(SPI_getbinval(tuple, tupdesc, 4, &isnull));
+			prel->atttypmod = DatumGetInt32(SPI_getbinval(tuple, tupdesc, 5, &isnull));
 
 			part_oids = lappend_int(part_oids, oid);
 		}

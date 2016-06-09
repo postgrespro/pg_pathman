@@ -78,6 +78,7 @@ typedef struct PartRelationInfo
 	PartType		parttype;
 	Index			attnum;
 	Oid				atttype;
+	int32			atttypmod;
 } PartRelationInfo;
 
 /*

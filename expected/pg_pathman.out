@@ -12,8 +12,6 @@ SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3);
 ERROR:  Partitioning key 'value' must be NOT NULL
 ALTER TABLE test.hash_rel ALTER COLUMN value SET NOT NULL;
 SELECT pathman.create_hash_partitions('test.hash_rel', 'Value', 3);
-NOTICE:  function test.hash_rel_insert_trigger_func() does not exist, skipping
-NOTICE:  function test.hash_rel_update_trigger_func() does not exist, skipping
 NOTICE:  Copying data to partitions...
  create_hash_partitions 
 ------------------------
@@ -728,12 +726,60 @@ begin
 	return 'ok';
 end;
 $$ language plpgsql;
+create or replace function test.pathman_test_5() returns text as $$
+declare
+	res record;
+begin
+	select
+	from test.runtime_test_3
+	where id = (select * from test.vals order by val limit 1)
+	limit 1
+	into res; /* test empty tlist */
+
+
+	select id, generate_series(1, 2) gen, val
+	from test.runtime_test_3
+	where id = any (select * from test.vals order by val limit 5)
+	order by id, gen, val
+	offset 1 limit 1
+	into res; /* without IndexOnlyScan */
+
+	perform test.pathman_equal(res.id::text, '1', 'id is incorrect (t2)');
+	perform test.pathman_equal(res.gen::text, '2', 'gen is incorrect (t2)');
+	perform test.pathman_equal(res.val::text, 'k = 1', 'val is incorrect (t2)');
+
+
+	select id
+	from test.runtime_test_3
+	where id = any (select * from test.vals order by val limit 5)
+	order by id
+	offset 3 limit 1
+	into res; /* with IndexOnlyScan */
+
+	perform test.pathman_equal(res.id::text, '4', 'id is incorrect (t3)');
+
+
+	select v.val v1, generate_series(2, 2) gen, t.val v2
+	from test.runtime_test_3 t join test.vals v on id = v.val
+	order by v1, gen, v2
+	limit 1
+	into res;
+
+	perform test.pathman_equal(res.v1::text, '1', 'v1 is incorrect (t4)');
+	perform test.pathman_equal(res.gen::text, '2', 'gen is incorrect (t4)');
+	perform test.pathman_equal(res.v2::text, 'k = 1', 'v2 is incorrect (t4)');
+
+	return 'ok';
+end;
+$$ language plpgsql
+set pg_pathman.enable = true
+set enable_hashjoin = off
+set enable_mergejoin = off;
+NOTICE:  RuntimeAppend, RuntimeMergeAppend and PartitionFilter nodes have been enabled
 create table test.run_values as select generate_series(1, 10000) val;
 create table test.runtime_test_1(id serial primary key, val real);
 insert into test.runtime_test_1 select generate_series(1, 10000), random();
 select pathman.create_hash_partitions('test.runtime_test_1', 'id', 6);
-NOTICE:  function test.runtime_test_1_insert_trigger_func() does not exist, skipping
-NOTICE:  function test.runtime_test_1_update_trigger_func() does not exist, skipping
 NOTICE:  Copying data to partitions...
  create_hash_partitions 
 ------------------------
@@ -745,16 +791,29 @@ create table test.runtime_test_2 (id serial, category_id int not null, name text
 insert into test.runtime_test_2 (select id, (id % 6) + 1 as category_id, 'good' || id::text as name, random() as rating from generate_series(1, 100000) id);
 create index on test.runtime_test_2 (category_id, rating);
 select pathman.create_hash_partitions('test.runtime_test_2', 'category_id', 6);
-NOTICE:  function test.runtime_test_2_insert_trigger_func() does not exist, skipping
-NOTICE:  function test.runtime_test_2_update_trigger_func() does not exist, skipping
 NOTICE:  Copying data to partitions...
  create_hash_partitions 
 ------------------------
                       6
 (1 row)
 
+create table test.vals as (select generate_series(1, 10000) as val);
+create table test.runtime_test_3(val text, id serial not null);
+insert into test.runtime_test_3(id, val) select * from generate_series(1, 10000) k, format('k = %s', k);
+select pathman.create_hash_partitions('test.runtime_test_3', 'id', 4);
+NOTICE:  Copying data to partitions...
+ create_hash_partitions 
+------------------------
+                      4
+(1 row)
+
+create index on test.runtime_test_3 (id);
+create index on test.runtime_test_3_0 (id);
 analyze test.run_values;
 analyze test.runtime_test_1;
+analyze test.runtime_test_2;
+analyze test.runtime_test_3;
+analyze test.runtime_test_3_0;
 set enable_mergejoin = off;
 set enable_hashjoin = off;
 set pg_pathman.enable_runtimeappend = on;
@@ -783,12 +842,18 @@ select test.pathman_test_4(); /* RuntimeMergeAppend (lateral) */
  ok
 (1 row)
 
+select test.pathman_test_5(); /* projection tests for RuntimeXXX nodes */
+ pathman_test_5 
+----------------
+ ok
+(1 row)
+
 set pg_pathman.enable_runtimeappend = off;
 set pg_pathman.enable_runtimemergeappend = off;
 set enable_mergejoin = on;
 set enable_hashjoin = on;
-drop table test.run_values, test.runtime_test_1, test.runtime_test_2 cascade;
-NOTICE:  drop cascades to 12 other objects
+drop table test.run_values, test.runtime_test_1, test.runtime_test_2, test.runtime_test_3, test.vals cascade;
+NOTICE:  drop cascades to 16 other objects
 /*
  * Test split and merge
  */
@@ -1009,15 +1074,14 @@ SELECT * FROM test.hash_rel WHERE id = 123;
 /*
  * Clean up
  */
-SELECT pathman.drop_hash_partitions('test.hash_rel');
-NOTICE:  drop cascades to trigger test_hash_rel_insert_trigger on table test.hash_rel
+SELECT pathman.drop_partitions('test.hash_rel');
 NOTICE:  drop cascades to 3 other objects
 NOTICE:  2 rows copied from test.hash_rel_2
 NOTICE:  3 rows copied from test.hash_rel_1
 NOTICE:  2 rows copied from test.hash_rel_0
- drop_hash_partitions 
-----------------------
-                    3
+ drop_partitions 
+-----------------
+               3
 (1 row)
 
 SELECT COUNT(*) FROM ONLY test.hash_rel;
@@ -1027,20 +1091,17 @@ SELECT COUNT(*) FROM ONLY test.hash_rel;
 (1 row)
 
 SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3);
-NOTICE:  function test.hash_rel_insert_trigger_func() does not exist, skipping
-NOTICE:  function test.hash_rel_update_trigger_func() does not exist, skipping
 NOTICE:  Copying data to partitions...
  create_hash_partitions 
 ------------------------
                       3
 (1 row)
 
-SELECT pathman.drop_hash_partitions('test.hash_rel', TRUE);
-NOTICE:  drop cascades to trigger test_hash_rel_insert_trigger on table test.hash_rel
+SELECT pathman.drop_partitions('test.hash_rel', TRUE);
 NOTICE:  function test.hash_rel_update_trigger_func() does not exist, skipping
- drop_hash_partitions 
-----------------------
-                    3
+ drop_partitions 
+-----------------
+               3
 (1 row)
 
 SELECT COUNT(*) FROM ONLY test.hash_rel;
@@ -1050,15 +1111,16 @@ SELECT COUNT(*) FROM ONLY test.hash_rel;
 (1 row)
 
 DROP TABLE test.hash_rel CASCADE;
-SELECT pathman.drop_range_partitions('test.num_range_rel');
+SELECT pathman.drop_partitions('test.num_range_rel');
+NOTICE:  drop cascades to 4 other objects
 NOTICE:  0 rows copied from test.num_range_rel_6
 NOTICE:  2 rows copied from test.num_range_rel_4
 NOTICE:  1000 rows copied from test.num_range_rel_3
 NOTICE:  1000 rows copied from test.num_range_rel_2
 NOTICE:  998 rows copied from test.num_range_rel_1
- drop_range_partitions 
------------------------
-                     5
+ drop_partitions 
+-----------------
+               5
 (1 row)
 
 DROP TABLE test.num_range_rel CASCADE;
@@ -1172,8 +1234,6 @@ CREATE TABLE test."TeSt" (a INT NOT NULL, b INT);
 SELECT pathman.create_hash_partitions('test.TeSt', 'a', 3);
 ERROR:  relation "test.test" does not exist at character 39
 SELECT pathman.create_hash_partitions('test."TeSt"', 'a', 3);
-NOTICE:  function test.TeSt_insert_trigger_func() does not exist, skipping
-NOTICE:  function test.TeSt_update_trigger_func() does not exist, skipping
 NOTICE:  Copying data to partitions...
  create_hash_partitions 
 ------------------------
@@ -1222,15 +1282,14 @@ EXPLAIN (COSTS OFF) SELECT * FROM test."TeSt" WHERE a = 1;
          Filter: (a = 1)
 (3 rows)
 
-SELECT pathman.drop_hash_partitions('test."TeSt"');
-NOTICE:  drop cascades to trigger test_TeSt_insert_trigger on table test."TeSt"
+SELECT pathman.drop_partitions('test."TeSt"');
 NOTICE:  drop cascades to 3 other objects
 NOTICE:  0 rows copied from test."TeSt_2"
 NOTICE:  3 rows copied from test."TeSt_1"
 NOTICE:  0 rows copied from test."TeSt_0"
- drop_hash_partitions 
-----------------------
-                    3
+ drop_partitions 
+-----------------
+               3
 (1 row)
 
 SELECT * FROM test."TeSt";
@@ -1291,15 +1350,16 @@ NOTICE:  Done!
  {12-31-2014,01-02-2015}
 (1 row)
 
-SELECT pathman.drop_range_partitions('test."RangeRel"');
+SELECT pathman.drop_partitions('test."RangeRel"');
+NOTICE:  function test.RangeRel_update_trigger_func() does not exist, skipping
 NOTICE:  1 rows copied from test."RangeRel_6"
 NOTICE:  0 rows copied from test."RangeRel_4"
 NOTICE:  1 rows copied from test."RangeRel_3"
 NOTICE:  1 rows copied from test."RangeRel_2"
 NOTICE:  0 rows copied from test."RangeRel_1"
- drop_range_partitions 
------------------------
-                     5
+ drop_partitions 
+-----------------
+               5
 (1 row)
 
 SELECT pathman.create_partitions_from_range('test."RangeRel"', 'dt', '2015-01-01'::DATE, '2015-01-05'::DATE, '1 day'::INTERVAL);
@@ -1314,7 +1374,7 @@ NOTICE:  drop cascades to 5 other objects
 SELECT * FROM pathman.pathman_config;
  id |      relname       | attname | parttype | range_interval 
 ----+--------------------+---------+----------+----------------
-  8 | test.num_range_rel | id      |        2 | 1000
+  9 | test.num_range_rel | id      |        2 | 1000
 (1 row)
 
 CREATE TABLE test."RangeRel" (
@@ -1328,13 +1388,14 @@ NOTICE:  Copying data to partitions...
                        3
 (1 row)
 
-SELECT pathman.drop_range_partitions('test."RangeRel"');
+SELECT pathman.drop_partitions('test."RangeRel"');
+NOTICE:  function test.RangeRel_update_trigger_func() does not exist, skipping
 NOTICE:  0 rows copied from test."RangeRel_3"
 NOTICE:  0 rows copied from test."RangeRel_2"
 NOTICE:  0 rows copied from test."RangeRel_1"
- drop_range_partitions 
------------------------
-                     3
+ drop_partitions 
+-----------------
+               3
 (1 row)
 
 SELECT pathman.create_partitions_from_range('test."RangeRel"', 'id', 1, 300, 100);
@@ -1355,8 +1416,6 @@ CREATE TABLE hash_rel (
 	value	INTEGER NOT NULL);
 INSERT INTO hash_rel (value) SELECT g FROM generate_series(1, 10000) as g;
 SELECT create_hash_partitions('hash_rel', 'value', 3);
-NOTICE:  function public.hash_rel_insert_trigger_func() does not exist, skipping
-NOTICE:  function public.hash_rel_update_trigger_func() does not exist, skipping
 NOTICE:  Copying data to partitions...
  create_hash_partitions 
 ------------------------
@@ -1503,7 +1562,8 @@ EXPLAIN (COSTS OFF) DELETE FROM range_rel r USING tmp t WHERE r.dt = '2010-01-02
 
 DELETE FROM range_rel r USING tmp t WHERE r.dt = '2010-01-02' AND r.id = t.id;
 /* Create range partitions from whole range */
-SELECT drop_range_partitions('range_rel');
+SELECT drop_partitions('range_rel');
+NOTICE:  function public.range_rel_update_trigger_func() does not exist, skipping
 NOTICE:  0 rows copied from range_rel_15
 NOTICE:  0 rows copied from range_rel_14
 NOTICE:  14 rows copied from range_rel_13
@@ -1518,9 +1578,9 @@ NOTICE:  31 rows copied from range_rel_5
 NOTICE:  30 rows copied from range_rel_4
 NOTICE:  31 rows copied from range_rel_3
 NOTICE:  44 rows copied from range_rel_1
- drop_range_partitions 
------------------------
-                    14
+ drop_partitions 
+-----------------
+              14
 (1 row)
 
 SELECT create_partitions_from_range('range_rel', 'id', 1, 1000, 100);
@@ -1530,10 +1590,11 @@ NOTICE:  Copying data to partitions...
                            10
 (1 row)
 
-SELECT drop_range_partitions('range_rel', TRUE);
- drop_range_partitions 
------------------------
-                    10
+SELECT drop_partitions('range_rel', TRUE);
+NOTICE:  function public.range_rel_update_trigger_func() does not exist, skipping
+ drop_partitions 
+-----------------
+              10
 (1 row)
 
 SELECT create_partitions_from_range('range_rel', 'dt', '2015-01-01'::date, '2015-12-01'::date, '1 month'::interval);

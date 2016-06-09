@@ -378,12 +378,14 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 			case CMD_SELECT:
 				disable_inheritance(parse);
 				break;
+
 			case CMD_UPDATE:
 			case CMD_DELETE:
 				disable_inheritance_cte(parse);
 				disable_inheritance_subselect(parse);
 				handle_modification_query(parse);
 				break;
+
 			case CMD_INSERT:
 			{
 				ListCell *lc;
@@ -396,6 +398,7 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 
 				return result;
 			}
+
 			default:
 				break;
 		}

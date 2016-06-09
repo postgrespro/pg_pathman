@@ -137,6 +137,42 @@ replace_tlist_varnos(List *child_tlist, RelOptInfo *parent)
 	return result;
 }
 
+/* Append partition attribute in case it's not present in target list */
+static List *
+append_part_attr_to_tlist(List *tlist, Index relno, PartRelationInfo *prel)
+{
+	ListCell   *lc;
+	bool		part_attr_found = false;
+
+	foreach (lc, tlist)
+	{
+		TargetEntry *te = (TargetEntry *) lfirst(lc);
+		Var			*var = (Var *) te->expr;
+
+		if (IsA(var, Var) && var->varattno == prel->attnum)
+			part_attr_found = true;
+	}
+
+	if (!part_attr_found)
+	{
+		/* TODO: how about collation support? */
+		Var	   *newvar = makeVar(relno,
+								 prel->attnum,
+								 prel->atttype,
+								 prel->atttypmod,
+								 InvalidOid,
+								 0);
+
+		Index	last_item = list_length(tlist) + 1;
+
+		tlist = lappend(tlist, makeTargetEntry((Expr *) newvar,
+											   last_item,
+											   NULL, false));
+	}
+
+	return tlist;
+}
+
 static void
 pack_runtimeappend_private(CustomScan *cscan, RuntimeAppendPath *path)
 {
@@ -313,9 +349,11 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 {
 	RuntimeAppendPath  *rpath = (RuntimeAppendPath *) best_path;
 	CustomScan		   *cscan;
+	PartRelationInfo   *prel = get_pathman_relation_info(rpath->relid, NULL);
 
 	cscan = makeNode(CustomScan);
 	cscan->custom_scan_tlist = NIL; /* initial value (empty list) */
+	cscan->scan.plan.targetlist = NIL;
 
 	if (custom_plans)
 	{
@@ -327,58 +365,24 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 			Plan		   *child_plan = (Plan *) lfirst(lc2);
 			RelOptInfo 	   *child_rel = ((Path *) lfirst(lc1))->parent;
 
-			/* We enforce IndexOnlyScans to return all available columns */
-			if (IsA(child_plan, IndexOnlyScan))
-			{
-				IndexOptInfo   *indexinfo = ((IndexPath *) lfirst(lc1))->indexinfo;
-				RangeTblEntry  *rentry = root->simple_rte_array[child_rel->relid];
-				Relation		child_relation;
+			/* Replace rel's  tlist with a matching one */
+			if (!cscan->scan.plan.targetlist)
+				tlist = replace_tlist_varnos(child_plan->targetlist, rel);
 
-				child_relation = heap_open(rentry->relid, NoLock);
-				child_plan->targetlist = build_index_tlist(root, indexinfo,
-														   child_relation);
-				heap_close(child_relation, NoLock);
+			/* Add partition attribute if necessary (for ExecQual()) */
+			child_plan->targetlist = append_part_attr_to_tlist(child_plan->targetlist,
+															   child_rel->relid,
+															   prel);
 
-				if (!cscan->custom_scan_tlist)
-				{
-					/* Set appropriate tlist for child scans */
-					cscan->custom_scan_tlist =
-						replace_tlist_varnos(child_plan->targetlist, rel);
-
-					/* Replace parent's tlist as well */
-					tlist = cscan->custom_scan_tlist;
-				}
-			}
-			/* Don't generate useless physical tlists that will be replaced */
-			else if (!cscan->custom_scan_tlist)
-				child_plan->targetlist = build_physical_tlist(root, child_rel);
+			/* Now make custom_scan_tlist match child plans' targetlists */
+			if (!cscan->custom_scan_tlist)
+				cscan->custom_scan_tlist = replace_tlist_varnos(child_plan->targetlist,
+																rel);
 		}
-
-		/*
-		 * Go through the other (non-IOS) plans and replace their
-		 * physical tlists with the new 'custom_scan_tlist'.
-		 */
-		if (cscan->custom_scan_tlist)
-			forboth (lc1, rpath->cpath.custom_paths, lc2, custom_plans)
-			{
-				Plan		   *child_plan = (Plan *) lfirst(lc2);
-				RelOptInfo 	   *child_rel = ((Path *) lfirst(lc1))->parent;
-
-				if (!IsA(child_plan, IndexOnlyScan))
-					child_plan->targetlist =
-						replace_tlist_varnos(cscan->custom_scan_tlist, child_rel);
-			}
 	}
 
 	cscan->scan.plan.qual = NIL;
 	cscan->scan.plan.targetlist = tlist;
-
-	/*
-	 * Initialize custom_scan_tlist if it's not
-	 * ready yet (there are no IndexOnlyScans).
-	 */
-	if (!cscan->custom_scan_tlist)
-		cscan->custom_scan_tlist = tlist;
 
 	/* Since we're not scanning any real table directly */
 	cscan->scan.scanrelid = 0;
