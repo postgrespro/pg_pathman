@@ -69,6 +69,10 @@ typedef struct RelationKey
  *		children - list of children's Oids
  *		parttype - partitioning type (HASH, LIST or RANGE)
  *		attnum - attribute number of parent relation's column
+ *		atttype - attribute type
+ *		atttypmod - attrubute type modifier
+ *		cmp_proc - compare fuction for a type of the attribute
+ *		hash_proc - hash function for a type of the attribute
  */
 typedef struct PartRelationInfo
 {
@@ -79,10 +83,12 @@ typedef struct PartRelationInfo
 	Index			attnum;
 	Oid				atttype;
 	int32			atttypmod;
+	Oid				cmp_proc;
+	Oid				hash_proc;
 } PartRelationInfo;
 
 /*
- * Child relation for HASH partitioning
+ * Child relation info for HASH partitioning
  */
 typedef struct HashRelationKey
 {
@@ -97,7 +103,7 @@ typedef struct HashRelation
 } HashRelation;
 
 /*
- * Child relation for RANGE partitioning
+ * Child relation info for RANGE partitioning
  */
 typedef struct RangeEntry
 {
@@ -232,6 +238,7 @@ search_rangerel_result search_range_partition_eq(const Datum value,
 char *get_extension_schema(void);
 Oid create_partitions_bg_worker(Oid relid, Datum value, Oid value_type);
 Oid create_partitions(Oid relid, Datum value, Oid value_type, bool *crashed);
+uint32 make_hash(uint32 value, uint32 partitions);
 
 void handle_modification_query(Query *parse);
 void disable_inheritance(Query *parse);

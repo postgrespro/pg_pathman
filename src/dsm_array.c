@@ -30,7 +30,7 @@ static DsmConfig *dsm_cfg = NULL;
 /*
  * Block header
  *
- * Its size must be 4 bytes for 32bit and 8 bytes for 64bit.
+ * Its size must be equal to 4 bytes for 32bit and 8 bytes for 64bit.
  * Otherwise it could screw up an alignment (for example on Sparc9)
  */
 typedef uintptr_t BlockHeader;

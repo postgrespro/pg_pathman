@@ -45,13 +45,6 @@
 PG_MODULE_MAGIC;
 
 
-typedef struct
-{
-	Oid old_varno;
-	Oid new_varno;
-} change_varno_context;
-
-
 bool			inheritance_disabled;
 bool			pg_pathman_enable;
 PathmanState   *pmstate;
@@ -65,18 +58,14 @@ static Node *wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysT
 static bool disable_inheritance_subselect_walker(Node *node, void *context);
 
 /* Expression tree handlers */
-static Datum increase_hashable_value(const PartRelationInfo *prel, Datum value);
-static Datum decrease_hashable_value(const PartRelationInfo *prel, Datum value);
-static int make_hash(const PartRelationInfo *prel, int value);
-static void handle_binary_opexpr(WalkerContext *context, WrapperNode *result, const Var *v, const Const *c);
 static WrapperNode *handle_const(const Const *c, WalkerContext *context);
+static void handle_binary_opexpr(WalkerContext *context, WrapperNode *result, const Node *varnode, const Const *c);
+static void handle_binary_opexpr_param(const PartRelationInfo *prel, WrapperNode *result, const Node *varnode);
 static WrapperNode *handle_opexpr(const OpExpr *expr, WalkerContext *context);
 static WrapperNode *handle_boolexpr(const BoolExpr *expr, WalkerContext *context);
 static WrapperNode *handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context);
-static void change_varnos_in_restrinct_info(RestrictInfo *rinfo, change_varno_context *context);
-static void change_varnos(Node *node, Oid old_varno, Oid new_varno);
-static bool change_varno_walker(Node *node, change_varno_context *context);
 static RestrictInfo *rebuild_restrictinfo(Node *clause, RestrictInfo *old_rinfo);
+static bool pull_var_param(const WalkerContext *ctx, const OpExpr *expr, Node **var_ptr, Node **param_ptr);
 
 /* copied from allpaths.h */
 static void set_plain_rel_size(PlannerInfo *root, RelOptInfo *rel,
@@ -594,124 +583,6 @@ wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue)
 }
 
 /*
- * Changes varno attribute in all variables nested in the node
- */
-static void
-change_varnos(Node *node, Oid old_varno, Oid new_varno)
-{
-	change_varno_context context;
-	context.old_varno = old_varno;
-	context.new_varno = new_varno;
-
-	change_varno_walker(node, &context);
-}
-
-static bool
-change_varno_walker(Node *node, change_varno_context *context)
-{
-	ListCell   *lc;
-	Var		   *var;
-	EquivalenceClass *ec;
-	EquivalenceMember *em;
-
-	if (node == NULL)
-		return false;
-
-	switch(node->type)
-	{
-		case T_Var:
-			var = (Var *) node;
-			if (var->varno == context->old_varno)
-			{
-				var->varno = context->new_varno;
-				var->varnoold = context->new_varno;
-			}
-			return false;
-
-		case T_RestrictInfo:
-			change_varnos_in_restrinct_info((RestrictInfo *) node, context);
-			return false;
-
-		case T_PathKey:
-			change_varno_walker((Node *) ((PathKey *) node)->pk_eclass, context);
-			return false;
-
-		case T_EquivalenceClass:
-			ec = (EquivalenceClass *) node;
-
-			foreach(lc, ec->ec_members)
-				change_varno_walker((Node *) lfirst(lc), context);
-			foreach(lc, ec->ec_derives)
-				change_varno_walker((Node *) lfirst(lc), context);
-			return false;
-
-		case T_EquivalenceMember:
-			em = (EquivalenceMember *) node;
-			change_varno_walker((Node *) em->em_expr, context);
-			if (bms_is_member(context->old_varno, em->em_relids))
-			{
-				em->em_relids = bms_del_member(em->em_relids, context->old_varno);
-				em->em_relids = bms_add_member(em->em_relids, context->new_varno);
-			}
-			return false;
-
-		case T_TargetEntry:
-			change_varno_walker((Node *) ((TargetEntry *) node)->expr, context);
-			return false;
-
-		case T_List:
-			foreach(lc, (List *) node)
-				change_varno_walker((Node *) lfirst(lc), context);
-			return false;
-
-		default:
-			break;
-	}
-
-	/* Should not find an unplanned subquery */
-	Assert(!IsA(node, Query));
-
-	return expression_tree_walker(node, change_varno_walker, (void *) context);
-}
-
-static void
-change_varnos_in_restrinct_info(RestrictInfo *rinfo, change_varno_context *context)
-{
-	ListCell *lc;
-
-	change_varno_walker((Node *) rinfo->clause, context);
-	if (rinfo->left_em)
-		change_varno_walker((Node *) rinfo->left_em->em_expr, context);
-
-	if (rinfo->right_em)
-		change_varno_walker((Node *) rinfo->right_em->em_expr, context);
-
-	if (rinfo->orclause)
-		foreach(lc, ((BoolExpr *) rinfo->orclause)->args)
-		{
-			Node *node = (Node *) lfirst(lc);
-			change_varno_walker(node, context);
-		}
-
-	/* TODO: find some elegant way to do this */
-	if (bms_is_member(context->old_varno, rinfo->clause_relids))
-	{
-		rinfo->clause_relids = bms_del_member(rinfo->clause_relids, context->old_varno);
-		rinfo->clause_relids = bms_add_member(rinfo->clause_relids, context->new_varno);
-	}
-	if (bms_is_member(context->old_varno, rinfo->left_relids))
-	{
-		rinfo->left_relids = bms_del_member(rinfo->left_relids, context->old_varno);
-		rinfo->left_relids = bms_add_member(rinfo->left_relids, context->new_varno);
-	}
-	if (bms_is_member(context->old_varno, rinfo->right_relids))
-	{
-		rinfo->right_relids = bms_del_member(rinfo->right_relids, context->old_varno);
-		rinfo->right_relids = bms_add_member(rinfo->right_relids, context->new_varno);
-	}
-}
-
-/*
  * Refresh cached RangeEntry array within WalkerContext
  *
  * This is essential when we add new partitions
@@ -792,17 +663,18 @@ finish_least_greatest(WrapperNode *wrap, WalkerContext *context)
 		{
 			case INT4OID:
 				{
-					int		least = DatumGetInt32(context->least),
+					uint32	least = DatumGetInt32(context->least),
 							greatest = DatumGetInt32(context->greatest);
 					List   *rangeset = NIL;
 
 					if (greatest - least + 1 < context->prel->children_count)
 					{
-						int	value,
-							hash;
+						uint32	value,
+								hash;
+
 						for (value = least; value <= greatest; value++)
 						{
-							hash = make_hash(context->prel, value);
+							hash = make_hash(value, context->prel->children_count);
 							rangeset = irange_list_union(rangeset,
 								list_make1_irange(make_irange(hash, hash, true)));
 						}
@@ -817,38 +689,6 @@ finish_least_greatest(WrapperNode *wrap, WalkerContext *context)
 	}
 	context->hasLeast = false;
 	context->hasGreatest = false;
-}
-
-/*
- * Increase value of hash partitioned column.
- */
-static Datum
-increase_hashable_value(const PartRelationInfo *prel, Datum value)
-{
-	switch (prel->atttype)
-	{
-		case INT4OID:
-			return Int32GetDatum(DatumGetInt32(value) + 1);
-		default:
-			elog(ERROR, "Invalid datatype: %u", prel->atttype);
-			return (Datum)0;
-	}
-}
-
-/*
- * Decrease value of hash partitioned column.
- */
-static Datum
-decrease_hashable_value(const PartRelationInfo *prel, Datum value)
-{
-	switch (prel->atttype)
-	{
-		case INT4OID:
-			return Int32GetDatum(DatumGetInt32(value) - 1);
-		default:
-			elog(ERROR, "Invalid datatype: %u", prel->atttype);
-			return (Datum)0;
-	}
 }
 
 void
@@ -1031,56 +871,35 @@ select_range_partitions(const Datum value,
  */
 static void
 handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
-					 const Var *v, const Const *c)
+					 const Node *varnode, const Const *c)
 {
-	HashRelationKey			key;
-	int						int_value,
-							strategy;
+	int						strategy;
 	TypeCacheEntry		   *tce;
 	FmgrInfo				cmp_func;
+	Oid						vartype;
 	const OpExpr		   *expr = (const OpExpr *) result->orig;
 	const PartRelationInfo *prel = context->prel;
 
-	tce = lookup_type_cache(v->vartype, TYPECACHE_BTREE_OPFAMILY);
+	Assert(IsA(varnode, Var) || IsA(varnode, RelabelType));
+
+	vartype = !IsA(varnode, RelabelType) ?
+			((Var *) varnode)->vartype :
+			((RelabelType *) varnode)->resulttype;
+
+	tce = lookup_type_cache(vartype, TYPECACHE_BTREE_OPFAMILY);
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
 	fill_type_cmp_fmgr_info(&cmp_func, c->consttype, prel->atttype);
 
 	switch (prel->parttype)
 	{
 		case PT_HASH:
-			if (strategy == BTLessStrategyNumber ||
-				strategy == BTLessEqualStrategyNumber)
+			if (strategy == BTEqualStrategyNumber)
 			{
-				Datum value = c->constvalue;
+				Datum	value = OidFunctionCall1(prel->hash_proc, c->constvalue);
+				uint32	hash = make_hash(DatumGetUInt32(value), prel->children_count);
 
-				if (strategy == BTLessStrategyNumber)
-					value = decrease_hashable_value(prel, value);
-				if (!context->hasGreatest || DatumGetInt32(FunctionCall2(&cmp_func, value, context->greatest)) < 0)
-				{
-					context->greatest = value;
-					context->hasGreatest = true;
-				}
-				/* go to end */
-			}
-			else if (strategy == BTGreaterStrategyNumber ||
-					 strategy == BTGreaterEqualStrategyNumber)
-			{
-				Datum value = c->constvalue;
+				result->rangeset = list_make1_irange(make_irange(hash, hash, true));
 
-				if (strategy == BTGreaterStrategyNumber)
-					value = increase_hashable_value(prel, value);
-				if (!context->hasLeast || DatumGetInt32(FunctionCall2(&cmp_func, value, context->least)) > 0)
-				{
-					context->least = value;
-					context->hasLeast = true;
-				}
-				/* go to end */
-			}
-			else if (strategy == BTEqualStrategyNumber)
-			{
-				int_value = DatumGetInt32(c->constvalue);
-				key.hash = make_hash(prel, int_value);
-				result->rangeset = list_make1_irange(make_irange(key.hash, key.hash, true));
 				return; /* exit on equal */
 			}
 
@@ -1106,18 +925,25 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 }
 
 /*
- *	Estimate selectivity of parametrized quals.
+ * Estimate selectivity of parametrized quals.
  */
 static void
 handle_binary_opexpr_param(const PartRelationInfo *prel,
-						   WrapperNode *result, const Var *v)
+						   WrapperNode *result, const Node *varnode)
 {
 	const OpExpr	   *expr = (const OpExpr *)result->orig;
 	TypeCacheEntry	   *tce;
 	int					strategy;
+	Oid					vartype;
+
+	Assert(IsA(varnode, Var) || IsA(varnode, RelabelType));
+
+	vartype = !IsA(varnode, RelabelType) ?
+			((Var *) varnode)->vartype :
+			((RelabelType *) varnode)->resulttype;
 
 	/* Determine operator type */
-	tce = lookup_type_cache(v->vartype, TYPECACHE_BTREE_OPFAMILY);
+	tce = lookup_type_cache(vartype, TYPECACHE_BTREE_OPFAMILY);
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
 
 	result->rangeset = list_make1_irange(make_irange(0, prel->children_count - 1, true));
@@ -1139,10 +965,10 @@ handle_binary_opexpr_param(const PartRelationInfo *prel,
 /*
  * Calculates hash value
  */
-static int
-make_hash(const PartRelationInfo *prel, int value)
+uint32
+make_hash(uint32 value, uint32 partitions)
 {
-	return value % prel->children_count;
+	return value % partitions;
 }
 
 search_rangerel_result
@@ -1219,11 +1045,9 @@ handle_const(const Const *c, WalkerContext *context)
 	{
 		case PT_HASH:
 			{
-				HashRelationKey	key;
-				int				int_value = DatumGetInt32(c->constvalue);
-
-				key.hash = make_hash(prel, int_value);
-				result->rangeset = list_make1_irange(make_irange(key.hash, key.hash, true));
+				Datum	value = OidFunctionCall1(prel->hash_proc, c->constvalue);
+				uint32	hash = make_hash(DatumGetUInt32(value), prel->children_count);
+				result->rangeset = list_make1_irange(make_irange(hash, hash, true));
 			}
 			break;
 
@@ -1262,8 +1086,7 @@ static WrapperNode *
 handle_opexpr(const OpExpr *expr, WalkerContext *context)
 {
 	WrapperNode	*result = (WrapperNode *)palloc(sizeof(WrapperNode));
-	Node		*firstarg = NULL,
-				*secondarg = NULL;
+	Node		*var, *param;
 	const PartRelationInfo *prel = context->prel;
 
 	result->orig = (const Node *)expr;
@@ -1271,29 +1094,16 @@ handle_opexpr(const OpExpr *expr, WalkerContext *context)
 
 	if (list_length(expr->args) == 2)
 	{
-		if (IsA(linitial(expr->args), Var)
-			&& ((Var *)linitial(expr->args))->varoattno == prel->attnum)
+		if (pull_var_param(context, expr, &var, &param))
 		{
-			firstarg = (Node *) linitial(expr->args);
-			secondarg = (Node *) lsecond(expr->args);
-		}
-		else if (IsA(lsecond(expr->args), Var)
-			&& ((Var *)lsecond(expr->args))->varoattno == prel->attnum)
-		{
-			firstarg = (Node *) lsecond(expr->args);
-			secondarg = (Node *) linitial(expr->args);
-		}
-
-		if (firstarg && secondarg)
-		{
-			if (IsConstValue(context, secondarg))
+			if (IsConstValue(context, param))
 			{
-				handle_binary_opexpr(context, result, (Var *)firstarg, ExtractConst(context, secondarg));
+				handle_binary_opexpr(context, result, var, ExtractConst(context, param));
 				return result;
 			}
-			else if (IsA(secondarg, Param) || IsA(secondarg, Var))
+			else if (IsA(param, Param) || IsA(param, Var))
 			{
-				handle_binary_opexpr_param(prel, result, (Var *)firstarg);
+				handle_binary_opexpr_param(prel, result, var);
 				return result;
 			}
 		}
@@ -1302,6 +1112,54 @@ handle_opexpr(const OpExpr *expr, WalkerContext *context)
 	result->rangeset = list_make1_irange(make_irange(0, prel->children_count - 1, true));
 	result->paramsel = 1.0;
 	return result;
+}
+
+/*
+ * Checks if expression is a KEY OP PARAM or PARAM OP KEY,
+ * where KEY is partition key (it could be Var or RelableType) and PARAM is
+ * whatever. Function returns variable (or RelableType) and param via var_ptr 
+ * and param_ptr pointers. If partition key isn't in expression then function
+ * returns false.
+ */
+static bool
+pull_var_param(const WalkerContext *ctx, const OpExpr *expr, Node **var_ptr, Node **param_ptr)
+{
+	Node   *left = linitial(expr->args),
+		   *right = lsecond(expr->args);
+	Var	   *v = NULL;
+
+	/* Check the case when variable is on the left side */
+	if (IsA(left, Var) || IsA(left, RelabelType))
+	{
+		v = !IsA(left, RelabelType) ?
+						(Var *) left :
+						(Var *) ((RelabelType *) left)->arg;
+
+		if (v->varattno == ctx->prel->attnum)
+		{
+			*var_ptr = left;
+			*param_ptr = right;
+			return true;
+		}
+	}
+	
+	/* ... variable is on the right side */
+	if (IsA(right, Var) || IsA(right, RelabelType))
+	{
+		v = !IsA(right, RelabelType) ?
+						(Var *) right :
+						(Var *) ((RelabelType *) right)->arg;
+
+		if (v->varattno == ctx->prel->attnum)
+		{
+			*var_ptr = right;
+			*param_ptr = left;
+			return true;
+		}
+	}
+
+	/* Variable isn't a partitionig key */
+	return false;
 }
 
 /*
@@ -1332,7 +1190,7 @@ handle_boolexpr(const BoolExpr *expr, WalkerContext *context)
 		switch (expr->boolop)
 		{
 			case OR_EXPR:
-				finish_least_greatest(arg, context);
+				// finish_least_greatest(arg, context);
 				result->rangeset = irange_list_union(result->rangeset, arg->rangeset);
 				break;
 			case AND_EXPR:
@@ -1370,16 +1228,27 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 {
 	WrapperNode *result = (WrapperNode *)palloc(sizeof(WrapperNode));
 	Node		*varnode = (Node *) linitial(expr->args);
+	Var			*var;
 	Node		*arraynode = (Node *) lsecond(expr->args);
-	int			 hash;
+	uint32		 hash;
 	const PartRelationInfo *prel = context->prel;
 
 	result->orig = (const Node *)expr;
 	result->args = NIL;
 	result->paramsel = 1.0;
 
+	Assert(varnode != NULL);
+
 	/* If variable is not the partition key then skip it */
-	if (!varnode || !IsA(varnode, Var) || ((Var *) varnode)->varattno != prel->attnum)
+	if (IsA(varnode, Var) || IsA(varnode, RelabelType))
+	{
+		var = !IsA(varnode, RelabelType) ?
+			(Var *) varnode :
+			(Var *) ((RelabelType *) varnode)->arg;
+		if (var->varattno != prel->attnum)
+			goto handle_arrexpr_return;
+	}
+	else
 		goto handle_arrexpr_return;
 
 	if (arraynode && IsA(arraynode, Const) &&
@@ -1393,6 +1262,7 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 		Datum	   *elem_values;
 		bool	   *elem_nulls;
 		int			i;
+		Datum		value;
 
 		/* Extract values from array */
 		arrayval = DatumGetArrayTypeP(((Const *) arraynode)->constvalue);
@@ -1408,7 +1278,9 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 		/* Construct OIDs list */
 		for (i = 0; i < num_elems; i++)
 		{
-			hash = make_hash(prel, elem_values[i]);
+			/* Invoke base hash function for value type */
+			value = OidFunctionCall1(prel->hash_proc, elem_values[i]);
+			hash = make_hash(DatumGetUInt32(value), prel->children_count);
 			result->rangeset = irange_list_union(result->rangeset,
 						list_make1_irange(make_irange(hash, hash, true)));
 		}
@@ -1792,7 +1664,6 @@ get_cheapest_parameterized_child_path(PlannerInfo *root, RelOptInfo *rel,
 	/* Return the best path, or NULL if we found no suitable candidate */
 	return cheapest;
 }
-
 
 /*
  * generate_mergeappend_paths

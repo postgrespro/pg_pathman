@@ -17,6 +17,20 @@
 #include "pathman.h"
 
 
+typedef struct
+{
+	RelOptInfo *child;
+	RelOptInfo *parent;
+	int			sublevels_up;
+} ReplaceVarsContext;
+
+typedef struct
+{
+	Oid			old_varno;
+	Oid			new_varno;
+} change_varno_context;
+
+
 bool clause_contains_params(Node *clause);
 
 List * build_index_tlist(PlannerInfo *root,
@@ -36,5 +50,7 @@ void fill_type_cmp_fmgr_info(FmgrInfo *finfo,
 							 Oid type2);
 
 List * list_reverse(List *l);
+
+void change_varnos(Node *node, Oid old_varno, Oid new_varno);
 
 #endif

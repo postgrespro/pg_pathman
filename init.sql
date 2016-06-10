@@ -406,3 +406,14 @@ END
 $$ LANGUAGE plpgsql
 SET pg_pathman.enable_partitionfilter = off;
 
+/*
+ * Returns hash function OID for specified type
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_type_hash_func(OID)
+RETURNS OID AS 'pg_pathman', 'get_type_hash_func' LANGUAGE C STRICT;
+
+/*
+ * Calculates hash for integer value
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_hash(INTEGER, INTEGER)
+RETURNS INTEGER AS 'pg_pathman', 'get_hash' LANGUAGE C STRICT;

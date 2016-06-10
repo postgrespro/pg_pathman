@@ -18,23 +18,35 @@ CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions(
 ) RETURNS INTEGER AS
 $$
 DECLARE
-	v_relname TEXT;
+	v_relname       TEXT;
 	v_child_relname TEXT;
-	v_type TEXT;
+	v_type          TEXT;
+	v_plain_schema  TEXT;
+	v_plain_relname TEXT;
+	v_hashfunc      TEXT;
 BEGIN
 	v_relname := @extschema@.validate_relname(relation);
 	attribute := lower(attribute);
 	PERFORM @extschema@.common_relation_checks(relation, attribute);
 
 	v_type := @extschema@.get_attribute_type_name(v_relname, attribute);
-	IF v_type::regtype != 'integer'::regtype THEN
-		RAISE EXCEPTION 'Attribute type must be INTEGER';
-	END IF;
+	-- IF v_type::regtype != 'integer'::regtype THEN
+	-- 	RAISE EXCEPTION 'Attribute type must be INTEGER';
+	-- END IF;
+
+	SELECT * INTO v_plain_schema, v_plain_relname
+	FROM @extschema@.get_plain_schema_and_relname(relation);
+
+	v_hashfunc := @extschema@.get_type_hash_func(v_type::regtype::oid)::regproc;
 
 	/* Create partitions and update pg_pathman configuration */
 	FOR partnum IN 0..partitions_count-1
 	LOOP
-		v_child_relname := @extschema@.get_schema_qualified_name(relation, '.', suffix := '_' || partnum);
+		-- v_child_relname := @extschema@.get_schema_qualified_name(relation, '.', suffix := '_' || partnum);
+		v_child_relname := format('%s.%s',
+        						  v_plain_schema,
+        						  quote_ident(v_plain_relname || '_' || partnum));
+
 		EXECUTE format('CREATE TABLE %s (LIKE %s INCLUDING ALL)'
 						, v_child_relname
 						, v_relname);
@@ -43,8 +55,9 @@ BEGIN
 						, v_child_relname
 						, v_relname);
 
-		EXECUTE format('ALTER TABLE %s ADD CHECK (%s %% %s = %s)'
+		EXECUTE format('ALTER TABLE %s ADD CHECK (@extschema@.get_hash(%s(%s), %s) = %s)'
 					   , v_child_relname
+					   , v_hashfunc
 					   , attribute
 					   , partitions_count
 					   , partnum);
@@ -80,8 +93,8 @@ DECLARE
 		$body$
 		DECLARE old_hash INTEGER; new_hash INTEGER; q TEXT;
 		BEGIN
-			old_hash := OLD.%2$s %% %3$s;
-			new_hash := NEW.%2$s %% %3$s;
+			old_hash := @extschema@.get_hash(%9$s(OLD.%2$s), %3$s);
+			new_hash := @extschema@.get_hash(%9$s(NEW.%2$s), %3$s);
 			IF old_hash = new_hash THEN RETURN NEW; END IF;
 			q := format(''DELETE FROM %8$s WHERE %4$s'', old_hash);
 			EXECUTE q USING %5$s;
@@ -106,6 +119,8 @@ DECLARE
 	funcname      TEXT;
 	triggername   TEXT;
 	child_relname_format TEXT;
+	atttype       TEXT;
+	hashfunc      TEXT;
 BEGIN
 	relation := @extschema@.validate_relname(relation);
 
@@ -135,9 +150,13 @@ BEGIN
 	child_relname_format := plain_schema || '.' || quote_ident(plain_relname || '_%s');
 	triggername := quote_ident(format('%s_%s_update_trigger', plain_schema, plain_relname));
 
+	/* base hash function for type */
+	atttype := @extschema@.get_attribute_type_name(relation, attr);
+	hashfunc := @extschema@.get_type_hash_func(atttype::regtype::oid)::regproc;
+
 	/* Format function definition and execute it */
 	func := format(func, funcname, attr, partitions_count, att_val_fmt,
-				   old_fields, att_fmt, new_fields, child_relname_format);
+				   old_fields, att_fmt, new_fields, child_relname_format, hashfunc);
 	EXECUTE func;
 
 	/* Create triggers on child relations */
