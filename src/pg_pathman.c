@@ -825,7 +825,7 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 	TypeCacheEntry	   *tce;
 	const PartRelationInfo *prel = context->prel;
 
-	Assert(IsA(varnode, Var) || IsA(varnode, RelableType));
+	Assert(IsA(varnode, Var) || IsA(varnode, RelabelType));
 
 	vartype = !IsA(varnode, RelabelType) ?
 			((Var *) varnode)->vartype :
@@ -1038,7 +1038,7 @@ handle_binary_opexpr_param(const PartRelationInfo *prel,
 	int					strategy;
 	Oid					vartype;
 
-	Assert(IsA(varnode, Var) || IsA(varnode, RelableType));
+	Assert(IsA(varnode, Var) || IsA(varnode, RelabelType));
 
 	vartype = !IsA(varnode, RelabelType) ?
 			((Var *) varnode)->vartype :
