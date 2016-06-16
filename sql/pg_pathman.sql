@@ -46,6 +46,8 @@ INSERT INTO test.num_range_rel
 SELECT COUNT(*) FROM test.num_range_rel;
 SELECT COUNT(*) FROM ONLY test.num_range_rel;
 
+SELECT * FROM ONLY test.range_rel UNION SELECT * FROM test.range_rel;
+
 SET pg_pathman.enable_runtimeappend = OFF;
 SET pg_pathman.enable_runtimemergeappend = OFF;
 

@@ -161,7 +161,8 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 		return;
 
 	/* This works only for SELECT queries (at least for now) */
-	if (root->parse->commandType != CMD_SELECT || !inheritance_disabled)
+	if (root->parse->commandType != CMD_SELECT ||
+		!list_member_oid(inheritance_enabled_relids, rte->relid))
 		return;
 
 	/* Lookup partitioning information for parent relation */
