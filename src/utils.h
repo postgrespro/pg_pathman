@@ -37,4 +37,14 @@ void fill_type_cmp_fmgr_info(FmgrInfo *finfo,
 
 List * list_reverse(List *l);
 
+Oid str_to_oid(const char * cstr);
+
+void plan_tree_walker(Plan *plan,
+					  void (*visitor)(Plan *, void *),
+					  void *context);
+
+void rowmark_add_tableoids(Query *parse);
+
+void postprocess_lock_rows(List *rtable, Plan *plan);
+
 #endif
