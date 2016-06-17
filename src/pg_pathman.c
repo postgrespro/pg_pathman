@@ -47,7 +47,8 @@
 PG_MODULE_MAGIC;
 
 
-bool			inheritance_disabled;
+List		   *inheritance_disabled_relids = NIL;
+List		   *inheritance_enabled_relids = NIL;
 bool			pg_pathman_enable;
 PathmanState   *pmstate;
 
@@ -199,6 +200,7 @@ disable_inheritance(Query *parse)
 	foreach(lc, parse->rtable)
 	{
 		rte = (RangeTblEntry *) lfirst(lc);
+
 		switch(rte->rtekind)
 		{
 			case RTE_RELATION:
@@ -215,9 +217,28 @@ disable_inheritance(Query *parse)
 						 * when user uses ONLY statement from case when we
 						 * make rte->inh false intentionally.
 						 */
-						inheritance_disabled = true;
+						inheritance_enabled_relids = \
+							lappend_oid(inheritance_enabled_relids, rte->relid);
+
+						/*
+						 * Check if relation was already found with ONLY modifier. In
+						 * this case throw an error because we cannot handle
+						 * situations when partitioned table used both with and
+						 * without ONLY modifier in SELECT queries
+						 */
+						if (list_member_oid(inheritance_disabled_relids, rte->relid))
+							goto disable_error;
+
+						goto disable_next;
 					}
 				}
+
+				inheritance_disabled_relids = \
+					lappend_oid(inheritance_disabled_relids, rte->relid);
+
+				/* Check if relation was already found withoud ONLY modifier */
+				if (list_member_oid(inheritance_enabled_relids, rte->relid))
+						goto disable_error;
 				break;
 			case RTE_SUBQUERY:
 				/* Recursively disable inheritance for subqueries */
@@ -226,7 +247,16 @@ disable_inheritance(Query *parse)
 			default:
 				break;
 		}
+
+disable_next:
+		;
 	}
+
+	return;
+
+disable_error:
+	elog(ERROR, "It is prohibited to query partitioned tables both "
+				"with and without ONLY modifier");
 }
 
 void

@@ -114,6 +114,8 @@ SELECT COUNT(*) FROM ONLY test.num_range_rel;
      0
 (1 row)
 
+SELECT * FROM ONLY test.range_rel UNION SELECT * FROM test.range_rel;
+ERROR:  It is prohibited to query partitioned tables both with and without ONLY modifier
 SET pg_pathman.enable_runtimeappend = OFF;
 SET pg_pathman.enable_runtimemergeappend = OFF;
 VACUUM;

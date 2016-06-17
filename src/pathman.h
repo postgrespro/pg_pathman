@@ -133,6 +133,7 @@ typedef struct PathmanState
 	DsmArray		databases;
 } PathmanState;
 
+
 typedef enum
 {
 	SEARCH_RANGEREL_OUT_OF_RANGE = 0,
@@ -140,7 +141,17 @@ typedef enum
 	SEARCH_RANGEREL_FOUND
 } search_rangerel_result;
 
-extern bool				inheritance_disabled;
+
+/*
+ * The list of partitioned relation relids that must be handled by pg_pathman
+ */
+extern List			   *inheritance_enabled_relids;
+/*
+ * This list is used to ensure that partitioned relation isn't used both
+ * with and without ONLY modifiers
+ */
+extern List			   *inheritance_disabled_relids;
+
 extern bool 			pg_pathman_enable;
 extern PathmanState    *pmstate;
 

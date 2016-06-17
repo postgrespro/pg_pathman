@@ -165,7 +165,8 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 		return;
 
 	/* This works only for SELECT queries (at least for now) */
-	if (root->parse->commandType != CMD_SELECT || !inheritance_disabled)
+	if (root->parse->commandType != CMD_SELECT ||
+		!list_member_oid(inheritance_enabled_relids, rte->relid))
 		return;
 
 	/* Lookup partitioning information for parent relation */
@@ -372,7 +373,6 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 
 	if (pg_pathman_enable)
 	{
-		inheritance_disabled = false;
 		switch(parse->commandType)
 		{
 			case CMD_SELECT:
@@ -421,6 +421,9 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 			postprocess_lock_rows(result->rtable, (Plan *) lfirst(lc));
 	}
 
+	list_free(inheritance_disabled_relids);
+	inheritance_disabled_relids = NIL;
+
 	return result;
 }
 
@@ -436,6 +439,9 @@ pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
 
 	if (post_parse_analyze_hook_next)
 		post_parse_analyze_hook_next(pstate, query);
+
+	inheritance_disabled_relids = NIL;
+	inheritance_enabled_relids = NIL;
 }
 
 void
