@@ -377,6 +377,7 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 		{
 			case CMD_SELECT:
 				disable_inheritance(parse);
+				rowmark_add_tableoids(parse); /* add attributes for rowmarks */
 				break;
 
 			case CMD_UPDATE:
@@ -409,6 +410,16 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 		result = planner_hook_next(parse, cursorOptions, boundParams);
 	else
 		result = standard_planner(parse, cursorOptions, boundParams);
+
+	if (pg_pathman_enable)
+	{
+		ListCell *lc;
+
+		/* Give rowmark-related attributes correct names */
+		postprocess_lock_rows(result->rtable, result->planTree);
+		foreach (lc, result->subplans)
+			postprocess_lock_rows(result->rtable, (Plan *) lfirst(lc));
+	}
 
 	return result;
 }

@@ -53,4 +53,14 @@ List * list_reverse(List *l);
 
 void change_varnos(Node *node, Oid old_varno, Oid new_varno);
 
+Oid str_to_oid(const char * cstr);
+
+void plan_tree_walker(Plan *plan,
+					  void (*visitor)(Plan *, void *),
+					  void *context);
+
+void rowmark_add_tableoids(Query *parse);
+
+void postprocess_lock_rows(List *rtable, Plan *plan);
+
 #endif

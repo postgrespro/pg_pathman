@@ -42,7 +42,7 @@ init_partition_filter_static_data(void)
 
 Plan *
 make_partition_filter(Plan *subplan, Oid partitioned_table,
-						   OnConflictAction	conflict_action)
+					  OnConflictAction conflict_action)
 {
 	CustomScan *cscan = makeNode(CustomScan);
 
@@ -327,78 +327,44 @@ pfilter_build_tlist(List *tlist)
 }
 
 /*
+ * Add partition filters to ModifyTable node's children
+ *
+ * 'context' should point to the PlannedStmt->rtable
+ */
+static void
+partition_filter_visitor(Plan *plan, void *context)
+{
+	List		   *rtable = (List *) context;
+	ModifyTable	   *modify_table = (ModifyTable *) plan;
+	ListCell	   *lc1,
+				   *lc2;
+
+	Assert(rtable && IsA(rtable, List));
+
+	/* Skip if not ModifyTable with 'INSERT' command */
+	if (!IsA(modify_table, ModifyTable) || modify_table->operation != CMD_INSERT)
+		return;
+
+	forboth (lc1, modify_table->plans, lc2, modify_table->resultRelations)
+	{
+		Index				rindex = lfirst_int(lc2);
+		Oid					relid = getrelid(rindex, rtable);
+		PartRelationInfo   *prel = get_pathman_relation_info(relid, NULL);
+
+		/* Check that table is partitioned */
+		if (prel)
+			lfirst(lc1) = make_partition_filter((Plan *) lfirst(lc1),
+												relid,
+												modify_table->onConflictAction);
+	}
+}
+
+/*
  * Add PartitionFilter nodes to the plan tree
  */
 void
 add_partition_filters(List *rtable, Plan *plan)
 {
-	ListCell   *l;
-
-	if (plan == NULL || !pg_pathman_enable_partition_filter)
-		return;
-
-	/* Plan-type-specific fixes*/
-	switch (nodeTag(plan))
-	{
-		case T_SubqueryScan:
-			add_partition_filters(rtable, ((SubqueryScan *) plan)->subplan);
-			break;
-
-		case T_CustomScan:
-			foreach(l, ((CustomScan *) plan)->custom_plans)
-				add_partition_filters(rtable, (Plan *) lfirst(l));
-			break;
-
-		/*
-		 * Add proxy PartitionFilter nodes
-		 * to subplans of ModifyTable node
-		 */
-		case T_ModifyTable:
-			{
-				ModifyTable	   *modify_table = ((ModifyTable *) plan);
-				ListCell	   *lc1,
-							   *lc2;
-
-				if (modify_table->operation != CMD_INSERT)
-					break;
-
-				forboth (lc1, modify_table->plans, lc2, modify_table->resultRelations)
-				{
-					Index				rindex = lfirst_int(lc2);
-					Oid					relid = getrelid(rindex, rtable);
-					PartRelationInfo   *prel = get_pathman_relation_info(relid, NULL);
-
-					add_partition_filters(rtable, (Plan *) lfirst(lc1));
-
-					if (prel)
-						lfirst(lc1) = make_partition_filter((Plan *) lfirst(lc1),
-															relid,
-															modify_table->onConflictAction);
-				}
-			}
-			break;
-
-		/* Since they look alike */
-		case T_MergeAppend:
-		case T_Append:
-			foreach(l, ((Append *) plan)->appendplans)
-				add_partition_filters(rtable, (Plan *) lfirst(l));
-			break;
-
-		case T_BitmapAnd:
-			foreach(l, ((BitmapAnd *) plan)->bitmapplans)
-				add_partition_filters(rtable, (Plan *) lfirst(l));
-			break;
-
-		case T_BitmapOr:
-			foreach(l, ((BitmapOr *) plan)->bitmapplans)
-				add_partition_filters(rtable, (Plan *) lfirst(l));
-			break;
-
-		default:
-			break;
-	}
-
-	add_partition_filters(rtable, plan->lefttree);
-	add_partition_filters(rtable, plan->righttree);
+	if (pg_pathman_enable_partition_filter)
+		plan_tree_walker(plan, partition_filter_visitor, rtable);
 }

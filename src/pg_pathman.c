@@ -21,6 +21,7 @@
 #include "optimizer/paths.h"
 #include "optimizer/pathnode.h"
 #include "optimizer/planner.h"
+#include "optimizer/prep.h"
 #include "optimizer/restrictinfo.h"
 #include "optimizer/cost.h"
 #include "parser/analyze.h"
@@ -33,6 +34,7 @@
 #include "utils/selfuncs.h"
 #include "access/heapam.h"
 #include "access/nbtree.h"
+#include "access/sysattr.h"
 #include "storage/ipc.h"
 #include "catalog/pg_type.h"
 #include "foreign/fdwapi.h"
@@ -196,7 +198,7 @@ disable_inheritance(Query *parse)
 
 	foreach(lc, parse->rtable)
 	{
-		rte = (RangeTblEntry*) lfirst(lc);
+		rte = (RangeTblEntry *) lfirst(lc);
 		switch(rte->rtekind)
 		{
 			case RTE_RELATION:
@@ -369,13 +371,17 @@ int
 append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	RangeTblEntry *rte, int index, Oid childOid, List *wrappers)
 {
-	RangeTblEntry *childrte;
-	RelOptInfo    *childrel;
-	Index		childRTindex;
-	AppendRelInfo *appinfo;
-	Node *node;
-	ListCell *lc, *lc2;
-	Relation	newrelation;
+	RangeTblEntry  *childrte;
+	RelOptInfo	   *childrel;
+	Index			childRTindex;
+	AppendRelInfo  *appinfo;
+	Node		   *node;
+	ListCell	   *lc,
+				   *lc2;
+	Relation		newrelation;
+	PlanRowMark	   *parent_rowmark;
+	PlanRowMark	   *child_rowmark;
+	AttrNumber		i;
 
 	newrelation = heap_open(childOid, NoLock);
 
@@ -407,8 +413,18 @@ append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		childrel->reltargetlist = lappend(childrel->reltargetlist, new_target);
 	}
 
-	/* Copy attr_needed (used in build_joinrel_tlist() function) */
-	childrel->attr_needed = rel->attr_needed;
+	/* Copy attr_needed & attr_widths */
+	childrel->attr_needed = (Relids *)
+		palloc0((rel->max_attr - rel->min_attr + 1) * sizeof(Relids));
+	childrel->attr_widths = (int32 *)
+		palloc0((rel->max_attr - rel->min_attr + 1) * sizeof(int32));
+
+	for (i = 0; i < rel->max_attr - rel->min_attr + 1; i++)
+		childrel->attr_needed[i] = bms_copy(rel->attr_needed[i]);
+
+	memcpy(childrel->attr_widths, rel->attr_widths,
+		   (rel->max_attr - rel->min_attr + 1) * sizeof(int32));
+
 
 	/* Copy restrictions */
 	childrel->baserestrictinfo = NIL;
@@ -490,6 +506,32 @@ append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	rel->tuples += childrel->tuples;
 
 	heap_close(newrelation, NoLock);
+
+
+	/* Create rowmarks required for child rels */
+	parent_rowmark = get_plan_rowmark(root->rowMarks, rti);
+	if (parent_rowmark)
+	{
+		child_rowmark = makeNode(PlanRowMark);
+
+		child_rowmark->rti = childRTindex;
+		child_rowmark->prti = rti;
+		child_rowmark->rowmarkId = parent_rowmark->rowmarkId;
+		/* Reselect rowmark type, because relkind might not match parent */
+		child_rowmark->markType = select_rowmark_type(childrte,
+													  parent_rowmark->strength);
+		child_rowmark->allMarkTypes = (1 << child_rowmark->markType);
+		child_rowmark->strength = parent_rowmark->strength;
+		child_rowmark->waitPolicy = parent_rowmark->waitPolicy;
+		child_rowmark->isParent = false;
+
+		/* Include child's rowmark type in parent's allMarkTypes */
+		parent_rowmark->allMarkTypes |= child_rowmark->allMarkTypes;
+
+		root->rowMarks = lappend(root->rowMarks, child_rowmark);
+
+		parent_rowmark->isParent = true;
+	}
 
 	return childRTindex;
 }
