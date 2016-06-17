@@ -1117,12 +1117,15 @@ handle_opexpr(const OpExpr *expr, WalkerContext *context)
 /*
  * Checks if expression is a KEY OP PARAM or PARAM OP KEY,
  * where KEY is partition key (it could be Var or RelableType) and PARAM is
- * whatever. Function returns variable (or RelableType) and param via var_ptr 
+ * whatever. Function returns variable (or RelableType) and param via var_ptr
  * and param_ptr pointers. If partition key isn't in expression then function
  * returns false.
  */
 static bool
-pull_var_param(const WalkerContext *ctx, const OpExpr *expr, Node **var_ptr, Node **param_ptr)
+pull_var_param(const WalkerContext *ctx,
+			   const OpExpr *expr,
+			   Node **var_ptr,
+			   Node **param_ptr)
 {
 	Node   *left = linitial(expr->args),
 		   *right = lsecond(expr->args);
@@ -1135,14 +1138,14 @@ pull_var_param(const WalkerContext *ctx, const OpExpr *expr, Node **var_ptr, Nod
 						(Var *) left :
 						(Var *) ((RelabelType *) left)->arg;
 
-		if (v->varattno == ctx->prel->attnum)
+		if (v->varoattno == ctx->prel->attnum)
 		{
 			*var_ptr = left;
 			*param_ptr = right;
 			return true;
 		}
 	}
-	
+
 	/* ... variable is on the right side */
 	if (IsA(right, Var) || IsA(right, RelabelType))
 	{
@@ -1150,7 +1153,7 @@ pull_var_param(const WalkerContext *ctx, const OpExpr *expr, Node **var_ptr, Nod
 						(Var *) right :
 						(Var *) ((RelabelType *) right)->arg;
 
-		if (v->varattno == ctx->prel->attnum)
+		if (v->varoattno == ctx->prel->attnum)
 		{
 			*var_ptr = right;
 			*param_ptr = left;
@@ -1245,7 +1248,7 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 		var = !IsA(varnode, RelabelType) ?
 			(Var *) varnode :
 			(Var *) ((RelabelType *) varnode)->arg;
-		if (var->varattno != prel->attnum)
+		if (var->varoattno != prel->attnum)
 			goto handle_arrexpr_return;
 	}
 	else

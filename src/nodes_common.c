@@ -149,7 +149,7 @@ append_part_attr_to_tlist(List *tlist, Index relno, PartRelationInfo *prel)
 		TargetEntry *te = (TargetEntry *) lfirst(lc);
 		Var			*var = (Var *) te->expr;
 
-		if (IsA(var, Var) && var->varattno == prel->attnum)
+		if (IsA(var, Var) && var->varoattno == prel->attnum)
 			part_attr_found = true;
 	}
 
