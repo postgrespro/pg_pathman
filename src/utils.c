@@ -25,7 +25,8 @@
 
 
 static bool clause_contains_params_walker(Node *node, void *context);
-static void change_varnos_in_restrinct_info(RestrictInfo *rinfo, change_varno_context *context);
+static void change_varnos_in_restrinct_info(RestrictInfo *rinfo,
+											change_varno_context *context);
 static bool change_varno_walker(Node *node, change_varno_context *context);
 static List *get_tableoids_list(List *tlist);
 static void lock_rows_visitor(Plan *plan, void *context);
@@ -440,6 +441,43 @@ change_varno_walker(Node *node, change_varno_context *context)
 	return expression_tree_walker(node, change_varno_walker, (void *) context);
 }
 
+static void
+change_varnos_in_restrinct_info(RestrictInfo *rinfo, change_varno_context *context)
+{
+	ListCell *lc;
+
+	change_varno_walker((Node *) rinfo->clause, context);
+	if (rinfo->left_em)
+		change_varno_walker((Node *) rinfo->left_em->em_expr, context);
+
+	if (rinfo->right_em)
+		change_varno_walker((Node *) rinfo->right_em->em_expr, context);
+
+	if (rinfo->orclause)
+		foreach(lc, ((BoolExpr *) rinfo->orclause)->args)
+		{
+			Node *node = (Node *) lfirst(lc);
+			change_varno_walker(node, context);
+		}
+
+	/* TODO: find some elegant way to do this */
+	if (bms_is_member(context->old_varno, rinfo->clause_relids))
+	{
+		rinfo->clause_relids = bms_del_member(rinfo->clause_relids, context->old_varno);
+		rinfo->clause_relids = bms_add_member(rinfo->clause_relids, context->new_varno);
+	}
+	if (bms_is_member(context->old_varno, rinfo->left_relids))
+	{
+		rinfo->left_relids = bms_del_member(rinfo->left_relids, context->old_varno);
+		rinfo->left_relids = bms_add_member(rinfo->left_relids, context->new_varno);
+	}
+	if (bms_is_member(context->old_varno, rinfo->right_relids))
+	{
+		rinfo->right_relids = bms_del_member(rinfo->right_relids, context->old_varno);
+		rinfo->right_relids = bms_add_member(rinfo->right_relids, context->new_varno);
+	}
+}
+
 Oid
 str_to_oid(const char *cstr)
 {
@@ -477,10 +515,6 @@ plan_tree_walker(Plan *plan,
 				plan_tree_walker((Plan *) lfirst(l), visitor, context);
 			break;
 
-		/*
-		 * Add proxy PartitionFilter nodes
-		 * to subplans of ModifyTable node
-		 */
 		case T_ModifyTable:
 			foreach (l, ((ModifyTable *) plan)->plans)
 				plan_tree_walker((Plan *) lfirst(l), visitor, context);
@@ -510,45 +544,8 @@ plan_tree_walker(Plan *plan,
 	plan_tree_walker(plan->lefttree, visitor, context);
 	plan_tree_walker(plan->righttree, visitor, context);
 
+	/* Apply visitor to the current node */
 	visitor(plan, context);
-}
-
-
-static void
-change_varnos_in_restrinct_info(RestrictInfo *rinfo, change_varno_context *context)
-{
-	ListCell *lc;
-
-	change_varno_walker((Node *) rinfo->clause, context);
-	if (rinfo->left_em)
-		change_varno_walker((Node *) rinfo->left_em->em_expr, context);
-
-	if (rinfo->right_em)
-		change_varno_walker((Node *) rinfo->right_em->em_expr, context);
-
-	if (rinfo->orclause)
-		foreach(lc, ((BoolExpr *) rinfo->orclause)->args)
-		{
-			Node *node = (Node *) lfirst(lc);
-			change_varno_walker(node, context);
-		}
-
-	/* TODO: find some elegant way to do this */
-	if (bms_is_member(context->old_varno, rinfo->clause_relids))
-	{
-		rinfo->clause_relids = bms_del_member(rinfo->clause_relids, context->old_varno);
-		rinfo->clause_relids = bms_add_member(rinfo->clause_relids, context->new_varno);
-	}
-	if (bms_is_member(context->old_varno, rinfo->left_relids))
-	{
-		rinfo->left_relids = bms_del_member(rinfo->left_relids, context->old_varno);
-		rinfo->left_relids = bms_add_member(rinfo->left_relids, context->new_varno);
-	}
-	if (bms_is_member(context->old_varno, rinfo->right_relids))
-	{
-		rinfo->right_relids = bms_del_member(rinfo->right_relids, context->old_varno);
-		rinfo->right_relids = bms_add_member(rinfo->right_relids, context->new_varno);
-	}
 }
 
 /*

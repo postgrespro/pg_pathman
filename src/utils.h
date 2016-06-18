@@ -19,15 +19,8 @@
 
 typedef struct
 {
-	RelOptInfo *child;
-	RelOptInfo *parent;
-	int			sublevels_up;
-} ReplaceVarsContext;
-
-typedef struct
-{
-	Oid			old_varno;
-	Oid			new_varno;
+	Oid		old_varno;
+	Oid		new_varno;
 } change_varno_context;
 
 
@@ -53,10 +46,10 @@ List * list_reverse(List *l);
 
 void change_varnos(Node *node, Oid old_varno, Oid new_varno);
 
-Oid str_to_oid(const char * cstr);
+Oid str_to_oid(const char *cstr);
 
 void plan_tree_walker(Plan *plan,
-					  void (*visitor)(Plan *, void *),
+					  void (*visitor) (Plan *plan, void *context),
 					  void *context);
 
 void rowmark_add_tableoids(Query *parse);
