@@ -16,7 +16,7 @@ session "s1"
 step "s1b" { BEGIN; }
 step "s1_insert_150" { INSERT INTO range_rel SELECT generate_series(1, 150); }
 step "s1_insert_300" { INSERT INTO range_rel SELECT generate_series(151, 300); }
-step "s1_show_partitions" { SELECT c.consrc FROM pg_inherits i LEFT JOIN pg_constraint c ON c.conrelid = i.inhrelid AND c.consrc IS NOT NULL WHERE i.inhparent = 'range_rel'::regclass::oid ORDER BY c.consrc; }
+step "s1_show_partitions" { SELECT c.consrc FROM pg_inherits i LEFT JOIN pg_constraint c ON c.conrelid = i.inhrelid AND c.consrc IS NOT NULL WHERE i.inhparent = 'range_rel'::regclass::oid ORDER BY c.oid; }
 step "s1r" { ROLLBACK; }
 step "s1c" { COMMIT; }
 
@@ -24,7 +24,7 @@ session "s2"
 step "s2b" { BEGIN; }
 step "s2_insert_150" { INSERT INTO range_rel SELECT generate_series(1, 150); }
 step "s2_insert_300" { INSERT INTO range_rel SELECT generate_series(151, 300); }
-step "s2_show_partitions" { SELECT c.consrc FROM pg_inherits i LEFT JOIN pg_constraint c ON c.conrelid = i.inhrelid  AND c.consrc IS NOT NULL WHERE i.inhparent = 'range_rel'::regclass::oid ORDER BY c.consrc; }
+step "s2_show_partitions" { SELECT c.consrc FROM pg_inherits i LEFT JOIN pg_constraint c ON c.conrelid = i.inhrelid  AND c.consrc IS NOT NULL WHERE i.inhparent = 'range_rel'::regclass::oid ORDER BY c.oid; }
 step "s2r" { ROLLBACK; }
 step "s2c" { COMMIT; }
 
