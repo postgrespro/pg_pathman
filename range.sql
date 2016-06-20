@@ -328,7 +328,7 @@ END
 $$ LANGUAGE plpgsql;
 
 /*
- * 
+ *
  */
 CREATE OR REPLACE FUNCTION @extschema@.check_boundaries(
 	p_relation REGCLASS
@@ -706,7 +706,7 @@ BEGIN
 	FROM @extschema@.pathman_config WHERE relname::regclass = p_relation;
 
 	v_atttype := @extschema@.get_attribute_type_name(p_relation, v_attname);
-	
+
 	EXECUTE format('SELECT @extschema@.append_partition_internal($1, $2, $3, ARRAY[]::%s[])', v_atttype)
 	INTO v_part_name
 	USING p_relation, v_atttype, v_interval;
@@ -918,7 +918,15 @@ DECLARE
 	v_cond           TEXT;
 	v_plain_partname TEXT;
 	v_plain_schema   TEXT;
+	rel_persistence  CHAR;
 BEGIN
+	/* Ignore temporary tables */
+	SELECT relpersistence FROM pg_catalog.pg_class WHERE oid = p_partition INTO rel_persistence;
+	IF rel_persistence = 't'::CHAR THEN
+		RAISE EXCEPTION 'Temporary table % cannot be used as a partition',
+			quote_ident(p_partition::TEXT);
+	END IF;
+
 	/* Prevent concurrent partition management */
 	PERFORM @extschema@.acquire_partitions_lock();
 
@@ -1086,7 +1094,7 @@ DECLARE
 			EXECUTE q USING %7$s;
 			RETURN NULL;
 		END $body$ LANGUAGE plpgsql';
-	trigger TEXT := 'CREATE TRIGGER %s_update_trigger ' ||  
+	trigger TEXT := 'CREATE TRIGGER %s_update_trigger ' ||
 		'BEFORE UPDATE ON %s ' ||
 		'FOR EACH ROW EXECUTE PROCEDURE %s_update_trigger_func()';
 	att_names   TEXT;
