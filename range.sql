@@ -722,7 +722,6 @@ BEGIN
 
 EXCEPTION WHEN others THEN
 	RAISE EXCEPTION '% %', SQLERRM, SQLSTATE;
-	PERFORM @extschema@.release_partitions_lock();
 END
 $$
 LANGUAGE plpgsql;
@@ -790,7 +789,6 @@ BEGIN
 
 EXCEPTION WHEN others THEN
 	RAISE EXCEPTION '% %', SQLERRM, SQLSTATE;
-	PERFORM @extschema@.release_partitions_lock();
 END
 $$
 LANGUAGE plpgsql;
@@ -861,7 +859,6 @@ BEGIN
 
 EXCEPTION WHEN others THEN
 	RAISE EXCEPTION '% %', SQLERRM, SQLSTATE;
-	PERFORM @extschema@.release_partitions_lock();
 END
 $$
 LANGUAGE plpgsql;
@@ -901,7 +898,6 @@ BEGIN
 
 EXCEPTION WHEN others THEN
 	RAISE EXCEPTION '% %', SQLERRM, SQLSTATE;
-	PERFORM @extschema@.release_partitions_lock();
 END
 $$
 LANGUAGE plpgsql;
@@ -962,7 +958,6 @@ BEGIN
 
 EXCEPTION WHEN others THEN
 	RAISE EXCEPTION '% %', SQLERRM, SQLSTATE;
-	PERFORM @extschema@.release_partitions_lock();
 END
 $$
 LANGUAGE plpgsql;
@@ -1004,7 +999,6 @@ BEGIN
 
 EXCEPTION WHEN others THEN
 	RAISE EXCEPTION '% %', SQLERRM, SQLSTATE;
-	PERFORM @extschema@.release_partitions_lock();
 END
 $$
 LANGUAGE plpgsql;
