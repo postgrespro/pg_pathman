@@ -693,13 +693,13 @@ DECLARE
 	v_part_name TEXT;
 	v_interval TEXT;
 BEGIN
+	/* Prevent concurrent partition creation */
+	PERFORM @extschema@.acquire_partitions_lock();
+
 	SELECT attname, range_interval INTO v_attname, v_interval
 	FROM @extschema@.pathman_config WHERE relname::regclass = p_relation;
 
 	v_atttype := @extschema@.get_attribute_type_name(p_relation, v_attname);
-
-	/* Prevent concurrent partition creation */
-	PERFORM @extschema@.acquire_partitions_lock();
 
 	EXECUTE format('SELECT @extschema@.append_partition_internal($1, $2, $3, ARRAY[]::%s[])', v_atttype)
 	INTO v_part_name
@@ -715,8 +715,8 @@ BEGIN
 	RETURN v_part_name;
 
 EXCEPTION WHEN others THEN
-	PERFORM @extschema@.release_partitions_lock();
 	RAISE EXCEPTION '% %', SQLERRM, SQLSTATE;
+	PERFORM @extschema@.release_partitions_lock();
 END
 $$
 LANGUAGE plpgsql;
@@ -762,12 +762,12 @@ DECLARE
 	v_part_name TEXT;
 	v_interval TEXT;
 BEGIN
+	/* Prevent concurrent partition creation */
+	PERFORM @extschema@.acquire_partitions_lock();
+
 	SELECT attname, range_interval INTO v_attname, v_interval
 	FROM @extschema@.pathman_config WHERE relname::regclass = p_relation;
 	v_atttype := @extschema@.get_attribute_type_name(p_relation, v_attname);
-
-	/* Prevent concurrent partition creation */
-	PERFORM @extschema@.acquire_partitions_lock();
 
 	EXECUTE format('SELECT @extschema@.prepend_partition_internal($1, $2, $3, ARRAY[]::%s[])', v_atttype)
 	INTO v_part_name
@@ -783,8 +783,8 @@ BEGIN
 	RETURN v_part_name;
 
 EXCEPTION WHEN others THEN
-	PERFORM @extschema@.release_partitions_lock();
 	RAISE EXCEPTION '% %', SQLERRM, SQLSTATE;
+	PERFORM @extschema@.release_partitions_lock();
 END
 $$
 LANGUAGE plpgsql;
