@@ -912,7 +912,15 @@ DECLARE
 	v_cond           TEXT;
 	v_plain_partname TEXT;
 	v_plain_schema   TEXT;
+	rel_persistence  CHAR;
 BEGIN
+	/* Ignore temporary tables */
+	SELECT relpersistence FROM pg_catalog.pg_class WHERE oid = p_partition INTO rel_persistence;
+	IF rel_persistence = 't'::CHAR THEN
+		RAISE EXCEPTION 'Temporary table % cannot be used as a partition',
+			quote_ident(p_partition::TEXT);
+	END IF;
+
 	/* Prevent concurrent partition management */
 	PERFORM @extschema@.acquire_partitions_lock();
 
