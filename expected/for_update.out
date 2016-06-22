@@ -1,0 +1,38 @@
+Parsed test spec with 2 sessions
+
+starting permutation: s1_b s1_update s2_select s1_r
+create_range_partitions
+
+10             
+step s1_b: begin;
+step s1_update: update test_tbl set id = 2 where id = 1;
+step s2_select: select * from test_tbl where id = 1;
+id             val            
+
+1              1              
+step s1_r: rollback;
+
+starting permutation: s1_b s1_update s2_select_locked s1_r
+create_range_partitions
+
+10             
+step s1_b: begin;
+step s1_update: update test_tbl set id = 2 where id = 1;
+step s2_select_locked: select * from test_tbl where id = 1 for share; <waiting ...>
+step s1_r: rollback;
+step s2_select_locked: <... completed>
+id             val            
+
+1              1              
+
+starting permutation: s1_b s1_update s2_select_locked s1_c
+create_range_partitions
+
+10             
+step s1_b: begin;
+step s1_update: update test_tbl set id = 2 where id = 1;
+step s2_select_locked: select * from test_tbl where id = 1 for share; <waiting ...>
+step s1_c: commit;
+step s2_select_locked: <... completed>
+id             val            
+

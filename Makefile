@@ -27,7 +27,7 @@ endif
 $(EXTENSION)--$(EXTVERSION).sql: init.sql hash.sql range.sql
 	cat $^ > $@
 
-ISOLATIONCHECKS=insert_trigger
+ISOLATIONCHECKS=insert_nodes for_update
 
 submake-isolation:
 	$(MAKE) -C $(top_builddir)/src/test/isolation all

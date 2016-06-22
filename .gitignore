@@ -1,4 +1,5 @@
 .deps
+isolation_output
 results/pg_pathman.out
 regression.diffs
 regression.out

@@ -7,7 +7,7 @@ setup
 
 teardown
 {
-	SELECT drop_range_partitions('range_rel');
+	SELECT drop_partitions('range_rel');
 	DROP TABLE range_rel CASCADE;
 	DROP EXTENSION pg_pathman;
 }
