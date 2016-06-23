@@ -192,7 +192,7 @@ EXPLAIN SELECT * FROM items WHERE id = 1234;
    ->  Index Scan using items_34_pkey on items_34  (cost=0.28..8.29 rows=0 width=0)
          Index Cond: (id = 1234)
 ```
-Note that pg_pathman exludes parent table from the query plan. To access parent table use ONLY modifier:
+Note that pg_pathman excludes parent table from the query plan. To access parent table use ONLY modifier:
 ```
 EXPLAIN SELECT * FROM ONLY items;
                       QUERY PLAN                      
