@@ -619,7 +619,7 @@ LANGUAGE plpgsql;
  * partition will be destroyed.
  *
  * Notes: dummy field is used to pass the element type to the function
- * (it is neccessary because of pseudo-types used in function)
+ * (it is necessary because of pseudo-types used in function)
  */
 CREATE OR REPLACE FUNCTION @extschema@.merge_range_partitions_internal(
 	p_parent_relid OID
