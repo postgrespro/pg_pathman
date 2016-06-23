@@ -120,7 +120,7 @@ Merge two adjacent RANGE partitions. Data from `partition2` is copied to `partit
 ```
 append_range_partition(p_relation TEXT)
 ```
-Appends new RANGE partition and returns 
+Appends new RANGE partition and returns
 ```
 prepend_range_partition(p_relation TEXT)
 ```
@@ -160,6 +160,13 @@ disable_partitioning(relation TEXT)
 Disables `pg_pathman` partitioning mechanism for the specified parent table and removes an insert trigger. Partitions itself remain unchanged.
 
 ## Examples
+
+### Common tips
+You can easily add **_partition_** column containing the names of the underlying partitions using the system attribute called **_tableoid_**:
+```
+SELECT tableoid::regclass, * AS partition FROM partitioned_table;
+```
+
 ### HASH
 Consider an example of HASH partitioning. First create a table with some integer column:
 ```
@@ -180,13 +187,13 @@ This will create new partitions and move the data from parent to partitions.
 Here is an example of the query with filtering by partitioning key and its plan:
 ```
 SELECT * FROM items WHERE id = 1234;
-  id  |               name               | code 
+  id  |               name               | code
 ------+----------------------------------+------
  1234 | 81dc9bdb52d04dc20036dbd8313ed055 | 1855
 (1 row)
 
 EXPLAIN SELECT * FROM items WHERE id = 1234;
-                                     QUERY PLAN                                     
+                                     QUERY PLAN
 ------------------------------------------------------------------------------------
  Append  (cost=0.28..8.29 rows=0 width=0)
    ->  Index Scan using items_34_pkey on items_34  (cost=0.28..8.29 rows=0 width=0)
@@ -195,7 +202,7 @@ EXPLAIN SELECT * FROM items WHERE id = 1234;
 Note that pg_pathman excludes parent table from the query plan. To access parent table use ONLY modifier:
 ```
 EXPLAIN SELECT * FROM ONLY items;
-                      QUERY PLAN                      
+                      QUERY PLAN
 ------------------------------------------------------
  Seq Scan on items  (cost=0.00..0.00 rows=1 width=45)
 ```
