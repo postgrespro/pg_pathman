@@ -108,7 +108,8 @@ lock_rows_visitor(Plan *plan, void *context)
 
 	/* Select tableoid attributes that must be renamed */
 	tableoids = get_tableoids_list(lock_child->targetlist);
-	Assert(tableoids);
+	if (!tableoids)
+		return; /* this LockRows has nothing to do with partitioned table */
 
 	foreach (lc, lock_rows->rowMarks)
 	{
