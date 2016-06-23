@@ -423,6 +423,10 @@ BEGIN
     v_attname := attname FROM @extschema@.pathman_config
                  WHERE relname::regclass = p_parent;
 
+	IF v_attname IS NULL THEN
+		RAISE EXCEPTION 'Table % is not partitioned', quote_ident(p_parent::TEXT);
+	END IF;
+
 	SELECT * INTO v_plain_schema, v_plain_relname
 	FROM @extschema@.get_plain_schema_and_relname(p_parent);
 
@@ -494,9 +498,15 @@ BEGIN
 					  FROM pg_inherits
 					  WHERE inhrelid = v_child_relid;
 
-	SELECT attname, parttype INTO v_attname, v_part_type
+	SELECT attname, parttype
 	FROM @extschema@.pathman_config
-	WHERE relname::regclass = v_parent_relid::regclass;
+	WHERE relname::regclass = v_parent_relid::regclass
+	INTO v_attname, v_part_type;
+
+	IF v_attname IS NULL THEN
+		RAISE EXCEPTION 'Table % is not partitioned',
+						quote_ident(v_parent_relid::regclass::text);
+	END IF;
 
 	SELECT * INTO v_plain_schema, v_plain_relname
 	FROM @extschema@.get_plain_schema_and_relname(p_partition);
@@ -591,9 +601,15 @@ BEGIN
 		RAISE EXCEPTION 'Cannot merge partitions having different parents';
 	END IF;
 
-	SELECT attname, parttype INTO v_attname, v_part_type
+	SELECT attname, parttype
 	FROM @extschema@.pathman_config
-	WHERE relname::regclass = v_parent_relid1::regclass;
+	WHERE relname::regclass = v_parent_relid1::regclass
+	INTO v_attname, v_part_type;
+
+	IF v_attname IS NULL THEN
+		RAISE EXCEPTION 'Table % is not partitioned',
+						quote_ident(v_parent_relid1::regclass::text);
+	END IF;
 
 	/* Check if this is RANGE partition */
 	IF v_part_type != 2 THEN
@@ -637,8 +653,14 @@ DECLARE
 	v_child_relname TEXT;
 	v_check_name    TEXT;
 BEGIN
-	SELECT attname INTO v_attname FROM @extschema@.pathman_config
-	WHERE relname::regclass = p_parent_relid::regclass;
+	SELECT attname FROM @extschema@.pathman_config
+	WHERE relname::regclass = p_parent_relid::regclass
+	INTO v_attname;
+
+	IF v_attname IS NULL THEN
+		RAISE EXCEPTION 'Table % is not partitioned',
+						quote_ident(p_parent_relid::regclass::text);
+	END IF;
 
 	SELECT * INTO v_plain_schema, v_plain_relname
 	FROM @extschema@.get_plain_schema_and_relname(p_part1);
@@ -694,16 +716,22 @@ CREATE OR REPLACE FUNCTION @extschema@.append_range_partition(
 RETURNS TEXT AS
 $$
 DECLARE
-	v_attname TEXT;
-	v_atttype TEXT;
-	v_part_name TEXT;
-	v_interval TEXT;
+	v_attname	TEXT;
+	v_atttype	TEXT;
+	v_part_name	TEXT;
+	v_interval	TEXT;
 BEGIN
 	/* Prevent concurrent partition creation */
 	PERFORM @extschema@.acquire_partitions_lock();
 
-	SELECT attname, range_interval INTO v_attname, v_interval
-	FROM @extschema@.pathman_config WHERE relname::regclass = p_relation;
+	SELECT attname, range_interval
+	FROM @extschema@.pathman_config
+	WHERE relname::regclass = p_relation
+	INTO v_attname, v_interval;
+
+	IF v_attname IS NULL THEN
+		RAISE EXCEPTION 'Table % is not partitioned', quote_ident(p_relation::TEXT);
+	END IF;
 
 	v_atttype := @extschema@.get_attribute_type_name(p_relation, v_attname);
 
@@ -770,8 +798,15 @@ BEGIN
 	/* Prevent concurrent partition creation */
 	PERFORM @extschema@.acquire_partitions_lock();
 
-	SELECT attname, range_interval INTO v_attname, v_interval
-	FROM @extschema@.pathman_config WHERE relname::regclass = p_relation;
+	SELECT attname, range_interval
+	FROM @extschema@.pathman_config
+	WHERE relname::regclass = p_relation
+	INTO v_attname, v_interval;
+
+	IF v_attname IS NULL THEN
+		RAISE EXCEPTION 'Table % is not partitioned', quote_ident(p_relation::TEXT);
+	END IF;
+
 	v_atttype := @extschema@.get_attribute_type_name(p_relation, v_attname);
 
 	EXECUTE format('SELECT @extschema@.prepend_partition_internal($1, $2, $3, ARRAY[]::%s[])', v_atttype)
@@ -946,7 +981,14 @@ BEGIN
 				   , p_relation);
 
 	/* Set check constraint */
-	v_attname := attname FROM @extschema@.pathman_config WHERE relname::regclass = p_relation;
+	v_attname := attname
+	FROM @extschema@.pathman_config
+	WHERE relname::regclass = p_relation;
+
+	IF v_attname IS NULL THEN
+		RAISE EXCEPTION 'Table % is not partitioned', quote_ident(p_relation::TEXT);
+	END IF;
+
 	v_cond := @extschema@.get_range_condition(v_attname, p_start_value, p_end_value);
 
 	/* Plain partition name and schema */
@@ -1072,7 +1114,7 @@ $$ LANGUAGE plpgsql;
  * Creates an update trigger
  */
 CREATE OR REPLACE FUNCTION @extschema@.create_range_update_trigger(
-	IN relation TEXT)
+	IN relation REGCLASS)
 RETURNS TEXT AS
 $$
 DECLARE
@@ -1107,8 +1149,7 @@ DECLARE
 	num         INTEGER := 0;
 	attr        TEXT;
 BEGIN
-	relation := @extschema@.validate_relname(relation);
-	relid := relation::regclass::oid;
+	relid := relation::oid;
 	SELECT string_agg(attname, ', '),
 		   string_agg('OLD.' || attname, ', '),
 		   string_agg('NEW.' || attname, ', '),
@@ -1123,7 +1164,14 @@ BEGIN
 		   att_val_fmt,
 		   att_fmt;
 
-	attr := attname FROM @extschema@.pathman_config WHERE relname = relation;
+	attr := attname
+	FROM @extschema@.pathman_config
+	WHERE relname::regclass = relation;
+
+	IF attr IS NULL THEN
+		RAISE EXCEPTION 'Table % is not partitioned', quote_ident(relation::TEXT);
+	END IF;
+
 	EXECUTE format(func, relation, attr, 0, att_val_fmt,
 				   old_fields, att_fmt, new_fields);
 	FOR rec in (SELECT * FROM pg_inherits WHERE inhparent = relation::regclass::oid)
@@ -1215,7 +1263,6 @@ CREATE OR REPLACE FUNCTION @extschema@.append_partitions_on_demand_internal(
 RETURNS OID AS
 $$
 DECLARE
-	v_relation TEXT;
 	v_cnt INTEGER := 0;
 	i INTEGER := 0;
 	v_part TEXT;
@@ -1227,11 +1274,16 @@ DECLARE
 	v_next_value p_new_value%TYPE;
 	v_is_date BOOLEAN;
 BEGIN
-	v_relation := @extschema@.validate_relname(p_relid::regclass::text);
-
 	/* get attribute name and interval */
-	SELECT attname, range_interval INTO v_attname, v_interval
-	FROM @extschema@.pathman_config WHERE relname = v_relation;
+	SELECT attname, range_interval
+	FROM @extschema@.pathman_config
+	WHERE relname::regclass = p_relid::regclass
+	INTO v_attname, v_interval;
+
+	IF v_attname IS NULL THEN
+		RAISE EXCEPTION 'Table % is not partitioned',
+						quote_ident(p_relid::regclass::text);
+	END IF;
 
 	v_min := @extschema@.get_min_range_value(p_relid::regclass::oid, p_new_value);
 	v_max := @extschema@.get_max_range_value(p_relid::regclass::oid, p_new_value);

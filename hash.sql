@@ -243,12 +243,10 @@ DECLARE
 	atttype       TEXT;
 	hashfunc      TEXT;
 BEGIN
-	relation := @extschema@.validate_relname(relation);
-
 	SELECT * INTO plain_schema, plain_relname
 	FROM @extschema@.get_plain_schema_and_relname(relation);
 
-	relid := relation::regclass::oid;
+	relid := relation::oid;
 	SELECT string_agg(attname, ', '),
 		   string_agg('OLD.' || attname, ', '),
 		   string_agg('NEW.' || attname, ', '),
@@ -264,6 +262,11 @@ BEGIN
 		   att_fmt;
 
 	attr := attname FROM @extschema@.pathman_config WHERE relname::regclass = relation;
+
+	IF attr IS NULL THEN
+		RAISE EXCEPTION 'Table % is not partitioned', quote_ident(relation::TEXT);
+	END IF;
+
 	partitions_count := COUNT(*) FROM pg_inherits WHERE inhparent = relation::oid;
 
 	/* Function name, trigger name and child relname template */
