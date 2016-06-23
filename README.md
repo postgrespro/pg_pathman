@@ -164,7 +164,7 @@ Disables `pg_pathman` partitioning mechanism for the specified parent table and 
 ### Common tips
 You can easily add **_partition_** column containing the names of the underlying partitions using the system attribute called **_tableoid_**:
 ```
-SELECT tableoid::regclass, * AS partition FROM partitioned_table;
+SELECT tableoid::regclass AS partition, * FROM partitioned_table;
 ```
 
 ### HASH
