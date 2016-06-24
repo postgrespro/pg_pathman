@@ -184,8 +184,6 @@ BEGIN
 		p_start_value := p_start_value + p_interval;
 	END LOOP;
 
-	/* Create triggers */
-	-- PERFORM create_hash_update_trigger(relation, attribute, partitions_count);
 	/* Notify backend about changes */
 	PERFORM @extschema@.on_create_partitions(p_relation::regclass::oid);
 

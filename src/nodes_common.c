@@ -504,7 +504,8 @@ rescan_append_common(CustomScanState *node)
 	ranges = list_make1_irange(make_irange(0, prel->children_count - 1, false));
 
 	InitWalkerContextCustomNode(&scan_state->wcxt, scan_state->prel,
-								econtext, &scan_state->wcxt_cached);
+								econtext, CurrentMemoryContext,
+								&scan_state->wcxt_cached);
 
 	foreach (lc, scan_state->custom_exprs)
 	{

@@ -276,6 +276,9 @@ typedef struct
 	/* Main partitioning structure */
 	const PartRelationInfo *prel;
 
+	/* Long-living context for cached values */
+	MemoryContext			persistent_mcxt;
+
 	/* Cached values */
 	const RangeEntry	   *ranges;		/* cached RangeEntry array (copy) */
 	size_t					nranges;	/* number of RangeEntries */
@@ -291,13 +294,15 @@ typedef struct
 /*
  * Usual initialization procedure for WalkerContext
  */
-#define InitWalkerContext(context, prel_info, ecxt) \
+#define InitWalkerContext(context, prel_info, ecxt, mcxt) \
 	do { \
 		(context)->prel = (prel_info); \
 		(context)->econtext = (ecxt); \
 		(context)->ranges = NULL; \
+		(context)->nranges = 0; \
 		(context)->hasLeast = false; \
 		(context)->hasGreatest = false; \
+		(context)->persistent_mcxt = (mcxt); \
 	} while (0)
 
 /*
@@ -305,18 +310,23 @@ typedef struct
  * in case of range partitioning, so 'wcxt' is stored
  * inside of Custom Node
  */
-#define InitWalkerContextCustomNode(context, prel_info, ecxt, isCached) \
+#define InitWalkerContextCustomNode(context, prel_info, ecxt, mcxt, isCached) \
 	do { \
 		if (!*isCached) \
 		{ \
 			(context)->prel = prel_info; \
 			(context)->econtext = ecxt; \
 			(context)->ranges = NULL; \
+			(context)->nranges = 0; \
+			(context)->persistent_mcxt = (mcxt); \
 			*isCached = true; \
 		} \
 		(context)->hasLeast = false; \
 		(context)->hasGreatest = false; \
 	} while (0)
+
+/* Check that WalkerContext contains ExprContext (plan execution stage) */
+#define WcxtHasExprContext(wcxt) ( (wcxt)->econtext )
 
 void select_range_partitions(const Datum value,
 							 const bool byVal,

@@ -1,6 +1,7 @@
 #include "partition_filter.h"
 #include "utils.h"
 #include "utils/guc.h"
+#include "utils/memutils.h"
 #include "nodes/nodeFuncs.h"
 
 
@@ -139,6 +140,8 @@ partition_filter_exec(CustomScanState *node)
 
 	if (!TupIsNull(slot))
 	{
+		MemoryContext   old_cxt;
+
 		List		   *ranges;
 		int				nparts;
 		Oid			   *parts;
@@ -160,10 +163,15 @@ partition_filter_exec(CustomScanState *node)
 		CopyToTempConst(constbyval,  attbyval);
 
 		InitWalkerContextCustomNode(&state->wcxt, state->prel,
-									econtext, &state->wcxt_cached);
+									econtext, CurrentMemoryContext,
+									&state->wcxt_cached);
+
+		/* Switch to per-tuple context */
+		old_cxt = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
 
 		ranges = walk_expr_tree((Expr *) &state->temp_const, &state->wcxt)->rangeset;
 		parts = get_partition_oids(ranges, &nparts, state->prel);
+
 
 		if (nparts > 1)
 			elog(ERROR, "PartitionFilter selected more than one partition");
@@ -173,10 +181,15 @@ partition_filter_exec(CustomScanState *node)
 														  state->temp_const.constvalue,
 														  state->temp_const.consttype);
 
+			/* Now we have to refresh state->wcxt->ranges manually */
 			refresh_walker_context_ranges(&state->wcxt);
 		}
 		else
 			selected_partid = parts[0];
+
+		/* Switch back and clean up per-tuple context */
+		MemoryContextSwitchTo(old_cxt);
+		ResetExprContext(econtext);
 
 		/* Replace main table with suitable partition */
 		estate->es_result_relation_info = getResultRelInfo(selected_partid,
