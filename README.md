@@ -32,7 +32,6 @@ Based on the partitioning type and condition's operator, `pg_pathman` searches f
 More interesting features are yet to come. Stay tuned!
 
 ## Roadmap
- * Replace INSERT triggers with a custom node (aka **PartitionFilter**)
  * Implement concurrent partitioning (much more responsive)
  * Implement HASH-patitioning for non-integer attributes
  * Optimize hash join (both tables are partitioned by join key)
@@ -162,6 +161,22 @@ Permanently disable `pg_pathman` partitioning mechanism for the specified parent
 
 - `RuntimeAppend` (overrides `Append` plan node)
 - `RuntimeMergeAppend` (overrides `MergeAppend` plan node)
+- `PartitionFilter` (drop-in replacement for INSERT triggers)
+
+`PartitionFilter` acts as a *proxy node* for INSERT's child scan, which means it can redirect output tuples to the corresponding partition:
+
+```
+EXPLAIN (COSTS OFF)
+INSERT INTO partitioned_table
+SELECT generate_series(1, 10), random();
+               QUERY PLAN
+-----------------------------------------
+ Insert on partitioned_table
+   ->  Custom Scan (PartitionFilter)
+         ->  Subquery Scan on "*SELECT*"
+               ->  Result
+(4 rows)
+```
 
 `RuntimeAppend` and `RuntimeMergeAppend` have much in common: they come in handy in a case when WHERE condition takes form of:
 ```
@@ -417,6 +432,7 @@ There are several user-accessible [GUC](https://www.postgresql.org/docs/9.5/stat
  - `pg_pathman.enable` --- disable (or enable) `pg_pathman` completely
  - `pg_pathman.enable_runtimeappend` --- toggle `RuntimeAppend` custom node on\off
  - `pg_pathman.enable_runtimemergeappend` --- toggle `RuntimeMergeAppend` custom node on\off
+ - `pg_pathman.enable_partitionfilter` --- toggle `PartitionFilter` custom node on\off
 
 To **permanently** disable `pg_pathman` for some previously partitioned table, use the `disable_partitioning()` function:
 ```
@@ -428,6 +444,6 @@ All sections and data will remain unchanged and will be handled by the standard 
 Do not hesitate to post your issues, questions and new ideas at the [issues](https://github.com/postgrespro/pg_pathman/issues) page.
 
 ## Authors
-Ildar Musin <i.musin@postgrespro.ru> Postgres Professional Ltd., Russia     
-Alexander Korotkov <a.korotkov@postgrespro.ru> Postgres Professional Ltd., Russia       
-Dmitry Ivanov <d.ivanov@postgrespro.ru> Postgres Professional Ltd., Russia      
+Ildar Musin <i.musin@postgrespro.ru> Postgres Professional Ltd., Russia		
+Alexander Korotkov <a.korotkov@postgrespro.ru> Postgres Professional Ltd., Russia		
+Dmitry Ivanov <d.ivanov@postgrespro.ru> Postgres Professional Ltd., Russia		
