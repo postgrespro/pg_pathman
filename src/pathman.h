@@ -155,7 +155,7 @@ extern List			   *inheritance_disabled_relids;
 extern bool 			pg_pathman_enable;
 extern PathmanState    *pmstate;
 
-#define PATHMAN_GET_DATUM(value, by_val) ( (by_val) ? (value) : PointerGetDatum(&value) )
+#define PATHMAN_GET_DATUM(value, by_val) ( (by_val) ? (Datum) (value) : PointerGetDatum(&value) )
 
 typedef struct {
 	bool	ir_valid : 1;
@@ -233,8 +233,8 @@ void load_config(void);
 void create_relations_hashtable(void);
 void create_hash_restrictions_hashtable(void);
 void create_range_restrictions_hashtable(void);
-void load_relations_hashtable(bool reinitialize);
-void load_check_constraints(Oid parent_oid, Snapshot snapshot);
+void load_relations(bool reinitialize);
+void load_partitions(Oid parent_oid, Snapshot snapshot);
 void remove_relation_info(Oid relid);
 
 /* utility functions */

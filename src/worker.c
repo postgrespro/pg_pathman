@@ -234,7 +234,7 @@ create_partitions(Oid relid, Datum value, Oid value_type, bool *crashed)
 			/* Update relation info */
 			free_dsm_array(&rangerel->ranges);
 			free_dsm_array(&prel->children);
-			load_check_constraints(relid, GetCatalogSnapshot(relid));
+			load_partitions(relid, GetCatalogSnapshot(relid));
 		}
 
 		*crashed = false;
