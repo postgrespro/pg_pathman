@@ -101,14 +101,14 @@ typedef struct HashRelation
  */
 typedef struct RangeEntry
 {
-	Oid		child_oid;
-	#ifdef HAVE_INT64_TIMESTAMP
+	Oid			child_oid;
+#ifdef HAVE_INT64_TIMESTAMP
 	int64		min;
 	int64		max;
-	#else
+#else
 	double		min;
 	double		max;
-	#endif
+#endif
 } RangeEntry;
 
 typedef struct RangeRelation
@@ -139,7 +139,7 @@ extern List			   *inheritance_disabled_relids;
 extern bool 			pg_pathman_enable;
 extern PathmanState    *pmstate;
 
-#define PATHMAN_GET_DATUM(value, by_val) ( (by_val) ? (value) : PointerGetDatum(&value) )
+#define PATHMAN_GET_DATUM(value, by_val) ( (by_val) ? (Datum) (value) : PointerGetDatum(&value) )
 
 typedef int IndexRange;
 #define RANGE_INFINITY 0x7FFF
