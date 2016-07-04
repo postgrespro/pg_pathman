@@ -38,3 +38,10 @@ isolationcheck: | submake-isolation
 	    --temp-config=$(top_srcdir)/$(subdir)/conf.add \
 	    --outputdir=./isolation_output \
 	    $(ISOLATIONCHECKS)
+
+deb%:
+	sed -e s/PGVERSION/$(subst deb,,$@)/g < debian/control.in > debian/control
+	sed -e s/PGVERSION/$(subst deb,,$@)/g < debian/changelog.in > debian/changelog
+	echo $(subst deb,,$@) > debian/pgversions
+	dch -v $(EXTVERSION)-git$(shell git describe --always) "Automatically built package"
+	PGVERSION=$(subst deb,,$@) dpkg-buildpackage -uc -us
