@@ -30,7 +30,7 @@ bool	initialization_needed = true;
 
 
 static bool validate_partition_constraints(const Oid *children_oids,
-										   const uint children_count,
+										   const uint32 children_count,
 										   Snapshot snapshot,
 										   PartRelationInfo *prel,
 										   RangeRelation *rangerel);
