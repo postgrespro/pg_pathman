@@ -446,12 +446,6 @@ BEGIN
         EXIT WHEN v_child_relname_exists = 0;
     END LOOP;
 
-    /* Skip existing partitions */
-    IF EXISTS (SELECT * FROM pg_tables WHERE tablename = v_child_relname) THEN
-        RAISE WARNING 'Relation % already exists, skipping...', v_child_relname;
-        RETURN NULL;
-    END IF;
-
     EXECUTE format('CREATE TABLE %s (LIKE %s INCLUDING ALL)'
                    , v_child_relname
                    , p_parent);
