@@ -1,0 +1,9 @@
+language: c
+
+before_install:
+  - sudo sh ./travis/apt.postgresql.org.sh
+
+env:
+  - PGVERSION=9.5
+
+script: bash ./travis/pg-travis-test.sh
