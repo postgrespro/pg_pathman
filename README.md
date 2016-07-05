@@ -32,17 +32,18 @@ Based on the partitioning type and condition's operator, `pg_pathman` searches f
 More interesting features are yet to come. Stay tuned!
 
 ## Roadmap
- * Implement concurrent partitioning (much more responsive)
- * Implement HASH-patitioning for non-integer attributes
+ * Replace INSERT triggers with a custom node (aka **PartitionFilter**)
+ * Implement [concurrent partitioning](https://github.com/postgrespro/pg_pathman/tree/concurrent_part) (much more responsive)
+ * Implement HASH partitioning for non-integer attributes
  * Optimize hash join (both tables are partitioned by join key)
- * Implement LIST patitioning scheme
+ * Implement LIST partitioning scheme
 
 ## Installation guide
 To install `pg_pathman`, execute this in the module's directory:
 ```
 make install USE_PGXS=1
 ```
-Modify the **`shared_preload_libraries`** parameter in `postgres.conf` as following:
+Modify the **`shared_preload_libraries`** parameter in `postgresql.conf` as following:
 ```
 shared_preload_libraries = 'pg_pathman'
 ```
@@ -65,7 +66,7 @@ create_hash_partitions(relation         TEXT,
 ```
 Performs HASH partitioning for `relation` by integer key `attribute`. Creates `partitions_count` partitions and trigger on INSERT. All the data will be automatically copied from the parent to partitions.
 
-```
+```plpgsql
 create_range_partitions(relation    TEXT,
                         attribute   TEXT,
                         start_value ANYELEMENT,
@@ -106,39 +107,39 @@ create_range_update_trigger(parent TEXT)
 Same as above, but for a RANGE-partitioned table.
 
 ### Post-creation partition management
-```
+```plpgsql
 split_range_partition(partition TEXT, value ANYELEMENT)
 ```
 Split RANGE `partition` in two by `value`.
 
-```
+```plpgsql
 merge_range_partitions(partition1 TEXT, partition2 TEXT)
 ```
 Merge two adjacent RANGE partitions. First, data from `partition2` is copied to `partition1`, then `partition2` is removed.
 
-```
+```plpgsql
 append_range_partition(p_relation TEXT)
 ```
 Append new RANGE partition.
 
-```
+```plpgsql
 prepend_range_partition(p_relation TEXT)
 ```
 Prepend new RANGE partition.
 
-```
+```plpgsql
 add_range_partition(relation    TEXT,
                     start_value ANYELEMENT,
                     end_value   ANYELEMENT)
 ```
 Create new RANGE partition for `relation` with specified range bounds.
 
-```
+```plpgsql
 drop_range_partition(partition TEXT)
 ```
 Drop RANGE partition and all its data.
 
-```
+```plpgsql
 attach_range_partition(relation    TEXT,
                        partition   TEXT,
                        start_value ANYELEMENT,
@@ -146,12 +147,12 @@ attach_range_partition(relation    TEXT,
 ```
 Attach partition to the existing RANGE-partitioned relation. The attached table must have exactly the same structure as the parent table, including the dropped columns.
 
-```
+```plpgsql
 detach_range_partition(partition TEXT)
 ```
 Detach partition from the existing RANGE-partitioned relation.
 
-```
+```plpgsql
 disable_partitioning(relation TEXT)
 ```
 Permanently disable `pg_pathman` partitioning mechanism for the specified parent table and remove the insert trigger if it exists. All partitions and data remain unchanged.
