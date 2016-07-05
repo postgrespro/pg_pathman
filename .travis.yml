@@ -1,4 +1,11 @@
+os:
+  - linux
+
 language: c
+
+compiler:
+  - clang
+  - gcc
 
 before_install:
   - sudo sh ./travis/apt.postgresql.org.sh
