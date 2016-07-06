@@ -1,0 +1,7 @@
+/*.log
+/*.substvars
+/changelog
+/control
+/files
+/pgversions
+/postgresql-*-pathman/

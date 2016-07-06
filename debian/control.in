@@ -1,0 +1,12 @@
+Source: postgresql-PGVERSION-pathman
+Section: database
+Priority: extra
+Maintainer: PostgresPro
+Build-Depends: debhelper (>= 8), postgresql-server-dev-PGVERSION
+Standards-Version: 3.9.5
+Homepage: https://github.com/postgrespro/pg_pathman
+
+Package: postgresql-PGVERSION-pathman
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, postgresql-PGVERSION
+Description: PostgreSQL module for optimized partitioning mechanism and functions to manage partitions.

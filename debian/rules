@@ -1,0 +1,15 @@
+#!/usr/bin/make -f
+# -*- makefile -*-
+
+# Uncomment this to turn on verbose mode.
+#export DH_VERBOSE=1
+
+export PATH := /usr/lib/postgresql/$(PGVERSION)/bin:$(PATH)
+
+override_dh_installdocs:
+	dh_installdocs --all README.md
+
+%:
+	dh $@
+
+.PHONY: debian/control
