@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/postgrespro/pg_pathman.svg?branch=master)](https://travis-ci.org/postgrespro/pg_pathman)
+
 # pg_pathman
 
 The `pg_pathman` module provides optimized partitioning mechanism and functions to manage partitions.
