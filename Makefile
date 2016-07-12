@@ -27,7 +27,7 @@ endif
 $(EXTENSION)--$(EXTVERSION).sql: init.sql hash.sql range.sql
 	cat $^ > $@
 
-ISOLATIONCHECKS=insert_trigger
+ISOLATIONCHECKS=insert_trigger rollback_on_create_partitions
 
 submake-isolation:
 	$(MAKE) -C $(top_builddir)/src/test/isolation all
