@@ -12,12 +12,14 @@
 #include "utils/typcache.h"
 #include "utils/array.h"
 #include "utils/snapmgr.h"
+#include "utils/memutils.h"
 #include "access/nbtree.h"
 #include "access/xact.h"
 #include "catalog/pg_type.h"
 #include "executor/spi.h"
 #include "storage/lmgr.h"
 
+static void on_rollback_after_partitions_created(XactEvent event, void *arg);
 
 /* declarations */
 PG_FUNCTION_INFO_V1( on_partitions_created );
@@ -34,18 +36,50 @@ PG_FUNCTION_INFO_V1( get_max_range_value );
 PG_FUNCTION_INFO_V1( get_type_hash_func );
 PG_FUNCTION_INFO_V1( get_hash );
 
+static void
+on_rollback_after_partitions_created(XactEvent event, void *arg)
+{
+	Oid		relid = *(Oid *) arg;
+
+	/* Catch abort event */
+	if (event == XACT_EVENT_ABORT)
+	{
+		/* Clear cache */
+		LWLockAcquire(pmstate->load_config_lock, LW_EXCLUSIVE);
+		elog(WARNING, "Removing '%s' partitions from pg_pathman's cache", get_rel_name(relid));
+		remove_relation_info(relid);
+		LWLockRelease(pmstate->load_config_lock);
+	}
+
+	UnregisterXactCallback(on_rollback_after_partitions_created, arg);
+	pfree(arg);
+}
+
 /*
  * Callbacks
  */
 Datum
 on_partitions_created(PG_FUNCTION_ARGS)
 {
+	MemoryContext	old_ctx;
+	Oid			   *relid;
+
+	/* Acquire lock */
 	LWLockAcquire(pmstate->load_config_lock, LW_EXCLUSIVE);
 
 	/* Reload config */
 	/* TODO: reload just the specified relation */
 	load_relations(false);
 
+	/* Register callback to handle transaction abortion */
+	old_ctx = CurrentMemoryContext;
+	MemoryContextSwitchTo(CurTransactionContext);
+	relid = palloc0(sizeof(Oid));
+	*relid = PG_GETARG_OID(0);
+	RegisterXactCallback(on_rollback_after_partitions_created, relid);
+	MemoryContextSwitchTo(old_ctx);
+
+	/* Release lock */
 	LWLockRelease(pmstate->load_config_lock);
 
 	PG_RETURN_NULL();
