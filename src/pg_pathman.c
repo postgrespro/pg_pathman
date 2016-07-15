@@ -33,6 +33,7 @@
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
 #include "utils/selfuncs.h"
+#include "utils/memutils.h"
 #include "access/heapam.h"
 #include "access/nbtree.h"
 #include "storage/ipc.h"
@@ -266,8 +267,6 @@ pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
 	if (post_parse_analyze_hook_original)
 		post_parse_analyze_hook_original(pstate, query);
 
-	// list_free(inheritance_disabled_relids);
-	// list_free(inheritance_enabled_relids);
 	inheritance_disabled_relids = NIL;
 	inheritance_enabled_relids = NIL;
 }
@@ -308,7 +307,9 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 		result = standard_planner(parse, cursorOptions, boundParams);
 
 	list_free(inheritance_disabled_relids);
+	list_free(inheritance_enabled_relids);
 	inheritance_disabled_relids = NIL;
+	inheritance_enabled_relids = NIL;
 
 	return result;
 }
@@ -320,9 +321,10 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 static void
 disable_inheritance(Query *parse)
 {
-	ListCell		 *lc;
-	RangeTblEntry	 *rte;
-	PartRelationInfo *prel;
+	ListCell		   *lc;
+	RangeTblEntry	   *rte;
+	PartRelationInfo   *prel;
+	MemoryContext		oldcontext;
 	bool	found;
 
 	/* If query contains CTE (WITH statement) then handle subqueries too */
@@ -351,8 +353,10 @@ disable_inheritance(Query *parse)
 						 * when user uses ONLY statement from case when we
 						 * make rte->inh false intentionally.
 						 */
+						oldcontext = MemoryContextSwitchTo(TopMemoryContext);
 						inheritance_enabled_relids = \
 							lappend_oid(inheritance_enabled_relids, rte->relid);
+						MemoryContextSwitchTo(oldcontext);
 
 						/*
 						 * Check if relation was already found with ONLY modifier. In
@@ -367,8 +371,10 @@ disable_inheritance(Query *parse)
 					}
 				}
 
+				oldcontext = MemoryContextSwitchTo(TopMemoryContext);
 				inheritance_disabled_relids = \
 					lappend_oid(inheritance_disabled_relids, rte->relid);
+				MemoryContextSwitchTo(oldcontext);
 
 				/* Check if relation was already found withoud ONLY modifier */
 				if (list_member_oid(inheritance_enabled_relids, rte->relid))
