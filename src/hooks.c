@@ -342,7 +342,8 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 	}
 }
 
-void pg_pathman_enable_assign_hook(bool newval, void *extra)
+void
+pg_pathman_enable_assign_hook(bool newval, void *extra)
 {
 	/* Return quickly if nothing has changed */
 	if (newval == (pg_pathman_enable &&

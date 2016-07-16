@@ -14,6 +14,7 @@
 #include "optimizer/restrictinfo.h"
 #include "parser/parse_param.h"
 #include "utils/builtins.h"
+#include "utils/memutils.h"
 #include "rewrite/rewriteManip.h"
 #include "catalog/heap.h"
 
@@ -21,6 +22,25 @@
 static bool clause_contains_params_walker(Node *node, void *context);
 static void change_varnos_in_restrinct_info(RestrictInfo *rinfo, change_varno_context *context);
 static bool change_varno_walker(Node *node, change_varno_context *context);
+
+
+/*
+ * Execute 'cb_proc' on CurTransactionContext reset.
+ */
+void
+execute_on_xact_mcxt_reset(MemoryContextCallbackFunction cb_proc, void *arg)
+{
+	MemoryContextCallback *mcxt_cb = MemoryContextAlloc(CurTransactionContext,
+														sizeof(MemoryContextCallback));
+
+	/* Initialize MemoryContextCallback */
+	mcxt_cb->arg = arg;
+	mcxt_cb->func = cb_proc;
+	mcxt_cb->next = NULL;
+
+	MemoryContextRegisterResetCallback(CurTransactionContext, mcxt_cb);
+}
+
 
 /*
  * Returns the same list in reversed order.
@@ -71,7 +91,7 @@ bms_print(Bitmapset *bms)
   initStringInfo(&str);
   x = -1;
   while ((x = bms_next_member(bms, x)) >= 0)
-    appendStringInfo(&str, " %d", x);
+	appendStringInfo(&str, " %d", x);
 
   return str.data;
 }

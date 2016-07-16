@@ -168,7 +168,9 @@ get_extension_schema()
 }
 
 /*
- * Loads partitioned tables structure to hashtable
+ * Loads partitioned tables structure to hashtable.
+ *
+ * TODO: reload just the specified relation
  */
 void
 load_relations(bool reinitialize)
@@ -681,7 +683,8 @@ validate_hash_constraint(Expr *expr, PartRelationInfo *prel, int *hash)
 		/* Check that function is the base hash function for the type  */
 		funcexpr = (FuncExpr *) first;
 		if (funcexpr->funcid != prel->hash_proc ||
-			(!IsA(linitial(funcexpr->args), Var) && !IsA(linitial(funcexpr->args), RelabelType)))
+			(!IsA(linitial(funcexpr->args), Var) && !IsA(linitial(funcexpr->args),
+														 RelabelType)))
 			return false;
 
 		/* Check that argument is partitioning key attribute */
@@ -723,14 +726,14 @@ create_range_restrictions_hashtable()
 }
 
 /*
- * Remove partitions
+ * Remove partitions from pathman's cache
  */
 void
 remove_relation_info(Oid relid)
 {
 	PartRelationInfo   *prel;
 	RangeRelation	   *rangerel;
-	RelationKey key;
+	RelationKey			key;
 
 	key.dbid = MyDatabaseId;
 	key.relid = relid;
@@ -739,7 +742,10 @@ remove_relation_info(Oid relid)
 
 	/* If there is nothing to remove then just return */
 	if (!prel)
+	{
+		elog(DEBUG2, "pg_pathman's cache does not contain relation %u", relid);
 		return;
+	}
 
 	/* Remove children relations */
 	switch (prel->parttype)
@@ -747,6 +753,7 @@ remove_relation_info(Oid relid)
 		case PT_HASH:
 			free_dsm_array(&prel->children);
 			break;
+
 		case PT_RANGE:
 			rangerel = get_pathman_range_relation(relid, NULL);
 			free_dsm_array(&rangerel->ranges);
@@ -754,6 +761,7 @@ remove_relation_info(Oid relid)
 			hash_search(range_restrictions, (const void *) &key, HASH_REMOVE, NULL);
 			break;
 	}
+
 	prel->children_count = 0;
 	hash_search(relations, (const void *) &key, HASH_REMOVE, 0);
 }

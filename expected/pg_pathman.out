@@ -55,10 +55,10 @@ CREATE INDEX ON test.range_rel (dt);
 INSERT INTO test.range_rel (dt, txt)
 SELECT g, md5(g::TEXT) FROM generate_series('2015-01-01', '2015-04-30', '1 day'::interval) as g;
 SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL, 2);
-ERROR:  Partitioning key 'dt' must be NOT NULL P0001
+ERROR:  Partitioning key 'dt' must be NOT NULL
 ALTER TABLE test.range_rel ALTER COLUMN dt SET NOT NULL;
 SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL, 2);
-ERROR:  Not enough partitions to fit all the values of 'dt' P0001
+ERROR:  Not enough partitions to fit all the values of 'dt'
 SELECT pathman.create_range_partitions('test.range_rel', 'DT', '2015-01-01'::DATE, '1 month'::INTERVAL);
 NOTICE:  sequence "range_rel_seq" does not exist, skipping
 NOTICE:  Copying data to partitions...
@@ -932,7 +932,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt BETWEEN '2014-12-15' A
 (3 rows)
 
 SELECT pathman.add_range_partition('test.range_rel', '2014-12-01'::DATE, '2015-01-02'::DATE);
-ERROR:  Specified range overlaps with existing partitions P0001
+ERROR:  Specified range overlaps with existing partitions
 SELECT pathman.add_range_partition('test.range_rel', '2014-12-01'::DATE, '2015-01-01'::DATE);
 NOTICE:  Done!
  add_range_partition 
@@ -952,7 +952,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt BETWEEN '2014-12-15' A
 
 CREATE TABLE test.range_rel_archive (LIKE test.range_rel INCLUDING ALL);
 SELECT pathman.attach_range_partition('test.range_rel', 'test.range_rel_archive', '2014-01-01'::DATE, '2015-01-01'::DATE);
-ERROR:  Specified range overlaps with existing partitions P0001
+ERROR:  Specified range overlaps with existing partitions
 SELECT pathman.attach_range_partition('test.range_rel', 'test.range_rel_archive', '2014-01-01'::DATE, '2014-12-01'::DATE);
  attach_range_partition 
 ------------------------
@@ -991,12 +991,12 @@ CREATE TABLE test.range_rel_test1 (
     txt TEXT,
     abc INTEGER);
 SELECT pathman.attach_range_partition('test.range_rel', 'test.range_rel_test1', '2013-01-01'::DATE, '2014-01-01'::DATE);
-ERROR:  Partition must have the exact same structure as parent P0001
+ERROR:  Partition must have the exact same structure as parent
 CREATE TABLE test.range_rel_test2 (
     id  SERIAL PRIMARY KEY,
     dt  TIMESTAMP);
 SELECT pathman.attach_range_partition('test.range_rel', 'test.range_rel_test2', '2013-01-01'::DATE, '2014-01-01'::DATE);
-ERROR:  Partition must have the exact same structure as parent P0001
+ERROR:  Partition must have the exact same structure as parent
 /*
  * Check that altering table columns doesn't break trigger
  */
@@ -1559,7 +1559,7 @@ INSERT INTO messages SELECT g, md5(g::text) FROM generate_series(1, 10) as g;
 INSERT INTO replies SELECT g, g, md5(g::text) FROM generate_series(1, 10) as g;
 SELECT create_range_partitions('messages', 'id', 1, 100, 2);
 WARNING:  Foreign key 'replies_message_id_fkey' references to the relation 'messages'
-ERROR:  Relation 'messages' is referenced from other relations P0001
+ERROR:  Relation 'messages' is referenced from other relations
 ALTER TABLE replies DROP CONSTRAINT replies_message_id_fkey;
 SELECT create_range_partitions('messages', 'id', 1, 100, 2);
 NOTICE:  sequence "messages_seq" does not exist, skipping

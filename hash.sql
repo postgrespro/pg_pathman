@@ -30,9 +30,6 @@ BEGIN
 	PERFORM @extschema@.common_relation_checks(relation, attribute);
 
 	v_type := @extschema@.get_attribute_type_name(v_relname, attribute);
-	-- IF v_type::regtype != 'integer'::regtype THEN
-	-- 	RAISE EXCEPTION 'Attribute type must be INTEGER';
-	-- END IF;
 
 	SELECT * INTO v_plain_schema, v_plain_relname
 	FROM @extschema@.get_plain_schema_and_relname(relation);
@@ -42,10 +39,9 @@ BEGIN
 	/* Create partitions and update pg_pathman configuration */
 	FOR partnum IN 0..partitions_count-1
 	LOOP
-		-- v_child_relname := @extschema@.get_schema_qualified_name(relation, '.', suffix := '_' || partnum);
 		v_child_relname := format('%s.%s',
-        						  v_plain_schema,
-        						  quote_ident(v_plain_relname || '_' || partnum));
+								  v_plain_schema,
+								  quote_ident(v_plain_relname || '_' || partnum));
 
 		EXECUTE format('CREATE TABLE %s (LIKE %s INCLUDING ALL)'
 						, v_child_relname
