@@ -52,20 +52,27 @@ typedef enum
  * Note: 'relname' cannot be fetched within
  * Xact callbacks, so we have to store it here.
  */
-typedef struct
+typedef struct part_abort_arg part_abort_arg;
+
+struct part_abort_arg
 {
 	Oid					partitioned_table_relid;
 	char			   *relname;
 
-	bool				is_subxact;	/* needed for correct callback removal */
-	SubTransactionId	subxact_id;	/* necessary for detecting specific subxact */
+	bool				is_subxact;		/* needed for correct callback removal */
+	SubTransactionId	subxact_id;		/* necessary for detecting specific subxact */
+	part_abort_arg	   *xact_cb_arg;	/* points to the parent Xact's arg */
 
-	part_event_type		event;		/* created | updated | removed partitions */
-} part_abort_arg;
+	part_event_type		event;			/* created | updated | removed partitions */
+
+	bool				expired;		/* set by (Sub)Xact when a job is done */
+};
 
 
 static part_abort_arg * make_part_abort_arg(Oid partitioned_table,
-											part_event_type event);
+											part_event_type event,
+											bool is_subxact,
+											part_abort_arg *xact_cb_arg);
 
 static void handle_part_event_cancellation(const part_abort_arg *arg);
 static void on_xact_abort_callback(XactEvent event, void *arg);
@@ -82,7 +89,8 @@ static void on_partitions_removed_internal(Oid partitioned_table, bool add_callb
 
 /* Construct part_abort_arg for callbacks in TopTransactionContext. */
 static part_abort_arg *
-make_part_abort_arg(Oid partitioned_table, part_event_type event)
+make_part_abort_arg(Oid partitioned_table, part_event_type event,
+					bool is_subxact, part_abort_arg *xact_cb_arg)
 {
 	part_abort_arg *arg = MemoryContextAlloc(TopTransactionContext,
 											 sizeof(part_abort_arg));
@@ -92,9 +100,11 @@ make_part_abort_arg(Oid partitioned_table, part_event_type event)
 	/* Fill in Oid & relation name */
 	arg->partitioned_table_relid = partitioned_table;
 	arg->relname = MemoryContextStrdup(TopTransactionContext, relname);
-	arg->is_subxact = IsSubTransaction();
+	arg->is_subxact = is_subxact;
 	arg->subxact_id = GetCurrentSubTransactionId(); /* for SubXact callback */
+	arg->xact_cb_arg = xact_cb_arg;
 	arg->event = event;
+	arg->expired = false;
 
 	return arg;
 }
@@ -166,21 +176,37 @@ remove_on_xact_abort_callbacks(void *arg)
 	else
 		UnregisterSubXactCallback(on_subxact_abort_callback, arg);
 
+	Assert(parg->expired == true); /* the job should always be done */
 	pfree(arg);
 }
 
 static void
 add_on_xact_abort_callbacks(Oid partitioned_table, part_event_type event)
 {
-	void *arg = make_part_abort_arg(partitioned_table, event);
+	part_abort_arg *xact_cb_arg = make_part_abort_arg(partitioned_table,
+													  event, false, NULL);
 
-	/* Decide which callback should be used this time */
-	if (!IsSubTransaction())
-		RegisterXactCallback(on_xact_abort_callback, arg);
-	else
-		RegisterSubXactCallback(on_subxact_abort_callback, arg);
+	RegisterXactCallback(on_xact_abort_callback, (void *) xact_cb_arg);
+	execute_on_xact_mcxt_reset(TopTransactionContext,
+							   remove_on_xact_abort_callbacks,
+							   xact_cb_arg);
 
-	execute_on_xact_mcxt_reset(remove_on_xact_abort_callbacks, arg);
+	/* Register SubXact callback if necessary */
+	if (IsSubTransaction())
+	{
+		/*
+		 * SubXact callback's arg contains a pointer to the parent
+		 * Xact callback's arg. This will allow it to 'expire' both
+		 * args and to prevent Xact's callback from doing anything
+		 */
+		void *subxact_cb_arg = make_part_abort_arg(partitioned_table, event,
+												   true, xact_cb_arg);
+
+		RegisterSubXactCallback(on_subxact_abort_callback, subxact_cb_arg);
+		execute_on_xact_mcxt_reset(CurTransactionContext,
+								   remove_on_xact_abort_callbacks,
+								   subxact_cb_arg);
+	}
 }
 
 /*
@@ -190,8 +216,16 @@ add_on_xact_abort_callbacks(Oid partitioned_table, part_event_type event)
 static void
 on_xact_abort_callback(XactEvent event, void *arg)
 {
-	if (event == XACT_EVENT_ABORT)
-		handle_part_event_cancellation((part_abort_arg *) arg);
+	part_abort_arg *parg = (part_abort_arg *) arg;
+
+	/* Check that this is an aborted Xact & action has not expired yet */
+	if (event == XACT_EVENT_ABORT && !parg->expired)
+	{
+		handle_part_event_cancellation(parg);
+
+		/* Set expiration flag */
+		parg->expired = true;
+	}
 }
 
 static void
@@ -203,8 +237,15 @@ on_subxact_abort_callback(SubXactEvent event, SubTransactionId mySubid,
 	Assert(parg->subxact_id != InvalidSubTransactionId);
 
 	/* Check if this is an aborted SubXact we've been waiting for */
-	if (event == SUBXACT_EVENT_ABORT_SUB && parg->subxact_id == mySubid)
+	if (event == SUBXACT_EVENT_ABORT_SUB &&
+		mySubid <= parg->subxact_id && !parg->expired)
+	{
 		handle_part_event_cancellation(parg);
+
+		/* Now set expiration flags to disable Xact callback */
+		parg->xact_cb_arg->expired = true;
+		parg->expired = true;
+	}
 }
 
 /*
