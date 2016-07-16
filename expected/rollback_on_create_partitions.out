@@ -74,8 +74,8 @@ create_range_partitions
 
 10             
 step savepoint_b: SAVEPOINT b;
-step drop_partitions: SELECT drop_range_partitions('range_rel');
-drop_range_partitions
+step drop_partitions: SELECT drop_partitions('range_rel');
+drop_partitions
 
 10             
 step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
@@ -100,8 +100,8 @@ create_range_partitions
 
 10             
 step savepoint_b: SAVEPOINT b;
-step drop_partitions: SELECT drop_range_partitions('range_rel');
-drop_range_partitions
+step drop_partitions: SELECT drop_partitions('range_rel');
+drop_partitions
 
 10             
 step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
@@ -124,8 +124,8 @@ create_range_partitions
 
 10             
 step savepoint_b: SAVEPOINT b;
-step drop_partitions: SELECT drop_range_partitions('range_rel');
-drop_range_partitions
+step drop_partitions: SELECT drop_partitions('range_rel');
+drop_partitions
 
 10             
 step savepoint_c: SAVEPOINT c;
@@ -161,8 +161,8 @@ create_range_partitions
 
 10             
 step savepoint_b: SAVEPOINT b;
-step drop_partitions: SELECT drop_range_partitions('range_rel');
-drop_range_partitions
+step drop_partitions: SELECT drop_partitions('range_rel');
+drop_partitions
 
 10             
 step savepoint_c: SAVEPOINT c;
@@ -207,8 +207,8 @@ create_range_partitions
 
 10             
 step savepoint_b: SAVEPOINT b;
-step drop_partitions: SELECT drop_range_partitions('range_rel');
-drop_range_partitions
+step drop_partitions: SELECT drop_partitions('range_rel');
+drop_partitions
 
 10             
 step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
@@ -238,8 +238,8 @@ create_range_partitions
 
 10             
 step savepoint_b: SAVEPOINT b;
-step drop_partitions: SELECT drop_range_partitions('range_rel');
-drop_range_partitions
+step drop_partitions: SELECT drop_partitions('range_rel');
+drop_partitions
 
 10             
 step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
@@ -269,8 +269,8 @@ create_range_partitions
 
 10             
 step savepoint_b: SAVEPOINT b;
-step drop_partitions: SELECT drop_range_partitions('range_rel');
-drop_range_partitions
+step drop_partitions: SELECT drop_partitions('range_rel');
+drop_partitions
 
 10             
 step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
@@ -280,8 +280,8 @@ Seq Scan on range_rel
 step savepoint_c: SAVEPOINT c;
 WARNING:  All changes in partitioned table 'range_rel' will be discarded
 step rollback_b: ROLLBACK TO SAVEPOINT b;
-step drop_partitions: SELECT drop_range_partitions('range_rel');
-drop_range_partitions
+step drop_partitions: SELECT drop_partitions('range_rel');
+drop_partitions
 
 10             
 step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
@@ -305,8 +305,8 @@ create_range_partitions
 
 10             
 step savepoint_b: SAVEPOINT b;
-step drop_partitions: SELECT drop_range_partitions('range_rel');
-drop_range_partitions
+step drop_partitions: SELECT drop_partitions('range_rel');
+drop_partitions
 
 10             
 step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
@@ -316,8 +316,8 @@ Seq Scan on range_rel
 step savepoint_c: SAVEPOINT c;
 WARNING:  All changes in partitioned table 'range_rel' will be discarded
 step rollback_b: ROLLBACK TO SAVEPOINT b;
-step drop_partitions: SELECT drop_range_partitions('range_rel');
-drop_range_partitions
+step drop_partitions: SELECT drop_partitions('range_rel');
+drop_partitions
 
 10             
 step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
@@ -339,8 +339,8 @@ create_range_partitions
 
 10             
 step savepoint_b: SAVEPOINT b;
-step drop_partitions: SELECT drop_range_partitions('range_rel');
-drop_range_partitions
+step drop_partitions: SELECT drop_partitions('range_rel');
+drop_partitions
 
 10             
 WARNING:  All changes in partitioned table 'range_rel' will be discarded
@@ -380,8 +380,8 @@ create_range_partitions
 
 10             
 step savepoint_b: SAVEPOINT b;
-step drop_partitions: SELECT drop_range_partitions('range_rel');
-drop_range_partitions
+step drop_partitions: SELECT drop_partitions('range_rel');
+drop_partitions
 
 10             
 WARNING:  All changes in partitioned table 'range_rel' will be discarded

@@ -6,7 +6,6 @@ setup
 
 teardown
 {
-	SELECT drop_range_partitions('range_rel');
 	DROP TABLE range_rel CASCADE;
 	DROP EXTENSION pg_pathman;
 }
@@ -17,7 +16,7 @@ step "rollback" { ROLLBACK; }
 step "commit" { COMMIT; }
 step "insert_data" { INSERT INTO range_rel SELECT generate_series(1, 10000); }
 step "create_partitions" { SELECT create_range_partitions('range_rel', 'id', 1, 1000); }
-step "drop_partitions" { SELECT drop_range_partitions('range_rel'); }
+step "drop_partitions" { SELECT drop_partitions('range_rel'); }
 step "savepoint_a" { SAVEPOINT a; }
 step "rollback_a" { ROLLBACK TO SAVEPOINT a; }
 step "savepoint_b" { SAVEPOINT b; }
