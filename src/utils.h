@@ -24,6 +24,9 @@ typedef struct
 } change_varno_context;
 
 
+void execute_on_xact_mcxt_reset(MemoryContextCallbackFunction cb_proc,
+								void *arg);
+
 bool clause_contains_params(Node *clause);
 
 List * build_index_tlist(PlannerInfo *root,

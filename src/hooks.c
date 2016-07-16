@@ -345,7 +345,8 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 	}
 }
 
-void pg_pathman_enable_assign_hook(bool newval, void *extra)
+void
+pg_pathman_enable_assign_hook(bool newval, void *extra)
 {
 	/* Return quickly if nothing has changed */
 	if (newval == (pg_pathman_enable &&
@@ -424,7 +425,9 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	}
 
 	list_free(inheritance_disabled_relids);
+	list_free(inheritance_enabled_relids);
 	inheritance_disabled_relids = NIL;
+	inheritance_enabled_relids = NIL;
 
 	return result;
 }

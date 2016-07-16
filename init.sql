@@ -104,10 +104,6 @@ BEGIN
 				, relname);
 	GET DIAGNOSTICS p_total = ROW_COUNT;
 	RETURN;
-
--- EXCEPTION WHEN others THEN
---     PERFORM on_remove_partitions(p_parent::regclass::integer);
---     RAISE EXCEPTION '% %', SQLERRM, SQLSTATE;
 END
 $$
 LANGUAGE plpgsql;

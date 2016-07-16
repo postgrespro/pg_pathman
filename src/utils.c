@@ -17,11 +17,15 @@
 #include "optimizer/var.h"
 #include "optimizer/restrictinfo.h"
 #include "utils/builtins.h"
-#include "utils/snapmgr.h"
+#include "utils/memutils.h"
 #include "utils/lsyscache.h"
+#include "rewrite/rewriteManip.h"
 #include "catalog/heap.h"
 #include "catalog/pg_type.h"
 
+
+#define TABLEOID_STR(subst) ( "pathman_tableoid" subst )
+#define TABLEOID_STR_BASE_LEN ( sizeof(TABLEOID_STR("")) - 1 )
 
 
 static bool clause_contains_params_walker(Node *node, void *context);
@@ -32,8 +36,22 @@ static List *get_tableoids_list(List *tlist);
 static void lock_rows_visitor(Plan *plan, void *context);
 
 
-#define TABLEOID_STR(subst) ( "pathman_tableoid" subst )
-#define TABLEOID_STR_BASE_LEN ( sizeof(TABLEOID_STR("")) - 1 )
+/*
+ * Execute 'cb_proc' on CurTransactionContext reset.
+ */
+void
+execute_on_xact_mcxt_reset(MemoryContextCallbackFunction cb_proc, void *arg)
+{
+	MemoryContextCallback *mcxt_cb = MemoryContextAlloc(CurTransactionContext,
+														sizeof(MemoryContextCallback));
+
+	/* Initialize MemoryContextCallback */
+	mcxt_cb->arg = arg;
+	mcxt_cb->func = cb_proc;
+	mcxt_cb->next = NULL;
+
+	MemoryContextRegisterResetCallback(CurTransactionContext, mcxt_cb);
+}
 
 /*
  * Check whether clause contains PARAMs or not
@@ -159,7 +177,7 @@ bms_print(Bitmapset *bms)
   initStringInfo(&str);
   x = -1;
   while ((x = bms_next_member(bms, x)) >= 0)
-    appendStringInfo(&str, " %d", x);
+	appendStringInfo(&str, " %d", x);
 
   return str.data;
 }

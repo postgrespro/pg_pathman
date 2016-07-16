@@ -106,8 +106,7 @@ BEGIN
 	RETURN p_count;
 
 EXCEPTION WHEN others THEN
-	PERFORM @extschema@.on_remove_partitions(p_relation::integer);
-	RAISE EXCEPTION '% %', SQLERRM, SQLSTATE;
+	RAISE EXCEPTION '%', SQLERRM;
 END
 $$ LANGUAGE plpgsql;
 
@@ -193,8 +192,7 @@ BEGIN
 	RETURN p_count;
 
 EXCEPTION WHEN others THEN
-	PERFORM @extschema@.on_remove_partitions(p_relation::regclass::integer);
-	RAISE EXCEPTION '% %', SQLERRM, SQLSTATE;
+	RAISE EXCEPTION '%', SQLERRM;
 END
 $$ LANGUAGE plpgsql;
 
@@ -257,8 +255,7 @@ BEGIN
 	RETURN i;
 
 EXCEPTION WHEN others THEN
-	PERFORM @extschema@.on_remove_partitions(p_relation::regclass::integer);
-	RAISE EXCEPTION '% %', SQLERRM, SQLSTATE;
+	RAISE EXCEPTION '%', SQLERRM;
 END
 $$ LANGUAGE plpgsql;
 
@@ -314,8 +311,7 @@ BEGIN
 	RETURN i;
 
 EXCEPTION WHEN others THEN
-	PERFORM @extschema@.on_remove_partitions(p_relation::regclass::integer);
-	RAISE EXCEPTION '% %', SQLERRM, SQLSTATE;
+	RAISE EXCEPTION '%', SQLERRM;
 END
 $$ LANGUAGE plpgsql;
 
@@ -401,19 +397,19 @@ CREATE OR REPLACE FUNCTION @extschema@.create_single_range_partition(
 RETURNS TEXT AS
 $$
 DECLARE
-    v_part_num      INT;
+	v_part_num      INT;
 	v_child_relname TEXT;
-    v_plain_child_relname TEXT;
+	v_plain_child_relname TEXT;
 	v_attname       TEXT;
-    v_sql           TEXT;
-    v_cond          TEXT;
-    v_plain_schema  TEXT;
-    v_plain_relname TEXT;
-    v_child_relname_exists INTEGER := 1;
-    v_seq_name      TEXT;
+	v_sql           TEXT;
+	v_cond          TEXT;
+	v_plain_schema  TEXT;
+	v_plain_relname TEXT;
+	v_child_relname_exists INTEGER := 1;
+	v_seq_name      TEXT;
 BEGIN
-    v_attname := attname FROM @extschema@.pathman_config
-                 WHERE relname::regclass = p_parent;
+	v_attname := attname FROM @extschema@.pathman_config
+				 WHERE relname::regclass = p_parent;
 
 	IF v_attname IS NULL THEN
 		RAISE EXCEPTION 'Table % is not partitioned', quote_ident(p_parent::TEXT);
@@ -424,36 +420,36 @@ BEGIN
 
 	v_seq_name := @extschema@.get_sequence_name(v_plain_schema, v_plain_relname);
 
-    /* get next value from sequence */
-    LOOP
-        v_part_num := nextval(v_seq_name);
-        v_plain_child_relname := format('%s_%s', v_plain_relname, v_part_num);
-        v_child_relname := format('%s.%s',
-        						  v_plain_schema,
-        						  quote_ident(v_plain_child_relname));
-        v_child_relname_exists := count(*)
-                                  FROM pg_class
-                                  WHERE relnamespace::regnamespace || '.' || relname = v_child_relname
-                                  LIMIT 1;
-        EXIT WHEN v_child_relname_exists = 0;
-    END LOOP;
+	/* get next value from sequence */
+	LOOP
+		v_part_num := nextval(v_seq_name);
+		v_plain_child_relname := format('%s_%s', v_plain_relname, v_part_num);
+		v_child_relname := format('%s.%s',
+								  v_plain_schema,
+								  quote_ident(v_plain_child_relname));
+		v_child_relname_exists := count(*)
+								  FROM pg_class
+								  WHERE relnamespace::regnamespace || '.' || relname = v_child_relname
+								  LIMIT 1;
+		EXIT WHEN v_child_relname_exists = 0;
+	END LOOP;
 
-    EXECUTE format('CREATE TABLE %s (LIKE %s INCLUDING ALL)'
-                   , v_child_relname
-                   , p_parent);
+	EXECUTE format('CREATE TABLE %s (LIKE %s INCLUDING ALL)'
+				   , v_child_relname
+				   , p_parent);
 
-    EXECUTE format('ALTER TABLE %s INHERIT %s'
-                   , v_child_relname
-                   , p_parent);
+	EXECUTE format('ALTER TABLE %s INHERIT %s'
+				   , v_child_relname
+				   , p_parent);
 
-    v_cond := @extschema@.get_range_condition(v_attname, p_start_value, p_end_value);
-    v_sql := format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)'
-                    , v_child_relname
-                    , quote_ident(format('%s_%s_check', v_plain_schema, v_plain_child_relname))
-                    , v_cond);
+	v_cond := @extschema@.get_range_condition(v_attname, p_start_value, p_end_value);
+	v_sql := format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)'
+					, v_child_relname
+					, quote_ident(format('%s_%s_check', v_plain_schema, v_plain_child_relname))
+					, v_cond);
 
-    EXECUTE v_sql;
-    RETURN v_child_relname;
+	EXECUTE v_sql;
+	RETURN v_child_relname;
 END
 $$ LANGUAGE plpgsql;
 
@@ -735,7 +731,7 @@ BEGIN
 	RETURN v_part_name;
 
 EXCEPTION WHEN others THEN
-	RAISE EXCEPTION '% %', SQLERRM, SQLSTATE;
+	RAISE EXCEPTION '%', SQLERRM;
 END
 $$
 LANGUAGE plpgsql;
@@ -809,7 +805,7 @@ BEGIN
 	RETURN v_part_name;
 
 EXCEPTION WHEN others THEN
-	RAISE EXCEPTION '% %', SQLERRM, SQLSTATE;
+	RAISE EXCEPTION '%', SQLERRM;
 END
 $$
 LANGUAGE plpgsql;
@@ -879,7 +875,7 @@ BEGIN
 	RETURN v_part_name;
 
 EXCEPTION WHEN others THEN
-	RAISE EXCEPTION '% %', SQLERRM, SQLSTATE;
+	RAISE EXCEPTION '%', SQLERRM;
 END
 $$
 LANGUAGE plpgsql;
@@ -918,7 +914,7 @@ BEGIN
 	RETURN v_part_name;
 
 EXCEPTION WHEN others THEN
-	RAISE EXCEPTION '% %', SQLERRM, SQLSTATE;
+	RAISE EXCEPTION '%', SQLERRM;
 END
 $$
 LANGUAGE plpgsql;
@@ -951,15 +947,13 @@ BEGIN
 	/* Prevent concurrent partition management */
 	PERFORM @extschema@.acquire_partitions_lock();
 
-	-- p_relation := @extschema@.validate_relname(p_relation);
-
 	IF @extschema@.check_overlap(p_relation::oid, p_start_value, p_end_value) != FALSE THEN
 		RAISE EXCEPTION 'Specified range overlaps with existing partitions';
 	END IF;
 
-    IF NOT @extschema@.validate_relations_equality(p_relation, p_partition) THEN
-        RAISE EXCEPTION 'Partition must have the exact same structure as parent';
-    END IF;
+	IF NOT @extschema@.validate_relations_equality(p_relation, p_partition) THEN
+		RAISE EXCEPTION 'Partition must have the exact same structure as parent';
+	END IF;
 
 	/* Set inheritance */
 	EXECUTE format('ALTER TABLE %s INHERIT %s'
@@ -993,7 +987,7 @@ BEGIN
 	RETURN p_partition;
 
 EXCEPTION WHEN others THEN
-	RAISE EXCEPTION '% %', SQLERRM, SQLSTATE;
+	RAISE EXCEPTION '%', SQLERRM;
 END
 $$
 LANGUAGE plpgsql;
@@ -1034,7 +1028,7 @@ BEGIN
 	RETURN p_partition;
 
 EXCEPTION WHEN others THEN
-	RAISE EXCEPTION '% %', SQLERRM, SQLSTATE;
+	RAISE EXCEPTION '%', SQLERRM;
 END
 $$
 LANGUAGE plpgsql;

@@ -32,9 +32,8 @@
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
 #include "utils/selfuncs.h"
+#include "utils/memutils.h"
 #include "access/heapam.h"
-#include "access/nbtree.h"
-#include "access/sysattr.h"
 #include "storage/ipc.h"
 #include "catalog/pg_type.h"
 #include "foreign/fdwapi.h"
@@ -182,9 +181,10 @@ get_pathman_range_relation(Oid relid, bool *found)
 void
 disable_inheritance(Query *parse)
 {
-	ListCell		 *lc;
-	RangeTblEntry	 *rte;
-	PartRelationInfo *prel;
+	ListCell		   *lc;
+	RangeTblEntry	   *rte;
+	PartRelationInfo   *prel;
+	MemoryContext		oldcontext;
 	bool	found;
 
 	/* If query contains CTE (WITH statement) then handle subqueries too */
@@ -213,8 +213,10 @@ disable_inheritance(Query *parse)
 						 * when user uses ONLY statement from case when we
 						 * make rte->inh false intentionally.
 						 */
+						oldcontext = MemoryContextSwitchTo(TopMemoryContext);
 						inheritance_enabled_relids = \
 							lappend_oid(inheritance_enabled_relids, rte->relid);
+						MemoryContextSwitchTo(oldcontext);
 
 						/*
 						 * Check if relation was already found with ONLY modifier. In
@@ -229,8 +231,10 @@ disable_inheritance(Query *parse)
 					}
 				}
 
+				oldcontext = MemoryContextSwitchTo(TopMemoryContext);
 				inheritance_disabled_relids = \
 					lappend_oid(inheritance_disabled_relids, rte->relid);
+				MemoryContextSwitchTo(oldcontext);
 
 				/* Check if relation was already found withoud ONLY modifier */
 				if (list_member_oid(inheritance_enabled_relids, rte->relid))
