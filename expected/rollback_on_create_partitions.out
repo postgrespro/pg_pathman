@@ -1,28 +1,412 @@
 Parsed test spec with 1 sessions
 
-starting permutation: begin insert_data create_partitions rollback show_me_what_you_got
+starting permutation: begin insert_data create_partitions show_rel rollback show_rel
 step begin: BEGIN;
 step insert_data: INSERT INTO range_rel SELECT generate_series(1, 10000);
 step create_partitions: SELECT create_range_partitions('range_rel', 'id', 1, 1000);
 create_range_partitions
 
 10             
-WARNING:  Removing 'range_rel' partitions from pg_pathman's cache
+step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
+QUERY PLAN     
+
+Append         
+  ->  Seq Scan on range_rel_1
+  ->  Seq Scan on range_rel_2
+  ->  Seq Scan on range_rel_3
+  ->  Seq Scan on range_rel_4
+  ->  Seq Scan on range_rel_5
+  ->  Seq Scan on range_rel_6
+  ->  Seq Scan on range_rel_7
+  ->  Seq Scan on range_rel_8
+  ->  Seq Scan on range_rel_9
+  ->  Seq Scan on range_rel_10
+WARNING:  Partitioning of table 'range_rel' has been aborted, removing partitions from pg_pathman's cache
 step rollback: ROLLBACK;
-step show_me_what_you_got: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
+step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
 QUERY PLAN     
 
 Seq Scan on range_rel
 
-starting permutation: begin insert_data create_partitions commit show_me_what_you_got
+starting permutation: begin insert_data create_partitions show_rel commit show_rel
 step begin: BEGIN;
 step insert_data: INSERT INTO range_rel SELECT generate_series(1, 10000);
 step create_partitions: SELECT create_range_partitions('range_rel', 'id', 1, 1000);
 create_range_partitions
 
 10             
+step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
+QUERY PLAN     
+
+Append         
+  ->  Seq Scan on range_rel_1
+  ->  Seq Scan on range_rel_2
+  ->  Seq Scan on range_rel_3
+  ->  Seq Scan on range_rel_4
+  ->  Seq Scan on range_rel_5
+  ->  Seq Scan on range_rel_6
+  ->  Seq Scan on range_rel_7
+  ->  Seq Scan on range_rel_8
+  ->  Seq Scan on range_rel_9
+  ->  Seq Scan on range_rel_10
 step commit: COMMIT;
-step show_me_what_you_got: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
+step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
+QUERY PLAN     
+
+Append         
+  ->  Seq Scan on range_rel_1
+  ->  Seq Scan on range_rel_2
+  ->  Seq Scan on range_rel_3
+  ->  Seq Scan on range_rel_4
+  ->  Seq Scan on range_rel_5
+  ->  Seq Scan on range_rel_6
+  ->  Seq Scan on range_rel_7
+  ->  Seq Scan on range_rel_8
+  ->  Seq Scan on range_rel_9
+  ->  Seq Scan on range_rel_10
+
+starting permutation: begin insert_data savepoint_a create_partitions savepoint_b drop_partitions show_rel savepoint_c rollback show_rel
+step begin: BEGIN;
+step insert_data: INSERT INTO range_rel SELECT generate_series(1, 10000);
+step savepoint_a: SAVEPOINT a;
+step create_partitions: SELECT create_range_partitions('range_rel', 'id', 1, 1000);
+create_range_partitions
+
+10             
+step savepoint_b: SAVEPOINT b;
+step drop_partitions: SELECT drop_range_partitions('range_rel');
+drop_range_partitions
+
+10             
+step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
+QUERY PLAN     
+
+Seq Scan on range_rel
+step savepoint_c: SAVEPOINT c;
+WARNING:  All changes in partitioned table 'range_rel' will be discarded
+WARNING:  Partitioning of table 'range_rel' has been aborted, removing partitions from pg_pathman's cache
+step rollback: ROLLBACK;
+step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
+QUERY PLAN     
+
+Seq Scan on range_rel
+
+starting permutation: begin insert_data savepoint_a create_partitions savepoint_b drop_partitions show_rel savepoint_c commit show_rel
+step begin: BEGIN;
+step insert_data: INSERT INTO range_rel SELECT generate_series(1, 10000);
+step savepoint_a: SAVEPOINT a;
+step create_partitions: SELECT create_range_partitions('range_rel', 'id', 1, 1000);
+create_range_partitions
+
+10             
+step savepoint_b: SAVEPOINT b;
+step drop_partitions: SELECT drop_range_partitions('range_rel');
+drop_range_partitions
+
+10             
+step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
+QUERY PLAN     
+
+Seq Scan on range_rel
+step savepoint_c: SAVEPOINT c;
+step commit: COMMIT;
+step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
+QUERY PLAN     
+
+Seq Scan on range_rel
+
+starting permutation: begin insert_data savepoint_a create_partitions savepoint_b drop_partitions savepoint_c rollback_b show_rel rollback show_rel
+step begin: BEGIN;
+step insert_data: INSERT INTO range_rel SELECT generate_series(1, 10000);
+step savepoint_a: SAVEPOINT a;
+step create_partitions: SELECT create_range_partitions('range_rel', 'id', 1, 1000);
+create_range_partitions
+
+10             
+step savepoint_b: SAVEPOINT b;
+step drop_partitions: SELECT drop_range_partitions('range_rel');
+drop_range_partitions
+
+10             
+step savepoint_c: SAVEPOINT c;
+WARNING:  All changes in partitioned table 'range_rel' will be discarded
+step rollback_b: ROLLBACK TO SAVEPOINT b;
+step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
+QUERY PLAN     
+
+Append         
+  ->  Seq Scan on range_rel_1
+  ->  Seq Scan on range_rel_2
+  ->  Seq Scan on range_rel_3
+  ->  Seq Scan on range_rel_4
+  ->  Seq Scan on range_rel_5
+  ->  Seq Scan on range_rel_6
+  ->  Seq Scan on range_rel_7
+  ->  Seq Scan on range_rel_8
+  ->  Seq Scan on range_rel_9
+  ->  Seq Scan on range_rel_10
+WARNING:  Partitioning of table 'range_rel' has been aborted, removing partitions from pg_pathman's cache
+step rollback: ROLLBACK;
+step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
+QUERY PLAN     
+
+Seq Scan on range_rel
+
+starting permutation: begin insert_data savepoint_a create_partitions savepoint_b drop_partitions savepoint_c rollback_b show_rel commit show_rel
+step begin: BEGIN;
+step insert_data: INSERT INTO range_rel SELECT generate_series(1, 10000);
+step savepoint_a: SAVEPOINT a;
+step create_partitions: SELECT create_range_partitions('range_rel', 'id', 1, 1000);
+create_range_partitions
+
+10             
+step savepoint_b: SAVEPOINT b;
+step drop_partitions: SELECT drop_range_partitions('range_rel');
+drop_range_partitions
+
+10             
+step savepoint_c: SAVEPOINT c;
+WARNING:  All changes in partitioned table 'range_rel' will be discarded
+step rollback_b: ROLLBACK TO SAVEPOINT b;
+step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
+QUERY PLAN     
+
+Append         
+  ->  Seq Scan on range_rel_1
+  ->  Seq Scan on range_rel_2
+  ->  Seq Scan on range_rel_3
+  ->  Seq Scan on range_rel_4
+  ->  Seq Scan on range_rel_5
+  ->  Seq Scan on range_rel_6
+  ->  Seq Scan on range_rel_7
+  ->  Seq Scan on range_rel_8
+  ->  Seq Scan on range_rel_9
+  ->  Seq Scan on range_rel_10
+step commit: COMMIT;
+step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
+QUERY PLAN     
+
+Append         
+  ->  Seq Scan on range_rel_1
+  ->  Seq Scan on range_rel_2
+  ->  Seq Scan on range_rel_3
+  ->  Seq Scan on range_rel_4
+  ->  Seq Scan on range_rel_5
+  ->  Seq Scan on range_rel_6
+  ->  Seq Scan on range_rel_7
+  ->  Seq Scan on range_rel_8
+  ->  Seq Scan on range_rel_9
+  ->  Seq Scan on range_rel_10
+
+starting permutation: begin insert_data savepoint_a create_partitions savepoint_b drop_partitions show_rel savepoint_c rollback_a show_rel rollback show_rel
+step begin: BEGIN;
+step insert_data: INSERT INTO range_rel SELECT generate_series(1, 10000);
+step savepoint_a: SAVEPOINT a;
+step create_partitions: SELECT create_range_partitions('range_rel', 'id', 1, 1000);
+create_range_partitions
+
+10             
+step savepoint_b: SAVEPOINT b;
+step drop_partitions: SELECT drop_range_partitions('range_rel');
+drop_range_partitions
+
+10             
+step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
+QUERY PLAN     
+
+Seq Scan on range_rel
+step savepoint_c: SAVEPOINT c;
+WARNING:  All changes in partitioned table 'range_rel' will be discarded
+WARNING:  Partitioning of table 'range_rel' has been aborted, removing partitions from pg_pathman's cache
+step rollback_a: ROLLBACK TO SAVEPOINT a;
+step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
+QUERY PLAN     
+
+Seq Scan on range_rel
+step rollback: ROLLBACK;
+step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
+QUERY PLAN     
+
+Seq Scan on range_rel
+
+starting permutation: begin insert_data savepoint_a create_partitions savepoint_b drop_partitions show_rel savepoint_c rollback_a show_rel commit show_rel
+step begin: BEGIN;
+step insert_data: INSERT INTO range_rel SELECT generate_series(1, 10000);
+step savepoint_a: SAVEPOINT a;
+step create_partitions: SELECT create_range_partitions('range_rel', 'id', 1, 1000);
+create_range_partitions
+
+10             
+step savepoint_b: SAVEPOINT b;
+step drop_partitions: SELECT drop_range_partitions('range_rel');
+drop_range_partitions
+
+10             
+step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
+QUERY PLAN     
+
+Seq Scan on range_rel
+step savepoint_c: SAVEPOINT c;
+WARNING:  All changes in partitioned table 'range_rel' will be discarded
+WARNING:  Partitioning of table 'range_rel' has been aborted, removing partitions from pg_pathman's cache
+step rollback_a: ROLLBACK TO SAVEPOINT a;
+step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
+QUERY PLAN     
+
+Seq Scan on range_rel
+step commit: COMMIT;
+step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
+QUERY PLAN     
+
+Seq Scan on range_rel
+
+starting permutation: begin insert_data savepoint_a create_partitions savepoint_b drop_partitions show_rel savepoint_c rollback_b drop_partitions show_rel rollback show_rel
+step begin: BEGIN;
+step insert_data: INSERT INTO range_rel SELECT generate_series(1, 10000);
+step savepoint_a: SAVEPOINT a;
+step create_partitions: SELECT create_range_partitions('range_rel', 'id', 1, 1000);
+create_range_partitions
+
+10             
+step savepoint_b: SAVEPOINT b;
+step drop_partitions: SELECT drop_range_partitions('range_rel');
+drop_range_partitions
+
+10             
+step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
+QUERY PLAN     
+
+Seq Scan on range_rel
+step savepoint_c: SAVEPOINT c;
+WARNING:  All changes in partitioned table 'range_rel' will be discarded
+step rollback_b: ROLLBACK TO SAVEPOINT b;
+step drop_partitions: SELECT drop_range_partitions('range_rel');
+drop_range_partitions
+
+10             
+step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
+QUERY PLAN     
+
+Seq Scan on range_rel
+WARNING:  All changes in partitioned table 'range_rel' will be discarded
+WARNING:  Partitioning of table 'range_rel' has been aborted, removing partitions from pg_pathman's cache
+step rollback: ROLLBACK;
+step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
+QUERY PLAN     
+
+Seq Scan on range_rel
+
+starting permutation: begin insert_data savepoint_a create_partitions savepoint_b drop_partitions show_rel savepoint_c rollback_b drop_partitions show_rel commit show_rel
+step begin: BEGIN;
+step insert_data: INSERT INTO range_rel SELECT generate_series(1, 10000);
+step savepoint_a: SAVEPOINT a;
+step create_partitions: SELECT create_range_partitions('range_rel', 'id', 1, 1000);
+create_range_partitions
+
+10             
+step savepoint_b: SAVEPOINT b;
+step drop_partitions: SELECT drop_range_partitions('range_rel');
+drop_range_partitions
+
+10             
+step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
+QUERY PLAN     
+
+Seq Scan on range_rel
+step savepoint_c: SAVEPOINT c;
+WARNING:  All changes in partitioned table 'range_rel' will be discarded
+step rollback_b: ROLLBACK TO SAVEPOINT b;
+step drop_partitions: SELECT drop_range_partitions('range_rel');
+drop_range_partitions
+
+10             
+step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
+QUERY PLAN     
+
+Seq Scan on range_rel
+step commit: COMMIT;
+step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
+QUERY PLAN     
+
+Seq Scan on range_rel
+
+starting permutation: begin insert_data savepoint_a create_partitions savepoint_b drop_partitions rollback_a create_partitions show_rel rollback show_rel
+step begin: BEGIN;
+step insert_data: INSERT INTO range_rel SELECT generate_series(1, 10000);
+step savepoint_a: SAVEPOINT a;
+step create_partitions: SELECT create_range_partitions('range_rel', 'id', 1, 1000);
+create_range_partitions
+
+10             
+step savepoint_b: SAVEPOINT b;
+step drop_partitions: SELECT drop_range_partitions('range_rel');
+drop_range_partitions
+
+10             
+WARNING:  All changes in partitioned table 'range_rel' will be discarded
+WARNING:  Partitioning of table 'range_rel' has been aborted, removing partitions from pg_pathman's cache
+step rollback_a: ROLLBACK TO SAVEPOINT a;
+step create_partitions: SELECT create_range_partitions('range_rel', 'id', 1, 1000);
+create_range_partitions
+
+10             
+step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
+QUERY PLAN     
+
+Append         
+  ->  Seq Scan on range_rel_1
+  ->  Seq Scan on range_rel_2
+  ->  Seq Scan on range_rel_3
+  ->  Seq Scan on range_rel_4
+  ->  Seq Scan on range_rel_5
+  ->  Seq Scan on range_rel_6
+  ->  Seq Scan on range_rel_7
+  ->  Seq Scan on range_rel_8
+  ->  Seq Scan on range_rel_9
+  ->  Seq Scan on range_rel_10
+WARNING:  Partitioning of table 'range_rel' has been aborted, removing partitions from pg_pathman's cache
+step rollback: ROLLBACK;
+step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
+QUERY PLAN     
+
+Seq Scan on range_rel
+
+starting permutation: begin insert_data savepoint_a create_partitions savepoint_b drop_partitions rollback_a create_partitions show_rel commit show_rel
+step begin: BEGIN;
+step insert_data: INSERT INTO range_rel SELECT generate_series(1, 10000);
+step savepoint_a: SAVEPOINT a;
+step create_partitions: SELECT create_range_partitions('range_rel', 'id', 1, 1000);
+create_range_partitions
+
+10             
+step savepoint_b: SAVEPOINT b;
+step drop_partitions: SELECT drop_range_partitions('range_rel');
+drop_range_partitions
+
+10             
+WARNING:  All changes in partitioned table 'range_rel' will be discarded
+WARNING:  Partitioning of table 'range_rel' has been aborted, removing partitions from pg_pathman's cache
+step rollback_a: ROLLBACK TO SAVEPOINT a;
+step create_partitions: SELECT create_range_partitions('range_rel', 'id', 1, 1000);
+create_range_partitions
+
+10             
+step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
+QUERY PLAN     
+
+Append         
+  ->  Seq Scan on range_rel_1
+  ->  Seq Scan on range_rel_2
+  ->  Seq Scan on range_rel_3
+  ->  Seq Scan on range_rel_4
+  ->  Seq Scan on range_rel_5
+  ->  Seq Scan on range_rel_6
+  ->  Seq Scan on range_rel_7
+  ->  Seq Scan on range_rel_8
+  ->  Seq Scan on range_rel_9
+  ->  Seq Scan on range_rel_10
+step commit: COMMIT;
+step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
 QUERY PLAN     
 
 Append         

@@ -25,12 +25,14 @@ static bool change_varno_walker(Node *node, change_varno_context *context);
 
 
 /*
- * Execute 'cb_proc' on CurTransactionContext reset.
+ * Execute 'cb_proc' on 'xact_context' reset.
  */
 void
-execute_on_xact_mcxt_reset(MemoryContextCallbackFunction cb_proc, void *arg)
+execute_on_xact_mcxt_reset(MemoryContext xact_context,
+						   MemoryContextCallbackFunction cb_proc,
+						   void *arg)
 {
-	MemoryContextCallback *mcxt_cb = MemoryContextAlloc(CurTransactionContext,
+	MemoryContextCallback *mcxt_cb = MemoryContextAlloc(xact_context,
 														sizeof(MemoryContextCallback));
 
 	/* Initialize MemoryContextCallback */
@@ -38,7 +40,7 @@ execute_on_xact_mcxt_reset(MemoryContextCallbackFunction cb_proc, void *arg)
 	mcxt_cb->func = cb_proc;
 	mcxt_cb->next = NULL;
 
-	MemoryContextRegisterResetCallback(CurTransactionContext, mcxt_cb);
+	MemoryContextRegisterResetCallback(xact_context, mcxt_cb);
 }
 
 
