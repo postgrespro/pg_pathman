@@ -180,7 +180,6 @@ remove_on_xact_abort_callbacks(void *arg)
 	else
 		UnregisterSubXactCallback(on_subxact_abort_callback, arg);
 
-	Assert(parg->expired == true); /* the job should always be done */
 	pfree(arg);
 }
 
@@ -223,7 +222,8 @@ on_xact_abort_callback(XactEvent event, void *arg)
 	part_abort_arg *parg = (part_abort_arg *) arg;
 
 	/* Check that this is an aborted Xact & action has not expired yet */
-	if (event == XACT_EVENT_ABORT && !parg->expired)
+	if ((event == XACT_EVENT_ABORT || event == XACT_EVENT_PARALLEL_ABORT) &&
+		!parg->expired)
 	{
 		handle_part_event_cancellation(parg);
 
