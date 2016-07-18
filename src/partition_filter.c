@@ -162,8 +162,8 @@ partition_filter_exec(CustomScanState *node)
 		CopyToTempConst(constlen,    attlen);
 		CopyToTempConst(constbyval,  attbyval);
 
-		InitWalkerContextCustomNode(&state->wcxt, state->prel,
-									econtext, CurrentMemoryContext,
+		InitWalkerContextCustomNode(&state->wcxt, state->prel, econtext,
+									CurrentMemoryContext, true,
 									&state->wcxt_cached);
 
 		/* Switch to per-tuple context */

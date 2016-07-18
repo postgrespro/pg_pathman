@@ -289,12 +289,14 @@ typedef struct
 							hasGreatest;
 	Datum					least,
 							greatest;
+
+	bool					for_insert;	/* are we in PartitionFilter now? */
 } WalkerContext;
 
 /*
  * Usual initialization procedure for WalkerContext
  */
-#define InitWalkerContext(context, prel_info, ecxt, mcxt) \
+#define InitWalkerContext(context, prel_info, ecxt, mcxt, for_ins) \
 	do { \
 		(context)->prel = (prel_info); \
 		(context)->econtext = (ecxt); \
@@ -303,6 +305,7 @@ typedef struct
 		(context)->hasLeast = false; \
 		(context)->hasGreatest = false; \
 		(context)->persistent_mcxt = (mcxt); \
+		(context)->for_insert = (for_ins); \
 	} while (0)
 
 /*
@@ -310,7 +313,7 @@ typedef struct
  * in case of range partitioning, so 'wcxt' is stored
  * inside of Custom Node
  */
-#define InitWalkerContextCustomNode(context, prel_info, ecxt, mcxt, isCached) \
+#define InitWalkerContextCustomNode(context, prel_info, ecxt, mcxt, for_ins, isCached) \
 	do { \
 		if (!*isCached) \
 		{ \
@@ -319,6 +322,7 @@ typedef struct
 			(context)->ranges = NULL; \
 			(context)->nranges = 0; \
 			(context)->persistent_mcxt = (mcxt); \
+			(context)->for_insert = (for_ins); \
 			*isCached = true; \
 		} \
 		(context)->hasLeast = false; \

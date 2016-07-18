@@ -91,8 +91,8 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		WrapperNode *wrap;
 
 		/* We aim to persist cached context->ranges */
-		InitWalkerContextCustomNode(&context, inner_prel,
-									NULL, CurrentMemoryContext,
+		InitWalkerContextCustomNode(&context, inner_prel, NULL,
+									CurrentMemoryContext, false,
 									&context_initialized);
 
 		wrap = walk_expr_tree((Expr *) lfirst(lc), &context);
@@ -225,7 +225,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 		ranges = list_make1_irange(make_irange(0, prel->children_count - 1, false));
 
 		/* Make wrappers over restrictions and collect final rangeset */
-		InitWalkerContext(&context, prel, NULL, CurrentMemoryContext);
+		InitWalkerContext(&context, prel, NULL, CurrentMemoryContext, false);
 		wrappers = NIL;
 		foreach(lc, rel->baserestrictinfo)
 		{

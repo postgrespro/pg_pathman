@@ -331,7 +331,7 @@ handle_modification_query(Query *parse)
 		return;
 
 	/* Parse syntax tree and extract partition ranges */
-	InitWalkerContext(&context, prel, NULL, CurrentMemoryContext);
+	InitWalkerContext(&context, prel, NULL, CurrentMemoryContext, false);
 	wrap = walk_expr_tree(expr, &context);
 	finish_least_greatest(wrap, &context);
 	clear_walker_context(&context);
@@ -1125,6 +1125,20 @@ handle_const(const Const *c, WalkerContext *context)
 	const PartRelationInfo *prel = context->prel;
 	WrapperNode			   *result = (WrapperNode *) palloc(sizeof(WrapperNode));
 
+	/*
+	 * Had to add this check for queries like:
+	 *   select * from test.hash_rel where txt = NULL;
+	 */
+	if (!context->for_insert)
+	{
+		result->rangeset = list_make1_irange(make_irange(0,
+														 prel->children_count - 1,
+														 true));
+		result->paramsel = 1.0;
+
+		return result;
+	}
+
 	switch (prel->parttype)
 	{
 		case PT_HASH:
@@ -1156,8 +1170,7 @@ handle_const(const Const *c, WalkerContext *context)
 			break;
 
 		default:
-			result->rangeset = list_make1_irange(make_irange(0, prel->children_count - 1, true));
-			result->paramsel = 1.0;
+			elog(ERROR, "Unknown partitioning type %u", prel->parttype);
 			break;
 	}
 
