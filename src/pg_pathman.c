@@ -1125,6 +1125,8 @@ handle_const(const Const *c, WalkerContext *context)
 	const PartRelationInfo *prel = context->prel;
 	WrapperNode			   *result = (WrapperNode *) palloc(sizeof(WrapperNode));
 
+	result->orig = (const Node *) c;
+
 	/*
 	 * Had to add this check for queries like:
 	 *   select * from test.hash_rel where txt = NULL;
