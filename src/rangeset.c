@@ -1,13 +1,14 @@
 /* ------------------------------------------------------------------------
  *
  * rangeset.c
- *		Index range functions
+ *		IndexRange functions
  *
  * Copyright (c) 2015-2016, Postgres Professional
  *
  * ------------------------------------------------------------------------
  */
-#include "pathman.h"
+
+#include "rangeset.h"
 
 /* Check if two ranges are intersecting */
 bool

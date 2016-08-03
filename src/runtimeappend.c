@@ -7,11 +7,12 @@
  *
  * ------------------------------------------------------------------------
  */
+
+#include "runtimeappend.h"
+
 #include "postgres.h"
 #include "utils/memutils.h"
 #include "utils/guc.h"
-#include "runtimeappend.h"
-#include "pathman.h"
 
 
 bool				pg_pathman_enable_runtimeappend = true;

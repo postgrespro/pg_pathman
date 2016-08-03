@@ -7,21 +7,29 @@
  *
  * ------------------------------------------------------------------------
  */
+
 #include "utils.h"
+
 #include "access/nbtree.h"
 #include "access/sysattr.h"
+#include "access/xact.h"
+#include "access/htup_details.h"
+#include "catalog/heap.h"
+#include "catalog/namespace.h"
+#include "catalog/pg_type.h"
+#include "catalog/pg_extension.h"
+#include "commands/extension.h"
 #include "executor/spi.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
 #include "nodes/makefuncs.h"
 #include "optimizer/var.h"
 #include "optimizer/restrictinfo.h"
+#include "rewrite/rewriteManip.h"
 #include "utils/builtins.h"
 #include "utils/memutils.h"
 #include "utils/lsyscache.h"
-#include "rewrite/rewriteManip.h"
-#include "catalog/heap.h"
-#include "catalog/pg_type.h"
+#include "utils/fmgroids.h"
 
 
 #define TABLEOID_STR(subst) ( "pathman_tableoid" subst )
@@ -481,7 +489,6 @@ change_varnos_in_restrinct_info(RestrictInfo *rinfo, change_varno_context *conte
 			change_varno_walker(node, context);
 		}
 
-	/* TODO: find some elegant way to do this */
 	if (bms_is_member(context->old_varno, rinfo->clause_relids))
 	{
 		rinfo->clause_relids = bms_del_member(rinfo->clause_relids, context->old_varno);
@@ -499,6 +506,9 @@ change_varnos_in_restrinct_info(RestrictInfo *rinfo, change_varno_context *conte
 	}
 }
 
+/*
+ * Convert number-as-string to Oid.
+ */
 Oid
 str_to_oid(const char *cstr)
 {
@@ -639,4 +649,49 @@ void
 postprocess_lock_rows(List *rtable, Plan *plan)
 {
 	plan_tree_walker(plan, lock_rows_visitor, rtable);
+}
+
+/*
+ * Returns pg_pathman schema's Oid or InvalidOid if that's not possible.
+ */
+Oid
+get_pathman_schema(void)
+{
+	Oid				result;
+	Relation		rel;
+	SysScanDesc		scandesc;
+	HeapTuple		tuple;
+	ScanKeyData		entry[1];
+	Oid				ext_schema;
+
+	/* It's impossible to fetch pg_pathman's schema now */
+	if (!IsTransactionState())
+		return InvalidOid;
+
+	ext_schema = get_extension_oid("pg_pathman", true);
+	if (ext_schema == InvalidOid)
+		return InvalidOid; /* exit if pg_pathman does not exist */
+
+	ScanKeyInit(&entry[0],
+				ObjectIdAttributeNumber,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(ext_schema));
+
+	rel = heap_open(ExtensionRelationId, AccessShareLock);
+	scandesc = systable_beginscan(rel, ExtensionOidIndexId, true,
+								  NULL, 1, entry);
+
+	tuple = systable_getnext(scandesc);
+
+	/* We assume that there can be at most one matching tuple */
+	if (HeapTupleIsValid(tuple))
+		result = ((Form_pg_extension) GETSTRUCT(tuple))->extnamespace;
+	else
+		result = InvalidOid;
+
+	systable_endscan(scandesc);
+
+	heap_close(rel, AccessShareLock);
+
+	return result;
 }

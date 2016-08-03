@@ -7,12 +7,13 @@
  *
  * ------------------------------------------------------------------------
  */
-#include "postgres.h"
+
 #include "nodes_common.h"
 #include "runtimeappend.h"
+#include "utils.h"
+
 #include "optimizer/restrictinfo.h"
 #include "utils/memutils.h"
-#include "utils.h"
 
 
 /* Allocation settings */
@@ -246,7 +247,7 @@ get_partition_oids(List *ranges, int *n, PartRelationInfo *prel)
 	int			allocated = INITIAL_ALLOC_NUM;
 	int			used = 0;
 	Oid		   *result = (Oid *) palloc(allocated * sizeof(Oid));
-	Oid		   *children = dsm_array_get_pointer(&prel->children, true);
+	Oid		   *children = PrelGetChildrenArray(prel, true);
 
 	foreach (range_cell, ranges)
 	{
@@ -262,7 +263,7 @@ get_partition_oids(List *ranges, int *n, PartRelationInfo *prel)
 				result = repalloc(result, allocated * sizeof(Oid));
 			}
 
-			Assert(i < prel->children_count);
+			Assert(i < PrelChildrenCount(prel));
 			result[used++] = children[i];
 		}
 	}
@@ -500,7 +501,7 @@ rescan_append_common(CustomScanState *node)
 	Oid				   *parts;
 	int					nparts;
 
-	ranges = list_make1_irange(make_irange(0, prel->children_count - 1, false));
+	ranges = list_make1_irange(make_irange(0, PrelChildrenCount(prel) - 1, false));
 
 	InitWalkerContextCustomNode(&scan_state->wcxt, scan_state->prel,
 								econtext, CurrentMemoryContext, false,

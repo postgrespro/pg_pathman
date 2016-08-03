@@ -19,7 +19,6 @@ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION @extschema@.create_or_replace_sequence(plain_schema TEXT, plain_relname TEXT, OUT seq_name TEXT)
 AS $$
-DECLARE
 BEGIN
 	seq_name := @extschema@.get_sequence_name(plain_schema, plain_relname);
 	EXECUTE format('DROP SEQUENCE IF EXISTS %s', seq_name);
@@ -40,13 +39,14 @@ CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions(
 RETURNS INTEGER AS
 $$
 DECLARE
-	v_relname       TEXT;
-	v_rows_count    INTEGER;
-	v_max           p_start_value%TYPE;
-	v_cur_value     p_start_value%TYPE := p_start_value;
-	v_plain_relname TEXT;
-	v_plain_schema  TEXT;
-	i               INTEGER;
+	v_relname			TEXT;
+	v_rows_count		INTEGER;
+	v_max				p_start_value%TYPE;
+	v_cur_value			p_start_value%TYPE := p_start_value;
+	v_plain_relname		TEXT;
+	v_plain_schema		TEXT;
+	i					INTEGER;
+
 BEGIN
 	v_relname := @extschema@.validate_relname(p_relation);
 	p_attribute := lower(p_attribute);
@@ -83,8 +83,8 @@ BEGIN
 	PERFORM @extschema@.create_or_replace_sequence(v_plain_schema, v_plain_relname);
 
 	/* Insert new entry to pathman config */
-	INSERT INTO @extschema@.pathman_config (relname, attname, parttype, range_interval)
-	VALUES (v_relname, p_attribute, 2, p_interval::text);
+	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype, range_interval)
+	VALUES (p_relation, p_attribute, 2, p_interval::text);
 
 	/* create first partition */
 	FOR i IN 1..p_count
@@ -95,8 +95,6 @@ BEGIN
 		p_start_value := p_start_value + p_interval;
 	END LOOP;
 
-	/* Create triggers */
-	-- PERFORM create_hash_update_trigger(relation, attribute, partitions_count);
 	/* Notify backend about changes */
 	PERFORM @extschema@.on_create_partitions(p_relation::oid);
 
@@ -122,15 +120,15 @@ CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions(
 RETURNS INTEGER AS
 $$
 DECLARE
-	v_relname       TEXT;
-	v_rows_count    INTEGER;
-	v_max           p_start_value%TYPE;
-	v_cur_value     p_start_value%TYPE := p_start_value;
-	i               INTEGER;
-	v_plain_schema  TEXT;
-	v_plain_relname TEXT;
+	v_rows_count		INTEGER;
+	v_max				p_start_value%TYPE;
+	v_cur_value			p_start_value%TYPE := p_start_value;
+	v_plain_schema		TEXT;
+	v_plain_relname		TEXT;
+	i					INTEGER;
+
 BEGIN
-	v_relname := @extschema@.validate_relname(p_relation);
+	PERFORM @extschema@.validate_relname(p_relation);
 	p_attribute := lower(p_attribute);
 	PERFORM @extschema@.common_relation_checks(p_relation, p_attribute);
 
@@ -171,8 +169,8 @@ BEGIN
 	PERFORM @extschema@.create_or_replace_sequence(v_plain_schema, v_plain_relname);
 
 	/* Insert new entry to pathman config */
-	INSERT INTO @extschema@.pathman_config (relname, attname, parttype, range_interval)
-	VALUES (v_relname, p_attribute, 2, p_interval::text);
+	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype, range_interval)
+	VALUES (p_relation, p_attribute, 2, p_interval::text);
 
 	/* create first partition */
 	FOR i IN 1..p_count
@@ -208,12 +206,12 @@ CREATE OR REPLACE FUNCTION @extschema@.create_partitions_from_range(
 RETURNS INTEGER AS
 $$
 DECLARE
-	v_relname       TEXT;
-	v_plain_schema  TEXT;
-	v_plain_relname TEXT;
-	i               INTEGER := 0;
+	v_plain_schema		TEXT;
+	v_plain_relname		TEXT;
+	i					INTEGER := 0;
+
 BEGIN
-	v_relname := @extschema@.validate_relname(p_relation);
+	PERFORM @extschema@.validate_relname(p_relation);
 	p_attribute := lower(p_attribute);
 	PERFORM @extschema@.common_relation_checks(p_relation, p_attribute);
 
@@ -232,8 +230,8 @@ BEGIN
 										 , p_end_value);
 
 	/* Insert new entry to pathman config */
-	INSERT INTO @extschema@.pathman_config (relname, attname, parttype, range_interval)
-	VALUES (v_relname, p_attribute, 2, p_interval::text);
+	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype, range_interval)
+	VALUES (p_relation, p_attribute, 2, p_interval::text);
 
 	WHILE p_start_value <= p_end_value
 	LOOP
@@ -271,12 +269,12 @@ CREATE OR REPLACE FUNCTION @extschema@.create_partitions_from_range(
 RETURNS INTEGER AS
 $$
 DECLARE
-	v_relname       TEXT;
-	v_plain_schema  TEXT;
-	v_plain_relname TEXT;
-	i               INTEGER := 0;
+	v_plain_schema		TEXT;
+	v_plain_relname		TEXT;
+	i					INTEGER := 0;
+
 BEGIN
-	v_relname := @extschema@.validate_relname(p_relation);
+	PERFORM @extschema@.validate_relname(p_relation);
 	p_attribute := lower(p_attribute);
 	PERFORM @extschema@.common_relation_checks(p_relation, p_attribute);
 
@@ -284,15 +282,15 @@ BEGIN
 	SELECT * INTO v_plain_schema, v_plain_relname FROM @extschema@.get_plain_schema_and_relname(p_relation);
 	PERFORM @extschema@.create_or_replace_sequence(v_plain_schema, v_plain_relname);
 
-	/* check boundaries */
+	/* Check boundaries */
 	PERFORM @extschema@.check_boundaries(p_relation
 										 , p_attribute
 										 , p_start_value
 										 , p_end_value);
 
 	/* Insert new entry to pathman config */
-	INSERT INTO @extschema@.pathman_config (relname, attname, parttype, range_interval)
-	VALUES (v_relname, p_attribute, 2, p_interval::text);
+	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype, range_interval)
+	VALUES (p_relation, p_attribute, 2, p_interval::text);
 
 	WHILE p_start_value <= p_end_value
 	LOOP
@@ -308,7 +306,7 @@ BEGIN
 	/* Copy data */
 	PERFORM @extschema@.partition_data(p_relation);
 
-	RETURN i;
+	RETURN i; /* number of created partitions */
 
 EXCEPTION WHEN others THEN
 	RAISE EXCEPTION '%', SQLERRM;
@@ -326,9 +324,10 @@ CREATE OR REPLACE FUNCTION @extschema@.check_boundaries(
 RETURNS VOID AS
 $$
 DECLARE
-	v_min p_start_value%TYPE;
-	v_max p_start_value%TYPE;
-	v_count INTEGER;
+	v_min		p_start_value%TYPE;
+	v_max		p_start_value%TYPE;
+	v_count		INTEGER;
+
 BEGIN
 	/* Get min and max values */
 	EXECUTE format('SELECT count(*), min(%s), max(%s) FROM %s WHERE NOT %s IS NULL',
@@ -364,8 +363,9 @@ CREATE OR REPLACE FUNCTION @extschema@.get_range_condition(
 RETURNS TEXT AS
 $$
 DECLARE
-	v_type REGTYPE;
-	v_sql  TEXT;
+	v_type		REGTYPE;
+	v_sql		TEXT;
+
 BEGIN
 	/* determine the type of values */
 	v_type := pg_typeof(p_start_value);
@@ -397,19 +397,20 @@ CREATE OR REPLACE FUNCTION @extschema@.create_single_range_partition(
 RETURNS TEXT AS
 $$
 DECLARE
-	v_part_num      INT;
-	v_child_relname TEXT;
-	v_plain_child_relname TEXT;
-	v_attname       TEXT;
-	v_sql           TEXT;
-	v_cond          TEXT;
-	v_plain_schema  TEXT;
-	v_plain_relname TEXT;
-	v_child_relname_exists INTEGER := 1;
-	v_seq_name      TEXT;
+	v_part_num				INT;
+	v_child_relname			TEXT;
+	v_plain_child_relname	TEXT;
+	v_attname				TEXT;
+	v_sql					TEXT;
+	v_cond					TEXT;
+	v_plain_schema			TEXT;
+	v_plain_relname			TEXT;
+	v_child_relname_exists	BOOL;
+	v_seq_name				TEXT;
+
 BEGIN
 	v_attname := attname FROM @extschema@.pathman_config
-				 WHERE relname::regclass = p_parent;
+				 WHERE partrel = p_parent;
 
 	IF v_attname IS NULL THEN
 		RAISE EXCEPTION 'Table % is not partitioned', quote_ident(p_parent::TEXT);
@@ -425,27 +426,24 @@ BEGIN
 		v_part_num := nextval(v_seq_name);
 		v_plain_child_relname := format('%s_%s', v_plain_relname, v_part_num);
 		v_child_relname := format('%s.%s',
-								  v_plain_schema,
+								  quote_ident(v_plain_schema),
 								  quote_ident(v_plain_child_relname));
-		v_child_relname_exists := count(*)
+		v_child_relname_exists := count(*) > 0
 								  FROM pg_class
-								  WHERE relnamespace::regnamespace || '.' || relname = v_child_relname
+								  WHERE v_child_relname = quote_ident(relnamespace::regnamespace::text) ||
+														  '.' || quote_ident(relname)
 								  LIMIT 1;
-		EXIT WHEN v_child_relname_exists = 0;
+		EXIT WHEN v_child_relname_exists = false;
 	END LOOP;
 
-	EXECUTE format('CREATE TABLE %s (LIKE %s INCLUDING ALL)'
+	EXECUTE format('CREATE TABLE %1$s (LIKE %2$s INCLUDING ALL) INHERITS (%2$s)'
 				   , v_child_relname
-				   , p_parent);
-
-	EXECUTE format('ALTER TABLE %s INHERIT %s'
-				   , v_child_relname
-				   , p_parent);
+				   , @extschema@.get_schema_qualified_name(p_parent, '.'));
 
 	v_cond := @extschema@.get_range_condition(v_attname, p_start_value, p_end_value);
 	v_sql := format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)'
 					, v_child_relname
-					, quote_ident(format('%s_%s_check', v_plain_schema, v_plain_child_relname))
+					, @extschema@.build_check_constraint_name(v_child_relname::regclass, v_attname)
 					, v_cond);
 
 	EXECUTE v_sql;
@@ -463,16 +461,17 @@ CREATE OR REPLACE FUNCTION @extschema@.split_range_partition(
 RETURNS ANYARRAY AS
 $$
 DECLARE
-	v_parent_relid  OID;
-	v_child_relid   OID := p_partition::oid;
-	v_attname       TEXT;
-	v_cond          TEXT;
-	v_new_partition TEXT;
-	v_part_type     INTEGER;
-	v_part_relname  TEXT;
-	v_plain_schema  TEXT;
-	v_plain_relname TEXT;
-	v_check_name    TEXT;
+	v_parent_relid		OID;
+	v_child_relid		OID := p_partition::oid;
+	v_attname			TEXT;
+	v_cond				TEXT;
+	v_new_partition		TEXT;
+	v_part_type			INTEGER;
+	v_part_relname		TEXT;
+	v_plain_schema		TEXT;
+	v_plain_relname		TEXT;
+	v_check_name		TEXT;
+
 BEGIN
 	v_part_relname := @extschema@.validate_relname(p_partition);
 
@@ -482,7 +481,7 @@ BEGIN
 
 	SELECT attname, parttype
 	FROM @extschema@.pathman_config
-	WHERE relname::regclass = v_parent_relid::regclass
+	WHERE partrel = v_parent_relid
 	INTO v_attname, v_part_type;
 
 	IF v_attname IS NULL THEN
@@ -532,12 +531,12 @@ BEGIN
 	/* Alter original partition */
 	RAISE NOTICE 'Altering original partition...';
 	v_cond := @extschema@.get_range_condition(v_attname, p_range[1], p_value);
-	v_check_name := quote_ident(format('%s_%s_check', v_plain_schema, v_plain_relname));
+	v_check_name := @extschema@.build_check_constraint_name(p_partition, v_attname);
 	EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %s'
 				   , p_partition::text
 				   , v_check_name);
 	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)'
-				   , p_partition
+				   , p_partition::text
 				   , v_check_name
 				   , v_cond);
 
@@ -559,19 +558,15 @@ CREATE OR REPLACE FUNCTION @extschema@.merge_range_partitions(
 RETURNS VOID AS
 $$
 DECLARE
-	v_parent_relid1 OID;
-	v_parent_relid2 OID;
-	v_part1_relid OID := p_partition1::oid;
-	v_part2_relid OID := p_partition2::oid;
-	v_part1_relname TEXT;
-	v_part2_relname TEXT;
-	v_attname TEXT;
-	v_part_type INTEGER;
-	v_atttype TEXT;
-BEGIN
-	v_part1_relname := @extschema@.validate_relname(p_partition1);
-	v_part2_relname := @extschema@.validate_relname(p_partition2);
+	v_parent_relid1		OID;
+	v_parent_relid2		OID;
+	v_part1_relid		OID := p_partition1::oid;
+	v_part2_relid		OID := p_partition2::oid;
+	v_attname			TEXT;
+	v_part_type			INTEGER;
+	v_atttype			TEXT;
 
+BEGIN
 	IF v_part1_relid = v_part2_relid THEN
 		RAISE EXCEPTION 'Cannot merge partition to itself';
 	END IF;
@@ -585,7 +580,7 @@ BEGIN
 
 	SELECT attname, parttype
 	FROM @extschema@.pathman_config
-	WHERE relname::regclass = v_parent_relid1::regclass
+	WHERE partrel = v_parent_relid1
 	INTO v_attname, v_part_type;
 
 	IF v_attname IS NULL THEN
@@ -628,24 +623,19 @@ CREATE OR REPLACE FUNCTION @extschema@.merge_range_partitions_internal(
 RETURNS ANYARRAY AS
 $$
 DECLARE
-	v_attname       TEXT;
-	v_cond          TEXT;
-	v_plain_schema  TEXT;
-	v_plain_relname TEXT;
-	v_child_relname TEXT;
-	v_check_name    TEXT;
+	v_attname		TEXT;
+	v_cond			TEXT;
+	v_check_name	TEXT;
+
 BEGIN
 	SELECT attname FROM @extschema@.pathman_config
-	WHERE relname::regclass = p_parent_relid::regclass
+	WHERE partrel = p_parent_relid
 	INTO v_attname;
 
 	IF v_attname IS NULL THEN
 		RAISE EXCEPTION 'Table % is not partitioned',
 						quote_ident(p_parent_relid::regclass::text);
 	END IF;
-
-	SELECT * INTO v_plain_schema, v_plain_relname
-	FROM @extschema@.get_plain_schema_and_relname(p_part1);
 
 	/*
 	 * Get ranges
@@ -667,7 +657,7 @@ BEGIN
 
 	/* Alter first partition */
 	RAISE NOTICE 'Altering first partition...';
-	v_check_name := quote_ident(v_plain_schema || '_' || v_plain_relname || '_check');
+	v_check_name := @extschema@.build_check_constraint_name(p_part1, v_attname);
 	EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %s'
 				   , p_part1::text
 				   , v_check_name);
@@ -698,17 +688,18 @@ CREATE OR REPLACE FUNCTION @extschema@.append_range_partition(
 RETURNS TEXT AS
 $$
 DECLARE
-	v_attname	TEXT;
-	v_atttype	TEXT;
-	v_part_name	TEXT;
-	v_interval	TEXT;
+	v_attname		TEXT;
+	v_atttype		TEXT;
+	v_part_name		TEXT;
+	v_interval		TEXT;
+
 BEGIN
 	/* Prevent concurrent partition creation */
 	PERFORM @extschema@.acquire_partitions_lock();
 
 	SELECT attname, range_interval
 	FROM @extschema@.pathman_config
-	WHERE relname::regclass = p_relation
+	WHERE partrel = p_relation
 	INTO v_attname, v_interval;
 
 	IF v_attname IS NULL THEN
@@ -745,7 +736,8 @@ CREATE OR REPLACE FUNCTION @extschema@.append_partition_internal(
 RETURNS TEXT AS
 $$
 DECLARE
-	v_part_name TEXT;
+	v_part_name	TEXT;
+
 BEGIN
 	p_range := @extschema@.get_range_by_idx(p_relation::oid, -1, 0);
 	RAISE NOTICE 'Appending new partition...';
@@ -772,17 +764,18 @@ CREATE OR REPLACE FUNCTION @extschema@.prepend_range_partition(p_relation REGCLA
 RETURNS TEXT AS
 $$
 DECLARE
-	v_attname TEXT;
-	v_atttype TEXT;
-	v_part_name TEXT;
-	v_interval TEXT;
+	v_attname		TEXT;
+	v_atttype		TEXT;
+	v_part_name		TEXT;
+	v_interval		TEXT;
+
 BEGIN
 	/* Prevent concurrent partition creation */
 	PERFORM @extschema@.acquire_partitions_lock();
 
 	SELECT attname, range_interval
 	FROM @extschema@.pathman_config
-	WHERE relname::regclass = p_relation
+	WHERE partrel = p_relation
 	INTO v_attname, v_interval;
 
 	IF v_attname IS NULL THEN
@@ -819,7 +812,8 @@ CREATE OR REPLACE FUNCTION @extschema@.prepend_partition_internal(
 RETURNS TEXT AS
 $$
 DECLARE
-	v_part_name TEXT;
+	v_part_name		TEXT;
+
 BEGIN
 	p_range := @extschema@.get_range_by_idx(p_relation::oid, 0, 0);
 	RAISE NOTICE 'Prepending new partition...';
@@ -850,7 +844,8 @@ CREATE OR REPLACE FUNCTION @extschema@.add_range_partition(
 RETURNS TEXT AS
 $$
 DECLARE
-	v_part_name TEXT;
+	v_part_name		TEXT;
+
 BEGIN
 	/* Prevent concurrent partition creation */
 	PERFORM @extschema@.acquire_partitions_lock();
@@ -889,9 +884,10 @@ CREATE OR REPLACE FUNCTION @extschema@.drop_range_partition(
 RETURNS TEXT AS
 $$
 DECLARE
-	v_part_name TEXT := p_partition::TEXT;
-	v_parent 	TEXT;
-	v_count     INTEGER;
+	v_part_name		TEXT := p_partition::TEXT;
+	v_parent		TEXT;
+	v_count			INTEGER;
+
 BEGIN
 	/* Prevent concurrent partition management */
 	PERFORM @extschema@.acquire_partitions_lock();
@@ -931,11 +927,12 @@ CREATE OR REPLACE FUNCTION @extschema@.attach_range_partition(
 RETURNS TEXT AS
 $$
 DECLARE
-	v_attname        TEXT;
-	v_cond           TEXT;
-	v_plain_partname TEXT;
-	v_plain_schema   TEXT;
-	rel_persistence  CHAR;
+	v_attname			TEXT;
+	v_cond				TEXT;
+	v_plain_partname	TEXT;
+	v_plain_schema		TEXT;
+	rel_persistence		CHAR;
+
 BEGIN
 	/* Ignore temporary tables */
 	SELECT relpersistence FROM pg_catalog.pg_class WHERE oid = p_partition INTO rel_persistence;
@@ -963,7 +960,7 @@ BEGIN
 	/* Set check constraint */
 	v_attname := attname
 	FROM @extschema@.pathman_config
-	WHERE relname::regclass = p_relation;
+	WHERE partrel = p_relation;
 
 	IF v_attname IS NULL THEN
 		RAISE EXCEPTION 'Table % is not partitioned', quote_ident(p_relation::TEXT);
@@ -976,7 +973,7 @@ BEGIN
 
 	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)'
 				   , p_partition
-				   , v_plain_schema || '_' || quote_ident(v_plain_partname || '_check')
+				   , @extschema@.build_check_constraint_name(p_partition, v_attname)
 				   , v_cond);
 
 	/* Invalidate cache */
@@ -1001,7 +998,9 @@ CREATE OR REPLACE FUNCTION @extschema@.detach_range_partition(
 RETURNS TEXT AS
 $$
 DECLARE
-	v_parent TEXT;
+	v_attname	text;
+	v_parent	regclass;
+
 BEGIN
 	/* Prevent concurrent partition management */
 	PERFORM @extschema@.acquire_partitions_lock();
@@ -1010,15 +1009,23 @@ BEGIN
 	SELECT inhparent::regclass INTO v_parent
 	FROM pg_inherits WHERE inhrelid = p_partition::regclass::oid;
 
+	v_attname := attname
+	FROM @extschema@.pathman_config
+	WHERE partrel = v_parent;
+
+	IF v_attname IS NULL THEN
+		RAISE EXCEPTION 'Table % is not partitioned', quote_ident(v_parent::TEXT);
+	END IF;
+
 	/* Remove inheritance */
 	EXECUTE format('ALTER TABLE %s NO INHERIT %s'
 				   , p_partition
 				   , v_parent);
 
 	/* Remove check constraint */
-	EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %s_check'
+	EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %s'
 				   , p_partition
-				   , @extschema@.get_schema_qualified_name(p_partition::regclass));
+				   , @extschema@.build_check_constraint_name(p_partition, v_attname));
 
 	/* Invalidate cache */
 	PERFORM @extschema@.on_update_partitions(v_parent::regclass::oid);
@@ -1042,38 +1049,48 @@ CREATE OR REPLACE FUNCTION @extschema@.create_range_update_trigger(
 RETURNS TEXT AS
 $$
 DECLARE
-	func TEXT := '
-		CREATE OR REPLACE FUNCTION %s_update_trigger_func()
-		RETURNS TRIGGER AS
-		$body$
-		DECLARE
-			old_oid INTEGER;
-			new_oid INTEGER;
-			q TEXT;
-		BEGIN
-			old_oid := TG_RELID;
-			new_oid := @extschema@.find_or_create_range_partition(''%1$s''::regclass::oid, NEW.%2$s);
-			IF old_oid = new_oid THEN RETURN NEW; END IF;
-			q := format(''DELETE FROM %%s WHERE %4$s'', old_oid::regclass::text);
-			EXECUTE q USING %5$s;
-			q := format(''INSERT INTO %%s VALUES (%6$s)'', new_oid::regclass::text);
-			EXECUTE q USING %7$s;
-			RETURN NULL;
-		END $body$ LANGUAGE plpgsql';
-	trigger TEXT := 'CREATE TRIGGER %s_update_trigger ' ||
-		'BEFORE UPDATE ON %s ' ||
-		'FOR EACH ROW EXECUTE PROCEDURE %s_update_trigger_func()';
-	att_names   TEXT;
-	old_fields  TEXT;
-	new_fields  TEXT;
-	att_val_fmt TEXT;
-	att_fmt     TEXT;
-	relid       INTEGER;
-	rec         RECORD;
-	num         INTEGER := 0;
-	attr        TEXT;
+	func			TEXT := 'CREATE OR REPLACE FUNCTION %s_update_trigger_func()
+							 RETURNS TRIGGER AS
+							 $body$
+							 DECLARE
+								old_oid INTEGER;
+								new_oid INTEGER;
+								q TEXT;
+
+							 BEGIN
+								old_oid := TG_RELID;
+								new_oid := @extschema@.find_or_create_range_partition(
+												''%1$s''::regclass::oid, NEW.%2$s);
+
+								IF old_oid = new_oid THEN
+									RETURN NEW;
+								END IF;
+
+								q := format(''DELETE FROM %%s WHERE %4$s'',
+											old_oid::regclass::text);
+								EXECUTE q USING %5$s;
+
+								q := format(''INSERT INTO %%s VALUES (%6$s)'',
+											new_oid::regclass::text);
+								EXECUTE q USING %7$s;
+
+								RETURN NULL;
+							 END $body$
+							 LANGUAGE plpgsql';
+
+	trigger			TEXT := 'CREATE TRIGGER %s_update_trigger ' ||
+							'BEFORE UPDATE ON %s ' ||
+							'FOR EACH ROW EXECUTE PROCEDURE %s_update_trigger_func()';
+
+	att_names		TEXT;
+	old_fields		TEXT;
+	new_fields		TEXT;
+	att_val_fmt		TEXT;
+	att_fmt			TEXT;
+	attr			TEXT;
+	rec				RECORD;
+
 BEGIN
-	relid := relation::oid;
 	SELECT string_agg(attname, ', '),
 		   string_agg('OLD.' || attname, ', '),
 		   string_agg('NEW.' || attname, ', '),
@@ -1081,7 +1098,7 @@ BEGIN
 					  ' ELSE ' || attname || ' IS NULL END', ' AND '),
 		   string_agg('$' || attnum, ', ')
 	FROM pg_attribute
-	WHERE attrelid=relid AND attnum>0
+	WHERE attrelid::regclass = relation AND attnum > 0
 	INTO   att_names,
 		   old_fields,
 		   new_fields,
@@ -1090,7 +1107,7 @@ BEGIN
 
 	attr := attname
 	FROM @extschema@.pathman_config
-	WHERE relname::regclass = relation;
+	WHERE partrel = relation;
 
 	IF attr IS NULL THEN
 		RAISE EXCEPTION 'Table % is not partitioned', quote_ident(relation::TEXT);
@@ -1098,13 +1115,12 @@ BEGIN
 
 	EXECUTE format(func, relation, attr, 0, att_val_fmt,
 				   old_fields, att_fmt, new_fields);
-	FOR rec in (SELECT * FROM pg_inherits WHERE inhparent = relation::regclass::oid)
+	FOR rec in (SELECT * FROM pg_inherits WHERE inhparent = relation::oid)
 	LOOP
 		EXECUTE format(trigger
-					   , @extschema@.get_schema_qualified_name(relation::regclass)
+					   , @extschema@.get_schema_qualified_name(relation)
 					   , rec.inhrelid::regclass
 					   , relation);
-		num := num + 1;
 	END LOOP;
 
 	RETURN format('%s_update_trigger_func()', relation);
@@ -1121,21 +1137,21 @@ CREATE OR REPLACE FUNCTION @extschema@.append_partitions_on_demand_internal(
 RETURNS OID AS
 $$
 DECLARE
-	v_cnt INTEGER := 0;
-	i INTEGER := 0;
-	v_part TEXT;
-	v_interval TEXT;
-	v_attname TEXT;
-	v_min p_new_value%TYPE;
-	v_max p_new_value%TYPE;
-	v_cur_value p_new_value%TYPE;
-	v_next_value p_new_value%TYPE;
-	v_is_date BOOLEAN;
+	i				INTEGER := 0;
+	v_part			TEXT;
+	v_interval		TEXT;
+	v_attname		TEXT;
+	v_min			p_new_value%TYPE;
+	v_max			p_new_value%TYPE;
+	v_cur_value		p_new_value%TYPE;
+	v_next_value	p_new_value%TYPE;
+	v_is_date		BOOLEAN;
+
 BEGIN
 	/* get attribute name and interval */
 	SELECT attname, range_interval
 	FROM @extschema@.pathman_config
-	WHERE relname::regclass = p_relid::regclass
+	WHERE partrel = p_relid
 	INTO v_attname, v_interval;
 
 	IF v_attname IS NULL THEN

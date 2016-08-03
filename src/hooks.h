@@ -7,6 +7,7 @@
  *
  * ------------------------------------------------------------------------
  */
+
 #ifndef JOIN_HOOK_H
 #define JOIN_HOOK_H
 
@@ -46,5 +47,7 @@ void pathman_post_parse_analysis_hook(ParseState *pstate,
 									  Query *query);
 
 void pathman_shmem_startup_hook(void);
+
+void pathman_relcache_hook(Datum arg, Oid relid);
 
 #endif

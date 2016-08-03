@@ -147,11 +147,11 @@ WHERE j1.dt < '2015-03-01' AND j2.dt >= '2015-02-01' ORDER BY j2.dt;
  * Test CTE query
  */
 EXPLAIN (COSTS OFF)
-    WITH ttt AS (SELECT * FROM test.range_rel WHERE dt >= '2015-02-01' AND dt < '2015-03-15')
+	WITH ttt AS (SELECT * FROM test.range_rel WHERE dt >= '2015-02-01' AND dt < '2015-03-15')
 SELECT * FROM ttt;
 
 EXPLAIN (COSTS OFF)
-    WITH ttt AS (SELECT * FROM test.hash_rel WHERE value = 2)
+	WITH ttt AS (SELECT * FROM test.hash_rel WHERE value = 2)
 SELECT * FROM ttt;
 
 
@@ -451,14 +451,14 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt BETWEEN '2014-11-15' A
 SELECT pathman.detach_range_partition('test.range_rel_archive');
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt BETWEEN '2014-11-15' AND '2015-01-15';
 CREATE TABLE test.range_rel_test1 (
-    id  SERIAL PRIMARY KEY,
-    dt  TIMESTAMP,
-    txt TEXT,
-    abc INTEGER);
+	id  SERIAL PRIMARY KEY,
+	dt  TIMESTAMP,
+	txt TEXT,
+	abc INTEGER);
 SELECT pathman.attach_range_partition('test.range_rel', 'test.range_rel_test1', '2013-01-01'::DATE, '2014-01-01'::DATE);
 CREATE TABLE test.range_rel_test2 (
-    id  SERIAL PRIMARY KEY,
-    dt  TIMESTAMP);
+	id  SERIAL PRIMARY KEY,
+	dt  TIMESTAMP);
 SELECT pathman.attach_range_partition('test.range_rel', 'test.range_rel_test2', '2013-01-01'::DATE, '2014-01-01'::DATE);
 
 /*

@@ -36,6 +36,10 @@ BEGIN
 
 	v_hashfunc := @extschema@.get_type_hash_func(v_type::regtype::oid)::regproc;
 
+	/* Insert new entry to pathman config */
+	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype)
+	VALUES (relation, attribute, 1);
+
 	/* Create partitions and update pg_pathman configuration */
 	FOR partnum IN 0..partitions_count-1
 	LOOP
@@ -43,27 +47,18 @@ BEGIN
 								  v_plain_schema,
 								  quote_ident(v_plain_relname || '_' || partnum));
 
-		EXECUTE format('CREATE TABLE %s (LIKE %s INCLUDING ALL)'
+		EXECUTE format('CREATE TABLE %1$s (LIKE %2$s INCLUDING ALL) INHERITS (%2$s)'
 						, v_child_relname
 						, v_relname);
 
-		EXECUTE format('ALTER TABLE %s INHERIT %s'
-						, v_child_relname
-						, v_relname);
-
-		EXECUTE format('ALTER TABLE %s ADD CHECK (@extschema@.get_hash(%s(%s), %s) = %s)'
+		EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (@extschema@.get_hash(%s(%s), %s) = %s)'
 					   , v_child_relname
+					   , @extschema@.build_check_constraint_name(v_child_relname::regclass, attribute)
 					   , v_hashfunc
 					   , attribute
 					   , partitions_count
 					   , partnum);
 	END LOOP;
-	INSERT INTO @extschema@.pathman_config (relname, attname, parttype)
-	VALUES (v_relname, attribute, 1);
-
-	/* Create triggers */
-	/* Do not create update trigger by default */
-	-- PERFORM @extschema@.create_hash_update_trigger(relation, attribute, partitions_count);
 
 	/* Notify backend about changes */
 	PERFORM @extschema@.on_create_partitions(relation::oid);
@@ -83,25 +78,36 @@ CREATE OR REPLACE FUNCTION @extschema@.create_hash_update_trigger(
 RETURNS VOID AS
 $$
 DECLARE
-	func TEXT := '
-		CREATE OR REPLACE FUNCTION %s()
-		RETURNS TRIGGER AS
-		$body$
-		DECLARE old_hash INTEGER; new_hash INTEGER; q TEXT;
-		BEGIN
-			old_hash := @extschema@.get_hash(%9$s(OLD.%2$s), %3$s);
-			new_hash := @extschema@.get_hash(%9$s(NEW.%2$s), %3$s);
-			IF old_hash = new_hash THEN RETURN NEW; END IF;
-			q := format(''DELETE FROM %8$s WHERE %4$s'', old_hash);
-			EXECUTE q USING %5$s;
-			q := format(''INSERT INTO %8$s VALUES (%6$s)'', new_hash);
-			EXECUTE q USING %7$s;
-			RETURN NULL;
-		END $body$ LANGUAGE plpgsql';
-	trigger TEXT := '
-		CREATE TRIGGER %s
-		BEFORE UPDATE ON %s
-		FOR EACH ROW EXECUTE PROCEDURE %s()';
+	func TEXT := 'CREATE OR REPLACE FUNCTION %s()
+				  RETURNS TRIGGER AS
+				  $body$
+				  DECLARE
+					old_hash INTEGER;
+					new_hash INTEGER;
+					q TEXT;
+
+				  BEGIN
+					old_hash := @extschema@.get_hash(%9$s(OLD.%2$s), %3$s);
+					new_hash := @extschema@.get_hash(%9$s(NEW.%2$s), %3$s);
+
+					IF old_hash = new_hash THEN
+						RETURN NEW;
+					END IF;
+
+					q := format(''DELETE FROM %8$s WHERE %4$s'', old_hash);
+					EXECUTE q USING %5$s;
+
+					q := format(''INSERT INTO %8$s VALUES (%6$s)'', new_hash);
+					EXECUTE q USING %7$s;
+
+					RETURN NULL;
+				  END $body$
+				  LANGUAGE plpgsql';
+
+	trigger TEXT := 'CREATE TRIGGER %s
+					 BEFORE UPDATE ON %s
+					 FOR EACH ROW EXECUTE PROCEDURE %s()';
+
 	att_names     TEXT;
 	old_fields    TEXT;
 	new_fields    TEXT;
@@ -117,6 +123,7 @@ DECLARE
 	child_relname_format TEXT;
 	atttype       TEXT;
 	hashfunc      TEXT;
+
 BEGIN
 	SELECT * INTO plain_schema, plain_relname
 	FROM @extschema@.get_plain_schema_and_relname(relation);
@@ -136,7 +143,7 @@ BEGIN
 		   att_val_fmt,
 		   att_fmt;
 
-	attr := attname FROM @extschema@.pathman_config WHERE relname::regclass = relation;
+	attr := attname FROM @extschema@.pathman_config WHERE partrel = relation;
 
 	IF attr IS NULL THEN
 		RAISE EXCEPTION 'Table % is not partitioned', quote_ident(relation::TEXT);

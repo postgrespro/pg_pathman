@@ -7,14 +7,16 @@
  *
  * ------------------------------------------------------------------------
  */
+
 #ifndef UTILS_H
 #define UTILS_H
+
+#include "pathman.h"
 
 #include "postgres.h"
 #include "utils/rel.h"
 #include "nodes/relation.h"
 #include "nodes/nodeFuncs.h"
-#include "pathman.h"
 
 
 typedef struct
@@ -59,5 +61,7 @@ void plan_tree_walker(Plan *plan,
 void rowmark_add_tableoids(Query *parse);
 
 void postprocess_lock_rows(List *rtable, Plan *plan);
+
+Oid get_pathman_schema(void);
 
 #endif

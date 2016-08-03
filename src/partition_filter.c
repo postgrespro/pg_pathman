@@ -1,5 +1,17 @@
+/* ------------------------------------------------------------------------
+ *
+ * partition_filter.c
+ *		Select partition for INSERT operation
+ *
+ * Copyright (c) 2016, Postgres Professional
+ *
+ * ------------------------------------------------------------------------
+ */
+
 #include "partition_filter.h"
+#include "nodes_common.h"
 #include "utils.h"
+
 #include "utils/guc.h"
 #include "utils/memutils.h"
 #include "nodes/nodeFuncs.h"
@@ -352,11 +364,11 @@ partition_filter_visitor(Plan *plan, void *context)
 	ListCell	   *lc1,
 				   *lc2;
 
-	Assert(rtable && IsA(rtable, List));
-
 	/* Skip if not ModifyTable with 'INSERT' command */
 	if (!IsA(modify_table, ModifyTable) || modify_table->operation != CMD_INSERT)
 		return;
+
+	Assert(rtable && IsA(rtable, List));
 
 	forboth (lc1, modify_table->plans, lc2, modify_table->resultRelations)
 	{

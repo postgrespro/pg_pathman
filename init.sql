@@ -10,20 +10,23 @@
 
 /*
  * Pathman config
- *  relname - schema qualified relation name
- *  attname - partitioning key
- *  parttype - partitioning type:
- *      1 - HASH
- *      2 - RANGE
- *  range_interval - base interval for RANGE partitioning in string representation
+ *		partrel - regclass (relation type, stored as Oid)
+ *		attname - partitioning key
+ *		parttype - partitioning type:
+ *			1 - HASH
+ *			2 - RANGE
+ *		range_interval - base interval for RANGE partitioning as string
  */
 CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
 	id				SERIAL PRIMARY KEY,
-	relname			VARCHAR(127),
-	attname			VARCHAR(127),
-	parttype		INTEGER,
-	range_interval	TEXT
+	partrel			REGCLASS NOT NULL,
+	attname			TEXT NOT NULL,
+	parttype		INTEGER NOT NULL,
+	range_interval	TEXT,
+
+	CHECK (parttype >= 1 OR parttype <= 2) /* check for allowed part types */
 );
+
 SELECT pg_catalog.pg_extension_config_dump('@extschema@.pathman_config', '');
 
 CREATE OR REPLACE FUNCTION @extschema@.on_create_partitions(relid OID)
@@ -112,13 +115,13 @@ LANGUAGE plpgsql;
 /*
  * Disable pathman partitioning for specified relation
  */
-CREATE OR REPLACE FUNCTION @extschema@.disable_partitioning(IN relation TEXT)
+CREATE OR REPLACE FUNCTION @extschema@.disable_partitioning(relation regclass)
 RETURNS VOID AS
 $$
 BEGIN
 	relation := @extschema@.validate_relname(relation);
 
-	DELETE FROM @extschema@.pathman_config WHERE relname = relation;
+	DELETE FROM @extschema@.pathman_config WHERE partrel = relation;
 	PERFORM @extschema@.drop_triggers(relation);
 
 	/* Notify backend about changes */
@@ -176,7 +179,7 @@ DECLARE
 	v_rec RECORD;
 	is_referenced BOOLEAN;
 BEGIN
-	IF EXISTS (SELECT * FROM @extschema@.pathman_config WHERE relname::regclass = p_relation) THEN
+	IF EXISTS (SELECT * FROM @extschema@.pathman_config WHERE partrel = p_relation) THEN
 		RAISE EXCEPTION 'Relation "%" has already been partitioned', p_relation;
 	END IF;
 
@@ -298,7 +301,7 @@ $$
 LANGUAGE plpgsql;
 
 /*
- * DDL trigger that deletes entry from pathman_config
+ * DDL trigger that deletes entry from pathman_config table
  */
 CREATE OR REPLACE FUNCTION @extschema@.pathman_ddl_trigger_func()
 RETURNS event_trigger AS
@@ -307,11 +310,12 @@ DECLARE
 	obj record;
 BEGIN
 	FOR obj IN SELECT * FROM pg_event_trigger_dropped_objects() as events
-			   JOIN @extschema@.pathman_config as cfg ON cfg.relname = events.object_identity
+			   JOIN @extschema@.pathman_config as cfg
+			   ON partrel::oid = events.objid
 	LOOP
 		IF obj.object_type = 'table' THEN
-			EXECUTE 'DELETE FROM @extschema@.pathman_config WHERE relname = $1'
-			USING obj.object_identity;
+			EXECUTE 'DELETE FROM @extschema@.pathman_config WHERE partrel = $1'
+			USING obj.objid;
 		END IF;
 	END LOOP;
 END
@@ -375,7 +379,7 @@ BEGIN
 	PERFORM @extschema@.drop_triggers(relation);
 
 	WITH config_num_deleted AS (DELETE FROM @extschema@.pathman_config
-								WHERE relname::regclass = relation
+								WHERE partrel = relation
 								RETURNING *)
 	SELECT count(*) from config_num_deleted INTO conf_num_del;
 
@@ -417,3 +421,15 @@ RETURNS OID AS 'pg_pathman', 'get_type_hash_func' LANGUAGE C STRICT;
  */
 CREATE OR REPLACE FUNCTION @extschema@.get_hash(INTEGER, INTEGER)
 RETURNS INTEGER AS 'pg_pathman', 'get_hash' LANGUAGE C STRICT;
+
+
+/*
+ * Build check constraint name for a specified relation's column
+ */
+CREATE OR REPLACE FUNCTION @extschema@.build_check_constraint_name(REGCLASS, INT2)
+RETURNS TEXT AS 'pg_pathman', 'build_check_constraint_name_attnum'
+LANGUAGE C STRICT;
+
+CREATE OR REPLACE FUNCTION @extschema@.build_check_constraint_name(REGCLASS, TEXT)
+RETURNS TEXT AS 'pg_pathman', 'build_check_constraint_name_attname'
+LANGUAGE C STRICT;

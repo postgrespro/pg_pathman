@@ -7,11 +7,15 @@
  *
  * ------------------------------------------------------------------------
  */
+
 #ifndef NODES_COMMON_H
 #define NODES_COMMON_H
 
+#include "relation_info.h"
+
+#include "postgres.h"
 #include "commands/explain.h"
-#include "pathman.h"
+#include "optimizer/planner.h"
 
 
 /*

@@ -1,14 +1,3 @@
-#include "pathman.h"
-#include "miscadmin.h"
-#include "postmaster/bgworker.h"
-#include "catalog/pg_type.h"
-#include "executor/spi.h"
-#include "storage/dsm.h"
-#include "access/xact.h"
-#include "utils/snapmgr.h"
-#include "utils/typcache.h"
-#include "utils.h"
-
 /*-------------------------------------------------------------------------
  *
  * worker.c
@@ -21,24 +10,145 @@
  *-------------------------------------------------------------------------
  */
 
-static dsm_segment *segment;
+#include "pathman.h"
+#include "init.h"
+#include "utils.h"
 
+#include "access/xact.h"
+#include "catalog/pg_type.h"
+#include "executor/spi.h"
+#include "miscadmin.h"
+#include "postmaster/bgworker.h"
+#include "storage/dsm.h"
+#include "utils/datum.h"
+#include "utils/snapmgr.h"
+#include "utils/typcache.h"
+#include "utils/lsyscache.h"
+
+
+static void bg_worker_load_config(const char *bgw_name);
 static void bg_worker_main(Datum main_arg);
+static Oid append_partitions(Oid relid, Datum value,
+							 Oid value_type, volatile bool *crashed);
 
-typedef struct PartitionArgs
+
+/*
+ * Store args, result and execution status of CreatePartitionsWorker.
+ */
+typedef struct
 {
+	bool	crashed;	/* has bgw crashed? */
+	Oid		result;		/* target partition */
 	Oid		dbid;
-	Oid		relid;
-#ifdef HAVE_INT64_TIMESTAMP
-	int64	value;
-#else
-	double	value;
-#endif
+	Oid		partitioned_table;
+
+	/* Type will help us to work with Datum */
 	Oid		value_type;
-	bool	by_val;
-	Oid		result;
-	bool	crashed;
+	Size	value_size;
+	bool	value_byval;
+
+	/* Store Datum as flexible array */
+	uint8	value[FLEXIBLE_ARRAY_MEMBER];
 } PartitionArgs;
+
+
+#ifdef USE_ASSERT_CHECKING
+
+	#include "access/htup_details.h"
+	#include "utils/syscache.h"
+
+	#define PrintUnpackedDatum(datum, typid) \
+		do { \
+			HeapTuple tup = SearchSysCache1(TYPEOID, \
+											ObjectIdGetDatum(typid)); \
+			if (HeapTupleIsValid(tup)) \
+			{ \
+				Form_pg_type	typtup = (Form_pg_type) GETSTRUCT(tup); \
+				FmgrInfo		finfo; \
+				fmgr_info(typtup->typoutput, &finfo); \
+				elog(LOG, "BGW: arg->value is '%s'", \
+					 DatumGetCString(FunctionCall1(&finfo, datum))); \
+			} \
+		} while (0)
+#elif
+	#define PrintUnpackedDatum(datum, typid) (true)
+#endif
+
+#define PackDatumToByteArray(array, datum, datum_size, typbyval) \
+	do { \
+		memcpy((void *) (array), \
+			   (const void *) ((typbyval) ? \
+								   (Pointer) (&datum) : \
+								   DatumGetPointer(datum)), \
+			   datum_size); \
+	} while (0)
+
+/*
+ * 'typid' is not necessary, but it is used by PrintUnpackedDatum().
+ */
+#define UnpackDatumFromByteArray(array, datum, datum_size, typbyval, typid) \
+	do { \
+		if (typbyval) \
+			memcpy((void *) &datum, (const void *) array, datum_size); \
+		else \
+		{ \
+			datum = PointerGetDatum(palloc(datum_size)); \
+			memcpy((void *) DatumGetPointer(datum), \
+				   (const void *) array, \
+				   datum_size); \
+		} \
+		PrintUnpackedDatum(datum, typid); \
+	} while (0)
+
+
+/*
+ * Initialize pg_pathman's local config in BGW process.
+ */
+static void
+bg_worker_load_config(const char *bgw_name)
+{
+	load_config();
+	elog(LOG, "%s loaded pg_pathman's config [%u]",
+		 bgw_name, MyProcPid);
+}
+
+/*
+ * Create args segment for partitions bgw.
+ */
+static dsm_segment *
+create_partitions_bg_worker_segment(Oid relid, Datum value, Oid value_type)
+{
+	TypeCacheEntry	   *typcache;
+	Size				datum_size;
+	Size				segment_size;
+	dsm_segment		   *segment;
+	PartitionArgs	   *args;
+
+	typcache = lookup_type_cache(value_type, 0);
+
+	/* Calculate segment size */
+	datum_size = datumGetSize(value, typcache->typbyval, typcache->typlen);
+	segment_size = offsetof(PartitionArgs, value) + datum_size;
+
+	segment = dsm_create(segment_size, 0);
+
+	/* Initialize BGW args */
+	args = (PartitionArgs *) dsm_segment_address(segment);
+	args->crashed = true; /* default value */
+	args->result = InvalidOid;
+	args->dbid = MyDatabaseId;
+	args->partitioned_table = relid;
+
+	/* Write value-related stuff */
+	args->value_type = value_type;
+	args->value_size = datum_size;
+	args->value_byval = typcache->typbyval;
+
+	PackDatumToByteArray(&args->value, value,
+						 datum_size, args->value_byval);
+
+	return segment;
+}
 
 /*
  * Starts background worker that will create new partitions,
@@ -67,39 +177,21 @@ create_partitions_bg_worker(Oid relid, Datum value, Oid value_type)
 	dsm_handle				segment_handle;
 	pid_t					pid;
 	PartitionArgs		   *args;
-	TypeCacheEntry		   *tce;
 	Oid						child_oid = InvalidOid;
 
 
 	/* Create a dsm segment for the worker to pass arguments */
-	segment = dsm_create(sizeof(PartitionArgs), 0);
+	segment = create_partitions_bg_worker_segment(relid, value, value_type);
 	segment_handle = dsm_segment_handle(segment);
-
-	tce = lookup_type_cache(value_type, 0);
-
-	/* Fill arguments structure */
 	args = (PartitionArgs *) dsm_segment_address(segment);
-	args->dbid = MyDatabaseId;
-	args->relid = relid;
-	if (tce->typbyval)
-		args->value = value;
-	else
-		memcpy(&args->value, DatumGetPointer(value), sizeof(args->value));
-	args->by_val = tce->typbyval;
-	args->value_type = value_type;
-	args->result = 0;
 
 	/* Initialize worker struct */
-	worker.bgw_flags = BGWORKER_SHMEM_ACCESS |
-		BGWORKER_BACKEND_DATABASE_CONNECTION;
-	worker.bgw_start_time = BgWorkerStart_RecoveryFinished;
-	worker.bgw_restart_time = BGW_NEVER_RESTART;
-	worker.bgw_main = bg_worker_main;
-	worker.bgw_main_arg = Int32GetDatum(segment_handle);
-	worker.bgw_notify_pid = MyProcPid;
-
-	LWLockAcquire(pmstate->load_config_lock, LW_EXCLUSIVE);
-	LWLockAcquire(pmstate->edit_partitions_lock, LW_EXCLUSIVE);
+	worker.bgw_flags		= BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION;
+	worker.bgw_start_time	= BgWorkerStart_RecoveryFinished;
+	worker.bgw_restart_time	= BGW_NEVER_RESTART;
+	worker.bgw_notify_pid	= MyProcPid;
+	worker.bgw_main_arg		= UInt32GetDatum(segment_handle);
+	worker.bgw_main			= bg_worker_main;
 
 	/* Start dynamic worker */
 	bgw_started = RegisterDynamicBackgroundWorker(&worker, &bgw_handle);
@@ -119,8 +211,6 @@ create_partitions_bg_worker(Oid relid, Datum value, Oid value_type)
 
 /* end execution */
 handle_exec_state:
-	LWLockRelease(pmstate->load_config_lock);
-	LWLockRelease(pmstate->edit_partitions_lock);
 
 	/* Free dsm segment */
 	dsm_detach(segment);
@@ -145,6 +235,9 @@ handle_exec_state:
 			break;
 	}
 
+	if (child_oid == InvalidOid)
+		elog(ERROR, "Attempt to append new partitions to relation %u failed", relid);
+
 	return child_oid;
 }
 
@@ -154,17 +247,21 @@ handle_exec_state:
 static void
 bg_worker_main(Datum main_arg)
 {
-	PartitionArgs  *args;
-	dsm_handle		handle = DatumGetInt32(main_arg);
+	const char	   *bgw_name = "CreatePartitionsWorker";
+	dsm_handle		handle = DatumGetUInt32(main_arg);
+	dsm_segment	   *segment;
+	PartitionArgs   *args;
+	Datum			value;
 
 	/* Create resource owner */
-	CurrentResourceOwner = ResourceOwnerCreate(NULL, "CreatePartitionsWorker");
+	CurrentResourceOwner = ResourceOwnerCreate(NULL, bgw_name);
+
+	if (!handle)
+		elog(ERROR, "%s: invalid dsm_handle", bgw_name);
 
 	/* Attach to dynamic shared memory */
-	if (!handle)
-		ereport(WARNING, (errmsg("pg_pathman worker: invalid dsm_handle")));
-
-	segment = dsm_attach(handle);
+	if ((segment = dsm_attach(handle)) == NULL)
+		elog(ERROR, "%s: cannot attach to segment", bgw_name);
 	args = dsm_segment_address(segment);
 
 	/* Establish connection and start transaction */
@@ -173,10 +270,17 @@ bg_worker_main(Datum main_arg)
 	SPI_connect();
 	PushActiveSnapshot(GetTransactionSnapshot());
 
+	/* Initialize pg_pathman's local config */
+	bg_worker_load_config(bgw_name);
+
+	UnpackDatumFromByteArray(&args->value, value,
+							 args->value_size,
+							 args->value_byval,
+							 args->value_type);
+
 	/* Create partitions */
-	args->result = create_partitions(args->relid,
-									 PATHMAN_GET_DATUM(args->value,
-													   args->by_val),
+	args->result = append_partitions(args->partitioned_table,
+									 value,
 									 args->value_type,
 									 &args->crashed);
 
@@ -189,40 +293,38 @@ bg_worker_main(Datum main_arg)
 }
 
 /*
- * Create partitions and return an OID of the partition that contain value
+ * Append partitions and return Oid of the partition that contains value
  */
-Oid
-create_partitions(Oid relid, Datum value, Oid value_type, bool *crashed)
+static Oid
+append_partitions(Oid relid, Datum value, Oid value_type, volatile bool *crashed)
 {
 	Oid					oids[]	= { OIDOID,					 value_type };
 	Datum				vals[]	= { ObjectIdGetDatum(relid), value };
 	bool				nulls[]	= { false,					 false };
 	char			   *sql;
 	PartRelationInfo   *prel;
-	RangeRelation	   *rangerel;
 	FmgrInfo			cmp_func;
-	char			   *schema;
+	MemoryContext		old_mcxt = CurrentMemoryContext;
 
-	*crashed = true;
-	schema = get_extension_schema();
+	*crashed = true; /* write default value */
 
-	prel = get_pathman_relation_info(relid, NULL);
-	rangerel = get_pathman_range_relation(relid, NULL);
+	if ((prel = get_pathman_relation_info(relid, NULL)) == NULL)
+		elog(ERROR, "BGW: cannot fetch PartRelationInfo for relation %u", relid);
 
 	/* Comparison function */
 	fill_type_cmp_fmgr_info(&cmp_func, value_type, prel->atttype);
 
 	/* Perform PL procedure */
 	sql = psprintf("SELECT %s.append_partitions_on_demand_internal($1, $2)",
-				   schema);
+				   get_namespace_name(get_pathman_schema()));
 	PG_TRY();
 	{
-		int				ret;
-		Oid				partid = InvalidOid;
-		bool			isnull;
+		int		ret;
+		Oid		partid = InvalidOid;
+		bool	isnull;
 
 		ret = SPI_execute_with_args(sql, 2, oids, vals, nulls, false, 0);
-		if (ret > 0)
+		if (ret == SPI_OK_SELECT)
 		{
 			TupleDesc	tupdesc = SPI_tuptable->tupdesc;
 			HeapTuple	tuple = SPI_tuptable->vals[0];
@@ -232,9 +334,7 @@ create_partitions(Oid relid, Datum value, Oid value_type, bool *crashed)
 			partid = DatumGetObjectId(SPI_getbinval(tuple, tupdesc, 1, &isnull));
 
 			/* Update relation info */
-			free_dsm_array(&rangerel->ranges);
-			free_dsm_array(&prel->children);
-			load_partitions(relid, GetCatalogSnapshot(relid));
+			/* TODO: mark ShmemRelationInfo as 'dirty' to invalidate cache */
 		}
 
 		*crashed = false;
@@ -242,9 +342,16 @@ create_partitions(Oid relid, Datum value, Oid value_type, bool *crashed)
 	}
 	PG_CATCH();
 	{
-		elog(ERROR, "Attempt to create new partitions failed");
+		ErrorData  *edata;
 
-		return InvalidOid; /* compiler should be happy */
+		MemoryContextSwitchTo(old_mcxt);
+		edata = CopyErrorData();
+		FlushErrorState();
+
+		elog(LOG, "BGW: %s", edata->message);
+		FreeErrorData(edata);
+
+		return InvalidOid; /* something bad happened */
 	}
 	PG_END_TRY();
 }

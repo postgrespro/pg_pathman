@@ -9,12 +9,14 @@
  *
  * ------------------------------------------------------------------------
  */
+
 #ifndef RUNTIME_MERGE_APPEND_H
 #define RUNTIME_MERGE_APPEND_H
 
-#include "postgres.h"
 #include "runtimeappend.h"
 #include "pathman.h"
+
+#include "postgres.h"
 
 
 typedef struct

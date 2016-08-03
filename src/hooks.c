@@ -7,15 +7,17 @@
  *
  * ------------------------------------------------------------------------
  */
-#include "postgres.h"
-#include "optimizer/cost.h"
-#include "optimizer/restrictinfo.h"
-#include "pathman.h"
+
 #include "hooks.h"
-#include "partition_filter.h"
+#include "init.h"
 #include "runtimeappend.h"
 #include "runtime_merge_append.h"
 #include "utils.h"
+
+#include "miscadmin.h"
+#include "optimizer/cost.h"
+#include "optimizer/restrictinfo.h"
+#include "partition_filter.h"
 
 
 set_join_pathlist_hook_type		set_join_pathlist_next = NULL;
@@ -35,52 +37,53 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 						   JoinPathExtraData *extra)
 {
 	JoinCostWorkspace	workspace;
-	Path			   *outer,
-					   *inner;
-	Relids				inner_required;
-	RangeTblEntry	   *inner_entry = root->simple_rte_array[innerrel->relid];
+	RangeTblEntry	   *inner_rte = root->simple_rte_array[innerrel->relid];
 	PartRelationInfo   *inner_prel;
-	NestPath		   *nest_path;
-	List			   *pathkeys = NIL;
-	List			   *joinrestrictclauses = extra->restrictlist;
-	List			   *joinclauses,
+	List			   *pathkeys = NIL,
+					   *joinclauses,
 					   *otherclauses;
 	ListCell		   *lc;
-	double				paramsel;
 	WalkerContext		context;
+	double				paramsel;
 	bool				context_initialized;
 	bool				innerrel_rinfo_contains_part_attr;
 
+	/* Call hooks set by other extensions */
 	if (set_join_pathlist_next)
 		set_join_pathlist_next(root, joinrel, outerrel,
 							   innerrel, jointype, extra);
 
-	if (jointype == JOIN_UNIQUE_OUTER ||
-		jointype == JOIN_UNIQUE_INNER)
-	{
-		jointype = JOIN_INNER;
-	}
-
-	if (jointype == JOIN_FULL || !pg_pathman_enable_runtimeappend)
+	/* Check that both pg_pathman & RuntimeAppend nodes are enabled */
+	if (!IsPathmanReady() || !pg_pathman_enable_runtimeappend)
 		return;
 
-	if (innerrel->reloptkind != RELOPT_BASEREL ||
-		!inner_entry->inh ||
-		!(inner_prel = get_pathman_relation_info(inner_entry->relid, NULL)))
+	if (jointype == JOIN_FULL)
+		return; /* handling full joins is meaningless */
+
+	/* Check that innerrel is a BASEREL with inheritors & PartRelationInfo */
+	if (innerrel->reloptkind != RELOPT_BASEREL || !inner_rte->inh ||
+		!(inner_prel = get_pathman_relation_info(inner_rte->relid, NULL)))
 	{
 		return; /* Obviously not our case */
 	}
 
+	/*
+	 * These codes are used internally in the planner, but are not supported
+	 * by the executor (nor, indeed, by most of the planner).
+	 */
+	if (jointype == JOIN_UNIQUE_OUTER || jointype == JOIN_UNIQUE_INNER)
+		jointype = JOIN_INNER; /* replace with a proper value */
+
 	/* Extract join clauses which will separate partitions */
 	if (IS_OUTER_JOIN(extra->sjinfo->jointype))
 	{
-		extract_actual_join_clauses(joinrestrictclauses,
+		extract_actual_join_clauses(extra->restrictlist,
 									&joinclauses, &otherclauses);
 	}
 	else
 	{
 		/* We can treat all clauses alike for an inner join */
-		joinclauses = extract_actual_clauses(joinrestrictclauses, false);
+		joinclauses = extract_actual_clauses(extra->restrictlist, false);
 		otherclauses = NIL;
 	}
 
@@ -99,6 +102,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		paramsel *= wrap->paramsel;
 	}
 
+	/* Check that innerrel's RestrictInfo contains partitioned column */
 	innerrel_rinfo_contains_part_attr =
 		check_rinfo_for_partitioned_attr(innerrel->baserestrictinfo,
 										 innerrel->relid,
@@ -106,17 +110,24 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 
 	foreach (lc, innerrel->pathlist)
 	{
+		Path		   *outer,
+					   *inner;
+		NestPath	   *nest_path;		/* NestLoop we're creating */
+		ParamPathInfo  *ppi;			/* parameterization info */
+		Relids			inner_required;	/* required paremeterization relids */
 		AppendPath	   *cur_inner_path = (AppendPath *) lfirst(lc);
-		ParamPathInfo  *ppi;
 
 		if (!IsA(cur_inner_path, AppendPath))
 			continue;
 
+		/* Select cheapest path for outerrel */
 		outer = outerrel->cheapest_total_path;
 
+		/* Make innerrel path depend on outerrel's column */
 		inner_required = bms_union(PATH_REQ_OUTER((Path *) cur_inner_path),
 								   bms_make_singleton(outerrel->relid));
 
+		/* Get the ParamPathInfo for a parameterized path */
 		ppi = get_baserel_parampathinfo(root, innerrel, inner_required);
 
 		/*
@@ -130,11 +141,10 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 			continue;
 
 		inner = create_runtimeappend_path(root, cur_inner_path,
-										  ppi,
-										  paramsel);
+										  ppi, paramsel);
 
 		initial_cost_nestloop(root, &workspace, jointype,
-							  outer, inner,
+							  outer, inner, /* built paths */
 							  extra->sjinfo, &extra->semifactors);
 
 		pathkeys = build_join_pathkeys(root, joinrel, jointype, outer->pathkeys);
@@ -145,6 +155,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 										 pathkeys,
 										 calc_nestloop_required_outer(outer, inner));
 
+		/* Finally we can add new NestLoop path */
 		add_path(joinrel, (Path *) nest_path);
 	}
 }
@@ -156,28 +167,25 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 	PartRelationInfo   *prel = NULL;
 	RangeTblEntry	  **new_rte_array;
 	RelOptInfo		  **new_rel_array;
-	bool				found;
 	int					len;
 
 	/* Invoke original hook if needed */
 	if (set_rel_pathlist_hook_next != NULL)
 		set_rel_pathlist_hook_next(root, rel, rti, rte);
 
-	if (!pg_pathman_enable)
-		return;
+	if (!IsPathmanReady())
+		return; /* pg_pathman is not ready */
 
 	/* This works only for SELECT queries (at least for now) */
 	if (root->parse->commandType != CMD_SELECT ||
 		!list_member_oid(inheritance_enabled_relids, rte->relid))
 		return;
 
-	/* Lookup partitioning information for parent relation */
-	prel = get_pathman_relation_info(rte->relid, &found);
-
-	if (prel != NULL && found)
+	/* Proceed iff relation 'rel' is partitioned */
+	if ((prel = get_pathman_relation_info(rte->relid, NULL)) != NULL)
 	{
 		ListCell	   *lc;
-		Oid			   *dsm_arr;
+		Oid			   *children;
 		List		   *ranges,
 					   *wrappers;
 		PathKey		   *pathkeyAsc = NULL,
@@ -220,9 +228,10 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 				pathkeyDesc = (PathKey *) linitial(pathkeys);
 		}
 
-		rte->inh = true;
-		dsm_arr = (Oid *) dsm_array_get_pointer(&prel->children, true);
-		ranges = list_make1_irange(make_irange(0, prel->children_count - 1, false));
+		rte->inh = true; /* we must restore 'inh' flag! */
+
+		children = PrelGetChildrenArray(prel, true);
+		ranges = list_make1_irange(make_irange(0, PrelChildrenCount(prel) - 1, false));
 
 		/* Make wrappers over restrictions and collect final rangeset */
 		InitWalkerContext(&context, prel, NULL, CurrentMemoryContext, false);
@@ -282,7 +291,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 			IndexRange	irange = lfirst_irange(lc);
 
 			for (i = irange.ir_lower; i <= irange.ir_upper; i++)
-				append_child_relation(root, rel, rti, rte, i, dsm_arr[i], wrappers);
+				append_child_relation(root, rel, rti, rte, i, children[i], wrappers);
 		}
 
 		/* Clear old path list */
@@ -292,12 +301,12 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 		set_append_rel_pathlist(root, rel, rti, rte, pathkeyAsc, pathkeyDesc);
 		set_append_rel_size(root, rel, rti, rte);
 
-		/* No need to go further, return */
+		/* No need to go further (both nodes are disabled), return */
 		if (!(pg_pathman_enable_runtimeappend ||
 			  pg_pathman_enable_runtime_merge_append))
 			return;
 
-		/* RuntimeAppend is pointless if there are no params in clauses */
+		/* Runtime[Merge]Append is pointless if there are no params in clauses */
 		if (!clause_contains_params((Node *) get_actual_clauses(rel->baserestrictinfo)))
 			return;
 
@@ -315,8 +324,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 
 			/* Skip if rel contains some join-related stuff or path type mismatched */
 			if (!(IsA(cur_path, AppendPath) || IsA(cur_path, MergeAppendPath)) ||
-				rel->has_eclass_joins ||
-				rel->joininfo)
+				rel->has_eclass_joins || rel->joininfo)
 			{
 				continue;
 			}
@@ -345,9 +353,22 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 	}
 }
 
+/*
+ * Intercept 'pg_pathman.enable' GUC assignments.
+ */
 void
 pg_pathman_enable_assign_hook(bool newval, void *extra)
 {
+	elog(DEBUG2, "pg_pathman_enable_assign_hook() [newval = %s] triggered",
+		  newval ? "true" : "false");
+
+	if (initialization_needed)
+	{
+		elog(DEBUG2, "pg_pathman is not yet initialized, "
+					 "pg_pathman.enable is set to false");
+		return;
+	}
+
 	/* Return quickly if nothing has changed */
 	if (newval == (pg_pathman_enable &&
 				   pg_pathman_enable_runtimeappend &&
@@ -372,9 +393,18 @@ pg_pathman_enable_assign_hook(bool newval, void *extra)
 PlannedStmt *
 pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 {
+#define ExecuteForPlanTree(planned_stmt, proc) \
+	do { \
+		ListCell *lc; \
+		proc((planned_stmt)->rtable, (planned_stmt)->planTree); \
+		foreach (lc, (planned_stmt)->subplans) \
+			proc((planned_stmt)->rtable, (Plan *) lfirst(lc)); \
+	} while (0)
+
 	PlannedStmt	  *result;
 
-	if (pg_pathman_enable)
+	/* TODO: fix these commands (traverse whole query tree) */
+	if (IsPathmanReady())
 	{
 		switch(parse->commandType)
 		{
@@ -390,38 +420,24 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 				handle_modification_query(parse);
 				break;
 
-			case CMD_INSERT:
-			{
-				ListCell *lc;
-
-				result = standard_planner(parse, cursorOptions, boundParams);
-
-				add_partition_filters(result->rtable, result->planTree);
-				foreach (lc, result->subplans)
-					add_partition_filters(result->rtable, (Plan *) lfirst(lc));
-
-				return result;
-			}
-
 			default:
 				break;
 		}
 	}
 
-	/* Invoke original hook */
+	/* Invoke original hook if needed */
 	if (planner_hook_next)
 		result = planner_hook_next(parse, cursorOptions, boundParams);
 	else
 		result = standard_planner(parse, cursorOptions, boundParams);
 
-	if (pg_pathman_enable)
+	if (IsPathmanReady())
 	{
-		ListCell *lc;
-
 		/* Give rowmark-related attributes correct names */
-		postprocess_lock_rows(result->rtable, result->planTree);
-		foreach (lc, result->subplans)
-			postprocess_lock_rows(result->rtable, (Plan *) lfirst(lc));
+		ExecuteForPlanTree(result, postprocess_lock_rows);
+
+		/* Add PartitionFilter node for INSERT queries */
+		ExecuteForPlanTree(result, add_partition_filters);
 	}
 
 	list_free(inheritance_disabled_relids);
@@ -439,26 +455,76 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 void
 pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
 {
-	if (initialization_needed)
-		load_config();
-
+	/* Invoke original hook if needed */
 	if (post_parse_analyze_hook_next)
 		post_parse_analyze_hook_next(pstate, query);
+
+	/* Load config if pg_pathman exists & it's still necessary */
+	if (IsPathmanEnabled() &&
+		initialization_needed &&
+		get_pathman_schema() != InvalidOid)
+	{
+		load_config();
+	}
 
 	inheritance_disabled_relids = NIL;
 	inheritance_enabled_relids = NIL;
 }
 
+/*
+ * Initialize dsm_config & shmem_config.
+ */
 void
 pathman_shmem_startup_hook(void)
 {
+	/* Invoke original hook if needed */
+	if (shmem_startup_hook_next != NULL)
+		shmem_startup_hook_next();
+
 	/* Allocate shared memory objects */
 	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
 	init_dsm_config();
 	init_shmem_config();
 	LWLockRelease(AddinShmemInitLock);
+}
 
-	/* Invoke original hook if needed */
-	if (shmem_startup_hook_next != NULL)
-		shmem_startup_hook_next();
+/*
+ * Invalidate PartRelationInfo cache entry if needed.
+ */
+void
+pathman_relcache_hook(Datum arg, Oid relid)
+{
+	PartParentSearch	search;
+	Oid					partitioned_table;
+
+	/* Invalidate PartParentInfo cache if needed */
+	partitioned_table = forget_parent_of_partition(relid, &search);
+
+	/* It is (or was) a valid partition */
+	if (partitioned_table != InvalidOid)
+	{
+		elog(DEBUG2, "Invalidation message for partition %u [%u]",
+			 relid, MyProcPid);
+
+		/* Invalidate PartRelationInfo cache */
+		invalidate_pathman_relation_info(partitioned_table, NULL);
+
+		/* TODO: add table to 'invalidated_rel' list */
+	}
+
+	/* Both syscache and pathman's cache say it isn't a partition */
+	else if (search == PPS_ENTRY_NOT_FOUND)
+	{
+		elog(DEBUG2, "Invalidation message for relation %u [%u]",
+			 relid, MyProcPid);
+	}
+
+	/* We can't say anything (state is not transactional) */
+	else if (search == PPS_NOT_SURE)
+	{
+		elog(DEBUG2, "Invalidation message for vague relation %u [%u]",
+			 relid, MyProcPid);
+
+		/* TODO: add table to 'PPS_NOT_SURE' list */
+	}
 }

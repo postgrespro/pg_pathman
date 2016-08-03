@@ -1,10 +1,22 @@
+/* ------------------------------------------------------------------------
+ *
+ * partition_filter.h
+ *		Select partition for INSERT operation
+ *
+ * Copyright (c) 2016, Postgres Professional
+ *
+ * ------------------------------------------------------------------------
+ */
+
 #ifndef RUNTIME_INSERT_H
 #define RUNTIME_INSERT_H
 
-#include "postgres.h"
-
+#include "relation_info.h"
 #include "pathman.h"
-#include "nodes_common.h"
+
+#include "postgres.h"
+#include "commands/explain.h"
+#include "optimizer/planner.h"
 
 
 typedef struct

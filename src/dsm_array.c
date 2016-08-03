@@ -1,15 +1,16 @@
 /* ------------------------------------------------------------------------
  *
- * init.c
- *		This module allocates large DSM segment to store arrays,
- *		initializes it with block structure and provides functions to
- *		allocate and free arrays
+ * dsm_array.c
+ *		Allocate data in shared memory
  *
  * Copyright (c) 2015-2016, Postgres Professional
  *
  * ------------------------------------------------------------------------
  */
+
 #include "pathman.h"
+#include "dsm_array.h"
+
 #include "storage/shmem.h"
 #include "storage/dsm.h"
 
@@ -49,11 +50,11 @@ typedef BlockHeader* BlockHeaderPtr;
 	((length) | ((*header) & FREE_BIT))
 
 /*
- * Amount of memory that need to be requested in shared memory to store dsm
- * config
+ * Amount of memory that need to be requested
+ * for shared memory to store dsm config
  */
 Size
-get_dsm_shared_size()
+estimate_dsm_config_size()
 {
 	return (Size) MAXALIGN(sizeof(DsmConfig));
 }
@@ -300,8 +301,8 @@ void *
 dsm_array_get_pointer(const DsmArray *arr, bool copy)
 {
 	uint8  *segment_address,
-	       *dsm_array,
-	       *result;
+		   *dsm_array,
+		   *result;
 	size_t	size;
 
 	segment_address = (uint8 *) dsm_segment_address(segment);

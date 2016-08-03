@@ -7,16 +7,17 @@
  *
  * ------------------------------------------------------------------------
  */
+
 #ifndef RUNTIME_APPEND_H
 #define RUNTIME_APPEND_H
+
+#include "pathman.h"
+#include "nodes_common.h"
 
 #include "postgres.h"
 #include "optimizer/paths.h"
 #include "optimizer/pathnode.h"
 #include "commands/explain.h"
-
-#include "pathman.h"
-#include "nodes_common.h"
 
 
 typedef struct
