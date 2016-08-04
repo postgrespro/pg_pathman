@@ -18,6 +18,7 @@
 #include "utils.h"
 
 #include "access/htup_details.h"
+#include "access/sysattr.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_inherits_fn.h"
 #include "catalog/pg_type.h"
@@ -368,7 +369,8 @@ build_check_constraint_name_internal(Oid relid, AttrNumber attno)
  * Extract tuple into 'values' and 'isnull' if they're provided.
  */
 bool
-pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull)
+pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
+								 TransactionId *xmin)
 {
 	Oid				pathman_config;
 	Relation		rel;
@@ -404,6 +406,21 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull)
 		/* Extract data if necessary */
 		if (values && isnull)
 			heap_deformtuple(htup, RelationGetDescr(rel), values, isnull);
+
+		/* Set xmin if necessary */
+		if (xmin)
+		{
+			Datum	value;
+			bool	isnull;
+
+			value = heap_getsysattr(htup,
+									MinTransactionIdAttributeNumber,
+									RelationGetDescr(rel),
+									&isnull);
+
+			Assert(!isnull);
+			*xmin = DatumGetTransactionId(value);
+		}
 	}
 
 	/* Clean resources */

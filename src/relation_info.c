@@ -183,7 +183,7 @@ get_pathman_relation_info(Oid relid, bool *found)
 		bool	isnull[Natts_pathman_config];
 
 		/* Check that PATHMAN_CONFIG table contains this relation */
-		if (pathman_config_contains_relation(relid, values, isnull))
+		if (pathman_config_contains_relation(relid, values, isnull, NULL))
 		{
 			PartType		part_type;
 			const char 	   *attname;
@@ -355,7 +355,7 @@ try_syscache_parent_search(Oid partition, PartParentSearch *status)
 			parent = ((Form_pg_inherits) GETSTRUCT(inheritsTuple))->inhparent;
 
 			/* Check that PATHMAN_CONFIG contains this table */
-			if (pathman_config_contains_relation(parent, NULL, NULL))
+			if (pathman_config_contains_relation(parent, NULL, NULL, NULL))
 			{
 				/* We've found the entry, update status */
 				if (status) *status = PPS_ENTRY_FOUND;

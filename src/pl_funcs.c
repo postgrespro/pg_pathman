@@ -152,8 +152,7 @@ find_or_create_range_partition(PG_FUNCTION_ARGS)
 			PG_RETURN_OID(found_rentry.child_oid);
 		}
 
-		/* Start background worker to create new partitions */
-		child_oid = create_partitions_bg_worker(relid, value, value_type);
+		child_oid = create_partitions(relid, value, value_type);
 
 		LWLockRelease(pmstate->load_config_lock);
 		LWLockRelease(pmstate->edit_partitions_lock);

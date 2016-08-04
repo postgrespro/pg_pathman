@@ -194,6 +194,9 @@ typedef struct
 /* Check that WalkerContext contains ExprContext (plan execution stage) */
 #define WcxtHasExprContext(wcxt) ( (wcxt)->econtext )
 
+Oid create_partitions_internal(Oid relid, Datum value, Oid value_type);
+Oid create_partitions(Oid relid, Datum value, Oid value_type);
+
 void select_range_partitions(const Datum value,
 							 FmgrInfo *cmp_func,
 							 const RangeEntry *ranges,

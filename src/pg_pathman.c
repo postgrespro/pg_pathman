@@ -18,33 +18,24 @@
 #include "runtime_merge_append.h"
 
 #include "postgres.h"
-#include "fmgr.h"
+#include "access/heapam.h"
+#include "access/transam.h"
+#include "access/xact.h"
+#include "catalog/pg_type.h"
+#include "executor/spi.h"
 #include "miscadmin.h"
-#include "nodes/makefuncs.h"
-#include "nodes/nodeFuncs.h"
-#include "nodes/pg_list.h"
-#include "nodes/relation.h"
-#include "nodes/primnodes.h"
 #include "optimizer/clauses.h"
-#include "optimizer/paths.h"
-#include "optimizer/pathnode.h"
-#include "optimizer/planner.h"
 #include "optimizer/prep.h"
 #include "optimizer/restrictinfo.h"
 #include "optimizer/cost.h"
-#include "parser/analyze.h"
-#include "utils/hsearch.h"
 #include "utils/rel.h"
-#include "utils/elog.h"
-#include "utils/array.h"
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
 #include "utils/selfuncs.h"
+#include "utils/snapmgr.h"
 #include "utils/memutils.h"
-#include "access/heapam.h"
-#include "storage/ipc.h"
-#include "catalog/pg_type.h"
 #include "foreign/fdwapi.h"
+#include "fmgr.h"
 
 
 PG_MODULE_MAGIC;
@@ -112,7 +103,7 @@ static Path *get_cheapest_parameterized_child_path(PlannerInfo *root, RelOptInfo
 
 
 /*
- * Entry point
+ * Set initial values for all Postmaster's forks.
  */
 void
 _PG_init(void)
@@ -161,8 +152,8 @@ _PG_init(void)
 }
 
 /*
- * Disables inheritance for partitioned by pathman relations. It must be done to
- * prevent PostgresSQL from full search.
+ * Disables inheritance for partitioned by pathman relations.
+ * It must be done to prevent PostgresSQL from exhaustive search.
  */
 void
 disable_inheritance(Query *parse)
@@ -171,7 +162,6 @@ disable_inheritance(Query *parse)
 	RangeTblEntry	   *rte;
 	PartRelationInfo   *prel;
 	MemoryContext		oldcontext;
-	bool	found;
 
 	/* If query contains CTE (WITH statement) then handle subqueries too */
 	disable_inheritance_cte(parse);
@@ -189,10 +179,12 @@ disable_inheritance(Query *parse)
 				if (rte->inh)
 				{
 					/* Look up this relation in pathman relations */
-					prel = get_pathman_relation_info(rte->relid, &found);
-					if (prel != NULL && found)
+					prel = get_pathman_relation_info(rte->relid, NULL);
+					if (prel)
 					{
+						/* We'll set this flag later */
 						rte->inh = false;
+
 						/*
 						 * Sometimes user uses the ONLY statement and in this case
 						 * rte->inh is also false. We should differ the case
@@ -754,6 +746,118 @@ finish_least_greatest(WrapperNode *wrap, WalkerContext *context)
 	context->hasGreatest = false;
 }
 
+/*
+ * Append partitions (if needed) and return Oid of the partition to contain value.
+ *
+ * NB: This function should not be called directly, use create_partitions() instead.
+ */
+Oid
+create_partitions_internal(Oid relid, Datum value, Oid value_type)
+{
+	int					ret;
+	char			   *sql;
+	PartRelationInfo   *prel;
+	FmgrInfo			cmp_func;
+	MemoryContext		old_mcxt = CurrentMemoryContext;
+	Oid					partid = InvalidOid; /* default value */
+
+	if ((prel = get_pathman_relation_info(relid, NULL)) == NULL)
+	{
+		elog(LOG, "Cannot fetch PartRelationInfo for relation %u [%u]",
+			 relid, MyProcPid);
+
+		return InvalidOid;
+	}
+
+	if ((ret = SPI_connect()) < 0)
+	{
+		elog(LOG, "create_partitions_internal(): SPI_connect returned %d", ret);
+
+		return InvalidOid;
+	}
+
+	/* Comparison function */
+	fill_type_cmp_fmgr_info(&cmp_func, value_type, prel->atttype);
+
+	/* Perform PL procedure */
+	sql = psprintf("SELECT %s.append_partitions_on_demand_internal($1, $2)",
+				   get_namespace_name(get_pathman_schema()));
+
+	PG_TRY();
+	{
+		Oid		oids[]	= { OIDOID,					 value_type };
+		Datum	vals[]	= { ObjectIdGetDatum(relid), value };
+		bool	nulls[]	= { false,					 false };
+		bool	isnull;
+
+		/* TODO: maybe this could be rewritten with FunctionCall */
+		ret = SPI_execute_with_args(sql, 2, oids, vals, nulls, false, 0);
+		if (ret == SPI_OK_SELECT)
+		{
+			TupleDesc	tupdesc = SPI_tuptable->tupdesc;
+			HeapTuple	tuple = SPI_tuptable->vals[0];
+
+			Assert(SPI_processed == 1);
+
+			partid = DatumGetObjectId(SPI_getbinval(tuple, tupdesc, 1, &isnull));
+		}
+	}
+	PG_CATCH();
+	{
+		ErrorData *edata;
+
+		MemoryContextSwitchTo(old_mcxt);
+		edata = CopyErrorData();
+		FlushErrorState();
+
+		elog(LOG, "create_partitions_internal(): %s [%u]",
+			 edata->message, MyProcPid);
+
+		FreeErrorData(edata);
+	}
+	PG_END_TRY();
+
+	SPI_finish();
+
+	return partid;
+}
+
+/*
+ * Create RANGE partitions (if needed) using either BGW or current backend.
+ *
+ * Returns Oid of the partition to store 'value'.
+ */
+Oid
+create_partitions(Oid relid, Datum value, Oid value_type)
+{
+	TransactionId	rel_xmin;
+
+	/* Check that table is partitioned and fetch xmin */
+	if (pathman_config_contains_relation(relid, NULL, NULL, &rel_xmin))
+	{
+		/* If table was partitioned in some previous xact, run BGWorker */
+		if (TransactionIdPrecedes(rel_xmin, GetCurrentTransactionId()))
+		{
+			elog(DEBUG2, "create_partitions(): chose BGW [%u]", MyProcPid);
+			return create_partitions_bg_worker(relid, value, value_type);
+		}
+		/* Else it'd better for the current backend to create partitions */
+		else
+		{
+			elog(DEBUG2, "create_partitions(): chose backend [%u]", MyProcPid);
+			return create_partitions_internal(relid, value, value_type);
+		}
+	}
+	else
+		elog(ERROR, "Relation %u is not partitioned by pg_pathman", relid);
+
+	return InvalidOid; /* keep compiler happy */
+}
+
+/*
+ * Given RangeEntry array and 'value', return selected
+ * RANGE partitions inside the WrapperNode.
+ */
 void
 select_range_partitions(const Datum value,
 						FmgrInfo *cmp_func,

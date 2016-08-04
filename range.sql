@@ -449,7 +449,8 @@ BEGIN
 	EXECUTE v_sql;
 	RETURN v_child_relname;
 END
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql
+SET client_min_messages = WARNING;
 
 /*
  * Split RANGE partition

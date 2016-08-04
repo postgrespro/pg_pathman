@@ -184,14 +184,13 @@ partition_filter_exec(CustomScanState *node)
 		ranges = walk_expr_tree((Expr *) &state->temp_const, &state->wcxt)->rangeset;
 		parts = get_partition_oids(ranges, &nparts, state->prel);
 
-
 		if (nparts > 1)
 			elog(ERROR, "PartitionFilter selected more than one partition");
 		else if (nparts == 0)
 		{
-			selected_partid = create_partitions_bg_worker(state->partitioned_table,
-														  state->temp_const.constvalue,
-														  state->temp_const.consttype);
+			selected_partid = create_partitions(state->partitioned_table,
+												state->temp_const.constvalue,
+												state->temp_const.consttype);
 
 			/* Now we have to refresh state->wcxt->ranges manually */
 			refresh_walker_context_ranges(&state->wcxt);
