@@ -187,8 +187,8 @@ fill_prel_with_partitions(const Oid *partitions,
 						prel->children[hash] = partitions[i];
 					else
 						elog(ERROR,
-							 "Wrong constraint format for HASH partition %u",
-							 partitions[i]);
+							 "Wrong constraint format for HASH partition \"%s\"",
+							 get_rel_name_or_relid(partitions[i]));
 				}
 				break;
 
@@ -205,13 +205,14 @@ fill_prel_with_partitions(const Oid *partitions,
 					}
 					else
 						elog(ERROR,
-							 "Wrong constraint format for RANGE partition %u",
-							 partitions[i]);
+							 "Wrong constraint format for RANGE partition \"%s\"",
+							 get_rel_name_or_relid(partitions[i]));
 				}
 				break;
 
 			default:
-				elog(ERROR, "Unknown partitioning type for relation %u", prel->key);
+				elog(ERROR, "Unknown partitioning type for relation \"%s\"",
+					 get_rel_name_or_relid(prel->key));
 		}
 	}
 
@@ -237,8 +238,9 @@ fill_prel_with_partitions(const Oid *partitions,
 		for (i = 0; i < PrelChildrenCount(prel); i++)
 		{
 			if (prel->children[i] == InvalidOid)
-				elog(ERROR, "pg_pathman's cache for relation %u "
-							"has not been properly initialized", prel->key);
+				elog(ERROR, "pg_pathman's cache for relation \"%s\" "
+							"has not been properly initialized",
+					 get_rel_name_or_relid(prel->key));
 		}
 #endif
 }

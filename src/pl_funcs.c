@@ -277,7 +277,8 @@ get_range_by_idx(PG_FUNCTION_ARGS)
 
 	prel = get_pathman_relation_info(parent_oid);
 	if (!prel)
-		elog(ERROR, "Cannot get partitioning cache entry for relation %u", parent_oid);
+		elog(ERROR, "Cannot get partitioning cache entry for relation \"%s\"",
+			 get_rel_name_or_relid(parent_oid));
 
 	if (((uint32) abs(idx)) >= PrelChildrenCount(prel))
 		elog(ERROR, "Partition #%d does not exist (max is #%u)",
@@ -334,6 +335,7 @@ get_max_range_value(PG_FUNCTION_ARGS)
 
 	prel = get_pathman_relation_info(parent_oid);
 
+	/* TODO: separate all these checks, they look ugly together */
 	if (!prel || prel->parttype != PT_RANGE || PrelChildrenCount(prel) == 0)
 		PG_RETURN_NULL();
 
@@ -392,6 +394,7 @@ check_overlap(PG_FUNCTION_ARGS)
 Datum
 acquire_partitions_lock(PG_FUNCTION_ARGS)
 {
+	/* FIXME: have to find another way (shmem maybe?) */
 	LWLockAcquire(pmstate->edit_partitions_lock, LW_EXCLUSIVE);
 	PG_RETURN_NULL();
 }
@@ -427,6 +430,32 @@ get_hash(PG_FUNCTION_ARGS)
 }
 
 Datum
+get_attribute_type_name(PG_FUNCTION_ARGS)
+{
+	Oid			relid = PG_GETARG_OID(0);
+	text	   *attname = PG_GETARG_TEXT_P(1);
+	char	   *result;
+	HeapTuple	tp;
+
+	/* NOTE: for now it's the most efficient way */
+	tp = SearchSysCacheAttName(relid, text_to_cstring(attname));
+	if (HeapTupleIsValid(tp))
+	{
+		Form_pg_attribute att_tup = (Form_pg_attribute) GETSTRUCT(tp);
+		result = format_type_be(att_tup->atttypid);
+		ReleaseSysCache(tp);
+
+		PG_RETURN_TEXT_P(cstring_to_text(result));
+	}
+	else
+		elog(ERROR, "Cannot find type name for attribute \"%s\" "
+					"of relation \"%s\"",
+			 text_to_cstring(attname), get_rel_name_or_relid(relid));
+
+	PG_RETURN_NULL(); /* keep compiler happy */
+}
+
+Datum
 build_check_constraint_name_attnum(PG_FUNCTION_ARGS)
 {
 	Oid			relid = PG_GETARG_OID(0);
@@ -459,8 +488,7 @@ build_check_constraint_name_attname(PG_FUNCTION_ARGS)
 
 	if (attnum == InvalidAttrNumber)
 		elog(ERROR, "Relation \"%s\" has no column '%s'",
-			 get_rel_name_or_relid(relid),
-			 text_to_cstring(attname));
+			 get_rel_name_or_relid(relid), text_to_cstring(attname));
 
 	result = build_check_constraint_name_internal(relid, attnum);
 
@@ -471,31 +499,6 @@ Datum
 is_date_type(PG_FUNCTION_ARGS)
 {
 	PG_RETURN_BOOL(is_date_type_internal(PG_GETARG_OID(0)));
-}
-
-Datum
-get_attribute_type_name(PG_FUNCTION_ARGS)
-{
-	Oid			relid = PG_GETARG_OID(0);
-	text	   *attname = PG_GETARG_TEXT_P(1);
-	char	   *result;
-	HeapTuple	tp;
-
-	tp = SearchSysCacheAttName(relid, text_to_cstring(attname));
-	if (HeapTupleIsValid(tp))
-	{
-		Form_pg_attribute att_tup = (Form_pg_attribute) GETSTRUCT(tp);
-		result = format_type_be(att_tup->atttypid);
-		ReleaseSysCache(tp);
-
-		PG_RETURN_TEXT_P(cstring_to_text(result));
-	}
-	else
-		elog(ERROR, "Cannot find type name for attribute \"%s\" "
-					"of relation \"%s\"",
-			 text_to_cstring(attname), get_rel_name_or_relid(relid));
-
-	PG_RETURN_NULL(); /* keep compiler happy */
 }
 
 Datum
@@ -522,7 +525,7 @@ is_attribute_nullable(PG_FUNCTION_ARGS)
 }
 
 /*
- * DEBUG: set breakpoint here.
+ * NOTE: used for DEBUG, set breakpoint here.
  */
 Datum
 debug_capture(PG_FUNCTION_ARGS)

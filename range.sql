@@ -8,7 +8,9 @@
  * ------------------------------------------------------------------------
  */
 
-CREATE OR REPLACE FUNCTION @extschema@.get_sequence_name(plain_schema TEXT, plain_relname TEXT)
+CREATE OR REPLACE FUNCTION @extschema@.get_sequence_name(
+	plain_schema TEXT,
+	plain_relname TEXT)
 RETURNS TEXT AS
 $$
 BEGIN
@@ -17,7 +19,10 @@ END
 $$
 LANGUAGE plpgsql;
 
-CREATE OR REPLACE FUNCTION @extschema@.create_or_replace_sequence(plain_schema TEXT, plain_relname TEXT, OUT seq_name TEXT)
+CREATE OR REPLACE FUNCTION @extschema@.create_or_replace_sequence(
+	plain_schema TEXT,
+	plain_relname TEXT,
+	OUT seq_name TEXT)
 AS $$
 BEGIN
 	seq_name := @extschema@.get_sequence_name(plain_schema, plain_relname);

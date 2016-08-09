@@ -754,7 +754,7 @@ spawn_partitions(const PartRelationInfo *prel,
 		/* ...and create partition */
 		ret = SPI_execute_with_args(query, 3, types, values, nulls, false, 0);
 		if (ret != SPI_OK_SELECT)
-			elog(ERROR, "Could not create partition");
+			elog(ERROR, "Could not spawn a partition");
 
 		/* Set 'last_partition' if necessary */
 		if (last_partition)
@@ -877,7 +877,8 @@ create_partitions_internal(Oid relid, Datum value, Oid value_type)
 			SPI_finish(); /* close SPI connection */
 		}
 		else
-			elog(ERROR, "Relation %u is not partitioned by pg_pathman", relid);
+			elog(ERROR, "Relation \"%s\" is not partitioned by pg_pathman",
+				 get_rel_name_or_relid(relid));
 	}
 	PG_CATCH();
 	{
@@ -928,7 +929,8 @@ create_partitions(Oid relid, Datum value, Oid value_type)
 		}
 	}
 	else
-		elog(ERROR, "Relation %u is not partitioned by pg_pathman", relid);
+		elog(ERROR, "Relation \"%s\" is not partitioned by pg_pathman",
+			 get_rel_name_or_relid(relid));
 
 	/* Check that 'last_partition' is valid */
 	if (last_partition == InvalidOid)
