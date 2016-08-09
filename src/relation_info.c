@@ -19,16 +19,37 @@
 #include "miscadmin.h"
 #include "storage/lmgr.h"
 #include "utils/builtins.h"
-#include "utils/hsearch.h"
 #include "utils/fmgroids.h"
+#include "utils/hsearch.h"
 #include "utils/lsyscache.h"
+#include "utils/memutils.h"
 #include "utils/snapmgr.h"
+
+
+static List *delayed_invalidation_parent_rels = NIL;
+static List *delayed_invalidation_vague_rels = NIL;
+
+/* Add unique Oid to list, allocate in TopMemoryContext */
+#define list_add_unique(list, oid) \
+	do { \
+		MemoryContext old_mcxt = MemoryContextSwitchTo(TopMemoryContext); \
+		list = list_append_unique_oid(list, ObjectIdGetDatum(oid)); \
+		MemoryContextSwitchTo(old_mcxt); \
+	} while (0)
+
+#define free_invalidation_list(list) \
+	do { \
+		list_free(list); \
+		list = NIL; \
+	} while (0)
 
 
 static Oid try_syscache_parent_search(Oid partition, PartParentSearch *status);
 static Oid get_parent_of_partition_internal(Oid partition,
 											PartParentSearch *status,
 											HASHACTION action);
+static bool perform_parent_refresh(Oid parent);
+
 
 #define FreeChildrenArray(prel) \
 	do { \
@@ -103,12 +124,15 @@ refresh_pathman_relation_info(Oid relid,
 	/* Initialize PartRelationInfo using syscache & typcache */
 	prel->attnum	= get_attnum(relid, part_column_name);
 	prel->atttype	= get_atttype(relid, prel->attnum);
-	prel->atttypmod	= get_atttypmod(relid, prel->attnum);
-	prel->attbyval	= get_typbyval(prel->atttype);
+	prel->atttypmod = get_atttypmod(relid, prel->attnum);
 
 	/* Fetch HASH & CMP fuctions for atttype */
 	typcache = lookup_type_cache(prel->atttype,
 								 TYPECACHE_CMP_PROC | TYPECACHE_HASH_PROC);
+
+	prel->attbyval = typcache->typbyval;
+	prel->attlen = typcache->typlen;
+	prel->attalign = typcache->typalign;
 
 	prel->cmp_proc	= typcache->cmp_proc;
 	prel->hash_proc	= typcache->hash_proc;
@@ -142,26 +166,28 @@ refresh_pathman_relation_info(Oid relid,
 	return prel;
 }
 
-/* Invalidate PartRelationInfo cache entry. */
+/* Invalidate PartRelationInfo cache entry. Create new entry if 'found' is NULL */
 void
 invalidate_pathman_relation_info(Oid relid, bool *found)
 {
-	bool				found_prel;
 	PartRelationInfo   *prel = hash_search(partitioned_rels,
 										   (const void *) &relid,
-										   HASH_ENTER, &found_prel);
+										   (found ? HASH_FIND : HASH_ENTER),
+										   found);
 
-	/* We should create entry if it doesn't exist */
-	if (!found_prel)
+	if(found && PrelIsValid(prel))
+	{
+		FreeChildrenArray(prel);
+		FreeRangesArray(prel);
+	}
+	else
 	{
 		prel->children = NULL;
 		prel->ranges = NULL;
 	}
 
-	prel->valid = false; /* now cache entry is invalid */
-
-	/* Set 'found' if needed */
-	if (found) *found = found_prel;
+	if (prel)
+		prel->valid = false; /* now cache entry is invalid */
 
 	elog(DEBUG2,
 		 "Invalidating record for relation %u in pg_pathman's cache [%u]",
@@ -224,6 +250,92 @@ remove_pathman_relation_info(Oid relid)
 	elog(DEBUG2,
 		 "Removing record for relation %u in pg_pathman's cache [%u]",
 		 relid, MyProcPid);
+}
+
+
+/*
+ * Functions for delayed invalidation.
+ */
+
+/* Add new delayed invalidation job for a [ex-]parent relation */
+void
+delay_invalidation_parent_rel(Oid parent)
+{
+	list_add_unique(delayed_invalidation_parent_rels, parent);
+}
+
+/* Add new delayed invalidation job for a vague relation */
+void
+delay_invalidation_vague_rel(Oid vague_rel)
+{
+	list_add_unique(delayed_invalidation_vague_rels, vague_rel);
+}
+
+/* Finish all pending invalidation jobs if possible */
+void
+finish_delayed_invalidation(void)
+{
+	/* Exit early if there's nothing to do */
+	if (delayed_invalidation_parent_rels == NIL &&
+		delayed_invalidation_vague_rels == NIL)
+	{
+		return;
+	}
+
+	/* Check that current state is transactional */
+	if (IsTransactionState())
+	{
+		ListCell *lc;
+
+		//elog(WARNING, "invalidating...");
+
+		/* Process relations that are (or were) definitely partitioned */
+		foreach (lc, delayed_invalidation_parent_rels)
+		{
+			Oid		parent = lfirst_oid(lc);
+
+			if (!pathman_config_contains_relation(parent, NULL, NULL, NULL))
+				remove_pathman_relation_info(parent);
+			else
+				invalidate_pathman_relation_info(parent, NULL);
+		}
+
+		/* Process all other vague cases */
+		foreach (lc, delayed_invalidation_vague_rels)
+		{
+			Oid		vague_rel = lfirst_oid(lc);
+
+			/* It might be a partitioned table or a partition */
+			if (!perform_parent_refresh(vague_rel))
+			{
+				PartParentSearch	search;
+				Oid					parent;
+
+				parent = get_parent_of_partition(vague_rel, &search);
+
+				switch (search)
+				{
+					case PPS_ENTRY_PART_PARENT:
+						perform_parent_refresh(parent);
+						break;
+
+					case PPS_ENTRY_PARENT:
+						remove_pathman_relation_info(parent);
+						break;
+
+					case PPS_NOT_SURE:
+						elog(ERROR, "This should never happen");
+						break;
+
+					default:
+						break;
+				}
+			}
+		}
+
+		free_invalidation_list(delayed_invalidation_parent_rels);
+		free_invalidation_list(delayed_invalidation_vague_rels);
+	}
 }
 
 
@@ -304,7 +416,7 @@ get_parent_of_partition_internal(Oid partition,
 
 	if (ppar)
 	{
-		if (status) *status = PPS_ENTRY_FOUND;
+		if (status) *status = PPS_ENTRY_PART_PARENT;
 		parent = ppar->parent_rel;
 	}
 	/* Try fetching parent from syscache if 'status' is provided */
@@ -354,13 +466,14 @@ try_syscache_parent_search(Oid partition, PartParentSearch *status)
 		{
 			parent = ((Form_pg_inherits) GETSTRUCT(inheritsTuple))->inhparent;
 
+			if (status) *status = PPS_ENTRY_PARENT;
+
 			/* Check that PATHMAN_CONFIG contains this table */
 			if (pathman_config_contains_relation(parent, NULL, NULL, NULL))
 			{
 				/* We've found the entry, update status */
-				if (status) *status = PPS_ENTRY_FOUND;
+				if (status) *status = PPS_ENTRY_PART_PARENT;
 			}
-			else parent = InvalidOid; /* invalidate 'parent' */
 
 			break; /* there should be no more rows */
 		}
@@ -371,6 +484,30 @@ try_syscache_parent_search(Oid partition, PartParentSearch *status)
 
 		return parent;
 	}
+}
+
+static bool
+perform_parent_refresh(Oid parent)
+{
+	Datum	values[Natts_pathman_config];
+	bool	isnull[Natts_pathman_config];
+
+	if (pathman_config_contains_relation(parent, values, isnull, NULL))
+	{
+		text	   *attname;
+		PartType	parttype;
+
+		parttype = DatumGetPartType(values[Anum_pathman_config_parttype - 1]);
+		attname = DatumGetTextP(values[Anum_pathman_config_attname - 1]);
+
+		if (!refresh_pathman_relation_info(parent, parttype,
+										   text_to_cstring(attname)))
+			return false;
+	}
+	else
+		return false;
+
+	return true;
 }
 
 /*

@@ -133,12 +133,12 @@ init_dsm_segment(size_t blocks_count, size_t block_size)
 void
 init_dsm_table(size_t block_size, size_t start, size_t end)
 {
-	int i;
-	BlockHeaderPtr header;
-	char *ptr = dsm_segment_address(segment);
+	size_t			i;
+	BlockHeaderPtr	header;
+	char		   *ptr = dsm_segment_address(segment);
 
 	/* create blocks */
-	for (i=start; i<end; i++)
+	for (i = start; i < end; i++)
 	{
 		header = (BlockHeaderPtr) &ptr[i * block_size];
 		*header = set_free(header);
@@ -250,11 +250,11 @@ alloc_dsm_array(DsmArray *arr, size_t entry_size, size_t elem_count)
 void
 free_dsm_array(DsmArray *arr)
 {
-	int start = arr->offset / dsm_cfg->block_size;
-	int i = 0;
-	char *ptr = dsm_segment_address(segment);
-	BlockHeaderPtr header = (BlockHeaderPtr) &ptr[start * dsm_cfg->block_size];
-	size_t blocks_count = get_length(header);
+	size_t			i = 0,
+					start = arr->offset / dsm_cfg->block_size;
+	char		   *ptr = dsm_segment_address(segment);
+	BlockHeaderPtr	header = (BlockHeaderPtr) &ptr[start * dsm_cfg->block_size];
+	size_t			blocks_count = get_length(header);
 
 	/* set blocks free */
 	for(; i < blocks_count; i++)

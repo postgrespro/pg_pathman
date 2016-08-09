@@ -10,25 +10,28 @@
 
 #include "utils.h"
 
+#include "access/htup_details.h"
 #include "access/nbtree.h"
 #include "access/sysattr.h"
 #include "access/xact.h"
-#include "access/htup_details.h"
 #include "catalog/heap.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_type.h"
 #include "catalog/pg_extension.h"
 #include "commands/extension.h"
 #include "executor/spi.h"
+#include "fmgr.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
 #include "nodes/makefuncs.h"
 #include "optimizer/var.h"
 #include "optimizer/restrictinfo.h"
+#include "parser/parse_oper.h"
 #include "rewrite/rewriteManip.h"
 #include "utils/builtins.h"
 #include "utils/memutils.h"
 #include "utils/lsyscache.h"
+#include "utils/syscache.h"
 #include "utils/fmgroids.h"
 
 
@@ -149,11 +152,12 @@ lock_rows_visitor(Plan *plan, void *context)
 		foreach (mark_lc, tableoids)
 		{
 			TargetEntry	   *te = (TargetEntry *) lfirst(mark_lc);
-			Oid				cur_oid;
+			const char	   *cur_oid_str = &(te->resname[TABLEOID_STR_BASE_LEN]);
+			Datum			cur_oid_datum;
 
-			cur_oid = str_to_oid(&(te->resname[TABLEOID_STR_BASE_LEN]));
+			cur_oid_datum = DirectFunctionCall1(oidin, CStringGetDatum(cur_oid_str));
 
-			if (cur_oid == parent_oid)
+			if (DatumGetObjectId(cur_oid_datum) == parent_oid)
 			{
 				char resname[64];
 
@@ -507,17 +511,6 @@ change_varnos_in_restrinct_info(RestrictInfo *rinfo, change_varno_context *conte
 }
 
 /*
- * Convert number-as-string to Oid.
- */
-Oid
-str_to_oid(const char *cstr)
-{
-	Datum result = DirectFunctionCall1(oidin, CStringGetDatum(cstr));
-
-	return DatumGetObjectId(result);
-}
-
-/*
  * Basic plan tree walker
  *
  * 'visitor' is applied right before return
@@ -619,6 +612,7 @@ rowmark_add_tableoids(Query *parse)
 		TargetEntry	   *tle;
 		char			resname[64];
 
+		/* Check that table is partitioned */
 		if (!get_pathman_relation_info(parent, NULL))
 			continue;
 
@@ -694,4 +688,82 @@ get_pathman_schema(void)
 	heap_close(rel, AccessShareLock);
 
 	return result;
+}
+
+/*
+ * Check if this is a "date"-related type.
+ */
+bool
+is_date_type_internal(Oid typid)
+{
+	return typid == TIMESTAMPOID ||
+		   typid == TIMESTAMPTZOID ||
+		   typid == DATEOID;
+}
+
+/*
+ * Check if this is a string type.
+ */
+bool
+is_string_type_internal(Oid typid)
+{
+	return typid == TEXTOID ||
+		   typid == CSTRINGOID;
+}
+
+/*
+ * Try to find binary operator.
+ *
+ * Returns operator function's Oid or throws an ERROR on InvalidOid.
+ */
+Oid
+get_binary_operator_oid(char *oprname, Oid arg1, Oid arg2)
+{
+	Oid			funcid = InvalidOid;
+	Operator	op;
+
+	op = oper(NULL, list_make1(makeString(oprname)), arg1, arg2, true, -1);
+	if (op)
+	{
+		funcid = oprfuncid(op);
+		ReleaseSysCache(op);
+	}
+	else
+		elog(ERROR, "Cannot find operator \"%s\"(%u, %u)", oprname, arg1, arg2);
+
+	return funcid;
+}
+
+/*
+ * Get CSTRING representation of Datum using the type Oid.
+ */
+char *
+datum_to_cstring(Datum datum, Oid typid)
+{
+	char	   *result;
+	HeapTuple	tup = SearchSysCache1(TYPEOID, ObjectIdGetDatum(typid));
+
+	if (HeapTupleIsValid(tup))
+	{
+		Form_pg_type	typtup = (Form_pg_type) GETSTRUCT(tup);
+		FmgrInfo		finfo;
+
+		fmgr_info(typtup->typoutput, &finfo);
+		result = DatumGetCString(FunctionCall1(&finfo, datum));
+		ReleaseSysCache(tup);
+	}
+	else
+		result = pstrdup("[error]");
+
+	return result;
+}
+
+/*
+ * Try to get relname or at least relid as cstring.
+ */
+char *
+get_rel_name_or_relid(Oid relid)
+{
+	return DatumGetCString(DirectFunctionCall1(regclassout,
+											   ObjectIdGetDatum(relid)));
 }

@@ -29,6 +29,8 @@ typedef struct
 
 #define InvalidDsmArray	{ 0, 0, 0, 0 }
 
+#define INITIAL_BLOCKS_COUNT 8192
+
 
 /* Dynamic shared memory functions */
 Size estimate_dsm_config_size(void);

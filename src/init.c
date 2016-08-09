@@ -396,6 +396,9 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 		   attrs[Anum_pathman_config_partrel - 1]->
 		   atttypid == REGCLASSOID);
 
+	/* Check that number of columns == Natts_pathman_config */
+	Assert(RelationGetDescr(rel)->natts == Natts_pathman_config);
+
 	snapshot = RegisterSnapshot(GetLatestSnapshot());
 	scan = heap_beginscan(rel, snapshot, 1, key);
 
@@ -405,7 +408,15 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 
 		/* Extract data if necessary */
 		if (values && isnull)
-			heap_deformtuple(htup, RelationGetDescr(rel), values, isnull);
+		{
+			heap_deform_tuple(htup, RelationGetDescr(rel), values, isnull);
+
+			/* Perform checks for non-NULL columns */
+			Assert(!isnull[Anum_pathman_config_id - 1]);
+			Assert(!isnull[Anum_pathman_config_partrel - 1]);
+			Assert(!isnull[Anum_pathman_config_attname - 1]);
+			Assert(!isnull[Anum_pathman_config_parttype - 1]);
+		}
 
 		/* Set xmin if necessary */
 		if (xmin)
@@ -457,6 +468,9 @@ read_pathman_config(void)
 		   attrs[Anum_pathman_config_partrel - 1]->
 		   atttypid == REGCLASSOID);
 
+	/* Check that number of columns == Natts_pathman_config */
+	Assert(RelationGetDescr(rel)->natts == Natts_pathman_config);
+
 	snapshot = RegisterSnapshot(GetLatestSnapshot());
 	scan = heap_beginscan(rel, snapshot, 0, NULL);
 
@@ -485,7 +499,7 @@ read_pathman_config(void)
 		/* Check that relation 'relid' exists */
 		if (get_rel_type_id(relid) == InvalidOid)
 		{
-			DisablePathman();
+			DisablePathman(); /* disable pg_pathman since config is broken */
 
 			ereport(ERROR,
 					(errmsg("Table \"%s\" contains nonexistent relation %u",

@@ -23,14 +23,13 @@ typedef struct
 {
 	Oid					partid;
 	ResultRelInfo	   *resultRelInfo;
-} ResultRelInfoHandle;
+} ResultRelInfoHolder;
 
 typedef struct
 {
 	CustomScanState		css;
 
 	Oid					partitioned_table;
-	PartRelationInfo   *prel;
 	OnConflictAction	onConflictAction;
 	ResultRelInfo	   *savedRelInfo;
 
@@ -40,9 +39,7 @@ typedef struct
 	HTAB			   *result_rels_table;
 	HASHCTL				result_rels_table_config;
 
-	WalkerContext		wcxt;
-	bool				wcxt_cached;	/* does wcxt contain cached data,
-										   e.g. RangeEntry array? */
+	bool				warning_triggered;
 } PartitionFilterState;
 
 
@@ -51,6 +48,10 @@ extern bool					pg_pathman_enable_partition_filter;
 extern CustomScanMethods	partition_filter_plan_methods;
 extern CustomExecMethods	partition_filter_exec_methods;
 
+
+void rowmark_add_tableoids(Query *parse);
+
+void postprocess_lock_rows(List *rtable, Plan *plan);
 
 void add_partition_filters(List *rtable, Plan *plan);
 

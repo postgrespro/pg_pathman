@@ -1,7 +1,7 @@
 /* ------------------------------------------------------------------------
  *
  * init.sql
- *      Creates config table and provides common utility functions
+ *		Creates config table and provides common utility functions
  *
  * Copyright (c) 2015-2016, Postgres Professional
  *
@@ -27,57 +27,9 @@ CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
 	CHECK (parttype >= 1 OR parttype <= 2) /* check for allowed part types */
 );
 
+
 SELECT pg_catalog.pg_extension_config_dump('@extschema@.pathman_config', '');
 
-CREATE OR REPLACE FUNCTION @extschema@.on_create_partitions(relid OID)
-RETURNS VOID AS 'pg_pathman', 'on_partitions_created' LANGUAGE C STRICT;
-
-CREATE OR REPLACE FUNCTION @extschema@.on_update_partitions(relid OID)
-RETURNS VOID AS 'pg_pathman', 'on_partitions_updated' LANGUAGE C STRICT;
-
-CREATE OR REPLACE FUNCTION @extschema@.on_remove_partitions(relid OID)
-RETURNS VOID AS 'pg_pathman', 'on_partitions_removed' LANGUAGE C STRICT;
-
-CREATE OR REPLACE FUNCTION @extschema@.find_or_create_range_partition(relid OID, value ANYELEMENT)
-RETURNS OID AS 'pg_pathman', 'find_or_create_range_partition' LANGUAGE C STRICT;
-
-
-/*
- * Returns min and max values for specified RANGE partition.
- */
-CREATE OR REPLACE FUNCTION @extschema@.get_partition_range(
-	parent_relid OID, partition_relid OID, dummy ANYELEMENT)
-RETURNS ANYARRAY AS 'pg_pathman', 'get_partition_range' LANGUAGE C STRICT;
-
-
-/*
- * Returns N-th range (in form of array)
- */
-CREATE OR REPLACE FUNCTION @extschema@.get_range_by_idx(
-	parent_relid OID, idx INTEGER, dummy ANYELEMENT)
-RETURNS ANYARRAY AS 'pg_pathman', 'get_range_by_idx' LANGUAGE C STRICT;
-
-/*
- * Returns min value of the first range for relation
- */
-CREATE OR REPLACE FUNCTION @extschema@.get_min_range_value(
-	parent_relid OID, dummy ANYELEMENT)
-RETURNS ANYELEMENT AS 'pg_pathman', 'get_min_range_value' LANGUAGE C STRICT;
-
-/*
- * Returns max value of the last range for relation
- */
-CREATE OR REPLACE FUNCTION @extschema@.get_max_range_value(
-	parent_relid OID, dummy ANYELEMENT)
-RETURNS ANYELEMENT AS 'pg_pathman', 'get_max_range_value' LANGUAGE C STRICT;
-
-/*
- * Checks if range overlaps with existing partitions.
- * Returns TRUE if overlaps and FALSE otherwise.
- */
-CREATE OR REPLACE FUNCTION @extschema@.check_overlap(
-	parent_relid OID, range_min ANYELEMENT, range_max ANYELEMENT)
-RETURNS BOOLEAN AS 'pg_pathman', 'check_overlap' LANGUAGE C STRICT;
 
 /*
  * Copy rows to partitions
@@ -111,7 +63,6 @@ END
 $$
 LANGUAGE plpgsql;
 
-
 /*
  * Disable pathman partitioning for specified relation
  */
@@ -129,43 +80,6 @@ BEGIN
 END
 $$
 LANGUAGE plpgsql;
-
-
-/*
- * Returns attribute type name for relation
- */
-CREATE OR REPLACE FUNCTION @extschema@.get_attribute_type_name(
-	p_relation REGCLASS
-	, p_attname TEXT
-	, OUT p_atttype TEXT)
-RETURNS TEXT AS
-$$
-BEGIN
-	SELECT typname::TEXT INTO p_atttype
-	FROM pg_type JOIN pg_attribute on atttypid = "oid"
-	WHERE attrelid = p_relation::oid and attname = lower(p_attname);
-END
-$$
-LANGUAGE plpgsql;
-
-
-/*
- * Checks if attribute is nullable
- */
-CREATE OR REPLACE FUNCTION @extschema@.is_attribute_nullable(
-	p_relation REGCLASS
-	, p_attname TEXT
-	, OUT p_nullable BOOLEAN)
-RETURNS BOOLEAN AS
-$$
-BEGIN
-	SELECT NOT attnotnull INTO p_nullable
-	FROM pg_type JOIN pg_attribute on atttypid = "oid"
-	WHERE attrelid = p_relation::oid and attname = lower(p_attname);
-END
-$$
-LANGUAGE plpgsql;
-
 
 /*
  * Aggregates several common relation checks before partitioning. Suitable for every partitioning type.
@@ -217,17 +131,6 @@ END
 $$
 LANGUAGE plpgsql;
 
-
-CREATE OR REPLACE FUNCTION @extschema@.get_plain_relname(cls regclass)
-RETURNS TEXT AS
-$$
-BEGIN
-	RETURN relname FROM pg_class WHERE oid = cls::oid;
-END
-$$
-LANGUAGE plpgsql;
-
-
 /*
  * Validates relation name. It must be schema qualified
  */
@@ -239,7 +142,6 @@ BEGIN
 END
 $$
 LANGUAGE plpgsql;
-
 
 /*
  * Returns schema-qualified name for table
@@ -289,18 +191,6 @@ $$
 LANGUAGE plpgsql;
 
 /*
- * Check if regclass if date or timestamp
- */
-CREATE OR REPLACE FUNCTION @extschema@.is_date(cls REGTYPE)
-RETURNS BOOLEAN AS
-$$
-BEGIN
-	RETURN cls IN ('timestamp'::regtype, 'timestamptz'::regtype, 'date'::regtype);
-END
-$$
-LANGUAGE plpgsql;
-
-/*
  * DDL trigger that deletes entry from pathman_config table
  */
 CREATE OR REPLACE FUNCTION @extschema@.pathman_ddl_trigger_func()
@@ -321,22 +211,6 @@ BEGIN
 END
 $$
 LANGUAGE plpgsql;
-
-CREATE EVENT TRIGGER pathman_ddl_trigger
-ON sql_drop
-EXECUTE PROCEDURE @extschema@.pathman_ddl_trigger_func();
-
-/*
- * Acquire partitions lock to prevent concurrent partitions creation
- */
-CREATE OR REPLACE FUNCTION @extschema@.acquire_partitions_lock()
-RETURNS VOID AS 'pg_pathman', 'acquire_partitions_lock' LANGUAGE C STRICT;
-
-/*
- * Release partitions lock
- */
-CREATE OR REPLACE FUNCTION @extschema@.release_partitions_lock()
-RETURNS VOID AS 'pg_pathman', 'release_partitions_lock' LANGUAGE C STRICT;
 
 /*
  * Drop trigger
@@ -410,18 +284,122 @@ END
 $$ LANGUAGE plpgsql
 SET pg_pathman.enable_partitionfilter = off;
 
+
+
+CREATE EVENT TRIGGER pathman_ddl_trigger
+ON sql_drop
+EXECUTE PROCEDURE @extschema@.pathman_ddl_trigger_func();
+
+
+/*
+ * Acquire partitions lock to prevent concurrent partitions creation
+ */
+CREATE OR REPLACE FUNCTION @extschema@.acquire_partitions_lock()
+RETURNS VOID AS 'pg_pathman', 'acquire_partitions_lock'
+LANGUAGE C STRICT;
+
+/*
+ * Release partitions lock
+ */
+CREATE OR REPLACE FUNCTION @extschema@.release_partitions_lock()
+RETURNS VOID AS 'pg_pathman', 'release_partitions_lock'
+LANGUAGE C STRICT;
+
+/*
+ * Check if regclass is date or timestamp
+ */
+CREATE OR REPLACE FUNCTION @extschema@.is_date_type(cls REGTYPE)
+RETURNS BOOLEAN AS 'pg_pathman', 'is_date_type'
+LANGUAGE C STRICT;
+
+/*
+ * Checks if range overlaps with existing partitions.
+ * Returns TRUE if overlaps and FALSE otherwise.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.check_overlap(
+	parent_relid OID, range_min ANYELEMENT, range_max ANYELEMENT)
+RETURNS BOOLEAN AS 'pg_pathman', 'check_overlap'
+LANGUAGE C STRICT;
+
+
+CREATE OR REPLACE FUNCTION @extschema@.on_create_partitions(relid OID)
+RETURNS VOID AS 'pg_pathman', 'on_partitions_created'
+LANGUAGE C STRICT;
+
+CREATE OR REPLACE FUNCTION @extschema@.on_update_partitions(relid OID)
+RETURNS VOID AS 'pg_pathman', 'on_partitions_updated'
+LANGUAGE C STRICT;
+
+CREATE OR REPLACE FUNCTION @extschema@.on_remove_partitions(relid OID)
+RETURNS VOID AS 'pg_pathman', 'on_partitions_removed'
+LANGUAGE C STRICT;
+
+
+CREATE OR REPLACE FUNCTION @extschema@.find_or_create_range_partition(relid OID, value ANYELEMENT)
+RETURNS OID AS 'pg_pathman', 'find_or_create_range_partition'
+LANGUAGE C STRICT;
+
+
+/*
+ * Returns min and max values for specified RANGE partition.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_partition_range(
+	parent_relid OID, partition_relid OID, dummy ANYELEMENT)
+RETURNS ANYARRAY AS 'pg_pathman', 'get_partition_range'
+LANGUAGE C STRICT;
+
+
+/*
+ * Returns N-th range (in form of array)
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_range_by_idx(
+	parent_relid OID, idx INTEGER, dummy ANYELEMENT)
+RETURNS ANYARRAY AS 'pg_pathman', 'get_range_by_idx'
+LANGUAGE C STRICT;
+
+/*
+ * Returns min value of the first range for relation
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_min_range_value(
+	parent_relid OID, dummy ANYELEMENT)
+RETURNS ANYELEMENT AS 'pg_pathman', 'get_min_range_value'
+LANGUAGE C STRICT;
+
+/*
+ * Returns max value of the last range for relation
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_max_range_value(
+	parent_relid OID, dummy ANYELEMENT)
+RETURNS ANYELEMENT AS 'pg_pathman', 'get_max_range_value'
+LANGUAGE C STRICT;
+
 /*
  * Returns hash function OID for specified type
  */
 CREATE OR REPLACE FUNCTION @extschema@.get_type_hash_func(OID)
-RETURNS OID AS 'pg_pathman', 'get_type_hash_func' LANGUAGE C STRICT;
+RETURNS OID AS 'pg_pathman', 'get_type_hash_func'
+LANGUAGE C STRICT;
 
 /*
  * Calculates hash for integer value
  */
 CREATE OR REPLACE FUNCTION @extschema@.get_hash(INTEGER, INTEGER)
-RETURNS INTEGER AS 'pg_pathman', 'get_hash' LANGUAGE C STRICT;
+RETURNS INTEGER AS 'pg_pathman', 'get_hash'
+LANGUAGE C STRICT;
 
+/*
+ * Checks if attribute is nullable
+ */
+CREATE OR REPLACE FUNCTION @extschema@.is_attribute_nullable(REGCLASS, TEXT)
+RETURNS BOOLEAN AS 'pg_pathman', 'is_attribute_nullable'
+LANGUAGE C STRICT;
+
+/*
+ * Returns attribute type name for relation
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_attribute_type_name(REGCLASS, TEXT)
+RETURNS TEXT AS 'pg_pathman', 'get_attribute_type_name'
+LANGUAGE C STRICT;
 
 /*
  * Build check constraint name for a specified relation's column
@@ -432,4 +410,11 @@ LANGUAGE C STRICT;
 
 CREATE OR REPLACE FUNCTION @extschema@.build_check_constraint_name(REGCLASS, TEXT)
 RETURNS TEXT AS 'pg_pathman', 'build_check_constraint_name_attname'
+LANGUAGE C STRICT;
+
+/*
+ * DEBUG: Place this inside some plpgsql fuction and set breakpoint.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.debug_capture()
+RETURNS VOID AS 'pg_pathman', 'debug_capture'
 LANGUAGE C STRICT;

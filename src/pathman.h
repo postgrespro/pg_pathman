@@ -33,8 +33,13 @@
 	#error "You are trying to build pg_pathman with PostgreSQL version lower than 9.5.  Please, check your environment."
 #endif
 
-#define ALL NIL
-#define INITIAL_BLOCKS_COUNT 8192
+/* Print Datum as CString to server log */
+#ifdef USE_ASSERT_CHECKING
+#include "utils.h"
+#define DebugPrintDatum(datum, typid) ( datum_to_cstring((datum), (typid)) )
+#elif
+#define DebugPrintDatum(datum, typid) ( "[use --enable-cassert]" )
+#endif
 
 
 /*
@@ -47,6 +52,9 @@
 #define Anum_pathman_config_attname			3
 #define Anum_pathman_config_parttype		4
 #define Anum_pathman_config_range_interval	5
+
+/* type modifier (typmod) for 'range_interval' */
+#define PATHMAN_CONFIG_interval_typmod		-1
 
 #define PATHMAN_CONFIG_partrel_idx			"pathman_config_partrel_idx"
 
@@ -98,6 +106,7 @@ extern PathmanState    *pmstate;
 #define DisablePathman() \
 	do { \
 		pg_pathman_enable = false; \
+		initialization_needed = true; \
 	} while (0)
 
 
@@ -110,7 +119,6 @@ search_rangerel_result search_range_partition_eq(const Datum value,
 												 const PartRelationInfo *prel,
 												 RangeEntry *out_re);
 
-Oid create_partitions_bg_worker(Oid relid, Datum value, Oid value_type);
 uint32 make_hash(uint32 value, uint32 partitions);
 
 void handle_modification_query(Query *parse);
@@ -121,8 +129,9 @@ void disable_inheritance_subselect(Query *parse);
 /* copied from allpaths.h */
 void set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
 						 Index rti, RangeTblEntry *rte);
-void set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTblEntry *rte,
-							 PathKey *pathkeyAsc, PathKey *pathkeyDesc);
+void set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
+							 RangeTblEntry *rte, PathKey *pathkeyAsc,
+							 PathKey *pathkeyDesc);
 
 typedef struct
 {
@@ -138,19 +147,7 @@ typedef struct
 	/* Main partitioning structure */
 	const PartRelationInfo *prel;
 
-	/* Long-living context for cached values */
-	MemoryContext			persistent_mcxt;
-
-	/* Cached values */
-	const RangeEntry	   *ranges;		/* cached RangeEntry array (copy) */
-	size_t					nranges;	/* number of RangeEntries */
 	ExprContext			   *econtext;	/* for ExecEvalExpr() */
-
-	/* Runtime values */
-	bool					hasLeast,
-							hasGreatest;
-	Datum					least,
-							greatest;
 
 	bool					for_insert;	/* are we in PartitionFilter now? */
 } WalkerContext;
@@ -158,55 +155,30 @@ typedef struct
 /*
  * Usual initialization procedure for WalkerContext
  */
-#define InitWalkerContext(context, prel_info, ecxt, mcxt, for_ins) \
+#define InitWalkerContext(context, prel_info, ecxt, for_ins) \
 	do { \
 		(context)->prel = (prel_info); \
 		(context)->econtext = (ecxt); \
-		(context)->ranges = NULL; \
-		(context)->nranges = 0; \
-		(context)->hasLeast = false; \
-		(context)->hasGreatest = false; \
-		(context)->persistent_mcxt = (mcxt); \
 		(context)->for_insert = (for_ins); \
-	} while (0)
-
-/*
- * We'd like to persist RangeEntry (ranges) array
- * in case of range partitioning, so 'wcxt' is stored
- * inside of Custom Node
- */
-#define InitWalkerContextCustomNode(context, prel_info, ecxt, mcxt, for_ins, isCached) \
-	do { \
-		if (!*isCached) \
-		{ \
-			(context)->prel = prel_info; \
-			(context)->econtext = ecxt; \
-			(context)->ranges = NULL; \
-			(context)->nranges = 0; \
-			(context)->persistent_mcxt = (mcxt); \
-			(context)->for_insert = (for_ins); \
-			*isCached = true; \
-		} \
-		(context)->hasLeast = false; \
-		(context)->hasGreatest = false; \
 	} while (0)
 
 /* Check that WalkerContext contains ExprContext (plan execution stage) */
 #define WcxtHasExprContext(wcxt) ( (wcxt)->econtext )
 
-Oid create_partitions_internal(Oid relid, Datum value, Oid value_type);
+/*
+ * Functions for partition creation, use create_partitions().
+ */
 Oid create_partitions(Oid relid, Datum value, Oid value_type);
+Oid create_partitions_bg_worker(Oid relid, Datum value, Oid value_type);
+Oid create_partitions_internal(Oid relid, Datum value, Oid value_type);
 
 void select_range_partitions(const Datum value,
 							 FmgrInfo *cmp_func,
 							 const RangeEntry *ranges,
-							 const size_t nranges,
+							 const int nranges,
 							 const int strategy,
 							 WrapperNode *result);
 
 WrapperNode *walk_expr_tree(Expr *expr, WalkerContext *context);
-void finish_least_greatest(WrapperNode *wrap, WalkerContext *context);
-void refresh_walker_context_ranges(WalkerContext *context);
-void clear_walker_context(WalkerContext *context);
 
 #endif   /* PATHMAN_H */

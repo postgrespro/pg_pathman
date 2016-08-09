@@ -14,6 +14,7 @@
 #include "dsm_array.h"
 
 #include "postgres.h"
+#include "access/attnum.h"
 #include "port/atomics.h"
 
 
@@ -51,10 +52,12 @@ typedef struct
 	RangeEntry	   *ranges;			/* per-partition range entry or NULL */
 
 	PartType		parttype;		/* partitioning type (HASH | RANGE) */
-	Index			attnum;			/* partitioned column's index */
+	AttrNumber		attnum;			/* partitioned column's index */
 	Oid				atttype;		/* partitioned column's type */
-	int32			atttypmod;		/* partitioned column's type modifier */
+	int32			atttypmod;		/* partitioned column type modifier */
 	bool			attbyval;		/* is partitioned column stored by value? */
+	int16			attlen;			/* length of the partitioned column's type */
+	int				attalign;
 
 	Oid				cmp_proc,		/* comparison fuction for 'atttype' */
 					hash_proc;		/* hash function for 'atttype' */
@@ -92,7 +95,8 @@ typedef struct
 typedef enum
 {
 	PPS_ENTRY_NOT_FOUND = 0,
-	PPS_ENTRY_FOUND,		/* entry was found in pathman's or system cache */
+	PPS_ENTRY_PARENT,		/* entry was found, but pg_pathman doesn't know it */
+	PPS_ENTRY_PART_PARENT,	/* entry is parent and is known by pg_pathman */
 	PPS_NOT_SURE			/* can't determine (not transactional state) */
 } PartParentSearch;
 
@@ -103,7 +107,7 @@ typedef enum
 
 #define PrelChildrenCount(prel) ( (prel)->children_count )
 
-#define PrelIsValid(prel) ( (prel)->valid )
+#define PrelIsValid(prel) ( (prel) && (prel)->valid )
 
 
 PartRelationInfo *refresh_pathman_relation_info(Oid relid,
@@ -112,6 +116,10 @@ PartRelationInfo *refresh_pathman_relation_info(Oid relid,
 void invalidate_pathman_relation_info(Oid relid, bool *found);
 void remove_pathman_relation_info(Oid relid);
 PartRelationInfo *get_pathman_relation_info(Oid relid, bool *found);
+
+void delay_invalidation_parent_rel(Oid parent);
+void delay_invalidation_vague_rel(Oid vague_rel);
+void finish_delayed_invalidation(void);
 
 void cache_parent_of_partition(Oid partition, Oid parent);
 Oid forget_parent_of_partition(Oid partition, PartParentSearch *status);

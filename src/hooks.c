@@ -45,7 +45,6 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	ListCell		   *lc;
 	WalkerContext		context;
 	double				paramsel;
-	bool				context_initialized;
 	bool				innerrel_rinfo_contains_part_attr;
 
 	/* Call hooks set by other extensions */
@@ -87,16 +86,12 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		otherclauses = NIL;
 	}
 
-	context_initialized = false;
 	paramsel = 1.0;
 	foreach (lc, joinclauses)
 	{
 		WrapperNode *wrap;
 
-		/* We aim to persist cached context->ranges */
-		InitWalkerContextCustomNode(&context, inner_prel, NULL,
-									CurrentMemoryContext, false,
-									&context_initialized);
+		InitWalkerContext(&context, inner_prel, NULL, false);
 
 		wrap = walk_expr_tree((Expr *) lfirst(lc), &context);
 		paramsel *= wrap->paramsel;
@@ -234,16 +229,14 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 		ranges = list_make1_irange(make_irange(0, PrelChildrenCount(prel) - 1, false));
 
 		/* Make wrappers over restrictions and collect final rangeset */
-		InitWalkerContext(&context, prel, NULL, CurrentMemoryContext, false);
+		InitWalkerContext(&context, prel, NULL, false);
 		wrappers = NIL;
 		foreach(lc, rel->baserestrictinfo)
 		{
 			WrapperNode	   *wrap;
-			RestrictInfo   *rinfo = (RestrictInfo*) lfirst(lc);
+			RestrictInfo   *rinfo = (RestrictInfo *) lfirst(lc);
 
 			wrap = walk_expr_tree(rinfo->clause, &context);
-			if (!lc->next)
-				finish_least_greatest(wrap, &context);
 
 			paramsel *= wrap->paramsel;
 			wrappers = lappend(wrappers, wrap);
@@ -462,10 +455,15 @@ pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
 	/* Load config if pg_pathman exists & it's still necessary */
 	if (IsPathmanEnabled() &&
 		initialization_needed &&
+		/* Now evaluate the most expensive clause */
 		get_pathman_schema() != InvalidOid)
 	{
-		load_config();
+		load_config(); /* perform main cache initialization */
 	}
+
+	/* Finish delayed invalidation jobs */
+	if (IsPathmanReady())
+		finish_delayed_invalidation();
 
 	inheritance_disabled_relids = NIL;
 	inheritance_enabled_relids = NIL;
@@ -500,31 +498,39 @@ pathman_relcache_hook(Datum arg, Oid relid)
 	/* Invalidate PartParentInfo cache if needed */
 	partitioned_table = forget_parent_of_partition(relid, &search);
 
-	/* It is (or was) a valid partition */
-	if (partitioned_table != InvalidOid)
+	switch (search)
 	{
-		elog(DEBUG2, "Invalidation message for partition %u [%u]",
-			 relid, MyProcPid);
+		/* It is (or was) a valid partition */
+		case PPS_ENTRY_PART_PARENT:
+		case PPS_ENTRY_PARENT:
+			{
+				elog(DEBUG2, "Invalidation message for partition %u [%u]",
+					 relid, MyProcPid);
 
-		/* Invalidate PartRelationInfo cache */
-		invalidate_pathman_relation_info(partitioned_table, NULL);
+				delay_invalidation_parent_rel(partitioned_table);
+			}
+			break;
 
-		/* TODO: add table to 'invalidated_rel' list */
-	}
+		/* Both syscache and pathman's cache say it isn't a partition */
+		case PPS_ENTRY_NOT_FOUND:
+			{
+				elog(DEBUG2, "Invalidation message for relation %u [%u]",
+					 relid, MyProcPid);
+			}
+			break;
 
-	/* Both syscache and pathman's cache say it isn't a partition */
-	else if (search == PPS_ENTRY_NOT_FOUND)
-	{
-		elog(DEBUG2, "Invalidation message for relation %u [%u]",
-			 relid, MyProcPid);
-	}
+		/* We can't say anything (state is not transactional) */
+		case PPS_NOT_SURE:
+			{
+				elog(DEBUG2, "Invalidation message for vague relation %u [%u]",
+					 relid, MyProcPid);
 
-	/* We can't say anything (state is not transactional) */
-	else if (search == PPS_NOT_SURE)
-	{
-		elog(DEBUG2, "Invalidation message for vague relation %u [%u]",
-			 relid, MyProcPid);
+				delay_invalidation_vague_rel(relid);
+			}
+			break;
 
-		/* TODO: add table to 'PPS_NOT_SURE' list */
+		default:
+			elog(ERROR, "Not implemented yet");
+			break;
 	}
 }

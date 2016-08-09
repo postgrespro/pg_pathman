@@ -68,7 +68,8 @@ BEGIN
 
 	RETURN partitions_count;
 END
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql
+SET client_min_messages = WARNING;
 
 /*
  * Creates an update trigger

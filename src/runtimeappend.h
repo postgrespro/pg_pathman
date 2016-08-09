@@ -33,7 +33,6 @@ typedef struct
 {
 	CustomScanState		css;
 	Oid					relid;		/* relid of the partitioned table */
-	PartRelationInfo   *prel;
 
 	/* Restrictions to be checked during ReScan and Exec */
 	List			   *custom_exprs;

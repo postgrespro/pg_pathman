@@ -26,42 +26,54 @@ typedef struct
 } change_varno_context;
 
 
-void execute_on_xact_mcxt_reset(MemoryContext xact_context,
-								MemoryContextCallbackFunction cb_proc,
-								void *arg);
-
-bool clause_contains_params(Node *clause);
-
+/*
+ * Plan tree modification.
+ */
+void plan_tree_walker(Plan *plan,
+					  void (*visitor) (Plan *plan, void *context),
+					  void *context);
 List * build_index_tlist(PlannerInfo *root,
 						 IndexOptInfo *index,
 						 Relation heapRelation);
-
-bool check_rinfo_for_partitioned_attr(List *rinfo,
-									  Index varno,
-									  AttrNumber varattno);
-
+void change_varnos(Node *node, Oid old_varno, Oid new_varno);
 TriggerDesc * append_trigger_descs(TriggerDesc *src,
 								   TriggerDesc *more,
 								   bool *grown_up);
 
+/*
+ * Rowmark processing.
+ */
+void rowmark_add_tableoids(Query *parse);
+void postprocess_lock_rows(List *rtable, Plan *plan);
+
+/*
+ * Various traits.
+ */
+bool clause_contains_params(Node *clause);
+bool is_date_type_internal(Oid typid);
+bool is_string_type_internal(Oid typid);
+bool check_rinfo_for_partitioned_attr(List *rinfo,
+									  Index varno,
+									  AttrNumber varattno);
+
+/*
+ * Misc.
+ */
+Oid get_pathman_schema(void);
+List * list_reverse(List *l);
+
+/*
+ * Handy execution-stage functions.
+ */
+char * get_rel_name_or_relid(Oid relid);
+Oid get_binary_operator_oid(char *opname, Oid arg1, Oid arg2);
 void fill_type_cmp_fmgr_info(FmgrInfo *finfo,
 							 Oid type1,
 							 Oid type2);
+void execute_on_xact_mcxt_reset(MemoryContext xact_context,
+								MemoryContextCallbackFunction cb_proc,
+								void *arg);
+char * datum_to_cstring(Datum datum, Oid typid);
 
-List * list_reverse(List *l);
-
-void change_varnos(Node *node, Oid old_varno, Oid new_varno);
-
-Oid str_to_oid(const char *cstr);
-
-void plan_tree_walker(Plan *plan,
-					  void (*visitor) (Plan *plan, void *context),
-					  void *context);
-
-void rowmark_add_tableoids(Query *parse);
-
-void postprocess_lock_rows(List *rtable, Plan *plan);
-
-Oid get_pathman_schema(void);
 
 #endif

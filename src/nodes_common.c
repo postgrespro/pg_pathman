@@ -241,19 +241,19 @@ unpack_runtimeappend_private(RuntimeAppendState *scan_state, CustomScan *cscan)
 
 /* Transform partition ranges into plain array of partition Oids */
 Oid *
-get_partition_oids(List *ranges, int *n, PartRelationInfo *prel)
+get_partition_oids(List *ranges, int *n, const PartRelationInfo *prel)
 {
 	ListCell   *range_cell;
-	int			allocated = INITIAL_ALLOC_NUM;
-	int			used = 0;
+	uint32		allocated = INITIAL_ALLOC_NUM;
+	uint32		used = 0;
 	Oid		   *result = (Oid *) palloc(allocated * sizeof(Oid));
 	Oid		   *children = PrelGetChildrenArray(prel, true);
 
 	foreach (range_cell, ranges)
 	{
-		int i;
-		int a = lfirst_irange(range_cell).ir_lower;
-		int b = lfirst_irange(range_cell).ir_upper;
+		uint32	i;
+		uint32	a = lfirst_irange(range_cell).ir_lower,
+				b = lfirst_irange(range_cell).ir_upper;
 
 		for (i = a; i <= b; i++)
 		{
@@ -263,7 +263,7 @@ get_partition_oids(List *ranges, int *n, PartRelationInfo *prel)
 				result = repalloc(result, allocated * sizeof(Oid));
 			}
 
-			Assert(i < PrelChildrenCount(prel));
+			Assert(i < (uint32) abs(PrelChildrenCount(prel)));
 			result[used++] = children[i];
 		}
 	}
@@ -412,10 +412,6 @@ create_append_scan_state_common(CustomScan *node,
 
 	unpack_runtimeappend_private(scan_state, node);
 
-	/* Fill in relation info using main table's relid */
-	scan_state->prel = get_pathman_relation_info(scan_state->relid, NULL);
-	Assert(scan_state->prel);
-
 	scan_state->cur_plans = NULL;
 	scan_state->ncur_plans = 0;
 	scan_state->running_idx = 0;
@@ -485,7 +481,6 @@ end_append_common(CustomScanState *node)
 {
 	RuntimeAppendState *scan_state = (RuntimeAppendState *) node;
 
-	clear_walker_context(&scan_state->wcxt);
 	clear_plan_states(&scan_state->css);
 	hash_destroy(scan_state->children_table);
 }
@@ -495,17 +490,18 @@ rescan_append_common(CustomScanState *node)
 {
 	RuntimeAppendState *scan_state = (RuntimeAppendState *) node;
 	ExprContext		   *econtext = node->ss.ps.ps_ExprContext;
-	PartRelationInfo   *prel = scan_state->prel;
+	PartRelationInfo   *prel;
 	List			   *ranges;
 	ListCell		   *lc;
 	Oid				   *parts;
 	int					nparts;
 
+	prel = get_pathman_relation_info(scan_state->relid, NULL);
+	Assert(prel);
+
 	ranges = list_make1_irange(make_irange(0, PrelChildrenCount(prel) - 1, false));
 
-	InitWalkerContextCustomNode(&scan_state->wcxt, scan_state->prel,
-								econtext, CurrentMemoryContext, false,
-								&scan_state->wcxt_cached);
+	InitWalkerContext(&scan_state->wcxt, prel, econtext, false);
 
 	foreach (lc, scan_state->custom_exprs)
 	{

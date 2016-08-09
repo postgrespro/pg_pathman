@@ -19,23 +19,28 @@
 
 #include "postgres.h"
 #include "access/heapam.h"
+#include "access/htup_details.h"
 #include "access/transam.h"
 #include "access/xact.h"
+#include "catalog/pg_cast.h"
 #include "catalog/pg_type.h"
 #include "executor/spi.h"
+#include "foreign/fdwapi.h"
+#include "fmgr.h"
 #include "miscadmin.h"
 #include "optimizer/clauses.h"
 #include "optimizer/prep.h"
 #include "optimizer/restrictinfo.h"
 #include "optimizer/cost.h"
-#include "utils/rel.h"
+#include "utils/builtins.h"
+#include "utils/datum.h"
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
+#include "utils/memutils.h"
+#include "utils/rel.h"
+#include "utils/syscache.h"
 #include "utils/selfuncs.h"
 #include "utils/snapmgr.h"
-#include "utils/memutils.h"
-#include "foreign/fdwapi.h"
-#include "fmgr.h"
 
 
 PG_MODULE_MAGIC;
@@ -53,6 +58,12 @@ void _PG_init(void);
 /* Utility functions */
 static Node *wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue);
 static bool disable_inheritance_subselect_walker(Node *node, void *context);
+
+/* "Partition creation"-related functions */
+static bool spawn_partitions(const PartRelationInfo *prel, FmgrInfo *cmp_proc,
+							 Datum interval_binary, Oid interval_type,
+							 Datum leading_bound, Datum value, bool forward,
+							 Oid *last_partition);
 
 /* Expression tree handlers */
 static WrapperNode *handle_const(const Const *c, WalkerContext *context);
@@ -83,16 +94,16 @@ static Path *get_cheapest_parameterized_child_path(PlannerInfo *root, RelOptInfo
  * flinfo is a pointer to an instance of FmgrInfo
  * arg1, arg2 are Datum instances
  */
-#define check_lt(flinfo, arg1, arg2) \
-	((int) FunctionCall2(cmp_func, arg1, arg2) < 0)
-#define check_le(flinfo, arg1, arg2) \
-	((int) FunctionCall2(cmp_func, arg1, arg2) <= 0)
-#define check_eq(flinfo, arg1, arg2) \
-	((int) FunctionCall2(cmp_func, arg1, arg2) == 0)
-#define check_ge(flinfo, arg1, arg2) \
-	((int) FunctionCall2(cmp_func, arg1, arg2) >= 0)
-#define check_gt(flinfo, arg1, arg2) \
-	((int) FunctionCall2(cmp_func, arg1, arg2) > 0)
+#define check_lt(finfo, arg1, arg2) \
+	((int) FunctionCall2(finfo, arg1, arg2) < 0)
+#define check_le(finfo, arg1, arg2) \
+	((int) FunctionCall2(finfo, arg1, arg2) <= 0)
+#define check_eq(finfo, arg1, arg2) \
+	((int) FunctionCall2(finfo, arg1, arg2) == 0)
+#define check_ge(finfo, arg1, arg2) \
+	((int) FunctionCall2(finfo, arg1, arg2) >= 0)
+#define check_gt(finfo, arg1, arg2) \
+	((int) FunctionCall2(finfo, arg1, arg2) > 0)
 
 /* We can transform Param into Const provided that 'econtext' is available */
 #define IsConstValue(wcxt, node) \
@@ -178,7 +189,7 @@ disable_inheritance(Query *parse)
 			case RTE_RELATION:
 				if (rte->inh)
 				{
-					/* Look up this relation in pathman relations */
+					/* Look up this relation in pathman local cache */
 					prel = get_pathman_relation_info(rte->relid, NULL);
 					if (prel)
 					{
@@ -309,10 +320,8 @@ handle_modification_query(Query *parse)
 		return;
 
 	/* Parse syntax tree and extract partition ranges */
-	InitWalkerContext(&context, prel, NULL, CurrentMemoryContext, false);
+	InitWalkerContext(&context, prel, NULL, false);
 	wrap = walk_expr_tree(expr, &context);
-	finish_least_greatest(wrap, &context);
-	clear_walker_context(&context);
 
 	ranges = irange_list_intersect(ranges, wrap->rangeset);
 
@@ -342,7 +351,7 @@ set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
 	foreach(l, root->append_rel_list)
 	{
 		AppendRelInfo *appinfo = (AppendRelInfo *) lfirst(l);
-		int			childRTindex,
+		Index		childRTindex,
 					parentRTindex = rti;
 		RelOptInfo *childrel;
 
@@ -627,46 +636,6 @@ wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue)
 }
 
 /*
- * Refresh cached RangeEntry array within WalkerContext
- *
- * This is essential when we add new partitions
- * while executing INSERT query on partitioned table.
- */
-void
-refresh_walker_context_ranges(WalkerContext *context)
-{
-	MemoryContext	old_mcxt;
-	Oid				partitioned_table = context->prel->key;
-
-	context->prel = get_pathman_relation_info(partitioned_table, NULL);
-
-	/* Clear old cached data */
-	clear_walker_context(context);
-
-	/* Switch to long-living context which should store data */
-	old_mcxt = MemoryContextSwitchTo(context->persistent_mcxt);
-
-	context->ranges = PrelGetRangesArray(context->prel, true);
-	context->nranges = PrelChildrenCount(context->prel);
-
-	/* Switch back */
-	MemoryContextSwitchTo(old_mcxt);
-}
-
-/*
- * Free all temporary data cached by WalkerContext
- */
-void
-clear_walker_context(WalkerContext *context)
-{
-	if (context->ranges)
-	{
-		context->ranges = NULL;
-		context->nranges = 0;
-	}
-}
-
-/*
  * Recursive function to walk through conditions tree
  */
 WrapperNode *
@@ -709,41 +678,111 @@ walk_expr_tree(Expr *expr, WalkerContext *context)
 	}
 }
 
-void
-finish_least_greatest(WrapperNode *wrap, WalkerContext *context)
+/*
+ * Append\prepend partitions if there's no partition to store 'value'.
+ *
+ * Used by create_partitions_internal().
+ *
+ * NB: 'value' type is not needed since we've already taken
+ * it into account while searching for the 'cmp_proc'.
+ */
+static bool
+spawn_partitions(const PartRelationInfo *prel,
+				 FmgrInfo *cmp_proc,	/* cmp(value, leading_bound) */
+				 Datum interval_binary,	/* interval in binary form */
+				 Oid interval_type,		/* INTERVALOID or prel->atttype */
+				 Datum leading_bound,	/* current global min\max */
+				 Datum value,			/* type isn't needed */
+				 bool forward,
+				 Oid *last_partition)	/* append\prepend */
 {
-	if (context->hasLeast && context->hasGreatest)
+/* Cache "+"(leading_bound, interval) or "-"(leading_bound, interval) operator */
+#define CacheOperator(finfo, opname, arg1, arg2, is_cached) \
+	do { \
+		if (!is_cached) \
+		{ \
+			fmgr_info(get_binary_operator_oid((opname), (arg1), (arg2)), \
+					  (finfo)); \
+			is_cached = true; \
+		} \
+	} while (0)
+
+/* Use "<" for prepend & ">=" for append */
+#define do_compare(compar, a, b, fwd) \
+	( \
+		(fwd) ? \
+			check_ge((compar), (a), (b)) : \
+			check_lt((compar), (a), (b)) \
+	)
+
+	FmgrInfo 	interval_move_bound; /* move upper\lower boundary */
+	bool		interval_move_bound_cached = false;
+	bool		done = false;
+
+	Datum		cur_part_leading = leading_bound;
+
+	char	   *query;
+
+	/* Create querty statement */
+	query = psprintf("SELECT part::regclass "
+					 "FROM %s.create_single_range_partition($1, $2, $3) AS part",
+					 get_namespace_name(get_pathman_schema()));
+
+	/* Execute comparison function cmp(value, cur_part_leading) */
+	while ((done = do_compare(cmp_proc, value, cur_part_leading, forward)))
 	{
-		switch (context->prel->atttype)
+		char   *nulls = NULL; /* no params are NULL */
+		Oid		types[3] = { REGCLASSOID, prel->atttype, prel->atttype };
+		Datum	values[3];
+		int		ret;
+
+		/* Assign the 'following' boundary to current 'leading' value */
+		Datum	cur_part_following = cur_part_leading;
+
+		CacheOperator(&interval_move_bound, (forward ? "+" : "-"),
+					  prel->atttype, interval_type, interval_move_bound_cached);
+
+		/* Move leading bound by interval (leading +\- INTERVAL) */
+		cur_part_leading = FunctionCall2(&interval_move_bound,
+										 cur_part_leading,
+										 interval_binary);
+
+		/* Fill in 'values' with parent's Oid and correct boundaries... */
+		values[0] = prel->key; /* partitioned table's Oid */
+		values[1] = forward ? cur_part_following : cur_part_leading; /* value #1 */
+		values[2] = forward ? cur_part_leading : cur_part_following; /* value #2 */
+
+		/* ...and create partition */
+		ret = SPI_execute_with_args(query, 3, types, values, nulls, false, 0);
+		if (ret != SPI_OK_SELECT)
+			elog(ERROR, "Could not create partition");
+
+		/* Set 'last_partition' if necessary */
+		if (last_partition)
 		{
-			case INT4OID:
-				{
-					uint32	least = DatumGetInt32(context->least),
-							greatest = DatumGetInt32(context->greatest);
-					List   *rangeset = NIL;
+			HeapTuple	htup = SPI_tuptable->vals[0];
+			Datum		partid;
+			bool		isnull;
 
-					if (greatest - least + 1 < PrelChildrenCount(context->prel))
-					{
-						uint32	value,
-								hash;
+			Assert(SPI_processed == 1);
+			Assert(SPI_tuptable->tupdesc->natts == 1);
+			partid = SPI_getbinval(htup, SPI_tuptable->tupdesc, 1, &isnull);
 
-						for (value = least; value <= greatest; value++)
-						{
-							hash = make_hash(value, PrelChildrenCount(context->prel));
-							rangeset = irange_list_union(rangeset,
-								list_make1_irange(make_irange(hash, hash, true)));
-						}
-						wrap->rangeset = irange_list_intersect(wrap->rangeset,
-															   rangeset);
-					}
-				}
-				break;
-			default:
-				elog(ERROR, "Invalid datatype: %u", context->prel->atttype);
+			*last_partition = DatumGetObjectId(partid);
 		}
+
+#ifdef USE_ASSERT_CHECKING
+		elog(DEBUG2, "%s partition with following='%s' & leading='%s' [%u]",
+			 (forward ? "Appending" : "Prepending"),
+			 DebugPrintDatum(cur_part_following, prel->atttype),
+			 DebugPrintDatum(cur_part_leading, prel->atttype),
+			 MyProcPid);
+#endif
 	}
-	context->hasLeast = false;
-	context->hasGreatest = false;
+
+	pfree(query);
+
+	return done;
 }
 
 /*
@@ -754,58 +793,98 @@ finish_least_greatest(WrapperNode *wrap, WalkerContext *context)
 Oid
 create_partitions_internal(Oid relid, Datum value, Oid value_type)
 {
-	int					ret;
-	char			   *sql;
-	PartRelationInfo   *prel;
-	FmgrInfo			cmp_func;
-	MemoryContext		old_mcxt = CurrentMemoryContext;
-	Oid					partid = InvalidOid; /* default value */
-
-	if ((prel = get_pathman_relation_info(relid, NULL)) == NULL)
-	{
-		elog(LOG, "Cannot fetch PartRelationInfo for relation %u [%u]",
-			 relid, MyProcPid);
-
-		return InvalidOid;
-	}
-
-	if ((ret = SPI_connect()) < 0)
-	{
-		elog(LOG, "create_partitions_internal(): SPI_connect returned %d", ret);
-
-		return InvalidOid;
-	}
-
-	/* Comparison function */
-	fill_type_cmp_fmgr_info(&cmp_func, value_type, prel->atttype);
-
-	/* Perform PL procedure */
-	sql = psprintf("SELECT %s.append_partitions_on_demand_internal($1, $2)",
-				   get_namespace_name(get_pathman_schema()));
+	MemoryContext	old_mcxt = CurrentMemoryContext;
+	Oid				partid = InvalidOid; /* default value */
 
 	PG_TRY();
 	{
-		Oid		oids[]	= { OIDOID,					 value_type };
-		Datum	vals[]	= { ObjectIdGetDatum(relid), value };
-		bool	nulls[]	= { false,					 false };
-		bool	isnull;
+		const PartRelationInfo *prel;
+		Datum					values[Natts_pathman_config];
+		bool					isnull[Natts_pathman_config];
 
-		/* TODO: maybe this could be rewritten with FunctionCall */
-		ret = SPI_execute_with_args(sql, 2, oids, vals, nulls, false, 0);
-		if (ret == SPI_OK_SELECT)
+		/* Get both PartRelationInfo & PATHMAN_CONFIG contents for this relation */
+		if ((prel = get_pathman_relation_info(relid, NULL)) != NULL &&
+			pathman_config_contains_relation(relid, values, isnull, NULL))
 		{
-			TupleDesc	tupdesc = SPI_tuptable->tupdesc;
-			HeapTuple	tuple = SPI_tuptable->vals[0];
+			Datum		min_rvalue,
+						max_rvalue;
 
-			Assert(SPI_processed == 1);
+			Oid			interval_type = InvalidOid;
+			Datum		interval_binary, /* assigned 'width' of a single partition */
+						interval_text;
+			const char *interval_cstring;
 
-			partid = DatumGetObjectId(SPI_getbinval(tuple, tupdesc, 1, &isnull));
+			FmgrInfo	interval_type_cmp;
+
+			if (prel->parttype != PT_RANGE)
+				elog(ERROR, "Relation \"%s\" is not partitioned by RANGE",
+					 get_rel_name_or_relid(relid));
+
+			/* Fill the FmgrInfo struct with a cmp(value, part_attribute) function */
+			fill_type_cmp_fmgr_info(&interval_type_cmp, value_type, prel->atttype);
+
+			/* Convert interval from TEXT to CSTRING */
+			interval_text = values[Anum_pathman_config_range_interval - 1];
+			interval_cstring = TextDatumGetCString(interval_text);
+
+			/* Read max & min range values from PartRelationInfo */
+			min_rvalue = prel->ranges[0].min;
+			max_rvalue = prel->ranges[PrelChildrenCount(prel) - 1].max;
+
+			/* If this is a *date type*, cast 'range_interval' to INTERVAL */
+			if (is_date_type_internal(value_type))
+			{
+				int32	interval_typmod = PATHMAN_CONFIG_interval_typmod;
+
+				/* Convert interval from CSTRING to internal form */
+				interval_binary = DirectFunctionCall3(interval_in,
+													  CStringGetDatum(interval_cstring),
+													  ObjectIdGetDatum(InvalidOid),
+													  Int32GetDatum(interval_typmod));
+				interval_type = INTERVALOID;
+			}
+			/* Otherwise cast it to the partitioned column's type */
+			else
+			{
+				HeapTuple	htup;
+				Oid			typein_proc = InvalidOid;
+
+				htup = SearchSysCache1(TYPEOID, ObjectIdGetDatum(prel->atttype));
+				if (HeapTupleIsValid(htup))
+				{
+					typein_proc = ((Form_pg_type) GETSTRUCT(htup))->typinput;
+					ReleaseSysCache(htup);
+				}
+				else
+					elog(ERROR, "Cannot find input function for type %u",
+						 prel->atttype);
+
+				/* Convert interval from CSTRING to 'prel->atttype' */
+				interval_binary = OidFunctionCall1(typein_proc, value);
+				interval_type = prel->atttype;
+			}
+
+			if (SPI_connect() != SPI_OK_CONNECT)
+				elog(ERROR, "Could not connect using SPI");
+
+			/* while (value >= MAX) ... */
+			spawn_partitions(prel, &interval_type_cmp, interval_binary,
+							 interval_type, max_rvalue, value, true, &partid);
+
+			/* while (value < MIN) ... */
+			spawn_partitions(prel, &interval_type_cmp, interval_binary,
+							 interval_type, min_rvalue, value, false, &partid);
+
+			SPI_finish(); /* close SPI connection */
 		}
+		else
+			elog(ERROR, "Relation %u is not partitioned by pg_pathman", relid);
 	}
 	PG_CATCH();
 	{
 		ErrorData *edata;
 
+		/* Switch to the original context & copy edata */
 		MemoryContextSwitchTo(old_mcxt);
 		edata = CopyErrorData();
 		FlushErrorState();
@@ -814,10 +893,10 @@ create_partitions_internal(Oid relid, Datum value, Oid value_type)
 			 edata->message, MyProcPid);
 
 		FreeErrorData(edata);
+
+		SPI_finish(); /* no problem if not connected */
 	}
 	PG_END_TRY();
-
-	SPI_finish();
 
 	return partid;
 }
@@ -831,6 +910,7 @@ Oid
 create_partitions(Oid relid, Datum value, Oid value_type)
 {
 	TransactionId	rel_xmin;
+	Oid				last_partition = InvalidOid;
 
 	/* Check that table is partitioned and fetch xmin */
 	if (pathman_config_contains_relation(relid, NULL, NULL, &rel_xmin))
@@ -839,19 +919,24 @@ create_partitions(Oid relid, Datum value, Oid value_type)
 		if (TransactionIdPrecedes(rel_xmin, GetCurrentTransactionId()))
 		{
 			elog(DEBUG2, "create_partitions(): chose BGW [%u]", MyProcPid);
-			return create_partitions_bg_worker(relid, value, value_type);
+			last_partition = create_partitions_bg_worker(relid, value, value_type);
 		}
 		/* Else it'd better for the current backend to create partitions */
 		else
 		{
 			elog(DEBUG2, "create_partitions(): chose backend [%u]", MyProcPid);
-			return create_partitions_internal(relid, value, value_type);
+			last_partition = create_partitions_internal(relid, value, value_type);
 		}
 	}
 	else
 		elog(ERROR, "Relation %u is not partitioned by pg_pathman", relid);
 
-	return InvalidOid; /* keep compiler happy */
+	/* Check that 'last_partition' is valid */
+	if (last_partition == InvalidOid)
+		elog(ERROR, "Could not create new partitions for relation \"%s\"",
+			 get_rel_name_or_relid(relid));
+
+	return last_partition;
 }
 
 /*
@@ -862,7 +947,7 @@ void
 select_range_partitions(const Datum value,
 						FmgrInfo *cmp_func,
 						const RangeEntry *ranges,
-						const size_t nranges,
+						const int nranges,
 						const int strategy,
 						WrapperNode *result)
 {
@@ -1059,7 +1144,7 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 			if (strategy == BTEqualStrategyNumber)
 			{
 				Datum	value = OidFunctionCall1(prel->hash_proc, c->constvalue);
-				uint32	hash = make_hash(DatumGetUInt32(value),
+				uint32	hash = make_hash(DatumGetInt32(value),
 										 PrelChildrenCount(prel));
 
 				result->rangeset = list_make1_irange(make_irange(hash, hash, true));
@@ -1069,14 +1154,10 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 
 		case PT_RANGE:
 			{
-				/* Refresh 'ranges' cache if necessary */
-				if (!context->ranges)
-					refresh_walker_context_ranges(context);
-
 				select_range_partitions(c->constvalue,
 										&cmp_func,
-										context->ranges,
-										context->nranges,
+										context->prel->ranges,
+										PrelChildrenCount(context->prel),
 										strategy,
 										result);
 				return;
@@ -1145,8 +1226,8 @@ search_range_partition_eq(const Datum value,
 						  RangeEntry *out_re) /* returned RangeEntry */
 {
 	RangeEntry *ranges;
-	size_t		nranges;
-	WrapperNode result;
+	int			nranges;
+	WrapperNode	result;
 
 	ranges = PrelGetRangesArray(prel, true);
 	nranges = PrelChildrenCount(prel);
@@ -1223,7 +1304,7 @@ handle_const(const Const *c, WalkerContext *context)
 		case PT_HASH:
 			{
 				Datum	value = OidFunctionCall1(prel->hash_proc, c->constvalue);
-				uint32	hash = make_hash(DatumGetUInt32(value),
+				uint32	hash = make_hash(DatumGetInt32(value),
 										 PrelChildrenCount(prel));
 				result->rangeset = list_make1_irange(make_irange(hash, hash, true));
 			}
@@ -1235,14 +1316,10 @@ handle_const(const Const *c, WalkerContext *context)
 
 				tce = lookup_type_cache(c->consttype, TYPECACHE_CMP_PROC_FINFO);
 
-				/* Refresh 'ranges' cache if necessary */
-				if (!context->ranges)
-					refresh_walker_context_ranges(context);
-
 				select_range_partitions(c->constvalue,
 										&tce->cmp_proc_finfo,
-										context->ranges,
-										context->nranges,
+										context->prel->ranges,
+										PrelChildrenCount(context->prel),
 										BTEqualStrategyNumber,
 										result);
 			}
@@ -1466,7 +1543,7 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 		{
 			/* Invoke base hash function for value type */
 			value = OidFunctionCall1(prel->hash_proc, elem_values[i]);
-			hash = make_hash(DatumGetUInt32(value), PrelChildrenCount(prel));
+			hash = make_hash(DatumGetInt32(value), PrelChildrenCount(prel));
 			result->rangeset = irange_list_union(result->rangeset,
 						list_make1_irange(make_irange(hash, hash, true)));
 		}
@@ -1580,7 +1657,7 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel,
 						Index rti, RangeTblEntry *rte,
 						PathKey *pathkeyAsc, PathKey *pathkeyDesc)
 {
-	int			parentRTindex = rti;
+	Index		parentRTindex = rti;
 	List	   *live_childrels = NIL;
 	List	   *subpaths = NIL;
 	bool		subpaths_valid = true;
@@ -1597,7 +1674,7 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel,
 	foreach(l, root->append_rel_list)
 	{
 		AppendRelInfo *appinfo = (AppendRelInfo *) lfirst(l);
-		int			childRTindex;
+		Index		childRTindex;
 		RangeTblEntry *childRTE;
 		RelOptInfo *childrel;
 		ListCell   *lcp;

@@ -314,7 +314,7 @@ END
 $$ LANGUAGE plpgsql;
 
 /*
- *
+ * Check RANGE partition boundaries.
  */
 CREATE OR REPLACE FUNCTION @extschema@.check_boundaries(
 	p_relation REGCLASS
@@ -334,9 +334,9 @@ BEGIN
 				   p_attribute, p_attribute, p_relation::text, p_attribute)
 	INTO v_count, v_min, v_max;
 
-	/* check if column has NULL values */
+	/* check that column has NULL values */
 	IF v_count > 0 AND (v_min IS NULL OR v_max IS NULL) THEN
-		RAISE EXCEPTION '''%'' column has NULL values', p_attribute;
+		RAISE EXCEPTION '''%'' column contains NULL values', p_attribute;
 	END IF;
 
 	/* check lower boundary */
@@ -352,40 +352,6 @@ BEGIN
 	END IF;
 END
 $$ LANGUAGE plpgsql;
-
-/*
- * Formats range condition. Utility function.
- */
-CREATE OR REPLACE FUNCTION @extschema@.get_range_condition(
-	p_attname TEXT
-	, p_start_value ANYELEMENT
-	, p_end_value ANYELEMENT)
-RETURNS TEXT AS
-$$
-DECLARE
-	v_type		REGTYPE;
-	v_sql		TEXT;
-
-BEGIN
-	/* determine the type of values */
-	v_type := pg_typeof(p_start_value);
-
-	/* we cannot use placeholders in DDL queries, so we are using format(...) */
-	IF v_type IN ('date'::regtype, 'timestamp'::regtype, 'timestamptz'::regtype) THEN
-		v_sql := '%s >= ''%s'' AND %s < ''%s''';
-	ELSE
-		v_sql := '%s >= %s AND %s < %s';
-	END IF;
-
-	v_sql := format(v_sql
-					, p_attname
-					, p_start_value
-					, p_attname
-					, p_end_value);
-	RETURN v_sql;
-END
-$$
-LANGUAGE plpgsql;
 
 /*
  * Creates new RANGE partition. Returns partition name
@@ -512,14 +478,12 @@ BEGIN
 	END IF;
 
 	/* Create new partition */
-	RAISE NOTICE 'Creating new partition...';
 	v_new_partition := @extschema@.create_single_range_partition(
 							@extschema@.get_schema_qualified_name(v_parent_relid::regclass, '.'),
 							p_value,
 							p_range[2]);
 
 	/* Copy data */
-	RAISE NOTICE 'Copying data to new partition...';
 	v_cond := @extschema@.get_range_condition(v_attname, p_value, p_range[2]);
 	EXECUTE format('
 				WITH part_data AS (
@@ -530,7 +494,6 @@ BEGIN
 				, v_new_partition);
 
 	/* Alter original partition */
-	RAISE NOTICE 'Altering original partition...';
 	v_cond := @extschema@.get_range_condition(v_attname, p_range[1], p_value);
 	v_check_name := @extschema@.build_check_constraint_name(p_partition, v_attname);
 	EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %s'
@@ -543,8 +506,6 @@ BEGIN
 
 	/* Tell backend to reload configuration */
 	PERFORM @extschema@.on_update_partitions(v_parent_relid::oid);
-
-	RAISE NOTICE 'Done!';
 END
 $$
 LANGUAGE plpgsql;
@@ -601,8 +562,6 @@ BEGIN
 
 	/* Tell backend to reload configuration */
 	PERFORM @extschema@.on_update_partitions(v_parent_relid1::oid);
-
-	RAISE NOTICE 'Done!';
 END
 $$
 LANGUAGE plpgsql;
@@ -657,7 +616,6 @@ BEGIN
 											  , greatest(p_range[2], p_range[4]));
 
 	/* Alter first partition */
-	RAISE NOTICE 'Altering first partition...';
 	v_check_name := @extschema@.build_check_constraint_name(p_part1, v_attname);
 	EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %s'
 				   , p_part1::text
@@ -668,14 +626,12 @@ BEGIN
 				   , v_cond);
 
 	/* Copy data from second partition to the first one */
-	RAISE NOTICE 'Copying data...';
 	EXECUTE format('WITH part_data AS (DELETE FROM %s RETURNING *)
 					INSERT INTO %s SELECT * FROM part_data'
 				   , p_part2::text
 				   , p_part1::text);
 
 	/* Remove second partition */
-	RAISE NOTICE 'Dropping second partition...';
 	EXECUTE format('DROP TABLE %s', p_part2::text);
 END
 $$ LANGUAGE plpgsql;
@@ -719,7 +675,6 @@ BEGIN
 	/* Release lock */
 	PERFORM @extschema@.release_partitions_lock();
 
-	RAISE NOTICE 'Done!';
 	RETURN v_part_name;
 
 EXCEPTION WHEN others THEN
@@ -741,8 +696,8 @@ DECLARE
 
 BEGIN
 	p_range := @extschema@.get_range_by_idx(p_relation::oid, -1, 0);
-	RAISE NOTICE 'Appending new partition...';
-	IF @extschema@.is_date(p_atttype::regtype) THEN
+
+	IF @extschema@.is_date_type(p_atttype::regtype) THEN
 		v_part_name := @extschema@.create_single_range_partition(p_relation
 																 , p_range[2]
 																 , p_range[2] + p_interval::interval);
@@ -795,7 +750,6 @@ BEGIN
 	/* Release lock */
 	PERFORM @extschema@.release_partitions_lock();
 
-	RAISE NOTICE 'Done!';
 	RETURN v_part_name;
 
 EXCEPTION WHEN others THEN
@@ -817,9 +771,8 @@ DECLARE
 
 BEGIN
 	p_range := @extschema@.get_range_by_idx(p_relation::oid, 0, 0);
-	RAISE NOTICE 'Prepending new partition...';
 
-	IF @extschema@.is_date(p_atttype::regtype) THEN
+	IF @extschema@.is_date_type(p_atttype::regtype) THEN
 		v_part_name := @extschema@.create_single_range_partition(p_relation
 																 , p_range[1] - p_interval::interval
 																 , p_range[1]);
@@ -867,7 +820,6 @@ BEGIN
 	/* Release lock */
 	PERFORM @extschema@.release_partitions_lock();
 
-	RAISE NOTICE 'Done!';
 	RETURN v_part_name;
 
 EXCEPTION WHEN others THEN
@@ -1129,89 +1081,11 @@ END
 $$ LANGUAGE plpgsql;
 
 /*
- * Internal function used to create new partitions on insert or update trigger.
- * Invoked from C-function find_or_create_range_partition().
+ * Construct CHECK constraint condition for a range partition.
  */
-CREATE OR REPLACE FUNCTION @extschema@.append_partitions_on_demand_internal(
-	p_relid OID
-	, p_new_value ANYELEMENT)
-RETURNS OID AS
-$$
-DECLARE
-	i				INTEGER := 0;
-	v_part			TEXT;
-	v_interval		TEXT;
-	v_attname		TEXT;
-	v_min			p_new_value%TYPE;
-	v_max			p_new_value%TYPE;
-	v_cur_value		p_new_value%TYPE;
-	v_next_value	p_new_value%TYPE;
-	v_is_date		BOOLEAN;
-
-BEGIN
-	/* get attribute name and interval */
-	SELECT attname, range_interval
-	FROM @extschema@.pathman_config
-	WHERE partrel = p_relid
-	INTO v_attname, v_interval;
-
-	IF v_attname IS NULL THEN
-		RAISE EXCEPTION 'Table % is not partitioned',
-						quote_ident(p_relid::regclass::text);
-	END IF;
-
-	v_min := @extschema@.get_min_range_value(p_relid::regclass::oid, p_new_value);
-	v_max := @extschema@.get_max_range_value(p_relid::regclass::oid, p_new_value);
-
-	v_is_date := @extschema@.is_date(pg_typeof(p_new_value)::regtype);
-
-	IF p_new_value >= v_max THEN
-		v_cur_value := v_max;
-		WHILE v_cur_value <= p_new_value AND i < 1000
-		LOOP
-			IF v_is_date THEN
-				v_next_value := v_cur_value + v_interval::interval;
-			ELSE
-				EXECUTE format('SELECT $1 + $2::%s', pg_typeof(p_new_value))
-				USING v_cur_value, v_interval
-				INTO v_next_value;
-			END IF;
-
-			v_part := @extschema@.create_single_range_partition(
-							@extschema@.get_schema_qualified_name(p_relid::regclass, '.')
-							, v_cur_value
-							, v_next_value);
-			i := i + 1;
-			v_cur_value := v_next_value;
-			RAISE NOTICE 'partition % created', v_part;
-		END LOOP;
-	ELSIF p_new_value <= v_min THEN
-		v_cur_value := v_min;
-		WHILE v_cur_value >= p_new_value AND i < 1000
-		LOOP
-			IF v_is_date THEN
-				v_next_value := v_cur_value - v_interval::interval;
-			ELSE
-				EXECUTE format('SELECT $1 - $2::%s', pg_typeof(p_new_value))
-				USING v_cur_value, v_interval
-				INTO v_next_value;
-			END IF;
-
-			v_part := @extschema@.create_single_range_partition(
-							@extschema@.get_schema_qualified_name(p_relid::regclass, '.')
-							, v_next_value
-							, v_cur_value);
-			i := i + 1;
-			v_cur_value := v_next_value;
-			RAISE NOTICE 'partition % created', v_part;
-		END LOOP;
-	ELSE
-		RAISE EXCEPTION 'Could not create partition';
-	END IF;
-
-	IF i > 0 THEN
-		RETURN v_part::regclass::oid;
-	END IF;
-	RETURN NULL;
-END
-$$ LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION @extschema@.get_range_condition(
+	p_attname TEXT,
+	p_start_value ANYELEMENT,
+	p_end_value ANYELEMENT)
+RETURNS TEXT AS 'pg_pathman', 'get_range_condition'
+LANGUAGE C STRICT;

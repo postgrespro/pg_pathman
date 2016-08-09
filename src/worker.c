@@ -51,30 +51,6 @@ typedef struct
 } PartitionArgs;
 
 
-#ifdef USE_ASSERT_CHECKING
-
-	#include "access/htup_details.h"
-	#include "utils/syscache.h"
-
-	#define PrintUnpackedDatum(datum, typid) \
-		do { \
-			HeapTuple tup = SearchSysCache1(TYPEOID, \
-											ObjectIdGetDatum(typid)); \
-			if (HeapTupleIsValid(tup)) \
-			{ \
-				Form_pg_type	typtup = (Form_pg_type) GETSTRUCT(tup); \
-				FmgrInfo		finfo; \
-				fmgr_info(typtup->typoutput, &finfo); \
-				elog(LOG, "BGW: arg->value is '%s' [%u]", \
-					 DatumGetCString(FunctionCall1(&finfo, datum)), \
-					 MyProcPid); \
-				ReleaseSysCache(tup); \
-			} \
-		} while (0)
-#elif
-	#define PrintUnpackedDatum(datum, typid) (true)
-#endif
-
 #define PackDatumToByteArray(array, datum, datum_size, typbyval) \
 	do { \
 		memcpy((void *) (array), \
@@ -98,7 +74,8 @@ typedef struct
 				   (const void *) array, \
 				   datum_size); \
 		} \
-		PrintUnpackedDatum(datum, typid); \
+		elog(LOG, "BGW: arg->value is '%s' [%u]", \
+			 DebugPrintDatum(datum, typid), MyProcPid); \
 	} while (0)
 
 
@@ -153,6 +130,8 @@ create_partitions_bg_worker_segment(Oid relid, Datum value, Oid value_type)
 /*
  * Starts background worker that will create new partitions,
  * waits till it finishes the job and returns the result (new partition oid)
+ *
+ * NB: This function should not be called directly, use create_partitions() instead.
  */
 Oid
 create_partitions_bg_worker(Oid relid, Datum value, Oid value_type)
@@ -238,7 +217,7 @@ handle_bg_exec_state:
 	if (child_oid == InvalidOid)
 		elog(ERROR,
 			 "Attempt to append new partitions to relation \"%s\" failed",
-			 get_rel_name(relid));
+			 get_rel_name_or_relid(relid));
 
 	return child_oid;
 }
@@ -286,7 +265,10 @@ bg_worker_main(Datum main_arg)
 											  value, /* unpacked Datum */
 											  args->value_type);
 
-	CommitTransactionCommand();
+	if (args->result == InvalidOid)
+		AbortCurrentTransaction();
+	else
+		CommitTransactionCommand();
 
 	dsm_detach(segment);
 }
