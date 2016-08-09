@@ -247,7 +247,7 @@ get_partition_oids(List *ranges, int *n, const PartRelationInfo *prel)
 	uint32		allocated = INITIAL_ALLOC_NUM;
 	uint32		used = 0;
 	Oid		   *result = (Oid *) palloc(allocated * sizeof(Oid));
-	Oid		   *children = PrelGetChildrenArray(prel, true);
+	Oid		   *children = PrelGetChildrenArray(prel);
 
 	foreach (range_cell, ranges)
 	{
@@ -349,7 +349,7 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 {
 	RuntimeAppendPath  *rpath = (RuntimeAppendPath *) best_path;
 	CustomScan		   *cscan;
-	PartRelationInfo   *prel = get_pathman_relation_info(rpath->relid, NULL);
+	PartRelationInfo   *prel = get_pathman_relation_info(rpath->relid);
 
 	cscan = makeNode(CustomScan);
 	cscan->custom_scan_tlist = NIL; /* initial value (empty list) */
@@ -496,7 +496,7 @@ rescan_append_common(CustomScanState *node)
 	Oid				   *parts;
 	int					nparts;
 
-	prel = get_pathman_relation_info(scan_state->relid, NULL);
+	prel = get_pathman_relation_info(scan_state->relid);
 	Assert(prel);
 
 	ranges = list_make1_irange(make_irange(0, PrelChildrenCount(prel) - 1, false));

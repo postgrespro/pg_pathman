@@ -190,7 +190,7 @@ disable_inheritance(Query *parse)
 				if (rte->inh)
 				{
 					/* Look up this relation in pathman local cache */
-					prel = get_pathman_relation_info(rte->relid, NULL);
+					prel = get_pathman_relation_info(rte->relid);
 					if (prel)
 					{
 						/* We'll set this flag later */
@@ -300,7 +300,6 @@ handle_modification_query(Query *parse)
 	RangeTblEntry	   *rte;
 	WrapperNode		   *wrap;
 	Expr			   *expr;
-	bool				found;
 	WalkerContext		context;
 
 	Assert(parse->commandType == CMD_UPDATE ||
@@ -308,9 +307,9 @@ handle_modification_query(Query *parse)
 	Assert(parse->resultRelation > 0);
 
 	rte = rt_fetch(parse->resultRelation, parse->rtable);
-	prel = get_pathman_relation_info(rte->relid, &found);
+	prel = get_pathman_relation_info(rte->relid);
 
-	if (!found)
+	if (!prel)
 		return;
 
 	/* Parse syntax tree and extract partition ranges */
@@ -331,7 +330,7 @@ handle_modification_query(Query *parse)
 		IndexRange irange = linitial_irange(ranges);
 		if (irange.ir_lower == irange.ir_upper)
 		{
-			Oid *children = PrelGetChildrenArray(prel, true);
+			Oid *children = PrelGetChildrenArray(prel);
 			rte->relid = children[irange.ir_lower];
 			rte->inh = false;
 		}
@@ -803,7 +802,7 @@ create_partitions_internal(Oid relid, Datum value, Oid value_type)
 		bool					isnull[Natts_pathman_config];
 
 		/* Get both PartRelationInfo & PATHMAN_CONFIG contents for this relation */
-		if ((prel = get_pathman_relation_info(relid, NULL)) != NULL &&
+		if ((prel = get_pathman_relation_info(relid)) != NULL &&
 			pathman_config_contains_relation(relid, values, isnull, NULL))
 		{
 			Datum		min_rvalue,
@@ -1229,7 +1228,7 @@ search_range_partition_eq(const Datum value,
 	int			nranges;
 	WrapperNode	result;
 
-	ranges = PrelGetRangesArray(prel, true);
+	ranges = PrelGetRangesArray(prel);
 	nranges = PrelChildrenCount(prel);
 
 	select_range_partitions(value,

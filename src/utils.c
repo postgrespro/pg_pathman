@@ -613,7 +613,7 @@ rowmark_add_tableoids(Query *parse)
 		char			resname[64];
 
 		/* Check that table is partitioned */
-		if (!get_pathman_relation_info(parent, NULL))
+		if (!get_pathman_relation_info(parent))
 			continue;
 
 		var = makeVar(rc->rti,

@@ -124,7 +124,7 @@ refresh_pathman_relation_info(Oid relid,
 	/* Initialize PartRelationInfo using syscache & typcache */
 	prel->attnum	= get_attnum(relid, part_column_name);
 	prel->atttype	= get_atttype(relid, prel->attnum);
-	prel->atttypmod = get_atttypmod(relid, prel->attnum);
+	prel->atttypmod	= get_atttypmod(relid, prel->attnum);
 
 	/* Fetch HASH & CMP fuctions for atttype */
 	typcache = lookup_type_cache(prel->atttype,
@@ -196,11 +196,11 @@ invalidate_pathman_relation_info(Oid relid, bool *found)
 
 /* Get PartRelationInfo from local cache. */
 PartRelationInfo *
-get_pathman_relation_info(Oid relid, bool *found)
+get_pathman_relation_info(Oid relid)
 {
 	PartRelationInfo *prel = hash_search(partitioned_rels,
 										 (const void *) &relid,
-										 HASH_FIND, found);
+										 HASH_FIND, NULL);
 
 	/* Refresh PartRelationInfo if needed */
 	if (prel && !PrelIsValid(prel))
@@ -238,14 +238,18 @@ remove_pathman_relation_info(Oid relid)
 {
 	PartRelationInfo *prel = hash_search(partitioned_rels,
 										 (const void *) &relid,
-										 HASH_REMOVE, NULL);
-
+										 HASH_FIND, NULL);
 	if (prel)
 	{
 		/* Free these arrays iff they're not NULL */
 		FreeChildrenArray(prel);
 		FreeRangesArray(prel);
 	}
+
+	/* Now let's remove the entry completely */
+	hash_search(partitioned_rels,
+				(const void *) &relid,
+				HASH_REMOVE, NULL);
 
 	elog(DEBUG2,
 		 "Removing record for relation %u in pg_pathman's cache [%u]",
@@ -393,7 +397,7 @@ get_parent_of_partition_internal(Oid partition,
 	Oid				parent;
 	PartParentInfo *ppar = hash_search(parent_cache,
 									   (const void *) &partition,
-									   action, NULL);
+									   HASH_FIND, NULL);
 
 	/* Set 'action_str' */
 	switch (action)
@@ -418,6 +422,12 @@ get_parent_of_partition_internal(Oid partition,
 	{
 		if (status) *status = PPS_ENTRY_PART_PARENT;
 		parent = ppar->parent_rel;
+
+		/* Remove entry if necessary */
+		if (action == HASH_REMOVE)
+			hash_search(parent_cache,
+						(const void *) &partition,
+						HASH_REMOVE, NULL);
 	}
 	/* Try fetching parent from syscache if 'status' is provided */
 	else if (status)

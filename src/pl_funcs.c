@@ -119,7 +119,7 @@ find_or_create_range_partition(PG_FUNCTION_ARGS)
 	RangeEntry			found_rentry;
 	search_rangerel_result search_state;
 
-	prel = get_pathman_relation_info(parent_oid, NULL);
+	prel = get_pathman_relation_info(parent_oid);
 
 	if (!prel)
 		PG_RETURN_NULL();
@@ -190,13 +190,13 @@ get_partition_range(PG_FUNCTION_ARGS)
 	TypeCacheEntry	   *tce;
 	ArrayType		   *arr;
 
-	prel = get_pathman_relation_info(parent_oid, NULL);
+	prel = get_pathman_relation_info(parent_oid);
 
 	if (!prel)
 		PG_RETURN_NULL();
 
-	ranges = PrelGetRangesArray(prel, true);
-	parts = PrelGetChildrenArray(prel, true);
+	ranges = PrelGetRangesArray(prel);
+	parts = PrelGetChildrenArray(prel);
 	tce = lookup_type_cache(prel->atttype, 0);
 
 	/* Looking for specified partition */
@@ -279,7 +279,7 @@ get_range_by_idx(PG_FUNCTION_ARGS)
 	RangeEntry			re;
 	Datum			   *elems;
 
-	prel = get_pathman_relation_info(parent_oid, NULL);
+	prel = get_pathman_relation_info(parent_oid);
 	if (!prel)
 		elog(ERROR, "Cannot get partitioning cache entry for relation %u", parent_oid);
 
@@ -287,7 +287,7 @@ get_range_by_idx(PG_FUNCTION_ARGS)
 		elog(ERROR, "Partition #%d does not exist (max is #%u)",
 			 idx, PrelChildrenCount(prel) - 1);
 
-	ranges = PrelGetRangesArray(prel, true);
+	ranges = PrelGetRangesArray(prel);
 	if (idx >= 0)
 		re = ranges[idx];
 	else if(idx == -1)
@@ -316,12 +316,12 @@ get_min_range_value(PG_FUNCTION_ARGS)
 	PartRelationInfo   *prel;
 	RangeEntry		   *ranges;
 
-	prel = get_pathman_relation_info(parent_oid, NULL);
+	prel = get_pathman_relation_info(parent_oid);
 
 	if (!prel || prel->parttype != PT_RANGE || PrelChildrenCount(prel) == 0)
 		PG_RETURN_NULL();
 
-	ranges = PrelGetRangesArray(prel, true);
+	ranges = PrelGetRangesArray(prel);
 
 	PG_RETURN_DATUM(ranges[0].min);
 }
@@ -336,12 +336,12 @@ get_max_range_value(PG_FUNCTION_ARGS)
 	PartRelationInfo   *prel;
 	RangeEntry		   *ranges;
 
-	prel = get_pathman_relation_info(parent_oid, NULL);
+	prel = get_pathman_relation_info(parent_oid);
 
 	if (!prel || prel->parttype != PT_RANGE || PrelChildrenCount(prel) == 0)
 		PG_RETURN_NULL();
 
-	ranges = PrelGetRangesArray(prel, true);
+	ranges = PrelGetRangesArray(prel);
 
 	PG_RETURN_DATUM(ranges[PrelChildrenCount(prel) - 1].max);
 }
@@ -368,7 +368,7 @@ check_overlap(PG_FUNCTION_ARGS)
 	RangeEntry		   *ranges;
 	uint32				i;
 
-	prel = get_pathman_relation_info(parent_oid, NULL);
+	prel = get_pathman_relation_info(parent_oid);
 
 	if (!prel || prel->parttype != PT_RANGE)
 		PG_RETURN_NULL();
@@ -377,7 +377,7 @@ check_overlap(PG_FUNCTION_ARGS)
 	fill_type_cmp_fmgr_info(&cmp_func_1, p1_type, prel->atttype);
 	fill_type_cmp_fmgr_info(&cmp_func_2, p2_type, prel->atttype);
 
-	ranges = PrelGetRangesArray(prel, true);
+	ranges = PrelGetRangesArray(prel);
 	for (i = 0; i < PrelChildrenCount(prel); i++)
 	{
 		int c1 = FunctionCall2(&cmp_func_1, p1, ranges[i].max);

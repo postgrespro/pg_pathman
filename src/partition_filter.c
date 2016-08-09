@@ -167,7 +167,7 @@ partition_filter_exec(CustomScanState *node)
 		Datum				value;
 
 		/* Fetch PartRelationInfo for this partitioned relation */
-		prel = get_pathman_relation_info(state->partitioned_table, NULL);
+		prel = get_pathman_relation_info(state->partitioned_table);
 		if (!prel)
 		{
 			if (!state->warning_triggered)
@@ -389,7 +389,7 @@ partition_filter_visitor(Plan *plan, void *context)
 	{
 		Index				rindex = lfirst_int(lc2);
 		Oid					relid = getrelid(rindex, rtable);
-		PartRelationInfo   *prel = get_pathman_relation_info(relid, NULL);
+		PartRelationInfo   *prel = get_pathman_relation_info(relid);
 
 		/* Check that table is partitioned */
 		if (prel)

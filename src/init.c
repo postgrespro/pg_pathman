@@ -125,8 +125,7 @@ init_local_config(void)
 							   PART_RELS_SIZE * CHILD_FACTOR,
 							   &ctl, HASH_ELEM | HASH_BLOBS);
 
-	CacheRegisterRelcacheCallback(pathman_relcache_hook,
-								  PointerGetDatum(NULL));
+	CacheRegisterRelcacheCallback(pathman_relcache_hook, PointerGetDatum(NULL));
 }
 
 /*

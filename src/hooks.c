@@ -61,7 +61,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 
 	/* Check that innerrel is a BASEREL with inheritors & PartRelationInfo */
 	if (innerrel->reloptkind != RELOPT_BASEREL || !inner_rte->inh ||
-		!(inner_prel = get_pathman_relation_info(inner_rte->relid, NULL)))
+		!(inner_prel = get_pathman_relation_info(inner_rte->relid)))
 	{
 		return; /* Obviously not our case */
 	}
@@ -177,7 +177,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 		return;
 
 	/* Proceed iff relation 'rel' is partitioned */
-	if ((prel = get_pathman_relation_info(rte->relid, NULL)) != NULL)
+	if ((prel = get_pathman_relation_info(rte->relid)) != NULL)
 	{
 		ListCell	   *lc;
 		Oid			   *children;
@@ -225,7 +225,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 
 		rte->inh = true; /* we must restore 'inh' flag! */
 
-		children = PrelGetChildrenArray(prel, true);
+		children = PrelGetChildrenArray(prel);
 		ranges = list_make1_irange(make_irange(0, PrelChildrenCount(prel) - 1, false));
 
 		/* Make wrappers over restrictions and collect final rangeset */

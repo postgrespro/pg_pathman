@@ -101,9 +101,9 @@ typedef enum
 } PartParentSearch;
 
 
-#define PrelGetChildrenArray(prel, copy) ( (prel)->children )
+#define PrelGetChildrenArray(prel) ( (prel)->children )
 
-#define PrelGetRangesArray(prel, copy) ( (prel)->ranges )
+#define PrelGetRangesArray(prel) ( (prel)->ranges )
 
 #define PrelChildrenCount(prel) ( (prel)->children_count )
 
@@ -115,7 +115,7 @@ PartRelationInfo *refresh_pathman_relation_info(Oid relid,
 												const char *part_column_name);
 void invalidate_pathman_relation_info(Oid relid, bool *found);
 void remove_pathman_relation_info(Oid relid);
-PartRelationInfo *get_pathman_relation_info(Oid relid, bool *found);
+PartRelationInfo *get_pathman_relation_info(Oid relid);
 
 void delay_invalidation_parent_rel(Oid parent);
 void delay_invalidation_vague_rel(Oid vague_rel);
