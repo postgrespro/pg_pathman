@@ -396,7 +396,7 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 
 	PlannedStmt	  *result;
 
-	/* TODO: fix these commands (traverse whole query tree) */
+	/* FIXME: fix these commands (traverse whole query tree) */
 	if (IsPathmanReady())
 	{
 		switch(parse->commandType)

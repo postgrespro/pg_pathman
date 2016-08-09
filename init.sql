@@ -312,15 +312,6 @@ CREATE OR REPLACE FUNCTION @extschema@.is_date_type(cls REGTYPE)
 RETURNS BOOLEAN AS 'pg_pathman', 'is_date_type'
 LANGUAGE C STRICT;
 
-/*
- * Checks if range overlaps with existing partitions.
- * Returns TRUE if overlaps and FALSE otherwise.
- */
-CREATE OR REPLACE FUNCTION @extschema@.check_overlap(
-	parent_relid OID, range_min ANYELEMENT, range_max ANYELEMENT)
-RETURNS BOOLEAN AS 'pg_pathman', 'check_overlap'
-LANGUAGE C STRICT;
-
 
 CREATE OR REPLACE FUNCTION @extschema@.on_create_partitions(relid OID)
 RETURNS VOID AS 'pg_pathman', 'on_partitions_created'
@@ -334,58 +325,6 @@ CREATE OR REPLACE FUNCTION @extschema@.on_remove_partitions(relid OID)
 RETURNS VOID AS 'pg_pathman', 'on_partitions_removed'
 LANGUAGE C STRICT;
 
-
-CREATE OR REPLACE FUNCTION @extschema@.find_or_create_range_partition(relid OID, value ANYELEMENT)
-RETURNS OID AS 'pg_pathman', 'find_or_create_range_partition'
-LANGUAGE C STRICT;
-
-
-/*
- * Returns min and max values for specified RANGE partition.
- */
-CREATE OR REPLACE FUNCTION @extschema@.get_partition_range(
-	parent_relid OID, partition_relid OID, dummy ANYELEMENT)
-RETURNS ANYARRAY AS 'pg_pathman', 'get_partition_range'
-LANGUAGE C STRICT;
-
-
-/*
- * Returns N-th range (in form of array)
- */
-CREATE OR REPLACE FUNCTION @extschema@.get_range_by_idx(
-	parent_relid OID, idx INTEGER, dummy ANYELEMENT)
-RETURNS ANYARRAY AS 'pg_pathman', 'get_range_by_idx'
-LANGUAGE C STRICT;
-
-/*
- * Returns min value of the first range for relation
- */
-CREATE OR REPLACE FUNCTION @extschema@.get_min_range_value(
-	parent_relid OID, dummy ANYELEMENT)
-RETURNS ANYELEMENT AS 'pg_pathman', 'get_min_range_value'
-LANGUAGE C STRICT;
-
-/*
- * Returns max value of the last range for relation
- */
-CREATE OR REPLACE FUNCTION @extschema@.get_max_range_value(
-	parent_relid OID, dummy ANYELEMENT)
-RETURNS ANYELEMENT AS 'pg_pathman', 'get_max_range_value'
-LANGUAGE C STRICT;
-
-/*
- * Returns hash function OID for specified type
- */
-CREATE OR REPLACE FUNCTION @extschema@.get_type_hash_func(OID)
-RETURNS OID AS 'pg_pathman', 'get_type_hash_func'
-LANGUAGE C STRICT;
-
-/*
- * Calculates hash for integer value
- */
-CREATE OR REPLACE FUNCTION @extschema@.get_hash(INTEGER, INTEGER)
-RETURNS INTEGER AS 'pg_pathman', 'get_hash'
-LANGUAGE C STRICT;
 
 /*
  * Checks if attribute is nullable

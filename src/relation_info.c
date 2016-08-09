@@ -219,6 +219,7 @@ get_pathman_relation_info(Oid relid)
 			attname = TextDatumGetCString(values[Anum_pathman_config_attname - 1]);
 
 			/* Refresh partitioned table cache entry */
+			/* TODO: possible refactoring, pass found 'prel' instead of searching */
 			refresh_pathman_relation_info(relid, part_type, attname);
 		}
 		/* Else clear remaining cache entry */
@@ -347,6 +348,7 @@ finish_delayed_invalidation(void)
  * cache\forget\get PartParentInfo functions.
  */
 
+/* Create "partition+parent" pair in local cache */
 void
 cache_parent_of_partition(Oid partition, Oid parent)
 {

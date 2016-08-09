@@ -30,7 +30,7 @@ PG_FUNCTION_INFO_V1( on_partitions_removed );
 PG_FUNCTION_INFO_V1( find_or_create_range_partition);
 PG_FUNCTION_INFO_V1( get_range_condition );
 PG_FUNCTION_INFO_V1( get_range_by_idx );
-PG_FUNCTION_INFO_V1( get_partition_range );
+PG_FUNCTION_INFO_V1( get_range_by_part_oid );
 PG_FUNCTION_INFO_V1( acquire_partitions_lock );
 PG_FUNCTION_INFO_V1( release_partitions_lock );
 PG_FUNCTION_INFO_V1( check_overlap );
@@ -169,14 +169,10 @@ find_or_create_range_partition(PG_FUNCTION_ARGS)
 }
 
 /*
- * Returns range (min, max) as output parameters
- *
- * first argument is the parent relid
- * second is the partition relid
- * third and forth are MIN and MAX output parameters
+ * Returns range (min, max) as output parameters.
  */
 Datum
-get_partition_range(PG_FUNCTION_ARGS)
+get_range_by_part_oid(PG_FUNCTION_ARGS)
 {
 	Oid					parent_oid = PG_GETARG_OID(0);
 	Oid					child_oid = PG_GETARG_OID(1);

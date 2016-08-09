@@ -465,7 +465,7 @@ BEGIN
 	END IF;
 
 	/* Get partition values range */
-	p_range := @extschema@.get_partition_range(v_parent_relid, v_child_relid, 0);
+	p_range := @extschema@.get_range_by_part_oid(v_parent_relid, v_child_relid, 0);
 	IF p_range IS NULL THEN
 		RAISE EXCEPTION 'Could not find specified partition';
 	END IF;
@@ -602,8 +602,8 @@ BEGIN
 	 * first and second elements of array are MIN and MAX of partition1
 	 * third and forth elements are MIN and MAX of partition2
 	 */
-	p_range := @extschema@.get_partition_range(p_parent_relid, p_part1::oid, 0) ||
-			   @extschema@.get_partition_range(p_parent_relid, p_part2::oid, 0);
+	p_range := @extschema@.get_range_by_part_oid(p_parent_relid, p_part1, 0) ||
+			   @extschema@.get_range_by_part_oid(p_parent_relid, p_part2, 0);
 
 	/* Check if ranges are adjacent */
 	IF p_range[1] != p_range[4] AND p_range[2] != p_range[3] THEN
@@ -1080,6 +1080,7 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
+
 /*
  * Construct CHECK constraint condition for a range partition.
  */
@@ -1088,4 +1089,53 @@ CREATE OR REPLACE FUNCTION @extschema@.get_range_condition(
 	p_start_value ANYELEMENT,
 	p_end_value ANYELEMENT)
 RETURNS TEXT AS 'pg_pathman', 'get_range_condition'
+LANGUAGE C STRICT;
+
+/*
+ * Returns N-th range (as an array of two elements).
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_range_by_idx(
+	parent_relid OID, idx INTEGER, dummy ANYELEMENT)
+RETURNS ANYARRAY AS 'pg_pathman', 'get_range_by_idx'
+LANGUAGE C STRICT;
+
+/*
+ * Returns min and max values for specified RANGE partition.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_range_by_part_oid(
+	parent_relid OID, partition_relid OID, dummy ANYELEMENT)
+RETURNS ANYARRAY AS 'pg_pathman', 'get_range_by_part_oid'
+LANGUAGE C STRICT;
+
+/*
+ * Returns min value of the first partition's RangeEntry.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_min_range_value(
+	parent_relid OID, dummy ANYELEMENT)
+RETURNS ANYELEMENT AS 'pg_pathman', 'get_min_range_value'
+LANGUAGE C STRICT;
+
+/*
+ * Returns max value of the last partition's RangeEntry.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_max_range_value(
+	parent_relid OID, dummy ANYELEMENT)
+RETURNS ANYELEMENT AS 'pg_pathman', 'get_max_range_value'
+LANGUAGE C STRICT;
+
+/*
+ * Checks if range overlaps with existing partitions.
+ * Returns TRUE if overlaps and FALSE otherwise.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.check_overlap(
+	parent_relid OID, range_min ANYELEMENT, range_max ANYELEMENT)
+RETURNS BOOLEAN AS 'pg_pathman', 'check_overlap'
+LANGUAGE C STRICT;
+
+/*
+ * Needed for an UPDATE trigger.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.find_or_create_range_partition(
+	relid OID, value ANYELEMENT)
+RETURNS OID AS 'pg_pathman', 'find_or_create_range_partition'
 LANGUAGE C STRICT;
