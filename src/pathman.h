@@ -37,7 +37,7 @@
 #ifdef USE_ASSERT_CHECKING
 #include "utils.h"
 #define DebugPrintDatum(datum, typid) ( datum_to_cstring((datum), (typid)) )
-#elif
+#else
 #define DebugPrintDatum(datum, typid) ( "[use --enable-cassert]" )
 #endif
 

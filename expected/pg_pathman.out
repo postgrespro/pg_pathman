@@ -12,7 +12,6 @@ SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3);
 ERROR:  Partitioning key 'value' must be NOT NULL
 ALTER TABLE test.hash_rel ALTER COLUMN value SET NOT NULL;
 SELECT pathman.create_hash_partitions('test.hash_rel', 'Value', 3);
-NOTICE:  Copying data to partitions...
  create_hash_partitions 
 ------------------------
                       3
@@ -549,7 +548,7 @@ WHERE j1.dt < '2015-03-01' AND j2.dt >= '2015-02-01' ORDER BY j2.dt;
  * Test CTE query
  */
 EXPLAIN (COSTS OFF)
-    WITH ttt AS (SELECT * FROM test.range_rel WHERE dt >= '2015-02-01' AND dt < '2015-03-15')
+	WITH ttt AS (SELECT * FROM test.range_rel WHERE dt >= '2015-02-01' AND dt < '2015-03-15')
 SELECT * FROM ttt;
                                          QUERY PLAN                                         
 --------------------------------------------------------------------------------------------
@@ -562,7 +561,7 @@ SELECT * FROM ttt;
 (6 rows)
 
 EXPLAIN (COSTS OFF)
-    WITH ttt AS (SELECT * FROM test.hash_rel WHERE value = 2)
+	WITH ttt AS (SELECT * FROM test.hash_rel WHERE value = 2)
 SELECT * FROM ttt;
               QUERY PLAN              
 --------------------------------------
@@ -782,7 +781,6 @@ create table test.run_values as select generate_series(1, 10000) val;
 create table test.runtime_test_1(id serial primary key, val real);
 insert into test.runtime_test_1 select generate_series(1, 10000), random();
 select pathman.create_hash_partitions('test.runtime_test_1', 'id', 6);
-NOTICE:  Copying data to partitions...
  create_hash_partitions 
 ------------------------
                       6
@@ -793,7 +791,6 @@ create table test.runtime_test_2 (id serial, category_id int not null, name text
 insert into test.runtime_test_2 (select id, (id % 6) + 1 as category_id, 'good' || id::text as name, random() as rating from generate_series(1, 100000) id);
 create index on test.runtime_test_2 (category_id, rating);
 select pathman.create_hash_partitions('test.runtime_test_2', 'category_id', 6);
-NOTICE:  Copying data to partitions...
  create_hash_partitions 
 ------------------------
                       6
@@ -803,7 +800,6 @@ create table test.vals as (select generate_series(1, 10000) as val);
 create table test.runtime_test_3(val text, id serial not null);
 insert into test.runtime_test_3(id, val) select * from generate_series(1, 10000) k, format('k = %s', k);
 select pathman.create_hash_partitions('test.runtime_test_3', 'id', 4);
-NOTICE:  Copying data to partitions...
  create_hash_partitions 
 ------------------------
                       4
@@ -861,10 +857,6 @@ NOTICE:  drop cascades to 16 other objects
  */
 /* Split first partition in half */
 SELECT pathman.split_range_partition('test.num_range_rel_1', 500);
-NOTICE:  Creating new partition...
-NOTICE:  Copying data to new partition...
-NOTICE:  Altering original partition...
-NOTICE:  Done!
  split_range_partition 
 -----------------------
  {0,1000}
@@ -881,10 +873,6 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id BETWEEN 100 AND 70
 (5 rows)
 
 SELECT pathman.split_range_partition('test.range_rel_1', '2015-01-15'::DATE);
-NOTICE:  Creating new partition...
-NOTICE:  Copying data to new partition...
-NOTICE:  Altering original partition...
-NOTICE:  Done!
   split_range_partition  
 -------------------------
  {01-01-2015,02-01-2015}
@@ -892,10 +880,6 @@ NOTICE:  Done!
 
 /* Merge two partitions into one */
 SELECT pathman.merge_range_partitions('test.num_range_rel_1', 'test.num_range_rel_' || currval('test.num_range_rel_seq'));
-NOTICE:  Altering first partition...
-NOTICE:  Copying data...
-NOTICE:  Dropping second partition...
-NOTICE:  Done!
  merge_range_partitions 
 ------------------------
  
@@ -910,10 +894,6 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id BETWEEN 100 AND 70
 (3 rows)
 
 SELECT pathman.merge_range_partitions('test.range_rel_1', 'test.range_rel_' || currval('test.range_rel_seq'));
-NOTICE:  Altering first partition...
-NOTICE:  Copying data...
-NOTICE:  Dropping second partition...
-NOTICE:  Done!
  merge_range_partitions 
 ------------------------
  
@@ -921,8 +901,6 @@ NOTICE:  Done!
 
 /* Append and prepend partitions */
 SELECT pathman.append_range_partition('test.num_range_rel');
-NOTICE:  Appending new partition...
-NOTICE:  Done!
  append_range_partition 
 ------------------------
  test.num_range_rel_6
@@ -936,8 +914,6 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 4000;
 (2 rows)
 
 SELECT pathman.prepend_range_partition('test.num_range_rel');
-NOTICE:  Prepending new partition...
-NOTICE:  Done!
  prepend_range_partition 
 -------------------------
  test.num_range_rel_7
@@ -957,16 +933,12 @@ SELECT pathman.drop_range_partition('test.num_range_rel_7');
 (1 row)
 
 SELECT pathman.append_range_partition('test.range_rel');
-NOTICE:  Appending new partition...
-NOTICE:  Done!
  append_range_partition 
 ------------------------
  test.range_rel_6
 (1 row)
 
 SELECT pathman.prepend_range_partition('test.range_rel');
-NOTICE:  Prepending new partition...
-NOTICE:  Done!
  prepend_range_partition 
 -------------------------
  test.range_rel_7
@@ -999,7 +971,6 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt BETWEEN '2014-12-15' A
 SELECT pathman.add_range_partition('test.range_rel', '2014-12-01'::DATE, '2015-01-02'::DATE);
 ERROR:  Specified range overlaps with existing partitions
 SELECT pathman.add_range_partition('test.range_rel', '2014-12-01'::DATE, '2015-01-01'::DATE);
-NOTICE:  Done!
  add_range_partition 
 ---------------------
  test.range_rel_8
@@ -1051,15 +1022,15 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt BETWEEN '2014-11-15' A
 (4 rows)
 
 CREATE TABLE test.range_rel_test1 (
-    id  SERIAL PRIMARY KEY,
-    dt  TIMESTAMP,
-    txt TEXT,
-    abc INTEGER);
+	id  SERIAL PRIMARY KEY,
+	dt  TIMESTAMP,
+	txt TEXT,
+	abc INTEGER);
 SELECT pathman.attach_range_partition('test.range_rel', 'test.range_rel_test1', '2013-01-01'::DATE, '2014-01-01'::DATE);
 ERROR:  Partition must have the exact same structure as parent
 CREATE TABLE test.range_rel_test2 (
-    id  SERIAL PRIMARY KEY,
-    dt  TIMESTAMP);
+	id  SERIAL PRIMARY KEY,
+	dt  TIMESTAMP);
 SELECT pathman.attach_range_partition('test.range_rel', 'test.range_rel_test2', '2013-01-01'::DATE, '2014-01-01'::DATE);
 ERROR:  Partition must have the exact same structure as parent
 /*
@@ -1093,7 +1064,6 @@ SELECT COUNT(*) FROM ONLY test.hash_rel;
 (1 row)
 
 SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3);
-NOTICE:  Copying data to partitions...
  create_hash_partitions 
 ------------------------
                       3
@@ -1174,7 +1144,7 @@ SELECT * FROM test.range_rel WHERE dt = '2015-03-15';
 DROP TABLE test.range_rel CASCADE;
 NOTICE:  drop cascades to 16 other objects
 SELECT * FROM pathman.pathman_config;
- id | relname | attname | parttype | range_interval 
+ id | partrel | attname | parttype | range_interval 
 ----+---------+---------+----------+----------------
 (0 rows)
 
@@ -1236,7 +1206,6 @@ CREATE TABLE test."TeSt" (a INT NOT NULL, b INT);
 SELECT pathman.create_hash_partitions('test.TeSt', 'a', 3);
 ERROR:  relation "test.test" does not exist at character 39
 SELECT pathman.create_hash_partitions('test."TeSt"', 'a', 3);
-NOTICE:  Copying data to partitions...
  create_hash_partitions 
 ------------------------
                       3
@@ -1317,36 +1286,24 @@ NOTICE:  Copying data to partitions...
 (1 row)
 
 SELECT pathman.append_range_partition('test."RangeRel"');
-NOTICE:  Appending new partition...
-NOTICE:  Done!
  append_range_partition 
 ------------------------
  test."RangeRel_4"
 (1 row)
 
 SELECT pathman.prepend_range_partition('test."RangeRel"');
-NOTICE:  Prepending new partition...
-NOTICE:  Done!
  prepend_range_partition 
 -------------------------
  test."RangeRel_5"
 (1 row)
 
 SELECT pathman.merge_range_partitions('test."RangeRel_1"', 'test."RangeRel_' || currval('test."RangeRel_seq"') || '"');
-NOTICE:  Altering first partition...
-NOTICE:  Copying data...
-NOTICE:  Dropping second partition...
-NOTICE:  Done!
  merge_range_partitions 
 ------------------------
  
 (1 row)
 
 SELECT pathman.split_range_partition('test."RangeRel_1"', '2015-01-01'::DATE);
-NOTICE:  Creating new partition...
-NOTICE:  Copying data to new partition...
-NOTICE:  Altering original partition...
-NOTICE:  Done!
   split_range_partition  
 -------------------------
  {12-31-2014,01-02-2015}
@@ -1374,7 +1331,7 @@ NOTICE:  Copying data to partitions...
 DROP TABLE test."RangeRel" CASCADE;
 NOTICE:  drop cascades to 5 other objects
 SELECT * FROM pathman.pathman_config;
- id |      relname       | attname | parttype | range_interval 
+ id |      partrel       | attname | parttype | range_interval 
 ----+--------------------+---------+----------+----------------
   9 | test.num_range_rel | id      |        2 | 1000
 (1 row)
@@ -1418,7 +1375,6 @@ CREATE TABLE hash_rel (
 	value	INTEGER NOT NULL);
 INSERT INTO hash_rel (value) SELECT g FROM generate_series(1, 10000) as g;
 SELECT create_hash_partitions('hash_rel', 'value', 3);
-NOTICE:  Copying data to partitions...
  create_hash_partitions 
 ------------------------
                       3
@@ -1451,36 +1407,24 @@ NOTICE:  Copying data to partitions...
 (1 row)
 
 SELECT merge_range_partitions('range_rel_1', 'range_rel_2');
-NOTICE:  Altering first partition...
-NOTICE:  Copying data...
-NOTICE:  Dropping second partition...
-NOTICE:  Done!
  merge_range_partitions 
 ------------------------
  
 (1 row)
 
 SELECT split_range_partition('range_rel_1', '2010-02-15'::date);
-NOTICE:  Creating new partition...
-NOTICE:  Copying data to new partition...
-NOTICE:  Altering original partition...
-NOTICE:  Done!
   split_range_partition  
 -------------------------
  {01-01-2010,03-01-2010}
 (1 row)
 
 SELECT append_range_partition('range_rel');
-NOTICE:  Appending new partition...
-NOTICE:  Done!
  append_range_partition 
 ------------------------
  public.range_rel_14
 (1 row)
 
 SELECT prepend_range_partition('range_rel');
-NOTICE:  Prepending new partition...
-NOTICE:  Done!
  prepend_range_partition 
 -------------------------
  public.range_rel_15
