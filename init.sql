@@ -197,17 +197,22 @@ CREATE OR REPLACE FUNCTION @extschema@.pathman_ddl_trigger_func()
 RETURNS event_trigger AS
 $$
 DECLARE
-	obj record;
+	obj					record;
+	pg_class_oid		oid;
+
 BEGIN
-	FOR obj IN SELECT * FROM pg_event_trigger_dropped_objects() as events
-			   JOIN @extschema@.pathman_config as cfg
-			   ON partrel::oid = events.objid
-	LOOP
-		IF obj.object_type = 'table' THEN
-			EXECUTE 'DELETE FROM @extschema@.pathman_config WHERE partrel = $1'
-			USING obj.objid;
-		END IF;
-	END LOOP;
+	pg_class_oid = 'pg_class'::regclass;
+
+	/* Handle 'DROP TABLE' events */
+	WITH to_be_deleted AS (
+		SELECT cfg.partrel AS rel
+		FROM pg_event_trigger_dropped_objects() AS events
+		JOIN @extschema@.pathman_config AS cfg
+		ON cfg.partrel::oid = events.objid
+		WHERE events.classid = pg_class_oid
+	)
+	DELETE FROM @extschema@.pathman_config
+	WHERE partrel IN (SELECT rel FROM to_be_deleted);
 END
 $$
 LANGUAGE plpgsql;

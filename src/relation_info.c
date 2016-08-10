@@ -51,29 +51,58 @@ static Oid get_parent_of_partition_internal(Oid partition,
 static bool perform_parent_refresh(Oid parent);
 
 
-#define FreeChildrenArray(prel) \
-	do { \
-		uint32	i; \
-		/* Remove relevant PartParentInfos */ \
-		if ((prel)->children) \
-		{ \
-			for (i = 0; i < PrelChildrenCount(prel); i++) \
-			{ \
-				Oid child = (prel)->children[i]; \
-				/* If it's *always been* relid's partition, free cache */ \
-				if (relid == get_parent_of_partition(child, NULL)) \
-					forget_parent_of_partition(child, NULL); \
-			} \
-			pfree((prel)->children); \
-			(prel)->children = NULL; \
-		} \
-	} while (0)
+/*
+ * Useful static functions for freeing memory.
+ */
 
-#define FreeRangesArray(prel) \
-	do { \
-		if ((prel)->ranges) pfree((prel)->ranges); \
-		(prel)->ranges = NULL; \
-	} while (0)
+static inline void
+FreeChildrenArray(PartRelationInfo *prel)
+{
+	uint32	i;
+
+	Assert(PrelIsValid(prel));
+
+	/* Remove relevant PartParentInfos */
+	if ((prel)->children)
+	{
+		for (i = 0; i < PrelChildrenCount(prel); i++)
+		{
+			Oid child = (prel)->children[i];
+
+			/* If it's *always been* relid's partition, free cache */
+			if (prel->key == get_parent_of_partition(child, NULL))
+				forget_parent_of_partition(child, NULL);
+		}
+
+		pfree((prel)->children);
+		(prel)->children = NULL;
+	}
+}
+
+static inline void
+FreeRangesArray(PartRelationInfo *prel)
+{
+	uint32	i;
+
+	Assert(PrelIsValid(prel));
+
+	/* Remove RangeEntries array */
+	if ((prel)->ranges)
+	{
+		/* Remove persistent entries if not byVal */
+		if (!(prel)->attbyval)
+		{
+			for (i = 0; i < PrelChildrenCount(prel); i++)
+			{
+				pfree(DatumGetPointer((prel)->ranges[i].min));
+				pfree(DatumGetPointer((prel)->ranges[i].max));
+			}
+		}
+
+		pfree((prel)->ranges);
+		(prel)->ranges = NULL;
+	}
+}
 
 
 /*
@@ -103,16 +132,16 @@ refresh_pathman_relation_info(Oid relid,
 			 "Creating new record for relation %u in pg_pathman's cache [%u]",
 		 relid, MyProcPid);
 
-	/* First we assume that this entry is invalid */
-	prel->valid = false;
-
 	/* Clear outdated resources */
-	if (found)
+	if (found && PrelIsValid(prel))
 	{
 		/* Free these arrays iff they're not NULL */
 		FreeChildrenArray(prel);
 		FreeRangesArray(prel);
 	}
+
+	/* First we assume that this entry is invalid */
+	prel->valid = false;
 
 	/* Make both arrays point to NULL */
 	prel->children = NULL;
@@ -180,14 +209,14 @@ invalidate_pathman_relation_info(Oid relid, bool *found)
 		FreeChildrenArray(prel);
 		FreeRangesArray(prel);
 	}
-	else
+	/* not found => we create a new one */
+	else if (!found)
 	{
 		prel->children = NULL;
 		prel->ranges = NULL;
 	}
 
-	if (prel)
-		prel->valid = false; /* now cache entry is invalid */
+	prel->valid = false; /* now cache entry is invalid */
 
 	elog(DEBUG2,
 		 "Invalidating record for relation %u in pg_pathman's cache [%u]",
@@ -240,7 +269,7 @@ remove_pathman_relation_info(Oid relid)
 	PartRelationInfo *prel = hash_search(partitioned_rels,
 										 (const void *) &relid,
 										 HASH_FIND, NULL);
-	if (prel)
+	if (prel && PrelIsValid(prel))
 	{
 		/* Free these arrays iff they're not NULL */
 		FreeChildrenArray(prel);

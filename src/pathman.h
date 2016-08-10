@@ -56,8 +56,6 @@
 /* type modifier (typmod) for 'range_interval' */
 #define PATHMAN_CONFIG_interval_typmod		-1
 
-#define PATHMAN_CONFIG_partrel_idx			"pathman_config_partrel_idx"
-
 
 /*
  * pg_pathman's global state.

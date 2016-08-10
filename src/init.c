@@ -27,6 +27,7 @@
 #include "executor/spi.h"
 #include "miscadmin.h"
 #include "optimizer/clauses.h"
+#include "utils/datum.h"
 #include "utils/inval.h"
 #include "utils/fmgroids.h"
 #include "utils/syscache.h"
@@ -66,7 +67,9 @@ static bool validate_hash_constraint(const Expr *expr,
 									 const PartRelationInfo *prel,
 									 uint32 *part_hash);
 
-static bool read_opexpr_const(const OpExpr *opexpr, AttrNumber varattno, Datum *val);
+static bool read_opexpr_const(const OpExpr *opexpr,
+							  const PartRelationInfo *prel,
+							  Datum *val);
 
 static int oid_cmp(const void *p1, const void *p2);
 
@@ -219,6 +222,7 @@ fill_prel_with_partitions(const Oid *partitions,
 	/* Finalize 'prel' for a RANGE-partitioned table */
 	if (prel->parttype == PT_RANGE)
 	{
+		MemoryContext	old_mcxt;
 		TypeCacheEntry *tce = lookup_type_cache(prel->atttype,
 												TYPECACHE_CMP_PROC_FINFO);
 
@@ -230,6 +234,21 @@ fill_prel_with_partitions(const Oid *partitions,
 		/* Initialize 'prel->children' array */
 		for (i = 0; i < PrelChildrenCount(prel); i++)
 			prel->children[i] = prel->ranges[i].child_oid;
+
+		/* Copy all min & max Datums to the persistent mcxt */
+		old_mcxt = MemoryContextSwitchTo(TopMemoryContext);
+		for (i = 0; i < PrelChildrenCount(prel); i++)
+		{
+			prel->ranges[i].max = datumCopy(prel->ranges[i].max,
+											prel->attbyval,
+											prel->attlen);
+
+			prel->ranges[i].min = datumCopy(prel->ranges[i].min,
+											prel->attbyval,
+											prel->attlen);
+		}
+		MemoryContextSwitchTo(old_mcxt);
+
 	}
 
 #ifdef USE_ASSERT_CHECKING
@@ -596,7 +615,7 @@ validate_range_constraint(const Expr *expr,
 	if (BTGreaterEqualStrategyNumber == get_op_opfamily_strategy(opexpr->opno,
 																 tce->btree_opf))
 	{
-		if (!read_opexpr_const(opexpr, prel->attnum, min))
+		if (!read_opexpr_const(opexpr, prel, min))
 			return false;
 	}
 	else
@@ -607,7 +626,7 @@ validate_range_constraint(const Expr *expr,
 	if (BTLessStrategyNumber == get_op_opfamily_strategy(opexpr->opno,
 														 tce->btree_opf))
 	{
-		if (!read_opexpr_const(opexpr, prel->attnum, max))
+		if (!read_opexpr_const(opexpr, prel, max))
 			return false;
 	}
 	else
@@ -620,19 +639,38 @@ validate_range_constraint(const Expr *expr,
  * Reads const value from expressions of kind: VAR >= CONST or VAR < CONST
  */
 static bool
-read_opexpr_const(const OpExpr *opexpr, AttrNumber varattno, Datum *val)
+read_opexpr_const(const OpExpr *opexpr,
+				  const PartRelationInfo *prel,
+				  Datum *val)
 {
-	const Node *left = linitial(opexpr->args);
-	const Node *right = lsecond(opexpr->args);
+	const Node	   *left;
+	const Node	   *right;
+	const Const	   *constant;
+
+	if (list_length(opexpr->args) != 2)
+		return false;
+
+	left = linitial(opexpr->args);
+	right = lsecond(opexpr->args);
 
 	if (!IsA(left, Var) || !IsA(right, Const))
 		return false;
-	if (((Var *) left)->varoattno != varattno)
+	if (((Var *) left)->varoattno != prel->attnum)
 		return false;
 	if (((Const *) right)->constisnull)
 		return false;
 
-	*val = ((Const *) right)->constvalue;
+	constant = (Const *) right;
+
+	/* Check that types match */
+	if (prel->atttype != constant->consttype)
+	{
+		elog(WARNING, "Constant type in some check constraint does "
+					  "not match the partitioned column's type");
+		return false;
+	}
+
+	*val = constant->constvalue;
 
 	return true;
 }
