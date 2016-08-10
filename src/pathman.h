@@ -56,6 +56,10 @@
 /* type modifier (typmod) for 'range_interval' */
 #define PATHMAN_CONFIG_interval_typmod		-1
 
+extern Oid	pathman_config_relid;
+
+Oid get_pathman_config_relid(void);
+
 
 /*
  * pg_pathman's global state.

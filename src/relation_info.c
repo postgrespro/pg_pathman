@@ -26,8 +26,9 @@
 #include "utils/snapmgr.h"
 
 
-static List *delayed_invalidation_parent_rels = NIL;
-static List *delayed_invalidation_vague_rels = NIL;
+static List	   *delayed_invalidation_parent_rels = NIL;
+static List	   *delayed_invalidation_vague_rels = NIL;
+static bool		delayed_shutdown = false;
 
 /* Add unique Oid to list, allocate in TopMemoryContext */
 #define list_add_unique(list, oid) \
@@ -49,60 +50,6 @@ static Oid get_parent_of_partition_internal(Oid partition,
 											PartParentSearch *status,
 											HASHACTION action);
 static bool perform_parent_refresh(Oid parent);
-
-
-/*
- * Useful static functions for freeing memory.
- */
-
-static inline void
-FreeChildrenArray(PartRelationInfo *prel)
-{
-	uint32	i;
-
-	Assert(PrelIsValid(prel));
-
-	/* Remove relevant PartParentInfos */
-	if ((prel)->children)
-	{
-		for (i = 0; i < PrelChildrenCount(prel); i++)
-		{
-			Oid child = (prel)->children[i];
-
-			/* If it's *always been* relid's partition, free cache */
-			if (prel->key == get_parent_of_partition(child, NULL))
-				forget_parent_of_partition(child, NULL);
-		}
-
-		pfree((prel)->children);
-		(prel)->children = NULL;
-	}
-}
-
-static inline void
-FreeRangesArray(PartRelationInfo *prel)
-{
-	uint32	i;
-
-	Assert(PrelIsValid(prel));
-
-	/* Remove RangeEntries array */
-	if ((prel)->ranges)
-	{
-		/* Remove persistent entries if not byVal */
-		if (!(prel)->attbyval)
-		{
-			for (i = 0; i < PrelChildrenCount(prel); i++)
-			{
-				pfree(DatumGetPointer((prel)->ranges[i].min));
-				pfree(DatumGetPointer((prel)->ranges[i].max));
-			}
-		}
-
-		pfree((prel)->ranges);
-		(prel)->ranges = NULL;
-	}
-}
 
 
 /*
@@ -131,6 +78,12 @@ refresh_pathman_relation_info(Oid relid,
 			 "Refreshing record for relation %u in pg_pathman's cache [%u]" :
 			 "Creating new record for relation %u in pg_pathman's cache [%u]",
 		 relid, MyProcPid);
+
+	/*
+	 * NOTE: Trick clang analyzer (first access without NULL pointer check).
+	 * Access to field 'valid' results in a dereference of a null pointer.
+	 */
+	prel->cmp_proc = InvalidOid;
 
 	/* Clear outdated resources */
 	if (found && PrelIsValid(prel))
@@ -199,24 +152,33 @@ refresh_pathman_relation_info(Oid relid,
 void
 invalidate_pathman_relation_info(Oid relid, bool *found)
 {
-	PartRelationInfo   *prel = hash_search(partitioned_rels,
-										   (const void *) &relid,
-										   (found ? HASH_FIND : HASH_ENTER),
-										   found);
+	bool				prel_found;
+	HASHACTION			action = found ? HASH_FIND : HASH_ENTER;
+	PartRelationInfo   *prel;
 
-	if(found && PrelIsValid(prel))
+	prel = hash_search(partitioned_rels,
+					   (const void *) &relid,
+					   action, &prel_found);
+
+	if ((action == HASH_FIND ||
+		(action == HASH_ENTER && prel_found)) && PrelIsValid(prel))
 	{
 		FreeChildrenArray(prel);
 		FreeRangesArray(prel);
+
+		prel->valid = false; /* now cache entry is invalid */
 	}
-	/* not found => we create a new one */
-	else if (!found)
+	/* Handle invalid PartRelationInfo */
+	else if (prel)
 	{
 		prel->children = NULL;
 		prel->ranges = NULL;
+
+		prel->valid = false; /* now cache entry is invalid */
 	}
 
-	prel->valid = false; /* now cache entry is invalid */
+	/* Set 'found' if necessary */
+	if (found) *found = prel_found;
 
 	elog(DEBUG2,
 		 "Invalidating record for relation %u in pg_pathman's cache [%u]",
@@ -291,6 +253,13 @@ remove_pathman_relation_info(Oid relid)
  * Functions for delayed invalidation.
  */
 
+/* Add new delayed pathman shutdown job (DROP EXTENSION) */
+void
+delay_pathman_shutdown(void)
+{
+	delayed_shutdown = true;
+}
+
 /* Add new delayed invalidation job for a [ex-]parent relation */
 void
 delay_invalidation_parent_rel(Oid parent)
@@ -311,7 +280,8 @@ finish_delayed_invalidation(void)
 {
 	/* Exit early if there's nothing to do */
 	if (delayed_invalidation_parent_rels == NIL &&
-		delayed_invalidation_vague_rels == NIL)
+		delayed_invalidation_vague_rels == NIL &&
+		delayed_shutdown == false)
 	{
 		return;
 	}
@@ -319,9 +289,14 @@ finish_delayed_invalidation(void)
 	/* Check that current state is transactional */
 	if (IsTransactionState())
 	{
-		ListCell *lc;
+		ListCell   *lc;
 
-		//elog(WARNING, "invalidating...");
+		if (delayed_shutdown)
+		{
+			delayed_shutdown = false;
+			unload_config();
+			return;
+		}
 
 		/* Process relations that are (or were) definitely partitioned */
 		foreach (lc, delayed_invalidation_parent_rels)
@@ -541,8 +516,7 @@ perform_parent_refresh(Oid parent)
 		parttype = DatumGetPartType(values[Anum_pathman_config_parttype - 1]);
 		attname = DatumGetTextP(values[Anum_pathman_config_attname - 1]);
 
-		if (!refresh_pathman_relation_info(parent, parttype,
-										   text_to_cstring(attname)))
+		if (!refresh_pathman_relation_info(parent, parttype, text_to_cstring(attname)))
 			return false;
 	}
 	else

@@ -207,6 +207,9 @@ partition_filter_exec(CustomScanState *node)
 			selected_partid = create_partitions(state->partitioned_table,
 												state->temp_const.constvalue,
 												state->temp_const.consttype);
+
+			/* get_pathman_relation_info() will refresh this entry */
+			invalidate_pathman_relation_info(state->partitioned_table, NULL);
 		}
 		else
 			selected_partid = parts[0];

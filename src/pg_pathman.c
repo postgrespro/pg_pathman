@@ -50,6 +50,7 @@ List		   *inheritance_disabled_relids = NIL;
 List		   *inheritance_enabled_relids = NIL;
 bool			pg_pathman_enable = true;
 PathmanState   *pmstate;
+Oid				pathman_config_relid = InvalidOid;
 
 
 /* pg module functions */
@@ -2074,4 +2075,10 @@ generate_mergeappend_paths(PlannerInfo *root, RelOptInfo *rel,
 																NULL));
 		}
 	}
+}
+
+Oid
+get_pathman_config_relid(void)
+{
+	return pathman_config_relid;
 }

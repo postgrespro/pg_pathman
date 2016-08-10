@@ -452,6 +452,10 @@ pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
 	if (post_parse_analyze_hook_next)
 		post_parse_analyze_hook_next(pstate, query);
 
+	/* Finish delayed invalidation jobs */
+	if (IsPathmanReady())
+		finish_delayed_invalidation();
+
 	/* Load config if pg_pathman exists & it's still necessary */
 	if (IsPathmanEnabled() &&
 		initialization_needed &&
@@ -460,10 +464,6 @@ pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
 	{
 		load_config(); /* perform main cache initialization */
 	}
-
-	/* Finish delayed invalidation jobs */
-	if (IsPathmanReady())
-		finish_delayed_invalidation();
 
 	inheritance_disabled_relids = NIL;
 	inheritance_enabled_relids = NIL;
@@ -495,6 +495,9 @@ pathman_relcache_hook(Datum arg, Oid relid)
 	PartParentSearch	search;
 	Oid					partitioned_table;
 
+	if (!IsPathmanReady())
+		return;
+
 	/* Invalidate PartParentInfo cache if needed */
 	partitioned_table = forget_parent_of_partition(relid, &search);
 
@@ -516,6 +519,9 @@ pathman_relcache_hook(Datum arg, Oid relid)
 			{
 				elog(DEBUG2, "Invalidation message for relation %u [%u]",
 					 relid, MyProcPid);
+
+				if (relid == get_pathman_config_relid())
+					delay_pathman_shutdown();
 			}
 			break;
 

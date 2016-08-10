@@ -101,6 +101,10 @@ typedef enum
 } PartParentSearch;
 
 
+/*
+ * PartRelationInfo field access macros.
+ */
+
 #define PrelGetChildrenArray(prel) ( (prel)->children )
 
 #define PrelGetRangesArray(prel) ( (prel)->ranges )
@@ -117,6 +121,7 @@ void invalidate_pathman_relation_info(Oid relid, bool *found);
 void remove_pathman_relation_info(Oid relid);
 PartRelationInfo *get_pathman_relation_info(Oid relid);
 
+void delay_pathman_shutdown(void);
 void delay_invalidation_parent_rel(Oid parent);
 void delay_invalidation_vague_rel(Oid vague_rel);
 void finish_delayed_invalidation(void);
@@ -126,5 +131,59 @@ Oid forget_parent_of_partition(Oid partition, PartParentSearch *status);
 Oid get_parent_of_partition(Oid partition, PartParentSearch *status);
 
 PartType DatumGetPartType(Datum datum);
+
+
+/*
+ * Useful static functions for freeing memory.
+ */
+
+static inline void
+FreeChildrenArray(PartRelationInfo *prel)
+{
+	uint32	i;
+
+	Assert(PrelIsValid(prel));
+
+	/* Remove relevant PartParentInfos */
+	if ((prel)->children)
+	{
+		for (i = 0; i < PrelChildrenCount(prel); i++)
+		{
+			Oid child = (prel)->children[i];
+
+			/* If it's *always been* relid's partition, free cache */
+			if (prel->key == get_parent_of_partition(child, NULL))
+				forget_parent_of_partition(child, NULL);
+		}
+
+		pfree((prel)->children);
+		(prel)->children = NULL;
+	}
+}
+
+static inline void
+FreeRangesArray(PartRelationInfo *prel)
+{
+	uint32	i;
+
+	Assert(PrelIsValid(prel));
+
+	/* Remove RangeEntries array */
+	if ((prel)->ranges)
+	{
+		/* Remove persistent entries if not byVal */
+		if (!(prel)->attbyval)
+		{
+			for (i = 0; i < PrelChildrenCount(prel); i++)
+			{
+				pfree(DatumGetPointer((prel)->ranges[i].min));
+				pfree(DatumGetPointer((prel)->ranges[i].max));
+			}
+		}
+
+		pfree((prel)->ranges);
+		(prel)->ranges = NULL;
+	}
+}
 
 #endif

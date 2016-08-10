@@ -78,14 +78,45 @@ static int oid_cmp(const void *p1, const void *p2);
  * Create local PartRelationInfo cache & load pg_pathman's config.
  */
 void
-load_config()
+load_config(void)
 {
+	/* cache PATHMAN_CONFIG relation Oid */
+	pathman_config_relid = get_relname_relid(PATHMAN_CONFIG, get_pathman_schema());
+
 	init_local_config();	/* create 'relations' hash table */
 	read_pathman_config();	/* read PATHMAN_CONFIG table & fill cache */
 
 	initialization_needed = false;
 
 	elog(DEBUG2, "pg_pathman's config has been loaded successfully");
+}
+
+/*
+ * Destroy local caches & free memory.
+ */
+void
+unload_config(void)
+{
+	HASH_SEQ_STATUS		status;
+	PartRelationInfo   *prel;
+
+	hash_seq_init(&status, partitioned_rels);
+	while((prel = (PartRelationInfo *) hash_seq_search(&status)) != NULL)
+	{
+		if (PrelIsValid(prel))
+		{
+			FreeChildrenArray(prel);
+			FreeRangesArray(prel);
+		}
+	}
+
+	/* Now we can safely destroy hash tables */
+	hash_destroy(partitioned_rels);
+	hash_destroy(parent_cache);
+	partitioned_rels = NULL;
+	parent_cache = NULL;
+
+	initialization_needed = true;
 }
 
 /*
@@ -104,12 +135,6 @@ void
 init_local_config(void)
 {
 	HASHCTL ctl;
-
-	if (partitioned_rels)
-	{
-		elog(DEBUG2, "pg_pathman's partitioned relations table already exists");
-		return;
-	}
 
 	memset(&ctl, 0, sizeof(ctl));
 	ctl.keysize = sizeof(Oid);
@@ -392,7 +417,6 @@ bool
 pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 								 TransactionId *xmin)
 {
-	Oid				pathman_config;
 	Relation		rel;
 	HeapScanDesc	scan;
 	ScanKeyData		key[1];
@@ -400,16 +424,13 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 	HeapTuple		htup;
 	bool			contains_rel = false;
 
-	/* Get PATHMAN_CONFIG table Oid */
-	pathman_config = get_relname_relid(PATHMAN_CONFIG, get_pathman_schema());
-
 	ScanKeyInit(&key[0],
 				Anum_pathman_config_partrel,
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(relid));
 
-	/* Open relation with latest snapshot available */
-	rel = heap_open(pathman_config, AccessShareLock);
+	/* Open PATHMAN_CONFIG with latest snapshot available */
+	rel = heap_open(get_pathman_config_relid(), AccessShareLock);
 
 	/* Check that 'partrel' column is if regclass type */
 	Assert(RelationGetDescr(rel)->
@@ -471,17 +492,13 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 static void
 read_pathman_config(void)
 {
-	Oid				pathman_config;
 	Relation		rel;
 	HeapScanDesc	scan;
 	Snapshot		snapshot;
 	HeapTuple		htup;
 
-	/* Get PATHMAN_CONFIG table Oid */
-	pathman_config = get_relname_relid(PATHMAN_CONFIG, get_pathman_schema());
-
-	/* Open relation with latest snapshot available */
-	rel = heap_open(pathman_config, AccessShareLock);
+	/* Open PATHMAN_CONFIG with latest snapshot available */
+	rel = heap_open(get_pathman_config_relid(), AccessShareLock);
 
 	/* Check that 'partrel' column is if regclass type */
 	Assert(RelationGetDescr(rel)->
