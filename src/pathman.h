@@ -25,12 +25,15 @@
 #include "nodes/execnodes.h"
 #include "optimizer/planner.h"
 #include "parser/parsetree.h"
-#include "storage/lwlock.h"
 
 
 /* Check PostgreSQL version */
-#if PG_VERSION_NUM < 90500
-	#error "You are trying to build pg_pathman with PostgreSQL version lower than 9.5.  Please, check your environment."
+/*
+ * TODO: a fix for WaitForBackgroundWorkerShutdown()
+ * has been accepted, so we have to update this number.
+ */
+#if PG_VERSION_NUM < 90503
+	#error "Cannot build pg_pathman with PostgreSQL version lower than 9.5.3"
 #endif
 
 /* Print Datum as CString to server log */
