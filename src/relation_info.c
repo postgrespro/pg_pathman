@@ -26,9 +26,13 @@
 #include "utils/snapmgr.h"
 
 
+/*
+ * We delay all invalidation jobs received in relcache hook.
+ */
 static List	   *delayed_invalidation_parent_rels = NIL;
 static List	   *delayed_invalidation_vague_rels = NIL;
-static bool		delayed_shutdown = false;
+static bool		delayed_shutdown = false; /* pathman was dropped */
+
 
 /* Add unique Oid to list, allocate in TopMemoryContext */
 #define list_add_unique(list, oid) \
@@ -291,11 +295,24 @@ finish_delayed_invalidation(void)
 	{
 		ListCell   *lc;
 
+		/* Handle the probable 'DROP EXTENSION' case */
 		if (delayed_shutdown)
 		{
 			delayed_shutdown = false;
-			unload_config();
-			return;
+
+			/* Check that PATHMAN_CONFIG table has indeed been dropped */
+			if (InvalidOid == get_relname_relid(PATHMAN_CONFIG, get_pathman_schema()))
+			{
+				/* Ok, let's unload pg_pathman's config */
+				unload_config();
+
+				/* Disregard all remaining invalidation jobs */
+				free_invalidation_list(delayed_invalidation_parent_rels);
+				free_invalidation_list(delayed_invalidation_vague_rels);
+
+				/* No need to continue, exit */
+				return;
+			}
 		}
 
 		/* Process relations that are (or were) definitely partitioned */
@@ -324,16 +341,19 @@ finish_delayed_invalidation(void)
 
 				switch (search)
 				{
+					/* It's still parent */
 					case PPS_ENTRY_PART_PARENT:
 						perform_parent_refresh(parent);
 						break;
 
+					/* It *might have been* parent before (not in PATHMAN_CONFIG) */
 					case PPS_ENTRY_PARENT:
 						remove_pathman_relation_info(parent);
 						break;
 
+					/* How come we still don't know?? */
 					case PPS_NOT_SURE:
-						elog(ERROR, "This should never happen");
+						elog(ERROR, "Unknown table status, this should never happen");
 						break;
 
 					default:
@@ -482,6 +502,11 @@ try_syscache_parent_search(Oid partition, PartParentSearch *status)
 		{
 			parent = ((Form_pg_inherits) GETSTRUCT(inheritsTuple))->inhparent;
 
+			/*
+			 * NB: don't forget that 'inh' flag does not immediately
+			 * mean that this is a pg_pathman's partition. It might
+			 * be just a casual inheriting table.
+			 */
 			if (status) *status = PPS_ENTRY_PARENT;
 
 			/* Check that PATHMAN_CONFIG contains this table */
