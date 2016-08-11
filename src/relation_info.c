@@ -49,11 +49,11 @@ static bool		delayed_shutdown = false; /* pathman was dropped */
 	} while (0)
 
 
+static bool try_perform_parent_refresh(Oid parent);
 static Oid try_syscache_parent_search(Oid partition, PartParentSearch *status);
 static Oid get_parent_of_partition_internal(Oid partition,
 											PartParentSearch *status,
 											HASHACTION action);
-static bool perform_parent_refresh(Oid parent);
 
 
 /*
@@ -332,7 +332,7 @@ finish_delayed_invalidation(void)
 			Oid		vague_rel = lfirst_oid(lc);
 
 			/* It might be a partitioned table or a partition */
-			if (!perform_parent_refresh(vague_rel))
+			if (!try_perform_parent_refresh(vague_rel))
 			{
 				PartParentSearch	search;
 				Oid					parent;
@@ -343,7 +343,7 @@ finish_delayed_invalidation(void)
 				{
 					/* It's still parent */
 					case PPS_ENTRY_PART_PARENT:
-						perform_parent_refresh(parent);
+						try_perform_parent_refresh(parent);
 						break;
 
 					/* It *might have been* parent before (not in PATHMAN_CONFIG) */
@@ -527,8 +527,13 @@ try_syscache_parent_search(Oid partition, PartParentSearch *status)
 	}
 }
 
+/*
+ * Try to refresh cache entry for relation 'parent'.
+ *
+ * Return true on success.
+ */
 static bool
-perform_parent_refresh(Oid parent)
+try_perform_parent_refresh(Oid parent)
 {
 	Datum	values[Natts_pathman_config];
 	bool	isnull[Natts_pathman_config];
