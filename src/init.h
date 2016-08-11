@@ -25,7 +25,6 @@ extern bool		initialization_needed;
 
 
 Size estimate_pathman_shmem_size(void);
-void init_local_config(void);
 void init_shmem_config(void);
 void load_config(void);
 void unload_config(void);

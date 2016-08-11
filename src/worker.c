@@ -51,32 +51,51 @@ typedef struct
 } PartitionArgs;
 
 
-#define PackDatumToByteArray(array, datum, datum_size, typbyval) \
-	do { \
-		memcpy((void *) (array), \
-			   (const void *) ((typbyval) ? \
-								   (Pointer) (&datum) : \
-								   DatumGetPointer(datum)), \
-			   datum_size); \
-	} while (0)
 
 /*
- * 'typid' is not necessary, but it is used by PrintUnpackedDatum().
+ * Useful datum packing\unpacking functions for BGW.
  */
-#define UnpackDatumFromByteArray(array, datum, datum_size, typbyval, typid) \
-	do { \
-		if (typbyval) \
-			memcpy((void *) &datum, (const void *) array, datum_size); \
-		else \
-		{ \
-			datum = PointerGetDatum(palloc(datum_size)); \
-			memcpy((void *) DatumGetPointer(datum), \
-				   (const void *) array, \
-				   datum_size); \
-		} \
-		elog(LOG, "BGW: arg->value is '%s' [%u]", \
-			 DebugPrintDatum(datum, typid), MyProcPid); \
-	} while (0)
+
+static void
+PackDatumToByteArray(void *byte_array, Datum datum, Size datum_size, bool typbyval)
+{
+	if (typbyval)
+		/* We have to copy all Datum's bytes */
+		datum_size = Max(sizeof(Datum), datum_size);
+
+	memcpy((void *) byte_array,
+		   (const void *) (typbyval ?
+							   (Pointer) &datum :		/* treat Datum as byte array */
+							   DatumGetPointer(datum)),	/* extract pointer to data */
+		   datum_size);
+}
+
+static void
+UnpackDatumFromByteArray(Datum *datum, Size datum_size, bool typbyval,
+						 const void *byte_array)
+{
+	void *dst;
+
+	if (typbyval)
+	{
+		/* Write Data to Datum directly */
+		dst = datum;
+
+		/* We have to copy all Datum's bytes */
+		datum_size = Max(sizeof(Datum), datum_size);
+	}
+	else
+	{
+		/* Allocate space for Datum's internals */
+		dst = palloc(datum_size);
+
+		/* Save pointer to Datum */
+		*datum = PointerGetDatum(dst);
+	}
+
+	memcpy(dst, byte_array, datum_size);
+}
+
 
 
 /*
@@ -121,7 +140,7 @@ create_partitions_bg_worker_segment(Oid relid, Datum value, Oid value_type)
 	args->value_size = datum_size;
 	args->value_byval = typcache->typbyval;
 
-	PackDatumToByteArray(&args->value, value,
+	PackDatumToByteArray((void *) args->value, value,
 						 datum_size, args->value_byval);
 
 	return segment;
@@ -255,10 +274,16 @@ bg_worker_main(Datum main_arg)
 	bg_worker_load_config(create_partitions_bgw);
 
 	/* Upack Datum from segment to 'value' */
-	UnpackDatumFromByteArray(&args->value, value,
+	UnpackDatumFromByteArray(&value,
 							 args->value_size,
 							 args->value_byval,
-							 args->value_type);
+							 (const void *) args->value);
+
+#ifdef USE_ASSERT_CHECKING
+	elog(LOG, "%s: arg->value is '%s' [%u]",
+		 create_partitions_bgw,
+		 DebugPrintDatum(value, args->value_type), MyProcPid);
+#endif
 
 	/* Create partitions */
 	args->result = create_partitions_internal(args->partitioned_table,

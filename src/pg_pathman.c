@@ -860,7 +860,8 @@ create_partitions_internal(Oid relid, Datum value, Oid value_type)
 						 prel->atttype);
 
 				/* Convert interval from CSTRING to 'prel->atttype' */
-				interval_binary = OidFunctionCall1(typein_proc, value);
+				interval_binary = OidFunctionCall1(typein_proc,
+												   CStringGetDatum(interval_cstring));
 				interval_type = prel->atttype;
 			}
 

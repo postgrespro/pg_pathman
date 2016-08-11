@@ -44,14 +44,17 @@
 
 
 /* Storage for PartRelationInfos */
-HTAB   *partitioned_rels = NULL;
+HTAB		   *partitioned_rels = NULL;
 
 /* Storage for PartParentInfos */
-HTAB   *parent_cache = NULL;
+HTAB		   *parent_cache = NULL;
 
-bool	initialization_needed = true;
+bool			initialization_needed = true;
+static bool		relcache_callback_needed = true;
 
 
+static void init_local_cache(void);
+static void fini_local_cache(void);
 static void read_pathman_config(void);
 
 static Expr *get_partition_constraint_expr(Oid partition, AttrNumber part_attno);
@@ -80,12 +83,20 @@ static int oid_cmp(const void *p1, const void *p2);
 void
 load_config(void)
 {
-	/* cache PATHMAN_CONFIG relation Oid */
+	/* Cache PATHMAN_CONFIG relation Oid */
 	pathman_config_relid = get_relname_relid(PATHMAN_CONFIG, get_pathman_schema());
 
-	init_local_config();	/* create 'relations' hash table */
+	init_local_cache();		/* create 'partitioned_rels' hash table */
 	read_pathman_config();	/* read PATHMAN_CONFIG table & fill cache */
 
+	/* Register pathman_relcache_hook(), currently we can't unregister it */
+	if (relcache_callback_needed)
+	{
+		CacheRegisterRelcacheCallback(pathman_relcache_hook, PointerGetDatum(NULL));
+		relcache_callback_needed = false;
+	}
+
+	/* Mark pg_pathman as initialized */
 	initialization_needed = false;
 
 	elog(DEBUG2, "pg_pathman's config has been loaded successfully");
@@ -97,26 +108,12 @@ load_config(void)
 void
 unload_config(void)
 {
-	HASH_SEQ_STATUS		status;
-	PartRelationInfo   *prel;
+	fini_local_cache();		/* destroy 'partitioned_rels' hash table */
 
-	hash_seq_init(&status, partitioned_rels);
-	while((prel = (PartRelationInfo *) hash_seq_search(&status)) != NULL)
-	{
-		if (PrelIsValid(prel))
-		{
-			FreeChildrenArray(prel);
-			FreeRangesArray(prel);
-		}
-	}
-
-	/* Now we can safely destroy hash tables */
-	hash_destroy(partitioned_rels);
-	hash_destroy(parent_cache);
-	partitioned_rels = NULL;
-	parent_cache = NULL;
-
+	/* Mark pg_pathman as uninitialized */
 	initialization_needed = true;
+
+	elog(DEBUG2, "pg_pathman's config has been unloaded successfully");
 }
 
 /*
@@ -131,8 +128,8 @@ estimate_pathman_shmem_size(void)
 /*
  * Initialize per-process resources.
  */
-void
-init_local_config(void)
+static void
+init_local_cache(void)
 {
 	HASHCTL ctl;
 
@@ -152,8 +149,32 @@ init_local_config(void)
 	parent_cache = hash_create("pg_pathman's partition parents cache",
 							   PART_RELS_SIZE * CHILD_FACTOR,
 							   &ctl, HASH_ELEM | HASH_BLOBS);
+}
 
-	CacheRegisterRelcacheCallback(pathman_relcache_hook, PointerGetDatum(NULL));
+/*
+ * Safely free per-process resources.
+ */
+static void
+fini_local_cache(void)
+{
+	HASH_SEQ_STATUS		status;
+	PartRelationInfo   *prel;
+
+	hash_seq_init(&status, partitioned_rels);
+	while((prel = (PartRelationInfo *) hash_seq_search(&status)) != NULL)
+	{
+		if (PrelIsValid(prel))
+		{
+			FreeChildrenArray(prel);
+			FreeRangesArray(prel);
+		}
+	}
+
+	/* Now we can safely destroy hash tables */
+	hash_destroy(partitioned_rels);
+	hash_destroy(parent_cache);
+	partitioned_rels = NULL;
+	parent_cache = NULL;
 }
 
 /*
