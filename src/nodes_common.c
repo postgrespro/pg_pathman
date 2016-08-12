@@ -160,7 +160,7 @@ append_part_attr_to_tlist(List *tlist, Index relno, PartRelationInfo *prel)
 								 prel->attnum,
 								 prel->atttype,
 								 prel->atttypmod,
-								 InvalidOid,
+								 prel->attcollid,
 								 0);
 
 		Index	last_item = list_length(tlist) + 1;

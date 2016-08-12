@@ -57,7 +57,8 @@ typedef struct
 	int32			atttypmod;		/* partitioned column type modifier */
 	bool			attbyval;		/* is partitioned column stored by value? */
 	int16			attlen;			/* length of the partitioned column's type */
-	int				attalign;
+	int				attalign;		/* alignment of the part column's type */
+	Oid				attcollid;		/* collation of the partitioned column */
 
 	Oid				cmp_proc,		/* comparison fuction for 'atttype' */
 					hash_proc;		/* hash function for 'atttype' */

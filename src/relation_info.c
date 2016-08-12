@@ -60,7 +60,7 @@ static Oid get_parent_of_partition_internal(Oid partition,
  * refresh\invalidate\get\remove PartRelationInfo functions.
  */
 
-/* Create or update PartRelationInfo in local cache. */
+/* Create or update PartRelationInfo in local cache. Might emit ERROR. */
 PartRelationInfo *
 refresh_pathman_relation_info(Oid relid,
 							  PartType partitioning_type,
@@ -109,16 +109,23 @@ refresh_pathman_relation_info(Oid relid,
 
 	/* Initialize PartRelationInfo using syscache & typcache */
 	prel->attnum	= get_attnum(relid, part_column_name);
-	prel->atttype	= get_atttype(relid, prel->attnum);
-	prel->atttypmod	= get_atttypmod(relid, prel->attnum);
 
-	/* Fetch HASH & CMP fuctions for atttype */
+	/* Attribute number sanity check */
+	if (prel->attnum == InvalidAttrNumber)
+		elog(ERROR, "Relation \"%s\" has no column \"%s\"",
+			 get_rel_name_or_relid(relid), part_column_name);
+
+	/* Fetch atttypid, atttypmod, and attcollation in a single cache lookup */
+	get_atttypetypmodcoll(relid, prel->attnum,
+						  &prel->atttype, &prel->atttypmod, &prel->attcollid);
+
+	/* Fetch HASH & CMP fuctions and other stuff from type cache */
 	typcache = lookup_type_cache(prel->atttype,
 								 TYPECACHE_CMP_PROC | TYPECACHE_HASH_PROC);
 
-	prel->attbyval = typcache->typbyval;
-	prel->attlen = typcache->typlen;
-	prel->attalign = typcache->typalign;
+	prel->attbyval	= typcache->typbyval;
+	prel->attlen	= typcache->typlen;
+	prel->attalign	= typcache->typalign;
 
 	prel->cmp_proc	= typcache->cmp_proc;
 	prel->hash_proc	= typcache->hash_proc;
@@ -152,7 +159,7 @@ refresh_pathman_relation_info(Oid relid,
 	return prel;
 }
 
-/* Invalidate PartRelationInfo cache entry. Create new entry if 'found' is NULL */
+/* Invalidate PartRelationInfo cache entry. Create new entry if 'found' is NULL. */
 void
 invalidate_pathman_relation_info(Oid relid, bool *found)
 {
@@ -215,7 +222,8 @@ get_pathman_relation_info(Oid relid)
 
 			/* Refresh partitioned table cache entry */
 			/* TODO: possible refactoring, pass found 'prel' instead of searching */
-			refresh_pathman_relation_info(relid, part_type, attname);
+			prel = refresh_pathman_relation_info(relid, part_type, attname);
+			Assert(PrelIsValid(prel)); /* it MUST be valid if we got here */
 		}
 		/* Else clear remaining cache entry */
 		else remove_pathman_relation_info(relid);
@@ -400,7 +408,7 @@ forget_parent_of_partition(Oid partition, PartParentSearch *status)
 	return get_parent_of_partition_internal(partition, status, HASH_REMOVE);
 }
 
-/* Peturn partition parent's Oid */
+/* Return partition parent's Oid */
 Oid
 get_parent_of_partition(Oid partition, PartParentSearch *status)
 {
@@ -546,11 +554,13 @@ try_perform_parent_refresh(Oid parent)
 		parttype = DatumGetPartType(values[Anum_pathman_config_parttype - 1]);
 		attname = DatumGetTextP(values[Anum_pathman_config_attname - 1]);
 
-		if (!refresh_pathman_relation_info(parent, parttype, text_to_cstring(attname)))
+		/* If anything went wrong, return false (actually, it might throw ERROR) */
+		if (!PrelIsValid(refresh_pathman_relation_info(parent, parttype,
+													   text_to_cstring(attname))))
 			return false;
 	}
-	else
-		return false;
+	/* Not a partitioned relation */
+	else return false;
 
 	return true;
 }

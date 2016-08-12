@@ -269,13 +269,11 @@ fill_prel_with_partitions(const Oid *partitions,
 	if (prel->parttype == PT_RANGE)
 	{
 		MemoryContext	old_mcxt;
-		TypeCacheEntry *tce = lookup_type_cache(prel->atttype,
-												TYPECACHE_CMP_PROC_FINFO);
 
 		/* Sort partitions by RangeEntry->min asc */
 		qsort_arg((void *) prel->ranges, PrelChildrenCount(prel),
 				  sizeof(RangeEntry), cmp_range_entries,
-				  (void *) &tce->cmp_proc_finfo);
+				  (void *) &prel->cmp_proc);
 
 		/* Initialize 'prel->children' array */
 		for (i = 0; i < PrelChildrenCount(prel); i++)
@@ -620,9 +618,10 @@ cmp_range_entries(const void *p1, const void *p2, void *arg)
 {
 	const RangeEntry   *v1 = (const RangeEntry *) p1;
 	const RangeEntry   *v2 = (const RangeEntry *) p2;
-	FmgrInfo		   *cmp_proc = (FmgrInfo *) arg;
 
-	return FunctionCall2(cmp_proc, v1->min, v2->min);
+	Oid					cmp_proc_oid = *(Oid *) arg;
+
+	return OidFunctionCall2(cmp_proc_oid, v1->min, v2->min);
 }
 
 /*

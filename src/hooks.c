@@ -498,6 +498,10 @@ pathman_relcache_hook(Datum arg, Oid relid)
 	if (!IsPathmanReady())
 		return;
 
+	/* Invalidation event for PATHMAN_CONFIG table (probably DROP) */
+	if (relid == get_pathman_config_relid())
+		delay_pathman_shutdown();
+
 	/* Invalidate PartParentInfo cache if needed */
 	partitioned_table = forget_parent_of_partition(relid, &search);
 
@@ -517,11 +521,11 @@ pathman_relcache_hook(Datum arg, Oid relid)
 		/* Both syscache and pathman's cache say it isn't a partition */
 		case PPS_ENTRY_NOT_FOUND:
 			{
+				/* NOTE: Remove NOT_USED when it's time */
+#ifdef NOT_USED
 				elog(DEBUG2, "Invalidation message for relation %u [%u]",
 					 relid, MyProcPid);
-
-				if (relid == get_pathman_config_relid())
-					delay_pathman_shutdown();
+#endif
 			}
 			break;
 

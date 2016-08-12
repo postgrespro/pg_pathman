@@ -50,11 +50,11 @@
  */
 #define PATHMAN_CONFIG						"pathman_config"
 #define Natts_pathman_config				5
-#define Anum_pathman_config_id				1
-#define Anum_pathman_config_partrel			2
-#define Anum_pathman_config_attname			3
-#define Anum_pathman_config_parttype		4
-#define Anum_pathman_config_range_interval	5
+#define Anum_pathman_config_id				1	/* primary key */
+#define Anum_pathman_config_partrel			2	/* partitioned relation (regclass) */
+#define Anum_pathman_config_attname			3	/* partitioned column (text) */
+#define Anum_pathman_config_parttype		4	/* partitioning type (1|2) */
+#define Anum_pathman_config_range_interval	5	/* interval for RANGE pt. (text) */
 
 /* type modifier (typmod) for 'range_interval' */
 #define PATHMAN_CONFIG_interval_typmod		-1
