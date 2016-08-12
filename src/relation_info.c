@@ -137,7 +137,10 @@ refresh_pathman_relation_info(Oid relid,
 
 	/* If there's no children at all, remove this entry */
 	if (prel_children_count == 0)
+	{
 		remove_pathman_relation_info(relid);
+		return NULL;
+	}
 
 	/*
 	 * Fill 'prel' with partition info, raise ERROR if anything is wrong.
@@ -306,10 +309,18 @@ finish_delayed_invalidation(void)
 		/* Handle the probable 'DROP EXTENSION' case */
 		if (delayed_shutdown)
 		{
+			Oid	cur_pathman_config_relid;
+
+			/* Unset 'shutdown' flag */
 			delayed_shutdown = false;
 
+			/* Get current PATHMAN_CONFIG relid */
+			cur_pathman_config_relid = get_relname_relid(PATHMAN_CONFIG,
+														 get_pathman_schema());
+
 			/* Check that PATHMAN_CONFIG table has indeed been dropped */
-			if (InvalidOid == get_relname_relid(PATHMAN_CONFIG, get_pathman_schema()))
+			if (cur_pathman_config_relid == InvalidOid ||
+				cur_pathman_config_relid != get_pathman_config_relid())
 			{
 				/* Ok, let's unload pg_pathman's config */
 				unload_config();

@@ -2078,6 +2078,9 @@ generate_mergeappend_paths(PlannerInfo *root, RelOptInfo *rel,
 	}
 }
 
+/*
+ * Get cached PATHMAN_CONFIG relation Oid.
+ */
 Oid
 get_pathman_config_relid(void)
 {

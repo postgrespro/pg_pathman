@@ -83,7 +83,7 @@ static int oid_cmp(const void *p1, const void *p2);
 void
 load_config(void)
 {
-	/* Cache PATHMAN_CONFIG relation Oid */
+	/* Cache PATHMAN_CONFIG relation's Oid */
 	pathman_config_relid = get_relname_relid(PATHMAN_CONFIG, get_pathman_schema());
 
 	init_local_cache();		/* create 'partitioned_rels' hash table */
@@ -99,7 +99,7 @@ load_config(void)
 	/* Mark pg_pathman as initialized */
 	initialization_needed = false;
 
-	elog(DEBUG2, "pg_pathman's config has been loaded successfully");
+	elog(DEBUG2, "pg_pathman's config has been loaded successfully [%u]", MyProcPid);
 }
 
 /*
@@ -108,12 +108,15 @@ load_config(void)
 void
 unload_config(void)
 {
+	/* Don't forget to reset cached PATHMAN_CONFIG relation's Oid */
+	pathman_config_relid = InvalidOid;
+
 	fini_local_cache();		/* destroy 'partitioned_rels' hash table */
 
 	/* Mark pg_pathman as uninitialized */
 	initialization_needed = true;
 
-	elog(DEBUG2, "pg_pathman's config has been unloaded successfully");
+	elog(DEBUG2, "pg_pathman's config has been unloaded successfully [%u]", MyProcPid);
 }
 
 /*
