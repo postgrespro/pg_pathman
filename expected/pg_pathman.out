@@ -118,9 +118,9 @@ SET pg_pathman.enable_runtimemergeappend = OFF;
 VACUUM;
 /* update triggers test */
 SELECT pathman.create_hash_update_trigger('test.hash_rel');
- create_hash_update_trigger 
-----------------------------
- 
+ create_hash_update_trigger  
+-----------------------------
+ test.hash_rel_upd_trig_func
 (1 row)
 
 UPDATE test.hash_rel SET value = 7 WHERE value = 6;
@@ -139,9 +139,9 @@ SELECT * FROM test.hash_rel WHERE value = 7;
 (1 row)
 
 SELECT pathman.create_range_update_trigger('test.num_range_rel');
-       create_range_update_trigger        
-------------------------------------------
- test.num_range_rel_update_trigger_func()
+   create_range_update_trigger    
+----------------------------------
+ test.num_range_rel_upd_trig_func
 (1 row)
 
 UPDATE test.num_range_rel SET id = 3001 WHERE id = 1;
@@ -1068,7 +1068,7 @@ SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3);
 (1 row)
 
 SELECT pathman.drop_partitions('test.hash_rel', TRUE);
-NOTICE:  function test.hash_rel_update_trigger_func() does not exist, skipping
+NOTICE:  function test.hash_rel_upd_trig_func() does not exist, skipping
  drop_partitions 
 -----------------
                3
@@ -1221,7 +1221,7 @@ SELECT * FROM test."TeSt";
 SELECT pathman.create_hash_update_trigger('test."TeSt"');
  create_hash_update_trigger 
 ----------------------------
- 
+ test."TeSt_upd_trig_func"
 (1 row)
 
 UPDATE test."TeSt" SET a = 1;
@@ -1305,7 +1305,7 @@ SELECT pathman.split_range_partition('test."RangeRel_1"', '2015-01-01'::DATE);
 (1 row)
 
 SELECT pathman.drop_partitions('test."RangeRel"');
-NOTICE:  function test.RangeRel_update_trigger_func() does not exist, skipping
+NOTICE:  function test.RangeRel_upd_trig_func() does not exist, skipping
 NOTICE:  1 rows copied from test."RangeRel_6"
 NOTICE:  0 rows copied from test."RangeRel_4"
 NOTICE:  1 rows copied from test."RangeRel_3"
@@ -1341,7 +1341,7 @@ SELECT pathman.create_range_partitions('test."RangeRel"', 'id', 1, 100, 3);
 (1 row)
 
 SELECT pathman.drop_partitions('test."RangeRel"');
-NOTICE:  function test.RangeRel_update_trigger_func() does not exist, skipping
+NOTICE:  function test.RangeRel_upd_trig_func() does not exist, skipping
 NOTICE:  0 rows copied from test."RangeRel_3"
 NOTICE:  0 rows copied from test."RangeRel_2"
 NOTICE:  0 rows copied from test."RangeRel_1"
@@ -1500,7 +1500,7 @@ EXPLAIN (COSTS OFF) DELETE FROM range_rel r USING tmp t WHERE r.dt = '2010-01-02
 DELETE FROM range_rel r USING tmp t WHERE r.dt = '2010-01-02' AND r.id = t.id;
 /* Create range partitions from whole range */
 SELECT drop_partitions('range_rel');
-NOTICE:  function public.range_rel_update_trigger_func() does not exist, skipping
+NOTICE:  function public.range_rel_upd_trig_func() does not exist, skipping
 NOTICE:  0 rows copied from range_rel_15
 NOTICE:  0 rows copied from range_rel_14
 NOTICE:  14 rows copied from range_rel_13
@@ -1527,7 +1527,7 @@ SELECT create_partitions_from_range('range_rel', 'id', 1, 1000, 100);
 (1 row)
 
 SELECT drop_partitions('range_rel', TRUE);
-NOTICE:  function public.range_rel_update_trigger_func() does not exist, skipping
+NOTICE:  function public.range_rel_upd_trig_func() does not exist, skipping
  drop_partitions 
 -----------------
               10

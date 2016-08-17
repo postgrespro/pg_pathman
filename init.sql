@@ -240,19 +240,14 @@ LANGUAGE plpgsql;
  * Drop trigger
  */
 CREATE OR REPLACE FUNCTION @extschema@.drop_triggers(
-	relation	REGCLASS)
+	parent_relid	REGCLASS)
 RETURNS VOID AS
 $$
 DECLARE
-	relname		TEXT;
-	schema		TEXT;
 	funcname	TEXT;
 
 BEGIN
-	SELECT * INTO schema, relname
-	FROM @extschema@.get_plain_schema_and_relname(relation);
-
-	funcname := schema || '.' || quote_ident(format('%s_update_trigger_func', relname));
+	funcname := @extschema@.build_update_trigger_func_name(parent_relid);
 	EXECUTE format('DROP FUNCTION IF EXISTS %s() CASCADE', funcname);
 END
 $$ LANGUAGE plpgsql;
@@ -373,6 +368,19 @@ LANGUAGE C STRICT;
 CREATE OR REPLACE FUNCTION @extschema@.build_check_constraint_name(
 	REGCLASS, TEXT)
 RETURNS TEXT AS 'pg_pathman', 'build_check_constraint_name_attname'
+LANGUAGE C STRICT;
+
+/*
+ * Build update trigger and its underlying function's names.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.build_update_trigger_name(
+	REGCLASS)
+RETURNS TEXT AS 'pg_pathman', 'build_update_trigger_name'
+LANGUAGE C STRICT;
+
+CREATE OR REPLACE FUNCTION @extschema@.build_update_trigger_func_name(
+	REGCLASS)
+RETURNS TEXT AS 'pg_pathman', 'build_update_trigger_func_name'
 LANGUAGE C STRICT;
 
 /*

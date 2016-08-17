@@ -78,16 +78,15 @@ SET client_min_messages = WARNING;
  */
 CREATE OR REPLACE FUNCTION @extschema@.create_hash_update_trigger(
 	parent_relid	REGCLASS)
-RETURNS VOID AS
+RETURNS TEXT AS
 $$
 DECLARE
-	func TEXT := 'CREATE OR REPLACE FUNCTION %s()
+	func TEXT := 'CREATE OR REPLACE FUNCTION %1$s()
 				  RETURNS TRIGGER AS
 				  $body$
 				  DECLARE
 					old_idx		INTEGER; /* partition indices */
 					new_idx		INTEGER;
-					q TEXT;
 
 				  BEGIN
 					old_idx := @extschema@.get_hash_part_idx(%9$s(OLD.%2$s), %3$s);
@@ -97,11 +96,11 @@ DECLARE
 						RETURN NEW;
 					END IF;
 
-					q := format(''DELETE FROM %8$s WHERE %4$s'', old_idx);
-					EXECUTE q USING %5$s;
+					EXECUTE format(''DELETE FROM %8$s WHERE %4$s'', old_idx)
+					USING %5$s;
 
-					q := format(''INSERT INTO %8$s VALUES (%6$s)'', new_idx);
-					EXECUTE q USING %7$s;
+					EXECUTE format(''INSERT INTO %8$s VALUES (%6$s)'', new_idx)
+					USING %7$s;
 
 					RETURN NULL;
 				  END $body$
@@ -119,16 +118,19 @@ DECLARE
 	attr					TEXT;
 	plain_schema			TEXT;
 	plain_relname			TEXT;
+	child_relname_format	TEXT;
 	funcname				TEXT;
 	triggername				TEXT;
-	child_relname_format	TEXT;
 	atttype					TEXT;
 	hashfunc				TEXT;
 	partitions_count		INTEGER;
 
 BEGIN
-	SELECT * INTO plain_schema, plain_relname
-	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
+	attr := attname FROM @extschema@.pathman_config WHERE partrel = parent_relid;
+
+	IF attr IS NULL THEN
+		RAISE EXCEPTION 'Table % is not partitioned', quote_ident(parent_relid::TEXT);
+	END IF;
 
 	SELECT string_agg(attname, ', '),
 		   string_agg('OLD.' || attname, ', '),
@@ -147,21 +149,21 @@ BEGIN
 		   att_val_fmt,
 		   att_fmt;
 
-	attr := attname FROM @extschema@.pathman_config WHERE partrel = parent_relid;
-
-	IF attr IS NULL THEN
-		RAISE EXCEPTION 'Table % is not partitioned', quote_ident(parent_relid::TEXT);
-	END IF;
-
 	partitions_count := COUNT(*) FROM pg_catalog.pg_inherits
 						WHERE inhparent = parent_relid::oid;
 
-	/* Function name, trigger name and child relname template */
-	funcname := plain_schema || '.' || quote_ident(format('%s_update_trigger_func', plain_relname));
-	child_relname_format := plain_schema || '.' || quote_ident(plain_relname || '_%s');
-	triggername := quote_ident(format('%s_%s_update_trigger', plain_schema, plain_relname));
+	/* Build trigger & trigger function's names */
+	funcname := @extschema@.build_update_trigger_func_name(parent_relid);
+	triggername := @extschema@.build_update_trigger_name(parent_relid);
 
-	/* base hash function for type */
+	/* Build partition name template */
+	SELECT * INTO plain_schema, plain_relname
+	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
+
+	child_relname_format := quote_ident(plain_schema) || '.' ||
+							quote_ident(plain_relname || '_%s');
+
+	/* Fetch base hash function for atttype */
 	atttype := @extschema@.get_attribute_type_name(parent_relid, attr);
 	hashfunc := @extschema@.get_type_hash_func(atttype::regtype)::regproc;
 
@@ -170,7 +172,7 @@ BEGIN
 				   old_fields, att_fmt, new_fields, child_relname_format, hashfunc);
 	EXECUTE func;
 
-	/* Create triggers on child relations */
+	/* Create trigger on every partition */
 	FOR num IN 0..partitions_count-1
 	LOOP
 		EXECUTE format(trigger,
@@ -178,6 +180,8 @@ BEGIN
 					   format(child_relname_format, num),
 					   funcname);
 	END LOOP;
+
+	return funcname;
 END
 $$ LANGUAGE plpgsql;
 

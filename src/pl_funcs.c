@@ -40,6 +40,8 @@ PG_FUNCTION_INFO_V1( check_overlap );
 PG_FUNCTION_INFO_V1( build_range_condition );
 PG_FUNCTION_INFO_V1( build_check_constraint_name_attnum );
 PG_FUNCTION_INFO_V1( build_check_constraint_name_attname );
+PG_FUNCTION_INFO_V1( build_update_trigger_func_name );
+PG_FUNCTION_INFO_V1( build_update_trigger_name );
 PG_FUNCTION_INFO_V1( is_date_type );
 PG_FUNCTION_INFO_V1( is_attribute_nullable );
 PG_FUNCTION_INFO_V1( debug_capture );
@@ -550,6 +552,41 @@ build_check_constraint_name_attname(PG_FUNCTION_ARGS)
 			 get_rel_name_or_relid(relid), text_to_cstring(attname));
 
 	result = build_check_constraint_name_internal(relid, attnum);
+
+	PG_RETURN_TEXT_P(cstring_to_text(result));
+}
+
+Datum
+build_update_trigger_func_name(PG_FUNCTION_ARGS)
+{
+	Oid			relid = PG_GETARG_OID(0),
+				nspid;
+	const char *result;
+
+	/* Check that relation exists */
+	if (get_rel_type_id(relid) == InvalidOid)
+		elog(ERROR, "Invalid relation %u", relid);
+
+	nspid = get_rel_namespace(relid);
+	result = psprintf("%s.%s",
+					  quote_identifier(get_namespace_name(nspid)),
+					  quote_identifier(psprintf("%s_upd_trig_func",
+												get_rel_name(relid))));
+
+	PG_RETURN_TEXT_P(cstring_to_text(result));
+}
+
+Datum
+build_update_trigger_name(PG_FUNCTION_ARGS)
+{
+	Oid			relid = PG_GETARG_OID(0);
+	const char *result; /* trigger's name can't be qualified */
+
+	/* Check that relation exists */
+	if (get_rel_type_id(relid) == InvalidOid)
+		elog(ERROR, "Invalid relation %u", relid);
+
+	result = quote_identifier(psprintf("%s_upd_trig", get_rel_name(relid)));
 
 	PG_RETURN_TEXT_P(cstring_to_text(result));
 }
