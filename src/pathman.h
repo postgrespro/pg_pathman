@@ -27,16 +27,12 @@
 #include "parser/parsetree.h"
 
 
-/* Check PostgreSQL version */
-/*
- * TODO: a fix for WaitForBackgroundWorkerShutdown()
- * has been accepted, so we have to update this number.
- */
-#if PG_VERSION_NUM < 90503
-	#error "Cannot build pg_pathman with PostgreSQL version lower than 9.5.3"
+/* Check PostgreSQL version (9.5.4 contains an important fix for BGW) */
+#if PG_VERSION_NUM < 90504
+	#error "Cannot build pg_pathman with PostgreSQL version lower than 9.5.4"
 #endif
 
-/* Print Datum as CString to server log */
+/* Get CString representation of Datum (simple wrapper) */
 #ifdef USE_ASSERT_CHECKING
 #include "utils.h"
 #define DebugPrintDatum(datum, typid) ( datum_to_cstring((datum), (typid)) )
@@ -59,8 +55,14 @@
 /* type modifier (typmod) for 'range_interval' */
 #define PATHMAN_CONFIG_interval_typmod		-1
 
+/*
+ * Cache current PATHMAN_CONFIG relid (set during load_config()).
+ */
 extern Oid	pathman_config_relid;
 
+/*
+ * Just to clarify our intentions (returns pathman_config_relid).
+ */
 Oid get_pathman_config_relid(void);
 
 
@@ -72,10 +74,12 @@ typedef struct PathmanState
 	LWLock		   *dsm_init_lock,
 				   *load_config_lock,
 				   *edit_partitions_lock;
-	DsmArray		databases;
 } PathmanState;
 
 
+/*
+ * Result of search_range_partition_eq().
+ */
 typedef enum
 {
 	SEARCH_RANGEREL_OUT_OF_RANGE = 0,
@@ -115,7 +119,6 @@ extern PathmanState    *pmstate;
 	} while (0)
 
 
-/* utility functions */
 int append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
 						  RangeTblEntry *rte, int index, Oid childOID, List *wrappers);
 
@@ -140,25 +143,22 @@ void set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 
 typedef struct
 {
-	const Node			   *orig;
-	List				   *args;
-	List				   *rangeset;
-	bool					found_gap;
-	double					paramsel;
+	const Node			   *orig;		/* examined expression */
+	List				   *args;		/* extracted from 'orig' */
+	List				   *rangeset;	/* IndexRanges representing selected parts */
+	bool					found_gap;	/* were there any gaps? */
+	double					paramsel;	/* estimated selectivity */
 } WrapperNode;
 
 typedef struct
 {
-	/* Main partitioning structure */
-	const PartRelationInfo *prel;
-
+	const PartRelationInfo *prel;		/* main partitioning structure */
 	ExprContext			   *econtext;	/* for ExecEvalExpr() */
-
 	bool					for_insert;	/* are we in PartitionFilter now? */
 } WalkerContext;
 
 /*
- * Usual initialization procedure for WalkerContext
+ * Usual initialization procedure for WalkerContext.
  */
 #define InitWalkerContext(context, prel_info, ecxt, for_ins) \
 	do { \
@@ -184,6 +184,7 @@ void select_range_partitions(const Datum value,
 							 const int strategy,
 							 WrapperNode *result);
 
+/* Examine expression in order to select partitions. */
 WrapperNode *walk_expr_tree(Expr *expr, WalkerContext *context);
 
 #endif   /* PATHMAN_H */
