@@ -155,7 +155,6 @@ append_part_attr_to_tlist(List *tlist, Index relno, PartRelationInfo *prel)
 
 	if (!part_attr_found)
 	{
-		/* TODO: how about collation support? */
 		Var	   *newvar = makeVar(relno,
 								 prel->attnum,
 								 prel->atttype,

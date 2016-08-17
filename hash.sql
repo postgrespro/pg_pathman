@@ -12,59 +12,60 @@
  * Creates hash partitions for specified relation
  */
 CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions(
-	relation REGCLASS
-	, attribute TEXT
-	, partitions_count INTEGER
+	parent_relid		REGCLASS,
+	attribute			TEXT,
+	partitions_count	INTEGER
 ) RETURNS INTEGER AS
 $$
 DECLARE
-	v_relname       TEXT;
-	v_child_relname TEXT;
-	v_type          TEXT;
-	v_plain_schema  TEXT;
-	v_plain_relname TEXT;
-	v_hashfunc      TEXT;
-BEGIN
-	v_relname := @extschema@.validate_relname(relation);
-	attribute := lower(attribute);
-	PERFORM @extschema@.common_relation_checks(relation, attribute);
+	v_child_relname		TEXT;
+	v_type				TEXT;
+	v_plain_schema		TEXT;
+	v_plain_relname		TEXT;
+	v_hashfunc			TEXT;
 
-	v_type := @extschema@.get_attribute_type_name(v_relname, attribute);
+BEGIN
+	PERFORM @extschema@.validate_relname(parent_relid);
+	attribute := lower(attribute);
+	PERFORM @extschema@.common_relation_checks(parent_relid, attribute);
+
+	v_type := @extschema@.get_attribute_type_name(parent_relid, attribute);
 
 	SELECT * INTO v_plain_schema, v_plain_relname
-	FROM @extschema@.get_plain_schema_and_relname(relation);
+	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
 
-	v_hashfunc := @extschema@.get_type_hash_func(v_type::regtype::oid)::regproc;
+	v_hashfunc := @extschema@.get_type_hash_func(v_type::regtype)::regproc;
 
 	/* Insert new entry to pathman config */
 	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype)
-	VALUES (relation, attribute, 1);
+	VALUES (parent_relid, attribute, 1);
 
 	/* Create partitions and update pg_pathman configuration */
 	FOR partnum IN 0..partitions_count-1
 	LOOP
 		v_child_relname := format('%s.%s',
-								  v_plain_schema,
+								  quote_ident(v_plain_schema),
 								  quote_ident(v_plain_relname || '_' || partnum));
 
-		EXECUTE format('CREATE TABLE %1$s (LIKE %2$s INCLUDING ALL) INHERITS (%2$s)'
-						, v_child_relname
-						, v_relname);
+		EXECUTE format('CREATE TABLE %1$s (LIKE %2$s INCLUDING ALL) INHERITS (%2$s)',
+					   v_child_relname,
+					   parent_relid::text);
 
-		EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (@extschema@.get_hash(%s(%s), %s) = %s)'
-					   , v_child_relname
-					   , @extschema@.build_check_constraint_name(v_child_relname::regclass, attribute)
-					   , v_hashfunc
-					   , attribute
-					   , partitions_count
-					   , partnum);
+		EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (@extschema@.get_hash(%s(%s), %s) = %s)',
+					   v_child_relname,
+					   @extschema@.build_check_constraint_name(v_child_relname::regclass,
+															   attribute),
+					   v_hashfunc,
+					   attribute,
+					   partitions_count,
+					   partnum);
 	END LOOP;
 
 	/* Notify backend about changes */
-	PERFORM @extschema@.on_create_partitions(relation::oid);
+	PERFORM @extschema@.on_create_partitions(parent_relid);
 
 	/* Copy data */
-	PERFORM @extschema@.partition_data(relation);
+	PERFORM @extschema@.partition_data(parent_relid);
 
 	RETURN partitions_count;
 END
@@ -75,7 +76,7 @@ SET client_min_messages = WARNING;
  * Creates an update trigger
  */
 CREATE OR REPLACE FUNCTION @extschema@.create_hash_update_trigger(
-	IN relation REGCLASS)
+	parent_relid	REGCLASS)
 RETURNS VOID AS
 $$
 DECLARE
@@ -105,52 +106,53 @@ DECLARE
 				  END $body$
 				  LANGUAGE plpgsql';
 
-	trigger TEXT := 'CREATE TRIGGER %s
-					 BEFORE UPDATE ON %s
-					 FOR EACH ROW EXECUTE PROCEDURE %s()';
+	trigger					TEXT := 'CREATE TRIGGER %s
+									 BEFORE UPDATE ON %s
+									 FOR EACH ROW EXECUTE PROCEDURE %s()';
 
-	att_names     TEXT;
-	old_fields    TEXT;
-	new_fields    TEXT;
-	att_val_fmt   TEXT;
-	att_fmt       TEXT;
-	relid         INTEGER;
-	partitions_count INTEGER;
-	attr          TEXT;
-	plain_schema  TEXT;
-	plain_relname TEXT;
-	funcname      TEXT;
-	triggername   TEXT;
-	child_relname_format TEXT;
-	atttype       TEXT;
-	hashfunc      TEXT;
+	att_names				TEXT;
+	old_fields				TEXT;
+	new_fields				TEXT;
+	att_val_fmt				TEXT;
+	att_fmt					TEXT;
+	attr					TEXT;
+	plain_schema			TEXT;
+	plain_relname			TEXT;
+	funcname				TEXT;
+	triggername				TEXT;
+	child_relname_format	TEXT;
+	atttype					TEXT;
+	hashfunc				TEXT;
+	partitions_count		INTEGER;
 
 BEGIN
 	SELECT * INTO plain_schema, plain_relname
-	FROM @extschema@.get_plain_schema_and_relname(relation);
+	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
 
-	relid := relation::oid;
 	SELECT string_agg(attname, ', '),
 		   string_agg('OLD.' || attname, ', '),
 		   string_agg('NEW.' || attname, ', '),
-		   string_agg('CASE WHEN NOT $' || attnum || ' IS NULL THEN ' || attname || ' = $' || attnum ||
-					  ' ELSE ' || attname || ' IS NULL END', ' AND '),
+		   string_agg('CASE WHEN NOT $' || attnum || ' IS NULL THEN ' ||
+							attname || ' = $' || attnum || ' ' ||
+					  'ELSE ' ||
+							attname || ' IS NULL END',
+					  ' AND '),
 		   string_agg('$' || attnum, ', ')
 	FROM pg_attribute
-	WHERE attrelid=relid AND attnum>0
+	WHERE attrelid = parent_relid AND attnum > 0
 	INTO   att_names,
 		   old_fields,
 		   new_fields,
 		   att_val_fmt,
 		   att_fmt;
 
-	attr := attname FROM @extschema@.pathman_config WHERE partrel = relation;
+	attr := attname FROM @extschema@.pathman_config WHERE partrel = parent_relid;
 
 	IF attr IS NULL THEN
-		RAISE EXCEPTION 'Table % is not partitioned', quote_ident(relation::TEXT);
+		RAISE EXCEPTION 'Table % is not partitioned', quote_ident(parent_relid::TEXT);
 	END IF;
 
-	partitions_count := COUNT(*) FROM pg_inherits WHERE inhparent = relation::oid;
+	partitions_count := COUNT(*) FROM pg_inherits WHERE inhparent = parent_relid::oid;
 
 	/* Function name, trigger name and child relname template */
 	funcname := plain_schema || '.' || quote_ident(format('%s_update_trigger_func', plain_relname));
@@ -158,8 +160,8 @@ BEGIN
 	triggername := quote_ident(format('%s_%s_update_trigger', plain_schema, plain_relname));
 
 	/* base hash function for type */
-	atttype := @extschema@.get_attribute_type_name(relation, attr);
-	hashfunc := @extschema@.get_type_hash_func(atttype::regtype::oid)::regproc;
+	atttype := @extschema@.get_attribute_type_name(parent_relid, attr);
+	hashfunc := @extschema@.get_type_hash_func(atttype::regtype)::regproc;
 
 	/* Format function definition and execute it */
 	func := format(func, funcname, attr, partitions_count, att_val_fmt,
@@ -169,10 +171,10 @@ BEGIN
 	/* Create triggers on child relations */
 	FOR num IN 0..partitions_count-1
 	LOOP
-		EXECUTE format(trigger
-					   , triggername
-					   , format(child_relname_format, num)
-					   , funcname);
+		EXECUTE format(trigger,
+					   triggername,
+					   format(child_relname_format, num),
+					   funcname);
 	END LOOP;
 END
 $$ LANGUAGE plpgsql;
@@ -180,7 +182,7 @@ $$ LANGUAGE plpgsql;
 /*
  * Returns hash function OID for specified type
  */
-CREATE OR REPLACE FUNCTION @extschema@.get_type_hash_func(OID)
+CREATE OR REPLACE FUNCTION @extschema@.get_type_hash_func(REGTYPE)
 RETURNS OID AS 'pg_pathman', 'get_type_hash_func'
 LANGUAGE C STRICT;
 

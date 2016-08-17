@@ -31,8 +31,6 @@ PG_FUNCTION_INFO_V1( find_or_create_range_partition);
 PG_FUNCTION_INFO_V1( get_range_condition );
 PG_FUNCTION_INFO_V1( get_range_by_idx );
 PG_FUNCTION_INFO_V1( get_range_by_part_oid );
-PG_FUNCTION_INFO_V1( acquire_partitions_lock );
-PG_FUNCTION_INFO_V1( release_partitions_lock );
 PG_FUNCTION_INFO_V1( check_overlap );
 PG_FUNCTION_INFO_V1( get_min_range_value );
 PG_FUNCTION_INFO_V1( get_max_range_value );
@@ -43,6 +41,7 @@ PG_FUNCTION_INFO_V1( build_check_constraint_name_attname );
 PG_FUNCTION_INFO_V1( is_date_type );
 PG_FUNCTION_INFO_V1( get_attribute_type_name );
 PG_FUNCTION_INFO_V1( is_attribute_nullable );
+PG_FUNCTION_INFO_V1( parent_of_partition );
 PG_FUNCTION_INFO_V1( debug_capture );
 
 
@@ -66,6 +65,7 @@ on_partitions_created_internal(Oid partitioned_table, bool add_callbacks)
 static void
 on_partitions_updated_internal(Oid partitioned_table, bool add_callbacks)
 {
+	/* TODO: shall we emit relcache invalidation event here? */
 	elog(DEBUG2, "on_partitions_updated() [add_callbacks = %s] "
 				 "triggered for relation %u",
 		 (add_callbacks ? "true" : "false"), partitioned_table);
@@ -126,6 +126,7 @@ find_or_create_range_partition(PG_FUNCTION_ARGS)
 
 	fill_type_cmp_fmgr_info(&cmp_func, value_type, prel->atttype);
 
+	/* FIXME: does this function even work? */
 	search_state = search_range_partition_eq(value, &cmp_func,prel,
 											 &found_rentry);
 
@@ -143,6 +144,7 @@ find_or_create_range_partition(PG_FUNCTION_ARGS)
 	{
 		Oid child_oid = InvalidOid;
 
+		/* FIXME: useless double-checked lock (no new data) */
 		LWLockAcquire(pmstate->load_config_lock, LW_EXCLUSIVE);
 		LWLockAcquire(pmstate->edit_partitions_lock, LW_EXCLUSIVE);
 
@@ -389,24 +391,6 @@ check_overlap(PG_FUNCTION_ARGS)
 }
 
 /*
- * Acquire partitions lock
- */
-Datum
-acquire_partitions_lock(PG_FUNCTION_ARGS)
-{
-	/* FIXME: have to find another way (shmem maybe?) */
-	LWLockAcquire(pmstate->edit_partitions_lock, LW_EXCLUSIVE);
-	PG_RETURN_NULL();
-}
-
-Datum
-release_partitions_lock(PG_FUNCTION_ARGS)
-{
-	LWLockRelease(pmstate->edit_partitions_lock);
-	PG_RETURN_NULL();
-}
-
-/*
  * Returns hash function OID for specified type
  */
 Datum
@@ -525,6 +509,34 @@ is_attribute_nullable(PG_FUNCTION_ARGS)
 }
 
 /*
+ * Get parent of a specified partition.
+ */
+Datum
+parent_of_partition(PG_FUNCTION_ARGS)
+{
+	Oid					partition = PG_GETARG_OID(0);
+	PartParentSearch	parent_search;
+	Oid					parent;
+
+	/* Fetch parent & write down search status */
+	parent = get_parent_of_partition(partition, &parent_search);
+
+	/* We MUST be sure :) */
+	Assert(parent_search != PPS_NOT_SURE);
+
+	/* It must be parent known by pg_pathman */
+	if (parent_search == PPS_ENTRY_PART_PARENT)
+		PG_RETURN_OID(parent);
+	else
+	{
+		elog(ERROR, "\%s\" is not pg_pathman's partition",
+			 get_rel_name_or_relid(partition));
+
+		PG_RETURN_NULL();
+	}
+}
+
+/*
  * NOTE: used for DEBUG, set breakpoint here.
  */
 Datum
@@ -535,4 +547,3 @@ debug_capture(PG_FUNCTION_ARGS)
 
 	PG_RETURN_VOID();
 }
-

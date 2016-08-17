@@ -61,9 +61,14 @@ static Node *wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysT
 static bool disable_inheritance_subselect_walker(Node *node, void *context);
 
 /* "Partition creation"-related functions */
-static bool spawn_partitions(const PartRelationInfo *prel, FmgrInfo *cmp_proc,
-							 Datum interval_binary, Oid interval_type,
-							 Datum leading_bound, Datum value, bool forward,
+static bool spawn_partitions(Oid partitioned_rel,
+							 Datum value,
+							 Datum leading_bound,
+							 Oid leading_bound_type,
+							 FmgrInfo *cmp_proc,
+							 Datum interval_binary,
+							 Oid interval_type,
+							 bool forward,
 							 Oid *last_partition);
 
 /* Expression tree handlers */
@@ -576,6 +581,7 @@ wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue)
 	 * sequntially.
 	 */
 	found = irange_list_find(wrap->rangeset, index, &lossy);
+
 	/* Return NULL for always true and always false. */
 	if (!found)
 		return NULL;
@@ -588,7 +594,7 @@ wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue)
 	if (IsA(wrap->orig, BoolExpr))
 	{
 		const BoolExpr *expr = (const BoolExpr *) wrap->orig;
-		BoolExpr *result;
+		BoolExpr	   *result;
 
 		if (expr->boolop == OR_EXPR || expr->boolop == AND_EXPR)
 		{
@@ -600,7 +606,8 @@ wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue)
 				Node   *arg;
 				bool	childAlwaysTrue;
 
-				arg = wrapper_make_expression((WrapperNode *)lfirst(lc), index, &childAlwaysTrue);
+				arg = wrapper_make_expression((WrapperNode *) lfirst(lc),
+											  index, &childAlwaysTrue);
 #ifdef USE_ASSERT_CHECKING
 				/*
 				 * We shouldn't get there for always true clause under OR and
@@ -626,7 +633,7 @@ wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue)
 			result->args = args;
 			result->boolop = expr->boolop;
 			result->location = expr->location;
-			return (Node *)result;
+			return (Node *) result;
 		}
 		else
 			return copyObject(wrap->orig);
@@ -687,14 +694,15 @@ walk_expr_tree(Expr *expr, WalkerContext *context)
  * it into account while searching for the 'cmp_proc'.
  */
 static bool
-spawn_partitions(const PartRelationInfo *prel,
-				 FmgrInfo *cmp_proc,	/* cmp(value, leading_bound) */
-				 Datum interval_binary,	/* interval in binary form */
-				 Oid interval_type,		/* INTERVALOID or prel->atttype */
-				 Datum leading_bound,	/* current global min\max */
-				 Datum value,			/* type isn't needed */
-				 bool forward,
-				 Oid *last_partition)	/* append\prepend */
+spawn_partitions(Oid partitioned_rel,		/* parent's Oid */
+				 Datum value,				/* value to be INSERTed */
+				 Datum leading_bound,		/* current global min\max */
+				 Oid leading_bound_type,	/* type of the boundary */
+				 FmgrInfo *cmp_proc,		/* cmp(value, leading_bound) */
+				 Datum interval_binary,		/* interval in binary form */
+				 Oid interval_type,			/* INTERVALOID or prel->atttype */
+				 bool forward,				/* append\prepend */
+				 Oid *last_partition)		/* result (Oid of the last partition) */
 {
 /* Cache "+"(leading_bound, interval) or "-"(leading_bound, interval) operator */
 #define CacheOperator(finfo, opname, arg1, arg2, is_cached) \
@@ -715,8 +723,8 @@ spawn_partitions(const PartRelationInfo *prel,
 			check_lt((compar), (a), (b)) \
 	)
 
-	FmgrInfo 	interval_move_bound; /* move upper\lower boundary */
-	bool		interval_move_bound_cached = false;
+	FmgrInfo 	interval_move_bound; /* function to move upper\lower boundary */
+	bool		interval_move_bound_cached = false; /* is it cached already? */
 	bool		done = false;
 
 	Datum		cur_part_leading = leading_bound;
@@ -732,7 +740,7 @@ spawn_partitions(const PartRelationInfo *prel,
 	while ((done = do_compare(cmp_proc, value, cur_part_leading, forward)))
 	{
 		char   *nulls = NULL; /* no params are NULL */
-		Oid		types[3] = { REGCLASSOID, prel->atttype, prel->atttype };
+		Oid		types[3] = { REGCLASSOID, leading_bound_type, leading_bound_type };
 		Datum	values[3];
 		int		ret;
 
@@ -740,7 +748,7 @@ spawn_partitions(const PartRelationInfo *prel,
 		Datum	cur_part_following = cur_part_leading;
 
 		CacheOperator(&interval_move_bound, (forward ? "+" : "-"),
-					  prel->atttype, interval_type, interval_move_bound_cached);
+					  leading_bound_type, interval_type, interval_move_bound_cached);
 
 		/* Move leading bound by interval (leading +\- INTERVAL) */
 		cur_part_leading = FunctionCall2(&interval_move_bound,
@@ -748,7 +756,7 @@ spawn_partitions(const PartRelationInfo *prel,
 										 interval_binary);
 
 		/* Fill in 'values' with parent's Oid and correct boundaries... */
-		values[0] = prel->key; /* partitioned table's Oid */
+		values[0] = partitioned_rel; /* partitioned table's Oid */
 		values[1] = forward ? cur_part_following : cur_part_leading; /* value #1 */
 		values[2] = forward ? cur_part_leading : cur_part_following; /* value #2 */
 
@@ -774,8 +782,8 @@ spawn_partitions(const PartRelationInfo *prel,
 #ifdef USE_ASSERT_CHECKING
 		elog(DEBUG2, "%s partition with following='%s' & leading='%s' [%u]",
 			 (forward ? "Appending" : "Prepending"),
-			 DebugPrintDatum(cur_part_following, prel->atttype),
-			 DebugPrintDatum(cur_part_leading, prel->atttype),
+			 DebugPrintDatum(cur_part_following, leading_bound_type),
+			 DebugPrintDatum(cur_part_leading, leading_bound_type),
 			 MyProcPid);
 #endif
 	}
@@ -794,7 +802,7 @@ Oid
 create_partitions_internal(Oid relid, Datum value, Oid value_type)
 {
 	MemoryContext	old_mcxt = CurrentMemoryContext;
-	Oid				partid = InvalidOid; /* default value */
+	Oid				partid = InvalidOid; /* last created partition (or InvalidOid) */
 
 	PG_TRY();
 	{
@@ -869,12 +877,14 @@ create_partitions_internal(Oid relid, Datum value, Oid value_type)
 				elog(ERROR, "Could not connect using SPI");
 
 			/* while (value >= MAX) ... */
-			spawn_partitions(prel, &interval_type_cmp, interval_binary,
-							 interval_type, max_rvalue, value, true, &partid);
+			spawn_partitions(prel->key, value, max_rvalue, prel->atttype,
+							 &interval_type_cmp, interval_binary,
+							 interval_type, true, &partid);
 
 			/* while (value < MIN) ... */
-			spawn_partitions(prel, &interval_type_cmp, interval_binary,
-							 interval_type, min_rvalue, value, false, &partid);
+			spawn_partitions(prel->key, value, min_rvalue, prel->atttype,
+							 &interval_type_cmp, interval_binary,
+							 interval_type, false, &partid);
 
 			SPI_finish(); /* close SPI connection */
 		}
@@ -923,7 +933,7 @@ create_partitions(Oid relid, Datum value, Oid value_type)
 			elog(DEBUG2, "create_partitions(): chose BGW [%u]", MyProcPid);
 			last_partition = create_partitions_bg_worker(relid, value, value_type);
 		}
-		/* Else it'd better for the current backend to create partitions */
+		/* Else it'd be better for the current backend to create partitions */
 		else
 		{
 			elog(DEBUG2, "create_partitions(): chose backend [%u]", MyProcPid);

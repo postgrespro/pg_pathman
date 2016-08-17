@@ -58,7 +58,6 @@ SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DAT
 ERROR:  Not enough partitions to fit all the values of 'dt'
 SELECT pathman.create_range_partitions('test.range_rel', 'DT', '2015-01-01'::DATE, '1 month'::INTERVAL);
 NOTICE:  sequence "range_rel_seq" does not exist, skipping
-NOTICE:  Copying data to partitions...
  create_range_partitions 
 -------------------------
                        4
@@ -81,7 +80,6 @@ CREATE TABLE test.num_range_rel (
 	txt	TEXT);
 SELECT pathman.create_range_partitions('test.num_range_rel', 'id', 0, 1000, 4);
 NOTICE:  sequence "num_range_rel_seq" does not exist, skipping
-NOTICE:  Copying data to partitions...
  create_range_partitions 
 -------------------------
                        4
@@ -1103,7 +1101,6 @@ CREATE TABLE test.range_rel (
 	id	SERIAL PRIMARY KEY,
 	dt	TIMESTAMP NOT NULL);
 SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '10 days'::INTERVAL, 1);
-NOTICE:  Copying data to partitions...
  create_range_partitions 
 -------------------------
                        1
@@ -1153,7 +1150,6 @@ CREATE TABLE test.num_range_rel (
 	id	SERIAL PRIMARY KEY,
 	txt	TEXT);
 SELECT pathman.create_range_partitions('test.num_range_rel', 'id', 1000, 1000, 4);
-NOTICE:  Copying data to partitions...
  create_range_partitions 
 -------------------------
                        4
@@ -1279,7 +1275,6 @@ INSERT INTO test."RangeRel" (dt, txt)
 SELECT g, md5(g::TEXT) FROM generate_series('2015-01-01', '2015-01-03', '1 day'::interval) as g;
 SELECT pathman.create_range_partitions('test."RangeRel"', 'dt', '2015-01-01'::DATE, '1 day'::INTERVAL);
 NOTICE:  sequence "RangeRel_seq" does not exist, skipping
-NOTICE:  Copying data to partitions...
  create_range_partitions 
 -------------------------
                        3
@@ -1322,7 +1317,6 @@ NOTICE:  0 rows copied from test."RangeRel_1"
 (1 row)
 
 SELECT pathman.create_partitions_from_range('test."RangeRel"', 'dt', '2015-01-01'::DATE, '2015-01-05'::DATE, '1 day'::INTERVAL);
-NOTICE:  Copying data to partitions...
  create_partitions_from_range 
 ------------------------------
                             5
@@ -1341,7 +1335,6 @@ CREATE TABLE test."RangeRel" (
 	dt	TIMESTAMP NOT NULL,
 	txt	TEXT);
 SELECT pathman.create_range_partitions('test."RangeRel"', 'id', 1, 100, 3);
-NOTICE:  Copying data to partitions...
  create_range_partitions 
 -------------------------
                        3
@@ -1358,7 +1351,6 @@ NOTICE:  0 rows copied from test."RangeRel_1"
 (1 row)
 
 SELECT pathman.create_partitions_from_range('test."RangeRel"', 'id', 1, 300, 100);
-NOTICE:  Copying data to partitions...
  create_partitions_from_range 
 ------------------------------
                             3
@@ -1400,7 +1392,6 @@ CREATE TABLE range_rel (
 INSERT INTO range_rel (dt, value) SELECT g, extract(day from g) FROM generate_series('2010-01-01'::date, '2010-12-31'::date, '1 day') as g;
 SELECT create_range_partitions('range_rel', 'dt', '2010-01-01'::date, '1 month'::interval, 12);
 NOTICE:  sequence "range_rel_seq" does not exist, skipping
-NOTICE:  Copying data to partitions...
  create_range_partitions 
 -------------------------
                       12
@@ -1530,7 +1521,6 @@ NOTICE:  44 rows copied from range_rel_1
 (1 row)
 
 SELECT create_partitions_from_range('range_rel', 'id', 1, 1000, 100);
-NOTICE:  Copying data to partitions...
  create_partitions_from_range 
 ------------------------------
                            10
@@ -1544,7 +1534,6 @@ NOTICE:  function public.range_rel_update_trigger_func() does not exist, skippin
 (1 row)
 
 SELECT create_partitions_from_range('range_rel', 'dt', '2015-01-01'::date, '2015-12-01'::date, '1 month'::interval);
-NOTICE:  Copying data to partitions...
  create_partitions_from_range 
 ------------------------------
                            12
@@ -1568,7 +1557,6 @@ ERROR:  Relation 'messages' is referenced from other relations
 ALTER TABLE replies DROP CONSTRAINT replies_message_id_fkey;
 SELECT create_range_partitions('messages', 'id', 1, 100, 2);
 NOTICE:  sequence "messages_seq" does not exist, skipping
-NOTICE:  Copying data to partitions...
  create_range_partitions 
 -------------------------
                        2
