@@ -1128,7 +1128,7 @@ select_range_partitions(const Datum value,
 }
 
 /*
- *	This function determines which partitions should appear in query plan
+ * This function determines which partitions should appear in query plan.
  */
 static void
 handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
@@ -1157,10 +1157,10 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 			if (strategy == BTEqualStrategyNumber)
 			{
 				Datum	value = OidFunctionCall1(prel->hash_proc, c->constvalue);
-				uint32	hash = make_hash(DatumGetInt32(value),
-										 PrelChildrenCount(prel));
+				uint32	idx = hash_to_part_index(DatumGetInt32(value),
+												 PrelChildrenCount(prel));
 
-				result->rangeset = list_make1_irange(make_irange(hash, hash, true));
+				result->rangeset = list_make1_irange(make_irange(idx, idx, true));
 
 				return; /* exit on equal */
 			}
@@ -1224,10 +1224,10 @@ handle_binary_opexpr_param(const PartRelationInfo *prel,
 }
 
 /*
- * Calculates hash value
+ * Convert hash value to the partition index.
  */
 uint32
-make_hash(uint32 value, uint32 partitions)
+hash_to_part_index(uint32 value, uint32 partitions)
 {
 	return value % partitions;
 }
@@ -1317,9 +1317,9 @@ handle_const(const Const *c, WalkerContext *context)
 		case PT_HASH:
 			{
 				Datum	value = OidFunctionCall1(prel->hash_proc, c->constvalue);
-				uint32	hash = make_hash(DatumGetInt32(value),
-										 PrelChildrenCount(prel));
-				result->rangeset = list_make1_irange(make_irange(hash, hash, true));
+				uint32	idx = hash_to_part_index(DatumGetInt32(value),
+												 PrelChildrenCount(prel));
+				result->rangeset = list_make1_irange(make_irange(idx, idx, true));
 			}
 			break;
 
@@ -1506,7 +1506,6 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 	Node		*varnode = (Node *) linitial(expr->args);
 	Var			*var;
 	Node		*arraynode = (Node *) lsecond(expr->args);
-	uint32		 hash;
 	const PartRelationInfo *prel = context->prel;
 
 	result->orig = (const Node *)expr;
@@ -1538,7 +1537,6 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 		Datum	   *elem_values;
 		bool	   *elem_nulls;
 		int			i;
-		Datum		value;
 
 		/* Extract values from array */
 		arrayval = DatumGetArrayTypeP(((Const *) arraynode)->constvalue);
@@ -1554,11 +1552,16 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 		/* Construct OIDs list */
 		for (i = 0; i < num_elems; i++)
 		{
+			Datum		value;
+			uint32		idx;
+
 			/* Invoke base hash function for value type */
 			value = OidFunctionCall1(prel->hash_proc, elem_values[i]);
-			hash = make_hash(DatumGetInt32(value), PrelChildrenCount(prel));
+			idx = hash_to_part_index(DatumGetInt32(value), PrelChildrenCount(prel));
 			result->rangeset = irange_list_union(result->rangeset,
-						list_make1_irange(make_irange(hash, hash, true)));
+												 list_make1_irange(make_irange(idx,
+																			   idx,
+																			   true)));
 		}
 
 		/* Free resources */

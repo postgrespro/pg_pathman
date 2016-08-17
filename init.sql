@@ -35,9 +35,8 @@ SELECT pg_catalog.pg_extension_config_dump('@extschema@.pathman_config', '');
  * Copy rows to partitions
  */
 CREATE OR REPLACE FUNCTION @extschema@.partition_data(
-	p_parent						REGCLASS,
-	p_invalidate_cache_on_error		BOOLEAN DEFAULT FALSE,
-	OUT p_total						BIGINT)
+	parent_relid	REGCLASS,
+	OUT p_total		BIGINT)
 AS
 $$
 DECLARE
@@ -46,14 +45,12 @@ DECLARE
 	cnt			BIGINT := 0;
 
 BEGIN
-	relname := @extschema@.validate_relname(p_parent);
-
 	p_total := 0;
 
 	/* Create partitions and copy rest of the data */
 	EXECUTE format('WITH part_data AS (DELETE FROM ONLY %1$s RETURNING *)
 					INSERT INTO %1$s SELECT * FROM part_data',
-				   relname);
+				   @extschema@.get_schema_qualified_name(parent_relid));
 
 	/* Get number of inserted rows */
 	GET DIAGNOSTICS p_total = ROW_COUNT;
@@ -66,17 +63,17 @@ LANGUAGE plpgsql;
  * Disable pathman partitioning for specified relation
  */
 CREATE OR REPLACE FUNCTION @extschema@.disable_partitioning(
-	relation	REGCLASS)
+	parent_relid	REGCLASS)
 RETURNS VOID AS
 $$
 BEGIN
-	relation := @extschema@.validate_relname(relation);
+	PERFORM @extschema@.validate_relname(parent_relid);
 
-	DELETE FROM @extschema@.pathman_config WHERE partrel = relation;
-	PERFORM @extschema@.drop_triggers(relation);
+	DELETE FROM @extschema@.pathman_config WHERE partrel = parent_relid;
+	PERFORM @extschema@.drop_triggers(parent_relid);
 
 	/* Notify backend about changes */
-	PERFORM on_remove_partitions(relation::regclass::integer);
+	PERFORM @extschema@.on_remove_partitions(parent_relid);
 END
 $$
 LANGUAGE plpgsql;
@@ -131,9 +128,29 @@ CREATE OR REPLACE FUNCTION @extschema@.get_plain_schema_and_relname(
 AS
 $$
 BEGIN
-	SELECT relnamespace::regnamespace, pg_class.relname
-	FROM pg_class WHERE oid = cls::oid
+	SELECT pg_catalog.pg_class.relnamespace::regnamespace,
+		   pg_catalog.pg_class.relname
+	FROM pg_catalog.pg_class WHERE oid = cls::oid
 	INTO schema, relname;
+END
+$$
+LANGUAGE plpgsql;
+
+/*
+ * Returns schema-qualified name for table
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_schema_qualified_name(
+	cls			REGCLASS,
+	delimiter	TEXT DEFAULT '.',
+	suffix		TEXT DEFAULT '')
+RETURNS TEXT AS
+$$
+BEGIN
+	RETURN (SELECT quote_ident(relnamespace::regnamespace::text) ||
+				   delimiter ||
+				   quote_ident(relname || suffix)
+			FROM pg_catalog.pg_class
+			WHERE oid = cls::oid);
 END
 $$
 LANGUAGE plpgsql;
@@ -145,27 +162,17 @@ CREATE OR REPLACE FUNCTION @extschema@.validate_relname(
 	cls		REGCLASS)
 RETURNS TEXT AS
 $$
-BEGIN
-	RETURN @extschema@.get_schema_qualified_name(cls, '.');
-END
-$$
-LANGUAGE plpgsql;
+DECLARE
+	relname	TEXT;
 
-/*
- * Returns schema-qualified name for table
- */
-CREATE OR REPLACE FUNCTION @extschema@.get_schema_qualified_name(
-	cls			REGCLASS,
-	delimiter	TEXT DEFAULT '_',
-	suffix		TEXT DEFAULT '')
-RETURNS TEXT AS
-$$
 BEGIN
-	RETURN (SELECT quote_ident(relnamespace::regnamespace::text) ||
-				   delimiter ||
-				   quote_ident(relname || suffix)
-			FROM pg_class
-			WHERE oid = cls::oid);
+	relname = @extschema@.get_schema_qualified_name(cls);
+
+	IF relname IS NULL THEN
+		RAISE EXCEPTION 'Relation %s does not exist', cls;
+	END IF;
+
+	RETURN relname;
 END
 $$
 LANGUAGE plpgsql;
@@ -183,8 +190,10 @@ DECLARE
 BEGIN
 	FOR rec IN (
 		WITH
-			a1 AS (select * from pg_attribute where attrelid = relation1 and attnum > 0),
-			a2 AS (select * from pg_attribute where attrelid = relation2 and attnum > 0)
+			a1 AS (select * from pg_catalog.pg_attribute
+				   where attrelid = relation1 and attnum > 0),
+			a2 AS (select * from pg_catalog.pg_attribute
+				   where attrelid = relation2 and attnum > 0)
 		SELECT a1.attname name1, a2.attname name2, a1.atttypid type1, a2.atttypid type2
 		FROM a1
 		FULL JOIN a2 ON a1.attnum = a2.attnum
@@ -211,7 +220,7 @@ DECLARE
 	pg_class_oid	oid;
 
 BEGIN
-	pg_class_oid = 'pg_class'::regclass;
+	pg_class_oid = 'pg_catalog.pg_class'::regclass;
 
 	/* Handle 'DROP TABLE' events */
 	WITH to_be_deleted AS (
@@ -261,11 +270,10 @@ DECLARE
 	v_rec			RECORD;
 	v_rows			INTEGER;
 	v_part_count	INTEGER := 0;
-	v_relname		TEXT;
 	conf_num_del	INTEGER;
 
 BEGIN
-	v_relname := @extschema@.validate_relname(parent_relid);
+	PERFORM @extschema@.validate_relname(parent_relid);
 
 	/* Drop trigger first */
 	PERFORM @extschema@.drop_triggers(parent_relid);
@@ -280,7 +288,8 @@ BEGIN
 	END IF;
 
 	FOR v_rec IN (SELECT inhrelid::regclass::text AS tbl
-				  FROM pg_inherits WHERE inhparent::regclass = parent_relid)
+				  FROM pg_catalog.pg_inherits
+				  WHERE inhparent::regclass = parent_relid)
 	LOOP
 		IF NOT delete_data THEN
 			EXECUTE format('WITH part_data AS (DELETE FROM %s RETURNING *)
@@ -376,6 +385,6 @@ LANGUAGE C STRICT;
 /*
  * Get parent of pg_pathman's partition.
  */
-CREATE OR REPLACE FUNCTION @extschema@.parent_of_partition(REGCLASS)
-RETURNS REGCLASS AS 'pg_pathman', 'parent_of_partition'
+CREATE OR REPLACE FUNCTION @extschema@.get_parent_of_partition(REGCLASS)
+RETURNS REGCLASS AS 'pg_pathman', 'get_parent_of_partition_pl'
 LANGUAGE C STRICT;

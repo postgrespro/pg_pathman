@@ -205,7 +205,7 @@ begin
 							   'wrong plan provider');
 
 	perform test.pathman_equal((plan->0->'Plan'->'Plans'->1->'Relation Name')::text,
-							   format('"runtime_test_1_%s"', pathman.get_hash(hashint4(1), 6)),
+							   format('"runtime_test_1_%s"', pathman.get_hash_part_idx(hashint4(1), 6)),
 							   'wrong partition');
 
 	select count(*) from jsonb_array_elements_text(plan->0->'Plan'->'Plans') into num;
@@ -239,7 +239,7 @@ begin
 
 	for i in 0..3 loop
 		perform test.pathman_equal((plan->0->'Plan'->'Plans'->1->'Plans'->i->'Relation Name')::text,
-								   format('"runtime_test_1_%s"', pathman.get_hash(hashint4(i + 1), 6)),
+								   format('"runtime_test_1_%s"', pathman.get_hash_part_idx(hashint4(i + 1), 6)),
 								   'wrong partition');
 
 		num = plan->0->'Plan'->'Plans'->1->'Plans'->i->'Actual Loops';
@@ -307,7 +307,7 @@ begin
 
 	for i in 0..3 loop
 		perform test.pathman_equal((plan->0->'Plan'->'Plans'->1->'Plans'->0->'Plans'->i->'Relation Name')::text,
-								   format('"runtime_test_2_%s"', pathman.get_hash(hashint4(i + 1), 6)),
+								   format('"runtime_test_2_%s"', pathman.get_hash_part_idx(hashint4(i + 1), 6)),
 								   'wrong partition');
 
 		num = plan->0->'Plan'->'Plans'->1->'Plans'->0->'Plans'->i->'Actual Loops';

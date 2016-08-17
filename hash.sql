@@ -49,9 +49,10 @@ BEGIN
 
 		EXECUTE format('CREATE TABLE %1$s (LIKE %2$s INCLUDING ALL) INHERITS (%2$s)',
 					   v_child_relname,
-					   parent_relid::text);
+					   @extschema@.get_schema_qualified_name(parent_relid));
 
-		EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (@extschema@.get_hash(%s(%s), %s) = %s)',
+		EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s
+						CHECK (@extschema@.get_hash_part_idx(%s(%s), %s) = %s)',
 					   v_child_relname,
 					   @extschema@.build_check_constraint_name(v_child_relname::regclass,
 															   attribute),
@@ -84,22 +85,22 @@ DECLARE
 				  RETURNS TRIGGER AS
 				  $body$
 				  DECLARE
-					old_hash INTEGER;
-					new_hash INTEGER;
+					old_idx		INTEGER; /* partition indices */
+					new_idx		INTEGER;
 					q TEXT;
 
 				  BEGIN
-					old_hash := @extschema@.get_hash(%9$s(OLD.%2$s), %3$s);
-					new_hash := @extschema@.get_hash(%9$s(NEW.%2$s), %3$s);
+					old_idx := @extschema@.get_hash_part_idx(%9$s(OLD.%2$s), %3$s);
+					new_idx := @extschema@.get_hash_part_idx(%9$s(NEW.%2$s), %3$s);
 
-					IF old_hash = new_hash THEN
+					IF old_idx = new_idx THEN
 						RETURN NEW;
 					END IF;
 
-					q := format(''DELETE FROM %8$s WHERE %4$s'', old_hash);
+					q := format(''DELETE FROM %8$s WHERE %4$s'', old_idx);
 					EXECUTE q USING %5$s;
 
-					q := format(''INSERT INTO %8$s VALUES (%6$s)'', new_hash);
+					q := format(''INSERT INTO %8$s VALUES (%6$s)'', new_idx);
 					EXECUTE q USING %7$s;
 
 					RETURN NULL;
@@ -138,7 +139,7 @@ BEGIN
 							attname || ' IS NULL END',
 					  ' AND '),
 		   string_agg('$' || attnum, ', ')
-	FROM pg_attribute
+	FROM pg_catalog.pg_attribute
 	WHERE attrelid = parent_relid AND attnum > 0
 	INTO   att_names,
 		   old_fields,
@@ -152,7 +153,8 @@ BEGIN
 		RAISE EXCEPTION 'Table % is not partitioned', quote_ident(parent_relid::TEXT);
 	END IF;
 
-	partitions_count := COUNT(*) FROM pg_inherits WHERE inhparent = parent_relid::oid;
+	partitions_count := COUNT(*) FROM pg_catalog.pg_inherits
+						WHERE inhparent = parent_relid::oid;
 
 	/* Function name, trigger name and child relname template */
 	funcname := plain_schema || '.' || quote_ident(format('%s_update_trigger_func', plain_relname));
@@ -189,6 +191,6 @@ LANGUAGE C STRICT;
 /*
  * Calculates hash for integer value
  */
-CREATE OR REPLACE FUNCTION @extschema@.get_hash(INTEGER, INTEGER)
-RETURNS INTEGER AS 'pg_pathman', 'get_hash'
+CREATE OR REPLACE FUNCTION @extschema@.get_hash_part_idx(INTEGER, INTEGER)
+RETURNS INTEGER AS 'pg_pathman', 'get_hash_part_idx'
 LANGUAGE C STRICT;

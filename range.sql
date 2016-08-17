@@ -14,7 +14,9 @@ CREATE OR REPLACE FUNCTION @extschema@.get_sequence_name(
 RETURNS TEXT AS
 $$
 BEGIN
-	RETURN format('%s.%s', plain_schema, quote_ident(format('%s_seq', plain_relname)));
+	RETURN format('%s.%s',
+				  quote_ident(plain_schema),
+				  quote_ident(format('%s_seq', plain_relname)));
 END
 $$
 LANGUAGE plpgsql;
@@ -416,15 +418,15 @@ BEGIN
 
 	EXECUTE format('CREATE TABLE %1$s (LIKE %2$s INCLUDING ALL) INHERITS (%2$s)',
 				   v_child_relname,
-				   @extschema@.get_schema_qualified_name(parent_relid, '.'));
+				   @extschema@.get_schema_qualified_name(parent_relid));
 
 	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)',
 				   v_child_relname,
 				   @extschema@.build_check_constraint_name(v_child_relname::regclass,
 														   v_attname),
-				   @extschema@.get_range_condition(v_attname,
-												   p_start_value,
-												   p_end_value));
+				   @extschema@.build_range_condition(v_attname,
+													 p_start_value,
+													 p_end_value));
 
 	RETURN v_child_relname;
 END
@@ -451,7 +453,7 @@ DECLARE
 
 BEGIN
 	v_part_relname := @extschema@.validate_relname(p_partition);
-	v_parent_relid = @extschema@.parent_of_partition(p_partition);
+	v_parent_relid = @extschema@.get_parent_of_partition(p_partition);
 
 	SELECT attname, parttype
 	FROM @extschema@.pathman_config
@@ -483,12 +485,12 @@ BEGIN
 
 	/* Create new partition */
 	v_new_partition := @extschema@.create_single_range_partition(
-							@extschema@.get_schema_qualified_name(v_parent_relid, '.'),
+							@extschema@.get_schema_qualified_name(v_parent_relid),
 							p_value,
 							p_range[2]);
 
 	/* Copy data */
-	v_cond := @extschema@.get_range_condition(v_attname, p_value, p_range[2]);
+	v_cond := @extschema@.build_range_condition(v_attname, p_value, p_range[2]);
 	EXECUTE format('WITH part_data AS (DELETE FROM %s WHERE %s RETURNING *)
 					INSERT INTO %s SELECT * FROM part_data',
 				   p_partition,
@@ -496,7 +498,7 @@ BEGIN
 				   v_new_partition);
 
 	/* Alter original partition */
-	v_cond := @extschema@.get_range_condition(v_attname, p_range[1], p_value);
+	v_cond := @extschema@.build_range_condition(v_attname, p_range[1], p_value);
 	v_check_name := @extschema@.build_check_constraint_name(p_partition, v_attname);
 
 	EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %s',
@@ -535,8 +537,8 @@ BEGIN
 		RAISE EXCEPTION 'Cannot merge partition with itself';
 	END IF;
 
-	v_parent_relid1 := @extschema@.parent_of_partition(partition1);
-	v_parent_relid2 := @extschema@.parent_of_partition(partition2);
+	v_parent_relid1 := @extschema@.get_parent_of_partition(partition1);
+	v_parent_relid2 := @extschema@.get_parent_of_partition(partition2);
 
 	IF v_parent_relid1 != v_parent_relid2 THEN
 		RAISE EXCEPTION 'Cannot merge partitions with different parents';
@@ -623,9 +625,9 @@ BEGIN
 	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)',
 				   partition1::text,
 				   v_check_name,
-				   @extschema@.get_range_condition(v_attname,
-												   least(p_range[1], p_range[3]),
-												   greatest(p_range[2], p_range[4])));
+				   @extschema@.build_range_condition(v_attname,
+													 least(p_range[1], p_range[3]),
+													 greatest(p_range[2], p_range[4])));
 
 	/* Copy data from second partition to the first one */
 	EXECUTE format('WITH part_data AS (DELETE FROM %s RETURNING *)
@@ -833,7 +835,7 @@ DECLARE
 	v_count			INTEGER;
 
 BEGIN
-	v_part_relid = @extschema@.parent_of_partition(p_partition);
+	v_part_relid = @extschema@.get_parent_of_partition(p_partition);
 
 	/* Drop table */
 	EXECUTE format('DROP TABLE %s', p_partition::TEXT);
@@ -902,9 +904,9 @@ BEGIN
 	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)',
 				   p_partition,
 				   @extschema@.build_check_constraint_name(p_partition, v_attname),
-				   @extschema@.get_range_condition(v_attname,
-												   p_start_value,
-												   p_end_value));
+				   @extschema@.build_range_condition(v_attname,
+													 p_start_value,
+													 p_end_value));
 
 	/* Invalidate cache */
 	PERFORM @extschema@.on_update_partitions(parent_relid);
@@ -930,7 +932,7 @@ DECLARE
 	v_parent		regclass;
 
 BEGIN
-	v_parent = @extschema@.parent_of_partition(p_partition);
+	v_parent = @extschema@.get_parent_of_partition(p_partition);
 
 	v_attname := attname
 	FROM @extschema@.pathman_config
@@ -1045,7 +1047,7 @@ BEGIN
 	FOR rec in (SELECT * FROM pg_inherits WHERE inhparent = parent_relid)
 	LOOP
 		EXECUTE format(trigger,
-					   @extschema@.get_schema_qualified_name(parent_relid),
+					   @extschema@.get_schema_qualified_name(parent_relid, '_'),
 					   rec.inhrelid::regclass,
 					   parent_relid);
 	END LOOP;
@@ -1058,11 +1060,11 @@ $$ LANGUAGE plpgsql;
 /*
  * Construct CHECK constraint condition for a range partition.
  */
-CREATE OR REPLACE FUNCTION @extschema@.get_range_condition(
+CREATE OR REPLACE FUNCTION @extschema@.build_range_condition(
 	p_attname		TEXT,
 	p_start_value	ANYELEMENT,
 	p_end_value		ANYELEMENT)
-RETURNS TEXT AS 'pg_pathman', 'get_range_condition'
+RETURNS TEXT AS 'pg_pathman', 'build_range_condition'
 LANGUAGE C STRICT;
 
 /*

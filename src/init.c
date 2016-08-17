@@ -718,7 +718,7 @@ read_opexpr_const(const OpExpr *opexpr,
 /*
  * Validate hash constraint. It MUST have this exact format:
  *
- *		get_hash(TYPE_HASH_PROC(VALUE), PARTITIONS_COUNT) = CUR_PARTITION_HASH
+ *		get_hash_part_idx(TYPE_HASH_PROC(VALUE), PARTITIONS_COUNT) = CUR_PARTITION_HASH
  *
  * Writes 'part_hash' hash value for this partition on success.
  */
@@ -741,7 +741,7 @@ validate_hash_constraint(const Expr *expr,
 	if (!IsA(linitial(eq_expr->args), FuncExpr))
 		return false;
 
-	get_hash_expr = (FuncExpr *) linitial(eq_expr->args);	/* arg #1: get_hash(...) */
+	get_hash_expr = (FuncExpr *) linitial(eq_expr->args); /* get_hash_part_idx(...) */
 
 	/* Is 'eqexpr' an equality operator? */
 	tce = lookup_type_cache(get_hash_expr->funcresulttype, TYPECACHE_BTREE_OPFAMILY);

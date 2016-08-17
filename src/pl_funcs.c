@@ -27,21 +27,21 @@
 PG_FUNCTION_INFO_V1( on_partitions_created );
 PG_FUNCTION_INFO_V1( on_partitions_updated );
 PG_FUNCTION_INFO_V1( on_partitions_removed );
+PG_FUNCTION_INFO_V1( get_parent_of_partition_pl );
+PG_FUNCTION_INFO_V1( get_attribute_type_name );
 PG_FUNCTION_INFO_V1( find_or_create_range_partition);
-PG_FUNCTION_INFO_V1( get_range_condition );
 PG_FUNCTION_INFO_V1( get_range_by_idx );
 PG_FUNCTION_INFO_V1( get_range_by_part_oid );
-PG_FUNCTION_INFO_V1( check_overlap );
 PG_FUNCTION_INFO_V1( get_min_range_value );
 PG_FUNCTION_INFO_V1( get_max_range_value );
 PG_FUNCTION_INFO_V1( get_type_hash_func );
-PG_FUNCTION_INFO_V1( get_hash );
+PG_FUNCTION_INFO_V1( get_hash_part_idx );
+PG_FUNCTION_INFO_V1( check_overlap );
+PG_FUNCTION_INFO_V1( build_range_condition );
 PG_FUNCTION_INFO_V1( build_check_constraint_name_attnum );
 PG_FUNCTION_INFO_V1( build_check_constraint_name_attname );
 PG_FUNCTION_INFO_V1( is_date_type );
-PG_FUNCTION_INFO_V1( get_attribute_type_name );
 PG_FUNCTION_INFO_V1( is_attribute_nullable );
-PG_FUNCTION_INFO_V1( parent_of_partition );
 PG_FUNCTION_INFO_V1( debug_capture );
 
 
@@ -51,7 +51,7 @@ static void on_partitions_removed_internal(Oid partitioned_table, bool add_callb
 
 
 /*
- * Callbacks
+ * Callbacks.
  */
 
 static void
@@ -80,7 +80,7 @@ on_partitions_removed_internal(Oid partitioned_table, bool add_callbacks)
 }
 
 /*
- * Thin layer between pure c and pl/PgSQL
+ * Thin layer between pure C and pl/PgSQL.
  */
 
 Datum
@@ -102,6 +102,64 @@ on_partitions_removed(PG_FUNCTION_ARGS)
 {
 	on_partitions_removed_internal(PG_GETARG_OID(0), true);
 	PG_RETURN_NULL();
+}
+
+
+/*
+ * Get parent of a specified partition.
+ */
+Datum
+get_parent_of_partition_pl(PG_FUNCTION_ARGS)
+{
+	Oid					partition = PG_GETARG_OID(0);
+	PartParentSearch	parent_search;
+	Oid					parent;
+
+	/* Fetch parent & write down search status */
+	parent = get_parent_of_partition(partition, &parent_search);
+
+	/* We MUST be sure :) */
+	Assert(parent_search != PPS_NOT_SURE);
+
+	/* It must be parent known by pg_pathman */
+	if (parent_search == PPS_ENTRY_PART_PARENT)
+		PG_RETURN_OID(parent);
+	else
+	{
+		elog(ERROR, "\%s\" is not pg_pathman's partition",
+			 get_rel_name_or_relid(partition));
+
+		PG_RETURN_NULL();
+	}
+}
+
+/*
+ * Get type (as text) of a given attribute.
+ */
+Datum
+get_attribute_type_name(PG_FUNCTION_ARGS)
+{
+	Oid			relid = PG_GETARG_OID(0);
+	text	   *attname = PG_GETARG_TEXT_P(1);
+	char	   *result;
+	HeapTuple	tp;
+
+	/* NOTE: for now it's the most efficient way */
+	tp = SearchSysCacheAttName(relid, text_to_cstring(attname));
+	if (HeapTupleIsValid(tp))
+	{
+		Form_pg_attribute att_tup = (Form_pg_attribute) GETSTRUCT(tp);
+		result = format_type_be(att_tup->atttypid);
+		ReleaseSysCache(tp);
+
+		PG_RETURN_TEXT_P(cstring_to_text(result));
+	}
+	else
+		elog(ERROR, "Cannot find type name for attribute \"%s\" "
+					"of relation \"%s\"",
+			 text_to_cstring(attname), get_rel_name_or_relid(relid));
+
+	PG_RETURN_NULL(); /* keep compiler happy */
 }
 
 /*
@@ -171,7 +229,10 @@ find_or_create_range_partition(PG_FUNCTION_ARGS)
 }
 
 /*
- * Returns range (min, max) as output parameters.
+ * Returns range entry (min, max) (in form of array).
+ *
+ * arg #1 is the parent's Oid.
+ * arg #2 is the partition's Oid.
  */
 Datum
 get_range_by_part_oid(PG_FUNCTION_ARGS)
@@ -220,52 +281,11 @@ get_range_by_part_oid(PG_FUNCTION_ARGS)
 }
 
 /*
- * Formats range condition for a CHECK CONSTRAINT.
- */
-Datum
-get_range_condition(PG_FUNCTION_ARGS)
-{
-	text   *attname = PG_GETARG_TEXT_P(0);
-
-	Datum	min_bound = PG_GETARG_DATUM(1),
-			max_bound = PG_GETARG_DATUM(2);
-
-	Oid		min_bound_type = get_fn_expr_argtype(fcinfo->flinfo, 1),
-			max_bound_type = get_fn_expr_argtype(fcinfo->flinfo, 2);
-
-	char   *subst_str; /* substitution string */
-	char   *result;
-
-	/* This is not going to trigger (not now, at least), just for the safety */
-	if (min_bound_type != max_bound_type)
-		elog(ERROR, "Cannot build range condition: "
-					"boundaries should be of the same type");
-
-	/* Check if we need single quotes */
-	/* TODO: check for primitive types instead, that would be better */
-	if (is_date_type_internal(min_bound_type) ||
-		is_string_type_internal(min_bound_type))
-	{
-		subst_str = "%1$s >= '%2$s' AND %1$s < '%3$s'";
-	}
-	else
-		subst_str = "%1$s >= %2$s AND %1$s < %3$s";
-
-	/* Create range condition CSTRING */
-	result = psprintf(subst_str,
-					  text_to_cstring(attname),
-					  datum_to_cstring(min_bound, min_bound_type),
-					  datum_to_cstring(max_bound, max_bound_type));
-
-	PG_RETURN_TEXT_P(cstring_to_text(result));
-}
-
-/*
- * Returns N-th range (in form of array)
+ * Returns N-th range entry (min, max) (in form of array).
  *
- * First argument is the parent relid.
- * Second argument is the index of the range (if it is
- * negative then the last range will be returned).
+ * arg #1 is the parent's Oid.
+ * arg #2 is the index of the range
+ *		(if it is negative then the last range will be returned).
  */
 Datum
 get_range_by_idx(PG_FUNCTION_ARGS)
@@ -306,7 +326,7 @@ get_range_by_idx(PG_FUNCTION_ARGS)
 }
 
 /*
- * Returns min value of the first range for relation
+ * Returns min value of the first range for relation.
  */
 Datum
 get_min_range_value(PG_FUNCTION_ARGS)
@@ -326,7 +346,7 @@ get_min_range_value(PG_FUNCTION_ARGS)
 }
 
 /*
- * Returns max value of the last range for relation
+ * Returns max value of the last range for relation.
  */
 Datum
 get_max_range_value(PG_FUNCTION_ARGS)
@@ -390,9 +410,12 @@ check_overlap(PG_FUNCTION_ARGS)
 	PG_RETURN_BOOL(false);
 }
 
+
 /*
- * Returns hash function OID for specified type
+ * HASH-related stuff.
  */
+
+/* Returns hash function's OID for a specified type. */
 Datum
 get_type_hash_func(PG_FUNCTION_ARGS)
 {
@@ -404,39 +427,91 @@ get_type_hash_func(PG_FUNCTION_ARGS)
 	PG_RETURN_OID(tce->hash_proc);
 }
 
+/* Wrapper for hash_to_part_index() */
 Datum
-get_hash(PG_FUNCTION_ARGS)
+get_hash_part_idx(PG_FUNCTION_ARGS)
 {
 	uint32	value = PG_GETARG_UINT32(0),
 			part_count = PG_GETARG_UINT32(1);
 
-	PG_RETURN_UINT32(make_hash(value, part_count));
+	PG_RETURN_UINT32(hash_to_part_index(value, part_count));
+}
+
+/*
+ * Traits.
+ */
+
+Datum
+is_date_type(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_BOOL(is_date_type_internal(PG_GETARG_OID(0)));
 }
 
 Datum
-get_attribute_type_name(PG_FUNCTION_ARGS)
+is_attribute_nullable(PG_FUNCTION_ARGS)
 {
 	Oid			relid = PG_GETARG_OID(0);
 	text	   *attname = PG_GETARG_TEXT_P(1);
-	char	   *result;
+	bool		result = true;
 	HeapTuple	tp;
 
-	/* NOTE: for now it's the most efficient way */
 	tp = SearchSysCacheAttName(relid, text_to_cstring(attname));
 	if (HeapTupleIsValid(tp))
 	{
 		Form_pg_attribute att_tup = (Form_pg_attribute) GETSTRUCT(tp);
-		result = format_type_be(att_tup->atttypid);
+		result = !att_tup->attnotnull;
 		ReleaseSysCache(tp);
-
-		PG_RETURN_TEXT_P(cstring_to_text(result));
 	}
 	else
 		elog(ERROR, "Cannot find type name for attribute \"%s\" "
 					"of relation \"%s\"",
 			 text_to_cstring(attname), get_rel_name_or_relid(relid));
 
-	PG_RETURN_NULL(); /* keep compiler happy */
+	PG_RETURN_BOOL(result); /* keep compiler happy */
+}
+
+
+/*
+ * Useful string builders.
+ */
+
+/* Build range condition for a CHECK CONSTRAINT. */
+Datum
+build_range_condition(PG_FUNCTION_ARGS)
+{
+	text   *attname = PG_GETARG_TEXT_P(0);
+
+	Datum	min_bound = PG_GETARG_DATUM(1),
+			max_bound = PG_GETARG_DATUM(2);
+
+	Oid		min_bound_type = get_fn_expr_argtype(fcinfo->flinfo, 1),
+			max_bound_type = get_fn_expr_argtype(fcinfo->flinfo, 2);
+
+	char   *subst_str; /* substitution string */
+	char   *result;
+
+	/* This is not going to trigger (not now, at least), just for the safety */
+	if (min_bound_type != max_bound_type)
+		elog(ERROR, "Cannot build range condition: "
+					"boundaries should be of the same type");
+
+	/* Check if we need single quotes */
+	/* TODO: check for primitive types instead, that would be better */
+	if (is_date_type_internal(min_bound_type) ||
+		is_string_type_internal(min_bound_type))
+	{
+		subst_str = "%1$s >= '%2$s' AND %1$s < '%3$s'";
+	}
+	else
+		subst_str = "%1$s >= %2$s AND %1$s < %3$s";
+
+	/* Create range condition CSTRING */
+	result = psprintf(subst_str,
+					  text_to_cstring(attname),
+					  datum_to_cstring(min_bound, min_bound_type),
+					  datum_to_cstring(max_bound, max_bound_type));
+
+	PG_RETURN_TEXT_P(cstring_to_text(result));
 }
 
 Datum
@@ -477,63 +552,6 @@ build_check_constraint_name_attname(PG_FUNCTION_ARGS)
 	result = build_check_constraint_name_internal(relid, attnum);
 
 	PG_RETURN_TEXT_P(cstring_to_text(result));
-}
-
-Datum
-is_date_type(PG_FUNCTION_ARGS)
-{
-	PG_RETURN_BOOL(is_date_type_internal(PG_GETARG_OID(0)));
-}
-
-Datum
-is_attribute_nullable(PG_FUNCTION_ARGS)
-{
-	Oid			relid = PG_GETARG_OID(0);
-	text	   *attname = PG_GETARG_TEXT_P(1);
-	bool		result = true;
-	HeapTuple	tp;
-
-	tp = SearchSysCacheAttName(relid, text_to_cstring(attname));
-	if (HeapTupleIsValid(tp))
-	{
-		Form_pg_attribute att_tup = (Form_pg_attribute) GETSTRUCT(tp);
-		result = !att_tup->attnotnull;
-		ReleaseSysCache(tp);
-	}
-	else
-		elog(ERROR, "Cannot find type name for attribute \"%s\" "
-					"of relation \"%s\"",
-			 text_to_cstring(attname), get_rel_name_or_relid(relid));
-
-	PG_RETURN_BOOL(result); /* keep compiler happy */
-}
-
-/*
- * Get parent of a specified partition.
- */
-Datum
-parent_of_partition(PG_FUNCTION_ARGS)
-{
-	Oid					partition = PG_GETARG_OID(0);
-	PartParentSearch	parent_search;
-	Oid					parent;
-
-	/* Fetch parent & write down search status */
-	parent = get_parent_of_partition(partition, &parent_search);
-
-	/* We MUST be sure :) */
-	Assert(parent_search != PPS_NOT_SURE);
-
-	/* It must be parent known by pg_pathman */
-	if (parent_search == PPS_ENTRY_PART_PARENT)
-		PG_RETURN_OID(parent);
-	else
-	{
-		elog(ERROR, "\%s\" is not pg_pathman's partition",
-			 get_rel_name_or_relid(partition));
-
-		PG_RETURN_NULL();
-	}
 }
 
 /*
