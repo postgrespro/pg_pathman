@@ -175,10 +175,10 @@ _PG_init(void)
 void
 disable_inheritance(Query *parse)
 {
-	ListCell		   *lc;
-	RangeTblEntry	   *rte;
-	PartRelationInfo   *prel;
-	MemoryContext		oldcontext;
+	const PartRelationInfo *prel;
+	RangeTblEntry		   *rte;
+	MemoryContext			oldcontext;
+	ListCell			   *lc;
 
 	/* If query contains CTE (WITH statement) then handle subqueries too */
 	disable_inheritance_cte(parse);
@@ -301,12 +301,12 @@ disable_inheritance_subselect_walker(Node *node, void *context)
 void
 handle_modification_query(Query *parse)
 {
-	PartRelationInfo   *prel;
-	List			   *ranges;
-	RangeTblEntry	   *rte;
-	WrapperNode		   *wrap;
-	Expr			   *expr;
-	WalkerContext		context;
+	const PartRelationInfo *prel;
+	List				   *ranges;
+	RangeTblEntry		   *rte;
+	WrapperNode			   *wrap;
+	Expr				   *expr;
+	WalkerContext			context;
 
 	Assert(parse->commandType == CMD_UPDATE ||
 		   parse->commandType == CMD_DELETE);
@@ -725,7 +725,7 @@ spawn_partitions(Oid partitioned_rel,		/* parent's Oid */
 
 	FmgrInfo 	interval_move_bound; /* function to move upper\lower boundary */
 	bool		interval_move_bound_cached = false; /* is it cached already? */
-	bool		done = false;
+	bool		spawned = false;
 
 	Datum		cur_part_leading = leading_bound;
 
@@ -737,7 +737,7 @@ spawn_partitions(Oid partitioned_rel,		/* parent's Oid */
 					 get_namespace_name(get_pathman_schema()));
 
 	/* Execute comparison function cmp(value, cur_part_leading) */
-	while ((done = do_compare(cmp_proc, value, cur_part_leading, forward)))
+	while (do_compare(cmp_proc, value, cur_part_leading, forward))
 	{
 		char   *nulls = NULL; /* no params are NULL */
 		Oid		types[3] = { REGCLASSOID, leading_bound_type, leading_bound_type };
@@ -786,11 +786,14 @@ spawn_partitions(Oid partitioned_rel,		/* parent's Oid */
 			 DebugPrintDatum(cur_part_leading, leading_bound_type),
 			 MyProcPid);
 #endif
+
+		/* We have spawned at least 1 partition */
+		spawned = true;
 	}
 
 	pfree(query);
 
-	return done;
+	return spawned;
 }
 
 /*

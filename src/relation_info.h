@@ -115,12 +115,12 @@ typedef enum
 #define PrelIsValid(prel) ( (prel) && (prel)->valid )
 
 
-PartRelationInfo *refresh_pathman_relation_info(Oid relid,
-												PartType partitioning_type,
-												const char *part_column_name);
+const PartRelationInfo *refresh_pathman_relation_info(Oid relid,
+													  PartType partitioning_type,
+													  const char *part_column_name);
 void invalidate_pathman_relation_info(Oid relid, bool *found);
 void remove_pathman_relation_info(Oid relid);
-PartRelationInfo *get_pathman_relation_info(Oid relid);
+const PartRelationInfo *get_pathman_relation_info(Oid relid);
 
 void delay_pathman_shutdown(void);
 void delay_invalidation_parent_rel(Oid parent);

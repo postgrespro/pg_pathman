@@ -61,7 +61,7 @@ static Oid get_parent_of_partition_internal(Oid partition,
  */
 
 /* Create or update PartRelationInfo in local cache. Might emit ERROR. */
-PartRelationInfo *
+const PartRelationInfo *
 refresh_pathman_relation_info(Oid relid,
 							  PartType partitioning_type,
 							  const char *part_column_name)
@@ -200,12 +200,12 @@ invalidate_pathman_relation_info(Oid relid, bool *found)
 }
 
 /* Get PartRelationInfo from local cache. */
-PartRelationInfo *
+const PartRelationInfo *
 get_pathman_relation_info(Oid relid)
 {
-	PartRelationInfo *prel = hash_search(partitioned_rels,
-										 (const void *) &relid,
-										 HASH_FIND, NULL);
+	const PartRelationInfo *prel = hash_search(partitioned_rels,
+											   (const void *) &relid,
+											   HASH_FIND, NULL);
 
 	/* Refresh PartRelationInfo if needed */
 	if (prel && !PrelIsValid(prel))

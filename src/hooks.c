@@ -36,16 +36,16 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 						   JoinType jointype,
 						   JoinPathExtraData *extra)
 {
-	JoinCostWorkspace	workspace;
-	RangeTblEntry	   *inner_rte = root->simple_rte_array[innerrel->relid];
-	PartRelationInfo   *inner_prel;
-	List			   *pathkeys = NIL,
-					   *joinclauses,
-					   *otherclauses;
-	ListCell		   *lc;
-	WalkerContext		context;
-	double				paramsel;
-	bool				innerrel_rinfo_contains_part_attr;
+	JoinCostWorkspace		workspace;
+	RangeTblEntry		   *inner_rte = root->simple_rte_array[innerrel->relid];
+	const PartRelationInfo *inner_prel;
+	List				   *pathkeys = NIL,
+						   *joinclauses,
+						   *otherclauses;
+	ListCell			   *lc;
+	WalkerContext			context;
+	double					paramsel;
+	bool					innerrel_rinfo_contains_part_attr;
 
 	/* Call hooks set by other extensions */
 	if (set_join_pathlist_next)
@@ -159,10 +159,10 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 void
 pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTblEntry *rte)
 {
-	PartRelationInfo   *prel = NULL;
-	RangeTblEntry	  **new_rte_array;
-	RelOptInfo		  **new_rel_array;
-	int					len;
+	const PartRelationInfo *prel;
+	RangeTblEntry		  **new_rte_array;
+	RelOptInfo			  **new_rel_array;
+	int						len;
 
 	/* Invoke original hook if needed */
 	if (set_rel_pathlist_hook_next != NULL)

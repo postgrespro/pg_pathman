@@ -139,7 +139,7 @@ replace_tlist_varnos(List *child_tlist, RelOptInfo *parent)
 
 /* Append partition attribute in case it's not present in target list */
 static List *
-append_part_attr_to_tlist(List *tlist, Index relno, PartRelationInfo *prel)
+append_part_attr_to_tlist(List *tlist, Index relno, const PartRelationInfo *prel)
 {
 	ListCell   *lc;
 	bool		part_attr_found = false;
@@ -346,9 +346,12 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 						  List *clauses, List *custom_plans,
 						  CustomScanMethods *scan_methods)
 {
-	RuntimeAppendPath  *rpath = (RuntimeAppendPath *) best_path;
-	CustomScan		   *cscan;
-	PartRelationInfo   *prel = get_pathman_relation_info(rpath->relid);
+	RuntimeAppendPath	   *rpath = (RuntimeAppendPath *) best_path;
+	const PartRelationInfo *prel;
+	CustomScan			   *cscan;
+
+	prel = get_pathman_relation_info(rpath->relid);
+	Assert(prel);
 
 	cscan = makeNode(CustomScan);
 	cscan->custom_scan_tlist = NIL; /* initial value (empty list) */
@@ -487,27 +490,27 @@ end_append_common(CustomScanState *node)
 void
 rescan_append_common(CustomScanState *node)
 {
-	RuntimeAppendState *scan_state = (RuntimeAppendState *) node;
-	ExprContext		   *econtext = node->ss.ps.ps_ExprContext;
-	PartRelationInfo   *prel;
-	List			   *ranges;
-	ListCell		   *lc;
-	Oid				   *parts;
-	int					nparts;
+	RuntimeAppendState	   *scan_state = (RuntimeAppendState *) node;
+	ExprContext			   *econtext = node->ss.ps.ps_ExprContext;
+	const PartRelationInfo *prel;
+	List				   *ranges;
+	ListCell			   *lc;
+	Oid					   *parts;
+	int						nparts;
 
 	prel = get_pathman_relation_info(scan_state->relid);
 	Assert(prel);
 
+	/* First we select all available partitions... */
 	ranges = list_make1_irange(make_irange(0, PrelChildrenCount(prel) - 1, false));
 
 	InitWalkerContext(&scan_state->wcxt, prel, econtext, false);
-
 	foreach (lc, scan_state->custom_exprs)
 	{
 		WrapperNode	   *wn;
 
+		/* ... then we cut off irrelevant ones using the provided clauses */
 		wn = walk_expr_tree((Expr *) lfirst(lc), &scan_state->wcxt);
-
 		ranges = irange_list_intersect(ranges, wn->rangeset);
 	}
 

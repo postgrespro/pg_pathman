@@ -153,18 +153,18 @@ partition_filter_exec(CustomScanState *node)
 
 	if (!TupIsNull(slot))
 	{
-		PartRelationInfo   *prel;
+		const PartRelationInfo *prel;
 
-		MemoryContext		old_cxt;
+		MemoryContext			old_cxt;
 
-		List			   *ranges;
-		int					nparts;
-		Oid				   *parts;
-		Oid					selected_partid;
+		List				   *ranges;
+		int						nparts;
+		Oid					   *parts;
+		Oid						selected_partid;
 
-		WalkerContext		wcxt;
-		bool				isnull;
-		Datum				value;
+		WalkerContext			wcxt;
+		bool					isnull;
+		Datum					value;
 
 		/* Fetch PartRelationInfo for this partitioned relation */
 		prel = get_pathman_relation_info(state->partitioned_table);
@@ -390,9 +390,9 @@ partition_filter_visitor(Plan *plan, void *context)
 
 	forboth (lc1, modify_table->plans, lc2, modify_table->resultRelations)
 	{
-		Index				rindex = lfirst_int(lc2);
-		Oid					relid = getrelid(rindex, rtable);
-		PartRelationInfo   *prel = get_pathman_relation_info(relid);
+		Index					rindex = lfirst_int(lc2);
+		Oid						relid = getrelid(rindex, rtable);
+		const PartRelationInfo *prel = get_pathman_relation_info(relid);
 
 		/* Check that table is partitioned */
 		if (prel)
