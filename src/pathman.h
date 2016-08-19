@@ -28,9 +28,9 @@
 
 
 /* Check PostgreSQL version (9.5.4 contains an important fix for BGW) */
-#if PG_VERSION_NUM < 90504
-	#error "Cannot build pg_pathman with PostgreSQL version lower than 9.5.4"
-#endif
+// #if PG_VERSION_NUM < 90504
+// 	#error "Cannot build pg_pathman with PostgreSQL version lower than 9.5.4"
+// #endif
 
 /* Get CString representation of Datum (simple wrapper) */
 #ifdef USE_ASSERT_CHECKING

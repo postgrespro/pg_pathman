@@ -5,4 +5,5 @@ regression.diffs
 regression.out
 *.o
 *.so
+*.pyc
 pg_pathman--*.sql

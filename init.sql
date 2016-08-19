@@ -143,91 +143,91 @@ CREATE TYPE @extschema@.PathmanRange (
 /*
  * Copy rows to partitions
  */
--- CREATE OR REPLACE FUNCTION @extschema@.partition_data(
---     p_relation regclass
---     , p_min ANYELEMENT DEFAULT NULL::text
---     , p_max ANYELEMENT DEFAULT NULL::text
---     , p_limit INT DEFAULT NULL
---     , OUT p_total BIGINT)
--- AS
--- $$
--- DECLARE
---     v_attr         TEXT;
---     v_limit_clause TEXT := '';
---     v_where_clause TEXT := '';
--- BEGIN
---     SELECT attname INTO v_attr
---     FROM @extschema@.pathman_config WHERE partrel = p_relation;
+CREATE OR REPLACE FUNCTION @extschema@.partition_data(
+    p_relation regclass
+    , p_min ANYELEMENT DEFAULT NULL::text
+    , p_max ANYELEMENT DEFAULT NULL::text
+    , p_limit INT DEFAULT NULL
+    , OUT p_total BIGINT)
+AS
+$$
+DECLARE
+    v_attr         TEXT;
+    v_limit_clause TEXT := '';
+    v_where_clause TEXT := '';
+BEGIN
+    SELECT attname INTO v_attr
+    FROM @extschema@.pathman_config WHERE partrel = p_relation;
 
---     PERFORM @extschema@.debug_capture();
+    PERFORM @extschema@.debug_capture();
 
---     p_total := 0;
+    p_total := 0;
 
---     /* Format LIMIT clause if needed */
---     IF NOT p_limit IS NULL THEN
---         v_limit_clause := format('LIMIT %s', p_limit);
---     END IF;
+    /* Format LIMIT clause if needed */
+    IF NOT p_limit IS NULL THEN
+        v_limit_clause := format('LIMIT %s', p_limit);
+    END IF;
 
---     /* Format WHERE clause if needed */
---     IF NOT p_min IS NULL THEN
---         v_where_clause := format('%1$s >= $1', v_attr);
---     END IF;
+    /* Format WHERE clause if needed */
+    IF NOT p_min IS NULL THEN
+        v_where_clause := format('%1$s >= $1', v_attr);
+    END IF;
 
---     IF NOT p_max IS NULL THEN
---         IF NOT p_min IS NULL THEN
---             v_where_clause := v_where_clause || ' AND ';
---         END IF;
---         v_where_clause := v_where_clause || format('%1$s < $2', v_attr);
---     END IF;
+    IF NOT p_max IS NULL THEN
+        IF NOT p_min IS NULL THEN
+            v_where_clause := v_where_clause || ' AND ';
+        END IF;
+        v_where_clause := v_where_clause || format('%1$s < $2', v_attr);
+    END IF;
 
---     IF v_where_clause != '' THEN
---         v_where_clause := 'WHERE ' || v_where_clause;
---     END IF;
+    IF v_where_clause != '' THEN
+        v_where_clause := 'WHERE ' || v_where_clause;
+    END IF;
 
---     /* Lock rows and copy data */
---     RAISE NOTICE 'Copying data to partitions...';
---     EXECUTE format('
---         WITH data AS (
---             DELETE FROM ONLY %1$s WHERE ctid IN (
---                 SELECT ctid FROM ONLY %1$s %2$s %3$s FOR UPDATE NOWAIT
---             ) RETURNING *)
---         INSERT INTO %1$s SELECT * FROM data'
---         , p_relation, v_where_clause, v_limit_clause)
---     USING p_min, p_max;
+    /* Lock rows and copy data */
+    RAISE NOTICE 'Copying data to partitions...';
+    EXECUTE format('
+        WITH data AS (
+            DELETE FROM ONLY %1$s WHERE ctid IN (
+                SELECT ctid FROM ONLY %1$s %2$s %3$s FOR UPDATE NOWAIT
+            ) RETURNING *)
+        INSERT INTO %1$s SELECT * FROM data'
+        , p_relation, v_where_clause, v_limit_clause)
+    USING p_min, p_max;
 
---     GET DIAGNOSTICS p_total = ROW_COUNT;
---     RETURN;
--- END
--- $$
--- LANGUAGE plpgsql;
+    GET DIAGNOSTICS p_total = ROW_COUNT;
+    RETURN;
+END
+$$
+LANGUAGE plpgsql;
 
 /*
  * Copy rows to partitions
  */
-CREATE OR REPLACE FUNCTION @extschema@.partition_data(
-	parent_relid	REGCLASS,
-	OUT p_total		BIGINT)
-AS
-$$
-DECLARE
-	relname		TEXT;
-	rec			RECORD;
-	cnt			BIGINT := 0;
+-- CREATE OR REPLACE FUNCTION @extschema@.partition_data(
+-- 	parent_relid	REGCLASS,
+-- 	OUT p_total		BIGINT)
+-- AS
+-- $$
+-- DECLARE
+-- 	relname		TEXT;
+-- 	rec			RECORD;
+-- 	cnt			BIGINT := 0;
 
-BEGIN
-	p_total := 0;
+-- BEGIN
+-- 	p_total := 0;
 
-	/* Create partitions and copy rest of the data */
-	EXECUTE format('WITH part_data AS (DELETE FROM ONLY %1$s RETURNING *)
-					INSERT INTO %1$s SELECT * FROM part_data',
-				   @extschema@.get_schema_qualified_name(parent_relid));
+-- 	/* Create partitions and copy rest of the data */
+-- 	EXECUTE format('WITH part_data AS (DELETE FROM ONLY %1$s RETURNING *)
+-- 					INSERT INTO %1$s SELECT * FROM part_data',
+-- 				   @extschema@.get_schema_qualified_name(parent_relid));
 
-	/* Get number of inserted rows */
-	GET DIAGNOSTICS p_total = ROW_COUNT;
-	RETURN;
-END
-$$
-LANGUAGE plpgsql;
+-- 	/* Get number of inserted rows */
+-- 	GET DIAGNOSTICS p_total = ROW_COUNT;
+-- 	RETURN;
+-- END
+-- $$
+-- LANGUAGE plpgsql;
 
 /*
  * Disable pathman partitioning for specified relation
