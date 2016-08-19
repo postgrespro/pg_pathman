@@ -26,7 +26,7 @@ extern bool		initialization_needed;
 
 Size estimate_pathman_shmem_size(void);
 void init_shmem_config(void);
-void load_config(void);
+bool load_config(void);
 void unload_config(void);
 
 void fill_prel_with_partitions(const Oid *partitions,
