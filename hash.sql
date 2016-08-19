@@ -14,7 +14,8 @@
 CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions(
 	parent_relid		REGCLASS,
 	attribute			TEXT,
-	partitions_count	INTEGER
+	partitions_count	INTEGER,
+	partition_data		BOOLEAN DEFAULT true
 ) RETURNS INTEGER AS
 $$
 DECLARE
@@ -23,6 +24,7 @@ DECLARE
 	v_plain_schema		TEXT;
 	v_plain_relname		TEXT;
 	v_hashfunc			TEXT;
+	v_enable_parent BOOLEAN := NOT partition_data;
 
 BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
@@ -66,7 +68,12 @@ BEGIN
 	PERFORM @extschema@.on_create_partitions(parent_relid);
 
 	/* Copy data */
-	PERFORM @extschema@.partition_data(parent_relid);
+	IF partition_data = true THEN
+		PERFORM @extschema@.disable_parent(parent_relid);
+		PERFORM @extschema@.partition_data(parent_relid);
+	ELSE
+		PERFORM @extschema@.enable_parent(parent_relid);
+	END IF;
 
 	RETURN partitions_count;
 END

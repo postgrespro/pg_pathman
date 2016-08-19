@@ -24,37 +24,179 @@ CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
 	parttype		INTEGER NOT NULL,
 	range_interval	TEXT,
 
-	CHECK (parttype >= 1 OR parttype <= 2) /* check for allowed part types */
+	CHECK (parttype IN (1, 2)) /* check for allowed part types */
 );
 
+CREATE TABLE IF NOT EXISTS @extschema@.pathman_config_params (
+	partrel			REGCLASS NOT NULL,
+	enable_parent	BOOLEAN NOT NULL DEFAULT TRUE
+);
+CREATE UNIQUE INDEX i_pathman_config_params
+ON @extschema@.pathman_config_params(partrel);
 
 SELECT pg_catalog.pg_extension_config_dump('@extschema@.pathman_config', '');
+SELECT pg_catalog.pg_extension_config_dump('@extschema@.pathman_config_params', '');
 
+
+CREATE OR REPLACE FUNCTION @extschema@.on_enable_parent(relid OID)
+RETURNS OID AS 'pg_pathman' LANGUAGE C STRICT;
+
+CREATE OR REPLACE FUNCTION @extschema@.on_disable_parent(relid OID)
+RETURNS OID AS 'pg_pathman' LANGUAGE C STRICT;
+
+/* Include parent relation into query plan's for specified relation */
+CREATE OR REPLACE FUNCTION @extschema@.enable_parent(relation REGCLASS)
+RETURNS VOID AS
+$$
+BEGIN
+	INSERT INTO @extschema@.pathman_config_params values (relation, True)
+	ON CONFLICT (partrel) DO
+	UPDATE SET enable_parent = True;
+
+	PERFORM @extschema@.on_enable_parent(relation::oid);
+END
+$$
+LANGUAGE plpgsql;
+
+/* Do not include parent relation into query plan's for specified relation */
+CREATE OR REPLACE FUNCTION @extschema@.disable_parent(relation REGCLASS)
+RETURNS VOID AS
+$$
+BEGIN
+	INSERT INTO @extschema@.pathman_config_params values (relation, False)
+	ON CONFLICT (partrel) DO
+	UPDATE SET enable_parent = False;
+
+	PERFORM @extschema@.on_disable_parent(relation::oid);
+END
+$$
+LANGUAGE plpgsql;
+
+/*
+ * Partitioning data tools
+ */
+CREATE OR REPLACE FUNCTION @extschema@.active_workers()
+RETURNS TABLE (
+	pid       INT,
+	dbid      INT,
+	relid     INT,
+	processed INT,
+	status    TEXT
+) AS 'pg_pathman' LANGUAGE C STRICT;
+
+CREATE OR REPLACE VIEW @extschema@.pathman_active_workers
+AS SELECT * FROM @extschema@.active_workers();
+
+CREATE OR REPLACE FUNCTION @extschema@.partition_data_worker(relation regclass)
+RETURNS VOID AS 'pg_pathman' LANGUAGE C STRICT;
+
+CREATE OR REPLACE FUNCTION @extschema@.stop_worker(relation regclass)
+RETURNS BOOL AS 'pg_pathman' LANGUAGE C STRICT;
+
+/* PathmanRange type */
+CREATE OR REPLACE FUNCTION @extschema@.pathman_range_in(cstring)
+    RETURNS PathmanRange
+    AS 'pg_pathman'
+    LANGUAGE C IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION @extschema@.pathman_range_out(PathmanRange)
+    RETURNS cstring
+    AS 'pg_pathman'
+    LANGUAGE C IMMUTABLE STRICT;
+
+/*
+CREATE OR REPLACE FUNCTION @extschema@.get_whole_range(relid OID)
+    RETURNS PathmanRange
+    AS 'pg_pathman'
+    LANGUAGE C STRICT;
+
+CREATE OR REPLACE FUNCTION @extschema@.range_value_cmp(range PathmanRange, value ANYELEMENT)
+	RETURNS INTEGER
+	AS 'pg_pathman'
+	LANGUAGE C STRICT;
+
+CREATE OR REPLACE FUNCTION @extschema@.range_lower(range PathmanRange, dummy ANYELEMENT)
+	RETURNS ANYELEMENT
+	AS 'pg_pathman'
+	LANGUAGE C;
+
+CREATE OR REPLACE FUNCTION @extschema@.range_upper(range PathmanRange, dummy ANYELEMENT)
+	RETURNS ANYELEMENT
+	AS 'pg_pathman'
+	LANGUAGE C;
+
+CREATE OR REPLACE FUNCTION @extschema@.range_oid(range PathmanRange)
+	RETURNS OID
+	AS 'pg_pathman'
+	LANGUAGE C STRICT;
+
+CREATE OR REPLACE FUNCTION @extschema@.range_partitions_list(parent_relid OID)
+	RETURNS SETOF PATHMANRANGE AS 'pg_pathman'
+	LANGUAGE C STRICT;
+*/
+CREATE TYPE @extschema@.PathmanRange (
+	internallength = 32,
+	input = pathman_range_in,
+	output = pathman_range_out
+);
 
 /*
  * Copy rows to partitions
  */
 CREATE OR REPLACE FUNCTION @extschema@.partition_data(
-	parent_relid	REGCLASS,
-	OUT p_total		BIGINT)
+    p_relation regclass
+    , p_min ANYELEMENT DEFAULT NULL::text
+    , p_max ANYELEMENT DEFAULT NULL::text
+    , p_limit INT DEFAULT NULL
+    , OUT p_total BIGINT)
 AS
 $$
 DECLARE
-	relname		TEXT;
-	rec			RECORD;
-	cnt			BIGINT := 0;
-
+    v_attr         TEXT;
+    v_limit_clause TEXT := '';
+    v_where_clause TEXT := '';
 BEGIN
-	p_total := 0;
+    SELECT attname INTO v_attr
+    FROM @extschema@.pathman_config WHERE partrel = p_relation;
 
-	/* Create partitions and copy rest of the data */
-	EXECUTE format('WITH part_data AS (DELETE FROM ONLY %1$s RETURNING *)
-					INSERT INTO %1$s SELECT * FROM part_data',
-				   @extschema@.get_schema_qualified_name(parent_relid));
+    PERFORM @extschema@.debug_capture();
 
-	/* Get number of inserted rows */
-	GET DIAGNOSTICS p_total = ROW_COUNT;
-	RETURN;
+    p_total := 0;
+
+    /* Format LIMIT clause if needed */
+    IF NOT p_limit IS NULL THEN
+        v_limit_clause := format('LIMIT %s', p_limit);
+    END IF;
+
+    /* Format WHERE clause if needed */
+    IF NOT p_min IS NULL THEN
+        v_where_clause := format('%1$s >= $1', v_attr);
+    END IF;
+
+    IF NOT p_max IS NULL THEN
+        IF NOT p_min IS NULL THEN
+            v_where_clause := v_where_clause || ' AND ';
+        END IF;
+        v_where_clause := v_where_clause || format('%1$s < $2', v_attr);
+    END IF;
+
+    IF v_where_clause != '' THEN
+        v_where_clause := 'WHERE ' || v_where_clause;
+    END IF;
+
+    /* Lock rows and copy data */
+    RAISE NOTICE 'Copying data to partitions...';
+    EXECUTE format('
+        WITH data AS (
+            DELETE FROM ONLY %1$s WHERE ctid IN (
+                SELECT ctid FROM ONLY %1$s %2$s %3$s FOR UPDATE NOWAIT
+            ) RETURNING *)
+        INSERT INTO %1$s SELECT * FROM data'
+        , p_relation, v_where_clause, v_limit_clause)
+    USING p_min, p_max;
+
+    GET DIAGNOSTICS p_total = ROW_COUNT;
+    RETURN;
 END
 $$
 LANGUAGE plpgsql;

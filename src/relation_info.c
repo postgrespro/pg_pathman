@@ -156,6 +156,12 @@ refresh_pathman_relation_info(Oid relid,
 
 	pfree(prel_children);
 
+	/*
+	 * Read additional parameter ('enable_parent' is the only one at
+	 * the moment)
+	 */
+	prel->enable_parent = read_enable_parent_parameter(relid);
+
 	/* We've successfully built a cache entry */
 	prel->valid = true;
 
@@ -217,7 +223,7 @@ get_pathman_relation_info(Oid relid)
 		if (pathman_config_contains_relation(relid, values, isnull, NULL))
 		{
 			PartType		part_type;
-			const char 	   *attname;
+			const char	   *attname;
 
 			/* We can't use 'part_type' & 'attname' from invalid prel */
 			part_type = DatumGetPartType(values[Anum_pathman_config_parttype - 1]);
@@ -225,7 +231,9 @@ get_pathman_relation_info(Oid relid)
 
 			/* Refresh partitioned table cache entry */
 			/* TODO: possible refactoring, pass found 'prel' instead of searching */
-			prel = refresh_pathman_relation_info(relid, part_type, attname);
+			prel = refresh_pathman_relation_info(relid,
+												 part_type,
+												 attname);
 			Assert(PrelIsValid(prel)); /* it MUST be valid if we got here */
 		}
 		/* Else clear remaining cache entry */
@@ -263,6 +271,19 @@ remove_pathman_relation_info(Oid relid)
 		 relid, MyProcPid);
 }
 
+void
+set_enable_parent(Oid relid, bool flag)
+{
+	PartRelationInfo *prel;
+
+	prel = hash_search(partitioned_rels,
+					   (const void *) &relid,
+					   HASH_FIND, NULL);
+	if (!prel)
+		elog(ERROR, "Relation %s isn't handled by pg_pathman", get_rel_name(relid));
+
+	prel->enable_parent = flag;
+}
 
 /*
  * Functions for delayed invalidation.

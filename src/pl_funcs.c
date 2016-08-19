@@ -23,10 +23,14 @@
 #include "utils/memutils.h"
 
 
+#include "miscadmin.h"
+
 /* declarations */
 PG_FUNCTION_INFO_V1( on_partitions_created );
 PG_FUNCTION_INFO_V1( on_partitions_updated );
 PG_FUNCTION_INFO_V1( on_partitions_removed );
+PG_FUNCTION_INFO_V1( on_enable_parent );
+PG_FUNCTION_INFO_V1( on_disable_parent );
 PG_FUNCTION_INFO_V1( get_parent_of_partition_pl );
 PG_FUNCTION_INFO_V1( get_attribute_type_name );
 PG_FUNCTION_INFO_V1( find_or_create_range_partition);
@@ -46,6 +50,31 @@ PG_FUNCTION_INFO_V1( is_date_type );
 PG_FUNCTION_INFO_V1( is_attribute_nullable );
 PG_FUNCTION_INFO_V1( debug_capture );
 
+/* pathman_range type */
+typedef struct PathmanRange
+{
+	Oid			type_oid;
+	bool		by_val;
+	RangeEntry	range;
+} PathmanRange;
+
+typedef struct PathmanHash
+{
+	Oid			child_oid;
+	uint32		hash;
+} PathmanHash;
+
+typedef struct PathmanRangeListCtxt
+{
+	Oid			type_oid;
+	bool		by_val;
+	RangeEntry *ranges;
+	int			nranges;
+	int			pos;
+} PathmanRangeListCtxt;
+
+PG_FUNCTION_INFO_V1( pathman_range_in );
+PG_FUNCTION_INFO_V1( pathman_range_out );
 
 static void on_partitions_created_internal(Oid partitioned_table, bool add_callbacks);
 static void on_partitions_updated_internal(Oid partitioned_table, bool add_callbacks);
@@ -162,6 +191,24 @@ get_attribute_type_name(PG_FUNCTION_ARGS)
 			 text_to_cstring(attname), get_rel_name_or_relid(relid));
 
 	PG_RETURN_NULL(); /* keep compiler happy */
+}
+
+Datum
+on_enable_parent(PG_FUNCTION_ARGS)
+{
+	Oid		relid = DatumGetObjectId(PG_GETARG_DATUM(0));
+
+	set_enable_parent(relid, true);
+	PG_RETURN_NULL();
+}
+
+Datum
+on_disable_parent(PG_FUNCTION_ARGS)
+{
+	Oid		relid = DatumGetObjectId(PG_GETARG_DATUM(0));
+
+	set_enable_parent(relid, false);
+	PG_RETURN_NULL();
 }
 
 /*
@@ -599,8 +646,35 @@ build_update_trigger_name(PG_FUNCTION_ARGS)
 Datum
 debug_capture(PG_FUNCTION_ARGS)
 {
+	static float8 sleep_time = 0;
+	DirectFunctionCall1(pg_sleep, Float8GetDatum(sleep_time));
+
 	/* Write something (doesn't really matter) */
-	elog(WARNING, "debug_capture");
+	elog(WARNING, "debug_capture [%u]", MyProcPid);
 
 	PG_RETURN_VOID();
+}
+
+Datum
+pathman_range_in(PG_FUNCTION_ARGS)
+{
+	elog(ERROR, "Not implemented");
+}
+
+Datum
+pathman_range_out(PG_FUNCTION_ARGS)
+{
+	PathmanRange *rng = (PathmanRange *) PG_GETARG_POINTER(0);
+	char	   *result;
+	char	   *left,
+			   *right;
+	Oid			outputfunc;
+	bool		typisvarlena;
+
+	getTypeOutputInfo(rng->type_oid, &outputfunc, &typisvarlena);
+	left = OidOutputFunctionCall(outputfunc, PATHMAN_GET_DATUM(rng->range.min, rng->by_val));
+	right = OidOutputFunctionCall(outputfunc, PATHMAN_GET_DATUM(rng->range.max, rng->by_val));
+
+	result = psprintf("[%s: %s)", left, right);
+	PG_RETURN_CSTRING(result);
 }

@@ -51,6 +51,7 @@ List		   *inheritance_enabled_relids = NIL;
 bool			pg_pathman_enable = true;
 PathmanState   *pmstate;
 Oid				pathman_config_relid = InvalidOid;
+Oid				pathman_config_params_relid = InvalidOid;
 
 
 /* pg module functions */
@@ -2101,4 +2102,10 @@ Oid
 get_pathman_config_relid(void)
 {
 	return pathman_config_relid;
+}
+
+Oid
+get_pathman_config_params_relid(void)
+{
+	return pathman_config_params_relid;
 }

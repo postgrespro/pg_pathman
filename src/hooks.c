@@ -246,11 +246,12 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 		/*
 		 * Expand simple_rte_array and simple_rel_array
 		 */
+		len = irange_list_length(ranges);
+		if (prel->enable_parent)
+			len++;
 
-		if (ranges)
+		if (len > 0)
 		{
-			len = irange_list_length(ranges);
-
 			/* Expand simple_rel_array and simple_rte_array */
 			new_rel_array = (RelOptInfo **)
 				palloc0((root->simple_rel_array_size + len) * sizeof(RelOptInfo *));
@@ -274,6 +275,10 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 			root->simple_rel_array = new_rel_array;
 			root->simple_rte_array = new_rte_array;
 		}
+
+		/* Add parent if needed */
+		if (prel->enable_parent)
+			append_child_relation(root, rel, rti, rte, i, rte->relid, NULL);
 
 		/*
 		 * Iterate all indexes in rangeset and append corresponding child
@@ -448,13 +453,30 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 void
 pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
 {
+	elog(DEBUG2, "Called parse hook [%u]", MyProcPid);
+
 	/* Invoke original hook if needed */
 	if (post_parse_analyze_hook_next)
 		post_parse_analyze_hook_next(pstate, query);
 
+
 	/* Finish delayed invalidation jobs */
 	if (IsPathmanReady())
 		finish_delayed_invalidation();
+
+	elog(DEBUG2, "post_parse: %d %d %u [%u]",
+		 IsPathmanEnabled(),
+		 initialization_needed,
+		 get_pathman_schema(),
+		 MyProcPid);
+
+	/* DEBUG!!!! */
+	// static int parse_sleep = 10;
+	// if (IsPathmanEnabled() &&
+	// 	initialization_needed &&
+	// 	get_pathman_schema() == InvalidOid)
+	// 	sleep(parse_sleep);
+	/* -------------------- */
 
 	/* Load config if pg_pathman exists & it's still necessary */
 	if (IsPathmanEnabled() &&

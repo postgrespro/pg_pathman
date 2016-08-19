@@ -56,15 +56,25 @@
 #define PATHMAN_CONFIG_interval_typmod		-1
 
 /*
+ * Definitions for the "pathman_config_params" table
+ */
+#define PATHMAN_CONFIG_PARAMS						"pathman_config_params"
+// #define PATHMAN_CONFIG_PARAMS_INDEX					"i_pathman_config_params"
+#define Natts_pathman_config_params					2
+#define Anum_pathman_config_params_partrel			1	/* primary key */
+#define Anum_pathman_config_params_enable_parent	2	/* include parent into plan */
+
+/*
  * Cache current PATHMAN_CONFIG relid (set during load_config()).
  */
 extern Oid	pathman_config_relid;
+extern Oid	pathman_config_params_relid;
 
 /*
  * Just to clarify our intentions (returns pathman_config_relid).
  */
 Oid get_pathman_config_relid(void);
-
+Oid get_pathman_config_params_relid(void);
 
 /*
  * pg_pathman's global state.

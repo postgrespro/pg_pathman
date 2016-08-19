@@ -53,6 +53,8 @@ bool			initialization_needed = true;
 static bool		relcache_callback_needed = true;
 
 
+static bool init_pathman_relation_oids(void);
+static void fini_pathman_relation_oids(void);
 static void init_local_cache(void);
 static void fini_local_cache(void);
 static void read_pathman_config(void);
@@ -83,8 +85,18 @@ static int oid_cmp(const void *p1, const void *p2);
 void
 load_config(void)
 {
-	/* Cache PATHMAN_CONFIG relation's Oid */
-	pathman_config_relid = get_relname_relid(PATHMAN_CONFIG, get_pathman_schema());
+	elog(DEBUG2, "pg_pathman's config!!! [%u]", MyProcPid);
+
+	/* 
+	 * Try to cache important relids.
+	 * 
+	 * Once CREATE EXTENSION stmt is processed, get_pathman_schema()
+	 * function starts to return perfectly valid schema Oid, which
+	 * means we have to check that ALL pg_pathman's relations' Oids
+	 * have been cached properly.
+	 */
+	if (!init_pathman_relation_oids())
+		return; /* remain 'uninitialized', exit */
 
 	init_local_cache();		/* create 'partitioned_rels' hash table */
 	read_pathman_config();	/* read PATHMAN_CONFIG table & fill cache */
@@ -108,8 +120,8 @@ load_config(void)
 void
 unload_config(void)
 {
-	/* Don't forget to reset cached PATHMAN_CONFIG relation's Oid */
-	pathman_config_relid = InvalidOid;
+	/* Don't forget to reset pg_pathman's cached relids */
+	fini_pathman_relation_oids();
 
 	fini_local_cache();		/* destroy 'partitioned_rels' hash table */
 
@@ -126,6 +138,39 @@ Size
 estimate_pathman_shmem_size(void)
 {
 	return estimate_dsm_config_size() + MAXALIGN(sizeof(PathmanState));
+}
+
+/*
+ * TODO: write some comment;
+ */
+static bool
+init_pathman_relation_oids(void)
+{
+	Oid schema = get_pathman_schema();
+
+	/* Cache PATHMAN_CONFIG relation's Oid */
+	pathman_config_params_relid = get_relname_relid(PATHMAN_CONFIG_PARAMS,
+													schema);
+	pathman_config_relid = get_relname_relid(PATHMAN_CONFIG, schema);
+
+	/* Return false if any relation doesn't exist yet */
+	if (pathman_config_params_relid == InvalidOid ||
+		pathman_config_relid == InvalidOid)
+	{
+		return false;
+	}
+
+	return true;
+}
+
+/*
+ * TODO: write some comment;
+ */
+static void
+fini_pathman_relation_oids(void)
+{
+	pathman_config_relid = InvalidOid;
+	pathman_config_params_relid = InvalidOid;
 }
 
 /*
@@ -465,7 +510,7 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 	snapshot = RegisterSnapshot(GetLatestSnapshot());
 	scan = heap_beginscan(rel, snapshot, 1, key);
 
-	while((htup = heap_getnext(scan, ForwardScanDirection)) != NULL)
+	while ((htup = heap_getnext(scan, ForwardScanDirection)) != NULL)
 	{
 		contains_rel = true; /* found partitioned table */
 
@@ -506,6 +551,46 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 		 (contains_rel ? "contains" : "doesn't contain"), relid);
 
 	return contains_rel;
+}
+
+/*
+ * Return 'enable_parent' parameter of relation
+ */
+bool
+read_enable_parent_parameter(Oid relid)
+{
+	Relation		rel;
+	HeapScanDesc	scan;
+	ScanKeyData		key[1];
+	Snapshot		snapshot;
+	HeapTuple		htup;
+	bool			result = false;
+
+	ScanKeyInit(&key[0],
+				Anum_pathman_config_params_partrel,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(relid));
+
+	rel = heap_open(get_pathman_config_params_relid(), AccessShareLock);
+	snapshot = RegisterSnapshot(GetLatestSnapshot());
+	scan = heap_beginscan(rel, snapshot, 1, key);
+
+	if ((htup = heap_getnext(scan, ForwardScanDirection)) != NULL)
+	{
+		Datum	values[Natts_pathman_config_params];
+		bool	isnull[Natts_pathman_config_params];
+
+		/* Extract data if necessary */
+		heap_deform_tuple(htup, RelationGetDescr(rel), values, isnull);
+		result = values[Anum_pathman_config_params_enable_parent - 1];
+	}
+
+	/* Clean resources */
+	heap_endscan(scan);
+	UnregisterSnapshot(snapshot);
+	heap_close(rel, AccessShareLock);
+
+	return result;
 }
 
 /*
