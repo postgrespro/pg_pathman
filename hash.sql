@@ -24,7 +24,6 @@ DECLARE
 	v_plain_schema		TEXT;
 	v_plain_relname		TEXT;
 	v_hashfunc			TEXT;
-	v_enable_parent BOOLEAN := NOT partition_data;
 
 BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
@@ -71,8 +70,6 @@ BEGIN
 	IF partition_data = true THEN
 		PERFORM @extschema@.disable_parent(parent_relid);
 		PERFORM @extschema@.partition_data(parent_relid);
-	ELSE
-		PERFORM @extschema@.enable_parent(parent_relid);
 	END IF;
 
 	RETURN partitions_count;

@@ -1,6 +1,3 @@
-
---:gdb
-
 \set VERBOSITY terse
 
 CREATE SCHEMA pathman;
