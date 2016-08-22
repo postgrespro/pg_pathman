@@ -813,9 +813,11 @@ create_partitions_internal(Oid relid, Datum value, Oid value_type)
 		Datum					values[Natts_pathman_config];
 		bool					isnull[Natts_pathman_config];
 
+		prel = get_pathman_relation_info(relid);
+		shout_if_prel_is_invalid(relid, prel, PT_RANGE);
+
 		/* Get both PartRelationInfo & PATHMAN_CONFIG contents for this relation */
-		if ((prel = get_pathman_relation_info(relid)) != NULL &&
-			pathman_config_contains_relation(relid, values, isnull, NULL))
+		if (pathman_config_contains_relation(relid, values, isnull, NULL))
 		{
 			Datum		min_rvalue,
 						max_rvalue;
@@ -826,10 +828,6 @@ create_partitions_internal(Oid relid, Datum value, Oid value_type)
 			const char *interval_cstring;
 
 			FmgrInfo	interval_type_cmp;
-
-			if (prel->parttype != PT_RANGE)
-				elog(ERROR, "Relation \"%s\" is not partitioned by RANGE",
-					 get_rel_name_or_relid(relid));
 
 			/* Fill the FmgrInfo struct with a cmp(value, part_attribute) function */
 			fill_type_cmp_fmgr_info(&interval_type_cmp, value_type, prel->atttype);
@@ -892,7 +890,7 @@ create_partitions_internal(Oid relid, Datum value, Oid value_type)
 			SPI_finish(); /* close SPI connection */
 		}
 		else
-			elog(ERROR, "Relation \"%s\" is not partitioned by pg_pathman",
+			elog(ERROR, "pg_pathman's config does not contain relation \"%s\"",
 				 get_rel_name_or_relid(relid));
 	}
 	PG_CATCH();
@@ -931,7 +929,8 @@ create_partitions(Oid relid, Datum value, Oid value_type)
 	if (pathman_config_contains_relation(relid, NULL, NULL, &rel_xmin))
 	{
 		/* If table was partitioned in some previous xact, run BGWorker */
-		if (TransactionIdPrecedes(rel_xmin, GetCurrentTransactionId()))
+		if (TransactionIdPrecedes(rel_xmin, GetCurrentTransactionId()) ||
+			TransactionIdEquals(rel_xmin, FrozenTransactionId))
 		{
 			elog(DEBUG2, "create_partitions(): chose BGW [%u]", MyProcPid);
 			last_partition = create_partitions_bg_worker(relid, value, value_type);
@@ -1178,6 +1177,9 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 										result);
 				return;
 			}
+
+		default:
+			elog(ERROR, "Unknown partitioning type %u", prel->parttype);
 	}
 
 	result->rangeset = list_make1_irange(make_irange(0,

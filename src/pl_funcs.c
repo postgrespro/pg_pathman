@@ -180,14 +180,12 @@ find_or_create_range_partition(PG_FUNCTION_ARGS)
 	search_rangerel_result	search_state;
 
 	prel = get_pathman_relation_info(parent_oid);
-
-	if (!prel)
-		PG_RETURN_NULL();
+	shout_if_prel_is_invalid(parent_oid, prel, PT_RANGE);
 
 	fill_type_cmp_fmgr_info(&cmp_func, value_type, prel->atttype);
 
-	/* FIXME: does this function even work? */
-	search_state = search_range_partition_eq(value, &cmp_func,prel,
+	/* Use available PartRelationInfo to find partition */
+	search_state = search_range_partition_eq(value, &cmp_func, prel,
 											 &found_rentry);
 
 	/*
@@ -246,9 +244,7 @@ get_range_by_part_oid(PG_FUNCTION_ARGS)
 	const PartRelationInfo *prel;
 
 	prel = get_pathman_relation_info(parent_oid);
-	if (!prel)
-		elog(ERROR, "Relation \"%s\" is not partitioned by pg_pathman",
-			 get_rel_name_or_relid(parent_oid));
+	shout_if_prel_is_invalid(parent_oid, prel, PT_RANGE);
 
 	ranges = PrelGetRangesArray(prel);
 
@@ -266,6 +262,7 @@ get_range_by_part_oid(PG_FUNCTION_ARGS)
 			PG_RETURN_ARRAYTYPE_P(arr);
 		}
 
+	/* No partition found, report error */
 	elog(ERROR, "Relation \"%s\" has no partition \"%s\"",
 		 get_rel_name_or_relid(parent_oid),
 		 get_rel_name_or_relid(child_oid));
@@ -290,9 +287,7 @@ get_range_by_idx(PG_FUNCTION_ARGS)
 	const PartRelationInfo *prel;
 
 	prel = get_pathman_relation_info(parent_oid);
-	if (!prel)
-		elog(ERROR, "Relation \"%s\" is not partitioned by pg_pathman",
-			 get_rel_name_or_relid(parent_oid));
+	shout_if_prel_is_invalid(parent_oid, prel, PT_RANGE);
 
 	if (((uint32) abs(idx)) >= PrelChildrenCount(prel))
 		elog(ERROR, "Partition #%d does not exist (total amount is %u)",
@@ -326,14 +321,7 @@ get_min_range_value(PG_FUNCTION_ARGS)
 	const PartRelationInfo *prel;
 
 	prel = get_pathman_relation_info(parent_oid);
-	if (!prel)
-		elog(ERROR, "Relation \"%s\" is not partitioned by pg_pathman",
-			 get_rel_name_or_relid(parent_oid));
-
-	if (prel->parttype != PT_RANGE)
-		if (!prel)
-			elog(ERROR, "Relation \"%s\" is not partitioned by RANGE",
-				 get_rel_name_or_relid(parent_oid));
+	shout_if_prel_is_invalid(parent_oid, prel, PT_RANGE);
 
 	ranges = PrelGetRangesArray(prel);
 
@@ -351,14 +339,7 @@ get_max_range_value(PG_FUNCTION_ARGS)
 	const PartRelationInfo *prel;
 
 	prel = get_pathman_relation_info(parent_oid);
-	if (!prel)
-		elog(ERROR, "Relation \"%s\" is not partitioned by pg_pathman",
-			 get_rel_name_or_relid(parent_oid));
-
-	if (prel->parttype != PT_RANGE)
-		if (!prel)
-			elog(ERROR, "Relation \"%s\" is not partitioned by RANGE",
-				 get_rel_name_or_relid(parent_oid));
+	shout_if_prel_is_invalid(parent_oid, prel, PT_RANGE);
 
 	ranges = PrelGetRangesArray(prel);
 
@@ -388,14 +369,7 @@ check_overlap(PG_FUNCTION_ARGS)
 	const PartRelationInfo *prel;
 
 	prel = get_pathman_relation_info(parent_oid);
-	if (!prel)
-		elog(ERROR, "Relation \"%s\" is not partitioned by pg_pathman",
-			 get_rel_name_or_relid(parent_oid));
-
-	if (prel->parttype != PT_RANGE)
-		if (!prel)
-			elog(ERROR, "Relation \"%s\" is not partitioned by RANGE",
-				 get_rel_name_or_relid(parent_oid));
+	shout_if_prel_is_invalid(parent_oid, prel, PT_RANGE);
 
 	/* comparison functions */
 	fill_type_cmp_fmgr_info(&cmp_func_1, p1_type, prel->atttype);

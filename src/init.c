@@ -155,13 +155,10 @@ init_pathman_relation_oids(void)
 
 	/* Cache PATHMAN_CONFIG relation's Oid */
 	pathman_config_relid = get_relname_relid(PATHMAN_CONFIG, schema);
-	/* NOTE: add more relations to be cached right here ^^^ */
-
-	/* Return false if *any* relation doesn't exist yet */
 	if (pathman_config_relid == InvalidOid)
-	{
 		return false;
-	}
+
+	/* NOTE: add more relations to be cached right here ^^^ */
 
 	/* Everything is fine, proceed */
 	return true;

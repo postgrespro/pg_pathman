@@ -712,6 +712,53 @@ is_string_type_internal(Oid typid)
 }
 
 /*
+ * Common PartRelationInfo checks. Emit ERROR if anything is wrong.
+ */
+void
+shout_if_prel_is_invalid(Oid parent_oid,
+						 const PartRelationInfo *prel,
+						 PartType expected_part_type)
+{
+	if (!prel)
+		elog(ERROR, "Relation \"%s\" is not partitioned by pg_pathman",
+			 get_rel_name_or_relid(parent_oid));
+
+	if (!PrelIsValid(prel))
+		elog(ERROR, "pg_pathman's cache contains invalid entry "
+					"for relation \"%s\" [%u]",
+			 get_rel_name_or_relid(parent_oid),
+			 MyProcPid);
+
+	/* Check partitioning type unless it's "indifferent" */
+	if (expected_part_type != PT_INDIFFERENT &&
+		expected_part_type != prel->parttype)
+	{
+		char *expected_str;
+
+		switch (expected_part_type)
+		{
+			case PT_HASH:
+				expected_str = "HASH";
+				break;
+
+			case PT_RANGE:
+				expected_str = "RANGE";
+				break;
+
+			default:
+				elog(ERROR,
+					 "expected_str selection not implemented for type %d",
+					 expected_part_type);
+		}
+
+		elog(ERROR, "Relation \"%s\" is not partitioned by %s",
+			 get_rel_name_or_relid(parent_oid),
+			 expected_str);
+	}
+}
+
+
+/*
  * Try to find binary operator.
  *
  * Returns operator function's Oid or throws an ERROR on InvalidOid.

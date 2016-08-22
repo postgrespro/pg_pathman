@@ -19,11 +19,12 @@
 
 
 /*
- * Partitioning type
+ * Partitioning type.
  */
 typedef enum
 {
-	PT_HASH = 1,
+	PT_INDIFFERENT = 0, /* for part type traits (virtual type) */
+	PT_HASH,
 	PT_RANGE
 } PartType;
 
