@@ -16,27 +16,37 @@ import time
 class ConcurrentTest(unittest.TestCase):
 
 	def setUp(self):
-		pass
-
-	def tearDown(self):
-		stop_all()
-		# clean_all()
-
-	def test_concurrent(self):
-		setup_cmd = [
+		self.setup_cmd = [
 			'create extension pg_pathman',
 			'create table abc(id serial, t text)',
 			'insert into abc select generate_series(1, 300000)',
 			'select create_hash_partitions(\'abc\', \'id\', 3, partition_data := false)',
 		]
 
+	def tearDown(self):
+		stop_all()
+		# clean_all()
+
+	def init_test_data(self, node):
+		"""Initialize pg_pathman extension and test data"""
+		for cmd in self.setup_cmd:
+			node.safe_psql('postgres', cmd)
+
+	def catchup_replica(self, master, replica):
+		"""Wait until replica synchronizes with master"""
+		master.poll_query_until(
+			'postgres',
+			'SELECT pg_current_xlog_location() <= replay_location '
+			'FROM pg_stat_replication WHERE application_name = \'%s\''
+			% replica.name)
+
+	def test_concurrent(self):
+		"""Tests concurrent partitioning"""
 		node = get_new_node('test')
 		node.init()
 		node.append_conf('postgresql.conf', 'shared_preload_libraries=\'pg_pathman\'\n')
 		node.start()
-
-		for cmd in setup_cmd:
-			node.safe_psql('postgres', cmd)
+		self.init_test_data(node)
 
 		node.psql('postgres', 'select partition_data_worker(\'abc\')')
 
@@ -59,6 +69,42 @@ class ConcurrentTest(unittest.TestCase):
 		self.assertEqual(data[0][0], 300000)
 
 		node.stop()
+
+	def test_replication(self):
+		"""Tests how pg_pathman works with replication"""
+		node = get_new_node('master')
+		replica = get_new_node('repl')
+
+		# initialize master server
+		node.init(allows_streaming=True)
+		node.append_conf('postgresql.conf', 'shared_preload_libraries=\'pg_pathman\'\n')
+		node.start()
+		node.backup('my_backup')
+
+		# initialize replica from backup
+		replica.init_from_backup(node, 'my_backup', has_streaming=True)
+		replica.start()
+
+		# initialize pg_pathman extension and some test data
+		self.init_test_data(node)
+
+		# wait until replica catches up
+		self.catchup_replica(node, replica)
+
+		# check that results are equal
+		self.assertEqual(
+			node.psql('postgres', 'explain (costs off) select * from abc'),
+			replica.psql('postgres', 'explain (costs off) select * from abc')
+		)
+
+		# enable parent and see if it is enabled in replica
+		node.psql('postgres', 'select enable_parent(\'abc\'')
+
+		self.catchup_replica(node, replica)
+		self.assertEqual(
+			node.psql('postgres', 'explain (costs off) select * from abc'),
+			replica.psql('postgres', 'explain (costs off) select * from abc')
+		)
 
 if __name__ == "__main__":
     unittest.main()
