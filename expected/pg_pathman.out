@@ -11,6 +11,84 @@ INSERT INTO test.hash_rel VALUES (3, 3);
 SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3);
 ERROR:  Partitioning key 'value' must be NOT NULL
 ALTER TABLE test.hash_rel ALTER COLUMN value SET NOT NULL;
+SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3, partition_data:=false);
+ create_hash_partitions 
+------------------------
+                      3
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
+          QUERY PLAN          
+------------------------------
+ Append
+   ->  Seq Scan on hash_rel
+   ->  Seq Scan on hash_rel_0
+   ->  Seq Scan on hash_rel_1
+   ->  Seq Scan on hash_rel_2
+(5 rows)
+
+SELECT * FROM test.hash_rel;
+ id | value 
+----+-------
+  1 |     1
+  2 |     2
+  3 |     3
+(3 rows)
+
+SELECT pathman.disable_parent('test.hash_rel');
+ disable_parent 
+----------------
+ 
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
+          QUERY PLAN          
+------------------------------
+ Append
+   ->  Seq Scan on hash_rel_0
+   ->  Seq Scan on hash_rel_1
+   ->  Seq Scan on hash_rel_2
+(4 rows)
+
+SELECT * FROM test.hash_rel;
+ id | value 
+----+-------
+(0 rows)
+
+SELECT pathman.enable_parent('test.hash_rel');
+ enable_parent 
+---------------
+ 
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
+          QUERY PLAN          
+------------------------------
+ Append
+   ->  Seq Scan on hash_rel
+   ->  Seq Scan on hash_rel_0
+   ->  Seq Scan on hash_rel_1
+   ->  Seq Scan on hash_rel_2
+(5 rows)
+
+SELECT * FROM test.hash_rel;
+ id | value 
+----+-------
+  1 |     1
+  2 |     2
+  3 |     3
+(3 rows)
+
+SELECT pathman.drop_partitions('test.hash_rel');
+NOTICE:  function test.hash_rel_upd_trig_func() does not exist, skipping
+NOTICE:  0 rows copied from test.hash_rel_0
+NOTICE:  0 rows copied from test.hash_rel_1
+NOTICE:  0 rows copied from test.hash_rel_2
+ drop_partitions 
+-----------------
+               3
+(1 row)
+
 SELECT pathman.create_hash_partitions('test.hash_rel', 'Value', 3);
  create_hash_partitions 
 ------------------------
@@ -1140,9 +1218,9 @@ SELECT * FROM test.range_rel WHERE dt = '2015-03-15';
 
 DROP TABLE test.range_rel CASCADE;
 NOTICE:  drop cascades to 16 other objects
-SELECT * FROM pathman.pathman_config;
- id | partrel | attname | parttype | range_interval 
-----+---------+---------+----------+----------------
+SELECT partrel, attname, parttype, range_interval FROM pathman.pathman_config;
+ partrel | attname | parttype | range_interval 
+---------+---------+----------+----------------
 (0 rows)
 
 /* Check overlaps */
@@ -1324,10 +1402,10 @@ SELECT pathman.create_partitions_from_range('test."RangeRel"', 'dt', '2015-01-01
 
 DROP TABLE test."RangeRel" CASCADE;
 NOTICE:  drop cascades to 5 other objects
-SELECT * FROM pathman.pathman_config;
- id |      partrel       | attname | parttype | range_interval 
-----+--------------------+---------+----------+----------------
-  9 | test.num_range_rel | id      |        2 | 1000
+SELECT partrel, attname, parttype, range_interval FROM pathman.pathman_config;
+      partrel       | attname | parttype | range_interval 
+--------------------+---------+----------+----------------
+ test.num_range_rel | id      |        2 | 1000
 (1 row)
 
 CREATE TABLE test."RangeRel" (

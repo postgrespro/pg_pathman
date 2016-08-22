@@ -70,6 +70,8 @@ BEGIN
 	IF partition_data = true THEN
 		PERFORM @extschema@.disable_parent(parent_relid);
 		PERFORM @extschema@.partition_data(parent_relid);
+	ELSE
+		PERFORM @extschema@.enable_parent(parent_relid);
 	END IF;
 
 	RETURN partitions_count;

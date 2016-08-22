@@ -43,7 +43,7 @@ CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions(
 	p_start_value	ANYELEMENT,
 	p_interval		INTERVAL,
 	p_count			INTEGER DEFAULT NULL,
-	p_partition_data BOOLEAN DEFAULT true)
+	partition_data  BOOLEAN DEFAULT true)
 RETURNS INTEGER AS
 $$
 DECLARE
@@ -107,10 +107,12 @@ BEGIN
 	/* Notify backend about changes */
 	PERFORM @extschema@.on_create_partitions(parent_relid);
 
-	/* Copy data */
-	IF p_partition_data = true THEN
+		/* Copy data */
+	IF partition_data = true THEN
 		PERFORM @extschema@.disable_parent(parent_relid);
 		PERFORM @extschema@.partition_data(parent_relid);
+	ELSE
+		PERFORM @extschema@.enable_parent(parent_relid);
 	END IF;
 
 	RETURN p_count;
@@ -129,7 +131,7 @@ CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions(
 	p_start_value	ANYELEMENT,
 	p_interval		ANYELEMENT,
 	p_count			INTEGER DEFAULT NULL,
-	p_partition_data BOOLEAN DEFAULT true)
+	partition_data  BOOLEAN DEFAULT true)
 RETURNS INTEGER AS
 $$
 DECLARE
@@ -199,9 +201,11 @@ BEGIN
 	PERFORM @extschema@.on_create_partitions(parent_relid);
 
 	/* Copy data */
-	IF p_partition_data = true THEN
+	IF partition_data = true THEN
 		PERFORM @extschema@.disable_parent(parent_relid);
 		PERFORM @extschema@.partition_data(parent_relid);
+	ELSE
+		PERFORM @extschema@.enable_parent(parent_relid);
 	END IF;
 
 	RETURN p_count;
@@ -220,7 +224,7 @@ CREATE OR REPLACE FUNCTION @extschema@.create_partitions_from_range(
 	p_start_value	ANYELEMENT,
 	p_end_value		ANYELEMENT,
 	p_interval		ANYELEMENT,
-	p_partition_data BOOLEAN DEFAULT true)
+	partition_data  BOOLEAN DEFAULT true)
 RETURNS INTEGER AS
 $$
 DECLARE
@@ -266,9 +270,11 @@ BEGIN
 	PERFORM @extschema@.on_create_partitions(parent_relid);
 
 	/* Copy data */
-	IF p_partition_data = true THEN
+	IF partition_data = true THEN
 		PERFORM @extschema@.disable_parent(parent_relid);
 		PERFORM @extschema@.partition_data(parent_relid);
+	ELSE
+		PERFORM @extschema@.enable_parent(parent_relid);
 	END IF;
 
 	RETURN part_count; /* number of created partitions */
@@ -287,7 +293,7 @@ CREATE OR REPLACE FUNCTION @extschema@.create_partitions_from_range(
 	p_start_value	ANYELEMENT,
 	p_end_value		ANYELEMENT,
 	p_interval		INTERVAL,
-	p_partition_data BOOLEAN DEFAULT true)
+	partition_data  BOOLEAN DEFAULT true)
 RETURNS INTEGER AS
 $$
 DECLARE
@@ -330,9 +336,11 @@ BEGIN
 	PERFORM @extschema@.on_create_partitions(parent_relid);
 
 	/* Copy data */
-	IF p_partition_data = true THEN
+	IF partition_data = true THEN
 		PERFORM @extschema@.disable_parent(parent_relid);
 		PERFORM @extschema@.partition_data(parent_relid);
+	ELSE
+		PERFORM @extschema@.enable_parent(parent_relid);
 	END IF;
 
 	RETURN part_count; /* number of created partitions */

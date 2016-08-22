@@ -137,7 +137,9 @@ unload_config(void)
 Size
 estimate_pathman_shmem_size(void)
 {
-	return estimate_dsm_config_size() + MAXALIGN(sizeof(PathmanState));
+	return estimate_dsm_config_size()
+		   + get_worker_slots_size()
+		   + MAXALIGN(sizeof(PathmanState));
 }
 
 /*
@@ -249,6 +251,8 @@ init_shmem_config(void)
 			pmstate->edit_partitions_lock	= LWLockAssign();
 		}
 	}
+
+	create_worker_slots();
 }
 
 /*

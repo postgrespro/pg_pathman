@@ -27,7 +27,7 @@ class ConcurrentTest(unittest.TestCase):
 			'create extension pg_pathman',
 			'create table abc(id serial, t text)',
 			'insert into abc select generate_series(1, 300000)',
-			'select create_hash_partitions(\'abc\', \'id\', 3, p_partition_data := false)',
+			'select create_hash_partitions(\'abc\', \'id\', 3, partition_data := false)',
 		]
 
 		node = get_new_node('test')

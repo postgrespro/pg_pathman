@@ -34,15 +34,43 @@ CREATE TABLE IF NOT EXISTS @extschema@.pathman_config_params (
 CREATE UNIQUE INDEX i_pathman_config_params
 ON @extschema@.pathman_config_params(partrel);
 
+/*
+ * Invalidate relcache every time someone changes parameters config
+ */
+CREATE OR REPLACE FUNCTION @extschema@.pathman_config_params_trigger_func()
+RETURNS TRIGGER AS
+$$
+BEGIN
+	IF TG_OP IN ('INSERT', 'UPDATE') THEN
+		PERFORM @extschema@.invalidate_relcache(NEW.partrel);
+	END IF;
+
+	IF TG_OP IN ('UPDATE', 'DELETE') THEN
+		PERFORM @extschema@.invalidate_relcache(OLD.partrel);
+	END IF;
+
+	IF TG_OP = 'DELETE' THEN
+		RETURN OLD;
+	ELSE
+		RETURN NEW;
+	END IF;
+END
+$$
+LANGUAGE plpgsql;
+
+CREATE TRIGGER pathman_config_params_trigger
+BEFORE INSERT OR UPDATE OR DELETE ON @extschema@.pathman_config_params
+FOR EACH ROW EXECUTE PROCEDURE @extschema@.pathman_config_params_trigger_func();
+
+/*
+ * Enable dump of config tables with pg_dump
+ */
 SELECT pg_catalog.pg_extension_config_dump('@extschema@.pathman_config', '');
 SELECT pg_catalog.pg_extension_config_dump('@extschema@.pathman_config_params', '');
 
 
-CREATE OR REPLACE FUNCTION @extschema@.on_enable_parent(relid OID)
-RETURNS OID AS 'pg_pathman' LANGUAGE C STRICT;
-
-CREATE OR REPLACE FUNCTION @extschema@.on_disable_parent(relid OID)
-RETURNS OID AS 'pg_pathman' LANGUAGE C STRICT;
+CREATE OR REPLACE FUNCTION @extschema@.invalidate_relcache(relid OID)
+RETURNS VOID AS 'pg_pathman' LANGUAGE C STRICT;
 
 /* Include parent relation into query plan's for specified relation */
 CREATE OR REPLACE FUNCTION @extschema@.enable_parent(relation REGCLASS)
@@ -53,7 +81,8 @@ BEGIN
 	ON CONFLICT (partrel) DO
 	UPDATE SET enable_parent = True;
 
-	PERFORM @extschema@.on_enable_parent(relation::oid);
+	-- PERFORM @extschema@.invalidate_relcache(relation::oid);
+	-- PERFORM @extschema@.on_enable_parent(relation::oid);
 END
 $$
 LANGUAGE plpgsql;
@@ -67,7 +96,8 @@ BEGIN
 	ON CONFLICT (partrel) DO
 	UPDATE SET enable_parent = False;
 
-	PERFORM @extschema@.on_disable_parent(relation::oid);
+	-- PERFORM @extschema@.invalidate_relcache(relation::oid);
+	-- PERFORM @extschema@.on_disable_parent(relation::oid);
 END
 $$
 LANGUAGE plpgsql;
@@ -143,12 +173,12 @@ CREATE TYPE @extschema@.PathmanRange (
 /*
  * Copy rows to partitions
  */
-CREATE OR REPLACE FUNCTION @extschema@.partition_data(
-    p_relation regclass
-    , p_min ANYELEMENT DEFAULT NULL::text
-    , p_max ANYELEMENT DEFAULT NULL::text
-    , p_limit INT DEFAULT NULL
-    , OUT p_total BIGINT)
+CREATE OR REPLACE FUNCTION @extschema@._partition_data_concurrent(
+    p_relation regclass,
+    p_min ANYELEMENT DEFAULT NULL::text,
+    p_max ANYELEMENT DEFAULT NULL::text,
+    p_limit INT DEFAULT NULL,
+    OUT p_total BIGINT)
 AS
 $$
 DECLARE
@@ -201,33 +231,30 @@ END
 $$
 LANGUAGE plpgsql;
 
-/*
- * Copy rows to partitions
- */
--- CREATE OR REPLACE FUNCTION @extschema@.partition_data(
--- 	parent_relid	REGCLASS,
--- 	OUT p_total		BIGINT)
--- AS
--- $$
--- DECLARE
--- 	relname		TEXT;
--- 	rec			RECORD;
--- 	cnt			BIGINT := 0;
+CREATE OR REPLACE FUNCTION @extschema@.partition_data(
+	parent_relid	REGCLASS,
+	OUT p_total		BIGINT)
+AS
+$$
+DECLARE
+	relname		TEXT;
+	rec			RECORD;
+	cnt			BIGINT := 0;
 
--- BEGIN
--- 	p_total := 0;
+BEGIN
+	p_total := 0;
 
--- 	/* Create partitions and copy rest of the data */
--- 	EXECUTE format('WITH part_data AS (DELETE FROM ONLY %1$s RETURNING *)
--- 					INSERT INTO %1$s SELECT * FROM part_data',
--- 				   @extschema@.get_schema_qualified_name(parent_relid));
+	/* Create partitions and copy rest of the data */
+	EXECUTE format('WITH part_data AS (DELETE FROM ONLY %1$s RETURNING *)
+					INSERT INTO %1$s SELECT * FROM part_data',
+				   @extschema@.get_schema_qualified_name(parent_relid));
 
--- 	/* Get number of inserted rows */
--- 	GET DIAGNOSTICS p_total = ROW_COUNT;
--- 	RETURN;
--- END
--- $$
--- LANGUAGE plpgsql;
+	/* Get number of inserted rows */
+	GET DIAGNOSTICS p_total = ROW_COUNT;
+	RETURN;
+END
+$$
+LANGUAGE plpgsql;
 
 /*
  * Disable pathman partitioning for specified relation
@@ -388,19 +415,25 @@ $$
 DECLARE
 	obj				record;
 	pg_class_oid	oid;
-
 BEGIN
 	pg_class_oid = 'pg_catalog.pg_class'::regclass;
 
 	/* Handle 'DROP TABLE' events */
 	WITH to_be_deleted AS (
-		SELECT cfg.partrel AS rel
-		FROM pg_event_trigger_dropped_objects() AS events
-		JOIN @extschema@.pathman_config AS cfg
-		ON cfg.partrel::oid = events.objid
+		SELECT cfg.partrel AS rel FROM pg_event_trigger_dropped_objects() AS events
+		JOIN @extschema@.pathman_config AS cfg ON cfg.partrel::oid = events.objid
 		WHERE events.classid = pg_class_oid
 	)
 	DELETE FROM @extschema@.pathman_config
+	WHERE partrel IN (SELECT rel FROM to_be_deleted);
+
+	/* Cleanup params table too */
+	WITH to_be_deleted AS (
+		SELECT cfg.partrel AS rel FROM pg_event_trigger_dropped_objects() AS events
+		JOIN @extschema@.pathman_config_params AS cfg ON cfg.partrel::oid = events.objid
+		WHERE events.classid = pg_class_oid
+	)
+	DELETE FROM @extschema@.pathman_config_params
 	WHERE partrel IN (SELECT rel FROM to_be_deleted);
 END
 $$
@@ -447,6 +480,8 @@ BEGIN
 								WHERE partrel = parent_relid
 								RETURNING *)
 	SELECT count(*) from config_num_deleted INTO conf_num_del;
+
+	DELETE FROM @extschema@.pathman_config_params WHERE partrel = parent_relid;
 
 	IF conf_num_del = 0 THEN
 		RAISE EXCEPTION 'table % has no partitions', parent_relid::text;

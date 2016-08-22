@@ -21,6 +21,7 @@
 #include "utils/typcache.h"
 #include "utils/array.h"
 #include "utils/memutils.h"
+#include <utils/inval.h>
 
 
 #include "miscadmin.h"
@@ -29,8 +30,7 @@
 PG_FUNCTION_INFO_V1( on_partitions_created );
 PG_FUNCTION_INFO_V1( on_partitions_updated );
 PG_FUNCTION_INFO_V1( on_partitions_removed );
-PG_FUNCTION_INFO_V1( on_enable_parent );
-PG_FUNCTION_INFO_V1( on_disable_parent );
+PG_FUNCTION_INFO_V1( invalidate_relcache );
 PG_FUNCTION_INFO_V1( get_parent_of_partition_pl );
 PG_FUNCTION_INFO_V1( get_attribute_type_name );
 PG_FUNCTION_INFO_V1( find_or_create_range_partition);
@@ -194,21 +194,14 @@ get_attribute_type_name(PG_FUNCTION_ARGS)
 }
 
 Datum
-on_enable_parent(PG_FUNCTION_ARGS)
+invalidate_relcache(PG_FUNCTION_ARGS)
 {
 	Oid		relid = DatumGetObjectId(PG_GETARG_DATUM(0));
 
-	set_enable_parent(relid, true);
-	PG_RETURN_NULL();
-}
-
-Datum
-on_disable_parent(PG_FUNCTION_ARGS)
-{
-	Oid		relid = DatumGetObjectId(PG_GETARG_DATUM(0));
-
-	set_enable_parent(relid, false);
-	PG_RETURN_NULL();
+	/* If type exists then invalidate cache */
+	if (get_rel_type_id(relid) != InvalidOid)
+		CacheInvalidateRelcacheByRelid(relid);
+	PG_RETURN_VOID();
 }
 
 /*

@@ -82,6 +82,28 @@ typedef struct PartitionDataArgs
 PartitionDataArgs *slots;
 
 /*
+ * Initialize shared memory
+ */
+void
+create_worker_slots()
+{
+	bool	found;
+	size_t	size = get_worker_slots_size();
+
+	slots = (PartitionDataArgs *)
+		ShmemInitStruct("worker slots", size ,&found);
+
+	if (!found)
+		memset(slots, 0, size);
+}
+
+Size
+get_worker_slots_size(void)
+{
+	return sizeof(PartitionDataArgs) * WORKER_SLOTS;
+}
+
+/*
  * Useful datum packing\unpacking functions for BGW.
  */
 
@@ -462,13 +484,13 @@ partition_data_bg_worker_main(Datum main_arg)
 	/* Establish connection and start transaction */
 	BackgroundWorkerInitializeConnectionByOid(args->dbid, InvalidOid);
 
-	bg_worker_load_config("PartitionDataWorker");
-
 	do
 	{
 		failed = false;
 		rows = 0;
 		StartTransactionCommand();
+		bg_worker_load_config("PartitionDataWorker");
+
 		SPI_connect();
 		PushActiveSnapshot(GetTransactionSnapshot());
 
@@ -481,7 +503,7 @@ partition_data_bg_worker_main(Datum main_arg)
 			 * context will be destroyed after transaction finishes
 			 */
 			oldcontext = MemoryContextSwitchTo(worker_context);
-			sql = psprintf("SELECT %s.partition_data($1::oid, p_limit:=$2)",
+			sql = psprintf("SELECT %s._partition_data_concurrent($1::oid, p_limit:=$2)",
 				get_namespace_name(get_pathman_schema()));
 			MemoryContextSwitchTo(oldcontext);
 		}

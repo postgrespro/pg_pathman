@@ -12,6 +12,16 @@ INSERT INTO test.hash_rel VALUES (2, 2);
 INSERT INTO test.hash_rel VALUES (3, 3);
 SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3);
 ALTER TABLE test.hash_rel ALTER COLUMN value SET NOT NULL;
+SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3, partition_data:=false);
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
+SELECT * FROM test.hash_rel;
+SELECT pathman.disable_parent('test.hash_rel');
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
+SELECT * FROM test.hash_rel;
+SELECT pathman.enable_parent('test.hash_rel');
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
+SELECT * FROM test.hash_rel;
+SELECT pathman.drop_partitions('test.hash_rel');
 SELECT pathman.create_hash_partitions('test.hash_rel', 'Value', 3);
 SELECT COUNT(*) FROM test.hash_rel;
 SELECT COUNT(*) FROM ONLY test.hash_rel;
@@ -500,7 +510,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt = '2015-03-15';
 SELECT * FROM test.range_rel WHERE dt = '2015-03-15';
 
 DROP TABLE test.range_rel CASCADE;
-SELECT * FROM pathman.pathman_config;
+SELECT partrel, attname, parttype, range_interval FROM pathman.pathman_config;
 
 /* Check overlaps */
 CREATE TABLE test.num_range_rel (
@@ -545,7 +555,7 @@ SELECT pathman.split_range_partition('test."RangeRel_1"', '2015-01-01'::DATE);
 SELECT pathman.drop_partitions('test."RangeRel"');
 SELECT pathman.create_partitions_from_range('test."RangeRel"', 'dt', '2015-01-01'::DATE, '2015-01-05'::DATE, '1 day'::INTERVAL);
 DROP TABLE test."RangeRel" CASCADE;
-SELECT * FROM pathman.pathman_config;
+SELECT partrel, attname, parttype, range_interval FROM pathman.pathman_config;
 CREATE TABLE test."RangeRel" (
 	id	SERIAL PRIMARY KEY,
 	dt	TIMESTAMP NOT NULL,
