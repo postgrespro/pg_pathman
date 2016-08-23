@@ -12,12 +12,13 @@
 #include "init.h"
 #include "runtimeappend.h"
 #include "runtime_merge_append.h"
+#include "partition_filter.h"
 #include "utils.h"
 
 #include "miscadmin.h"
 #include "optimizer/cost.h"
 #include "optimizer/restrictinfo.h"
-#include "partition_filter.h"
+#include "utils/typcache.h"
 
 
 set_join_pathlist_hook_type		set_join_pathlist_next = NULL;

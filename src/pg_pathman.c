@@ -41,6 +41,7 @@
 #include "utils/syscache.h"
 #include "utils/selfuncs.h"
 #include "utils/snapmgr.h"
+#include "utils/typcache.h"
 
 
 PG_MODULE_MAGIC;
