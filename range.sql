@@ -396,7 +396,8 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION @extschema@.create_single_range_partition(
 	parent_relid	REGCLASS,
 	p_start_value	ANYELEMENT,
-	p_end_value		ANYELEMENT)
+	p_end_value		ANYELEMENT,
+	partition_name	TEXT DEFAULT NULL)
 RETURNS TEXT AS
 $$
 DECLARE
@@ -423,34 +424,42 @@ BEGIN
 
 	v_seq_name := @extschema@.get_sequence_name(v_plain_schema, v_plain_relname);
 
-	/* Get next value from sequence */
-	LOOP
-		v_part_num := nextval(v_seq_name);
-		v_plain_child_relname := format('%s_%s', v_plain_relname, v_part_num);
-		v_child_relname := format('%s.%s',
-								  quote_ident(v_plain_schema),
-								  quote_ident(v_plain_child_relname));
+	IF partition_name IS NULL THEN
+		/* Get next value from sequence */
+		LOOP
+			v_part_num := nextval(v_seq_name);
+			v_plain_child_relname := format('%s_%s', v_plain_relname, v_part_num);
+			v_child_relname := format('%s.%s',
+									  quote_ident(v_plain_schema),
+									  quote_ident(v_plain_child_relname));
 
-		v_child_relname_exists := count(*) > 0
-								  FROM pg_class
-								  WHERE relname = v_plain_child_relname AND
-										relnamespace = v_plain_schema::regnamespace
-								  LIMIT 1;
+			v_child_relname_exists := count(*) > 0
+									  FROM pg_class
+									  WHERE relname = v_plain_child_relname AND
+											relnamespace = v_plain_schema::regnamespace
+									  LIMIT 1;
 
-		EXIT WHEN v_child_relname_exists = false;
-	END LOOP;
+			EXIT WHEN v_child_relname_exists = false;
+		END LOOP;
+	ELSE
+		v_child_relname := partition_name;
+	END IF;
 
-	EXECUTE format('CREATE TABLE %1$s (LIKE %2$s INCLUDING ALL) INHERITS (%2$s)',
-				   v_child_relname,
-				   @extschema@.get_schema_qualified_name(parent_relid));
+	EXECUTE format(
+		'CREATE TABLE %1$s (LIKE %2$s INCLUDING ALL) INHERITS (%2$s)',
+		v_child_relname,
+		@extschema@.get_schema_qualified_name(parent_relid));
 
-	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)',
-				   v_child_relname,
-				   @extschema@.build_check_constraint_name(v_child_relname::regclass,
-														   v_attname),
-				   @extschema@.build_range_condition(v_attname,
-													 p_start_value,
-													 p_end_value));
+	EXECUTE format(
+		'ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)',
+		v_child_relname,
+		@extschema@.build_check_constraint_name(
+			v_child_relname::regclass,
+			v_attname),
+		@extschema@.build_range_condition(
+			v_attname,
+			p_start_value,
+			p_end_value));
 
 	RETURN v_child_relname;
 END
@@ -463,6 +472,7 @@ SET client_min_messages = WARNING;
 CREATE OR REPLACE FUNCTION @extschema@.split_range_partition(
 	p_partition		REGCLASS,
 	p_value			ANYELEMENT,
+	partition_name	TEXT DEFAULT NULL,
 	OUT p_range		ANYARRAY)
 RETURNS ANYARRAY AS
 $$
@@ -669,7 +679,8 @@ $$ LANGUAGE plpgsql;
  * Append new partition
  */
 CREATE OR REPLACE FUNCTION @extschema@.append_range_partition(
-	parent_relid	REGCLASS)
+	parent_relid	REGCLASS,
+	partition_name	TEXT DEFAULT NULL)
 RETURNS TEXT AS
 $$
 DECLARE
@@ -690,14 +701,20 @@ BEGIN
 
 	v_atttype := @extschema@.get_attribute_type_name(parent_relid, v_attname);
 
-	EXECUTE format('SELECT @extschema@.append_partition_internal($1, $2, $3, ARRAY[]::%s[])',
-				   v_atttype)
-	INTO v_part_name
-	USING parent_relid, v_atttype, v_interval;
+	EXECUTE
+		format(
+			'SELECT @extschema@.append_partition_internal($1, $2, $3, ARRAY[]::%s[], $4)',
+			v_atttype)
+	USING
+		parent_relid,
+		v_atttype,
+		v_interval,
+		partition_name
+	INTO
+		v_part_name;
 
 	/* Invalidate cache */
 	PERFORM @extschema@.on_update_partitions(parent_relid);
-
 	RETURN v_part_name;
 
 EXCEPTION WHEN others THEN
@@ -711,7 +728,8 @@ CREATE OR REPLACE FUNCTION @extschema@.append_partition_internal(
 	parent_relid	REGCLASS,
 	p_atttype		TEXT,
 	p_interval		TEXT,
-	p_range			ANYARRAY DEFAULT NULL)
+	p_range			ANYARRAY DEFAULT NULL,
+	partition_name	TEXT DEFAULT NULL)
 RETURNS TEXT AS
 $$
 DECLARE
@@ -721,14 +739,23 @@ BEGIN
 	p_range := @extschema@.get_range_by_idx(parent_relid, -1, 0);
 
 	IF @extschema@.is_date_type(p_atttype::regtype) THEN
-		v_part_name := @extschema@.create_single_range_partition(parent_relid
-																 , p_range[2]
-																 , p_range[2] + p_interval::interval);
+		v_part_name := @extschema@.create_single_range_partition(
+			parent_relid,
+			p_range[2],
+			p_range[2] + p_interval::interval,
+			partition_name);
 	ELSE
-		EXECUTE format('SELECT @extschema@.create_single_range_partition($1, $2, $2 + $3::%s)',
-					   p_atttype)
-		USING parent_relid, p_range[2], p_interval
-		INTO v_part_name;
+		EXECUTE
+			format(
+				'SELECT @extschema@.create_single_range_partition($1, $2, $2 + $3::%s, $4)',
+				p_atttype)
+		USING
+			parent_relid,
+			p_range[2],
+			p_interval,
+			partition_name
+		INTO
+			v_part_name;
 	END IF;
 
 	RETURN v_part_name;
@@ -741,7 +768,8 @@ LANGUAGE plpgsql;
  * Prepend new partition
  */
 CREATE OR REPLACE FUNCTION @extschema@.prepend_range_partition(
-	parent_relid	REGCLASS)
+	parent_relid	REGCLASS,
+	partition_name	TEXT DEFAULT NULL)
 RETURNS TEXT AS
 $$
 DECLARE
@@ -762,14 +790,20 @@ BEGIN
 
 	v_atttype := @extschema@.get_attribute_type_name(parent_relid, v_attname);
 
-	EXECUTE format('SELECT @extschema@.prepend_partition_internal($1, $2, $3, ARRAY[]::%s[])',
-				   v_atttype)
-	INTO v_part_name
-	USING parent_relid, v_atttype, v_interval;
+	EXECUTE
+		format(
+			'SELECT @extschema@.prepend_partition_internal($1, $2, $3, ARRAY[]::%s[], $4)',
+			v_atttype)
+	USING
+		parent_relid,
+		v_atttype,
+		v_interval,
+		partition_name
+	INTO
+		v_part_name;
 
 	/* Invalidate cache */
 	PERFORM @extschema@.on_update_partitions(parent_relid);
-
 	RETURN v_part_name;
 
 EXCEPTION WHEN others THEN
@@ -783,7 +817,8 @@ CREATE OR REPLACE FUNCTION @extschema@.prepend_partition_internal(
 	parent_relid	REGCLASS,
 	p_atttype		TEXT,
 	p_interval		TEXT,
-	p_range			ANYARRAY DEFAULT NULL)
+	p_range			ANYARRAY DEFAULT NULL,
+	partition_name	TEXT DEFAULT NULL)
 RETURNS TEXT AS
 $$
 DECLARE
@@ -793,14 +828,23 @@ BEGIN
 	p_range := @extschema@.get_range_by_idx(parent_relid, 0, 0);
 
 	IF @extschema@.is_date_type(p_atttype::regtype) THEN
-		v_part_name := @extschema@.create_single_range_partition(parent_relid,
-																 p_range[1] - p_interval::interval,
-																 p_range[1]);
+		v_part_name := @extschema@.create_single_range_partition(
+			parent_relid,
+			p_range[1] - p_interval::interval,
+			p_range[1],
+			partition_name);
 	ELSE
-		EXECUTE format('SELECT @extschema@.create_single_range_partition($1, $2 - $3::%s, $2)',
-					   p_atttype)
-		USING parent_relid, p_range[1], p_interval
-		INTO v_part_name;
+		EXECUTE
+			format(
+				'SELECT @extschema@.create_single_range_partition($1, $2 - $3::%s, $2, $4)',
+				p_atttype)
+		USING
+			parent_relid,
+			p_range[1],
+			p_interval,
+			partition_name
+		INTO
+			v_part_name;
 	END IF;
 
 	RETURN v_part_name;
@@ -815,7 +859,8 @@ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION @extschema@.add_range_partition(
 	parent_relid	REGCLASS,
 	p_start_value	ANYELEMENT,
-	p_end_value		ANYELEMENT)
+	p_end_value		ANYELEMENT,
+	partition_name	TEXT DEFAULT NULL)
 RETURNS TEXT AS
 $$
 DECLARE
@@ -832,9 +877,11 @@ BEGIN
 	END IF;
 
 	/* Create new partition */
-	v_part_name := @extschema@.create_single_range_partition(parent_relid,
-															 p_start_value,
-															 p_end_value);
+	v_part_name :=@extschema@.create_single_range_partition(
+		parent_relid,
+		p_start_value,
+		p_end_value,
+		partition_name);
 	PERFORM @extschema@.on_update_partitions(parent_relid);
 
 	RETURN v_part_name;
