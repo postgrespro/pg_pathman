@@ -134,36 +134,6 @@ CREATE OR REPLACE FUNCTION @extschema@.pathman_range_out(PathmanRange)
     AS 'pg_pathman'
     LANGUAGE C IMMUTABLE STRICT;
 
-/*
-CREATE OR REPLACE FUNCTION @extschema@.get_whole_range(relid OID)
-    RETURNS PathmanRange
-    AS 'pg_pathman'
-    LANGUAGE C STRICT;
-
-CREATE OR REPLACE FUNCTION @extschema@.range_value_cmp(range PathmanRange, value ANYELEMENT)
-	RETURNS INTEGER
-	AS 'pg_pathman'
-	LANGUAGE C STRICT;
-
-CREATE OR REPLACE FUNCTION @extschema@.range_lower(range PathmanRange, dummy ANYELEMENT)
-	RETURNS ANYELEMENT
-	AS 'pg_pathman'
-	LANGUAGE C;
-
-CREATE OR REPLACE FUNCTION @extschema@.range_upper(range PathmanRange, dummy ANYELEMENT)
-	RETURNS ANYELEMENT
-	AS 'pg_pathman'
-	LANGUAGE C;
-
-CREATE OR REPLACE FUNCTION @extschema@.range_oid(range PathmanRange)
-	RETURNS OID
-	AS 'pg_pathman'
-	LANGUAGE C STRICT;
-
-CREATE OR REPLACE FUNCTION @extschema@.range_partitions_list(parent_relid OID)
-	RETURNS SETOF PATHMANRANGE AS 'pg_pathman'
-	LANGUAGE C STRICT;
-*/
 CREATE TYPE @extschema@.PathmanRange (
 	internallength = 32,
 	input = pathman_range_in,
@@ -185,11 +155,10 @@ DECLARE
     v_attr         TEXT;
     v_limit_clause TEXT := '';
     v_where_clause TEXT := '';
+    ctids          TID[];
 BEGIN
     SELECT attname INTO v_attr
     FROM @extschema@.pathman_config WHERE partrel = p_relation;
-
-    PERFORM @extschema@.debug_capture();
 
     p_total := 0;
 
@@ -216,14 +185,17 @@ BEGIN
 
     /* Lock rows and copy data */
     RAISE NOTICE 'Copying data to partitions...';
+    EXECUTE format('SELECT array(SELECT ctid FROM ONLY %1$s %2$s %3$s FOR UPDATE NOWAIT)',
+			   	   p_relation, v_where_clause, v_limit_clause)
+    USING p_min, p_max
+    INTO ctids;
+
     EXECUTE format('
         WITH data AS (
-            DELETE FROM ONLY %1$s WHERE ctid IN (
-                SELECT ctid FROM ONLY %1$s %2$s %3$s FOR UPDATE NOWAIT
-            ) RETURNING *)
-        INSERT INTO %1$s SELECT * FROM data'
-        , p_relation, v_where_clause, v_limit_clause)
-    USING p_min, p_max;
+            DELETE FROM ONLY %1$s WHERE ctid = ANY($1) RETURNING *)
+        INSERT INTO %1$s SELECT * FROM data',
+        p_relation)
+    USING ctids;
 
     GET DIAGNOSTICS p_total = ROW_COUNT;
     RETURN;
