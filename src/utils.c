@@ -15,24 +15,18 @@
 #include "access/sysattr.h"
 #include "access/xact.h"
 #include "catalog/heap.h"
-#include "catalog/namespace.h"
 #include "catalog/pg_type.h"
 #include "catalog/pg_extension.h"
 #include "commands/extension.h"
-#include "executor/spi.h"
-#include "fmgr.h"
 #include "miscadmin.h"
-#include "nodes/nodeFuncs.h"
-#include "nodes/makefuncs.h"
 #include "optimizer/var.h"
 #include "optimizer/restrictinfo.h"
 #include "parser/parse_oper.h"
-#include "rewrite/rewriteManip.h"
 #include "utils/builtins.h"
-#include "utils/memutils.h"
+#include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
-#include "utils/fmgroids.h"
+#include "utils/typcache.h"
 
 
 #define TABLEOID_STR(subst) ( "pathman_tableoid" subst )
@@ -710,6 +704,53 @@ is_string_type_internal(Oid typid)
 	return typid == TEXTOID ||
 		   typid == CSTRINGOID;
 }
+
+/*
+ * Common PartRelationInfo checks. Emit ERROR if anything is wrong.
+ */
+void
+shout_if_prel_is_invalid(Oid parent_oid,
+						 const PartRelationInfo *prel,
+						 PartType expected_part_type)
+{
+	if (!prel)
+		elog(ERROR, "Relation \"%s\" is not partitioned by pg_pathman",
+			 get_rel_name_or_relid(parent_oid));
+
+	if (!PrelIsValid(prel))
+		elog(ERROR, "pg_pathman's cache contains invalid entry "
+					"for relation \"%s\" [%u]",
+			 get_rel_name_or_relid(parent_oid),
+			 MyProcPid);
+
+	/* Check partitioning type unless it's "indifferent" */
+	if (expected_part_type != PT_INDIFFERENT &&
+		expected_part_type != prel->parttype)
+	{
+		char *expected_str;
+
+		switch (expected_part_type)
+		{
+			case PT_HASH:
+				expected_str = "HASH";
+				break;
+
+			case PT_RANGE:
+				expected_str = "RANGE";
+				break;
+
+			default:
+				elog(ERROR,
+					 "expected_str selection not implemented for type %d",
+					 expected_part_type);
+		}
+
+		elog(ERROR, "Relation \"%s\" is not partitioned by %s",
+			 get_rel_name_or_relid(parent_oid),
+			 expected_str);
+	}
+}
+
 
 /*
  * Try to find binary operator.

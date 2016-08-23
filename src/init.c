@@ -20,10 +20,10 @@
 #include "access/htup_details.h"
 #include "access/sysattr.h"
 #include "catalog/indexing.h"
+#include "catalog/pg_constraint.h"
+#include "catalog/pg_inherits.h"
 #include "catalog/pg_inherits_fn.h"
 #include "catalog/pg_type.h"
-#include "catalog/pg_inherits.h"
-#include "catalog/pg_constraint.h"
 #include "executor/spi.h"
 #include "miscadmin.h"
 #include "optimizer/clauses.h"
@@ -81,22 +81,22 @@ static int oid_cmp(const void *p1, const void *p2);
 
 /*
  * Create local PartRelationInfo cache & load pg_pathman's config.
+ * Return true on success. May occasionally emit ERROR.
  */
-void
+bool
 load_config(void)
 {
-	elog(DEBUG2, "pg_pathman's config!!! [%u]", MyProcPid);
-
-	/* 
+	/*
 	 * Try to cache important relids.
-	 * 
+	 *
 	 * Once CREATE EXTENSION stmt is processed, get_pathman_schema()
-	 * function starts to return perfectly valid schema Oid, which
-	 * means we have to check that ALL pg_pathman's relations' Oids
-	 * have been cached properly.
+	 * function starts returning perfectly valid schema Oid, which
+	 * means we have to check that *ALL* pg_pathman's relations' Oids
+	 * have been cached properly. Only then can we assume that
+	 * initialization is not needed anymore.
 	 */
 	if (!init_pathman_relation_oids())
-		return; /* remain 'uninitialized', exit */
+		return false; /* remain 'uninitialized', exit before creating main caches */
 
 	init_local_cache();		/* create 'partitioned_rels' hash table */
 	read_pathman_config();	/* read PATHMAN_CONFIG table & fill cache */
@@ -112,6 +112,8 @@ load_config(void)
 	initialization_needed = false;
 
 	elog(DEBUG2, "pg_pathman's config has been loaded successfully [%u]", MyProcPid);
+
+	return true;
 }
 
 /*
@@ -123,7 +125,8 @@ unload_config(void)
 	/* Don't forget to reset pg_pathman's cached relids */
 	fini_pathman_relation_oids();
 
-	fini_local_cache();		/* destroy 'partitioned_rels' hash table */
+	/* Destroy 'partitioned_rels' & 'parent_cache' hash tables */
+	fini_local_cache();
 
 	/* Mark pg_pathman as uninitialized */
 	initialization_needed = true;
@@ -143,36 +146,42 @@ estimate_pathman_shmem_size(void)
 }
 
 /*
- * TODO: write some comment;
+ * Cache *all* important pg_pathman's relids at once.
+ * We should NOT rely on any previously cached values.
  */
 static bool
 init_pathman_relation_oids(void)
 {
 	Oid schema = get_pathman_schema();
+	Assert(schema != InvalidOid);
 
 	/* Cache PATHMAN_CONFIG relation's Oid */
+	pathman_config_relid = get_relname_relid(PATHMAN_CONFIG, schema);
+	if (pathman_config_relid == InvalidOid)
+		return false;
+
+	/* Cache PATHMAN_CONFIG_PARAMS relation's Oid */
 	pathman_config_params_relid = get_relname_relid(PATHMAN_CONFIG_PARAMS,
 													schema);
-	pathman_config_relid = get_relname_relid(PATHMAN_CONFIG, schema);
-
-	/* Return false if any relation doesn't exist yet */
-	if (pathman_config_params_relid == InvalidOid ||
-		pathman_config_relid == InvalidOid)
-	{
+	if (pathman_config_params_relid == InvalidOid)
 		return false;
-	}
 
+	/* NOTE: add more relations to be cached right here ^^^ */
+
+	/* Everything is fine, proceed */
 	return true;
 }
 
 /*
- * TODO: write some comment;
+ * Forget *all* pg_pathman's cached relids.
  */
 static void
 fini_pathman_relation_oids(void)
 {
 	pathman_config_relid = InvalidOid;
 	pathman_config_params_relid = InvalidOid;
+	
+	/* NOTE: add more relations to be forgotten right here ^^^ */
 }
 
 /*

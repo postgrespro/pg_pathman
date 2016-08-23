@@ -227,9 +227,13 @@ handle_exec_state:
 static void
 bg_worker_load_config(const char *bgw_name)
 {
-	load_config();
-	elog(LOG, "%s: loaded pg_pathman's config [%u]",
-		 bgw_name, MyProcPid);
+	/* Try to load config */
+	if (!load_config())
+		elog(ERROR, "%s: could not load pg_pathman's config [%u]",
+			 bgw_name, MyProcPid);
+	else
+		elog(LOG, "%s: loaded pg_pathman's config [%u]",
+			 bgw_name, MyProcPid);
 }
 
 /*

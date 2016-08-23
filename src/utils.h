@@ -55,6 +55,9 @@ bool is_string_type_internal(Oid typid);
 bool check_rinfo_for_partitioned_attr(List *rinfo,
 									  Index varno,
 									  AttrNumber varattno);
+void shout_if_prel_is_invalid(Oid parent_oid,
+							  const PartRelationInfo *prel,
+							  PartType expected_part_type);
 
 /*
  * Misc.

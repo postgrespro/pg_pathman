@@ -11,15 +11,11 @@
 #ifndef PATHMAN_H
 #define PATHMAN_H
 
-#include "dsm_array.h"
 #include "init.h"
 #include "relation_info.h"
 #include "rangeset.h"
 
 #include "postgres.h"
-#include "utils/date.h"
-#include "utils/snapshot.h"
-#include "utils/typcache.h"
 #include "nodes/makefuncs.h"
 #include "nodes/primnodes.h"
 #include "nodes/execnodes.h"
@@ -28,16 +24,18 @@
 
 
 /* Check PostgreSQL version (9.5.4 contains an important fix for BGW) */
-// #if PG_VERSION_NUM < 90504
-// 	#error "Cannot build pg_pathman with PostgreSQL version lower than 9.5.4"
-// #endif
+#if PG_VERSION_NUM < 90503
+	#error "Cannot build pg_pathman with PostgreSQL version lower than 9.5.3"
+#elif PG_VERSION_NUM < 90504
+	#warning "It is STRONGLY recommended to use pg_pathman with PostgreSQL 9.5.4 since it contains important fixes"
+#endif
 
 /* Get CString representation of Datum (simple wrapper) */
 #ifdef USE_ASSERT_CHECKING
-#include "utils.h"
-#define DebugPrintDatum(datum, typid) ( datum_to_cstring((datum), (typid)) )
+	#include "utils.h"
+	#define DebugPrintDatum(datum, typid) ( datum_to_cstring((datum), (typid)) )
 #else
-#define DebugPrintDatum(datum, typid) ( "[use --enable-cassert]" )
+	#define DebugPrintDatum(datum, typid) ( "[use --enable-cassert]" )
 #endif
 
 
