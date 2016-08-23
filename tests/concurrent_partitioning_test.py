@@ -105,6 +105,33 @@ class ConcurrentTest(unittest.TestCase):
 			node.psql('postgres', 'explain (costs off) select * from abc'),
 			replica.psql('postgres', 'explain (costs off) select * from abc')
 		)
+		self.assertEqual(
+			node.psql('postgres', 'select * from abc'),
+			replica.psql('postgres', 'select * from abc')
+		)
+		self.assertEqual(
+			node.execute('postgres', 'select count(*) from abc')[0][0],
+			300000
+		)
+
+		# check that direct UPDATE in pathman_config_params invalidates
+		# cache
+		node.psql(
+			'postgres',
+			'update pathman_config_params set enable_parent = false')
+		self.catchup_replica(node, replica)
+		self.assertEqual(
+			node.psql('postgres', 'explain (costs off) select * from abc'),
+			replica.psql('postgres', 'explain (costs off) select * from abc')
+		)
+		self.assertEqual(
+			node.psql('postgres', 'select * from abc'),
+			replica.psql('postgres', 'select * from abc')
+		)
+		self.assertEqual(
+			node.execute('postgres', 'select count(*) from abc')[0][0],
+			0
+		)
 
 if __name__ == "__main__":
     unittest.main()
