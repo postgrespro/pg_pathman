@@ -135,12 +135,12 @@ unpack_runtimemergeappend_private(RuntimeMergeAppendState *scan_state,
 #define FillStateField(name, type, method) \
 	do \
 	{ \
-		ListCell *lc; \
-		int i = 0; \
+		ListCell   *lc; \
+		int			i = 0; \
 		Assert(scan_state->numCols == list_length(name)); \
-		scan_state->name = palloc(scan_state->numCols * sizeof(type)); \
+		scan_state->name = palloc0(scan_state->numCols * sizeof(type)); \
 		foreach (lc, name) \
-			scan_state->name[i] = lfirst_int(lc); \
+			scan_state->name[i++] = method(lc); \
 	} \
 	while (0)
 
@@ -197,8 +197,8 @@ create_runtimemergeappend_path(PlannerInfo *root,
 
 Plan *
 create_runtimemergeappend_plan(PlannerInfo *root, RelOptInfo *rel,
-						  CustomPath *best_path, List *tlist,
-						  List *clauses, List *custom_plans)
+							   CustomPath *best_path, List *tlist,
+							   List *clauses, List *custom_plans)
 {
 	CustomScan	   *node;
 	Plan		   *plan;
