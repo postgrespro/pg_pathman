@@ -875,7 +875,7 @@ BEGIN
 	WHERE oid = p_partition INTO rel_persistence;
 
 	IF rel_persistence = 't'::CHAR THEN
-		RAISE EXCEPTION 'Temporary table \"%\" cannot be used as a partition',
+		RAISE EXCEPTION 'Temporary table "%" cannot be used as a partition',
 			quote_ident(p_partition::TEXT);
 	END IF;
 

@@ -69,6 +69,9 @@ BEGIN
 	PERFORM @extschema@.partition_data(parent_relid);
 
 	RETURN partitions_count;
+
+EXCEPTION WHEN others THEN
+	RAISE EXCEPTION '%', SQLERRM;
 END
 $$ LANGUAGE plpgsql
 SET client_min_messages = WARNING;

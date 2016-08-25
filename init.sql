@@ -88,8 +88,18 @@ $$
 DECLARE
 	v_rec			RECORD;
 	is_referenced	BOOLEAN;
+	rel_persistence	CHAR;
 
 BEGIN
+	/* Ignore temporary tables */
+	SELECT relpersistence FROM pg_catalog.pg_class
+	WHERE oid = p_relation INTO rel_persistence;
+
+	IF rel_persistence = 't'::CHAR THEN
+		RAISE EXCEPTION 'Temporary table "%" cannot be partitioned',
+			quote_ident(p_relation::TEXT);
+	END IF;
+
 	IF EXISTS (SELECT * FROM @extschema@.pathman_config
 			   WHERE partrel = p_relation) THEN
 		RAISE EXCEPTION 'Relation "%" has already been partitioned', p_relation;
