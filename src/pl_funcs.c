@@ -13,6 +13,8 @@
 #include "utils.h"
 #include "relation_info.h"
 
+#include "catalog/indexing.h"
+#include "commands/sequence.h"
 #include "access/htup_details.h"
 #include "access/nbtree.h"
 #include "access/xact.h"
@@ -45,12 +47,20 @@ PG_FUNCTION_INFO_V1( build_update_trigger_func_name );
 PG_FUNCTION_INFO_V1( build_update_trigger_name );
 PG_FUNCTION_INFO_V1( is_date_type );
 PG_FUNCTION_INFO_V1( is_attribute_nullable );
+PG_FUNCTION_INFO_V1( add_to_pathman_config );
 PG_FUNCTION_INFO_V1( debug_capture );
 
 
 static void on_partitions_created_internal(Oid partitioned_table, bool add_callbacks);
 static void on_partitions_updated_internal(Oid partitioned_table, bool add_callbacks);
 static void on_partitions_removed_internal(Oid partitioned_table, bool add_callbacks);
+
+
+static bool
+check_relation_exists(Oid relid)
+{
+	return get_rel_type_id(relid) != InvalidOid;
+}
 
 
 /*
@@ -295,7 +305,7 @@ get_range_by_idx(PG_FUNCTION_ARGS)
 	{
 		elog(ERROR, "Negative indices other than -1 (last partition) are not allowed");
 	}
-	else if (idx == -1 && PrelChildrenCount(prel) > 0)
+	else if (idx == -1)
 	{
 		idx = PrelLastChild(prel);
 	}
@@ -506,7 +516,7 @@ build_check_constraint_name_attnum(PG_FUNCTION_ARGS)
 	AttrNumber	attnum = PG_GETARG_INT16(1);
 	const char *result;
 
-	if (get_rel_type_id(relid) == InvalidOid)
+	if (!check_relation_exists(relid))
 		elog(ERROR, "Invalid relation %u", relid);
 
 	/* We explicitly do not support system attributes */
@@ -527,7 +537,7 @@ build_check_constraint_name_attname(PG_FUNCTION_ARGS)
 	AttrNumber	attnum = get_attnum(relid, text_to_cstring(attname));
 	const char *result;
 
-	if (get_rel_type_id(relid) == InvalidOid)
+	if (!check_relation_exists(relid))
 		elog(ERROR, "Invalid relation %u", relid);
 
 	if (attnum == InvalidAttrNumber)
@@ -547,7 +557,7 @@ build_update_trigger_func_name(PG_FUNCTION_ARGS)
 	const char *result;
 
 	/* Check that relation exists */
-	if (get_rel_type_id(relid) == InvalidOid)
+	if (!check_relation_exists(relid))
 		elog(ERROR, "Invalid relation %u", relid);
 
 	nspid = get_rel_namespace(relid);
@@ -566,13 +576,109 @@ build_update_trigger_name(PG_FUNCTION_ARGS)
 	const char *result; /* trigger's name can't be qualified */
 
 	/* Check that relation exists */
-	if (get_rel_type_id(relid) == InvalidOid)
+	if (!check_relation_exists(relid))
 		elog(ERROR, "Invalid relation %u", relid);
 
 	result = quote_identifier(psprintf("%s_upd_trig", get_rel_name(relid)));
 
 	PG_RETURN_TEXT_P(cstring_to_text(result));
 }
+
+
+/*
+ * Try to add previously partitioned table to PATHMAN_CONFIG.
+ */
+Datum
+add_to_pathman_config(PG_FUNCTION_ARGS)
+{
+	Oid					relid;
+	text			   *attname;
+	PartType			parttype;
+
+	Relation			pathman_config;
+	Datum				values[Natts_pathman_config];
+	bool				isnull[Natts_pathman_config];
+	HeapTuple			htup;
+	CatalogIndexState	indstate;
+
+	PathmanInitState	init_state;
+	MemoryContext		old_mcxt = CurrentMemoryContext;
+
+	if (PG_ARGISNULL(0))
+		elog(ERROR, "parent_relid should not be null");
+
+	if (PG_ARGISNULL(1))
+		elog(ERROR, "attname should not be null");
+
+	/* Read parameters */
+	relid = PG_GETARG_OID(0);
+	attname = PG_GETARG_TEXT_P(1);
+
+	/* Check that relation exists */
+	if (!check_relation_exists(relid))
+		elog(ERROR, "Invalid relation %u", relid);
+
+	if (get_attnum(relid, text_to_cstring(attname)) == InvalidAttrNumber)
+		elog(ERROR, "Relation \"%s\" has no column '%s'",
+			 get_rel_name_or_relid(relid), text_to_cstring(attname));
+
+	/* Select partitioning type using 'range_interval' */
+	parttype = PG_ARGISNULL(2) ? PT_HASH : PT_RANGE;
+
+	/*
+	 * Initialize columns (partrel, attname, parttype, range_interval).
+	 */
+	values[Anum_pathman_config_partrel - 1]			= ObjectIdGetDatum(relid);
+	isnull[Anum_pathman_config_partrel - 1]			= false;
+
+	values[Anum_pathman_config_attname - 1]			= PointerGetDatum(attname);
+	isnull[Anum_pathman_config_attname - 1]			= false;
+
+	values[Anum_pathman_config_parttype - 1]		= Int32GetDatum(parttype);
+	isnull[Anum_pathman_config_parttype - 1]		= false;
+
+	values[Anum_pathman_config_range_interval - 1]	= PG_GETARG_DATUM(2);
+	isnull[Anum_pathman_config_range_interval - 1]	= PG_ARGISNULL(2);
+
+	/* Insert new row into PATHMAN_CONFIG */
+	pathman_config = heap_open(get_pathman_config_relid(), RowExclusiveLock);
+	htup = heap_form_tuple(RelationGetDescr(pathman_config), values, isnull);
+	simple_heap_insert(pathman_config, htup);
+	indstate = CatalogOpenIndexes(pathman_config);
+	CatalogIndexInsert(indstate, htup);
+	CatalogCloseIndexes(indstate);
+	heap_close(pathman_config, RowExclusiveLock);
+
+	/* Now try to create a PartRelationInfo */
+	PG_TRY();
+	{
+		/* Some flags might change during refresh attempt */
+		save_pathman_init_state(&init_state);
+
+		refresh_pathman_relation_info(relid, parttype, text_to_cstring(attname));
+	}
+	PG_CATCH();
+	{
+		ErrorData *edata;
+
+		/* Switch to the original context & copy edata */
+		MemoryContextSwitchTo(old_mcxt);
+		edata = CopyErrorData();
+		FlushErrorState();
+
+		/* We have to restore all changed flags */
+		restore_pathman_init_state(&init_state);
+
+		/* Show error message */
+		elog(ERROR, "%s", edata->message);
+
+		FreeErrorData(edata);
+	}
+	PG_END_TRY();
+
+	PG_RETURN_BOOL(true);
+}
+
 
 /*
  * NOTE: used for DEBUG, set breakpoint here.

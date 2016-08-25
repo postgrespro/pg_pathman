@@ -15,14 +15,63 @@
 
 #include "postgres.h"
 #include "storage/lmgr.h"
-#include "utils/snapshot.h"
+#include "utils/guc.h"
 #include "utils/hsearch.h"
+#include "utils/snapshot.h"
 
 
-extern HTAB	   *partitioned_rels;
-extern HTAB	   *parent_cache;
-extern bool		initialization_needed;
+/*
+ * pg_pathman's initialization state structure.
+ */
+typedef struct
+{
+	bool 	pg_pathman_enable;		/* GUC variable implementation */
+	bool	initialization_needed;	/* do we need to perform init? */
+} PathmanInitState;
 
+
+extern HTAB				   *partitioned_rels;
+extern HTAB				   *parent_cache;
+
+/* pg_pathman's initialization state */
+extern PathmanInitState 	pg_pathman_init_state;
+
+
+/*
+ * Check if pg_pathman is initialized.
+ */
+#define IsPathmanInitialized()	( !pg_pathman_init_state.initialization_needed )
+
+/*
+ * Check if pg_pathman is enabled.
+ */
+#define IsPathmanEnabled()		( pg_pathman_init_state.pg_pathman_enable )
+
+/*
+ * Check if pg_pathman is initialized & enabled.
+ */
+#define IsPathmanReady()		( IsPathmanInitialized() && IsPathmanEnabled() )
+
+/*
+ * Emergency disable mechanism.
+ */
+#define DisablePathman() \
+	do { \
+		pg_pathman_init_state.pg_pathman_enable = false; \
+		pg_pathman_init_state.initialization_needed = true; \
+	} while (0)
+
+
+/*
+ * Save and restore PathmanInitState.
+ */
+void save_pathman_init_state(PathmanInitState *temp_init_state);
+void restore_pathman_init_state(const PathmanInitState *temp_init_state);
+
+/*
+ * Create main GUC variable.
+ */
+void init_main_pathman_toggle(void);
 
 Size estimate_pathman_shmem_size(void);
 void init_shmem_config(void);

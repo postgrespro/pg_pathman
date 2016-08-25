@@ -38,23 +38,27 @@
 #include "utils/snapmgr.h"
 
 
+/* Help user in case of emergency */
+#define INIT_ERROR_HINT "pg_pathman will be disabled to allow you to resolve this issue"
+
 /* Initial size of 'partitioned_rels' table */
 #define PART_RELS_SIZE	10
 #define CHILD_FACTOR	500
 
+
 /* Storage for PartRelationInfos */
-HTAB		   *partitioned_rels = NULL;
+HTAB			   *partitioned_rels = NULL;
 
 /* Storage for PartParentInfos */
-HTAB		   *parent_cache = NULL;
+HTAB			   *parent_cache = NULL;
 
-bool			initialization_needed = true;
-static bool		relcache_callback_needed = true;
+/* pg_pathman's init status */
+PathmanInitState 	pg_pathman_init_state;
 
-/* Help user in case of emergency */
-#define INIT_ERROR_HINT "pg_pathman will be disabled to allow you fix this"
+/* Shall we install new relcache callback? */
+static bool			relcache_callback_needed = true;
 
-
+/* Functions for various local caches */
 static bool init_pathman_relation_oids(void);
 static void fini_pathman_relation_oids(void);
 static void init_local_cache(void);
@@ -80,6 +84,41 @@ static bool read_opexpr_const(const OpExpr *opexpr,
 
 static int oid_cmp(const void *p1, const void *p2);
 
+
+/*
+ * Save and restore main init state.
+ */
+
+void
+save_pathman_init_state(PathmanInitState *temp_init_state)
+{
+	*temp_init_state = pg_pathman_init_state;
+}
+
+void
+restore_pathman_init_state(const PathmanInitState *temp_init_state)
+{
+	pg_pathman_init_state = *temp_init_state;
+}
+
+/*
+ * Create main GUC.
+ */
+void
+init_main_pathman_toggle(void)
+{
+	/* Main toggle, load_config() will enable it */
+	DefineCustomBoolVariable("pg_pathman.enable",
+							 "Enables pg_pathman's optimizations during the planner stage",
+							 NULL,
+							 &pg_pathman_init_state.pg_pathman_enable,
+							 true,
+							 PGC_USERSET,
+							 0,
+							 NULL,
+							 pg_pathman_enable_assign_hook,
+							 NULL);
+}
 
 /*
  * Create local PartRelationInfo cache & load pg_pathman's config.
@@ -111,7 +150,7 @@ load_config(void)
 	}
 
 	/* Mark pg_pathman as initialized */
-	initialization_needed = false;
+	pg_pathman_init_state.initialization_needed = false;
 
 	elog(DEBUG2, "pg_pathman's config has been loaded successfully [%u]", MyProcPid);
 
@@ -131,7 +170,7 @@ unload_config(void)
 	fini_local_cache();
 
 	/* Mark pg_pathman as uninitialized */
-	initialization_needed = true;
+	pg_pathman_init_state.initialization_needed = true;
 
 	elog(DEBUG2, "pg_pathman's config has been unloaded successfully [%u]", MyProcPid);
 }
@@ -539,7 +578,6 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 			heap_deform_tuple(htup, RelationGetDescr(rel), values, isnull);
 
 			/* Perform checks for non-NULL columns */
-			Assert(!isnull[Anum_pathman_config_id - 1]);
 			Assert(!isnull[Anum_pathman_config_partrel - 1]);
 			Assert(!isnull[Anum_pathman_config_attname - 1]);
 			Assert(!isnull[Anum_pathman_config_parttype - 1]);
