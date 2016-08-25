@@ -72,6 +72,15 @@ SELECT pg_catalog.pg_extension_config_dump('@extschema@.pathman_config_params', 
 CREATE OR REPLACE FUNCTION @extschema@.invalidate_relcache(relid OID)
 RETURNS VOID AS 'pg_pathman' LANGUAGE C STRICT;
 
+CREATE OR REPLACE FUNCTION @extschema@.partitions_count(relation REGCLASS)
+RETURNS INT AS
+$$
+BEGIN
+	RETURN count(*) FROM pg_inherits WHERE inhparent = relation;
+END
+$$
+LANGUAGE plpgsql;
+
 /* Include parent relation into query plan's for specified relation */
 CREATE OR REPLACE FUNCTION @extschema@.enable_parent(relation REGCLASS)
 RETURNS VOID AS

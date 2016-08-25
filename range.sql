@@ -59,6 +59,10 @@ BEGIN
 	p_attribute := lower(p_attribute);
 	PERFORM @extschema@.common_relation_checks(parent_relid, p_attribute);
 
+	IF p_count < 0 THEN
+		RAISE EXCEPTION 'Partitions count must not be less than zero';
+	END IF;
+
 	/* Try to determine partitions count if not set */
 	IF p_count IS NULL THEN
 		EXECUTE format('SELECT count(*), max(%s) FROM %s', p_attribute, parent_relid)
@@ -76,13 +80,19 @@ BEGIN
 		END LOOP;
 	END IF;
 
-	/* Check boundaries */
-	EXECUTE format('SELECT @extschema@.check_boundaries(''%s'', ''%s'', ''%s'', ''%s''::%s)',
-				   parent_relid,
-				   p_attribute,
-				   p_start_value,
-				   p_start_value + p_interval * p_count,
-				   pg_typeof(p_start_value));
+	/*
+	 * In case when user doesn't want to automatically create partitions
+	 * and specifies partition count as 0 then do not check boundaries
+	 */
+	IF p_count != 0 THEN
+		/* Check boundaries */
+		EXECUTE format('SELECT @extschema@.check_boundaries(''%s'', ''%s'', ''%s'', ''%s''::%s)',
+					   parent_relid,
+					   p_attribute,
+					   p_start_value,
+					   p_start_value + p_interval * p_count,
+					   pg_typeof(p_start_value));
+	END IF;
 
 	SELECT * INTO v_plain_schema, v_plain_relname
 	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
@@ -147,8 +157,8 @@ BEGIN
 	p_attribute := lower(p_attribute);
 	PERFORM @extschema@.common_relation_checks(parent_relid, p_attribute);
 
-	IF p_count <= 0 THEN
-		RAISE EXCEPTION 'Partitions count must be greater than zero';
+	IF p_count < 0 THEN
+		RAISE EXCEPTION 'Partitions count must not be less than zero';
 	END IF;
 
 	/* Try to determine partitions count if not set */
@@ -172,11 +182,17 @@ BEGIN
 		END LOOP;
 	END IF;
 
-	/* check boundaries */
-	PERFORM @extschema@.check_boundaries(parent_relid,
-										 p_attribute,
-										 p_start_value,
-										 p_start_value + p_interval * p_count);
+	/*
+	 * In case when user doesn't want to automatically create partitions
+	 * and specifies partition count as 0 then do not check boundaries
+	 */
+	IF p_count != 0 THEN
+		/* check boundaries */
+		PERFORM @extschema@.check_boundaries(parent_relid,
+											 p_attribute,
+											 p_start_value,
+											 p_start_value + p_interval * p_count);
+	END IF;
 
 	SELECT * INTO v_plain_schema, v_plain_relname
 	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
@@ -521,7 +537,8 @@ BEGIN
 	v_new_partition := @extschema@.create_single_range_partition(
 							@extschema@.get_schema_qualified_name(v_parent_relid),
 							p_value,
-							p_range[2]);
+							p_range[2],
+							partition_name);
 
 	/* Copy data */
 	v_cond := @extschema@.build_range_condition(v_attname, p_value, p_range[2]);
@@ -736,6 +753,10 @@ DECLARE
 	v_part_name	TEXT;
 
 BEGIN
+	IF @extschema@.partitions_count(parent_relid) = 0 THEN
+		RAISE EXCEPTION 'Cannot append to empty partitions set';
+	END IF;
+
 	p_range := @extschema@.get_range_by_idx(parent_relid, -1, 0);
 
 	IF @extschema@.is_date_type(p_atttype::regtype) THEN
@@ -825,6 +846,10 @@ DECLARE
 	v_part_name		TEXT;
 
 BEGIN
+	IF @extschema@.partitions_count(parent_relid) = 0 THEN
+		RAISE EXCEPTION 'Cannot prepend to empty partitions set';
+	END IF;
+
 	p_range := @extschema@.get_range_by_idx(parent_relid, 0, 0);
 
 	IF @extschema@.is_date_type(p_atttype::regtype) THEN
@@ -865,15 +890,15 @@ RETURNS TEXT AS
 $$
 DECLARE
 	v_part_name		TEXT;
-
 BEGIN
-	/* check range overlap */
-	IF @extschema@.check_overlap(parent_relid, p_start_value, p_end_value) THEN
-		RAISE EXCEPTION 'Specified range overlaps with existing partitions';
-	END IF;
-
 	IF p_start_value >= p_end_value THEN
 		RAISE EXCEPTION 'Failed to create partition: p_start_value is greater than p_end_value';
+	END IF;
+
+	/* check range overlap */
+	IF @extschema@.partitions_count(parent_relid) > 0
+	   AND @extschema@.check_overlap(parent_relid, p_start_value, p_end_value) THEN
+		RAISE EXCEPTION 'Specified range overlaps with existing partitions';
 	END IF;
 
 	/* Create new partition */

@@ -498,6 +498,7 @@ partition_data_bg_worker_main(Datum main_arg)
 		SPI_connect();
 		PushActiveSnapshot(GetTransactionSnapshot());
 
+		/* Do some preparation within the first iteration */
 		if (sql == NULL)
 		{
 			MemoryContext oldcontext;
@@ -530,10 +531,12 @@ partition_data_bg_worker_main(Datum main_arg)
 		}
 		PG_CATCH();
 		{
+			ErrorData *error;
 			EmitErrorReport();
+			error = CopyErrorData();
+			elog(LOG, "Worker error: %s", error->message);
 			FlushErrorState();
 
-			elog(WARNING, "Error #%u", failures_count);
 			/*
 			 * The most common exception we can catch here is a deadlock with
 			 * concurrent user queries. Check that attempts count doesn't exceed
@@ -543,7 +546,9 @@ partition_data_bg_worker_main(Datum main_arg)
 			{
 				pfree(sql);
 				args->status = WS_FREE;
-				elog(ERROR, "Failures count exceeded 100. Finishing...");
+				elog(LOG,
+					 "The concurrent partitioning worker exiting because the "
+					 "maximum attempts count exceeded. See the error message below");
 				exit(1);
 			}
 			failed = true;

@@ -472,6 +472,21 @@ CREATE TABLE test.range_rel_test2 (
 SELECT pathman.attach_range_partition('test.range_rel', 'test.range_rel_test2', '2013-01-01'::DATE, '2014-01-01'::DATE);
 
 /*
+ * Zero partitions count and adding partitions with specified name
+ */
+CREATE TABLE test.zero(
+	id		SERIAL PRIMARY KEY,
+	value	INT NOT NULL);
+INSERT INTO test.zero SELECT g, g FROM generate_series(1, 100) as g;
+SELECT pathman.create_range_partitions('test.zero', 'value', 50, 10, 0);
+SELECT pathman.append_range_partition('test.zero', 'test.zero_0');
+SELECT pathman.prepend_range_partition('test.zero', 'test.zero_1');
+SELECT pathman.add_range_partition('test.zero', 50, 70, 'test.zero_50');
+SELECT pathman.append_range_partition('test.zero', 'test.zero_appended');
+SELECT pathman.prepend_range_partition('test.zero', 'test.zero_prepended');
+SELECT pathman.split_range_partition('test.zero_50', 60, 'test.zero_60');
+
+/*
  * Check that altering table columns doesn't break trigger
  */
 ALTER TABLE test.hash_rel ADD COLUMN abc int;
