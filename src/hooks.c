@@ -227,7 +227,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 		rte->inh = true; /* we must restore 'inh' flag! */
 
 		children = PrelGetChildrenArray(prel);
-		ranges = list_make1_irange(make_irange(0, PrelChildrenCount(prel) - 1, false));
+		ranges = list_make1_irange(make_irange(0, PrelLastChild(prel), false));
 
 		/* Make wrappers over restrictions and collect final rangeset */
 		InitWalkerContext(&context, prel, NULL, false);

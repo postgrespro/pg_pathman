@@ -320,7 +320,7 @@ handle_modification_query(Query *parse)
 		return;
 
 	/* Parse syntax tree and extract partition ranges */
-	ranges = list_make1_irange(make_irange(0, PrelChildrenCount(prel) - 1, false));
+	ranges = list_make1_irange(make_irange(0, PrelLastChild(prel), false));
 	expr = (Expr *) eval_const_expressions(NULL, parse->jointree->quals);
 	if (!expr)
 		return;
@@ -680,7 +680,7 @@ walk_expr_tree(Expr *expr, WalkerContext *context)
 			result->orig = (const Node *) expr;
 			result->args = NIL;
 			result->rangeset = list_make1_irange(
-						make_irange(0, PrelChildrenCount(context->prel) - 1, true));
+						make_irange(0, PrelLastChild(context->prel), true));
 			result->paramsel = 1.0;
 			return result;
 	}
@@ -839,7 +839,7 @@ create_partitions_internal(Oid relid, Datum value, Oid value_type)
 
 			/* Read max & min range values from PartRelationInfo */
 			min_rvalue = prel->ranges[0].min;
-			max_rvalue = prel->ranges[PrelChildrenCount(prel) - 1].max;
+			max_rvalue = prel->ranges[PrelLastChild(prel)].max;
 
 			/* If this is a *date type*, cast 'range_interval' to INTERVAL */
 			if (is_date_type_internal(value_type))
@@ -1183,9 +1183,7 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 			elog(ERROR, "Unknown partitioning type %u", prel->parttype);
 	}
 
-	result->rangeset = list_make1_irange(make_irange(0,
-													 PrelChildrenCount(prel) - 1,
-													 true));
+	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), true));
 	result->paramsel = 1.0;
 }
 
@@ -1211,9 +1209,7 @@ handle_binary_opexpr_param(const PartRelationInfo *prel,
 	tce = lookup_type_cache(vartype, TYPECACHE_BTREE_OPFAMILY);
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
 
-	result->rangeset = list_make1_irange(make_irange(0,
-													 PrelChildrenCount(prel) - 1,
-													 true));
+	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), true));
 
 	if (strategy == BTEqualStrategyNumber)
 	{
@@ -1311,7 +1307,7 @@ handle_const(const Const *c, WalkerContext *context)
 	if (!context->for_insert)
 	{
 		result->rangeset = list_make1_irange(make_irange(0,
-														 PrelChildrenCount(prel) - 1,
+														 PrelLastChild(prel),
 														 true));
 		result->paramsel = 1.0;
 
@@ -1382,9 +1378,7 @@ handle_opexpr(const OpExpr *expr, WalkerContext *context)
 		}
 	}
 
-	result->rangeset = list_make1_irange(make_irange(0,
-													 PrelChildrenCount(prel) - 1,
-													 true));
+	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), true));
 	result->paramsel = 1.0;
 	return result;
 }
@@ -1456,7 +1450,7 @@ handle_boolexpr(const BoolExpr *expr, WalkerContext *context)
 
 	if (expr->boolop == AND_EXPR)
 		result->rangeset = list_make1_irange(make_irange(0,
-														 PrelChildrenCount(prel) - 1,
+														 PrelLastChild(prel),
 														 false));
 	else
 		result->rangeset = NIL;
@@ -1479,7 +1473,7 @@ handle_boolexpr(const BoolExpr *expr, WalkerContext *context)
 				break;
 			default:
 				result->rangeset = list_make1_irange(make_irange(0,
-																 PrelChildrenCount(prel) - 1,
+																 PrelLastChild(prel),
 																 false));
 				break;
 		}
@@ -1581,9 +1575,7 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 		result->paramsel = DEFAULT_INEQ_SEL;
 
 handle_arrexpr_return:
-	result->rangeset = list_make1_irange(make_irange(0,
-													 PrelChildrenCount(prel) - 1,
-													 true));
+	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), true));
 	return result;
 }
 

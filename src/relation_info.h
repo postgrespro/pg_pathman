@@ -107,13 +107,25 @@ typedef enum
  * PartRelationInfo field access macros.
  */
 
-#define PrelGetChildrenArray(prel) ( (prel)->children )
+#define PrelGetChildrenArray(prel)	( (prel)->children )
 
-#define PrelGetRangesArray(prel) ( (prel)->ranges )
+#define PrelGetRangesArray(prel)	( (prel)->ranges )
 
-#define PrelChildrenCount(prel) ( (prel)->children_count )
+#define PrelChildrenCount(prel)		( (prel)->children_count )
 
-#define PrelIsValid(prel) ( (prel) && (prel)->valid )
+#define PrelIsValid(prel)			( (prel) && (prel)->valid )
+
+inline static uint32
+PrelLastChild(const PartRelationInfo *prel)
+{
+	Assert(PrelIsValid(prel));
+
+	if (PrelChildrenCount(prel) == 0)
+		elog(ERROR, "pg_pathman's cache entry for relation %u has 0 children",
+			 prel->key);
+
+	return PrelChildrenCount(prel) - 1; /* last partition */
+}
 
 
 const PartRelationInfo *refresh_pathman_relation_info(Oid relid,

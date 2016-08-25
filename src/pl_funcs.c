@@ -11,6 +11,7 @@
 #include "pathman.h"
 #include "init.h"
 #include "utils.h"
+#include "relation_info.h"
 
 #include "access/htup_details.h"
 #include "access/nbtree.h"
@@ -289,16 +290,22 @@ get_range_by_idx(PG_FUNCTION_ARGS)
 	prel = get_pathman_relation_info(parent_oid);
 	shout_if_prel_is_invalid(parent_oid, prel, PT_RANGE);
 
-	if (((uint32) abs(idx)) >= PrelChildrenCount(prel))
+	/* Now we have to deal with 'idx' */
+	if (idx < -1)
+	{
+		elog(ERROR, "Negative indices other than -1 (last partition) are not allowed");
+	}
+	else if (idx == -1 && PrelChildrenCount(prel) > 0)
+	{
+		idx = PrelLastChild(prel);
+	}
+	else if (((uint32) abs(idx)) >= PrelChildrenCount(prel))
+	{
 		elog(ERROR, "Partition #%d does not exist (total amount is %u)",
 			 idx, PrelChildrenCount(prel));
+	}
 
 	ranges = PrelGetRangesArray(prel);
-
-	if (idx == -1)
-		idx = PrelChildrenCount(prel) - 1;
-	else if (idx < -1)
-		elog(ERROR, "Negative indices other than -1 (last partition) are not allowed");
 
 	elems[0] = ranges[idx].min;
 	elems[1] = ranges[idx].max;
@@ -343,7 +350,7 @@ get_max_range_value(PG_FUNCTION_ARGS)
 
 	ranges = PrelGetRangesArray(prel);
 
-	PG_RETURN_DATUM(ranges[PrelChildrenCount(prel) - 1].max);
+	PG_RETURN_DATUM(ranges[PrelLastChild(prel)].max);
 }
 
 /*
