@@ -13,7 +13,7 @@ import subprocess
 import time
 
 
-class ConcurrentTest(unittest.TestCase):
+class PartitioningTests(unittest.TestCase):
 
 	def setUp(self):
 		self.setup_cmd = [
@@ -48,7 +48,7 @@ class ConcurrentTest(unittest.TestCase):
 		node.start()
 		self.init_test_data(node)
 
-		node.psql('postgres', 'select partition_data_worker(\'abc\')')
+		node.psql('postgres', 'select partition_data_concurrent(\'abc\')')
 
 		while True:
 			# update some rows to check for deadlocks

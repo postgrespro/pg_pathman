@@ -167,7 +167,7 @@ RETURNS TABLE (
 CREATE OR REPLACE VIEW @extschema@.pathman_active_workers
 AS SELECT * FROM @extschema@.active_workers();
 
-CREATE OR REPLACE FUNCTION @extschema@.partition_data_worker(relation regclass)
+CREATE OR REPLACE FUNCTION @extschema@.partition_data_concurrent(relation regclass)
 RETURNS VOID AS 'pg_pathman' LANGUAGE C STRICT;
 
 CREATE OR REPLACE FUNCTION @extschema@.stop_worker(relation regclass)

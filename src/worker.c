@@ -37,7 +37,7 @@ static void create_partitions_bg_worker_main(Datum main_arg);
 static void partition_data_bg_worker_main(Datum main_arg);
 static void handle_sigterm(SIGNAL_ARGS);
 
-PG_FUNCTION_INFO_V1( partition_data_worker );
+PG_FUNCTION_INFO_V1( partition_data_concurrent );
 PG_FUNCTION_INFO_V1( active_workers );
 PG_FUNCTION_INFO_V1( stop_worker );
 
@@ -374,7 +374,7 @@ create_partitions_bg_worker_main(Datum main_arg)
  * immediately
  */
 Datum
-partition_data_worker( PG_FUNCTION_ARGS )
+partition_data_concurrent( PG_FUNCTION_ARGS )
 {
 	Oid		relid = PG_GETARG_OID(0);
 	int		empty_slot_idx = -1;
