@@ -74,6 +74,8 @@ refresh_pathman_relation_info(Oid relid,
 							i;
 	bool					found;
 	PartRelationInfo	   *prel;
+	Datum					param_values[Natts_pathman_config_params];
+	bool					param_isnull[Natts_pathman_config_params];
 
 	prel = (PartRelationInfo *) hash_search(partitioned_rels,
 											(const void *) &relid,
@@ -158,10 +160,13 @@ refresh_pathman_relation_info(Oid relid,
 	pfree(prel_children);
 
 	/*
-	 * Read additional parameter ('enable_parent' is the only one at
-	 * the moment)
+	 * Read additional parameters ('enable_parent' and 'auto' at the moment)
 	 */
-	prel->enable_parent = read_enable_parent_parameter(relid);
+	if (read_pathman_params(relid, param_values, param_isnull))
+	{
+		prel->enable_parent = param_values[Anum_pathman_config_params_enable_parent - 1];
+		prel->auto_partition = param_values[Anum_pathman_config_params_auto - 1];
+	}
 
 	/* We've successfully built a cache entry */
 	prel->valid = true;

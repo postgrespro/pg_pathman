@@ -570,7 +570,7 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
  * Return 'enable_parent' parameter of relation
  */
 bool
-read_enable_parent_parameter(Oid relid)
+read_pathman_params(Oid relid, Datum *values, bool *isnull)
 {
 	Relation		rel;
 	HeapScanDesc	scan;
@@ -590,12 +590,9 @@ read_enable_parent_parameter(Oid relid)
 
 	if ((htup = heap_getnext(scan, ForwardScanDirection)) != NULL)
 	{
-		Datum	values[Natts_pathman_config_params];
-		bool	isnull[Natts_pathman_config_params];
-
 		/* Extract data if necessary */
 		heap_deform_tuple(htup, RelationGetDescr(rel), values, isnull);
-		result = values[Anum_pathman_config_params_enable_parent - 1];
+		result = true;
 	}
 
 	/* Clean resources */

@@ -57,10 +57,10 @@
  * Definitions for the "pathman_config_params" table
  */
 #define PATHMAN_CONFIG_PARAMS						"pathman_config_params"
-// #define PATHMAN_CONFIG_PARAMS_INDEX					"i_pathman_config_params"
-#define Natts_pathman_config_params					2
+#define Natts_pathman_config_params					3
 #define Anum_pathman_config_params_partrel			1	/* primary key */
 #define Anum_pathman_config_params_enable_parent	2	/* include parent into plan */
+#define Anum_pathman_config_params_auto				3	/* auto partitions creation */
 
 /*
  * Cache current PATHMAN_CONFIG relid (set during load_config()).

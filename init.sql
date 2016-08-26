@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
 
 CREATE TABLE IF NOT EXISTS @extschema@.pathman_config_params (
 	partrel			REGCLASS NOT NULL,
-	enable_parent	BOOLEAN NOT NULL DEFAULT TRUE
+	enable_parent	BOOLEAN NOT NULL DEFAULT TRUE,
+	auto			BOOLEAN NOT NULL DEFAULT TRUE
 );
 CREATE UNIQUE INDEX i_pathman_config_params
 ON @extschema@.pathman_config_params(partrel);
@@ -81,32 +82,73 @@ END
 $$
 LANGUAGE plpgsql;
 
-/* Include parent relation into query plan's for specified relation */
-CREATE OR REPLACE FUNCTION @extschema@.enable_parent(relation REGCLASS)
+/*
+ * Set additional param
+ */
+CREATE OR REPLACE FUNCTION @extschema@.pathman_set_param(
+	relation	REGCLASS,
+	param		TEXT,
+	value		BOOLEAN)
 RETURNS VOID AS
 $$
 BEGIN
-	INSERT INTO @extschema@.pathman_config_params values (relation, True)
-	ON CONFLICT (partrel) DO
-	UPDATE SET enable_parent = True;
-
-	-- PERFORM @extschema@.invalidate_relcache(relation::oid);
-	-- PERFORM @extschema@.on_enable_parent(relation::oid);
+	EXECUTE format(
+		'INSERT INTO @extschema@.pathman_config_params (partrel, %1$s)
+		VALUES ($1, $2)
+		ON CONFLICT (partrel) DO
+		UPDATE SET %1$s = $2',
+		param)
+	USING
+		relation,
+		value;
 END
 $$
 LANGUAGE plpgsql;
 
-/* Do not include parent relation into query plan's for specified relation */
+/*
+ * Include parent relation into query plan's for specified relation
+ */
+CREATE OR REPLACE FUNCTION @extschema@.enable_parent(relation REGCLASS)
+RETURNS VOID AS
+$$
+BEGIN
+	PERFORM @extschema@.pathman_set_param(relation, 'enable_parent', True);
+END
+$$ 
+LANGUAGE plpgsql;
+
+/*
+ * Do not include parent relation into query plan's for specified relation
+ */
 CREATE OR REPLACE FUNCTION @extschema@.disable_parent(relation REGCLASS)
 RETURNS VOID AS
 $$
 BEGIN
-	INSERT INTO @extschema@.pathman_config_params values (relation, False)
-	ON CONFLICT (partrel) DO
-	UPDATE SET enable_parent = False;
+	PERFORM @extschema@.pathman_set_param(relation, 'enable_parent', False);
+END
+$$
+LANGUAGE plpgsql;
 
-	-- PERFORM @extschema@.invalidate_relcache(relation::oid);
-	-- PERFORM @extschema@.on_disable_parent(relation::oid);
+/*
+ * Enable auto partition creation
+ */
+CREATE OR REPLACE FUNCTION @extschema@.enable_auto(relation REGCLASS)
+RETURNS VOID AS
+$$
+BEGIN
+	PERFORM @extschema@.pathman_set_param(relation, 'auto', True);
+END
+$$
+LANGUAGE plpgsql;
+
+/*
+ * Disable auto partition creation
+ */
+CREATE OR REPLACE FUNCTION @extschema@.disable_auto(relation REGCLASS)
+RETURNS VOID AS
+$$
+BEGIN
+	PERFORM @extschema@.pathman_set_param(relation, 'auto', False);
 END
 $$
 LANGUAGE plpgsql;

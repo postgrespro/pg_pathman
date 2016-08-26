@@ -48,6 +48,7 @@ typedef struct
 	Oid				key;			/* partitioned table's Oid */
 	bool			valid;			/* is this entry valid? */
 	bool			enable_parent;	/* include parent to the plan */
+	bool			auto_partition; /* auto partition creation */
 
 	uint32			children_count;
 	Oid			   *children;		/* Oids of child partitions */

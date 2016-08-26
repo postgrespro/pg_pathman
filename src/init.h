@@ -47,6 +47,8 @@ bool pathman_config_contains_relation(Oid relid,
 									  bool *isnull,
 									  TransactionId *xmin);
 
-bool read_enable_parent_parameter(Oid relid);
+bool read_pathman_params(Oid relid,
+						 Datum *values,
+						 bool *isnull);
 
 #endif

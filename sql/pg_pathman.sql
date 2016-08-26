@@ -485,6 +485,7 @@ SELECT pathman.add_range_partition('test.zero', 50, 70, 'test.zero_50');
 SELECT pathman.append_range_partition('test.zero', 'test.zero_appended');
 SELECT pathman.prepend_range_partition('test.zero', 'test.zero_prepended');
 SELECT pathman.split_range_partition('test.zero_50', 60, 'test.zero_60');
+DROP TABLE test.zero CASCADE;
 
 /*
  * Check that altering table columns doesn't break trigger
