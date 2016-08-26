@@ -3,7 +3,7 @@
 MODULE_big = pg_pathman
 OBJS = src/init.o src/relation_info.o src/utils.o src/partition_filter.o src/runtimeappend.o \
 	src/runtime_merge_append.o src/pg_pathman.o src/dsm_array.o src/rangeset.o src/pl_funcs.o \
-	src/worker.o src/hooks.o src/nodes_common.o $(WIN32RES)
+	src/worker.o src/hooks.o src/nodes_common.o src/xact_handling.o $(WIN32RES)
 
 EXTENSION = pg_pathman
 EXTVERSION = 0.1

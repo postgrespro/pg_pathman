@@ -12,6 +12,7 @@
 #include "init.h"
 #include "utils.h"
 #include "relation_info.h"
+#include "xact_handling.h"
 
 #include "catalog/indexing.h"
 #include "commands/sequence.h"
@@ -48,6 +49,7 @@ PG_FUNCTION_INFO_V1( build_update_trigger_name );
 PG_FUNCTION_INFO_V1( is_date_type );
 PG_FUNCTION_INFO_V1( is_attribute_nullable );
 PG_FUNCTION_INFO_V1( add_to_pathman_config );
+PG_FUNCTION_INFO_V1( lock_partitioned_relation );
 PG_FUNCTION_INFO_V1( debug_capture );
 
 
@@ -211,29 +213,10 @@ find_or_create_range_partition(PG_FUNCTION_ARGS)
 		PG_RETURN_NULL();
 	else
 	{
-		Oid child_oid = InvalidOid;
+		Oid	child_oid = create_partitions(parent_oid, value, value_type);
 
-		/* FIXME: useless double-checked lock (no new data) */
-		LWLockAcquire(pmstate->load_config_lock, LW_EXCLUSIVE);
-		LWLockAcquire(pmstate->edit_partitions_lock, LW_EXCLUSIVE);
-
-		/*
-		 * Check if someone else has already created partition.
-		 */
-		search_state = search_range_partition_eq(value, &cmp_func, prel,
-												 &found_rentry);
-		if (search_state == SEARCH_RANGEREL_FOUND)
-		{
-			LWLockRelease(pmstate->load_config_lock);
-			LWLockRelease(pmstate->edit_partitions_lock);
-
-			PG_RETURN_OID(found_rentry.child_oid);
-		}
-
-		child_oid = create_partitions(parent_oid, value, value_type);
-
-		LWLockRelease(pmstate->load_config_lock);
-		LWLockRelease(pmstate->edit_partitions_lock);
+		/* get_pathman_relation_info() will refresh this entry */
+		invalidate_pathman_relation_info(parent_oid, NULL);
 
 		PG_RETURN_OID(child_oid);
 	}
@@ -677,6 +660,21 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	PG_END_TRY();
 
 	PG_RETURN_BOOL(true);
+}
+
+
+/*
+ * Acquire appropriate lock on a partitioned relation.
+ */
+Datum
+lock_partitioned_relation(PG_FUNCTION_ARGS)
+{
+	Oid			relid = PG_GETARG_OID(0);
+
+	/* Lock partitioned relation till transaction's end */
+	xact_lock_partitioned_rel(relid);
+
+	PG_RETURN_VOID();
 }
 
 

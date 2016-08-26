@@ -285,10 +285,8 @@ init_shmem_config(void)
 		 */
 		if (!IsUnderPostmaster)
 		{
-			/* Initialize locks */
-			pmstate->load_config_lock		= LWLockAssign();
-			pmstate->dsm_init_lock			= LWLockAssign();
-			pmstate->edit_partitions_lock	= LWLockAssign();
+			/* NOTE: dsm_array is redundant, hence the commented code */
+			/* pmstate->dsm_init_lock = LWLockAssign(); */
 		}
 	}
 }

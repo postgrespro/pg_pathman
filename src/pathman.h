@@ -69,9 +69,7 @@ Oid get_pathman_config_relid(void);
  */
 typedef struct PathmanState
 {
-	LWLock		   *dsm_init_lock,
-				   *load_config_lock,
-				   *edit_partitions_lock;
+	LWLock		   *dsm_init_lock;	/* unused */
 } PathmanState;
 
 

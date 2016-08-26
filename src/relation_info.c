@@ -11,6 +11,7 @@
 #include "relation_info.h"
 #include "init.h"
 #include "utils.h"
+#include "xact_handling.h"
 
 #include "access/htup_details.h"
 #include "access/xact.h"
@@ -236,6 +237,22 @@ get_pathman_relation_info(Oid relid)
 	elog(DEBUG2,
 		 "Fetching %s record for relation %u from pg_pathman's cache [%u]",
 		 (prel ? "live" : "NULL"), relid, MyProcPid);
+
+	return prel;
+}
+
+/* Acquire lock on a table and try to get PartRelationInfo */
+const PartRelationInfo *
+get_pathman_relation_info_after_lock(Oid relid, bool unlock_if_not_found)
+{
+	const PartRelationInfo *prel;
+
+	/* Restrict concurrent partition creation (it's dangerous) */
+	xact_lock_partitioned_rel(relid);
+
+	prel = get_pathman_relation_info(relid);
+	if (!prel && unlock_if_not_found)
+		xact_unlock_partitioned_rel(relid);
 
 	return prel;
 }

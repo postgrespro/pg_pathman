@@ -317,13 +317,16 @@ SET pg_pathman.enable_partitionfilter = off;
 
 
 
+/*
+ * Create DDL trigger to call pathman_ddl_trigger_func().
+ */
 CREATE EVENT TRIGGER pathman_ddl_trigger
 ON sql_drop
 EXECUTE PROCEDURE @extschema@.pathman_ddl_trigger_func();
 
 
 /*
- * Attach partitioned table
+ * Attach a previously partitioned table
  */
 CREATE OR REPLACE FUNCTION @extschema@.add_to_pathman_config(
 	parent_relid	REGCLASS,
@@ -357,14 +360,6 @@ RETURNS REGCLASS AS 'pg_pathman', 'get_parent_of_partition_pl'
 LANGUAGE C STRICT;
 
 /*
- * Check if regclass is date or timestamp
- */
-CREATE OR REPLACE FUNCTION @extschema@.is_date_type(
-	typid	REGTYPE)
-RETURNS BOOLEAN AS 'pg_pathman', 'is_date_type'
-LANGUAGE C STRICT;
-
-/*
  * Checks if attribute is nullable
  */
 CREATE OR REPLACE FUNCTION @extschema@.is_attribute_nullable(
@@ -373,11 +368,26 @@ RETURNS BOOLEAN AS 'pg_pathman', 'is_attribute_nullable'
 LANGUAGE C STRICT;
 
 /*
+ * Check if regclass is date or timestamp
+ */
+CREATE OR REPLACE FUNCTION @extschema@.is_date_type(
+	typid	REGTYPE)
+RETURNS BOOLEAN AS 'pg_pathman', 'is_date_type'
+LANGUAGE C STRICT;
+
+/*
  * Returns attribute type name for relation
  */
 CREATE OR REPLACE FUNCTION @extschema@.get_attribute_type_name(
 	REGCLASS, TEXT)
 RETURNS TEXT AS 'pg_pathman', 'get_attribute_type_name'
+LANGUAGE C STRICT;
+
+/*
+ * Get parent of pg_pathman's partition.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_parent_of_partition(REGCLASS)
+RETURNS REGCLASS AS 'pg_pathman', 'get_parent_of_partition_pl'
 LANGUAGE C STRICT;
 
 /*
@@ -405,6 +415,16 @@ CREATE OR REPLACE FUNCTION @extschema@.build_update_trigger_func_name(
 	REGCLASS)
 RETURNS TEXT AS 'pg_pathman', 'build_update_trigger_func_name'
 LANGUAGE C STRICT;
+
+
+/*
+ * Lock partitioned relation to restrict concurrent modification of partitioning scheme.
+ */
+ CREATE OR REPLACE FUNCTION @extschema@.lock_partitioned_relation(
+	 REGCLASS)
+ RETURNS VOID AS 'pg_pathman', 'lock_partitioned_relation'
+ LANGUAGE C STRICT;
+
 
 /*
  * DEBUG: Place this inside some plpgsql fuction and set breakpoint.

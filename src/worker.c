@@ -37,6 +37,8 @@ static const char *create_partitions_bgw = "CreatePartitionsWorker";
  */
 typedef struct
 {
+	Oid		userid;		/* connect as a specified user */
+
 	Oid		result;		/* target partition */
 	Oid		dbid;
 	Oid		partitioned_table;
@@ -135,6 +137,9 @@ create_partitions_bg_worker_segment(Oid relid, Datum value, Oid value_type)
 
 	/* Initialize BGW args */
 	args = (PartitionArgs *) dsm_segment_address(segment);
+
+	args->userid = GetAuthenticatedUserId();
+
 	args->result = InvalidOid;
 	args->dbid = MyDatabaseId;
 	args->partitioned_table = relid;
@@ -256,6 +261,9 @@ bg_worker_main(Datum main_arg)
 	PartitionArgs   *args;
 	Datum			value;
 
+	/* FIXME: add signal handler */
+	BackgroundWorkerUnblockSignals();
+
 	/* Create resource owner */
 	CurrentResourceOwner = ResourceOwnerCreate(NULL, create_partitions_bgw);
 
@@ -270,8 +278,9 @@ bg_worker_main(Datum main_arg)
 	args = dsm_segment_address(segment);
 
 	/* Establish connection and start transaction */
-	BackgroundWorkerInitializeConnectionByOid(args->dbid, InvalidOid);
+	BackgroundWorkerInitializeConnectionByOid(args->dbid, args->userid);
 
+	/* Start new transaction (syscache access etc.) */
 	StartTransactionCommand();
 
 	/* Initialize pg_pathman's local config */
@@ -283,17 +292,19 @@ bg_worker_main(Datum main_arg)
 							 args->value_byval,
 							 (const void *) args->value);
 
+/* Print 'arg->value' for debug purposes */
 #ifdef USE_ASSERT_CHECKING
 	elog(LOG, "%s: arg->value is '%s' [%u]",
 		 create_partitions_bgw,
 		 DebugPrintDatum(value, args->value_type), MyProcPid);
 #endif
 
-	/* Create partitions */
+	/* Create partitions and save the Oid of the last one */
 	args->result = create_partitions_internal(args->partitioned_table,
 											  value, /* unpacked Datum */
 											  args->value_type);
 
+	/* Finish transaction in an appropriate way */
 	if (args->result == InvalidOid)
 		AbortCurrentTransaction();
 	else
