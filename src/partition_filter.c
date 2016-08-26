@@ -204,12 +204,20 @@ partition_filter_exec(CustomScanState *node)
 			elog(ERROR, "PartitionFilter selected more than one partition");
 		else if (nparts == 0)
 		{
-			selected_partid = create_partitions(state->partitioned_table,
-												state->temp_const.constvalue,
-												state->temp_const.consttype);
+			if (prel->auto_partition)
+			{
+				selected_partid = create_partitions(state->partitioned_table,
+													state->temp_const.constvalue,
+													state->temp_const.consttype);
 
-			/* get_pathman_relation_info() will refresh this entry */
-			invalidate_pathman_relation_info(state->partitioned_table, NULL);
+				/* get_pathman_relation_info() will refresh this entry */
+				invalidate_pathman_relation_info(state->partitioned_table, NULL);
+			}
+			else
+				elog(ERROR,
+					 "There is no suitable partition for key '%s'",
+					 datum_to_cstring(state->temp_const.constvalue,
+					 				  state->temp_const.consttype));
 		}
 		else
 			selected_partid = parts[0];

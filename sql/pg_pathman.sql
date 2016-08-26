@@ -525,6 +525,11 @@ SELECT * FROM test.range_rel WHERE dt = '2014-12-15';
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt = '2015-03-15';
 SELECT * FROM test.range_rel WHERE dt = '2015-03-15';
 
+SELECT pathman.disable_auto('test.range_rel');
+INSERT INTO test.range_rel (dt) VALUES ('2015-06-01');
+SELECT pathman.enable_auto('test.range_rel');
+INSERT INTO test.range_rel (dt) VALUES ('2015-06-01');
+
 DROP TABLE test.range_rel CASCADE;
 SELECT partrel, attname, parttype, range_interval FROM pathman.pathman_config;
 

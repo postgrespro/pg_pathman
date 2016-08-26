@@ -1256,8 +1256,23 @@ SELECT * FROM test.range_rel WHERE dt = '2015-03-15';
  74 | Sun Mar 15 00:00:00 2015
 (1 row)
 
+SELECT pathman.disable_auto('test.range_rel');
+ disable_auto 
+--------------
+ 
+(1 row)
+
+INSERT INTO test.range_rel (dt) VALUES ('2015-06-01');
+ERROR:  There is no suitable partition for key 'Mon Jun 01 00:00:00 2015'
+SELECT pathman.enable_auto('test.range_rel');
+ enable_auto 
+-------------
+ 
+(1 row)
+
+INSERT INTO test.range_rel (dt) VALUES ('2015-06-01');
 DROP TABLE test.range_rel CASCADE;
-NOTICE:  drop cascades to 16 other objects
+NOTICE:  drop cascades to 20 other objects
 SELECT partrel, attname, parttype, range_interval FROM pathman.pathman_config;
  partrel | attname | parttype | range_interval 
 ---------+---------+----------+----------------
