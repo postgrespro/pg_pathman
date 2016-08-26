@@ -238,6 +238,7 @@ partition_filter_end(CustomScanState *node)
 	hash_seq_init(&stat, state->result_rels_table);
 	while ((rri_handle = (ResultRelInfoHolder *) hash_seq_search(&stat)) != NULL)
 	{
+		/* FIXME: add ResultRelInfos to estate->es_result_relations to fix triggers */
 		ExecCloseIndices(rri_handle->resultRelInfo);
 		heap_close(rri_handle->resultRelInfo->ri_RelationDesc,
 				   RowExclusiveLock);
