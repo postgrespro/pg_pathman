@@ -64,9 +64,10 @@ Done! Now it's time to setup your partitioning schemes.
 ```plpgsql
 create_hash_partitions(relation         REGCLASS,
                        attribute        TEXT,
-                       partitions_count INTEGER)
+                       partitions_count INTEGER,
+                       partition_name TEXT DEFAULT NULL)
 ```
-Performs HASH partitioning for `relation` by integer key `attribute`. Creates `partitions_count` partitions and trigger on INSERT. All the data will be automatically copied from the parent to partitions.
+Performs HASH partitioning for `relation` by integer key `attribute`. The `partitions_count` parameter specifies the number of partitions to create; it cannot be changed afterwards. If `partition_data` is `true` then all the data will be automatically copied from the parent table to partitions. Note that data migration may took a while to finish and the table will be locked until transaction commits. See `partition_data_concurrent()` for a lock-free way to migrate data.
 
 ```plpgsql
 create_range_partitions(relation       REGCLASS,
@@ -83,7 +84,7 @@ create_range_partitions(relation       TEXT,
                         count          INTEGER DEFAULT NULL,
                         partition_data BOOLEAN DEFAULT true)
 ```
-Performs RANGE partitioning for `relation` by partitioning key `attribute`. `start_value` argument specifies initial value, `interval` sets the range of values in a single partition, `count` is the number of premade partitions (if not set then pathman tries to determine it based on attribute values). If `partition_data` is `true` then all the data will be automatically copied from the parent table to partitions. Note that data migration may took a while to finish and the table will be locked until transaction commits. See `partition_data_concurrent()` for a lock-free way to migrate data.
+Performs RANGE partitioning for `relation` by partitioning key `attribute`. `start_value` argument specifies initial value, `interval` sets the range of values in a single partition, `count` is the number of premade partitions (if not set then pathman tries to determine it based on attribute values).
 
 ```plpgsql
 create_partitions_from_range(relation       REGCLASS,
@@ -123,7 +124,7 @@ Same as above, but for a RANGE-partitioned table.
 ```plpgsql
 split_range_partition(partition      REGCLASS,
                       value          ANYELEMENT,
-                      partition_name TEXT DEFAULT NULL)
+                      partition_name TEXT DEFAULT NULL,)
 ```
 Split RANGE `partition` in two by `value`.
 
