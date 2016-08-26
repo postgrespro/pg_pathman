@@ -38,21 +38,27 @@
 #include "utils/snapmgr.h"
 
 
+/* Help user in case of emergency */
+#define INIT_ERROR_HINT "pg_pathman will be disabled to allow you to resolve this issue"
+
 /* Initial size of 'partitioned_rels' table */
 #define PART_RELS_SIZE	10
 #define CHILD_FACTOR	500
 
 
 /* Storage for PartRelationInfos */
-HTAB		   *partitioned_rels = NULL;
+HTAB			   *partitioned_rels = NULL;
 
 /* Storage for PartParentInfos */
-HTAB		   *parent_cache = NULL;
+HTAB			   *parent_cache = NULL;
 
-bool			initialization_needed = true;
-static bool		relcache_callback_needed = true;
+/* pg_pathman's init status */
+PathmanInitState 	pg_pathman_init_state;
 
+/* Shall we install new relcache callback? */
+static bool			relcache_callback_needed = true;
 
+/* Functions for various local caches */
 static bool init_pathman_relation_oids(void);
 static void fini_pathman_relation_oids(void);
 static void init_local_cache(void);
@@ -78,6 +84,41 @@ static bool read_opexpr_const(const OpExpr *opexpr,
 
 static int oid_cmp(const void *p1, const void *p2);
 
+
+/*
+ * Save and restore main init state.
+ */
+
+void
+save_pathman_init_state(PathmanInitState *temp_init_state)
+{
+	*temp_init_state = pg_pathman_init_state;
+}
+
+void
+restore_pathman_init_state(const PathmanInitState *temp_init_state)
+{
+	pg_pathman_init_state = *temp_init_state;
+}
+
+/*
+ * Create main GUC.
+ */
+void
+init_main_pathman_toggle(void)
+{
+	/* Main toggle, load_config() will enable it */
+	DefineCustomBoolVariable("pg_pathman.enable",
+							 "Enables pg_pathman's optimizations during the planner stage",
+							 NULL,
+							 &pg_pathman_init_state.pg_pathman_enable,
+							 true,
+							 PGC_USERSET,
+							 0,
+							 NULL,
+							 pg_pathman_enable_assign_hook,
+							 NULL);
+}
 
 /*
  * Create local PartRelationInfo cache & load pg_pathman's config.
@@ -109,7 +150,7 @@ load_config(void)
 	}
 
 	/* Mark pg_pathman as initialized */
-	initialization_needed = false;
+	pg_pathman_init_state.initialization_needed = false;
 
 	elog(DEBUG2, "pg_pathman's config has been loaded successfully [%u]", MyProcPid);
 
@@ -129,7 +170,7 @@ unload_config(void)
 	fini_local_cache();
 
 	/* Mark pg_pathman as uninitialized */
-	initialization_needed = true;
+	pg_pathman_init_state.initialization_needed = true;
 
 	elog(DEBUG2, "pg_pathman's config has been unloaded successfully [%u]", MyProcPid);
 }
@@ -296,9 +337,13 @@ fill_prel_with_partitions(const Oid *partitions,
 					if (validate_hash_constraint(con_expr, prel, &hash))
 						prel->children[hash] = partitions[i];
 					else
-						elog(ERROR,
-							 "Wrong constraint format for HASH partition \"%s\"",
-							 get_rel_name_or_relid(partitions[i]));
+					{
+						DisablePathman(); /* disable pg_pathman since config is broken */
+						ereport(ERROR,
+								(errmsg("Wrong constraint format for HASH partition \"%s\"",
+										get_rel_name_or_relid(partitions[i])),
+								 errhint(INIT_ERROR_HINT)));
+					}
 				}
 				break;
 
@@ -314,15 +359,24 @@ fill_prel_with_partitions(const Oid *partitions,
 						prel->ranges[i].max			= range_max;
 					}
 					else
-						elog(ERROR,
-							 "Wrong constraint format for RANGE partition \"%s\"",
-							 get_rel_name_or_relid(partitions[i]));
+					{
+						DisablePathman(); /* disable pg_pathman since config is broken */
+						ereport(ERROR,
+								(errmsg("Wrong constraint format for RANGE partition \"%s\"",
+										get_rel_name_or_relid(partitions[i])),
+								 errhint(INIT_ERROR_HINT)));
+					}
 				}
 				break;
 
 			default:
-				elog(ERROR, "Unknown partitioning type for relation \"%s\"",
-					 get_rel_name_or_relid(prel->key));
+			{
+				DisablePathman(); /* disable pg_pathman since config is broken */
+				ereport(ERROR,
+						(errmsg("Unknown partitioning type for relation \"%s\"",
+								get_rel_name_or_relid(prel->key)),
+						 errhint(INIT_ERROR_HINT)));
+			}
 		}
 	}
 
@@ -362,9 +416,12 @@ fill_prel_with_partitions(const Oid *partitions,
 		for (i = 0; i < PrelChildrenCount(prel); i++)
 		{
 			if (prel->children[i] == InvalidOid)
+			{
+				DisablePathman(); /* disable pg_pathman since config is broken */
 				elog(ERROR, "pg_pathman's cache for relation \"%s\" "
 							"has not been properly initialized",
 					 get_rel_name_or_relid(prel->key));
+			}
 		}
 #endif
 }
@@ -533,7 +590,6 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 			heap_deform_tuple(htup, RelationGetDescr(rel), values, isnull);
 
 			/* Perform checks for non-NULL columns */
-			Assert(!isnull[Anum_pathman_config_id - 1]);
 			Assert(!isnull[Anum_pathman_config_partrel - 1]);
 			Assert(!isnull[Anum_pathman_config_attname - 1]);
 			Assert(!isnull[Anum_pathman_config_parttype - 1]);
@@ -654,11 +710,10 @@ read_pathman_config(void)
 		if (get_rel_type_id(relid) == InvalidOid)
 		{
 			DisablePathman(); /* disable pg_pathman since config is broken */
-
 			ereport(ERROR,
 					(errmsg("Table \"%s\" contains nonexistent relation %u",
 							PATHMAN_CONFIG, relid),
-					 errdetail("pg_pathman will be disabled")));
+					 errhint(INIT_ERROR_HINT)));
 		}
 
 		/* Create or update PartRelationInfo for this partitioned table */
@@ -687,7 +742,15 @@ get_partition_constraint_expr(Oid partition, AttrNumber part_attno)
 	Expr	   *expr;			/* expression tree for constraint */
 
 	conname = build_check_constraint_name_internal(partition, part_attno);
-	conid = get_relation_constraint_oid(partition, conname, false);
+	conid = get_relation_constraint_oid(partition, conname, true);
+	if (conid == InvalidOid)
+	{
+		DisablePathman(); /* disable pg_pathman since config is broken */
+		ereport(ERROR,
+				(errmsg("constraint \"%s\" for partition \"%s\" does not exist",
+						conname, get_rel_name_or_relid(partition)),
+				 errhint(INIT_ERROR_HINT)));
+	}
 
 	con_tuple = SearchSysCache1(CONSTROID, ObjectIdGetDatum(conid));
 	conbin_datum = SysCacheGetAttr(CONSTROID, con_tuple,
@@ -695,9 +758,14 @@ get_partition_constraint_expr(Oid partition, AttrNumber part_attno)
 								   &conbin_isnull);
 	if (conbin_isnull)
 	{
-		elog(DEBUG2, "conbin is null for constraint %s", conname);
+		DisablePathman(); /* disable pg_pathman since config is broken */
+		ereport(WARNING,
+				(errmsg("constraint \"%s\" for partition \"%s\" has NULL conbin",
+						conname, get_rel_name_or_relid(partition)),
+				 errhint(INIT_ERROR_HINT)));
 		pfree(conname);
-		return NULL;
+
+		return NULL; /* could not parse */
 	}
 	pfree(conname);
 
@@ -738,6 +806,9 @@ validate_range_constraint(const Expr *expr,
 	const TypeCacheEntry   *tce;
 	const BoolExpr		   *boolexpr = (const BoolExpr *) expr;
 	const OpExpr		   *opexpr;
+
+	if (!expr)
+		return false;
 
 	/* it should be an AND operator on top */
 	if (!and_clause((Node *) expr))
@@ -828,6 +899,9 @@ validate_hash_constraint(const Expr *expr,
 						   *type_hash_proc_expr;
 	const Var			   *var; /* partitioned column */
 
+	if (!expr)
+		return false;
+
 	if (!IsA(expr, OpExpr))
 		return false;
 	eq_expr = (const OpExpr *) expr;
@@ -874,7 +948,7 @@ validate_hash_constraint(const Expr *expr,
 			return false;
 
 		/* Check that PARTITIONS_COUNT is equal to total amount of partitions */
-		if (DatumGetUInt32(((Const*) second)->constvalue) != PrelChildrenCount(prel))
+		if (DatumGetUInt32(((Const *) second)->constvalue) != PrelChildrenCount(prel))
 			return false;
 
 		/* Check that CUR_PARTITION_HASH is Const */

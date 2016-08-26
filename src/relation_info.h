@@ -68,19 +68,6 @@ typedef struct
 } PartRelationInfo;
 
 /*
- * ShmemRelationInfo
- *		Per-relation misc information stored in shmem
- */
-typedef struct
-{
-	Oid				key;			/* partitioned table's Oid */
-
-	pg_atomic_flag	dirty;			/* is anyone performing any of the
-									   partitioning-related operations
-									   on this table at the moment? */
-} ShmemRelationInfo;
-
-/*
  * RelParentInfo
  *		Cached parent of the specified partition.
  *		Allows us to quickly search for PartRelationInfo.
@@ -109,13 +96,25 @@ typedef enum
  * PartRelationInfo field access macros.
  */
 
-#define PrelGetChildrenArray(prel) ( (prel)->children )
+#define PrelGetChildrenArray(prel)	( (prel)->children )
 
-#define PrelGetRangesArray(prel) ( (prel)->ranges )
+#define PrelGetRangesArray(prel)	( (prel)->ranges )
 
-#define PrelChildrenCount(prel) ( (prel)->children_count )
+#define PrelChildrenCount(prel)		( (prel)->children_count )
 
-#define PrelIsValid(prel) ( (prel) && (prel)->valid )
+#define PrelIsValid(prel)			( (prel) && (prel)->valid )
+
+inline static uint32
+PrelLastChild(const PartRelationInfo *prel)
+{
+	Assert(PrelIsValid(prel));
+
+	if (PrelChildrenCount(prel) == 0)
+		elog(ERROR, "pg_pathman's cache entry for relation %u has 0 children",
+			 prel->key);
+
+	return PrelChildrenCount(prel) - 1; /* last partition */
+}
 
 
 const PartRelationInfo *refresh_pathman_relation_info(Oid relid,

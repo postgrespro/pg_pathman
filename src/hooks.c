@@ -227,7 +227,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 		rte->inh = true; /* we must restore 'inh' flag! */
 
 		children = PrelGetChildrenArray(prel);
-		ranges = list_make1_irange(make_irange(0, PrelChildrenCount(prel) - 1, false));
+		ranges = list_make1_irange(make_irange(0, PrelLastChild(prel), false));
 
 		/* Make wrappers over restrictions and collect final rangeset */
 		InitWalkerContext(&context, prel, NULL, false);
@@ -361,15 +361,8 @@ pg_pathman_enable_assign_hook(bool newval, void *extra)
 	elog(DEBUG2, "pg_pathman_enable_assign_hook() [newval = %s] triggered",
 		  newval ? "true" : "false");
 
-	if (initialization_needed)
-	{
-		elog(DEBUG2, "pg_pathman is not yet initialized, "
-					 "pg_pathman.enable is set to false");
-		return;
-	}
-
 	/* Return quickly if nothing has changed */
-	if (newval == (pg_pathman_enable &&
+	if (newval == (pg_pathman_init_state.pg_pathman_enable &&
 				   pg_pathman_enable_runtimeappend &&
 				   pg_pathman_enable_runtime_merge_append &&
 				   pg_pathman_enable_partition_filter))
@@ -465,23 +458,9 @@ pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
 	if (IsPathmanReady())
 		finish_delayed_invalidation();
 
-	elog(DEBUG2, "post_parse: %d %d %u [%u]",
-		 IsPathmanEnabled(),
-		 initialization_needed,
-		 get_pathman_schema(),
-		 MyProcPid);
-
-	/* DEBUG!!!! */
-	// static int parse_sleep = 10;
-	// if (IsPathmanEnabled() &&
-	// 	initialization_needed &&
-	// 	get_pathman_schema() == InvalidOid)
-	// 	sleep(parse_sleep);
-	/* -------------------- */
-
 	/* Load config if pg_pathman exists & it's still necessary */
 	if (IsPathmanEnabled() &&
-		initialization_needed &&
+		!IsPathmanInitialized() &&
 		/* Now evaluate the most expensive clause */
 		get_pathman_schema() != InvalidOid)
 	{

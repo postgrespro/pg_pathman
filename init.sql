@@ -18,8 +18,7 @@
  *		range_interval - base interval for RANGE partitioning as string
  */
 CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
-	id				SERIAL PRIMARY KEY,
-	partrel			REGCLASS NOT NULL,
+	partrel			REGCLASS NOT NULL PRIMARY KEY,
 	attname			TEXT NOT NULL,
 	parttype		INTEGER NOT NULL,
 	range_interval	TEXT,
@@ -309,8 +308,18 @@ $$
 DECLARE
 	v_rec			RECORD;
 	is_referenced	BOOLEAN;
+	rel_persistence	CHAR;
 
 BEGIN
+	/* Ignore temporary tables */
+	SELECT relpersistence FROM pg_catalog.pg_class
+	WHERE oid = p_relation INTO rel_persistence;
+
+	IF rel_persistence = 't'::CHAR THEN
+		RAISE EXCEPTION 'Temporary table "%" cannot be partitioned',
+			quote_ident(p_relation::TEXT);
+	END IF;
+
 	IF EXISTS (SELECT * FROM @extschema@.pathman_config
 			   WHERE partrel = p_relation) THEN
 		RAISE EXCEPTION 'Relation "%" has already been partitioned', p_relation;
@@ -320,7 +329,7 @@ BEGIN
 		RAISE EXCEPTION 'Partitioning key ''%'' must be NOT NULL', p_attribute;
 	END IF;
 
-	/* Check if there are foreign keys reference to the relation */
+	/* Check if there are foreign keys that reference the relation */
 	FOR v_rec IN (SELECT *
 				  FROM pg_constraint WHERE confrelid = p_relation::regclass::oid)
 	LOOP
@@ -469,12 +478,9 @@ CREATE OR REPLACE FUNCTION @extschema@.drop_triggers(
 	parent_relid	REGCLASS)
 RETURNS VOID AS
 $$
-DECLARE
-	funcname	TEXT;
-
 BEGIN
-	funcname := @extschema@.build_update_trigger_func_name(parent_relid);
-	EXECUTE format('DROP FUNCTION IF EXISTS %s() CASCADE', funcname);
+	EXECUTE format('DROP FUNCTION IF EXISTS %s() CASCADE',
+				   @extschema@.build_update_trigger_func_name(parent_relid));
 END
 $$ LANGUAGE plpgsql;
 
@@ -545,12 +551,14 @@ EXECUTE PROCEDURE @extschema@.pathman_ddl_trigger_func();
 
 
 /*
- * Check if regclass is date or timestamp
+ * Attach partitioned table
  */
-CREATE OR REPLACE FUNCTION @extschema@.is_date_type(
-	typid	REGTYPE)
-RETURNS BOOLEAN AS 'pg_pathman', 'is_date_type'
-LANGUAGE C STRICT;
+CREATE OR REPLACE FUNCTION @extschema@.add_to_pathman_config(
+	parent_relid	REGCLASS,
+	attname			TEXT,
+	range_interval	TEXT DEFAULT NULL)
+RETURNS BOOLEAN AS 'pg_pathman', 'add_to_pathman_config'
+LANGUAGE C;
 
 
 CREATE OR REPLACE FUNCTION @extschema@.on_create_partitions(
@@ -568,6 +576,21 @@ CREATE OR REPLACE FUNCTION @extschema@.on_remove_partitions(
 RETURNS VOID AS 'pg_pathman', 'on_partitions_removed'
 LANGUAGE C STRICT;
 
+
+/*
+ * Get parent of pg_pathman's partition.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_parent_of_partition(REGCLASS)
+RETURNS REGCLASS AS 'pg_pathman', 'get_parent_of_partition_pl'
+LANGUAGE C STRICT;
+
+/*
+ * Check if regclass is date or timestamp
+ */
+CREATE OR REPLACE FUNCTION @extschema@.is_date_type(
+	typid	REGTYPE)
+RETURNS BOOLEAN AS 'pg_pathman', 'is_date_type'
+LANGUAGE C STRICT;
 
 /*
  * Checks if attribute is nullable
@@ -616,11 +639,4 @@ LANGUAGE C STRICT;
  */
 CREATE OR REPLACE FUNCTION @extschema@.debug_capture()
 RETURNS VOID AS 'pg_pathman', 'debug_capture'
-LANGUAGE C STRICT;
-
-/*
- * Get parent of pg_pathman's partition.
- */
-CREATE OR REPLACE FUNCTION @extschema@.get_parent_of_partition(REGCLASS)
-RETURNS REGCLASS AS 'pg_pathman', 'get_parent_of_partition_pl'
 LANGUAGE C STRICT;

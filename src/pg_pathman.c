@@ -34,7 +34,6 @@
 #include "optimizer/cost.h"
 #include "utils/builtins.h"
 #include "utils/datum.h"
-#include "utils/guc.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
@@ -49,7 +48,6 @@ PG_MODULE_MAGIC;
 
 List		   *inheritance_disabled_relids = NIL;
 List		   *inheritance_enabled_relids = NIL;
-bool			pg_pathman_enable = true;
 PathmanState   *pmstate;
 Oid				pathman_config_relid = InvalidOid;
 Oid				pathman_config_params_relid = InvalidOid;
@@ -127,18 +125,25 @@ static Path *get_cheapest_parameterized_child_path(PlannerInfo *root, RelOptInfo
 void
 _PG_init(void)
 {
+	PathmanInitState	temp_init_state;
+
 	if (!process_shared_preload_libraries_in_progress)
 	{
 		elog(ERROR, "Pathman module must be initialized in postmaster. "
 					"Put the following line to configuration file: "
 					"shared_preload_libraries='pg_pathman'");
-
-		initialization_needed = false;
 	}
 
 	/* Request additional shared resources */
 	RequestAddinShmemSpace(estimate_pathman_shmem_size());
 	RequestAddinLWLocks(3);
+
+	/* Assign pg_pathman's initial state */
+	temp_init_state.initialization_needed = true;
+	temp_init_state.pg_pathman_enable = true;
+
+	/* Apply initial state */
+	restore_pathman_init_state(&temp_init_state);
 
 	/* Initialize 'next' hook pointers */
 	set_rel_pathlist_hook_next		= set_rel_pathlist_hook;
@@ -152,22 +157,11 @@ _PG_init(void)
 	planner_hook_next				= planner_hook;
 	planner_hook					= pathman_planner_hook;
 
-	/* Initialize custom nodes */
+	/* Initialize static data for all subsystems */
+	init_main_pathman_toggle();
 	init_runtimeappend_static_data();
 	init_runtime_merge_append_static_data();
 	init_partition_filter_static_data();
-
-	/* Main toggle, load_config() will enable it */
-	DefineCustomBoolVariable("pg_pathman.enable",
-							 "Enables pg_pathman's optimizations during the planner stage",
-							 NULL,
-							 &pg_pathman_enable,
-							 true,
-							 PGC_USERSET,
-							 0,
-							 NULL,
-							 pg_pathman_enable_assign_hook,
-							 NULL);
 }
 
 /*
@@ -321,7 +315,7 @@ handle_modification_query(Query *parse)
 		return;
 
 	/* Parse syntax tree and extract partition ranges */
-	ranges = list_make1_irange(make_irange(0, PrelChildrenCount(prel) - 1, false));
+	ranges = list_make1_irange(make_irange(0, PrelLastChild(prel), false));
 	expr = (Expr *) eval_const_expressions(NULL, parse->jointree->quals);
 	if (!expr)
 		return;
@@ -681,7 +675,7 @@ walk_expr_tree(Expr *expr, WalkerContext *context)
 			result->orig = (const Node *) expr;
 			result->args = NIL;
 			result->rangeset = list_make1_irange(
-						make_irange(0, PrelChildrenCount(context->prel) - 1, true));
+						make_irange(0, PrelLastChild(context->prel), true));
 			result->paramsel = 1.0;
 			return result;
 	}
@@ -840,7 +834,7 @@ create_partitions_internal(Oid relid, Datum value, Oid value_type)
 
 			/* Read max & min range values from PartRelationInfo */
 			min_rvalue = prel->ranges[0].min;
-			max_rvalue = prel->ranges[PrelChildrenCount(prel) - 1].max;
+			max_rvalue = prel->ranges[PrelLastChild(prel)].max;
 
 			/* If this is a *date type*, cast 'range_interval' to INTERVAL */
 			if (is_date_type_internal(value_type))
@@ -1184,9 +1178,7 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 			elog(ERROR, "Unknown partitioning type %u", prel->parttype);
 	}
 
-	result->rangeset = list_make1_irange(make_irange(0,
-													 PrelChildrenCount(prel) - 1,
-													 true));
+	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), true));
 	result->paramsel = 1.0;
 }
 
@@ -1212,9 +1204,7 @@ handle_binary_opexpr_param(const PartRelationInfo *prel,
 	tce = lookup_type_cache(vartype, TYPECACHE_BTREE_OPFAMILY);
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
 
-	result->rangeset = list_make1_irange(make_irange(0,
-													 PrelChildrenCount(prel) - 1,
-													 true));
+	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), true));
 
 	if (strategy == BTEqualStrategyNumber)
 	{
@@ -1312,7 +1302,7 @@ handle_const(const Const *c, WalkerContext *context)
 	if (!context->for_insert)
 	{
 		result->rangeset = list_make1_irange(make_irange(0,
-														 PrelChildrenCount(prel) - 1,
+														 PrelLastChild(prel),
 														 true));
 		result->paramsel = 1.0;
 
@@ -1383,9 +1373,7 @@ handle_opexpr(const OpExpr *expr, WalkerContext *context)
 		}
 	}
 
-	result->rangeset = list_make1_irange(make_irange(0,
-													 PrelChildrenCount(prel) - 1,
-													 true));
+	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), true));
 	result->paramsel = 1.0;
 	return result;
 }
@@ -1457,7 +1445,7 @@ handle_boolexpr(const BoolExpr *expr, WalkerContext *context)
 
 	if (expr->boolop == AND_EXPR)
 		result->rangeset = list_make1_irange(make_irange(0,
-														 PrelChildrenCount(prel) - 1,
+														 PrelLastChild(prel),
 														 false));
 	else
 		result->rangeset = NIL;
@@ -1480,7 +1468,7 @@ handle_boolexpr(const BoolExpr *expr, WalkerContext *context)
 				break;
 			default:
 				result->rangeset = list_make1_irange(make_irange(0,
-																 PrelChildrenCount(prel) - 1,
+																 PrelLastChild(prel),
 																 false));
 				break;
 		}
@@ -1582,9 +1570,7 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 		result->paramsel = DEFAULT_INEQ_SEL;
 
 handle_arrexpr_return:
-	result->rangeset = list_make1_irange(make_irange(0,
-													 PrelChildrenCount(prel) - 1,
-													 true));
+	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), true));
 	return result;
 }
 

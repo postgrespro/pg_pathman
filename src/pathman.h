@@ -11,7 +11,6 @@
 #ifndef PATHMAN_H
 #define PATHMAN_H
 
-#include "init.h"
 #include "relation_info.h"
 #include "rangeset.h"
 
@@ -43,15 +42,16 @@
  * Definitions for the "pathman_config" table.
  */
 #define PATHMAN_CONFIG						"pathman_config"
-#define Natts_pathman_config				5
-#define Anum_pathman_config_id				1	/* primary key */
-#define Anum_pathman_config_partrel			2	/* partitioned relation (regclass) */
-#define Anum_pathman_config_attname			3	/* partitioned column (text) */
-#define Anum_pathman_config_parttype		4	/* partitioning type (1|2) */
-#define Anum_pathman_config_range_interval	5	/* interval for RANGE pt. (text) */
+#define Natts_pathman_config				4
+#define Anum_pathman_config_partrel			1	/* partitioned relation (regclass) */
+#define Anum_pathman_config_attname			2	/* partitioned column (text) */
+#define Anum_pathman_config_parttype		3	/* partitioning type (1|2) */
+#define Anum_pathman_config_range_interval	4	/* interval for RANGE pt. (text) */
 
 /* type modifier (typmod) for 'range_interval' */
 #define PATHMAN_CONFIG_interval_typmod		-1
+
+#define PATHMAN_CONFIG_ID_SEQ				"pathman_config_id_seq"
 
 /*
  * Definitions for the "pathman_config_params" table
@@ -106,25 +106,7 @@ extern List			   *inheritance_enabled_relids;
  */
 extern List			   *inheritance_disabled_relids;
 
-extern bool 			pg_pathman_enable;
 extern PathmanState    *pmstate;
-
-
-#define PATHMAN_GET_DATUM(value, by_val) \
-	( (by_val) ? (Datum) (value) : PointerGetDatum(&value) )
-
-/*
- * Check if pg_pathman is initialized & enabled.
- */
-#define IsPathmanReady() ( !initialization_needed && pg_pathman_enable )
-
-#define IsPathmanEnabled() ( pg_pathman_enable )
-
-#define DisablePathman() \
-	do { \
-		pg_pathman_enable = false; \
-		initialization_needed = true; \
-	} while (0)
 
 
 int append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,

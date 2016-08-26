@@ -1273,7 +1273,7 @@ SELECT pathman.enable_auto('test.range_rel');
 INSERT INTO test.range_rel (dt) VALUES ('2015-06-01');
 DROP TABLE test.range_rel CASCADE;
 NOTICE:  drop cascades to 20 other objects
-SELECT partrel, attname, parttype, range_interval FROM pathman.pathman_config;
+SELECT * FROM pathman.pathman_config;
  partrel | attname | parttype | range_interval 
 ---------+---------+----------+----------------
 (0 rows)
@@ -1457,7 +1457,7 @@ SELECT pathman.create_partitions_from_range('test."RangeRel"', 'dt', '2015-01-01
 
 DROP TABLE test."RangeRel" CASCADE;
 NOTICE:  drop cascades to 5 other objects
-SELECT partrel, attname, parttype, range_interval FROM pathman.pathman_config;
+SELECT * FROM pathman.pathman_config;
       partrel       | attname | parttype | range_interval 
 --------------------+---------+----------+----------------
  test.num_range_rel | id      |        2 | 1000
