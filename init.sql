@@ -281,7 +281,7 @@ LANGUAGE plpgsql;
 /*
  * Disable pathman partitioning for specified relation
  */
-CREATE OR REPLACE FUNCTION @extschema@.disable_partitioning(
+CREATE OR REPLACE FUNCTION @extschema@.disable_pathman_for(
 	parent_relid	REGCLASS)
 RETURNS VOID AS
 $$
