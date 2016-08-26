@@ -531,7 +531,7 @@ SELECT pathman.enable_auto('test.range_rel');
 INSERT INTO test.range_rel (dt) VALUES ('2015-06-01');
 
 DROP TABLE test.range_rel CASCADE;
-SELECT partrel, attname, parttype, range_interval FROM pathman.pathman_config;
+SELECT * FROM pathman.pathman_config;
 
 /* Check overlaps */
 CREATE TABLE test.num_range_rel (
@@ -576,7 +576,7 @@ SELECT pathman.split_range_partition('test."RangeRel_1"', '2015-01-01'::DATE);
 SELECT pathman.drop_partitions('test."RangeRel"');
 SELECT pathman.create_partitions_from_range('test."RangeRel"', 'dt', '2015-01-01'::DATE, '2015-01-05'::DATE, '1 day'::INTERVAL);
 DROP TABLE test."RangeRel" CASCADE;
-SELECT partrel, attname, parttype, range_interval FROM pathman.pathman_config;
+SELECT * FROM pathman.pathman_config;
 CREATE TABLE test."RangeRel" (
 	id	SERIAL PRIMARY KEY,
 	dt	TIMESTAMP NOT NULL,
