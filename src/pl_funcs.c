@@ -12,12 +12,14 @@
 #include "init.h"
 #include "utils.h"
 #include "relation_info.h"
+#include "xact_handling.h"
 
-#include "catalog/indexing.h"
-#include "commands/sequence.h"
 #include "access/htup_details.h"
 #include "access/nbtree.h"
 #include "access/xact.h"
+#include "catalog/indexing.h"
+#include "commands/sequence.h"
+#include "miscadmin.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
@@ -27,13 +29,10 @@
 #include <utils/inval.h>
 
 
-#include "miscadmin.h"
-
 /* declarations */
 PG_FUNCTION_INFO_V1( on_partitions_created );
 PG_FUNCTION_INFO_V1( on_partitions_updated );
 PG_FUNCTION_INFO_V1( on_partitions_removed );
-PG_FUNCTION_INFO_V1( invalidate_relcache );
 PG_FUNCTION_INFO_V1( get_parent_of_partition_pl );
 PG_FUNCTION_INFO_V1( get_attribute_type_name );
 PG_FUNCTION_INFO_V1( find_or_create_range_partition);
@@ -52,7 +51,10 @@ PG_FUNCTION_INFO_V1( build_update_trigger_name );
 PG_FUNCTION_INFO_V1( is_date_type );
 PG_FUNCTION_INFO_V1( is_attribute_nullable );
 PG_FUNCTION_INFO_V1( add_to_pathman_config );
+PG_FUNCTION_INFO_V1( invalidate_relcache );
+PG_FUNCTION_INFO_V1( lock_partitioned_relation );
 PG_FUNCTION_INFO_V1( debug_capture );
+
 
 /* pathman_range type */
 typedef struct PathmanRange
@@ -80,11 +82,15 @@ typedef struct PathmanRangeListCtxt
 PG_FUNCTION_INFO_V1( pathman_range_in );
 PG_FUNCTION_INFO_V1( pathman_range_out );
 
+
 static void on_partitions_created_internal(Oid partitioned_table, bool add_callbacks);
 static void on_partitions_updated_internal(Oid partitioned_table, bool add_callbacks);
 static void on_partitions_removed_internal(Oid partitioned_table, bool add_callbacks);
 
 
+/*
+ * Extracted common check.
+ */
 static bool
 check_relation_exists(Oid relid)
 {
@@ -112,6 +118,7 @@ on_partitions_updated_internal(Oid partitioned_table, bool add_callbacks)
 	elog(DEBUG2, "on_partitions_updated() [add_callbacks = %s] "
 				 "triggered for relation %u",
 		 (add_callbacks ? "true" : "false"), partitioned_table);
+
 	invalidate_pathman_relation_info(partitioned_table, &found);
 }
 
@@ -206,17 +213,6 @@ get_attribute_type_name(PG_FUNCTION_ARGS)
 	PG_RETURN_NULL(); /* keep compiler happy */
 }
 
-Datum
-invalidate_relcache(PG_FUNCTION_ARGS)
-{
-	Oid		relid = DatumGetObjectId(PG_GETARG_DATUM(0));
-
-	/* If type exists then invalidate cache */
-	if (get_rel_type_id(relid) != InvalidOid)
-		CacheInvalidateRelcacheByRelid(relid);
-	PG_RETURN_VOID();
-}
-
 /*
  * Returns partition oid for specified parent relid and value.
  * In case when partition doesn't exist try to create one.
@@ -253,29 +249,10 @@ find_or_create_range_partition(PG_FUNCTION_ARGS)
 		PG_RETURN_NULL();
 	else
 	{
-		Oid child_oid = InvalidOid;
+		Oid	child_oid = create_partitions(parent_oid, value, value_type);
 
-		/* FIXME: useless double-checked lock (no new data) */
-		LWLockAcquire(pmstate->load_config_lock, LW_EXCLUSIVE);
-		LWLockAcquire(pmstate->edit_partitions_lock, LW_EXCLUSIVE);
-
-		/*
-		 * Check if someone else has already created partition.
-		 */
-		search_state = search_range_partition_eq(value, &cmp_func, prel,
-												 &found_rentry);
-		if (search_state == SEARCH_RANGEREL_FOUND)
-		{
-			LWLockRelease(pmstate->load_config_lock);
-			LWLockRelease(pmstate->edit_partitions_lock);
-
-			PG_RETURN_OID(found_rentry.child_oid);
-		}
-
-		child_oid = create_partitions(parent_oid, value, value_type);
-
-		LWLockRelease(pmstate->load_config_lock);
-		LWLockRelease(pmstate->edit_partitions_lock);
+		/* get_pathman_relation_info() will refresh this entry */
+		invalidate_pathman_relation_info(parent_oid, NULL);
 
 		PG_RETURN_OID(child_oid);
 	}
@@ -723,19 +700,34 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 
 
 /*
- * NOTE: used for DEBUG, set breakpoint here.
+ * Invalidate relcache for a specified relation.
  */
 Datum
-debug_capture(PG_FUNCTION_ARGS)
+invalidate_relcache(PG_FUNCTION_ARGS)
 {
-	static float8 sleep_time = 0;
-	DirectFunctionCall1(pg_sleep, Float8GetDatum(sleep_time));
+	Oid		relid = PG_GETARG_OID(0);
 
-	/* Write something (doesn't really matter) */
-	elog(WARNING, "debug_capture [%u]", MyProcPid);
+	if (check_relation_exists(relid))
+		CacheInvalidateRelcacheByRelid(relid);
 
 	PG_RETURN_VOID();
 }
+
+
+/*
+ * Acquire appropriate lock on a partitioned relation.
+ */
+Datum
+lock_partitioned_relation(PG_FUNCTION_ARGS)
+{
+	Oid			relid = PG_GETARG_OID(0);
+
+	/* Lock partitioned relation till transaction's end */
+	xact_lock_partitioned_rel(relid);
+
+	PG_RETURN_VOID();
+}
+
 
 Datum
 pathman_range_in(PG_FUNCTION_ARGS)
@@ -757,16 +749,32 @@ pathman_range_out(PG_FUNCTION_ARGS)
 
 	left = OidOutputFunctionCall(
 		outputfunc,
-		rng->by_val ? 
+		rng->by_val ?
 			(Datum) rng->range.min :
 			PointerGetDatum(&rng->range.min));
 
 	right = OidOutputFunctionCall(
 		outputfunc,
-		rng->by_val ? 
+		rng->by_val ?
 			(Datum) rng->range.max :
 			PointerGetDatum(&rng->range.max));
 
 	result = psprintf("[%s: %s)", left, right);
 	PG_RETURN_CSTRING(result);
+}
+
+
+/*
+ * NOTE: used for DEBUG, set breakpoint here.
+ */
+Datum
+debug_capture(PG_FUNCTION_ARGS)
+{
+	static float8 sleep_time = 0;
+	DirectFunctionCall1(pg_sleep, Float8GetDatum(sleep_time));
+
+	/* Write something (doesn't really matter) */
+	elog(WARNING, "debug_capture [%u]", MyProcPid);
+
+	PG_RETURN_VOID();
 }

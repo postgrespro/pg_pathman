@@ -14,6 +14,7 @@
 #include "hooks.h"
 #include "init.h"
 #include "pathman.h"
+#include "pathman_workers.h"
 #include "relation_info.h"
 #include "utils.h"
 
@@ -176,14 +177,14 @@ unload_config(void)
 }
 
 /*
- * Estimate shmem amount needed for pg_pathman to run.
+ * Estimate total amount of shmem needed for pg_pathman to run.
  */
 Size
 estimate_pathman_shmem_size(void)
 {
-	return estimate_dsm_config_size()
-		   + get_worker_slots_size()
-		   + MAXALIGN(sizeof(PathmanState));
+	return estimate_dsm_config_size() +
+		   estimate_concurrent_part_task_slots_size() +
+		   MAXALIGN(sizeof(PathmanState));
 }
 
 /*
@@ -221,7 +222,7 @@ fini_pathman_relation_oids(void)
 {
 	pathman_config_relid = InvalidOid;
 	pathman_config_params_relid = InvalidOid;
-	
+
 	/* NOTE: add more relations to be forgotten right here ^^^ */
 }
 
@@ -295,14 +296,13 @@ init_shmem_config(void)
 		 */
 		if (!IsUnderPostmaster)
 		{
-			/* Initialize locks */
-			pmstate->load_config_lock		= LWLockAssign();
-			pmstate->dsm_init_lock			= LWLockAssign();
-			pmstate->edit_partitions_lock	= LWLockAssign();
+			/* NOTE: dsm_array is redundant, hence the commented code */
+			/* pmstate->dsm_init_lock = LWLockAssign(); */
 		}
 	}
 
-	create_worker_slots();
+	/* Allocate some space for concurrent part slots */
+	init_concurrent_part_task_slots();
 }
 
 /*

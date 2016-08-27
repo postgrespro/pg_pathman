@@ -123,7 +123,8 @@ const PartRelationInfo *refresh_pathman_relation_info(Oid relid,
 void invalidate_pathman_relation_info(Oid relid, bool *found);
 void remove_pathman_relation_info(Oid relid);
 const PartRelationInfo *get_pathman_relation_info(Oid relid);
-void set_enable_parent(Oid relid, bool flag);
+const PartRelationInfo *get_pathman_relation_info_after_lock(Oid relid,
+															 bool unlock_if_not_found);
 
 void delay_pathman_shutdown(void);
 void delay_invalidation_parent_rel(Oid parent);
@@ -135,6 +136,10 @@ Oid forget_parent_of_partition(Oid partition, PartParentSearch *status);
 Oid get_parent_of_partition(Oid partition, PartParentSearch *status);
 
 PartType DatumGetPartType(Datum datum);
+
+void shout_if_prel_is_invalid(Oid parent_oid,
+							  const PartRelationInfo *prel,
+							  PartType expected_part_type);
 
 
 /*

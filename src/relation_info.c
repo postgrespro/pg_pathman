@@ -11,6 +11,7 @@
 #include "relation_info.h"
 #include "init.h"
 #include "utils.h"
+#include "xact_handling.h"
 
 #include "access/htup_details.h"
 #include "access/xact.h"
@@ -253,6 +254,22 @@ get_pathman_relation_info(Oid relid)
 	return prel;
 }
 
+/* Acquire lock on a table and try to get PartRelationInfo */
+const PartRelationInfo *
+get_pathman_relation_info_after_lock(Oid relid, bool unlock_if_not_found)
+{
+	const PartRelationInfo *prel;
+
+	/* Restrict concurrent partition creation (it's dangerous) */
+	xact_lock_partitioned_rel(relid);
+
+	prel = get_pathman_relation_info(relid);
+	if (!prel && unlock_if_not_found)
+		xact_unlock_partitioned_rel(relid);
+
+	return prel;
+}
+
 /* Remove PartRelationInfo from local cache. */
 void
 remove_pathman_relation_info(Oid relid)
@@ -277,19 +294,6 @@ remove_pathman_relation_info(Oid relid)
 		 relid, MyProcPid);
 }
 
-void
-set_enable_parent(Oid relid, bool flag)
-{
-	PartRelationInfo *prel;
-
-	prel = hash_search(partitioned_rels,
-					   (const void *) &relid,
-					   HASH_FIND, NULL);
-	if (!prel)
-		elog(ERROR, "Relation %s isn't handled by pg_pathman", get_rel_name(relid));
-
-	prel->enable_parent = flag;
-}
 
 /*
  * Functions for delayed invalidation.
@@ -615,4 +619,50 @@ DatumGetPartType(Datum datum)
 		elog(ERROR, "Unknown partitioning type %u", val);
 
 	return (PartType) val;
+}
+
+/*
+ * Common PartRelationInfo checks. Emit ERROR if anything is wrong.
+ */
+void
+shout_if_prel_is_invalid(Oid parent_oid,
+						 const PartRelationInfo *prel,
+						 PartType expected_part_type)
+{
+	if (!prel)
+		elog(ERROR, "Relation \"%s\" is not partitioned by pg_pathman",
+			 get_rel_name_or_relid(parent_oid));
+
+	if (!PrelIsValid(prel))
+		elog(ERROR, "pg_pathman's cache contains invalid entry "
+					"for relation \"%s\" [%u]",
+			 get_rel_name_or_relid(parent_oid),
+			 MyProcPid);
+
+	/* Check partitioning type unless it's "indifferent" */
+	if (expected_part_type != PT_INDIFFERENT &&
+		expected_part_type != prel->parttype)
+	{
+		char *expected_str;
+
+		switch (expected_part_type)
+		{
+			case PT_HASH:
+				expected_str = "HASH";
+				break;
+
+			case PT_RANGE:
+				expected_str = "RANGE";
+				break;
+
+			default:
+				elog(ERROR,
+					 "expected_str selection not implemented for type %d",
+					 expected_part_type);
+		}
+
+		elog(ERROR, "Relation \"%s\" is not partitioned by %s",
+			 get_rel_name_or_relid(parent_oid),
+			 expected_str);
+	}
 }

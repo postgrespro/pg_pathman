@@ -16,6 +16,7 @@
 #include "partition_filter.h"
 #include "runtimeappend.h"
 #include "runtime_merge_append.h"
+#include "xact_handling.h"
 
 #include "postgres.h"
 #include "access/heapam.h"
@@ -61,6 +62,9 @@ static Node *wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysT
 static bool disable_inheritance_subselect_walker(Node *node, void *context);
 
 /* "Partition creation"-related functions */
+static Datum extract_binary_interval_from_text(Datum interval_text,
+											   Oid part_atttype,
+											   Oid *interval_type);
 static bool spawn_partitions(Oid partitioned_rel,
 							 Datum value,
 							 Datum leading_bound,
@@ -129,14 +133,15 @@ _PG_init(void)
 
 	if (!process_shared_preload_libraries_in_progress)
 	{
-		elog(ERROR, "Pathman module must be initialized in postmaster. "
+		elog(ERROR, "pg_pathman module must be initialized by Postmaster. "
 					"Put the following line to configuration file: "
 					"shared_preload_libraries='pg_pathman'");
 	}
 
 	/* Request additional shared resources */
 	RequestAddinShmemSpace(estimate_pathman_shmem_size());
-	RequestAddinLWLocks(3);
+
+	/* NOTE: we don't need LWLocks now. RequestAddinLWLocks(1); */
 
 	/* Assign pg_pathman's initial state */
 	temp_init_state.initialization_needed = true;
@@ -793,6 +798,57 @@ spawn_partitions(Oid partitioned_rel,		/* parent's Oid */
 }
 
 /*
+ * Convert interval from TEXT to binary form using partitioned column's type.
+ */
+static Datum
+extract_binary_interval_from_text(Datum interval_text,	/* interval as TEXT */
+								  Oid part_atttype,		/* partitioned column's type */
+								  Oid *interval_type)	/* returned value */
+{
+	Datum		interval_binary;
+	const char *interval_cstring;
+
+	interval_cstring = TextDatumGetCString(interval_text);
+
+	/* If 'part_atttype' is a *date type*, cast 'range_interval' to INTERVAL */
+	if (is_date_type_internal(part_atttype))
+	{
+		int32	interval_typmod = PATHMAN_CONFIG_interval_typmod;
+
+		/* Convert interval from CSTRING to internal form */
+		interval_binary = DirectFunctionCall3(interval_in,
+											  CStringGetDatum(interval_cstring),
+											  ObjectIdGetDatum(InvalidOid),
+											  Int32GetDatum(interval_typmod));
+		if (interval_type)
+			*interval_type = INTERVALOID;
+	}
+	/* Otherwise cast it to the partitioned column's type */
+	else
+	{
+		HeapTuple	htup;
+		Oid			typein_proc = InvalidOid;
+
+		htup = SearchSysCache1(TYPEOID, ObjectIdGetDatum(part_atttype));
+		if (HeapTupleIsValid(htup))
+		{
+			typein_proc = ((Form_pg_type) GETSTRUCT(htup))->typinput;
+			ReleaseSysCache(htup);
+		}
+		else
+			elog(ERROR, "Cannot find input function for type %u", part_atttype);
+
+		/* Convert interval from CSTRING to 'prel->atttype' */
+		interval_binary = OidFunctionCall1(typein_proc,
+										   CStringGetDatum(interval_cstring));
+		if (interval_type)
+			*interval_type = part_atttype;
+	}
+
+	return interval_binary;
+}
+
+/*
  * Append partitions (if needed) and return Oid of the partition to contain value.
  *
  * NB: This function should not be called directly, use create_partitions() instead.
@@ -809,9 +865,6 @@ create_partitions_internal(Oid relid, Datum value, Oid value_type)
 		Datum					values[Natts_pathman_config];
 		bool					isnull[Natts_pathman_config];
 
-		prel = get_pathman_relation_info(relid);
-		shout_if_prel_is_invalid(relid, prel, PT_RANGE);
-
 		/* Get both PartRelationInfo & PATHMAN_CONFIG contents for this relation */
 		if (pathman_config_contains_relation(relid, values, isnull, NULL))
 		{
@@ -821,54 +874,27 @@ create_partitions_internal(Oid relid, Datum value, Oid value_type)
 			Oid			interval_type = InvalidOid;
 			Datum		interval_binary, /* assigned 'width' of a single partition */
 						interval_text;
-			const char *interval_cstring;
 
 			FmgrInfo	interval_type_cmp;
 
-			/* Fill the FmgrInfo struct with a cmp(value, part_attribute) function */
-			fill_type_cmp_fmgr_info(&interval_type_cmp, value_type, prel->atttype);
-
-			/* Convert interval from TEXT to CSTRING */
-			interval_text = values[Anum_pathman_config_range_interval - 1];
-			interval_cstring = TextDatumGetCString(interval_text);
+			/* Fetch PartRelationInfo by 'relid' */
+			prel = get_pathman_relation_info(relid);
+			shout_if_prel_is_invalid(relid, prel, PT_RANGE);
 
 			/* Read max & min range values from PartRelationInfo */
 			min_rvalue = prel->ranges[0].min;
 			max_rvalue = prel->ranges[PrelLastChild(prel)].max;
 
-			/* If this is a *date type*, cast 'range_interval' to INTERVAL */
-			if (is_date_type_internal(value_type))
-			{
-				int32	interval_typmod = PATHMAN_CONFIG_interval_typmod;
+			/* Retrieve interval as TEXT from tuple */
+			interval_text = values[Anum_pathman_config_range_interval - 1];
 
-				/* Convert interval from CSTRING to internal form */
-				interval_binary = DirectFunctionCall3(interval_in,
-													  CStringGetDatum(interval_cstring),
-													  ObjectIdGetDatum(InvalidOid),
-													  Int32GetDatum(interval_typmod));
-				interval_type = INTERVALOID;
-			}
-			/* Otherwise cast it to the partitioned column's type */
-			else
-			{
-				HeapTuple	htup;
-				Oid			typein_proc = InvalidOid;
+			/* Convert interval to binary representation */
+			interval_binary = extract_binary_interval_from_text(interval_text,
+																prel->atttype,
+																&interval_type);
 
-				htup = SearchSysCache1(TYPEOID, ObjectIdGetDatum(prel->atttype));
-				if (HeapTupleIsValid(htup))
-				{
-					typein_proc = ((Form_pg_type) GETSTRUCT(htup))->typinput;
-					ReleaseSysCache(htup);
-				}
-				else
-					elog(ERROR, "Cannot find input function for type %u",
-						 prel->atttype);
-
-				/* Convert interval from CSTRING to 'prel->atttype' */
-				interval_binary = OidFunctionCall1(typein_proc,
-												   CStringGetDatum(interval_cstring));
-				interval_type = prel->atttype;
-			}
+			/* Fill the FmgrInfo struct with a cmp(value, part_attribute) function */
+			fill_type_cmp_fmgr_info(&interval_type_cmp, value_type, prel->atttype);
 
 			if (SPI_connect() != SPI_OK_CONNECT)
 				elog(ERROR, "Could not connect using SPI");
@@ -924,11 +950,17 @@ create_partitions(Oid relid, Datum value, Oid value_type)
 	/* Check that table is partitioned and fetch xmin */
 	if (pathman_config_contains_relation(relid, NULL, NULL, &rel_xmin))
 	{
-		/* If table was partitioned in some previous xact, run BGWorker */
-		if (TransactionIdPrecedes(rel_xmin, GetCurrentTransactionId()) ||
-			TransactionIdEquals(rel_xmin, FrozenTransactionId))
+		bool part_in_prev_xact =
+					TransactionIdPrecedes(rel_xmin, GetCurrentTransactionId()) ||
+					TransactionIdEquals(rel_xmin, FrozenTransactionId);
+
+		/*
+		 * If table has been partitioned in some previous xact AND
+		 * we don't hold any conflicting locks, run BGWorker.
+		 */
+		if (part_in_prev_xact && !xact_conflicting_lock_exists(relid))
 		{
-			elog(DEBUG2, "create_partitions(): chose BGW [%u]", MyProcPid);
+			elog(DEBUG2, "create_partitions(): chose BGWorker [%u]", MyProcPid);
 			last_partition = create_partitions_bg_worker(relid, value, value_type);
 		}
 		/* Else it'd be better for the current backend to create partitions */
@@ -2093,6 +2125,9 @@ get_pathman_config_relid(void)
 	return pathman_config_relid;
 }
 
+/*
+ * Get cached PATHMAN_CONFIG_PARAMS relation Oid.
+ */
 Oid
 get_pathman_config_params_relid(void)
 {

@@ -1,0 +1,680 @@
+/*-------------------------------------------------------------------------
+ *
+ * pathman_workers.c
+ *
+ *		There are two purposes of this subsystem:
+ *
+ *			* Create new partitions for INSERT in separate transaction
+ *			* Process concurrent partitioning operations
+ *
+ *		Background worker API is used for both cases.
+ *
+ * Copyright (c) 2015-2016, Postgres Professional
+ *
+ *-------------------------------------------------------------------------
+ */
+
+#include "init.h"
+#include "pathman_workers.h"
+#include "relation_info.h"
+#include "utils.h"
+
+#include "access/htup_details.h"
+#include "access/xact.h"
+#include "catalog/pg_type.h"
+#include "executor/spi.h"
+#include "funcapi.h"
+#include "miscadmin.h"
+#include "postmaster/bgworker.h"
+#include "storage/dsm.h"
+#include "storage/ipc.h"
+#include "storage/latch.h"
+#include "utils/builtins.h"
+#include "utils/datum.h"
+#include "utils/lsyscache.h"
+#include "utils/typcache.h"
+#include "utils/resowner.h"
+#include "utils/snapmgr.h"
+
+
+
+/* Declarations for ConcurrentPartWorker */
+PG_FUNCTION_INFO_V1( partition_table_concurrently );
+PG_FUNCTION_INFO_V1( show_concurrent_part_tasks_internal );
+PG_FUNCTION_INFO_V1( stop_concurrent_part_task );
+
+
+static void handle_sigterm(SIGNAL_ARGS);
+static void bg_worker_load_config(const char *bgw_name);
+static void start_bg_worker(const char bgworker_name[BGW_MAXLEN],
+							bgworker_main_type bgw_main_func,
+							Datum bgw_arg, bool wait_for_shutdown);
+
+static void bgw_main_spawn_partitions(Datum main_arg);
+static void bgw_main_concurrent_part(Datum main_arg);
+
+
+/*
+ * Function context for concurrent_part_tasks_internal() SRF.
+ */
+typedef struct
+{
+	int cur_idx; /* current slot to be processed */
+} active_workers_cxt;
+
+
+/*
+ * Slots for concurrent partitioning tasks.
+ */
+static ConcurrentPartSlot  *concurrent_part_slots;
+
+
+/*
+ * Available workers' names.
+ */
+static const char		   *spawn_partitions_bgw	= "SpawnPartitionsWorker";
+static const char		   *concurrent_part_bgw		= "ConcurrentPartWorker";
+
+
+/*
+ * Estimate amount of shmem needed for concurrent partitioning.
+ */
+Size
+estimate_concurrent_part_task_slots_size(void)
+{
+	return sizeof(ConcurrentPartSlot) * PART_WORKER_SLOTS;
+}
+
+/*
+ * Initialize shared memory needed for concurrent partitioning.
+ */
+void
+init_concurrent_part_task_slots(void)
+{
+	bool	found;
+	Size	size = estimate_concurrent_part_task_slots_size();
+
+	concurrent_part_slots = (ConcurrentPartSlot *)
+			ShmemInitStruct("array of ConcurrentPartSlots", size, &found);
+
+	/* Initialize 'concurrent_part_slots' if needed */
+	if (!found) memset(concurrent_part_slots, 0, size);
+}
+
+
+/*
+ * -------------------------------------------------
+ *  Common utility functions for background workers
+ * -------------------------------------------------
+ */
+
+/*
+ * Handle SIGTERM in BGW's process.
+ */
+static void
+handle_sigterm(SIGNAL_ARGS)
+{
+	int save_errno = errno;
+
+	SetLatch(MyLatch);
+
+	if (!proc_exit_inprogress)
+	{
+		InterruptPending = true;
+		ProcDiePending = true;
+	}
+
+	errno = save_errno;
+}
+
+/*
+ * Initialize pg_pathman's local config in BGW's process.
+ */
+static void
+bg_worker_load_config(const char *bgw_name)
+{
+	/* Try to load config */
+	if (!load_config())
+		elog(ERROR, "%s: could not load pg_pathman's config [%u]",
+			 bgw_name, MyProcPid);
+	else
+		elog(LOG, "%s: loaded pg_pathman's config [%u]",
+			 bgw_name, MyProcPid);
+}
+
+/*
+ * Common function to start background worker.
+ */
+static void
+start_bg_worker(const char bgworker_name[BGW_MAXLEN],
+				bgworker_main_type bgw_main_func,
+				Datum bgw_arg, bool wait_for_shutdown)
+{
+#define HandleError(condition, new_state) \
+	if (condition) { exec_state = (new_state); goto handle_exec_state; }
+
+	/* Execution state to be checked */
+	enum
+	{
+		BGW_OK = 0,				/* everything is fine (default) */
+		BGW_COULD_NOT_START,	/* could not start worker */
+		BGW_PM_DIED				/* postmaster died */
+	}						exec_state = BGW_OK;
+
+	BackgroundWorker		worker;
+	BackgroundWorkerHandle *bgw_handle;
+	BgwHandleStatus			bgw_status;
+	bool					bgw_started;
+	pid_t					pid;
+
+	/* Initialize worker struct */
+	memcpy(worker.bgw_name, bgworker_name, BGW_MAXLEN);
+	worker.bgw_flags		= BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION;
+	worker.bgw_start_time	= BgWorkerStart_RecoveryFinished;
+	worker.bgw_restart_time	= BGW_NEVER_RESTART;
+	worker.bgw_main			= bgw_main_func;
+	worker.bgw_main_arg		= bgw_arg;
+	worker.bgw_notify_pid	= MyProcPid;
+
+	/* Start dynamic worker */
+	bgw_started = RegisterDynamicBackgroundWorker(&worker, &bgw_handle);
+	HandleError(bgw_started == false, BGW_COULD_NOT_START);
+
+	/* Wait till the worker starts */
+	bgw_status = WaitForBackgroundWorkerStartup(bgw_handle, &pid);
+	HandleError(bgw_status == BGWH_POSTMASTER_DIED, BGW_PM_DIED);
+
+	/* Wait till the edn if we're asked to */
+	if (wait_for_shutdown)
+	{
+		/* Wait till the worker finishes job */
+		bgw_status = WaitForBackgroundWorkerShutdown(bgw_handle);
+		HandleError(bgw_status == BGWH_POSTMASTER_DIED, BGW_PM_DIED);
+	}
+
+/* end execution */
+handle_exec_state:
+
+	switch (exec_state)
+	{
+		case BGW_COULD_NOT_START:
+			elog(ERROR, "Unable to create background %s for pg_pathman",
+				 bgworker_name);
+			break;
+
+		case BGW_PM_DIED:
+			ereport(ERROR,
+					(errmsg("Postmaster died during the pg_pathman background worker process"),
+					errhint("More details may be available in the server log.")));
+			break;
+
+		default:
+			break;
+	}
+}
+
+
+/*
+ * --------------------------------------
+ *  SpawnPartitionsWorker implementation
+ * --------------------------------------
+ */
+
+/*
+ * Create args segment for partitions bgw.
+ */
+static dsm_segment *
+create_partitions_bg_worker_segment(Oid relid, Datum value, Oid value_type)
+{
+	TypeCacheEntry	   *typcache;
+	Size				datum_size;
+	Size				segment_size;
+	dsm_segment		   *segment;
+	SpawnPartitionArgs	   *args;
+
+	typcache = lookup_type_cache(value_type, 0);
+
+	/* Calculate segment size */
+	datum_size = datumGetSize(value, typcache->typbyval, typcache->typlen);
+	segment_size = offsetof(SpawnPartitionArgs, value) + datum_size;
+
+	segment = dsm_create(segment_size, 0);
+
+	/* Initialize BGW args */
+	args = (SpawnPartitionArgs *) dsm_segment_address(segment);
+
+	args->userid = GetAuthenticatedUserId();
+
+	args->result = InvalidOid;
+	args->dbid = MyDatabaseId;
+	args->partitioned_table = relid;
+
+	/* Write value-related stuff */
+	args->value_type = value_type;
+	args->value_size = datum_size;
+	args->value_byval = typcache->typbyval;
+
+	PackDatumToByteArray((void *) args->value, value,
+						 datum_size, args->value_byval);
+
+	return segment;
+}
+
+/*
+ * Starts background worker that will create new partitions,
+ * waits till it finishes the job and returns the result (new partition oid)
+ *
+ * NB: This function should not be called directly, use create_partitions() instead.
+ */
+Oid
+create_partitions_bg_worker(Oid relid, Datum value, Oid value_type)
+{
+	dsm_segment			   *segment;
+	dsm_handle				segment_handle;
+	SpawnPartitionArgs	   *bgw_args;
+	Oid						child_oid = InvalidOid;
+
+	/* Create a dsm segment for the worker to pass arguments */
+	segment = create_partitions_bg_worker_segment(relid, value, value_type);
+	segment_handle = dsm_segment_handle(segment);
+	bgw_args = (SpawnPartitionArgs *) dsm_segment_address(segment);
+
+	/* Start worker and wait for it to finish */
+	start_bg_worker(spawn_partitions_bgw,
+					bgw_main_spawn_partitions,
+					UInt32GetDatum(segment_handle),
+					true);
+
+	/* Save the result (partition Oid) */
+	child_oid = bgw_args->result;
+
+	/* Free dsm segment */
+	dsm_detach(segment);
+
+	if (child_oid == InvalidOid)
+		elog(ERROR,
+			 "Attempt to append new partitions to relation \"%s\" failed",
+			 get_rel_name_or_relid(relid));
+
+	return child_oid;
+}
+
+/*
+ * Entry point for SpawnPartitionsWorker's process.
+ */
+static void
+bgw_main_spawn_partitions(Datum main_arg)
+{
+	dsm_handle		handle = DatumGetUInt32(main_arg);
+	dsm_segment	   *segment;
+	SpawnPartitionArgs   *args;
+	Datum			value;
+
+	/* Establish signal handlers before unblocking signals. */
+	pqsignal(SIGTERM, handle_sigterm);
+
+	/* We're now ready to receive signals */
+	BackgroundWorkerUnblockSignals();
+
+	/* Create resource owner */
+	CurrentResourceOwner = ResourceOwnerCreate(NULL, spawn_partitions_bgw);
+
+	if (!handle)
+		elog(ERROR, "%s: invalid dsm_handle [%u]",
+			 spawn_partitions_bgw, MyProcPid);
+
+	/* Attach to dynamic shared memory */
+	if ((segment = dsm_attach(handle)) == NULL)
+		elog(ERROR, "%s: cannot attach to segment [%u]",
+			 spawn_partitions_bgw, MyProcPid);
+	args = dsm_segment_address(segment);
+
+	/* Establish connection and start transaction */
+	BackgroundWorkerInitializeConnectionByOid(args->dbid, args->userid);
+
+	/* Start new transaction (syscache access etc.) */
+	StartTransactionCommand();
+
+	/* Initialize pg_pathman's local config */
+	bg_worker_load_config(spawn_partitions_bgw);
+
+	/* Upack Datum from segment to 'value' */
+	UnpackDatumFromByteArray(&value,
+							 args->value_size,
+							 args->value_byval,
+							 (const void *) args->value);
+
+/* Print 'arg->value' for debug purposes */
+#ifdef USE_ASSERT_CHECKING
+	elog(LOG, "%s: arg->value is '%s' [%u]",
+		 spawn_partitions_bgw,
+		 DebugPrintDatum(value, args->value_type), MyProcPid);
+#endif
+
+	/* Create partitions and save the Oid of the last one */
+	args->result = create_partitions_internal(args->partitioned_table,
+											  value, /* unpacked Datum */
+											  args->value_type);
+
+	/* Finish transaction in an appropriate way */
+	if (args->result == InvalidOid)
+		AbortCurrentTransaction();
+	else
+		CommitTransactionCommand();
+
+	dsm_detach(segment);
+}
+
+
+/*
+ * -------------------------------------
+ *  ConcurrentPartWorker implementation
+ * -------------------------------------
+ */
+
+/*
+ * Entry point for ConcurrentPartWorker's process.
+ */
+static void
+bgw_main_concurrent_part(Datum main_arg)
+{
+	ConcurrentPartSlot *args;
+	Oid					types[2]	= { OIDOID,	INT4OID };
+	Datum				vals[2];
+	bool				nulls[2]	= { false, false };
+	int					rows;
+	int					slot_idx = DatumGetInt32(main_arg);
+	MemoryContext		worker_context = CurrentMemoryContext;
+	int					failures_count = 0;
+	bool				failed;
+	char			   *sql = NULL;
+
+	/* Create resource owner */
+	CurrentResourceOwner = ResourceOwnerCreate(NULL, "PartitionDataWorker");
+
+	args = &concurrent_part_slots[slot_idx];
+	args->pid = MyProcPid;
+	vals[0] = args->relid;
+	vals[1] = 10000;
+
+	/* Establish signal handlers before unblocking signals. */
+	pqsignal(SIGTERM, handle_sigterm);
+
+	/* We're now ready to receive signals */
+	BackgroundWorkerUnblockSignals();
+
+	/* Establish connection and start transaction */
+	BackgroundWorkerInitializeConnectionByOid(args->dbid, InvalidOid);
+
+	do
+	{
+		failed = false;
+		rows = 0;
+		StartTransactionCommand();
+		bg_worker_load_config("PartitionDataWorker");
+
+		SPI_connect();
+		PushActiveSnapshot(GetTransactionSnapshot());
+
+		/* Do some preparation within the first iteration */
+		if (sql == NULL)
+		{
+			MemoryContext oldcontext;
+
+			/*
+			 * Allocate as SQL query in top memory context because current
+			 * context will be destroyed after transaction finishes
+			 */
+			oldcontext = MemoryContextSwitchTo(worker_context);
+			sql = psprintf("SELECT %s._partition_data_concurrent($1::oid, p_limit:=$2)",
+				get_namespace_name(get_pathman_schema()));
+			MemoryContextSwitchTo(oldcontext);
+		}
+
+		PG_TRY();
+		{
+			int		ret;
+			bool	isnull;
+
+			ret = SPI_execute_with_args(sql, 2, types, vals, nulls, false, 0);
+			if (ret > 0)
+			{
+				TupleDesc	tupdesc = SPI_tuptable->tupdesc;
+				HeapTuple	tuple = SPI_tuptable->vals[0];
+
+				Assert(SPI_processed == 1);
+
+				rows = DatumGetInt32(SPI_getbinval(tuple, tupdesc, 1, &isnull));
+			}
+		}
+		PG_CATCH();
+		{
+			ErrorData *error;
+			EmitErrorReport();
+			error = CopyErrorData();
+			elog(LOG, "Worker error: %s", error->message);
+			FlushErrorState();
+
+			/*
+			 * The most common exception we can catch here is a deadlock with
+			 * concurrent user queries. Check that attempts count doesn't exceed
+			 * some reasonable value
+			 */
+			if (100 <= failures_count++)
+			{
+				pfree(sql);
+				args->worker_status = WS_FREE;
+				elog(LOG,
+					 "The concurrent partitioning worker exiting because the "
+					 "maximum attempts count exceeded. See the error message below");
+				exit(1);
+			}
+			failed = true;
+		}
+		PG_END_TRY();
+
+		SPI_finish();
+		PopActiveSnapshot();
+		if (failed)
+		{
+			/* abort transaction and sleep for a second */
+			AbortCurrentTransaction();
+			DirectFunctionCall1(pg_sleep, Float8GetDatum(1));
+		}
+		else
+		{
+			/* Reset failures counter and commit transaction */
+			CommitTransactionCommand();
+			failures_count = 0;
+			args->total_rows += rows;
+		}
+
+		/* If other backend requested to stop worker then quit */
+		if (args->worker_status == WS_STOPPING)
+			break;
+	}
+	while(rows > 0 || failed);  /* do while there is still rows to relocate */
+
+	pfree(sql);
+	args->worker_status = WS_FREE;
+}
+
+
+/*
+ * -----------------------------------------------
+ *  Public interface for the ConcurrentPartWorker
+ * -----------------------------------------------
+ */
+
+/*
+ * Start concurrent partitioning worker to redistribute rows.
+ * NOTE: this function returns immediately.
+ */
+Datum
+partition_table_concurrently(PG_FUNCTION_ARGS)
+{
+	Oid					relid = PG_GETARG_OID(0);
+	ConcurrentPartSlot *my_slot = NULL;
+	int					empty_slot_idx = -1;
+	int					i;
+
+	/* Check if relation is a partitioned table */
+	shout_if_prel_is_invalid(relid,
+							 get_pathman_relation_info_after_lock(relid, true),
+							 PT_INDIFFERENT);
+
+	/*
+	 * Look for an empty slot and also check that a concurrent
+	 * partitioning operation for this table hasn't been started yet
+	 */
+	for (i = 0; i < PART_WORKER_SLOTS; i++)
+	{
+		if (concurrent_part_slots[i].worker_status == WS_FREE)
+		{
+			if (empty_slot_idx < 0)
+			{
+				my_slot = &concurrent_part_slots[i];
+				empty_slot_idx = i;
+			}
+		}
+		else if (concurrent_part_slots[i].relid == relid &&
+				 concurrent_part_slots[i].dbid == MyDatabaseId)
+		{
+			elog(ERROR,
+				 "Table \"%s\" is already being partitioned",
+				 get_rel_name(relid));
+		}
+	}
+
+	if (my_slot == NULL)
+		elog(ERROR, "No empty worker slots found");
+
+	/* Initialize concurrent part slot */
+	InitConcurrentPartSlot(my_slot, WS_WORKING, MyDatabaseId, relid);
+
+	/* Start worker (we should not wait) */
+	start_bg_worker(concurrent_part_bgw,
+					bgw_main_concurrent_part,
+					Int32GetDatum(empty_slot_idx),
+					false);
+
+	/* Tell user everything's fine */
+	elog(NOTICE,
+		 "Worker started. You can stop it with the following command: "
+		 "select stop_concurrent_part_task('%s');",
+		 get_rel_name(relid));
+
+	PG_RETURN_VOID();
+}
+
+/*
+ * Return list of active concurrent partitioning workers.
+ * NOTE: this is a set-returning-function (SRF).
+ */
+Datum
+show_concurrent_part_tasks_internal(PG_FUNCTION_ARGS)
+{
+	FuncCallContext		   *funcctx;
+	active_workers_cxt	   *userctx;
+	int						i;
+
+	/*
+	 * Initialize tuple descriptor & function call context.
+	 */
+	if (SRF_IS_FIRSTCALL())
+	{
+		TupleDesc			tupdesc;
+		MemoryContext		old_mcxt;
+
+		funcctx = SRF_FIRSTCALL_INIT();
+
+		old_mcxt = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+
+		userctx = (active_workers_cxt *) palloc(sizeof(active_workers_cxt));
+		userctx->cur_idx = 0;
+
+		/* Create tuple descriptor */
+		tupdesc = CreateTemplateTupleDesc(5, false);
+		TupleDescInitEntry(tupdesc, (AttrNumber) 1, "pid",		 INT4OID,	  -1, 0);
+		TupleDescInitEntry(tupdesc, (AttrNumber) 2, "dbid",		 OIDOID,	  -1, 0);
+		TupleDescInitEntry(tupdesc, (AttrNumber) 3, "relid",	 REGCLASSOID, -1, 0);
+		TupleDescInitEntry(tupdesc, (AttrNumber) 4, "processed", INT4OID,	  -1, 0);
+		TupleDescInitEntry(tupdesc, (AttrNumber) 5, "status",	 TEXTOID,	  -1, 0);
+
+		funcctx->tuple_desc = BlessTupleDesc(tupdesc);
+		funcctx->user_fctx = (void *) userctx;
+
+		MemoryContextSwitchTo(old_mcxt);
+	}
+
+	funcctx = SRF_PERCALL_SETUP();
+	userctx = (active_workers_cxt *) funcctx->user_fctx;
+
+	/*
+	 * Iterate through worker slots
+	 */
+	for (i = userctx->cur_idx; i < PART_WORKER_SLOTS; i++)
+	{
+		if (concurrent_part_slots[i].worker_status != WS_FREE)
+		{
+			HeapTuple	tuple;
+			Datum		values[5];
+			bool		isnull[5] = { false, false, false, false, false };
+
+			values[0] = concurrent_part_slots[i].pid;
+			values[1] = concurrent_part_slots[i].dbid;
+			values[2] = concurrent_part_slots[i].relid;
+			values[3] = concurrent_part_slots[i].total_rows;
+
+			/* Now build a status string */
+			switch(concurrent_part_slots[i].worker_status)
+			{
+				case WS_WORKING:
+					values[4] = PointerGetDatum(pstrdup("working"));
+					break;
+
+				case WS_STOPPING:
+					values[4] = PointerGetDatum(pstrdup("stopping"));
+					break;
+
+				default:
+					values[4] = PointerGetDatum(pstrdup("[unknown]"));
+			}
+
+			/* Form output tuple */
+			tuple = heap_form_tuple(funcctx->tuple_desc, values, isnull);
+
+			/* Switch to next worker */
+			userctx->cur_idx = i + 1;
+
+			SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tuple));
+		}
+	}
+
+	SRF_RETURN_DONE(funcctx);
+}
+
+/*
+ * Stop the specified concurrent partitioning worker.
+ * NOTE: worker will stop after it finishes a batch.
+ */
+Datum
+stop_concurrent_part_task(PG_FUNCTION_ARGS)
+{
+	Oid		relid = PG_GETARG_OID(0);
+	int		i;
+
+	for (i = 0; i < PART_WORKER_SLOTS; i++)
+		if (concurrent_part_slots[i].worker_status != WS_FREE &&
+			concurrent_part_slots[i].relid == relid &&
+			concurrent_part_slots[i].dbid == MyDatabaseId)
+		{
+			concurrent_part_slots[i].worker_status = WS_STOPPING;
+			elog(NOTICE, "Worker will stop after current batch's finished");
+
+			PG_RETURN_BOOL(true);
+		}
+
+	elog(ERROR, "Cannot find worker for relation \"%s\"",
+		 get_rel_name_or_relid(relid));
+}

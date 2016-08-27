@@ -69,19 +69,17 @@ extern Oid	pathman_config_relid;
 extern Oid	pathman_config_params_relid;
 
 /*
- * Just to clarify our intentions (returns pathman_config_relid).
+ * Just to clarify our intentions (return the corresponding relid).
  */
 Oid get_pathman_config_relid(void);
 Oid get_pathman_config_params_relid(void);
 
 /*
- * pg_pathman's global state.
+ * pg_pathman's global state structure.
  */
 typedef struct PathmanState
 {
-	LWLock		   *dsm_init_lock,
-				   *load_config_lock,
-				   *edit_partitions_lock;
+	LWLock		   *dsm_init_lock;	/* unused */
 } PathmanState;
 
 
@@ -100,12 +98,16 @@ typedef enum
  * The list of partitioned relation relids that must be handled by pg_pathman
  */
 extern List			   *inheritance_enabled_relids;
+
 /*
  * This list is used to ensure that partitioned relation isn't used both
  * with and without ONLY modifiers
  */
 extern List			   *inheritance_disabled_relids;
 
+/*
+ * pg_pathman's global state.
+ */
 extern PathmanState    *pmstate;
 
 

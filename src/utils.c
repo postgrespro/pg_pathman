@@ -705,52 +705,6 @@ is_string_type_internal(Oid typid)
 		   typid == CSTRINGOID;
 }
 
-/*
- * Common PartRelationInfo checks. Emit ERROR if anything is wrong.
- */
-void
-shout_if_prel_is_invalid(Oid parent_oid,
-						 const PartRelationInfo *prel,
-						 PartType expected_part_type)
-{
-	if (!prel)
-		elog(ERROR, "Relation \"%s\" is not partitioned by pg_pathman",
-			 get_rel_name_or_relid(parent_oid));
-
-	if (!PrelIsValid(prel))
-		elog(ERROR, "pg_pathman's cache contains invalid entry "
-					"for relation \"%s\" [%u]",
-			 get_rel_name_or_relid(parent_oid),
-			 MyProcPid);
-
-	/* Check partitioning type unless it's "indifferent" */
-	if (expected_part_type != PT_INDIFFERENT &&
-		expected_part_type != prel->parttype)
-	{
-		char *expected_str;
-
-		switch (expected_part_type)
-		{
-			case PT_HASH:
-				expected_str = "HASH";
-				break;
-
-			case PT_RANGE:
-				expected_str = "RANGE";
-				break;
-
-			default:
-				elog(ERROR,
-					 "expected_str selection not implemented for type %d",
-					 expected_part_type);
-		}
-
-		elog(ERROR, "Relation \"%s\" is not partitioned by %s",
-			 get_rel_name_or_relid(parent_oid),
-			 expected_str);
-	}
-}
-
 
 /*
  * Try to find binary operator.
@@ -787,10 +741,7 @@ datum_to_cstring(Datum datum, Oid typid)
 	if (HeapTupleIsValid(tup))
 	{
 		Form_pg_type	typtup = (Form_pg_type) GETSTRUCT(tup);
-		FmgrInfo		finfo;
-
-		fmgr_info(typtup->typoutput, &finfo);
-		result = DatumGetCString(FunctionCall1(&finfo, datum));
+		result = OidOutputFunctionCall(typtup->typoutput, datum);
 		ReleaseSysCache(tup);
 	}
 	else

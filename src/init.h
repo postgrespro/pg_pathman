@@ -75,10 +75,10 @@ void init_main_pathman_toggle(void);
 
 Size estimate_pathman_shmem_size(void);
 void init_shmem_config(void);
+
 bool load_config(void);
 void unload_config(void);
-Size get_worker_slots_size(void);
-void create_worker_slots(void);
+
 
 void fill_prel_with_partitions(const Oid *partitions,
 							   const uint32 parts_count,

@@ -15,8 +15,8 @@ CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions(
 	parent_relid		REGCLASS,
 	attribute			TEXT,
 	partitions_count	INTEGER,
-	partition_data		BOOLEAN DEFAULT true
-) RETURNS INTEGER AS
+	partition_data		BOOLEAN DEFAULT true)
+RETURNS INTEGER AS
 $$
 DECLARE
 	v_child_relname		TEXT;
@@ -26,6 +26,9 @@ DECLARE
 	v_hashfunc			TEXT;
 
 BEGIN
+	/* Acquire exclusive lock on parent */
+	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+
 	PERFORM @extschema@.validate_relname(parent_relid);
 	attribute := lower(attribute);
 	PERFORM @extschema@.common_relation_checks(parent_relid, attribute);
