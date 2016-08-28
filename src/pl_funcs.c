@@ -8,10 +8,10 @@
  * ------------------------------------------------------------------------
  */
 
-#include "pathman.h"
 #include "init.h"
-#include "utils.h"
+#include "pathman.h"
 #include "relation_info.h"
+#include "utils.h"
 #include "xact_handling.h"
 
 #include "access/htup_details.h"
@@ -20,13 +20,13 @@
 #include "catalog/indexing.h"
 #include "commands/sequence.h"
 #include "miscadmin.h"
+#include "utils/array.h"
 #include "utils/builtins.h"
+#include <utils/inval.h>
+#include "utils/memutils.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
-#include "utils/array.h"
-#include "utils/memutils.h"
-#include <utils/inval.h>
 
 
 /* declarations */
@@ -54,33 +54,6 @@ PG_FUNCTION_INFO_V1( add_to_pathman_config );
 PG_FUNCTION_INFO_V1( invalidate_relcache );
 PG_FUNCTION_INFO_V1( lock_partitioned_relation );
 PG_FUNCTION_INFO_V1( debug_capture );
-
-
-/* pathman_range type */
-typedef struct PathmanRange
-{
-	Oid			type_oid;
-	bool		by_val;
-	RangeEntry	range;
-} PathmanRange;
-
-typedef struct PathmanHash
-{
-	Oid			child_oid;
-	uint32		hash;
-} PathmanHash;
-
-typedef struct PathmanRangeListCtxt
-{
-	Oid			type_oid;
-	bool		by_val;
-	RangeEntry *ranges;
-	int			nranges;
-	int			pos;
-} PathmanRangeListCtxt;
-
-PG_FUNCTION_INFO_V1( pathman_range_in );
-PG_FUNCTION_INFO_V1( pathman_range_out );
 
 
 static void on_partitions_created_internal(Oid partitioned_table, bool add_callbacks);
@@ -726,41 +699,6 @@ lock_partitioned_relation(PG_FUNCTION_ARGS)
 	xact_lock_partitioned_rel(relid);
 
 	PG_RETURN_VOID();
-}
-
-
-Datum
-pathman_range_in(PG_FUNCTION_ARGS)
-{
-	elog(ERROR, "Not implemented");
-}
-
-Datum
-pathman_range_out(PG_FUNCTION_ARGS)
-{
-	PathmanRange *rng = (PathmanRange *) PG_GETARG_POINTER(0);
-	char	   *result;
-	char	   *left,
-			   *right;
-	Oid			outputfunc;
-	bool		typisvarlena;
-
-	getTypeOutputInfo(rng->type_oid, &outputfunc, &typisvarlena);
-
-	left = OidOutputFunctionCall(
-		outputfunc,
-		rng->by_val ?
-			(Datum) rng->range.min :
-			PointerGetDatum(&rng->range.min));
-
-	right = OidOutputFunctionCall(
-		outputfunc,
-		rng->by_val ?
-			(Datum) rng->range.max :
-			PointerGetDatum(&rng->range.max));
-
-	result = psprintf("[%s: %s)", left, right);
-	PG_RETURN_CSTRING(result);
 }
 
 

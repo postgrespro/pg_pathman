@@ -10,9 +10,9 @@
 
 #include "hooks.h"
 #include "init.h"
+#include "partition_filter.h"
 #include "runtimeappend.h"
 #include "runtime_merge_append.h"
-#include "partition_filter.h"
 #include "utils.h"
 
 #include "miscadmin.h"
@@ -447,12 +447,9 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 void
 pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
 {
-	elog(DEBUG2, "Called parse hook [%u]", MyProcPid);
-
 	/* Invoke original hook if needed */
 	if (post_parse_analyze_hook_next)
 		post_parse_analyze_hook_next(pstate, query);
-
 
 	/* Finish delayed invalidation jobs */
 	if (IsPathmanReady())

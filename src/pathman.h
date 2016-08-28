@@ -51,8 +51,6 @@
 /* type modifier (typmod) for 'range_interval' */
 #define PATHMAN_CONFIG_interval_typmod		-1
 
-#define PATHMAN_CONFIG_ID_SEQ				"pathman_config_id_seq"
-
 /*
  * Definitions for the "pathman_config_params" table
  */

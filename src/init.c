@@ -25,18 +25,17 @@
 #include "catalog/pg_inherits.h"
 #include "catalog/pg_inherits_fn.h"
 #include "catalog/pg_type.h"
-#include "executor/spi.h"
 #include "miscadmin.h"
 #include "optimizer/clauses.h"
 #include "utils/datum.h"
 #include "utils/inval.h"
-#include "utils/fmgroids.h"
-#include "utils/syscache.h"
 #include "utils/builtins.h"
-#include "utils/typcache.h"
+#include "utils/fmgroids.h"
 #include "utils/memutils.h"
 #include "utils/lsyscache.h"
 #include "utils/snapmgr.h"
+#include "utils/syscache.h"
+#include "utils/typcache.h"
 
 
 /* Help user in case of emergency */
