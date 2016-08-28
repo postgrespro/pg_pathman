@@ -158,6 +158,7 @@ LANGUAGE plpgsql;
  */
 CREATE OR REPLACE FUNCTION @extschema@.show_concurrent_part_tasks()
 RETURNS TABLE (
+	userid		REGROLE,
 	pid			INT,
 	dbid		OID,
 	relid		REGCLASS,
@@ -188,7 +189,7 @@ RETURNS BOOL AS 'pg_pathman', 'stop_concurrent_part_task' LANGUAGE C STRICT;
  * Copy rows to partitions concurrently.
  */
 CREATE OR REPLACE FUNCTION @extschema@._partition_data_concurrent(
-	p_relation		regclass,
+	p_relation		REGCLASS,
 	p_min			ANYELEMENT DEFAULT NULL::text,
 	p_max			ANYELEMENT DEFAULT NULL::text,
 	p_limit			INT DEFAULT NULL,

@@ -18,6 +18,7 @@
 #include "pathman_workers.h"
 #include "relation_info.h"
 #include "utils.h"
+#include "xact_handling.h"
 
 #include "access/htup_details.h"
 #include "access/xact.h"
@@ -31,6 +32,7 @@
 #include "storage/latch.h"
 #include "utils/builtins.h"
 #include "utils/datum.h"
+#include "utils/memutils.h"
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"
 #include "utils/resowner.h"
@@ -351,6 +353,17 @@ bgw_main_spawn_partitions(Datum main_arg)
 		 DebugPrintDatum(value, args->value_type), MyProcPid);
 #endif
 
+	/* Check again if there's a conflicting lock */
+	if (xact_conflicting_lock_exists(args->partitioned_table))
+	{
+		elog(LOG, "%s: there's a conflicting lock on relation \"%s\"",
+			 spawn_partitions_bgw,
+			 get_rel_name_or_relid(args->partitioned_table));
+
+		dsm_detach(segment);
+		return; /* exit quickly */
+	}
+
 	/* Create partitions and save the Oid of the last one */
 	args->result = create_partitions_internal(args->partitioned_table,
 											  value, /* unpacked Datum */
@@ -378,24 +391,11 @@ bgw_main_spawn_partitions(Datum main_arg)
 static void
 bgw_main_concurrent_part(Datum main_arg)
 {
-	ConcurrentPartSlot *args;
-	Oid					types[2]	= { OIDOID,	INT4OID };
-	Datum				vals[2];
-	bool				nulls[2]	= { false, false };
 	int					rows;
-	int					slot_idx = DatumGetInt32(main_arg);
-	MemoryContext		worker_context = CurrentMemoryContext;
-	int					failures_count = 0;
 	bool				failed;
+	int					failures_count = 0;
 	char			   *sql = NULL;
-
-	/* Create resource owner */
-	CurrentResourceOwner = ResourceOwnerCreate(NULL, "PartitionDataWorker");
-
-	args = &concurrent_part_slots[slot_idx];
-	args->pid = MyProcPid;
-	vals[0] = args->relid;
-	vals[1] = 10000;
+	ConcurrentPartSlot *part_slot;
 
 	/* Establish signal handlers before unblocking signals. */
 	pqsignal(SIGTERM, handle_sigterm);
@@ -403,20 +403,39 @@ bgw_main_concurrent_part(Datum main_arg)
 	/* We're now ready to receive signals */
 	BackgroundWorkerUnblockSignals();
 
-	/* Establish connection and start transaction */
-	BackgroundWorkerInitializeConnectionByOid(args->dbid, InvalidOid);
+	/* Create resource owner */
+	CurrentResourceOwner = ResourceOwnerCreate(NULL, concurrent_part_bgw);
 
+	/* Update concurrent part slot */
+	part_slot = &concurrent_part_slots[DatumGetInt32(main_arg)];
+	part_slot->pid = MyProcPid;
+
+	/* Establish connection and start transaction */
+	BackgroundWorkerInitializeConnectionByOid(part_slot->dbid, part_slot->userid);
+
+	/* Initialize pg_pathman's local config */
+	StartTransactionCommand();
+	bg_worker_load_config(concurrent_part_bgw);
+	CommitTransactionCommand();
+
+	/* Do the job */
 	do
 	{
+		Oid		types[2]	= { OIDOID,				INT4OID };
+		Datum	vals[2]		= { part_slot->relid,	part_slot->batch_size };
+		bool	nulls[2]	= { false,				false };
+
+		/* Reset loop variables */
 		failed = false;
 		rows = 0;
+
+		/* Start new transaction (syscache access etc.) */
 		StartTransactionCommand();
-		bg_worker_load_config("PartitionDataWorker");
 
 		SPI_connect();
 		PushActiveSnapshot(GetTransactionSnapshot());
 
-		/* Do some preparation within the first iteration */
+		/* Prepare the query if needed */
 		if (sql == NULL)
 		{
 			MemoryContext oldcontext;
@@ -425,78 +444,104 @@ bgw_main_concurrent_part(Datum main_arg)
 			 * Allocate as SQL query in top memory context because current
 			 * context will be destroyed after transaction finishes
 			 */
-			oldcontext = MemoryContextSwitchTo(worker_context);
+			oldcontext = MemoryContextSwitchTo(TopMemoryContext);
 			sql = psprintf("SELECT %s._partition_data_concurrent($1::oid, p_limit:=$2)",
-				get_namespace_name(get_pathman_schema()));
+						   get_namespace_name(get_pathman_schema()));
 			MemoryContextSwitchTo(oldcontext);
 		}
 
+		/* Exec ret = _partition_data_concurrent() */
 		PG_TRY();
 		{
 			int		ret;
 			bool	isnull;
 
 			ret = SPI_execute_with_args(sql, 2, types, vals, nulls, false, 0);
-			if (ret > 0)
+			if (ret == SPI_OK_SELECT)
 			{
 				TupleDesc	tupdesc = SPI_tuptable->tupdesc;
 				HeapTuple	tuple = SPI_tuptable->vals[0];
 
-				Assert(SPI_processed == 1);
+				Assert(SPI_processed == 1); /* there should be 1 result at most */
 
 				rows = DatumGetInt32(SPI_getbinval(tuple, tupdesc, 1, &isnull));
+
+				Assert(!isnull); /* ... and ofc it must not be NULL */
 			}
 		}
 		PG_CATCH();
 		{
 			ErrorData *error;
+
 			EmitErrorReport();
+
 			error = CopyErrorData();
-			elog(LOG, "Worker error: %s", error->message);
+			elog(LOG, "%s: %s", concurrent_part_bgw, error->message);
 			FlushErrorState();
+			FreeErrorData(error);
 
 			/*
 			 * The most common exception we can catch here is a deadlock with
 			 * concurrent user queries. Check that attempts count doesn't exceed
 			 * some reasonable value
 			 */
-			if (100 <= failures_count++)
+			if (failures_count++ > PART_WORKER_MAX_ATTEMPTS)
 			{
-				pfree(sql);
-				args->worker_status = WS_FREE;
+				/* Mark slot as FREE */
+				part_slot->worker_status = WS_FREE;
+
 				elog(LOG,
-					 "The concurrent partitioning worker exiting because the "
-					 "maximum attempts count exceeded. See the error message below");
-				exit(1);
+					 "Concurrent partitioning worker has canceled the task because "
+					 "maximum amount of attempts (%d) had been exceeded. "
+					 "See the error message below",
+					 PART_WORKER_MAX_ATTEMPTS);
+
+				return; /* exit quickly */
 			}
+
+			/* Set 'failed' flag */
 			failed = true;
 		}
 		PG_END_TRY();
 
 		SPI_finish();
 		PopActiveSnapshot();
+
 		if (failed)
 		{
-			/* abort transaction and sleep for a second */
+#ifdef USE_ASSERT_CHECKING
+			elog(DEBUG2, "%s: could not relocate batch, total: %lu [%u]",
+				 concurrent_part_bgw, part_slot->total_rows, MyProcPid);
+#endif
+
+			/* Abort transaction and sleep for a second */
 			AbortCurrentTransaction();
-			DirectFunctionCall1(pg_sleep, Float8GetDatum(1));
+			DirectFunctionCall1(pg_sleep, Float8GetDatum(part_slot->sleep_time));
 		}
 		else
 		{
-			/* Reset failures counter and commit transaction */
+			/* Commit transaction and reset 'failures_count' */
 			CommitTransactionCommand();
 			failures_count = 0;
-			args->total_rows += rows;
+
+			/* Add rows to total_rows */
+			part_slot->total_rows += rows;
+
+#ifdef USE_ASSERT_CHECKING
+			elog(DEBUG2, "%s: relocated %d rows, total: %lu [%u]",
+				 concurrent_part_bgw, rows, part_slot->total_rows, MyProcPid);
+#endif
 		}
 
-		/* If other backend requested to stop worker then quit */
-		if (args->worker_status == WS_STOPPING)
+		/* If other backend requested to stop us, quit */
+		if (part_slot->worker_status == WS_STOPPING)
 			break;
 	}
-	while(rows > 0 || failed);  /* do while there is still rows to relocate */
+	while(rows > 0 || failed);  /* do while there's still rows to be relocated */
 
+	/* Reclaim the resources */
 	pfree(sql);
-	args->worker_status = WS_FREE;
+	part_slot->worker_status = WS_FREE;
 }
 
 
@@ -513,6 +558,8 @@ bgw_main_concurrent_part(Datum main_arg)
 Datum
 partition_table_concurrently(PG_FUNCTION_ARGS)
 {
+#define tostr(str) ( #str )
+
 	Oid					relid = PG_GETARG_OID(0);
 	ConcurrentPartSlot *my_slot = NULL;
 	int					empty_slot_idx = -1;
@@ -550,7 +597,9 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 		elog(ERROR, "No empty worker slots found");
 
 	/* Initialize concurrent part slot */
-	InitConcurrentPartSlot(my_slot, WS_WORKING, MyDatabaseId, relid);
+	InitConcurrentPartSlot(my_slot, GetAuthenticatedUserId(),
+						   WS_WORKING, MyDatabaseId, relid,
+						   1000, 1.0);
 
 	/* Start worker (we should not wait) */
 	start_bg_worker(concurrent_part_bgw,
@@ -560,8 +609,9 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 
 	/* Tell user everything's fine */
 	elog(NOTICE,
-		 "Worker started. You can stop it with the following command: "
-		 "select stop_concurrent_part_task('%s');",
+		 "Worker started. You can stop it "
+		 "with the following command: select %s('%s');",
+		 tostr(stop_concurrent_part_task), /* convert function's name to literal */
 		 get_rel_name(relid));
 
 	PG_RETURN_VOID();
@@ -594,12 +644,20 @@ show_concurrent_part_tasks_internal(PG_FUNCTION_ARGS)
 		userctx->cur_idx = 0;
 
 		/* Create tuple descriptor */
-		tupdesc = CreateTemplateTupleDesc(5, false);
-		TupleDescInitEntry(tupdesc, (AttrNumber) 1, "pid",		 INT4OID,	  -1, 0);
-		TupleDescInitEntry(tupdesc, (AttrNumber) 2, "dbid",		 OIDOID,	  -1, 0);
-		TupleDescInitEntry(tupdesc, (AttrNumber) 3, "relid",	 REGCLASSOID, -1, 0);
-		TupleDescInitEntry(tupdesc, (AttrNumber) 4, "processed", INT4OID,	  -1, 0);
-		TupleDescInitEntry(tupdesc, (AttrNumber) 5, "status",	 TEXTOID,	  -1, 0);
+		tupdesc = CreateTemplateTupleDesc(Natts_pathman_cp_tasks, false);
+
+		TupleDescInitEntry(tupdesc, Anum_pathman_cp_tasks_userid,
+						   "userid", REGROLEOID, -1, 0);
+		TupleDescInitEntry(tupdesc, Anum_pathman_cp_tasks_pid,
+						   "pid", INT4OID, -1, 0);
+		TupleDescInitEntry(tupdesc, Anum_pathman_cp_tasks_dbid,
+						   "dbid", OIDOID, -1, 0);
+		TupleDescInitEntry(tupdesc, Anum_pathman_cp_tasks_relid,
+						   "relid", REGCLASSOID, -1, 0);
+		TupleDescInitEntry(tupdesc, Anum_pathman_cp_tasks_processed,
+						   "processed", INT4OID, -1, 0);
+		TupleDescInitEntry(tupdesc, Anum_pathman_cp_tasks_status,
+						   "status", TEXTOID, -1, 0);
 
 		funcctx->tuple_desc = BlessTupleDesc(tupdesc);
 		funcctx->user_fctx = (void *) userctx;
@@ -610,35 +668,39 @@ show_concurrent_part_tasks_internal(PG_FUNCTION_ARGS)
 	funcctx = SRF_PERCALL_SETUP();
 	userctx = (active_workers_cxt *) funcctx->user_fctx;
 
-	/*
-	 * Iterate through worker slots
-	 */
+	/* Iterate through worker slots */
 	for (i = userctx->cur_idx; i < PART_WORKER_SLOTS; i++)
 	{
-		if (concurrent_part_slots[i].worker_status != WS_FREE)
+		ConcurrentPartSlot *cur_slot = &concurrent_part_slots[i];
+
+		if (cur_slot->worker_status != WS_FREE)
 		{
 			HeapTuple	tuple;
-			Datum		values[5];
-			bool		isnull[5] = { false, false, false, false, false };
+			Datum		values[Natts_pathman_cp_tasks];
+			bool		isnull[Natts_pathman_cp_tasks] = { 0, 0, 0, 0, 0, 0 };
 
-			values[0] = concurrent_part_slots[i].pid;
-			values[1] = concurrent_part_slots[i].dbid;
-			values[2] = concurrent_part_slots[i].relid;
-			values[3] = concurrent_part_slots[i].total_rows;
+			values[Anum_pathman_cp_tasks_userid - 1]	= cur_slot->userid;
+			values[Anum_pathman_cp_tasks_pid - 1]		= cur_slot->pid;
+			values[Anum_pathman_cp_tasks_dbid - 1]		= cur_slot->dbid;
+			values[Anum_pathman_cp_tasks_relid - 1]		= cur_slot->relid;
+			values[Anum_pathman_cp_tasks_processed - 1]	= cur_slot->total_rows;
 
 			/* Now build a status string */
-			switch(concurrent_part_slots[i].worker_status)
+			switch(cur_slot->worker_status)
 			{
 				case WS_WORKING:
-					values[4] = PointerGetDatum(pstrdup("working"));
+					values[Anum_pathman_cp_tasks_status - 1] =
+							PointerGetDatum(cstring_to_text("working"));
 					break;
 
 				case WS_STOPPING:
-					values[4] = PointerGetDatum(pstrdup("stopping"));
+					values[Anum_pathman_cp_tasks_status - 1] =
+							PointerGetDatum(cstring_to_text("stopping"));
 					break;
 
 				default:
-					values[4] = PointerGetDatum(pstrdup("[unknown]"));
+					values[Anum_pathman_cp_tasks_status - 1] =
+							PointerGetDatum(cstring_to_text("[unknown]"));
 			}
 
 			/* Form output tuple */
@@ -670,7 +732,7 @@ stop_concurrent_part_task(PG_FUNCTION_ARGS)
 			concurrent_part_slots[i].dbid == MyDatabaseId)
 		{
 			concurrent_part_slots[i].worker_status = WS_STOPPING;
-			elog(NOTICE, "Worker will stop after current batch's finished");
+			elog(NOTICE, "Worker will stop after it finishes current batch");
 
 			PG_RETURN_BOOL(true);
 		}

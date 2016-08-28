@@ -8,8 +8,8 @@
  * ------------------------------------------------------------------------
  */
 
-#ifndef UTILS_H
-#define UTILS_H
+#ifndef PATHMAN_UTILS_H
+#define PATHMAN_UTILS_H
 
 #include "pathman.h"
 
