@@ -67,7 +67,7 @@ create_hash_partitions(relation         REGCLASS,
                        partitions_count INTEGER,
                        partition_name TEXT DEFAULT NULL)
 ```
-Performs HASH partitioning for `relation` by integer key `attribute`. The `partitions_count` parameter specifies the number of partitions to create; it cannot be changed afterwards. If `partition_data` is `true` then all the data will be automatically copied from the parent table to partitions. Note that data migration may took a while to finish and the table will be locked until transaction commits. See `partition_data_concurrent()` for a lock-free way to migrate data.
+Performs HASH partitioning for `relation` by integer key `attribute`. The `partitions_count` parameter specifies the number of partitions to create; it cannot be changed afterwards. If `partition_data` is `true` then all the data will be automatically copied from the parent table to partitions. Note that data migration may took a while to finish and the table will be locked until transaction commits. See `partition_table_concurrently()` for a lock-free way to migrate data.
 
 ```plpgsql
 create_range_partitions(relation       REGCLASS,
@@ -106,9 +106,14 @@ Performs RANGE-partitioning from specified range for `relation` by partitioning 
 ### Data migration
 
 ```plpgsql
-partition_data_concurrent(relation REGCLASS)
+partition_table_concurrently(relation REGCLASS)
 ```
-Starts a background worker to copy data from parent table to partitions. The worker utilize short transactions to copy small bunches of data (up to 10K rows per transaction) and thus doesn't significantly interfere with users activity.
+Starts a background worker to move data from parent table to partitions. The worker utilizes short transactions to copy small batches of data (up to 10K rows per transaction) and thus doesn't significantly interfere with user's activity.
+
+```plpgsql
+stop_concurrent_part_task(relation REGCLASS)
+```
+Stops a background worker performing a concurrent partitioning task. Note: worker will exit after it finishes relocating a current batch.
 
 ### Triggers
 ```plpgsql
@@ -343,6 +348,15 @@ SELECT tableoid::regclass AS partition, * FROM partitioned_table;
 ```
 
 - Though indices on a parent table aren't particularly useful (since it's empty), they act as prototypes for indices on partitions. For each index on the parent table, `pg_pathman` will create a similar index on every partition.
+
+- All running concurrent partitioning tasks can be listed using the `pathman_concurrent_part_tasks` view:
+```plpgsql
+postgres=# SELECT * FROM pathman_concurrent_part_tasks;
+ userid | pid  | dbid  | relid | processed | status  
+--------+------+-------+-------+-----------+---------
+ dmitry | 7367 | 16384 | test  |    472000 | working
+(1 row)
+```
 
 ### HASH partitioning
 Consider an example of HASH partitioning. First create a table with some integer column:
