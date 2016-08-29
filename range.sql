@@ -50,8 +50,6 @@ DECLARE
 	v_rows_count		INTEGER;
 	v_max				p_start_value%TYPE;
 	v_cur_value			p_start_value%TYPE := p_start_value;
-	v_plain_relname		TEXT;
-	v_plain_schema		TEXT;
 	i					INTEGER;
 
 BEGIN
@@ -94,17 +92,15 @@ BEGIN
 					   pg_typeof(p_start_value));
 	END IF;
 
-	SELECT * INTO v_plain_schema, v_plain_relname
-	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
-
 	/* Create sequence for child partitions names */
-	PERFORM @extschema@.create_or_replace_sequence(v_plain_schema, v_plain_relname);
+	PERFORM @extschema@.create_or_replace_sequence(schema, relname)
+	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
 
 	/* Insert new entry to pathman config */
 	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype, range_interval)
-	VALUES (parent_relid, p_attribute, 2, p_interval::text);
+	VALUES (parent_relid, p_attribute, 2, p_interval::TEXT);
 
-	/* create first partition */
+	/* Create first partition */
 	FOR i IN 1..p_count
 	LOOP
 		EXECUTE format('SELECT @extschema@.create_single_range_partition($1, $2, $3::%s)',
@@ -117,7 +113,7 @@ BEGIN
 	/* Notify backend about changes */
 	PERFORM @extschema@.on_create_partitions(parent_relid);
 
-		/* Copy data */
+	/* Relocate data if asked to */
 	IF partition_data = true THEN
 		PERFORM @extschema@.disable_parent(parent_relid);
 		PERFORM @extschema@.partition_data(parent_relid);
@@ -148,8 +144,6 @@ DECLARE
 	v_rows_count		INTEGER;
 	v_max				p_start_value%TYPE;
 	v_cur_value			p_start_value%TYPE := p_start_value;
-	v_plain_schema		TEXT;
-	v_plain_relname		TEXT;
 	i					INTEGER;
 
 BEGIN
@@ -194,15 +188,13 @@ BEGIN
 											 p_start_value + p_interval * p_count);
 	END IF;
 
-	SELECT * INTO v_plain_schema, v_plain_relname
-	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
-
 	/* Create sequence for child partitions names */
-	PERFORM @extschema@.create_or_replace_sequence(v_plain_schema, v_plain_relname);
+	PERFORM @extschema@.create_or_replace_sequence(schema, relname)
+	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
 
 	/* Insert new entry to pathman config */
 	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype, range_interval)
-	VALUES (parent_relid, p_attribute, 2, p_interval::text);
+	VALUES (parent_relid, p_attribute, 2, p_interval::TEXT);
 
 	/* create first partition */
 	FOR i IN 1..p_count
@@ -216,7 +208,7 @@ BEGIN
 	/* Notify backend about changes */
 	PERFORM @extschema@.on_create_partitions(parent_relid);
 
-	/* Copy data */
+	/* Relocate data if asked to */
 	IF partition_data = true THEN
 		PERFORM @extschema@.disable_parent(parent_relid);
 		PERFORM @extschema@.partition_data(parent_relid);
@@ -244,9 +236,7 @@ CREATE OR REPLACE FUNCTION @extschema@.create_partitions_from_range(
 RETURNS INTEGER AS
 $$
 DECLARE
-	v_plain_schema		TEXT;
-	v_plain_relname		TEXT;
-	part_count			INTEGER := 0;
+	part_count		INTEGER := 0;
 
 BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
@@ -257,21 +247,19 @@ BEGIN
 		RAISE EXCEPTION 'Interval must be positive';
 	END IF;
 
-	SELECT * INTO v_plain_schema, v_plain_relname
-	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
-
-	/* Create sequence for child partitions names */
-	PERFORM @extschema@.create_or_replace_sequence(v_plain_schema, v_plain_relname);
-
 	/* Check boundaries */
 	PERFORM @extschema@.check_boundaries(parent_relid,
 										 p_attribute,
 										 p_start_value,
 										 p_end_value);
 
+	/* Create sequence for child partitions names */
+	PERFORM @extschema@.create_or_replace_sequence(schema, relname)
+	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
+
 	/* Insert new entry to pathman config */
 	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype, range_interval)
-	VALUES (parent_relid, p_attribute, 2, p_interval::text);
+	VALUES (parent_relid, p_attribute, 2, p_interval::TEXT);
 
 	WHILE p_start_value <= p_end_value
 	LOOP
@@ -285,7 +273,7 @@ BEGIN
 	/* Notify backend about changes */
 	PERFORM @extschema@.on_create_partitions(parent_relid);
 
-	/* Copy data */
+	/* Relocate data if asked to */
 	IF partition_data = true THEN
 		PERFORM @extschema@.disable_parent(parent_relid);
 		PERFORM @extschema@.partition_data(parent_relid);
@@ -313,20 +301,12 @@ CREATE OR REPLACE FUNCTION @extschema@.create_partitions_from_range(
 RETURNS INTEGER AS
 $$
 DECLARE
-	v_plain_schema		TEXT;
-	v_plain_relname		TEXT;
-	part_count			INTEGER := 0;
+	part_count		INTEGER := 0;
 
 BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
 	p_attribute := lower(p_attribute);
 	PERFORM @extschema@.common_relation_checks(parent_relid, p_attribute);
-
-	SELECT * INTO v_plain_schema, v_plain_relname
-	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
-
-	/* Create sequence for child partitions names */
-	PERFORM @extschema@.create_or_replace_sequence(v_plain_schema, v_plain_relname);
 
 	/* Check boundaries */
 	PERFORM @extschema@.check_boundaries(parent_relid,
@@ -334,9 +314,13 @@ BEGIN
 										 p_start_value,
 										 p_end_value);
 
+	/* Create sequence for child partitions names */
+	PERFORM @extschema@.create_or_replace_sequence(schema, relname)
+	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
+
 	/* Insert new entry to pathman config */
 	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype, range_interval)
-	VALUES (parent_relid, p_attribute, 2, p_interval::text);
+	VALUES (parent_relid, p_attribute, 2, p_interval::TEXT);
 
 	WHILE p_start_value <= p_end_value
 	LOOP
@@ -351,7 +335,7 @@ BEGIN
 	/* Notify backend about changes */
 	PERFORM @extschema@.on_create_partitions(parent_relid);
 
-	/* Copy data */
+	/* Relocate data if asked to */
 	IF partition_data = true THEN
 		PERFORM @extschema@.disable_parent(parent_relid);
 		PERFORM @extschema@.partition_data(parent_relid);
@@ -379,15 +363,16 @@ $$
 DECLARE
 	v_min		p_start_value%TYPE;
 	v_max		p_start_value%TYPE;
-	v_count		INTEGER;
+	v_count		BIGINT;
 
 BEGIN
 	/* Get min and max values */
-	EXECUTE format('SELECT count(*), min(%s), max(%s) FROM %s WHERE NOT %s IS NULL',
-				   p_attribute, p_attribute, parent_relid::text, p_attribute)
+	EXECUTE format('SELECT count(*), min(%1$s), max(%1$s)
+					FROM %2$s WHERE NOT %1$s IS NULL',
+				   p_attribute, parent_relid::TEXT)
 	INTO v_count, v_min, v_max;
 
-	/* check that column has NULL values */
+	/* Check if column has NULL values */
 	IF v_count > 0 AND (v_min IS NULL OR v_max IS NULL) THEN
 		RAISE EXCEPTION '''%'' column contains NULL values', p_attribute;
 	END IF;
@@ -399,8 +384,8 @@ BEGIN
 	END IF;
 
 	/* Check upper boundary */
-	IF p_end_value <= v_max  THEN
-		RAISE EXCEPTION 'Not enough partitions to fit all the values of ''%''',
+	IF p_end_value <= v_max THEN
+		RAISE EXCEPTION 'Not enough partitions to fit all values of ''%''',
 				p_attribute;
 	END IF;
 END
@@ -421,7 +406,6 @@ DECLARE
 	v_child_relname			TEXT;
 	v_plain_child_relname	TEXT;
 	v_attname				TEXT;
-	v_sql					TEXT;
 	v_plain_schema			TEXT;
 	v_plain_relname			TEXT;
 	v_child_relname_exists	BOOL;
@@ -432,7 +416,7 @@ BEGIN
 				 WHERE partrel = parent_relid;
 
 	IF v_attname IS NULL THEN
-		RAISE EXCEPTION 'Table % is not partitioned', quote_ident(parent_relid::text);
+		RAISE EXCEPTION 'Table "%" is not partitioned', parent_relid::TEXT;
 	END IF;
 
 	SELECT * INTO v_plain_schema, v_plain_relname
@@ -461,21 +445,17 @@ BEGIN
 		v_child_relname := partition_name;
 	END IF;
 
-	EXECUTE format(
-		'CREATE TABLE %1$s (LIKE %2$s INCLUDING ALL) INHERITS (%2$s)',
-		v_child_relname,
-		@extschema@.get_schema_qualified_name(parent_relid));
+	EXECUTE format('CREATE TABLE %1$s (LIKE %2$s INCLUDING ALL) INHERITS (%2$s)',
+				   v_child_relname,
+				   parent_relid::TEXT);
 
-	EXECUTE format(
-		'ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)',
-		v_child_relname,
-		@extschema@.build_check_constraint_name(
-			v_child_relname::regclass,
-			v_attname),
-		@extschema@.build_range_condition(
-			v_attname,
-			p_start_value,
-			p_end_value));
+	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)',
+				   v_child_relname,
+				   @extschema@.build_check_constraint_name(v_child_relname::REGCLASS,
+														   v_attname),
+				   @extschema@.build_range_condition(v_attname,
+													 p_start_value,
+													 p_end_value));
 
 	RETURN v_child_relname;
 END
@@ -511,8 +491,7 @@ BEGIN
 	INTO v_attname, v_part_type;
 
 	IF v_attname IS NULL THEN
-		RAISE EXCEPTION 'Table % is not partitioned',
-						quote_ident(v_parent_relid::text);
+		RAISE EXCEPTION 'Table "%" is not partitioned', v_parent_relid::TEXT;
 	END IF;
 
 	/* Check if this is a RANGE partition */
@@ -534,17 +513,16 @@ BEGIN
 	END IF;
 
 	/* Create new partition */
-	v_new_partition := @extschema@.create_single_range_partition(
-							@extschema@.get_schema_qualified_name(v_parent_relid),
-							p_value,
-							p_range[2],
-							partition_name);
+	v_new_partition := @extschema@.create_single_range_partition(v_parent_relid,
+																 p_value,
+																 p_range[2],
+																 partition_name);
 
 	/* Copy data */
 	v_cond := @extschema@.build_range_condition(v_attname, p_value, p_range[2]);
 	EXECUTE format('WITH part_data AS (DELETE FROM %s WHERE %s RETURNING *)
 					INSERT INTO %s SELECT * FROM part_data',
-				   p_partition,
+				   p_partition::TEXT,
 				   v_cond,
 				   v_new_partition);
 
@@ -553,11 +531,11 @@ BEGIN
 	v_check_name := @extschema@.build_check_constraint_name(p_partition, v_attname);
 
 	EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %s',
-				   p_partition::text,
+				   p_partition::TEXT,
 				   v_check_name);
 
 	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)',
-				   p_partition::text,
+				   p_partition::TEXT,
 				   v_check_name,
 				   v_cond);
 
@@ -577,8 +555,8 @@ CREATE OR REPLACE FUNCTION @extschema@.merge_range_partitions(
 RETURNS VOID AS
 $$
 DECLARE
-	v_parent_relid1		OID;
-	v_parent_relid2		OID;
+	v_parent_relid1		REGCLASS;
+	v_parent_relid2		REGCLASS;
 	v_attname			TEXT;
 	v_part_type			INTEGER;
 	v_atttype			TEXT;
@@ -601,8 +579,7 @@ BEGIN
 	INTO v_attname, v_part_type;
 
 	IF v_attname IS NULL THEN
-		RAISE EXCEPTION 'Table % is not partitioned',
-						quote_ident(v_parent_relid1::regclass::text);
+		RAISE EXCEPTION 'Table "%" is not partitioned', v_parent_relid1::TEXT;
 	END IF;
 
 	/* Check if this is a RANGE partition */
@@ -640,7 +617,6 @@ RETURNS ANYARRAY AS
 $$
 DECLARE
 	v_attname		TEXT;
-	v_cond			TEXT;
 	v_check_name	TEXT;
 
 BEGIN
@@ -649,8 +625,7 @@ BEGIN
 	INTO v_attname;
 
 	IF v_attname IS NULL THEN
-		RAISE EXCEPTION 'Table % is not partitioned',
-						quote_ident(parent_relid::text);
+		RAISE EXCEPTION 'Table "%" is not partitioned', parent_relid::TEXT;
 	END IF;
 
 	/*
@@ -669,12 +644,12 @@ BEGIN
 	/* Drop constraint on first partition... */
 	v_check_name := @extschema@.build_check_constraint_name(partition1, v_attname);
 	EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %s',
-				   partition1::text,
+				   partition1::TEXT,
 				   v_check_name);
 
 	/* and create a new one */
 	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)',
-				   partition1::text,
+				   partition1::TEXT,
 				   v_check_name,
 				   @extschema@.build_range_condition(v_attname,
 													 least(p_range[1], p_range[3]),
@@ -683,11 +658,11 @@ BEGIN
 	/* Copy data from second partition to the first one */
 	EXECUTE format('WITH part_data AS (DELETE FROM %s RETURNING *)
 					INSERT INTO %s SELECT * FROM part_data',
-				   partition2::text,
-				   partition1::text);
+				   partition2::TEXT,
+				   partition1::TEXT);
 
 	/* Remove second partition */
-	EXECUTE format('DROP TABLE %s', partition2::text);
+	EXECUTE format('DROP TABLE %s', partition2::TEXT);
 END
 $$ LANGUAGE plpgsql;
 
@@ -713,7 +688,7 @@ BEGIN
 	INTO v_attname, v_interval;
 
 	IF v_attname IS NULL THEN
-		RAISE EXCEPTION 'Table % is not partitioned', quote_ident(parent_relid::TEXT);
+		RAISE EXCEPTION 'Table "%" is not partitioned', parent_relid::TEXT;
 	END IF;
 
 	v_atttype := @extschema@.get_attribute_type_name(parent_relid, v_attname);
@@ -750,7 +725,7 @@ CREATE OR REPLACE FUNCTION @extschema@.append_partition_internal(
 RETURNS TEXT AS
 $$
 DECLARE
-	v_part_name	TEXT;
+	v_part_name		TEXT;
 
 BEGIN
 	IF @extschema@.partitions_count(parent_relid) = 0 THEN
@@ -806,7 +781,7 @@ BEGIN
 	INTO v_attname, v_interval;
 
 	IF v_attname IS NULL THEN
-		RAISE EXCEPTION 'Table % is not partitioned', quote_ident(parent_relid::TEXT);
+		RAISE EXCEPTION 'Table "%" is not partitioned', parent_relid::TEXT;
 	END IF;
 
 	v_atttype := @extschema@.get_attribute_type_name(parent_relid, v_attname);
@@ -890,6 +865,7 @@ RETURNS TEXT AS
 $$
 DECLARE
 	v_part_name		TEXT;
+
 BEGIN
 	IF p_start_value >= p_end_value THEN
 		RAISE EXCEPTION 'Failed to create partition: p_start_value is greater than p_end_value';
@@ -902,11 +878,10 @@ BEGIN
 	END IF;
 
 	/* Create new partition */
-	v_part_name :=@extschema@.create_single_range_partition(
-		parent_relid,
-		p_start_value,
-		p_end_value,
-		partition_name);
+	v_part_name := @extschema@.create_single_range_partition(parent_relid,
+															 p_start_value,
+															 p_end_value,
+															 partition_name);
 	PERFORM @extschema@.on_update_partitions(parent_relid);
 
 	RETURN v_part_name;
@@ -926,20 +901,20 @@ CREATE OR REPLACE FUNCTION @extschema@.drop_range_partition(
 RETURNS TEXT AS
 $$
 DECLARE
-	v_part_relid	REGCLASS;
-	v_part_name		TEXT := p_partition::TEXT;
-	v_count			INTEGER;
+	parent_relid	REGCLASS;
+	part_name		TEXT;
 
 BEGIN
-	v_part_relid = @extschema@.get_parent_of_partition(p_partition);
+	parent_relid := @extschema@.get_parent_of_partition(p_partition);
+	part_name := p_partition::TEXT; /* save the name to be returned */
 
 	/* Drop table */
-	EXECUTE format('DROP TABLE %s', p_partition::TEXT);
+	EXECUTE format('DROP TABLE %s', part_name);
 
 	/* Invalidate cache */
-	PERFORM @extschema@.on_update_partitions(v_part_relid);
+	PERFORM @extschema@.on_update_partitions(parent_relid);
 
-	RETURN v_part_name;
+	RETURN part_name;
 
 EXCEPTION WHEN others THEN
 	RAISE EXCEPTION '%', SQLERRM;
@@ -960,9 +935,6 @@ RETURNS TEXT AS
 $$
 DECLARE
 	v_attname			TEXT;
-	v_cond				TEXT;
-	v_plain_partname	TEXT;
-	v_plain_schema		TEXT;
 	rel_persistence		CHAR;
 
 BEGIN
@@ -972,7 +944,7 @@ BEGIN
 
 	IF rel_persistence = 't'::CHAR THEN
 		RAISE EXCEPTION 'Temporary table "%" cannot be used as a partition',
-			quote_ident(p_partition::TEXT);
+						p_partition::TEXT;
 	END IF;
 
 	IF @extschema@.check_overlap(parent_relid, p_start_value, p_end_value) THEN
@@ -986,19 +958,15 @@ BEGIN
 	/* Set inheritance */
 	EXECUTE format('ALTER TABLE %s INHERIT %s', p_partition, parent_relid);
 
-	/* Set check constraint */
 	v_attname := attname FROM @extschema@.pathman_config WHERE partrel = parent_relid;
 
 	IF v_attname IS NULL THEN
-		RAISE EXCEPTION 'Table % is not partitioned', quote_ident(parent_relid::TEXT);
+		RAISE EXCEPTION 'Table "%" is not partitioned', parent_relid::TEXT;
 	END IF;
 
-	/* Plain partition name and schema */
-	SELECT * INTO v_plain_schema, v_plain_partname
-	FROM @extschema@.get_plain_schema_and_relname(p_partition);
-
+	/* Set check constraint */
 	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)',
-				   p_partition,
+				   p_partition::TEXT,
 				   @extschema@.build_check_constraint_name(p_partition, v_attname),
 				   @extschema@.build_range_condition(v_attname,
 													 p_start_value,
@@ -1024,32 +992,32 @@ CREATE OR REPLACE FUNCTION @extschema@.detach_range_partition(
 RETURNS TEXT AS
 $$
 DECLARE
-	v_attname		text;
-	v_parent		regclass;
+	v_attname		TEXT;
+	parent_relid	REGCLASS;
 
 BEGIN
-	v_parent = @extschema@.get_parent_of_partition(p_partition);
+	parent_relid = @extschema@.get_parent_of_partition(p_partition);
 
 	v_attname := attname
 	FROM @extschema@.pathman_config
-	WHERE partrel = v_parent;
+	WHERE partrel = parent_relid;
 
 	IF v_attname IS NULL THEN
-		RAISE EXCEPTION 'Table % is not partitioned', quote_ident(v_parent::TEXT);
+		RAISE EXCEPTION 'Table "%" is not partitioned', parent_relid::TEXT;
 	END IF;
 
 	/* Remove inheritance */
 	EXECUTE format('ALTER TABLE %s NO INHERIT %s',
-				   p_partition,
-				   v_parent);
+				   p_partition::TEXT,
+				   parent_relid::TEXT);
 
 	/* Remove check constraint */
 	EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %s',
-				   p_partition,
+				   p_partition::TEXT,
 				   @extschema@.build_check_constraint_name(p_partition, v_attname));
 
 	/* Invalidate cache */
-	PERFORM @extschema@.on_update_partitions(v_parent);
+	PERFORM @extschema@.on_update_partitions(parent_relid);
 
 	RETURN p_partition;
 
@@ -1114,7 +1082,7 @@ BEGIN
 	attr := attname FROM @extschema@.pathman_config WHERE partrel = parent_relid;
 
 	IF attr IS NULL THEN
-		RAISE EXCEPTION 'Table % is not partitioned', quote_ident(parent_relid::TEXT);
+		RAISE EXCEPTION 'Table "%" is not partitioned', parent_relid::TEXT;
 	END IF;
 
 	SELECT string_agg(attname, ', '),
@@ -1127,7 +1095,7 @@ BEGIN
 					  ' AND '),
 		   string_agg('$' || attnum, ', ')
 	FROM pg_attribute
-	WHERE attrelid::regclass = parent_relid AND attnum > 0
+	WHERE attrelid::REGCLASS = parent_relid AND attnum > 0
 	INTO att_names,
 		 old_fields,
 		 new_fields,
@@ -1148,11 +1116,11 @@ BEGIN
 	LOOP
 		EXECUTE format(trigger,
 					   triggername,
-					   @extschema@.get_schema_qualified_name(rec.inhrelid),
+					   rec.inhrelid::REGCLASS::TEXT,
 					   funcname);
 	END LOOP;
 
-	return funcname;
+	RETURN funcname;
 END
 $$ LANGUAGE plpgsql;
 

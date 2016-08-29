@@ -53,7 +53,7 @@ BEGIN
 
 		EXECUTE format('CREATE TABLE %1$s (LIKE %2$s INCLUDING ALL) INHERITS (%2$s)',
 					   v_child_relname,
-					   @extschema@.get_schema_qualified_name(parent_relid));
+					   parent_relid::TEXT);
 
 		EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s
 						CHECK (@extschema@.get_hash_part_idx(%s(%s), %s) = %s)',
@@ -141,7 +141,7 @@ BEGIN
 	attr := attname FROM @extschema@.pathman_config WHERE partrel = parent_relid;
 
 	IF attr IS NULL THEN
-		RAISE EXCEPTION 'Table % is not partitioned', quote_ident(parent_relid::TEXT);
+		RAISE EXCEPTION 'Table "%" is not partitioned', parent_relid::TEXT;
 	END IF;
 
 	SELECT string_agg(attname, ', '),

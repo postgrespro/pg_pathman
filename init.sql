@@ -268,7 +268,7 @@ BEGIN
 	/* Create partitions and copy rest of the data */
 	EXECUTE format('WITH part_data AS (DELETE FROM ONLY %1$s RETURNING *)
 					INSERT INTO %1$s SELECT * FROM part_data',
-				   @extschema@.get_schema_qualified_name(parent_relid));
+				   parent_relid::TEXT);
 
 	/* Get number of inserted rows */
 	GET DIAGNOSTICS p_total = ROW_COUNT;
@@ -317,7 +317,7 @@ BEGIN
 
 	IF rel_persistence = 't'::CHAR THEN
 		RAISE EXCEPTION 'Temporary table "%" cannot be partitioned',
-			quote_ident(p_relation::TEXT);
+						p_relation::TEXT;
 	END IF;
 
 	IF EXISTS (SELECT * FROM @extschema@.pathman_config

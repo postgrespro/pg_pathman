@@ -133,7 +133,7 @@ SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DAT
 ERROR:  Partitioning key 'dt' must be NOT NULL
 ALTER TABLE test.range_rel ALTER COLUMN dt SET NOT NULL;
 SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL, 2);
-ERROR:  Not enough partitions to fit all the values of 'dt'
+ERROR:  Not enough partitions to fit all values of 'dt'
 SELECT pathman.create_range_partitions('test.range_rel', 'DT', '2015-01-01'::DATE, '1 month'::INTERVAL);
 NOTICE:  sequence "range_rel_seq" does not exist, skipping
  create_range_partitions 
