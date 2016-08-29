@@ -247,7 +247,8 @@ BEGIN
 	RETURN;
 END
 $$
-LANGUAGE plpgsql;
+LANGUAGE plpgsql
+SET pg_pathman.enable_partitionfilter = on; /* ensures that PartitionFilter is ON */
 
 /*
  * Old school way to distribute rows to partitions.
@@ -275,7 +276,8 @@ BEGIN
 	RETURN;
 END
 $$
-LANGUAGE plpgsql;
+LANGUAGE plpgsql
+SET pg_pathman.enable_partitionfilter = on; /* ensures that PartitionFilter is ON */
 
 /*
  * Disable pathman partitioning for specified relation.
@@ -541,7 +543,7 @@ BEGIN
 	RETURN v_part_count;
 END
 $$ LANGUAGE plpgsql
-SET pg_pathman.enable_partitionfilter = off;
+SET pg_pathman.enable_partitionfilter = off; /* ensures that PartitionFilter is OFF */
 
 
 

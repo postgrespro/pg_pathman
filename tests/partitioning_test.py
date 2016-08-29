@@ -53,8 +53,10 @@ class PartitioningTests(unittest.TestCase):
 		while True:
 			# update some rows to check for deadlocks
 			node.safe_psql('postgres', 
-				'''update abc set t = 'test'
-				where id in (select (random() * 300000)::int from generate_series(1, 3000))''')
+				'''
+					update abc set t = 'test'
+					where id in (select (random() * 300000)::int from generate_series(1, 3000))
+				''')
 
 			count = node.execute('postgres', 'select count(*) from pathman_concurrent_part_tasks')
 

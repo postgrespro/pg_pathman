@@ -82,7 +82,7 @@ typedef struct
 #define PART_WORKER_SLOTS			10
 
 /* Max number of attempts per batch */
-#define PART_WORKER_MAX_ATTEMPTS	100
+#define PART_WORKER_MAX_ATTEMPTS	60
 
 
 /*

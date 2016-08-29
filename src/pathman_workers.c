@@ -421,9 +421,11 @@ bgw_main_concurrent_part(Datum main_arg)
 	/* Do the job */
 	do
 	{
-		Oid		types[2]	= { OIDOID,				INT4OID };
-		Datum	vals[2]		= { part_slot->relid,	part_slot->batch_size };
-		bool	nulls[2]	= { false,				false };
+		MemoryContext	old_mcxt;
+
+		Oid				types[2]	= { OIDOID,				INT4OID };
+		Datum			vals[2]		= { part_slot->relid,	part_slot->batch_size };
+		bool			nulls[2]	= { false,				false };
 
 		/* Reset loop variables */
 		failed = false;
@@ -432,22 +434,25 @@ bgw_main_concurrent_part(Datum main_arg)
 		/* Start new transaction (syscache access etc.) */
 		StartTransactionCommand();
 
+		/* We'll need this to recover from errors */
+		old_mcxt = CurrentMemoryContext;
+
 		SPI_connect();
 		PushActiveSnapshot(GetTransactionSnapshot());
 
 		/* Prepare the query if needed */
 		if (sql == NULL)
 		{
-			MemoryContext oldcontext;
+			MemoryContext	current_mcxt;
 
 			/*
 			 * Allocate as SQL query in top memory context because current
 			 * context will be destroyed after transaction finishes
 			 */
-			oldcontext = MemoryContextSwitchTo(TopMemoryContext);
+			current_mcxt = MemoryContextSwitchTo(TopMemoryContext);
 			sql = psprintf("SELECT %s._partition_data_concurrent($1::oid, p_limit:=$2)",
 						   get_namespace_name(get_pathman_schema()));
-			MemoryContextSwitchTo(oldcontext);
+			MemoryContextSwitchTo(current_mcxt);
 		}
 
 		/* Exec ret = _partition_data_concurrent() */
@@ -471,13 +476,25 @@ bgw_main_concurrent_part(Datum main_arg)
 		}
 		PG_CATCH();
 		{
-			ErrorData *error;
+			ErrorData  *error;
+			char	   *sleep_time_str;
 
-			EmitErrorReport();
-
+			/* Switch to the original context & copy edata */
+			MemoryContextSwitchTo(old_mcxt);
 			error = CopyErrorData();
-			elog(LOG, "%s: %s", concurrent_part_bgw, error->message);
 			FlushErrorState();
+
+			/* Print messsage for this BGWorker to server log */
+			sleep_time_str = datum_to_cstring(Float8GetDatum(part_slot->sleep_time),
+											  FLOAT8OID);
+			ereport(LOG,
+					(errmsg("%s: %s", concurrent_part_bgw, error->message),
+					 errdetail("Attempt: %d/%d, sleep time: %s",
+							   failures_count + 1,
+							   PART_WORKER_MAX_ATTEMPTS,
+							   sleep_time_str)));
+			pfree(sleep_time_str); /* free the time string */
+
 			FreeErrorData(error);
 
 			/*
@@ -485,7 +502,7 @@ bgw_main_concurrent_part(Datum main_arg)
 			 * concurrent user queries. Check that attempts count doesn't exceed
 			 * some reasonable value
 			 */
-			if (failures_count++ > PART_WORKER_MAX_ATTEMPTS)
+			if (failures_count++ >= PART_WORKER_MAX_ATTEMPTS)
 			{
 				/* Mark slot as FREE */
 				part_slot->worker_status = WS_FREE;
@@ -510,8 +527,11 @@ bgw_main_concurrent_part(Datum main_arg)
 		if (failed)
 		{
 #ifdef USE_ASSERT_CHECKING
-			elog(DEBUG2, "%s: could not relocate batch, total: %lu [%u]",
-				 concurrent_part_bgw, part_slot->total_rows, MyProcPid);
+			elog(DEBUG1, "%s: could not relocate batch (%d/%d), total: %lu [%u]",
+				 concurrent_part_bgw,
+				 failures_count, PART_WORKER_MAX_ATTEMPTS, /* current/max */
+				 part_slot->total_rows,
+				 MyProcPid);
 #endif
 
 			/* Abort transaction and sleep for a second */
@@ -528,7 +548,7 @@ bgw_main_concurrent_part(Datum main_arg)
 			part_slot->total_rows += rows;
 
 #ifdef USE_ASSERT_CHECKING
-			elog(DEBUG2, "%s: relocated %d rows, total: %lu [%u]",
+			elog(DEBUG1, "%s: relocated %d rows, total: %lu [%u]",
 				 concurrent_part_bgw, rows, part_slot->total_rows, MyProcPid);
 #endif
 		}
