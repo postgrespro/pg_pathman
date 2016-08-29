@@ -160,13 +160,17 @@ refresh_pathman_relation_info(Oid relid,
 
 	pfree(prel_children);
 
-	/*
-	 * Read additional parameters ('enable_parent' and 'auto' at the moment)
-	 */
+	/* Read additional parameters ('enable_parent' and 'auto' at the moment) */
 	if (read_pathman_params(relid, param_values, param_isnull))
 	{
 		prel->enable_parent = param_values[Anum_pathman_config_params_enable_parent - 1];
 		prel->auto_partition = param_values[Anum_pathman_config_params_auto - 1];
+	}
+	/* Else set default values if they cannot be found */
+	else
+	{
+		prel->enable_parent = false;
+		prel->auto_partition = true;
 	}
 
 	/* We've successfully built a cache entry */

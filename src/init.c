@@ -623,6 +623,7 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 
 /*
  * Loads additional pathman parameters like 'enable_parent' or 'auto'
+ * from PATHMAN_CONFIG_PARAMS
  */
 bool
 read_pathman_params(Oid relid, Datum *values, bool *isnull)
@@ -632,7 +633,7 @@ read_pathman_params(Oid relid, Datum *values, bool *isnull)
 	ScanKeyData		key[1];
 	Snapshot		snapshot;
 	HeapTuple		htup;
-	bool			result = false;
+	bool			row_found = false;
 
 	ScanKeyInit(&key[0],
 				Anum_pathman_config_params_partrel,
@@ -643,11 +644,12 @@ read_pathman_params(Oid relid, Datum *values, bool *isnull)
 	snapshot = RegisterSnapshot(GetLatestSnapshot());
 	scan = heap_beginscan(rel, snapshot, 1, key);
 
+	/* There should be just 1 row */
 	if ((htup = heap_getnext(scan, ForwardScanDirection)) != NULL)
 	{
 		/* Extract data if necessary */
 		heap_deform_tuple(htup, RelationGetDescr(rel), values, isnull);
-		result = true;
+		row_found = true;
 	}
 
 	/* Clean resources */
@@ -655,7 +657,7 @@ read_pathman_params(Oid relid, Datum *values, bool *isnull)
 	UnregisterSnapshot(snapshot);
 	heap_close(rel, AccessShareLock);
 
-	return result;
+	return row_found;
 }
 
 /*
