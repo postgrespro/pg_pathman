@@ -62,77 +62,94 @@ Done! Now it's time to setup your partitioning schemes.
 
 ### Partition creation
 ```plpgsql
-create_hash_partitions(relation         TEXT,
+create_hash_partitions(relation         REGCLASS,
                        attribute        TEXT,
-                       partitions_count INTEGER)
+                       partitions_count INTEGER,
+                       partition_name TEXT DEFAULT NULL)
 ```
-Performs HASH partitioning for `relation` by integer key `attribute`. Creates `partitions_count` partitions and trigger on INSERT. All the data will be automatically copied from the parent to partitions.
+Performs HASH partitioning for `relation` by integer key `attribute`. The `partitions_count` parameter specifies the number of partitions to create; it cannot be changed afterwards. If `partition_data` is `true` then all the data will be automatically copied from the parent table to partitions. Note that data migration may took a while to finish and the table will be locked until transaction commits. See `partition_data_concurrent()` for a lock-free way to migrate data.
 
 ```plpgsql
-create_range_partitions(relation    TEXT,
-                        attribute   TEXT,
-                        start_value ANYELEMENT,
-                        interval    ANYELEMENT,
-                        premake     INTEGER DEFAULT NULL)
+create_range_partitions(relation       REGCLASS,
+                        attribute      TEXT,
+                        start_value    ANYELEMENT,
+                        interval       ANYELEMENT,
+                        count          INTEGER DEFAULT NULL
+                        partition_data BOOLEAN DEFAULT true)
 
-create_range_partitions(relation    TEXT,
-                        attribute   TEXT,
-                        start_value ANYELEMENT,
-                        interval    INTERVAL,
-                        premake     INTEGER DEFAULT NULL)
+create_range_partitions(relation       TEXT,
+                        attribute      TEXT,
+                        start_value    ANYELEMENT,
+                        interval       INTERVAL,
+                        count          INTEGER DEFAULT NULL,
+                        partition_data BOOLEAN DEFAULT true)
 ```
-Performs RANGE partitioning for `relation` by partitioning key `attribute`. `start_value` argument specifies initial value, `interval` sets the range of values in a single partition, `premake` is the number of premade partitions (if not set then pathman tries to determine it based on attribute values). All the data will be automatically copied from the parent to partitions.
+Performs RANGE partitioning for `relation` by partitioning key `attribute`. `start_value` argument specifies initial value, `interval` sets the range of values in a single partition, `count` is the number of premade partitions (if not set then pathman tries to determine it based on attribute values).
 
 ```plpgsql
-create_partitions_from_range(relation    TEXT,
-                             attribute   TEXT,
-                             start_value ANYELEMENT,
-                             end_value   ANYELEMENT,
-                             interval    ANYELEMENT)
+create_partitions_from_range(relation       REGCLASS,
+                             attribute      TEXT,
+                             start_value    ANYELEMENT,
+                             end_value      ANYELEMENT,
+                             interval       ANYELEMENT,
+                             partition_data BOOLEAN DEFAULT true)
 
-create_partitions_from_range(relation    TEXT,
-                             attribute   TEXT,
-                             start_value ANYELEMENT,
-                             end_value   ANYELEMENT,
-                             interval    INTERVAL)
+create_partitions_from_range(relation       REGCLASS,
+                             attribute      TEXT,
+                             start_value    ANYELEMENT,
+                             end_value      ANYELEMENT,
+                             interval       INTERVAL,
+                             partition_data BOOLEAN DEFAULT true)
 ```
-Performs RANGE-partitioning from specified range for `relation` by partitioning key `attribute`. Data will be copied to partitions as well.
+Performs RANGE-partitioning from specified range for `relation` by partitioning key `attribute`.
+
+### Data migration
+
+```plpgsql
+partition_data_concurrent(relation REGCLASS)
+```
+Starts a background worker to copy data from parent table to partitions. The worker utilize short transactions to copy small bunches of data (up to 10K rows per transaction) and thus doesn't significantly interfere with users activity.
 
 ### Triggers
 ```plpgsql
-create_hash_update_trigger(parent TEXT)
+create_hash_update_trigger(parent REGCLASS)
 ```
 Creates the trigger on UPDATE for HASH partitions. The UPDATE trigger isn't created by default because of the overhead. It's useful in cases when the key attribute might change.
 ```plpgsql
-create_range_update_trigger(parent TEXT)
+create_range_update_trigger(parent REGCLASS)
 ```
 Same as above, but for a RANGE-partitioned table.
 
 ### Post-creation partition management
 ```plpgsql
-split_range_partition(partition TEXT, value ANYELEMENT)
+split_range_partition(partition      REGCLASS,
+                      value          ANYELEMENT,
+                      partition_name TEXT DEFAULT NULL,)
 ```
 Split RANGE `partition` in two by `value`.
 
 ```plpgsql
-merge_range_partitions(partition1 TEXT, partition2 TEXT)
+merge_range_partitions(partition1 REGCLASS, partition2 REGCLASS)
 ```
 Merge two adjacent RANGE partitions. First, data from `partition2` is copied to `partition1`, then `partition2` is removed.
 
 ```plpgsql
-append_range_partition(p_relation TEXT)
+append_range_partition(p_relation     REGCLASS,
+                       partition_name TEXT DEFAULT NULL)
 ```
 Append new RANGE partition.
 
 ```plpgsql
-prepend_range_partition(p_relation TEXT)
+prepend_range_partition(p_relation     REGCLASS,
+                        partition_name TEXT DEFAULT NULL)
 ```
 Prepend new RANGE partition.
 
 ```plpgsql
-add_range_partition(relation    TEXT,
-                    start_value ANYELEMENT,
-                    end_value   ANYELEMENT)
+add_range_partition(relation       REGCLASS,
+                    start_value    ANYELEMENT,
+                    end_value      ANYELEMENT,
+                    partition_name TEXT DEFAULT NULL)
 ```
 Create new RANGE partition for `relation` with specified range bounds.
 
@@ -155,9 +172,30 @@ detach_range_partition(partition TEXT)
 Detach partition from the existing RANGE-partitioned relation.
 
 ```plpgsql
-disable_partitioning(relation TEXT)
+disable_pathman_for(relation TEXT)
 ```
 Permanently disable `pg_pathman` partitioning mechanism for the specified parent table and remove the insert trigger if it exists. All partitions and data remain unchanged.
+
+```plpgsql
+drop_partitions(parent      REGCLASS,
+                delete_data BOOLEAN DEFAULT FALSE)
+```
+Drop partitions of the `parent` table. If `delete_data` is `false` then the data is copied to the parent table first. Default is `false`.
+
+
+### Additional parameters
+
+```plpgsql
+enable_parent(relation  REGCLASS)
+disable_parent(relation REGCLASS)
+```
+Include/exclude parent table into/from query plan. In original PostgreSQL planner parent table is always included into query plan even if it's empty which can lead to additional overhead. You can use `disable_parent()` if you are never going to use parent table as a storage. Default value depends on the `partition_data` parameter that was specified during initial partitioning in `create_range_partitions()` or `create_partitions_from_range()` functions. If the `partition_data` parameter was `true` then all data have already been migrated to partitions and parent table disabled. Otherwise it is enabled.
+
+```plpgsql
+enable_auto(relation  REGCLASS)
+disable_auto(relation REGCLASS)
+```
+Enable/disable auto partition propagation (only for RANGE partitioning). It is enabled by default.
 
 ## Custom plan nodes
 `pg_pathman` provides a couple of [custom plan nodes](https://wiki.postgresql.org/wiki/CustomScanAPI) which aim to reduce execution time, namely:
