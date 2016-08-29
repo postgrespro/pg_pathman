@@ -46,6 +46,7 @@ typedef struct
  */
 typedef struct
 {
+	pg_atomic_flag	slot_used;	/* flag for atomic slot acquirement */
 	Oid		userid;			/* connect as a specified user */
 
 	enum
@@ -57,7 +58,7 @@ typedef struct
 	}		worker_status;	/* status of a particular worker */
 
 	pid_t	pid;			/* worker's PID */
-	Oid		dbid;			/* database which contains relation 'relid' */
+	Oid		dbid;			/* database which contains the relation */
 	Oid		relid;			/* table to be partitioned concurrently */
 	uint64	total_rows;		/* total amount of rows processed */
 

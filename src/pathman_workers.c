@@ -95,12 +95,19 @@ init_concurrent_part_task_slots(void)
 {
 	bool	found;
 	Size	size = estimate_concurrent_part_task_slots_size();
+	int		i;
 
 	concurrent_part_slots = (ConcurrentPartSlot *)
 			ShmemInitStruct("array of ConcurrentPartSlots", size, &found);
 
 	/* Initialize 'concurrent_part_slots' if needed */
-	if (!found) memset(concurrent_part_slots, 0, size);
+	if (!found)
+	{
+		memset(concurrent_part_slots, 0, size);
+
+		for (i = 0; i < PART_WORKER_SLOTS; i++)
+			pg_atomic_init_flag_impl(&concurrent_part_slots[i].slot_used);
+	}
 }
 
 
@@ -423,9 +430,9 @@ bgw_main_concurrent_part(Datum main_arg)
 	{
 		MemoryContext	old_mcxt;
 
-		Oid				types[2]	= { OIDOID,				INT4OID };
-		Datum			vals[2]		= { part_slot->relid,	part_slot->batch_size };
-		bool			nulls[2]	= { false,				false };
+		Oid		types[2]	= { OIDOID,				INT4OID };
+		Datum	vals[2]		= { part_slot->relid,	part_slot->batch_size };
+		bool	nulls[2]	= { false,				false };
 
 		/* Reset loop variables */
 		failed = false;
@@ -506,6 +513,7 @@ bgw_main_concurrent_part(Datum main_arg)
 			{
 				/* Mark slot as FREE */
 				part_slot->worker_status = WS_FREE;
+				pg_atomic_clear_flag(&part_slot->slot_used);
 
 				elog(LOG,
 					 "Concurrent partitioning worker has canceled the task because "
@@ -561,7 +569,10 @@ bgw_main_concurrent_part(Datum main_arg)
 
 	/* Reclaim the resources */
 	pfree(sql);
+
+	/* Set slot free */
 	part_slot->worker_status = WS_FREE;
+	pg_atomic_clear_flag(&part_slot->slot_used);
 }
 
 
@@ -596,16 +607,24 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 	 */
 	for (i = 0; i < PART_WORKER_SLOTS; i++)
 	{
-		if (concurrent_part_slots[i].worker_status == WS_FREE)
+		/*
+		 * Attempt to acquire the flag. If it has alread been used then skip
+		 * this slot and try another one
+		 */
+		if (!pg_atomic_test_set_flag(&concurrent_part_slots[i].slot_used))
+			continue;
+
+		/* If atomic flag wasn't used then status should be WS_FREE */
+		Assert(concurrent_part_slots[i].worker_status == WS_FREE);
+
+		if (empty_slot_idx < 0)
 		{
-			if (empty_slot_idx < 0)
-			{
-				my_slot = &concurrent_part_slots[i];
-				empty_slot_idx = i;
-			}
+			my_slot = &concurrent_part_slots[i];
+			empty_slot_idx = i;
 		}
-		else if (concurrent_part_slots[i].relid == relid &&
-				 concurrent_part_slots[i].dbid == MyDatabaseId)
+
+		if (concurrent_part_slots[i].relid == relid &&
+			concurrent_part_slots[i].dbid == MyDatabaseId)
 		{
 			elog(ERROR,
 				 "Table \"%s\" is already being partitioned",
@@ -745,13 +764,16 @@ stop_concurrent_part_task(PG_FUNCTION_ARGS)
 {
 	Oid		relid = PG_GETARG_OID(0);
 	int		i;
+	ConcurrentPartSlot *slot;
 
 	for (i = 0; i < PART_WORKER_SLOTS; i++)
-		if (concurrent_part_slots[i].worker_status != WS_FREE &&
-			concurrent_part_slots[i].relid == relid &&
-			concurrent_part_slots[i].dbid == MyDatabaseId)
+		slot = &concurrent_part_slots[i];
+
+		if (slot->worker_status != WS_FREE &&
+			slot->relid == relid &&
+			slot->dbid == MyDatabaseId)
 		{
-			concurrent_part_slots[i].worker_status = WS_STOPPING;
+			slot->worker_status = WS_STOPPING;
 			elog(NOTICE, "Worker will stop after it finishes current batch");
 
 			PG_RETURN_BOOL(true);

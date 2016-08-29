@@ -622,7 +622,7 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 }
 
 /*
- * Return 'enable_parent' parameter of relation
+ * Loads additional pathman parameters like 'enable_parent' or 'auto'
  */
 bool
 read_pathman_params(Oid relid, Datum *values, bool *isnull)
