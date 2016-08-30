@@ -584,12 +584,14 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 #define tostr(str) ( #str ) /* convert function's name to literal */
 
 	Oid		relid = PG_GETARG_OID(0);
-	int		empty_slot_idx = -1;
+	int		empty_slot_idx = -1;		/* do we have a slot for BGWorker? */
 	int		i;
 
 	/* Check if relation is a partitioned table */
 	shout_if_prel_is_invalid(relid,
+							 /* We also lock the parent relation */
 							 get_pathman_relation_info_after_lock(relid, true),
+							 /* Partitioning type does not matter here */
 							 PT_INDIFFERENT);
 
 	/*
@@ -601,30 +603,38 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 		ConcurrentPartSlot *cur_slot = &concurrent_part_slots[i];
 		bool				keep_this_lock = false;
 
+		/* Lock current slot */
 		SpinLockAcquire(&cur_slot->mutex);
 
-		/* Should we take this slot into account? */
+		/* Should we take this slot into account? (it should be FREE) */
 		if (empty_slot_idx < 0 && cur_slot->worker_status == CPS_FREE)
 		{
-			empty_slot_idx = i;
-			keep_this_lock = true;
+			empty_slot_idx = i;		/* yes, remember this slot */
+			keep_this_lock = true;	/* also don't unlock it */
 		}
 
+		/* Oops, looks like we already have BGWorker for this table */
 		if (cur_slot->relid == relid &&
 			cur_slot->dbid == MyDatabaseId)
 		{
-			if (empty_slot_idx >= 0)
-				SpinLockRelease(&cur_slot->mutex);
+			/* Unlock current slot */
+			SpinLockRelease(&cur_slot->mutex);
+
+			/* Release borrowed slot for new BGWorker too */
+			if (empty_slot_idx >= 0 && empty_slot_idx != i)
+				SpinLockRelease(&concurrent_part_slots[empty_slot_idx].mutex);
 
 			elog(ERROR,
 				 "Table \"%s\" is already being partitioned",
 				 get_rel_name(relid));
 		}
 
+		/* Normally we don't want to keep it */
 		if (!keep_this_lock)
 			SpinLockRelease(&cur_slot->mutex);
 	}
 
+	/* Looks like we could not find an empty slot */
 	if (empty_slot_idx < 0)
 		elog(ERROR, "No empty worker slots found");
 	else
@@ -634,6 +644,7 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 							   GetAuthenticatedUserId(), CPS_WORKING,
 							   MyDatabaseId, relid, 1000, 1.0);
 
+		/* Now we can safely unlock slot for new BGWorker */
 		SpinLockRelease(&concurrent_part_slots[empty_slot_idx].mutex);
 	}
 
