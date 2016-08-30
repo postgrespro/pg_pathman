@@ -77,7 +77,7 @@ create_range_partitions(relation       REGCLASS,
                         count          INTEGER DEFAULT NULL
                         partition_data BOOLEAN DEFAULT true)
 
-create_range_partitions(relation       TEXT,
+create_range_partitions(relation       REGCLASS,
                         attribute      TEXT,
                         start_value    ANYELEMENT,
                         interval       INTERVAL,
@@ -164,20 +164,20 @@ drop_range_partition(partition TEXT)
 Удаляет RANGE секцию вместе с содержащимися в ней данными.
 
 ```plpgsql
-attach_range_partition(relation    TEXT,
-                       partition   TEXT,
+attach_range_partition(relation    REGCLASS,
+                       partition   REGCLASS,
                        start_value ANYELEMENT,
                        end_value   ANYELEMENT)
 ```
 Присоединяет существующую таблицу `partition` в качестве секции к ранее секционированной таблице `relation`. Структура присоединяемой таблицы должна в точности повторять структуру родительской.
 
 ```plpgsql
-detach_range_partition(partition TEXT)
+detach_range_partition(partition REGCLASS)
 ```
 Отсоединяет секцию `partition`, после чего она становится независимой таблицей.
 
 ```plpgsql
-disable_pathman_for(relation TEXT)
+disable_pathman_for(relation REGCLASS)
 ```
 Отключает механизм секционирования `pg_pathman` для заданной таблицы. При этом созданные ранее секции остаются без изменений.
 
