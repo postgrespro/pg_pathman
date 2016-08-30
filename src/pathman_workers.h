@@ -18,6 +18,7 @@
 #define PATHMAN_WORKERS_H
 
 #include "postgres.h"
+#include "storage/spin.h"
 
 
 /*
@@ -41,22 +42,24 @@ typedef struct
 } SpawnPartitionArgs;
 
 
+typedef enum
+{
+	CPS_FREE = 0,	/* slot is empty */
+	CPS_WORKING,	/* occupied by live worker */
+	CPS_STOPPING	/* worker is going to shutdown */
+
+} ConcurrentPartSlotStatus;
+
 /*
  * Store args and execution status of a single ConcurrentPartWorker.
  */
 typedef struct
 {
-	pg_atomic_flag	slot_used;	/* flag for atomic slot acquirement */
+	slock_t	mutex;			/* protect slot from race conditions */
+
+	ConcurrentPartSlotStatus worker_status;	/* status of a particular worker */
+
 	Oid		userid;			/* connect as a specified user */
-
-	enum
-	{
-		WS_FREE = 0,	/* slot is empty */
-		WS_WORKING,		/* occupied by live worker */
-		WS_STOPPING		/* worker is going to shutdown */
-
-	}		worker_status;	/* status of a particular worker */
-
 	pid_t	pid;			/* worker's PID */
 	Oid		dbid;			/* database which contains the relation */
 	Oid		relid;			/* table to be partitioned concurrently */
@@ -77,6 +80,27 @@ typedef struct
 		(slot)->batch_size = (batch_sz); \
 		(slot)->sleep_time = (sleep_t); \
 	} while (0)
+
+static inline ConcurrentPartSlotStatus
+cps_check_status(ConcurrentPartSlot *slot)
+{
+	ConcurrentPartSlotStatus status;
+
+	SpinLockAcquire(&slot->mutex);
+	status = slot->worker_status;
+	SpinLockRelease(&slot->mutex);
+
+	return status;
+}
+
+static inline void
+cps_set_status(ConcurrentPartSlot *slot, ConcurrentPartSlotStatus status)
+{
+	SpinLockAcquire(&slot->mutex);
+	slot->worker_status = status;
+	SpinLockRelease(&slot->mutex);
+}
+
 
 
 /* Number of worker slots for concurrent partitioning */

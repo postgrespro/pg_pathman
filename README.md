@@ -489,7 +489,7 @@ There are several user-accessible [GUC](https://www.postgresql.org/docs/9.5/stat
 
 To **permanently** disable `pg_pathman` for some previously partitioned table, use the `disable_partitioning()` function:
 ```
-SELECT disable_partitioning('range_rel');
+SELECT disable_pathman_for('range_rel');
 ```
 All sections and data will remain unchanged and will be handled by the standard PostgreSQL inheritance mechanism.
 
