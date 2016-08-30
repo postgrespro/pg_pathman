@@ -26,6 +26,7 @@
 typedef struct
 {
 	bool 	pg_pathman_enable;		/* GUC variable implementation */
+	bool	auto_partition;			/* GUC variable for auto partition propagation */
 	bool	initialization_needed;	/* do we need to perform init? */
 } PathmanInitState;
 
@@ -51,6 +52,21 @@ extern PathmanInitState 	pg_pathman_init_state;
  * Check if pg_pathman is initialized & enabled.
  */
 #define IsPathmanReady()		( IsPathmanInitialized() && IsPathmanEnabled() )
+
+/*
+ * Check if auto partition propagation enabled
+ */
+#define IsAutoPartitionEnabled() ( pg_pathman_init_state.auto_partition )
+
+/*
+ * Enable/disable auto partition propagation. Note that this only works if
+ * partitioned relation supports this. See enable_auto() and disable_auto()
+ * functions.
+ */
+#define SetAutoPartitionEnabled(value) \
+	do { \
+		pg_pathman_init_state.auto_partition = value; \
+	} while (0)
 
 /*
  * Emergency disable mechanism.

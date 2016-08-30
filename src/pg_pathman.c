@@ -446,45 +446,61 @@ append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	memcpy(childrel->attr_widths, rel->attr_widths,
 		   (rel->max_attr - rel->min_attr + 1) * sizeof(int32));
 
-
-	/* Copy restrictions */
+	/*
+	 * Copy restrictions. If it's not the parent table then copy only those
+	 * restrictions that reference to this partition
+	 */
 	childrel->baserestrictinfo = NIL;
-	forboth(lc, wrappers, lc2, rel->baserestrictinfo)
+	if (rte->relid != childOid)
 	{
-		bool alwaysTrue;
-		WrapperNode *wrap = (WrapperNode *) lfirst(lc);
-		Node *new_clause = wrapper_make_expression(wrap, index, &alwaysTrue);
-		RestrictInfo *old_rinfo = (RestrictInfo *) lfirst(lc2);
-
-		if (alwaysTrue)
+		forboth(lc, wrappers, lc2, rel->baserestrictinfo)
 		{
-			continue;
-		}
-		Assert(new_clause);
+			bool alwaysTrue;
+			WrapperNode *wrap = (WrapperNode *) lfirst(lc);
+			Node *new_clause = wrapper_make_expression(wrap, index, &alwaysTrue);
+			RestrictInfo *old_rinfo = (RestrictInfo *) lfirst(lc2);
 
-		if (and_clause((Node *) new_clause))
-		{
-			ListCell *alc;
-
-			foreach(alc, ((BoolExpr *) new_clause)->args)
+			if (alwaysTrue)
 			{
-				Node *arg = (Node *) lfirst(alc);
-				RestrictInfo *new_rinfo = rebuild_restrictinfo(arg, old_rinfo);
+				continue;
+			}
+			Assert(new_clause);
 
+			if (and_clause((Node *) new_clause))
+			{
+				ListCell *alc;
+
+				foreach(alc, ((BoolExpr *) new_clause)->args)
+				{
+					Node *arg = (Node *) lfirst(alc);
+					RestrictInfo *new_rinfo = rebuild_restrictinfo(arg, old_rinfo);
+
+					change_varnos((Node *)new_rinfo, rel->relid, childrel->relid);
+					childrel->baserestrictinfo = lappend(childrel->baserestrictinfo,
+														 new_rinfo);
+				}
+			}
+			else
+			{
+				RestrictInfo *new_rinfo = rebuild_restrictinfo(new_clause, old_rinfo);
+
+				/* Replace old relids with new ones */
 				change_varnos((Node *)new_rinfo, rel->relid, childrel->relid);
+
 				childrel->baserestrictinfo = lappend(childrel->baserestrictinfo,
-													 new_rinfo);
+													 (void *) new_rinfo);
 			}
 		}
-		else
+	}
+	/* If it's the parent table then copy all restrictions */
+	else
+	{
+		foreach(lc, rel->baserestrictinfo)
 		{
-			RestrictInfo *new_rinfo = rebuild_restrictinfo(new_clause, old_rinfo);
-
-			/* Replace old relids with new ones */
-			change_varnos((Node *)new_rinfo, rel->relid, childrel->relid);
+			RestrictInfo *rinfo = (RestrictInfo *) lfirst(lc);
 
 			childrel->baserestrictinfo = lappend(childrel->baserestrictinfo,
-												 (void *) new_rinfo);
+												 (RestrictInfo *) copyObject(rinfo));
 		}
 	}
 

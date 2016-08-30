@@ -417,6 +417,9 @@ bgw_main_concurrent_part(Datum main_arg)
 	part_slot = &concurrent_part_slots[DatumGetInt32(main_arg)];
 	part_slot->pid = MyProcPid;
 
+	/* Disable auto partition propagation */
+	SetAutoPartitionEnabled(false);
+
 	/* Establish connection and start transaction */
 	BackgroundWorkerInitializeConnectionByOid(part_slot->dbid, part_slot->userid);
 
@@ -494,10 +497,11 @@ bgw_main_concurrent_part(Datum main_arg)
 			/* Print messsage for this BGWorker to server log */
 			sleep_time_str = datum_to_cstring(Float8GetDatum(part_slot->sleep_time),
 											  FLOAT8OID);
+			failures_count++;
 			ereport(LOG,
 					(errmsg("%s: %s", concurrent_part_bgw, error->message),
 					 errdetail("Attempt: %d/%d, sleep time: %s",
-							   failures_count + 1,
+							   failures_count,
 							   PART_WORKER_MAX_ATTEMPTS,
 							   sleep_time_str)));
 			pfree(sleep_time_str); /* free the time string */
@@ -509,7 +513,7 @@ bgw_main_concurrent_part(Datum main_arg)
 			 * concurrent user queries. Check that attempts count doesn't exceed
 			 * some reasonable value
 			 */
-			if (failures_count++ >= PART_WORKER_MAX_ATTEMPTS)
+			if (failures_count >= PART_WORKER_MAX_ATTEMPTS)
 			{
 				/* Mark slot as FREE */
 				cps_set_status(part_slot, CPS_FREE);
@@ -593,7 +597,6 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 							 get_pathman_relation_info_after_lock(relid, true),
 							 /* Partitioning type does not matter here */
 							 PT_INDIFFERENT);
-
 	/*
 	 * Look for an empty slot and also check that a concurrent
 	 * partitioning operation for this table hasn't been started yet

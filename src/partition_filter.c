@@ -11,6 +11,7 @@
 #include "partition_filter.h"
 #include "nodes_common.h"
 #include "utils.h"
+#include "init.h"
 
 #include "utils/guc.h"
 #include "utils/memutils.h"
@@ -204,7 +205,11 @@ partition_filter_exec(CustomScanState *node)
 			elog(ERROR, "PartitionFilter selected more than one partition");
 		else if (nparts == 0)
 		{
-			if (prel->auto_partition)
+			/*
+			 * If auto partition propagation is enabled then try to create
+			 * new partitions for the key
+			 */
+			if (prel->auto_partition && IsAutoPartitionEnabled())
 			{
 				selected_partid = create_partitions(state->partitioned_table,
 													state->temp_const.constvalue,
