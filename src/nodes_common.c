@@ -248,6 +248,12 @@ get_partition_oids(List *ranges, int *n, const PartRelationInfo *prel)
 	Oid		   *result = (Oid *) palloc(allocated * sizeof(Oid));
 	Oid		   *children = PrelGetChildrenArray(prel);
 
+	/* If required, add parent to result */
+	Assert(INITIAL_ALLOC_NUM >= 1);
+	if (prel->enable_parent)
+		result[used++] = PrelParentRelid(prel);
+
+	/* Deal with selected partitions */
 	foreach (range_cell, ranges)
 	{
 		uint32	i;
@@ -366,6 +372,10 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 		{
 			Plan		   *child_plan = (Plan *) lfirst(lc2);
 			RelOptInfo 	   *child_rel = ((Path *) lfirst(lc1))->parent;
+			Oid				child_relid;
+
+			/* Fetch relid of the 'child_rel' */
+			child_relid = root->simple_rte_array[child_rel->relid]->relid;
 
 			/* Replace rel's  tlist with a matching one */
 			if (!cscan->scan.plan.targetlist)
@@ -380,6 +390,10 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 			if (!cscan->custom_scan_tlist)
 				cscan->custom_scan_tlist = replace_tlist_varnos(child_plan->targetlist,
 																rel);
+
+			/* If this is a plan for parent table, fill it with quals */
+			if (PrelParentRelid(prel) == child_relid)
+				child_plan->qual = get_actual_clauses(clauses);
 		}
 	}
 

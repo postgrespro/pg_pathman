@@ -373,7 +373,7 @@ fill_prel_with_partitions(const Oid *partitions,
 				DisablePathman(); /* disable pg_pathman since config is broken */
 				ereport(ERROR,
 						(errmsg("Unknown partitioning type for relation \"%s\"",
-								get_rel_name_or_relid(prel->key)),
+								get_rel_name_or_relid(PrelParentRelid(prel))),
 						 errhint(INIT_ERROR_HINT)));
 			}
 		}
@@ -419,7 +419,7 @@ fill_prel_with_partitions(const Oid *partitions,
 				DisablePathman(); /* disable pg_pathman since config is broken */
 				elog(ERROR, "pg_pathman's cache for relation \"%s\" "
 							"has not been properly initialized",
-					 get_rel_name_or_relid(prel->key));
+					 get_rel_name_or_relid(PrelParentRelid(prel)));
 			}
 		}
 #endif

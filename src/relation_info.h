@@ -96,6 +96,8 @@ typedef enum
  * PartRelationInfo field access macros.
  */
 
+#define PrelParentRelid(prel)		( (prel)->key )
+
 #define PrelGetChildrenArray(prel)	( (prel)->children )
 
 #define PrelGetRangesArray(prel)	( (prel)->ranges )
@@ -111,7 +113,7 @@ PrelLastChild(const PartRelationInfo *prel)
 
 	if (PrelChildrenCount(prel) == 0)
 		elog(ERROR, "pg_pathman's cache entry for relation %u has 0 children",
-			 prel->key);
+			 PrelParentRelid(prel));
 
 	return PrelChildrenCount(prel) - 1; /* last partition */
 }
@@ -161,7 +163,7 @@ FreeChildrenArray(PartRelationInfo *prel)
 			Oid child = (prel)->children[i];
 
 			/* If it's *always been* relid's partition, free cache */
-			if (prel->key == get_parent_of_partition(child, NULL))
+			if (PrelParentRelid(prel) == get_parent_of_partition(child, NULL))
 				forget_parent_of_partition(child, NULL);
 		}
 
