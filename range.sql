@@ -35,6 +35,47 @@ $$
 LANGUAGE plpgsql;
 
 /*
+ * Check RANGE partition boundaries.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.check_boundaries(
+	parent_relid	REGCLASS,
+	p_attribute		TEXT,
+	p_start_value	ANYELEMENT,
+	p_end_value		ANYELEMENT)
+RETURNS VOID AS
+$$
+DECLARE
+	v_min		p_start_value%TYPE;
+	v_max		p_start_value%TYPE;
+	v_count		BIGINT;
+
+BEGIN
+	/* Get min and max values */
+	EXECUTE format('SELECT count(*), min(%1$s), max(%1$s)
+					FROM %2$s WHERE NOT %1$s IS NULL',
+				   p_attribute, parent_relid::TEXT)
+	INTO v_count, v_min, v_max;
+
+	/* Check if column has NULL values */
+	IF v_count > 0 AND (v_min IS NULL OR v_max IS NULL) THEN
+		RAISE EXCEPTION '''%'' column contains NULL values', p_attribute;
+	END IF;
+
+	/* Check lower boundary */
+	IF p_start_value > v_min THEN
+		RAISE EXCEPTION 'Start value is less than minimum value of ''%''',
+				p_attribute;
+	END IF;
+
+	/* Check upper boundary */
+	IF p_end_value <= v_max THEN
+		RAISE EXCEPTION 'Not enough partitions to fit all values of ''%''',
+				p_attribute;
+	END IF;
+END
+$$ LANGUAGE plpgsql;
+
+/*
  * Creates RANGE partitions for specified relation based on datetime attribute
  */
 CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions(
@@ -53,6 +94,9 @@ DECLARE
 	i					INTEGER;
 
 BEGIN
+	/* Acquire exclusive lock on parent */
+	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+
 	PERFORM @extschema@.validate_relname(parent_relid);
 	p_attribute := lower(p_attribute);
 	PERFORM @extschema@.common_relation_checks(parent_relid, p_attribute);
@@ -147,6 +191,9 @@ DECLARE
 	i					INTEGER;
 
 BEGIN
+	/* Acquire exclusive lock on parent */
+	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+
 	PERFORM @extschema@.validate_relname(parent_relid);
 	p_attribute := lower(p_attribute);
 	PERFORM @extschema@.common_relation_checks(parent_relid, p_attribute);
@@ -239,6 +286,9 @@ DECLARE
 	part_count		INTEGER := 0;
 
 BEGIN
+	/* Acquire exclusive lock on parent */
+	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+
 	PERFORM @extschema@.validate_relname(parent_relid);
 	p_attribute := lower(p_attribute);
 	PERFORM @extschema@.common_relation_checks(parent_relid, p_attribute);
@@ -304,6 +354,9 @@ DECLARE
 	part_count		INTEGER := 0;
 
 BEGIN
+	/* Acquire exclusive lock on parent */
+	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+
 	PERFORM @extschema@.validate_relname(parent_relid);
 	p_attribute := lower(p_attribute);
 	PERFORM @extschema@.common_relation_checks(parent_relid, p_attribute);
@@ -351,48 +404,8 @@ END
 $$ LANGUAGE plpgsql;
 
 /*
- * Check RANGE partition boundaries.
- */
-CREATE OR REPLACE FUNCTION @extschema@.check_boundaries(
-	parent_relid	REGCLASS,
-	p_attribute		TEXT,
-	p_start_value	ANYELEMENT,
-	p_end_value		ANYELEMENT)
-RETURNS VOID AS
-$$
-DECLARE
-	v_min		p_start_value%TYPE;
-	v_max		p_start_value%TYPE;
-	v_count		BIGINT;
-
-BEGIN
-	/* Get min and max values */
-	EXECUTE format('SELECT count(*), min(%1$s), max(%1$s)
-					FROM %2$s WHERE NOT %1$s IS NULL',
-				   p_attribute, parent_relid::TEXT)
-	INTO v_count, v_min, v_max;
-
-	/* Check if column has NULL values */
-	IF v_count > 0 AND (v_min IS NULL OR v_max IS NULL) THEN
-		RAISE EXCEPTION '''%'' column contains NULL values', p_attribute;
-	END IF;
-
-	/* Check lower boundary */
-	IF p_start_value > v_min THEN
-		RAISE EXCEPTION 'Start value is less than minimum value of ''%''',
-				p_attribute;
-	END IF;
-
-	/* Check upper boundary */
-	IF p_end_value <= v_max THEN
-		RAISE EXCEPTION 'Not enough partitions to fit all values of ''%''',
-				p_attribute;
-	END IF;
-END
-$$ LANGUAGE plpgsql;
-
-/*
- * Creates new RANGE partition. Returns partition name
+ * Creates new RANGE partition. Returns partition name.
+ * NOTE: This function SHOULD NOT take xact_handling lock (BGWs in 9.5).
  */
 CREATE OR REPLACE FUNCTION @extschema@.create_single_range_partition(
 	parent_relid	REGCLASS,
@@ -485,6 +498,9 @@ BEGIN
 	v_part_relname := @extschema@.validate_relname(p_partition);
 	v_parent_relid = @extschema@.get_parent_of_partition(p_partition);
 
+	/* Acquire exclusive lock on parent */
+	PERFORM @extschema@.lock_partitioned_relation(v_parent_relid);
+
 	SELECT attname, parttype
 	FROM @extschema@.pathman_config
 	WHERE partrel = v_parent_relid
@@ -573,6 +589,9 @@ BEGIN
 		RAISE EXCEPTION 'Cannot merge partitions with different parents';
 	END IF;
 
+	/* Acquire exclusive lock on parent */
+	PERFORM @extschema@.lock_partitioned_relation(v_parent_relid1);
+
 	SELECT attname, parttype
 	FROM @extschema@.pathman_config
 	WHERE partrel = v_parent_relid1
@@ -604,8 +623,8 @@ LANGUAGE plpgsql;
  * Merge two partitions. All data will be copied to the first one. Second
  * partition will be destroyed.
  *
- * Notes: dummy field is used to pass the element type to the function
- * (it is necessary because of pseudo-types used in function)
+ * NOTE: dummy field is used to pass the element type to the function
+ * (it is necessary because of pseudo-types used in function).
  */
 CREATE OR REPLACE FUNCTION @extschema@.merge_range_partitions_internal(
 	parent_relid	REGCLASS,
@@ -668,7 +687,7 @@ $$ LANGUAGE plpgsql;
 
 
 /*
- * Append new partition
+ * Append new partition.
  */
 CREATE OR REPLACE FUNCTION @extschema@.append_range_partition(
 	parent_relid	REGCLASS,
@@ -682,6 +701,9 @@ DECLARE
 	v_interval		TEXT;
 
 BEGIN
+	/* Acquire exclusive lock on parent */
+	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+
 	SELECT attname, range_interval
 	FROM @extschema@.pathman_config
 	WHERE partrel = parent_relid
@@ -715,7 +737,12 @@ END
 $$
 LANGUAGE plpgsql;
 
-
+/*
+ * Spawn logic for append_partition(). We have to
+ * separate this in order to pass the 'p_range'.
+ *
+ * NOTE: we don't take a xact_handling lock here.
+ */
 CREATE OR REPLACE FUNCTION @extschema@.append_partition_internal(
 	parent_relid	REGCLASS,
 	p_atttype		TEXT,
@@ -761,7 +788,7 @@ LANGUAGE plpgsql;
 
 
 /*
- * Prepend new partition
+ * Prepend new partition.
  */
 CREATE OR REPLACE FUNCTION @extschema@.prepend_range_partition(
 	parent_relid	REGCLASS,
@@ -808,7 +835,12 @@ END
 $$
 LANGUAGE plpgsql;
 
-
+/*
+ * Spawn logic for prepend_partition(). We have to
+ * separate this in order to pass the 'p_range'.
+ *
+ * NOTE: we don't take a xact_handling lock here.
+ */
 CREATE OR REPLACE FUNCTION @extschema@.prepend_partition_internal(
 	parent_relid	REGCLASS,
 	p_atttype		TEXT,
@@ -867,6 +899,9 @@ DECLARE
 	v_part_name		TEXT;
 
 BEGIN
+	/* Acquire exclusive lock on parent */
+	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+
 	IF p_start_value >= p_end_value THEN
 		RAISE EXCEPTION 'Failed to create partition: p_start_value is greater than p_end_value';
 	END IF;
@@ -908,6 +943,9 @@ BEGIN
 	parent_relid := @extschema@.get_parent_of_partition(p_partition);
 	part_name := p_partition::TEXT; /* save the name to be returned */
 
+	/* Acquire exclusive lock on parent */
+	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+
 	/* Drop table */
 	EXECUTE format('DROP TABLE %s', part_name);
 
@@ -938,6 +976,9 @@ DECLARE
 	rel_persistence		CHAR;
 
 BEGIN
+	/* Acquire exclusive lock on parent */
+	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+
 	/* Ignore temporary tables */
 	SELECT relpersistence FROM pg_catalog.pg_class
 	WHERE oid = p_partition INTO rel_persistence;
@@ -997,6 +1038,9 @@ DECLARE
 
 BEGIN
 	parent_relid = @extschema@.get_parent_of_partition(p_partition);
+
+	/* Acquire exclusive lock on parent */
+	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 
 	v_attname := attname
 	FROM @extschema@.pathman_config
