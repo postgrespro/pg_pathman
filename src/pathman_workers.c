@@ -609,8 +609,7 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 			empty_slot_idx = i;
 			keep_this_lock = true;
 		}
-
-		if (cur_slot->relid == relid &&
+		else if (cur_slot->relid == relid &&
 			cur_slot->dbid == MyDatabaseId)
 		{
 			if (empty_slot_idx >= 0)
