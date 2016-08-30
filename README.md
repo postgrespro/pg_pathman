@@ -75,7 +75,7 @@ create_range_partitions(relation       REGCLASS,
                         count          INTEGER DEFAULT NULL
                         partition_data BOOLEAN DEFAULT true)
 
-create_range_partitions(relation       TEXT,
+create_range_partitions(relation       REGCLASS,
                         attribute      TEXT,
                         start_value    ANYELEMENT,
                         interval       INTERVAL,
@@ -162,15 +162,15 @@ drop_range_partition(partition TEXT)
 Drop RANGE partition and all its data.
 
 ```plpgsql
-attach_range_partition(relation    TEXT,
-                       partition   TEXT,
+attach_range_partition(relation    REGCLASS,
+                       partition   REGCLASS,
                        start_value ANYELEMENT,
                        end_value   ANYELEMENT)
 ```
 Attach partition to the existing RANGE-partitioned relation. The attached table must have exactly the same structure as the parent table, including the dropped columns.
 
 ```plpgsql
-detach_range_partition(partition TEXT)
+detach_range_partition(partition REGCLASS)
 ```
 Detach partition from the existing RANGE-partitioned relation.
 
