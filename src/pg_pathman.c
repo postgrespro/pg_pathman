@@ -1194,6 +1194,7 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 
 				return; /* exit on equal */
 			}
+			break; /* continue to function's end */
 
 		case PT_RANGE:
 			{
