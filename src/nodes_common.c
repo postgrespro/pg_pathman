@@ -262,7 +262,7 @@ get_partition_oids(List *ranges, int *n, const PartRelationInfo *prel)
 				result = repalloc(result, allocated * sizeof(Oid));
 			}
 
-			Assert(i < (uint32) abs(PrelChildrenCount(prel)));
+			Assert(i < PrelChildrenCount(prel));
 			result[used++] = children[i];
 		}
 	}
