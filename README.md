@@ -35,6 +35,7 @@ More interesting features are yet to come. Stay tuned!
 
 ## Roadmap
 
+ * Provide a way to create user-defined partition creation\destruction callbacks (issue [#22](https://github.com/postgrespro/pg_pathman/issues/22))
  * Implement LIST partitioning scheme;
  * Optimize hash join (both tables are partitioned by join key).
 
@@ -63,7 +64,7 @@ Done! Now it's time to setup your partitioning schemes.
 create_hash_partitions(relation         REGCLASS,
                        attribute        TEXT,
                        partitions_count INTEGER,
-                       partition_name TEXT DEFAULT NULL)
+                       partition_name   TEXT DEFAULT NULL)
 ```
 Performs HASH partitioning for `relation` by integer key `attribute`. The `partitions_count` parameter specifies the number of partitions to create; it cannot be changed afterwards. If `partition_data` is `true` then all the data will be automatically copied from the parent table to partitions. Note that data migration may took a while to finish and the table will be locked until transaction commits. See `partition_table_concurrently()` for a lock-free way to migrate data.
 
@@ -75,7 +76,7 @@ create_range_partitions(relation       REGCLASS,
                         count          INTEGER DEFAULT NULL
                         partition_data BOOLEAN DEFAULT true)
 
-create_range_partitions(relation       TEXT,
+create_range_partitions(relation       REGCLASS,
                         attribute      TEXT,
                         start_value    ANYELEMENT,
                         interval       INTERVAL,
@@ -162,15 +163,15 @@ drop_range_partition(partition TEXT)
 Drop RANGE partition and all its data.
 
 ```plpgsql
-attach_range_partition(relation    TEXT,
-                       partition   TEXT,
+attach_range_partition(relation    REGCLASS,
+                       partition   REGCLASS,
                        start_value ANYELEMENT,
                        end_value   ANYELEMENT)
 ```
 Attach partition to the existing RANGE-partitioned relation. The attached table must have exactly the same structure as the parent table, including the dropped columns.
 
 ```plpgsql
-detach_range_partition(partition TEXT)
+detach_range_partition(partition REGCLASS)
 ```
 Detach partition from the existing RANGE-partitioned relation.
 
@@ -349,7 +350,7 @@ SELECT tableoid::regclass AS partition, * FROM partitioned_table;
 
 - All running concurrent partitioning tasks can be listed using the `pathman_concurrent_part_tasks` view:
 ```plpgsql
-postgres=# SELECT * FROM pathman_concurrent_part_tasks;
+SELECT * FROM pathman_concurrent_part_tasks;
  userid | pid  | dbid  | relid | processed | status  
 --------+------+-------+-------+-----------+---------
  dmitry | 7367 | 16384 | test  |    472000 | working

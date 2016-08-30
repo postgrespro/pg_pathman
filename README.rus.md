@@ -38,6 +38,7 @@ More interesting features are yet to come. Stay tuned!
 
 ## Roadmap
 
+ * Предоставить возможность установки пользовательских колбеков на создание\уничтожение партиции (issue [#22](https://github.com/postgrespro/pg_pathman/issues/22))
  * LIST-секционирование;
  * Оптимизация hash join для случая, когда обе таблицы секционированы по ключу join’а.
 
@@ -65,7 +66,7 @@ CREATE EXTENSION pg_pathman;
 create_hash_partitions(relation         REGCLASS,
                        attribute        TEXT,
                        partitions_count INTEGER,
-                       partition_name TEXT DEFAULT NULL)
+                       partition_name   TEXT DEFAULT NULL)
 ```
 Выполняет HASH-секционирование таблицы `relation` по целочисленному полю `attribute`. Параметр `partitions_count` определяет, сколько секций будет создано. Если `partition_data` установлен в значение `true`, то данные из родительской таблицы будут автоматически распределены по секциям. Стоит иметь в виду, что миграция данных может занять некоторое время, а данные заблокированы. Для конкурентной миграции данных см. функцию `partition_table_concurrently()`.
 
@@ -77,7 +78,7 @@ create_range_partitions(relation       REGCLASS,
                         count          INTEGER DEFAULT NULL
                         partition_data BOOLEAN DEFAULT true)
 
-create_range_partitions(relation       TEXT,
+create_range_partitions(relation       REGCLASS,
                         attribute      TEXT,
                         start_value    ANYELEMENT,
                         interval       INTERVAL,
@@ -164,20 +165,20 @@ drop_range_partition(partition TEXT)
 Удаляет RANGE секцию вместе с содержащимися в ней данными.
 
 ```plpgsql
-attach_range_partition(relation    TEXT,
-                       partition   TEXT,
+attach_range_partition(relation    REGCLASS,
+                       partition   REGCLASS,
                        start_value ANYELEMENT,
                        end_value   ANYELEMENT)
 ```
 Присоединяет существующую таблицу `partition` в качестве секции к ранее секционированной таблице `relation`. Структура присоединяемой таблицы должна в точности повторять структуру родительской.
 
 ```plpgsql
-detach_range_partition(partition TEXT)
+detach_range_partition(partition REGCLASS)
 ```
 Отсоединяет секцию `partition`, после чего она становится независимой таблицей.
 
 ```plpgsql
-disable_pathman_for(relation TEXT)
+disable_pathman_for(relation REGCLASS)
 ```
 Отключает механизм секционирования `pg_pathman` для заданной таблицы. При этом созданные ранее секции остаются без изменений.
 
@@ -348,7 +349,7 @@ SELECT tableoid::regclass AS partition, * FROM partitioned_table;
 
 - Получить все текущие процессы конкурентного секционирования можно из представления `pathman_concurrent_part_tasks`:
 ```plpgsql
-postgres=# SELECT * FROM pathman_concurrent_part_tasks;
+SELECT * FROM pathman_concurrent_part_tasks;
  userid | pid  | dbid  | relid | processed | status  
 --------+------+-------+-------+-----------+---------
  dmitry | 7367 | 16384 | test  |    472000 | working
