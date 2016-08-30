@@ -106,7 +106,7 @@ init_concurrent_part_task_slots(void)
 		memset(concurrent_part_slots, 0, size);
 
 		for (i = 0; i < PART_WORKER_SLOTS; i++)
-			pg_atomic_init_flag_impl(&concurrent_part_slots[i].slot_used);
+			SpinLockInit(&concurrent_part_slots[i].mutex);
 	}
 }
 
@@ -235,10 +235,10 @@ handle_exec_state:
 static dsm_segment *
 create_partitions_bg_worker_segment(Oid relid, Datum value, Oid value_type)
 {
-	TypeCacheEntry	   *typcache;
-	Size				datum_size;
-	Size				segment_size;
-	dsm_segment		   *segment;
+	TypeCacheEntry		   *typcache;
+	Size					datum_size;
+	Size					segment_size;
+	dsm_segment			   *segment;
 	SpawnPartitionArgs	   *args;
 
 	typcache = lookup_type_cache(value_type, 0);
@@ -314,10 +314,10 @@ create_partitions_bg_worker(Oid relid, Datum value, Oid value_type)
 static void
 bgw_main_spawn_partitions(Datum main_arg)
 {
-	dsm_handle		handle = DatumGetUInt32(main_arg);
-	dsm_segment	   *segment;
-	SpawnPartitionArgs   *args;
-	Datum			value;
+	dsm_handle				handle = DatumGetUInt32(main_arg);
+	dsm_segment			   *segment;
+	SpawnPartitionArgs	   *args;
+	Datum					value;
 
 	/* Establish signal handlers before unblocking signals. */
 	pqsignal(SIGTERM, handle_sigterm);
@@ -512,8 +512,7 @@ bgw_main_concurrent_part(Datum main_arg)
 			if (failures_count++ >= PART_WORKER_MAX_ATTEMPTS)
 			{
 				/* Mark slot as FREE */
-				part_slot->worker_status = WS_FREE;
-				pg_atomic_clear_flag(&part_slot->slot_used);
+				cps_set_status(part_slot, WS_FREE);
 
 				elog(LOG,
 					 "Concurrent partitioning worker has canceled the task because "
@@ -534,14 +533,6 @@ bgw_main_concurrent_part(Datum main_arg)
 
 		if (failed)
 		{
-#ifdef USE_ASSERT_CHECKING
-			elog(DEBUG1, "%s: could not relocate batch (%d/%d), total: %lu [%u]",
-				 concurrent_part_bgw,
-				 failures_count, PART_WORKER_MAX_ATTEMPTS, /* current/max */
-				 part_slot->total_rows,
-				 MyProcPid);
-#endif
-
 			/* Abort transaction and sleep for a second */
 			AbortCurrentTransaction();
 			DirectFunctionCall1(pg_sleep, Float8GetDatum(part_slot->sleep_time));
@@ -553,16 +544,18 @@ bgw_main_concurrent_part(Datum main_arg)
 			failures_count = 0;
 
 			/* Add rows to total_rows */
+			SpinLockAcquire(&part_slot->mutex);
 			part_slot->total_rows += rows;
-
+/* Report debug message */
 #ifdef USE_ASSERT_CHECKING
 			elog(DEBUG1, "%s: relocated %d rows, total: %lu [%u]",
 				 concurrent_part_bgw, rows, part_slot->total_rows, MyProcPid);
 #endif
+			SpinLockRelease(&part_slot->mutex);
 		}
 
 		/* If other backend requested to stop us, quit */
-		if (part_slot->worker_status == WS_STOPPING)
+		if (cps_check_status(part_slot) == WS_STOPPING)
 			break;
 	}
 	while(rows > 0 || failed);  /* do while there's still rows to be relocated */
@@ -570,9 +563,8 @@ bgw_main_concurrent_part(Datum main_arg)
 	/* Reclaim the resources */
 	pfree(sql);
 
-	/* Set slot free */
-	part_slot->worker_status = WS_FREE;
-	pg_atomic_clear_flag(&part_slot->slot_used);
+	/* Mark slot as FREE */
+	cps_set_status(part_slot, WS_FREE);
 }
 
 
@@ -589,12 +581,11 @@ bgw_main_concurrent_part(Datum main_arg)
 Datum
 partition_table_concurrently(PG_FUNCTION_ARGS)
 {
-#define tostr(str) ( #str )
+#define tostr(str) ( #str ) /* convert function's name to literal */
 
-	Oid					relid = PG_GETARG_OID(0);
-	ConcurrentPartSlot *my_slot = NULL;
-	int					empty_slot_idx = -1;
-	int					i;
+	Oid		relid = PG_GETARG_OID(0);
+	int		empty_slot_idx = -1;
+	int		i;
 
 	/* Check if relation is a partitioned table */
 	shout_if_prel_is_invalid(relid,
@@ -607,38 +598,43 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 	 */
 	for (i = 0; i < PART_WORKER_SLOTS; i++)
 	{
-		/*
-		 * Attempt to acquire the flag. If it has alread been used then skip
-		 * this slot and try another one
-		 */
-		if (!pg_atomic_test_set_flag(&concurrent_part_slots[i].slot_used))
-			continue;
+		ConcurrentPartSlot *cur_slot = &concurrent_part_slots[i];
+		bool				keep_this_lock = false;
 
-		/* If atomic flag wasn't used then status should be WS_FREE */
-		Assert(concurrent_part_slots[i].worker_status == WS_FREE);
+		SpinLockAcquire(&cur_slot->mutex);
 
 		if (empty_slot_idx < 0)
 		{
-			my_slot = &concurrent_part_slots[i];
 			empty_slot_idx = i;
+			keep_this_lock = true;
 		}
 
-		if (concurrent_part_slots[i].relid == relid &&
-			concurrent_part_slots[i].dbid == MyDatabaseId)
+		if (cur_slot->relid == relid &&
+			cur_slot->dbid == MyDatabaseId)
 		{
+			if (empty_slot_idx >= 0)
+				SpinLockRelease(&cur_slot->mutex);
+
 			elog(ERROR,
 				 "Table \"%s\" is already being partitioned",
 				 get_rel_name(relid));
 		}
+
+		if (!keep_this_lock)
+			SpinLockRelease(&cur_slot->mutex);
 	}
 
-	if (my_slot == NULL)
+	if (empty_slot_idx < 0)
 		elog(ERROR, "No empty worker slots found");
+	else
+	{
+		/* Initialize concurrent part slot */
+		InitConcurrentPartSlot(&concurrent_part_slots[empty_slot_idx],
+							   GetAuthenticatedUserId(), WS_WORKING,
+							   MyDatabaseId, relid, 1000, 1.0);
 
-	/* Initialize concurrent part slot */
-	InitConcurrentPartSlot(my_slot, GetAuthenticatedUserId(),
-						   WS_WORKING, MyDatabaseId, relid,
-						   1000, 1.0);
+		SpinLockRelease(&concurrent_part_slots[empty_slot_idx].mutex);
+	}
 
 	/* Start worker (we should not wait) */
 	start_bg_worker(concurrent_part_bgw,
@@ -712,11 +708,13 @@ show_concurrent_part_tasks_internal(PG_FUNCTION_ARGS)
 	{
 		ConcurrentPartSlot *cur_slot = &concurrent_part_slots[i];
 
+		SpinLockAcquire(&cur_slot->mutex);
+
 		if (cur_slot->worker_status != WS_FREE)
 		{
 			HeapTuple	tuple;
 			Datum		values[Natts_pathman_cp_tasks];
-			bool		isnull[Natts_pathman_cp_tasks] = { 0, 0, 0, 0, 0, 0 };
+			bool		isnull[Natts_pathman_cp_tasks] = { 0 };
 
 			values[Anum_pathman_cp_tasks_userid - 1]	= cur_slot->userid;
 			values[Anum_pathman_cp_tasks_pid - 1]		= cur_slot->pid;
@@ -750,6 +748,8 @@ show_concurrent_part_tasks_internal(PG_FUNCTION_ARGS)
 
 			SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tuple));
 		}
+
+		SpinLockRelease(&cur_slot->mutex);
 	}
 
 	SRF_RETURN_DONE(funcctx);
@@ -763,22 +763,35 @@ Datum
 stop_concurrent_part_task(PG_FUNCTION_ARGS)
 {
 	Oid		relid = PG_GETARG_OID(0);
+	bool	worker_found = false;
 	int		i;
-	ConcurrentPartSlot *slot;
 
-	for (i = 0; i < PART_WORKER_SLOTS; i++)
-		slot = &concurrent_part_slots[i];
+	for (i = 0; i < PART_WORKER_SLOTS && !worker_found; i++)
+	{
+		ConcurrentPartSlot *cur_slot = &concurrent_part_slots[i];
 
-		if (slot->worker_status != WS_FREE &&
-			slot->relid == relid &&
-			slot->dbid == MyDatabaseId)
+		SpinLockAcquire(&cur_slot->mutex);
+
+		if (cur_slot->worker_status != WS_FREE &&
+			cur_slot->relid == relid &&
+			cur_slot->dbid == MyDatabaseId)
 		{
-			slot->worker_status = WS_STOPPING;
 			elog(NOTICE, "Worker will stop after it finishes current batch");
 
-			PG_RETURN_BOOL(true);
+			cur_slot->worker_status = WS_STOPPING;
+			worker_found = true;
 		}
 
-	elog(ERROR, "Cannot find worker for relation \"%s\"",
-		 get_rel_name_or_relid(relid));
+		SpinLockRelease(&cur_slot->mutex);
+	}
+
+	if (worker_found)
+		PG_RETURN_BOOL(true);
+	else
+	{
+		elog(ERROR, "Cannot find worker for relation \"%s\"",
+			 get_rel_name_or_relid(relid));
+
+		PG_RETURN_BOOL(false); /* keep compiler happy */
+	}
 }
