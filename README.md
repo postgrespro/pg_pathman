@@ -29,16 +29,14 @@ WHERE id = 150
 Based on the partitioning type and condition's operator, `pg_pathman` searches for the corresponding partitions and builds the plan. Currently `pg_pathman` supports two partitioning schemes:
 
 * **RANGE** - maps rows to partitions using partitioning key ranges assigned to each partition. Optimization is achieved by using the binary search algorithm;
-* **HASH** - maps rows to partitions using a generic hash function (only *integer* attributes are supported at the moment).
+* **HASH** - maps rows to partitions using a generic hash function.
 
 More interesting features are yet to come. Stay tuned!
 
 ## Roadmap
- * Replace INSERT triggers with a custom node (aka **PartitionFilter**)
- * Implement [concurrent partitioning](https://github.com/postgrespro/pg_pathman/tree/concurrent_part) (much more responsive)
- * Implement HASH partitioning for non-integer attributes
- * Optimize hash join (both tables are partitioned by join key)
- * Implement LIST partitioning scheme
+
+ * Implement LIST partitioning scheme;
+ * Optimize hash join (both tables are partitioned by join key).
 
 ## Installation guide
 To install `pg_pathman`, execute this in the module's directory:
