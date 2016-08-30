@@ -615,7 +615,8 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 
 		/* Oops, looks like we already have BGWorker for this table */
 		if (cur_slot->relid == relid &&
-			cur_slot->dbid == MyDatabaseId)
+			cur_slot->dbid == MyDatabaseId &&
+			cur_slot->worker_status != CPS_FREE)
 		{
 			/* Unlock current slot */
 			SpinLockRelease(&cur_slot->mutex);
