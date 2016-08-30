@@ -44,9 +44,9 @@ typedef struct
 
 typedef enum
 {
-	WS_FREE = 0,	/* slot is empty */
-	WS_WORKING,		/* occupied by live worker */
-	WS_STOPPING		/* worker is going to shutdown */
+	CPS_FREE = 0,	/* slot is empty */
+	CPS_WORKING,	/* occupied by live worker */
+	CPS_STOPPING	/* worker is going to shutdown */
 
 } ConcurrentPartSlotStatus;
 

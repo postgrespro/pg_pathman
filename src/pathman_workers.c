@@ -512,7 +512,7 @@ bgw_main_concurrent_part(Datum main_arg)
 			if (failures_count++ >= PART_WORKER_MAX_ATTEMPTS)
 			{
 				/* Mark slot as FREE */
-				cps_set_status(part_slot, WS_FREE);
+				cps_set_status(part_slot, CPS_FREE);
 
 				elog(LOG,
 					 "Concurrent partitioning worker has canceled the task because "
@@ -555,7 +555,7 @@ bgw_main_concurrent_part(Datum main_arg)
 		}
 
 		/* If other backend requested to stop us, quit */
-		if (cps_check_status(part_slot) == WS_STOPPING)
+		if (cps_check_status(part_slot) == CPS_STOPPING)
 			break;
 	}
 	while(rows > 0 || failed);  /* do while there's still rows to be relocated */
@@ -564,7 +564,7 @@ bgw_main_concurrent_part(Datum main_arg)
 	pfree(sql);
 
 	/* Mark slot as FREE */
-	cps_set_status(part_slot, WS_FREE);
+	cps_set_status(part_slot, CPS_FREE);
 }
 
 
@@ -603,7 +603,8 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 
 		SpinLockAcquire(&cur_slot->mutex);
 
-		if (empty_slot_idx < 0)
+		/* Should we take this slot into account? */
+		if (empty_slot_idx < 0 && cur_slot->worker_status == CPS_FREE)
 		{
 			empty_slot_idx = i;
 			keep_this_lock = true;
@@ -630,7 +631,7 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 	{
 		/* Initialize concurrent part slot */
 		InitConcurrentPartSlot(&concurrent_part_slots[empty_slot_idx],
-							   GetAuthenticatedUserId(), WS_WORKING,
+							   GetAuthenticatedUserId(), CPS_WORKING,
 							   MyDatabaseId, relid, 1000, 1.0);
 
 		SpinLockRelease(&concurrent_part_slots[empty_slot_idx].mutex);
@@ -707,12 +708,13 @@ show_concurrent_part_tasks_internal(PG_FUNCTION_ARGS)
 	for (i = userctx->cur_idx; i < PART_WORKER_SLOTS; i++)
 	{
 		ConcurrentPartSlot *cur_slot = &concurrent_part_slots[i];
+		HeapTuple			htup = NULL;
 
+		HOLD_INTERRUPTS();
 		SpinLockAcquire(&cur_slot->mutex);
 
-		if (cur_slot->worker_status != WS_FREE)
+		if (cur_slot->worker_status != CPS_FREE)
 		{
-			HeapTuple	tuple;
 			Datum		values[Natts_pathman_cp_tasks];
 			bool		isnull[Natts_pathman_cp_tasks] = { 0 };
 
@@ -725,12 +727,12 @@ show_concurrent_part_tasks_internal(PG_FUNCTION_ARGS)
 			/* Now build a status string */
 			switch(cur_slot->worker_status)
 			{
-				case WS_WORKING:
+				case CPS_WORKING:
 					values[Anum_pathman_cp_tasks_status - 1] =
 							PointerGetDatum(cstring_to_text("working"));
 					break;
 
-				case WS_STOPPING:
+				case CPS_STOPPING:
 					values[Anum_pathman_cp_tasks_status - 1] =
 							PointerGetDatum(cstring_to_text("stopping"));
 					break;
@@ -741,15 +743,18 @@ show_concurrent_part_tasks_internal(PG_FUNCTION_ARGS)
 			}
 
 			/* Form output tuple */
-			tuple = heap_form_tuple(funcctx->tuple_desc, values, isnull);
+			htup = heap_form_tuple(funcctx->tuple_desc, values, isnull);
 
 			/* Switch to next worker */
 			userctx->cur_idx = i + 1;
-
-			SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tuple));
 		}
 
 		SpinLockRelease(&cur_slot->mutex);
+		RESUME_INTERRUPTS();
+
+		/* Return tuple if needed */
+		if (htup)
+			SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(htup));
 	}
 
 	SRF_RETURN_DONE(funcctx);
@@ -770,19 +775,22 @@ stop_concurrent_part_task(PG_FUNCTION_ARGS)
 	{
 		ConcurrentPartSlot *cur_slot = &concurrent_part_slots[i];
 
+		HOLD_INTERRUPTS();
 		SpinLockAcquire(&cur_slot->mutex);
 
-		if (cur_slot->worker_status != WS_FREE &&
+		if (cur_slot->worker_status != CPS_FREE &&
 			cur_slot->relid == relid &&
 			cur_slot->dbid == MyDatabaseId)
 		{
 			elog(NOTICE, "Worker will stop after it finishes current batch");
 
-			cur_slot->worker_status = WS_STOPPING;
+			/* Change worker's state & set 'worker_found' */
+			cur_slot->worker_status = CPS_STOPPING;
 			worker_found = true;
 		}
 
 		SpinLockRelease(&cur_slot->mutex);
+		RESUME_INTERRUPTS();
 	}
 
 	if (worker_found)
