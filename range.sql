@@ -97,6 +97,11 @@ BEGIN
 	/* Acquire exclusive lock on parent */
 	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 
+	IF partition_data = true THEN
+		/* Acquire data modification lock */
+		PERFORM @extschema@.lock_relation_modification(parent_relid);
+	END IF;
+
 	PERFORM @extschema@.validate_relname(parent_relid);
 	p_attribute := lower(p_attribute);
 	PERFORM @extschema@.common_relation_checks(parent_relid, p_attribute);
@@ -194,6 +199,11 @@ BEGIN
 	/* Acquire exclusive lock on parent */
 	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 
+	IF partition_data = true THEN
+		/* Acquire data modification lock */
+		PERFORM @extschema@.lock_relation_modification(parent_relid);
+	END IF;
+
 	PERFORM @extschema@.validate_relname(parent_relid);
 	p_attribute := lower(p_attribute);
 	PERFORM @extschema@.common_relation_checks(parent_relid, p_attribute);
@@ -289,6 +299,11 @@ BEGIN
 	/* Acquire exclusive lock on parent */
 	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 
+	IF partition_data = true THEN
+		/* Acquire data modification lock */
+		PERFORM @extschema@.lock_relation_modification(parent_relid);
+	END IF;
+
 	PERFORM @extschema@.validate_relname(parent_relid);
 	p_attribute := lower(p_attribute);
 	PERFORM @extschema@.common_relation_checks(parent_relid, p_attribute);
@@ -356,6 +371,11 @@ DECLARE
 BEGIN
 	/* Acquire exclusive lock on parent */
 	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+
+	IF partition_data = true THEN
+		/* Acquire data modification lock */
+		PERFORM @extschema@.lock_relation_modification(parent_relid);
+	END IF;
 
 	PERFORM @extschema@.validate_relname(parent_relid);
 	p_attribute := lower(p_attribute);
@@ -501,6 +521,9 @@ BEGIN
 	/* Acquire exclusive lock on parent */
 	PERFORM @extschema@.lock_partitioned_relation(v_parent_relid);
 
+	/* Acquire data modification lock */
+	PERFORM @extschema@.lock_relation_modification(p_partition);
+
 	SELECT attname, parttype
 	FROM @extschema@.pathman_config
 	WHERE partrel = v_parent_relid
@@ -584,6 +607,10 @@ BEGIN
 
 	v_parent_relid1 := @extschema@.get_parent_of_partition(partition1);
 	v_parent_relid2 := @extschema@.get_parent_of_partition(partition2);
+
+	/* Acquire data modification lock */
+	PERFORM @extschema@.lock_relation_modification(partition1);
+	PERFORM @extschema@.lock_relation_modification(partition2);
 
 	IF v_parent_relid1 != v_parent_relid2 THEN
 		RAISE EXCEPTION 'Cannot merge partitions with different parents';

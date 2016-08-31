@@ -24,6 +24,10 @@ extern List	   *locked_by_me;
  */
 void xact_lock_partitioned_rel(Oid relid);
 void xact_unlock_partitioned_rel(Oid relid);
+
+void xact_lock_rel_data(Oid relid);
+void xact_unlock_rel_data(Oid relid);
+
 bool xact_conflicting_lock_exists(Oid relid);
 
 #endif

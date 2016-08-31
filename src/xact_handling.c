@@ -40,6 +40,24 @@ xact_unlock_partitioned_rel(Oid relid)
 }
 
 /*
+ * Lock certain relation's data (INSERT | UPDATE | DELETE).
+ */
+void
+xact_lock_rel_data(Oid relid)
+{
+	LockRelationOid(relid, RowExclusiveLock);
+}
+
+/*
+ * Unlock relation's data.
+ */
+void
+xact_unlock_rel_data(Oid relid)
+{
+	UnlockRelationOid(relid, RowExclusiveLock);
+}
+
+/*
  * Check whether we already hold a lock that
  * might conflict with partition spawning BGW.
  */

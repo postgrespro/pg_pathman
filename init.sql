@@ -657,6 +657,14 @@ LANGUAGE C STRICT;
 
 
 /*
+ * Lock relation to restrict concurrent modification of data.
+ */
+ CREATE OR REPLACE FUNCTION @extschema@.lock_relation_modification(
+	 REGCLASS)
+ RETURNS VOID AS 'pg_pathman', 'lock_relation_modification'
+ LANGUAGE C STRICT;
+
+/*
  * DEBUG: Place this inside some plpgsql fuction and set breakpoint.
  */
 CREATE OR REPLACE FUNCTION @extschema@.debug_capture()

@@ -53,6 +53,7 @@ PG_FUNCTION_INFO_V1( is_attribute_nullable );
 PG_FUNCTION_INFO_V1( add_to_pathman_config );
 PG_FUNCTION_INFO_V1( invalidate_relcache );
 PG_FUNCTION_INFO_V1( lock_partitioned_relation );
+PG_FUNCTION_INFO_V1( lock_relation_modification );
 PG_FUNCTION_INFO_V1( debug_capture );
 
 
@@ -697,6 +698,17 @@ lock_partitioned_relation(PG_FUNCTION_ARGS)
 
 	/* Lock partitioned relation till transaction's end */
 	xact_lock_partitioned_rel(relid);
+
+	PG_RETURN_VOID();
+}
+
+Datum
+lock_relation_modification(PG_FUNCTION_ARGS)
+{
+	Oid			relid = PG_GETARG_OID(0);
+
+	/* Lock partitioned relation till transaction's end */
+	xact_lock_rel_data(relid);
 
 	PG_RETURN_VOID();
 }
