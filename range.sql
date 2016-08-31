@@ -174,9 +174,6 @@ BEGIN
 	END IF;
 
 	RETURN p_count;
-
-EXCEPTION WHEN others THEN
-	RAISE EXCEPTION '%', SQLERRM;
 END
 $$ LANGUAGE plpgsql;
 
@@ -280,9 +277,6 @@ BEGIN
 	END IF;
 
 	RETURN p_count;
-
-EXCEPTION WHEN others THEN
-	RAISE EXCEPTION '%', SQLERRM;
 END
 $$ LANGUAGE plpgsql;
 
@@ -356,9 +350,6 @@ BEGIN
 	END IF;
 
 	RETURN part_count; /* number of created partitions */
-
-EXCEPTION WHEN others THEN
-	RAISE EXCEPTION '%', SQLERRM;
 END
 $$ LANGUAGE plpgsql;
 
@@ -429,9 +420,6 @@ BEGIN
 	END IF;
 
 	RETURN part_count; /* number of created partitions */
-
-EXCEPTION WHEN others THEN
-	RAISE EXCEPTION '%', SQLERRM;
 END
 $$ LANGUAGE plpgsql;
 
@@ -772,9 +760,6 @@ BEGIN
 	/* Invalidate cache */
 	PERFORM @extschema@.on_update_partitions(parent_relid);
 	RETURN v_part_name;
-
-EXCEPTION WHEN others THEN
-	RAISE EXCEPTION '%', SQLERRM;
 END
 $$
 LANGUAGE plpgsql;
@@ -870,9 +855,6 @@ BEGIN
 	/* Invalidate cache */
 	PERFORM @extschema@.on_update_partitions(parent_relid);
 	RETURN v_part_name;
-
-EXCEPTION WHEN others THEN
-	RAISE EXCEPTION '%', SQLERRM;
 END
 $$
 LANGUAGE plpgsql;
@@ -962,9 +944,6 @@ BEGIN
 	PERFORM @extschema@.on_update_partitions(parent_relid);
 
 	RETURN v_part_name;
-
-EXCEPTION WHEN others THEN
-	RAISE EXCEPTION '%', SQLERRM;
 END
 $$
 LANGUAGE plpgsql;
@@ -995,9 +974,6 @@ BEGIN
 	PERFORM @extschema@.on_update_partitions(parent_relid);
 
 	RETURN part_name;
-
-EXCEPTION WHEN others THEN
-	RAISE EXCEPTION '%', SQLERRM;
 END
 $$
 LANGUAGE plpgsql;
@@ -1059,9 +1035,6 @@ BEGIN
 	PERFORM @extschema@.on_update_partitions(parent_relid);
 
 	RETURN p_partition;
-
-EXCEPTION WHEN others THEN
-	RAISE EXCEPTION '%', SQLERRM;
 END
 $$
 LANGUAGE plpgsql;
@@ -1106,9 +1079,6 @@ BEGIN
 	PERFORM @extschema@.on_update_partitions(parent_relid);
 
 	RETURN p_partition;
-
-EXCEPTION WHEN others THEN
-	RAISE EXCEPTION '%', SQLERRM;
 END
 $$
 LANGUAGE plpgsql;
