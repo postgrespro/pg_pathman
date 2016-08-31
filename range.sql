@@ -97,6 +97,14 @@ BEGIN
 	/* Acquire exclusive lock on parent */
 	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 
+	IF partition_data = true THEN
+		/* Perform some checks regarding the blocking partitioning */
+		PERFORM @extschema@.common_blocking_partitioning_checks(parent_relid);
+
+		/* Acquire data modification lock (prevent further modifications) */
+		PERFORM @extschema@.lock_relation_modification(parent_relid);
+	END IF;
+
 	PERFORM @extschema@.validate_relname(parent_relid);
 	p_attribute := lower(p_attribute);
 	PERFORM @extschema@.common_relation_checks(parent_relid, p_attribute);
@@ -166,9 +174,6 @@ BEGIN
 	END IF;
 
 	RETURN p_count;
-
-EXCEPTION WHEN others THEN
-	RAISE EXCEPTION '%', SQLERRM;
 END
 $$ LANGUAGE plpgsql;
 
@@ -193,6 +198,14 @@ DECLARE
 BEGIN
 	/* Acquire exclusive lock on parent */
 	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+
+	IF partition_data = true THEN
+		/* Perform some checks regarding the blocking partitioning */
+		PERFORM @extschema@.common_blocking_partitioning_checks(parent_relid);
+
+		/* Acquire data modification lock (prevent further modifications) */
+		PERFORM @extschema@.lock_relation_modification(parent_relid);
+	END IF;
 
 	PERFORM @extschema@.validate_relname(parent_relid);
 	p_attribute := lower(p_attribute);
@@ -264,9 +277,6 @@ BEGIN
 	END IF;
 
 	RETURN p_count;
-
-EXCEPTION WHEN others THEN
-	RAISE EXCEPTION '%', SQLERRM;
 END
 $$ LANGUAGE plpgsql;
 
@@ -288,6 +298,14 @@ DECLARE
 BEGIN
 	/* Acquire exclusive lock on parent */
 	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+
+	IF partition_data = true THEN
+		/* Perform some checks regarding the blocking partitioning */
+		PERFORM @extschema@.common_blocking_partitioning_checks(parent_relid);
+
+		/* Acquire data modification lock (prevent further modifications) */
+		PERFORM @extschema@.lock_relation_modification(parent_relid);
+	END IF;
 
 	PERFORM @extschema@.validate_relname(parent_relid);
 	p_attribute := lower(p_attribute);
@@ -332,9 +350,6 @@ BEGIN
 	END IF;
 
 	RETURN part_count; /* number of created partitions */
-
-EXCEPTION WHEN others THEN
-	RAISE EXCEPTION '%', SQLERRM;
 END
 $$ LANGUAGE plpgsql;
 
@@ -356,6 +371,14 @@ DECLARE
 BEGIN
 	/* Acquire exclusive lock on parent */
 	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+
+	IF partition_data = true THEN
+		/* Perform some checks regarding the blocking partitioning */
+		PERFORM @extschema@.common_blocking_partitioning_checks(parent_relid);
+
+		/* Acquire data modification lock (prevent further modifications) */
+		PERFORM @extschema@.lock_relation_modification(parent_relid);
+	END IF;
 
 	PERFORM @extschema@.validate_relname(parent_relid);
 	p_attribute := lower(p_attribute);
@@ -397,9 +420,6 @@ BEGIN
 	END IF;
 
 	RETURN part_count; /* number of created partitions */
-
-EXCEPTION WHEN others THEN
-	RAISE EXCEPTION '%', SQLERRM;
 END
 $$ LANGUAGE plpgsql;
 
@@ -501,6 +521,10 @@ BEGIN
 	/* Acquire exclusive lock on parent */
 	PERFORM @extschema@.lock_partitioned_relation(v_parent_relid);
 
+	/* Acquire data modification lock (prevent further modifications) */
+	PERFORM @extschema@.common_blocking_partitioning_checks(p_partition);
+	PERFORM @extschema@.lock_relation_modification(p_partition);
+
 	SELECT attname, parttype
 	FROM @extschema@.pathman_config
 	WHERE partrel = v_parent_relid
@@ -584,6 +608,12 @@ BEGIN
 
 	v_parent_relid1 := @extschema@.get_parent_of_partition(partition1);
 	v_parent_relid2 := @extschema@.get_parent_of_partition(partition2);
+
+	/* Acquire data modification locks (prevent further modifications) */
+	PERFORM @extschema@.common_blocking_partitioning_checks(partition1);
+	PERFORM @extschema@.lock_relation_modification(partition1);
+	PERFORM @extschema@.common_blocking_partitioning_checks(partition2);
+	PERFORM @extschema@.lock_relation_modification(partition2);
 
 	IF v_parent_relid1 != v_parent_relid2 THEN
 		RAISE EXCEPTION 'Cannot merge partitions with different parents';
@@ -730,9 +760,6 @@ BEGIN
 	/* Invalidate cache */
 	PERFORM @extschema@.on_update_partitions(parent_relid);
 	RETURN v_part_name;
-
-EXCEPTION WHEN others THEN
-	RAISE EXCEPTION '%', SQLERRM;
 END
 $$
 LANGUAGE plpgsql;
@@ -828,9 +855,6 @@ BEGIN
 	/* Invalidate cache */
 	PERFORM @extschema@.on_update_partitions(parent_relid);
 	RETURN v_part_name;
-
-EXCEPTION WHEN others THEN
-	RAISE EXCEPTION '%', SQLERRM;
 END
 $$
 LANGUAGE plpgsql;
@@ -920,9 +944,6 @@ BEGIN
 	PERFORM @extschema@.on_update_partitions(parent_relid);
 
 	RETURN v_part_name;
-
-EXCEPTION WHEN others THEN
-	RAISE EXCEPTION '%', SQLERRM;
 END
 $$
 LANGUAGE plpgsql;
@@ -953,9 +974,6 @@ BEGIN
 	PERFORM @extschema@.on_update_partitions(parent_relid);
 
 	RETURN part_name;
-
-EXCEPTION WHEN others THEN
-	RAISE EXCEPTION '%', SQLERRM;
 END
 $$
 LANGUAGE plpgsql;
@@ -1017,9 +1035,6 @@ BEGIN
 	PERFORM @extschema@.on_update_partitions(parent_relid);
 
 	RETURN p_partition;
-
-EXCEPTION WHEN others THEN
-	RAISE EXCEPTION '%', SQLERRM;
 END
 $$
 LANGUAGE plpgsql;
@@ -1064,9 +1079,6 @@ BEGIN
 	PERFORM @extschema@.on_update_partitions(parent_relid);
 
 	RETURN p_partition;
-
-EXCEPTION WHEN others THEN
-	RAISE EXCEPTION '%', SQLERRM;
 END
 $$
 LANGUAGE plpgsql;

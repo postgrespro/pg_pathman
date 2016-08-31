@@ -53,6 +53,8 @@ PG_FUNCTION_INFO_V1( is_attribute_nullable );
 PG_FUNCTION_INFO_V1( add_to_pathman_config );
 PG_FUNCTION_INFO_V1( invalidate_relcache );
 PG_FUNCTION_INFO_V1( lock_partitioned_relation );
+PG_FUNCTION_INFO_V1( lock_relation_modification );
+PG_FUNCTION_INFO_V1( common_blocking_partitioning_checks );
 PG_FUNCTION_INFO_V1( debug_capture );
 
 
@@ -697,6 +699,36 @@ lock_partitioned_relation(PG_FUNCTION_ARGS)
 
 	/* Lock partitioned relation till transaction's end */
 	xact_lock_partitioned_rel(relid);
+
+	PG_RETURN_VOID();
+}
+
+Datum
+lock_relation_modification(PG_FUNCTION_ARGS)
+{
+	Oid			relid = PG_GETARG_OID(0);
+
+	/* Lock partitioned relation till transaction's end */
+	xact_lock_rel_data(relid);
+
+	PG_RETURN_VOID();
+}
+
+Datum
+common_blocking_partitioning_checks(PG_FUNCTION_ARGS)
+{
+	Oid			relid = PG_GETARG_OID(0);
+
+	if (!xact_is_level_read_committed())
+		ereport(ERROR,
+				(errmsg("Cannot perform blocking partitioning operation"),
+				 errdetail("Expected READ COMMITTED isolation level")));
+
+	if (xact_is_table_being_modified(relid))
+		ereport(ERROR,
+				(errmsg("Cannot perform blocking partitioning operation"),
+				 errdetail("Table \"%s\" is being modified concurrently",
+						   get_rel_name_or_relid(relid))));
 
 	PG_RETURN_VOID();
 }

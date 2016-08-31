@@ -976,7 +976,7 @@ create_partitions(Oid relid, Datum value, Oid value_type)
 		 * If table has been partitioned in some previous xact AND
 		 * we don't hold any conflicting locks, run BGWorker.
 		 */
-		if (part_in_prev_xact && !xact_conflicting_lock_exists(relid))
+		if (part_in_prev_xact && !xact_bgw_conflicting_lock_exists(relid))
 		{
 			elog(DEBUG2, "create_partitions(): chose BGWorker [%u]", MyProcPid);
 			last_partition = create_partitions_bg_worker(relid, value, value_type);

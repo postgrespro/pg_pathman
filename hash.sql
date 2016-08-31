@@ -29,6 +29,11 @@ BEGIN
 	/* Acquire exclusive lock on parent */
 	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 
+	IF partition_data = true THEN
+		/* Acquire data modification lock */
+		PERFORM @extschema@.lock_relation_modification(parent_relid);
+	END IF;
+
 	PERFORM @extschema@.validate_relname(parent_relid);
 	attribute := lower(attribute);
 	PERFORM @extschema@.common_relation_checks(parent_relid, attribute);
@@ -78,9 +83,6 @@ BEGIN
 	END IF;
 
 	RETURN partitions_count;
-
-EXCEPTION WHEN others THEN
-	RAISE EXCEPTION '%', SQLERRM;
 END
 $$ LANGUAGE plpgsql
 SET client_min_messages = WARNING;

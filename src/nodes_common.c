@@ -240,7 +240,8 @@ unpack_runtimeappend_private(RuntimeAppendState *scan_state, CustomScan *cscan)
 
 /* Transform partition ranges into plain array of partition Oids */
 Oid *
-get_partition_oids(List *ranges, int *n, const PartRelationInfo *prel)
+get_partition_oids(List *ranges, int *n, const PartRelationInfo *prel,
+				   bool include_parent)
 {
 	ListCell   *range_cell;
 	uint32		allocated = INITIAL_ALLOC_NUM;
@@ -250,7 +251,7 @@ get_partition_oids(List *ranges, int *n, const PartRelationInfo *prel)
 
 	/* If required, add parent to result */
 	Assert(INITIAL_ALLOC_NUM >= 1);
-	if (prel->enable_parent)
+	if (include_parent)
 		result[used++] = PrelParentRelid(prel);
 
 	/* Deal with selected partitions */
@@ -372,10 +373,6 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 		{
 			Plan		   *child_plan = (Plan *) lfirst(lc2);
 			RelOptInfo 	   *child_rel = ((Path *) lfirst(lc1))->parent;
-			Oid				child_relid;
-
-			/* Fetch relid of the 'child_rel' */
-			child_relid = root->simple_rte_array[child_rel->relid]->relid;
 
 			/* Replace rel's  tlist with a matching one */
 			if (!cscan->scan.plan.targetlist)
@@ -390,10 +387,6 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 			if (!cscan->custom_scan_tlist)
 				cscan->custom_scan_tlist = replace_tlist_varnos(child_plan->targetlist,
 																rel);
-
-			/* If this is a plan for parent table, fill it with quals */
-			if (PrelParentRelid(prel) == child_relid)
-				child_plan->qual = get_actual_clauses(clauses);
 		}
 	}
 
@@ -529,7 +522,7 @@ rescan_append_common(CustomScanState *node)
 	}
 
 	/* Get Oids of the required partitions */
-	parts = get_partition_oids(ranges, &nparts, prel);
+	parts = get_partition_oids(ranges, &nparts, prel, prel->enable_parent);
 
 	/* Select new plans for this run using 'parts' */
 	if (scan_state->cur_plans)

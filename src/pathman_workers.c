@@ -361,7 +361,7 @@ bgw_main_spawn_partitions(Datum main_arg)
 #endif
 
 	/* Check again if there's a conflicting lock */
-	if (xact_conflicting_lock_exists(args->partitioned_table))
+	if (xact_bgw_conflicting_lock_exists(args->partitioned_table))
 	{
 		elog(LOG, "%s: there's a conflicting lock on relation \"%s\"",
 			 spawn_partitions_bgw,
