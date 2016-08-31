@@ -173,12 +173,13 @@ append_part_attr_to_tlist(List *tlist, Index relno, const PartRelationInfo *prel
 }
 
 static void
-pack_runtimeappend_private(CustomScan *cscan, RuntimeAppendPath *path)
+pack_runtimeappend_private(CustomScan *cscan, RuntimeAppendPath *path,
+						   bool enable_parent)
 {
 	ChildScanCommon    *children = path->children;
 	int					nchildren = path->nchildren;
-	List			   *custom_private = NIL;
-	List			   *custom_oids = NIL;
+	List			   *custom_private = NIL,
+					   *custom_oids = NIL;
 	int					i;
 
 	for (i = 0; i < nchildren; i++)
@@ -188,31 +189,39 @@ pack_runtimeappend_private(CustomScan *cscan, RuntimeAppendPath *path)
 		pfree(children[i]);
 	}
 
-	/* Save main table and partition relids as first element of 'custom_private' */
+	/* Save parent & partition Oids and a flag as first element of 'custom_private' */
 	custom_private = lappend(custom_private,
-							 list_make2(list_make1_oid(path->relid),
-										custom_oids));
+							 list_make3(list_make1_oid(path->relid),
+										custom_oids, /* list of Oids */
+										list_make1_int(enable_parent)));
 
+	/* Store freshly built 'custom_private' */
 	cscan->custom_private = custom_private;
 }
 
 static void
 unpack_runtimeappend_private(RuntimeAppendState *scan_state, CustomScan *cscan)
 {
-	ListCell   *oid_cell;
-	ListCell   *plan_cell;
-	List	   *runtimeappend_private = linitial(cscan->custom_private);
-	List	   *custom_oids = (List *) lsecond(runtimeappend_private);
-	int			nchildren = list_length(custom_oids);
+	ListCell   *oid_cell,
+			   *plan_cell;
+	List	   *runtimeappend_private = linitial(cscan->custom_private),
+			   *custom_oids;		/* Oids of partitions */
+	int			custom_oids_count;	/* number of partitions */
+
 	HTAB	   *children_table;
 	HASHCTL	   *children_table_config = &scan_state->children_table_config;
 	int			i;
+
+	/* Extract Oids list from packed data */
+	custom_oids = (List *) lsecond(runtimeappend_private);
+	custom_oids_count = list_length(custom_oids);
 
 	memset(children_table_config, 0, sizeof(HASHCTL));
 	children_table_config->keysize = sizeof(Oid);
 	children_table_config->entrysize = sizeof(ChildScanCommonData);
 
-	children_table = hash_create("Plan storage", nchildren,
+	children_table = hash_create("RuntimeAppend plan storage",
+								 custom_oids_count,
 								 children_table_config,
 								 HASH_ELEM | HASH_BLOBS);
 
@@ -233,8 +242,10 @@ unpack_runtimeappend_private(RuntimeAppendState *scan_state, CustomScan *cscan)
 		child->original_order = i++; /* will be used in EXPLAIN */
 	}
 
+	/* Finally fill 'scan_state' with unpacked elements */
 	scan_state->children_table = children_table;
 	scan_state->relid = linitial_oid(linitial(runtimeappend_private));
+	scan_state->enable_parent = (bool) linitial_int(lthird(runtimeappend_private));
 }
 
 
@@ -400,7 +411,8 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 	cscan->custom_plans = custom_plans;
 	cscan->methods = scan_methods;
 
-	pack_runtimeappend_private(cscan, rpath);
+	/* Cache 'prel->enable_parent' as well */
+	pack_runtimeappend_private(cscan, rpath, prel->enable_parent);
 
 	return &cscan->scan.plan;
 }
@@ -502,6 +514,7 @@ rescan_append_common(CustomScanState *node)
 	const PartRelationInfo *prel;
 	List				   *ranges;
 	ListCell			   *lc;
+	WalkerContext			wcxt;
 	Oid					   *parts;
 	int						nparts;
 
@@ -511,18 +524,18 @@ rescan_append_common(CustomScanState *node)
 	/* First we select all available partitions... */
 	ranges = list_make1_irange(make_irange(0, PrelLastChild(prel), false));
 
-	InitWalkerContext(&scan_state->wcxt, prel, econtext, false);
+	InitWalkerContext(&wcxt, prel, econtext, false);
 	foreach (lc, scan_state->custom_exprs)
 	{
 		WrapperNode	   *wn;
 
 		/* ... then we cut off irrelevant ones using the provided clauses */
-		wn = walk_expr_tree((Expr *) lfirst(lc), &scan_state->wcxt);
+		wn = walk_expr_tree((Expr *) lfirst(lc), &wcxt);
 		ranges = irange_list_intersect(ranges, wn->rangeset);
 	}
 
 	/* Get Oids of the required partitions */
-	parts = get_partition_oids(ranges, &nparts, prel, prel->enable_parent);
+	parts = get_partition_oids(ranges, &nparts, prel, scan_state->enable_parent);
 
 	/* Select new plans for this run using 'parts' */
 	if (scan_state->cur_plans)

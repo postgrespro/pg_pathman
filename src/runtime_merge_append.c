@@ -113,18 +113,18 @@ static void
 pack_runtimemergeappend_private(CustomScan *cscan, MergeAppendGuts *mag)
 {
 	List   *runtimemergeappend_private = NIL;
-	List   *sortColIdx    = NIL,
-		   *sortOperators = NIL,
-		   *collations    = NIL,
-		   *nullsFirst    = NIL;
+	List   *sortColIdx		= NIL,
+		   *sortOperators	= NIL,
+		   *collations		= NIL,
+		   *nullsFirst		= NIL;
 	int		i;
 
 	for (i = 0; i < mag->numCols; i++)
 	{
-		sortColIdx    = lappend_int(sortColIdx, mag->sortColIdx[i]);
-		sortOperators = lappend_oid(sortOperators, mag->sortOperators[i]);
-		collations    = lappend_oid(collations, mag->collations[i]);
-		nullsFirst    = lappend_int(nullsFirst, mag->nullsFirst[i]);
+		sortColIdx		= lappend_int(sortColIdx, mag->sortColIdx[i]);
+		sortOperators	= lappend_oid(sortOperators, mag->sortOperators[i]);
+		collations		= lappend_oid(collations, mag->collations[i]);
+		nullsFirst		= lappend_int(nullsFirst, mag->nullsFirst[i]);
 	}
 
 	runtimemergeappend_private = list_make2(makeInteger(mag->numCols),
@@ -133,7 +133,14 @@ pack_runtimemergeappend_private(CustomScan *cscan, MergeAppendGuts *mag)
 													   collations,
 													   nullsFirst));
 
-	/* Append RuntimeMergeAppend's data to the 'custom_private' */
+	/*
+	 * Append RuntimeMergeAppend's data to the 'custom_private' (2nd).
+	 *
+	 * This way some sort of hierarchy is maintained in 'custom_private':
+	 * inherited structure (in this case RuntimeAppend) is stored first,
+	 * so we can think of pack\unpack functions as 'constructors' to some
+	 * extent.
+	 */
 	cscan->custom_private = lappend(cscan->custom_private,
 									runtimemergeappend_private);
 }
@@ -168,15 +175,15 @@ unpack_runtimemergeappend_private(RuntimeMergeAppendState *scan_state,
 	runtimemergeappend_private = lsecond(cscan->custom_private);
 	scan_state->numCols = intVal(linitial(runtimemergeappend_private));
 
-	sortColIdx    = linitial(lsecond(runtimemergeappend_private));
-	sortOperators = lsecond(lsecond(runtimemergeappend_private));
-	collations    = lthird(lsecond(runtimemergeappend_private));
-	nullsFirst    = lfourth(lsecond(runtimemergeappend_private));
+	sortColIdx		= linitial(lsecond(runtimemergeappend_private));
+	sortOperators	= lsecond(lsecond(runtimemergeappend_private));
+	collations		= lthird(lsecond(runtimemergeappend_private));
+	nullsFirst		= lfourth(lsecond(runtimemergeappend_private));
 
-	FillStateField(sortColIdx,    AttrNumber, lfirst_int);
-	FillStateField(sortOperators, Oid,        lfirst_oid);
-	FillStateField(collations,    Oid,        lfirst_oid);
-	FillStateField(nullsFirst,    bool,       lfirst_int);
+	FillStateField(sortColIdx,		AttrNumber,	lfirst_int);
+	FillStateField(sortOperators,	Oid,		lfirst_oid);
+	FillStateField(collations,		Oid,		lfirst_oid);
+	FillStateField(nullsFirst,		bool,		lfirst_int);
 }
 
 void

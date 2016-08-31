@@ -23,9 +23,9 @@
 typedef struct
 {
 	CustomPath			cpath;
-	Oid					relid;		/* relid of the partitioned table */
+	Oid					relid;			/* relid of the partitioned table */
 
-	ChildScanCommon	   *children;	/* all available plans */
+	ChildScanCommon	   *children;		/* all available plans */
 	int					nchildren;
 } RuntimeAppendPath;
 
@@ -46,15 +46,14 @@ typedef struct
 	ChildScanCommon	   *cur_plans;
 	int					ncur_plans;
 
+	/* Should we include parent table? Cached for prepared statements */
+	bool				enable_parent;
+
 	/* Index of the selected plan state */
 	int					running_idx;
 
 	/* Last saved tuple (for SRF projections) */
 	TupleTableSlot	   *slot;
-
-	/* Cached walker context */
-	WalkerContext		wcxt;
-	bool				wcxt_cached;
 } RuntimeAppendState;
 
 
