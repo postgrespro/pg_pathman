@@ -60,7 +60,8 @@ clear_plan_states(CustomScanState *scan_state)
 	}
 }
 
-Oid * get_partition_oids(List *ranges, int *n, const PartRelationInfo *prel);
+Oid * get_partition_oids(List *ranges, int *n, const PartRelationInfo *prel,
+						 bool include_parent);
 
 Path * create_append_path_common(PlannerInfo *root,
 								 AppendPath *inner_append,

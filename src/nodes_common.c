@@ -240,7 +240,8 @@ unpack_runtimeappend_private(RuntimeAppendState *scan_state, CustomScan *cscan)
 
 /* Transform partition ranges into plain array of partition Oids */
 Oid *
-get_partition_oids(List *ranges, int *n, const PartRelationInfo *prel)
+get_partition_oids(List *ranges, int *n, const PartRelationInfo *prel,
+				   bool include_parent)
 {
 	ListCell   *range_cell;
 	uint32		allocated = INITIAL_ALLOC_NUM;
@@ -250,7 +251,7 @@ get_partition_oids(List *ranges, int *n, const PartRelationInfo *prel)
 
 	/* If required, add parent to result */
 	Assert(INITIAL_ALLOC_NUM >= 1);
-	if (prel->enable_parent)
+	if (include_parent)
 		result[used++] = PrelParentRelid(prel);
 
 	/* Deal with selected partitions */
@@ -521,7 +522,7 @@ rescan_append_common(CustomScanState *node)
 	}
 
 	/* Get Oids of the required partitions */
-	parts = get_partition_oids(ranges, &nparts, prel);
+	parts = get_partition_oids(ranges, &nparts, prel, prel->enable_parent);
 
 	/* Select new plans for this run using 'parts' */
 	if (scan_state->cur_plans)

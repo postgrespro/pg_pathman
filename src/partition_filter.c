@@ -199,7 +199,7 @@ partition_filter_exec(CustomScanState *node)
 		old_cxt = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
 
 		ranges = walk_expr_tree((Expr *) &state->temp_const, &wcxt)->rangeset;
-		parts = get_partition_oids(ranges, &nparts, prel);
+		parts = get_partition_oids(ranges, &nparts, prel, false);
 
 		if (nparts > 1)
 			elog(ERROR, "PartitionFilter selected more than one partition");
@@ -222,7 +222,7 @@ partition_filter_exec(CustomScanState *node)
 				elog(ERROR,
 					 "There is no suitable partition for key '%s'",
 					 datum_to_cstring(state->temp_const.constvalue,
-					 				  state->temp_const.consttype));
+									  state->temp_const.consttype));
 		}
 		else
 			selected_partid = parts[0];
