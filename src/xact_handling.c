@@ -11,6 +11,7 @@
 #include "xact_handling.h"
 
 #include "postgres.h"
+#include "access/xact.h"
 #include "catalog/catalog.h"
 #include "miscadmin.h"
 #include "storage/lmgr.h"
@@ -45,7 +46,7 @@ xact_unlock_partitioned_rel(Oid relid)
 void
 xact_lock_rel_data(Oid relid)
 {
-	LockRelationOid(relid, RowExclusiveLock);
+	LockRelationOid(relid, ShareLock);
 }
 
 /*
@@ -54,7 +55,7 @@ xact_lock_rel_data(Oid relid)
 void
 xact_unlock_rel_data(Oid relid)
 {
-	UnlockRelationOid(relid, RowExclusiveLock);
+	UnlockRelationOid(relid, ShareLock);
 }
 
 /*
@@ -62,7 +63,7 @@ xact_unlock_rel_data(Oid relid)
  * might conflict with partition spawning BGW.
  */
 bool
-xact_conflicting_lock_exists(Oid relid)
+xact_bgw_conflicting_lock_exists(Oid relid)
 {
 	LOCKMODE	lockmode;
 
@@ -78,6 +79,37 @@ xact_conflicting_lock_exists(Oid relid)
 	return false;
 }
 
+/*
+ * Check if table is being modified
+ * concurrently in a separate transaction.
+ */
+bool
+xact_is_table_being_modified(Oid relid)
+{
+	/*
+	 * Check if someone has already started a
+	 * transaction and modified table's contents.
+	 */
+	if (ConditionalLockRelationOid(relid, ExclusiveLock))
+	{
+		UnlockRelationOid(relid, ExclusiveLock);
+		return false;
+	}
+
+	return true;
+}
+
+/*
+ * Check if current transaction's level is READ COMMITTED.
+ */
+bool
+xact_is_level_read_committed(void)
+{
+	if (XactIsoLevel <= XACT_READ_COMMITTED)
+		return true;
+
+	return false;
+}
 
 /*
  * Do we hold the specified lock?

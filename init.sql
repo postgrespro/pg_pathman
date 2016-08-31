@@ -655,7 +655,6 @@ LANGUAGE C STRICT;
  RETURNS VOID AS 'pg_pathman', 'lock_partitioned_relation'
  LANGUAGE C STRICT;
 
-
 /*
  * Lock relation to restrict concurrent modification of data.
  */
@@ -663,6 +662,15 @@ LANGUAGE C STRICT;
 	 REGCLASS)
  RETURNS VOID AS 'pg_pathman', 'lock_relation_modification'
  LANGUAGE C STRICT;
+
+/*
+ * Check if we can distribute data without bad consequences.
+ */
+ CREATE OR REPLACE FUNCTION @extschema@.common_blocking_partitioning_checks(
+	 REGCLASS)
+ RETURNS VOID AS 'pg_pathman', 'common_blocking_partitioning_checks'
+ LANGUAGE C STRICT;
+
 
 /*
  * DEBUG: Place this inside some plpgsql fuction and set breakpoint.

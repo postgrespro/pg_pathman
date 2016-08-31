@@ -98,7 +98,10 @@ BEGIN
 	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 
 	IF partition_data = true THEN
-		/* Acquire data modification lock */
+		/* Perform some checks regarding the blocking partitioning */
+		PERFORM @extschema@.common_blocking_partitioning_checks(parent_relid);
+
+		/* Acquire data modification lock (prevent further modifications) */
 		PERFORM @extschema@.lock_relation_modification(parent_relid);
 	END IF;
 
@@ -200,7 +203,10 @@ BEGIN
 	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 
 	IF partition_data = true THEN
-		/* Acquire data modification lock */
+		/* Perform some checks regarding the blocking partitioning */
+		PERFORM @extschema@.common_blocking_partitioning_checks(parent_relid);
+
+		/* Acquire data modification lock (prevent further modifications) */
 		PERFORM @extschema@.lock_relation_modification(parent_relid);
 	END IF;
 
@@ -300,7 +306,10 @@ BEGIN
 	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 
 	IF partition_data = true THEN
-		/* Acquire data modification lock */
+		/* Perform some checks regarding the blocking partitioning */
+		PERFORM @extschema@.common_blocking_partitioning_checks(parent_relid);
+
+		/* Acquire data modification lock (prevent further modifications) */
 		PERFORM @extschema@.lock_relation_modification(parent_relid);
 	END IF;
 
@@ -373,7 +382,10 @@ BEGIN
 	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 
 	IF partition_data = true THEN
-		/* Acquire data modification lock */
+		/* Perform some checks regarding the blocking partitioning */
+		PERFORM @extschema@.common_blocking_partitioning_checks(parent_relid);
+
+		/* Acquire data modification lock (prevent further modifications) */
 		PERFORM @extschema@.lock_relation_modification(parent_relid);
 	END IF;
 
@@ -521,7 +533,8 @@ BEGIN
 	/* Acquire exclusive lock on parent */
 	PERFORM @extschema@.lock_partitioned_relation(v_parent_relid);
 
-	/* Acquire data modification lock */
+	/* Acquire data modification lock (prevent further modifications) */
+	PERFORM @extschema@.common_blocking_partitioning_checks(p_partition);
 	PERFORM @extschema@.lock_relation_modification(p_partition);
 
 	SELECT attname, parttype
@@ -608,8 +621,10 @@ BEGIN
 	v_parent_relid1 := @extschema@.get_parent_of_partition(partition1);
 	v_parent_relid2 := @extschema@.get_parent_of_partition(partition2);
 
-	/* Acquire data modification lock */
+	/* Acquire data modification locks (prevent further modifications) */
+	PERFORM @extschema@.common_blocking_partitioning_checks(partition1);
 	PERFORM @extschema@.lock_relation_modification(partition1);
+	PERFORM @extschema@.common_blocking_partitioning_checks(partition2);
 	PERFORM @extschema@.lock_relation_modification(partition2);
 
 	IF v_parent_relid1 != v_parent_relid2 THEN

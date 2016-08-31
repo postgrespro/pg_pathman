@@ -15,11 +15,6 @@
 
 
 /*
- * List of partitioned relations locked by this backend (plain Oids).
- */
-extern List	   *locked_by_me;
-
-/*
  * Transaction locks.
  */
 void xact_lock_partitioned_rel(Oid relid);
@@ -28,6 +23,11 @@ void xact_unlock_partitioned_rel(Oid relid);
 void xact_lock_rel_data(Oid relid);
 void xact_unlock_rel_data(Oid relid);
 
-bool xact_conflicting_lock_exists(Oid relid);
+/*
+ * Utility checks.
+ */
+bool xact_bgw_conflicting_lock_exists(Oid relid);
+bool xact_is_table_being_modified(Oid relid);
+bool xact_is_level_read_committed(void);
 
 #endif
