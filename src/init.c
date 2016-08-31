@@ -118,6 +118,17 @@ init_main_pathman_toggle(void)
 							 NULL,
 							 pg_pathman_enable_assign_hook,
 							 NULL);
+
+	DefineCustomBoolVariable("pg_pathman.enable_auto_partition",
+							 "Enables auto partition propagation",
+							 NULL,
+							 &pg_pathman_init_state.auto_partition,
+							 true,
+							 PGC_USERSET,
+							 0,
+							 NULL,
+							 NULL,
+							 NULL);
 }
 
 /*
