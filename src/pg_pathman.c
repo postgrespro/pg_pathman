@@ -498,9 +498,11 @@ append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		foreach(lc, rel->baserestrictinfo)
 		{
 			RestrictInfo *rinfo = (RestrictInfo *) lfirst(lc);
+			RestrictInfo *new_rinfo = (RestrictInfo *) copyObject(rinfo);
 
+			change_varnos((Node *)new_rinfo, rel->relid, childrel->relid);
 			childrel->baserestrictinfo = lappend(childrel->baserestrictinfo,
-												 (RestrictInfo *) copyObject(rinfo));
+												 (void *) new_rinfo);
 		}
 	}
 
