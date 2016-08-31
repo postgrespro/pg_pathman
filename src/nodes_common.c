@@ -372,10 +372,6 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 		{
 			Plan		   *child_plan = (Plan *) lfirst(lc2);
 			RelOptInfo 	   *child_rel = ((Path *) lfirst(lc1))->parent;
-			Oid				child_relid;
-
-			/* Fetch relid of the 'child_rel' */
-			child_relid = root->simple_rte_array[child_rel->relid]->relid;
 
 			/* Replace rel's  tlist with a matching one */
 			if (!cscan->scan.plan.targetlist)
@@ -390,10 +386,6 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 			if (!cscan->custom_scan_tlist)
 				cscan->custom_scan_tlist = replace_tlist_varnos(child_plan->targetlist,
 																rel);
-
-			/* If this is a plan for parent table, fill it with quals */
-			if (PrelParentRelid(prel) == child_relid)
-				child_plan->qual = get_actual_clauses(clauses);
 		}
 	}
 
