@@ -53,8 +53,7 @@ PG_FUNCTION_INFO_V1( is_attribute_nullable );
 PG_FUNCTION_INFO_V1( add_to_pathman_config );
 PG_FUNCTION_INFO_V1( invalidate_relcache );
 PG_FUNCTION_INFO_V1( lock_partitioned_relation );
-PG_FUNCTION_INFO_V1( lock_relation_modification );
-PG_FUNCTION_INFO_V1( common_blocking_partitioning_checks );
+PG_FUNCTION_INFO_V1( prevent_relation_modification );
 PG_FUNCTION_INFO_V1( debug_capture );
 
 
@@ -698,33 +697,34 @@ lock_partitioned_relation(PG_FUNCTION_ARGS)
 	Oid			relid = PG_GETARG_OID(0);
 
 	/* Lock partitioned relation till transaction's end */
-	xact_lock_partitioned_rel(relid);
+	xact_lock_partitioned_rel(relid, false);
 
 	PG_RETURN_VOID();
 }
 
+/*
+ * Lock relation exclusively & check for current isolation level.
+ */
 Datum
-lock_relation_modification(PG_FUNCTION_ARGS)
+prevent_relation_modification(PG_FUNCTION_ARGS)
 {
 	Oid			relid = PG_GETARG_OID(0);
 
-	/* Lock partitioned relation till transaction's end */
-	xact_lock_rel_data(relid);
-
-	PG_RETURN_VOID();
-}
-
-Datum
-common_blocking_partitioning_checks(PG_FUNCTION_ARGS)
-{
-	Oid			relid = PG_GETARG_OID(0);
-
+	/*
+	 * Check that isolation level is READ COMMITTED.
+	 * Else we won't be able to see new rows
+	 * which could slip through locks.
+	 */
 	if (!xact_is_level_read_committed())
 		ereport(ERROR,
 				(errmsg("Cannot perform blocking partitioning operation"),
 				 errdetail("Expected READ COMMITTED isolation level")));
 
-	if (xact_is_table_being_modified(relid))
+	/*
+	 * Check if table is being modified
+	 * concurrently in a separate transaction.
+	 */
+	if (!xact_lock_rel_exclusive(relid, true))
 		ereport(ERROR,
 				(errmsg("Cannot perform blocking partitioning operation"),
 				 errdetail("Table \"%s\" is being modified concurrently",

@@ -26,12 +26,12 @@ DECLARE
 	v_hashfunc			TEXT;
 
 BEGIN
-	/* Acquire exclusive lock on parent */
-	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
-
 	IF partition_data = true THEN
 		/* Acquire data modification lock */
-		PERFORM @extschema@.lock_relation_modification(parent_relid);
+		PERFORM @extschema@.prevent_relation_modification(parent_relid);
+	ELSE
+		/* Acquire lock on parent */
+		PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 	END IF;
 
 	PERFORM @extschema@.validate_relname(parent_relid);

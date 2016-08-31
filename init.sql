@@ -658,17 +658,9 @@ LANGUAGE C STRICT;
 /*
  * Lock relation to restrict concurrent modification of data.
  */
- CREATE OR REPLACE FUNCTION @extschema@.lock_relation_modification(
+ CREATE OR REPLACE FUNCTION @extschema@.prevent_relation_modification(
 	 REGCLASS)
- RETURNS VOID AS 'pg_pathman', 'lock_relation_modification'
- LANGUAGE C STRICT;
-
-/*
- * Check if we can distribute data without bad consequences.
- */
- CREATE OR REPLACE FUNCTION @extschema@.common_blocking_partitioning_checks(
-	 REGCLASS)
- RETURNS VOID AS 'pg_pathman', 'common_blocking_partitioning_checks'
+ RETURNS VOID AS 'pg_pathman', 'prevent_relation_modification'
  LANGUAGE C STRICT;
 
 

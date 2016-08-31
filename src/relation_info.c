@@ -265,7 +265,7 @@ get_pathman_relation_info_after_lock(Oid relid, bool unlock_if_not_found)
 	const PartRelationInfo *prel;
 
 	/* Restrict concurrent partition creation (it's dangerous) */
-	xact_lock_partitioned_rel(relid);
+	xact_lock_partitioned_rel(relid, false);
 
 	prel = get_pathman_relation_info(relid);
 	if (!prel && unlock_if_not_found)

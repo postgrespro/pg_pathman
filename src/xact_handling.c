@@ -24,11 +24,19 @@ static inline bool do_we_hold_the_lock(Oid relid, LOCKMODE lockmode);
 /*
  * Lock certain partitioned relation to disable concurrent access.
  */
-void
-xact_lock_partitioned_rel(Oid relid)
+bool
+xact_lock_partitioned_rel(Oid relid, bool nowait)
 {
-	/* Share exclusive lock conflicts with itself */
-	LockRelationOid(relid, ShareUpdateExclusiveLock);
+	if (nowait)
+	{
+		if (ConditionalLockRelationOid(relid, ShareUpdateExclusiveLock))
+			return true;
+		return false;
+	}
+	else
+		LockRelationOid(relid, ShareUpdateExclusiveLock);
+
+	return true;
 }
 
 /*
@@ -41,21 +49,30 @@ xact_unlock_partitioned_rel(Oid relid)
 }
 
 /*
- * Lock certain relation's data (INSERT | UPDATE | DELETE).
+ * Lock relation exclusively (SELECTs are possible).
  */
-void
-xact_lock_rel_data(Oid relid)
+bool
+xact_lock_rel_exclusive(Oid relid, bool nowait)
 {
-	LockRelationOid(relid, ShareLock);
+	if (nowait)
+	{
+		if (ConditionalLockRelationOid(relid, ExclusiveLock))
+			return true;
+		return false;
+	}
+	else
+		LockRelationOid(relid, ExclusiveLock);
+
+	return true;
 }
 
 /*
- * Unlock relation's data.
+ * Unlock relation (exclusive lock).
  */
 void
-xact_unlock_rel_data(Oid relid)
+xact_unlock_rel_exclusive(Oid relid)
 {
-	UnlockRelationOid(relid, ShareLock);
+	UnlockRelationOid(relid, ExclusiveLock);
 }
 
 /*
@@ -79,25 +96,6 @@ xact_bgw_conflicting_lock_exists(Oid relid)
 	return false;
 }
 
-/*
- * Check if table is being modified
- * concurrently in a separate transaction.
- */
-bool
-xact_is_table_being_modified(Oid relid)
-{
-	/*
-	 * Check if someone has already started a
-	 * transaction and modified table's contents.
-	 */
-	if (ConditionalLockRelationOid(relid, ExclusiveLock))
-	{
-		UnlockRelationOid(relid, ExclusiveLock);
-		return false;
-	}
-
-	return true;
-}
 
 /*
  * Check if current transaction's level is READ COMMITTED.
