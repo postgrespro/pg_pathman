@@ -38,6 +38,7 @@ More interesting features are yet to come. Stay tuned!
 
 ## Roadmap
 
+ * Предоставить возможность установки пользовательских колбеков на создание\уничтожение партиции (issue [#22](https://github.com/postgrespro/pg_pathman/issues/22))
  * LIST-секционирование;
  * Оптимизация hash join для случая, когда обе таблицы секционированы по ключу join’а.
 
@@ -65,7 +66,7 @@ CREATE EXTENSION pg_pathman;
 create_hash_partitions(relation         REGCLASS,
                        attribute        TEXT,
                        partitions_count INTEGER,
-                       partition_name TEXT DEFAULT NULL)
+                       partition_name   TEXT DEFAULT NULL)
 ```
 Выполняет HASH-секционирование таблицы `relation` по целочисленному полю `attribute`. Параметр `partitions_count` определяет, сколько секций будет создано. Если `partition_data` установлен в значение `true`, то данные из родительской таблицы будут автоматически распределены по секциям. Стоит иметь в виду, что миграция данных может занять некоторое время, а данные заблокированы. Для конкурентной миграции данных см. функцию `partition_table_concurrently()`.
 
@@ -348,7 +349,7 @@ SELECT tableoid::regclass AS partition, * FROM partitioned_table;
 
 - Получить все текущие процессы конкурентного секционирования можно из представления `pathman_concurrent_part_tasks`:
 ```plpgsql
-postgres=# SELECT * FROM pathman_concurrent_part_tasks;
+SELECT * FROM pathman_concurrent_part_tasks;
  userid | pid  | dbid  | relid | processed | status  
 --------+------+-------+-------+-----------+---------
  dmitry | 7367 | 16384 | test  |    472000 | working
