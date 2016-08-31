@@ -52,6 +52,7 @@ class PartitioningTests(unittest.TestCase):
 
 		while True:
 			# update some rows to check for deadlocks
+			# import ipdb; ipdb.set_trace()
 			node.safe_psql('postgres', 
 				'''
 					update abc set t = 'test'
@@ -133,6 +134,96 @@ class PartitioningTests(unittest.TestCase):
 		self.assertEqual(
 			node.execute('postgres', 'select count(*) from abc')[0][0],
 			0
+		)
+
+	def test_locks(self):
+		"""Test that a session trying to create new partitions waits for other
+		sessions if they doing the same"""
+
+		import threading
+		import time
+
+		class Flag:
+			def __init__(self, value):
+				self.flag = value
+
+			def set(self, value):
+				self.flag = value
+
+			def get(self):
+				return self.flag
+
+		# There is one flag for each thread which shows if thread have done
+		# its work
+		flags = [Flag(False) for i in xrange(3)]
+
+		# All threads synchronizes though this lock
+		lock = threading.Lock()
+
+		# Define thread function
+		def add_partition(node, flag, query):
+			""" We expect that this query will wait until another session
+			commits or rolls back"""
+			node.safe_psql('postgres', query)
+			with lock:
+				flag.set(True)
+
+		# Initialize master server
+		node = get_new_node('master')
+		node.init()
+		node.append_conf('postgresql.conf', 'shared_preload_libraries=\'pg_pathman\'\n')
+		node.start()
+		node.safe_psql(
+			'postgres',
+			'create extension pg_pathman; '
+			+ 'create table abc(id serial, t text); '
+			+ 'insert into abc select generate_series(1, 100000); '
+			+ 'select create_range_partitions(\'abc\', \'id\', 1, 50000);'
+		)
+
+		# Start transaction that will create partition
+		con = node.connect()
+		con.begin()
+		con.execute('select append_range_partition(\'abc\')')
+
+		# Start threads that suppose to add new partitions and wait some time
+		query = [
+			'select prepend_range_partition(\'abc\')',
+			'select append_range_partition(\'abc\')',
+			'select add_range_partition(\'abc\', 500000, 550000)',
+		]
+		threads = []
+		for i in range(3):
+			thread = \
+				threading.Thread(target=add_partition, args=(node, flags[i], query[i]))
+			threads.append(thread)
+			thread.start()
+		time.sleep(3)
+
+		# This threads should wait until current transaction finished
+		with lock:
+			for i in range(3):
+				self.assertEqual(flags[i].get(), False)
+
+		# Commit transaction. Since then other sessions can create partitions
+		con.commit()
+
+		# Now wait until each thread finishes
+		for i in range(3):
+			threads[i].join()
+
+		# Check flags, it should be true which means that threads are finished
+		with lock:
+			for i in range(3):
+				self.assertEqual(flags[i].get(), True)
+
+		# Check that all partitions are created
+		self.assertEqual(
+			node.safe_psql(
+				'postgres',
+				'select count(*) from pg_inherits where inhparent=\'abc\'::regclass'
+			),
+			'6\n'
 		)
 
 if __name__ == "__main__":
