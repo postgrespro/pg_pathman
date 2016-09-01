@@ -341,7 +341,7 @@ BEGIN
 	END LOOP;
 
 	IF is_referenced THEN
-		RAISE EXCEPTION 'Relation ''%'' is referenced from other relations', p_relation;
+		RAISE EXCEPTION 'Relation "%" is referenced from other relations', p_relation;
 	END IF;
 
 	RETURN TRUE;
@@ -515,7 +515,7 @@ BEGIN
 	DELETE FROM @extschema@.pathman_config_params WHERE partrel = parent_relid;
 
 	IF conf_num_del = 0 THEN
-		RAISE EXCEPTION 'table % has no partitions', parent_relid::text;
+		RAISE EXCEPTION 'Relation "%" has no partitions', parent_relid::text;
 	END IF;
 
 	FOR v_rec IN (SELECT inhrelid::regclass::text AS tbl
