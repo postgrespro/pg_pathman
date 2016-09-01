@@ -6,7 +6,8 @@ sudo apt-get update
 
 
 # required packages
-packages="postgresql-$PGVERSION postgresql-server-dev-$PGVERSION postgresql-common"
+apt_packages="postgresql-$PGVERSION postgresql-server-dev-$PGVERSION postgresql-common python-pip python-dev build-essential"
+pip_packages="testgres"
 
 # exit code
 status=0
@@ -25,7 +26,7 @@ echo 'exit 0' | sudo tee /etc/init.d/postgresql
 sudo chmod a+x /etc/init.d/postgresql
 
 # install required packages
-sudo apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" -y install -qq $packages
+sudo apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" -y install -qq $apt_packages
 
 # create cluster 'test'
 sudo pg_createcluster --start $PGVERSION test -p 55435 -- -A trust
@@ -73,4 +74,23 @@ PGPORT=55435 make installcheck USE_PGXS=1 PGUSER=postgres PG_CONFIG=$config_path
 
 # show diff if it exists
 if test -f regression.diffs; then cat regression.diffs; fi
+
+set +u
+
+# create a virtual environment and activate it
+virtualenv /tmp/envs/pg_pathman
+source /tmp/envs/pg_pathman/bin/activate
+
+# install pip packages
+pip install $pip_packages
+
+# set permission to write postgres locks
+sudo chmod a+w /var/run/postgresql/
+
+# run python tests
+cd tests
+PG_CONFIG=$config_path python -m unittest partitioning_test || status=$?
+
+set -u
+
 exit $status
