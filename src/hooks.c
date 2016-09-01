@@ -279,7 +279,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 
 		/* Add parent if needed */
 		if (prel->enable_parent)
-			append_child_relation(root, rel, rti, rte, i, rte->relid, NULL);
+			append_child_relation(root, rel, rti, rte, 0, rte->relid, NULL);
 
 		/*
 		 * Iterate all indexes in rangeset and append corresponding child
