@@ -18,7 +18,6 @@
 #include "pathman_workers.h"
 #include "relation_info.h"
 #include "utils.h"
-#include "xact_handling.h"
 
 #include "access/htup_details.h"
 #include "access/xact.h"
@@ -359,17 +358,6 @@ bgw_main_spawn_partitions(Datum main_arg)
 		 spawn_partitions_bgw,
 		 DebugPrintDatum(value, args->value_type), MyProcPid);
 #endif
-
-	/* Check again if there's a conflicting lock */
-	if (xact_bgw_conflicting_lock_exists(args->partitioned_table))
-	{
-		elog(LOG, "%s: there's a conflicting lock on relation \"%s\"",
-			 spawn_partitions_bgw,
-			 get_rel_name_or_relid(args->partitioned_table));
-
-		dsm_detach(segment);
-		return; /* exit quickly */
-	}
 
 	/* Create partitions and save the Oid of the last one */
 	args->result = create_partitions_internal(args->partitioned_table,

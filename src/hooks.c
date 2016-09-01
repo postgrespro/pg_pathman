@@ -14,6 +14,7 @@
 #include "runtimeappend.h"
 #include "runtime_merge_append.h"
 #include "utils.h"
+#include "xact_handling.h"
 
 #include "miscadmin.h"
 #include "optimizer/cost.h"
@@ -450,6 +451,14 @@ pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
 	/* Invoke original hook if needed */
 	if (post_parse_analyze_hook_next)
 		post_parse_analyze_hook_next(pstate, query);
+
+	 /* We shouldn't do anything on BEGIN or SET ISOLATION LEVEL stmts */
+	if (query->commandType == CMD_UTILITY &&
+			(xact_is_transaction_stmt(query->utilityStmt) ||
+			 xact_is_set_transaction_stmt(query->utilityStmt)))
+	{
+		return;
+	}
 
 	/* Finish delayed invalidation jobs */
 	if (IsPathmanReady())

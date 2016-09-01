@@ -1690,7 +1690,7 @@ INSERT INTO messages SELECT g, md5(g::text) FROM generate_series(1, 10) as g;
 INSERT INTO replies SELECT g, g, md5(g::text) FROM generate_series(1, 10) as g;
 SELECT create_range_partitions('messages', 'id', 1, 100, 2);
 WARNING:  Foreign key 'replies_message_id_fkey' references to the relation 'messages'
-ERROR:  Relation 'messages' is referenced from other relations
+ERROR:  Relation "messages" is referenced from other relations
 ALTER TABLE replies DROP CONSTRAINT replies_message_id_fkey;
 SELECT create_range_partitions('messages', 'id', 1, 100, 2);
 NOTICE:  sequence "messages_seq" does not exist, skipping
