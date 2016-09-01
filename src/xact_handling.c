@@ -110,6 +110,42 @@ xact_is_level_read_committed(void)
 }
 
 /*
+ * Check if 'stmt' is BEGIN\ROLLBACK etc transaction statement.
+ */
+bool
+xact_is_transaction_stmt(Node *stmt)
+{
+	if (!stmt)
+		return false;
+
+	if (IsA(stmt, TransactionStmt))
+		return true;
+
+	return false;
+}
+
+/*
+ * Check if 'stmt' is SET TRANSACTION statement.
+ */
+bool
+xact_is_set_transaction_stmt(Node *stmt)
+{
+	if (!stmt)
+		return false;
+
+	if (IsA(stmt, VariableSetStmt))
+	{
+		VariableSetStmt *var_set_stmt = (VariableSetStmt *) stmt;
+
+		/* special case for SET TRANSACTION ... */
+		if (var_set_stmt->kind == VAR_SET_MULTI)
+			return true;
+	}
+
+	return false;
+}
+
+/*
  * Do we hold the specified lock?
  */
 static inline bool
