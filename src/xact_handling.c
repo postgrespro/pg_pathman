@@ -168,7 +168,7 @@ do_we_hold_the_lock(Oid relid, LOCKMODE lockmode)
 			return false;
 
 		default:
-			return false; /* should not happen */
+			return false;
 	}
 }
 
