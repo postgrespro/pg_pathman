@@ -519,7 +519,7 @@ build_check_constraint_name_attnum(PG_FUNCTION_ARGS)
 
 	result = build_check_constraint_name_internal(relid, attnum);
 
-	PG_RETURN_TEXT_P(cstring_to_text(result));
+	PG_RETURN_TEXT_P(cstring_to_text(quote_identifier(result)));
 }
 
 Datum
@@ -539,7 +539,7 @@ build_check_constraint_name_attname(PG_FUNCTION_ARGS)
 
 	result = build_check_constraint_name_internal(relid, attnum);
 
-	PG_RETURN_TEXT_P(cstring_to_text(result));
+	PG_RETURN_TEXT_P(cstring_to_text(quote_identifier(result)));
 }
 
 Datum
