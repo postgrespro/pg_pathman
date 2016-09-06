@@ -546,6 +546,31 @@ $$ LANGUAGE plpgsql
 SET pg_pathman.enable_partitionfilter = off; /* ensures that PartitionFilter is OFF */
 
 
+/*
+ * Copy all of parent's foreign keys.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.copy_foreign_keys(
+	parent_relid	REGCLASS,
+	partition		REGCLASS)
+RETURNS VOID AS
+$$
+DECLARE
+	rec		RECORD;
+
+BEGIN
+	PERFORM @extschema@.validate_relname(parent_relid);
+	PERFORM @extschema@.validate_relname(partition);
+
+	FOR rec IN (SELECT oid as conid FROM pg_catalog.pg_constraint
+				WHERE conrelid = parent_relid AND contype = 'f')
+	LOOP
+		EXECUTE format('ALTER TABLE %s ADD %s',
+					   partition::TEXT,
+					   pg_get_constraintdef(rec.conid));
+	END LOOP;
+END
+$$ LANGUAGE plpgsql;
+
 
 /*
  * Create DDL trigger to call pathman_ddl_trigger_func().

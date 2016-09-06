@@ -478,6 +478,8 @@ BEGIN
 													 p_start_value,
 													 p_end_value));
 
+	PERFORM @extschema@.copy_foreign_keys(parent_relid, v_child_relname::REGCLASS);
+
 	RETURN v_child_relname;
 END
 $$ LANGUAGE plpgsql

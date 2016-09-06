@@ -63,12 +63,14 @@ BEGIN
 		EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s
 						CHECK (@extschema@.get_hash_part_idx(%s(%s), %s) = %s)',
 					   v_child_relname,
-					   @extschema@.build_check_constraint_name(v_child_relname::regclass,
+					   @extschema@.build_check_constraint_name(v_child_relname::REGCLASS,
 															   attribute),
 					   v_hashfunc,
 					   attribute,
 					   partitions_count,
 					   partnum);
+
+		PERFORM @extschema@.copy_foreign_keys(parent_relid, v_child_relname::REGCLASS);
 	END LOOP;
 
 	/* Notify backend about changes */
