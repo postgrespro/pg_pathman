@@ -662,5 +662,6 @@ INSERT INTO test_fkey VALUES(1, 'test');
 SELECT drop_partitions('test_fkey');
 
 SELECT create_hash_partitions('test_fkey', 'id', 10);
+INSERT INTO test_fkey VALUES(1, 'wrong');
 INSERT INTO test_fkey VALUES(1, 'test');
 SELECT drop_partitions('test_fkey');
