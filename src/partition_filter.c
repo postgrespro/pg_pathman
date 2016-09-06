@@ -232,7 +232,9 @@ partition_filter_exec(CustomScanState *node)
 		ResetExprContext(econtext);
 
 		/* Replace parent table with a suitable partition */
+		old_cxt = MemoryContextSwitchTo(estate->es_query_cxt);
 		estate->es_result_relation_info = getResultRelInfo(selected_partid, state);
+		MemoryContextSwitchTo(old_cxt);
 
 		return slot;
 	}
@@ -285,24 +287,16 @@ getResultRelInfo(Oid partid, PartitionFilterState *state)
 #define CopyToResultRelInfo(field_name) \
 	( resultRelInfo->field_name = state->savedRelInfo->field_name )
 
-#define ResizeTriggerField(field_name, field_type) \
-	do { \
-		if (resultRelInfo->field_name) \
-			pfree(resultRelInfo->field_name); \
-		resultRelInfo->field_name = (field_type *) \
-			palloc0(resultRelInfo->ri_TrigDesc->numtriggers * sizeof(field_type)); \
-	} while (0)
-
-	ResultRelInfoHolder	   *resultRelInfoHandle;
+	ResultRelInfoHolder	   *resultRelInfoHolder;
 	bool					found;
 
-	resultRelInfoHandle = hash_search(state->result_rels_table,
+	resultRelInfoHolder = hash_search(state->result_rels_table,
 									  (const void *) &partid,
 									  HASH_ENTER, &found);
 
+	/* If not found, create & cache new ResultRelInfo */
 	if (!found)
 	{
-		bool			grown_up;
 		ResultRelInfo  *resultRelInfo = (ResultRelInfo *) palloc(sizeof(ResultRelInfo));
 
 		InitResultRelInfo(resultRelInfo,
@@ -311,24 +305,6 @@ getResultRelInfo(Oid partid, PartitionFilterState *state)
 						  state->css.ss.ps.state->es_instrument);
 
 		ExecOpenIndices(resultRelInfo, state->onConflictAction != ONCONFLICT_NONE);
-
-		resultRelInfo->ri_TrigDesc = append_trigger_descs(resultRelInfo->ri_TrigDesc,
-														  state->savedRelInfo->ri_TrigDesc,
-														  &grown_up);
-		if (grown_up)
-		{
-			ResizeTriggerField(ri_TrigFunctions, FmgrInfo);
-			ResizeTriggerField(ri_TrigWhenExprs, List *);
-
-			if (resultRelInfo->ri_TrigInstrument)
-			{
-				pfree(resultRelInfo->ri_TrigInstrument);
-
-				resultRelInfo->ri_TrigInstrument =
-					InstrAlloc(resultRelInfo->ri_TrigDesc->numtriggers,
-							   state->css.ss.ps.state->es_instrument);
-			}
-		}
 
 		/* Copy necessary fields from saved ResultRelInfo */
 		CopyToResultRelInfo(ri_WithCheckOptions);
@@ -341,14 +317,15 @@ getResultRelInfo(Oid partid, PartitionFilterState *state)
 		/* ri_ConstraintExprs will be initialized by ExecRelCheck() */
 		resultRelInfo->ri_ConstraintExprs = NULL;
 
-		resultRelInfoHandle->partid = partid;
-		resultRelInfoHandle->resultRelInfo = resultRelInfo;
-
 		/* Make 'range table index' point to the parent relation */
 		resultRelInfo->ri_RangeTableIndex = state->savedRelInfo->ri_RangeTableIndex;
+
+		/* Now fill the ResultRelInfo holder */
+		resultRelInfoHolder->partid = partid;
+		resultRelInfoHolder->resultRelInfo = resultRelInfo;
 	}
 
-	return resultRelInfoHandle->resultRelInfo;
+	return resultRelInfoHolder->resultRelInfo;
 }
 
 /*

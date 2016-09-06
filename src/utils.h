@@ -36,9 +36,6 @@ List * build_index_tlist(PlannerInfo *root,
 						 IndexOptInfo *index,
 						 Relation heapRelation);
 void change_varnos(Node *node, Oid old_varno, Oid new_varno);
-TriggerDesc * append_trigger_descs(TriggerDesc *src,
-								   TriggerDesc *more,
-								   bool *grown_up);
 
 /*
  * Rowmark processing.
