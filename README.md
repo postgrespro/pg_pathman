@@ -5,6 +5,8 @@
 
 The `pg_pathman` module provides optimized partitioning mechanism and functions to manage partitions.
 
+The extension is compatible with PostgreSQL 9.5 (9.6 support is coming soon).
+
 ## Overview
 **Partitioning** means splitting one large table into smaller pieces. Each row in such table is moved to a single partition according to the partitioning key. PostgreSQL supports partitioning via table inheritance: each partition must be created as a child table with CHECK CONSTRAINT. For example:
 
