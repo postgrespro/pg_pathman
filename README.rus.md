@@ -144,13 +144,13 @@ merge_range_partitions(partition1 REGCLASS, partition2 REGCLASS)
 append_range_partition(p_relation     REGCLASS,
                        partition_name TEXT DEFAULT NULL)
 ```
-Добавляет новую RANGE секцию в конец списка секций.
+Добавляет новую RANGE секцию с диапазоном `pathman_config.range_interval` в конец списка секций.
 
 ```plpgsql
 prepend_range_partition(p_relation     REGCLASS,
                         partition_name TEXT DEFAULT NULL)
 ```
-Добавляет новую RANGE секцию в начало списка секций.
+Добавляет новую RANGE секцию с диапазоном `pathman_config.range_interval` в начало списка секций.
 
 ```plpgsql
 add_range_partition(relation       REGCLASS,

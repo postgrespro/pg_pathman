@@ -142,13 +142,13 @@ Merge two adjacent RANGE partitions. First, data from `partition2` is copied to 
 append_range_partition(p_relation     REGCLASS,
                        partition_name TEXT DEFAULT NULL)
 ```
-Append new RANGE partition.
+Append new RANGE partition with `pathman_config.range_interval` as interval.
 
 ```plpgsql
 prepend_range_partition(p_relation     REGCLASS,
                         partition_name TEXT DEFAULT NULL)
 ```
-Prepend new RANGE partition.
+Prepend new RANGE partition with `pathman_config.range_interval` as interval.
 
 ```plpgsql
 add_range_partition(relation       REGCLASS,
