@@ -644,3 +644,23 @@ SELECT create_range_partitions('messages', 'id', 1, 100, 2);
 ALTER TABLE replies DROP CONSTRAINT replies_message_id_fkey;
 SELECT create_range_partitions('messages', 'id', 1, 100, 2);
 EXPLAIN (COSTS OFF) SELECT * FROM messages;
+
+/* Check primary keys generation */
+CREATE TABLE test_ref(comment TEXT UNIQUE);
+INSERT INTO test_ref VALUES('test');
+
+CREATE TABLE test_fkey(
+	id			INT NOT NULL,
+	comment		TEXT,
+	FOREIGN KEY (comment) REFERENCES test_ref(comment));
+
+INSERT INTO test_fkey SELECT generate_series(1, 1000), 'test';
+
+SELECT create_range_partitions('test_fkey', 'id', 1, 100);
+INSERT INTO test_fkey VALUES(1, 'wrong');
+INSERT INTO test_fkey VALUES(1, 'test');
+SELECT drop_partitions('test_fkey');
+
+SELECT create_hash_partitions('test_fkey', 'id', 10);
+INSERT INTO test_fkey VALUES(1, 'test');
+SELECT drop_partitions('test_fkey');
