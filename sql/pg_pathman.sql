@@ -665,3 +665,10 @@ SELECT create_hash_partitions('test_fkey', 'id', 10);
 INSERT INTO test_fkey VALUES(1, 'wrong');
 INSERT INTO test_fkey VALUES(1, 'test');
 SELECT drop_partitions('test_fkey');
+
+/* Check rowmarks */
+SELECT create_hash_partitions('test_fkey', 'id', 5);
+EXPLAIN (COSTS OFF)
+SELECT * FROM test_fkey
+WHERE id = (SELECT id FROM test_fkey ORDER BY id OFFSET 10 LIMIT 1 FOR UPDATE)
+FOR SHARE;

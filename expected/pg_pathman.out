@@ -1768,3 +1768,41 @@ NOTICE:  100 rows copied from test_fkey_0
               10
 (1 row)
 
+/* Check rowmarks */
+SELECT create_hash_partitions('test_fkey', 'id', 5);
+ create_hash_partitions 
+------------------------
+                      5
+(1 row)
+
+EXPLAIN (COSTS OFF)
+SELECT * FROM test_fkey
+WHERE id = (SELECT id FROM test_fkey ORDER BY id OFFSET 10 LIMIT 1 FOR UPDATE)
+FOR SHARE;
+                              QUERY PLAN                               
+-----------------------------------------------------------------------
+ LockRows
+   InitPlan 1 (returns $1)
+     ->  Limit
+           ->  LockRows
+                 ->  Sort
+                       Sort Key: test_fkey_0_1.id
+                       ->  Append
+                             ->  Seq Scan on test_fkey_0 test_fkey_0_1
+                             ->  Seq Scan on test_fkey_1 test_fkey_1_1
+                             ->  Seq Scan on test_fkey_2 test_fkey_2_1
+                             ->  Seq Scan on test_fkey_3 test_fkey_3_1
+                             ->  Seq Scan on test_fkey_4 test_fkey_4_1
+   ->  Append
+         ->  Seq Scan on test_fkey_0
+               Filter: (id = $1)
+         ->  Seq Scan on test_fkey_1
+               Filter: (id = $1)
+         ->  Seq Scan on test_fkey_2
+               Filter: (id = $1)
+         ->  Seq Scan on test_fkey_3
+               Filter: (id = $1)
+         ->  Seq Scan on test_fkey_4
+               Filter: (id = $1)
+(23 rows)
+
