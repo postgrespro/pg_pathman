@@ -5,6 +5,8 @@
 
 Модуль `pg_pathman` предоставляет оптимизированный механизм секционирования, а также функции для создания и управления секциями.
 
+Расширение совместимо с PostgreSQL 9.5 (поддержка 9.6 будет добавлена в одном из ближайших обновлений).
+
 ## Концепция pg_pathman
 
 **Секционирование** -- это способ разбиения одной большой таблицы на множество меньших по размеру. Для каждой записи можно однозначно определить секцию, в которой она должна храниться посредством вычисления ключа.
@@ -144,13 +146,13 @@ merge_range_partitions(partition1 REGCLASS, partition2 REGCLASS)
 append_range_partition(p_relation     REGCLASS,
                        partition_name TEXT DEFAULT NULL)
 ```
-Добавляет новую RANGE секцию в конец списка секций.
+Добавляет новую RANGE секцию с диапазоном `pathman_config.range_interval` в конец списка секций.
 
 ```plpgsql
 prepend_range_partition(p_relation     REGCLASS,
                         partition_name TEXT DEFAULT NULL)
 ```
-Добавляет новую RANGE секцию в начало списка секций.
+Добавляет новую RANGE секцию с диапазоном `pathman_config.range_interval` в начало списка секций.
 
 ```plpgsql
 add_range_partition(relation       REGCLASS,
