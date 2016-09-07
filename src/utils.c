@@ -101,9 +101,10 @@ get_tableoids_list(List *tlist)
 		if (!IsA(var, Var))
 			continue;
 
-		if (strlen(te->resname) > TABLEOID_STR_BASE_LEN &&
-			0 == strncmp(te->resname, TABLEOID_STR(""), TABLEOID_STR_BASE_LEN) &&
-			var->varoattno == TableOidAttributeNumber)
+		/* Check that column name begins with TABLEOID_STR & it's tableoid */
+		if (var->varoattno == TableOidAttributeNumber &&
+			(te->resname && strlen(te->resname) > TABLEOID_STR_BASE_LEN) &&
+			0 == strncmp(te->resname, TABLEOID_STR(""), TABLEOID_STR_BASE_LEN))
 		{
 			result = lappend(result, te);
 		}
