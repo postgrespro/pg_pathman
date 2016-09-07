@@ -42,25 +42,6 @@ static void lock_rows_visitor(Plan *plan, void *context);
 
 
 /*
- * Execute 'cb_proc' on 'xact_context' reset.
- */
-void
-execute_on_xact_mcxt_reset(MemoryContext xact_context,
-						   MemoryContextCallbackFunction cb_proc,
-						   void *arg)
-{
-	MemoryContextCallback *mcxt_cb = MemoryContextAlloc(xact_context,
-														sizeof(MemoryContextCallback));
-
-	/* Initialize MemoryContextCallback */
-	mcxt_cb->arg = arg;
-	mcxt_cb->func = cb_proc;
-	mcxt_cb->next = NULL;
-
-	MemoryContextRegisterResetCallback(xact_context, mcxt_cb);
-}
-
-/*
  * Check whether clause contains PARAMs or not
  */
 bool
@@ -248,36 +229,6 @@ build_index_tlist(PlannerInfo *root, IndexOptInfo *index,
 		elog(ERROR, "wrong number of index expressions");
 
 	return tlist;
-}
-
-/*
- * We should ensure that 'rel->baserestrictinfo' or 'ppi->ppi_clauses' contain
- * Var which corresponds to partition attribute before creating RuntimeXXX
- * paths since they are used by create_scan_plan() to form 'scan_clauses'
- * that are passed to create_customscan_plan().
- */
-bool
-check_rinfo_for_partitioned_attr(List *rinfo, Index varno, AttrNumber varattno)
-{
-	List	   *vars;
-	List	   *clauses;
-	ListCell   *lc;
-
-	clauses = get_actual_clauses(rinfo);
-
-	vars = pull_var_clause((Node *) clauses,
-						   PVC_REJECT_AGGREGATES,
-						   PVC_REJECT_PLACEHOLDERS);
-
-	foreach (lc, vars)
-	{
-		Var *var = (Var *) lfirst(lc);
-
-		if (var->varno == varno && var->varoattno == varattno)
-			return true;
-	}
-
-	return false;
 }
 
 /*

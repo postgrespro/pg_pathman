@@ -49,9 +49,6 @@ void postprocess_lock_rows(List *rtable, Plan *plan);
 bool clause_contains_params(Node *clause);
 bool is_date_type_internal(Oid typid);
 bool is_string_type_internal(Oid typid);
-bool check_rinfo_for_partitioned_attr(List *rinfo,
-									  Index varno,
-									  AttrNumber varattno);
 
 /*
  * Misc.
@@ -67,9 +64,6 @@ Oid get_binary_operator_oid(char *opname, Oid arg1, Oid arg2);
 void fill_type_cmp_fmgr_info(FmgrInfo *finfo,
 							 Oid type1,
 							 Oid type2);
-void execute_on_xact_mcxt_reset(MemoryContext xact_context,
-								MemoryContextCallbackFunction cb_proc,
-								void *arg);
 char * datum_to_cstring(Datum datum, Oid typid);
 
 

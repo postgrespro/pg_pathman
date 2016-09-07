@@ -12,7 +12,9 @@
 #include "runtimeappend.h"
 #include "utils.h"
 
+#include "access/sysattr.h"
 #include "optimizer/restrictinfo.h"
+#include "optimizer/var.h"
 #include "utils/memutils.h"
 
 
@@ -248,6 +250,38 @@ unpack_runtimeappend_private(RuntimeAppendState *scan_state, CustomScan *cscan)
 	scan_state->enable_parent = (bool) linitial_int(lthird(runtimeappend_private));
 }
 
+/*
+ * Filter all available clauses and extract relevant ones.
+ */
+List *
+get_partitioned_attr_clauses(List *restrictinfo_list,
+							 const PartRelationInfo *prel,
+							 Index partitioned_rel)
+{
+#define AdjustAttno(attno) \
+	( (AttrNumber) (part_attno + FirstLowInvalidHeapAttributeNumber) )
+
+	List	   *result = NIL;
+	ListCell   *l;
+
+	foreach(l, restrictinfo_list)
+	{
+		RestrictInfo   *rinfo = (RestrictInfo *) lfirst(l);
+		Bitmapset	   *varattnos = NULL;
+		int				part_attno;
+
+		Assert(IsA(rinfo, RestrictInfo));
+		pull_varattnos((Node *) rinfo->clause, partitioned_rel, &varattnos);
+
+		if (bms_get_singleton_member(varattnos, &part_attno) &&
+			AdjustAttno(part_attno) == prel->attnum)
+		{
+			result = lappend(result, rinfo->clause);
+		}
+	}
+	return result;
+}
+
 
 /* Transform partition ranges into plain array of partition Oids */
 Oid *
@@ -385,7 +419,7 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 			Plan		   *child_plan = (Plan *) lfirst(lc2);
 			RelOptInfo 	   *child_rel = ((Path *) lfirst(lc1))->parent;
 
-			/* Replace rel's  tlist with a matching one */
+			/* Replace rel's tlist with a matching one */
 			if (!cscan->scan.plan.targetlist)
 				tlist = replace_tlist_varnos(child_plan->targetlist, rel);
 
@@ -407,7 +441,7 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 	/* Since we're not scanning any real table directly */
 	cscan->scan.scanrelid = 0;
 
-	cscan->custom_exprs = get_actual_clauses(clauses);
+	cscan->custom_exprs = get_partitioned_attr_clauses(clauses, prel, rel->relid);
 	cscan->custom_plans = custom_plans;
 	cscan->methods = scan_methods;
 

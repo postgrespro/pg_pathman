@@ -101,9 +101,8 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 
 	/* Check that innerrel's RestrictInfo contains partitioned column */
 	innerrel_rinfo_contains_part_attr =
-		check_rinfo_for_partitioned_attr(innerrel->baserestrictinfo,
-										 innerrel->relid,
-										 inner_prel->attnum);
+		get_partitioned_attr_clauses(innerrel->baserestrictinfo,
+									 inner_prel, innerrel->relid) != NULL;
 
 	foreach (lc, innerrel->pathlist)
 	{
@@ -132,9 +131,9 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		 * ppi->ppi_clauses reference partition attribute
 		 */
 		if (!(innerrel_rinfo_contains_part_attr ||
-			  (ppi && check_rinfo_for_partitioned_attr(ppi->ppi_clauses,
-													   innerrel->relid,
-													   inner_prel->attnum))))
+			  (ppi && get_partitioned_attr_clauses(ppi->ppi_clauses,
+												   inner_prel,
+												   innerrel->relid))))
 			continue;
 
 		inner = create_runtimeappend_path(root, cur_inner_path,
@@ -310,10 +309,10 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 		if (!clause_contains_params((Node *) get_actual_clauses(rel->baserestrictinfo)))
 			return;
 
+		/* Check that rel's RestrictInfo contains partitioned column */
 		rel_rinfo_contains_part_attr =
-			check_rinfo_for_partitioned_attr(rel->baserestrictinfo,
-											 rel->relid,
-											 prel->attnum);
+			get_partitioned_attr_clauses(rel->baserestrictinfo,
+										 prel, rel->relid) != NULL;
 
 		foreach (lc, rel->pathlist)
 		{
@@ -334,9 +333,8 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 			 * ppi->ppi_clauses reference partition attribute
 			 */
 			if (!(rel_rinfo_contains_part_attr ||
-				  (ppi && check_rinfo_for_partitioned_attr(ppi->ppi_clauses,
-														   rel->relid,
-														   prel->attnum))))
+				  (ppi && get_partitioned_attr_clauses(ppi->ppi_clauses,
+													   prel, rel->relid))))
 				continue;
 
 			if (IsA(cur_path, AppendPath) && pg_pathman_enable_runtimeappend)
