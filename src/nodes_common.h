@@ -60,6 +60,10 @@ clear_plan_states(CustomScanState *scan_state)
 	}
 }
 
+List * get_partitioned_attr_clauses(List *restrictinfo_list,
+									const PartRelationInfo *prel,
+									Index partitioned_rel);
+
 Oid * get_partition_oids(List *ranges, int *n, const PartRelationInfo *prel,
 						 bool include_parent);
 
