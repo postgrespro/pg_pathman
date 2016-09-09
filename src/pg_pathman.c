@@ -1510,7 +1510,6 @@ handle_boolexpr(const BoolExpr *expr, WalkerContext *context)
 		switch (expr->boolop)
 		{
 			case OR_EXPR:
-				// finish_least_greatest(arg, context);
 				result->rangeset = irange_list_union(result->rangeset, arg->rangeset);
 				break;
 			case AND_EXPR:
@@ -1671,7 +1670,6 @@ set_plain_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 	path = create_seqscan_path(root, rel, required_outer);
 #endif
 	add_path(rel, path);
-	// set_pathkeys(root, rel, path);
 
 	/* Consider index scans */
 	create_index_paths(root, rel);
