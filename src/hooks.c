@@ -99,19 +99,21 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		paramsel *= wrap->paramsel;
 	}
 
-	/* Check that innerrel's RestrictInfo contains partitioned column */
+	/* Check that innerrel's RestrictInfos contain partitioned column */
 	innerrel_rinfo_contains_part_attr =
 		get_partitioned_attr_clauses(innerrel->baserestrictinfo,
 									 inner_prel, innerrel->relid) != NULL;
 
 	foreach (lc, innerrel->pathlist)
 	{
+		AppendPath	   *cur_inner_path = (AppendPath *) lfirst(lc);
 		Path		   *outer,
 					   *inner;
 		NestPath	   *nest_path;		/* NestLoop we're creating */
 		ParamPathInfo  *ppi;			/* parameterization info */
 		Relids			inner_required;	/* required paremeterization relids */
-		AppendPath	   *cur_inner_path = (AppendPath *) lfirst(lc);
+		List		   *filtered_joinclauses = NIL;
+		ListCell	   *rinfo_lc;
 
 		if (!IsA(cur_inner_path, AppendPath))
 			continue;
@@ -136,8 +138,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 												   innerrel->relid))))
 			continue;
 
-		inner = create_runtimeappend_path(root, cur_inner_path,
-										  ppi, paramsel);
+		inner = create_runtimeappend_path(root, cur_inner_path, ppi, paramsel);
 
 		initial_cost_nestloop(root, &workspace, jointype,
 							  outer, inner, /* built paths */
@@ -151,7 +152,29 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 										 pathkeys,
 										 calc_nestloop_required_outer(outer, inner));
 
-		/* Finally we can add new NestLoop path */
+		/* Discard all clauses that are to be evaluated by 'inner' */
+		foreach (rinfo_lc, extra->restrictlist)
+		{
+			RestrictInfo *rinfo = (RestrictInfo *) lfirst(rinfo_lc);
+
+			Assert(IsA(rinfo, RestrictInfo));
+			if (!join_clause_is_movable_to(rinfo, inner->parent))
+				filtered_joinclauses = lappend(filtered_joinclauses, rinfo);
+		}
+
+		/*
+		 * Override 'rows' value produced by standard estimator.
+		 * Currently we use get_parameterized_joinrel_size() since
+		 * it works just fine, but this might change some day.
+		 */
+		nest_path->path.rows = get_parameterized_joinrel_size(root,
+															  joinrel,
+															  outer->rows,
+															  inner->rows,
+															  extra->sjinfo,
+															  filtered_joinclauses);
+
+		/* Finally we can add the new NestLoop path */
 		add_path(joinrel, (Path *) nest_path);
 	}
 }
