@@ -259,7 +259,7 @@ get_partitioned_attr_clauses(List *restrictinfo_list,
 							 Index partitioned_rel)
 {
 #define AdjustAttno(attno) \
-	( (AttrNumber) (part_attno + FirstLowInvalidHeapAttributeNumber) )
+	( (AttrNumber) (attno + FirstLowInvalidHeapAttributeNumber) )
 
 	List	   *result = NIL;
 	ListCell   *l;
