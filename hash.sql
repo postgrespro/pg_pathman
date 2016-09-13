@@ -24,6 +24,7 @@ DECLARE
 	v_plain_schema		TEXT;
 	v_plain_relname		TEXT;
 	v_hashfunc			TEXT;
+	v_tablespace		TEXT;
 
 BEGIN
 	IF partition_data = true THEN
@@ -49,6 +50,9 @@ BEGIN
 	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype)
 	VALUES (parent_relid, attribute, 1);
 
+	/* Determine tablespace of parent table */
+	v_tablespace :=  @extschema@.get_rel_tablespace_name(parent_relid);
+
 	/* Create partitions and update pg_pathman configuration */
 	FOR partnum IN 0..partitions_count-1
 	LOOP
@@ -56,9 +60,11 @@ BEGIN
 								  quote_ident(v_plain_schema),
 								  quote_ident(v_plain_relname || '_' || partnum));
 
-		EXECUTE format('CREATE TABLE %1$s (LIKE %2$s INCLUDING ALL) INHERITS (%2$s)',
-					   v_child_relname,
-					   parent_relid::TEXT);
+		EXECUTE format(
+			'CREATE TABLE %1$s (LIKE %2$s INCLUDING ALL) INHERITS (%2$s) TABLESPACE %s',
+			v_child_relname,
+			parent_relid::TEXT,
+			v_tablespace);
 
 		EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s
 						CHECK (@extschema@.get_hash_part_idx(%s(%s), %s) = %s)',

@@ -66,5 +66,8 @@ void fill_type_cmp_fmgr_info(FmgrInfo *finfo,
 							 Oid type2);
 char * datum_to_cstring(Datum datum, Oid typid);
 
+#if PG_VERSION_NUM < 90600
+char get_rel_persistence(Oid relid);
+#endif
 
 #endif

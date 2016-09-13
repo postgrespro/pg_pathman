@@ -40,6 +40,14 @@ CREATE TABLE IF NOT EXISTS @extschema@.pathman_config_params (
 CREATE UNIQUE INDEX i_pathman_config_params
 ON @extschema@.pathman_config_params(partrel);
 
+CREATE TYPE partition AS (
+	parent			REGCLASS,
+	parttype		INTEGER,
+	child			REGCLASS,
+	start_value		TEXT,
+	end_value		TEXT
+);
+
 /*
  * Invalidate relcache every time someone changes parameters config.
  */
@@ -694,4 +702,11 @@ LANGUAGE C STRICT;
  */
 CREATE OR REPLACE FUNCTION @extschema@.debug_capture()
 RETURNS VOID AS 'pg_pathman', 'debug_capture'
+LANGUAGE C STRICT;
+
+/*
+ * Return tablespace name for specified relation
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_rel_tablespace_name(relation REGCLASS)
+RETURNS TEXT AS 'pg_pathman', 'get_rel_tablespace_name'
 LANGUAGE C STRICT;

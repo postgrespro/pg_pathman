@@ -19,6 +19,7 @@
 #include "access/xact.h"
 #include "catalog/indexing.h"
 #include "commands/sequence.h"
+#include "commands/tablespace.h"
 #include "miscadmin.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
@@ -55,6 +56,7 @@ PG_FUNCTION_INFO_V1( invalidate_relcache );
 PG_FUNCTION_INFO_V1( lock_partitioned_relation );
 PG_FUNCTION_INFO_V1( prevent_relation_modification );
 PG_FUNCTION_INFO_V1( debug_capture );
+PG_FUNCTION_INFO_V1( get_rel_tablespace_name );
 
 
 static void on_partitions_created_internal(Oid partitioned_table, bool add_callbacks);
@@ -747,4 +749,30 @@ debug_capture(PG_FUNCTION_ARGS)
 	elog(WARNING, "debug_capture [%u]", MyProcPid);
 
 	PG_RETURN_VOID();
+}
+
+/*
+ * Return tablespace name for specified relation
+ */
+Datum
+get_rel_tablespace_name(PG_FUNCTION_ARGS)
+{
+	Oid			relid = PG_GETARG_OID(0);
+	Oid			tablespace_id;
+	char	   *result;
+
+	tablespace_id = get_rel_tablespace(relid);
+
+	/* If tablespace id is InvalidOid then use the default tablespace */
+	if (!OidIsValid(tablespace_id))
+	{
+		tablespace_id = GetDefaultTablespace(get_rel_persistence(relid));
+
+		/* If tablespace is still invalid then use database's default */
+		if (!OidIsValid(tablespace_id))
+			tablespace_id = MyDatabaseTableSpace;
+	}
+
+	result = get_tablespace_name(tablespace_id);
+	PG_RETURN_TEXT_P(cstring_to_text(result));
 }

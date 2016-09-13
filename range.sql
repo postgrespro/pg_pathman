@@ -91,8 +91,8 @@ DECLARE
 	v_rows_count		INTEGER;
 	v_max				p_start_value%TYPE;
 	v_cur_value			p_start_value%TYPE := p_start_value;
+	v_tablespace		TEXT;
 	i					INTEGER;
-
 BEGIN
 	IF partition_data = true THEN
 		/* Acquire data modification lock */
@@ -149,12 +149,20 @@ BEGIN
 	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype, range_interval)
 	VALUES (parent_relid, p_attribute, 2, p_interval::TEXT);
 
+	/* Determine tablespace of parent table */
+	v_tablespace :=  @extschema@.get_rel_tablespace_name(parent_relid);
+
 	/* Create first partition */
 	FOR i IN 1..p_count
 	LOOP
-		EXECUTE format('SELECT @extschema@.create_single_range_partition($1, $2, $3::%s)',
-					   pg_typeof(p_start_value))
-		USING parent_relid, p_start_value, p_start_value + p_interval;
+		EXECUTE
+			format('SELECT @extschema@.create_single_range_partition($1, $2, $3::%s, tablespace:=$4)',
+				   pg_typeof(p_start_value))
+		USING
+			parent_relid,
+			p_start_value,
+			p_start_value + p_interval,
+			v_tablespace;
 
 		p_start_value := p_start_value + p_interval;
 	END LOOP;
@@ -190,6 +198,7 @@ DECLARE
 	v_rows_count		INTEGER;
 	v_max				p_start_value%TYPE;
 	v_cur_value			p_start_value%TYPE := p_start_value;
+	v_tablespace		TEXT;
 	i					INTEGER;
 
 BEGIN
@@ -250,12 +259,18 @@ BEGIN
 	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype, range_interval)
 	VALUES (parent_relid, p_attribute, 2, p_interval::TEXT);
 
+	/* Determine tablespace of parent table */
+	v_tablespace :=  @extschema@.get_rel_tablespace_name(parent_relid);
+
 	/* create first partition */
 	FOR i IN 1..p_count
 	LOOP
-		PERFORM @extschema@.create_single_range_partition(parent_relid,
-														  p_start_value,
-														  p_start_value + p_interval);
+		PERFORM @extschema@.create_single_range_partition(
+			parent_relid,
+			p_start_value,
+			p_start_value + p_interval,
+			tablespace := v_tablespace);
+
 		p_start_value := p_start_value + p_interval;
 	END LOOP;
 
@@ -288,6 +303,7 @@ RETURNS INTEGER AS
 $$
 DECLARE
 	part_count		INTEGER := 0;
+	v_tablespace	TEXT;
 
 BEGIN
 	IF partition_data = true THEN
@@ -320,11 +336,17 @@ BEGIN
 	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype, range_interval)
 	VALUES (parent_relid, p_attribute, 2, p_interval::TEXT);
 
+	/* Determine tablespace of parent table */
+	v_tablespace :=  @extschema@.get_rel_tablespace_name(parent_relid);
+
 	WHILE p_start_value <= p_end_value
 	LOOP
-		PERFORM @extschema@.create_single_range_partition(parent_relid,
-														  p_start_value,
-														  p_start_value + p_interval);
+		PERFORM @extschema@.create_single_range_partition(
+			parent_relid,
+			p_start_value,
+			p_start_value + p_interval,
+			tablespace := v_tablespace);
+
 		p_start_value := p_start_value + p_interval;
 		part_count := part_count + 1;
 	END LOOP;
@@ -358,6 +380,7 @@ RETURNS INTEGER AS
 $$
 DECLARE
 	part_count		INTEGER := 0;
+	v_tablespace	TEXT;
 
 BEGIN
 	IF partition_data = true THEN
@@ -386,11 +409,19 @@ BEGIN
 	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype, range_interval)
 	VALUES (parent_relid, p_attribute, 2, p_interval::TEXT);
 
+	/* Determine tablespace of parent table */
+	v_tablespace :=  @extschema@.get_rel_tablespace_name(parent_relid);
+
 	WHILE p_start_value <= p_end_value
 	LOOP
-		EXECUTE format('SELECT @extschema@.create_single_range_partition($1, $2, $3::%s);',
-					   pg_typeof(p_start_value))
-		USING parent_relid, p_start_value, p_start_value + p_interval;
+		EXECUTE
+			format('SELECT @extschema@.create_single_range_partition($1, $2, $3::%s, tablespace:=$4);',
+				   pg_typeof(p_start_value))
+		USING
+			parent_relid,
+			p_start_value,
+			p_start_value + p_interval,
+			v_tablespace;
 
 		p_start_value := p_start_value + p_interval;
 		part_count := part_count + 1;
@@ -419,7 +450,8 @@ CREATE OR REPLACE FUNCTION @extschema@.create_single_range_partition(
 	parent_relid	REGCLASS,
 	p_start_value	ANYELEMENT,
 	p_end_value		ANYELEMENT,
-	partition_name	TEXT DEFAULT NULL)
+	partition_name	TEXT DEFAULT NULL,
+	tablespace		TEXT DEFAULT NULL)
 RETURNS TEXT AS
 $$
 DECLARE
@@ -431,7 +463,7 @@ DECLARE
 	v_plain_relname			TEXT;
 	v_child_relname_exists	BOOL;
 	v_seq_name				TEXT;
-
+	v_create_table_query	TEXT;
 BEGIN
 	v_attname := attname FROM @extschema@.pathman_config
 				 WHERE partrel = parent_relid;
@@ -466,7 +498,15 @@ BEGIN
 		v_child_relname := partition_name;
 	END IF;
 
-	EXECUTE format('CREATE TABLE %1$s (LIKE %2$s INCLUDING ALL) INHERITS (%2$s)',
+	v_create_table_query := 'CREATE TABLE %1$s (LIKE %2$s INCLUDING ALL) INHERITS (%2$s)';
+
+	/* If tablespace is specified then add it to a create query */
+	if NOT tablespace IS NULL THEN
+		v_create_table_query := v_create_table_query || ' TABLESPACE ' ||tablespace;
+	END IF;
+	RAISE NOTICE 'query: %', v_create_table_query;
+
+	EXECUTE format(v_create_table_query,
 				   v_child_relname,
 				   parent_relid::TEXT);
 
@@ -708,7 +748,8 @@ $$ LANGUAGE plpgsql;
  */
 CREATE OR REPLACE FUNCTION @extschema@.append_range_partition(
 	parent_relid	REGCLASS,
-	partition_name	TEXT DEFAULT NULL)
+	partition_name	TEXT DEFAULT NULL,
+	tablespace		TEXT DEFAULT NULL)
 RETURNS TEXT AS
 $$
 DECLARE
@@ -734,13 +775,14 @@ BEGIN
 
 	EXECUTE
 		format(
-			'SELECT @extschema@.append_partition_internal($1, $2, $3, ARRAY[]::%s[], $4)',
+			'SELECT @extschema@.append_partition_internal($1, $2, $3, ARRAY[]::%s[], $4, $5)',
 			v_atttype)
 	USING
 		parent_relid,
 		v_atttype,
 		v_interval,
-		partition_name
+		partition_name,
+		tablespace
 	INTO
 		v_part_name;
 
@@ -762,7 +804,8 @@ CREATE OR REPLACE FUNCTION @extschema@.append_partition_internal(
 	p_atttype		TEXT,
 	p_interval		TEXT,
 	p_range			ANYARRAY DEFAULT NULL,
-	partition_name	TEXT DEFAULT NULL)
+	partition_name	TEXT DEFAULT NULL,
+	tablespace		TEXT DEFAULT NULL)
 RETURNS TEXT AS
 $$
 DECLARE
@@ -771,6 +814,11 @@ DECLARE
 BEGIN
 	IF @extschema@.partitions_count(parent_relid) = 0 THEN
 		RAISE EXCEPTION 'Cannot append to empty partitions set';
+	END IF;
+
+	/* If tablespace isn't specified then choose parent's tablespace */
+	IF tablespace IS NULL THEN
+		tablespace := @extschema@.get_rel_tablespace_name(parent_relid);
 	END IF;
 
 	p_range := @extschema@.get_range_by_idx(parent_relid, -1, 0);
@@ -784,13 +832,14 @@ BEGIN
 	ELSE
 		EXECUTE
 			format(
-				'SELECT @extschema@.create_single_range_partition($1, $2, $2 + $3::%s, $4)',
+				'SELECT @extschema@.create_single_range_partition($1, $2, $2 + $3::%s, $4, $5)',
 				p_atttype)
 		USING
 			parent_relid,
 			p_range[2],
 			p_interval,
-			partition_name
+			partition_name,
+			tablespace
 		INTO
 			v_part_name;
 	END IF;
@@ -806,7 +855,8 @@ LANGUAGE plpgsql;
  */
 CREATE OR REPLACE FUNCTION @extschema@.prepend_range_partition(
 	parent_relid	REGCLASS,
-	partition_name	TEXT DEFAULT NULL)
+	partition_name	TEXT DEFAULT NULL,
+	tablespace		TEXT DEFAULT NULL)
 RETURNS TEXT AS
 $$
 DECLARE
@@ -829,13 +879,14 @@ BEGIN
 
 	EXECUTE
 		format(
-			'SELECT @extschema@.prepend_partition_internal($1, $2, $3, ARRAY[]::%s[], $4)',
+			'SELECT @extschema@.prepend_partition_internal($1, $2, $3, ARRAY[]::%s[], $4, $5)',
 			v_atttype)
 	USING
 		parent_relid,
 		v_atttype,
 		v_interval,
-		partition_name
+		partition_name,
+		tablespace
 	INTO
 		v_part_name;
 
@@ -857,7 +908,8 @@ CREATE OR REPLACE FUNCTION @extschema@.prepend_partition_internal(
 	p_atttype		TEXT,
 	p_interval		TEXT,
 	p_range			ANYARRAY DEFAULT NULL,
-	partition_name	TEXT DEFAULT NULL)
+	partition_name	TEXT DEFAULT NULL,
+	tablespace		TEXT DEFAULT NULL)
 RETURNS TEXT AS
 $$
 DECLARE
@@ -866,6 +918,11 @@ DECLARE
 BEGIN
 	IF @extschema@.partitions_count(parent_relid) = 0 THEN
 		RAISE EXCEPTION 'Cannot prepend to empty partitions set';
+	END IF;
+
+	/* If tablespace isn't specified then choose parent's tablespace */
+	IF tablespace IS NULL THEN
+		tablespace := @extschema@.get_rel_tablespace_name(parent_relid);
 	END IF;
 
 	p_range := @extschema@.get_range_by_idx(parent_relid, 0, 0);
@@ -879,13 +936,14 @@ BEGIN
 	ELSE
 		EXECUTE
 			format(
-				'SELECT @extschema@.create_single_range_partition($1, $2 - $3::%s, $2, $4)',
+				'SELECT @extschema@.create_single_range_partition($1, $2 - $3::%s, $2, $4, $5)',
 				p_atttype)
 		USING
 			parent_relid,
 			p_range[1],
 			p_interval,
-			partition_name
+			partition_name,
+			tablespace
 		INTO
 			v_part_name;
 	END IF;
@@ -903,7 +961,8 @@ CREATE OR REPLACE FUNCTION @extschema@.add_range_partition(
 	parent_relid	REGCLASS,
 	p_start_value	ANYELEMENT,
 	p_end_value		ANYELEMENT,
-	partition_name	TEXT DEFAULT NULL)
+	partition_name	TEXT DEFAULT NULL,
+	tablespace		TEXT DEFAULT NULL)
 RETURNS TEXT AS
 $$
 DECLARE
@@ -923,11 +982,17 @@ BEGIN
 		RAISE EXCEPTION 'Specified range overlaps with existing partitions';
 	END IF;
 
+	/* If tablespace isn't specified then choose parent's tablespace */
+	IF tablespace IS NULL THEN
+		tablespace := @extschema@.get_rel_tablespace_name(parent_relid);
+	END IF;
+
 	/* Create new partition */
 	v_part_name := @extschema@.create_single_range_partition(parent_relid,
 															 p_start_value,
 															 p_end_value,
-															 partition_name);
+															 partition_name,
+															 tablespace);
 	PERFORM @extschema@.on_update_partitions(parent_relid);
 
 	RETURN v_part_name;
