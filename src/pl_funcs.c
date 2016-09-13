@@ -34,7 +34,8 @@ PG_FUNCTION_INFO_V1( on_partitions_created );
 PG_FUNCTION_INFO_V1( on_partitions_updated );
 PG_FUNCTION_INFO_V1( on_partitions_removed );
 PG_FUNCTION_INFO_V1( get_parent_of_partition_pl );
-PG_FUNCTION_INFO_V1( get_attribute_type_name );
+PG_FUNCTION_INFO_V1( get_base_type_pl );
+PG_FUNCTION_INFO_V1( get_attribute_type_pl );
 PG_FUNCTION_INFO_V1( find_or_create_range_partition);
 PG_FUNCTION_INFO_V1( get_range_by_idx );
 PG_FUNCTION_INFO_V1( get_range_by_part_oid );
@@ -159,14 +160,24 @@ get_parent_of_partition_pl(PG_FUNCTION_ARGS)
 }
 
 /*
- * Get type (as text) of a given attribute.
+ * Extract basic type of a domain.
  */
 Datum
-get_attribute_type_name(PG_FUNCTION_ARGS)
+get_base_type_pl(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_OID(getBaseType(PG_GETARG_OID(0)));
+}
+
+
+/*
+ * Get type (as REGTYPE) of a given attribute.
+ */
+Datum
+get_attribute_type_pl(PG_FUNCTION_ARGS)
 {
 	Oid			relid = PG_GETARG_OID(0);
 	text	   *attname = PG_GETARG_TEXT_P(1);
-	char	   *result;
+	Oid			result;
 	HeapTuple	tp;
 
 	/* NOTE: for now it's the most efficient way */
@@ -174,10 +185,10 @@ get_attribute_type_name(PG_FUNCTION_ARGS)
 	if (HeapTupleIsValid(tp))
 	{
 		Form_pg_attribute att_tup = (Form_pg_attribute) GETSTRUCT(tp);
-		result = format_type_be(att_tup->atttypid);
+		result = att_tup->atttypid;
 		ReleaseSysCache(tp);
 
-		PG_RETURN_TEXT_P(cstring_to_text(result));
+		PG_RETURN_OID(result);
 	}
 	else
 		elog(ERROR, "Cannot find type name for attribute \"%s\" "
@@ -425,6 +436,7 @@ get_hash_part_idx(PG_FUNCTION_ARGS)
 	PG_RETURN_UINT32(hash_to_part_index(value, part_count));
 }
 
+
 /*
  * Traits.
  */
@@ -475,7 +487,6 @@ build_range_condition(PG_FUNCTION_ARGS)
 	Oid		min_bound_type = get_fn_expr_argtype(fcinfo->flinfo, 1),
 			max_bound_type = get_fn_expr_argtype(fcinfo->flinfo, 2);
 
-	char   *subst_str; /* substitution string */
 	char   *result;
 
 	/* This is not going to trigger (not now, at least), just for the safety */
@@ -483,18 +494,8 @@ build_range_condition(PG_FUNCTION_ARGS)
 		elog(ERROR, "Cannot build range condition: "
 					"boundaries should be of the same type");
 
-	/* Check if we need single quotes */
-	/* TODO: check for primitive types instead, that would be better */
-	if (is_date_type_internal(min_bound_type) ||
-		is_string_type_internal(min_bound_type))
-	{
-		subst_str = "%1$s >= '%2$s' AND %1$s < '%3$s'";
-	}
-	else
-		subst_str = "%1$s >= %2$s AND %1$s < %3$s";
-
 	/* Create range condition CSTRING */
-	result = psprintf(subst_str,
+	result = psprintf("%1$s >= '%2$s' AND %1$s < '%3$s'",
 					  text_to_cstring(attname),
 					  datum_to_cstring(min_bound, min_bound_type),
 					  datum_to_cstring(max_bound, max_bound_type));

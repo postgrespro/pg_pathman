@@ -246,6 +246,11 @@ fill_type_cmp_fmgr_info(FmgrInfo *finfo, Oid type1, Oid type2)
 									 type1,
 									 type2,
 									 BTORDER_PROC);
+
+	if (cmp_proc_oid == InvalidOid)
+		elog(ERROR, "Missing comparison function for types %u & %u",
+			 type1, type2);
+
 	fmgr_info(cmp_proc_oid, finfo);
 
 	return;

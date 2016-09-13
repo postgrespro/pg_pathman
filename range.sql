@@ -138,7 +138,7 @@ BEGIN
 					   p_attribute,
 					   p_start_value,
 					   p_start_value + p_interval * p_count,
-					   pg_typeof(p_start_value));
+					   @extschema@.get_base_type(pg_typeof(p_start_value))::TEXT);
 	END IF;
 
 	/* Create sequence for child partitions names */
@@ -153,7 +153,7 @@ BEGIN
 	FOR i IN 1..p_count
 	LOOP
 		EXECUTE format('SELECT @extschema@.create_single_range_partition($1, $2, $3::%s)',
-					   pg_typeof(p_start_value))
+					   @extschema@.get_base_type(pg_typeof(p_start_value))::TEXT)
 		USING parent_relid, p_start_value, p_start_value + p_interval;
 
 		p_start_value := p_start_value + p_interval;
@@ -283,7 +283,7 @@ CREATE OR REPLACE FUNCTION @extschema@.create_partitions_from_range(
 	p_start_value	ANYELEMENT,
 	p_end_value		ANYELEMENT,
 	p_interval		ANYELEMENT,
-	partition_data  BOOLEAN DEFAULT true)
+	partition_data	BOOLEAN DEFAULT true)
 RETURNS INTEGER AS
 $$
 DECLARE
@@ -353,7 +353,7 @@ CREATE OR REPLACE FUNCTION @extschema@.create_partitions_from_range(
 	p_start_value	ANYELEMENT,
 	p_end_value		ANYELEMENT,
 	p_interval		INTERVAL,
-	partition_data  BOOLEAN DEFAULT true)
+	partition_data	BOOLEAN DEFAULT true)
 RETURNS INTEGER AS
 $$
 DECLARE
@@ -389,7 +389,7 @@ BEGIN
 	WHILE p_start_value <= p_end_value
 	LOOP
 		EXECUTE format('SELECT @extschema@.create_single_range_partition($1, $2, $3::%s);',
-					   pg_typeof(p_start_value))
+					   @extschema@.get_base_type(pg_typeof(p_start_value))::TEXT)
 		USING parent_relid, p_start_value, p_start_value + p_interval;
 
 		p_start_value := p_start_value + p_interval;
@@ -588,7 +588,7 @@ DECLARE
 	v_parent_relid2		REGCLASS;
 	v_attname			TEXT;
 	v_part_type			INTEGER;
-	v_atttype			TEXT;
+	v_atttype			REGTYPE;
 
 BEGIN
 	IF partition1 = partition2 THEN
@@ -623,10 +623,10 @@ BEGIN
 		RAISE EXCEPTION 'Specified partitions aren''t RANGE partitions';
 	END IF;
 
-	v_atttype := @extschema@.get_attribute_type_name(partition1, v_attname);
+	v_atttype := @extschema@.get_attribute_type(partition1, v_attname);
 
 	EXECUTE format('SELECT @extschema@.merge_range_partitions_internal($1, $2, $3, NULL::%s)',
-				   v_atttype)
+				   @extschema@.get_base_type(v_atttype)::TEXT)
 	USING v_parent_relid1, partition1, partition2;
 
 	/* Tell backend to reload configuration */
@@ -713,7 +713,7 @@ RETURNS TEXT AS
 $$
 DECLARE
 	v_attname		TEXT;
-	v_atttype		TEXT;
+	v_atttype		REGTYPE;
 	v_part_name		TEXT;
 	v_interval		TEXT;
 
@@ -730,12 +730,11 @@ BEGIN
 		RAISE EXCEPTION 'Table "%" is not partitioned', parent_relid::TEXT;
 	END IF;
 
-	v_atttype := @extschema@.get_attribute_type_name(parent_relid, v_attname);
+	v_atttype := @extschema@.get_attribute_type(parent_relid, v_attname);
 
 	EXECUTE
-		format(
-			'SELECT @extschema@.append_partition_internal($1, $2, $3, ARRAY[]::%s[], $4)',
-			v_atttype)
+		format('SELECT @extschema@.append_partition_internal($1, $2, $3, ARRAY[]::%s[], $4)',
+			   @extschema@.get_base_type(v_atttype)::TEXT)
 	USING
 		parent_relid,
 		v_atttype,
@@ -759,7 +758,7 @@ LANGUAGE plpgsql;
  */
 CREATE OR REPLACE FUNCTION @extschema@.append_partition_internal(
 	parent_relid	REGCLASS,
-	p_atttype		TEXT,
+	p_atttype		REGTYPE,
 	p_interval		TEXT,
 	p_range			ANYARRAY DEFAULT NULL,
 	partition_name	TEXT DEFAULT NULL)
@@ -775,7 +774,7 @@ BEGIN
 
 	p_range := @extschema@.get_range_by_idx(parent_relid, -1, 0);
 
-	IF @extschema@.is_date_type(p_atttype::regtype) THEN
+	IF @extschema@.is_date_type(p_atttype) THEN
 		v_part_name := @extschema@.create_single_range_partition(
 			parent_relid,
 			p_range[2],
@@ -783,9 +782,8 @@ BEGIN
 			partition_name);
 	ELSE
 		EXECUTE
-			format(
-				'SELECT @extschema@.create_single_range_partition($1, $2, $2 + $3::%s, $4)',
-				p_atttype)
+			format('SELECT @extschema@.create_single_range_partition($1, $2, $2 + $3::%s, $4)',
+				   @extschema@.get_base_type(p_atttype)::TEXT)
 		USING
 			parent_relid,
 			p_range[2],
@@ -811,7 +809,7 @@ RETURNS TEXT AS
 $$
 DECLARE
 	v_attname		TEXT;
-	v_atttype		TEXT;
+	v_atttype		REGTYPE;
 	v_part_name		TEXT;
 	v_interval		TEXT;
 
@@ -825,12 +823,11 @@ BEGIN
 		RAISE EXCEPTION 'Table "%" is not partitioned', parent_relid::TEXT;
 	END IF;
 
-	v_atttype := @extschema@.get_attribute_type_name(parent_relid, v_attname);
+	v_atttype := @extschema@.get_attribute_type(parent_relid, v_attname);
 
 	EXECUTE
-		format(
-			'SELECT @extschema@.prepend_partition_internal($1, $2, $3, ARRAY[]::%s[], $4)',
-			v_atttype)
+		format('SELECT @extschema@.prepend_partition_internal($1, $2, $3, ARRAY[]::%s[], $4)',
+			   @extschema@.get_base_type(v_atttype)::TEXT)
 	USING
 		parent_relid,
 		v_atttype,
@@ -854,7 +851,7 @@ LANGUAGE plpgsql;
  */
 CREATE OR REPLACE FUNCTION @extschema@.prepend_partition_internal(
 	parent_relid	REGCLASS,
-	p_atttype		TEXT,
+	p_atttype		REGTYPE,
 	p_interval		TEXT,
 	p_range			ANYARRAY DEFAULT NULL,
 	partition_name	TEXT DEFAULT NULL)
@@ -870,7 +867,7 @@ BEGIN
 
 	p_range := @extschema@.get_range_by_idx(parent_relid, 0, 0);
 
-	IF @extschema@.is_date_type(p_atttype::regtype) THEN
+	IF @extschema@.is_date_type(p_atttype) THEN
 		v_part_name := @extschema@.create_single_range_partition(
 			parent_relid,
 			p_range[1] - p_interval::interval,
@@ -878,9 +875,8 @@ BEGIN
 			partition_name);
 	ELSE
 		EXECUTE
-			format(
-				'SELECT @extschema@.create_single_range_partition($1, $2 - $3::%s, $2, $4)',
-				p_atttype)
+			format('SELECT @extschema@.create_single_range_partition($1, $2 - $3::%s, $2, $4)',
+				   @extschema@.get_base_type(p_atttype)::TEXT)
 		USING
 			parent_relid,
 			p_range[1],

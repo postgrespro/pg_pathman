@@ -857,9 +857,16 @@ extract_binary_interval_from_text(Datum interval_text,	/* interval as TEXT */
 		else
 			elog(ERROR, "Cannot find input function for type %u", part_atttype);
 
-		/* Convert interval from CSTRING to 'prel->atttype' */
-		interval_binary = OidFunctionCall1(typein_proc,
-										   CStringGetDatum(interval_cstring));
+		/*
+		 * Convert interval from CSTRING to 'prel->atttype'.
+		 *
+		 * Note: We pass 3 arguments in case
+		 * 'typein_proc' also takes Oid & typmod.
+		 */
+		interval_binary = OidFunctionCall3(typein_proc,
+										   CStringGetDatum(interval_cstring),
+										   ObjectIdGetDatum(part_atttype),
+										   Int32GetDatum(-1));
 		if (interval_type)
 			*interval_type = part_atttype;
 	}
@@ -887,8 +894,11 @@ create_partitions_internal(Oid relid, Datum value, Oid value_type)
 		/* Get both PartRelationInfo & PATHMAN_CONFIG contents for this relation */
 		if (pathman_config_contains_relation(relid, values, isnull, NULL))
 		{
-			Datum		min_rvalue,
-						max_rvalue;
+			Oid			base_atttype;		/* base type of prel->atttype */
+			Oid			base_value_type;	/* base type of value_type */
+
+			Datum		min_rvalue,			/* absolute MIN */
+						max_rvalue;			/* absolute MAX */
 
 			Oid			interval_type = InvalidOid;
 			Datum		interval_binary, /* assigned 'width' of a single partition */
@@ -900,6 +910,10 @@ create_partitions_internal(Oid relid, Datum value, Oid value_type)
 			prel = get_pathman_relation_info(relid);
 			shout_if_prel_is_invalid(relid, prel, PT_RANGE);
 
+			/* Fetch base types of prel->atttype & value_type */
+			base_atttype = getBaseType(prel->atttype);
+			base_value_type = getBaseType(value_type);
+
 			/* Read max & min range values from PartRelationInfo */
 			min_rvalue = prel->ranges[0].min;
 			max_rvalue = prel->ranges[PrelLastChild(prel)].max;
@@ -909,23 +923,23 @@ create_partitions_internal(Oid relid, Datum value, Oid value_type)
 
 			/* Convert interval to binary representation */
 			interval_binary = extract_binary_interval_from_text(interval_text,
-																prel->atttype,
+																base_atttype,
 																&interval_type);
 
 			/* Fill the FmgrInfo struct with a cmp(value, part_attribute) function */
-			fill_type_cmp_fmgr_info(&interval_type_cmp, value_type, prel->atttype);
+			fill_type_cmp_fmgr_info(&interval_type_cmp, base_value_type, base_atttype);
 
 			if (SPI_connect() != SPI_OK_CONNECT)
 				elog(ERROR, "Could not connect using SPI");
 
 			/* while (value >= MAX) ... */
 			spawn_partitions(PrelParentRelid(prel), value, max_rvalue,
-							 prel->atttype, &interval_type_cmp, interval_binary,
+							 base_atttype, &interval_type_cmp, interval_binary,
 							 interval_type, true, &partid);
 
 			/* while (value < MIN) ... */
 			spawn_partitions(PrelParentRelid(prel), value, min_rvalue,
-							 prel->atttype, &interval_type_cmp, interval_binary,
+							 base_atttype, &interval_type_cmp, interval_binary,
 							 interval_type, false, &partid);
 
 			SPI_finish(); /* close SPI connection */
