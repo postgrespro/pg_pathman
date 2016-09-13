@@ -828,7 +828,8 @@ BEGIN
 			parent_relid,
 			p_range[2],
 			p_range[2] + p_interval::interval,
-			partition_name);
+			partition_name,
+			tablespace);
 	ELSE
 		EXECUTE
 			format(
@@ -932,7 +933,8 @@ BEGIN
 			parent_relid,
 			p_range[1] - p_interval::interval,
 			p_range[1],
-			partition_name);
+			partition_name,
+			tablespace);
 	ELSE
 		EXECUTE
 			format(
