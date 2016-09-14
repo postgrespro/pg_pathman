@@ -8,6 +8,7 @@
  * ------------------------------------------------------------------------
  */
 
+#include "copy_stmt_hooking.h"
 #include "hooks.h"
 #include "init.h"
 #include "partition_filter.h"
@@ -27,6 +28,7 @@ set_rel_pathlist_hook_type		set_rel_pathlist_hook_next = NULL;
 planner_hook_type				planner_hook_next = NULL;
 post_parse_analyze_hook_type	post_parse_analyze_hook_next = NULL;
 shmem_startup_hook_type			shmem_startup_hook_next = NULL;
+ProcessUtility_hook_type		process_utility_hook_next = NULL;
 
 
 /* Take care of joins */
@@ -573,4 +575,33 @@ pathman_relcache_hook(Datum arg, Oid relid)
 			elog(ERROR, "Not implemented yet");
 			break;
 	}
+}
+
+/*
+ * Utility function invoker hook.
+ */
+void
+pathman_process_utility_hook(Node *parsetree,
+							 const char *queryString,
+							 ProcessUtilityContext context,
+							 ParamListInfo params,
+							 DestReceiver *dest,
+							 char *completionTag)
+{
+	/* Call hooks set by other extensions */
+	if (process_utility_hook_next)
+		process_utility_hook_next(parsetree, queryString,
+								  context, params,
+								  dest, completionTag);
+
+	/* Override standard COPY statements if needed */
+	if (is_pathman_related_copy(parsetree))
+	{
+		elog(INFO, "copy!");
+	}
+
+	/* Call internal implementation */
+	standard_ProcessUtility(parsetree, queryString,
+							context, params,
+							dest, completionTag);
 }

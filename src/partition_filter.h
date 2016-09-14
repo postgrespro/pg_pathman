@@ -19,25 +19,34 @@
 #include "optimizer/planner.h"
 
 
+/*
+ * Single element of 'result_rels_table'.
+ */
 typedef struct
 {
 	Oid					partid;
-	ResultRelInfo	   *resultRelInfo;
+	ResultRelInfo	   *result_rel_info;
 } ResultRelInfoHolder;
+
+/*
+ * Cached ResultRelInfos of partitions.
+ */
+typedef struct
+{
+	ResultRelInfo	   *saved_rel_info;
+	HTAB			   *result_rels_table;
+	HASHCTL				result_rels_table_config;
+} ResultPartsStorage;
 
 typedef struct
 {
 	CustomScanState		css;
 
 	Oid					partitioned_table;
-	OnConflictAction	onConflictAction;
-	ResultRelInfo	   *savedRelInfo;
+	OnConflictAction	on_conflict_action;
 
-	Plan			   *subplan;
-	Const				temp_const;		/* temporary const for expr walker */
-
-	HTAB			   *result_rels_table;
-	HASHCTL				result_rels_table_config;
+	Plan			   *subplan;		/* proxy variable to store subplan */
+	ResultPartsStorage	result_parts;
 
 	bool				warning_triggered;
 } PartitionFilterState;
@@ -49,13 +58,20 @@ extern CustomScanMethods	partition_filter_plan_methods;
 extern CustomExecMethods	partition_filter_exec_methods;
 
 
-void rowmark_add_tableoids(Query *parse);
-
-void postprocess_lock_rows(List *rtable, Plan *plan);
+void init_partition_filter_static_data(void);
 
 void add_partition_filters(List *rtable, Plan *plan);
 
-void init_partition_filter_static_data(void);
+/* ResultPartsStorage init\fini\scan function */
+void init_result_parts_storage(ResultPartsStorage *parts_storage);
+void fini_result_parts_storage(ResultPartsStorage *parts_storage);
+ResultRelInfo * scan_result_parts_storage(Oid partid,
+										  ResultPartsStorage *storage,
+										  bool speculative_insertion);
+
+/* */
+Oid *find_partitions_for_value(Datum value, const PartRelationInfo *prel,
+							   ExprContext *econtext, int *nparts);
 
 Plan * make_partition_filter(Plan *subplan,
 							 Oid partitioned_table,

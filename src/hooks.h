@@ -16,6 +16,7 @@
 #include "optimizer/paths.h"
 #include "parser/analyze.h"
 #include "storage/ipc.h"
+#include "tcop/utility.h"
 
 
 extern set_join_pathlist_hook_type		set_join_pathlist_next;
@@ -23,6 +24,7 @@ extern set_rel_pathlist_hook_type		set_rel_pathlist_hook_next;
 extern planner_hook_type				planner_hook_next;
 extern post_parse_analyze_hook_type		post_parse_analyze_hook_next;
 extern shmem_startup_hook_type			shmem_startup_hook_next;
+extern ProcessUtility_hook_type			process_utility_hook_next;
 
 
 void pathman_join_pathlist_hook(PlannerInfo *root,
@@ -49,5 +51,12 @@ void pathman_post_parse_analysis_hook(ParseState *pstate,
 void pathman_shmem_startup_hook(void);
 
 void pathman_relcache_hook(Datum arg, Oid relid);
+
+void pathman_process_utility_hook(Node *parsetree,
+								  const char *queryString,
+								  ProcessUtilityContext context,
+								  ParamListInfo params,
+								  DestReceiver *dest,
+								  char *completionTag);
 
 #endif

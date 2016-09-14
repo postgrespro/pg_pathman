@@ -161,6 +161,8 @@ _PG_init(void)
 	post_parse_analyze_hook			= pathman_post_parse_analysis_hook;
 	planner_hook_next				= planner_hook;
 	planner_hook					= pathman_planner_hook;
+	process_utility_hook_next		= ProcessUtility_hook;
+	ProcessUtility_hook				= pathman_process_utility_hook;
 
 	/* Initialize static data for all subsystems */
 	init_main_pathman_toggle();
