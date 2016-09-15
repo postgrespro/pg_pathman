@@ -160,7 +160,6 @@ PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
 	bool		is_from = stmt->is_from;
 	bool		pipe = (stmt->filename == NULL);
 	Relation	rel;
-	Oid			relid;
 	Node	   *query = NULL;
 	List	   *range_table = NIL;
 
@@ -193,8 +192,6 @@ PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
 
 		/* Open the relation (we've locked it in is_pathman_related_copy()) */
 		rel = heap_openrv(stmt->relation, NoLock);
-
-		relid = RelationGetRelid(rel);
 
 		rte = makeNode(RangeTblEntry);
 		rte->rtekind = RTE_RELATION;
@@ -280,7 +277,6 @@ PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
 		Assert(stmt->query);
 
 		query = stmt->query;
-		relid = InvalidOid;
 		rel = NULL;
 	}
 
@@ -291,7 +287,7 @@ PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
 		Assert(rel);
 
 		/* check read-only transaction and parallel mode */
-		if (XactReadOnly && !rel->rd_islocaltemp)
+		if (XactReadOnly && rel && !rel->rd_islocaltemp)
 			PreventCommandIfReadOnly("PATHMAN COPY FROM");
 		PreventCommandIfParallelMode("PATHMAN COPY FROM");
 
