@@ -309,7 +309,7 @@ partition_filter_exec(CustomScanState *node)
 			elog(ERROR, "partitioned column's value should not be NULL");
 
 		/* Switch to per-tuple context */
-		old_cxt = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
+		old_cxt = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 
 		/* Search for matching partitions */
 		parts = find_partitions_for_value(value, prel, econtext, &nparts);

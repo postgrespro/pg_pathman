@@ -387,17 +387,22 @@ pg_pathman_enable_assign_hook(bool newval, void *extra)
 
 	/* Return quickly if nothing has changed */
 	if (newval == (pg_pathman_init_state.pg_pathman_enable &&
+				   pg_pathman_init_state.auto_partition &&
+				   pg_pathman_init_state.override_copy &&
 				   pg_pathman_enable_runtimeappend &&
 				   pg_pathman_enable_runtime_merge_append &&
 				   pg_pathman_enable_partition_filter))
 		return;
 
+	pg_pathman_init_state.auto_partition = newval;
+	pg_pathman_init_state.override_copy = newval;
 	pg_pathman_enable_runtime_merge_append = newval;
 	pg_pathman_enable_runtimeappend = newval;
 	pg_pathman_enable_partition_filter = newval;
 
 	elog(NOTICE,
-		 "RuntimeAppend, RuntimeMergeAppend and PartitionFilter nodes have been %s",
+		 "RuntimeAppend, RuntimeMergeAppend and PartitionFilter nodes "
+		 "and some other options have been %s",
 		 newval ? "enabled" : "disabled");
 }
 
@@ -594,10 +599,17 @@ pathman_process_utility_hook(Node *parsetree,
 								  context, params,
 								  dest, completionTag);
 
-	/* Override standard COPY statements if needed */
+	/* Override standard COPY statement if needed */
 	if (is_pathman_related_copy(parsetree))
 	{
-		elog(INFO, "copy!");
+		uint64		processed;
+
+		PathmanDoCopy((CopyStmt *) parsetree, queryString, &processed);
+		if (completionTag)
+			snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
+					 "PATHMAN COPY " UINT64_FORMAT, processed);
+
+		return; /* don't call standard_ProcessUtility() */
 	}
 
 	/* Call internal implementation */

@@ -27,6 +27,7 @@ typedef struct
 {
 	bool 	pg_pathman_enable;		/* GUC variable implementation */
 	bool	auto_partition;			/* GUC variable for auto partition propagation */
+	bool	override_copy;			/* override COPY TO/FROM */
 	bool	initialization_needed;	/* do we need to perform init? */
 } PathmanInitState;
 
@@ -41,22 +42,27 @@ extern PathmanInitState 	pg_pathman_init_state;
 /*
  * Check if pg_pathman is initialized.
  */
-#define IsPathmanInitialized()	( !pg_pathman_init_state.initialization_needed )
+#define IsPathmanInitialized()		( !pg_pathman_init_state.initialization_needed )
 
 /*
  * Check if pg_pathman is enabled.
  */
-#define IsPathmanEnabled()		( pg_pathman_init_state.pg_pathman_enable )
+#define IsPathmanEnabled()			( pg_pathman_init_state.pg_pathman_enable )
 
 /*
  * Check if pg_pathman is initialized & enabled.
  */
-#define IsPathmanReady()		( IsPathmanInitialized() && IsPathmanEnabled() )
+#define IsPathmanReady()			( IsPathmanInitialized() && IsPathmanEnabled() )
 
 /*
- * Check if auto partition propagation enabled
+ * Should we override COPY stmt handling?
  */
-#define IsAutoPartitionEnabled() ( pg_pathman_init_state.auto_partition )
+#define IsOverrideCopyEnabled()		( pg_pathman_init_state.override_copy )
+
+/*
+ * Check if auto partition creation is enabled.
+ */
+#define IsAutoPartitionEnabled()	( pg_pathman_init_state.auto_partition )
 
 /*
  * Enable/disable auto partition propagation. Note that this only works if
@@ -65,7 +71,8 @@ extern PathmanInitState 	pg_pathman_init_state;
  */
 #define SetAutoPartitionEnabled(value) \
 	do { \
-		pg_pathman_init_state.auto_partition = value; \
+		Assert((value) == true || (value) == false); \
+		pg_pathman_init_state.auto_partition = (value); \
 	} while (0)
 
 /*
@@ -74,6 +81,8 @@ extern PathmanInitState 	pg_pathman_init_state;
 #define DisablePathman() \
 	do { \
 		pg_pathman_init_state.pg_pathman_enable = false; \
+		pg_pathman_init_state.auto_partition = false; \
+		pg_pathman_init_state.override_copy = false; \
 		pg_pathman_init_state.initialization_needed = true; \
 	} while (0)
 
@@ -85,9 +94,9 @@ void save_pathman_init_state(PathmanInitState *temp_init_state);
 void restore_pathman_init_state(const PathmanInitState *temp_init_state);
 
 /*
- * Create main GUC variable.
+ * Create main GUC variables.
  */
-void init_main_pathman_toggle(void);
+void init_main_pathman_toggles(void);
 
 Size estimate_pathman_shmem_size(void);
 void init_shmem_config(void);

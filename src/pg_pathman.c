@@ -165,7 +165,7 @@ _PG_init(void)
 	ProcessUtility_hook				= pathman_process_utility_hook;
 
 	/* Initialize static data for all subsystems */
-	init_main_pathman_toggle();
+	init_main_pathman_toggles();
 	init_runtimeappend_static_data();
 	init_runtime_merge_append_static_data();
 	init_partition_filter_static_data();

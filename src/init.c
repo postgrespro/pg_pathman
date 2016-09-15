@@ -102,10 +102,10 @@ restore_pathman_init_state(const PathmanInitState *temp_init_state)
 }
 
 /*
- * Create main GUC.
+ * Create main GUCs.
  */
 void
-init_main_pathman_toggle(void)
+init_main_pathman_toggles(void)
 {
 	/* Main toggle, load_config() will enable it */
 	DefineCustomBoolVariable("pg_pathman.enable",
@@ -119,10 +119,23 @@ init_main_pathman_toggle(void)
 							 pg_pathman_enable_assign_hook,
 							 NULL);
 
+	/* Global toggle for automatic partition creation */
 	DefineCustomBoolVariable("pg_pathman.enable_auto_partition",
-							 "Enables auto partition propagation",
+							 "Enables automatic partition creation",
 							 NULL,
 							 &pg_pathman_init_state.auto_partition,
+							 true,
+							 PGC_USERSET,
+							 0,
+							 NULL,
+							 NULL,
+							 NULL);
+
+	/* Global toggle for COPY stmt handling */
+	DefineCustomBoolVariable("pg_pathman.override_copy",
+							 "Override COPY statement handling",
+							 NULL,
+							 &pg_pathman_init_state.override_copy,
 							 true,
 							 PGC_USERSET,
 							 0,
