@@ -852,7 +852,7 @@ $$ language plpgsql
 set pg_pathman.enable = true
 set enable_hashjoin = off
 set enable_mergejoin = off;
-NOTICE:  RuntimeAppend, RuntimeMergeAppend and PartitionFilter nodes have been enabled
+NOTICE:  RuntimeAppend, RuntimeMergeAppend and PartitionFilter nodes and some other options have been enabled
 create table test.run_values as select generate_series(1, 10000) val;
 create table test.runtime_test_1(id serial primary key, val real);
 insert into test.runtime_test_1 select generate_series(1, 10000), random();
