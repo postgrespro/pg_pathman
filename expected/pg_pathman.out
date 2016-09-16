@@ -1770,15 +1770,14 @@ NOTICE:  100 rows copied from test_fkey_0
 
 /* Check callbacks */
 CREATE TABLE log(id serial, message text);
-CREATE FUNCTION abc_on_partition_created_callback(args jsonb)
+CREATE OR REPLACE FUNCTION abc_on_partition_created_callback(args jsonb)
 RETURNS VOID AS $$
 DECLARE
-  start_value TEXT := args->>'start';
-  end_value   TEXT := args::jsonb->'end';
+	start_value TEXT := args->>'start';
+	end_value   TEXT := args::jsonb->'end';
 BEGIN
-  -- raise notice 'callback: %', args->start;
-  INSERT INTO log(message)
-  VALUES (start_value || '-' || end_value);
+	INSERT INTO log(message)
+	VALUES (start_value || '-' || end_value);
 END
 $$ language plpgsql;
 CREATE TABLE abc(a serial, b int);
