@@ -31,22 +31,16 @@ CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
  *		partrel - regclass (relation type, stored as Oid)
  *		enable_parent - add parent table to plan
  *		auto - enable automatic partition creation
+ *		callback - 
  */
 CREATE TABLE IF NOT EXISTS @extschema@.pathman_config_params (
 	partrel			REGCLASS NOT NULL PRIMARY KEY,
 	enable_parent	BOOLEAN NOT NULL DEFAULT TRUE,
-	auto			BOOLEAN NOT NULL DEFAULT TRUE
+	auto			BOOLEAN NOT NULL DEFAULT TRUE,
+	callback		REGPROCEDURE
 );
 CREATE UNIQUE INDEX i_pathman_config_params
 ON @extschema@.pathman_config_params(partrel);
-
-CREATE TYPE partition AS (
-	parent			REGCLASS,
-	parttype		INTEGER,
-	child			REGCLASS,
-	start_value		TEXT,
-	end_value		TEXT
-);
 
 /*
  * Invalidate relcache every time someone changes parameters config.
@@ -101,7 +95,7 @@ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION @extschema@.pathman_set_param(
 	relation	REGCLASS,
 	param		TEXT,
-	value		BOOLEAN)
+	value		ANYELEMENT)
 RETURNS VOID AS
 $$
 BEGIN
@@ -157,6 +151,19 @@ RETURNS VOID AS
 $$
 BEGIN
 	PERFORM @extschema@.pathman_set_param(relation, 'auto', False);
+END
+$$
+LANGUAGE plpgsql;
+
+/*
+ * Set partition creation callback
+ */
+CREATE OR REPLACE FUNCTION @extschema@.set_callback(relation REGCLASS, callback REGPROC)
+RETURNS VOID AS
+$$
+BEGIN
+	PERFORM @extschema@.validate_on_partition_created_callback(callback);
+	PERFORM @extschema@.pathman_set_param(relation, 'callback', callback);
 END
 $$
 LANGUAGE plpgsql;
@@ -709,4 +716,24 @@ LANGUAGE C STRICT;
  */
 CREATE OR REPLACE FUNCTION @extschema@.get_rel_tablespace_name(relation REGCLASS)
 RETURNS TEXT AS 'pg_pathman', 'get_rel_tablespace_name'
+LANGUAGE C STRICT;
+
+/*
+ * Checks that callback function meets specific requirements. Particularly it
+ * must have the only JSONB argument and VOID return type
+ */
+CREATE OR REPLACE FUNCTION @extschema@.validate_on_partition_created_callback(callback REGPROC)
+RETURNS VOID AS 'pg_pathman', 'validate_on_partition_created_callback'
+LANGUAGE C STRICT;
+
+/*
+ * Builds JSONB object containing new partition parameters and invoke the
+ * callback
+ */
+CREATE OR REPLACE FUNCTION @extschema@.invoke_on_partition_created_callback(
+	parent		REGCLASS,
+	partition	REGCLASS,
+	start_value	ANYELEMENT,
+	end_value	ANYELEMENT)
+RETURNS VOID AS 'pg_pathman', 'invoke_on_partition_created_callback'
 LANGUAGE C STRICT;

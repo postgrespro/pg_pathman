@@ -13,11 +13,14 @@
 #include "relation_info.h"
 #include "utils.h"
 #include "xact_handling.h"
+#include "fmgr.h"
 
 #include "access/htup_details.h"
 #include "access/nbtree.h"
 #include "access/xact.h"
 #include "catalog/indexing.h"
+#include "catalog/pg_type.h"
+#include "catalog/pg_proc.h"
 #include "commands/sequence.h"
 #include "commands/tablespace.h"
 #include "miscadmin.h"
@@ -28,6 +31,8 @@
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
+#include "utils/jsonb.h"
+#include "utils/fmgroids.h"
 
 
 /* declarations */
@@ -57,7 +62,8 @@ PG_FUNCTION_INFO_V1( lock_partitioned_relation );
 PG_FUNCTION_INFO_V1( prevent_relation_modification );
 PG_FUNCTION_INFO_V1( debug_capture );
 PG_FUNCTION_INFO_V1( get_rel_tablespace_name );
-
+PG_FUNCTION_INFO_V1( validate_on_partition_created_callback );
+PG_FUNCTION_INFO_V1( invoke_on_partition_created_callback );
 
 static void on_partitions_created_internal(Oid partitioned_table, bool add_callbacks);
 static void on_partitions_updated_internal(Oid partitioned_table, bool add_callbacks);
@@ -775,4 +781,88 @@ get_rel_tablespace_name(PG_FUNCTION_ARGS)
 
 	result = get_tablespace_name(tablespace_id);
 	PG_RETURN_TEXT_P(cstring_to_text(result));
+}
+
+/*
+ * Checks that callback function meets specific requirements. Particularly it
+ * must have the only JSONB argument and VOID return type
+ */
+Datum
+validate_on_partition_created_callback(PG_FUNCTION_ARGS)
+{
+	HeapTuple	tp;
+	Oid			callback = PG_GETARG_OID(0);
+	Form_pg_proc functup;
+
+	tp = SearchSysCache1(PROCOID, ObjectIdGetDatum(callback));
+	if (!HeapTupleIsValid(tp))
+		elog(ERROR, "cache lookup failed for function %u", callback);
+	functup = (Form_pg_proc) GETSTRUCT(tp);
+
+	if (functup->pronargs != 1 || functup->proargtypes.values[0] != JSONBOID ||
+		functup->prorettype != VOIDOID)
+		elog(ERROR,
+			 "Callback function must have only one JSNOB argument "
+			 "and return VOID");
+
+	ReleaseSysCache(tp);
+	PG_RETURN_VOID();
+}
+
+/*
+ * Builds JSONB object containing new partition parameters and invoke the
+ * callback
+ */
+Datum
+invoke_on_partition_created_callback(PG_FUNCTION_ARGS)
+{
+	char   *json;
+	Datum	jsonb;
+	Oid		parent_oid = PG_GETARG_OID(0);
+	Oid		partition_oid = PG_GETARG_OID(1);
+	Oid		type = get_fn_expr_argtype(fcinfo->flinfo, 2);
+	Datum	start_value = PG_GETARG_DATUM(2);
+	Datum	end_value = PG_GETARG_DATUM(3);
+	const PartRelationInfo   *prel;
+
+	if ((prel = get_pathman_relation_info(parent_oid)) == NULL)
+		elog(ERROR,
+			 "Relation %s isn't partitioned by pg_pathman",
+			 get_rel_name(parent_oid));
+
+	/* If there is no callback function specified then we're done */
+	if (!prel->callback)
+		PG_RETURN_VOID();
+	
+	/* Convert ANYELEMENT arguments to jsonb */
+	start_value = convert_to_jsonb(start_value, type);
+	end_value = convert_to_jsonb(end_value, type);
+
+	/*
+	 * Build jsonb object to pass into callback
+	 *
+	 * XXX it would be nice to have this rewrited with pushJsonbValue() to get
+	 * rid of string formatting and parsing. See jsonb_build_object() for
+	 * example
+	 */
+	json = psprintf("{"
+		"\"parent\": %u,"
+		"\"partition\": %u,"
+		"\"part_type\": %u,"
+		"\"start\": %s,"
+		"\"end\": %s,"
+		"\"value_type\": %u}",
+		parent_oid,
+		partition_oid,
+		prel->parttype,
+		datum_to_cstring(start_value, JSONBOID),
+		datum_to_cstring(end_value, JSONBOID),
+		type
+	);
+	jsonb = OidFunctionCall1(F_JSONB_IN, CStringGetDatum(json));
+
+	/* Invoke callback */
+	OidFunctionCall1(prel->callback, JsonbGetDatum(jsonb));
+
+	PG_RETURN_JSONB(jsonb);
 }

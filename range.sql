@@ -504,7 +504,6 @@ BEGIN
 	if NOT tablespace IS NULL THEN
 		v_create_table_query := v_create_table_query || ' TABLESPACE ' ||tablespace;
 	END IF;
-	RAISE NOTICE 'query: %', v_create_table_query;
 
 	EXECUTE format(v_create_table_query,
 				   v_child_relname,
@@ -519,6 +518,10 @@ BEGIN
 													 p_end_value));
 
 	PERFORM @extschema@.copy_foreign_keys(parent_relid, v_child_relname::REGCLASS);
+	PERFORM @extschema@.invoke_on_partition_created_callback(parent_relid,
+															 v_child_relname,
+															 p_start_value,
+															 p_end_value);
 
 	RETURN v_child_relname;
 END
@@ -1233,7 +1236,6 @@ BEGIN
 	RETURN funcname;
 END
 $$ LANGUAGE plpgsql;
-
 
 /*
  * Construct CHECK constraint condition for a range partition.

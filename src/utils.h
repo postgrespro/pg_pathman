@@ -65,6 +65,10 @@ void fill_type_cmp_fmgr_info(FmgrInfo *finfo,
 							 Oid type1,
 							 Oid type2);
 char * datum_to_cstring(Datum datum, Oid typid);
+Datum datum_in(char *str, Oid typid);
+Datum convert_to_jsonb(Datum datum, Oid typid);
+Const *makeConstFromDatum(Datum datum, Oid typid);
+FuncExpr *makeFuncNode(Oid funcid, List *args);
 
 #if PG_VERSION_NUM < 90600
 char get_rel_persistence(Oid relid);

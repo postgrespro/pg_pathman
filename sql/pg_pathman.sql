@@ -665,3 +665,27 @@ SELECT create_hash_partitions('test_fkey', 'id', 10);
 INSERT INTO test_fkey VALUES(1, 'wrong');
 INSERT INTO test_fkey VALUES(1, 'test');
 SELECT drop_partitions('test_fkey');
+
+/* Check callbacks */
+CREATE TABLE log(id serial, message text);
+
+CREATE OR REPLACE FUNCTION abc_on_partition_created_callback(args jsonb)
+RETURNS VOID AS $$
+DECLARE
+	start_value TEXT := args->>'start';
+	end_value   TEXT := args::jsonb->'end';
+BEGIN
+	INSERT INTO log(message)
+	VALUES (start_value || '-' || end_value);
+END
+$$ language plpgsql;
+
+CREATE TABLE abc(a serial, b int);
+SELECT create_range_partitions('abc', 'a', 1, 100, 2);
+SELECT set_callback('abc', 'abc_on_partition_created_callback');
+INSERT INTO abc VALUES (123, 1);
+INSERT INTO abc VALUES (223, 1);
+SELECT append_range_partition('abc');
+SELECT prepend_range_partition('abc');
+SELECT add_range_partition('abc', 401, 501);
+SELECT message FROM log;

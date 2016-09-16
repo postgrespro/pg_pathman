@@ -17,6 +17,7 @@
 #include "catalog/heap.h"
 #include "catalog/pg_type.h"
 #include "catalog/pg_extension.h"
+#include "catalog/pg_proc.h"
 #include "commands/extension.h"
 #include "miscadmin.h"
 #include "optimizer/var.h"
@@ -625,6 +626,85 @@ datum_to_cstring(Datum datum, Oid typid)
 		result = pstrdup("[error]");
 
 	return result;
+}
+
+/*
+ * Converts datum to jsonb type
+ * This function is a wrapper to to_jsonb()
+ */
+Datum
+convert_to_jsonb(Datum datum, Oid typid)
+{
+	List	   *args;
+	FuncExpr   *fexpr;
+	FmgrInfo	flinfo;
+	Const	   *constval;
+
+	/* Build const value to use in the FuncExpr node. */
+	constval = makeConstFromDatum(datum, typid);
+
+	/* Function takes single argument */
+	args = list_make1(constval);
+
+	/* Build function expression */
+	fexpr = makeFuncNode(F_TO_JSONB, args);
+	fmgr_info(F_TO_JSONB, &flinfo);
+	flinfo.fn_expr = (Node *) fexpr;
+
+	return FunctionCall1(&flinfo, datum);
+}
+
+/*
+ * Builds Const from specified datum and type oid
+ */
+Const *
+makeConstFromDatum(Datum datum, Oid typid)
+{
+	HeapTuple	tp;
+	Const	   *constval;
+	Form_pg_type typtup;
+
+	tp = SearchSysCache1(TYPEOID, ObjectIdGetDatum(typid));
+	if (!HeapTupleIsValid(tp))
+		elog(ERROR, "cache lookup failed for type %u", typid);
+	typtup = (Form_pg_type) GETSTRUCT(tp);
+	constval = makeConst(
+		typid,
+		typtup->typtypmod,
+		typtup->typcollation,
+		typtup->typlen,
+		datum,
+		false,
+		typtup->typbyval);
+	ReleaseSysCache(tp);
+
+	return constval;
+}
+
+/*
+ * Builds function expression
+ */
+FuncExpr *
+makeFuncNode(Oid funcid, List *args)
+{
+	HeapTuple	tp;
+	FuncExpr   *fexpr;
+	Form_pg_proc functup;
+
+	tp = SearchSysCache1(PROCOID, ObjectIdGetDatum(funcid));
+	if (!HeapTupleIsValid(tp))
+		elog(ERROR, "cache lookup failed for function %u", funcid);
+	functup = (Form_pg_proc) GETSTRUCT(tp);
+	fexpr = makeFuncExpr(funcid,
+						 functup->prorettype,
+						 args,
+						 InvalidOid,
+						 InvalidOid,
+						 COERCE_EXPLICIT_CALL);
+	ReleaseSysCache(tp);
+	fexpr->funcvariadic = false;
+
+	return fexpr;
 }
 
 /*
