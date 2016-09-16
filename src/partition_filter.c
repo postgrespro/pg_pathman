@@ -67,24 +67,64 @@ add_partition_filters(List *rtable, Plan *plan)
 		plan_tree_walker(plan, partition_filter_visitor, rtable);
 }
 
+/*
+ * This callback adds a new RangeTblEntry once
+ * partition is opened for an INSERT.
+ */
+void
+check_acl_for_partition(EState *estate,
+						ResultRelInfoHolder *rri_holder,
+						void *arg)
+{
+	RangeTblEntry  *rte;
+	Relation		part_rel = rri_holder->result_rel_info->ri_RelationDesc;
+
+	rte = makeNode(RangeTblEntry);
+
+	rte->rtekind = RTE_RELATION;
+	rte->relid = rri_holder->partid;
+	rte->relkind = part_rel->rd_rel->relkind;
+	rte->requiredPerms = ACL_INSERT;
+
+	/* Check permissions for current partition */
+	ExecCheckRTPerms(list_make1(rte), true);
+
+	/* TODO: append RTE to estate->es_range_table */
+}
+
 
 /*
  * Initialize ResultPartsStorage (hash table etc).
  */
 void
-init_result_parts_storage(ResultPartsStorage *parts_storage)
+init_result_parts_storage(ResultPartsStorage *parts_storage,
+						  EState *estate,
+						  bool speculative_inserts,
+						  Size table_entry_size,
+						  on_new_rri_holder on_new_rri_holder_cb,
+						  void *on_new_rri_holder_cb_arg)
 {
 	HASHCTL *result_rels_table_config = &parts_storage->result_rels_table_config;
 
 	memset(result_rels_table_config, 0, sizeof(HASHCTL));
 	result_rels_table_config->keysize = sizeof(Oid);
-	result_rels_table_config->entrysize = sizeof(ResultRelInfoHolder);
+
+	/* Use sizeof(ResultRelInfoHolder) if table_entry_size is 0 */
+	if (table_entry_size == ResultPartsStorageStandard)
+		result_rels_table_config->entrysize = sizeof(ResultRelInfoHolder);
+	else
+		result_rels_table_config->entrysize = table_entry_size;
 
 	parts_storage->result_rels_table = hash_create("ResultRelInfo storage", 10,
 												   result_rels_table_config,
 												   HASH_ELEM | HASH_BLOBS);
-
+	parts_storage->estate = estate;
+	parts_storage->es_alloc_result_rels = estate->es_num_result_relations;
+	parts_storage->speculative_inserts = speculative_inserts;
 	parts_storage->saved_rel_info = NULL;
+
+	parts_storage->on_new_rri_holder_callback = on_new_rri_holder_cb;
+	parts_storage->callback_arg = on_new_rri_holder_cb_arg;
 }
 
 /*
@@ -94,13 +134,13 @@ void
 fini_result_parts_storage(ResultPartsStorage *parts_storage)
 {
 	HASH_SEQ_STATUS			stat;
-	ResultRelInfoHolder	   *rri_handle; /* ResultRelInfo holder */
+	ResultRelInfoHolder	   *rri_holder; /* ResultRelInfo holder */
 
 	hash_seq_init(&stat, parts_storage->result_rels_table);
-	while ((rri_handle = (ResultRelInfoHolder *) hash_seq_search(&stat)) != NULL)
+	while ((rri_holder = (ResultRelInfoHolder *) hash_seq_search(&stat)) != NULL)
 	{
-		ExecCloseIndices(rri_handle->result_rel_info);
-		heap_close(rri_handle->result_rel_info->ri_RelationDesc,
+		ExecCloseIndices(rri_holder->result_rel_info);
+		heap_close(rri_holder->result_rel_info->ri_RelationDesc,
 				   RowExclusiveLock);
 	}
 	hash_destroy(parts_storage->result_rels_table);
@@ -109,32 +149,34 @@ fini_result_parts_storage(ResultPartsStorage *parts_storage)
 /*
  * Find a ResultRelInfo for the partition using ResultPartsStorage.
  */
-ResultRelInfo *
-scan_result_parts_storage(Oid partid,
-						  ResultPartsStorage *storage,
-						  bool speculative_insertion)
+ResultRelInfoHolder *
+scan_result_parts_storage(Oid partid, ResultPartsStorage *storage)
 {
 #define CopyToResultRelInfo(field_name) \
-	( resultRelInfo->field_name = storage->saved_rel_info->field_name )
+	( part_result_rel_info->field_name = storage->saved_rel_info->field_name )
 
-	ResultRelInfoHolder	   *resultRelInfoHolder;
+	ResultRelInfoHolder	   *rri_holder;
 	bool					found;
 
-	resultRelInfoHolder = hash_search(storage->result_rels_table,
-									  (const void *) &partid,
-									  HASH_ENTER, &found);
+	rri_holder = hash_search(storage->result_rels_table,
+							 (const void *) &partid,
+							 HASH_ENTER, &found);
 
 	/* If not found, create & cache new ResultRelInfo */
 	if (!found)
 	{
-		ResultRelInfo  *resultRelInfo = (ResultRelInfo *) palloc(sizeof(ResultRelInfo));
+		ResultRelInfo *part_result_rel_info = makeNode(ResultRelInfo);
 
-		InitResultRelInfo(resultRelInfo,
+		InitResultRelInfo(part_result_rel_info,
 						  heap_open(partid, RowExclusiveLock),
 						  0,
 						  0); /* TODO: select suitable options */
 
-		ExecOpenIndices(resultRelInfo, speculative_insertion);
+		ExecOpenIndices(part_result_rel_info, storage->speculative_inserts);
+
+		/* Check that 'saved_rel_info' is set */
+		if (!storage->saved_rel_info)
+			elog(ERROR, "ResultPartsStorage contains no saved_rel_info");
 
 		/* Copy necessary fields from saved ResultRelInfo */
 		CopyToResultRelInfo(ri_WithCheckOptions);
@@ -145,18 +187,23 @@ scan_result_parts_storage(Oid partid,
 		CopyToResultRelInfo(ri_onConflictSetWhere);
 
 		/* ri_ConstraintExprs will be initialized by ExecRelCheck() */
-		resultRelInfo->ri_ConstraintExprs = NULL;
+		part_result_rel_info->ri_ConstraintExprs = NULL;
 
 		/* Make 'range table index' point to the parent relation */
-		resultRelInfo->ri_RangeTableIndex =
+		part_result_rel_info->ri_RangeTableIndex =
 				storage->saved_rel_info->ri_RangeTableIndex;
 
 		/* Now fill the ResultRelInfo holder */
-		resultRelInfoHolder->partid = partid;
-		resultRelInfoHolder->result_rel_info = resultRelInfo;
+		rri_holder->partid = partid;
+		rri_holder->result_rel_info = part_result_rel_info;
+
+		/* Call on_new_rri_holder_callback() if needed */
+		if (storage->on_new_rri_holder_callback)
+			storage->on_new_rri_holder_callback(storage->estate, rri_holder,
+												storage->callback_arg);
 	}
 
-	return resultRelInfoHolder->result_rel_info;
+	return rri_holder;
 }
 
 
@@ -255,7 +302,12 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 	/* It's convenient to store PlanState in 'custom_ps' */
 	node->custom_ps = list_make1(ExecInitNode(state->subplan, estate, eflags));
 
-	init_result_parts_storage(&state->result_parts);
+	/* Init ResultRelInfo cache */
+	init_result_parts_storage(&state->result_parts, estate,
+							  state->on_conflict_action != ONCONFLICT_NONE,
+							  ResultPartsStorageStandard,
+							  check_acl_for_partition, NULL);
+
 	state->warning_triggered = false;
 }
 
@@ -281,10 +333,10 @@ partition_filter_exec(CustomScanState *node)
 
 		MemoryContext			old_cxt;
 
+		ResultRelInfoHolder	   *result_part_holder;
+		Oid						selected_partid;
 		int						nparts;
 		Oid					   *parts;
-		Oid						selected_partid;
-		bool					speculative_insert;
 
 		bool					isnull;
 		Datum					value;
@@ -344,10 +396,9 @@ partition_filter_exec(CustomScanState *node)
 
 		/* Replace parent table with a suitable partition */
 		old_cxt = MemoryContextSwitchTo(estate->es_query_cxt);
-		speculative_insert = state->on_conflict_action != ONCONFLICT_NONE;
-		estate->es_result_relation_info = scan_result_parts_storage(selected_partid,
-														   &state->result_parts,
-														   speculative_insert);
+		result_part_holder = scan_result_parts_storage(selected_partid,
+													   &state->result_parts);
+		estate->es_result_relation_info = result_part_holder->result_rel_info;
 		MemoryContextSwitchTo(old_cxt);
 
 		return slot;

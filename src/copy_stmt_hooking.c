@@ -12,6 +12,7 @@
 
 #include "copy_stmt_hooking.h"
 #include "init.h"
+#include "partition_filter.h"
 #include "relation_info.h"
 
 #include "access/htup_details.h"
@@ -26,10 +27,20 @@
 #include "nodes/makefuncs.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
+#include "utils/memutils.h"
 #include "utils/rel.h"
 #include "utils/rls.h"
 
 #include "libpq/libpq.h"
+
+
+static uint64 PathmanCopyFrom(CopyState cstate,
+							  Relation parent_rel,
+							  List *range_table,
+							  bool old_protocol);
+static ResultRelInfoHolder *select_partition_for_copy(const PartRelationInfo *prel,
+													  ResultPartsStorage *parts_storage,
+													  Datum value, EState *estate);
 
 
 /*
@@ -283,6 +294,11 @@ PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
 	/* COPY ... FROM ... */
 	if (is_from)
 	{
+		bool is_old_protocol;
+
+		is_old_protocol = PG_PROTOCOL_MAJOR(FrontendProtocol) < 3 &&
+						  stmt->filename == NULL;
+
 		/* There should be relation */
 		Assert(rel);
 
@@ -293,9 +309,7 @@ PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
 
 		cstate = BeginCopyFrom(rel, stmt->filename, stmt->is_program,
 							   stmt->attlist, stmt->options);
-		/* TODO: copy files to DB */
-		heap_close(rel, NoLock);
-		*processed = 0;
+		*processed = PathmanCopyFrom(cstate, rel, range_table, is_old_protocol);
 		EndCopyFrom(cstate);
 	}
 	/* COPY ... TO ... */
@@ -314,4 +328,233 @@ PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
 		/* Call standard DoCopy using a new CopyStmt */
 		DoCopy(&modified_copy_stmt, queryString, processed);
 	}
+
+	/*
+	 * Close the relation. If reading, we can release the AccessShareLock we
+	 * got; if writing, we should hold the lock until end of transaction to
+	 * ensure that updates will be committed before lock is released.
+	 */
+	if (rel != NULL)
+		heap_close(rel, (is_from ? NoLock : AccessShareLock));
+}
+
+/*
+ * Copy FROM file to relation.
+ */
+static uint64
+PathmanCopyFrom(CopyState cstate, Relation parent_rel,
+				List *range_table, bool old_protocol)
+{
+	HeapTuple			tuple;
+	TupleDesc			tupDesc;
+	Datum			   *values;
+	bool			   *nulls;
+
+	ResultPartsStorage	parts_storage;
+	ResultRelInfo	   *parent_result_rel;
+
+	EState			   *estate = CreateExecutorState(); /* for ExecConstraints() */
+	ExprContext		   *econtext;
+	TupleTableSlot	   *myslot;
+	MemoryContext		oldcontext = CurrentMemoryContext;
+
+	uint64				processed = 0;
+
+
+	tupDesc = RelationGetDescr(parent_rel);
+
+	parent_result_rel = makeNode(ResultRelInfo);
+	InitResultRelInfo(parent_result_rel,
+					  parent_rel,
+					  1,		/* dummy rangetable index */
+					  0);
+	ExecOpenIndices(parent_result_rel, false);
+
+	estate->es_result_relations = parent_result_rel;
+	estate->es_num_result_relations = 1;
+	estate->es_result_relation_info = parent_result_rel;
+	estate->es_range_table = range_table;
+
+	/* Initialize ResultPartsStorage */
+	init_result_parts_storage(&parts_storage, estate, false,
+							  ResultPartsStorageStandard,
+							  check_acl_for_partition, NULL);
+	parts_storage.saved_rel_info = parent_result_rel;
+
+	/* Set up a tuple slot too */
+	myslot = ExecInitExtraTupleSlot(estate);
+	ExecSetSlotDescriptor(myslot, tupDesc);
+	/* Triggers might need a slot as well */
+	estate->es_trig_tuple_slot = ExecInitExtraTupleSlot(estate);
+
+	/* Prepare to catch AFTER triggers. */
+	AfterTriggerBeginQuery();
+
+	/*
+	 * Check BEFORE STATEMENT insertion triggers. It's debatable whether we
+	 * should do this for COPY, since it's not really an "INSERT" statement as
+	 * such. However, executing these triggers maintains consistency with the
+	 * EACH ROW triggers that we already fire on COPY.
+	 */
+	ExecBSInsertTriggers(estate, parent_result_rel);
+
+	values = (Datum *) palloc(tupDesc->natts * sizeof(Datum));
+	nulls = (bool *) palloc(tupDesc->natts * sizeof(bool));
+
+	econtext = GetPerTupleExprContext(estate);
+
+	for (;;)
+	{
+		TupleTableSlot		   *slot;
+		bool					skip_tuple;
+		Oid						tuple_oid = InvalidOid;
+
+		const PartRelationInfo *prel;
+		ResultRelInfoHolder	   *rri_holder_child;
+		ResultRelInfo		   *child_result_rel;
+
+		CHECK_FOR_INTERRUPTS();
+
+		ResetPerTupleExprContext(estate);
+
+		/* Fetch PartRelationInfo for parent relation */
+		prel = get_pathman_relation_info(RelationGetRelid(parent_rel));
+
+		/* Switch into its memory context */
+		MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
+
+		if (!NextCopyFrom(cstate, econtext, values, nulls, &tuple_oid))
+			break;
+
+		/* Search for a matching partition */
+		rri_holder_child = select_partition_for_copy(prel, &parts_storage,
+													 values[prel->attnum - 1],
+													 estate);
+		child_result_rel = rri_holder_child->result_rel_info;
+		estate->es_result_relation_info = child_result_rel;
+
+		/* And now we can form the input tuple. */
+		tuple = heap_form_tuple(tupDesc, values, nulls);
+		if (tuple_oid != InvalidOid)
+			HeapTupleSetOid(tuple, tuple_oid);
+
+		/*
+		 * Constraints might reference the tableoid column, so initialize
+		 * t_tableOid before evaluating them.
+		 */
+		tuple->t_tableOid = RelationGetRelid(child_result_rel->ri_RelationDesc);
+
+		/* Triggers and stuff need to be invoked in query context. */
+		MemoryContextSwitchTo(oldcontext);
+
+		/* Place tuple in tuple slot --- but slot shouldn't free it */
+		slot = myslot;
+		ExecStoreTuple(tuple, slot, InvalidBuffer, false);
+
+		skip_tuple = false;
+
+		/* BEFORE ROW INSERT Triggers */
+		if (child_result_rel->ri_TrigDesc &&
+			child_result_rel->ri_TrigDesc->trig_insert_before_row)
+		{
+			slot = ExecBRInsertTriggers(estate, child_result_rel, slot);
+
+			if (slot == NULL)	/* "do nothing" */
+				skip_tuple = true;
+			else	/* trigger might have changed tuple */
+				tuple = ExecMaterializeSlot(slot);
+		}
+
+		/* Proceed if we still have a tuple */
+		if (!skip_tuple)
+		{
+			List *recheckIndexes = NIL;
+
+			/* Check the constraints of the tuple */
+			if (child_result_rel->ri_RelationDesc->rd_att->constr)
+				ExecConstraints(child_result_rel, slot, estate);
+
+			/* OK, store the tuple and create index entries for it */
+			simple_heap_insert(child_result_rel->ri_RelationDesc, tuple);
+
+			if (child_result_rel->ri_NumIndices > 0)
+				recheckIndexes = ExecInsertIndexTuples(slot, &(tuple->t_self),
+													   estate, false, NULL,
+													   NIL);
+
+			/* AFTER ROW INSERT Triggers */
+			ExecARInsertTriggers(estate, child_result_rel, tuple,
+								 recheckIndexes);
+
+			list_free(recheckIndexes);
+
+			/*
+			 * We count only tuples not suppressed by a BEFORE INSERT trigger;
+			 * this is the same definition used by execMain.c for counting
+			 * tuples inserted by an INSERT command.
+			 */
+			processed++;
+		}
+	}
+
+	MemoryContextSwitchTo(oldcontext);
+
+	/*
+	 * In the old protocol, tell pqcomm that we can process normal protocol
+	 * messages again.
+	 */
+	if (old_protocol)
+		pq_endmsgread();
+
+	/* Execute AFTER STATEMENT insertion triggers */
+	ExecASInsertTriggers(estate, parent_result_rel);
+
+	/* Handle queued AFTER triggers */
+	AfterTriggerEndQuery(estate);
+
+	pfree(values);
+	pfree(nulls);
+
+	ExecResetTupleTable(estate->es_tupleTable, false);
+	fini_result_parts_storage(&parts_storage);
+
+	FreeExecutorState(estate);
+
+	return processed;
+}
+
+/*
+ * Smart wrapper for scan_result_parts_storage().
+ */
+static ResultRelInfoHolder *
+select_partition_for_copy(const PartRelationInfo *prel,
+						  ResultPartsStorage *parts_storage,
+						  Datum value, EState *estate)
+{
+	ExprContext			   *econtext;
+	ResultRelInfoHolder	   *rri_holder;
+	Oid						selected_partid = InvalidOid;
+	Oid					   *parts;
+	int						nparts;
+
+	econtext = GetPerTupleExprContext(estate);
+
+	/* Search for matching partitions using partitioned column */
+	parts = find_partitions_for_value(value, prel, econtext, &nparts);
+
+	if (nparts > 1)
+		elog(ERROR, "PATHMAN COPY selected more than one partition");
+	else if (nparts == 0)
+		elog(ERROR,
+			 "There is no suitable partition for key '%s'",
+			 datum_to_cstring(value, prel->atttype));
+	else
+		selected_partid = parts[0];
+
+	/* Replace parent table with a suitable partition */
+	MemoryContextSwitchTo(estate->es_query_cxt);
+	rri_holder = scan_result_parts_storage(selected_partid, parts_storage);
+	MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
+
+	return rri_holder;
 }

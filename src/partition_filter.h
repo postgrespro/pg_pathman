@@ -24,19 +24,39 @@
  */
 typedef struct
 {
-	Oid					partid;
-	ResultRelInfo	   *result_rel_info;
+	Oid					partid;					/* partition's relid */
+	ResultRelInfo	   *result_rel_info;		/* cached ResultRelInfo */
 } ResultRelInfoHolder;
+
+/*
+ * Callback to be fired at rri_holder creation.
+ */
+typedef void (*on_new_rri_holder)(EState *estate,
+								  ResultRelInfoHolder *rri_holder,
+								  void *arg);
 
 /*
  * Cached ResultRelInfos of partitions.
  */
 typedef struct
 {
-	ResultRelInfo	   *saved_rel_info;
+	ResultRelInfo	   *saved_rel_info;			/* original ResultRelInfo (parent) */
 	HTAB			   *result_rels_table;
 	HASHCTL				result_rels_table_config;
+
+	bool				speculative_inserts;	/* for ExecOpenIndices() */
+
+	on_new_rri_holder	on_new_rri_holder_callback;
+	void			   *callback_arg;
+
+	EState			   *estate;
+	int					es_alloc_result_rels;	/* number of allocated result rels */
 } ResultPartsStorage;
+
+/*
+ * Standard size of ResultPartsStorage entry.
+ */
+#define ResultPartsStorageStandard	0
 
 typedef struct
 {
@@ -45,10 +65,10 @@ typedef struct
 	Oid					partitioned_table;
 	OnConflictAction	on_conflict_action;
 
-	Plan			   *subplan;		/* proxy variable to store subplan */
-	ResultPartsStorage	result_parts;
+	Plan			   *subplan;				/* proxy variable to store subplan */
+	ResultPartsStorage	result_parts;			/* partition ResultRelInfo cache */
 
-	bool				warning_triggered;
+	bool				warning_triggered;		/* WARNING message counter */
 } PartitionFilterState;
 
 
@@ -61,15 +81,22 @@ extern CustomExecMethods	partition_filter_exec_methods;
 void init_partition_filter_static_data(void);
 
 void add_partition_filters(List *rtable, Plan *plan);
+void check_acl_for_partition(EState *estate,
+							 ResultRelInfoHolder *rri_holder,
+							 void *arg);
 
 /* ResultPartsStorage init\fini\scan function */
-void init_result_parts_storage(ResultPartsStorage *parts_storage);
+void init_result_parts_storage(ResultPartsStorage *parts_storage,
+							   EState *estate,
+							   bool speculative_inserts,
+							   Size table_entry_size,
+							   on_new_rri_holder on_new_rri_holder_cb,
+							   void *on_new_rri_holder_cb_arg);
 void fini_result_parts_storage(ResultPartsStorage *parts_storage);
-ResultRelInfo * scan_result_parts_storage(Oid partid,
-										  ResultPartsStorage *storage,
-										  bool speculative_insertion);
+ResultRelInfoHolder * scan_result_parts_storage(Oid partid,
+												ResultPartsStorage *storage);
 
-/* */
+/* Find suitable partition using 'value' */
 Oid *find_partitions_for_value(Datum value, const PartRelationInfo *prel,
 							   ExprContext *econtext, int *nparts);
 
