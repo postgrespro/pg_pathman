@@ -19,6 +19,9 @@
 #include "utils/lsyscache.h"
 
 
+#define ALLOC_EXP	2
+
+
 bool				pg_pathman_enable_partition_filter = true;
 
 CustomScanMethods	partition_filter_plan_methods;
@@ -27,6 +30,7 @@ CustomExecMethods	partition_filter_exec_methods;
 
 static void partition_filter_visitor(Plan *plan, void *context);
 static List * pfilter_build_tlist(List *tlist);
+static int append_rri_to_estate(EState *estate, ResultRelInfo *rri, int cur_allocated);
 
 
 void
@@ -86,7 +90,7 @@ check_acl_for_partition(EState *estate,
 	rte->relkind = part_rel->rd_rel->relkind;
 	rte->requiredPerms = ACL_INSERT;
 
-	/* Check permissions for current partition */
+	/* FIXME: Check permissions for partition */
 	ExecCheckRTPerms(list_make1(rte), true);
 
 	/* TODO: append RTE to estate->es_range_table */
@@ -125,24 +129,35 @@ init_result_parts_storage(ResultPartsStorage *parts_storage,
 
 	parts_storage->on_new_rri_holder_callback = on_new_rri_holder_cb;
 	parts_storage->callback_arg = on_new_rri_holder_cb_arg;
+
+	/* Partitions must remain locked till transaction's end */
+	parts_storage->head_open_lock_mode = RowExclusiveLock;
+	parts_storage->heap_close_lock_mode = NoLock;
 }
 
 /*
  * Free ResultPartsStorage (close relations etc).
  */
 void
-fini_result_parts_storage(ResultPartsStorage *parts_storage)
+fini_result_parts_storage(ResultPartsStorage *parts_storage, bool close_rels)
 {
-	HASH_SEQ_STATUS			stat;
-	ResultRelInfoHolder	   *rri_holder; /* ResultRelInfo holder */
-
-	hash_seq_init(&stat, parts_storage->result_rels_table);
-	while ((rri_holder = (ResultRelInfoHolder *) hash_seq_search(&stat)) != NULL)
+	/* Close partitions and their indices if asked to */
+	if (close_rels)
 	{
-		ExecCloseIndices(rri_holder->result_rel_info);
-		heap_close(rri_holder->result_rel_info->ri_RelationDesc,
-				   RowExclusiveLock);
+		HASH_SEQ_STATUS			stat;
+		ResultRelInfoHolder	   *rri_holder; /* ResultRelInfo holder */
+
+		hash_seq_init(&stat, parts_storage->result_rels_table);
+		while ((rri_holder = (ResultRelInfoHolder *) hash_seq_search(&stat)) != NULL)
+		{
+			ExecCloseIndices(rri_holder->result_rel_info);
+
+			heap_close(rri_holder->result_rel_info->ri_RelationDesc,
+					   parts_storage->heap_close_lock_mode);
+		}
 	}
+
+	/* Finally destroy hash table */
 	hash_destroy(parts_storage->result_rels_table);
 }
 
@@ -150,15 +165,15 @@ fini_result_parts_storage(ResultPartsStorage *parts_storage)
  * Find a ResultRelInfo for the partition using ResultPartsStorage.
  */
 ResultRelInfoHolder *
-scan_result_parts_storage(Oid partid, ResultPartsStorage *storage)
+scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 {
 #define CopyToResultRelInfo(field_name) \
-	( part_result_rel_info->field_name = storage->saved_rel_info->field_name )
+	( part_result_rel_info->field_name = parts_storage->saved_rel_info->field_name )
 
 	ResultRelInfoHolder	   *rri_holder;
 	bool					found;
 
-	rri_holder = hash_search(storage->result_rels_table,
+	rri_holder = hash_search(parts_storage->result_rels_table,
 							 (const void *) &partid,
 							 HASH_ENTER, &found);
 
@@ -167,16 +182,16 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *storage)
 	{
 		ResultRelInfo *part_result_rel_info = makeNode(ResultRelInfo);
 
+		/* Check that 'saved_rel_info' is set */
+		if (!parts_storage->saved_rel_info)
+			elog(ERROR, "ResultPartsStorage contains no saved_rel_info");
+
 		InitResultRelInfo(part_result_rel_info,
-						  heap_open(partid, RowExclusiveLock),
-						  0,
+						  heap_open(partid, parts_storage->head_open_lock_mode),
+						  parts_storage->saved_rel_info->ri_RangeTableIndex,
 						  0); /* TODO: select suitable options */
 
-		ExecOpenIndices(part_result_rel_info, storage->speculative_inserts);
-
-		/* Check that 'saved_rel_info' is set */
-		if (!storage->saved_rel_info)
-			elog(ERROR, "ResultPartsStorage contains no saved_rel_info");
+		ExecOpenIndices(part_result_rel_info, parts_storage->speculative_inserts);
 
 		/* Copy necessary fields from saved ResultRelInfo */
 		CopyToResultRelInfo(ri_WithCheckOptions);
@@ -189,18 +204,21 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *storage)
 		/* ri_ConstraintExprs will be initialized by ExecRelCheck() */
 		part_result_rel_info->ri_ConstraintExprs = NULL;
 
-		/* Make 'range table index' point to the parent relation */
-		part_result_rel_info->ri_RangeTableIndex =
-				storage->saved_rel_info->ri_RangeTableIndex;
-
 		/* Now fill the ResultRelInfo holder */
 		rri_holder->partid = partid;
 		rri_holder->result_rel_info = part_result_rel_info;
 
+		/* Add ResultRelInfo to storage->es_alloc_result_rels */
+		parts_storage->es_alloc_result_rels =
+				append_rri_to_estate(parts_storage->estate,
+									 part_result_rel_info,
+									 parts_storage->es_alloc_result_rels);
+
 		/* Call on_new_rri_holder_callback() if needed */
-		if (storage->on_new_rri_holder_callback)
-			storage->on_new_rri_holder_callback(storage->estate, rri_holder,
-												storage->callback_arg);
+		if (parts_storage->on_new_rri_holder_callback)
+			parts_storage->on_new_rri_holder_callback(parts_storage->estate,
+													  rri_holder,
+													  parts_storage->callback_arg);
 	}
 
 	return rri_holder;
@@ -412,8 +430,8 @@ partition_filter_end(CustomScanState *node)
 {
 	PartitionFilterState   *state = (PartitionFilterState *) node;
 
-	/* Close cached relations */
-	fini_result_parts_storage(&state->result_parts);
+	/* Executor will close rels via estate->es_result_relations */
+	fini_result_parts_storage(&state->result_parts, false);
 
 	Assert(list_length(node->custom_ps) == 1);
 	ExecEndNode((PlanState *) linitial(node->custom_ps));
@@ -430,6 +448,29 @@ void
 partition_filter_explain(CustomScanState *node, List *ancestors, ExplainState *es)
 {
 	/* Nothing to do here now */
+}
+
+static int
+append_rri_to_estate(EState *estate, ResultRelInfo *rri, int cur_allocated)
+{
+	int result_rels_allocated = cur_allocated;
+
+	if (result_rels_allocated <= estate->es_num_result_relations)
+	{
+		ResultRelInfo *rri_array = estate->es_result_relations;
+
+		result_rels_allocated = result_rels_allocated * ALLOC_EXP + 1;
+		estate->es_result_relations = palloc(result_rels_allocated *
+												sizeof(ResultRelInfo));
+		memcpy(estate->es_result_relations,
+			   rri_array,
+			   estate->es_num_result_relations * sizeof(ResultRelInfo));
+	}
+
+	/* Append ResultRelInfo to 'es_result_relations' array */
+	estate->es_result_relations[estate->es_num_result_relations++] = *rri;
+
+	return result_rels_allocated;
 }
 
 /*
@@ -465,9 +506,9 @@ pfilter_build_tlist(List *tlist)
 }
 
 /*
- * Add partition filters to ModifyTable node's children
+ * Add partition filters to ModifyTable node's children.
  *
- * 'context' should point to the PlannedStmt->rtable
+ * 'context' should point to the PlannedStmt->rtable.
  */
 static void
 partition_filter_visitor(Plan *plan, void *context)

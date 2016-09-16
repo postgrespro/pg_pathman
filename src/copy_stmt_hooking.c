@@ -516,7 +516,9 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	pfree(nulls);
 
 	ExecResetTupleTable(estate->es_tupleTable, false);
-	fini_result_parts_storage(&parts_storage);
+
+	/* Close partitions and destroy hash table */
+	fini_result_parts_storage(&parts_storage, true);
 
 	FreeExecutorState(estate);
 

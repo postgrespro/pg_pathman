@@ -84,8 +84,8 @@ transform_plans_into_states(RuntimeAppendState *scan_state,
 static ChildScanCommon *
 select_required_plans(HTAB *children_table, Oid *parts, int nparts, int *nres)
 {
-	int					allocated = INITIAL_ALLOC_NUM;
-	int					used = 0;
+	uint32				allocated = INITIAL_ALLOC_NUM,
+						used = 0;
 	ChildScanCommon	   *result;
 	int					i;
 
@@ -101,7 +101,7 @@ select_required_plans(HTAB *children_table, Oid *parts, int nparts, int *nres)
 
 		if (allocated <= used)
 		{
-			allocated *= ALLOC_EXP;
+			allocated = allocated * ALLOC_EXP + 1;
 			result = repalloc(result, allocated * sizeof(ChildScanCommon));
 		}
 
@@ -289,8 +289,8 @@ get_partition_oids(List *ranges, int *n, const PartRelationInfo *prel,
 				   bool include_parent)
 {
 	ListCell   *range_cell;
-	uint32		allocated = INITIAL_ALLOC_NUM;
-	uint32		used = 0;
+	uint32		allocated = INITIAL_ALLOC_NUM,
+				used = 0;
 	Oid		   *result = (Oid *) palloc(allocated * sizeof(Oid));
 	Oid		   *children = PrelGetChildrenArray(prel);
 
@@ -310,7 +310,7 @@ get_partition_oids(List *ranges, int *n, const PartRelationInfo *prel,
 		{
 			if (allocated <= used)
 			{
-				allocated *= ALLOC_EXP;
+				allocated = allocated * ALLOC_EXP + 1;
 				result = repalloc(result, allocated * sizeof(Oid));
 			}
 
@@ -595,10 +595,10 @@ explain_append_common(CustomScanState *node, HTAB *children_table, ExplainState 
 	/* Construct excess PlanStates */
 	if (!es->analyze)
 	{
-		int					allocated = INITIAL_ALLOC_NUM;
-		int					used = 0;
-		ChildScanCommon	   *custom_ps;
-		ChildScanCommon		child;
+		uint32				allocated = INITIAL_ALLOC_NUM,
+							used = 0;
+		ChildScanCommon	   *custom_ps,
+							child;
 		HASH_SEQ_STATUS		seqstat;
 		int					i;
 
@@ -614,7 +614,7 @@ explain_append_common(CustomScanState *node, HTAB *children_table, ExplainState 
 		{
 			if (allocated <= used)
 			{
-				allocated *= ALLOC_EXP;
+				allocated = allocated * ALLOC_EXP + 1;
 				custom_ps = repalloc(custom_ps, allocated * sizeof(ChildScanCommon));
 			}
 

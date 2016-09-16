@@ -12,7 +12,7 @@
 #define RUNTIME_INSERT_H
 
 #include "relation_info.h"
-#include "pathman.h"
+#include "utils.h"
 
 #include "postgres.h"
 #include "commands/explain.h"
@@ -51,6 +51,9 @@ typedef struct
 
 	EState			   *estate;
 	int					es_alloc_result_rels;	/* number of allocated result rels */
+
+	LOCKMODE			head_open_lock_mode;
+	LOCKMODE			heap_close_lock_mode;
 } ResultPartsStorage;
 
 /*
@@ -68,7 +71,7 @@ typedef struct
 	Plan			   *subplan;				/* proxy variable to store subplan */
 	ResultPartsStorage	result_parts;			/* partition ResultRelInfo cache */
 
-	bool				warning_triggered;		/* WARNING message counter */
+	bool				warning_triggered;		/* warning message counter */
 } PartitionFilterState;
 
 
@@ -92,7 +95,8 @@ void init_result_parts_storage(ResultPartsStorage *parts_storage,
 							   Size table_entry_size,
 							   on_new_rri_holder on_new_rri_holder_cb,
 							   void *on_new_rri_holder_cb_arg);
-void fini_result_parts_storage(ResultPartsStorage *parts_storage);
+void fini_result_parts_storage(ResultPartsStorage *parts_storage,
+							   bool close_rels);
 ResultRelInfoHolder * scan_result_parts_storage(Oid partid,
 												ResultPartsStorage *storage);
 

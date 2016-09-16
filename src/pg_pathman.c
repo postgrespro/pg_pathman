@@ -406,6 +406,7 @@ append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	PlanRowMark	   *child_rowmark;
 	AttrNumber		i;
 
+	/* FIXME: acquire a suitable lock on partition */
 	newrelation = heap_open(childOid, NoLock);
 
 	/*
