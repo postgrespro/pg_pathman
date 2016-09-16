@@ -294,13 +294,11 @@ PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
 	/* COPY ... FROM ... */
 	if (is_from)
 	{
-		bool is_old_protocol;
-
-		is_old_protocol = PG_PROTOCOL_MAJOR(FrontendProtocol) < 3 &&
-						  stmt->filename == NULL;
+		bool is_old_protocol = PG_PROTOCOL_MAJOR(FrontendProtocol) < 3 &&
+							   stmt->filename == NULL;
 
 		/* There should be relation */
-		Assert(rel);
+		if (!rel) elog(FATAL, "No relation for PATHMAN COPY FROM");
 
 		/* check read-only transaction and parallel mode */
 		if (XactReadOnly && rel && !rel->rd_islocaltemp)
