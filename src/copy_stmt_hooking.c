@@ -301,7 +301,7 @@ PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
 		if (!rel) elog(FATAL, "No relation for PATHMAN COPY FROM");
 
 		/* check read-only transaction and parallel mode */
-		if (XactReadOnly && rel && !rel->rd_islocaltemp)
+		if (XactReadOnly && !rel->rd_islocaltemp)
 			PreventCommandIfReadOnly("PATHMAN COPY FROM");
 		PreventCommandIfParallelMode("PATHMAN COPY FROM");
 
