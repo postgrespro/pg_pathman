@@ -22,6 +22,7 @@
 #include "access/sysattr.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_constraint.h"
+#include "catalog/pg_constraint_fn.h"
 #include "catalog/pg_inherits.h"
 #include "catalog/pg_inherits_fn.h"
 #include "catalog/pg_type.h"

@@ -15,6 +15,7 @@
 #include "catalog/pg_collation.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
+#include "nodes/plannodes.h"
 #include "optimizer/clauses.h"
 #include "optimizer/cost.h"
 #include "optimizer/planmain.h"
@@ -601,6 +602,27 @@ find_ec_member_for_tle(EquivalenceClass *ec,
 	return NULL;
 }
 
+/*
+ * make_result
+ *	  Build a Result plan node
+ */
+static Result *
+make_result(List *tlist,
+			Node *resconstantqual,
+			Plan *subplan)
+{
+	Result	   *node = makeNode(Result);
+	Plan	   *plan = &node->plan;
+
+	plan->targetlist = tlist;
+	plan->qual = NIL;
+	plan->lefttree = subplan;
+	plan->righttree = NULL;
+	node->resconstantqual = resconstantqual;
+
+	return node;
+}
+
 static Plan *
 prepare_sort_from_pathkeys(PlannerInfo *root, Plan *lefttree, List *pathkeys,
 						   Relids relids,
@@ -727,6 +749,7 @@ prepare_sort_from_pathkeys(PlannerInfo *root, Plan *lefttree, List *pathkeys,
 				EquivalenceMember *em = (EquivalenceMember *) lfirst(j);
 				List	   *exprvars;
 				ListCell   *k;
+				int			varflag;
 
 				/*
 				 * We shouldn't be trying to sort by an equivalence class that
@@ -745,9 +768,8 @@ prepare_sort_from_pathkeys(PlannerInfo *root, Plan *lefttree, List *pathkeys,
 					continue;
 
 				sortexpr = em->em_expr;
-				exprvars = pull_var_clause((Node *) sortexpr,
-										   PVC_INCLUDE_AGGREGATES,
-										   PVC_INCLUDE_PLACEHOLDERS);
+				varflag = PVC_INCLUDE_AGGREGATES | PVC_INCLUDE_PLACEHOLDERS;
+				exprvars = pull_var_clause((Node *) sortexpr, varflag);
 				foreach(k, exprvars)
 				{
 					if (!tlist_member_ignore_relabel(lfirst(k), tlist))
@@ -771,8 +793,7 @@ prepare_sort_from_pathkeys(PlannerInfo *root, Plan *lefttree, List *pathkeys,
 			{
 				/* copy needed so we don't modify input's tlist below */
 				tlist = copyObject(tlist);
-				lefttree = (Plan *) make_result(root, tlist, NULL,
-												lefttree);
+				lefttree = (Plan *) make_result(tlist, NULL, lefttree);
 			}
 
 			/* Don't bother testing is_projection_capable_plan again */

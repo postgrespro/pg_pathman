@@ -17,7 +17,7 @@
 #include "postgres.h"
 #include "commands/explain.h"
 #include "optimizer/planner.h"
-
+#include "nodes/extensible.h"
 
 typedef struct
 {

@@ -169,8 +169,8 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		 */
 		nest_path->path.rows = get_parameterized_joinrel_size(root,
 															  joinrel,
-															  outer->rows,
-															  inner->rows,
+															  outer,
+															  inner,
 															  extra->sjinfo,
 															  filtered_joinclauses);
 

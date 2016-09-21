@@ -376,11 +376,11 @@ set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
 		Assert(childrel->rows > 0);
 
 		parent_rows += childrel->rows;
-		parent_size += childrel->width * childrel->rows;
+		parent_size += childrel->reltarget->width * childrel->rows;
 	}
 
 	rel->rows = parent_rows;
-	rel->width = rint(parent_size / parent_rows);
+	rel->reltarget->width = rint(parent_size / parent_rows);
 	rel->tuples = parent_rows;
 }
 
@@ -423,15 +423,19 @@ append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	childrel = build_simple_rel(root, childRTindex, RELOPT_OTHER_MEMBER_REL);
 
 	/* Copy targetlist */
-	childrel->reltargetlist = NIL;
-	foreach(lc, rel->reltargetlist)
+	childrel->reltarget->exprs = NIL;
+	childrel->reltarget->sortgrouprefs = (Index *) palloc(
+						list_length(rel->reltarget->exprs) * sizeof(Index));
+	foreach(lc, rel->reltarget->exprs)
 	{
 		Node *new_target;
 
 		node = (Node *) lfirst(lc);
 		new_target = copyObject(node);
 		change_varnos(new_target, rel->relid, childrel->relid);
-		childrel->reltargetlist = lappend(childrel->reltargetlist, new_target);
+		childrel->reltarget->exprs = lappend(childrel->reltarget->exprs,
+											 new_target);
+		/* childrel->reltarget->sortgrouprefs[i++] =  */
 	}
 
 	/* Copy attr_needed & attr_widths */
@@ -1640,7 +1644,7 @@ set_plain_rel_size(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 	 * Test any partial indexes of rel for applicability.  We must do this
 	 * first since partial unique indexes can affect size estimates.
 	 */
-	check_partial_indexes(root, rel);
+	check_index_predicates(root, rel);
 
 	/* Mark rel with estimated output rows, width, etc */
 	set_baserel_size_estimates(root, rel);
@@ -1854,7 +1858,7 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel,
 	 * if we have zero or one live subpath due to constraint exclusion.)
 	 */
 	if (subpaths_valid)
-		add_path(rel, (Path *) create_append_path(rel, subpaths, NULL));
+		add_path(rel, (Path *) create_append_path(rel, subpaths, NULL, 0));
 
 	/*
 	 * Also build unparameterized MergeAppend paths based on the collected
@@ -1905,7 +1909,7 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel,
 
 		if (subpaths_valid)
 			add_path(rel, (Path *)
-					 create_append_path(rel, subpaths, required_outer));
+					 create_append_path(rel, subpaths, required_outer, 0));
 	}
 }
 
@@ -2083,13 +2087,13 @@ generate_mergeappend_paths(PlannerInfo *root, RelOptInfo *rel,
 		{
 			Path *path;
 
-			path = (Path *) create_append_path(rel, startup_subpaths, NULL);
+			path = (Path *) create_append_path(rel, startup_subpaths, NULL, 0);
 			path->pathkeys = pathkeys;
 			add_path(rel, path);
 
 			if (startup_neq_total)
 			{
-				path = (Path *) create_append_path(rel, total_subpaths, NULL);
+				path = (Path *) create_append_path(rel, total_subpaths, NULL, 0);
 				path->pathkeys = pathkeys;
 				add_path(rel, path);
 			}
@@ -2103,14 +2107,14 @@ generate_mergeappend_paths(PlannerInfo *root, RelOptInfo *rel,
 			Path *path;
 
 			path = (Path *) create_append_path(rel,
-								list_reverse(startup_subpaths), NULL);
+								list_reverse(startup_subpaths), NULL, 0);
 			path->pathkeys = pathkeys;
 			add_path(rel, path);
 
 			if (startup_neq_total)
 			{
 				path = (Path *) create_append_path(rel,
-								list_reverse(total_subpaths), NULL);
+								list_reverse(total_subpaths), NULL, 0);
 				path->pathkeys = pathkeys;
 				add_path(rel, path);
 			}
