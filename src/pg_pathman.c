@@ -9,6 +9,8 @@
  * ------------------------------------------------------------------------
  */
 
+#include "pg_compat.h"
+
 #include "pathman.h"
 #include "init.h"
 #include "hooks.h"
@@ -42,7 +44,6 @@
 #include "utils/selfuncs.h"
 #include "utils/snapmgr.h"
 #include "utils/typcache.h"
-
 
 PG_MODULE_MAGIC;
 
@@ -346,44 +347,6 @@ handle_modification_query(Query *parse)
 	return;
 }
 
-void
-set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
-					Index rti, RangeTblEntry *rte)
-{
-	double		parent_rows = 0;
-	double		parent_size = 0;
-	ListCell   *l;
-
-	foreach(l, root->append_rel_list)
-	{
-		AppendRelInfo *appinfo = (AppendRelInfo *) lfirst(l);
-		Index		childRTindex,
-					parentRTindex = rti;
-		RelOptInfo *childrel;
-
-		/* append_rel_list contains all append rels; ignore others */
-		if (appinfo->parent_relid != parentRTindex)
-			continue;
-
-		childRTindex = appinfo->child_relid;
-
-		childrel = find_base_rel(root, childRTindex);
-		Assert(childrel->reloptkind == RELOPT_OTHER_MEMBER_REL);
-
-		/*
-		 * Accumulate size information from each live child.
-		 */
-		Assert(childrel->rows > 0);
-
-		parent_rows += childrel->rows;
-		parent_size += childrel->reltarget->width * childrel->rows;
-	}
-
-	rel->rows = parent_rows;
-	rel->reltarget->width = rint(parent_size / parent_rows);
-	rel->tuples = parent_rows;
-}
-
 /*
  * Creates child relation and adds it to root.
  * Returns child index in simple_rel_array
@@ -396,7 +359,6 @@ append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	RelOptInfo	   *childrel;
 	Index			childRTindex;
 	AppendRelInfo  *appinfo;
-	Node		   *node;
 	ListCell	   *lc,
 				   *lc2;
 	Relation		newrelation;
@@ -423,20 +385,7 @@ append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	childrel = build_simple_rel(root, childRTindex, RELOPT_OTHER_MEMBER_REL);
 
 	/* Copy targetlist */
-	childrel->reltarget->exprs = NIL;
-	childrel->reltarget->sortgrouprefs = (Index *) palloc(
-						list_length(rel->reltarget->exprs) * sizeof(Index));
-	foreach(lc, rel->reltarget->exprs)
-	{
-		Node *new_target;
-
-		node = (Node *) lfirst(lc);
-		new_target = copyObject(node);
-		change_varnos(new_target, rel->relid, childrel->relid);
-		childrel->reltarget->exprs = lappend(childrel->reltarget->exprs,
-											 new_target);
-		/* childrel->reltarget->sortgrouprefs[i++] =  */
-	}
+	copy_targetlist_compat(childrel, rel);
 
 	/* Copy attr_needed & attr_widths */
 	childrel->attr_needed = (Relids *)
@@ -1644,7 +1593,7 @@ set_plain_rel_size(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 	 * Test any partial indexes of rel for applicability.  We must do this
 	 * first since partial unique indexes can affect size estimates.
 	 */
-	check_index_predicates(root, rel);
+	check_index_predicates_compat(root, rel);
 
 	/* Mark rel with estimated output rows, width, etc */
 	set_baserel_size_estimates(root, rel);
@@ -1858,7 +1807,8 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel,
 	 * if we have zero or one live subpath due to constraint exclusion.)
 	 */
 	if (subpaths_valid)
-		add_path(rel, (Path *) create_append_path(rel, subpaths, NULL, 0));
+		add_path(rel,
+				 (Path *) create_append_path_compat(rel, subpaths, NULL, 0));
 
 	/*
 	 * Also build unparameterized MergeAppend paths based on the collected
@@ -1909,7 +1859,7 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel,
 
 		if (subpaths_valid)
 			add_path(rel, (Path *)
-					 create_append_path(rel, subpaths, required_outer, 0));
+					 create_append_path_compat(rel, subpaths, required_outer, 0));
 	}
 }
 
@@ -2087,13 +2037,15 @@ generate_mergeappend_paths(PlannerInfo *root, RelOptInfo *rel,
 		{
 			Path *path;
 
-			path = (Path *) create_append_path(rel, startup_subpaths, NULL, 0);
+			path = (Path *) create_append_path_compat(rel, startup_subpaths,
+													  NULL, 0);
 			path->pathkeys = pathkeys;
 			add_path(rel, path);
 
 			if (startup_neq_total)
 			{
-				path = (Path *) create_append_path(rel, total_subpaths, NULL, 0);
+				path = (Path *) create_append_path_compat(rel, total_subpaths,
+														  NULL, 0);
 				path->pathkeys = pathkeys;
 				add_path(rel, path);
 			}
@@ -2106,14 +2058,14 @@ generate_mergeappend_paths(PlannerInfo *root, RelOptInfo *rel,
 			 */
 			Path *path;
 
-			path = (Path *) create_append_path(rel,
+			path = (Path *) create_append_path_compat(rel,
 								list_reverse(startup_subpaths), NULL, 0);
 			path->pathkeys = pathkeys;
 			add_path(rel, path);
 
 			if (startup_neq_total)
 			{
-				path = (Path *) create_append_path(rel,
+				path = (Path *) create_append_path_compat(rel,
 								list_reverse(total_subpaths), NULL, 0);
 				path->pathkeys = pathkeys;
 				add_path(rel, path);
