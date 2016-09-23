@@ -73,7 +73,21 @@ is_pathman_related_copy(Node *parsetree)
 	/* Check that relation is partitioned */
 	if (get_pathman_relation_info(partitioned_table))
 	{
-		elog(DEBUG1, "Overriding default behavior for COPY (%u)", partitioned_table);
+		ListCell *lc;
+
+		/* Analyze options list */
+		foreach (lc, copy_stmt->options)
+		{
+			DefElem *defel = (DefElem *) lfirst(lc);
+
+			Assert(IsA(defel, DefElem));
+
+			/* We do not support freeze */
+			if (strcmp(defel->defname, "freeze") == 0)
+				elog(ERROR, "freeze is not supported for partitioned tables");
+		}
+
+		elog(DEBUG1, "Overriding default behavior for COPY [%u]", partitioned_table);
 		return true;
 	}
 
