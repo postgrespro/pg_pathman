@@ -1,3 +1,13 @@
+/* ------------------------------------------------------------------------
+ *
+ * pg_compat.c
+ *		Compatibility tools
+ *
+ * Copyright (c) 2016, Postgres Professional
+ *
+ * ------------------------------------------------------------------------
+ */
+
 #include "pg_compat.h"
 
 #include "optimizer/pathnode.h"
@@ -6,23 +16,6 @@
 
 #include <math.h>
 
-/*
-double
-get_parameterized_joinrel_size_compat(PlannerInfo *root, RelOptInfo *rel,
-									  Path *outer_path, Path *inner_path,
-									  SpecialJoinInfo *sjinfo,
-									  List *restrict_clauses)
-{
-#if PG_VERSION_NUM >= 90600
-	return get_parameterized_joinrel_size(root, rel, outer_path, inner_path,
-										  sjinfo, restrict_clauses);
-#else
-	return get_parameterized_joinrel_size(root, rel, outer_path->rows,
-										  inner_path->rows, sjinfo,
-#endif
-										  restrict_clauses);
-}
-*/
 
 void
 set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel,

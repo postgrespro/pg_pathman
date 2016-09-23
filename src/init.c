@@ -22,7 +22,6 @@
 #include "access/sysattr.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_constraint.h"
-#include "catalog/pg_constraint_fn.h"
 #include "catalog/pg_inherits.h"
 #include "catalog/pg_inherits_fn.h"
 #include "catalog/pg_type.h"
@@ -37,6 +36,10 @@
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
+
+#if PG_VERSION_NUM >= 90600
+#include "catalog/pg_constraint_fn.h"
+#endif
 
 
 /* Help user in case of emergency */

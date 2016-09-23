@@ -14,6 +14,8 @@ before_install:
   - sudo sh ./travis/apt.postgresql.org.sh
 
 env:
+  - PGVERSION=9.6 CHECK_CODE=true
+  - PGVERSION=9.6 CHECK_CODE=false
   - PGVERSION=9.5 CHECK_CODE=true
   - PGVERSION=9.5 CHECK_CODE=false
 
