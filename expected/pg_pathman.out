@@ -1267,7 +1267,7 @@ SELECT pathman.disable_auto('test.range_rel');
 (1 row)
 
 INSERT INTO test.range_rel (dt) VALUES ('2015-06-01');
-ERROR:  There is no suitable partition for key 'Mon Jun 01 00:00:00 2015'
+ERROR:  no suitable partition for key 'Mon Jun 01 00:00:00 2015'
 SELECT pathman.enable_auto('test.range_rel');
  enable_auto 
 -------------

@@ -38,9 +38,6 @@ static uint64 PathmanCopyFrom(CopyState cstate,
 							  Relation parent_rel,
 							  List *range_table,
 							  bool old_protocol);
-static ResultRelInfoHolder *select_partition_for_copy(const PartRelationInfo *prel,
-													  ResultPartsStorage *parts_storage,
-													  Datum value, EState *estate);
 
 
 /*
@@ -376,7 +373,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	/* Initialize ResultPartsStorage */
 	init_result_parts_storage(&parts_storage, estate, false,
 							  ResultPartsStorageStandard,
-							  check_acl_for_partition, NULL);
+							  NULL, NULL);
 	parts_storage.saved_rel_info = parent_result_rel;
 
 	/* Set up a tuple slot too */
@@ -418,16 +415,19 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 		/* Fetch PartRelationInfo for parent relation */
 		prel = get_pathman_relation_info(RelationGetRelid(parent_rel));
 
-		/* Switch into its memory context */
+		/* Switch into per tuple memory context */
 		MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 
 		if (!NextCopyFrom(cstate, econtext, values, nulls, &tuple_oid))
 			break;
 
+		if (nulls[prel->attnum - 1])
+			elog(ERROR, ERR_PART_ATTR_NULL);
+
 		/* Search for a matching partition */
-		rri_holder_child = select_partition_for_copy(prel, &parts_storage,
-													 values[prel->attnum - 1],
-													 estate);
+		rri_holder_child = select_partition_for_insert(prel, &parts_storage,
+													   values[prel->attnum - 1],
+													   estate, false);
 		child_result_rel = rri_holder_child->result_rel_info;
 		estate->es_result_relation_info = child_result_rel;
 
@@ -477,8 +477,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 
 			if (child_result_rel->ri_NumIndices > 0)
 				recheckIndexes = ExecInsertIndexTuples(slot, &(tuple->t_self),
-													   estate, false, NULL,
-													   NIL);
+													   estate, false, NULL, NIL);
 
 			/* AFTER ROW INSERT Triggers */
 			ExecARInsertTriggers(estate, child_result_rel, tuple,
@@ -521,40 +520,4 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	FreeExecutorState(estate);
 
 	return processed;
-}
-
-/*
- * Smart wrapper for scan_result_parts_storage().
- */
-static ResultRelInfoHolder *
-select_partition_for_copy(const PartRelationInfo *prel,
-						  ResultPartsStorage *parts_storage,
-						  Datum value, EState *estate)
-{
-	ExprContext			   *econtext;
-	ResultRelInfoHolder	   *rri_holder;
-	Oid						selected_partid = InvalidOid;
-	Oid					   *parts;
-	int						nparts;
-
-	econtext = GetPerTupleExprContext(estate);
-
-	/* Search for matching partitions using partitioned column */
-	parts = find_partitions_for_value(value, prel, econtext, &nparts);
-
-	if (nparts > 1)
-		elog(ERROR, "PATHMAN COPY selected more than one partition");
-	else if (nparts == 0)
-		elog(ERROR,
-			 "There is no suitable partition for key '%s'",
-			 datum_to_cstring(value, prel->atttype));
-	else
-		selected_partid = parts[0];
-
-	/* Replace parent table with a suitable partition */
-	MemoryContextSwitchTo(estate->es_query_cxt);
-	rri_holder = scan_result_parts_storage(selected_partid, parts_storage);
-	MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
-
-	return rri_holder;
 }

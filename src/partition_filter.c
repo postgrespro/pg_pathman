@@ -17,9 +17,23 @@
 #include "utils/memutils.h"
 #include "nodes/nodeFuncs.h"
 #include "utils/lsyscache.h"
+#include "utils/syscache.h"
 
 
 #define ALLOC_EXP	2
+
+
+/*
+ * We use this struct as an argument for fake
+ * MemoryContextCallback pf_memcxt_callback()
+ * in order to attach some additional info to
+ * EState (estate->es_query_cxt is involved).
+ */
+typedef struct
+{
+	int		estate_alloc_result_rels;	/* number of allocated result rels */
+	bool	estate_not_modified;		/* did we modify EState somehow? */
+} estate_mod_data;
 
 
 bool				pg_pathman_enable_partition_filter = true;
@@ -28,9 +42,11 @@ CustomScanMethods	partition_filter_plan_methods;
 CustomExecMethods	partition_filter_exec_methods;
 
 
+static estate_mod_data * fetch_estate_mod_data(EState *estate);
 static void partition_filter_visitor(Plan *plan, void *context);
 static List * pfilter_build_tlist(List *tlist);
-static int append_rri_to_estate(EState *estate, ResultRelInfo *rri, int cur_allocated);
+static Index append_rte_to_estate(EState *estate, RangeTblEntry *rte);
+static int append_rri_to_estate(EState *estate, ResultRelInfo *rri);
 
 
 void
@@ -71,31 +87,6 @@ add_partition_filters(List *rtable, Plan *plan)
 		plan_tree_walker(plan, partition_filter_visitor, rtable);
 }
 
-/*
- * This callback adds a new RangeTblEntry once
- * partition is opened for an INSERT.
- */
-void
-check_acl_for_partition(EState *estate,
-						ResultRelInfoHolder *rri_holder,
-						void *arg)
-{
-	RangeTblEntry  *rte;
-	Relation		part_rel = rri_holder->result_rel_info->ri_RelationDesc;
-
-	rte = makeNode(RangeTblEntry);
-
-	rte->rtekind = RTE_RELATION;
-	rte->relid = rri_holder->partid;
-	rte->relkind = part_rel->rd_rel->relkind;
-	rte->requiredPerms = ACL_INSERT;
-
-	/* FIXME: Check permissions for partition */
-	ExecCheckRTPerms(list_make1(rte), true);
-
-	/* TODO: append RTE to estate->es_range_table */
-}
-
 
 /*
  * Initialize ResultPartsStorage (hash table etc).
@@ -123,12 +114,14 @@ init_result_parts_storage(ResultPartsStorage *parts_storage,
 												   result_rels_table_config,
 												   HASH_ELEM | HASH_BLOBS);
 	parts_storage->estate = estate;
-	parts_storage->es_alloc_result_rels = estate->es_num_result_relations;
-	parts_storage->speculative_inserts = speculative_inserts;
 	parts_storage->saved_rel_info = NULL;
 
 	parts_storage->on_new_rri_holder_callback = on_new_rri_holder_cb;
 	parts_storage->callback_arg = on_new_rri_holder_cb_arg;
+
+	/* Currenly ResultPartsStorage is used only for INSERTs */
+	parts_storage->command_type = CMD_INSERT;
+	parts_storage->speculative_inserts = speculative_inserts;
 
 	/* Partitions must remain locked till transaction's end */
 	parts_storage->head_open_lock_mode = RowExclusiveLock;
@@ -180,18 +173,57 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 	/* If not found, create & cache new ResultRelInfo */
 	if (!found)
 	{
-		ResultRelInfo *part_result_rel_info = makeNode(ResultRelInfo);
+		Relation		child_rel;
+		RangeTblEntry  *child_rte,
+					   *parent_rte;
+		Index			child_rte_idx;
+		ResultRelInfo  *part_result_rel_info;
+
+		LockRelationOid(partid, parts_storage->head_open_lock_mode);
+		if(!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(partid)))
+		{
+			UnlockRelationOid(partid, parts_storage->head_open_lock_mode);
+			return NULL;
+		}
+
+		parent_rte = rt_fetch(parts_storage->saved_rel_info->ri_RangeTableIndex,
+							  parts_storage->estate->es_range_table);
+
+		/* Open relation and check if it is a valid target */
+		child_rel = heap_open(partid, NoLock);
+		CheckValidResultRel(child_rel, parts_storage->command_type);
+
+		/* Create RangeTblEntry for partition */
+		child_rte = makeNode(RangeTblEntry);
+
+		child_rte->rtekind = RTE_RELATION;
+		child_rte->relid = partid;
+		child_rte->relkind = child_rel->rd_rel->relkind;
+		child_rte->eref = parent_rte->eref;
+		child_rte->requiredPerms = parent_rte->requiredPerms;
+		child_rte->checkAsUser = parent_rte->checkAsUser;
+		child_rte->insertedCols = parent_rte->insertedCols;
+
+		/* Check permissions for partition */
+		ExecCheckRTPerms(list_make1(child_rte), true);
+
+		/* Append RangeTblEntry to estate->es_range_table */
+		child_rte_idx = append_rte_to_estate(parts_storage->estate, child_rte);
+
+		/* Create ResultRelInfo for partition */
+		part_result_rel_info = makeNode(ResultRelInfo);
 
 		/* Check that 'saved_rel_info' is set */
 		if (!parts_storage->saved_rel_info)
 			elog(ERROR, "ResultPartsStorage contains no saved_rel_info");
 
 		InitResultRelInfo(part_result_rel_info,
-						  heap_open(partid, parts_storage->head_open_lock_mode),
-						  parts_storage->saved_rel_info->ri_RangeTableIndex,
-						  0); /* TODO: select suitable options */
+						  child_rel,
+						  child_rte_idx,
+						  parts_storage->estate->es_instrument);
 
-		ExecOpenIndices(part_result_rel_info, parts_storage->speculative_inserts);
+		if (parts_storage->command_type != CMD_DELETE)
+			ExecOpenIndices(part_result_rel_info, parts_storage->speculative_inserts);
 
 		/* Copy necessary fields from saved ResultRelInfo */
 		CopyToResultRelInfo(ri_WithCheckOptions);
@@ -208,11 +240,8 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 		rri_holder->partid = partid;
 		rri_holder->result_rel_info = part_result_rel_info;
 
-		/* Add ResultRelInfo to storage->es_alloc_result_rels */
-		parts_storage->es_alloc_result_rels =
-				append_rri_to_estate(parts_storage->estate,
-									 part_result_rel_info,
-									 parts_storage->es_alloc_result_rels);
+		/* Append ResultRelInfo to storage->es_alloc_result_rels */
+		append_rri_to_estate(parts_storage->estate, part_result_rel_info);
 
 		/* Call on_new_rri_holder_callback() if needed */
 		if (parts_storage->on_new_rri_holder_callback)
@@ -223,7 +252,6 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 
 	return rri_holder;
 }
-
 
 /*
  * Find matching partitions for 'value' using PartRelationInfo.
@@ -323,8 +351,7 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 	/* Init ResultRelInfo cache */
 	init_result_parts_storage(&state->result_parts, estate,
 							  state->on_conflict_action != ONCONFLICT_NONE,
-							  ResultPartsStorageStandard,
-							  check_acl_for_partition, NULL);
+							  ResultPartsStorageStandard, NULL, NULL);
 
 	state->warning_triggered = false;
 }
@@ -347,15 +374,9 @@ partition_filter_exec(CustomScanState *node)
 
 	if (!TupIsNull(slot))
 	{
-		const PartRelationInfo *prel;
-
 		MemoryContext			old_cxt;
-
-		ResultRelInfoHolder	   *result_part_holder;
-		Oid						selected_partid;
-		int						nparts;
-		Oid					   *parts;
-
+		const PartRelationInfo *prel;
+		ResultRelInfoHolder	   *rri_holder;
 		bool					isnull;
 		Datum					value;
 
@@ -376,48 +397,20 @@ partition_filter_exec(CustomScanState *node)
 					attrs[prel->attnum - 1]->atttypid == prel->atttype);
 		value = slot_getattr(slot, prel->attnum, &isnull);
 		if (isnull)
-			elog(ERROR, "partitioned column's value should not be NULL");
+			elog(ERROR, ERR_PART_ATTR_NULL);
 
 		/* Switch to per-tuple context */
 		old_cxt = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 
-		/* Search for matching partitions */
-		parts = find_partitions_for_value(value, prel, econtext, &nparts);
-
-		if (nparts > 1)
-			elog(ERROR, "PartitionFilter selected more than one partition");
-		else if (nparts == 0)
-		{
-			/*
-			 * If auto partition propagation is enabled then try to create
-			 * new partitions for the key
-			 */
-			if (prel->auto_partition && IsAutoPartitionEnabled())
-			{
-				selected_partid = create_partitions(state->partitioned_table,
-													value, prel->atttype);
-
-				/* get_pathman_relation_info() will refresh this entry */
-				invalidate_pathman_relation_info(state->partitioned_table, NULL);
-			}
-			else
-				elog(ERROR,
-					 "There is no suitable partition for key '%s'",
-					 datum_to_cstring(value, prel->atttype));
-		}
-		else
-			selected_partid = parts[0];
+		/* Search for a matching partition */
+		rri_holder = select_partition_for_insert(prel,
+												 &state->result_parts,
+												 value, estate, true);
+		estate->es_result_relation_info = rri_holder->result_rel_info;
 
 		/* Switch back and clean up per-tuple context */
 		MemoryContextSwitchTo(old_cxt);
 		ResetExprContext(econtext);
-
-		/* Replace parent table with a suitable partition */
-		old_cxt = MemoryContextSwitchTo(estate->es_query_cxt);
-		result_part_holder = scan_result_parts_storage(selected_partid,
-													   &state->result_parts);
-		estate->es_result_relation_info = result_part_holder->result_rel_info;
-		MemoryContextSwitchTo(old_cxt);
 
 		return slot;
 	}
@@ -450,11 +443,132 @@ partition_filter_explain(CustomScanState *node, List *ancestors, ExplainState *e
 	/* Nothing to do here now */
 }
 
-static int
-append_rri_to_estate(EState *estate, ResultRelInfo *rri, int cur_allocated)
+/*
+ * Smart wrapper for scan_result_parts_storage().
+ */
+ResultRelInfoHolder *
+select_partition_for_insert(const PartRelationInfo *prel,
+							ResultPartsStorage *parts_storage,
+							Datum value, EState *estate,
+							bool spawn_partitions)
 {
-	int result_rels_allocated = cur_allocated;
+	MemoryContext			old_cxt;
+	ExprContext			   *econtext;
+	ResultRelInfoHolder	   *rri_holder;
+	Oid						selected_partid = InvalidOid;
+	Oid					   *parts;
+	int						nparts;
 
+	econtext = GetPerTupleExprContext(estate);
+
+	/* Search for matching partitions */
+	parts = find_partitions_for_value(value, prel, econtext, &nparts);
+
+	if (nparts > 1)
+		elog(ERROR, ERR_PART_ATTR_MULTIPLE);
+	else if (nparts == 0)
+	{
+		/*
+		 * If auto partition propagation is enabled then try to create
+		 * new partitions for the key
+		 */
+		if (prel->auto_partition && IsAutoPartitionEnabled() && spawn_partitions)
+		{
+			selected_partid = create_partitions(PrelParentRelid(prel),
+												value, prel->atttype);
+
+			/* get_pathman_relation_info() will refresh this entry */
+			invalidate_pathman_relation_info(PrelParentRelid(prel), NULL);
+		}
+		else
+			elog(ERROR, ERR_PART_ATTR_NO_PART,
+				 datum_to_cstring(value, prel->atttype));
+	}
+	else selected_partid = parts[0];
+
+	/* Replace parent table with a suitable partition */
+	old_cxt = MemoryContextSwitchTo(estate->es_query_cxt);
+	rri_holder = scan_result_parts_storage(selected_partid, parts_storage);
+	MemoryContextSwitchTo(old_cxt);
+
+	/* Could not find suitable partition */
+	if (rri_holder == NULL)
+		elog(ERROR, ERR_PART_ATTR_NO_PART,
+			 datum_to_cstring(value, prel->atttype));
+
+	return rri_holder;
+}
+
+/*
+ * Used by fetch_estate_mod_data() to find estate_mod_data.
+ */
+static void
+pf_memcxt_callback(void *arg) { elog(DEBUG1, "EState is destroyed"); }
+
+/*
+ * Fetch (or create) a estate_mod_data structure we've hidden inside es_query_cxt.
+ */
+static estate_mod_data *
+fetch_estate_mod_data(EState *estate)
+{
+	MemoryContext			estate_mcxt = estate->es_query_cxt;
+	estate_mod_data		   *emd_struct;
+	MemoryContextCallback  *cb = estate_mcxt->reset_cbs;
+
+	/* Go through callback list */
+	while (cb != NULL)
+	{
+		/* This is the dummy callback we're looking for! */
+		if (cb->func == pf_memcxt_callback)
+			return (estate_mod_data *) cb->arg;
+
+		cb = estate_mcxt->reset_cbs->next;
+	}
+
+	/* Have to create a new one */
+	emd_struct = MemoryContextAlloc(estate_mcxt, sizeof(estate_mod_data));
+	emd_struct->estate_not_modified = true;
+	emd_struct->estate_alloc_result_rels = estate->es_num_result_relations;
+
+	cb = MemoryContextAlloc(estate_mcxt, sizeof(MemoryContextCallback));
+	cb->func = pf_memcxt_callback;
+	cb->arg = emd_struct;
+
+	MemoryContextRegisterResetCallback(estate_mcxt, cb);
+
+	return emd_struct;
+}
+
+/*
+ * Append RangeTblEntry 'rte' to estate->es_range_table.
+ */
+static Index
+append_rte_to_estate(EState *estate, RangeTblEntry *rte)
+{
+	estate_mod_data	   *emd_struct = fetch_estate_mod_data(estate);
+
+	/* Copy estate->es_range_table if it's first time expansion */
+	if (emd_struct->estate_not_modified)
+		estate->es_range_table = list_copy(estate->es_range_table);
+
+	estate->es_range_table = lappend(estate->es_range_table, rte);
+
+	/* Update estate_mod_data */
+	emd_struct->estate_not_modified = false;
+
+	return list_length(estate->es_range_table);
+}
+
+/*
+ * Append ResultRelInfo 'rri' to estate->es_result_relations.
+ */
+static int
+append_rri_to_estate(EState *estate, ResultRelInfo *rri)
+{
+	estate_mod_data	   *emd_struct = fetch_estate_mod_data(estate);
+	int					result_rels_allocated = emd_struct->estate_alloc_result_rels;
+
+	/* Reallocate estate->es_result_relations if needed */
 	if (result_rels_allocated <= estate->es_num_result_relations)
 	{
 		ResultRelInfo *rri_array = estate->es_result_relations;
@@ -468,9 +582,13 @@ append_rri_to_estate(EState *estate, ResultRelInfo *rri, int cur_allocated)
 	}
 
 	/* Append ResultRelInfo to 'es_result_relations' array */
-	estate->es_result_relations[estate->es_num_result_relations++] = *rri;
+	estate->es_result_relations[estate->es_num_result_relations] = *rri;
 
-	return result_rels_allocated;
+	/* Update estate_mod_data */
+	emd_struct->estate_alloc_result_rels = result_rels_allocated;
+	emd_struct->estate_not_modified = false;
+
+	return estate->es_num_result_relations++;
 }
 
 /*

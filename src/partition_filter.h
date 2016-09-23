@@ -19,6 +19,11 @@
 #include "optimizer/planner.h"
 
 
+#define ERR_PART_ATTR_NULL		"partitioned column's value should not be NULL"
+#define ERR_PART_ATTR_NO_PART	"no suitable partition for key '%s'"
+#define ERR_PART_ATTR_MULTIPLE	"PartitionFilter selected more than one partition"
+
+
 /*
  * Single element of 'result_rels_table'.
  */
@@ -49,9 +54,9 @@ typedef struct
 	on_new_rri_holder	on_new_rri_holder_callback;
 	void			   *callback_arg;
 
-	EState			   *estate;
-	int					es_alloc_result_rels;	/* number of allocated result rels */
+	EState			   *estate;					/* pointer to executor's state */
 
+	CmdType				command_type;			/* currenly we only allow INSERT */
 	LOCKMODE			head_open_lock_mode;
 	LOCKMODE			heap_close_lock_mode;
 } ResultPartsStorage;
@@ -84,9 +89,6 @@ extern CustomExecMethods	partition_filter_exec_methods;
 void init_partition_filter_static_data(void);
 
 void add_partition_filters(List *rtable, Plan *plan);
-void check_acl_for_partition(EState *estate,
-							 ResultRelInfoHolder *rri_holder,
-							 void *arg);
 
 /* ResultPartsStorage init\fini\scan function */
 void init_result_parts_storage(ResultPartsStorage *parts_storage,
@@ -123,5 +125,10 @@ void partition_filter_rescan(CustomScanState *node);
 void partition_filter_explain(CustomScanState *node,
 							  List *ancestors,
 							  ExplainState *es);
+
+ResultRelInfoHolder * select_partition_for_insert(const PartRelationInfo *prel,
+												  ResultPartsStorage *parts_storage,
+												  Datum value, EState *estate,
+												  bool spawn_partitions);
 
 #endif
