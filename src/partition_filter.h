@@ -81,6 +81,7 @@ typedef struct
 
 
 extern bool					pg_pathman_enable_partition_filter;
+extern int					pg_pathman_insert_into_fdw;
 
 extern CustomScanMethods	partition_filter_plan_methods;
 extern CustomExecMethods	partition_filter_exec_methods;

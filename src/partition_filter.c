@@ -8,14 +8,16 @@
  * ------------------------------------------------------------------------
  */
 
-#include "partition_filter.h"
-#include "nodes_common.h"
-#include "utils.h"
 #include "init.h"
+#include "nodes_common.h"
+#include "partition_filter.h"
+#include "utils.h"
 
+#include "foreign/fdwapi.h"
+#include "foreign/foreign.h"
+#include "nodes/nodeFuncs.h"
 #include "utils/guc.h"
 #include "utils/memutils.h"
-#include "nodes/nodeFuncs.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 
@@ -35,8 +37,26 @@ typedef struct
 	bool	estate_not_modified;		/* did we modify EState somehow? */
 } estate_mod_data;
 
+/*
+ * Allow INSERTs into any FDW \ postgres_fdw \ no FDWs at all.
+ */
+typedef enum
+{
+	PF_FDW_INSERT_DISABLED = 0,		/* INSERTs into FDWs are prohibited */
+	PF_FDW_INSERT_POSTGRES,			/* INSERTs into postgres_fdw are OK */
+	PF_FDW_INSERT_ANY_FDW			/* INSERTs into any FDWs are OK */
+} PF_insert_fdw_mode;
+
+static const struct config_enum_entry pg_pathman_insert_into_fdw_options[] = {
+	{ "disabled",	PF_FDW_INSERT_DISABLED,	false },
+	{ "postgres",	PF_FDW_INSERT_POSTGRES,	false },
+	{ "any_fdw",	PF_FDW_INSERT_ANY_FDW,	false },
+	{ NULL,			0,						false }
+};
+
 
 bool				pg_pathman_enable_partition_filter = true;
+int					pg_pathman_insert_into_fdw = PF_FDW_INSERT_POSTGRES;
 
 CustomScanMethods	partition_filter_plan_methods;
 CustomExecMethods	partition_filter_exec_methods;
@@ -47,6 +67,9 @@ static void partition_filter_visitor(Plan *plan, void *context);
 static List * pfilter_build_tlist(List *tlist);
 static Index append_rte_to_estate(EState *estate, RangeTblEntry *rte);
 static int append_rri_to_estate(EState *estate, ResultRelInfo *rri);
+static void prepare_rri_fdw_for_insert(EState *estate,
+									   ResultRelInfoHolder *rri_holder,
+									   void *arg);
 
 
 void
@@ -70,6 +93,18 @@ init_partition_filter_static_data(void)
 							 &pg_pathman_enable_partition_filter,
 							 true,
 							 PGC_USERSET,
+							 0,
+							 NULL,
+							 NULL,
+							 NULL);
+
+	DefineCustomEnumVariable("pg_pathman.insert_into_fdw",
+							 "Allow INSERTS into FDW partitions.",
+							 NULL,
+							 &pg_pathman_insert_into_fdw,
+							 PF_FDW_INSERT_POSTGRES,
+							 pg_pathman_insert_into_fdw_options,
+							 PGC_SUSET,
 							 0,
 							 NULL,
 							 NULL,
@@ -179,6 +214,7 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 		Index			child_rte_idx;
 		ResultRelInfo  *part_result_rel_info;
 
+		/* Lock partition and check if it exists */
 		LockRelationOid(partid, parts_storage->head_open_lock_mode);
 		if(!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(partid)))
 		{
@@ -236,18 +272,18 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 		/* ri_ConstraintExprs will be initialized by ExecRelCheck() */
 		part_result_rel_info->ri_ConstraintExprs = NULL;
 
-		/* Now fill the ResultRelInfo holder */
+		/* Finally fill the ResultRelInfo holder */
 		rri_holder->partid = partid;
 		rri_holder->result_rel_info = part_result_rel_info;
-
-		/* Append ResultRelInfo to storage->es_alloc_result_rels */
-		append_rri_to_estate(parts_storage->estate, part_result_rel_info);
 
 		/* Call on_new_rri_holder_callback() if needed */
 		if (parts_storage->on_new_rri_holder_callback)
 			parts_storage->on_new_rri_holder_callback(parts_storage->estate,
 													  rri_holder,
 													  parts_storage->callback_arg);
+
+		/* Append ResultRelInfo to storage->es_alloc_result_rels */
+		append_rri_to_estate(parts_storage->estate, part_result_rel_info);
 	}
 
 	return rri_holder;
@@ -351,7 +387,7 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 	/* Init ResultRelInfo cache */
 	init_result_parts_storage(&state->result_parts, estate,
 							  state->on_conflict_action != ONCONFLICT_NONE,
-							  ResultPartsStorageStandard, NULL, NULL);
+							  ResultPartsStorageStandard, prepare_rri_fdw_for_insert, NULL);
 
 	state->warning_triggered = false;
 }
@@ -500,6 +536,148 @@ select_partition_for_insert(const PartRelationInfo *prel,
 }
 
 /*
+ * Callback to be executed on FDW partitions.
+ */
+static void
+prepare_rri_fdw_for_insert(EState *estate,
+						   ResultRelInfoHolder *rri_holder,
+						   void *arg)
+{
+	ResultRelInfo  *rri = rri_holder->result_rel_info;
+	FdwRoutine	   *fdw_routine = rri->ri_FdwRoutine;
+	Oid				partid;
+
+	/* Nothing to do if not FDW */
+	if (fdw_routine == NULL)
+		return;
+
+	partid = RelationGetRelid(rri->ri_RelationDesc);
+
+	/* Perform some checks according to 'pg_pathman_insert_into_fdw' */
+	switch (pg_pathman_insert_into_fdw)
+	{
+		case PF_FDW_INSERT_DISABLED:
+			elog(ERROR, "INSERTs into FDW partitions are disabled");
+			break;
+
+		case PF_FDW_INSERT_POSTGRES:
+			{
+				ForeignDataWrapper *fdw;
+				ForeignServer	   *fserver;
+
+				/* Check if it's PostgreSQL FDW */
+				fserver = GetForeignServer(GetForeignTable(partid)->serverid);
+				fdw = GetForeignDataWrapper(fserver->fdwid);
+				if (strcmp("postgres_fdw", fdw->fdwname) != 0)
+					elog(ERROR, "FDWs other than postgres_fdw are restricted");
+			}
+			break;
+
+		case PF_FDW_INSERT_ANY_FDW:
+			{
+				ForeignDataWrapper *fdw;
+				ForeignServer	   *fserver;
+
+				fserver = GetForeignServer(GetForeignTable(partid)->serverid);
+				fdw = GetForeignDataWrapper(fserver->fdwid);
+				if (strcmp("postgres_fdw", fdw->fdwname) != 0)
+					elog(WARNING, "unrestricted FDW mode may lead to \"%s\" crashes",
+						 fdw->fdwname);
+			}
+			break; /* do nothing */
+
+		default:
+			elog(ERROR, "Mode is not implemented yet");
+			break;
+	}
+
+	if (fdw_routine->PlanForeignModify)
+	{
+		RangeTblEntry	   *rte;
+		ModifyTableState	mtstate;
+		List			   *fdw_private;
+		Query				query;
+		PlannedStmt		   *plan;
+		TupleDesc			tupdesc;
+		int					i,
+							target_attr;
+
+		/* Fetch RangeTblEntry for partition */
+		rte = rt_fetch(rri->ri_RangeTableIndex, estate->es_range_table);
+
+		/* Fetch tuple descriptor */
+		tupdesc = RelationGetDescr(rri->ri_RelationDesc);
+
+		/* Create fake Query node */
+		memset((void *) &query, 0, sizeof(Query));
+		NodeSetTag(&query, T_Query);
+
+		query.commandType		= CMD_INSERT;
+		query.querySource		= QSRC_ORIGINAL;
+		query.resultRelation	= 1;
+		query.rtable			= list_make1(copyObject(rte));
+		query.jointree			= makeNode(FromExpr);
+
+		query.targetList		= NIL;
+		query.returningList		= NIL;
+
+		/* Generate 'query.targetList' using 'tupdesc' */
+		target_attr = 1;
+		for (i = 0; i < tupdesc->natts; i++)
+		{
+			Form_pg_attribute	attr;
+			TargetEntry		   *te;
+			Param			   *param;
+
+			attr = tupdesc->attrs[i];
+
+			if (attr->attisdropped)
+				continue;
+
+			param = makeNode(Param);
+			param->paramkind	= PARAM_EXTERN;
+			param->paramid		= target_attr;
+			param->paramtype	= attr->atttypid;
+			param->paramtypmod	= attr->atttypmod;
+			param->paramcollid	= attr->attcollation;
+			param->location		= -1;
+
+			te = makeTargetEntry((Expr *) param, target_attr,
+								 pstrdup(NameStr(attr->attname)),
+								 false);
+
+			query.targetList = lappend(query.targetList, te);
+
+			target_attr++;
+		}
+
+		/* Create fake ModifyTableState */
+		memset((void *) &mtstate, 0, sizeof(ModifyTableState));
+		NodeSetTag(&mtstate, T_ModifyTableState);
+		mtstate.ps.state = estate;
+		mtstate.operation = CMD_INSERT;
+		mtstate.resultRelInfo = rri;
+		mtstate.mt_onconflict = ONCONFLICT_NONE;
+
+		/* Plan fake query in for FDW access to be planned as well */
+		elog(DEBUG1, "FDW(%u): plan fake query for fdw_private", partid);
+		plan = standard_planner(&query, 0, NULL);
+
+		/* Extract fdw_private from useless plan */
+		elog(DEBUG1, "FDW(%u): extract fdw_private", partid);
+		fdw_private = (List *)
+				linitial(((ModifyTable *) plan->planTree)->fdwPrivLists);
+
+		/* call BeginForeignModify on 'rri' */
+		elog(DEBUG1, "FDW(%u): call BeginForeignModify on a fake INSERT node", partid);
+		fdw_routine->BeginForeignModify(&mtstate, rri, fdw_private, 0, 0);
+
+		/* Report success */
+		elog(DEBUG1, "FDW(%u): success", partid);
+	}
+}
+
+/*
  * Used by fetch_estate_mod_data() to find estate_mod_data.
  */
 static void
@@ -581,7 +759,11 @@ append_rri_to_estate(EState *estate, ResultRelInfo *rri)
 			   estate->es_num_result_relations * sizeof(ResultRelInfo));
 	}
 
-	/* Append ResultRelInfo to 'es_result_relations' array */
+	/*
+	 * Append ResultRelInfo to 'es_result_relations' array.
+	 * NOTE: this is probably safe since ResultRelInfo
+	 * contains nothing but pointers to various structs.
+	 */
 	estate->es_result_relations[estate->es_num_result_relations] = *rri;
 
 	/* Update estate_mod_data */

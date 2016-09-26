@@ -904,8 +904,8 @@ create_partitions_internal(Oid relid, Datum value, Oid value_type)
 			shout_if_prel_is_invalid(relid, prel, PT_RANGE);
 
 			/* Read max & min range values from PartRelationInfo */
-			min_rvalue = prel->ranges[0].min;
-			max_rvalue = prel->ranges[PrelLastChild(prel)].max;
+			min_rvalue = PrelGetRangesArray(prel)[0].min;
+			max_rvalue = PrelGetRangesArray(prel)[PrelLastChild(prel)].max;
 
 			/* Retrieve interval as TEXT from tuple */
 			interval_text = values[Anum_pathman_config_range_interval - 1];
@@ -1222,7 +1222,7 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 			{
 				select_range_partitions(c->constvalue,
 										&cmp_func,
-										context->prel->ranges,
+										PrelGetRangesArray(context->prel),
 										PrelChildrenCount(context->prel),
 										strategy,
 										result);
@@ -1383,7 +1383,7 @@ handle_const(const Const *c, WalkerContext *context)
 
 				select_range_partitions(c->constvalue,
 										&tce->cmp_proc_finfo,
-										context->prel->ranges,
+										PrelGetRangesArray(context->prel),
 										PrelChildrenCount(context->prel),
 										BTEqualStrategyNumber,
 										result);

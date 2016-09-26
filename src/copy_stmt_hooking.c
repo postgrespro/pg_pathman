@@ -23,6 +23,7 @@
 #include "commands/copy.h"
 #include "commands/trigger.h"
 #include "executor/executor.h"
+#include "foreign/fdwapi.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "utils/builtins.h"
@@ -38,6 +39,10 @@ static uint64 PathmanCopyFrom(CopyState cstate,
 							  Relation parent_rel,
 							  List *range_table,
 							  bool old_protocol);
+
+static void prepare_rri_fdw_for_copy(EState *estate,
+									 ResultRelInfoHolder *rri_holder,
+									 void *arg);
 
 
 /*
@@ -63,7 +68,7 @@ is_pathman_related_copy(Node *parsetree)
 	if (!copy_stmt->relation)
 		return false;
 
-	/* TODO: select appropriate lock for COPY */
+	/* Get partition's Oid while locking it */
 	partitioned_table = RangeVarGetRelid(copy_stmt->relation,
 										 (copy_stmt->is_from ?
 											  RowExclusiveLock :
@@ -387,7 +392,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	/* Initialize ResultPartsStorage */
 	init_result_parts_storage(&parts_storage, estate, false,
 							  ResultPartsStorageStandard,
-							  NULL, NULL);
+							  prepare_rri_fdw_for_copy, NULL);
 	parts_storage.saved_rel_info = parent_result_rel;
 
 	/* Set up a tuple slot too */
@@ -534,4 +539,20 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	FreeExecutorState(estate);
 
 	return processed;
+}
+
+/*
+ * COPY FROM does not support FDWs, emit ERROR.
+ */
+static void
+prepare_rri_fdw_for_copy(EState *estate,
+						 ResultRelInfoHolder *rri_holder,
+						 void *arg)
+{
+	ResultRelInfo  *rri = rri_holder->result_rel_info;
+	FdwRoutine	   *fdw_routine = rri->ri_FdwRoutine;
+
+	if (fdw_routine != NULL)
+		elog(ERROR, "cannot copy to foreign partition \"%s\"",
+			 get_rel_name(RelationGetRelid(rri->ri_RelationDesc)));
 }

@@ -154,7 +154,9 @@ lock_rows_visitor(Plan *plan, void *context)
 	}
 }
 
-/* NOTE: Used for debug */
+/*
+ * Print Bitmapset as cstring.
+ */
 #ifdef __GNUC__
 __attribute__((unused))
 #endif
