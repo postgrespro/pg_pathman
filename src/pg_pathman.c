@@ -902,6 +902,9 @@ create_partitions_internal(Oid relid, Datum value, Oid value_type)
 		FreeErrorData(edata);
 
 		SPI_finish(); /* no problem if not connected */
+
+		/* Reset 'partid' in case of error */
+		partid = InvalidOid;
 	}
 	PG_END_TRY();
 
