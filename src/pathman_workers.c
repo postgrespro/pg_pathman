@@ -365,7 +365,7 @@ bgw_main_spawn_partitions(Datum main_arg)
 											  args->value_type);
 
 	/* Finish transaction in an appropriate way */
-	if (args->result == InvalidOid)
+	if (args->result == InvalidOid || IsAbortedTransactionBlockState())
 		AbortCurrentTransaction();
 	else
 		CommitTransactionCommand();

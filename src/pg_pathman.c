@@ -876,9 +876,10 @@ create_partitions_internal(Oid relid, Datum value, Oid value_type)
 							 interval_type, true, &partid);
 
 			/* while (value < MIN) ... */
-			spawn_partitions(PrelParentRelid(prel), value, min_rvalue,
-							 prel->atttype, &interval_type_cmp, interval_binary,
-							 interval_type, false, &partid);
+			if (partid == InvalidOid)
+				spawn_partitions(PrelParentRelid(prel), value, min_rvalue,
+								 prel->atttype, &interval_type_cmp, interval_binary,
+								 interval_type, false, &partid);
 
 			SPI_finish(); /* close SPI connection */
 		}
