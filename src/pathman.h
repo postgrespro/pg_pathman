@@ -59,7 +59,7 @@
 #define Anum_pathman_config_params_partrel			1	/* primary key */
 #define Anum_pathman_config_params_enable_parent	2	/* include parent into plan */
 #define Anum_pathman_config_params_auto				3	/* auto partitions creation */
-#define Anum_pathman_config_params_callback			4	/* auto partitions creation */
+#define Anum_pathman_config_params_init_callback	4	/* partition action callback */
 
 /*
  * Cache current PATHMAN_CONFIG relid (set during load_config()).

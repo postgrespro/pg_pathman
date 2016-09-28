@@ -31,13 +31,13 @@ CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
  *		partrel - regclass (relation type, stored as Oid)
  *		enable_parent - add parent table to plan
  *		auto - enable automatic partition creation
- *		callback - 
+ *		init_callback - cb to be executed on partition creation
  */
 CREATE TABLE IF NOT EXISTS @extschema@.pathman_config_params (
 	partrel			REGCLASS NOT NULL PRIMARY KEY,
 	enable_parent	BOOLEAN NOT NULL DEFAULT TRUE,
 	auto			BOOLEAN NOT NULL DEFAULT TRUE,
-	callback		REGPROCEDURE
+	init_callback	REGPROCEDURE NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX i_pathman_config_params
 ON @extschema@.pathman_config_params(partrel);
@@ -87,7 +87,7 @@ BEGIN
 	RETURN count(*) FROM pg_inherits WHERE inhparent = relation;
 END
 $$
-LANGUAGE plpgsql;
+LANGUAGE plpgsql STRICT;
 
 /*
  * Add a row describing the optional parameter to pathman_config_params.
@@ -108,62 +108,44 @@ $$
 LANGUAGE plpgsql;
 
 /*
- * Include parent relation into query plan's for specified relation.
+ * Include\exclude parent relation in query plan.
  */
-CREATE OR REPLACE FUNCTION @extschema@.enable_parent(relation REGCLASS)
+CREATE OR REPLACE FUNCTION @extschema@.set_enable_parent(
+	relation	REGCLASS,
+	value		BOOLEAN)
 RETURNS VOID AS
 $$
 BEGIN
-	PERFORM @extschema@.pathman_set_param(relation, 'enable_parent', True);
+	PERFORM @extschema@.pathman_set_param(relation, 'enable_parent', value);
 END
 $$
-LANGUAGE plpgsql;
+LANGUAGE plpgsql STRICT;
 
 /*
- * Do not include parent relation into query plan's for specified relation.
+ * Enable\disable automatic partition creation.
  */
-CREATE OR REPLACE FUNCTION @extschema@.disable_parent(relation REGCLASS)
+CREATE OR REPLACE FUNCTION @extschema@.set_auto_partitioning(
+	relation	REGCLASS,
+	value		BOOLEAN)
 RETURNS VOID AS
 $$
 BEGIN
-	PERFORM @extschema@.pathman_set_param(relation, 'enable_parent', False);
+	PERFORM @extschema@.pathman_set_param(relation, 'auto', value);
 END
 $$
-LANGUAGE plpgsql;
-
-/*
- * Enable automatic partition creation.
- */
-CREATE OR REPLACE FUNCTION @extschema@.enable_auto(relation REGCLASS)
-RETURNS VOID AS
-$$
-BEGIN
-	PERFORM @extschema@.pathman_set_param(relation, 'auto', True);
-END
-$$
-LANGUAGE plpgsql;
-
-/*
- * Disable automatic partition creation.
- */
-CREATE OR REPLACE FUNCTION @extschema@.disable_auto(relation REGCLASS)
-RETURNS VOID AS
-$$
-BEGIN
-	PERFORM @extschema@.pathman_set_param(relation, 'auto', False);
-END
-$$
-LANGUAGE plpgsql;
+LANGUAGE plpgsql STRICT;
 
 /*
  * Set partition creation callback
  */
-CREATE OR REPLACE FUNCTION @extschema@.set_callback(relation REGCLASS, callback REGPROC)
+CREATE OR REPLACE FUNCTION @extschema@.set_part_init_callback(
+	relation	REGCLASS,
+	callback	REGPROC)
 RETURNS VOID AS
 $$
 BEGIN
 	PERFORM @extschema@.validate_on_partition_created_callback(callback);
-	PERFORM @extschema@.pathman_set_param(relation, 'callback', callback);
+	PERFORM @extschema@.pathman_set_param(relation, 'init_callback', callback);
 END
 $$
 LANGUAGE plpgsql;
@@ -262,7 +244,7 @@ BEGIN
 	RETURN;
 END
 $$
-LANGUAGE plpgsql
+LANGUAGE plpgsql STRICT
 SET pg_pathman.enable_partitionfilter = on; /* ensures that PartitionFilter is ON */
 
 /*
@@ -291,7 +273,7 @@ BEGIN
 	RETURN;
 END
 $$
-LANGUAGE plpgsql
+LANGUAGE plpgsql STRICT
 SET pg_pathman.enable_partitionfilter = on; /* ensures that PartitionFilter is ON */
 
 /*
@@ -311,7 +293,7 @@ BEGIN
 	PERFORM @extschema@.on_remove_partitions(parent_relid);
 END
 $$
-LANGUAGE plpgsql;
+LANGUAGE plpgsql STRICT;
 
 /*
  * Aggregates several common relation checks before partitioning.
@@ -380,7 +362,7 @@ BEGIN
 	INTO schema, relname;
 END
 $$
-LANGUAGE plpgsql;
+LANGUAGE plpgsql STRICT;
 
 /*
  * Returns schema-qualified name for table
@@ -399,7 +381,7 @@ BEGIN
 			WHERE oid = cls::oid);
 END
 $$
-LANGUAGE plpgsql;
+LANGUAGE plpgsql STRICT;
 
 /*
  * Validates relation name. It must be schema qualified
@@ -499,7 +481,7 @@ BEGIN
 	EXECUTE format('DROP FUNCTION IF EXISTS %s() CASCADE',
 				   @extschema@.build_update_trigger_func_name(parent_relid));
 END
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql STRICT;
 
 /*
  * Drop partitions
@@ -584,7 +566,7 @@ BEGIN
 					   pg_get_constraintdef(rec.conid));
 	END LOOP;
 END
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql STRICT;
 
 
 /*
@@ -712,7 +694,7 @@ RETURNS VOID AS 'pg_pathman', 'debug_capture'
 LANGUAGE C STRICT;
 
 /*
- * Return tablespace name for specified relation
+ * Return tablespace name for specified relation.
  */
 CREATE OR REPLACE FUNCTION @extschema@.get_rel_tablespace_name(relation REGCLASS)
 RETURNS TEXT AS 'pg_pathman', 'get_rel_tablespace_name'
@@ -720,20 +702,17 @@ LANGUAGE C STRICT;
 
 /*
  * Checks that callback function meets specific requirements. Particularly it
- * must have the only JSONB argument and VOID return type
+ * must have the only JSONB argument and VOID return type.
  */
 CREATE OR REPLACE FUNCTION @extschema@.validate_on_partition_created_callback(callback REGPROC)
-RETURNS VOID AS 'pg_pathman', 'validate_on_partition_created_callback'
+RETURNS VOID AS 'pg_pathman', 'validate_on_part_init_callback_pl'
 LANGUAGE C STRICT;
 
 /*
- * Builds JSONB object containing new partition parameters and invoke the
- * callback
+ * Builds JSONB object containing new partition parameters and invoke the callback.
  */
 CREATE OR REPLACE FUNCTION @extschema@.invoke_on_partition_created_callback(
-	parent		REGCLASS,
-	partition	REGCLASS,
-	start_value	ANYELEMENT,
-	end_value	ANYELEMENT)
-RETURNS VOID AS 'pg_pathman', 'invoke_on_partition_created_callback'
-LANGUAGE C STRICT;
+	parent_relid	REGCLASS,
+	partition		REGCLASS)
+RETURNS JSONB AS 'pg_pathman', 'invoke_on_partition_created_callback'
+LANGUAGE C;

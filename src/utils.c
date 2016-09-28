@@ -618,7 +618,7 @@ datum_to_cstring(Datum datum, Oid typid)
 
 	if (HeapTupleIsValid(tup))
 	{
-		Form_pg_type	typtup = (Form_pg_type) GETSTRUCT(tup);
+		Form_pg_type typtup = (Form_pg_type) GETSTRUCT(tup);
 		result = OidOutputFunctionCall(typtup->typoutput, datum);
 		ReleaseSysCache(tup);
 	}
@@ -626,85 +626,6 @@ datum_to_cstring(Datum datum, Oid typid)
 		result = pstrdup("[error]");
 
 	return result;
-}
-
-/*
- * Converts datum to jsonb type
- * This function is a wrapper to to_jsonb()
- */
-Datum
-convert_to_jsonb(Datum datum, Oid typid)
-{
-	List	   *args;
-	FuncExpr   *fexpr;
-	FmgrInfo	flinfo;
-	Const	   *constval;
-
-	/* Build const value to use in the FuncExpr node. */
-	constval = makeConstFromDatum(datum, typid);
-
-	/* Function takes single argument */
-	args = list_make1(constval);
-
-	/* Build function expression */
-	fexpr = makeFuncNode(F_TO_JSONB, args);
-	fmgr_info(F_TO_JSONB, &flinfo);
-	flinfo.fn_expr = (Node *) fexpr;
-
-	return FunctionCall1(&flinfo, datum);
-}
-
-/*
- * Builds Const from specified datum and type oid
- */
-Const *
-makeConstFromDatum(Datum datum, Oid typid)
-{
-	HeapTuple	tp;
-	Const	   *constval;
-	Form_pg_type typtup;
-
-	tp = SearchSysCache1(TYPEOID, ObjectIdGetDatum(typid));
-	if (!HeapTupleIsValid(tp))
-		elog(ERROR, "cache lookup failed for type %u", typid);
-	typtup = (Form_pg_type) GETSTRUCT(tp);
-	constval = makeConst(
-		typid,
-		typtup->typtypmod,
-		typtup->typcollation,
-		typtup->typlen,
-		datum,
-		false,
-		typtup->typbyval);
-	ReleaseSysCache(tp);
-
-	return constval;
-}
-
-/*
- * Builds function expression
- */
-FuncExpr *
-makeFuncNode(Oid funcid, List *args)
-{
-	HeapTuple	tp;
-	FuncExpr   *fexpr;
-	Form_pg_proc functup;
-
-	tp = SearchSysCache1(PROCOID, ObjectIdGetDatum(funcid));
-	if (!HeapTupleIsValid(tp))
-		elog(ERROR, "cache lookup failed for function %u", funcid);
-	functup = (Form_pg_proc) GETSTRUCT(tp);
-	fexpr = makeFuncExpr(funcid,
-						 functup->prorettype,
-						 args,
-						 InvalidOid,
-						 InvalidOid,
-						 COERCE_EXPLICIT_CALL);
-	ReleaseSysCache(tp);
-	fexpr->funcvariadic = false;
-
-	return fexpr;
 }
 
 /*
@@ -734,6 +655,7 @@ get_rel_persistence(Oid relid)
 	tp = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
 	if (!HeapTupleIsValid(tp))
 		elog(ERROR, "cache lookup failed for relation %u", relid);
+
 	reltup = (Form_pg_class) GETSTRUCT(tp);
 	result = reltup->relpersistence;
 	ReleaseSysCache(tp);
@@ -741,3 +663,35 @@ get_rel_persistence(Oid relid)
 	return result;
 }
 #endif
+
+/*
+ * Checks that callback function meets specific requirements.
+ * It must have the only JSONB argument and BOOL return type.
+ */
+bool
+validate_on_part_init_cb(Oid procid, bool emit_error)
+{
+	HeapTuple		tp;
+	Form_pg_proc	functup;
+	bool			is_ok = true;
+
+	tp = SearchSysCache1(PROCOID, ObjectIdGetDatum(procid));
+	if (!HeapTupleIsValid(tp))
+		elog(ERROR, "cache lookup failed for function %u", procid);
+
+	functup = (Form_pg_proc) GETSTRUCT(tp);
+
+	if (functup->pronargs != 1 ||
+		functup->proargtypes.values[0] != JSONBOID ||
+		functup->prorettype != VOIDOID)
+		is_ok = false;
+
+	ReleaseSysCache(tp);
+
+	if (emit_error && !is_ok)
+		elog(ERROR,
+			 "Callback function must have the following signature: "
+			 "callback(arg JSONB) RETURNS VOID");
+
+	return is_ok;
+}

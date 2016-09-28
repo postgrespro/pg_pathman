@@ -172,10 +172,10 @@ BEGIN
 
 	/* Relocate data if asked to */
 	IF partition_data = true THEN
-		PERFORM @extschema@.disable_parent(parent_relid);
+		PERFORM @extschema@.set_enable_parent(parent_relid, false);
 		PERFORM @extschema@.partition_data(parent_relid);
 	ELSE
-		PERFORM @extschema@.enable_parent(parent_relid);
+		PERFORM @extschema@.set_enable_parent(parent_relid, true);
 	END IF;
 
 	RETURN p_count;
@@ -279,10 +279,10 @@ BEGIN
 
 	/* Relocate data if asked to */
 	IF partition_data = true THEN
-		PERFORM @extschema@.disable_parent(parent_relid);
+		PERFORM @extschema@.set_enable_parent(parent_relid, false);
 		PERFORM @extschema@.partition_data(parent_relid);
 	ELSE
-		PERFORM @extschema@.enable_parent(parent_relid);
+		PERFORM @extschema@.set_enable_parent(parent_relid, true);
 	END IF;
 
 	RETURN p_count;
@@ -356,10 +356,10 @@ BEGIN
 
 	/* Relocate data if asked to */
 	IF partition_data = true THEN
-		PERFORM @extschema@.disable_parent(parent_relid);
+		PERFORM @extschema@.set_enable_parent(parent_relid, false);
 		PERFORM @extschema@.partition_data(parent_relid);
 	ELSE
-		PERFORM @extschema@.enable_parent(parent_relid);
+		PERFORM @extschema@.set_enable_parent(parent_relid, true);
 	END IF;
 
 	RETURN part_count; /* number of created partitions */
@@ -432,10 +432,10 @@ BEGIN
 
 	/* Relocate data if asked to */
 	IF partition_data = true THEN
-		PERFORM @extschema@.disable_parent(parent_relid);
+		PERFORM @extschema@.set_enable_parent(parent_relid, false);
 		PERFORM @extschema@.partition_data(parent_relid);
 	ELSE
-		PERFORM @extschema@.enable_parent(parent_relid);
+		PERFORM @extschema@.set_enable_parent(parent_relid, true);
 	END IF;
 
 	RETURN part_count; /* number of created partitions */
@@ -519,9 +519,7 @@ BEGIN
 
 	PERFORM @extschema@.copy_foreign_keys(parent_relid, v_child_relname::REGCLASS);
 	PERFORM @extschema@.invoke_on_partition_created_callback(parent_relid,
-															 v_child_relname,
-															 p_start_value,
-															 p_end_value);
+															 v_child_relname::REGCLASS);
 
 	RETURN v_child_relname;
 END

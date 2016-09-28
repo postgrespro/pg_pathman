@@ -27,12 +27,11 @@
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include <utils/inval.h>
+#include "utils/jsonb.h"
 #include "utils/memutils.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
-#include "utils/jsonb.h"
-#include "utils/fmgroids.h"
 
 
 /* declarations */
@@ -62,7 +61,7 @@ PG_FUNCTION_INFO_V1( lock_partitioned_relation );
 PG_FUNCTION_INFO_V1( prevent_relation_modification );
 PG_FUNCTION_INFO_V1( debug_capture );
 PG_FUNCTION_INFO_V1( get_rel_tablespace_name );
-PG_FUNCTION_INFO_V1( validate_on_partition_created_callback );
+PG_FUNCTION_INFO_V1( validate_on_part_init_callback_pl );
 PG_FUNCTION_INFO_V1( invoke_on_partition_created_callback );
 
 static void on_partitions_created_internal(Oid partitioned_table, bool add_callbacks);
@@ -785,27 +784,13 @@ get_rel_tablespace_name(PG_FUNCTION_ARGS)
 
 /*
  * Checks that callback function meets specific requirements. Particularly it
- * must have the only JSONB argument and VOID return type
+ * must have the only JSONB argument and BOOL return type.
  */
 Datum
-validate_on_partition_created_callback(PG_FUNCTION_ARGS)
+validate_on_part_init_callback_pl(PG_FUNCTION_ARGS)
 {
-	HeapTuple	tp;
-	Oid			callback = PG_GETARG_OID(0);
-	Form_pg_proc functup;
+	validate_on_part_init_cb(PG_GETARG_OID(0), true);
 
-	tp = SearchSysCache1(PROCOID, ObjectIdGetDatum(callback));
-	if (!HeapTupleIsValid(tp))
-		elog(ERROR, "cache lookup failed for function %u", callback);
-	functup = (Form_pg_proc) GETSTRUCT(tp);
-
-	if (functup->pronargs != 1 || functup->proargtypes.values[0] != JSONBOID ||
-		functup->prorettype != VOIDOID)
-		elog(ERROR,
-			 "Callback function must have only one JSNOB argument "
-			 "and return VOID");
-
-	ReleaseSysCache(tp);
 	PG_RETURN_VOID();
 }
 
@@ -816,53 +801,121 @@ validate_on_partition_created_callback(PG_FUNCTION_ARGS)
 Datum
 invoke_on_partition_created_callback(PG_FUNCTION_ARGS)
 {
-	char   *json;
-	Datum	jsonb;
-	Oid		parent_oid = PG_GETARG_OID(0);
-	Oid		partition_oid = PG_GETARG_OID(1);
-	Oid		type = get_fn_expr_argtype(fcinfo->flinfo, 2);
-	Datum	start_value = PG_GETARG_DATUM(2);
-	Datum	end_value = PG_GETARG_DATUM(3);
-	const PartRelationInfo   *prel;
+#define JSB_INIT_VAL(value, val_type, val_cstring) \
+	do { \
+		(value)->type = jbvString; \
+		(value)->val.string.len = strlen(val_cstring); \
+		(value)->val.string.val = val_cstring; \
+		pushJsonbValue(&jsonb_state, val_type, (value)); \
+	} while (0)
 
-	if ((prel = get_pathman_relation_info(parent_oid)) == NULL)
-		elog(ERROR,
-			 "Relation %s isn't partitioned by pg_pathman",
-			 get_rel_name(parent_oid));
+#define PART_TYPE_STR(part_type) ( #part_type )
+
+	FmgrInfo				cb_flinfo;
+	FunctionCallInfoData	cb_fcinfo;
+
+	const PartRelationInfo *prel;
+	Oid						parent_oid		= PG_GETARG_OID(0),
+							partition_oid	= PG_GETARG_OID(1);
+	uint32					i,
+							part_idx;
+	bool					part_found = false;
+	Datum					jsonb;
+	JsonbParseState		   *jsonb_state = NULL;
+	JsonbValue			   *result,
+							key,
+							val;
+
+	if (PG_ARGISNULL(0))
+		elog(ERROR, "parent_relid should not be null");
+
+	if (PG_ARGISNULL(1))
+		elog(ERROR, "partition should not be null");
+
+	prel = get_pathman_relation_info(parent_oid);
+	shout_if_prel_is_invalid(parent_oid, prel, PT_INDIFFERENT);
 
 	/* If there is no callback function specified then we're done */
-	if (!prel->callback)
-		PG_RETURN_VOID();
-	
-	/* Convert ANYELEMENT arguments to jsonb */
-	start_value = convert_to_jsonb(start_value, type);
-	end_value = convert_to_jsonb(end_value, type);
+	if (prel->callback == InvalidOid)
+		PG_RETURN_NULL();
 
-	/*
-	 * Build jsonb object to pass into callback
-	 *
-	 * XXX it would be nice to have this rewrited with pushJsonbValue() to get
-	 * rid of string formatting and parsing. See jsonb_build_object() for
-	 * example
-	 */
-	json = psprintf("{"
-		"\"parent\": %u,"
-		"\"partition\": %u,"
-		"\"part_type\": %u,"
-		"\"start\": %s,"
-		"\"end\": %s,"
-		"\"value_type\": %u}",
-		parent_oid,
-		partition_oid,
-		prel->parttype,
-		datum_to_cstring(start_value, JSONBOID),
-		datum_to_cstring(end_value, JSONBOID),
-		type
-	);
-	jsonb = OidFunctionCall1(F_JSONB_IN, CStringGetDatum(json));
+	for (i = 0; i < PrelChildrenCount(prel); i++)
+	{
+		if (PrelGetChildrenArray(prel)[i] == partition_oid)
+		{
+			part_found = true;
+			part_idx = i;
+			break;
+		}
+	}
 
-	/* Invoke callback */
-	OidFunctionCall1(prel->callback, JsonbGetDatum(jsonb));
+	if (!part_found)
+		elog(ERROR, "cannot find partition %u", partition_oid);
 
-	PG_RETURN_JSONB(jsonb);
+	switch (prel->parttype)
+	{
+		case PT_HASH:
+			{
+				pushJsonbValue(&jsonb_state, WJB_BEGIN_OBJECT, NULL);
+
+				JSB_INIT_VAL(&key, WJB_KEY, "parent");
+				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(parent_oid));
+				JSB_INIT_VAL(&key, WJB_KEY, "partition");
+				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(partition_oid));
+				JSB_INIT_VAL(&key, WJB_KEY, "part_type");
+				JSB_INIT_VAL(&val, WJB_VALUE, "HASH");
+
+				result = pushJsonbValue(&jsonb_state, WJB_END_OBJECT, NULL);
+			}
+			break;
+
+		case PT_RANGE:
+			{
+				RangeEntry *re = &PrelGetRangesArray(prel)[part_idx];
+				char	   *start_value,
+						   *end_value;
+
+				/* Convert min & max to CSTRING */
+				start_value = datum_to_cstring(re->min, prel->atttype);
+				end_value = datum_to_cstring(re->max, prel->atttype);
+
+				pushJsonbValue(&jsonb_state, WJB_BEGIN_OBJECT, NULL);
+
+				JSB_INIT_VAL(&key, WJB_KEY, "parent");
+				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(parent_oid));
+				JSB_INIT_VAL(&key, WJB_KEY, "partition");
+				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(partition_oid));
+				JSB_INIT_VAL(&key, WJB_KEY, "part_type");
+				JSB_INIT_VAL(&val, WJB_VALUE, "RANGE");
+				JSB_INIT_VAL(&key, WJB_KEY, "start");
+				JSB_INIT_VAL(&val, WJB_VALUE, start_value);
+				JSB_INIT_VAL(&key, WJB_KEY, "end");
+				JSB_INIT_VAL(&val, WJB_VALUE, end_value);
+
+				result = pushJsonbValue(&jsonb_state, WJB_END_OBJECT, NULL);
+			}
+			break;
+
+		default:
+			elog(ERROR, "Unknown partitioning type %u", prel->parttype);
+			break;
+	}
+
+	/* Construct JSONB object */
+	jsonb = PointerGetDatum(JsonbValueToJsonb(result));
+
+	/* Validate the callback's signature */
+	validate_on_part_init_cb(prel->callback, true);
+
+	fmgr_info(prel->callback, &cb_flinfo);
+
+	InitFunctionCallInfoData(cb_fcinfo, &cb_flinfo, 1, InvalidOid, NULL, NULL);
+
+	cb_fcinfo.arg[0] = jsonb;
+	cb_fcinfo.argnull[0] = false;
+
+	/* Invoke the callback */
+	FunctionCallInvoke(&cb_fcinfo);
+
+	PG_RETURN_DATUM(jsonb);
 }

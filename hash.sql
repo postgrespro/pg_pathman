@@ -84,10 +84,10 @@ BEGIN
 
 	/* Copy data */
 	IF partition_data = true THEN
-		PERFORM @extschema@.disable_parent(parent_relid);
+		PERFORM @extschema@.set_enable_parent(parent_relid, false);
 		PERFORM @extschema@.partition_data(parent_relid);
 	ELSE
-		PERFORM @extschema@.enable_parent(parent_relid);
+		PERFORM @extschema@.set_enable_parent(parent_relid, true);
 	END IF;
 
 	RETURN partitions_count;
