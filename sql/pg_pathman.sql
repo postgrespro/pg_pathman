@@ -15,10 +15,10 @@ ALTER TABLE test.hash_rel ALTER COLUMN value SET NOT NULL;
 SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3, partition_data:=false);
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
 SELECT * FROM test.hash_rel;
-SELECT pathman.disable_parent('test.hash_rel');
+SELECT pathman.set_enable_parent('test.hash_rel', false);
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
 SELECT * FROM test.hash_rel;
-SELECT pathman.enable_parent('test.hash_rel');
+SELECT pathman.set_enable_parent('test.hash_rel', true);
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
 SELECT * FROM test.hash_rel;
 SELECT pathman.drop_partitions('test.hash_rel');
@@ -525,9 +525,9 @@ SELECT * FROM test.range_rel WHERE dt = '2014-12-15';
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt = '2015-03-15';
 SELECT * FROM test.range_rel WHERE dt = '2015-03-15';
 
-SELECT pathman.disable_auto('test.range_rel');
+SELECT pathman.set_auto('test.range_rel', false);
 INSERT INTO test.range_rel (dt) VALUES ('2015-06-01');
-SELECT pathman.enable_auto('test.range_rel');
+SELECT pathman.set_auto('test.range_rel', true);
 INSERT INTO test.range_rel (dt) VALUES ('2015-06-01');
 
 DROP TABLE test.range_rel CASCADE;
@@ -665,3 +665,27 @@ SELECT create_hash_partitions('test_fkey', 'id', 10);
 INSERT INTO test_fkey VALUES(1, 'wrong');
 INSERT INTO test_fkey VALUES(1, 'test');
 SELECT drop_partitions('test_fkey');
+
+/* Check callbacks */
+CREATE TABLE log(id serial, message text);
+
+CREATE OR REPLACE FUNCTION abc_on_partition_created_callback(args JSONB)
+RETURNS VOID AS $$
+DECLARE
+	start_value	TEXT := args->>'start';
+	end_value	TEXT := args->'end';
+BEGIN
+	INSERT INTO log(message)
+	VALUES (start_value || '-' || end_value);
+END
+$$ language plpgsql;
+
+CREATE TABLE abc(a serial, b int);
+SELECT create_range_partitions('abc', 'a', 1, 100, 2);
+SELECT set_part_init_callback('abc', 'abc_on_partition_created_callback');
+INSERT INTO abc VALUES (123, 1);
+INSERT INTO abc VALUES (223, 1);
+SELECT append_range_partition('abc');
+SELECT prepend_range_partition('abc');
+SELECT add_range_partition('abc', 401, 501);
+SELECT message FROM log ORDER BY id;

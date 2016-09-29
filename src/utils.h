@@ -49,12 +49,17 @@ void postprocess_lock_rows(List *rtable, Plan *plan);
 bool clause_contains_params(Node *clause);
 bool is_date_type_internal(Oid typid);
 bool is_string_type_internal(Oid typid);
+bool validate_on_part_init_cb(Oid procid, bool emit_error);
 
 /*
  * Misc.
  */
 Oid get_pathman_schema(void);
 List * list_reverse(List *l);
+
+#if PG_VERSION_NUM < 90600
+char get_rel_persistence(Oid relid);
+#endif
 
 /*
  * Handy execution-stage functions.
@@ -65,6 +70,5 @@ void fill_type_cmp_fmgr_info(FmgrInfo *finfo,
 							 Oid type1,
 							 Oid type2);
 char * datum_to_cstring(Datum datum, Oid typid);
-
 
 #endif

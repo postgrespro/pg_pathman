@@ -35,9 +35,9 @@ SELECT * FROM test.hash_rel;
   3 |     3
 (3 rows)
 
-SELECT pathman.disable_parent('test.hash_rel');
- disable_parent 
-----------------
+SELECT pathman.set_enable_parent('test.hash_rel', false);
+ set_enable_parent 
+-------------------
  
 (1 row)
 
@@ -55,9 +55,9 @@ SELECT * FROM test.hash_rel;
 ----+-------
 (0 rows)
 
-SELECT pathman.enable_parent('test.hash_rel');
- enable_parent 
----------------
+SELECT pathman.set_enable_parent('test.hash_rel', true);
+ set_enable_parent 
+-------------------
  
 (1 row)
 
@@ -1260,17 +1260,17 @@ SELECT * FROM test.range_rel WHERE dt = '2015-03-15';
  74 | Sun Mar 15 00:00:00 2015
 (1 row)
 
-SELECT pathman.disable_auto('test.range_rel');
- disable_auto 
---------------
+SELECT pathman.set_auto('test.range_rel', false);
+ set_auto 
+----------
  
 (1 row)
 
 INSERT INTO test.range_rel (dt) VALUES ('2015-06-01');
 ERROR:  no suitable partition for key 'Mon Jun 01 00:00:00 2015'
-SELECT pathman.enable_auto('test.range_rel');
- enable_auto 
--------------
+SELECT pathman.set_auto('test.range_rel', true);
+ set_auto 
+----------
  
 (1 row)
 
@@ -1767,4 +1767,59 @@ NOTICE:  100 rows copied from test_fkey_0
 -----------------
               10
 (1 row)
+
+/* Check callbacks */
+CREATE TABLE log(id serial, message text);
+CREATE OR REPLACE FUNCTION abc_on_partition_created_callback(args JSONB)
+RETURNS VOID AS $$
+DECLARE
+	start_value	TEXT := args->>'start';
+	end_value	TEXT := args->'end';
+BEGIN
+	INSERT INTO log(message)
+	VALUES (start_value || '-' || end_value);
+END
+$$ language plpgsql;
+CREATE TABLE abc(a serial, b int);
+SELECT create_range_partitions('abc', 'a', 1, 100, 2);
+NOTICE:  sequence "abc_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+SELECT set_part_init_callback('abc', 'abc_on_partition_created_callback');
+ set_part_init_callback 
+------------------------
+ 
+(1 row)
+
+INSERT INTO abc VALUES (123, 1);
+INSERT INTO abc VALUES (223, 1);
+SELECT append_range_partition('abc');
+ append_range_partition 
+------------------------
+ public.abc_4
+(1 row)
+
+SELECT prepend_range_partition('abc');
+ prepend_range_partition 
+-------------------------
+ public.abc_5
+(1 row)
+
+SELECT add_range_partition('abc', 401, 501);
+ add_range_partition 
+---------------------
+ public.abc_6
+(1 row)
+
+SELECT message FROM log ORDER BY id;
+  message  
+-----------
+ 201-"301"
+ 301-"401"
+ -99-"1"
+ 401-"501"
+(4 rows)
 

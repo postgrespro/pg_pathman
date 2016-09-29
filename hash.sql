@@ -24,6 +24,7 @@ DECLARE
 	v_plain_relname		TEXT;
 	v_atttype			REGTYPE;
 	v_hashfunc			REGPROC;
+	v_init_callback		REGPROCEDURE;
 
 BEGIN
 	IF partition_data = true THEN
@@ -56,9 +57,11 @@ BEGIN
 								  quote_ident(v_plain_schema),
 								  quote_ident(v_plain_relname || '_' || partnum));
 
-		EXECUTE format('CREATE TABLE %1$s (LIKE %2$s INCLUDING ALL) INHERITS (%2$s)',
-					   v_child_relname,
-					   parent_relid::TEXT);
+		EXECUTE format(
+			'CREATE TABLE %1$s (LIKE %2$s INCLUDING ALL) INHERITS (%2$s) TABLESPACE %s',
+			v_child_relname,
+			parent_relid::TEXT,
+			@extschema@.get_rel_tablespace_name(parent_relid));
 
 		EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s
 						CHECK (@extschema@.get_hash_part_idx(%s(%s), %s) = %s)',
@@ -71,6 +74,18 @@ BEGIN
 					   partnum);
 
 		PERFORM @extschema@.copy_foreign_keys(parent_relid, v_child_relname::REGCLASS);
+
+		/* Fetch init_callback from 'params' table */
+		WITH stub_callback(stub) as (values (0))
+		SELECT coalesce(init_callback, 0::REGPROCEDURE)
+		FROM stub_callback
+		LEFT JOIN @extschema@.pathman_config_params AS params
+		ON params.partrel = parent_relid
+		INTO v_init_callback;
+
+		PERFORM @extschema@.invoke_on_partition_created_callback(parent_relid,
+																 v_child_relname::REGCLASS,
+																 v_init_callback);
 	END LOOP;
 
 	/* Notify backend about changes */
@@ -78,10 +93,10 @@ BEGIN
 
 	/* Copy data */
 	IF partition_data = true THEN
-		PERFORM @extschema@.disable_parent(parent_relid);
+		PERFORM @extschema@.set_enable_parent(parent_relid, false);
 		PERFORM @extschema@.partition_data(parent_relid);
 	ELSE
-		PERFORM @extschema@.enable_parent(parent_relid);
+		PERFORM @extschema@.set_enable_parent(parent_relid, true);
 	END IF;
 
 	RETURN partitions_count;
@@ -138,7 +153,6 @@ DECLARE
 	funcname				TEXT;
 	triggername				TEXT;
 	atttype					REGTYPE;
-	hashfunc				TEXT;
 	partitions_count		INTEGER;
 
 BEGIN

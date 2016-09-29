@@ -49,6 +49,7 @@ typedef struct
 	bool			valid;			/* is this entry valid? */
 	bool			enable_parent;	/* include parent to the plan */
 	bool			auto_partition; /* auto partition creation */
+	Oid				init_callback;	/* callback for partition creation */
 
 	uint32			children_count;
 	Oid			   *children;		/* Oids of child partitions */

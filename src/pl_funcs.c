@@ -13,16 +13,21 @@
 #include "relation_info.h"
 #include "utils.h"
 #include "xact_handling.h"
+#include "fmgr.h"
 
 #include "access/htup_details.h"
 #include "access/nbtree.h"
 #include "access/xact.h"
 #include "catalog/indexing.h"
+#include "catalog/pg_type.h"
+#include "catalog/pg_proc.h"
 #include "commands/sequence.h"
+#include "commands/tablespace.h"
 #include "miscadmin.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include <utils/inval.h>
+#include "utils/jsonb.h"
 #include "utils/memutils.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
@@ -56,6 +61,9 @@ PG_FUNCTION_INFO_V1( invalidate_relcache );
 PG_FUNCTION_INFO_V1( lock_partitioned_relation );
 PG_FUNCTION_INFO_V1( prevent_relation_modification );
 PG_FUNCTION_INFO_V1( debug_capture );
+PG_FUNCTION_INFO_V1( get_rel_tablespace_name );
+PG_FUNCTION_INFO_V1( validate_on_part_init_callback_pl );
+PG_FUNCTION_INFO_V1( invoke_on_partition_created_callback );
 
 
 static void on_partitions_created_internal(Oid partitioned_table, bool add_callbacks);
@@ -746,6 +754,164 @@ debug_capture(PG_FUNCTION_ARGS)
 
 	/* Write something (doesn't really matter) */
 	elog(WARNING, "debug_capture [%u]", MyProcPid);
+
+	PG_RETURN_VOID();
+}
+
+/*
+ * Return tablespace name for specified relation
+ */
+Datum
+get_rel_tablespace_name(PG_FUNCTION_ARGS)
+{
+	Oid			relid = PG_GETARG_OID(0);
+	Oid			tablespace_id;
+	char	   *result;
+
+	tablespace_id = get_rel_tablespace(relid);
+
+	/* If tablespace id is InvalidOid then use the default tablespace */
+	if (!OidIsValid(tablespace_id))
+	{
+		tablespace_id = GetDefaultTablespace(get_rel_persistence(relid));
+
+		/* If tablespace is still invalid then use database's default */
+		if (!OidIsValid(tablespace_id))
+			tablespace_id = MyDatabaseTableSpace;
+	}
+
+	result = get_tablespace_name(tablespace_id);
+	PG_RETURN_TEXT_P(cstring_to_text(result));
+}
+
+/*
+ * Checks that callback function meets specific requirements.
+ * It must have the only JSONB argument and BOOL return type.
+ */
+Datum
+validate_on_part_init_callback_pl(PG_FUNCTION_ARGS)
+{
+	validate_on_part_init_cb(PG_GETARG_OID(0), true);
+
+	PG_RETURN_VOID();
+}
+
+/*
+ * Builds JSONB object containing new partition parameters
+ * and invokes the callback.
+ */
+Datum
+invoke_on_partition_created_callback(PG_FUNCTION_ARGS)
+{
+#define JSB_INIT_VAL(value, val_type, val_cstring) \
+	do { \
+		(value)->type = jbvString; \
+		(value)->val.string.len = strlen(val_cstring); \
+		(value)->val.string.val = val_cstring; \
+		pushJsonbValue(&jsonb_state, val_type, (value)); \
+	} while (0)
+
+#define ARG_PARENT			0	/* parent table */
+#define ARG_CHILD			1	/* partition */
+#define ARG_CALLBACK		2	/* callback to be invoked */
+#define ARG_RANGE_START		3	/* start_value */
+#define ARG_RANGE_END		4	/* end_value */
+
+	Oid						parent_oid		= PG_GETARG_OID(ARG_PARENT),
+							partition_oid	= PG_GETARG_OID(ARG_CHILD);
+	PartType				part_type;
+
+	Oid						cb_oid			= PG_GETARG_OID(ARG_CALLBACK);
+	FmgrInfo				cb_flinfo;
+	FunctionCallInfoData	cb_fcinfo;
+
+	JsonbParseState		   *jsonb_state = NULL;
+	JsonbValue			   *result,
+							key,
+							val;
+
+	/* If there's no callback function specified, we're done */
+	if (cb_oid == InvalidOid)
+		PG_RETURN_VOID();
+
+	if (PG_ARGISNULL(ARG_PARENT))
+		elog(ERROR, "parent_relid should not be null");
+
+	if (PG_ARGISNULL(ARG_CHILD))
+		elog(ERROR, "partition should not be null");
+
+	/* Both RANGE_START & RANGE_END are not available (HASH) */
+	if (PG_ARGISNULL(ARG_RANGE_START) && PG_ARGISNULL(ARG_RANGE_START))
+		part_type = PT_HASH;
+
+	/* Either RANGE_START or RANGE_END is missing */
+	else if (PG_ARGISNULL(ARG_RANGE_START) || PG_ARGISNULL(ARG_RANGE_START))
+		elog(ERROR, "both boundaries must be provided for RANGE partition");
+
+	/* Both RANGE_START & RANGE_END are provided */
+	else part_type = PT_RANGE;
+
+	/* Build JSONB according to partitioning type */
+	switch (part_type)
+	{
+		case PT_HASH:
+			{
+				pushJsonbValue(&jsonb_state, WJB_BEGIN_OBJECT, NULL);
+
+				JSB_INIT_VAL(&key, WJB_KEY, "parent");
+				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(parent_oid));
+				JSB_INIT_VAL(&key, WJB_KEY, "partition");
+				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(partition_oid));
+				JSB_INIT_VAL(&key, WJB_KEY, "part_type");
+				JSB_INIT_VAL(&val, WJB_VALUE, "HASH");
+
+				result = pushJsonbValue(&jsonb_state, WJB_END_OBJECT, NULL);
+			}
+			break;
+
+		case PT_RANGE:
+			{
+				char   *start_value,
+					   *end_value;
+				Oid		type = get_fn_expr_argtype(fcinfo->flinfo, ARG_RANGE_START);
+
+				/* Convert min & max to CSTRING */
+				start_value = datum_to_cstring(PG_GETARG_DATUM(ARG_RANGE_START), type);
+				end_value = datum_to_cstring(PG_GETARG_DATUM(ARG_RANGE_END), type);
+
+				pushJsonbValue(&jsonb_state, WJB_BEGIN_OBJECT, NULL);
+
+				JSB_INIT_VAL(&key, WJB_KEY, "parent");
+				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(parent_oid));
+				JSB_INIT_VAL(&key, WJB_KEY, "partition");
+				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(partition_oid));
+				JSB_INIT_VAL(&key, WJB_KEY, "part_type");
+				JSB_INIT_VAL(&val, WJB_VALUE, "RANGE");
+				JSB_INIT_VAL(&key, WJB_KEY, "start");
+				JSB_INIT_VAL(&val, WJB_VALUE, start_value);
+				JSB_INIT_VAL(&key, WJB_KEY, "end");
+				JSB_INIT_VAL(&val, WJB_VALUE, end_value);
+
+				result = pushJsonbValue(&jsonb_state, WJB_END_OBJECT, NULL);
+			}
+			break;
+
+		default:
+			elog(ERROR, "Unknown partitioning type %u", part_type);
+			break;
+	}
+
+	/* Validate the callback's signature */
+	validate_on_part_init_cb(cb_oid, true);
+
+	fmgr_info(cb_oid, &cb_flinfo);
+
+	InitFunctionCallInfoData(cb_fcinfo, &cb_flinfo, 1, InvalidOid, NULL, NULL);
+	cb_fcinfo.arg[0] = PointerGetDatum(JsonbValueToJsonb(result));
+	cb_fcinfo.argnull[0] = false;
+
+	/* Invoke the callback */
+	FunctionCallInvoke(&cb_fcinfo);
 
 	PG_RETURN_VOID();
 }
