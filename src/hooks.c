@@ -12,6 +12,7 @@
 #include "hooks.h"
 #include "init.h"
 #include "partition_filter.h"
+#include "pg_compat.h"
 #include "runtimeappend.h"
 #include "runtime_merge_append.h"
 #include "utils.h"
@@ -169,12 +170,12 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		 * Currently we use get_parameterized_joinrel_size() since
 		 * it works just fine, but this might change some day.
 		 */
-		nest_path->path.rows = get_parameterized_joinrel_size(root,
-															  joinrel,
-															  outer->rows,
-															  inner->rows,
-															  extra->sjinfo,
-															  filtered_joinclauses);
+		nest_path->path.rows = get_parameterized_joinrel_size_compat(root,
+																	 joinrel,
+																	 outer,
+																	 inner,
+																	 extra->sjinfo,
+																	 filtered_joinclauses);
 
 		/* Finally we can add the new NestLoop path */
 		add_path(joinrel, (Path *) nest_path);
@@ -183,7 +184,10 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 
 /* Cope with simple relations */
 void
-pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTblEntry *rte)
+pathman_rel_pathlist_hook(PlannerInfo *root,
+						  RelOptInfo *rel,
+						  Index rti,
+						  RangeTblEntry *rte)
 {
 	const PartRelationInfo *prel;
 	RangeTblEntry		  **new_rte_array;
@@ -315,7 +319,8 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 			IndexRange	irange = lfirst_irange(lc);
 
 			for (i = irange.ir_lower; i <= irange.ir_upper; i++)
-				append_child_relation(root, rel, rti, rte, i, children[i], wrappers);
+				append_child_relation(root, rel, rti, rte, i, children[i],
+									  wrappers);
 		}
 
 		/* Clear old path list */
@@ -323,7 +328,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 
 		rel->pathlist = NIL;
 		set_append_rel_pathlist(root, rel, rti, rte, pathkeyAsc, pathkeyDesc);
-		set_append_rel_size(root, rel, rti, rte);
+		set_append_rel_size_compat(root, rel, rti, rte);
 
 		/* No need to go further (both nodes are disabled), return */
 		if (!(pg_pathman_enable_runtimeappend ||

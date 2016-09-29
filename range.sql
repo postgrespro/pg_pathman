@@ -91,6 +91,7 @@ DECLARE
 	v_rows_count		INTEGER;
 	v_max				p_start_value%TYPE;
 	v_cur_value			p_start_value%TYPE := p_start_value;
+	p_end_value			p_start_value%TYPE;
 	i					INTEGER;
 
 BEGIN
@@ -132,12 +133,19 @@ BEGIN
 	 * and specifies partition count as 0 then do not check boundaries
 	 */
 	IF p_count != 0 THEN
+		/* compute right bound of partitioning through additions */
+		p_end_value := p_start_value;
+		FOR i IN 1..p_count
+		LOOP
+			p_end_value := p_end_value + p_interval;
+		END LOOP;
+
 		/* Check boundaries */
 		EXECUTE format('SELECT @extschema@.check_boundaries(''%s'', ''%s'', ''%s'', ''%s''::%s)',
 					   parent_relid,
 					   p_attribute,
 					   p_start_value,
-					   p_start_value + p_interval * p_count,
+					   p_end_value,
 					   @extschema@.get_base_type(pg_typeof(p_start_value))::TEXT);
 	END IF;
 
@@ -195,6 +203,7 @@ DECLARE
 	v_rows_count		INTEGER;
 	v_max				p_start_value%TYPE;
 	v_cur_value			p_start_value%TYPE := p_start_value;
+	p_end_value			p_start_value%TYPE;
 	i					INTEGER;
 
 BEGIN
@@ -240,11 +249,18 @@ BEGIN
 	 * and specifies partition count as 0 then do not check boundaries
 	 */
 	IF p_count != 0 THEN
+		/* compute right bound of partitioning through additions */
+		p_end_value := p_start_value;
+		FOR i IN 1..p_count
+		LOOP
+			p_end_value := p_end_value + p_interval;
+		END LOOP;
+
 		/* check boundaries */
 		PERFORM @extschema@.check_boundaries(parent_relid,
 											 p_attribute,
 											 p_start_value,
-											 p_start_value + p_interval * p_count);
+											 p_end_value);
 	END IF;
 
 	/* Create sequence for child partitions names */

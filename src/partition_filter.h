@@ -18,6 +18,10 @@
 #include "commands/explain.h"
 #include "optimizer/planner.h"
 
+#if PG_VERSION_NUM >= 90600
+#include "nodes/extensible.h"
+#endif
+
 
 #define ERR_PART_ATTR_NULL		"partitioned column's value should not be NULL"
 #define ERR_PART_ATTR_NO_PART	"no suitable partition for key '%s'"

@@ -10,6 +10,8 @@
  * ------------------------------------------------------------------------
  */
 
+#include "pg_compat.h"
+
 #include "runtime_merge_append.h"
 #include "pathman.h"
 
@@ -17,6 +19,7 @@
 #include "catalog/pg_collation.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
+#include "nodes/plannodes.h"
 #include "optimizer/clauses.h"
 #include "optimizer/cost.h"
 #include "optimizer/planmain.h"
@@ -747,9 +750,9 @@ prepare_sort_from_pathkeys(PlannerInfo *root, Plan *lefttree, List *pathkeys,
 					continue;
 
 				sortexpr = em->em_expr;
-				exprvars = pull_var_clause((Node *) sortexpr,
-										   PVC_INCLUDE_AGGREGATES,
-										   PVC_INCLUDE_PLACEHOLDERS);
+				exprvars = pull_var_clause_compat((Node *) sortexpr,
+												  PVC_INCLUDE_AGGREGATES,
+												  PVC_INCLUDE_PLACEHOLDERS);
 				foreach(k, exprvars)
 				{
 					if (!tlist_member_ignore_relabel(lfirst(k), tlist))
@@ -773,8 +776,8 @@ prepare_sort_from_pathkeys(PlannerInfo *root, Plan *lefttree, List *pathkeys,
 			{
 				/* copy needed so we don't modify input's tlist below */
 				tlist = copyObject(tlist);
-				lefttree = (Plan *) make_result(root, tlist, NULL,
-												lefttree);
+				lefttree = (Plan *) make_result_compat(root, tlist, NULL,
+													   lefttree);
 			}
 
 			/* Don't bother testing is_projection_capable_plan again */

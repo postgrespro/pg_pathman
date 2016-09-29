@@ -38,6 +38,10 @@
 #include "utils/syscache.h"
 #include "utils/typcache.h"
 
+#if PG_VERSION_NUM >= 90600
+#include "catalog/pg_constraint_fn.h"
+#endif
+
 
 /* Help user in case of emergency */
 #define INIT_ERROR_HINT "pg_pathman will be disabled to allow you to resolve this issue"

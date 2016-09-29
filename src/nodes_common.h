@@ -17,6 +17,10 @@
 #include "commands/explain.h"
 #include "optimizer/planner.h"
 
+#if PG_VERSION_NUM >= 90600
+#include "nodes/extensible.h"
+#endif
+
 
 /*
  * Common structure for storing selected
