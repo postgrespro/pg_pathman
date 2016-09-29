@@ -27,6 +27,7 @@
 #include "catalog/pg_type.h"
 #include "miscadmin.h"
 #include "optimizer/clauses.h"
+#include "parser/parse_coerce.h"
 #include "utils/datum.h"
 #include "utils/inval.h"
 #include "utils/builtins.h"
@@ -867,7 +868,9 @@ validate_range_constraint(const Expr *expr,
 }
 
 /*
- * Reads const value from expressions of kind: VAR >= CONST or VAR < CONST
+ * Reads const value from expressions of kind:
+ *		1) VAR >= CONST OR VAR < CONST
+ *		2) RELABELTYPE(VAR) >= CONST OR RELABELTYPE(VAR) < CONST
  */
 static bool
 read_opexpr_const(const OpExpr *opexpr,
@@ -876,6 +879,7 @@ read_opexpr_const(const OpExpr *opexpr,
 {
 	const Node	   *left;
 	const Node	   *right;
+	const Var	   *part_attr;	/* partitioned column */
 	const Const	   *constant;
 
 	if (list_length(opexpr->args) != 2)
@@ -884,24 +888,81 @@ read_opexpr_const(const OpExpr *opexpr,
 	left = linitial(opexpr->args);
 	right = lsecond(opexpr->args);
 
-	if (!IsA(left, Var) || !IsA(right, Const))
+	/* VAR is a part of RelabelType node */
+	if (IsA(left, RelabelType) && IsA(right, Const))
+	{
+		Var *var = (Var *) ((RelabelType *) left)->arg;
+
+		if (IsA(var, Var))
+			part_attr = var;
+		else
+			return false;
+	}
+	/* left arg is of type VAR */
+	else if (IsA(left, Var) && IsA(right, Const))
+	{
+		part_attr = (Var *) left;
+	}
+	/* Something is wrong, retreat! */
+	else return false;
+
+	/* VAR.attno == partitioned attribute number */
+	if (part_attr->varoattno != prel->attnum)
 		return false;
-	if (((Var *) left)->varoattno != prel->attnum)
-		return false;
+
+	/* CONST is NOT NULL */
 	if (((Const *) right)->constisnull)
 		return false;
 
 	constant = (Const *) right;
 
-	/* Check that types match */
-	if (prel->atttype != constant->consttype)
+	/* Check that types are binary coercible */
+	if (IsBinaryCoercible(constant->consttype, prel->atttype))
 	{
-		elog(WARNING, "Constant type in some check constraint does "
-					  "not match the partitioned column's type");
-		return false;
+		*val = constant->constvalue;
 	}
+	/* If not, try to perfrom a type cast */
+	else
+	{
+		CoercionPathType	ret;
+		Oid					castfunc = InvalidOid;
 
-	*val = constant->constvalue;
+		ret = find_coercion_pathway(prel->atttype, constant->consttype,
+									COERCION_EXPLICIT, &castfunc);
+
+		switch (ret)
+		{
+			/* There's a function */
+			case COERCION_PATH_FUNC:
+				{
+					/* Perform conversion */
+					Assert(castfunc != InvalidOid);
+					*val = OidFunctionCall1(castfunc, constant->constvalue);
+				}
+				break;
+
+			/* Types are binary compatible (no implicit cast) */
+			case COERCION_PATH_RELABELTYPE:
+				{
+					/* We don't perform any checks here */
+					*val = constant->constvalue;
+				}
+				break;
+
+			/* TODO: implement these if needed */
+			case COERCION_PATH_ARRAYCOERCE:
+			case COERCION_PATH_COERCEVIAIO:
+
+			/* There's no cast available */
+			case COERCION_PATH_NONE:
+			default:
+				{
+					elog(WARNING, "Constant type in some check constraint "
+								  "does not match the partitioned column's type");
+					return false;
+				}
+		}
+	}
 
 	return true;
 }

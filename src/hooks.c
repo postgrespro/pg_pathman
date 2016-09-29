@@ -565,7 +565,6 @@ pathman_relcache_hook(Datum arg, Oid relid)
 		/* Both syscache and pathman's cache say it isn't a partition */
 		case PPS_ENTRY_NOT_FOUND:
 			{
-				/* NOTE: Remove NOT_USED when it's time */
 				delay_invalidation_parent_rel(partitioned_table);
 #ifdef NOT_USED
 				elog(DEBUG2, "Invalidation message for relation %u [%u]",

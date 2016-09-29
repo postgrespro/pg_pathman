@@ -615,6 +615,14 @@ RETURNS REGCLASS AS 'pg_pathman', 'get_parent_of_partition_pl'
 LANGUAGE C STRICT;
 
 /*
+ * Extract basic type of a domain.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_base_type(REGTYPE)
+RETURNS REGTYPE AS 'pg_pathman', 'get_base_type_pl'
+LANGUAGE C STRICT;
+
+
+/*
  * Checks if attribute is nullable
  */
 CREATE OR REPLACE FUNCTION @extschema@.is_attribute_nullable(
@@ -633,9 +641,9 @@ LANGUAGE C STRICT;
 /*
  * Returns attribute type name for relation
  */
-CREATE OR REPLACE FUNCTION @extschema@.get_attribute_type_name(
+CREATE OR REPLACE FUNCTION @extschema@.get_attribute_type(
 	REGCLASS, TEXT)
-RETURNS TEXT AS 'pg_pathman', 'get_attribute_type_name'
+RETURNS REGTYPE AS 'pg_pathman', 'get_attribute_type_pl'
 LANGUAGE C STRICT;
 
 /*
