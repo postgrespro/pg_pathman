@@ -198,6 +198,7 @@ DECLARE
 	v_limit_clause	TEXT := '';
 	v_where_clause	TEXT := '';
 	ctids			TID[];
+
 BEGIN
 	SELECT attname INTO v_attr
 	FROM @extschema@.pathman_config WHERE partrel = p_relation;
@@ -244,7 +245,7 @@ BEGIN
 	RETURN;
 END
 $$
-LANGUAGE plpgsql STRICT
+LANGUAGE plpgsql
 SET pg_pathman.enable_partitionfilter = on; /* ensures that PartitionFilter is ON */
 
 /*
@@ -708,8 +709,9 @@ CREATE OR REPLACE FUNCTION @extschema@.validate_on_partition_created_callback(ca
 RETURNS VOID AS 'pg_pathman', 'validate_on_part_init_callback_pl'
 LANGUAGE C STRICT;
 
+
 /*
- * Builds JSONB object containing new partition parameters and invoke the callback.
+ * Invoke init_callback on RANGE partition.
  */
 CREATE OR REPLACE FUNCTION @extschema@.invoke_on_partition_created_callback(
 	parent_relid	REGCLASS,
@@ -720,6 +722,9 @@ CREATE OR REPLACE FUNCTION @extschema@.invoke_on_partition_created_callback(
 RETURNS VOID AS 'pg_pathman', 'invoke_on_partition_created_callback'
 LANGUAGE C;
 
+/*
+ * Invoke init_callback on HASH partition.
+ */
 CREATE OR REPLACE FUNCTION @extschema@.invoke_on_partition_created_callback(
 	parent_relid	REGCLASS,
 	partition		REGCLASS,

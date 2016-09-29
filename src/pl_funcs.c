@@ -844,7 +844,7 @@ invoke_on_partition_created_callback(PG_FUNCTION_ARGS)
 		part_type = PT_HASH;
 
 	/* Either RANGE_START or RANGE_END is missing */
-	if (PG_ARGISNULL(ARG_RANGE_START) || PG_ARGISNULL(ARG_RANGE_START))
+	else if (PG_ARGISNULL(ARG_RANGE_START) || PG_ARGISNULL(ARG_RANGE_START))
 		elog(ERROR, "both boundaries must be provided for RANGE partition");
 
 	/* Both RANGE_START & RANGE_END are provided */
