@@ -497,6 +497,7 @@ append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	/* Recalc parent relation tuples count */
 	rel->tuples += childrel->tuples;
 
+	/* Close child relations, but keep locks */
 	heap_close(newrelation, NoLock);
 
 

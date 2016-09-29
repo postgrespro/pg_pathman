@@ -369,8 +369,16 @@ pathman_rel_pathlist_hook(PlannerInfo *root, RelOptInfo *rel, Index rti, RangeTb
 													   ppi, paramsel);
 			else if (IsA(cur_path, MergeAppendPath) &&
 					 pg_pathman_enable_runtime_merge_append)
+			{
+				/* Check struct layout compatibility */
+				if (offsetof(AppendPath, subpaths) !=
+						offsetof(MergeAppendPath, subpaths))
+					elog(FATAL, "Struct layouts of AppendPath and "
+								"MergeAppendPath differ");
+
 				inner_path = create_runtimemergeappend_path(root, cur_path,
 															ppi, paramsel);
+			}
 
 			if (inner_path)
 				add_path(rel, inner_path);
