@@ -525,9 +525,9 @@ SELECT * FROM test.range_rel WHERE dt = '2014-12-15';
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt = '2015-03-15';
 SELECT * FROM test.range_rel WHERE dt = '2015-03-15';
 
-SELECT pathman.set_auto_partitioning('test.range_rel', false);
+SELECT pathman.set_auto('test.range_rel', false);
 INSERT INTO test.range_rel (dt) VALUES ('2015-06-01');
-SELECT pathman.set_auto_partitioning('test.range_rel', true);
+SELECT pathman.set_auto('test.range_rel', true);
 INSERT INTO test.range_rel (dt) VALUES ('2015-06-01');
 
 DROP TABLE test.range_rel CASCADE;

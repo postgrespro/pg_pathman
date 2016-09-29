@@ -84,15 +84,15 @@ CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions(
 	p_start_value	ANYELEMENT,
 	p_interval		INTERVAL,
 	p_count			INTEGER DEFAULT NULL,
-	partition_data  BOOLEAN DEFAULT true)
+	partition_data  BOOLEAN DEFAULT TRUE)
 RETURNS INTEGER AS
 $$
 DECLARE
 	v_rows_count		INTEGER;
 	v_max				p_start_value%TYPE;
 	v_cur_value			p_start_value%TYPE := p_start_value;
-	v_tablespace		TEXT;
 	i					INTEGER;
+
 BEGIN
 	IF partition_data = true THEN
 		/* Acquire data modification lock */
@@ -149,9 +149,6 @@ BEGIN
 	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype, range_interval)
 	VALUES (parent_relid, p_attribute, 2, p_interval::TEXT);
 
-	/* Determine tablespace of parent table */
-	v_tablespace :=  @extschema@.get_rel_tablespace_name(parent_relid);
-
 	/* Create first partition */
 	FOR i IN 1..p_count
 	LOOP
@@ -162,7 +159,7 @@ BEGIN
 			parent_relid,
 			p_start_value,
 			p_start_value + p_interval,
-			v_tablespace;
+			@extschema@.get_rel_tablespace_name(parent_relid);
 
 		p_start_value := p_start_value + p_interval;
 	END LOOP;
@@ -191,14 +188,13 @@ CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions(
 	p_start_value	ANYELEMENT,
 	p_interval		ANYELEMENT,
 	p_count			INTEGER DEFAULT NULL,
-	partition_data  BOOLEAN DEFAULT true)
+	partition_data  BOOLEAN DEFAULT TRUE)
 RETURNS INTEGER AS
 $$
 DECLARE
 	v_rows_count		INTEGER;
 	v_max				p_start_value%TYPE;
 	v_cur_value			p_start_value%TYPE := p_start_value;
-	v_tablespace		TEXT;
 	i					INTEGER;
 
 BEGIN
@@ -259,9 +255,6 @@ BEGIN
 	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype, range_interval)
 	VALUES (parent_relid, p_attribute, 2, p_interval::TEXT);
 
-	/* Determine tablespace of parent table */
-	v_tablespace :=  @extschema@.get_rel_tablespace_name(parent_relid);
-
 	/* create first partition */
 	FOR i IN 1..p_count
 	LOOP
@@ -269,7 +262,7 @@ BEGIN
 			parent_relid,
 			p_start_value,
 			p_start_value + p_interval,
-			tablespace := v_tablespace);
+			tablespace := @extschema@.get_rel_tablespace_name(parent_relid));
 
 		p_start_value := p_start_value + p_interval;
 	END LOOP;
@@ -298,12 +291,11 @@ CREATE OR REPLACE FUNCTION @extschema@.create_partitions_from_range(
 	p_start_value	ANYELEMENT,
 	p_end_value		ANYELEMENT,
 	p_interval		ANYELEMENT,
-	partition_data  BOOLEAN DEFAULT true)
+	partition_data  BOOLEAN DEFAULT TRUE)
 RETURNS INTEGER AS
 $$
 DECLARE
 	part_count		INTEGER := 0;
-	v_tablespace	TEXT;
 
 BEGIN
 	IF partition_data = true THEN
@@ -336,16 +328,13 @@ BEGIN
 	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype, range_interval)
 	VALUES (parent_relid, p_attribute, 2, p_interval::TEXT);
 
-	/* Determine tablespace of parent table */
-	v_tablespace :=  @extschema@.get_rel_tablespace_name(parent_relid);
-
 	WHILE p_start_value <= p_end_value
 	LOOP
 		PERFORM @extschema@.create_single_range_partition(
 			parent_relid,
 			p_start_value,
 			p_start_value + p_interval,
-			tablespace := v_tablespace);
+			tablespace := @extschema@.get_rel_tablespace_name(parent_relid));
 
 		p_start_value := p_start_value + p_interval;
 		part_count := part_count + 1;
@@ -375,12 +364,11 @@ CREATE OR REPLACE FUNCTION @extschema@.create_partitions_from_range(
 	p_start_value	ANYELEMENT,
 	p_end_value		ANYELEMENT,
 	p_interval		INTERVAL,
-	partition_data  BOOLEAN DEFAULT true)
+	partition_data  BOOLEAN DEFAULT TRUE)
 RETURNS INTEGER AS
 $$
 DECLARE
 	part_count		INTEGER := 0;
-	v_tablespace	TEXT;
 
 BEGIN
 	IF partition_data = true THEN
@@ -409,9 +397,6 @@ BEGIN
 	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype, range_interval)
 	VALUES (parent_relid, p_attribute, 2, p_interval::TEXT);
 
-	/* Determine tablespace of parent table */
-	v_tablespace :=  @extschema@.get_rel_tablespace_name(parent_relid);
-
 	WHILE p_start_value <= p_end_value
 	LOOP
 		EXECUTE
@@ -421,7 +406,7 @@ BEGIN
 			parent_relid,
 			p_start_value,
 			p_start_value + p_interval,
-			v_tablespace;
+			@extschema@.get_rel_tablespace_name(parent_relid);
 
 		p_start_value := p_start_value + p_interval;
 		part_count := part_count + 1;
@@ -463,7 +448,8 @@ DECLARE
 	v_plain_relname			TEXT;
 	v_child_relname_exists	BOOL;
 	v_seq_name				TEXT;
-	v_create_table_query	TEXT;
+	v_init_callback			REGPROCEDURE;
+
 BEGIN
 	v_attname := attname FROM @extschema@.pathman_config
 				 WHERE partrel = parent_relid;
@@ -498,16 +484,15 @@ BEGIN
 		v_child_relname := partition_name;
 	END IF;
 
-	v_create_table_query := 'CREATE TABLE %1$s (LIKE %2$s INCLUDING ALL) INHERITS (%2$s)';
-
-	/* If tablespace is specified then add it to a create query */
-	if NOT tablespace IS NULL THEN
-		v_create_table_query := v_create_table_query || ' TABLESPACE ' ||tablespace;
+	IF tablespace IS NULL THEN
+		tablespace := @extschema@.get_rel_tablespace_name(parent_relid);
 	END IF;
 
-	EXECUTE format(v_create_table_query,
+	EXECUTE format('CREATE TABLE %1$s (LIKE %2$s INCLUDING ALL)
+					INHERITS (%2$s) TABLESPACE %3$s',
 				   v_child_relname,
-				   parent_relid::TEXT);
+				   parent_relid::TEXT,
+				   tablespace);
 
 	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)',
 				   v_child_relname,
@@ -518,8 +503,20 @@ BEGIN
 													 p_end_value));
 
 	PERFORM @extschema@.copy_foreign_keys(parent_relid, v_child_relname::REGCLASS);
+
+	/* Fetch init_callback from 'params' table */
+	WITH stub_callback(stub) as (values (0))
+	SELECT coalesce(init_callback, 0::REGPROCEDURE)
+	FROM stub_callback
+	LEFT JOIN @extschema@.pathman_config_params AS params
+	ON params.partrel = parent_relid
+	INTO v_init_callback;
+
 	PERFORM @extschema@.invoke_on_partition_created_callback(parent_relid,
-															 v_child_relname::REGCLASS);
+															 v_child_relname::REGCLASS,
+															 v_init_callback,
+															 p_start_value,
+															 p_end_value);
 
 	RETURN v_child_relname;
 END
@@ -817,11 +814,6 @@ BEGIN
 		RAISE EXCEPTION 'Cannot append to empty partitions set';
 	END IF;
 
-	/* If tablespace isn't specified then choose parent's tablespace */
-	IF tablespace IS NULL THEN
-		tablespace := @extschema@.get_rel_tablespace_name(parent_relid);
-	END IF;
-
 	p_range := @extschema@.get_range_by_idx(parent_relid, -1, 0);
 
 	IF @extschema@.is_date_type(p_atttype::regtype) THEN
@@ -922,11 +914,6 @@ BEGIN
 		RAISE EXCEPTION 'Cannot prepend to empty partitions set';
 	END IF;
 
-	/* If tablespace isn't specified then choose parent's tablespace */
-	IF tablespace IS NULL THEN
-		tablespace := @extschema@.get_rel_tablespace_name(parent_relid);
-	END IF;
-
 	p_range := @extschema@.get_range_by_idx(parent_relid, 0, 0);
 
 	IF @extschema@.is_date_type(p_atttype::regtype) THEN
@@ -983,11 +970,6 @@ BEGIN
 	IF @extschema@.partitions_count(parent_relid) > 0
 	   AND @extschema@.check_overlap(parent_relid, p_start_value, p_end_value) THEN
 		RAISE EXCEPTION 'Specified range overlaps with existing partitions';
-	END IF;
-
-	/* If tablespace isn't specified then choose parent's tablespace */
-	IF tablespace IS NULL THEN
-		tablespace := @extschema@.get_rel_tablespace_name(parent_relid);
 	END IF;
 
 	/* Create new partition */

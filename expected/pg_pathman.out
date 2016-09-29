@@ -1260,17 +1260,17 @@ SELECT * FROM test.range_rel WHERE dt = '2015-03-15';
  74 | Sun Mar 15 00:00:00 2015
 (1 row)
 
-SELECT pathman.set_auto_partitioning('test.range_rel', false);
- set_auto_partitioning 
------------------------
+SELECT pathman.set_auto('test.range_rel', false);
+ set_auto 
+----------
  
 (1 row)
 
 INSERT INTO test.range_rel (dt) VALUES ('2015-06-01');
 ERROR:  There is no suitable partition for key 'Mon Jun 01 00:00:00 2015'
-SELECT pathman.set_auto_partitioning('test.range_rel', true);
- set_auto_partitioning 
------------------------
+SELECT pathman.set_auto('test.range_rel', true);
+ set_auto 
+----------
  
 (1 row)
 

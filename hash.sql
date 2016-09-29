@@ -24,7 +24,7 @@ DECLARE
 	v_plain_schema		TEXT;
 	v_plain_relname		TEXT;
 	v_hashfunc			TEXT;
-	v_tablespace		TEXT;
+	v_init_callback		REGPROCEDURE;
 
 BEGIN
 	IF partition_data = true THEN
@@ -50,9 +50,6 @@ BEGIN
 	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype)
 	VALUES (parent_relid, attribute, 1);
 
-	/* Determine tablespace of parent table */
-	v_tablespace :=  @extschema@.get_rel_tablespace_name(parent_relid);
-
 	/* Create partitions and update pg_pathman configuration */
 	FOR partnum IN 0..partitions_count-1
 	LOOP
@@ -64,7 +61,7 @@ BEGIN
 			'CREATE TABLE %1$s (LIKE %2$s INCLUDING ALL) INHERITS (%2$s) TABLESPACE %s',
 			v_child_relname,
 			parent_relid::TEXT,
-			v_tablespace);
+			@extschema@.get_rel_tablespace_name(parent_relid));
 
 		EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s
 						CHECK (@extschema@.get_hash_part_idx(%s(%s), %s) = %s)',
@@ -77,6 +74,18 @@ BEGIN
 					   partnum);
 
 		PERFORM @extschema@.copy_foreign_keys(parent_relid, v_child_relname::REGCLASS);
+
+		/* Fetch init_callback from 'params' table */
+		WITH stub_callback(stub) as (values (0))
+		SELECT coalesce(init_callback, 0::REGPROCEDURE)
+		FROM stub_callback
+		LEFT JOIN @extschema@.pathman_config_params AS params
+		ON params.partrel = parent_relid
+		INTO v_init_callback;
+
+		PERFORM @extschema@.invoke_on_partition_created_callback(parent_relid,
+																 v_child_relname::REGCLASS,
+																 v_init_callback);
 	END LOOP;
 
 	/* Notify backend about changes */

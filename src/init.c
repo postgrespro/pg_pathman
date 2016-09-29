@@ -661,6 +661,12 @@ read_pathman_params(Oid relid, Datum *values, bool *isnull)
 		/* Extract data if necessary */
 		heap_deform_tuple(htup, RelationGetDescr(rel), values, isnull);
 		row_found = true;
+
+		/* Perform checks for non-NULL columns */
+		Assert(!isnull[Anum_pathman_config_params_partrel - 1]);
+		Assert(!isnull[Anum_pathman_config_params_enable_parent - 1]);
+		Assert(!isnull[Anum_pathman_config_params_auto - 1]);
+		Assert(!isnull[Anum_pathman_config_params_init_callback - 1]);
 	}
 
 	/* Clean resources */

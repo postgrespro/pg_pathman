@@ -124,7 +124,7 @@ LANGUAGE plpgsql STRICT;
 /*
  * Enable\disable automatic partition creation.
  */
-CREATE OR REPLACE FUNCTION @extschema@.set_auto_partitioning(
+CREATE OR REPLACE FUNCTION @extschema@.set_auto(
 	relation	REGCLASS,
 	value		BOOLEAN)
 RETURNS VOID AS
@@ -713,6 +713,16 @@ LANGUAGE C STRICT;
  */
 CREATE OR REPLACE FUNCTION @extschema@.invoke_on_partition_created_callback(
 	parent_relid	REGCLASS,
-	partition		REGCLASS)
-RETURNS JSONB AS 'pg_pathman', 'invoke_on_partition_created_callback'
+	partition		REGCLASS,
+	init_callback	REGPROCEDURE,
+	start_value		ANYELEMENT,
+	end_value		ANYELEMENT)
+RETURNS VOID AS 'pg_pathman', 'invoke_on_partition_created_callback'
+LANGUAGE C;
+
+CREATE OR REPLACE FUNCTION @extschema@.invoke_on_partition_created_callback(
+	parent_relid	REGCLASS,
+	partition		REGCLASS,
+	init_callback	REGPROCEDURE)
+RETURNS VOID AS 'pg_pathman', 'invoke_on_partition_created_callback'
 LANGUAGE C;
