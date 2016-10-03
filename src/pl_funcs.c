@@ -9,6 +9,7 @@
  */
 
 #include "init.h"
+#include "utils.h"
 #include "pathman.h"
 #include "relation_info.h"
 #include "xact_handling.h"
@@ -23,6 +24,7 @@
 #include "utils/builtins.h"
 #include "utils/inval.h"
 #include "utils/jsonb.h"
+#include "utils/snapmgr.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 
