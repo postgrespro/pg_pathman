@@ -11,59 +11,65 @@
 #include "init.h"
 #include "pathman.h"
 #include "relation_info.h"
-#include "utils.h"
 #include "xact_handling.h"
-#include "fmgr.h"
 
 #include "access/htup_details.h"
 #include "access/nbtree.h"
-#include "access/xact.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_type.h"
-#include "catalog/pg_proc.h"
-#include "commands/sequence.h"
 #include "commands/tablespace.h"
+#include "funcapi.h"
 #include "miscadmin.h"
-#include "utils/array.h"
 #include "utils/builtins.h"
-#include <utils/inval.h>
+#include "utils/inval.h"
 #include "utils/jsonb.h"
-#include "utils/memutils.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
-#include "utils/typcache.h"
 
 
-/* declarations */
+/* Function declarations */
+
 PG_FUNCTION_INFO_V1( on_partitions_created );
 PG_FUNCTION_INFO_V1( on_partitions_updated );
 PG_FUNCTION_INFO_V1( on_partitions_removed );
+
 PG_FUNCTION_INFO_V1( get_parent_of_partition_pl );
 PG_FUNCTION_INFO_V1( get_base_type_pl );
 PG_FUNCTION_INFO_V1( get_attribute_type_pl );
-PG_FUNCTION_INFO_V1( find_or_create_range_partition);
-PG_FUNCTION_INFO_V1( get_range_by_idx );
-PG_FUNCTION_INFO_V1( get_range_by_part_oid );
-PG_FUNCTION_INFO_V1( get_min_range_value );
-PG_FUNCTION_INFO_V1( get_max_range_value );
-PG_FUNCTION_INFO_V1( get_type_hash_func );
-PG_FUNCTION_INFO_V1( get_hash_part_idx );
-PG_FUNCTION_INFO_V1( check_overlap );
-PG_FUNCTION_INFO_V1( build_range_condition );
-PG_FUNCTION_INFO_V1( build_check_constraint_name_attnum );
-PG_FUNCTION_INFO_V1( build_check_constraint_name_attname );
+PG_FUNCTION_INFO_V1( get_rel_tablespace_name );
+
+PG_FUNCTION_INFO_V1( show_partition_list_internal );
+
 PG_FUNCTION_INFO_V1( build_update_trigger_func_name );
 PG_FUNCTION_INFO_V1( build_update_trigger_name );
+PG_FUNCTION_INFO_V1( build_check_constraint_name_attnum );
+PG_FUNCTION_INFO_V1( build_check_constraint_name_attname );
+
 PG_FUNCTION_INFO_V1( is_date_type );
 PG_FUNCTION_INFO_V1( is_attribute_nullable );
+
 PG_FUNCTION_INFO_V1( add_to_pathman_config );
 PG_FUNCTION_INFO_V1( invalidate_relcache );
+
 PG_FUNCTION_INFO_V1( lock_partitioned_relation );
 PG_FUNCTION_INFO_V1( prevent_relation_modification );
-PG_FUNCTION_INFO_V1( debug_capture );
-PG_FUNCTION_INFO_V1( get_rel_tablespace_name );
+
 PG_FUNCTION_INFO_V1( validate_on_part_init_callback_pl );
 PG_FUNCTION_INFO_V1( invoke_on_partition_created_callback );
+
+PG_FUNCTION_INFO_V1( debug_capture );
+
+
+typedef struct
+{
+	Relation				pathman_config;
+	HeapScanDesc			pathman_config_scan;
+	Snapshot				snapshot;
+
+	const PartRelationInfo *current_prel;
+
+	uint32					child_number;
+} show_partition_list_cxt;
 
 
 static void on_partitions_created_internal(Oid partitioned_table, bool add_callbacks);
@@ -82,7 +88,9 @@ check_relation_exists(Oid relid)
 
 
 /*
- * Callbacks.
+ * ----------------------------
+ *  Partition events callbacks
+ * ----------------------------
  */
 
 static void
@@ -113,9 +121,6 @@ on_partitions_removed_internal(Oid partitioned_table, bool add_callbacks)
 		 (add_callbacks ? "true" : "false"), partitioned_table);
 }
 
-/*
- * Thin layer between pure C and pl/PgSQL.
- */
 
 Datum
 on_partitions_created(PG_FUNCTION_ARGS)
@@ -138,6 +143,12 @@ on_partitions_removed(PG_FUNCTION_ARGS)
 	PG_RETURN_NULL();
 }
 
+
+/*
+ * ------------------------
+ *  Various useful getters
+ * ------------------------
+ */
 
 /*
  * Get parent of a specified partition.
@@ -176,7 +187,6 @@ get_base_type_pl(PG_FUNCTION_ARGS)
 	PG_RETURN_OID(getBaseType(PG_GETARG_OID(0)));
 }
 
-
 /*
  * Get type (as REGTYPE) of a given attribute.
  */
@@ -207,246 +217,212 @@ get_attribute_type_pl(PG_FUNCTION_ARGS)
 }
 
 /*
- * Returns partition oid for specified parent relid and value.
- * In case when partition doesn't exist try to create one.
+ * Return tablespace name for specified relation
  */
 Datum
-find_or_create_range_partition(PG_FUNCTION_ARGS)
+get_rel_tablespace_name(PG_FUNCTION_ARGS)
 {
-	Oid						parent_oid = PG_GETARG_OID(0);
-	Datum					value = PG_GETARG_DATUM(1);
-	Oid						value_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
-	const PartRelationInfo *prel;
-	FmgrInfo				cmp_func;
-	RangeEntry				found_rentry;
-	search_rangerel_result	search_state;
+	Oid			relid = PG_GETARG_OID(0);
+	Oid			tablespace_id;
+	char	   *result;
 
-	prel = get_pathman_relation_info(parent_oid);
-	shout_if_prel_is_invalid(parent_oid, prel, PT_RANGE);
+	tablespace_id = get_rel_tablespace(relid);
 
-	fill_type_cmp_fmgr_info(&cmp_func, value_type, prel->atttype);
-
-	/* Use available PartRelationInfo to find partition */
-	search_state = search_range_partition_eq(value, &cmp_func, prel,
-											 &found_rentry);
-
-	/*
-	 * If found then just return oid, else create new partitions
-	 */
-	if (search_state == SEARCH_RANGEREL_FOUND)
-		PG_RETURN_OID(found_rentry.child_oid);
-	/*
-	 * If not found and value is between first and last partitions
-	 */
-	else if (search_state == SEARCH_RANGEREL_GAP)
-		PG_RETURN_NULL();
-	else
+	/* If tablespace id is InvalidOid then use the default tablespace */
+	if (!OidIsValid(tablespace_id))
 	{
-		Oid	child_oid = create_partitions(parent_oid, value, value_type);
+		tablespace_id = GetDefaultTablespace(get_rel_persistence(relid));
 
-		/* get_pathman_relation_info() will refresh this entry */
-		invalidate_pathman_relation_info(parent_oid, NULL);
-
-		PG_RETURN_OID(child_oid);
+		/* If tablespace is still invalid then use database's default */
+		if (!OidIsValid(tablespace_id))
+			tablespace_id = MyDatabaseTableSpace;
 	}
+
+	result = get_tablespace_name(tablespace_id);
+	PG_RETURN_TEXT_P(cstring_to_text(result));
 }
 
+
 /*
- * Returns range entry (min, max) (in form of array).
- *
- * arg #1 is the parent's Oid.
- * arg #2 is the partition's Oid.
+ * ----------------------
+ *  Common purpose VIEWs
+ * ----------------------
+ */
+
+/*
+ * List all existing partitions and their parents.
  */
 Datum
-get_range_by_part_oid(PG_FUNCTION_ARGS)
+show_partition_list_internal(PG_FUNCTION_ARGS)
 {
-	Oid						parent_oid = PG_GETARG_OID(0);
-	Oid						child_oid = PG_GETARG_OID(1);
-	uint32					i;
-	RangeEntry			   *ranges;
-	const PartRelationInfo *prel;
+	show_partition_list_cxt	   *usercxt;
+	FuncCallContext			   *funccxt;
 
-	prel = get_pathman_relation_info(parent_oid);
-	shout_if_prel_is_invalid(parent_oid, prel, PT_RANGE);
+	/*
+	 * Initialize tuple descriptor & function call context.
+	 */
+	if (SRF_IS_FIRSTCALL())
+	{
+		TupleDesc		tupdesc;
+		MemoryContext	old_mcxt;
 
-	ranges = PrelGetRangesArray(prel);
+		funccxt = SRF_FIRSTCALL_INIT();
 
-	/* Look for the specified partition */
-	for (i = 0; i < PrelChildrenCount(prel); i++)
-		if (ranges[i].child_oid == child_oid)
+		old_mcxt = MemoryContextSwitchTo(funccxt->multi_call_memory_ctx);
+
+		usercxt = (show_partition_list_cxt *) palloc(sizeof(show_partition_list_cxt));
+
+		/* Open PATHMAN_CONFIG with latest snapshot available */
+		usercxt->pathman_config = heap_open(get_pathman_config_relid(),
+											AccessShareLock);
+		usercxt->snapshot = RegisterSnapshot(GetLatestSnapshot());
+		usercxt->pathman_config_scan = heap_beginscan(usercxt->pathman_config,
+													  usercxt->snapshot, 0, NULL);
+
+		usercxt->current_prel = NULL;
+
+		/* Create tuple descriptor */
+		tupdesc = CreateTemplateTupleDesc(Natts_pathman_partition_list, false);
+
+		TupleDescInitEntry(tupdesc, Anum_pathman_pl_parent,
+						   "parent", REGCLASSOID, -1, 0);
+		TupleDescInitEntry(tupdesc, Anum_pathman_pl_partition,
+						   "partition", REGCLASSOID, -1, 0);
+		TupleDescInitEntry(tupdesc, Anum_pathman_pl_parttype,
+						   "parttype", INT4OID, -1, 0);
+		TupleDescInitEntry(tupdesc, Anum_pathman_pl_partattr,
+						   "partattr", TEXTOID, -1, 0);
+		TupleDescInitEntry(tupdesc, Anum_pathman_pl_range_min,
+						   "range_min", TEXTOID, -1, 0);
+		TupleDescInitEntry(tupdesc, Anum_pathman_pl_range_max,
+						   "range_max", TEXTOID, -1, 0);
+
+		funccxt->tuple_desc = BlessTupleDesc(tupdesc);
+		funccxt->user_fctx = (void *) usercxt;
+
+		MemoryContextSwitchTo(old_mcxt);
+	}
+
+	funccxt = SRF_PERCALL_SETUP();
+	usercxt = (show_partition_list_cxt *) funccxt->user_fctx;
+
+	/* Iterate through pathman cache */
+	for(;;)
+	{
+		const PartRelationInfo *prel;
+		HeapTuple				htup;
+		Datum					values[Natts_pathman_partition_list];
+		bool					isnull[Natts_pathman_partition_list] = { 0 };
+		char				   *partattr_cstr;
+
+		/* Fetch next PartRelationInfo if needed */
+		if (usercxt->current_prel == NULL)
 		{
-			ArrayType  *arr;
-			Datum		elems[2] = { ranges[i].min, ranges[i].max };
+			HeapTuple	pathman_config_htup;
+			Datum		parent_table;
+			bool		parent_table_isnull;
+			Oid			parent_table_oid;
 
-			arr = construct_array(elems, 2, prel->atttype,
-								  prel->attlen, prel->attbyval,
-								  prel->attalign);
+			pathman_config_htup = heap_getnext(usercxt->pathman_config_scan,
+											   ForwardScanDirection);
+			if (!HeapTupleIsValid(pathman_config_htup))
+				break;
 
-			PG_RETURN_ARRAYTYPE_P(arr);
+			parent_table = heap_getattr(pathman_config_htup,
+										Anum_pathman_config_partrel,
+										RelationGetDescr(usercxt->pathman_config),
+										&parent_table_isnull);
+
+			Assert(parent_table_isnull == false);
+			parent_table_oid = DatumGetObjectId(parent_table);
+
+			usercxt->current_prel = get_pathman_relation_info(parent_table_oid);
+			if (usercxt->current_prel == NULL)
+				continue;
+
+			usercxt->child_number = 0;
 		}
 
-	/* No partition found, report error */
-	elog(ERROR, "Relation \"%s\" has no partition \"%s\"",
-		 get_rel_name_or_relid(parent_oid),
-		 get_rel_name_or_relid(child_oid));
+		/* Alias to 'usercxt->current_prel' */
+		prel = usercxt->current_prel;
 
-	PG_RETURN_NULL(); /* keep compiler happy */
-}
+		if (usercxt->child_number >= PrelChildrenCount(prel))
+		{
+			usercxt->current_prel = NULL;
+			usercxt->child_number = 0;
 
-/*
- * Returns N-th range entry (min, max) (in form of array).
- *
- * arg #1 is the parent's Oid.
- * arg #2 is the index of the range
- *		(if it is negative then the last range will be returned).
- */
-Datum
-get_range_by_idx(PG_FUNCTION_ARGS)
-{
-	Oid						parent_oid = PG_GETARG_OID(0);
-	int						idx = PG_GETARG_INT32(1);
-	Datum					elems[2];
-	RangeEntry			   *ranges;
-	const PartRelationInfo *prel;
+			continue;
+		}
 
-	prel = get_pathman_relation_info(parent_oid);
-	shout_if_prel_is_invalid(parent_oid, prel, PT_RANGE);
+		partattr_cstr = get_attname(PrelParentRelid(prel), prel->attnum);
+		if (!partattr_cstr)
+		{
+			usercxt->current_prel = NULL;
+			continue;
+		}
 
-	/* Now we have to deal with 'idx' */
-	if (idx < -1)
-	{
-		elog(ERROR, "Negative indices other than -1 (last partition) are not allowed");
-	}
-	else if (idx == -1)
-	{
-		idx = PrelLastChild(prel);
-	}
-	else if (((uint32) abs(idx)) >= PrelChildrenCount(prel))
-	{
-		elog(ERROR, "Partition #%d does not exist (total amount is %u)",
-			 idx, PrelChildrenCount(prel));
-	}
+		values[Anum_pathman_pl_parent - 1]		= PrelParentRelid(prel);
+		values[Anum_pathman_pl_parttype - 1]	= prel->parttype;
+		values[Anum_pathman_pl_partattr - 1]	= CStringGetTextDatum(partattr_cstr);
 
-	ranges = PrelGetRangesArray(prel);
+		switch (prel->parttype)
+		{
+			case PT_HASH:
+				{
+					Oid	 *children = PrelGetChildrenArray(prel),
+						  child_oid = children[usercxt->child_number];
 
-	elems[0] = ranges[idx].min;
-	elems[1] = ranges[idx].max;
+					values[Anum_pathman_pl_partition - 1] = child_oid;
+					isnull[Anum_pathman_pl_range_min - 1] = true;
+					isnull[Anum_pathman_pl_range_max - 1] = true;
+				}
+				break;
 
-	PG_RETURN_ARRAYTYPE_P(construct_array(elems, 2,
-										  prel->atttype,
-										  prel->attlen,
-										  prel->attbyval,
-										  prel->attalign));
-}
+			case PT_RANGE:
+				{
+					RangeEntry *re;
+					Datum		rmin,
+								rmax;
 
-/*
- * Returns min value of the first range for relation.
- */
-Datum
-get_min_range_value(PG_FUNCTION_ARGS)
-{
-	Oid						parent_oid = PG_GETARG_OID(0);
-	RangeEntry			   *ranges;
-	const PartRelationInfo *prel;
+					re = &PrelGetRangesArray(prel)[usercxt->child_number];
 
-	prel = get_pathman_relation_info(parent_oid);
-	shout_if_prel_is_invalid(parent_oid, prel, PT_RANGE);
+					rmin = CStringGetTextDatum(datum_to_cstring(re->min,
+																prel->atttype));
+					rmax = CStringGetTextDatum(datum_to_cstring(re->max,
+																prel->atttype));
 
-	ranges = PrelGetRangesArray(prel);
+					values[Anum_pathman_pl_partition - 1] = re->child_oid;
+					values[Anum_pathman_pl_range_min - 1] = rmin;
+					values[Anum_pathman_pl_range_max - 1] = rmax;
+				}
+				break;
 
-	PG_RETURN_DATUM(ranges[0].min);
-}
+			default:
+				elog(ERROR, "Unknown partitioning type %u", prel->parttype);
+		}
 
-/*
- * Returns max value of the last range for relation.
- */
-Datum
-get_max_range_value(PG_FUNCTION_ARGS)
-{
-	Oid						parent_oid = PG_GETARG_OID(0);
-	RangeEntry			   *ranges;
-	const PartRelationInfo *prel;
+		/* Switch to the next child */
+		usercxt->child_number++;
 
-	prel = get_pathman_relation_info(parent_oid);
-	shout_if_prel_is_invalid(parent_oid, prel, PT_RANGE);
+		/* Form output tuple */
+		htup = heap_form_tuple(funccxt->tuple_desc, values, isnull);
 
-	ranges = PrelGetRangesArray(prel);
-
-	PG_RETURN_DATUM(ranges[PrelLastChild(prel)].max);
-}
-
-/*
- * Checks if range overlaps with existing partitions.
- * Returns TRUE if overlaps and FALSE otherwise.
- */
-Datum
-check_overlap(PG_FUNCTION_ARGS)
-{
-	Oid						parent_oid = PG_GETARG_OID(0);
-
-	Datum					p1 = PG_GETARG_DATUM(1),
-							p2 = PG_GETARG_DATUM(2);
-
-	Oid						p1_type = get_fn_expr_argtype(fcinfo->flinfo, 1),
-							p2_type = get_fn_expr_argtype(fcinfo->flinfo, 2);
-
-	FmgrInfo				cmp_func_1,
-							cmp_func_2;
-
-	uint32					i;
-	RangeEntry			   *ranges;
-	const PartRelationInfo *prel;
-
-	prel = get_pathman_relation_info(parent_oid);
-	shout_if_prel_is_invalid(parent_oid, prel, PT_RANGE);
-
-	/* comparison functions */
-	fill_type_cmp_fmgr_info(&cmp_func_1, p1_type, prel->atttype);
-	fill_type_cmp_fmgr_info(&cmp_func_2, p2_type, prel->atttype);
-
-	ranges = PrelGetRangesArray(prel);
-	for (i = 0; i < PrelChildrenCount(prel); i++)
-	{
-		int c1 = FunctionCall2(&cmp_func_1, p1, ranges[i].max);
-		int c2 = FunctionCall2(&cmp_func_2, p2, ranges[i].min);
-
-		if (c1 < 0 && c2 > 0)
-			PG_RETURN_BOOL(true);
+		SRF_RETURN_NEXT(funccxt, HeapTupleGetDatum(htup));
 	}
 
-	PG_RETURN_BOOL(false);
+	/* Clean resources */
+	heap_endscan(usercxt->pathman_config_scan);
+	UnregisterSnapshot(usercxt->snapshot);
+	heap_close(usercxt->pathman_config, AccessShareLock);
+
+	SRF_RETURN_DONE(funccxt);
 }
 
 
 /*
- * HASH-related stuff.
- */
-
-/* Returns hash function's OID for a specified type. */
-Datum
-get_type_hash_func(PG_FUNCTION_ARGS)
-{
-	TypeCacheEntry *tce;
-	Oid 			type_oid = PG_GETARG_OID(0);
-
-	tce = lookup_type_cache(type_oid, TYPECACHE_HASH_PROC);
-
-	PG_RETURN_OID(tce->hash_proc);
-}
-
-/* Wrapper for hash_to_part_index() */
-Datum
-get_hash_part_idx(PG_FUNCTION_ARGS)
-{
-	uint32	value = PG_GETARG_UINT32(0),
-			part_count = PG_GETARG_UINT32(1);
-
-	PG_RETURN_UINT32(hash_to_part_index(value, part_count));
-}
-
-
-/*
- * Traits.
+ * --------
+ *  Traits
+ * --------
  */
 
 Datum
@@ -480,33 +456,42 @@ is_attribute_nullable(PG_FUNCTION_ARGS)
 
 
 /*
- * Useful string builders.
+ * ------------------------
+ *  Useful string builders
+ * ------------------------
  */
 
-/* Build range condition for a CHECK CONSTRAINT. */
 Datum
-build_range_condition(PG_FUNCTION_ARGS)
+build_update_trigger_func_name(PG_FUNCTION_ARGS)
 {
-	text   *attname = PG_GETARG_TEXT_P(0);
+	Oid			relid = PG_GETARG_OID(0),
+				nspid;
+	const char *result;
 
-	Datum	min_bound = PG_GETARG_DATUM(1),
-			max_bound = PG_GETARG_DATUM(2);
+	/* Check that relation exists */
+	if (!check_relation_exists(relid))
+		elog(ERROR, "Invalid relation %u", relid);
 
-	Oid		min_bound_type = get_fn_expr_argtype(fcinfo->flinfo, 1),
-			max_bound_type = get_fn_expr_argtype(fcinfo->flinfo, 2);
+	nspid = get_rel_namespace(relid);
+	result = psprintf("%s.%s",
+					  quote_identifier(get_namespace_name(nspid)),
+					  quote_identifier(psprintf("%s_upd_trig_func",
+												get_rel_name(relid))));
 
-	char   *result;
+	PG_RETURN_TEXT_P(cstring_to_text(result));
+}
 
-	/* This is not going to trigger (not now, at least), just for the safety */
-	if (min_bound_type != max_bound_type)
-		elog(ERROR, "Cannot build range condition: "
-					"boundaries should be of the same type");
+Datum
+build_update_trigger_name(PG_FUNCTION_ARGS)
+{
+	Oid			relid = PG_GETARG_OID(0);
+	const char *result; /* trigger's name can't be qualified */
 
-	/* Create range condition CSTRING */
-	result = psprintf("%1$s >= '%2$s' AND %1$s < '%3$s'",
-					  text_to_cstring(attname),
-					  datum_to_cstring(min_bound, min_bound_type),
-					  datum_to_cstring(max_bound, max_bound_type));
+	/* Check that relation exists */
+	if (!check_relation_exists(relid))
+		elog(ERROR, "Invalid relation %u", relid);
+
+	result = quote_identifier(psprintf("%s_upd_trig", get_rel_name(relid)));
 
 	PG_RETURN_TEXT_P(cstring_to_text(result));
 }
@@ -551,41 +536,12 @@ build_check_constraint_name_attname(PG_FUNCTION_ARGS)
 	PG_RETURN_TEXT_P(cstring_to_text(quote_identifier(result)));
 }
 
-Datum
-build_update_trigger_func_name(PG_FUNCTION_ARGS)
-{
-	Oid			relid = PG_GETARG_OID(0),
-				nspid;
-	const char *result;
 
-	/* Check that relation exists */
-	if (!check_relation_exists(relid))
-		elog(ERROR, "Invalid relation %u", relid);
-
-	nspid = get_rel_namespace(relid);
-	result = psprintf("%s.%s",
-					  quote_identifier(get_namespace_name(nspid)),
-					  quote_identifier(psprintf("%s_upd_trig_func",
-												get_rel_name(relid))));
-
-	PG_RETURN_TEXT_P(cstring_to_text(result));
-}
-
-Datum
-build_update_trigger_name(PG_FUNCTION_ARGS)
-{
-	Oid			relid = PG_GETARG_OID(0);
-	const char *result; /* trigger's name can't be qualified */
-
-	/* Check that relation exists */
-	if (!check_relation_exists(relid))
-		elog(ERROR, "Invalid relation %u", relid);
-
-	result = quote_identifier(psprintf("%s_upd_trig", get_rel_name(relid)));
-
-	PG_RETURN_TEXT_P(cstring_to_text(result));
-}
-
+/*
+ * ------------------------
+ *  Cache & config updates
+ * ------------------------
+ */
 
 /*
  * Try to add previously partitioned table to PATHMAN_CONFIG.
@@ -698,6 +654,12 @@ invalidate_relcache(PG_FUNCTION_ARGS)
 
 
 /*
+ * --------------------------
+ *  Special locking routines
+ * --------------------------
+ */
+
+/*
  * Acquire appropriate lock on a partitioned relation.
  */
 Datum
@@ -744,45 +706,10 @@ prevent_relation_modification(PG_FUNCTION_ARGS)
 
 
 /*
- * NOTE: used for DEBUG, set breakpoint here.
+ * -------------------------------------------
+ *  User-defined partition creation callbacks
+ * -------------------------------------------
  */
-Datum
-debug_capture(PG_FUNCTION_ARGS)
-{
-	static float8 sleep_time = 0;
-	DirectFunctionCall1(pg_sleep, Float8GetDatum(sleep_time));
-
-	/* Write something (doesn't really matter) */
-	elog(WARNING, "debug_capture [%u]", MyProcPid);
-
-	PG_RETURN_VOID();
-}
-
-/*
- * Return tablespace name for specified relation
- */
-Datum
-get_rel_tablespace_name(PG_FUNCTION_ARGS)
-{
-	Oid			relid = PG_GETARG_OID(0);
-	Oid			tablespace_id;
-	char	   *result;
-
-	tablespace_id = get_rel_tablespace(relid);
-
-	/* If tablespace id is InvalidOid then use the default tablespace */
-	if (!OidIsValid(tablespace_id))
-	{
-		tablespace_id = GetDefaultTablespace(get_rel_persistence(relid));
-
-		/* If tablespace is still invalid then use database's default */
-		if (!OidIsValid(tablespace_id))
-			tablespace_id = MyDatabaseTableSpace;
-	}
-
-	result = get_tablespace_name(tablespace_id);
-	PG_RETURN_TEXT_P(cstring_to_text(result));
-}
 
 /*
  * Checks that callback function meets specific requirements.
@@ -912,6 +839,28 @@ invoke_on_partition_created_callback(PG_FUNCTION_ARGS)
 
 	/* Invoke the callback */
 	FunctionCallInvoke(&cb_fcinfo);
+
+	PG_RETURN_VOID();
+}
+
+
+/*
+ * -------
+ *  DEBUG
+ * -------
+ */
+
+/*
+ * NOTE: used for DEBUG, set breakpoint here.
+ */
+Datum
+debug_capture(PG_FUNCTION_ARGS)
+{
+	static float8 sleep_time = 0;
+	DirectFunctionCall1(pg_sleep, Float8GetDatum(sleep_time));
+
+	/* Write something (doesn't really matter) */
+	elog(WARNING, "debug_capture [%u]", MyProcPid);
 
 	PG_RETURN_VOID();
 }

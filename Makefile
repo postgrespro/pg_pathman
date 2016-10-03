@@ -1,10 +1,11 @@
 # contrib/pg_pathman/Makefile
 
 MODULE_big = pg_pathman
-OBJS = src/init.o src/relation_info.o src/utils.o src/partition_filter.o src/runtimeappend.o \
-	src/runtime_merge_append.o src/pg_pathman.o src/rangeset.o src/pl_funcs.o \
-	src/pathman_workers.o src/hooks.o src/nodes_common.o src/xact_handling.o \
-	src/copy_stmt_hooking.o src/pg_compat.o $(WIN32RES)
+OBJS = src/init.o src/relation_info.o src/utils.o src/partition_filter.o \
+	src/runtimeappend.o src/runtime_merge_append.o src/pg_pathman.o src/rangeset.o \
+	src/pl_funcs.o src/pl_range_funcs.o src/pl_hash_funcs.o src/pathman_workers.o \
+	src/hooks.o src/nodes_common.o src/xact_handling.o src/copy_stmt_hooking.o \
+	src/pg_compat.o $(WIN32RES)
 
 EXTENSION = pg_pathman
 EXTVERSION = 1.0

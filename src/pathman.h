@@ -52,7 +52,7 @@
 #define PATHMAN_CONFIG_interval_typmod		-1
 
 /*
- * Definitions for the "pathman_config_params" table
+ * Definitions for the "pathman_config_params" table.
  */
 #define PATHMAN_CONFIG_PARAMS						"pathman_config_params"
 #define Natts_pathman_config_params					4
@@ -60,6 +60,19 @@
 #define Anum_pathman_config_params_enable_parent	2	/* include parent into plan */
 #define Anum_pathman_config_params_auto				3	/* auto partitions creation */
 #define Anum_pathman_config_params_init_callback	4	/* partition action callback */
+
+/*
+ * Definitions for the "pathman_partition_list" view.
+ */
+#define PATHMAN_PARTITION_LIST				"pathman_partition_list"
+#define Natts_pathman_partition_list		6
+#define Anum_pathman_pl_parent				1
+#define Anum_pathman_pl_partition			2
+#define Anum_pathman_pl_parttype			3
+#define Anum_pathman_pl_partattr			4
+#define Anum_pathman_pl_range_min			5
+#define Anum_pathman_pl_range_max			6
+
 
 /*
  * Cache current PATHMAN_CONFIG relid (set during load_config()).

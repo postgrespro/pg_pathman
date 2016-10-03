@@ -111,7 +111,7 @@ cps_set_status(ConcurrentPartSlot *slot, ConcurrentPartSlotStatus status)
 
 
 /*
- * Definitions for the "pathman_concurrent_part_tasks" view
+ * Definitions for the "pathman_concurrent_part_tasks" view.
  */
 #define PATHMAN_CONCURRENT_PART_TASKS		"pathman_concurrent_part_tasks"
 #define Natts_pathman_cp_tasks				6

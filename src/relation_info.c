@@ -627,6 +627,22 @@ DatumGetPartType(Datum datum)
 	return (PartType) val;
 }
 
+Datum
+PartTypeGetTextDatum(PartType parttype)
+{
+	switch(parttype)
+	{
+		case PT_HASH:
+			return CStringGetTextDatum("HASH");
+
+		case PT_RANGE:
+			return CStringGetTextDatum("RANGE");
+
+		default:
+			elog(ERROR, "Unknown partitioning type %u", parttype);
+	}
+}
+
 /*
  * Common PartRelationInfo checks. Emit ERROR if anything is wrong.
  */
