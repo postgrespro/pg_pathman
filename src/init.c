@@ -210,8 +210,7 @@ unload_config(void)
 Size
 estimate_pathman_shmem_size(void)
 {
-	return estimate_dsm_config_size() +
-		   estimate_concurrent_part_task_slots_size() +
+	return estimate_concurrent_part_task_slots_size() +
 		   MAXALIGN(sizeof(PathmanState));
 }
 

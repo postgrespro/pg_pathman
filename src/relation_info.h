@@ -11,8 +11,6 @@
 #ifndef RELATION_INFO_H
 #define RELATION_INFO_H
 
-#include "dsm_array.h"
-
 #include "postgres.h"
 #include "access/attnum.h"
 #include "port/atomics.h"

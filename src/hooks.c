@@ -530,7 +530,6 @@ pathman_shmem_startup_hook(void)
 
 	/* Allocate shared memory objects */
 	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
-	init_dsm_config();
 	init_shmem_config();
 	LWLockRelease(AddinShmemInitLock);
 }
