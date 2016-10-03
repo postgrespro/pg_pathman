@@ -10,6 +10,7 @@
 
 #include "pathman.h"
 #include "relation_info.h"
+#include "utils.h"
 
 #include "utils/array.h"
 #include "utils/builtins.h"
