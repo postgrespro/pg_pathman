@@ -514,6 +514,7 @@ DECLARE
 	v_rows			INTEGER;
 	v_part_count	INTEGER := 0;
 	conf_num_del	INTEGER;
+	v_relkind		CHAR;
 
 BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
@@ -547,7 +548,20 @@ BEGIN
 			RAISE NOTICE '% rows copied from %', v_rows, v_rec.tbl;
 		END IF;
 
-		EXECUTE format('DROP TABLE %s', v_rec.tbl);
+		/*
+		 * Determine the kind of child relation. It can be either regular
+		 * table (r) or foreign table (f). Depending on relkind we use
+		 * DROP TABLE or DROP FOREIGN TABLE
+		 */
+		EXECUTE format('SELECT relkind FROM pg_class WHERE oid = ''%s''::regclass', v_rec.tbl)
+		INTO v_relkind;
+
+		IF v_relkind = 'f' THEN
+			EXECUTE format('DROP FOREIGN TABLE %s', v_rec.tbl);
+		ELSE
+			EXECUTE format('DROP TABLE %s', v_rec.tbl);
+		END IF;
+
 		v_part_count := v_part_count + 1;
 	END LOOP;
 
