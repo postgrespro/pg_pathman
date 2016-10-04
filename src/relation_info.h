@@ -137,7 +137,7 @@ Oid forget_parent_of_partition(Oid partition, PartParentSearch *status);
 Oid get_parent_of_partition(Oid partition, PartParentSearch *status);
 
 PartType DatumGetPartType(Datum datum);
-Datum PartTypeGetTextDatum(PartType parttype);
+char * PartTypeToCString(PartType parttype);
 
 void shout_if_prel_is_invalid(Oid parent_oid,
 							  const PartRelationInfo *prel,

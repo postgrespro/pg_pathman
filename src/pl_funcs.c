@@ -769,16 +769,25 @@ invoke_on_partition_created_callback(PG_FUNCTION_ARGS)
 	if (PG_ARGISNULL(ARG_CHILD))
 		elog(ERROR, "partition should not be null");
 
-	/* Both RANGE_START & RANGE_END are not available (HASH) */
-	if (PG_ARGISNULL(ARG_RANGE_START) && PG_ARGISNULL(ARG_RANGE_START))
-		part_type = PT_HASH;
+	switch (PG_NARGS())
+	{
+		case 3:
+			part_type = PT_HASH;
+			break;
 
-	/* Either RANGE_START or RANGE_END is missing */
-	else if (PG_ARGISNULL(ARG_RANGE_START) || PG_ARGISNULL(ARG_RANGE_START))
-		elog(ERROR, "both boundaries must be provided for RANGE partition");
+		case 5:
+			{
+				if (PG_ARGISNULL(ARG_RANGE_START) || PG_ARGISNULL(ARG_RANGE_START))
+					elog(ERROR, "both bounds must be provided for RANGE partition");
 
-	/* Both RANGE_START & RANGE_END are provided */
-	else part_type = PT_RANGE;
+				part_type = PT_RANGE;
+			}
+			break;
+
+		default:
+			elog(ERROR, "error in function \"%s\"",
+				 CppAsString(invoke_on_partition_created_callback));
+	}
 
 	/* Build JSONB according to partitioning type */
 	switch (part_type)
@@ -791,8 +800,8 @@ invoke_on_partition_created_callback(PG_FUNCTION_ARGS)
 				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(parent_oid));
 				JSB_INIT_VAL(&key, WJB_KEY, "partition");
 				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(partition_oid));
-				JSB_INIT_VAL(&key, WJB_KEY, "part_type");
-				JSB_INIT_VAL(&val, WJB_VALUE, "HASH");
+				JSB_INIT_VAL(&key, WJB_KEY, "parttype");
+				JSB_INIT_VAL(&val, WJB_VALUE, PartTypeToCString(PT_HASH));
 
 				result = pushJsonbValue(&jsonb_state, WJB_END_OBJECT, NULL);
 			}
@@ -814,11 +823,11 @@ invoke_on_partition_created_callback(PG_FUNCTION_ARGS)
 				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(parent_oid));
 				JSB_INIT_VAL(&key, WJB_KEY, "partition");
 				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(partition_oid));
-				JSB_INIT_VAL(&key, WJB_KEY, "part_type");
-				JSB_INIT_VAL(&val, WJB_VALUE, "RANGE");
-				JSB_INIT_VAL(&key, WJB_KEY, "start");
+				JSB_INIT_VAL(&key, WJB_KEY, "parttype");
+				JSB_INIT_VAL(&val, WJB_VALUE, PartTypeToCString(PT_RANGE));
+				JSB_INIT_VAL(&key, WJB_KEY, "range_min");
 				JSB_INIT_VAL(&val, WJB_VALUE, start_value);
-				JSB_INIT_VAL(&key, WJB_KEY, "end");
+				JSB_INIT_VAL(&key, WJB_KEY, "range_max");
 				JSB_INIT_VAL(&val, WJB_VALUE, end_value);
 
 				result = pushJsonbValue(&jsonb_state, WJB_END_OBJECT, NULL);

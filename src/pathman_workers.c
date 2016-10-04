@@ -488,7 +488,7 @@ bgw_main_concurrent_part(Datum main_arg)
 			failures_count++;
 			ereport(LOG,
 					(errmsg("%s: %s", concurrent_part_bgw, error->message),
-					 errdetail("Attempt: %d/%d, sleep time: %s",
+					 errdetail("attempt: %d/%d, sleep time: %s",
 							   failures_count,
 							   PART_WORKER_MAX_ATTEMPTS,
 							   sleep_time_str)));
@@ -507,9 +507,9 @@ bgw_main_concurrent_part(Datum main_arg)
 				cps_set_status(part_slot, CPS_FREE);
 
 				elog(LOG,
-					 "Concurrent partitioning worker has canceled the task because "
-					 "maximum amount of attempts (%d) had been exceeded. "
-					 "See the error message below",
+					 "concurrent partitioning worker has canceled the task because "
+					 "maximum amount of attempts (%d) had been exceeded, "
+					 "see the error message below",
 					 PART_WORKER_MAX_ATTEMPTS);
 
 				return; /* exit quickly */
@@ -573,11 +573,9 @@ bgw_main_concurrent_part(Datum main_arg)
 Datum
 partition_table_concurrently(PG_FUNCTION_ARGS)
 {
-#define tostr(str) ( #str ) /* convert function's name to literal */
-
 	Oid		relid = PG_GETARG_OID(0);
-	int		empty_slot_idx = -1;		/* do we have a slot for BGWorker? */
-	int		i;
+	int		empty_slot_idx = -1,		/* do we have a slot for BGWorker? */
+			i;
 
 	/* Check if relation is a partitioned table */
 	shout_if_prel_is_invalid(relid,
@@ -617,7 +615,7 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 				SpinLockRelease(&concurrent_part_slots[empty_slot_idx].mutex);
 
 			elog(ERROR,
-				 "Table \"%s\" is already being partitioned",
+				 "table \"%s\" is already being partitioned",
 				 get_rel_name(relid));
 		}
 
@@ -628,7 +626,7 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 
 	/* Looks like we could not find an empty slot */
 	if (empty_slot_idx < 0)
-		elog(ERROR, "No empty worker slots found");
+		elog(ERROR, "no empty worker slots found");
 	else
 	{
 		/* Initialize concurrent part slot */
@@ -648,9 +646,9 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 
 	/* Tell user everything's fine */
 	elog(NOTICE,
-		 "Worker started. You can stop it "
+		 "worker started, you can stop it "
 		 "with the following command: select %s('%s');",
-		 tostr(stop_concurrent_part_task), /* convert function's name to literal */
+		 CppAsString(stop_concurrent_part_task),
 		 get_rel_name(relid));
 
 	PG_RETURN_VOID();
@@ -785,7 +783,7 @@ stop_concurrent_part_task(PG_FUNCTION_ARGS)
 			cur_slot->relid == relid &&
 			cur_slot->dbid == MyDatabaseId)
 		{
-			elog(NOTICE, "Worker will stop after it finishes current batch");
+			elog(NOTICE, "worker will stop after it finishes current batch");
 
 			/* Change worker's state & set 'worker_found' */
 			cur_slot->worker_status = CPS_STOPPING;
@@ -800,7 +798,7 @@ stop_concurrent_part_task(PG_FUNCTION_ARGS)
 		PG_RETURN_BOOL(true);
 	else
 	{
-		elog(ERROR, "Cannot find worker for relation \"%s\"",
+		elog(ERROR, "cannot find worker for relation \"%s\"",
 			 get_rel_name_or_relid(relid));
 
 		PG_RETURN_BOOL(false); /* keep compiler happy */
