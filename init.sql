@@ -332,17 +332,17 @@ BEGIN
 	WHERE oid = p_relation INTO rel_persistence;
 
 	IF rel_persistence = 't'::CHAR THEN
-		RAISE EXCEPTION 'Temporary table "%" cannot be partitioned',
+		RAISE EXCEPTION 'temporary table "%" cannot be partitioned',
 						p_relation::TEXT;
 	END IF;
 
 	IF EXISTS (SELECT * FROM @extschema@.pathman_config
 			   WHERE partrel = p_relation) THEN
-		RAISE EXCEPTION 'Relation "%" has already been partitioned', p_relation;
+		RAISE EXCEPTION 'relation "%" has already been partitioned', p_relation;
 	END IF;
 
 	IF @extschema@.is_attribute_nullable(p_relation, p_attribute) THEN
-		RAISE EXCEPTION 'Partitioning key ''%'' must be NOT NULL', p_attribute;
+		RAISE EXCEPTION 'partitioning key ''%'' must be NOT NULL', p_attribute;
 	END IF;
 
 	/* Check if there are foreign keys that reference the relation */
@@ -350,12 +350,12 @@ BEGIN
 				  FROM pg_constraint WHERE confrelid = p_relation::regclass::oid)
 	LOOP
 		is_referenced := TRUE;
-		RAISE WARNING 'Foreign key ''%'' references to the relation ''%''',
+		RAISE WARNING 'foreign key ''%'' references relation ''%''',
 				v_rec.conname, p_relation;
 	END LOOP;
 
 	IF is_referenced THEN
-		RAISE EXCEPTION 'Relation "%" is referenced from other relations', p_relation;
+		RAISE EXCEPTION 'relation "%" is referenced from other relations', p_relation;
 	END IF;
 
 	RETURN TRUE;
@@ -414,7 +414,7 @@ BEGIN
 	relname = @extschema@.get_schema_qualified_name(cls);
 
 	IF relname IS NULL THEN
-		RAISE EXCEPTION 'Relation %s does not exist', cls;
+		RAISE EXCEPTION 'relation %s does not exist', cls;
 	END IF;
 
 	RETURN relname;
@@ -529,7 +529,7 @@ BEGIN
 	DELETE FROM @extschema@.pathman_config_params WHERE partrel = parent_relid;
 
 	IF conf_num_del = 0 THEN
-		RAISE EXCEPTION 'Relation "%" has no partitions', parent_relid::text;
+		RAISE EXCEPTION 'relation "%" has no partitions', parent_relid::text;
 	END IF;
 
 	FOR v_rec IN (SELECT inhrelid::regclass::text AS tbl

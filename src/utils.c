@@ -641,8 +641,12 @@ datum_to_cstring(Datum datum, Oid typid)
 char *
 get_rel_name_or_relid(Oid relid)
 {
-	return DatumGetCString(DirectFunctionCall1(regclassout,
-											   ObjectIdGetDatum(relid)));
+	char *relname = get_rel_name(relid);
+
+	if (!relname)
+		return DatumGetCString(DirectFunctionCall1(oidout,
+												   ObjectIdGetDatum(relid)));
+	return relname;
 }
 
 

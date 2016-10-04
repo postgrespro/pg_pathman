@@ -34,7 +34,7 @@ get_type_hash_func(PG_FUNCTION_ARGS)
 }
 
 /*
- * Wrapper for hash_to_part_index()
+ * Wrapper for hash_to_part_index().
  */
 Datum
 get_hash_part_idx(PG_FUNCTION_ARGS)

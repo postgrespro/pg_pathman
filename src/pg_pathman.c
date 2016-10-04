@@ -1172,7 +1172,9 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 
 	tce = lookup_type_cache(vartype, TYPECACHE_BTREE_OPFAMILY);
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
-	fill_type_cmp_fmgr_info(&cmp_func, c->consttype, prel->atttype);
+	fill_type_cmp_fmgr_info(&cmp_func,
+							getBaseType(c->consttype),
+							getBaseType(prel->atttype));
 
 	switch (prel->parttype)
 	{

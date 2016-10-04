@@ -63,13 +63,13 @@ BEGIN
 
 	/* Check lower boundary */
 	IF p_start_value > v_min THEN
-		RAISE EXCEPTION 'Start value is less than minimum value of ''%''',
+		RAISE EXCEPTION 'start value is less than minimum value of ''%''',
 				p_attribute;
 	END IF;
 
 	/* Check upper boundary */
 	IF p_end_value <= v_max THEN
-		RAISE EXCEPTION 'Not enough partitions to fit all values of ''%''',
+		RAISE EXCEPTION 'not enough partitions to fit all values of ''%''',
 				p_attribute;
 	END IF;
 END
@@ -108,7 +108,7 @@ BEGIN
 	PERFORM @extschema@.common_relation_checks(parent_relid, p_attribute);
 
 	IF p_count < 0 THEN
-		RAISE EXCEPTION 'Partitions count must not be less than zero';
+		RAISE EXCEPTION '''p_count'' must not be less than 0';
 	END IF;
 
 	/* Try to determine partitions count if not set */
@@ -117,7 +117,7 @@ BEGIN
 		INTO v_rows_count, v_max;
 
 		IF v_rows_count = 0 THEN
-			RAISE EXCEPTION 'Cannot determine partitions count for empty table';
+			RAISE EXCEPTION 'cannot determine partitions count for empty table';
 		END IF;
 
 		p_count := 0;
@@ -220,7 +220,7 @@ BEGIN
 	PERFORM @extschema@.common_relation_checks(parent_relid, p_attribute);
 
 	IF p_count < 0 THEN
-		RAISE EXCEPTION 'Partitions count must not be less than zero';
+		RAISE EXCEPTION 'partitions count must not be less than zero';
 	END IF;
 
 	/* Try to determine partitions count if not set */
@@ -229,7 +229,7 @@ BEGIN
 		INTO v_rows_count, v_max;
 
 		IF v_rows_count = 0 THEN
-			RAISE EXCEPTION 'Cannot determine partitions count for empty table';
+			RAISE EXCEPTION 'cannot determine partitions count for empty table';
 		END IF;
 
 		IF v_max IS NULL THEN
@@ -327,7 +327,7 @@ BEGIN
 	PERFORM @extschema@.common_relation_checks(parent_relid, p_attribute);
 
 	IF p_interval <= 0 THEN
-		RAISE EXCEPTION 'Interval must be positive';
+		RAISE EXCEPTION 'interval must be positive';
 	END IF;
 
 	/* Check boundaries */
@@ -471,7 +471,7 @@ BEGIN
 				 WHERE partrel = parent_relid;
 
 	IF v_attname IS NULL THEN
-		RAISE EXCEPTION 'Table "%" is not partitioned', parent_relid::TEXT;
+		RAISE EXCEPTION 'table "%" is not partitioned', parent_relid::TEXT;
 	END IF;
 
 	SELECT * INTO v_plain_schema, v_plain_relname
@@ -550,53 +550,57 @@ CREATE OR REPLACE FUNCTION @extschema@.split_range_partition(
 RETURNS ANYARRAY AS
 $$
 DECLARE
-	v_parent_relid		REGCLASS;
-	v_attname			TEXT;
-	v_cond				TEXT;
-	v_new_partition		TEXT;
-	v_part_type			INTEGER;
-	v_part_relname		TEXT;
-	v_check_name		TEXT;
+	v_parent		REGCLASS;
+	v_attname		TEXT;
+	v_cond			TEXT;
+	v_new_partition	TEXT;
+	v_part_type		INTEGER;
+	v_part_relname	TEXT;
+	v_check_name	TEXT;
 
 BEGIN
 	v_part_relname := @extschema@.validate_relname(p_partition);
-	v_parent_relid = @extschema@.get_parent_of_partition(p_partition);
+	v_parent = @extschema@.get_parent_of_partition(p_partition);
 
 	/* Acquire lock on parent */
-	PERFORM @extschema@.lock_partitioned_relation(v_parent_relid);
+	PERFORM @extschema@.lock_partitioned_relation(v_parent);
 
 	/* Acquire data modification lock (prevent further modifications) */
 	PERFORM @extschema@.prevent_relation_modification(p_partition);
 
 	SELECT attname, parttype
 	FROM @extschema@.pathman_config
-	WHERE partrel = v_parent_relid
+	WHERE partrel = v_parent
 	INTO v_attname, v_part_type;
 
 	IF v_attname IS NULL THEN
-		RAISE EXCEPTION 'Table "%" is not partitioned', v_parent_relid::TEXT;
+		RAISE EXCEPTION 'table "%" is not partitioned', v_parent::TEXT;
 	END IF;
 
 	/* Check if this is a RANGE partition */
 	IF v_part_type != 2 THEN
-		RAISE EXCEPTION 'Specified partition isn''t RANGE partition';
+		RAISE EXCEPTION 'specified partition isn''t RANGE partition';
 	END IF;
 
 	/* Get partition values range */
-	p_range := @extschema@.get_range_by_part_oid(v_parent_relid, p_partition, 0);
+	EXECUTE format('SELECT @extschema@.get_part_range($1, NULL::%s)',
+				   @extschema@.get_attribute_type(v_parent, v_attname)::TEXT)
+	USING p_partition
+	INTO p_range;
+
 	IF p_range IS NULL THEN
-		RAISE EXCEPTION 'Could not find specified partition';
+		RAISE EXCEPTION 'could not find specified partition';
 	END IF;
 
 	/* Check if value fit into the range */
 	IF p_range[1] > p_value OR p_range[2] <= p_value
 	THEN
-		RAISE EXCEPTION 'Specified value does not fit into the range [%, %)',
+		RAISE EXCEPTION 'specified value does not fit into the range [%, %)',
 			p_range[1], p_range[2];
 	END IF;
 
 	/* Create new partition */
-	v_new_partition := @extschema@.create_single_range_partition(v_parent_relid,
+	v_new_partition := @extschema@.create_single_range_partition(v_parent,
 																 p_value,
 																 p_range[2],
 																 partition_name);
@@ -623,7 +627,7 @@ BEGIN
 				   v_cond);
 
 	/* Tell backend to reload configuration */
-	PERFORM @extschema@.on_update_partitions(v_parent_relid);
+	PERFORM @extschema@.on_update_partitions(v_parent);
 END
 $$
 LANGUAGE plpgsql;
@@ -638,53 +642,53 @@ CREATE OR REPLACE FUNCTION @extschema@.merge_range_partitions(
 RETURNS VOID AS
 $$
 DECLARE
-	v_parent_relid1		REGCLASS;
-	v_parent_relid2		REGCLASS;
-	v_attname			TEXT;
-	v_part_type			INTEGER;
-	v_atttype			REGTYPE;
+	v_parent1		REGCLASS;
+	v_parent2		REGCLASS;
+	v_attname		TEXT;
+	v_part_type		INTEGER;
+	v_atttype		REGTYPE;
 
 BEGIN
 	IF partition1 = partition2 THEN
-		RAISE EXCEPTION 'Cannot merge partition with itself';
+		RAISE EXCEPTION 'cannot merge partition with itself';
 	END IF;
 
-	v_parent_relid1 := @extschema@.get_parent_of_partition(partition1);
-	v_parent_relid2 := @extschema@.get_parent_of_partition(partition2);
+	v_parent1 := @extschema@.get_parent_of_partition(partition1);
+	v_parent2 := @extschema@.get_parent_of_partition(partition2);
 
 	/* Acquire data modification locks (prevent further modifications) */
 	PERFORM @extschema@.prevent_relation_modification(partition1);
 	PERFORM @extschema@.prevent_relation_modification(partition2);
 
-	IF v_parent_relid1 != v_parent_relid2 THEN
-		RAISE EXCEPTION 'Cannot merge partitions with different parents';
+	IF v_parent1 != v_parent2 THEN
+		RAISE EXCEPTION 'cannot merge partitions with different parents';
 	END IF;
 
 	/* Acquire lock on parent */
-	PERFORM @extschema@.lock_partitioned_relation(v_parent_relid1);
+	PERFORM @extschema@.lock_partitioned_relation(v_parent1);
 
 	SELECT attname, parttype
 	FROM @extschema@.pathman_config
-	WHERE partrel = v_parent_relid1
+	WHERE partrel = v_parent1
 	INTO v_attname, v_part_type;
 
 	IF v_attname IS NULL THEN
-		RAISE EXCEPTION 'Table "%" is not partitioned', v_parent_relid1::TEXT;
+		RAISE EXCEPTION 'table "%" is not partitioned', v_parent1::TEXT;
 	END IF;
 
 	/* Check if this is a RANGE partition */
 	IF v_part_type != 2 THEN
-		RAISE EXCEPTION 'Specified partitions aren''t RANGE partitions';
+		RAISE EXCEPTION 'specified partitions aren''t RANGE partitions';
 	END IF;
 
 	v_atttype := @extschema@.get_attribute_type(partition1, v_attname);
 
 	EXECUTE format('SELECT @extschema@.merge_range_partitions_internal($1, $2, $3, NULL::%s)',
 				   @extschema@.get_base_type(v_atttype)::TEXT)
-	USING v_parent_relid1, partition1, partition2;
+	USING v_parent1, partition1, partition2;
 
 	/* Tell backend to reload configuration */
-	PERFORM @extschema@.on_update_partitions(v_parent_relid1);
+	PERFORM @extschema@.on_update_partitions(v_parent1);
 END
 $$
 LANGUAGE plpgsql;
@@ -715,20 +719,19 @@ BEGIN
 	INTO v_attname;
 
 	IF v_attname IS NULL THEN
-		RAISE EXCEPTION 'Table "%" is not partitioned', parent_relid::TEXT;
+		RAISE EXCEPTION 'table "%" is not partitioned', parent_relid::TEXT;
 	END IF;
 
-	/*
-	 * Get ranges
-	 * first and second elements of array are MIN and MAX of partition1
-	 * third and forth elements are MIN and MAX of partition2
-	 */
-	p_range := @extschema@.get_range_by_part_oid(parent_relid, partition1, 0) ||
-			   @extschema@.get_range_by_part_oid(parent_relid, partition2, 0);
+	/* We have to pass fake NULL casted to column's type */
+	EXECUTE format('SELECT @extschema@.get_part_range($1, NULL::%1$s) ||
+						   @extschema@.get_part_range($2, NULL::%1$s)',
+				   @extschema@.get_attribute_type(parent_relid, v_attname)::TEXT)
+	USING partition1, partition2
+	INTO p_range;
 
 	/* Check if ranges are adjacent */
 	IF p_range[1] != p_range[4] AND p_range[2] != p_range[3] THEN
-		RAISE EXCEPTION 'Merge failed. Partitions must be adjacent';
+		RAISE EXCEPTION 'merge failed, partitions must be adjacent';
 	END IF;
 
 	/* Drop constraint on first partition... */
@@ -782,7 +785,7 @@ BEGIN
 	INTO v_attname, v_interval;
 
 	IF v_attname IS NULL THEN
-		RAISE EXCEPTION 'Table "%" is not partitioned', parent_relid::TEXT;
+		RAISE EXCEPTION 'table "%" is not partitioned', parent_relid::TEXT;
 	END IF;
 
 	v_atttype := @extschema@.get_attribute_type(parent_relid, v_attname);
@@ -826,10 +829,14 @@ DECLARE
 
 BEGIN
 	IF @extschema@.partitions_count(parent_relid) = 0 THEN
-		RAISE EXCEPTION 'Cannot append to empty partitions set';
+		RAISE EXCEPTION 'cannot append to empty partitions set';
 	END IF;
 
-	p_range := @extschema@.get_range_by_idx(parent_relid, -1, 0);
+	/* We have to pass fake NULL casted to column's type */
+	EXECUTE format('SELECT @extschema@.get_part_range($1, -1, NULL::%s)',
+				   p_atttype::TEXT)
+	USING parent_relid
+	INTO p_range;
 
 	IF @extschema@.is_date_type(p_atttype) THEN
 		v_part_name := @extschema@.create_single_range_partition(
@@ -880,7 +887,7 @@ BEGIN
 	INTO v_attname, v_interval;
 
 	IF v_attname IS NULL THEN
-		RAISE EXCEPTION 'Table "%" is not partitioned', parent_relid::TEXT;
+		RAISE EXCEPTION 'table "%" is not partitioned', parent_relid::TEXT;
 	END IF;
 
 	v_atttype := @extschema@.get_attribute_type(parent_relid, v_attname);
@@ -924,10 +931,14 @@ DECLARE
 
 BEGIN
 	IF @extschema@.partitions_count(parent_relid) = 0 THEN
-		RAISE EXCEPTION 'Cannot prepend to empty partitions set';
+		RAISE EXCEPTION 'cannot prepend to empty partitions set';
 	END IF;
 
-	p_range := @extschema@.get_range_by_idx(parent_relid, 0, 0);
+	/* We have to pass fake NULL casted to column's type */
+	EXECUTE format('SELECT @extschema@.get_part_range($1, 0, NULL::%s)',
+				   p_atttype::TEXT)
+	USING parent_relid
+	INTO p_range;
 
 	IF @extschema@.is_date_type(p_atttype) THEN
 		v_part_name := @extschema@.create_single_range_partition(
@@ -975,13 +986,13 @@ BEGIN
 	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 
 	IF p_start_value >= p_end_value THEN
-		RAISE EXCEPTION 'Failed to create partition: p_start_value is greater than p_end_value';
+		RAISE EXCEPTION 'failed to create partition: p_start_value is greater than p_end_value';
 	END IF;
 
 	/* check range overlap */
 	IF @extschema@.partitions_count(parent_relid) > 0
 	   AND @extschema@.check_overlap(parent_relid, p_start_value, p_end_value) THEN
-		RAISE EXCEPTION 'Specified range overlaps with existing partitions';
+		RAISE EXCEPTION 'specified range overlaps with existing partitions';
 	END IF;
 
 	/* Create new partition */
@@ -1051,16 +1062,16 @@ BEGIN
 	WHERE oid = p_partition INTO rel_persistence;
 
 	IF rel_persistence = 't'::CHAR THEN
-		RAISE EXCEPTION 'Temporary table "%" cannot be used as a partition',
+		RAISE EXCEPTION 'temporary table "%" cannot be used as a partition',
 						p_partition::TEXT;
 	END IF;
 
 	IF @extschema@.check_overlap(parent_relid, p_start_value, p_end_value) THEN
-		RAISE EXCEPTION 'Specified range overlaps with existing partitions';
+		RAISE EXCEPTION 'specified range overlaps with existing partitions';
 	END IF;
 
 	IF NOT @extschema@.validate_relations_equality(parent_relid, p_partition) THEN
-		RAISE EXCEPTION 'Partition must have the exact same structure as parent';
+		RAISE EXCEPTION 'partition must have the exact same structure as parent';
 	END IF;
 
 	/* Set inheritance */
@@ -1069,7 +1080,7 @@ BEGIN
 	v_attname := attname FROM @extschema@.pathman_config WHERE partrel = parent_relid;
 
 	IF v_attname IS NULL THEN
-		RAISE EXCEPTION 'Table "%" is not partitioned', parent_relid::TEXT;
+		RAISE EXCEPTION 'table "%" is not partitioned', parent_relid::TEXT;
 	END IF;
 
 	/* Set check constraint */
@@ -1111,7 +1122,7 @@ BEGIN
 	WHERE partrel = parent_relid;
 
 	IF v_attname IS NULL THEN
-		RAISE EXCEPTION 'Table "%" is not partitioned', parent_relid::TEXT;
+		RAISE EXCEPTION 'table "%" is not partitioned', parent_relid::TEXT;
 	END IF;
 
 	/* Remove inheritance */
@@ -1187,7 +1198,7 @@ BEGIN
 	attr := attname FROM @extschema@.pathman_config WHERE partrel = parent_relid;
 
 	IF attr IS NULL THEN
-		RAISE EXCEPTION 'Table "%" is not partitioned', parent_relid::TEXT;
+		RAISE EXCEPTION 'table "%" is not partitioned', parent_relid::TEXT;
 	END IF;
 
 	SELECT string_agg(attname, ', '),
@@ -1237,45 +1248,26 @@ CREATE OR REPLACE FUNCTION @extschema@.build_range_condition(
 	p_start_value	ANYELEMENT,
 	p_end_value		ANYELEMENT)
 RETURNS TEXT AS 'pg_pathman', 'build_range_condition'
-LANGUAGE C STRICT;
+LANGUAGE C;
 
 /*
  * Returns N-th range (as an array of two elements).
  */
-CREATE OR REPLACE FUNCTION @extschema@.get_range_by_idx(
+CREATE OR REPLACE FUNCTION @extschema@.get_part_range(
 	parent_relid	REGCLASS,
-	idx				INTEGER,
+	partition_idx	INTEGER,
 	dummy			ANYELEMENT)
-RETURNS ANYARRAY AS 'pg_pathman', 'get_range_by_idx'
-LANGUAGE C STRICT;
+RETURNS ANYARRAY AS 'pg_pathman', 'get_part_range_by_idx'
+LANGUAGE C;
 
 /*
  * Returns min and max values for specified RANGE partition.
  */
-CREATE OR REPLACE FUNCTION @extschema@.get_range_by_part_oid(
-	parent_relid	REGCLASS,
+CREATE OR REPLACE FUNCTION @extschema@.get_part_range(
 	partition_relid	REGCLASS,
 	dummy			ANYELEMENT)
-RETURNS ANYARRAY AS 'pg_pathman', 'get_range_by_part_oid'
-LANGUAGE C STRICT;
-
-/*
- * Returns min value of the first partition's RangeEntry.
- */
-CREATE OR REPLACE FUNCTION @extschema@.get_min_range_value(
-	parent_relid	REGCLASS,
-	dummy			ANYELEMENT)
-RETURNS ANYELEMENT AS 'pg_pathman', 'get_min_range_value'
-LANGUAGE C STRICT;
-
-/*
- * Returns max value of the last partition's RangeEntry.
- */
-CREATE OR REPLACE FUNCTION @extschema@.get_max_range_value(
-	parent_relid	REGCLASS,
-	dummy			ANYELEMENT)
-RETURNS ANYELEMENT AS 'pg_pathman', 'get_max_range_value'
-LANGUAGE C STRICT;
+RETURNS ANYARRAY AS 'pg_pathman', 'get_part_range_by_oid'
+LANGUAGE C;
 
 /*
  * Checks if range overlaps with existing partitions.
@@ -1286,7 +1278,7 @@ CREATE OR REPLACE FUNCTION @extschema@.check_overlap(
 	range_min		ANYELEMENT,
 	range_max		ANYELEMENT)
 RETURNS BOOLEAN AS 'pg_pathman', 'check_overlap'
-LANGUAGE C STRICT;
+LANGUAGE C;
 
 /*
  * Needed for an UPDATE trigger.
@@ -1295,4 +1287,4 @@ CREATE OR REPLACE FUNCTION @extschema@.find_or_create_range_partition(
 	parent_relid	REGCLASS,
 	value			ANYELEMENT)
 RETURNS REGCLASS AS 'pg_pathman', 'find_or_create_range_partition'
-LANGUAGE C STRICT;
+LANGUAGE C;

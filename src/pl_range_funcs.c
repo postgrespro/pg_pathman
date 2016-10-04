@@ -14,6 +14,7 @@
 
 #include "utils/array.h"
 #include "utils/builtins.h"
+#include "utils/lsyscache.h"
 
 
 /* Function declarations */
@@ -21,10 +22,8 @@
 PG_FUNCTION_INFO_V1( find_or_create_range_partition);
 PG_FUNCTION_INFO_V1( check_overlap );
 
-PG_FUNCTION_INFO_V1( get_range_by_part_oid );
-PG_FUNCTION_INFO_V1( get_range_by_idx );
-PG_FUNCTION_INFO_V1( get_min_range_value );
-PG_FUNCTION_INFO_V1( get_max_range_value );
+PG_FUNCTION_INFO_V1( get_part_range_by_oid );
+PG_FUNCTION_INFO_V1( get_part_range_by_idx );
 
 PG_FUNCTION_INFO_V1( build_range_condition );
 
@@ -53,7 +52,9 @@ find_or_create_range_partition(PG_FUNCTION_ARGS)
 	prel = get_pathman_relation_info(parent_oid);
 	shout_if_prel_is_invalid(parent_oid, prel, PT_RANGE);
 
-	fill_type_cmp_fmgr_info(&cmp_func, value_type, prel->atttype);
+	fill_type_cmp_fmgr_info(&cmp_func,
+							getBaseType(value_type),
+							getBaseType(prel->atttype));
 
 	/* Use available PartRelationInfo to find partition */
 	search_state = search_range_partition_eq(value, &cmp_func, prel,
@@ -93,7 +94,8 @@ check_overlap(PG_FUNCTION_ARGS)
 							p2 = PG_GETARG_DATUM(2);
 
 	Oid						p1_type = get_fn_expr_argtype(fcinfo->flinfo, 1),
-							p2_type = get_fn_expr_argtype(fcinfo->flinfo, 2);
+							p2_type = get_fn_expr_argtype(fcinfo->flinfo, 2),
+							part_type;
 
 	FmgrInfo				cmp_func_1,
 							cmp_func_2;
@@ -105,9 +107,11 @@ check_overlap(PG_FUNCTION_ARGS)
 	prel = get_pathman_relation_info(parent_oid);
 	shout_if_prel_is_invalid(parent_oid, prel, PT_RANGE);
 
-	/* comparison functions */
-	fill_type_cmp_fmgr_info(&cmp_func_1, p1_type, prel->atttype);
-	fill_type_cmp_fmgr_info(&cmp_func_2, p2_type, prel->atttype);
+	part_type = getBaseType(prel->atttype);
+
+	/* Fetch comparison functions */
+	fill_type_cmp_fmgr_info(&cmp_func_1, getBaseType(p1_type), part_type);
+	fill_type_cmp_fmgr_info(&cmp_func_2, getBaseType(p2_type), part_type);
 
 	ranges = PrelGetRangesArray(prel);
 	for (i = 0; i < PrelChildrenCount(prel); i++)
@@ -136,22 +140,33 @@ check_overlap(PG_FUNCTION_ARGS)
  * arg #2 is the partition's Oid.
  */
 Datum
-get_range_by_part_oid(PG_FUNCTION_ARGS)
+get_part_range_by_oid(PG_FUNCTION_ARGS)
 {
-	Oid						parent_oid = PG_GETARG_OID(0);
-	Oid						child_oid = PG_GETARG_OID(1);
+	Oid						partition_relid = InvalidOid,
+							parent_relid;
+	PartParentSearch		parent_search;
 	uint32					i;
 	RangeEntry			   *ranges;
 	const PartRelationInfo *prel;
 
-	prel = get_pathman_relation_info(parent_oid);
-	shout_if_prel_is_invalid(parent_oid, prel, PT_RANGE);
+	if (PG_ARGISNULL(0))
+		elog(ERROR, "'partition_relid' should not be NULL");
+	else
+		partition_relid = PG_GETARG_OID(0);
+
+	parent_relid = get_parent_of_partition(partition_relid, &parent_search);
+	if (parent_search != PPS_ENTRY_PART_PARENT)
+		elog(ERROR, "relation \"%s\" is not a partition",
+			 get_rel_name_or_relid(partition_relid));
+
+	prel = get_pathman_relation_info(parent_relid);
+	shout_if_prel_is_invalid(parent_relid, prel, PT_RANGE);
 
 	ranges = PrelGetRangesArray(prel);
 
 	/* Look for the specified partition */
 	for (i = 0; i < PrelChildrenCount(prel); i++)
-		if (ranges[i].child_oid == child_oid)
+		if (ranges[i].child_oid == partition_relid)
 		{
 			ArrayType  *arr;
 			Datum		elems[2] = { ranges[i].min, ranges[i].max };
@@ -164,9 +179,9 @@ get_range_by_part_oid(PG_FUNCTION_ARGS)
 		}
 
 	/* No partition found, report error */
-	elog(ERROR, "Relation \"%s\" has no partition \"%s\"",
-		 get_rel_name_or_relid(parent_oid),
-		 get_rel_name_or_relid(child_oid));
+	elog(ERROR, "relation \"%s\" has no partition \"%s\"",
+		 get_rel_name_or_relid(parent_relid),
+		 get_rel_name_or_relid(partition_relid));
 
 	PG_RETURN_NULL(); /* keep compiler happy */
 }
@@ -179,78 +194,52 @@ get_range_by_part_oid(PG_FUNCTION_ARGS)
  *		(if it is negative then the last range will be returned).
  */
 Datum
-get_range_by_idx(PG_FUNCTION_ARGS)
+get_part_range_by_idx(PG_FUNCTION_ARGS)
 {
-	Oid						parent_oid = PG_GETARG_OID(0);
-	int						idx = PG_GETARG_INT32(1);
+	Oid						parent_relid = InvalidOid;
+	int						partition_idx = 0;
 	Datum					elems[2];
 	RangeEntry			   *ranges;
 	const PartRelationInfo *prel;
 
-	prel = get_pathman_relation_info(parent_oid);
-	shout_if_prel_is_invalid(parent_oid, prel, PT_RANGE);
+	if (PG_ARGISNULL(0))
+		elog(ERROR, "'parent_relid' should not be NULL");
+	else
+		parent_relid = PG_GETARG_OID(0);
+
+	if (PG_ARGISNULL(1))
+		elog(ERROR, "'partition_idx' should not be NULL");
+	else
+		partition_idx = PG_GETARG_INT32(1);
+
+	prel = get_pathman_relation_info(parent_relid);
+	shout_if_prel_is_invalid(parent_relid, prel, PT_RANGE);
 
 	/* Now we have to deal with 'idx' */
-	if (idx < -1)
+	if (partition_idx < -1)
 	{
-		elog(ERROR, "Negative indices other than -1 (last partition) are not allowed");
+		elog(ERROR, "negative indices other than -1 (last partition) are not allowed");
 	}
-	else if (idx == -1)
+	else if (partition_idx == -1)
 	{
-		idx = PrelLastChild(prel);
+		partition_idx = PrelLastChild(prel);
 	}
-	else if (((uint32) abs(idx)) >= PrelChildrenCount(prel))
+	else if (((uint32) abs(partition_idx)) >= PrelChildrenCount(prel))
 	{
-		elog(ERROR, "Partition #%d does not exist (total amount is %u)",
-			 idx, PrelChildrenCount(prel));
+		elog(ERROR, "partition #%d does not exist (total amount is %u)",
+			 partition_idx, PrelChildrenCount(prel));
 	}
 
 	ranges = PrelGetRangesArray(prel);
 
-	elems[0] = ranges[idx].min;
-	elems[1] = ranges[idx].max;
+	elems[0] = ranges[partition_idx].min;
+	elems[1] = ranges[partition_idx].max;
 
 	PG_RETURN_ARRAYTYPE_P(construct_array(elems, 2,
 										  prel->atttype,
 										  prel->attlen,
 										  prel->attbyval,
 										  prel->attalign));
-}
-
-/*
- * Returns min value of the first range for relation.
- */
-Datum
-get_min_range_value(PG_FUNCTION_ARGS)
-{
-	Oid						parent_oid = PG_GETARG_OID(0);
-	RangeEntry			   *ranges;
-	const PartRelationInfo *prel;
-
-	prel = get_pathman_relation_info(parent_oid);
-	shout_if_prel_is_invalid(parent_oid, prel, PT_RANGE);
-
-	ranges = PrelGetRangesArray(prel);
-
-	PG_RETURN_DATUM(ranges[0].min);
-}
-
-/*
- * Returns max value of the last range for relation.
- */
-Datum
-get_max_range_value(PG_FUNCTION_ARGS)
-{
-	Oid						parent_oid = PG_GETARG_OID(0);
-	RangeEntry			   *ranges;
-	const PartRelationInfo *prel;
-
-	prel = get_pathman_relation_info(parent_oid);
-	shout_if_prel_is_invalid(parent_oid, prel, PT_RANGE);
-
-	ranges = PrelGetRangesArray(prel);
-
-	PG_RETURN_DATUM(ranges[PrelLastChild(prel)].max);
 }
 
 
@@ -276,7 +265,7 @@ build_range_condition(PG_FUNCTION_ARGS)
 
 	/* This is not going to trigger (not now, at least), just for the safety */
 	if (min_bound_type != max_bound_type)
-		elog(ERROR, "Cannot build range condition: "
+		elog(ERROR, "cannot build range condition: "
 					"boundaries should be of the same type");
 
 	/* Create range condition CSTRING */

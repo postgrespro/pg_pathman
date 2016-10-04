@@ -652,7 +652,7 @@ shout_if_prel_is_invalid(Oid parent_oid,
 						 PartType expected_part_type)
 {
 	if (!prel)
-		elog(ERROR, "Relation \"%s\" is not partitioned by pg_pathman",
+		elog(ERROR, "relation \"%s\" is not partitioned by pg_pathman",
 			 get_rel_name_or_relid(parent_oid));
 
 	if (!PrelIsValid(prel))
@@ -683,7 +683,7 @@ shout_if_prel_is_invalid(Oid parent_oid,
 					 expected_part_type);
 		}
 
-		elog(ERROR, "Relation \"%s\" is not partitioned by %s",
+		elog(ERROR, "relation \"%s\" is not partitioned by %s",
 			 get_rel_name_or_relid(parent_oid),
 			 expected_str);
 	}
