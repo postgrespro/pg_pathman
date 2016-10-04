@@ -1,6 +1,6 @@
 .deps
 isolation_output
-results/pg_pathman.out
+results/*
 regression.diffs
 regression.out
 *.o

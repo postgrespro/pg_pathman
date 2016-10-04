@@ -89,6 +89,7 @@ RETURNS INTEGER AS
 $$
 DECLARE
 	v_rows_count		INTEGER;
+	v_atttype			REGTYPE;
 	v_max				p_start_value%TYPE;
 	v_cur_value			p_start_value%TYPE := p_start_value;
 	p_end_value			p_start_value%TYPE;
@@ -128,6 +129,8 @@ BEGIN
 		END LOOP;
 	END IF;
 
+	v_atttype := @extschema@.get_base_type(pg_typeof(p_start_value));
+
 	/*
 	 * In case when user doesn't want to automatically create partitions
 	 * and specifies partition count as 0 then do not check boundaries
@@ -146,7 +149,7 @@ BEGIN
 					   p_attribute,
 					   p_start_value,
 					   p_end_value,
-					   @extschema@.get_base_type(pg_typeof(p_start_value))::TEXT);
+					   v_atttype::TEXT);
 	END IF;
 
 	/* Create sequence for child partitions names */
@@ -162,7 +165,7 @@ BEGIN
 	LOOP
 		EXECUTE
 			format('SELECT @extschema@.create_single_range_partition($1, $2, $3::%s, tablespace:=$4)',
-				   @extschema@.get_base_type(pg_typeof(p_start_value))::TEXT)
+				   v_atttype::TEXT)
 		USING
 			parent_relid,
 			p_start_value,
@@ -831,15 +834,18 @@ RETURNS TEXT AS
 $$
 DECLARE
 	v_part_name		TEXT;
+	v_atttype		REGTYPE;
 
 BEGIN
 	IF @extschema@.partitions_count(parent_relid) = 0 THEN
 		RAISE EXCEPTION 'cannot append to empty partitions set';
 	END IF;
 
+	v_atttype := @extschema@.get_base_type(p_atttype);
+
 	/* We have to pass fake NULL casted to column's type */
 	EXECUTE format('SELECT @extschema@.get_part_range($1, -1, NULL::%s)',
-				   @extschema@.get_base_type(p_atttype)::TEXT)
+				   v_atttype::TEXT)
 	USING parent_relid
 	INTO p_range;
 
@@ -853,7 +859,7 @@ BEGIN
 	ELSE
 		EXECUTE
 			format('SELECT @extschema@.create_single_range_partition($1, $2, $2 + $3::%s, $4, $5)',
-				   @extschema@.get_base_type(p_atttype)::TEXT)
+				   v_atttype::TEXT)
 		USING
 			parent_relid,
 			p_range[2],
@@ -933,15 +939,18 @@ RETURNS TEXT AS
 $$
 DECLARE
 	v_part_name		TEXT;
+	v_atttype		REGTYPE;
 
 BEGIN
 	IF @extschema@.partitions_count(parent_relid) = 0 THEN
 		RAISE EXCEPTION 'cannot prepend to empty partitions set';
 	END IF;
 
+	v_atttype := @extschema@.get_base_type(p_atttype);
+
 	/* We have to pass fake NULL casted to column's type */
 	EXECUTE format('SELECT @extschema@.get_part_range($1, 0, NULL::%s)',
-				   @extschema@.get_base_type(p_atttype)::TEXT)
+				   v_atttype::TEXT)
 	USING parent_relid
 	INTO p_range;
 
@@ -955,7 +964,7 @@ BEGIN
 	ELSE
 		EXECUTE
 			format('SELECT @extschema@.create_single_range_partition($1, $2 - $3::%s, $2, $4, $5)',
-				   @extschema@.get_base_type(p_atttype)::TEXT)
+				   v_atttype::TEXT)
 		USING
 			parent_relid,
 			p_range[1],
@@ -1117,7 +1126,7 @@ DECLARE
 	parent_relid	REGCLASS;
 
 BEGIN
-	parent_relid = @extschema@.get_parent_of_partition(p_partition);
+	parent_relid := @extschema@.get_parent_of_partition(p_partition);
 
 	/* Acquire lock on parent */
 	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
