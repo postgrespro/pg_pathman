@@ -1,3 +1,4 @@
+\set VERBOSITY terse
 CREATE EXTENSION pg_pathman;
 CREATE SCHEMA domains;
 CREATE DOMAIN domains.dom_test AS numeric CHECK (value < 1200);
@@ -88,21 +89,4 @@ ORDER BY range_min::INT, range_max::INT;
 
 DROP SCHEMA domains CASCADE;
 NOTICE:  drop cascades to 17 other objects
-DETAIL:  drop cascades to type domains.dom_test
-drop cascades to table domains.dom_table
-drop cascades to sequence domains.dom_table_seq
-drop cascades to table domains.dom_table_1
-drop cascades to table domains.dom_table_3
-drop cascades to table domains.dom_table_4
-drop cascades to table domains.dom_table_5
-drop cascades to table domains.dom_table_6
-drop cascades to table domains.dom_table_7
-drop cascades to table domains.dom_table_8
-drop cascades to table domains.dom_table_9
-drop cascades to table domains.dom_table_10
-drop cascades to table domains.dom_table_11
-drop cascades to table domains.dom_table_12
-drop cascades to table domains.dom_table_13
-drop cascades to table domains.dom_table_14
-drop cascades to table domains.dom_table_15
 DROP EXTENSION pg_pathman CASCADE;

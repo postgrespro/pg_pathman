@@ -1,3 +1,4 @@
+\set VERBOSITY terse
 CREATE EXTENSION pg_pathman;
 CREATE SCHEMA callbacks;
 /* Check callbacks */
@@ -99,14 +100,4 @@ WARNING:  callback: partition "abc_4"
 
 DROP SCHEMA callbacks CASCADE;
 NOTICE:  drop cascades to 10 other objects
-DETAIL:  drop cascades to table callbacks.log
-drop cascades to function callbacks.abc_on_part_created_range_callback(jsonb)
-drop cascades to function callbacks.abc_on_part_created_hash_callback(jsonb)
-drop cascades to table callbacks.abc
-drop cascades to sequence callbacks.abc_seq
-drop cascades to table callbacks.abc_0
-drop cascades to table callbacks.abc_1
-drop cascades to table callbacks.abc_2
-drop cascades to table callbacks.abc_3
-drop cascades to table callbacks.abc_4
 DROP EXTENSION pg_pathman CASCADE;

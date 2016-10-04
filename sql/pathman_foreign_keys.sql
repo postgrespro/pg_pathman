@@ -1,3 +1,5 @@
+\set VERBOSITY terse
+
 CREATE EXTENSION pg_pathman;
 CREATE SCHEMA fkeys;
 

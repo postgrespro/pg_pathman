@@ -1,3 +1,4 @@
+\set VERBOSITY terse
 CREATE EXTENSION pg_pathman;
 CREATE SCHEMA fkeys;
 /* Check primary keys generation */
@@ -17,7 +18,6 @@ NOTICE:  sequence "test_fkey_seq" does not exist, skipping
 
 INSERT INTO fkeys.test_fkey VALUES(1, 'wrong');
 ERROR:  insert or update on table "test_fkey_1" violates foreign key constraint "test_fkey_1_comment_fkey"
-DETAIL:  Key (comment)=(wrong) is not present in table "test_ref".
 INSERT INTO fkeys.test_fkey VALUES(1, 'test');
 SELECT drop_partitions('fkeys.test_fkey');
 NOTICE:  function fkeys.test_fkey_upd_trig_func() does not exist, skipping
@@ -44,7 +44,6 @@ SELECT create_hash_partitions('fkeys.test_fkey', 'id', 10);
 
 INSERT INTO fkeys.test_fkey VALUES(1, 'wrong');
 ERROR:  insert or update on table "test_fkey_0" violates foreign key constraint "test_fkey_0_comment_fkey"
-DETAIL:  Key (comment)=(wrong) is not present in table "test_ref".
 INSERT INTO fkeys.test_fkey VALUES(1, 'test');
 SELECT drop_partitions('fkeys.test_fkey');
 NOTICE:  function fkeys.test_fkey_upd_trig_func() does not exist, skipping
@@ -65,7 +64,4 @@ NOTICE:  94 rows copied from fkeys.test_fkey_9
 
 DROP SCHEMA fkeys CASCADE;
 NOTICE:  drop cascades to 3 other objects
-DETAIL:  drop cascades to table fkeys.test_ref
-drop cascades to table fkeys.test_fkey
-drop cascades to sequence fkeys.test_fkey_seq
 DROP EXTENSION pg_pathman CASCADE;

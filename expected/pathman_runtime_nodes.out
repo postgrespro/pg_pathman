@@ -1,3 +1,4 @@
+\set VERBOSITY terse
 CREATE SCHEMA pathman;
 CREATE EXTENSION pg_pathman SCHEMA pathman;
 CREATE SCHEMA test;
@@ -286,35 +287,5 @@ select test.pathman_test_5(); /* projection tests for RuntimeXXX nodes */
 
 DROP SCHEMA test CASCADE;
 NOTICE:  drop cascades to 30 other objects
-DETAIL:  drop cascades to function test.pathman_assert(boolean,text)
-drop cascades to function test.pathman_equal(text,text,text)
-drop cascades to function test.pathman_test(text)
-drop cascades to function test.pathman_test_1()
-drop cascades to function test.pathman_test_2()
-drop cascades to function test.pathman_test_3()
-drop cascades to function test.pathman_test_4()
-drop cascades to function test.pathman_test_5()
-drop cascades to table test.run_values
-drop cascades to table test.runtime_test_1
-drop cascades to table test.runtime_test_1_0
-drop cascades to table test.runtime_test_1_1
-drop cascades to table test.runtime_test_1_2
-drop cascades to table test.runtime_test_1_3
-drop cascades to table test.runtime_test_1_4
-drop cascades to table test.runtime_test_1_5
-drop cascades to table test.category
-drop cascades to table test.runtime_test_2
-drop cascades to table test.runtime_test_2_0
-drop cascades to table test.runtime_test_2_1
-drop cascades to table test.runtime_test_2_2
-drop cascades to table test.runtime_test_2_3
-drop cascades to table test.runtime_test_2_4
-drop cascades to table test.runtime_test_2_5
-drop cascades to table test.vals
-drop cascades to table test.runtime_test_3
-drop cascades to table test.runtime_test_3_0
-drop cascades to table test.runtime_test_3_1
-drop cascades to table test.runtime_test_3_2
-drop cascades to table test.runtime_test_3_3
 DROP EXTENSION pg_pathman CASCADE;
 DROP SCHEMA pathman CASCADE;
