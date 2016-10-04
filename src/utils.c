@@ -251,8 +251,8 @@ fill_type_cmp_fmgr_info(FmgrInfo *finfo, Oid type1, Oid type2)
 									 BTORDER_PROC);
 
 	if (cmp_proc_oid == InvalidOid)
-		elog(ERROR, "Missing comparison function for types %u & %u",
-			 type1, type2);
+		elog(ERROR, "missing comparison function for types %s & %s",
+			 format_type_be(type1), format_type_be(type2));
 
 	fmgr_info(cmp_proc_oid, finfo);
 
@@ -647,6 +647,20 @@ get_rel_name_or_relid(Oid relid)
 		return DatumGetCString(DirectFunctionCall1(oidout,
 												   ObjectIdGetDatum(relid)));
 	return relname;
+}
+
+/*
+ * Try to get opname or at least opid as cstring.
+ */
+char *
+get_op_name_or_opid(Oid opid)
+{
+	char *opname = get_opname(opid);
+
+	if (!opname)
+		return DatumGetCString(DirectFunctionCall1(oidout,
+												   ObjectIdGetDatum(opid)));
+	return opname;
 }
 
 

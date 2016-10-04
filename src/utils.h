@@ -65,6 +65,8 @@ char get_rel_persistence(Oid relid);
  * Handy execution-stage functions.
  */
 char * get_rel_name_or_relid(Oid relid);
+char * get_op_name_or_opid(Oid opid);
+
 Oid get_binary_operator_oid(char *opname, Oid arg1, Oid arg2);
 void fill_type_cmp_fmgr_info(FmgrInfo *finfo,
 							 Oid type1,

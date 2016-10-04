@@ -886,7 +886,7 @@ create_partitions_internal(Oid relid, Datum value, Oid value_type)
 			fill_type_cmp_fmgr_info(&interval_type_cmp, base_value_type, base_atttype);
 
 			if (SPI_connect() != SPI_OK_CONNECT)
-				elog(ERROR, "Could not connect using SPI");
+				elog(ERROR, "could not connect using SPI");
 
 			/* while (value >= MAX) ... */
 			spawn_partitions(PrelParentRelid(prel), value, max_rvalue,
@@ -964,12 +964,12 @@ create_partitions(Oid relid, Datum value, Oid value_type)
 		}
 	}
 	else
-		elog(ERROR, "Relation \"%s\" is not partitioned by pg_pathman",
+		elog(ERROR, "relation \"%s\" is not partitioned by pg_pathman",
 			 get_rel_name_or_relid(relid));
 
 	/* Check that 'last_partition' is valid */
 	if (last_partition == InvalidOid)
-		elog(ERROR, "Could not create new partitions for relation \"%s\"",
+		elog(ERROR, "could not create new partitions for relation \"%s\"",
 			 get_rel_name_or_relid(relid));
 
 	return last_partition;

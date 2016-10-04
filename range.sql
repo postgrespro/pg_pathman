@@ -552,14 +552,14 @@ $$
 DECLARE
 	v_parent		REGCLASS;
 	v_attname		TEXT;
+	v_atttype		REGTYPE;
 	v_cond			TEXT;
 	v_new_partition	TEXT;
 	v_part_type		INTEGER;
-	v_part_relname	TEXT;
 	v_check_name	TEXT;
 
 BEGIN
-	v_part_relname := @extschema@.validate_relname(p_partition);
+	PERFORM @extschema@.validate_relname(p_partition);
 	v_parent = @extschema@.get_parent_of_partition(p_partition);
 
 	/* Acquire lock on parent */
@@ -582,9 +582,11 @@ BEGIN
 		RAISE EXCEPTION 'specified partition isn''t RANGE partition';
 	END IF;
 
+	v_atttype = @extschema@.get_attribute_type(v_parent, v_attname);
+
 	/* Get partition values range */
 	EXECUTE format('SELECT @extschema@.get_part_range($1, NULL::%s)',
-				   @extschema@.get_attribute_type(v_parent, v_attname)::TEXT)
+				   @extschema@.get_base_type(v_atttype)::TEXT)
 	USING p_partition
 	INTO p_range;
 
@@ -711,6 +713,7 @@ RETURNS ANYARRAY AS
 $$
 DECLARE
 	v_attname		TEXT;
+	v_atttype		REGTYPE;
 	v_check_name	TEXT;
 
 BEGIN
@@ -722,10 +725,12 @@ BEGIN
 		RAISE EXCEPTION 'table "%" is not partitioned', parent_relid::TEXT;
 	END IF;
 
+	v_atttype = @extschema@.get_attribute_type(parent_relid, v_attname);
+
 	/* We have to pass fake NULL casted to column's type */
 	EXECUTE format('SELECT @extschema@.get_part_range($1, NULL::%1$s) ||
 						   @extschema@.get_part_range($2, NULL::%1$s)',
-				   @extschema@.get_attribute_type(parent_relid, v_attname)::TEXT)
+				   @extschema@.get_base_type(v_atttype)::TEXT)
 	USING partition1, partition2
 	INTO p_range;
 
@@ -834,7 +839,7 @@ BEGIN
 
 	/* We have to pass fake NULL casted to column's type */
 	EXECUTE format('SELECT @extschema@.get_part_range($1, -1, NULL::%s)',
-				   p_atttype::TEXT)
+				   @extschema@.get_base_type(p_atttype)::TEXT)
 	USING parent_relid
 	INTO p_range;
 
@@ -936,7 +941,7 @@ BEGIN
 
 	/* We have to pass fake NULL casted to column's type */
 	EXECUTE format('SELECT @extschema@.get_part_range($1, 0, NULL::%s)',
-				   p_atttype::TEXT)
+				   @extschema@.get_base_type(p_atttype)::TEXT)
 	USING parent_relid
 	INTO p_range;
 

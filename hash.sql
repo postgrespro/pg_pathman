@@ -159,7 +159,7 @@ BEGIN
 	attr := attname FROM @extschema@.pathman_config WHERE partrel = parent_relid;
 
 	IF attr IS NULL THEN
-		RAISE EXCEPTION 'Table "%" is not partitioned', parent_relid::TEXT;
+		RAISE EXCEPTION 'table "%" is not partitioned', parent_relid::TEXT;
 	END IF;
 
 	SELECT string_agg(attname, ', '),

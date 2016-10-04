@@ -636,7 +636,7 @@ LANGUAGE C STRICT;
 /*
  * Return tablespace name for specified relation.
  */
-CREATE OR REPLACE FUNCTION @extschema@.get_rel_tablespace_name(relation REGCLASS)
+CREATE OR REPLACE FUNCTION @extschema@.get_rel_tablespace_name(REGCLASS)
 RETURNS TEXT AS 'pg_pathman', 'get_rel_tablespace_name'
 LANGUAGE C STRICT;
 
