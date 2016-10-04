@@ -26,10 +26,9 @@ environment variable:
 export PG_CONFIG=/path/to/pg_config
 ```
 
-Tests concerning FDW features are disabled by default. To test FDW features
-you need to install postgres_fdw contrib module first and then set the TEST_FDW
-environment variable:
+To test FDW features you need to install postgres_fdw contrib module first.
+If you want to skip FDW tests set the FDW_DISABLED environment variable:
 
 ```
-export TEST_FDW=1
+export FDW_DISABLED=1
 ```

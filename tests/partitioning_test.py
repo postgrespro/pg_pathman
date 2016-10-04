@@ -12,10 +12,10 @@ import time
 import os
 
 
-def test_fdw(func):
+def if_fdw_enabled(func):
     """To run tests with FDW support set environment variable TEST_FDW=1"""
     def wrapper(*args, **kwargs):
-        if os.environ.get('TEST_FDW'):
+        if os.environ.get('FDW_DISABLED') != '1':
             func(*args, **kwargs)
         else:
             print('Warning: FDW features tests are disabled, skipping...')
@@ -341,7 +341,7 @@ class PartitioningTests(unittest.TestCase):
         self.assertTrue(check_tablespace(node, 'abc_prepended_2', 'pg_default'))
         self.assertTrue(check_tablespace(node, 'abc_added_2', 'pg_default'))
 
-    @test_fdw
+    @if_fdw_enabled
     def test_foreign_table(self):
         """Test foreign tables"""
 
