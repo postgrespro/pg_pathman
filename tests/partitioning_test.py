@@ -12,11 +12,21 @@ import time
 import os
 
 
+def if_fdw_enabled(func):
+    """To run tests with FDW support set environment variable TEST_FDW=1"""
+    def wrapper(*args, **kwargs):
+        if os.environ.get('FDW_DISABLED') != '1':
+            func(*args, **kwargs)
+        else:
+            print('Warning: FDW features tests are disabled, skipping...')
+    return wrapper
+
+
 class PartitioningTests(unittest.TestCase):
 
     def setUp(self):
         self.setup_cmd = [
-            'create extension pg_pathman',
+            # 'create extension pg_pathman',
             'create table abc(id serial, t text)',
             'insert into abc select generate_series(1, 300000)',
             'select create_hash_partitions(\'abc\', \'id\', 3, partition_data := false)',
@@ -25,6 +35,16 @@ class PartitioningTests(unittest.TestCase):
     def tearDown(self):
         stop_all()
         # clean_all()
+
+    def start_new_pathman_cluster(self, name='test', allows_streaming=False):
+        node = get_new_node(name)
+        node.init(allows_streaming=allows_streaming)
+        node.append_conf(
+            'postgresql.conf',
+            'shared_preload_libraries=\'pg_pathman\'\n')
+        node.start()
+        node.psql('postgres', 'create extension pg_pathman')
+        return node
 
     def init_test_data(self, node):
         """Initialize pg_pathman extension and test data"""
@@ -42,17 +62,12 @@ class PartitioningTests(unittest.TestCase):
     def printlog(self, logfile):
         with open(logfile, 'r') as log:
             for line in log.readlines():
-                print line
+                print(line)
 
     def test_concurrent(self):
         """Tests concurrent partitioning"""
-        node = get_new_node('test')
         try:
-            node.init()
-            node.append_conf(
-                'postgresql.conf',
-                'shared_preload_libraries=\'pg_pathman\'\n')
-            node.start()
+            node = self.start_new_pathman_cluster()
             self.init_test_data(node)
 
             node.psql(
@@ -95,11 +110,7 @@ class PartitioningTests(unittest.TestCase):
 
         try:
             # initialize master server
-            node.init(allows_streaming=True)
-            node.append_conf(
-                'postgresql.conf',
-                'shared_preload_libraries=\'pg_pathman\'\n')
-            node.start()
+            node = self.start_new_pathman_cluster(allows_streaming=True)
             node.backup('my_backup')
 
             # initialize replica from backup
@@ -238,8 +249,8 @@ class PartitioningTests(unittest.TestCase):
             con.commit()
 
             # Now wait until each thread finishes
-            for i in range(3):
-                threads[i].join()
+            for thread in threads:
+                thread.join()
 
             # Check flags, it should be true which means that threads are
             # finished
@@ -277,11 +288,11 @@ class PartitioningTests(unittest.TestCase):
             'postgresql.conf',
             'shared_preload_libraries=\'pg_pathman\'\n')
         node.start()
-        path = os.path.join(node.data_dir, 'test_space_location')
-        os.mkdir(path)
         node.psql('postgres', 'create extension pg_pathman')
 
         # create tablespace
+        path = os.path.join(node.data_dir, 'test_space_location')
+        os.mkdir(path)
         node.psql(
             'postgres',
             'create tablespace test_space location \'{}\''.format(path))
@@ -329,6 +340,71 @@ class PartitioningTests(unittest.TestCase):
         self.assertTrue(check_tablespace(node, 'abc_appended_2', 'pg_default'))
         self.assertTrue(check_tablespace(node, 'abc_prepended_2', 'pg_default'))
         self.assertTrue(check_tablespace(node, 'abc_added_2', 'pg_default'))
+
+    @if_fdw_enabled
+    def test_foreign_table(self):
+        """Test foreign tables"""
+
+        # Start master server
+        master = get_new_node('test')
+        master.init()
+        master.append_conf(
+            'postgresql.conf',
+            'shared_preload_libraries=\'pg_pathman, postgres_fdw\'\n')
+        master.start()
+        master.psql('postgres', 'create extension pg_pathman')
+        master.psql('postgres', 'create extension postgres_fdw')
+        master.psql(
+            'postgres',
+            '''create table abc(id serial, name text);
+            select create_range_partitions('abc', 'id', 0, 10, 2)''')
+
+        # Current user name (needed for user mapping)
+        username = master.execute('postgres', 'select current_user')[0][0]
+
+        # Start foreign server
+        fserv = get_new_node('fserv')
+        fserv.init().start()
+        fserv.safe_psql('postgres', 'create table ftable(id serial, name text)')
+        fserv.safe_psql('postgres', 'insert into ftable values (25, \'foreign\')')
+
+        # Create foreign table and attach it to partitioned table
+        master.safe_psql(
+            'postgres',
+            '''create server fserv
+            foreign data wrapper postgres_fdw
+            options (dbname 'postgres', host '127.0.0.1', port '{}')'''.format(fserv.port)
+        )
+        master.safe_psql(
+            'postgres',
+            '''create user mapping for {0}
+            server fserv
+            options (user '{0}')'''.format(username)
+        )
+        master.safe_psql(
+            'postgres',
+            '''import foreign schema public limit to (ftable)
+            from server fserv into public'''
+        )
+        master.safe_psql(
+            'postgres',
+            'select attach_range_partition(\'abc\', \'ftable\', 20, 30)')
+
+        # Check that table attached to partitioned table
+        self.assertEqual(
+            master.safe_psql('postgres', 'select * from ftable'),
+            '25|foreign\n'
+        )
+
+        # Check that we can successfully insert new data into foreign partition
+        master.safe_psql('postgres', 'insert into abc values (26, \'part\')')
+        self.assertEqual(
+            master.safe_psql('postgres', 'select * from ftable order by id'),
+            '25|foreign\n26|part\n'
+        )
+
+        # Testing drop partitions (including foreign partitions)
+        master.safe_psql('postgres', 'select drop_partitions(\'abc\')')
 
 
 if __name__ == "__main__":
