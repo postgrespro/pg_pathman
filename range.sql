@@ -1066,6 +1066,7 @@ $$
 DECLARE
 	v_attname			TEXT;
 	rel_persistence		CHAR;
+	v_init_callback		REGPROCEDURE;
 
 BEGIN
 	/* Acquire lock on parent */
@@ -1104,6 +1105,20 @@ BEGIN
 				   @extschema@.build_range_condition(v_attname,
 													 p_start_value,
 													 p_end_value));
+
+	/* Fetch init_callback from 'params' table */
+	WITH stub_callback(stub) as (values (0))
+	SELECT coalesce(init_callback, 0::REGPROCEDURE)
+	FROM stub_callback
+	LEFT JOIN @extschema@.pathman_config_params AS params
+	ON params.partrel = parent_relid
+	INTO v_init_callback;
+
+	PERFORM @extschema@.invoke_on_partition_created_callback(parent_relid,
+															 p_partition,
+															 v_init_callback,
+															 p_start_value,
+															 p_end_value);
 
 	/* Invalidate cache */
 	PERFORM @extschema@.on_update_partitions(parent_relid);

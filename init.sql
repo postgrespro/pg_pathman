@@ -530,36 +530,37 @@ BEGIN
 	DELETE FROM @extschema@.pathman_config_params WHERE partrel = parent_relid;
 
 	IF conf_num_del = 0 THEN
-		RAISE EXCEPTION 'relation "%" has no partitions', parent_relid::text;
+		RAISE EXCEPTION 'relation "%" has no partitions', parent_relid::TEXT;
 	END IF;
 
-	FOR v_rec IN (SELECT inhrelid::regclass::text AS tbl
+	FOR v_rec IN (SELECT inhrelid::REGCLASS AS tbl
 				  FROM pg_catalog.pg_inherits
 				  WHERE inhparent::regclass = parent_relid)
 	LOOP
 		IF NOT delete_data THEN
 			EXECUTE format('WITH part_data AS (DELETE FROM %s RETURNING *)
 							INSERT INTO %s SELECT * FROM part_data',
-							v_rec.tbl,
+							v_rec.tbl::TEXT,
 							parent_relid::text);
 			GET DIAGNOSTICS v_rows = ROW_COUNT;
 
 			/* Show number of copied rows */
-			RAISE NOTICE '% rows copied from %', v_rows, v_rec.tbl;
+			RAISE NOTICE '% rows copied from %', v_rows, v_rec.tbl::TEXT;
 		END IF;
+
+		SELECT relkind FROM pg_catalog.pg_class
+		WHERE oid = v_rec.tbl
+		INTO v_relkind;
 
 		/*
 		 * Determine the kind of child relation. It can be either regular
 		 * table (r) or foreign table (f). Depending on relkind we use
-		 * DROP TABLE or DROP FOREIGN TABLE
+		 * DROP TABLE or DROP FOREIGN TABLE.
 		 */
-		EXECUTE format('SELECT relkind FROM pg_class WHERE oid = ''%s''::regclass', v_rec.tbl)
-		INTO v_relkind;
-
 		IF v_relkind = 'f' THEN
-			EXECUTE format('DROP FOREIGN TABLE %s', v_rec.tbl);
+			EXECUTE format('DROP FOREIGN TABLE %s', v_rec.tbl::TEXT);
 		ELSE
-			EXECUTE format('DROP TABLE %s', v_rec.tbl);
+			EXECUTE format('DROP TABLE %s', v_rec.tbl::TEXT);
 		END IF;
 
 		v_part_count := v_part_count + 1;

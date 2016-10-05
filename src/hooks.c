@@ -611,9 +611,9 @@ pathman_process_utility_hook(Node *parsetree,
 								  dest, completionTag);
 
 	/* Override standard COPY statement if needed */
-	if (is_pathman_related_copy(parsetree))
+	if (IsPathmanReady() && is_pathman_related_copy(parsetree))
 	{
-		uint64		processed;
+		uint64	processed;
 
 		PathmanDoCopy((CopyStmt *) parsetree, queryString, &processed);
 		if (completionTag)

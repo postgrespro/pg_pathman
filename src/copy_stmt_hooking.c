@@ -54,6 +54,8 @@ is_pathman_related_copy(Node *parsetree)
 	CopyStmt   *copy_stmt = (CopyStmt *) parsetree;
 	Oid			partitioned_table;
 
+	Assert(IsPathmanReady());
+
 	if (!IsOverrideCopyEnabled())
 	{
 		elog(DEBUG1, "COPY statement hooking is disabled");
