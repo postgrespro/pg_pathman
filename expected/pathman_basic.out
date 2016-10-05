@@ -889,9 +889,9 @@ SELECT * FROM test.hash_rel WHERE id = 123;
  */
 SELECT pathman.drop_partitions('test.hash_rel');
 NOTICE:  drop cascades to 3 other objects
-NOTICE:  2 rows copied from test.hash_rel_2
-NOTICE:  3 rows copied from test.hash_rel_1
 NOTICE:  2 rows copied from test.hash_rel_0
+NOTICE:  3 rows copied from test.hash_rel_1
+NOTICE:  2 rows copied from test.hash_rel_2
  drop_partitions 
 -----------------
                3
@@ -925,11 +925,11 @@ SELECT COUNT(*) FROM ONLY test.hash_rel;
 DROP TABLE test.hash_rel CASCADE;
 SELECT pathman.drop_partitions('test.num_range_rel');
 NOTICE:  drop cascades to 4 other objects
-NOTICE:  0 rows copied from test.num_range_rel_6
-NOTICE:  2 rows copied from test.num_range_rel_4
-NOTICE:  1000 rows copied from test.num_range_rel_3
-NOTICE:  1000 rows copied from test.num_range_rel_2
 NOTICE:  998 rows copied from test.num_range_rel_1
+NOTICE:  1000 rows copied from test.num_range_rel_2
+NOTICE:  1000 rows copied from test.num_range_rel_3
+NOTICE:  2 rows copied from test.num_range_rel_4
+NOTICE:  0 rows copied from test.num_range_rel_6
  drop_partitions 
 -----------------
                5
@@ -1108,9 +1108,9 @@ EXPLAIN (COSTS OFF) SELECT * FROM test."TeSt" WHERE a = 1;
 
 SELECT pathman.drop_partitions('test."TeSt"');
 NOTICE:  drop cascades to 3 other objects
-NOTICE:  3 rows copied from test."TeSt_2"
-NOTICE:  0 rows copied from test."TeSt_1"
 NOTICE:  0 rows copied from test."TeSt_0"
+NOTICE:  0 rows copied from test."TeSt_1"
+NOTICE:  3 rows copied from test."TeSt_2"
  drop_partitions 
 -----------------
                3
@@ -1163,11 +1163,11 @@ SELECT pathman.split_range_partition('test."RangeRel_1"', '2015-01-01'::DATE);
 
 SELECT pathman.drop_partitions('test."RangeRel"');
 NOTICE:  function test.RangeRel_upd_trig_func() does not exist, skipping
-NOTICE:  1 rows copied from test."RangeRel_6"
-NOTICE:  0 rows copied from test."RangeRel_4"
-NOTICE:  1 rows copied from test."RangeRel_3"
-NOTICE:  1 rows copied from test."RangeRel_2"
 NOTICE:  0 rows copied from test."RangeRel_1"
+NOTICE:  1 rows copied from test."RangeRel_2"
+NOTICE:  1 rows copied from test."RangeRel_3"
+NOTICE:  0 rows copied from test."RangeRel_4"
+NOTICE:  1 rows copied from test."RangeRel_6"
  drop_partitions 
 -----------------
                5
@@ -1199,9 +1199,9 @@ SELECT pathman.create_range_partitions('test."RangeRel"', 'id', 1, 100, 3);
 
 SELECT pathman.drop_partitions('test."RangeRel"');
 NOTICE:  function test.RangeRel_upd_trig_func() does not exist, skipping
-NOTICE:  0 rows copied from test."RangeRel_3"
-NOTICE:  0 rows copied from test."RangeRel_2"
 NOTICE:  0 rows copied from test."RangeRel_1"
+NOTICE:  0 rows copied from test."RangeRel_2"
+NOTICE:  0 rows copied from test."RangeRel_3"
  drop_partitions 
 -----------------
                3
@@ -1358,20 +1358,20 @@ DELETE FROM range_rel r USING tmp t WHERE r.dt = '2010-01-02' AND r.id = t.id;
 /* Create range partitions from whole range */
 SELECT drop_partitions('range_rel');
 NOTICE:  function public.range_rel_upd_trig_func() does not exist, skipping
-NOTICE:  0 rows copied from range_rel_15
-NOTICE:  0 rows copied from range_rel_14
-NOTICE:  14 rows copied from range_rel_13
-NOTICE:  31 rows copied from range_rel_12
-NOTICE:  30 rows copied from range_rel_11
-NOTICE:  31 rows copied from range_rel_10
-NOTICE:  30 rows copied from range_rel_9
-NOTICE:  31 rows copied from range_rel_8
-NOTICE:  31 rows copied from range_rel_7
-NOTICE:  29 rows copied from range_rel_6
-NOTICE:  31 rows copied from range_rel_5
-NOTICE:  30 rows copied from range_rel_4
-NOTICE:  31 rows copied from range_rel_3
 NOTICE:  44 rows copied from range_rel_1
+NOTICE:  31 rows copied from range_rel_3
+NOTICE:  30 rows copied from range_rel_4
+NOTICE:  31 rows copied from range_rel_5
+NOTICE:  29 rows copied from range_rel_6
+NOTICE:  31 rows copied from range_rel_7
+NOTICE:  31 rows copied from range_rel_8
+NOTICE:  30 rows copied from range_rel_9
+NOTICE:  31 rows copied from range_rel_10
+NOTICE:  30 rows copied from range_rel_11
+NOTICE:  31 rows copied from range_rel_12
+NOTICE:  14 rows copied from range_rel_13
+NOTICE:  0 rows copied from range_rel_14
+NOTICE:  0 rows copied from range_rel_15
  drop_partitions 
 -----------------
               14

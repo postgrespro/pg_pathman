@@ -135,9 +135,9 @@ LANGUAGE plpgsql STRICT;
 /*
  * Set partition creation callback
  */
-CREATE OR REPLACE FUNCTION @extschema@.set_part_init_callback(
+CREATE OR REPLACE FUNCTION @extschema@.set_init_callback(
 	relation	REGCLASS,
-	callback	REGPROC)
+	callback	REGPROC DEFAULT 0)
 RETURNS VOID AS
 $$
 BEGIN
@@ -535,7 +535,8 @@ BEGIN
 
 	FOR v_rec IN (SELECT inhrelid::REGCLASS AS tbl
 				  FROM pg_catalog.pg_inherits
-				  WHERE inhparent::regclass = parent_relid)
+				  WHERE inhparent::regclass = parent_relid
+				  ORDER BY inhrelid ASC)
 	LOOP
 		IF NOT delete_data THEN
 			EXECUTE format('WITH part_data AS (DELETE FROM %s RETURNING *)

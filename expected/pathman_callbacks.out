@@ -18,10 +18,10 @@ NOTICE:  sequence "abc_seq" does not exist, skipping
                        2
 (1 row)
 
-SELECT set_part_init_callback('callbacks.abc',
-							  'callbacks.abc_on_part_created_callback');
- set_part_init_callback 
-------------------------
+SELECT set_init_callback('callbacks.abc',
+						 'callbacks.abc_on_part_created_callback');
+ set_init_callback 
+-------------------
  
 (1 row)
 
@@ -62,10 +62,10 @@ NOTICE:  0 rows copied from callbacks.abc_6
 (1 row)
 
 /* set callback to be called on HASH partitions */
-SELECT set_part_init_callback('callbacks.abc',
-							  'callbacks.abc_on_part_created_callback');
- set_part_init_callback 
-------------------------
+SELECT set_init_callback('callbacks.abc',
+						 'callbacks.abc_on_part_created_callback');
+ set_init_callback 
+-------------------
  
 (1 row)
 

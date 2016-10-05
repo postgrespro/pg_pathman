@@ -700,6 +700,9 @@ validate_on_part_init_cb(Oid procid, bool emit_error)
 	Form_pg_proc	functup;
 	bool			is_ok = true;
 
+	if (procid == InvalidOid)
+		return true;
+
 	tp = SearchSysCache1(PROCOID, ObjectIdGetDatum(procid));
 	if (!HeapTupleIsValid(tp))
 		elog(ERROR, "cache lookup failed for function %u", procid);

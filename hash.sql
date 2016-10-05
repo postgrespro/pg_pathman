@@ -15,7 +15,7 @@ CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions(
 	parent_relid		REGCLASS,
 	attribute			TEXT,
 	partitions_count	INTEGER,
-	partition_data		BOOLEAN DEFAULT true)
+	partition_data		BOOLEAN DEFAULT TRUE)
 RETURNS INTEGER AS
 $$
 DECLARE
