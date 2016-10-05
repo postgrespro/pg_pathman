@@ -511,7 +511,7 @@ RETURNS INTEGER AS
 $$
 DECLARE
 	v_rec			RECORD;
-	v_rows			INTEGER;
+	v_rows			BIGINT;
 	v_part_count	INTEGER := 0;
 	conf_num_del	INTEGER;
 	v_relkind		CHAR;
@@ -539,10 +539,9 @@ BEGIN
 				  ORDER BY inhrelid ASC)
 	LOOP
 		IF NOT delete_data THEN
-			EXECUTE format('WITH part_data AS (DELETE FROM %s RETURNING *)
-							INSERT INTO %s SELECT * FROM part_data',
-							v_rec.tbl::TEXT,
-							parent_relid::text);
+			EXECUTE format('INSERT INTO %s SELECT * FROM %s',
+							parent_relid::TEXT,
+							v_rec.tbl::TEXT);
 			GET DIAGNOSTICS v_rows = ROW_COUNT;
 
 			/* Show number of copied rows */

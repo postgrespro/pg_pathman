@@ -18,6 +18,7 @@
 #include "utils.h"
 #include "xact_handling.h"
 
+#include "access/transam.h"
 #include "miscadmin.h"
 #include "optimizer/cost.h"
 #include "optimizer/restrictinfo.h"
@@ -546,6 +547,10 @@ pathman_relcache_hook(Datum arg, Oid relid)
 	if (!IsPathmanReady())
 		return;
 
+	/* We shouldn't even consider special OIDs */
+	if (relid < FirstNormalObjectId)
+		return;
+
 	/* Invalidation event for PATHMAN_CONFIG table (probably DROP) */
 	if (relid == get_pathman_config_relid())
 		delay_pathman_shutdown();
@@ -569,7 +574,8 @@ pathman_relcache_hook(Datum arg, Oid relid)
 		/* Both syscache and pathman's cache say it isn't a partition */
 		case PPS_ENTRY_NOT_FOUND:
 			{
-				delay_invalidation_parent_rel(partitioned_table);
+				if (partitioned_table != InvalidOid)
+					delay_invalidation_parent_rel(partitioned_table);
 #ifdef NOT_USED
 				elog(DEBUG2, "Invalidation message for relation %u [%u]",
 					 relid, MyProcPid);
@@ -588,7 +594,8 @@ pathman_relcache_hook(Datum arg, Oid relid)
 			break;
 
 		default:
-			elog(ERROR, "Not implemented yet");
+			elog(ERROR, "Not implemented yet (%s)",
+				 CppAsString(pathman_relcache_hook));
 			break;
 	}
 }

@@ -1027,12 +1027,15 @@ LANGUAGE plpgsql;
  * Drop range partition
  */
 CREATE OR REPLACE FUNCTION @extschema@.drop_range_partition(
-	p_partition		REGCLASS)
+	p_partition		REGCLASS,
+	delete_data		BOOLEAN DEFAULT TRUE)
 RETURNS TEXT AS
 $$
 DECLARE
 	parent_relid	REGCLASS;
 	part_name		TEXT;
+	v_relkind		CHAR;
+	v_rows			BIGINT;
 
 BEGIN
 	parent_relid := @extschema@.get_parent_of_partition(p_partition);
@@ -1041,8 +1044,30 @@ BEGIN
 	/* Acquire lock on parent */
 	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 
-	/* Drop table */
-	EXECUTE format('DROP TABLE %s', part_name);
+	IF NOT delete_data THEN
+		EXECUTE format('INSERT INTO %s SELECT * FROM %s',
+						parent_relid::TEXT,
+						p_partition::TEXT);
+		GET DIAGNOSTICS v_rows = ROW_COUNT;
+
+		/* Show number of copied rows */
+		RAISE NOTICE '% rows copied from %', v_rows, p_partition::TEXT;
+	END IF;
+
+	SELECT relkind FROM pg_catalog.pg_class
+	WHERE oid = p_partition
+	INTO v_relkind;
+
+	/*
+	 * Determine the kind of child relation. It can be either regular
+	 * table (r) or foreign table (f). Depending on relkind we use
+	 * DROP TABLE or DROP FOREIGN TABLE.
+	 */
+	IF v_relkind = 'f' THEN
+		EXECUTE format('DROP FOREIGN TABLE %s', p_partition::TEXT);
+	ELSE
+		EXECUTE format('DROP TABLE %s', p_partition::TEXT);
+	END IF;
 
 	/* Invalidate cache */
 	PERFORM @extschema@.on_update_partitions(parent_relid);
@@ -1050,7 +1075,8 @@ BEGIN
 	RETURN part_name;
 END
 $$
-LANGUAGE plpgsql;
+LANGUAGE plpgsql
+SET pg_pathman.enable_partitionfilter = off; /* ensures that PartitionFilter is OFF */
 
 
 /*

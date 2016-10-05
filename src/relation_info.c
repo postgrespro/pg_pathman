@@ -15,6 +15,7 @@
 
 #include "access/htup_details.h"
 #include "access/xact.h"
+#include "catalog/catalog.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_inherits.h"
 #include "miscadmin.h"
@@ -242,12 +243,11 @@ get_pathman_relation_info(Oid relid)
 			part_type = DatumGetPartType(values[Anum_pathman_config_parttype - 1]);
 			attname = TextDatumGetCString(values[Anum_pathman_config_attname - 1]);
 
-			/* Refresh partitioned table cache entry */
+			/* Refresh partitioned table cache entry (might turn NULL) */
 			/* TODO: possible refactoring, pass found 'prel' instead of searching */
 			prel = refresh_pathman_relation_info(relid,
 												 part_type,
 												 attname);
-			Assert(PrelIsValid(prel)); /* it MUST be valid if we got here */
 		}
 		/* Else clear remaining cache entry */
 		else remove_pathman_relation_info(relid);
@@ -346,7 +346,7 @@ finish_delayed_invalidation(void)
 		/* Handle the probable 'DROP EXTENSION' case */
 		if (delayed_shutdown)
 		{
-			Oid	cur_pathman_config_relid;
+			Oid		cur_pathman_config_relid;
 
 			/* Unset 'shutdown' flag */
 			delayed_shutdown = false;
@@ -376,9 +376,14 @@ finish_delayed_invalidation(void)
 		{
 			Oid		parent = lfirst_oid(lc);
 
+			/* Skip if it's a TOAST table */
+			if (IsToastNamespace(get_rel_namespace(parent)))
+				continue;
+
 			if (!pathman_config_contains_relation(parent, NULL, NULL, NULL))
 				remove_pathman_relation_info(parent);
 			else
+				/* get_pathman_relation_info() will refresh this entry */
 				invalidate_pathman_relation_info(parent, NULL);
 		}
 
@@ -386,6 +391,10 @@ finish_delayed_invalidation(void)
 		foreach (lc, delayed_invalidation_vague_rels)
 		{
 			Oid		vague_rel = lfirst_oid(lc);
+
+			/* Skip if it's a TOAST table */
+			if (IsToastNamespace(get_rel_namespace(vague_rel)))
+				continue;
 
 			/* It might be a partitioned table or a partition */
 			if (!try_perform_parent_refresh(vague_rel))
@@ -656,7 +665,7 @@ shout_if_prel_is_invalid(Oid parent_oid,
 						 PartType expected_part_type)
 {
 	if (!prel)
-		elog(ERROR, "relation \"%s\" is not partitioned by pg_pathman",
+		elog(ERROR, "relation \"%s\" has no partitions",
 			 get_rel_name_or_relid(parent_oid));
 
 	if (!PrelIsValid(prel))

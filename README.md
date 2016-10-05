@@ -165,9 +165,9 @@ add_range_partition(relation       REGCLASS,
 Create new RANGE partition for `relation` with specified range bounds.
 
 ```plpgsql
-drop_range_partition(partition TEXT)
+drop_range_partition(partition TEXT, delete_data BOOLEAN DEFAULT TRUE)
 ```
-Drop RANGE partition and all its data.
+Drop RANGE partition and all of its data if `delete_data` is true.
 
 ```plpgsql
 attach_range_partition(relation    REGCLASS,
@@ -221,8 +221,7 @@ CREATE TABLE IF NOT EXISTS pathman_config (
     parttype        INTEGER NOT NULL,
     range_interval  TEXT,
 
-    CHECK (parttype IN (1, 2)) /* check for allowed part types */
-);
+    CHECK (parttype IN (1, 2)) /* check for allowed part types */ );
 ```
 This table stores a list of partitioned tables.
 
@@ -232,8 +231,7 @@ CREATE TABLE IF NOT EXISTS pathman_config_params (
     partrel        REGCLASS NOT NULL PRIMARY KEY,
     enable_parent  BOOLEAN NOT NULL DEFAULT TRUE,
     auto           BOOLEAN NOT NULL DEFAULT TRUE,
-    init_callback  REGPROCEDURE NOT NULL DEFAULT 0
-);
+    init_callback  REGPROCEDURE NOT NULL DEFAULT 0);
 ```
 This table stores optional parameters which override standard behavior.
 
@@ -259,7 +257,7 @@ This view lists all currently running concurrent partitioning tasks.
 #### `pathman_partition_list` --- list of all existing partitions
 ```plpgsql
 -- helper SRF function
-CREATE OR REPLACE FUNCTION @extschema@.show_partition_list()
+CREATE OR REPLACE FUNCTION show_partition_list()
 RETURNS TABLE (
     parent     REGCLASS,
     partition  REGCLASS,
@@ -471,7 +469,7 @@ Notice that the `Append` node contains only one child scan which corresponds to 
 > **Important:** pay attention to the fact that `pg_pathman` excludes the parent table from the query plan.
 
 To access parent table use ONLY modifier:
-```
+```plpgsql
 EXPLAIN SELECT * FROM ONLY items;
                       QUERY PLAN
 ------------------------------------------------------
@@ -484,8 +482,7 @@ CREATE TABLE journal (
     id      SERIAL,
     dt      TIMESTAMP NOT NULL,
     level   INTEGER,
-    msg     TEXT
-);
+    msg     TEXT);
 
 -- similar index will also be created for each partition
 CREATE INDEX ON journal(dt);
@@ -515,8 +512,8 @@ CREATE FOREIGN TABLE journal_archive (
     id      INTEGER NOT NULL,
     dt      TIMESTAMP NOT NULL,
     level   INTEGER,
-    msg     TEXT
-) SERVER archive_server;
+    msg     TEXT)
+SERVER archive_server;
 
 SELECT attach_range_partition('journal', 'journal_archive', '2014-01-01'::date, '2015-01-01'::date);
 ```

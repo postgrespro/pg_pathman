@@ -106,13 +106,13 @@ on_partitions_created_internal(Oid partitioned_table, bool add_callbacks)
 static void
 on_partitions_updated_internal(Oid partitioned_table, bool add_callbacks)
 {
-	bool found;
+	bool entry_found;
 
 	elog(DEBUG2, "on_partitions_updated() [add_callbacks = %s] "
 				 "triggered for relation %u",
 		 (add_callbacks ? "true" : "false"), partitioned_table);
 
-	invalidate_pathman_relation_info(partitioned_table, &found);
+	invalidate_pathman_relation_info(partitioned_table, &entry_found);
 }
 
 static void

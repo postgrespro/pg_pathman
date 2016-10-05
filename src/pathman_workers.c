@@ -213,7 +213,7 @@ handle_exec_state:
 		case BGW_PM_DIED:
 			ereport(ERROR,
 					(errmsg("Postmaster died during the pg_pathman background worker process"),
-					errhint("More details may be available in the server log.")));
+					 errhint("More details may be available in the server log.")));
 			break;
 
 		default:
@@ -300,9 +300,10 @@ create_partitions_bg_worker(Oid relid, Datum value, Oid value_type)
 	dsm_detach(segment);
 
 	if (child_oid == InvalidOid)
-		elog(ERROR,
-			 "Attempt to append new partitions to relation \"%s\" failed",
-			 get_rel_name_or_relid(relid));
+		ereport(ERROR,
+				(errmsg("Attempt to spawn new partitions of relation \"%s\" failed",
+						get_rel_name_or_relid(relid)),
+				 errhint("See server log for more details.")));
 
 	return child_oid;
 }
