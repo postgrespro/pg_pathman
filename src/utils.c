@@ -40,6 +40,7 @@ static void change_varnos_in_restrinct_info(RestrictInfo *rinfo,
 static bool change_varno_walker(Node *node, change_varno_context *context);
 static List *get_tableoids_list(List *tlist);
 static void lock_rows_visitor(Plan *plan, void *context);
+static bool rowmark_add_tableoids_walker(Node *node, void *context);
 
 
 /*
@@ -451,6 +452,57 @@ plan_tree_walker(Plan *plan,
 	visitor(plan, context);
 }
 
+static bool
+rowmark_add_tableoids_walker(Node *node, void *context)
+{
+	if (node == NULL)
+		return false;
+
+	if (IsA(node, Query))
+	{
+		Query	   *parse = (Query *) node;
+		ListCell   *lc;
+
+		/* Generate 'tableoid' for partitioned table rowmark */
+		foreach (lc, parse->rowMarks)
+		{
+			RowMarkClause  *rc = (RowMarkClause *) lfirst(lc);
+			Oid				parent = getrelid(rc->rti, parse->rtable);
+			Var			   *var;
+			TargetEntry	   *tle;
+			char			resname[64];
+
+			/* Check that table is partitioned */
+			if (!get_pathman_relation_info(parent))
+				continue;
+
+			var = makeVar(rc->rti,
+						  TableOidAttributeNumber,
+						  OIDOID,
+						  -1,
+						  InvalidOid,
+						  0);
+
+			/* Use parent's Oid as TABLEOID_STR's key (%u) */
+			snprintf(resname, sizeof(resname), TABLEOID_STR("%u"), parent);
+
+			tle = makeTargetEntry((Expr *) var,
+								  list_length(parse->targetList) + 1,
+								  pstrdup(resname),
+								  true);
+
+			/* There's no problem here since new attribute is junk */
+			parse->targetList = lappend(parse->targetList, tle);
+		}
+
+		return query_tree_walker((Query *) node,
+								 rowmark_add_tableoids_walker,
+								 NULL, 0);
+	}
+
+	return expression_tree_walker(node, rowmark_add_tableoids_walker, NULL);
+}
+
 /*
  * Add missing 'TABLEOID_STR%u' junk attributes for inherited partitions
  *
@@ -463,56 +515,7 @@ plan_tree_walker(Plan *plan,
 void
 rowmark_add_tableoids(Query *parse)
 {
-	ListCell *lc;
-
-	check_stack_depth();
-
-	foreach(lc, parse->rtable)
-	{
-		RangeTblEntry *rte = (RangeTblEntry *) lfirst(lc);
-
-		switch(rte->rtekind)
-		{
-			case RTE_SUBQUERY:
-				rowmark_add_tableoids(rte->subquery);
-				break;
-
-			default:
-				break;
-		}
-	}
-
-	/* Generate 'tableoid' for partitioned table rowmark */
-	foreach (lc, parse->rowMarks)
-	{
-		RowMarkClause  *rc = (RowMarkClause *) lfirst(lc);
-		Oid				parent = getrelid(rc->rti, parse->rtable);
-		Var			   *var;
-		TargetEntry	   *tle;
-		char			resname[64];
-
-		/* Check that table is partitioned */
-		if (!get_pathman_relation_info(parent))
-			continue;
-
-		var = makeVar(rc->rti,
-					  TableOidAttributeNumber,
-					  OIDOID,
-					  -1,
-					  InvalidOid,
-					  0);
-
-		/* Use parent's Oid as TABLEOID_STR's key (%u) */
-		snprintf(resname, sizeof(resname), TABLEOID_STR("%u"), parent);
-
-		tle = makeTargetEntry((Expr *) var,
-							  list_length(parse->targetList) + 1,
-							  pstrdup(resname),
-							  true);
-
-		/* There's no problem here since new attribute is junk */
-		parse->targetList = lappend(parse->targetList, tle);
-	}
+	rowmark_add_tableoids_walker((Node *) parse, NULL);
 }
 
 /*
