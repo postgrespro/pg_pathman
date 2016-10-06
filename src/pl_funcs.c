@@ -62,15 +62,18 @@ PG_FUNCTION_INFO_V1( invoke_on_partition_created_callback );
 PG_FUNCTION_INFO_V1( debug_capture );
 
 
+/*
+ * User context for function show_partition_list_internal().
+ */
 typedef struct
 {
 	Relation				pathman_config;
 	HeapScanDesc			pathman_config_scan;
 	Snapshot				snapshot;
 
-	const PartRelationInfo *current_prel;
+	const PartRelationInfo *current_prel;	/* selected PartRelationInfo */
 
-	uint32					child_number;
+	uint32					child_number;	/* child we're looking at */
 } show_partition_list_cxt;
 
 
@@ -348,6 +351,7 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 		/* Alias to 'usercxt->current_prel' */
 		prel = usercxt->current_prel;
 
+		/* If we've run out of partitions, switch to the next 'prel' */
 		if (usercxt->child_number >= PrelChildrenCount(prel))
 		{
 			usercxt->current_prel = NULL;
@@ -359,10 +363,12 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 		partattr_cstr = get_attname(PrelParentRelid(prel), prel->attnum);
 		if (!partattr_cstr)
 		{
+			/* Parent does not exist, go to the next 'prel' */
 			usercxt->current_prel = NULL;
 			continue;
 		}
 
+		/* Fill in common values */
 		values[Anum_pathman_pl_parent - 1]		= PrelParentRelid(prel);
 		values[Anum_pathman_pl_parttype - 1]	= prel->parttype;
 		values[Anum_pathman_pl_partattr - 1]	= CStringGetTextDatum(partattr_cstr);

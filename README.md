@@ -38,7 +38,6 @@ More interesting features are yet to come. Stay tuned!
 
 ## Roadmap
 
- * Provide a way to create user-defined partition creation\destruction callbacks (issue [#22](https://github.com/postgrespro/pg_pathman/issues/22))
  * Implement LIST partitioning scheme;
  * Optimize hash join (both tables are partitioned by join key).
 
