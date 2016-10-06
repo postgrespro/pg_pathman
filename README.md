@@ -533,7 +533,7 @@ SELECT detach_range_partition('journal_archive');
 ```
 
 Here's an example of the query performing filtering by partitioning key:
-```
+```plpgsql
 SELECT * FROM journal WHERE dt >= '2015-06-01' AND dt < '2015-06-03';
    id   |         dt          | level |               msg
 --------+---------------------+-------+----------------------------------

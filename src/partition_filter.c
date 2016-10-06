@@ -92,7 +92,7 @@ init_partition_filter_static_data(void)
 							 NULL,
 							 &pg_pathman_enable_partition_filter,
 							 true,
-							 PGC_SUSET,
+							 PGC_USERSET,
 							 0,
 							 NULL,
 							 NULL,

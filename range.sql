@@ -582,7 +582,7 @@ BEGIN
 
 	/* Check if this is a RANGE partition */
 	IF v_part_type != 2 THEN
-		RAISE EXCEPTION 'specified partition isn''t RANGE partition';
+		RAISE EXCEPTION '"%" is not a RANGE partition', p_partition::TEXT;
 	END IF;
 
 	v_atttype = @extschema@.get_attribute_type(v_parent, v_attname);
@@ -1036,10 +1036,21 @@ DECLARE
 	part_name		TEXT;
 	v_relkind		CHAR;
 	v_rows			BIGINT;
+	v_part_type		INTEGER;
 
 BEGIN
 	parent_relid := @extschema@.get_parent_of_partition(p_partition);
 	part_name := p_partition::TEXT; /* save the name to be returned */
+
+	SELECT parttype
+	FROM @extschema@.pathman_config
+	WHERE partrel = parent_relid
+	INTO v_part_type;
+
+	/* Check if this is a RANGE partition */
+	IF v_part_type != 2 THEN
+		RAISE EXCEPTION '"%" is not a RANGE partition', p_partition::TEXT;
+	END IF;
 
 	/* Acquire lock on parent */
 	PERFORM @extschema@.lock_partitioned_relation(parent_relid);

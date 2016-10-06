@@ -173,7 +173,7 @@ get_parent_of_partition_pl(PG_FUNCTION_ARGS)
 		PG_RETURN_OID(parent);
 	else
 	{
-		elog(ERROR, "\%s\" is not pg_pathman's partition",
+		elog(ERROR, "\"%s\" is not a partition",
 			 get_rel_name_or_relid(partition));
 
 		PG_RETURN_NULL();
