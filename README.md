@@ -430,6 +430,22 @@ SELECT * FROM pathman_concurrent_part_tasks;
 (1 row)
 ```
 
+- `pathman_partition_list` in conjunction with `drop_range_partition()` can be used to drop RANGE partitions in a more flexible way compared to good old `DROP TABLE`:
+```plpgsql
+SELECT drop_range_partition(partition, false) /* move data to parent */
+FROM pathman_partition_list
+WHERE parent = 'part_test'::regclass AND range_min::int < 500;
+NOTICE:  1 rows copied from part_test_11
+NOTICE:  100 rows copied from part_test_1
+NOTICE:  100 rows copied from part_test_2
+ drop_range_partition 
+----------------------
+ dummy_test_11
+ dummy_test_1
+ dummy_test_2
+(3 rows)
+```
+
 ### HASH partitioning
 Consider an example of HASH partitioning. First create a table with some integer column:
 ```plpgsql
