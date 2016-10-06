@@ -690,6 +690,29 @@ get_rel_persistence(Oid relid)
 #endif
 
 /*
+ * Returns relation owner
+ */
+Oid
+get_rel_owner(Oid relid)
+{
+	HeapTuple	tp;
+	Oid 		owner;
+
+	tp = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
+	if (HeapTupleIsValid(tp))
+	{
+		Form_pg_class reltup = (Form_pg_class) GETSTRUCT(tp);
+
+		owner = reltup->relowner;
+		ReleaseSysCache(tp);
+
+		return owner;
+	}
+
+	return InvalidOid;
+}
+
+/*
  * Checks that callback function meets specific requirements.
  * It must have the only JSONB argument and BOOL return type.
  */

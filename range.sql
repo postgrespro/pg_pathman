@@ -95,6 +95,8 @@ DECLARE
 	i					INTEGER;
 
 BEGIN
+	PERFORM @extschema@.check_permissions(parent_relid);
+
 	IF partition_data = true THEN
 		/* Acquire data modification lock */
 		PERFORM @extschema@.prevent_relation_modification(parent_relid);
@@ -103,7 +105,6 @@ BEGIN
 		PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 	END IF;
 
-	PERFORM @extschema@.validate_relname(parent_relid);
 	p_attribute := lower(p_attribute);
 	PERFORM @extschema@.common_relation_checks(parent_relid, p_attribute);
 
@@ -207,6 +208,8 @@ DECLARE
 	i					INTEGER;
 
 BEGIN
+	PERFORM @extschema@.check_permissions(parent_relid);
+
 	IF partition_data = true THEN
 		/* Acquire data modification lock */
 		PERFORM @extschema@.prevent_relation_modification(parent_relid);
@@ -215,7 +218,6 @@ BEGIN
 		PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 	END IF;
 
-	PERFORM @extschema@.validate_relname(parent_relid);
 	p_attribute := lower(p_attribute);
 	PERFORM @extschema@.common_relation_checks(parent_relid, p_attribute);
 
@@ -314,6 +316,8 @@ DECLARE
 	part_count		INTEGER := 0;
 
 BEGIN
+	PERFORM @extschema@.check_permissions(parent_relid);
+
 	IF partition_data = true THEN
 		/* Acquire data modification lock */
 		PERFORM @extschema@.prevent_relation_modification(parent_relid);
@@ -322,7 +326,6 @@ BEGIN
 		PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 	END IF;
 
-	PERFORM @extschema@.validate_relname(parent_relid);
 	p_attribute := lower(p_attribute);
 	PERFORM @extschema@.common_relation_checks(parent_relid, p_attribute);
 
@@ -387,6 +390,8 @@ DECLARE
 	part_count		INTEGER := 0;
 
 BEGIN
+	PERFORM @extschema@.check_permissions(parent_relid);
+
 	IF partition_data = true THEN
 		/* Acquire data modification lock */
 		PERFORM @extschema@.prevent_relation_modification(parent_relid);
@@ -395,7 +400,6 @@ BEGIN
 		PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 	END IF;
 
-	PERFORM @extschema@.validate_relname(parent_relid);
 	p_attribute := lower(p_attribute);
 	PERFORM @extschema@.common_relation_checks(parent_relid, p_attribute);
 
@@ -559,7 +563,6 @@ DECLARE
 	v_check_name	TEXT;
 
 BEGIN
-	PERFORM @extschema@.validate_relname(p_partition);
 	v_parent = @extschema@.get_parent_of_partition(p_partition);
 
 	/* Acquire lock on parent */

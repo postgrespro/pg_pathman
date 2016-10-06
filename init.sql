@@ -42,6 +42,39 @@ CREATE TABLE IF NOT EXISTS @extschema@.pathman_config_params (
 CREATE UNIQUE INDEX i_pathman_config_params
 ON @extschema@.pathman_config_params(partrel);
 
+GRANT SELECT, INSERT, UPDATE, DELETE
+ON @extschema@.pathman_config, @extschema@.pathman_config_params
+TO public;
+
+/*
+ * Check if current user can alter/drop specified relation
+ */
+CREATE OR REPLACE FUNCTION @extschema@.can_manage_relation(relation regclass)
+RETURNS BOOL AS 'pg_pathman', 'can_manage_relation' LANGUAGE C STRICT;
+
+/*
+ * Check user permissions. If permission denied then throw an error.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.check_permissions(relation regclass)
+RETURNS BOOL AS 'pg_pathman', 'check_permissions' LANGUAGE C STRICT;
+
+/*
+ * Row security policy to restrict partitioning operations to owner and
+ * superusers only
+ */
+CREATE POLICY deny_modification ON @extschema@.pathman_config
+FOR ALL USING (can_manage_relation(partrel));
+
+CREATE POLICY deny_modification ON @extschema@.pathman_config_params
+FOR ALL USING (can_manage_relation(partrel));
+
+CREATE POLICY allow_select ON @extschema@.pathman_config FOR SELECT USING (true);
+
+CREATE POLICY allow_select ON @extschema@.pathman_config_params FOR SELECT USING (true);
+
+ALTER TABLE @extschema@.pathman_config ENABLE ROW LEVEL SECURITY;
+ALTER TABLE @extschema@.pathman_config_params ENABLE ROW LEVEL SECURITY;
+
 /*
  * Invalidate relcache every time someone changes parameters config.
  */
@@ -96,6 +129,8 @@ CREATE OR REPLACE FUNCTION @extschema@.pathman_set_param(
 RETURNS VOID AS
 $$
 BEGIN
+	PERFORM @extschema@.check_permissions(relation);
+
 	EXECUTE format('INSERT INTO @extschema@.pathman_config_params
 					(partrel, %1$s) VALUES ($1, $2)
 					ON CONFLICT (partrel) DO UPDATE SET %1$s = $2', param)
@@ -301,7 +336,7 @@ CREATE OR REPLACE FUNCTION @extschema@.disable_pathman_for(
 RETURNS VOID AS
 $$
 BEGIN
-	PERFORM @extschema@.validate_relname(parent_relid);
+	PERFORM @extschema@.check_permissions(parent_relid);
 
 	DELETE FROM @extschema@.pathman_config WHERE partrel = parent_relid;
 	PERFORM @extschema@.drop_triggers(parent_relid);
@@ -401,28 +436,6 @@ $$
 LANGUAGE plpgsql STRICT;
 
 /*
- * Validates relation name. It must be schema qualified.
- */
-CREATE OR REPLACE FUNCTION @extschema@.validate_relname(
-	cls		REGCLASS)
-RETURNS TEXT AS
-$$
-DECLARE
-	relname	TEXT;
-
-BEGIN
-	relname = @extschema@.get_schema_qualified_name(cls);
-
-	IF relname IS NULL THEN
-		RAISE EXCEPTION 'relation %s does not exist', cls;
-	END IF;
-
-	RETURN relname;
-END
-$$
-LANGUAGE plpgsql;
-
-/*
  * Check if two relations have equal structures.
  */
 CREATE OR REPLACE FUNCTION @extschema@.validate_relations_equality(
@@ -517,7 +530,7 @@ DECLARE
 	v_relkind		CHAR;
 
 BEGIN
-	PERFORM @extschema@.validate_relname(parent_relid);
+	PERFORM @extschema@.check_permissions(parent_relid);
 
 	/* Drop trigger first */
 	PERFORM @extschema@.drop_triggers(parent_relid);
@@ -586,9 +599,6 @@ DECLARE
 	rec		RECORD;
 
 BEGIN
-	PERFORM @extschema@.validate_relname(parent_relid);
-	PERFORM @extschema@.validate_relname(partition);
-
 	FOR rec IN (SELECT oid as conid FROM pg_catalog.pg_constraint
 				WHERE conrelid = parent_relid AND contype = 'f')
 	LOOP
