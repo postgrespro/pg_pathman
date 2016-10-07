@@ -1,0 +1,178 @@
+CREATE EXTENSION pg_pathman;
+CREATE SCHEMA rowmarks;
+CREATE TABLE rowmarks.first(id int NOT NULL);
+CREATE TABLE rowmarks.second(id int NOT NULL);
+INSERT INTO rowmarks.first SELECT generate_series(1, 10);
+INSERT INTO rowmarks.second SELECT generate_series(1, 10);
+SELECT create_hash_partitions('rowmarks.first', 'id', 5);
+ create_hash_partitions 
+------------------------
+                      5
+(1 row)
+
+/* Not partitioned */
+SELECT * FROM rowmarks.second ORDER BY id FOR UPDATE;
+ id 
+----
+  1
+  2
+  3
+  4
+  5
+  6
+  7
+  8
+  9
+ 10
+(10 rows)
+
+/* Simple case (plan) */
+EXPLAIN (COSTS OFF)
+SELECT * FROM rowmarks.first ORDER BY id FOR UPDATE;
+              QUERY PLAN               
+---------------------------------------
+ LockRows
+   ->  Sort
+         Sort Key: first_0.id
+         ->  Append
+               ->  Seq Scan on first_0
+               ->  Seq Scan on first_1
+               ->  Seq Scan on first_2
+               ->  Seq Scan on first_3
+               ->  Seq Scan on first_4
+(9 rows)
+
+/* Simple case (execution) */
+SELECT * FROM rowmarks.first ORDER BY id FOR UPDATE;
+ id 
+----
+  1
+  2
+  3
+  4
+  5
+  6
+  7
+  8
+  9
+ 10
+(10 rows)
+
+SELECT FROM rowmarks.first ORDER BY id FOR UPDATE;
+--
+(10 rows)
+
+SELECT tableoid > 0 FROM rowmarks.first ORDER BY id FOR UPDATE;
+ ?column? 
+----------
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+ t
+(10 rows)
+
+/* A little harder (plan) */
+EXPLAIN (COSTS OFF)
+SELECT * FROM rowmarks.first
+WHERE id = (SELECT id FROM rowmarks.first
+			ORDER BY id
+			OFFSET 10 LIMIT 1
+			FOR UPDATE)
+FOR SHARE;
+                     QUERY PLAN                      
+-----------------------------------------------------
+ LockRows
+   InitPlan 1 (returns $1)
+     ->  Limit
+           ->  LockRows
+                 ->  Sort
+                       Sort Key: first_0.id
+                       ->  Append
+                             ->  Seq Scan on first_0
+                             ->  Seq Scan on first_1
+                             ->  Seq Scan on first_2
+                             ->  Seq Scan on first_3
+                             ->  Seq Scan on first_4
+   ->  Custom Scan (RuntimeAppend)
+         ->  Seq Scan on first_0 first
+               Filter: (id = $1)
+         ->  Seq Scan on first_1 first
+               Filter: (id = $1)
+         ->  Seq Scan on first_2 first
+               Filter: (id = $1)
+         ->  Seq Scan on first_3 first
+               Filter: (id = $1)
+         ->  Seq Scan on first_4 first
+               Filter: (id = $1)
+(23 rows)
+
+/* A little harder (execution) */
+SELECT * FROM rowmarks.first
+WHERE id = (SELECT id FROM rowmarks.first
+			ORDER BY id
+			OFFSET 5 LIMIT 1
+			FOR UPDATE)
+FOR SHARE;
+ id 
+----
+  6
+(1 row)
+
+/* Two tables (plan) */
+EXPLAIN (COSTS OFF)
+SELECT * FROM rowmarks.first
+WHERE id = (SELECT id FROM rowmarks.second
+			ORDER BY id
+			OFFSET 5 LIMIT 1
+			FOR UPDATE)
+FOR SHARE;
+                  QUERY PLAN                  
+----------------------------------------------
+ LockRows
+   InitPlan 1 (returns $1)
+     ->  Limit
+           ->  LockRows
+                 ->  Sort
+                       Sort Key: second.id
+                       ->  Seq Scan on second
+   ->  Custom Scan (RuntimeAppend)
+         ->  Seq Scan on first_0 first
+               Filter: (id = $1)
+         ->  Seq Scan on first_1 first
+               Filter: (id = $1)
+         ->  Seq Scan on first_2 first
+               Filter: (id = $1)
+         ->  Seq Scan on first_3 first
+               Filter: (id = $1)
+         ->  Seq Scan on first_4 first
+               Filter: (id = $1)
+(18 rows)
+
+/* Two tables (execution) */
+SELECT * FROM rowmarks.first
+WHERE id = (SELECT id FROM rowmarks.second
+			ORDER BY id
+			OFFSET 5 LIMIT 1
+			FOR UPDATE)
+FOR SHARE;
+ id 
+----
+  6
+(1 row)
+
+DROP SCHEMA rowmarks CASCADE;
+NOTICE:  drop cascades to 7 other objects
+DETAIL:  drop cascades to table rowmarks.first
+drop cascades to table rowmarks.second
+drop cascades to table rowmarks.first_0
+drop cascades to table rowmarks.first_1
+drop cascades to table rowmarks.first_2
+drop cascades to table rowmarks.first_3
+drop cascades to table rowmarks.first_4
+DROP EXTENSION pg_pathman;

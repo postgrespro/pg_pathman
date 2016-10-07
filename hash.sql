@@ -15,7 +15,7 @@ CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions(
 	parent_relid		REGCLASS,
 	attribute			TEXT,
 	partitions_count	INTEGER,
-	partition_data		BOOLEAN DEFAULT true)
+	partition_data		BOOLEAN DEFAULT TRUE)
 RETURNS INTEGER AS
 $$
 DECLARE
@@ -27,6 +27,8 @@ DECLARE
 	v_init_callback		REGPROCEDURE;
 
 BEGIN
+	PERFORM @extschema@.validate_relname(parent_relid);
+
 	IF partition_data = true THEN
 		/* Acquire data modification lock */
 		PERFORM @extschema@.prevent_relation_modification(parent_relid);

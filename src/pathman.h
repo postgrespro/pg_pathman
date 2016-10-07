@@ -66,12 +66,12 @@
  */
 #define PATHMAN_PARTITION_LIST				"pathman_partition_list"
 #define Natts_pathman_partition_list		6
-#define Anum_pathman_pl_parent				1
-#define Anum_pathman_pl_partition			2
-#define Anum_pathman_pl_parttype			3
-#define Anum_pathman_pl_partattr			4
-#define Anum_pathman_pl_range_min			5
-#define Anum_pathman_pl_range_max			6
+#define Anum_pathman_pl_parent				1	/* partitioned relation (regclass) */
+#define Anum_pathman_pl_partition			2	/* child partition (regclass) */
+#define Anum_pathman_pl_parttype			3	/* partitioning type (1|2) */
+#define Anum_pathman_pl_partattr			4	/* partitioned column (text) */
+#define Anum_pathman_pl_range_min			5	/* partition's min value */
+#define Anum_pathman_pl_range_max			6	/* partition's max value */
 
 
 /*

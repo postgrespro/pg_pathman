@@ -874,6 +874,10 @@ create_partitions_internal(Oid relid, Datum value, Oid value_type)
 			min_rvalue = PrelGetRangesArray(prel)[0].min;
 			max_rvalue = PrelGetRangesArray(prel)[PrelLastChild(prel)].max;
 
+			/* Copy datums on order to protect them from cache invalidation */
+			min_rvalue = datumCopy(min_rvalue, prel->attbyval, prel->attlen);
+			max_rvalue = datumCopy(max_rvalue, prel->attbyval, prel->attlen);
+
 			/* Retrieve interval as TEXT from tuple */
 			interval_text = values[Anum_pathman_config_range_interval - 1];
 

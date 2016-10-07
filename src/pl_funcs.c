@@ -64,15 +64,18 @@ PG_FUNCTION_INFO_V1( check_security_policy );
 PG_FUNCTION_INFO_V1( debug_capture );
 
 
+/*
+ * User context for function show_partition_list_internal().
+ */
 typedef struct
 {
 	Relation				pathman_config;
 	HeapScanDesc			pathman_config_scan;
 	Snapshot				snapshot;
 
-	const PartRelationInfo *current_prel;
+	const PartRelationInfo *current_prel;	/* selected PartRelationInfo */
 
-	uint32					child_number;
+	uint32					child_number;	/* child we're looking at */
 } show_partition_list_cxt;
 
 
@@ -108,13 +111,13 @@ on_partitions_created_internal(Oid partitioned_table, bool add_callbacks)
 static void
 on_partitions_updated_internal(Oid partitioned_table, bool add_callbacks)
 {
-	bool found;
+	bool entry_found;
 
 	elog(DEBUG2, "on_partitions_updated() [add_callbacks = %s] "
 				 "triggered for relation %u",
 		 (add_callbacks ? "true" : "false"), partitioned_table);
 
-	invalidate_pathman_relation_info(partitioned_table, &found);
+	invalidate_pathman_relation_info(partitioned_table, &entry_found);
 }
 
 static void
@@ -175,7 +178,7 @@ get_parent_of_partition_pl(PG_FUNCTION_ARGS)
 		PG_RETURN_OID(parent);
 	else
 	{
-		elog(ERROR, "\%s\" is not pg_pathman's partition",
+		elog(ERROR, "\"%s\" is not a partition",
 			 get_rel_name_or_relid(partition));
 
 		PG_RETURN_NULL();
@@ -350,6 +353,7 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 		/* Alias to 'usercxt->current_prel' */
 		prel = usercxt->current_prel;
 
+		/* If we've run out of partitions, switch to the next 'prel' */
 		if (usercxt->child_number >= PrelChildrenCount(prel))
 		{
 			usercxt->current_prel = NULL;
@@ -361,10 +365,12 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 		partattr_cstr = get_attname(PrelParentRelid(prel), prel->attnum);
 		if (!partattr_cstr)
 		{
+			/* Parent does not exist, go to the next 'prel' */
 			usercxt->current_prel = NULL;
 			continue;
 		}
 
+		/* Fill in common values */
 		values[Anum_pathman_pl_parent - 1]		= PrelParentRelid(prel);
 		values[Anum_pathman_pl_parttype - 1]	= prel->parttype;
 		values[Anum_pathman_pl_partattr - 1]	= CStringGetTextDatum(partattr_cstr);
@@ -771,16 +777,25 @@ invoke_on_partition_created_callback(PG_FUNCTION_ARGS)
 	if (PG_ARGISNULL(ARG_CHILD))
 		elog(ERROR, "partition should not be null");
 
-	/* Both RANGE_START & RANGE_END are not available (HASH) */
-	if (PG_ARGISNULL(ARG_RANGE_START) && PG_ARGISNULL(ARG_RANGE_START))
-		part_type = PT_HASH;
+	switch (PG_NARGS())
+	{
+		case 3:
+			part_type = PT_HASH;
+			break;
 
-	/* Either RANGE_START or RANGE_END is missing */
-	else if (PG_ARGISNULL(ARG_RANGE_START) || PG_ARGISNULL(ARG_RANGE_START))
-		elog(ERROR, "both boundaries must be provided for RANGE partition");
+		case 5:
+			{
+				if (PG_ARGISNULL(ARG_RANGE_START) || PG_ARGISNULL(ARG_RANGE_START))
+					elog(ERROR, "both bounds must be provided for RANGE partition");
 
-	/* Both RANGE_START & RANGE_END are provided */
-	else part_type = PT_RANGE;
+				part_type = PT_RANGE;
+			}
+			break;
+
+		default:
+			elog(ERROR, "error in function \"%s\"",
+				 CppAsString(invoke_on_partition_created_callback));
+	}
 
 	/* Build JSONB according to partitioning type */
 	switch (part_type)
@@ -793,8 +808,8 @@ invoke_on_partition_created_callback(PG_FUNCTION_ARGS)
 				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(parent_oid));
 				JSB_INIT_VAL(&key, WJB_KEY, "partition");
 				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(partition_oid));
-				JSB_INIT_VAL(&key, WJB_KEY, "part_type");
-				JSB_INIT_VAL(&val, WJB_VALUE, "HASH");
+				JSB_INIT_VAL(&key, WJB_KEY, "parttype");
+				JSB_INIT_VAL(&val, WJB_VALUE, PartTypeToCString(PT_HASH));
 
 				result = pushJsonbValue(&jsonb_state, WJB_END_OBJECT, NULL);
 			}
@@ -816,11 +831,11 @@ invoke_on_partition_created_callback(PG_FUNCTION_ARGS)
 				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(parent_oid));
 				JSB_INIT_VAL(&key, WJB_KEY, "partition");
 				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(partition_oid));
-				JSB_INIT_VAL(&key, WJB_KEY, "part_type");
-				JSB_INIT_VAL(&val, WJB_VALUE, "RANGE");
-				JSB_INIT_VAL(&key, WJB_KEY, "start");
+				JSB_INIT_VAL(&key, WJB_KEY, "parttype");
+				JSB_INIT_VAL(&val, WJB_VALUE, PartTypeToCString(PT_RANGE));
+				JSB_INIT_VAL(&key, WJB_KEY, "range_min");
 				JSB_INIT_VAL(&val, WJB_VALUE, start_value);
-				JSB_INIT_VAL(&key, WJB_KEY, "end");
+				JSB_INIT_VAL(&key, WJB_KEY, "range_max");
 				JSB_INIT_VAL(&val, WJB_VALUE, end_value);
 
 				result = pushJsonbValue(&jsonb_state, WJB_END_OBJECT, NULL);

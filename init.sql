@@ -129,8 +129,6 @@ CREATE OR REPLACE FUNCTION @extschema@.pathman_set_param(
 RETURNS VOID AS
 $$
 BEGIN
-	-- PERFORM @extschema@.check_permissions(relation);
-
 	EXECUTE format('INSERT INTO @extschema@.pathman_config_params
 					(partrel, %1$s) VALUES ($1, $2)
 					ON CONFLICT (partrel) DO UPDATE SET %1$s = $2', param)
@@ -170,9 +168,9 @@ LANGUAGE plpgsql STRICT;
 /*
  * Set partition creation callback
  */
-CREATE OR REPLACE FUNCTION @extschema@.set_part_init_callback(
+CREATE OR REPLACE FUNCTION @extschema@.set_init_callback(
 	relation	REGCLASS,
-	callback	REGPROC)
+	callback	REGPROC DEFAULT 0)
 RETURNS VOID AS
 $$
 BEGIN
@@ -336,7 +334,7 @@ CREATE OR REPLACE FUNCTION @extschema@.disable_pathman_for(
 RETURNS VOID AS
 $$
 BEGIN
-	-- PERFORM @extschema@.check_permissions(parent_relid);
+	PERFORM @extschema@.validate_relname(parent_relid);
 
 	DELETE FROM @extschema@.pathman_config WHERE partrel = parent_relid;
 	PERFORM @extschema@.drop_triggers(parent_relid);
@@ -346,6 +344,28 @@ BEGIN
 END
 $$
 LANGUAGE plpgsql STRICT;
+
+/*
+ * Validates relation name. It must be schema qualified.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.validate_relname(
+	cls		REGCLASS)
+RETURNS TEXT AS
+$$
+DECLARE
+	relname	TEXT;
+
+BEGIN
+	relname = @extschema@.get_schema_qualified_name(cls);
+
+	IF relname IS NULL THEN
+		RAISE EXCEPTION 'relation %s does not exist', cls;
+	END IF;
+
+	RETURN relname;
+END
+$$
+LANGUAGE plpgsql;
 
 /*
  * Aggregates several common relation checks before partitioning.
@@ -519,13 +539,13 @@ RETURNS INTEGER AS
 $$
 DECLARE
 	v_rec			RECORD;
-	v_rows			INTEGER;
+	v_rows			BIGINT;
 	v_part_count	INTEGER := 0;
 	conf_num_del	INTEGER;
 	v_relkind		CHAR;
 
 BEGIN
-	-- PERFORM @extschema@.check_permissions(parent_relid);
+	PERFORM @extschema@.validate_relname(parent_relid);
 
 	/* Drop trigger first */
 	PERFORM @extschema@.drop_triggers(parent_relid);
@@ -538,36 +558,37 @@ BEGIN
 	DELETE FROM @extschema@.pathman_config_params WHERE partrel = parent_relid;
 
 	IF conf_num_del = 0 THEN
-		RAISE EXCEPTION 'relation "%" has no partitions', parent_relid::text;
+		RAISE EXCEPTION 'relation "%" has no partitions', parent_relid::TEXT;
 	END IF;
 
-	FOR v_rec IN (SELECT inhrelid::regclass::text AS tbl
+	FOR v_rec IN (SELECT inhrelid::REGCLASS AS tbl
 				  FROM pg_catalog.pg_inherits
-				  WHERE inhparent::regclass = parent_relid)
+				  WHERE inhparent::regclass = parent_relid
+				  ORDER BY inhrelid ASC)
 	LOOP
 		IF NOT delete_data THEN
-			EXECUTE format('WITH part_data AS (DELETE FROM %s RETURNING *)
-							INSERT INTO %s SELECT * FROM part_data',
-							v_rec.tbl,
-							parent_relid::text);
+			EXECUTE format('INSERT INTO %s SELECT * FROM %s',
+							parent_relid::TEXT,
+							v_rec.tbl::TEXT);
 			GET DIAGNOSTICS v_rows = ROW_COUNT;
 
 			/* Show number of copied rows */
-			RAISE NOTICE '% rows copied from %', v_rows, v_rec.tbl;
+			RAISE NOTICE '% rows copied from %', v_rows, v_rec.tbl::TEXT;
 		END IF;
+
+		SELECT relkind FROM pg_catalog.pg_class
+		WHERE oid = v_rec.tbl
+		INTO v_relkind;
 
 		/*
 		 * Determine the kind of child relation. It can be either regular
 		 * table (r) or foreign table (f). Depending on relkind we use
-		 * DROP TABLE or DROP FOREIGN TABLE
+		 * DROP TABLE or DROP FOREIGN TABLE.
 		 */
-		EXECUTE format('SELECT relkind FROM pg_class WHERE oid = ''%s''::regclass', v_rec.tbl)
-		INTO v_relkind;
-
 		IF v_relkind = 'f' THEN
-			EXECUTE format('DROP FOREIGN TABLE %s', v_rec.tbl);
+			EXECUTE format('DROP FOREIGN TABLE %s', v_rec.tbl::TEXT);
 		ELSE
-			EXECUTE format('DROP TABLE %s', v_rec.tbl);
+			EXECUTE format('DROP TABLE %s', v_rec.tbl::TEXT);
 		END IF;
 
 		v_part_count := v_part_count + 1;
@@ -594,6 +615,9 @@ DECLARE
 	rec		RECORD;
 
 BEGIN
+	PERFORM @extschema@.validate_relname(parent_relid);
+	PERFORM @extschema@.validate_relname(partition);
+
 	FOR rec IN (SELECT oid as conid FROM pg_catalog.pg_constraint
 				WHERE conrelid = parent_relid AND contype = 'f')
 	LOOP
