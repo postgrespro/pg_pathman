@@ -49,24 +49,24 @@ TO public;
 /*
  * Check if current user can alter/drop specified relation
  */
-CREATE OR REPLACE FUNCTION @extschema@.can_manage_relation(relation regclass)
-RETURNS BOOL AS 'pg_pathman', 'can_manage_relation' LANGUAGE C STRICT;
+CREATE OR REPLACE FUNCTION @extschema@.check_security_policy(relation regclass)
+RETURNS BOOL AS 'pg_pathman', 'check_security_policy' LANGUAGE C STRICT;
 
 /*
  * Check user permissions. If permission denied then throw an error.
  */
-CREATE OR REPLACE FUNCTION @extschema@.check_permissions(relation regclass)
-RETURNS BOOL AS 'pg_pathman', 'check_permissions' LANGUAGE C STRICT;
+-- CREATE OR REPLACE FUNCTION @extschema@.check_permissions(relation regclass)
+-- RETURNS BOOL AS 'pg_pathman', 'check_permissions' LANGUAGE C STRICT;
 
 /*
  * Row security policy to restrict partitioning operations to owner and
  * superusers only
  */
 CREATE POLICY deny_modification ON @extschema@.pathman_config
-FOR ALL USING (can_manage_relation(partrel));
+FOR ALL USING (check_security_policy(partrel));
 
 CREATE POLICY deny_modification ON @extschema@.pathman_config_params
-FOR ALL USING (can_manage_relation(partrel));
+FOR ALL USING (check_security_policy(partrel));
 
 CREATE POLICY allow_select ON @extschema@.pathman_config FOR SELECT USING (true);
 
@@ -129,7 +129,7 @@ CREATE OR REPLACE FUNCTION @extschema@.pathman_set_param(
 RETURNS VOID AS
 $$
 BEGIN
-	PERFORM @extschema@.check_permissions(relation);
+	-- PERFORM @extschema@.check_permissions(relation);
 
 	EXECUTE format('INSERT INTO @extschema@.pathman_config_params
 					(partrel, %1$s) VALUES ($1, $2)
@@ -336,7 +336,7 @@ CREATE OR REPLACE FUNCTION @extschema@.disable_pathman_for(
 RETURNS VOID AS
 $$
 BEGIN
-	PERFORM @extschema@.check_permissions(parent_relid);
+	-- PERFORM @extschema@.check_permissions(parent_relid);
 
 	DELETE FROM @extschema@.pathman_config WHERE partrel = parent_relid;
 	PERFORM @extschema@.drop_triggers(parent_relid);
@@ -468,7 +468,7 @@ $$
 LANGUAGE plpgsql;
 
 /*
- * DDL trigger that deletes entry from pathman_config table.
+ * DDL trigger that removes entry from pathman_config table.
  */
 CREATE OR REPLACE FUNCTION @extschema@.pathman_ddl_trigger_func()
 RETURNS event_trigger AS
@@ -476,26 +476,21 @@ $$
 DECLARE
 	obj				record;
 	pg_class_oid	oid;
+	relids			regclass[];
 BEGIN
 	pg_class_oid = 'pg_catalog.pg_class'::regclass;
 
-	/* Handle 'DROP TABLE' events */
-	WITH to_be_deleted AS (
-		SELECT cfg.partrel AS rel FROM pg_event_trigger_dropped_objects() AS events
-		JOIN @extschema@.pathman_config AS cfg ON cfg.partrel::oid = events.objid
-		WHERE events.classid = pg_class_oid
-	)
-	DELETE FROM @extschema@.pathman_config
-	WHERE partrel IN (SELECT rel FROM to_be_deleted);
+	/* Find relids to remove from config */
+	SELECT array_agg(cfg.partrel) INTO relids
+	FROM pg_event_trigger_dropped_objects() AS events
+	JOIN @extschema@.pathman_config AS cfg ON cfg.partrel::oid = events.objid
+	WHERE events.classid = pg_class_oid;
+
+	/* Cleanup pathman_config */
+	DELETE FROM @extschema@.pathman_config WHERE partrel = ANY(relids);
 
 	/* Cleanup params table too */
-	WITH to_be_deleted AS (
-		SELECT cfg.partrel AS rel FROM pg_event_trigger_dropped_objects() AS events
-		JOIN @extschema@.pathman_config_params AS cfg ON cfg.partrel::oid = events.objid
-		WHERE events.classid = pg_class_oid
-	)
-	DELETE FROM @extschema@.pathman_config_params
-	WHERE partrel IN (SELECT rel FROM to_be_deleted);
+	DELETE FROM @extschema@.pathman_config_params WHERE partrel = ANY(relids);
 END
 $$
 LANGUAGE plpgsql;
@@ -530,7 +525,7 @@ DECLARE
 	v_relkind		CHAR;
 
 BEGIN
-	PERFORM @extschema@.check_permissions(parent_relid);
+	-- PERFORM @extschema@.check_permissions(parent_relid);
 
 	/* Drop trigger first */
 	PERFORM @extschema@.drop_triggers(parent_relid);

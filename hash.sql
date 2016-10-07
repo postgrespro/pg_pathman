@@ -27,8 +27,6 @@ DECLARE
 	v_init_callback		REGPROCEDURE;
 
 BEGIN
-	PERFORM @extschema@.check_permissions(parent_relid);
-
 	IF partition_data = true THEN
 		/* Acquire data modification lock */
 		PERFORM @extschema@.prevent_relation_modification(parent_relid);

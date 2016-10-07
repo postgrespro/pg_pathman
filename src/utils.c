@@ -743,3 +743,37 @@ validate_on_part_init_cb(Oid procid, bool emit_error)
 
 	return is_ok;
 }
+
+/*
+ * Check if user can alter/drop specified relation. This function is used to
+ * make sure that current user can change pg_pathman's config. Returns true
+ * if user can manage relation, false otherwise.
+ *
+ * XXX currently we just check if user is a table owner. Probably it's better to
+ * check user permissions in order to let other users.
+ */
+bool
+check_security_policy_internal(Oid relid)
+{
+	Oid 		owner;
+
+	/*
+	 * If user has superuser privileges then he or she can do whatever wants
+	 */
+	if (superuser())
+		return true;
+
+	/*
+	 * Sometimes the relation doesn't exist anymore but there is still a record
+	 * in config. It for example happens in event trigger function. So we
+	 * should be able to remove this record
+	 */
+	if ((owner = get_rel_owner(relid)) == InvalidOid)
+		return true;
+
+	/* Check if current user is an owner of the relation */
+	if (owner != GetUserId())
+		elog(ERROR, "Only table owner or superuser can change partitioning configuration");
+
+	return true;
+}

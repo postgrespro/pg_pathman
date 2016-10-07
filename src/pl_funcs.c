@@ -28,7 +28,6 @@
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 
-static bool can_manage_relation_internal(Oid relid);
 
 /* Function declarations */
 
@@ -60,8 +59,7 @@ PG_FUNCTION_INFO_V1( prevent_relation_modification );
 PG_FUNCTION_INFO_V1( validate_on_part_init_callback_pl );
 PG_FUNCTION_INFO_V1( invoke_on_partition_created_callback );
 
-PG_FUNCTION_INFO_V1( can_manage_relation );
-PG_FUNCTION_INFO_V1( check_permissions );
+PG_FUNCTION_INFO_V1( check_security_policy );
 
 PG_FUNCTION_INFO_V1( debug_capture );
 
@@ -858,45 +856,11 @@ invoke_on_partition_created_callback(PG_FUNCTION_ARGS)
  * check user permissions in order to let other users.
  */
 Datum
-can_manage_relation(PG_FUNCTION_ARGS)
+check_security_policy(PG_FUNCTION_ARGS)
 {
 	Oid 		relid = PG_GETARG_OID(0);
 
-	PG_RETURN_BOOL(can_manage_relation_internal(relid));
-}
-
-static bool
-can_manage_relation_internal(Oid relid)
-{
-	Oid 		owner;
-
-	/*
-	 * If user has superuser privileges then he or she can do whatever wants
-	 */
-	if (superuser())
-		return true;
-
-	/* Otherwise check if user is owner of the relation */
-	owner = get_rel_owner(relid);
-	if (owner == GetUserId())
-		return true;
-
-	return false;
-}
-
-/*
- * Check user permissions. If permission denied then throw an error.
- */
-Datum
-check_permissions(PG_FUNCTION_ARGS)
-{
-	Oid 		relid = PG_GETARG_OID(0);
-
-	if (!can_manage_relation_internal(relid))
-		elog(ERROR,
-			 "Only table owner or superuser can change partitioning configuration");
-
-	PG_RETURN_VOID();
+	PG_RETURN_BOOL(check_security_policy_internal(relid));
 }
 
 
