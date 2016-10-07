@@ -1,61 +1,130 @@
 \set VERBOSITY terse
 CREATE EXTENSION pg_pathman;
+CREATE SCHEMA permissions;
 CREATE ROLE user1 LOGIN;
 CREATE ROLE user2 LOGIN;
+GRANT USAGE, CREATE ON SCHEMA permissions TO user1;
+GRANT USAGE, CREATE ON SCHEMA permissions TO user2;
+ALTER DEFAULT PRIVILEGES FOR ROLE user1
+IN SCHEMA permissions
+GRANT SELECT, INSERT ON TABLES
+TO user2;
+/* Switch to #1 */
 SET ROLE user1;
-CREATE TABLE user1_table(id serial, a int);
-INSERT INTO user1_table SELECT g, g FROM generate_series(1, 20) as g;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO public;
+CREATE TABLE permissions.user1_table(id serial, a int);
+INSERT INTO permissions.user1_table SELECT g, g FROM generate_series(1, 20) as g;
+/* Should fail */
 SET ROLE user2;
-/* Not owner and not superuser cannot create partitions */
-SELECT create_range_partitions('user1_table', 'id', 1, 10, 2);
-ERROR:  permission denied for relation user1_table
+SELECT create_range_partitions('permissions.user1_table', 'id', 1, 10, 2);
+NOTICE:  sequence "user1_table_seq" does not exist, skipping
+ERROR:  only the owner or superuser can change partitioning configuration of table "user1_table"
+/* Should be ok */
 SET ROLE user1;
-/* Owner can */
-SELECT create_range_partitions('user1_table', 'id', 1, 10, 2);
+SELECT create_range_partitions('permissions.user1_table', 'id', 1, 10, 2);
 NOTICE:  sequence "user1_table_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                        2
 (1 row)
 
+/* Should be able to see */
 SET ROLE user2;
-/* Try to change partitioning parameters for user1_table */
-SELECT set_enable_parent('user1_table', true);
+SELECT * FROM pathman_config;
+         partrel         | attname | parttype | range_interval 
+-------------------------+---------+----------+----------------
+ permissions.user1_table | id      |        2 | 10
+(1 row)
+
+SELECT * FROM pathman_config_params;
+         partrel         | enable_parent | auto | init_callback 
+-------------------------+---------------+------+---------------
+ permissions.user1_table | f             | t    | -
+(1 row)
+
+/* Should fail */
+SET ROLE user2;
+SELECT set_enable_parent('permissions.user1_table', true);
 ERROR:  only the owner or superuser can change partitioning configuration of table "user1_table"
-SELECT set_auto('user1_table', false);
+SELECT set_auto('permissions.user1_table', false);
 ERROR:  only the owner or superuser can change partitioning configuration of table "user1_table"
-/*
- * Check that user is able to propagate partitions by inserting rows that
- * doesn't fit into range
- */
-INSERT INTO user1_table (id, a) VALUES (25, 0);
-ERROR:  permission denied for relation user1_table
+/* Should fail */
+SET ROLE user2;
+DELETE FROM pathman_config
+WHERE partrel = 'permissions.user1_table'::regclass;
+ERROR:  only the owner or superuser can change partitioning configuration of table "user1_table"
+/* No rights to insert, should fail */
+SET ROLE user2;
+INSERT INTO permissions.user1_table (id, a) VALUES (35, 0);
+/* Have rights, should be ok (bgw connects as user1) */
 SET ROLE user1;
-SELECT drop_partitions('test1_table');
-ERROR:  relation "test1_table" does not exist at character 24
+GRANT INSERT ON permissions.user1_table TO user2;
+SET ROLE user2;
+INSERT INTO permissions.user1_table (id, a) VALUES (35, 0) RETURNING *;
+ id | a 
+----+---
+ 35 | 0
+(1 row)
+
+SELECT relacl FROM pg_class WHERE oid = 'permissions.user1_table_4'::regclass;
+                relacl                
+--------------------------------------
+ {user1=arwdDxt/user1,user2=ar/user1}
+(1 row)
+
+/* Try to drop partition, should fail */
+SELECT drop_range_partition('permissions.user1_table_4');
+ERROR:  must be owner of relation user1_table_4
+/* Disable automatic partition creation */
+SET ROLE user1;
+SELECT set_auto('permissions.user1_table', false);
+ set_auto 
+----------
+ 
+(1 row)
+
+/* Partition creation, should fail */
+SET ROLE user2;
+INSERT INTO permissions.user1_table (id, a) VALUES (55, 0) RETURNING *;
+ERROR:  no suitable partition for key '55'
+/* Finally drop partitions */
+SET ROLE user1;
+SELECT drop_partitions('permissions.user1_table');
+NOTICE:  function permissions.user1_table_upd_trig_func() does not exist, skipping
+NOTICE:  10 rows copied from permissions.user1_table_1
+NOTICE:  10 rows copied from permissions.user1_table_2
+NOTICE:  0 rows copied from permissions.user1_table_3
+NOTICE:  2 rows copied from permissions.user1_table_4
+ drop_partitions 
+-----------------
+               4
+(1 row)
+
+/* Switch to #2 */
 SET ROLE user2;
 /* Test ddl event trigger */
-CREATE TABLE user2_table(id serial);
-SELECT create_hash_partitions('user2_table', 'id', 3);
+CREATE TABLE permissions.user2_table(id serial);
+SELECT create_hash_partitions('permissions.user2_table', 'id', 3);
  create_hash_partitions 
 ------------------------
                       3
 (1 row)
 
-INSERT INTO user2_table SELECT generate_series(1, 30);
-SELECT drop_partitions('user2_table');
-NOTICE:  function public.user2_table_upd_trig_func() does not exist, skipping
-NOTICE:  9 rows copied from user2_table_0
-NOTICE:  11 rows copied from user2_table_1
-NOTICE:  10 rows copied from user2_table_2
+INSERT INTO permissions.user2_table SELECT generate_series(1, 30);
+SELECT drop_partitions('permissions.user2_table');
+NOTICE:  function permissions.user2_table_upd_trig_func() does not exist, skipping
+NOTICE:  9 rows copied from permissions.user2_table_0
+NOTICE:  11 rows copied from permissions.user2_table_1
+NOTICE:  10 rows copied from permissions.user2_table_2
  drop_partitions 
 -----------------
                3
 (1 row)
 
+/* Finally reset user */
 RESET ROLE;
 DROP OWNED BY user1;
 DROP OWNED BY user2;
 DROP USER user1;
 DROP USER user2;
+DROP SCHEMA permissions CASCADE;
+DROP EXTENSION pg_pathman;
