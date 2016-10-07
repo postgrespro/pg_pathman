@@ -848,19 +848,14 @@ invoke_on_partition_created_callback(PG_FUNCTION_ARGS)
 }
 
 /*
- * Check if user can alter/drop specified relation. This function is used to
- * make sure that current user can change pg_pathman's config. Returns true
- * if user can manage relation, false otherwise.
- *
- * XXX currently we just check if user is a table owner. Probably it's better to
- * check user permissions in order to let other users.
+ * Function to be used for RLS rules on PATHMAN_CONFIG and
+ * PATHMAN_CONFIG_PARAMS tables.
+ * NOTE: check_security_policy_internal() is used under the hood.
  */
 Datum
 check_security_policy(PG_FUNCTION_ARGS)
 {
-	Oid 		relid = PG_GETARG_OID(0);
-
-	PG_RETURN_BOOL(check_security_policy_internal(relid));
+	PG_RETURN_BOOL(check_security_policy_internal(PG_GETARG_OID(0)));
 }
 
 

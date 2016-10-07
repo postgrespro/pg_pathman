@@ -22,9 +22,9 @@ NOTICE:  sequence "user1_table_seq" does not exist, skipping
 SET ROLE user2;
 /* Try to change partitioning parameters for user1_table */
 SELECT set_enable_parent('user1_table', true);
-ERROR:  Only table owner or superuser can change partitioning configuration
+ERROR:  only the owner or superuser can change partitioning configuration of table "user1_table"
 SELECT set_auto('user1_table', false);
-ERROR:  Only table owner or superuser can change partitioning configuration
+ERROR:  only the owner or superuser can change partitioning configuration of table "user1_table"
 /*
  * Check that user is able to propagate partitions by inserting rows that
  * doesn't fit into range

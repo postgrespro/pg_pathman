@@ -632,7 +632,7 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 	{
 		/* Initialize concurrent part slot */
 		InitConcurrentPartSlot(&concurrent_part_slots[empty_slot_idx],
-							   GetAuthenticatedUserId(), CPS_WORKING,
+							   GetUserId(), CPS_WORKING,
 							   MyDatabaseId, relid, 1000, 1.0);
 
 		/* Now we can safely unlock slot for new BGWorker */
