@@ -587,7 +587,7 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 		elog(ERROR, "Invalid relation %u", relid);
 
 	if (get_attnum(relid, text_to_cstring(attname)) == InvalidAttrNumber)
-		elog(ERROR, "Relation \"%s\" has no column '%s'",
+		elog(ERROR, "relation \"%s\" has no column \"%s\"",
 			 get_rel_name_or_relid(relid), text_to_cstring(attname));
 
 	/* Select partitioning type using 'range_interval' */

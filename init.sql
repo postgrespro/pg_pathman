@@ -199,6 +199,8 @@ AS 'pg_pathman', 'show_partition_list_internal' LANGUAGE C STRICT;
 CREATE OR REPLACE VIEW @extschema@.pathman_partition_list
 AS SELECT * FROM @extschema@.show_partition_list();
 
+GRANT SELECT ON @extschema@.pathman_partition_list TO PUBLIC;
+
 /*
  * Show all existing concurrent partitioning tasks.
  */
@@ -217,6 +219,8 @@ AS 'pg_pathman', 'show_concurrent_part_tasks_internal' LANGUAGE C STRICT;
  */
 CREATE OR REPLACE VIEW @extschema@.pathman_concurrent_part_tasks
 AS SELECT * FROM @extschema@.show_concurrent_part_tasks();
+
+GRANT SELECT ON @extschema@.pathman_concurrent_part_tasks TO PUBLIC;
 
 /*
  * Partition table using ConcurrentPartWorker.
