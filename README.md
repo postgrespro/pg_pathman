@@ -5,12 +5,12 @@
 
 The `pg_pathman` module provides optimized partitioning mechanism and functions to manage partitions.
 
-The extension is compatible with PostgreSQL 9.5 (9.6 support is coming soon).
+The extension is compatible with PostgreSQL 9.5+.
 
 ## Overview
 **Partitioning** means splitting one large table into smaller pieces. Each row in such table is moved to a single partition according to the partitioning key. PostgreSQL supports partitioning via table inheritance: each partition must be created as a child table with CHECK CONSTRAINT. For example:
 
-```
+```plpgsql
 CREATE TABLE test (id SERIAL PRIMARY KEY, title TEXT);
 CREATE TABLE test_1 (CHECK ( id >= 100 AND id < 200 )) INHERITS (test);
 CREATE TABLE test_2 (CHECK ( id >= 200 AND id < 300 )) INHERITS (test);
@@ -25,7 +25,7 @@ VARIABLE OP CONST
 ```
 where `VARIABLE` is a partitioning key, `OP` is a comparison operator (supported operators are =, <, <=, >, >=), `CONST` is a scalar value. For example:
 
-```
+```plpgsql
 WHERE id = 150
 ```
 
@@ -35,6 +35,22 @@ Based on the partitioning type and condition's operator, `pg_pathman` searches f
 * **HASH** - maps rows to partitions using a generic hash function.
 
 More interesting features are yet to come. Stay tuned!
+
+## Feature highlights
+
+ * HASH and RANGE partitioning schemes;
+ * Both automatic and manual partition management;
+ * Support for integer, floating point, date and other types, including domains;
+ * Effective query planning for partitioned tables (JOINs, subselects etc);
+ * `RuntimeAppend` & `RuntimeMergeAppend` custom plan nodes to pick partitions at runtime;
+ * `PartitionFilter`: an efficient drop-in replacement for INSERT triggers;
+ * Automatic partition creation for new INSERTed data (only for RANGE partitioning);
+ * Improved `COPY FROM\TO` statement that is able to insert rows directly into partitions;
+ * UPDATE triggers generation out of the box (will be replaced with custom nodes too);
+ * User-defined callbacks for partition creation event handling;
+ * Non-blocking concurrent table partitioning;
+ * FDW support (foreign partitions);
+ * Various GUC toggles and configurable settings.
 
 ## Roadmap
 
@@ -462,6 +478,8 @@ NOTICE:  100 rows copied from part_test_2
 (3 rows)
 ```
 
+- You can turn foreign tables into partitions using the `attach_range_partition()` function. Rows that were meant to be inserted into parent will be redirected to foreign partitions (as usual, PartitionFilter will be involved), though by default it is prohibited to insert rows into partitions provided not by `postgres_fdw`. Only superuser is allowed to set `pg_pathman.insert_into_fdw` GUC variable.
+
 ### HASH partitioning
 Consider an example of HASH partitioning. First create a table with some integer column:
 ```plpgsql
@@ -587,7 +605,7 @@ EXPLAIN SELECT * FROM journal WHERE dt >= '2015-06-01' AND dt < '2015-06-03';
 ### Disabling `pg_pathman`
 There are several user-accessible [GUC](https://www.postgresql.org/docs/9.5/static/config-setting.html) variables designed to toggle the whole module or specific custom nodes on and off:
 
- - `pg_pathman.enable` --- disable (or enable) `pg_pathman` completely
+ - `pg_pathman.enable` --- disable (or enable) `pg_pathman` **completely**
  - `pg_pathman.enable_runtimeappend` --- toggle `RuntimeAppend` custom node on\off
  - `pg_pathman.enable_runtimemergeappend` --- toggle `RuntimeMergeAppend` custom node on\off
  - `pg_pathman.enable_partitionfilter` --- toggle `PartitionFilter` custom node on\off
@@ -596,7 +614,7 @@ There are several user-accessible [GUC](https://www.postgresql.org/docs/9.5/stat
  - `pg_pathman.override_copy` --- toggle COPY statement hooking on\off
 
 To **permanently** disable `pg_pathman` for some previously partitioned table, use the `disable_pathman_for()` function:
-```
+```plpgsql
 SELECT disable_pathman_for('range_rel');
 ```
 All sections and data will remain unchanged and will be handled by the standard PostgreSQL inheritance mechanism.
