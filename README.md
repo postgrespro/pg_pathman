@@ -91,15 +91,15 @@ Performs HASH partitioning for `relation` by integer key `attribute`. The `parti
 create_range_partitions(relation       REGCLASS,
                         attribute      TEXT,
                         start_value    ANYELEMENT,
-                        interval       ANYELEMENT,
-                        count          INTEGER DEFAULT NULL
+                        p_interval     ANYELEMENT,
+                        p_count        INTEGER DEFAULT NULL
                         partition_data BOOLEAN DEFAULT TRUE)
 
 create_range_partitions(relation       REGCLASS,
                         attribute      TEXT,
                         start_value    ANYELEMENT,
-                        interval       INTERVAL,
-                        count          INTEGER DEFAULT NULL,
+                        p_interval     INTERVAL,
+                        p_count        INTEGER DEFAULT NULL,
                         partition_data BOOLEAN DEFAULT TRUE)
 ```
 Performs RANGE partitioning for `relation` by partitioning key `attribute`. `start_value` argument specifies initial value, `interval` sets the range of values in a single partition, `count` is the number of premade partitions (if not set then pathman tries to determine it based on attribute values). Partition creation callback is invoked for each partition if set beforehand.
@@ -109,14 +109,14 @@ create_partitions_from_range(relation       REGCLASS,
                              attribute      TEXT,
                              start_value    ANYELEMENT,
                              end_value      ANYELEMENT,
-                             interval       ANYELEMENT,
+                             p_interval     ANYELEMENT,
                              partition_data BOOLEAN DEFAULT TRUE)
 
 create_partitions_from_range(relation       REGCLASS,
                              attribute      TEXT,
                              start_value    ANYELEMENT,
                              end_value      ANYELEMENT,
-                             interval       INTERVAL,
+                             p_interval     INTERVAL,
                              partition_data BOOLEAN DEFAULT TRUE)
 ```
 Performs RANGE-partitioning from specified range for `relation` by partitioning key `attribute`. Partition creation callback is invoked for each partition if set beforehand.
@@ -146,10 +146,10 @@ Same as above, but for a RANGE-partitioned table.
 ### Post-creation partition management
 ```plpgsql
 split_range_partition(partition      REGCLASS,
-                      value          ANYELEMENT,
+                      split_value    ANYELEMENT,
                       partition_name TEXT DEFAULT NULL)
 ```
-Split RANGE `partition` in two by `value`. Partition creation callback is invoked for a new partition if available.
+Split RANGE `partition` in two by `split_value`. Partition creation callback is invoked for a new partition if available.
 
 ```plpgsql
 merge_range_partitions(partition1 REGCLASS, partition2 REGCLASS)
@@ -157,14 +157,14 @@ merge_range_partitions(partition1 REGCLASS, partition2 REGCLASS)
 Merge two adjacent RANGE partitions. First, data from `partition2` is copied to `partition1`, then `partition2` is removed.
 
 ```plpgsql
-append_range_partition(p_relation     REGCLASS,
+append_range_partition(parent         REGCLASS,
                        partition_name TEXT DEFAULT NULL,
                        tablespace     TEXT DEFAULT NULL)
 ```
 Append new RANGE partition with `pathman_config.range_interval` as interval.
 
 ```plpgsql
-prepend_range_partition(p_relation     REGCLASS,
+prepend_range_partition(parent         REGCLASS,
                         partition_name TEXT DEFAULT NULL,
                         tablespace     TEXT DEFAULT NULL)
 ```
