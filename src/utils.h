@@ -50,7 +50,7 @@ bool clause_contains_params(Node *clause);
 bool is_date_type_internal(Oid typid);
 bool is_string_type_internal(Oid typid);
 bool validate_on_part_init_cb(Oid procid, bool emit_error);
-bool check_security_policy_internal(Oid relid);
+bool check_security_policy_internal(Oid relid, Oid role);
 
 /*
  * Misc.

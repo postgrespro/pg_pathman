@@ -17,7 +17,8 @@ INSERT INTO permissions.user1_table SELECT g, g FROM generate_series(1, 20) as g
 SET ROLE user2;
 SELECT create_range_partitions('permissions.user1_table', 'id', 1, 10, 2);
 NOTICE:  sequence "user1_table_seq" does not exist, skipping
-ERROR:  only the owner or superuser can change partitioning configuration of table "user1_table"
+WARNING:  only the owner or superuser can change partitioning configuration of table "user1_table"
+ERROR:  new row violates row-level security policy for table "pathman_config"
 /* Should be ok */
 SET ROLE user1;
 SELECT create_range_partitions('permissions.user1_table', 'id', 1, 10, 2);
@@ -44,14 +45,16 @@ SELECT * FROM pathman_config_params;
 /* Should fail */
 SET ROLE user2;
 SELECT set_enable_parent('permissions.user1_table', true);
-ERROR:  only the owner or superuser can change partitioning configuration of table "user1_table"
+WARNING:  only the owner or superuser can change partitioning configuration of table "user1_table"
+ERROR:  new row violates row-level security policy for table "pathman_config_params"
 SELECT set_auto('permissions.user1_table', false);
-ERROR:  only the owner or superuser can change partitioning configuration of table "user1_table"
+WARNING:  only the owner or superuser can change partitioning configuration of table "user1_table"
+ERROR:  new row violates row-level security policy for table "pathman_config_params"
 /* Should fail */
 SET ROLE user2;
 DELETE FROM pathman_config
 WHERE partrel = 'permissions.user1_table'::regclass;
-ERROR:  only the owner or superuser can change partitioning configuration of table "user1_table"
+WARNING:  only the owner or superuser can change partitioning configuration of table "user1_table"
 /* No rights to insert, should fail */
 SET ROLE user2;
 INSERT INTO permissions.user1_table (id, a) VALUES (35, 0);

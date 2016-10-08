@@ -538,7 +538,7 @@ build_check_constraint_name_attname(PG_FUNCTION_ARGS)
 		elog(ERROR, "Invalid relation %u", relid);
 
 	if (attnum == InvalidAttrNumber)
-		elog(ERROR, "Relation \"%s\" has no column '%s'",
+		elog(ERROR, "relation \"%s\" has no column \"%s\"",
 			 get_rel_name_or_relid(relid), text_to_cstring(attname));
 
 	result = build_check_constraint_name_internal(relid, attnum);
@@ -870,7 +870,19 @@ invoke_on_partition_created_callback(PG_FUNCTION_ARGS)
 Datum
 check_security_policy(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_BOOL(check_security_policy_internal(PG_GETARG_OID(0)));
+	Oid relid = PG_GETARG_OID(0);
+
+	if (!check_security_policy_internal(relid, GetUserId()))
+	{
+		elog(WARNING, "only the owner or superuser can change "
+					  "partitioning configuration of table \"%s\"",
+			 get_rel_name_or_relid(relid));
+
+		PG_RETURN_BOOL(false);
+	}
+
+	/* Else return TRUE */
+	PG_RETURN_BOOL(true);
 }
 
 

@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
  */
 CREATE TABLE IF NOT EXISTS @extschema@.pathman_config_params (
 	partrel			REGCLASS NOT NULL PRIMARY KEY,
-	enable_parent	BOOLEAN NOT NULL DEFAULT TRUE,
+	enable_parent	BOOLEAN NOT NULL DEFAULT FALSE,
 	auto			BOOLEAN NOT NULL DEFAULT TRUE,
 	init_callback	REGPROCEDURE NOT NULL DEFAULT 0
 );

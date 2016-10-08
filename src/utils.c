@@ -759,27 +759,28 @@ validate_on_part_init_cb(Oid procid, bool emit_error)
  * better to check user permissions in order to let other users participate.
  */
 bool
-check_security_policy_internal(Oid relid)
+check_security_policy_internal(Oid relid, Oid role)
 {
-	Oid		owner;
+	Oid owner;
 
 	/* Superuser is allowed to do anything */
 	if (superuser())
 		return true;
+
+	/* Fetch the owner */
+	owner = get_rel_owner(relid);
 
 	/*
 	 * Sometimes the relation doesn't exist anymore but there is still
 	 * a record in config. For instance, it happens in DDL event trigger.
 	 * Still we should be able to remove this record.
 	 */
-	if ((owner = get_rel_owner(relid)) == InvalidOid)
+	if (owner == InvalidOid)
 		return true;
 
 	/* Check if current user is the owner of the relation */
-	if (owner != GetUserId())
-		elog(ERROR, "only the owner or superuser can change "
-					"partitioning configuration of table \"%s\"",
-			 get_rel_name_or_relid(relid));
+	if (owner != role)
+		return false;
 
 	return true;
 }
