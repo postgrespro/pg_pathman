@@ -574,8 +574,19 @@ Datum
 partition_table_concurrently(PG_FUNCTION_ARGS)
 {
 	Oid		relid = PG_GETARG_OID(0);
+	int32	batch_size = PG_GETARG_INT32(1);
+	float8	sleep_time = PG_GETARG_FLOAT8(2);
 	int		empty_slot_idx = -1,		/* do we have a slot for BGWorker? */
 			i;
+
+	/* Check batch_size */
+	if (batch_size < 1 || batch_size > 10000)
+		elog(ERROR, "\"batch_size\" should not be less than 1 "
+					"or greater than 10000");
+
+	/* Check sleep_time */
+	if (sleep_time < 0.5)
+		elog(ERROR, "\"sleep_time\" should not be less than 0.5");
 
 	/* Check if relation is a partitioned table */
 	shout_if_prel_is_invalid(relid,
@@ -631,8 +642,8 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 	{
 		/* Initialize concurrent part slot */
 		InitConcurrentPartSlot(&concurrent_part_slots[empty_slot_idx],
-							   GetUserId(), CPS_WORKING,
-							   MyDatabaseId, relid, 1000, 1.0);
+							   GetUserId(), CPS_WORKING, MyDatabaseId,
+							   relid, batch_size, sleep_time);
 
 		/* Now we can safely unlock slot for new BGWorker */
 		SpinLockRelease(&concurrent_part_slots[empty_slot_idx].mutex);

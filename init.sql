@@ -225,21 +225,27 @@ GRANT SELECT ON @extschema@.pathman_concurrent_part_tasks TO PUBLIC;
 /*
  * Partition table using ConcurrentPartWorker.
  */
-CREATE OR REPLACE FUNCTION @extschema@.partition_table_concurrently(relation regclass)
-RETURNS VOID AS 'pg_pathman', 'partition_table_concurrently' LANGUAGE C STRICT;
+CREATE OR REPLACE FUNCTION @extschema@.partition_table_concurrently(
+	relation		REGCLASS,
+	batch_size		INTEGER DEFAULT 1000,
+	sleep_time		FLOAT8 DEFAULT 1.0)
+RETURNS VOID AS 'pg_pathman', 'partition_table_concurrently'
+LANGUAGE C STRICT;
 
 /*
  * Stop concurrent partitioning task.
  */
-CREATE OR REPLACE FUNCTION @extschema@.stop_concurrent_part_task(relation regclass)
-RETURNS BOOL AS 'pg_pathman', 'stop_concurrent_part_task' LANGUAGE C STRICT;
+CREATE OR REPLACE FUNCTION @extschema@.stop_concurrent_part_task(
+	relation		REGCLASS)
+RETURNS BOOL AS 'pg_pathman', 'stop_concurrent_part_task'
+LANGUAGE C STRICT;
 
 
 /*
  * Copy rows to partitions concurrently.
  */
 CREATE OR REPLACE FUNCTION @extschema@._partition_data_concurrent(
-	p_relation		REGCLASS,
+	relation		REGCLASS,
 	p_min			ANYELEMENT DEFAULT NULL::text,
 	p_max			ANYELEMENT DEFAULT NULL::text,
 	p_limit			INT DEFAULT NULL,
@@ -254,7 +260,7 @@ DECLARE
 
 BEGIN
 	SELECT attname INTO v_attr
-	FROM @extschema@.pathman_config WHERE partrel = p_relation;
+	FROM @extschema@.pathman_config WHERE partrel = relation;
 
 	p_total := 0;
 
@@ -282,7 +288,7 @@ BEGIN
 	/* Lock rows and copy data */
 	RAISE NOTICE 'Copying data to partitions...';
 	EXECUTE format('SELECT array(SELECT ctid FROM ONLY %1$s %2$s %3$s FOR UPDATE NOWAIT)',
-				   p_relation, v_where_clause, v_limit_clause)
+				   relation, v_where_clause, v_limit_clause)
 	USING p_min, p_max
 	INTO ctids;
 
@@ -290,7 +296,7 @@ BEGIN
 		WITH data AS (
 			DELETE FROM ONLY %1$s WHERE ctid = ANY($1) RETURNING *)
 		INSERT INTO %1$s SELECT * FROM data',
-		p_relation)
+		relation)
 	USING ctids;
 
 	/* Get number of inserted rows */
@@ -376,7 +382,7 @@ LANGUAGE plpgsql;
  * Suitable for every partitioning type.
  */
 CREATE OR REPLACE FUNCTION @extschema@.common_relation_checks(
-	p_relation		REGCLASS,
+	relation		REGCLASS,
 	p_attribute		TEXT)
 RETURNS BOOLEAN AS
 $$
@@ -388,33 +394,33 @@ DECLARE
 BEGIN
 	/* Ignore temporary tables */
 	SELECT relpersistence FROM pg_catalog.pg_class
-	WHERE oid = p_relation INTO rel_persistence;
+	WHERE oid = relation INTO rel_persistence;
 
 	IF rel_persistence = 't'::CHAR THEN
 		RAISE EXCEPTION 'temporary table "%" cannot be partitioned',
-						p_relation::TEXT;
+						relation::TEXT;
 	END IF;
 
 	IF EXISTS (SELECT * FROM @extschema@.pathman_config
-			   WHERE partrel = p_relation) THEN
-		RAISE EXCEPTION 'relation "%" has already been partitioned', p_relation;
+			   WHERE partrel = relation) THEN
+		RAISE EXCEPTION 'relation "%" has already been partitioned', relation;
 	END IF;
 
-	IF @extschema@.is_attribute_nullable(p_relation, p_attribute) THEN
+	IF @extschema@.is_attribute_nullable(relation, p_attribute) THEN
 		RAISE EXCEPTION 'partitioning key ''%'' must be NOT NULL', p_attribute;
 	END IF;
 
 	/* Check if there are foreign keys that reference the relation */
-	FOR v_rec IN (SELECT *
-				  FROM pg_constraint WHERE confrelid = p_relation::regclass::oid)
+	FOR v_rec IN (SELECT * FROM pg_catalog.pg_constraint
+				  WHERE confrelid = relation::REGCLASS::OID)
 	LOOP
 		is_referenced := TRUE;
-		RAISE WARNING 'foreign key ''%'' references relation ''%''',
-				v_rec.conname, p_relation;
+		RAISE WARNING 'foreign key "%" references relation "%"',
+				v_rec.conname, relation;
 	END LOOP;
 
 	IF is_referenced THEN
-		RAISE EXCEPTION 'relation "%" is referenced from other relations', p_relation;
+		RAISE EXCEPTION 'relation "%" is referenced from other relations', relation;
 	END IF;
 
 	RETURN TRUE;
@@ -627,7 +633,7 @@ BEGIN
 	LOOP
 		EXECUTE format('ALTER TABLE %s ADD %s',
 					   partition::TEXT,
-					   pg_get_constraintdef(rec.conid));
+					   pg_catalog.pg_get_constraintdef(rec.conid));
 	END LOOP;
 END
 $$ LANGUAGE plpgsql STRICT;
@@ -743,7 +749,8 @@ RETURNS BOOLEAN AS 'pg_pathman', 'add_to_pathman_config'
 LANGUAGE C;
 
 CREATE OR REPLACE FUNCTION @extschema@.invalidate_relcache(relid OID)
-RETURNS VOID AS 'pg_pathman' LANGUAGE C STRICT;
+RETURNS VOID AS 'pg_pathman'
+LANGUAGE C STRICT;
 
 
 /*
