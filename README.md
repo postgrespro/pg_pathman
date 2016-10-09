@@ -128,7 +128,7 @@ partition_table_concurrently(relation   REGCLASS,
                              batch_size INTEGER DEFAULT 1000,
                              sleep_time FLOAT8 DEFAULT 1.0)
 ```
-Starts a background worker to move data from parent table to partitions. The worker utilizes short transactions to copy small batches of data (up to 10K rows per transaction) and thus doesn't significantly interfere with user's activity. If the worker is unable to lock rows of a batch, it sleeps for `sleep_time` seconds up to 60 times before the next attempt, and quits if it's still unable to lock the batch.
+Starts a background worker to move data from parent table to partitions. The worker utilizes short transactions to copy small batches of data (up to 10K rows per transaction) and thus doesn't significantly interfere with user's activity. If the worker is unable to lock rows of a batch, it sleeps for `sleep_time` seconds before the next attempt and tries again up to 60 times, and quits if it's still unable to lock the batch.
 
 ```plpgsql
 stop_concurrent_part_task(relation REGCLASS)
