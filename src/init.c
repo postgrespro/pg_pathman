@@ -841,6 +841,7 @@ validate_range_constraint(const Expr *expr,
 	const TypeCacheEntry   *tce;
 	const BoolExpr		   *boolexpr = (const BoolExpr *) expr;
 	const OpExpr		   *opexpr;
+	int						strategy;
 
 	if (!expr)
 		return false;
@@ -853,8 +854,9 @@ validate_range_constraint(const Expr *expr,
 
 	/* check that left operand is >= operator */
 	opexpr = (OpExpr *) linitial(boolexpr->args);
-	if (BTGreaterEqualStrategyNumber == get_op_opfamily_strategy(opexpr->opno,
-																 tce->btree_opf))
+	strategy = get_op_opfamily_strategy(opexpr->opno, tce->btree_opf);
+
+	if (strategy == BTGreaterEqualStrategyNumber)
 	{
 		if (!read_opexpr_const(opexpr, prel, min))
 			return false;
@@ -864,8 +866,9 @@ validate_range_constraint(const Expr *expr,
 
 	/* check that right operand is < operator */
 	opexpr = (OpExpr *) lsecond(boolexpr->args);
-	if (BTLessStrategyNumber == get_op_opfamily_strategy(opexpr->opno,
-														 tce->btree_opf))
+	strategy = get_op_opfamily_strategy(opexpr->opno, tce->btree_opf);
+
+	if (strategy == BTLessStrategyNumber)
 	{
 		if (!read_opexpr_const(opexpr, prel, max))
 			return false;

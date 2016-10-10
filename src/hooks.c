@@ -43,6 +43,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 						   JoinPathExtraData *extra)
 {
 	JoinCostWorkspace		workspace;
+	JoinType				saved_jointype = jointype;
 	RangeTblEntry		   *inner_rte = root->simple_rte_array[innerrel->relid];
 	const PartRelationInfo *inner_prel;
 	List				   *pathkeys = NIL,
@@ -118,6 +119,12 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 
 		/* Select cheapest path for outerrel */
 		outer = outerrel->cheapest_total_path;
+		if (saved_jointype == JOIN_UNIQUE_OUTER)
+		{
+			outer = (Path *) create_unique_path(root, outerrel,
+												outer, extra->sjinfo);
+			Assert(outer);
+		}
 
 		/* Make innerrel path depend on outerrel's column */
 		inner_required = bms_union(PATH_REQ_OUTER((Path *) cur_inner_path),
@@ -133,6 +140,8 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 			continue;
 
 		inner = create_runtimeappend_path(root, cur_inner_path, ppi, paramsel);
+		if (saved_jointype == JOIN_UNIQUE_INNER)
+			return; /* No way to do this with a parameterized inner path */
 
 		initial_cost_nestloop(root, &workspace, jointype,
 							  outer, inner, /* built paths */
@@ -204,7 +213,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		Oid			   *children;
 		List		   *ranges,
 					   *wrappers,
-					   *rel_partattr_clauses = NIL;
+					   *rel_part_clauses = NIL;
 		PathKey		   *pathkeyAsc = NULL,
 					   *pathkeyDesc = NULL;
 		double			paramsel = 1.0;
@@ -310,8 +319,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			IndexRange	irange = lfirst_irange(lc);
 
 			for (i = irange.ir_lower; i <= irange.ir_upper; i++)
-				append_child_relation(root, rel, rti, rte, i, children[i],
-									  wrappers);
+				append_child_relation(root, rel, rti, rte, i, children[i], wrappers);
 		}
 
 		/* Clear old path list */
@@ -327,19 +335,26 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			return;
 
 		/* Check that rel's RestrictInfo contains partitioned column */
-		rel_partattr_clauses = get_partitioned_attr_clauses(rel->baserestrictinfo,
-															prel, rel->relid);
+		rel_part_clauses = get_partitioned_attr_clauses(rel->baserestrictinfo,
+														prel, rel->relid);
 
 		/* Runtime[Merge]Append is pointless if there are no params in clauses */
-		if (!clause_contains_params((Node *) rel_partattr_clauses))
+		if (!clause_contains_params((Node *) rel_part_clauses))
 			return;
 
 		foreach (lc, rel->pathlist)
 		{
 			AppendPath	   *cur_path = (AppendPath *) lfirst(lc);
 			Relids			inner_required = PATH_REQ_OUTER((Path *) cur_path);
-			ParamPathInfo  *ppi = get_baserel_parampathinfo(root, rel, inner_required);
 			Path		   *inner_path = NULL;
+			ParamPathInfo  *ppi;
+			List		   *ppi_part_clauses = NIL;
+
+			/* Fetch ParamPathInfo & try to extract part-related clauses */
+			ppi = get_baserel_parampathinfo(root, rel, inner_required);
+			if (ppi && ppi->ppi_clauses)
+				ppi_part_clauses = get_partitioned_attr_clauses(ppi->ppi_clauses,
+																prel, rel->relid);
 
 			/* Skip if rel contains some join-related stuff or path type mismatched */
 			if (!(IsA(cur_path, AppendPath) || IsA(cur_path, MergeAppendPath)) ||
@@ -352,9 +367,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			 * Skip if neither rel->baserestrictinfo nor
 			 * ppi->ppi_clauses reference partition attribute
 			 */
-			if (!(rel_partattr_clauses ||
-				  (ppi && get_partitioned_attr_clauses(ppi->ppi_clauses,
-													   prel, rel->relid))))
+			if (!(rel_part_clauses || ppi_part_clauses))
 				continue;
 
 			if (IsA(cur_path, AppendPath) && pg_pathman_enable_runtimeappend)
