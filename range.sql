@@ -88,7 +88,7 @@ CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions(
 RETURNS INTEGER AS
 $$
 DECLARE
-	v_rows_count		INTEGER;
+	v_rows_count		BIGINT;
 	v_atttype			REGTYPE;
 	v_max				start_value%TYPE;
 	v_cur_value			start_value%TYPE := start_value;
@@ -204,7 +204,7 @@ CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions(
 RETURNS INTEGER AS
 $$
 DECLARE
-	v_rows_count		INTEGER;
+	v_rows_count		BIGINT;
 	v_max				start_value%TYPE;
 	v_cur_value			start_value%TYPE := start_value;
 	end_value			start_value%TYPE;
