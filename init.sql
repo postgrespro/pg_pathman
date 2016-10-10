@@ -53,12 +53,6 @@ CREATE OR REPLACE FUNCTION @extschema@.check_security_policy(relation regclass)
 RETURNS BOOL AS 'pg_pathman', 'check_security_policy' LANGUAGE C STRICT;
 
 /*
- * Check user permissions. If permission denied then throw an error.
- */
--- CREATE OR REPLACE FUNCTION @extschema@.check_permissions(relation regclass)
--- RETURNS BOOL AS 'pg_pathman', 'check_permissions' LANGUAGE C STRICT;
-
-/*
  * Row security policy to restrict partitioning operations to owner and
  * superusers only
  */
