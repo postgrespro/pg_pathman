@@ -7,3 +7,5 @@ regression.out
 *.so
 *.pyc
 pg_pathman--*.sql
+*.gcda
+*.gcno
