@@ -1184,7 +1184,7 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 
 	/* There's no strategy for this operator, go to end */
 	if (strategy == 0)
-		goto binary_opexpr_all;
+		goto binary_opexpr_return;
 
 	fill_type_cmp_fmgr_info(&cmp_func,
 							getBaseType(c->consttype),
@@ -1206,7 +1206,7 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 				return; /* exit on equal */
 			}
 			/* Else go to end */
-			else goto binary_opexpr_all;
+			else goto binary_opexpr_return;
 
 		case PT_RANGE:
 			{
@@ -1226,7 +1226,7 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 			elog(ERROR, "Unknown partitioning type %u", prel->parttype);
 	}
 
-binary_opexpr_all:
+binary_opexpr_return:
 	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), true));
 	result->paramsel = 1.0;
 }
@@ -1381,8 +1381,8 @@ handle_const(const Const *c, WalkerContext *context)
 				FmgrInfo	cmp_finfo;
 
 				fill_type_cmp_fmgr_info(&cmp_finfo,
-										c->consttype,
-										prel->atttype);
+										getBaseType(c->consttype),
+										getBaseType(prel->atttype));
 
 				select_range_partitions(c->constvalue,
 										&cmp_finfo,
