@@ -6,4 +6,4 @@ regression.out
 *.o
 *.so
 *.pyc
-pg_pathman--*.sql
+pg_pathman--1.1.sql

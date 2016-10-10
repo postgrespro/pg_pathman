@@ -8,7 +8,7 @@ OBJS = src/init.o src/relation_info.o src/utils.o src/partition_filter.o \
 	src/pg_compat.o $(WIN32RES)
 
 EXTENSION = pg_pathman
-EXTVERSION = 1.0
+EXTVERSION = 1.1
 DATA_built = $(EXTENSION)--$(EXTVERSION).sql
 PGFILEDESC = "pg_pathman - partitioning tool"
 
