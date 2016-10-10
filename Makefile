@@ -8,8 +8,9 @@ OBJS = src/init.o src/relation_info.o src/utils.o src/partition_filter.o \
 	src/pg_compat.o $(WIN32RES)
 
 EXTENSION = pg_pathman
-EXTVERSION = 1.0
-DATA_built = $(EXTENSION)--$(EXTVERSION).sql
+EXTVERSION = 1.1
+DATA_built = pg_pathman--$(EXTVERSION).sql
+DATA = pg_pathman--1.0.sql pg_pathman--1.0--1.1.sql
 PGFILEDESC = "pg_pathman - partitioning tool"
 
 REGRESS = pathman_basic \
@@ -20,7 +21,7 @@ REGRESS = pathman_basic \
 		  pathman_permissions \
 		  pathman_rowmarks
 EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add
-EXTRA_CLEAN = $(EXTENSION)--$(EXTVERSION).sql ./isolation_output
+EXTRA_CLEAN = pg_pathman--$(EXTVERSION).sql ./isolation_output
 
 ifdef USE_PGXS
 PG_CONFIG = pg_config
