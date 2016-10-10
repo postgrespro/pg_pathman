@@ -6,6 +6,6 @@ regression.out
 *.o
 *.so
 *.pyc
-pg_pathman--*.sql
 *.gcda
 *.gcno
+pg_pathman--1.1.sql
