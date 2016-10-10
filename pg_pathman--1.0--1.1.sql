@@ -1,10 +1,24 @@
-/***********************************************************************
+/* ------------------------------------------------------------------------
+ *
+ * pg_pathman--1.0--1.1.sql
+ *		Migration scripts to version 1.1
+ *
+ * Copyright (c) 2015-2016, Postgres Professional
+ *
+ * ------------------------------------------------------------------------
+ */
+
+
+/* ------------------------------------------------------------------------
  * Modify config params table
- **********************************************************************/
+ * ----------------------------------------------------------------------*/
 ALTER TABLE @extschema@.pathman_config_params ADD COLUMN init_callback REGPROCEDURE NOT NULL DEFAULT 0;
 ALTER TABLE @extschema@.pathman_config_params ALTER COLUMN enable_parent SET DEFAULT FALSE;
 
-/* Enable permissions */
+
+/* ------------------------------------------------------------------------
+ * Enable permissions
+ * ----------------------------------------------------------------------*/
 GRANT SELECT, INSERT, UPDATE, DELETE
 ON @extschema@.pathman_config, @extschema@.pathman_config_params
 TO public;
@@ -27,8 +41,10 @@ ALTER TABLE @extschema@.pathman_config_params ENABLE ROW LEVEL SECURITY;
 
 GRANT SELECT ON @extschema@.pathman_concurrent_part_tasks TO PUBLIC;
 
-/* Drop irrelevant functions */
-DROP FUNCTION @extschema@.invalidate_relcache(OID);
+
+/* ------------------------------------------------------------------------
+ * Drop irrelevant functions
+ * ----------------------------------------------------------------------*/
 DROP FUNCTION @extschema@.pathman_set_param(REGCLASS, TEXT, BOOLEAN);
 DROP FUNCTION @extschema@.enable_parent(REGCLASS);
 DROP FUNCTION @extschema@.disable_parent(relation REGCLASS);
@@ -61,7 +77,10 @@ DROP FUNCTION @extschema@.get_range_by_part_oid(REGCLASS, REGCLASS, ANYELEMENT);
 DROP FUNCTION @extschema@.get_min_range_value(REGCLASS, ANYELEMENT);
 DROP FUNCTION @extschema@.get_max_range_value(REGCLASS, ANYELEMENT);
 
-/* Alter functions' modifiers */
+
+/* ------------------------------------------------------------------------
+ * Alter functions' modifiers
+ * ----------------------------------------------------------------------*/
 ALTER FUNCTION @extschema@.partitions_count(REGCLASS) STRICT;
 ALTER FUNCTION @extschema@.partition_data(REGCLASS, OUT	BIGINT) STRICT;
 ALTER FUNCTION @extschema@.disable_pathman_for(REGCLASS) STRICT;
@@ -71,7 +90,29 @@ ALTER FUNCTION @extschema@.drop_triggers(REGCLASS) STRICT;
 ALTER FUNCTION @extschema@.check_overlap(REGCLASS, ANYELEMENT, ANYELEMENT) CALLED ON NULL INPUT;
 ALTER FUNCTION @extschema@.find_or_create_range_partition(REGCLASS, ANYELEMENT) CALLED ON NULL INPUT;
 
-/* Create functions */
+
+/* ------------------------------------------------------------------------
+ * Add new views
+ * ----------------------------------------------------------------------*/
+CREATE OR REPLACE FUNCTION @extschema@.show_partition_list()
+RETURNS TABLE (
+	 parent		REGCLASS,
+	 partition	REGCLASS,
+	 parttype	INT4,
+	 partattr	TEXT,
+	 range_min	TEXT,
+	 range_max	TEXT)
+AS 'pg_pathman', 'show_partition_list_internal' LANGUAGE C STRICT;
+
+CREATE OR REPLACE VIEW @extschema@.pathman_partition_list
+AS SELECT * FROM @extschema@.show_partition_list();
+
+GRANT SELECT ON @extschema@.pathman_partition_list TO PUBLIC;
+
+
+/* ------------------------------------------------------------------------
+ * (Re)create functions
+ * ----------------------------------------------------------------------*/
 CREATE OR REPLACE FUNCTION @extschema@.pathman_set_param(
 	relation	REGCLASS,
 	param		TEXT,
