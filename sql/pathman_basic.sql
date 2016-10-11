@@ -1,5 +1,6 @@
 \set VERBOSITY terse
 
+SET search_path = 'public';
 CREATE SCHEMA pathman;
 CREATE EXTENSION pg_pathman SCHEMA pathman;
 CREATE SCHEMA test;
