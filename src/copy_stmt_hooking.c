@@ -35,6 +35,19 @@
 #include "libpq/libpq.h"
 
 
+/*
+ * While building PostgreSQL on Windows the msvc compiler produces .def file
+ * which contains all the symbols that were declared as external except the ones
+ * that were declared but not defined. We redefine variables below to prevent
+ * 'unresolved symbol' errors on Windows. But we have to disable COPY feature
+ * on Windows
+ */
+#ifdef WIN32
+bool				XactReadOnly = false;
+ProtocolVersion		FrontendProtocol = (ProtocolVersion) 0;
+#endif
+
+
 static uint64 PathmanCopyFrom(CopyState cstate,
 							  Relation parent_rel,
 							  List *range_table,
@@ -95,6 +108,11 @@ is_pathman_related_copy(Node *parsetree)
 		}
 
 		elog(DEBUG1, "Overriding default behavior for COPY [%u]", partitioned_table);
+
+		#ifdef WIN32
+			elog(ERROR, "COPY is not supported for partitioned tables on Windows");
+		#endif
+
 		return true;
 	}
 
