@@ -613,27 +613,28 @@ pathman_process_utility_hook(Node *parsetree,
 							 DestReceiver *dest,
 							 char *completionTag)
 {
-	/* Call hooks set by other extensions */
-	if (process_utility_hook_next)
-		process_utility_hook_next(parsetree, queryString,
-								  context, params,
-								  dest, completionTag);
-
 	/* Override standard COPY statement if needed */
 	if (IsPathmanReady() && is_pathman_related_copy(parsetree))
 	{
 		uint64	processed;
 
+		/* Handle our COPY case (and show a special cmd name) */
 		PathmanDoCopy((CopyStmt *) parsetree, queryString, &processed);
 		if (completionTag)
 			snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
 					 "PATHMAN COPY " UINT64_FORMAT, processed);
 
-		return; /* don't call standard_ProcessUtility() */
+		return; /* don't call standard_ProcessUtility() or hooks */
 	}
 
-	/* Call internal implementation */
-	standard_ProcessUtility(parsetree, queryString,
-							context, params,
-							dest, completionTag);
+	/* Call hooks set by other extensions if needed */
+	if (process_utility_hook_next)
+		process_utility_hook_next(parsetree, queryString,
+								  context, params,
+								  dest, completionTag);
+	/* Else call internal implementation */
+	else
+		standard_ProcessUtility(parsetree, queryString,
+								context, params,
+								dest, completionTag);
 }
