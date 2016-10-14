@@ -66,6 +66,8 @@ Modify the **`shared_preload_libraries`** parameter in `postgresql.conf` as foll
 ```
 shared_preload_libraries = 'pg_pathman'
 ```
+> **Important:** `pg_pathman` may have conflicts with some other extensions which uses the same hook functions. For example, `pg_pathman` uses `ProcessUtility_hook` hook to handle COPY queries for partitioned tables. And it could sometimes interfere with `pg_stat_statements` extension which uses the same hook. In this case try to list libraries in certain order: `shared_preload_libraries = 'pg_pathman, pg_stat_statements'`
+
 It is essential to restart the PostgreSQL instance. After that, execute the following query in psql:
 ```plpgsql
 CREATE EXTENSION pg_pathman;
