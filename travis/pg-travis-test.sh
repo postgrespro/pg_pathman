@@ -79,7 +79,7 @@ if [ $status -ne 0 ]; then exit $status; fi
 # add pg_pathman to shared_preload_libraries and restart cluster 'test'
 echo "shared_preload_libraries = 'pg_pathman'" >> $CLUSTER_PATH/postgresql.conf
 echo "port = 55435" >> $CLUSTER_PATH/postgresql.conf
-$pg_ctl_path -D $CLUSTER_PATH start -l postgres.log
+$pg_ctl_path -D $CLUSTER_PATH start -l postgres.log -w
 
 # run regression tests
 PGPORT=55435 PGUSER=$USER PG_CONFIG=$config_path make installcheck USE_PGXS=1 || status=$?
