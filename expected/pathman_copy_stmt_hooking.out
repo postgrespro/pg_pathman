@@ -3,6 +3,7 @@ CREATE EXTENSION pg_pathman;
 CREATE SCHEMA copy_stmt_hooking;
 CREATE TABLE copy_stmt_hooking.test(val int not null, comment text);
 INSERT INTO copy_stmt_hooking.test SELECT generate_series(1, 20), 'comment';
+CREATE INDEX ON copy_stmt_hooking.test(val);
 /* test for RANGE partitioning */
 SELECT create_range_partitions('copy_stmt_hooking.test', 'val', 1, 5);
 NOTICE:  sequence "test_seq" does not exist, skipping
@@ -12,6 +13,7 @@ NOTICE:  sequence "test_seq" does not exist, skipping
 (1 row)
 
 /* perform VACUUM */
+VACUUM FULL copy_stmt_hooking.test;
 VACUUM FULL copy_stmt_hooking.test_1;
 VACUUM FULL copy_stmt_hooking.test_2;
 VACUUM FULL copy_stmt_hooking.test_3;
@@ -99,9 +101,25 @@ SELECT *, tableoid::REGCLASS FROM copy_stmt_hooking.test ORDER BY val;
   16 | test_4  | copy_stmt_hooking.test_4
 (5 rows)
 
-/* COPY TO (partition does not exist) */
+/* COPY TO (partition does not exist, NOT allowed to create partitions) */
+SET pg_pathman.enable_auto_partition = OFF;
 COPY copy_stmt_hooking.test FROM stdin;
 ERROR:  no suitable partition for key '21'
+SELECT * FROM copy_stmt_hooking.test WHERE val > 20;
+ val | comment 
+-----+---------
+(0 rows)
+
+/* COPY TO (partition does not exist, allowed to create partitions) */
+SET pg_pathman.enable_auto_partition = ON;
+COPY copy_stmt_hooking.test FROM stdin;
+SELECT * FROM copy_stmt_hooking.test WHERE val > 20;
+ val |   comment    
+-----+--------------
+  21 | test_no_part
+(1 row)
+
+/* COPY TO (partitioned column is not specified) */
 COPY copy_stmt_hooking.test(comment) FROM stdin;
 ERROR:  partitioned column's value should not be NULL
 /* delete all data */
@@ -109,7 +127,7 @@ SELECT drop_partitions('copy_stmt_hooking.test', true);
 NOTICE:  function copy_stmt_hooking.test_upd_trig_func() does not exist, skipping
  drop_partitions 
 -----------------
-               4
+               5
 (1 row)
 
 /* test for HASH partitioning */
