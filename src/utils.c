@@ -177,65 +177,6 @@ bms_print(Bitmapset *bms)
 }
 
 /*
- * Copied from util/plancat.c
- *
- * Build a targetlist representing the columns of the specified index.
- */
-List *
-build_index_tlist(PlannerInfo *root, IndexOptInfo *index,
-				  Relation heapRelation)
-{
-	List	   *tlist = NIL;
-	Index		varno = index->rel->relid;
-	ListCell   *indexpr_item;
-	int			i;
-
-	indexpr_item = list_head(index->indexprs);
-	for (i = 0; i < index->ncolumns; i++)
-	{
-		int			indexkey = index->indexkeys[i];
-		Expr	   *indexvar;
-
-		if (indexkey != 0)
-		{
-			/* simple column */
-			Form_pg_attribute att_tup;
-
-			if (indexkey < 0)
-				att_tup = SystemAttributeDefinition(indexkey,
-										   heapRelation->rd_rel->relhasoids);
-			else
-				att_tup = heapRelation->rd_att->attrs[indexkey - 1];
-
-			indexvar = (Expr *) makeVar(varno,
-										indexkey,
-										att_tup->atttypid,
-										att_tup->atttypmod,
-										att_tup->attcollation,
-										0);
-		}
-		else
-		{
-			/* expression column */
-			if (indexpr_item == NULL)
-				elog(ERROR, "wrong number of index expressions");
-			indexvar = (Expr *) lfirst(indexpr_item);
-			indexpr_item = lnext(indexpr_item);
-		}
-
-		tlist = lappend(tlist,
-						makeTargetEntry(indexvar,
-										i + 1,
-										NULL,
-										false));
-	}
-	if (indexpr_item != NULL)
-		elog(ERROR, "wrong number of index expressions");
-
-	return tlist;
-}
-
-/*
  * Get BTORDER_PROC for two types described by Oids
  */
 void
@@ -583,16 +524,6 @@ is_date_type_internal(Oid typid)
 		   typid == DATEOID;
 }
 
-/*
- * Check if this is a string type.
- */
-bool
-is_string_type_internal(Oid typid)
-{
-	return typid == TEXTOID ||
-		   typid == CSTRINGOID;
-}
-
 
 /*
  * Try to find binary operator.
@@ -650,20 +581,6 @@ get_rel_name_or_relid(Oid relid)
 		return DatumGetCString(DirectFunctionCall1(oidout,
 												   ObjectIdGetDatum(relid)));
 	return relname;
-}
-
-/*
- * Try to get opname or at least opid as cstring.
- */
-char *
-get_op_name_or_opid(Oid opid)
-{
-	char *opname = get_opname(opid);
-
-	if (!opname)
-		return DatumGetCString(DirectFunctionCall1(oidout,
-												   ObjectIdGetDatum(opid)));
-	return opname;
 }
 
 
