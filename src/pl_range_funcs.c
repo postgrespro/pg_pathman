@@ -104,9 +104,17 @@ check_overlap(PG_FUNCTION_ARGS)
 	RangeEntry			   *ranges;
 	const PartRelationInfo *prel;
 
+
+	/* Try fetching the PartRelationInfo structure */
 	prel = get_pathman_relation_info(parent_oid);
+
+	/* If there's no prel, return FALSE (overlap is not possible) */
+	if (!prel) PG_RETURN_BOOL(false);
+
+	/* Emit an error if it is not partitioned by RANGE */
 	shout_if_prel_is_invalid(parent_oid, prel, PT_RANGE);
 
+	/* Get base type of partitioned column */
 	part_type = getBaseType(prel->atttype);
 
 	/* Fetch comparison functions */
