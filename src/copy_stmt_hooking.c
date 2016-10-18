@@ -466,7 +466,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 		/* Search for a matching partition */
 		rri_holder_child = select_partition_for_insert(prel, &parts_storage,
 													   values[prel->attnum - 1],
-													   estate, false);
+													   estate, true);
 		child_result_rel = rri_holder_child->result_rel_info;
 		estate->es_result_relation_info = child_result_rel;
 
@@ -555,6 +555,9 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 
 	/* Close partitions and destroy hash table */
 	fini_result_parts_storage(&parts_storage, true);
+
+	/* Close parent's indices */
+	ExecCloseIndices(parent_result_rel);
 
 	FreeExecutorState(estate);
 
