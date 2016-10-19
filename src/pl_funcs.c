@@ -768,7 +768,7 @@ invoke_on_partition_created_callback(PG_FUNCTION_ARGS)
 							val;
 
 	/* If there's no callback function specified, we're done */
-	if (cb_oid == InvalidOid)
+	if (PG_ARGISNULL(ARG_CALLBACK) || cb_oid == InvalidOid)
 		PG_RETURN_VOID();
 
 	if (PG_ARGISNULL(ARG_PARENT))
@@ -785,7 +785,7 @@ invoke_on_partition_created_callback(PG_FUNCTION_ARGS)
 
 		case 5:
 			{
-				if (PG_ARGISNULL(ARG_RANGE_START) || PG_ARGISNULL(ARG_RANGE_START))
+				if (PG_ARGISNULL(ARG_RANGE_START) || PG_ARGISNULL(ARG_RANGE_END))
 					elog(ERROR, "both bounds must be provided for RANGE partition");
 
 				part_type = PT_RANGE;
