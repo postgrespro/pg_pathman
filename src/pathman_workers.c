@@ -29,6 +29,7 @@
 #include "storage/dsm.h"
 #include "storage/ipc.h"
 #include "storage/latch.h"
+#include "storage/proc.h"
 #include "utils/builtins.h"
 #include "utils/datum.h"
 #include "utils/memutils.h"
@@ -256,6 +257,12 @@ create_partitions_bg_worker_segment(Oid relid, Datum value, Oid value_type)
 	args->dbid = MyDatabaseId;
 	args->partitioned_table = relid;
 
+#if PG_VERSION_NUM >= 90600
+	/* Initialize args for BecomeLockGroupMember() */
+	args->parallel_master_pgproc = MyProc;
+	args->parallel_master_pid = MyProcPid;
+#endif
+
 	/* Write value-related stuff */
 	args->value_type = value_type;
 	args->value_size = datum_size;
@@ -285,6 +292,11 @@ create_partitions_bg_worker(Oid relid, Datum value, Oid value_type)
 	segment = create_partitions_bg_worker_segment(relid, value, value_type);
 	segment_handle = dsm_segment_handle(segment);
 	bgw_args = (SpawnPartitionArgs *) dsm_segment_address(segment);
+
+#if PG_VERSION_NUM >= 90600
+	/* Become locking group leader */
+	BecomeLockGroupLeader();
+#endif
 
 	/* Start worker and wait for it to finish */
 	start_bg_worker(spawn_partitions_bgw,
@@ -336,6 +348,13 @@ bgw_main_spawn_partitions(Datum main_arg)
 		elog(ERROR, "%s: cannot attach to segment [%u]",
 			 spawn_partitions_bgw, MyProcPid);
 	args = dsm_segment_address(segment);
+
+#if PG_VERSION_NUM >= 90600
+	/* Join locking group. If we can't join the group, quit */
+	if (!BecomeLockGroupMember(args->parallel_master_pgproc,
+							   args->parallel_master_pid))
+		return;
+#endif
 
 	/* Establish connection and start transaction */
 	BackgroundWorkerInitializeConnectionByOid(args->dbid, args->userid);
