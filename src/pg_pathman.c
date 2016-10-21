@@ -436,15 +436,15 @@ inh_translation_list_error:
  * NOTE: This code is partially based on the expand_inherited_rtentry() function.
  */
 int
-append_child_relation(PlannerInfo *root, Index parent_rti,
-					  int ir_index, Oid child_oid, List *wrappers)
+append_child_relation(PlannerInfo *root, Relation parent_relation,
+					  Index parent_rti, int ir_index, Oid child_oid,
+					  List *wrappers)
 {
 	RangeTblEntry  *parent_rte,
 				   *child_rte;
 	RelOptInfo	   *parent_rel,
 				   *child_rel;
-	Relation		parent_relation,
-					child_relation;
+	Relation		child_relation;
 	AppendRelInfo  *appinfo;
 	Index			childRTindex;
 	PlanRowMark	   *parent_rowmark,
@@ -455,8 +455,6 @@ append_child_relation(PlannerInfo *root, Index parent_rti,
 	parent_rel = root->simple_rel_array[parent_rti];
 	parent_rte = root->simple_rte_array[parent_rti];
 
-	/* Parent has already been locked by rewriter */
-	parent_relation = heap_open(parent_rte->relid, NoLock);
 	/* FIXME: acquire a suitable lock on partition */
 	child_relation = heap_open(child_oid, NoLock);
 
@@ -552,7 +550,6 @@ append_child_relation(PlannerInfo *root, Index parent_rti,
 	parent_rel->tuples += child_rel->tuples;
 
 	/* Close child relations, but keep locks */
-	heap_close(parent_relation, NoLock);
 	heap_close(child_relation, NoLock);
 
 
@@ -600,6 +597,7 @@ wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue)
 	/* Return NULL for always true and always false. */
 	if (!found)
 		return NULL;
+
 	if (!lossy)
 	{
 		*alwaysTrue = true;

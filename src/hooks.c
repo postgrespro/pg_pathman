@@ -209,22 +209,22 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 	/* Proceed iff relation 'rel' is partitioned */
 	if ((prel = get_pathman_relation_info(rte->relid)) != NULL)
 	{
-		ListCell	   *lc;
-		Oid			   *children;
-		List		   *ranges,
-					   *wrappers,
-					   *rel_part_clauses = NIL;
+		Relation		parent_rel;				/* parent's relation (heap */
+		Oid			   *children;				/* selected children oids */
+		List		   *ranges,					/* a list of IndexRanges */
+					   *wrappers,				/* a list of WrapperNodes */
+					   *rel_part_clauses = NIL;	/* clauses with part. column */
 		PathKey		   *pathkeyAsc = NULL,
 					   *pathkeyDesc = NULL;
-		double			paramsel = 1.0;
+		double			paramsel = 1.0;			/* default part selectivity */
 		WalkerContext	context;
+		ListCell	   *lc;
 		int				i;
 
 		if (prel->parttype == PT_RANGE)
 		{
 			/*
-			 * Get pathkeys for ascending and descending sort by partition
-			 * column
+			 * Get pathkeys for ascending and descending sort by partitioned column.
 			 */
 			List		   *pathkeys;
 			Var			   *var;
@@ -273,13 +273,12 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			ranges = irange_list_intersect(ranges, wrap->rangeset);
 		}
 
-		/*
-		 * Expand simple_rte_array and simple_rel_array
-		 */
+		/* Get number of selected partitions */
 		len = irange_list_length(ranges);
 		if (prel->enable_parent)
-			len++;
+			len++; /* add parent too */
 
+		/* Expand simple_rte_array and simple_rel_array */
 		if (len > 0)
 		{
 			/* Expand simple_rel_array and simple_rte_array */
@@ -306,26 +305,32 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			root->simple_rte_array = new_rte_array;
 		}
 
-		/* Add parent if needed */
+		/* Parent has already been locked by rewriter */
+		parent_rel = heap_open(rte->relid, NoLock);
+
+		/* Add parent if asked to */
 		if (prel->enable_parent)
-			append_child_relation(root, rti, 0, rte->relid, NULL);
+			append_child_relation(root, parent_rel, rti, 0, rte->relid, NULL);
 
 		/*
-		 * Iterate all indexes in rangeset and append corresponding child
-		 * relations.
+		 * Iterate all indexes in rangeset and append corresponding child relations.
 		 */
 		foreach(lc, ranges)
 		{
 			IndexRange irange = lfirst_irange(lc);
 
 			for (i = irange.ir_lower; i <= irange.ir_upper; i++)
-				append_child_relation(root, rti, i, children[i], wrappers);
+				append_child_relation(root, parent_rel, rti, i, children[i], wrappers);
 		}
 
-		/* Clear old path list */
-		list_free(rel->pathlist);
+		/* Now close parent relation */
+		heap_close(parent_rel, NoLock);
 
+		/* Clear path list and make it point to NIL */
+		list_free_deep(rel->pathlist);
 		rel->pathlist = NIL;
+
+		/* Generate new paths using the rels we've just added */
 		set_append_rel_pathlist(root, rel, rti, pathkeyAsc, pathkeyDesc);
 		set_append_rel_size_compat(root, rel, rti);
 
@@ -342,6 +347,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		if (!clause_contains_params((Node *) rel_part_clauses))
 			return;
 
+		/* Generate Runtime[Merge]Append paths if needed */
 		foreach (lc, rel->pathlist)
 		{
 			AppendPath	   *cur_path = (AppendPath *) lfirst(lc);
