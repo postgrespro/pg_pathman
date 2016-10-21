@@ -123,8 +123,8 @@ extern List			   *inheritance_disabled_relids;
 extern PathmanState    *pmstate;
 
 
-int append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
-						  RangeTblEntry *rte, int index, Oid childOID, List *wrappers);
+int append_child_relation(PlannerInfo *root, Index parent_rti,
+						  int ir_index, Oid child_oid, List *wrappers);
 
 search_rangerel_result search_range_partition_eq(const Datum value,
 												 FmgrInfo *cmp_func,
@@ -142,8 +142,7 @@ void disable_inheritance_subselect(Query *parse);
 void set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
 						 Index rti, RangeTblEntry *rte);
 void set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
-							 RangeTblEntry *rte, PathKey *pathkeyAsc,
-							 PathKey *pathkeyDesc);
+							 PathKey *pathkeyAsc, PathKey *pathkeyDesc);
 
 typedef struct
 {

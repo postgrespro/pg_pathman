@@ -245,9 +245,7 @@ get_pathman_relation_info(Oid relid)
 
 			/* Refresh partitioned table cache entry (might turn NULL) */
 			/* TODO: possible refactoring, pass found 'prel' instead of searching */
-			prel = refresh_pathman_relation_info(relid,
-												 part_type,
-												 attname);
+			prel = refresh_pathman_relation_info(relid, part_type, attname);
 		}
 		/* Else clear remaining cache entry */
 		else remove_pathman_relation_info(relid);

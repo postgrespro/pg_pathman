@@ -19,9 +19,9 @@
 #include "optimizer/paths.h"
 
 
-extern void set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel,
-									   Index rti, RangeTblEntry *rte);
-extern void copy_targetlist_compat(RelOptInfo *dest, RelOptInfo *rel);
+void set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel, Index rti);
+void adjust_targetlist_compat(PlannerInfo *root, RelOptInfo *dest,
+							  RelOptInfo *rel, AppendRelInfo *appinfo);
 
 #if PG_VERSION_NUM >= 90600
 

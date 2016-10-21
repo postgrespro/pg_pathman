@@ -82,16 +82,7 @@ SET enable_seqscan = ON;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2 OR value = 1;
--- Temporarily commented out
--- EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value BETWEEN 1 AND 2;
---                    QUERY PLAN
--- -------------------------------------------------
---  Append
---    ->  Seq Scan on hash_rel_1
---          Filter: ((value >= 1) AND (value <= 2))
---    ->  Seq Scan on hash_rel_2
---          Filter: ((value >= 1) AND (value <= 2))
--- (5 rows)
+
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > 2500;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 1000 AND id < 3000;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 1500 AND id < 2500;
@@ -330,7 +321,8 @@ DROP TABLE test."RangeRel" CASCADE;
 
 DROP EXTENSION pg_pathman;
 
-/* Test that everithing works fine without schemas */
+
+/* Test that everything works fine without schemas */
 CREATE EXTENSION pg_pathman;
 
 /* Hash */
@@ -378,6 +370,7 @@ SELECT drop_partitions('range_rel', TRUE);
 SELECT create_partitions_from_range('range_rel', 'dt', '2015-01-01'::date, '2015-12-01'::date, '1 month'::interval);
 EXPLAIN (COSTS OFF) SELECT * FROM range_rel WHERE dt = '2015-12-15';
 
+/* Test foreign keys */
 CREATE TABLE messages(id SERIAL PRIMARY KEY, msg TEXT);
 CREATE TABLE replies(id SERIAL PRIMARY KEY, message_id INTEGER REFERENCES messages(id),  msg TEXT);
 INSERT INTO messages SELECT g, md5(g::text) FROM generate_series(1, 10) as g;
@@ -386,6 +379,20 @@ SELECT create_range_partitions('messages', 'id', 1, 100, 2);
 ALTER TABLE replies DROP CONSTRAINT replies_message_id_fkey;
 SELECT create_range_partitions('messages', 'id', 1, 100, 2);
 EXPLAIN (COSTS OFF) SELECT * FROM messages;
+DROP TABLE messages, replies CASCADE;
+
+/* Special test case (quals generation) -- fixing commit f603e6c5 */
+CREATE TABLE special_case_1_ind_o_s(val serial, comment text);
+INSERT INTO special_case_1_ind_o_s SELECT generate_series(1, 200), NULL;
+SELECT create_range_partitions('special_case_1_ind_o_s', 'val', 1, 50);
+INSERT INTO special_case_1_ind_o_s_2 SELECT 75 FROM generate_series(1, 6000);
+CREATE INDEX ON special_case_1_ind_o_s_2 (val, comment);
+VACUUM ANALYZE special_case_1_ind_o_s_2;
+EXPLAIN (COSTS OFF) SELECT * FROM special_case_1_ind_o_s WHERE val < 75 AND comment = 'a';
+SELECT set_enable_parent('special_case_1_ind_o_s', true);
+EXPLAIN (COSTS OFF) SELECT * FROM special_case_1_ind_o_s WHERE val < 75 AND comment = 'a';
+SELECT set_enable_parent('special_case_1_ind_o_s', false);
+EXPLAIN (COSTS OFF) SELECT * FROM special_case_1_ind_o_s WHERE val < 75 AND comment = 'a';
 
 
 DROP SCHEMA test CASCADE;

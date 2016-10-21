@@ -308,7 +308,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 
 		/* Add parent if needed */
 		if (prel->enable_parent)
-			append_child_relation(root, rel, rti, rte, 0, rte->relid, NULL);
+			append_child_relation(root, rti, 0, rte->relid, NULL);
 
 		/*
 		 * Iterate all indexes in rangeset and append corresponding child
@@ -316,18 +316,18 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		 */
 		foreach(lc, ranges)
 		{
-			IndexRange	irange = lfirst_irange(lc);
+			IndexRange irange = lfirst_irange(lc);
 
 			for (i = irange.ir_lower; i <= irange.ir_upper; i++)
-				append_child_relation(root, rel, rti, rte, i, children[i], wrappers);
+				append_child_relation(root, rti, i, children[i], wrappers);
 		}
 
 		/* Clear old path list */
 		list_free(rel->pathlist);
 
 		rel->pathlist = NIL;
-		set_append_rel_pathlist(root, rel, rti, rte, pathkeyAsc, pathkeyDesc);
-		set_append_rel_size_compat(root, rel, rti, rte);
+		set_append_rel_pathlist(root, rel, rti, pathkeyAsc, pathkeyDesc);
+		set_append_rel_size_compat(root, rel, rti);
 
 		/* No need to go further (both nodes are disabled), return */
 		if (!(pg_pathman_enable_runtimeappend ||

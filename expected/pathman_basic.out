@@ -268,16 +268,6 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2 OR value = 1;
          Filter: (value = 1)
 (5 rows)
 
--- Temporarily commented out
--- EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value BETWEEN 1 AND 2;
---                    QUERY PLAN
--- -------------------------------------------------
---  Append
---    ->  Seq Scan on hash_rel_1
---          Filter: ((value >= 1) AND (value <= 2))
---    ->  Seq Scan on hash_rel_2
---          Filter: ((value >= 1) AND (value <= 2))
--- (5 rows)
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > 2500;
             QUERY PLAN             
 -----------------------------------
@@ -1217,7 +1207,7 @@ SELECT pathman.create_partitions_from_range('test."RangeRel"', 'id', 1, 300, 100
 DROP TABLE test."RangeRel" CASCADE;
 NOTICE:  drop cascades to 3 other objects
 DROP EXTENSION pg_pathman;
-/* Test that everithing works fine without schemas */
+/* Test that everything works fine without schemas */
 CREATE EXTENSION pg_pathman;
 /* Hash */
 CREATE TABLE hash_rel (
@@ -1405,6 +1395,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM range_rel WHERE dt = '2015-12-15';
          Filter: (dt = 'Tue Dec 15 00:00:00 2015'::timestamp without time zone)
 (3 rows)
 
+/* Test foreign keys */
 CREATE TABLE messages(id SERIAL PRIMARY KEY, msg TEXT);
 CREATE TABLE replies(id SERIAL PRIMARY KEY, message_id INTEGER REFERENCES messages(id),  msg TEXT);
 INSERT INTO messages SELECT g, md5(g::text) FROM generate_series(1, 10) as g;
@@ -1427,6 +1418,65 @@ EXPLAIN (COSTS OFF) SELECT * FROM messages;
    ->  Seq Scan on messages_1
    ->  Seq Scan on messages_2
 (3 rows)
+
+DROP TABLE messages, replies CASCADE;
+NOTICE:  drop cascades to 2 other objects
+/* Special test case (quals generation) -- fixing commit f603e6c5 */
+CREATE TABLE special_case_1_ind_o_s(val serial, comment text);
+INSERT INTO special_case_1_ind_o_s SELECT generate_series(1, 200), NULL;
+SELECT create_range_partitions('special_case_1_ind_o_s', 'val', 1, 50);
+NOTICE:  sequence "special_case_1_ind_o_s_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                       4
+(1 row)
+
+INSERT INTO special_case_1_ind_o_s_2 SELECT 75 FROM generate_series(1, 6000);
+CREATE INDEX ON special_case_1_ind_o_s_2 (val, comment);
+VACUUM ANALYZE special_case_1_ind_o_s_2;
+EXPLAIN (COSTS OFF) SELECT * FROM special_case_1_ind_o_s WHERE val < 75 AND comment = 'a';
+                                            QUERY PLAN                                            
+--------------------------------------------------------------------------------------------------
+ Append
+   ->  Seq Scan on special_case_1_ind_o_s_1
+         Filter: (comment = 'a'::text)
+   ->  Index Only Scan using special_case_1_ind_o_s_2_val_comment_idx on special_case_1_ind_o_s_2
+         Index Cond: ((val < 75) AND (comment = 'a'::text))
+(5 rows)
+
+SELECT set_enable_parent('special_case_1_ind_o_s', true);
+ set_enable_parent 
+-------------------
+ 
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM special_case_1_ind_o_s WHERE val < 75 AND comment = 'a';
+                                            QUERY PLAN                                            
+--------------------------------------------------------------------------------------------------
+ Append
+   ->  Seq Scan on special_case_1_ind_o_s
+         Filter: ((val < 75) AND (comment = 'a'::text))
+   ->  Seq Scan on special_case_1_ind_o_s_1
+         Filter: (comment = 'a'::text)
+   ->  Index Only Scan using special_case_1_ind_o_s_2_val_comment_idx on special_case_1_ind_o_s_2
+         Index Cond: ((val < 75) AND (comment = 'a'::text))
+(7 rows)
+
+SELECT set_enable_parent('special_case_1_ind_o_s', false);
+ set_enable_parent 
+-------------------
+ 
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM special_case_1_ind_o_s WHERE val < 75 AND comment = 'a';
+                                            QUERY PLAN                                            
+--------------------------------------------------------------------------------------------------
+ Append
+   ->  Seq Scan on special_case_1_ind_o_s_1
+         Filter: (comment = 'a'::text)
+   ->  Index Only Scan using special_case_1_ind_o_s_2_val_comment_idx on special_case_1_ind_o_s_2
+         Index Cond: ((val < 75) AND (comment = 'a'::text))
+(5 rows)
 
 DROP SCHEMA test CASCADE;
 NOTICE:  drop cascades to 13 other objects

@@ -84,8 +84,11 @@ static WrapperNode *handle_opexpr(const OpExpr *expr, WalkerContext *context);
 static WrapperNode *handle_boolexpr(const BoolExpr *expr, WalkerContext *context);
 static WrapperNode *handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context);
 static double estimate_paramsel_using_prel(const PartRelationInfo *prel, int strategy);
-static RestrictInfo *rebuild_restrictinfo(Node *clause, RestrictInfo *old_rinfo);
 static bool pull_var_param(const WalkerContext *ctx, const OpExpr *expr, Node **var_ptr, Node **param_ptr);
+
+static List *make_inh_translation_list_simplified(Relation oldrelation,
+												  Relation newrelation,
+												  Index newvarno);
 
 /* copied from allpaths.h */
 static void set_plain_rel_size(PlannerInfo *root, RelOptInfo *rel,
@@ -351,171 +354,219 @@ handle_modification_query(Query *parse)
 }
 
 /*
+ * Build the list of translations from parent Vars to child Vars
+ * for an inheritance child.
+ *
+ * NOTE: Inspired by function make_inh_translation_list().
+ */
+static List *
+make_inh_translation_list_simplified(Relation oldrelation,
+									 Relation newrelation,
+									 Index newvarno)
+{
+	List	   *vars = NIL;
+	TupleDesc	old_tupdesc = RelationGetDescr(oldrelation);
+	TupleDesc	new_tupdesc = RelationGetDescr(newrelation);
+	int			oldnatts = RelationGetNumberOfAttributes(oldrelation);
+	int			newnatts = RelationGetNumberOfAttributes(newrelation);
+	int			old_attno;
+
+	/* Amounts of attributes must match */
+	if (oldnatts != newnatts)
+		goto inh_translation_list_error;
+
+	/* We expect that parent and partition have an identical tupdesc */
+	for (old_attno = 0; old_attno < oldnatts; old_attno++)
+	{
+		Form_pg_attribute	old_att,
+							new_att;
+		Oid					atttypid;
+		int32				atttypmod;
+		Oid					attcollation;
+
+		old_att = old_tupdesc->attrs[old_attno];
+		new_att = new_tupdesc->attrs[old_attno];
+
+		/* Attribute definitions must match */
+		if (old_att->attisdropped != new_att->attisdropped ||
+			old_att->atttypid != new_att->atttypid ||
+			old_att->atttypmod != new_att->atttypmod ||
+			old_att->attcollation != new_att->attcollation ||
+			strcmp(NameStr(old_att->attname), NameStr(new_att->attname)) != 0)
+		{
+			goto inh_translation_list_error;
+		}
+
+		if (old_att->attisdropped)
+		{
+			/* Just put NULL into this list entry */
+			vars = lappend(vars, NULL);
+			continue;
+		}
+
+		atttypid = old_att->atttypid;
+		atttypmod = old_att->atttypmod;
+		attcollation = old_att->attcollation;
+
+		vars = lappend(vars, makeVar(newvarno,
+									 (AttrNumber) (old_attno + 1),
+									 atttypid,
+									 atttypmod,
+									 attcollation,
+									 0));
+	}
+
+	/* Everything's ok */
+	return vars;
+
+/* We end up here if any attribute differs */
+inh_translation_list_error:
+	elog(ERROR, "partition \"%s\" must have exact"
+				"same structure as parent \"%s\"",
+		 RelationGetRelationName(newrelation),
+		 RelationGetRelationName(oldrelation));
+
+	return NIL; /* keep compiler happy */
+}
+
+/*
  * Creates child relation and adds it to root.
- * Returns child index in simple_rel_array
+ * Returns child index in simple_rel_array.
+ *
+ * NOTE: This code is partially based on the expand_inherited_rtentry() function.
  */
 int
-append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
-	RangeTblEntry *rte, int index, Oid childOid, List *wrappers)
+append_child_relation(PlannerInfo *root, Index parent_rti,
+					  int ir_index, Oid child_oid, List *wrappers)
 {
-	RangeTblEntry  *childrte;
-	RelOptInfo	   *childrel;
-	Index			childRTindex;
+	RangeTblEntry  *parent_rte,
+				   *child_rte;
+	RelOptInfo	   *parent_rel,
+				   *child_rel;
+	Relation		parent_relation,
+					child_relation;
 	AppendRelInfo  *appinfo;
+	Index			childRTindex;
+	PlanRowMark	   *parent_rowmark,
+				   *child_rowmark;
 	ListCell	   *lc,
 				   *lc2;
-	Relation		newrelation;
-	PlanRowMark	   *parent_rowmark;
-	PlanRowMark	   *child_rowmark;
-	AttrNumber		i;
 
+	parent_rel = root->simple_rel_array[parent_rti];
+	parent_rte = root->simple_rte_array[parent_rti];
+
+	/* Parent has already been locked by rewriter */
+	parent_relation = heap_open(parent_rte->relid, NoLock);
 	/* FIXME: acquire a suitable lock on partition */
-	newrelation = heap_open(childOid, NoLock);
+	child_relation = heap_open(child_oid, NoLock);
 
-	/*
-	 * Create RangeTblEntry for child relation.
-	 * This code partially based on expand_inherited_rtentry() function.
-	 */
-	childrte = copyObject(rte);
-	childrte->relid = childOid;
-	childrte->relkind = newrelation->rd_rel->relkind;
-	childrte->inh = false;
-	childrte->requiredPerms = 0;
-	root->parse->rtable = lappend(root->parse->rtable, childrte);
+	/* Create RangeTblEntry for child relation */
+	child_rte = copyObject(parent_rte);
+	child_rte->relid = child_oid;
+	child_rte->relkind = child_relation->rd_rel->relkind;
+	child_rte->inh = false;
+	child_rte->requiredPerms = 0;
+
+	/* Add 'child_rte' to rtable and 'root->simple_rte_array' */
+	root->parse->rtable = lappend(root->parse->rtable, child_rte);
 	childRTindex = list_length(root->parse->rtable);
-	root->simple_rte_array[childRTindex] = childrte;
+	root->simple_rte_array[childRTindex] = child_rte;
 
-	/* Create RelOptInfo */
-	childrel = build_simple_rel(root, childRTindex, RELOPT_OTHER_MEMBER_REL);
+	/* Create RelOptInfo for this child (and make some estimates as well) */
+	child_rel = build_simple_rel(root, childRTindex, RELOPT_OTHER_MEMBER_REL);
 
-	/* Copy targetlist */
-	copy_targetlist_compat(childrel, rel);
+	/* Increase total_table_pages using the 'child_rel' */
+	root->total_table_pages += (double) child_rel->pages;
 
-	/* Copy attr_needed & attr_widths */
-	childrel->attr_needed = (Relids *)
-		palloc0((rel->max_attr - rel->min_attr + 1) * sizeof(Relids));
-	childrel->attr_widths = (int32 *)
-		palloc0((rel->max_attr - rel->min_attr + 1) * sizeof(int32));
 
-	for (i = 0; i < rel->max_attr - rel->min_attr + 1; i++)
-		childrel->attr_needed[i] = bms_copy(rel->attr_needed[i]);
+	/* Build an AppendRelInfo for this child */
+	appinfo = makeNode(AppendRelInfo);
+	appinfo->parent_relid = parent_rti;
+	appinfo->child_relid = childRTindex;
+	appinfo->parent_reloid = parent_rte->relid;
+	appinfo->translated_vars = make_inh_translation_list_simplified(parent_relation,
+																	child_relation,
+																	childRTindex);
 
-	memcpy(childrel->attr_widths, rel->attr_widths,
-		   (rel->max_attr - rel->min_attr + 1) * sizeof(int32));
+	/* Now append 'appinfo' to 'root->append_rel_list' */
+	root->append_rel_list = lappend(root->append_rel_list, appinfo);
+
+	/* Adjust target list for this child */
+	adjust_targetlist_compat(root, child_rel, parent_rel, appinfo);
 
 	/*
-	 * Copy restrictions. If it's not the parent table then copy only those
-	 * restrictions that reference to this partition
+	 * Copy restrictions. If it's not the parent table, copy only
+	 * those restrictions that are related to this partition.
 	 */
-	childrel->baserestrictinfo = NIL;
-	if (rte->relid != childOid)
+	child_rel->baserestrictinfo = NIL;
+	if (parent_rte->relid != child_oid)
 	{
-		forboth(lc, wrappers, lc2, rel->baserestrictinfo)
+		List *childquals = NIL;
+
+		forboth(lc, wrappers, lc2, parent_rel->baserestrictinfo)
 		{
-			bool alwaysTrue;
-			WrapperNode *wrap = (WrapperNode *) lfirst(lc);
-			Node *new_clause = wrapper_make_expression(wrap, index, &alwaysTrue);
-			RestrictInfo *old_rinfo = (RestrictInfo *) lfirst(lc2);
+			WrapperNode	   *wrap = (WrapperNode *) lfirst(lc);
+			Node		   *new_clause;
+			bool			always_true;
 
-			if (alwaysTrue)
-			{
+			/* Generate a set of clauses for this child using WrapperNode */
+			new_clause = wrapper_make_expression(wrap, ir_index, &always_true);
+
+			/* Don't add this clause if it's always true */
+			if (always_true)
 				continue;
-			}
+
+			/* Clause should not be NULL */
 			Assert(new_clause);
-
-			if (and_clause((Node *) new_clause))
-			{
-				ListCell *alc;
-
-				foreach(alc, ((BoolExpr *) new_clause)->args)
-				{
-					Node *arg = (Node *) lfirst(alc);
-					RestrictInfo *new_rinfo = rebuild_restrictinfo(arg, old_rinfo);
-
-					change_varnos((Node *)new_rinfo, rel->relid, childrel->relid);
-					childrel->baserestrictinfo = lappend(childrel->baserestrictinfo,
-														 new_rinfo);
-				}
-			}
-			else
-			{
-				RestrictInfo *new_rinfo = rebuild_restrictinfo(new_clause, old_rinfo);
-
-				/* Replace old relids with new ones */
-				change_varnos((Node *)new_rinfo, rel->relid, childrel->relid);
-
-				childrel->baserestrictinfo = lappend(childrel->baserestrictinfo,
-													 (void *) new_rinfo);
-			}
+			childquals = lappend(childquals, new_clause);
 		}
+
+		childquals = (List *) adjust_appendrel_attrs(root,
+													 (Node *) childquals,
+													 appinfo);
+		childquals = make_restrictinfos_from_actual_clauses(root, childquals);
+		child_rel->baserestrictinfo = childquals;
 	}
-	/* If it's the parent table then copy all restrictions */
+	/* If it's the parent table, copy all restrictions */
 	else
 	{
-		foreach(lc, rel->baserestrictinfo)
-		{
-			RestrictInfo *rinfo = (RestrictInfo *) lfirst(lc);
-			RestrictInfo *new_rinfo = (RestrictInfo *) copyObject(rinfo);
+		List *childquals = NIL;
 
-			change_varnos((Node *)new_rinfo, rel->relid, childrel->relid);
-			childrel->baserestrictinfo = lappend(childrel->baserestrictinfo,
-												 (void *) new_rinfo);
-		}
+		childquals = get_all_actual_clauses(parent_rel->baserestrictinfo);
+		childquals = (List *) adjust_appendrel_attrs(root,
+													 (Node *) childquals,
+													 appinfo);
+		childquals = make_restrictinfos_from_actual_clauses(root, childquals);
+		child_rel->baserestrictinfo = childquals;
 	}
 
-	/* Build an AppendRelInfo for this parent and child */
-	appinfo = makeNode(AppendRelInfo);
-	appinfo->parent_relid = rti;
-	appinfo->child_relid = childRTindex;
-	appinfo->parent_reloid = rte->relid;
-	root->append_rel_list = lappend(root->append_rel_list, appinfo);
-	root->total_table_pages += (double) childrel->pages;
-
-	/* Add equivalence members */
-	foreach(lc, root->eq_classes)
-	{
-		EquivalenceClass *cur_ec = (EquivalenceClass *) lfirst(lc);
-
-		/* Copy equivalence member from parent and make some modifications */
-		foreach(lc2, cur_ec->ec_members)
-		{
-			EquivalenceMember *cur_em = (EquivalenceMember *) lfirst(lc2);
-			EquivalenceMember *em;
-
-			if (!bms_is_member(rti, cur_em->em_relids))
-				continue;
-
-			em = makeNode(EquivalenceMember);
-			em->em_expr = copyObject(cur_em->em_expr);
-			change_varnos((Node *) em->em_expr, rti, childRTindex);
-			em->em_relids = bms_add_member(NULL, childRTindex);
-			em->em_nullable_relids = cur_em->em_nullable_relids;
-			em->em_is_const = false;
-			em->em_is_child = true;
-			em->em_datatype = cur_em->em_datatype;
-			cur_ec->ec_members = lappend(cur_ec->ec_members, em);
-		}
-	}
-	childrel->has_eclass_joins = rel->has_eclass_joins;
+	/*
+	 * We have to make child entries in the EquivalenceClass data
+	 * structures as well.
+	 */
+	if (parent_rel->has_eclass_joins || has_useful_pathkeys(root, parent_rel))
+		add_child_rel_equivalences(root, appinfo, parent_rel, child_rel);
+	child_rel->has_eclass_joins = parent_rel->has_eclass_joins;
 
 	/* Recalc parent relation tuples count */
-	rel->tuples += childrel->tuples;
+	parent_rel->tuples += child_rel->tuples;
 
 	/* Close child relations, but keep locks */
-	heap_close(newrelation, NoLock);
+	heap_close(parent_relation, NoLock);
+	heap_close(child_relation, NoLock);
 
 
 	/* Create rowmarks required for child rels */
-	parent_rowmark = get_plan_rowmark(root->rowMarks, rti);
+	parent_rowmark = get_plan_rowmark(root->rowMarks, parent_rti);
 	if (parent_rowmark)
 	{
 		child_rowmark = makeNode(PlanRowMark);
 
 		child_rowmark->rti = childRTindex;
-		child_rowmark->prti = rti;
+		child_rowmark->prti = parent_rti;
 		child_rowmark->rowmarkId = parent_rowmark->rowmarkId;
 		/* Reselect rowmark type, because relkind might not match parent */
-		child_rowmark->markType = select_rowmark_type(childrte,
+		child_rowmark->markType = select_rowmark_type(child_rte,
 													  parent_rowmark->strength);
 		child_rowmark->allMarkTypes = (1 << child_rowmark->markType);
 		child_rowmark->strength = parent_rowmark->strength;
@@ -531,19 +582,6 @@ append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	}
 
 	return childRTindex;
-}
-
-/* Create new restriction based on clause */
-static RestrictInfo *
-rebuild_restrictinfo(Node *clause, RestrictInfo *old_rinfo)
-{
-	return make_restrictinfo((Expr *) clause,
-							 old_rinfo->is_pushed_down,
-							 old_rinfo->outerjoin_delayed,
-							 old_rinfo->pseudoconstant,
-							 old_rinfo->required_relids,
-							 old_rinfo->outer_relids,
-							 old_rinfo->nullable_relids);
 }
 
 /* Convert wrapper into expression for given index */
@@ -575,8 +613,8 @@ wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue)
 
 		if (expr->boolop == OR_EXPR || expr->boolop == AND_EXPR)
 		{
-			ListCell *lc;
-			List *args = NIL;
+			ListCell   *lc;
+			List	   *args = NIL;
 
 			foreach (lc, wrap->args)
 			{
@@ -1796,8 +1834,7 @@ set_foreign_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
  *	  Build access paths for an "append relation"
  */
 void
-set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel,
-						Index rti, RangeTblEntry *rte,
+set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 						PathKey *pathkeyAsc, PathKey *pathkeyDesc)
 {
 	Index		parentRTindex = rti;

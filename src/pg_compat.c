@@ -11,6 +11,7 @@
 #include "pg_compat.h"
 
 #include "optimizer/pathnode.h"
+#include "optimizer/prep.h"
 #include "port.h"
 #include "utils.h"
 
@@ -18,8 +19,7 @@
 
 
 void
-set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel,
-						   Index rti, RangeTblEntry *rte)
+set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel, Index rti)
 {
 	double		parent_rows = 0;
 	double		parent_size = 0;
@@ -63,31 +63,21 @@ set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel,
 	rel->tuples = parent_rows;
 }
 
-extern
-void copy_targetlist_compat(RelOptInfo *dest, RelOptInfo *rel)
+void
+adjust_targetlist_compat(PlannerInfo *root, RelOptInfo *dest,
+						 RelOptInfo *rel, AppendRelInfo *appinfo)
 {
-	ListCell	   *lc;
-
 #if PG_VERSION_NUM >= 90600
-	dest->reltarget->exprs = NIL;
-	foreach(lc, rel->reltarget->exprs)
+	dest->reltarget->exprs = (List *)
+			adjust_appendrel_attrs(root,
+								   (Node *) rel->reltarget->exprs,
+								   appinfo);
 #else
-	dest->reltargetlist = NIL;
-	foreach(lc, rel->reltargetlist)
+	dest->reltargetlist = (List *)
+			adjust_appendrel_attrs(root,
+								   (Node *) rel->reltargetlist,
+								   appinfo);
 #endif
-	{
-		Node *new_target;
-		Node *node;
-
-		node = (Node *) lfirst(lc);
-		new_target = copyObject(node);
-		change_varnos(new_target, rel->relid, dest->relid);
-#if PG_VERSION_NUM >= 90600
-		dest->reltarget->exprs = lappend(dest->reltarget->exprs, new_target);
-#else
-		dest->reltargetlist = lappend(dest->reltargetlist, new_target);
-#endif
-	}
 }
 
 #if PG_VERSION_NUM >= 90600

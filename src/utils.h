@@ -32,7 +32,6 @@ typedef struct
 void plan_tree_walker(Plan *plan,
 					  void (*visitor) (Plan *plan, void *context),
 					  void *context);
-void change_varnos(Node *node, Oid old_varno, Oid new_varno);
 
 /*
  * Rowmark processing.
