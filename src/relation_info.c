@@ -23,9 +23,10 @@
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
 #include "utils/hsearch.h"
-#include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/snapmgr.h"
+#include "utils/syscache.h"
+#include "utils/lsyscache.h"
 #include "utils/typcache.h"
 
 
@@ -144,8 +145,18 @@ refresh_pathman_relation_info(Oid relid,
 	}
 	else LockRelationOid(relid, lockmode);
 
+	/* Check if parent exists */
+	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
+	{
+		/* Nope, it doesn't, remove this entry and exit */
+		UnlockRelationOid(relid, lockmode);
+		remove_pathman_relation_info(relid);
+		return NULL; /* exit */
+	}
+
 	/* Try searching for children (don't wait if we can't lock) */
-	switch (find_inheritance_children_array(relid, lockmode, true,
+	switch (find_inheritance_children_array(relid, lockmode,
+											allow_incomplete,
 											&prel_children_count,
 											&prel_children))
 	{
