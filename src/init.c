@@ -752,7 +752,9 @@ read_pathman_config(void)
 		}
 
 		/* Create or update PartRelationInfo for this partitioned table */
-		refresh_pathman_relation_info(relid, parttype, text_to_cstring(attname));
+		refresh_pathman_relation_info(relid, parttype,
+									  text_to_cstring(attname),
+									  true); /* allow lazy prel loading */
 	}
 
 	/* Clean resources */

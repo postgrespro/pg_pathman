@@ -120,7 +120,8 @@ PrelLastChild(const PartRelationInfo *prel)
 
 const PartRelationInfo *refresh_pathman_relation_info(Oid relid,
 													  PartType partitioning_type,
-													  const char *part_column_name);
+													  const char *part_column_name,
+													  bool allow_incomplete);
 void invalidate_pathman_relation_info(Oid relid, bool *found);
 void remove_pathman_relation_info(Oid relid);
 const PartRelationInfo *get_pathman_relation_info(Oid relid);

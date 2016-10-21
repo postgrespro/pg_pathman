@@ -67,7 +67,8 @@ static Oid get_parent_of_partition_internal(Oid partition,
 const PartRelationInfo *
 refresh_pathman_relation_info(Oid relid,
 							  PartType partitioning_type,
-							  const char *part_column_name)
+							  const char *part_column_name,
+							  bool allow_incomplete)
 {
 	const LOCKMODE			lockmode = AccessShareLock;
 	const TypeCacheEntry   *typcache;
@@ -103,14 +104,14 @@ refresh_pathman_relation_info(Oid relid,
 	}
 
 	/* First we assume that this entry is invalid */
-	prel->valid = false;
+	prel->valid		= false;
 
 	/* Make both arrays point to NULL */
-	prel->children = NULL;
-	prel->ranges = NULL;
+	prel->children	= NULL;
+	prel->ranges	= NULL;
 
 	/* Set partitioning type */
-	prel->parttype = partitioning_type;
+	prel->parttype	= partitioning_type;
 
 	/* Initialize PartRelationInfo using syscache & typcache */
 	prel->attnum	= get_attnum(relid, part_column_name);
@@ -245,9 +246,8 @@ get_pathman_relation_info(Oid relid)
 
 			/* Refresh partitioned table cache entry (might turn NULL) */
 			/* TODO: possible refactoring, pass found 'prel' instead of searching */
-			prel = refresh_pathman_relation_info(relid,
-												 part_type,
-												 attname);
+			prel = refresh_pathman_relation_info(relid, part_type,
+												 attname, false);
 		}
 		/* Else clear remaining cache entry */
 		else remove_pathman_relation_info(relid);
@@ -611,10 +611,10 @@ try_perform_parent_refresh(Oid parent)
 		parttype = DatumGetPartType(values[Anum_pathman_config_parttype - 1]);
 		attname = DatumGetTextP(values[Anum_pathman_config_attname - 1]);
 
-		/* If anything went wrong, return false (actually, it might throw ERROR) */
-		if (!PrelIsValid(refresh_pathman_relation_info(parent, parttype,
-													   text_to_cstring(attname))))
-			return false;
+		/* If anything went wrong, return false (actually, it might emit ERROR) */
+		refresh_pathman_relation_info(parent, parttype,
+									  text_to_cstring(attname),
+									  true); /* allow lazy */
 	}
 	/* Not a partitioned relation */
 	else return false;
