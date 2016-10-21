@@ -75,16 +75,16 @@ refresh_pathman_relation_info(Oid relid,
 	Oid					   *prel_children;
 	uint32					prel_children_count = 0,
 							i;
-	bool					found;
+	bool					found_entry;
 	PartRelationInfo	   *prel;
 	Datum					param_values[Natts_pathman_config_params];
 	bool					param_isnull[Natts_pathman_config_params];
 
 	prel = (PartRelationInfo *) hash_search(partitioned_rels,
 											(const void *) &relid,
-											HASH_ENTER, &found);
+											HASH_ENTER, &found_entry);
 	elog(DEBUG2,
-		 found ?
+		 found_entry ?
 			 "Refreshing record for relation %u in pg_pathman's cache [%u]" :
 			 "Creating new record for relation %u in pg_pathman's cache [%u]",
 		 relid, MyProcPid);
@@ -96,7 +96,7 @@ refresh_pathman_relation_info(Oid relid,
 	prel->cmp_proc = InvalidOid;
 
 	/* Clear outdated resources */
-	if (found && PrelIsValid(prel))
+	if (found_entry && PrelIsValid(prel))
 	{
 		/* Free these arrays iff they're not NULL */
 		FreeChildrenArray(prel);
@@ -136,16 +136,38 @@ refresh_pathman_relation_info(Oid relid,
 	prel->cmp_proc	= typcache->cmp_proc;
 	prel->hash_proc	= typcache->hash_proc;
 
-	LockRelationOid(relid, lockmode);
-	prel_children = find_inheritance_children_array(relid, lockmode,
-													&prel_children_count);
-	UnlockRelationOid(relid, lockmode);
-
-	/* If there's no children at all, remove this entry */
-	if (prel_children_count == 0)
+	/* Try locking parent, exit fast if 'allow_incomplete' */
+	if (allow_incomplete)
 	{
-		remove_pathman_relation_info(relid);
-		return NULL;
+		if (!ConditionalLockRelationOid(relid, lockmode))
+			return NULL; /* leave an invalid entry */
+	}
+	else LockRelationOid(relid, lockmode);
+
+	/* Try searching for children (don't wait if we can't lock) */
+	switch (find_inheritance_children_array(relid, lockmode, true,
+											&prel_children_count,
+											&prel_children))
+	{
+		/* If there's no children at all, remove this entry */
+		case FCS_NO_CHILDREN:
+			UnlockRelationOid(relid, lockmode);
+			remove_pathman_relation_info(relid);
+			return NULL; /* exit */
+
+		/* If can't lock children, leave an invalid entry */
+		case FCS_COULD_NOT_LOCK:
+			UnlockRelationOid(relid, lockmode);
+			return NULL; /* exit */
+
+		/* Found some children, just unlock parent */
+		case FCS_FOUND:
+			UnlockRelationOid(relid, lockmode);
+			break; /* continue */
+
+		/* Error: unknown result code */
+		default:
+			elog(ERROR, "error in " CppAsString(find_inheritance_children_array));
 	}
 
 	/*
@@ -156,7 +178,7 @@ refresh_pathman_relation_info(Oid relid,
 	 */
 	fill_prel_with_partitions(prel_children, prel_children_count, prel);
 
-	/* Add "partition+parent" tuple to cache */
+	/* Add "partition+parent" pair to cache */
 	for (i = 0; i < prel_children_count; i++)
 		cache_parent_of_partition(prel_children[i], relid);
 
