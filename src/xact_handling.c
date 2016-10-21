@@ -82,6 +82,10 @@ xact_unlock_rel_exclusive(Oid relid)
 bool
 xact_bgw_conflicting_lock_exists(Oid relid)
 {
+#if PG_VERSION_NUM >= 90600
+	/* We use locking groups for 9.6+ */
+	return false;
+#else
 	LOCKMODE	lockmode;
 
 	/* Try each lock >= ShareUpdateExclusiveLock */
@@ -94,6 +98,7 @@ xact_bgw_conflicting_lock_exists(Oid relid)
 	}
 
 	return false;
+#endif
 }
 
 
