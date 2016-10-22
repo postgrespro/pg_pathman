@@ -94,7 +94,7 @@ refresh_pathman_relation_info(Oid relid,
 	 * NOTE: Trick clang analyzer (first access without NULL pointer check).
 	 * Access to field 'valid' results in a dereference of a null pointer.
 	 */
-	prel->cmp_proc = InvalidOid;
+	prel->cmp_proc	= InvalidOid;
 
 	/* Clear outdated resources */
 	if (found_entry && PrelIsValid(prel))
@@ -102,6 +102,23 @@ refresh_pathman_relation_info(Oid relid,
 		/* Free these arrays iff they're not NULL */
 		FreeChildrenArray(prel);
 		FreeRangesArray(prel);
+	}
+
+	/* Try locking parent, exit fast if 'allow_incomplete' */
+	if (allow_incomplete)
+	{
+		if (!ConditionalLockRelationOid(relid, lockmode))
+			return NULL; /* leave an invalid entry */
+	}
+	else LockRelationOid(relid, lockmode);
+
+	/* Check if parent exists */
+	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
+	{
+		/* Nope, it doesn't, remove this entry and exit */
+		UnlockRelationOid(relid, lockmode);
+		remove_pathman_relation_info(relid);
+		return NULL; /* exit */
 	}
 
 	/* First we assume that this entry is invalid */
@@ -136,23 +153,6 @@ refresh_pathman_relation_info(Oid relid,
 
 	prel->cmp_proc	= typcache->cmp_proc;
 	prel->hash_proc	= typcache->hash_proc;
-
-	/* Try locking parent, exit fast if 'allow_incomplete' */
-	if (allow_incomplete)
-	{
-		if (!ConditionalLockRelationOid(relid, lockmode))
-			return NULL; /* leave an invalid entry */
-	}
-	else LockRelationOid(relid, lockmode);
-
-	/* Check if parent exists */
-	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
-	{
-		/* Nope, it doesn't, remove this entry and exit */
-		UnlockRelationOid(relid, lockmode);
-		remove_pathman_relation_info(relid);
-		return NULL; /* exit */
-	}
 
 	/* Try searching for children (don't wait if we can't lock) */
 	switch (find_inheritance_children_array(relid, lockmode,
@@ -189,9 +189,15 @@ refresh_pathman_relation_info(Oid relid,
 	 */
 	fill_prel_with_partitions(prel_children, prel_children_count, prel);
 
-	/* Add "partition+parent" pair to cache */
+	/* Peform some actions for each child */
 	for (i = 0; i < prel_children_count; i++)
+	{
+		/* Add "partition+parent" pair to cache */
 		cache_parent_of_partition(prel_children[i], relid);
+
+		/* Now it's time to unlock this child */
+		UnlockRelationOid(prel_children[i], lockmode);
+	}
 
 	pfree(prel_children);
 
