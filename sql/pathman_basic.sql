@@ -326,87 +326,87 @@ DROP EXTENSION pg_pathman;
 CREATE EXTENSION pg_pathman;
 
 /* Hash */
-CREATE TABLE hash_rel (
+CREATE TABLE test.hash_rel (
 	id		SERIAL PRIMARY KEY,
 	value	INTEGER NOT NULL);
-INSERT INTO hash_rel (value) SELECT g FROM generate_series(1, 10000) as g;
-SELECT create_hash_partitions('hash_rel', 'value', 3);
-EXPLAIN (COSTS OFF) SELECT * FROM hash_rel WHERE id = 1234;
+INSERT INTO test.hash_rel (value) SELECT g FROM generate_series(1, 10000) as g;
+SELECT create_hash_partitions('test.hash_rel', 'value', 3);
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE id = 1234;
 
 /* Range */
-CREATE TABLE range_rel (
+CREATE TABLE test.range_rel (
 	id		SERIAL PRIMARY KEY,
 	dt		TIMESTAMP NOT NULL,
 	value	INTEGER);
-INSERT INTO range_rel (dt, value) SELECT g, extract(day from g) FROM generate_series('2010-01-01'::date, '2010-12-31'::date, '1 day') as g;
-SELECT create_range_partitions('range_rel', 'dt', '2010-01-01'::date, '1 month'::interval, 12);
-SELECT merge_range_partitions('range_rel_1', 'range_rel_2');
-SELECT split_range_partition('range_rel_1', '2010-02-15'::date);
-SELECT append_range_partition('range_rel');
-SELECT prepend_range_partition('range_rel');
-EXPLAIN (COSTS OFF) SELECT * FROM range_rel WHERE dt < '2010-03-01';
-EXPLAIN (COSTS OFF) SELECT * FROM range_rel WHERE dt > '2010-12-15';
+INSERT INTO test.range_rel (dt, value) SELECT g, extract(day from g) FROM generate_series('2010-01-01'::date, '2010-12-31'::date, '1 day') as g;
+SELECT create_range_partitions('test.range_rel', 'dt', '2010-01-01'::date, '1 month'::interval, 12);
+SELECT merge_range_partitions('test.range_rel_1', 'test.range_rel_2');
+SELECT split_range_partition('test.range_rel_1', '2010-02-15'::date);
+SELECT append_range_partition('test.range_rel');
+SELECT prepend_range_partition('test.range_rel');
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt < '2010-03-01';
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt > '2010-12-15';
 
 /* Temporary table for JOINs */
-CREATE TABLE tmp (id INTEGER NOT NULL, value INTEGER NOT NULL);
-INSERT INTO tmp VALUES (1, 1), (2, 2);
+CREATE TABLE test.tmp (id INTEGER NOT NULL, value INTEGER NOT NULL);
+INSERT INTO test.tmp VALUES (1, 1), (2, 2);
 
 /* Test UPDATE and DELETE */
-EXPLAIN (COSTS OFF) UPDATE range_rel SET value = 111 WHERE dt = '2010-06-15';
-UPDATE range_rel SET value = 111 WHERE dt = '2010-06-15';
-SELECT * FROM range_rel WHERE dt = '2010-06-15';
-EXPLAIN (COSTS OFF) DELETE FROM range_rel WHERE dt = '2010-06-15';
-DELETE FROM range_rel WHERE dt = '2010-06-15';
-SELECT * FROM range_rel WHERE dt = '2010-06-15';
-EXPLAIN (COSTS OFF) UPDATE range_rel r SET value = t.value FROM tmp t WHERE r.dt = '2010-01-01' AND r.id = t.id;
-UPDATE range_rel r SET value = t.value FROM tmp t WHERE r.dt = '2010-01-01' AND r.id = t.id;
-EXPLAIN (COSTS OFF) DELETE FROM range_rel r USING tmp t WHERE r.dt = '2010-01-02' AND r.id = t.id;
-DELETE FROM range_rel r USING tmp t WHERE r.dt = '2010-01-02' AND r.id = t.id;
+EXPLAIN (COSTS OFF) UPDATE test.range_rel SET value = 111 WHERE dt = '2010-06-15';
+UPDATE test.range_rel SET value = 111 WHERE dt = '2010-06-15';
+SELECT * FROM test.range_rel WHERE dt = '2010-06-15';
+EXPLAIN (COSTS OFF) DELETE FROM test.range_rel WHERE dt = '2010-06-15';
+DELETE FROM test.range_rel WHERE dt = '2010-06-15';
+SELECT * FROM test.range_rel WHERE dt = '2010-06-15';
+EXPLAIN (COSTS OFF) UPDATE test.range_rel r SET value = t.value FROM test.tmp t WHERE r.dt = '2010-01-01' AND r.id = t.id;
+UPDATE test.range_rel r SET value = t.value FROM test.tmp t WHERE r.dt = '2010-01-01' AND r.id = t.id;
+EXPLAIN (COSTS OFF) DELETE FROM test.range_rel r USING test.tmp t WHERE r.dt = '2010-01-02' AND r.id = t.id;
+DELETE FROM test.range_rel r USING test.tmp t WHERE r.dt = '2010-01-02' AND r.id = t.id;
 
 /* Create range partitions from whole range */
-SELECT drop_partitions('range_rel');
-SELECT create_partitions_from_range('range_rel', 'id', 1, 1000, 100);
-SELECT drop_partitions('range_rel', TRUE);
-SELECT create_partitions_from_range('range_rel', 'dt', '2015-01-01'::date, '2015-12-01'::date, '1 month'::interval);
-EXPLAIN (COSTS OFF) SELECT * FROM range_rel WHERE dt = '2015-12-15';
+SELECT drop_partitions('test.range_rel');
+SELECT create_partitions_from_range('test.range_rel', 'id', 1, 1000, 100);
+SELECT drop_partitions('test.range_rel', TRUE);
+SELECT create_partitions_from_range('test.range_rel', 'dt', '2015-01-01'::date, '2015-12-01'::date, '1 month'::interval);
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt = '2015-12-15';
 
 /* Test foreign keys */
-CREATE TABLE messages(id SERIAL PRIMARY KEY, msg TEXT);
-CREATE TABLE replies(id SERIAL PRIMARY KEY, message_id INTEGER REFERENCES messages(id),  msg TEXT);
-INSERT INTO messages SELECT g, md5(g::text) FROM generate_series(1, 10) as g;
-INSERT INTO replies SELECT g, g, md5(g::text) FROM generate_series(1, 10) as g;
-SELECT create_range_partitions('messages', 'id', 1, 100, 2);
-ALTER TABLE replies DROP CONSTRAINT replies_message_id_fkey;
-SELECT create_range_partitions('messages', 'id', 1, 100, 2);
-EXPLAIN (COSTS OFF) SELECT * FROM messages;
-DROP TABLE messages, replies CASCADE;
+CREATE TABLE test.messages(id SERIAL PRIMARY KEY, msg TEXT);
+CREATE TABLE test.replies(id SERIAL PRIMARY KEY, message_id INTEGER REFERENCES test.messages(id),  msg TEXT);
+INSERT INTO test.messages SELECT g, md5(g::text) FROM generate_series(1, 10) as g;
+INSERT INTO test.replies SELECT g, g, md5(g::text) FROM generate_series(1, 10) as g;
+SELECT create_range_partitions('test.messages', 'id', 1, 100, 2);
+ALTER TABLE test.replies DROP CONSTRAINT replies_message_id_fkey;
+SELECT create_range_partitions('test.messages', 'id', 1, 100, 2);
+EXPLAIN (COSTS OFF) SELECT * FROM test.messages;
+DROP TABLE test.messages, test.replies CASCADE;
 
 /* Special test case (quals generation) -- fixing commit f603e6c5 */
-CREATE TABLE special_case_1_ind_o_s(val serial, comment text);
-INSERT INTO special_case_1_ind_o_s SELECT generate_series(1, 200), NULL;
-SELECT create_range_partitions('special_case_1_ind_o_s', 'val', 1, 50);
-INSERT INTO special_case_1_ind_o_s_2 SELECT 75 FROM generate_series(1, 6000);
-CREATE INDEX ON special_case_1_ind_o_s_2 (val, comment);
-VACUUM ANALYZE special_case_1_ind_o_s_2;
-EXPLAIN (COSTS OFF) SELECT * FROM special_case_1_ind_o_s WHERE val < 75 AND comment = 'a';
-SELECT set_enable_parent('special_case_1_ind_o_s', true);
-EXPLAIN (COSTS OFF) SELECT * FROM special_case_1_ind_o_s WHERE val < 75 AND comment = 'a';
-SELECT set_enable_parent('special_case_1_ind_o_s', false);
-EXPLAIN (COSTS OFF) SELECT * FROM special_case_1_ind_o_s WHERE val < 75 AND comment = 'a';
+CREATE TABLE test.special_case_1_ind_o_s(val serial, comment text);
+INSERT INTO test.special_case_1_ind_o_s SELECT generate_series(1, 200), NULL;
+SELECT create_range_partitions('test.special_case_1_ind_o_s', 'val', 1, 50);
+INSERT INTO test.special_case_1_ind_o_s_2 SELECT 75 FROM generate_series(1, 6000);
+CREATE INDEX ON test.special_case_1_ind_o_s_2 (val, comment);
+VACUUM ANALYZE test.special_case_1_ind_o_s_2;
+EXPLAIN (COSTS OFF) SELECT * FROM test.special_case_1_ind_o_s WHERE val < 75 AND comment = 'a';
+SELECT set_enable_parent('test.special_case_1_ind_o_s', true);
+EXPLAIN (COSTS OFF) SELECT * FROM test.special_case_1_ind_o_s WHERE val < 75 AND comment = 'a';
+SELECT set_enable_parent('test.special_case_1_ind_o_s', false);
+EXPLAIN (COSTS OFF) SELECT * FROM test.special_case_1_ind_o_s WHERE val < 75 AND comment = 'a';
 
 /* Test index scans on child relation under enable_parent is set */
-CREATE TABLE test_index_on_childs(c1 integer not null, c2 integer);
-CREATE INDEX ON test_index_on_childs(c2);
-INSERT INTO test_index_on_childs SELECT i, (random()*10000)::integer FROM generate_series(1, 10000) i;
-SELECT create_range_partitions('test_index_on_childs', 'c1', 1, 1000, 0, false);
-SELECT add_range_partition('test_index_on_childs', 1, 1000, 'test_index_on_childs_1_1K');
-SELECT append_range_partition('test_index_on_childs', 'test_index_on_childs_1K_2K');
-SELECT append_range_partition('test_index_on_childs', 'test_index_on_childs_2K_3K');
-SELECT append_range_partition('test_index_on_childs', 'test_index_on_childs_3K_4K');
-SELECT append_range_partition('test_index_on_childs', 'test_index_on_childs_4K_5K');
-SELECT set_enable_parent('test_index_on_childs', true);
-VACUUM ANALYZE test_index_on_childs;
-EXPLAIN (COSTS OFF) SELECT * FROM test_index_on_childs WHERE c1 > 100 AND c1 < 2500 AND c2 = 500;
+CREATE TABLE test.index_on_childs(c1 integer not null, c2 integer);
+CREATE INDEX ON test.index_on_childs(c2);
+INSERT INTO test.index_on_childs SELECT i, (random()*10000)::integer FROM generate_series(1, 10000) i;
+SELECT create_range_partitions('test.index_on_childs', 'c1', 1, 1000, 0, false);
+SELECT add_range_partition('test.index_on_childs', 1, 1000, 'test.index_on_childs_1_1K');
+SELECT append_range_partition('test.index_on_childs', 'test.index_on_childs_1K_2K');
+SELECT append_range_partition('test.index_on_childs', 'test.index_on_childs_2K_3K');
+SELECT append_range_partition('test.index_on_childs', 'test.index_on_childs_3K_4K');
+SELECT append_range_partition('test.index_on_childs', 'test.index_on_childs_4K_5K');
+SELECT set_enable_parent('test.index_on_childs', true);
+VACUUM ANALYZE test.index_on_childs;
+EXPLAIN (COSTS OFF) SELECT * FROM test.index_on_childs WHERE c1 > 100 AND c1 < 2500 AND c2 = 500;
 
 DROP SCHEMA test CASCADE;
 DROP EXTENSION pg_pathman CASCADE;
