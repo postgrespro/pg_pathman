@@ -394,6 +394,19 @@ EXPLAIN (COSTS OFF) SELECT * FROM special_case_1_ind_o_s WHERE val < 75 AND comm
 SELECT set_enable_parent('special_case_1_ind_o_s', false);
 EXPLAIN (COSTS OFF) SELECT * FROM special_case_1_ind_o_s WHERE val < 75 AND comment = 'a';
 
+/* Test index scans on child relation under enable_parent is set */
+CREATE TABLE test_index_on_childs(c1 integer not null, c2 integer);
+CREATE INDEX ON test_index_on_childs(c2);
+INSERT INTO test_index_on_childs SELECT i, (random()*10000)::integer FROM generate_series(1, 10000) i;
+SELECT create_range_partitions('test_index_on_childs', 'c1', 1, 1000, 0, false);
+SELECT add_range_partition('test_index_on_childs', 1, 1000, 'test_index_on_childs_1_1K');
+SELECT append_range_partition('test_index_on_childs', 'test_index_on_childs_1K_2K');
+SELECT append_range_partition('test_index_on_childs', 'test_index_on_childs_2K_3K');
+SELECT append_range_partition('test_index_on_childs', 'test_index_on_childs_3K_4K');
+SELECT append_range_partition('test_index_on_childs', 'test_index_on_childs_4K_5K');
+SELECT set_enable_parent('test_index_on_childs', true);
+VACUUM ANALYZE test_index_on_childs;
+EXPLAIN (COSTS OFF) SELECT * FROM test_index_on_childs WHERE c1 > 100 AND c1 < 2500 AND c2 = 500;
 
 DROP SCHEMA test CASCADE;
 DROP EXTENSION pg_pathman CASCADE;

@@ -1478,6 +1478,71 @@ EXPLAIN (COSTS OFF) SELECT * FROM special_case_1_ind_o_s WHERE val < 75 AND comm
          Index Cond: ((val < 75) AND (comment = 'a'::text))
 (5 rows)
 
+/* Test index scans on child relation under enable_parent is set */
+CREATE TABLE test_index_on_childs(c1 integer not null, c2 integer);
+CREATE INDEX ON test_index_on_childs(c2);
+INSERT INTO test_index_on_childs SELECT i, (random()*10000)::integer FROM generate_series(1, 10000) i;
+SELECT create_range_partitions('test_index_on_childs', 'c1', 1, 1000, 0, false);
+NOTICE:  sequence "test_index_on_childs_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                       0
+(1 row)
+
+SELECT add_range_partition('test_index_on_childs', 1, 1000, 'test_index_on_childs_1_1K');
+    add_range_partition    
+---------------------------
+ test_index_on_childs_1_1K
+(1 row)
+
+SELECT append_range_partition('test_index_on_childs', 'test_index_on_childs_1K_2K');
+   append_range_partition   
+----------------------------
+ test_index_on_childs_1K_2K
+(1 row)
+
+SELECT append_range_partition('test_index_on_childs', 'test_index_on_childs_2K_3K');
+   append_range_partition   
+----------------------------
+ test_index_on_childs_2K_3K
+(1 row)
+
+SELECT append_range_partition('test_index_on_childs', 'test_index_on_childs_3K_4K');
+   append_range_partition   
+----------------------------
+ test_index_on_childs_3K_4K
+(1 row)
+
+SELECT append_range_partition('test_index_on_childs', 'test_index_on_childs_4K_5K');
+   append_range_partition   
+----------------------------
+ test_index_on_childs_4K_5K
+(1 row)
+
+SELECT set_enable_parent('test_index_on_childs', true);
+ set_enable_parent 
+-------------------
+ 
+(1 row)
+
+VACUUM ANALYZE test_index_on_childs;
+EXPLAIN (COSTS OFF) SELECT * FROM test_index_on_childs WHERE c1 > 100 AND c1 < 2500 AND c2 = 500;
+                                       QUERY PLAN                                       
+----------------------------------------------------------------------------------------
+ Append
+   ->  Index Scan using test_index_on_childs_c2_idx on test_index_on_childs
+         Index Cond: (c2 = 500)
+         Filter: ((c1 > 100) AND (c1 < 2500))
+   ->  Index Scan using test_index_on_childs_1_1k_c2_idx on test_index_on_childs_1_1k
+         Index Cond: (c2 = 500)
+         Filter: (c1 > 100)
+   ->  Index Scan using test_index_on_childs_1k_2k_c2_idx on test_index_on_childs_1k_2k
+         Index Cond: (c2 = 500)
+   ->  Index Scan using test_index_on_childs_2k_3k_c2_idx on test_index_on_childs_2k_3k
+         Index Cond: (c2 = 500)
+         Filter: (c1 < 2500)
+(12 rows)
+
 DROP SCHEMA test CASCADE;
 NOTICE:  drop cascades to 13 other objects
 DROP EXTENSION pg_pathman CASCADE;
