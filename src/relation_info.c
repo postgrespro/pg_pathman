@@ -104,6 +104,9 @@ refresh_pathman_relation_info(Oid relid,
 		FreeRangesArray(prel);
 	}
 
+	/* First we assume that this entry is invalid */
+	prel->valid		= false;
+
 	/* Try locking parent, exit fast if 'allow_incomplete' */
 	if (allow_incomplete)
 	{
@@ -120,9 +123,6 @@ refresh_pathman_relation_info(Oid relid,
 		remove_pathman_relation_info(relid);
 		return NULL; /* exit */
 	}
-
-	/* First we assume that this entry is invalid */
-	prel->valid		= false;
 
 	/* Make both arrays point to NULL */
 	prel->children	= NULL;
