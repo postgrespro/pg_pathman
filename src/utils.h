@@ -32,9 +32,6 @@ typedef struct
 void plan_tree_walker(Plan *plan,
 					  void (*visitor) (Plan *plan, void *context),
 					  void *context);
-List * build_index_tlist(PlannerInfo *root,
-						 IndexOptInfo *index,
-						 Relation heapRelation);
 void change_varnos(Node *node, Oid old_varno, Oid new_varno);
 
 /*
@@ -48,7 +45,6 @@ void postprocess_lock_rows(List *rtable, Plan *plan);
  */
 bool clause_contains_params(Node *clause);
 bool is_date_type_internal(Oid typid);
-bool is_string_type_internal(Oid typid);
 bool validate_on_part_init_cb(Oid procid, bool emit_error);
 bool check_security_policy_internal(Oid relid, Oid role);
 
@@ -67,8 +63,6 @@ Oid get_rel_owner(Oid relid);
  * Handy execution-stage functions.
  */
 char * get_rel_name_or_relid(Oid relid);
-char * get_op_name_or_opid(Oid opid);
-
 Oid get_binary_operator_oid(char *opname, Oid arg1, Oid arg2);
 void fill_type_cmp_fmgr_info(FmgrInfo *finfo,
 							 Oid type1,

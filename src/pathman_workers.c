@@ -540,7 +540,7 @@ bgw_main_concurrent_part(Datum main_arg)
 			part_slot->total_rows += rows;
 /* Report debug message */
 #ifdef USE_ASSERT_CHECKING
-			elog(DEBUG1, "%s: relocated %d rows, total: %lu [%u]",
+			elog(DEBUG1, "%s: relocated %d rows, total: " UINT64_FORMAT " [%u]",
 				 concurrent_part_bgw, rows, part_slot->total_rows, MyProcPid);
 #endif
 			SpinLockRelease(&part_slot->mutex);

@@ -33,5 +33,12 @@ SELECT * FROM pathman_partition_list
 ORDER BY range_min::INT, range_max::INT;
 
 
+SELECT drop_partitions('domains.dom_table');
+SELECT create_hash_partitions('domains.dom_table', 'val', 5);
+
+SELECT * FROM pathman_partition_list
+ORDER BY partition::TEXT;
+
+
 DROP SCHEMA domains CASCADE;
 DROP EXTENSION pg_pathman CASCADE;

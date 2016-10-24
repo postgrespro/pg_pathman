@@ -19,7 +19,9 @@ REGRESS = pathman_basic \
 		  pathman_domains \
 		  pathman_foreign_keys \
 		  pathman_permissions \
-		  pathman_rowmarks
+		  pathman_rowmarks \
+		  pathman_copy_stmt_hooking \
+		  pathman_calamity
 EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add
 EXTRA_CLEAN = pg_pathman--$(EXTVERSION).sql ./isolation_output
 

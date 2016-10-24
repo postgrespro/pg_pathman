@@ -87,6 +87,44 @@ ORDER BY range_min::INT, range_max::INT;
  domains.dom_table | domains.dom_table_15 |        2 | val      | 1101      | 1201
 (14 rows)
 
+SELECT drop_partitions('domains.dom_table');
+NOTICE:  function domains.dom_table_upd_trig_func() does not exist, skipping
+NOTICE:  49 rows copied from domains.dom_table_1
+NOTICE:  100 rows copied from domains.dom_table_3
+NOTICE:  100 rows copied from domains.dom_table_4
+NOTICE:  100 rows copied from domains.dom_table_5
+NOTICE:  100 rows copied from domains.dom_table_6
+NOTICE:  100 rows copied from domains.dom_table_7
+NOTICE:  100 rows copied from domains.dom_table_8
+NOTICE:  100 rows copied from domains.dom_table_9
+NOTICE:  99 rows copied from domains.dom_table_10
+NOTICE:  1 rows copied from domains.dom_table_11
+NOTICE:  0 rows copied from domains.dom_table_12
+NOTICE:  0 rows copied from domains.dom_table_13
+NOTICE:  151 rows copied from domains.dom_table_14
+NOTICE:  1 rows copied from domains.dom_table_15
+ drop_partitions 
+-----------------
+              14
+(1 row)
+
+SELECT create_hash_partitions('domains.dom_table', 'val', 5);
+ create_hash_partitions 
+------------------------
+                      5
+(1 row)
+
+SELECT * FROM pathman_partition_list
+ORDER BY partition::TEXT;
+      parent       |      partition      | parttype | partattr | range_min | range_max 
+-------------------+---------------------+----------+----------+-----------+-----------
+ domains.dom_table | domains.dom_table_0 |        1 | val      |           | 
+ domains.dom_table | domains.dom_table_1 |        1 | val      |           | 
+ domains.dom_table | domains.dom_table_2 |        1 | val      |           | 
+ domains.dom_table | domains.dom_table_3 |        1 | val      |           | 
+ domains.dom_table | domains.dom_table_4 |        1 | val      |           | 
+(5 rows)
+
 DROP SCHEMA domains CASCADE;
-NOTICE:  drop cascades to 17 other objects
+NOTICE:  drop cascades to 8 other objects
 DROP EXTENSION pg_pathman CASCADE;

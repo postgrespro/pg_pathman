@@ -1,0 +1,158 @@
+\set VERBOSITY terse
+CREATE EXTENSION pg_pathman;
+CREATE SCHEMA copy_stmt_hooking;
+CREATE TABLE copy_stmt_hooking.test(val int not null, comment text);
+INSERT INTO copy_stmt_hooking.test SELECT generate_series(1, 20), 'comment';
+CREATE INDEX ON copy_stmt_hooking.test(val);
+/* test for RANGE partitioning */
+SELECT create_range_partitions('copy_stmt_hooking.test', 'val', 1, 5);
+NOTICE:  sequence "test_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                       4
+(1 row)
+
+/* perform VACUUM */
+VACUUM FULL copy_stmt_hooking.test;
+VACUUM FULL copy_stmt_hooking.test_1;
+VACUUM FULL copy_stmt_hooking.test_2;
+VACUUM FULL copy_stmt_hooking.test_3;
+VACUUM FULL copy_stmt_hooking.test_4;
+/* COPY TO */
+COPY copy_stmt_hooking.test TO stdout;
+1	comment
+2	comment
+3	comment
+4	comment
+5	comment
+6	comment
+7	comment
+8	comment
+9	comment
+10	comment
+11	comment
+12	comment
+13	comment
+14	comment
+15	comment
+16	comment
+17	comment
+18	comment
+19	comment
+20	comment
+\copy copy_stmt_hooking.test to stdout (format csv)
+1,comment
+2,comment
+3,comment
+4,comment
+5,comment
+6,comment
+7,comment
+8,comment
+9,comment
+10,comment
+11,comment
+12,comment
+13,comment
+14,comment
+15,comment
+16,comment
+17,comment
+18,comment
+19,comment
+20,comment
+\copy copy_stmt_hooking.test(comment) to stdout
+comment
+comment
+comment
+comment
+comment
+comment
+comment
+comment
+comment
+comment
+comment
+comment
+comment
+comment
+comment
+comment
+comment
+comment
+comment
+comment
+/* DELETE ROWS, COPY FROM */
+DELETE FROM copy_stmt_hooking.test;
+COPY copy_stmt_hooking.test FROM stdin;
+SELECT count(*) FROM ONLY copy_stmt_hooking.test;
+ count 
+-------
+     0
+(1 row)
+
+SELECT *, tableoid::REGCLASS FROM copy_stmt_hooking.test ORDER BY val;
+ val | comment |         tableoid         
+-----+---------+--------------------------
+   1 | test_1  | copy_stmt_hooking.test_1
+   6 | test_2  | copy_stmt_hooking.test_2
+   7 | test_2  | copy_stmt_hooking.test_2
+  11 | test_3  | copy_stmt_hooking.test_3
+  16 | test_4  | copy_stmt_hooking.test_4
+(5 rows)
+
+/* COPY TO (partition does not exist, NOT allowed to create partitions) */
+SET pg_pathman.enable_auto_partition = OFF;
+COPY copy_stmt_hooking.test FROM stdin;
+ERROR:  no suitable partition for key '21'
+SELECT * FROM copy_stmt_hooking.test WHERE val > 20;
+ val | comment 
+-----+---------
+(0 rows)
+
+/* COPY TO (partition does not exist, allowed to create partitions) */
+SET pg_pathman.enable_auto_partition = ON;
+COPY copy_stmt_hooking.test FROM stdin;
+SELECT * FROM copy_stmt_hooking.test WHERE val > 20;
+ val |   comment    
+-----+--------------
+  21 | test_no_part
+(1 row)
+
+/* COPY TO (partitioned column is not specified) */
+COPY copy_stmt_hooking.test(comment) FROM stdin;
+ERROR:  partitioned column's value should not be NULL
+/* delete all data */
+SELECT drop_partitions('copy_stmt_hooking.test', true);
+NOTICE:  function copy_stmt_hooking.test_upd_trig_func() does not exist, skipping
+ drop_partitions 
+-----------------
+               5
+(1 row)
+
+/* test for HASH partitioning */
+SELECT create_hash_partitions('copy_stmt_hooking.test', 'val', 5);
+ create_hash_partitions 
+------------------------
+                      5
+(1 row)
+
+/* DELETE ROWS, COPY FROM */
+DELETE FROM copy_stmt_hooking.test;
+COPY copy_stmt_hooking.test FROM stdin;
+SELECT count(*) FROM ONLY copy_stmt_hooking.test;
+ count 
+-------
+     0
+(1 row)
+
+SELECT * FROM copy_stmt_hooking.test ORDER BY val;
+ val | comment 
+-----+---------
+   1 | hash_1
+   6 | hash_2
+(2 rows)
+
+DROP SCHEMA copy_stmt_hooking CASCADE;
+NOTICE:  drop cascades to 7 other objects
+DROP EXTENSION pg_pathman;
