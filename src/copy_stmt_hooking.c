@@ -278,9 +278,8 @@ PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
 			is_from == false) /* rewrite COPY table TO statements */
 		{
 			SelectStmt *select;
-			ColumnRef  *cr;
-			ResTarget  *target;
 			RangeVar   *from;
+			List	   *target_list = NIL;
 
 			if (is_from)
 				ereport(ERROR,
@@ -289,20 +288,54 @@ PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
 						 errhint("Use INSERT statements instead.")));
 
 			/* Build target list */
-			cr = makeNode(ColumnRef);
-
 			if (!stmt->attlist)
+			{
+				ColumnRef  *cr;
+				ResTarget  *target;
+
+				cr = makeNode(ColumnRef);
 				cr->fields = list_make1(makeNode(A_Star));
+				cr->location = -1;
+
+				/* Build the ResTarget and add the ColumnRef to it. */
+				target = makeNode(ResTarget);
+				target->name = NULL;
+				target->indirection = NIL;
+				target->val = (Node *) cr;
+				target->location = -1;
+
+				target_list = list_make1(target);
+			}
 			else
-				cr->fields = stmt->attlist;
+			{
+				ListCell   *lc;
 
-			cr->location = 1;
+				foreach(lc, stmt->attlist)
+				{
+					ColumnRef  *cr;
+					ResTarget  *target;
 
-			target = makeNode(ResTarget);
-			target->name = NULL;
-			target->indirection = NIL;
-			target->val = (Node *) cr;
-			target->location = 1;
+					/*
+					 * Build the ColumnRef for each column.  The ColumnRef
+					 * 'fields' property is a String 'Value' node (see
+					 * nodes/value.h) that corresponds to the column name
+					 * respectively.
+					 */
+					cr = makeNode(ColumnRef);
+					cr->fields = list_make1(lfirst(lc));
+					cr->location = -1;
+
+					/* Build the ResTarget and add the ColumnRef to it. */
+					target = makeNode(ResTarget);
+					target->name = NULL;
+					target->indirection = NIL;
+					target->val = (Node *) cr;
+					target->location = -1;
+
+					/* Add each column to the SELECT statements target list */
+					target_list = lappend(target_list, target);
+				}
+			}
 
 			/*
 			 * Build RangeVar for from clause, fully qualified based on the
@@ -313,7 +346,7 @@ PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
 
 			/* Build query */
 			select = makeNode(SelectStmt);
-			select->targetList = list_make1(target);
+			select->targetList = target_list;
 			select->fromClause = list_make1(from);
 
 			query = (Node *) select;
