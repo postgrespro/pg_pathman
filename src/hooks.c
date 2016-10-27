@@ -324,10 +324,21 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 
 		/* Clear old path list */
 		list_free(rel->pathlist);
-
 		rel->pathlist = NIL;
+
+#if PG_VERSION_NUM >= 90600
+		/* Clear old partial path list */
+		list_free(rel->partial_pathlist);
+		rel->partial_pathlist = NIL;
+#endif
+
 		set_append_rel_pathlist(root, rel, rti, rte, pathkeyAsc, pathkeyDesc);
 		set_append_rel_size_compat(root, rel, rti, rte);
+
+#if PG_VERSION_NUM >= 90600
+		/* consider gathering partial paths for the parent appendrel */
+		generate_gather_paths(root, rel);
+#endif
 
 		/* No need to go further (both nodes are disabled), return */
 		if (!(pg_pathman_enable_runtimeappend ||
