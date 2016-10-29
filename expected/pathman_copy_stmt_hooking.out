@@ -1,7 +1,11 @@
 \set VERBOSITY terse
 CREATE EXTENSION pg_pathman;
 CREATE SCHEMA copy_stmt_hooking;
-CREATE TABLE copy_stmt_hooking.test(val int not null, comment text);
+CREATE TABLE copy_stmt_hooking.test(
+	val int not null,
+	comment text,
+	c3 int,
+	c4 int);
 INSERT INTO copy_stmt_hooking.test SELECT generate_series(1, 20), 'comment';
 CREATE INDEX ON copy_stmt_hooking.test(val);
 /* test for RANGE partitioning */
@@ -20,47 +24,47 @@ VACUUM FULL copy_stmt_hooking.test_3;
 VACUUM FULL copy_stmt_hooking.test_4;
 /* COPY TO */
 COPY copy_stmt_hooking.test TO stdout;
-1	comment
-2	comment
-3	comment
-4	comment
-5	comment
-6	comment
-7	comment
-8	comment
-9	comment
-10	comment
-11	comment
-12	comment
-13	comment
-14	comment
-15	comment
-16	comment
-17	comment
-18	comment
-19	comment
-20	comment
+1	comment	\N	\N
+2	comment	\N	\N
+3	comment	\N	\N
+4	comment	\N	\N
+5	comment	\N	\N
+6	comment	\N	\N
+7	comment	\N	\N
+8	comment	\N	\N
+9	comment	\N	\N
+10	comment	\N	\N
+11	comment	\N	\N
+12	comment	\N	\N
+13	comment	\N	\N
+14	comment	\N	\N
+15	comment	\N	\N
+16	comment	\N	\N
+17	comment	\N	\N
+18	comment	\N	\N
+19	comment	\N	\N
+20	comment	\N	\N
 \copy copy_stmt_hooking.test to stdout (format csv)
-1,comment
-2,comment
-3,comment
-4,comment
-5,comment
-6,comment
-7,comment
-8,comment
-9,comment
-10,comment
-11,comment
-12,comment
-13,comment
-14,comment
-15,comment
-16,comment
-17,comment
-18,comment
-19,comment
-20,comment
+1,comment,,
+2,comment,,
+3,comment,,
+4,comment,,
+5,comment,,
+6,comment,,
+7,comment,,
+8,comment,,
+9,comment,,
+10,comment,,
+11,comment,,
+12,comment,,
+13,comment,,
+14,comment,,
+15,comment,,
+16,comment,,
+17,comment,,
+18,comment,,
+19,comment,,
+20,comment,,
 \copy copy_stmt_hooking.test(comment) to stdout
 comment
 comment
@@ -92,31 +96,62 @@ SELECT count(*) FROM ONLY copy_stmt_hooking.test;
 (1 row)
 
 SELECT *, tableoid::REGCLASS FROM copy_stmt_hooking.test ORDER BY val;
- val | comment |         tableoid         
------+---------+--------------------------
-   1 | test_1  | copy_stmt_hooking.test_1
-   6 | test_2  | copy_stmt_hooking.test_2
-   7 | test_2  | copy_stmt_hooking.test_2
-  11 | test_3  | copy_stmt_hooking.test_3
-  16 | test_4  | copy_stmt_hooking.test_4
+ val | comment | c3 | c4 |         tableoid         
+-----+---------+----+----+--------------------------
+   1 | test_1  |  0 |  0 | copy_stmt_hooking.test_1
+   6 | test_2  |  0 |  0 | copy_stmt_hooking.test_2
+   7 | test_2  |  0 |  0 | copy_stmt_hooking.test_2
+  11 | test_3  |  0 |  0 | copy_stmt_hooking.test_3
+  16 | test_4  |  0 |  0 | copy_stmt_hooking.test_4
 (5 rows)
 
+/* perform VACUUM */
+VACUUM FULL copy_stmt_hooking.test;
+VACUUM FULL copy_stmt_hooking.test_1;
+VACUUM FULL copy_stmt_hooking.test_2;
+VACUUM FULL copy_stmt_hooking.test_3;
+VACUUM FULL copy_stmt_hooking.test_4;
+/* COPY FROM (specified columns) */
+COPY copy_stmt_hooking.test (val) TO stdout;
+1
+6
+7
+11
+16
+COPY copy_stmt_hooking.test (val, comment) TO stdout;
+1	test_1
+6	test_2
+7	test_2
+11	test_3
+16	test_4
+COPY copy_stmt_hooking.test (c3, val, comment) TO stdout;
+0	1	test_1
+0	6	test_2
+0	7	test_2
+0	11	test_3
+0	16	test_4
+COPY copy_stmt_hooking.test (val, comment, c3, c4) TO stdout;
+1	test_1	0	0
+6	test_2	0	0
+7	test_2	0	0
+11	test_3	0	0
+16	test_4	0	0
 /* COPY TO (partition does not exist, NOT allowed to create partitions) */
 SET pg_pathman.enable_auto_partition = OFF;
 COPY copy_stmt_hooking.test FROM stdin;
 ERROR:  no suitable partition for key '21'
 SELECT * FROM copy_stmt_hooking.test WHERE val > 20;
- val | comment 
------+---------
+ val | comment | c3 | c4 
+-----+---------+----+----
 (0 rows)
 
 /* COPY TO (partition does not exist, allowed to create partitions) */
 SET pg_pathman.enable_auto_partition = ON;
 COPY copy_stmt_hooking.test FROM stdin;
 SELECT * FROM copy_stmt_hooking.test WHERE val > 20;
- val |   comment    
------+--------------
-  21 | test_no_part
+ val |   comment    | c3 | c4 
+-----+--------------+----+----
+  21 | test_no_part |  0 |  0
 (1 row)
 
 /* COPY TO (partitioned column is not specified) */
@@ -147,10 +182,10 @@ SELECT count(*) FROM ONLY copy_stmt_hooking.test;
 (1 row)
 
 SELECT * FROM copy_stmt_hooking.test ORDER BY val;
- val | comment 
------+---------
-   1 | hash_1
-   6 | hash_2
+ val | comment | c3 | c4 
+-----+---------+----+----
+   1 | hash_1  |  0 |  0
+   6 | hash_2  |  0 |  0
 (2 rows)
 
 DROP SCHEMA copy_stmt_hooking CASCADE;
