@@ -109,9 +109,19 @@ void fill_prel_with_partitions(const Oid *partitions,
 							   const uint32 parts_count,
 							   PartRelationInfo *prel);
 
-Oid *find_inheritance_children_array(Oid parentrelId,
-									 LOCKMODE lockmode,
-									 uint32 *size);
+/* Result of find_inheritance_children_array() */
+typedef enum
+{
+	FCS_NO_CHILDREN = 0,	/* could not find any children (GOOD) */
+	FCS_COULD_NOT_LOCK,		/* could not lock one of the children */
+	FCS_FOUND				/* found some children (GOOD) */
+} find_children_status;
+
+find_children_status find_inheritance_children_array(Oid parentrelId,
+													 LOCKMODE lockmode,
+													 bool nowait,
+													 uint32 *children_size,
+													 Oid **children);
 
 char *build_check_constraint_name_internal(Oid relid,
 										   AttrNumber attno);

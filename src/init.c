@@ -466,8 +466,12 @@ fill_prel_with_partitions(const Oid *partitions,
  *
  * borrowed from pg_inherits.c
  */
-Oid *
-find_inheritance_children_array(Oid parentrelId, LOCKMODE lockmode, uint32 *size)
+find_children_status
+find_inheritance_children_array(Oid parentrelId,
+								LOCKMODE lockmode,
+								bool nowait,
+								uint32 *children_size,	/* ret value #1 */
+								Oid **children)			/* ret value #2 */
 {
 	Relation	relation;
 	SysScanDesc scan;
@@ -485,8 +489,12 @@ find_inheritance_children_array(Oid parentrelId, LOCKMODE lockmode, uint32 *size
 	 */
 	if (!has_subclass(parentrelId))
 	{
-		*size = 0;
-		return NULL;
+		/* Init return values */
+		*children_size = 0;
+		children = NULL;
+
+		/* Ok, could not find any children */
+		return FCS_NO_CHILDREN;
 	}
 
 	/*
@@ -540,7 +548,25 @@ find_inheritance_children_array(Oid parentrelId, LOCKMODE lockmode, uint32 *size
 		if (lockmode != NoLock)
 		{
 			/* Get the lock to synchronize against concurrent drop */
-			LockRelationOid(inhrelid, lockmode);
+			if (nowait)
+			{
+				if (!ConditionalLockRelationOid(inhrelid, lockmode))
+				{
+					uint32 j;
+
+					/* Unlock all previously locked children */
+					for (j = 0; j < i; j++)
+						UnlockRelationOid(oidarr[j], lockmode);
+
+					/* Init return values */
+					*children_size = numoids;
+					*children = oidarr;
+
+					/* We couldn't lock this child, retreat! */
+					return FCS_COULD_NOT_LOCK;
+				}
+			}
+			else LockRelationOid(inhrelid, lockmode);
 
 			/*
 			 * Now that we have the lock, double-check to see if the relation
@@ -557,8 +583,12 @@ find_inheritance_children_array(Oid parentrelId, LOCKMODE lockmode, uint32 *size
 		}
 	}
 
-	*size = numoids;
-	return oidarr;
+	/* Init return values */
+	*children_size = numoids;
+	*children = oidarr;
+
+	/* Ok, we have children */
+	return FCS_FOUND;
 }
 
 /*
@@ -752,7 +782,9 @@ read_pathman_config(void)
 		}
 
 		/* Create or update PartRelationInfo for this partitioned table */
-		refresh_pathman_relation_info(relid, parttype, text_to_cstring(attname));
+		refresh_pathman_relation_info(relid, parttype,
+									  text_to_cstring(attname),
+									  true); /* allow lazy prel loading */
 	}
 
 	/* Clean resources */

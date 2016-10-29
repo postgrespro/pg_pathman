@@ -623,7 +623,9 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 		/* Some flags might change during refresh attempt */
 		save_pathman_init_state(&init_state);
 
-		refresh_pathman_relation_info(relid, parttype, text_to_cstring(attname));
+		refresh_pathman_relation_info(relid, parttype,
+									  text_to_cstring(attname),
+									  false); /* initialize immediately */
 	}
 	PG_CATCH();
 	{

@@ -23,9 +23,10 @@
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
 #include "utils/hsearch.h"
-#include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/snapmgr.h"
+#include "utils/syscache.h"
+#include "utils/lsyscache.h"
 #include "utils/typcache.h"
 
 
@@ -67,23 +68,24 @@ static Oid get_parent_of_partition_internal(Oid partition,
 const PartRelationInfo *
 refresh_pathman_relation_info(Oid relid,
 							  PartType partitioning_type,
-							  const char *part_column_name)
+							  const char *part_column_name,
+							  bool allow_incomplete)
 {
 	const LOCKMODE			lockmode = AccessShareLock;
 	const TypeCacheEntry   *typcache;
 	Oid					   *prel_children;
 	uint32					prel_children_count = 0,
 							i;
-	bool					found;
+	bool					found_entry;
 	PartRelationInfo	   *prel;
 	Datum					param_values[Natts_pathman_config_params];
 	bool					param_isnull[Natts_pathman_config_params];
 
 	prel = (PartRelationInfo *) hash_search(partitioned_rels,
 											(const void *) &relid,
-											HASH_ENTER, &found);
+											HASH_ENTER, &found_entry);
 	elog(DEBUG2,
-		 found ?
+		 found_entry ?
 			 "Refreshing record for relation %u in pg_pathman's cache [%u]" :
 			 "Creating new record for relation %u in pg_pathman's cache [%u]",
 		 relid, MyProcPid);
@@ -92,10 +94,10 @@ refresh_pathman_relation_info(Oid relid,
 	 * NOTE: Trick clang analyzer (first access without NULL pointer check).
 	 * Access to field 'valid' results in a dereference of a null pointer.
 	 */
-	prel->cmp_proc = InvalidOid;
+	prel->cmp_proc	= InvalidOid;
 
 	/* Clear outdated resources */
-	if (found && PrelIsValid(prel))
+	if (found_entry && PrelIsValid(prel))
 	{
 		/* Free these arrays iff they're not NULL */
 		FreeChildrenArray(prel);
@@ -103,14 +105,31 @@ refresh_pathman_relation_info(Oid relid,
 	}
 
 	/* First we assume that this entry is invalid */
-	prel->valid = false;
+	prel->valid		= false;
+
+	/* Try locking parent, exit fast if 'allow_incomplete' */
+	if (allow_incomplete)
+	{
+		if (!ConditionalLockRelationOid(relid, lockmode))
+			return NULL; /* leave an invalid entry */
+	}
+	else LockRelationOid(relid, lockmode);
+
+	/* Check if parent exists */
+	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
+	{
+		/* Nope, it doesn't, remove this entry and exit */
+		UnlockRelationOid(relid, lockmode);
+		remove_pathman_relation_info(relid);
+		return NULL; /* exit */
+	}
 
 	/* Make both arrays point to NULL */
-	prel->children = NULL;
-	prel->ranges = NULL;
+	prel->children	= NULL;
+	prel->ranges	= NULL;
 
 	/* Set partitioning type */
-	prel->parttype = partitioning_type;
+	prel->parttype	= partitioning_type;
 
 	/* Initialize PartRelationInfo using syscache & typcache */
 	prel->attnum	= get_attnum(relid, part_column_name);
@@ -135,16 +154,31 @@ refresh_pathman_relation_info(Oid relid,
 	prel->cmp_proc	= typcache->cmp_proc;
 	prel->hash_proc	= typcache->hash_proc;
 
-	LockRelationOid(relid, lockmode);
-	prel_children = find_inheritance_children_array(relid, lockmode,
-													&prel_children_count);
-	UnlockRelationOid(relid, lockmode);
-
-	/* If there's no children at all, remove this entry */
-	if (prel_children_count == 0)
+	/* Try searching for children (don't wait if we can't lock) */
+	switch (find_inheritance_children_array(relid, lockmode,
+											allow_incomplete,
+											&prel_children_count,
+											&prel_children))
 	{
-		remove_pathman_relation_info(relid);
-		return NULL;
+		/* If there's no children at all, remove this entry */
+		case FCS_NO_CHILDREN:
+			UnlockRelationOid(relid, lockmode);
+			remove_pathman_relation_info(relid);
+			return NULL; /* exit */
+
+		/* If can't lock children, leave an invalid entry */
+		case FCS_COULD_NOT_LOCK:
+			UnlockRelationOid(relid, lockmode);
+			return NULL; /* exit */
+
+		/* Found some children, just unlock parent */
+		case FCS_FOUND:
+			UnlockRelationOid(relid, lockmode);
+			break; /* continue */
+
+		/* Error: unknown result code */
+		default:
+			elog(ERROR, "error in " CppAsString(find_inheritance_children_array));
 	}
 
 	/*
@@ -155,9 +189,15 @@ refresh_pathman_relation_info(Oid relid,
 	 */
 	fill_prel_with_partitions(prel_children, prel_children_count, prel);
 
-	/* Add "partition+parent" tuple to cache */
+	/* Peform some actions for each child */
 	for (i = 0; i < prel_children_count; i++)
+	{
+		/* Add "partition+parent" pair to cache */
 		cache_parent_of_partition(prel_children[i], relid);
+
+		/* Now it's time to unlock this child */
+		UnlockRelationOid(prel_children[i], lockmode);
+	}
 
 	pfree(prel_children);
 
@@ -245,7 +285,7 @@ get_pathman_relation_info(Oid relid)
 
 			/* Refresh partitioned table cache entry (might turn NULL) */
 			/* TODO: possible refactoring, pass found 'prel' instead of searching */
-			prel = refresh_pathman_relation_info(relid, part_type, attname);
+			prel = refresh_pathman_relation_info(relid, part_type, attname, false);
 		}
 		/* Else clear remaining cache entry */
 		else remove_pathman_relation_info(relid);
@@ -609,10 +649,10 @@ try_perform_parent_refresh(Oid parent)
 		parttype = DatumGetPartType(values[Anum_pathman_config_parttype - 1]);
 		attname = DatumGetTextP(values[Anum_pathman_config_attname - 1]);
 
-		/* If anything went wrong, return false (actually, it might throw ERROR) */
-		if (!PrelIsValid(refresh_pathman_relation_info(parent, parttype,
-													   text_to_cstring(attname))))
-			return false;
+		/* If anything went wrong, return false (actually, it might emit ERROR) */
+		refresh_pathman_relation_info(parent, parttype,
+									  text_to_cstring(attname),
+									  true); /* allow lazy */
 	}
 	/* Not a partitioned relation */
 	else return false;
