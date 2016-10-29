@@ -333,16 +333,16 @@ handle_modification_query(Query *parse)
 	InitWalkerContext(&context, prel, NULL, false);
 	wrap = walk_expr_tree(expr, &context);
 
-	ranges = irange_list_intersect(ranges, wrap->rangeset);
+	ranges = irange_list_intersection(ranges, wrap->rangeset);
 
 	/* If only one partition is affected then substitute parent table with partition */
 	if (irange_list_length(ranges) == 1)
 	{
 		IndexRange irange = linitial_irange(ranges);
-		if (irange.ir_lower == irange.ir_upper)
+		if (irange_lower(irange) == irange_upper(irange))
 		{
 			Oid *children = PrelGetChildrenArray(prel);
-			rte->relid = children[irange.ir_lower];
+			rte->relid = children[irange_lower(irange)];
 			rte->inh = false;
 		}
 	}
@@ -1317,13 +1317,13 @@ search_range_partition_eq(const Datum value,
 		IndexRange irange = linitial_irange(result.rangeset);
 
 		Assert(list_length(result.rangeset) == 1);
-		Assert(irange.ir_lower == irange.ir_upper);
-		Assert(irange.ir_valid);
+		Assert(irange_lower(irange) == irange_upper(irange));
+		Assert(is_irange_valid(irange));
 
 		/* Write result to the 'out_rentry' if necessary */
 		if (out_re)
 			memcpy((void *) out_re,
-				   (const void *) &ranges[irange.ir_lower],
+				   (const void *) &ranges[irange_lower(irange)],
 				   sizeof(RangeEntry));
 
 		return SEARCH_RANGEREL_FOUND;
@@ -1525,8 +1525,8 @@ handle_boolexpr(const BoolExpr *expr, WalkerContext *context)
 				break;
 
 			case AND_EXPR:
-				result->rangeset = irange_list_intersect(result->rangeset,
-														 arg->rangeset);
+				result->rangeset = irange_list_intersection(result->rangeset,
+															arg->rangeset);
 				result->paramsel *= arg->paramsel;
 				break;
 
@@ -1544,8 +1544,8 @@ handle_boolexpr(const BoolExpr *expr, WalkerContext *context)
 
 		foreach (lc, result->args)
 		{
-			WrapperNode *arg = (WrapperNode *) lfirst(lc);
-			int len = irange_list_length(arg->rangeset);
+			WrapperNode	   *arg = (WrapperNode *) lfirst(lc);
+			int				len = irange_list_length(arg->rangeset);
 
 			result->paramsel *= (1.0 - arg->paramsel * (double)len / (double)totallen);
 		}

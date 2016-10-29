@@ -270,7 +270,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 
 			paramsel *= wrap->paramsel;
 			wrappers = lappend(wrappers, wrap);
-			ranges = irange_list_intersect(ranges, wrap->rangeset);
+			ranges = irange_list_intersection(ranges, wrap->rangeset);
 		}
 
 		/*
@@ -318,7 +318,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		{
 			IndexRange	irange = lfirst_irange(lc);
 
-			for (i = irange.ir_lower; i <= irange.ir_upper; i++)
+			for (i = irange_lower(irange); i <= irange_upper(irange); i++)
 				append_child_relation(root, rel, rti, rte, i, children[i], wrappers);
 		}
 
