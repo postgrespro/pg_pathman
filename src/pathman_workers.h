@@ -20,6 +20,10 @@
 #include "postgres.h"
 #include "storage/spin.h"
 
+#if PG_VERSION_NUM >= 90600
+#include "storage/lock.h"
+#endif
+
 
 /*
  * Store args, result and execution status of CreatePartitionsWorker.
@@ -31,6 +35,12 @@ typedef struct
 	Oid		result;			/* target partition */
 	Oid		dbid;			/* database which stores 'partitioned_table' */
 	Oid		partitioned_table;
+
+#if PG_VERSION_NUM >= 90600
+	/* Args for BecomeLockGroupMember() function */
+	PGPROC *parallel_master_pgproc;
+	pid_t	parallel_master_pid;
+#endif
 
 	/* Needed to decode Datum from 'values' */
 	Oid		value_type;
