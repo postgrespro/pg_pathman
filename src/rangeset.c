@@ -56,6 +56,7 @@ irange_cmp_lossiness(IndexRange a, IndexRange b)
 IndexRange
 irange_union_simple(IndexRange a, IndexRange b)
 {
+	/* Ranges should be connected somehow */
 	Assert(iranges_intersect(a, b) || iranges_adjoin(a, b));
 
 	return make_irange(Min(irange_lower(a), irange_lower(b)),
@@ -67,6 +68,7 @@ irange_union_simple(IndexRange a, IndexRange b)
 IndexRange
 irange_intersection_simple(IndexRange a, IndexRange b)
 {
+	/* Ranges should be connected somehow */
 	Assert(iranges_intersect(a, b) || iranges_adjoin(a, b));
 
 	return make_irange(Max(irange_lower(a), irange_lower(b)),
@@ -81,43 +83,74 @@ irange_handle_cover_internal(IndexRange ir_covering,
 							 IndexRange ir_inner,
 							 List **new_iranges)
 {
+	/* Equal lossiness should've been taken into cosideration earlier */
+	Assert(is_irange_lossy(ir_covering) != is_irange_lossy(ir_inner));
+
 	/* range 'ir_inner' is lossy */
 	if (is_irange_lossy(ir_covering) == false)
-		/* Good, this means 'ir_covering' is not */
 		return ir_covering;
 
-	/* range 'ir_covering' is lossy */
+	/* range 'ir_covering' is lossy, 'ir_inner' is lossless! */
 	else
 	{
-		/* which means that 'ir_inner' is lossless! */
-		IndexRange	left_range,
-					right_range;
+		IndexRange	ret; /* IndexRange to be returned */
+
+		/* 'left_range_upper' should not be less than 'left_range_lower' */
+		uint32		left_range_lower	= irange_lower(ir_covering),
+					left_range_upper	= Max(irb_pred(irange_lower(ir_inner)),
+											  left_range_lower);
+
+		/* 'right_range_lower' should not be greater than 'right_range_upper' */
+		uint32		right_range_upper	= irange_upper(ir_covering),
+					right_range_lower	= Min(irb_succ(irange_upper(ir_inner)),
+											  right_range_upper);
 
 		/* We have to split the covering lossy IndexRange */
 		Assert(is_irange_lossy(ir_covering) == true);
 
-		/* Left IndexRange is lossy */
-		left_range = make_irange(irange_lower(ir_covering),
-								 irange_lower(ir_inner),
-								 true);
+		/* 'ir_inner' should not cover leftmost IndexRange */
+		if (irange_lower(ir_inner) > left_range_upper)
+		{
+			IndexRange	left_range;
 
-		/* Right IndexRange is also lossy */
-		right_range = make_irange(irange_upper(ir_inner),
-								  irange_upper(ir_covering),
-								  true);
+			/* Leftmost IndexRange is lossy */
+			left_range = make_irange(left_range_lower,
+									 left_range_upper,
+									 true);
 
-		/* Append leftmost and medial IndexRanges to list */
-		*new_iranges = lappend_irange(*new_iranges, left_range);
-		*new_iranges = lappend_irange(*new_iranges, ir_inner);
+			/* Append leftmost IndexRange ('left_range') to 'new_iranges' */
+			*new_iranges = lappend_irange(*new_iranges, left_range);
+		}
 
-		/* Return rightmost IndexRange */
-		return right_range;
+		/* 'ir_inner' should not cover rightmost IndexRange */
+		if (right_range_lower > irange_upper(ir_inner))
+		{
+			IndexRange	right_range;
+
+			/* Rightmost IndexRange is also lossy */
+			right_range = make_irange(right_range_lower,
+									  right_range_upper,
+									  true);
+
+			/* 'right_range' is indeed rightmost IndexRange */
+			ret = right_range;
+
+			/* Append medial IndexRange ('ir_inner') to 'new_iranges' */
+			*new_iranges = lappend_irange(*new_iranges, ir_inner);
+		}
+		/* Else return 'ir_inner' as rightmost IndexRange */
+		else ret = ir_inner;
+
+		/* Return rightmost IndexRange (right_range | ir_inner) */
+		return ret;
 	}
 }
 
 /* Calculate union of two IndexRanges, return rightmost IndexRange */
 static IndexRange
-irange_union_internal(IndexRange first, IndexRange second, List **new_iranges)
+irange_union_internal(IndexRange first,
+					  IndexRange second,
+					  List **new_iranges)
 {
 	/* Swap 'first' and 'second' if order is incorrect */
 	if (irange_lower(first) > irange_lower(second))
