@@ -556,7 +556,7 @@ rescan_append_common(CustomScanState *node)
 	Assert(prel);
 
 	/* First we select all available partitions... */
-	ranges = list_make1_irange(make_irange(0, PrelLastChild(prel), false));
+	ranges = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_COMPLETE));
 
 	InitWalkerContext(&wcxt, prel, econtext, false);
 	foreach (lc, scan_state->custom_exprs)

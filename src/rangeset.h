@@ -29,6 +29,10 @@ typedef struct {
 } IndexRange;
 
 
+/* Convenience macros for make_irange(...) */
+#define IR_LOSSY				true
+#define IR_COMPLETE				false
+
 #define IRANGE_SPECIAL_BIT		( (uint32) ( ((uint32) 1) << 31) )
 #define IRANGE_BONDARY_MASK		( (uint32) (~IRANGE_SPECIAL_BIT) )
 

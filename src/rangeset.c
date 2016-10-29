@@ -125,7 +125,7 @@ irange_handle_cover_internal(IndexRange ir_covering,
 			/* Leftmost IndexRange is lossy */
 			left_range = make_irange(left_range_lower,
 									 left_range_upper,
-									 true);
+									 IR_LOSSY);
 
 			/* Append leftmost IndexRange ('left_range') to 'new_iranges' */
 			*new_iranges = lappend_irange(*new_iranges, left_range);
@@ -139,7 +139,7 @@ irange_handle_cover_internal(IndexRange ir_covering,
 			/* Rightmost IndexRange is also lossy */
 			right_range = make_irange(right_range_lower,
 									  right_range_upper,
-									  true);
+									  IR_LOSSY);
 
 			/* 'right_range' is indeed rightmost IndexRange */
 			ret = right_range;
