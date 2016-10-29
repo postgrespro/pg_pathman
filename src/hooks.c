@@ -256,7 +256,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		rte->inh = true; /* we must restore 'inh' flag! */
 
 		children = PrelGetChildrenArray(prel);
-		ranges = list_make1_irange(make_irange(0, PrelLastChild(prel), false));
+		ranges = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_COMPLETE));
 
 		/* Make wrappers over restrictions and collect final rangeset */
 		InitWalkerContext(&context, prel, NULL, false);
@@ -270,7 +270,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 
 			paramsel *= wrap->paramsel;
 			wrappers = lappend(wrappers, wrap);
-			ranges = irange_list_intersect(ranges, wrap->rangeset);
+			ranges = irange_list_intersection(ranges, wrap->rangeset);
 		}
 
 		/* Get number of selected partitions */
@@ -319,7 +319,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		{
 			IndexRange irange = lfirst_irange(lc);
 
-			for (i = irange.ir_lower; i <= irange.ir_upper; i++)
+			for (i = irange_lower(irange); i <= irange_upper(irange); i++)
 				append_child_relation(root, parent_rel, rti, i, children[i], wrappers);
 		}
 

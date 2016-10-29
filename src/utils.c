@@ -154,26 +154,6 @@ lock_rows_visitor(Plan *plan, void *context)
 }
 
 /*
- * Print Bitmapset as cstring.
- */
-#ifdef __GNUC__
-__attribute__((unused))
-#endif
-static char *
-bms_print(Bitmapset *bms)
-{
-  StringInfoData str;
-  int x;
-
-  initStringInfo(&str);
-  x = -1;
-  while ((x = bms_next_member(bms, x)) >= 0)
-	appendStringInfo(&str, " %d", x);
-
-  return str.data;
-}
-
-/*
  * Get BTORDER_PROC for two types described by Oids
  */
 void

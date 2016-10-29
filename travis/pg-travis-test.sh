@@ -88,7 +88,7 @@ pip install $pip_packages
 sudo chmod a+w /var/run/postgresql/
 
 # run python tests
-cd tests
+cd tests/python
 PG_CONFIG=$config_path python -m unittest partitioning_test || status=$?
 
 set -u
