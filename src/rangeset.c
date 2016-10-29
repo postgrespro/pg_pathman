@@ -11,6 +11,15 @@
 #include "rangeset.h"
 
 
+static IndexRange irange_handle_cover_internal(IndexRange ir_covering,
+											   IndexRange ir_inner,
+											   List **new_iranges);
+
+static IndexRange irange_union_internal(IndexRange first,
+										IndexRange second,
+										List **new_iranges);
+
+
 /* Check if two ranges intersect */
 bool
 iranges_intersect(IndexRange a, IndexRange b)
@@ -175,13 +184,13 @@ irange_union_internal(IndexRange first,
 		/* range 'first' covers 'second' */
 		if (irange_eq_bounds(ir_union, first))
 		{
-			/* Save rightmost IndexRange to 'ret' */
+			/* Return rightmost IndexRange, save others to 'new_iranges' */
 			return irange_handle_cover_internal(first, second, new_iranges);
 		}
 		/* range 'second' covers 'first' */
 		else if (irange_eq_bounds(ir_union, second))
 		{
-			/* Save rightmost IndexRange to 'ret' */
+			/* Retun rightmost IndexRange, save others to 'new_iranges' */
 			return irange_handle_cover_internal(second, first, new_iranges);
 		}
 		/* No obvious leader, lossiness differs */
@@ -242,9 +251,7 @@ irange_union_internal(IndexRange first,
 	}
 }
 
-/*
- * Make union of two index rage lists.
- */
+/* Make union of two index rage lists */
 List *
 irange_list_union(List *a, List *b)
 {
@@ -307,9 +314,7 @@ irange_list_union(List *a, List *b)
 	return result;
 }
 
-/*
- * Find intersection of two range lists.
- */
+/* Find intersection of two range lists */
 List *
 irange_list_intersection(List *a, List *b)
 {

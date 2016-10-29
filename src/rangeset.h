@@ -20,10 +20,10 @@
  * IndexRange contains a set of selected partitions.
  */
 typedef struct {
-	/* lossy == should we use IndexScan? */
+	/* lossy == should we use quals? */
 	/* valid == is this IndexRange valid? */
 
-	/* Don't swap this fields */
+	/* Don't swap these fields */
 	uint32	lower;	/* valid + lower_bound */
 	uint32	upper;	/* lossy + upper_bound */
 } IndexRange;
