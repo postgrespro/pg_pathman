@@ -420,7 +420,7 @@ class PartitioningTests(unittest.TestCase):
         # Check version of postgres server
         # If version < 9.6 skip all tests for parallel queries
         version = node.execute("postgres", "show server_version_num")
-        if version < 90600:
+        if int(version[0][0]) < 90600:
             return
 
         # Prepare test database
