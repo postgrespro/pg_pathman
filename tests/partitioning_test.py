@@ -406,6 +406,84 @@ class PartitioningTests(unittest.TestCase):
         # Testing drop partitions (including foreign partitions)
         master.safe_psql('postgres', 'select drop_partitions(\'abc\')')
 
+    def test_parallel_nodes(self):
+        """Test parallel queries under partitions"""
+
+        # Init and start postgres instance with preload pg_pathman module
+        node = get_new_node('test')
+        node.init()
+        node.append_conf(
+            'postgresql.conf',
+            'shared_preload_libraries=\'pg_pathman, postgres_fdw\'\n')
+        node.start()
+
+        # Check version of postgres server
+        # If version < 9.6 skip all tests for parallel queries
+        version = node.execute("postgres", "show server_version_num")
+        if version < 90600:
+            return
+
+        # Prepare test database
+        node.psql('postgres', 'create extension pg_pathman')
+        node.psql('postgres', 'create table range_partitioned as select generate_series(1, 1e4::integer) i')
+        node.psql('postgres', 'alter table range_partitioned alter column i set not null')
+        node.psql('postgres', 'select create_range_partitions(\'range_partitioned\', \'i\', 1, 1e3::integer)')
+        node.psql('postgres', 'vacuum analyze range_partitioned')
+
+        node.psql('postgres', 'create table hash_partitioned as select generate_series(1, 1e4::integer) i')
+        node.psql('postgres', 'alter table hash_partitioned alter column i set not null')
+        node.psql('postgres', 'select create_hash_partitions(\'hash_partitioned\', \'i\', 10)')
+        node.psql('postgres', 'vacuum analyze hash_partitioned')
+
+        # Test parallel select
+        with node.connect() as con:
+            con.execute('set max_parallel_workers_per_gather = 2')
+            con.execute('set min_parallel_relation_size = 0')
+            con.execute('set parallel_setup_cost = 0')
+            con.execute('set parallel_tuple_cost = 0')
+
+            # Check parallel aggregate plan
+            plan = con.execute('explain (costs off) select count(*) from range_partitioned where i < 1500')
+            expected = [('Finalize Aggregate',),
+                        ('  ->  Gather',),
+                        ('        Workers Planned: 2',),
+                        ('        ->  Partial Aggregate',),
+                        ('              ->  Append',),
+                        ('                    ->  Parallel Seq Scan on range_partitioned_1',),
+                        ('                    ->  Parallel Seq Scan on range_partitioned_2',),
+                        ('                          Filter: (i < 1500)',)]
+            self.assertEqual(plan, expected)
+
+            # Check count of returned tuples
+            count = con.execute('select count(*) from range_partitioned where i < 1500')
+            self.assertEqual(count[0][0], 1499)
+
+            # Check simple parallel seq scan plan with limit
+            plan = con.execute('explain (costs off) select * from range_partitioned where i < 1500 limit 5')
+            expected = [('Limit',),
+                        ('  ->  Gather',),
+                        ('        Workers Planned: 2',),
+                        ('        ->  Append',),
+                        ('              ->  Parallel Seq Scan on range_partitioned_1',),
+                        ('              ->  Parallel Seq Scan on range_partitioned_2',),
+                        ('                    Filter: (i < 1500)',)]
+            self.assertEqual(plan, expected)
+
+            # Check tuples returned by query above
+            res_tuples = con.execute('select * from range_partitioned where i < 1500 limit 5')
+            expected = [(1,), (2,), (3,), (4,), (5,)]
+            self.assertEqual(res_tuples, expected)
+            #  import ipdb; ipdb.set_trace()
+
+        # Remove all objects for testing
+        node.psql('postgres', 'drop table range_partitioned cascade')
+        node.psql('postgres', 'drop table hash_partitioned cascade')
+        node.psql('postgres', 'drop extension pg_pathman cascade')
+
+        # Stop instance and finish work
+        node.stop()
+        node.cleanup()
+
 
 if __name__ == "__main__":
     unittest.main()
