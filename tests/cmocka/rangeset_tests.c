@@ -18,7 +18,9 @@
 static void test_irange_list_union_merge(void **state);
 static void test_irange_list_union_lossy_cov(void **state);
 static void test_irange_list_union_complete_cov(void **state);
-static void test_irange_list_union_intersection(void **state);
+static void test_irange_list_union_intersecting(void **state);
+
+static void test_irange_list_intersection(void **state);
 
 
 /* Entrypoint */
@@ -31,7 +33,8 @@ main(void)
 		cmocka_unit_test(test_irange_list_union_merge),
 		cmocka_unit_test(test_irange_list_union_lossy_cov),
 		cmocka_unit_test(test_irange_list_union_complete_cov),
-		cmocka_unit_test(test_irange_list_union_intersection),
+		cmocka_unit_test(test_irange_list_union_intersecting),
+		cmocka_unit_test(test_irange_list_intersection),
 	};
 
 	/* Run series of tests */
@@ -44,7 +47,7 @@ main(void)
  * ----------------------
  */
 
-/* Test merges of adjoint lists */
+/* Test merges of adjoint IndexRanges */
 static void
 test_irange_list_union_merge(void **state)
 {
@@ -211,8 +214,9 @@ test_irange_list_union_complete_cov(void **state)
 						"[0-100]C");
 }
 
+/* Several IndexRanges intersect, unite them */
 static void
-test_irange_list_union_intersection(void **state)
+test_irange_list_union_intersecting(void **state)
 {
 	IndexRange	a, b;
 	List	   *unmerged,
@@ -276,4 +280,64 @@ test_irange_list_union_intersection(void **state)
 
 	assert_string_equal(rangeset_print(union_result),
 						"[0-45]C, [46-63]L, [64-100]C");
+}
+
+
+/* Test intersection of IndexRanges */
+static void
+test_irange_list_intersection(void **state)
+{
+	IndexRange	a, b;
+	List	   *intersection_result;
+
+
+	/* Subtest #0 */
+	a = make_irange(0, 100, IR_LOSSY);
+	b = make_irange(10, 20, IR_LOSSY);
+
+	intersection_result = irange_list_intersection(list_make1_irange(a),
+												   list_make1_irange(b));
+
+	assert_string_equal(rangeset_print(intersection_result),
+						"[10-20]L");
+
+	/* Subtest #1 */
+	a = make_irange(0, 100, IR_LOSSY);
+	b = make_irange(10, 20, IR_COMPLETE);
+
+	intersection_result = irange_list_intersection(list_make1_irange(a),
+												   list_make1_irange(b));
+
+	assert_string_equal(rangeset_print(intersection_result),
+						"[10-20]L");
+
+	/* Subtest #2 */
+	a = make_irange(0, 100, IR_COMPLETE);
+	b = make_irange(10, 20, IR_LOSSY);
+
+	intersection_result = irange_list_intersection(list_make1_irange(a),
+												   list_make1_irange(b));
+
+	assert_string_equal(rangeset_print(intersection_result),
+						"[10-20]L");
+
+	/* Subtest #3 */
+	a = make_irange(15, 25, IR_COMPLETE);
+	b = make_irange(10, 20, IR_LOSSY);
+
+	intersection_result = irange_list_intersection(list_make1_irange(a),
+												   list_make1_irange(b));
+
+	assert_string_equal(rangeset_print(intersection_result),
+						"[15-20]L");
+
+	/* Subtest #4 */
+	a = make_irange(15, 25, IR_COMPLETE);
+	b = make_irange(10, 20, IR_COMPLETE);
+
+	intersection_result = irange_list_intersection(list_make1_irange(a),
+												   list_make1_irange(b));
+
+	assert_string_equal(rangeset_print(intersection_result),
+						"[15-20]C");
 }
