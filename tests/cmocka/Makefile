@@ -26,3 +26,6 @@ build_extension:
 
 clean:
 	rm -f $(OBJ) $(TEST_BIN)
+
+check: all
+	./$(TEST_BIN)

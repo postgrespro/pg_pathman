@@ -44,22 +44,6 @@ irange_eq_bounds(IndexRange a, IndexRange b)
 		   (irange_upper(a) == irange_upper(b));
 }
 
-/* Comapre lossiness factor of two ranges */
-ir_cmp_lossiness
-irange_cmp_lossiness(IndexRange a, IndexRange b)
-{
-	if (is_irange_lossy(a) == is_irange_lossy(b))
-		return IR_EQ_LOSSINESS;
-
-	if (is_irange_lossy(a))
-		return IR_A_LOSSY;
-
-	if (is_irange_lossy(b))
-		return IR_B_LOSSY;
-
-	return IR_EQ_LOSSINESS;
-}
-
 
 /* Make union of two conjuncted ranges */
 IndexRange
@@ -161,6 +145,10 @@ irange_union_internal(IndexRange first,
 					  IndexRange second,
 					  List **new_iranges)
 {
+	/* Assert that both IndexRanges are valid */
+	Assert(is_irange_valid(first));
+	Assert(is_irange_valid(second));
+
 	/* Swap 'first' and 'second' if order is incorrect */
 	if (irange_lower(first) > irange_lower(second))
 	{
@@ -332,39 +320,48 @@ irange_list_intersection(List *a, List *b)
 		IndexRange	ra = lfirst_irange(ca),
 					rb = lfirst_irange(cb);
 
+		/* Assert that both IndexRanges are valid */
+		Assert(is_irange_valid(ra));
+		Assert(is_irange_valid(rb));
+
 		/* Only care about intersecting ranges */
 		if (iranges_intersect(ra, rb))
 		{
-			IndexRange	intersect, last;
+			IndexRange	ir_intersection;
+			bool		glued_to_last = false;
 
 			/*
 			 * Get intersection and try to "glue" it to
-			 * previous range, put it separately otherwise.
+			 * last irange, put it separately otherwise.
 			 */
-			intersect = irange_intersection_simple(ra, rb);
+			ir_intersection = irange_intersection_simple(ra, rb);
 			if (result != NIL)
 			{
-				last = llast_irange(result);
-				if (iranges_adjoin(last, intersect) &&
-					is_irange_lossy(last) == is_irange_lossy(intersect))
+				IndexRange last = llast_irange(result);
+
+				/* Test if we can glue 'last' and 'ir_intersection' */
+				if (irange_cmp_lossiness(last, ir_intersection) == IR_EQ_LOSSINESS &&
+					iranges_adjoin(last, ir_intersection))
 				{
-					llast(result) = alloc_irange(irange_union_simple(last, intersect));
-				}
-				else
-				{
-					result = lappend_irange(result, intersect);
+					IndexRange ir_union = irange_union_simple(last, ir_intersection);
+
+					/* We allocate a new IndexRange for safety */
+					llast(result) = alloc_irange(ir_union);
+
+					/* Successfully glued them */
+					glued_to_last = true;
 				}
 			}
-			else
-			{
-				result = lappend_irange(result, intersect);
-			}
+
+			/* Append IndexRange if we couldn't glue it */
+			if (!glued_to_last)
+				result = lappend_irange(result, ir_intersection);
 		}
 
 		/*
-		 * Fetch next ranges. We use upper bound of current range to determine
-		 * which lists to fetch, since lower bound of next range is greater (or
-		 * equal) to upper bound of current.
+		 * Fetch next iranges. We use upper bound of current irange to
+		 * determine which lists to fetch, since lower bound of next
+		 * irange is greater (or equal) to upper bound of current.
 		 */
 		if (irange_upper(ra) <= irange_upper(rb))
 			ca = lnext(ca);

@@ -44,6 +44,14 @@ typedef struct {
 #define irange_upper(irange)	( (uint32) (irange.upper & IRANGE_BONDARY_MASK) )
 
 
+#define lfirst_irange(lc)				( *(IndexRange *) lfirst(lc) )
+#define lappend_irange(list, irange)	( lappend((list), alloc_irange(irange)) )
+#define lcons_irange(irange, list)		( lcons(alloc_irange(irange), (list)) )
+#define list_make1_irange(irange)		( lcons_irange(irange, NIL) )
+#define llast_irange(list)				( lfirst_irange(list_tail(list)) )
+#define linitial_irange(list)			( lfirst_irange(list_head(list)) )
+
+
 inline static IndexRange
 make_irange(uint32 lower, uint32 upper, bool lossy)
 {
@@ -82,23 +90,15 @@ irb_pred(uint32 boundary)
 	return 0;
 }
 
-/* Return predecessor or IRANGE_BONDARY_MASK */
+/* Return successor or IRANGE_BONDARY_MASK */
 inline static uint32
 irb_succ(uint32 boundary)
 {
 	if (boundary >= IRANGE_BONDARY_MASK)
-		return boundary;
+		return IRANGE_BONDARY_MASK;
 
 	return boundary + 1;
 }
-
-
-#define lfirst_irange(lc)				( *(IndexRange *) lfirst(lc) )
-#define lappend_irange(list, irange)	( lappend((list), alloc_irange(irange)) )
-#define lcons_irange(irange, list)		( lcons(alloc_irange(irange), (list)) )
-#define list_make1_irange(irange)		( lcons(alloc_irange(irange), NIL) )
-#define llast_irange(list)				( lfirst_irange(list_tail(list)) )
-#define linitial_irange(list)			( lfirst_irange(list_head(list)) )
 
 
 /* Result of function irange_cmp_lossiness() */
@@ -109,12 +109,27 @@ typedef enum
 	IR_B_LOSSY				/* IndexRange 'b' is lossy ('a' is not) */
 } ir_cmp_lossiness;
 
+/* Comapre lossiness factor of two IndexRanges */
+inline static ir_cmp_lossiness
+irange_cmp_lossiness(IndexRange a, IndexRange b)
+{
+	if (is_irange_lossy(a) == is_irange_lossy(b))
+		return IR_EQ_LOSSINESS;
+
+	if (is_irange_lossy(a))
+		return IR_A_LOSSY;
+
+	if (is_irange_lossy(b))
+		return IR_B_LOSSY;
+
+	return IR_EQ_LOSSINESS;
+}
+
 
 /* Various traits */
 bool iranges_intersect(IndexRange a, IndexRange b);
 bool iranges_adjoin(IndexRange a, IndexRange b);
 bool irange_eq_bounds(IndexRange a, IndexRange b);
-ir_cmp_lossiness irange_cmp_lossiness(IndexRange a, IndexRange b);
 
 /* Basic operations on IndexRanges */
 IndexRange irange_union_simple(IndexRange a, IndexRange b);
