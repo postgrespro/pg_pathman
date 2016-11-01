@@ -409,6 +409,8 @@ class PartitioningTests(unittest.TestCase):
     def test_parallel_nodes(self):
         """Test parallel queries under partitions"""
 
+        import json
+
         # Init and start postgres instance with preload pg_pathman module
         node = get_new_node('test')
         node.init()
@@ -419,8 +421,8 @@ class PartitioningTests(unittest.TestCase):
 
         # Check version of postgres server
         # If version < 9.6 skip all tests for parallel queries
-        version = node.psql("postgres", "show server_version_num")
-        if int(version[1]) < 90600:
+        version = int(node.psql("postgres", "show server_version_num")[1])
+        if version < 90600:
             return
 
         # Prepare test database
@@ -435,6 +437,26 @@ class PartitioningTests(unittest.TestCase):
         node.psql('postgres', 'select create_hash_partitions(\'hash_partitioned\', \'i\', 10)')
         node.psql('postgres', 'vacuum analyze hash_partitioned')
 
+        node.psql('postgres', """
+            create or replace function query_plan(query text) returns jsonb as $$
+            declare
+                    plan jsonb;
+            begin
+                    execute 'explain (costs off, format json)' || query into plan;
+                    return plan;
+            end;
+            $$ language plpgsql;
+        """)
+
+        # Helper function for json equality
+        def ordered(obj):
+            if isinstance(obj, dict):
+                return sorted((k, ordered(v)) for k, v in obj.items())
+            if isinstance(obj, list):
+                return sorted(ordered(x) for x in obj)
+            else:
+                return obj
+
         # Test parallel select
         with node.connect() as con:
             con.execute('set max_parallel_workers_per_gather = 2')
@@ -443,35 +465,120 @@ class PartitioningTests(unittest.TestCase):
             con.execute('set parallel_tuple_cost = 0')
 
             # Check parallel aggregate plan
-            plan = con.execute('explain (costs off) select count(*) from range_partitioned where i < 1500')
-            expected = [('Finalize Aggregate',),
-                        ('  ->  Gather',),
-                        ('        Workers Planned: 2',),
-                        ('        ->  Partial Aggregate',),
-                        ('              ->  Append',),
-                        ('                    ->  Parallel Seq Scan on range_partitioned_1',),
-                        ('                    ->  Parallel Seq Scan on range_partitioned_2',),
-                        ('                          Filter: (i < 1500)',)]
-            self.assertEqual(plan, expected)
+            test_query = 'select count(*) from range_partitioned where i < 1500'
+            plan = con.execute('select query_plan(\'%s\')' % test_query)[0][0]
+            expected = json.loads("""
+            [
+              {
+                "Plan": {
+                  "Node Type": "Aggregate",
+                  "Strategy": "Plain",
+                  "Partial Mode": "Finalize",
+                  "Parallel Aware": false,
+                  "Plans": [
+                    {
+                      "Node Type": "Gather",
+                      "Parent Relationship": "Outer",
+                      "Parallel Aware": false,
+                      "Workers Planned": 2,
+                      "Single Copy": false,
+                      "Plans": [
+                        {
+                          "Node Type": "Aggregate",
+                          "Strategy": "Plain",
+                          "Partial Mode": "Partial",
+                          "Parent Relationship": "Outer",
+                          "Parallel Aware": false,
+                          "Plans": [
+                            {
+                              "Node Type": "Append",
+                              "Parent Relationship": "Outer",
+                              "Parallel Aware": false,
+                              "Plans": [
+                                {
+                                  "Node Type": "Seq Scan",
+                                  "Parent Relationship": "Member",
+                                  "Parallel Aware": true,
+                                  "Relation Name": "range_partitioned_2",
+                                  "Alias": "range_partitioned_2",
+                                  "Filter": "(i < 1500)"
+                                },
+                                {
+                                  "Node Type": "Seq Scan",
+                                  "Parent Relationship": "Member",
+                                  "Parallel Aware": true,
+                                  "Relation Name": "range_partitioned_1",
+                                  "Alias": "range_partitioned_1"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+            """)
+            self.assertEqual(ordered(plan), ordered(expected))
 
             # Check count of returned tuples
-            count = con.execute('select count(*) from range_partitioned where i < 1500')
-            self.assertEqual(count[0][0], 1499)
+            count = con.execute('select count(*) from range_partitioned where i < 1500')[0][0]
+            self.assertEqual(count, 1499)
 
             # Check simple parallel seq scan plan with limit
-            plan = con.execute('explain (costs off) select * from range_partitioned where i < 1500 limit 5')
-            expected = [('Limit',),
-                        ('  ->  Gather',),
-                        ('        Workers Planned: 2',),
-                        ('        ->  Append',),
-                        ('              ->  Parallel Seq Scan on range_partitioned_1',),
-                        ('              ->  Parallel Seq Scan on range_partitioned_2',),
-                        ('                    Filter: (i < 1500)',)]
-            self.assertEqual(plan, expected)
+            test_query = 'select * from range_partitioned where i < 1500 limit 5'
+            plan = con.execute('select query_plan(\'%s\')' % test_query)[0][0]
+            expected = json.loads("""
+            [
+              {
+                "Plan": {
+                  "Node Type": "Limit",
+                  "Parallel Aware": false,
+                  "Plans": [
+                    {
+                      "Node Type": "Gather",
+                      "Parent Relationship": "Outer",
+                      "Parallel Aware": false,
+                      "Workers Planned": 2,
+                      "Single Copy": false,
+                      "Plans": [
+                        {
+                          "Node Type": "Append",
+                          "Parent Relationship": "Outer",
+                          "Parallel Aware": false,
+                          "Plans": [
+                            {
+                              "Node Type": "Seq Scan",
+                              "Parent Relationship": "Member",
+                              "Parallel Aware": true,
+                              "Relation Name": "range_partitioned_2",
+                              "Alias": "range_partitioned_2",
+                              "Filter": "(i < 1500)"
+                            },
+                            {
+                              "Node Type": "Seq Scan",
+                              "Parent Relationship": "Member",
+                              "Parallel Aware": true,
+                              "Relation Name": "range_partitioned_1",
+                              "Alias": "range_partitioned_1"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ] 
+            """)
+            self.assertEqual(ordered(plan), ordered(expected))
 
             # Check tuples returned by query above
             res_tuples = con.execute('select * from range_partitioned where i < 1500 limit 5')
-            expected = [(1,), (2,), (3,), (4,), (5,)]
+            res_tuples = sorted(map(lambda x: x[0], res_tuples))
+            expected = [1, 2, 3, 4, 5]
             self.assertEqual(res_tuples, expected)
             #  import ipdb; ipdb.set_trace()
 
