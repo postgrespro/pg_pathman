@@ -47,7 +47,7 @@ typedef struct {
 #define lfirst_irange(lc)				( *(IndexRange *) lfirst(lc) )
 #define lappend_irange(list, irange)	( lappend((list), alloc_irange(irange)) )
 #define lcons_irange(irange, list)		( lcons(alloc_irange(irange), (list)) )
-#define list_make1_irange(irange)		( lcons(alloc_irange(irange), NIL) )
+#define list_make1_irange(irange)		( lcons_irange(irange, NIL) )
 #define llast_irange(list)				( lfirst_irange(list_tail(list)) )
 #define linitial_irange(list)			( lfirst_irange(list_head(list)) )
 
@@ -90,12 +90,12 @@ irb_pred(uint32 boundary)
 	return 0;
 }
 
-/* Return predecessor or IRANGE_BONDARY_MASK */
+/* Return successor or IRANGE_BONDARY_MASK */
 inline static uint32
 irb_succ(uint32 boundary)
 {
 	if (boundary >= IRANGE_BONDARY_MASK)
-		return boundary;
+		return IRANGE_BONDARY_MASK;
 
 	return boundary + 1;
 }
