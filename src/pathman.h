@@ -107,17 +107,6 @@ typedef enum
 
 
 /*
- * The list of partitioned relation relids that must be handled by pg_pathman
- */
-extern List			   *inheritance_enabled_relids;
-
-/*
- * This list is used to ensure that partitioned relation isn't used both
- * with and without ONLY modifiers
- */
-extern List			   *inheritance_disabled_relids;
-
-/*
  * pg_pathman's global state.
  */
 extern PathmanState    *pmstate;
@@ -132,11 +121,6 @@ search_rangerel_result search_range_partition_eq(const Datum value,
 												 RangeEntry *out_re);
 
 uint32 hash_to_part_index(uint32 value, uint32 partitions);
-
-void handle_modification_query(Query *parse);
-void disable_inheritance(Query *parse);
-void disable_inheritance_cte(Query *parse);
-void disable_inheritance_subselect(Query *parse);
 
 /* copied from allpaths.h */
 void set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,

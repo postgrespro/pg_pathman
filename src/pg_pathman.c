@@ -16,6 +16,7 @@
 #include "hooks.h"
 #include "utils.h"
 #include "partition_filter.h"
+#include "planner_tree_modification.h"
 #include "runtimeappend.h"
 #include "runtime_merge_append.h"
 #include "xact_handling.h"
@@ -48,8 +49,6 @@
 PG_MODULE_MAGIC;
 
 
-List		   *inheritance_disabled_relids = NIL;
-List		   *inheritance_enabled_relids = NIL;
 PathmanState   *pmstate;
 Oid				pathman_config_relid = InvalidOid;
 Oid				pathman_config_params_relid = InvalidOid;
@@ -60,7 +59,6 @@ void _PG_init(void);
 
 /* Utility functions */
 static Node *wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue);
-static bool disable_inheritance_subselect_walker(Node *node, void *context);
 
 /* "Partition creation"-related functions */
 static Datum extract_binary_interval_from_text(Datum interval_text,
@@ -97,7 +95,9 @@ static void generate_mergeappend_paths(PlannerInfo *root, RelOptInfo *rel,
 						   List *all_child_pathkeys,
 						   PathKey *pathkeyAsc,
 						   PathKey *pathkeyDesc);
-static Path *get_cheapest_parameterized_child_path(PlannerInfo *root, RelOptInfo *rel, Relids required_outer);
+static Path *get_cheapest_parameterized_child_path(PlannerInfo *root,
+												   RelOptInfo *rel,
+												   Relids required_outer);
 
 
 /*
@@ -122,7 +122,11 @@ static Path *get_cheapest_parameterized_child_path(PlannerInfo *root, RelOptInfo
 	( IsA((node), Const) || (WcxtHasExprContext(wcxt) ? IsA((node), Param) : false) )
 
 #define ExtractConst(wcxt, node) \
-	( IsA((node), Param) ? extract_const((wcxt), (Param *) (node)) : ((Const *) (node)) )
+	( \
+		IsA((node), Param) ? \
+				extract_const((wcxt), (Param *) (node)) : \
+				((Const *) (node)) \
+	)
 
 
 /*
@@ -171,183 +175,6 @@ _PG_init(void)
 	init_runtimeappend_static_data();
 	init_runtime_merge_append_static_data();
 	init_partition_filter_static_data();
-}
-
-/*
- * Disables inheritance for partitioned by pathman relations.
- * It must be done to prevent PostgresSQL from exhaustive search.
- */
-void
-disable_inheritance(Query *parse)
-{
-	const PartRelationInfo *prel;
-	RangeTblEntry		   *rte;
-	MemoryContext			oldcontext;
-	ListCell			   *lc;
-
-	/* If query contains CTE (WITH statement) then handle subqueries too */
-	disable_inheritance_cte(parse);
-
-	/* If query contains subselects */
-	disable_inheritance_subselect(parse);
-
-	foreach(lc, parse->rtable)
-	{
-		rte = (RangeTblEntry *) lfirst(lc);
-
-		switch(rte->rtekind)
-		{
-			case RTE_RELATION:
-				if (rte->inh)
-				{
-					/* Look up this relation in pathman local cache */
-					prel = get_pathman_relation_info(rte->relid);
-					if (prel)
-					{
-						/* We'll set this flag later */
-						rte->inh = false;
-
-						/*
-						 * Sometimes user uses the ONLY statement and in this case
-						 * rte->inh is also false. We should differ the case
-						 * when user uses ONLY statement from case when we
-						 * make rte->inh false intentionally.
-						 */
-						oldcontext = MemoryContextSwitchTo(TopMemoryContext);
-						inheritance_enabled_relids = \
-							lappend_oid(inheritance_enabled_relids, rte->relid);
-						MemoryContextSwitchTo(oldcontext);
-
-						/*
-						 * Check if relation was already found with ONLY modifier. In
-						 * this case throw an error because we cannot handle
-						 * situations when partitioned table used both with and
-						 * without ONLY modifier in SELECT queries
-						 */
-						if (list_member_oid(inheritance_disabled_relids, rte->relid))
-							goto disable_error;
-
-						goto disable_next;
-					}
-				}
-
-				oldcontext = MemoryContextSwitchTo(TopMemoryContext);
-				inheritance_disabled_relids = \
-					lappend_oid(inheritance_disabled_relids, rte->relid);
-				MemoryContextSwitchTo(oldcontext);
-
-				/* Check if relation was already found withoud ONLY modifier */
-				if (list_member_oid(inheritance_enabled_relids, rte->relid))
-						goto disable_error;
-				break;
-			case RTE_SUBQUERY:
-				/* Recursively disable inheritance for subqueries */
-				disable_inheritance(rte->subquery);
-				break;
-			default:
-				break;
-		}
-
-disable_next:
-		;
-	}
-
-	return;
-
-disable_error:
-	elog(ERROR, "It is prohibited to query partitioned tables both "
-				"with and without ONLY modifier");
-}
-
-void
-disable_inheritance_cte(Query *parse)
-{
-	ListCell	  *lc;
-
-	foreach(lc, parse->cteList)
-	{
-		CommonTableExpr *cte = (CommonTableExpr*) lfirst(lc);
-
-		if (IsA(cte->ctequery, Query))
-			disable_inheritance((Query *) cte->ctequery);
-	}
-}
-
-void
-disable_inheritance_subselect(Query *parse)
-{
-	Node		*quals;
-
-	if (!parse->jointree || !parse->jointree->quals)
-		return;
-
-	quals = parse->jointree->quals;
-	disable_inheritance_subselect_walker(quals, NULL);
-}
-
-static bool
-disable_inheritance_subselect_walker(Node *node, void *context)
-{
-	if (node == NULL)
-		return false;
-
-	if (IsA(node, SubLink))
-	{
-		disable_inheritance((Query *) (((SubLink *) node)->subselect));
-		return false;
-	}
-
-	return expression_tree_walker(node, disable_inheritance_subselect_walker, (void *) context);
-}
-
-/*
- * Checks if query affects only one partition. If true then substitute
- */
-void
-handle_modification_query(Query *parse)
-{
-	const PartRelationInfo *prel;
-	List				   *ranges;
-	RangeTblEntry		   *rte;
-	WrapperNode			   *wrap;
-	Expr				   *expr;
-	WalkerContext			context;
-
-	Assert(parse->commandType == CMD_UPDATE ||
-		   parse->commandType == CMD_DELETE);
-	Assert(parse->resultRelation > 0);
-
-	rte = rt_fetch(parse->resultRelation, parse->rtable);
-	prel = get_pathman_relation_info(rte->relid);
-
-	if (!prel)
-		return;
-
-	/* Parse syntax tree and extract partition ranges */
-	ranges = list_make1_irange(make_irange(0, PrelLastChild(prel), false));
-	expr = (Expr *) eval_const_expressions(NULL, parse->jointree->quals);
-	if (!expr)
-		return;
-
-	/* Parse syntax tree and extract partition ranges */
-	InitWalkerContext(&context, prel, NULL, false);
-	wrap = walk_expr_tree(expr, &context);
-
-	ranges = irange_list_intersect(ranges, wrap->rangeset);
-
-	/* If only one partition is affected then substitute parent table with partition */
-	if (irange_list_length(ranges) == 1)
-	{
-		IndexRange irange = linitial_irange(ranges);
-		if (irange.ir_lower == irange.ir_upper)
-		{
-			Oid *children = PrelGetChildrenArray(prel);
-			rte->relid = children[irange.ir_lower];
-			rte->inh = false;
-		}
-	}
-
-	return;
 }
 
 /*

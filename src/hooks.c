@@ -13,6 +13,7 @@
 #include "init.h"
 #include "partition_filter.h"
 #include "pg_compat.h"
+#include "planner_tree_modification.h"
 #include "runtimeappend.h"
 #include "runtime_merge_append.h"
 #include "utils.h"
@@ -202,8 +203,12 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		return; /* pg_pathman is not ready */
 
 	/* This works only for SELECT queries (at least for now) */
-	if (root->parse->commandType != CMD_SELECT ||
-		!list_member_oid(inheritance_enabled_relids, rte->relid))
+	if (root->parse->commandType != CMD_SELECT)
+		return;
+
+	/* Skip if this table is not allowed to act as parent (see FROM ONLY) */
+	if (PARENTHOOD_DISALLOWED == get_parenthood_status(root->query_level,
+													   rte->relid))
 		return;
 
 	/* Proceed iff relation 'rel' is partitioned */
@@ -223,8 +228,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		if (prel->parttype == PT_RANGE)
 		{
 			/*
-			 * Get pathkeys for ascending and descending sort by partition
-			 * column
+			 * Get pathkeys for ascending and descending sort by partition column
 			 */
 			List		   *pathkeys;
 			Var			   *var;
@@ -438,29 +442,11 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 			proc((planned_stmt)->rtable, (Plan *) lfirst(lc)); \
 	} while (0)
 
-	PlannedStmt	  *result;
+	PlannedStmt *result;
 
-	/* FIXME: fix these commands (traverse whole query tree) */
+	/* Modify query tree if needed */
 	if (IsPathmanReady())
-	{
-		switch(parse->commandType)
-		{
-			case CMD_SELECT:
-				disable_inheritance(parse);
-				rowmark_add_tableoids(parse); /* add attributes for rowmarks */
-				break;
-
-			case CMD_UPDATE:
-			case CMD_DELETE:
-				disable_inheritance_cte(parse);
-				disable_inheritance_subselect(parse);
-				handle_modification_query(parse);
-				break;
-
-			default:
-				break;
-		}
-	}
+		pathman_transform_query(parse);
 
 	/* Invoke original hook if needed */
 	if (planner_hook_next)
@@ -475,12 +461,10 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 
 		/* Add PartitionFilter node for INSERT queries */
 		ExecuteForPlanTree(result, add_partition_filters);
-	}
 
-	list_free(inheritance_disabled_relids);
-	list_free(inheritance_enabled_relids);
-	inheritance_disabled_relids = NIL;
-	inheritance_enabled_relids = NIL;
+		/* Free all parenthood lists (see pathman_transform_query()) */
+		reset_parenthood_statuses();
+	}
 
 	return result;
 }
@@ -516,9 +500,6 @@ pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
 	{
 		load_config(); /* perform main cache initialization */
 	}
-
-	inheritance_disabled_relids = NIL;
-	inheritance_enabled_relids = NIL;
 }
 
 /*

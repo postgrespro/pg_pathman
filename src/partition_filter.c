@@ -11,6 +11,7 @@
 #include "init.h"
 #include "nodes_common.h"
 #include "partition_filter.h"
+#include "planner_tree_modification.h"
 #include "utils.h"
 
 #include "foreign/fdwapi.h"
@@ -63,7 +64,6 @@ CustomExecMethods	partition_filter_exec_methods;
 
 
 static estate_mod_data * fetch_estate_mod_data(EState *estate);
-static void partition_filter_visitor(Plan *plan, void *context);
 static List * pfilter_build_tlist(List *tlist);
 static Index append_rte_to_estate(EState *estate, RangeTblEntry *rte);
 static int append_rri_to_estate(EState *estate, ResultRelInfo *rri);
@@ -109,17 +109,6 @@ init_partition_filter_static_data(void)
 							 NULL,
 							 NULL,
 							 NULL);
-}
-
-
-/*
- * Add PartitionFilter nodes to the plan tree
- */
-void
-add_partition_filters(List *rtable, Plan *plan)
-{
-	if (pg_pathman_enable_partition_filter)
-		plan_tree_walker(plan, partition_filter_visitor, rtable);
 }
 
 
@@ -803,37 +792,4 @@ pfilter_build_tlist(List *tlist)
 	}
 
 	return result_tlist;
-}
-
-/*
- * Add partition filters to ModifyTable node's children.
- *
- * 'context' should point to the PlannedStmt->rtable.
- */
-static void
-partition_filter_visitor(Plan *plan, void *context)
-{
-	List		   *rtable = (List *) context;
-	ModifyTable	   *modify_table = (ModifyTable *) plan;
-	ListCell	   *lc1,
-				   *lc2;
-
-	/* Skip if not ModifyTable with 'INSERT' command */
-	if (!IsA(modify_table, ModifyTable) || modify_table->operation != CMD_INSERT)
-		return;
-
-	Assert(rtable && IsA(rtable, List));
-
-	forboth (lc1, modify_table->plans, lc2, modify_table->resultRelations)
-	{
-		Index					rindex = lfirst_int(lc2);
-		Oid						relid = getrelid(rindex, rtable);
-		const PartRelationInfo *prel = get_pathman_relation_info(relid);
-
-		/* Check that table is partitioned */
-		if (prel)
-			lfirst(lc1) = make_partition_filter((Plan *) lfirst(lc1),
-												relid,
-												modify_table->onConflictAction);
-	}
 }
