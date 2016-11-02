@@ -504,7 +504,12 @@ list_member_parenthood(List *list, Oid relid)
 		status = (cached_parenthood_status *) lfirst(lc);
 
 		if (status->relid == relid)
+		{
+			/* This should NEVER happen! */
+			Assert(status->parenthood_status != PARENTHOOD_NOT_SET);
+
 			return status->parenthood_status;
+		}
 	}
 
 	return PARENTHOOD_NOT_SET;
@@ -562,8 +567,21 @@ assign_rel_parenthood_status(Index query_level,
 	/* Search for a parenthood status */
 	existing_status = list_member_parenthood(nth_parenthood_list, relid);
 
+	/* Append new status entry if we couldn't find it */
+	if (existing_status == PARENTHOOD_NOT_SET)
+	{
+		/* Append new element (relid, status) */
+		old_mcxt = MemoryContextSwitchTo(TopTransactionContext);
+		nth_parenthood_list = lappend_parenthood(nth_parenthood_list,
+												 relid, new_status);
+		MemoryContextSwitchTo(old_mcxt);
+
+		/* Update ListCell */
+		lfirst(nth_parenthood_cell) = nth_parenthood_list;
+	}
+
 	/* Parenthood statuses mismatched, emit an ERROR */
-	if (existing_status != new_status && existing_status != PARENTHOOD_NOT_SET)
+	else if (existing_status != new_status)
 	{
 		/* Don't forget to clear all lists! */
 		reset_parenthood_statuses();
@@ -571,14 +589,6 @@ assign_rel_parenthood_status(Index query_level,
 		elog(ERROR, "It is prohibited to apply ONLY modifier to partitioned "
 					"tables which have already been mentioned without ONLY");
 	}
-
-	/* Append new element (relid, status) */
-	old_mcxt = MemoryContextSwitchTo(TopTransactionContext);
-	nth_parenthood_list = lappend_parenthood(nth_parenthood_list, relid, new_status);
-	MemoryContextSwitchTo(old_mcxt);
-
-	/* Update ListCell */
-	lfirst(nth_parenthood_cell) = nth_parenthood_list;
 }
 
 /* Get parenthood status (per query level) */
