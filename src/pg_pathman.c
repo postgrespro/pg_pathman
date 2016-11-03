@@ -1628,6 +1628,12 @@ set_plain_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 #endif
 	add_path(rel, path);
 
+#if PG_VERSION_NUM >= 90600
+	/* If appropriate, consider parallel sequential scan */
+	if (rel->consider_parallel && required_outer == NULL)
+		create_plain_partial_paths_compat(root, rel);
+#endif
+
 	/* Consider index scans */
 	create_index_paths(root, rel);
 
@@ -1675,6 +1681,10 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	List	   *live_childrels = NIL;
 	List	   *subpaths = NIL;
 	bool		subpaths_valid = true;
+#if PG_VERSION_NUM >= 90600
+	List	   *partial_subpaths = NIL;
+	bool		partial_subpaths_valid = true;
+#endif
 	List	   *all_child_pathkeys = NIL;
 	List	   *all_child_outers = NIL;
 	ListCell   *l;
@@ -1702,6 +1712,18 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		childRTE = root->simple_rte_array[childRTindex];
 		childrel = root->simple_rel_array[childRTindex];
 
+#if PG_VERSION_NUM >= 90600
+		/*
+		 * If parallelism is allowable for this query in general and for parent
+		 * appendrel, see whether it's allowable for this childrel in
+		 * particular.
+		 *
+		 * For consistency, do this before calling set_rel_size() for the child.
+		 */
+		if (root->glob->parallelModeOK && rel->consider_parallel)
+			set_rel_consider_parallel_compat(root, childrel, childRTE);
+#endif
+
 		/*
 		 * Compute the child's access paths.
 		 */
@@ -1728,6 +1750,18 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		 */
 		live_childrels = lappend(live_childrels, childrel);
 
+#if PG_VERSION_NUM >= 90600
+		/*
+		 * If any live child is not parallel-safe, treat the whole appendrel
+		 * as not parallel-safe.  In future we might be able to generate plans
+		 * in which some children are farmed out to workers while others are
+		 * not; but we don't have that today, so it's a waste to consider
+		 * partial paths anywhere in the appendrel unless it's all safe.
+		 */
+		if (!childrel->consider_parallel)
+			rel->consider_parallel = false;
+#endif
+
 		/*
 		 * If child has an unparameterized cheapest-total path, add that to
 		 * the unparameterized Append path we are constructing for the parent.
@@ -1738,6 +1772,15 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 											  childrel->cheapest_total_path);
 		else
 			subpaths_valid = false;
+
+#if PG_VERSION_NUM >= 90600
+		/* Same idea, but for a partial plan. */
+		if (childrel->partial_pathlist != NIL)
+			partial_subpaths = accumulate_append_subpath(partial_subpaths,
+									   linitial(childrel->partial_pathlist));
+		else
+			partial_subpaths_valid = false;
+#endif
 
 		/*
 		 * Collect lists of all the available path orderings and
@@ -1812,6 +1855,37 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	if (subpaths_valid)
 		add_path(rel,
 				 (Path *) create_append_path_compat(rel, subpaths, NULL, 0));
+
+#if PG_VERSION_NUM >= 90600
+	/*
+	 * Consider an append of partial unordered, unparameterized partial paths.
+	 */
+	if (partial_subpaths_valid)
+	{
+		AppendPath *appendpath;
+		ListCell   *lc;
+		int			parallel_workers = 0;
+
+		/*
+		 * Decide on the number of workers to request for this append path.
+		 * For now, we just use the maximum value from among the members.  It
+		 * might be useful to use a higher number if the Append node were
+		 * smart enough to spread out the workers, but it currently isn't.
+		 */
+		foreach(lc, partial_subpaths)
+		{
+			Path	   *path = lfirst(lc);
+
+			parallel_workers = Max(parallel_workers, path->parallel_workers);
+		}
+		Assert(parallel_workers > 0);
+
+		/* Generate a partial append path. */
+		appendpath = create_append_path(rel, partial_subpaths, NULL,
+										parallel_workers);
+		add_partial_path(rel, (Path *) appendpath);
+	}
+#endif
 
 	/*
 	 * Also build unparameterized MergeAppend paths based on the collected

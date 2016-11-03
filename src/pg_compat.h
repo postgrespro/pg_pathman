@@ -41,6 +41,15 @@ void adjust_targetlist_compat(PlannerInfo *root, RelOptInfo *dest,
 #define pull_var_clause_compat(node, aggbehavior, phbehavior) \
 		pull_var_clause(node, aggbehavior | phbehavior)
 
+extern void set_rel_consider_parallel(PlannerInfo *root, RelOptInfo *rel,
+									  RangeTblEntry *rte);
+#define set_rel_consider_parallel_compat(root, rel, rte) \
+		set_rel_consider_parallel(root, rel, rte)
+
+extern void create_plain_partial_paths(PlannerInfo *root, RelOptInfo *rel);
+#define create_plain_partial_paths_compat(root, rel) \
+		create_plain_partial_paths(root, rel)
+
 extern Result *make_result(List *tlist, Node *resconstantqual, Plan *subplan);
 #define make_result_compat(root, tlist, resconstantqual, subplan) \
 		make_result(tlist, resconstantqual, subplan)
@@ -67,6 +76,10 @@ extern Result *make_result(List *tlist, Node *resconstantqual, Plan *subplan);
 
 #define make_result_compat(root, tlist, resconstantqual, subplan) \
 		make_result(root, tlist, resconstantqual, subplan)
+
+#define set_rel_consider_parallel_compat(root, rel, rte) ((void) true)
+
+#define create_plain_partial_paths_compat(root, rel) ((void) true)
 
 #endif
 
