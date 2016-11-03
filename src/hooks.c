@@ -199,16 +199,19 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 	if (set_rel_pathlist_hook_next != NULL)
 		set_rel_pathlist_hook_next(root, rel, rti, rte);
 
+	/* Make sure that pg_pathman is ready */
 	if (!IsPathmanReady())
-		return; /* pg_pathman is not ready */
+		return;
 
-	/* This works only for SELECT queries (at least for now) */
-	if (root->parse->commandType != CMD_SELECT)
+	/* This works only for SELECTs on simple relations */
+	if (root->parse->commandType != CMD_SELECT ||
+		rte->rtekind != RTE_RELATION ||
+		rte->relkind != RELKIND_RELATION)
 		return;
 
 	/* Skip if this table is not allowed to act as parent (see FROM ONLY) */
-	if (PARENTHOOD_DISALLOWED == get_parenthood_status(root->query_level,
-													   rte->relid))
+	if (PARENTHOOD_DISALLOWED == get_rel_parenthood_status(root->parse->queryId,
+														   rte->relid))
 		return;
 
 	/* Proceed iff relation 'rel' is partitioned */
@@ -443,10 +446,16 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	} while (0)
 
 	PlannedStmt *result;
+	uint32		 query_id = parse->queryId;
 
-	/* Modify query tree if needed */
 	if (IsPathmanReady())
+	{
+		/* Increment parenthood_statuses refcount */
+		incr_refcount_parenthood_statuses();
+
+		/* Modify query tree if needed */
 		pathman_transform_query(parse);
+	}
 
 	/* Invoke original hook if needed */
 	if (planner_hook_next)
@@ -462,8 +471,11 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 		/* Add PartitionFilter node for INSERT queries */
 		ExecuteForPlanTree(result, add_partition_filters);
 
-		/* Free all parenthood lists (see pathman_transform_query()) */
-		reset_parenthood_statuses();
+		/* Decrement parenthood_statuses refcount */
+		decr_refcount_parenthood_statuses();
+
+		/* HACK: restore queryId set by pg_stat_statements */
+		result->queryId = query_id;
 	}
 
 	return result;

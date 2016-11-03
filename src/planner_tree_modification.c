@@ -8,6 +8,7 @@
  * ------------------------------------------------------------------------
  */
 
+#include "nodes_common.h"
 #include "partition_filter.h"
 #include "planner_tree_modification.h"
 #include "rangeset.h"
@@ -25,17 +26,11 @@
 #define TABLEOID_STR_BASE_LEN	( sizeof(TABLEOID_STR("")) - 1 )
 
 
-/* context for pathman_transform_query_walker() */
-typedef struct
-{
-	int query_level; /* level of current Query */
-} query_transform_cxt;
-
 static bool pathman_transform_query_walker(Node *node, void *context);
 
-static void disable_standard_inheritance(Query *parse, query_transform_cxt *cxt);
-static void rowmark_add_tableoids(Query *parse, query_transform_cxt *cxt);
-static void handle_modification_query(Query *parse, query_transform_cxt *cxt);
+static void disable_standard_inheritance(Query *parse);
+static void rowmark_add_tableoids(Query *parse);
+static void handle_modification_query(Query *parse);
 
 static void partition_filter_visitor(Plan *plan, void *context);
 
@@ -44,10 +39,35 @@ static List *get_tableoids_list(List *tlist);
 
 
 /*
- * This list is used to ensure that partitioned relation
- * isn't used with both and without ONLY modifiers
+ * This table is used to ensure that partitioned relation
+ * cant't be used with both and without ONLY modifiers.
  */
-static List *per_query_parenthood_lists = NIL;
+static HTAB	   *per_table_parenthood_mapping = NULL;
+static uint32	per_table_parenthood_mapping_refcount = 0;
+
+/*
+ * We have to mark each Query with a unique id in order
+ * to recognize them properly.
+ */
+#define QUERY_ID_INITIAL 0
+static uint32	latest_query_id = QUERY_ID_INITIAL;
+
+static inline void
+assign_query_id(Query *query)
+{
+	uint32	prev_id = latest_query_id++;
+
+	if (prev_id > latest_query_id)
+		elog(WARNING, "assign_query_id(): queryId overflow");
+
+	query->queryId = latest_query_id;
+}
+
+static inline void
+reset_query_id_generator(void)
+{
+	latest_query_id = QUERY_ID_INITIAL;
+}
 
 
 /*
@@ -123,9 +143,7 @@ plan_tree_walker(Plan *plan,
 void
 pathman_transform_query(Query *parse)
 {
-	query_transform_cxt context = { 0 };
-
-	pathman_transform_query_walker((Node *) parse, (void *) &context);
+	pathman_transform_query_walker((Node *) parse, NULL);
 }
 
 /* Walker for pathman_transform_query() */
@@ -137,29 +155,21 @@ pathman_transform_query_walker(Node *node, void *context)
 
 	else if (IsA(node, Query))
 	{
-		Query				   *query = (Query *) node;
-		query_transform_cxt	   *cxt = (query_transform_cxt *) context;
-		bool					walker_result;
+		Query *query = (Query *) node;
 
-		/* Increment Query level */
-		cxt->query_level++;
+		/* Assign Query a 'queryId' */
+		assign_query_id(query);
 
 		/* Apply Query tree modifiers */
-		rowmark_add_tableoids(query, cxt);
-		disable_standard_inheritance(query, cxt);
-		handle_modification_query(query, cxt);
+		rowmark_add_tableoids(query);
+		disable_standard_inheritance(query);
+		handle_modification_query(query);
 
 		/* Handle Query node */
-		walker_result = query_tree_walker(query,
-										  pathman_transform_query_walker,
-										  context,
-										  0);
-
-		/* Decrement Query level */
-		cxt->query_level--;
-
-		/* Result of query_tree_walker() */
-		return walker_result;
+		return query_tree_walker(query,
+								 pathman_transform_query_walker,
+								 context,
+								 0);
 	}
 
 	/* Handle expression subtree */
@@ -181,7 +191,7 @@ pathman_transform_query_walker(Node *node, void *context)
  * This function sets RangeTblEntry::inh flag to false.
  */
 static void
-disable_standard_inheritance(Query *parse, query_transform_cxt *cxt)
+disable_standard_inheritance(Query *parse)
 {
 	ListCell *lc;
 
@@ -210,13 +220,13 @@ disable_standard_inheritance(Query *parse, query_transform_cxt *cxt)
 				rte->inh = false;
 
 				/* Try marking it using PARENTHOOD_ALLOWED */
-				assign_rel_parenthood_status(cxt->query_level,
+				assign_rel_parenthood_status(parse->queryId,
 											 rte->relid,
 											 PARENTHOOD_ALLOWED);
 			}
 		}
 		/* Else try marking it using PARENTHOOD_DISALLOWED */
-		else assign_rel_parenthood_status(cxt->query_level,
+		else assign_rel_parenthood_status(parse->queryId,
 										  rte->relid,
 										  PARENTHOOD_DISALLOWED);
 	}
@@ -232,7 +242,7 @@ disable_standard_inheritance(Query *parse, query_transform_cxt *cxt)
  * relnames into 'tableoid:rowmarkId'.
  */
 static void
-rowmark_add_tableoids(Query *parse, query_transform_cxt *cxt)
+rowmark_add_tableoids(Query *parse)
 {
 	ListCell *lc;
 
@@ -271,7 +281,7 @@ rowmark_add_tableoids(Query *parse, query_transform_cxt *cxt)
 
 /* Checks if query affects only one partition */
 static void
-handle_modification_query(Query *parse, query_transform_cxt *cxt)
+handle_modification_query(Query *parse)
 {
 	const PartRelationInfo *prel;
 	List				   *ranges;
@@ -487,140 +497,112 @@ lock_rows_visitor(Plan *plan, void *context)
 /* private struct stored by parenthood lists */
 typedef struct
 {
+	Oid						relid;		/* key (part #1) */
+	uint32					queryId;	/* key (part #2) */
 	rel_parenthood_status	parenthood_status;
-	Oid						relid;
-}	cached_parenthood_status;
+} cached_parenthood_status;
 
-
-inline static rel_parenthood_status
-list_member_parenthood(List *list, Oid relid)
-{
-	ListCell *lc;
-
-	foreach (lc, list)
-	{
-		cached_parenthood_status *status;
-
-		status = (cached_parenthood_status *) lfirst(lc);
-
-		if (status->relid == relid)
-		{
-			/* This should NEVER happen! */
-			Assert(status->parenthood_status != PARENTHOOD_NOT_SET);
-
-			return status->parenthood_status;
-		}
-	}
-
-	return PARENTHOOD_NOT_SET;
-}
-
-inline static void
-list_free_parenthood(List *list)
-{
-	list_free_deep(list);
-}
-
-inline static List *
-lappend_parenthood(List *list, Oid relid, rel_parenthood_status new_status)
-{
-	cached_parenthood_status *status;
-
-	status = palloc(sizeof(cached_parenthood_status));
-	status->parenthood_status = new_status;
-	status->relid = relid;
-
-	return lappend(list, (void *) status);
-}
 
 /* Set parenthood status (per query level) */
 void
-assign_rel_parenthood_status(Index query_level,
+assign_rel_parenthood_status(uint32 query_id,
 							 Oid relid,
 							 rel_parenthood_status new_status)
 {
-	List				   *nth_parenthood_list;
-	ListCell			   *nth_parenthood_cell = NULL;
-	rel_parenthood_status	existing_status;
-	MemoryContext			old_mcxt;
+	cached_parenthood_status   *status_entry,
+								key = { relid, query_id, PARENTHOOD_NOT_SET };
+	bool						found;
 
-	Assert(query_level > 0);
-
-	/* Create new ListCells if it's a new Query level */
-	while (query_level > list_length(per_query_parenthood_lists))
+	/* We prefer to init this table lazily */
+	if (per_table_parenthood_mapping == NULL)
 	{
-		old_mcxt = MemoryContextSwitchTo(TopTransactionContext);
-		per_query_parenthood_lists = lappend(per_query_parenthood_lists, NIL);
-		MemoryContextSwitchTo(old_mcxt);
+		const long	start_elems = 50;
+		HASHCTL		hashctl;
 
-		nth_parenthood_cell = list_tail(per_query_parenthood_lists);
+		memset(&hashctl, 0, sizeof(HASHCTL));
+		hashctl.entrysize = sizeof(cached_parenthood_status);
+		hashctl.keysize = offsetof(cached_parenthood_status, parenthood_status);
+		hashctl.hcxt = TopTransactionContext;
+
+		per_table_parenthood_mapping = hash_create("Parenthood Storage",
+												   start_elems, &hashctl,
+												   HASH_ELEM | HASH_BLOBS);
 	}
 
-	/* Else fetch an existing ListCell */
-	if (nth_parenthood_cell == NULL)
-		nth_parenthood_cell = list_nth_cell(per_query_parenthood_lists,
-											query_level - 1);
+	/* Search by 'key' */
+	status_entry = hash_search(per_table_parenthood_mapping,
+							   &key, HASH_ENTER, &found);
 
-	/* Extract parenthood list from ListCell */
-	nth_parenthood_list = (List *) lfirst(nth_parenthood_cell);
-
-	/* Search for a parenthood status */
-	existing_status = list_member_parenthood(nth_parenthood_list, relid);
-
-	/* Append new status entry if we couldn't find it */
-	if (existing_status == PARENTHOOD_NOT_SET)
+	if (found)
 	{
-		/* Append new element (relid, status) */
-		old_mcxt = MemoryContextSwitchTo(TopTransactionContext);
-		nth_parenthood_list = lappend_parenthood(nth_parenthood_list,
-												 relid, new_status);
-		MemoryContextSwitchTo(old_mcxt);
+		/* Saved status conflicts with 'new_status' */
+		if (status_entry->parenthood_status != new_status)
+		{
+			/* Don't forget to clear all lists! */
+			decr_refcount_parenthood_statuses();
 
-		/* Update ListCell */
-		lfirst(nth_parenthood_cell) = nth_parenthood_list;
+			elog(ERROR, "It is prohibited to apply ONLY modifier to partitioned "
+						"tables which have already been mentioned without ONLY");
+		}
 	}
-
-	/* Parenthood statuses mismatched, emit an ERROR */
-	else if (existing_status != new_status)
+	else
 	{
-		/* Don't forget to clear all lists! */
-		reset_parenthood_statuses();
+		/* This should NEVER happen! */
+		Assert(new_status != PARENTHOOD_NOT_SET);
 
-		elog(ERROR, "It is prohibited to apply ONLY modifier to partitioned "
-					"tables which have already been mentioned without ONLY");
+		status_entry->parenthood_status = new_status;
 	}
 }
 
 /* Get parenthood status (per query level) */
 rel_parenthood_status
-get_parenthood_status(Index query_level, Oid relid)
+get_rel_parenthood_status(uint32 query_id, Oid relid)
 {
-	List *nth_parenthood_list;
+	cached_parenthood_status   *status_entry,
+								key = { relid, query_id, PARENTHOOD_NOT_SET };
 
-	Assert(query_level > 0);
+	/* Skip if table is not initialized */
+	if (per_table_parenthood_mapping)
+	{
+		/* Search by 'key' */
+		status_entry = hash_search(per_table_parenthood_mapping,
+								   &key, HASH_FIND, NULL);
 
-	/* Return PARENTHOOD_NOT_SET if there's no such level */
-	if (query_level > list_length(per_query_parenthood_lists))
-		return PARENTHOOD_NOT_SET;
+		if (status_entry)
+		{
+			/* This should NEVER happen! */
+			Assert(status_entry->parenthood_status != PARENTHOOD_NOT_SET);
 
-	/* Fetch a parenthood list for a Query indentified by 'query_level' */
-	nth_parenthood_list = (List *) list_nth(per_query_parenthood_lists,
-											query_level - 1);
+			/* Return cached parenthood status */
+			return status_entry->parenthood_status;
+		}
+	}
 
-	return list_member_parenthood(nth_parenthood_list, relid);
+	/* Not found, return stub value */
+	return PARENTHOOD_NOT_SET;
 }
 
-/* Reset all cached statuses (query end) */
+/* Increate usage counter by 1 */
 void
-reset_parenthood_statuses(void)
+incr_refcount_parenthood_statuses(void)
 {
-	ListCell *lc;
+	Assert(per_table_parenthood_mapping_refcount >= 0);
+	per_table_parenthood_mapping_refcount++;
+}
 
-	/* Clear parenthood lists for each Query level */
-	foreach (lc, per_query_parenthood_lists)
-		list_free_parenthood((List *) lfirst(lc));
+/* Reset all cached statuses if needed (query end) */
+void
+decr_refcount_parenthood_statuses(void)
+{
+	Assert(per_table_parenthood_mapping_refcount > 0);
+	per_table_parenthood_mapping_refcount--;
 
-	/* Now free the main list and point it to NIL */
-	list_free(per_query_parenthood_lists);
-	per_query_parenthood_lists = NIL;
+	/* Free resources if no one is using them */
+	if (per_table_parenthood_mapping_refcount == 0)
+	{
+		reset_query_id_generator();
+
+		hash_destroy(per_table_parenthood_mapping);
+		per_table_parenthood_mapping = NULL;
+	}
 }

@@ -41,10 +41,11 @@ typedef enum
 	PARENTHOOD_ALLOWED		/* children are enabled (default) */
 } rel_parenthood_status;
 
-void assign_rel_parenthood_status(Index query_level, Oid relid,
+void assign_rel_parenthood_status(uint32 query_id, Oid relid,
 								  rel_parenthood_status new_status);
-rel_parenthood_status get_parenthood_status(Index query_level, Oid relid);
-void reset_parenthood_statuses(void);
+rel_parenthood_status get_rel_parenthood_status(uint32 query_id, Oid relid);
+void incr_refcount_parenthood_statuses(void);
+void decr_refcount_parenthood_statuses(void);
 
 
 #endif /* PLANNER_TREE_MODIFICATION_H */
