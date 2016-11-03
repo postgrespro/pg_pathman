@@ -472,7 +472,7 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 		ExecuteForPlanTree(result, add_partition_filters);
 
 		/* Decrement parenthood_statuses refcount */
-		decr_refcount_parenthood_statuses();
+		decr_refcount_parenthood_statuses(false);
 
 		/* HACK: restore queryId set by pg_stat_statements */
 		result->queryId = query_id;

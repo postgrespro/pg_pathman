@@ -538,8 +538,8 @@ assign_rel_parenthood_status(uint32 query_id,
 		/* Saved status conflicts with 'new_status' */
 		if (status_entry->parenthood_status != new_status)
 		{
-			/* Don't forget to clear all lists! */
-			decr_refcount_parenthood_statuses();
+			/* Don't forget to clear ALL tracked statuses! */
+			decr_refcount_parenthood_statuses(true);
 
 			elog(ERROR, "It is prohibited to apply ONLY modifier to partitioned "
 						"tables which have already been mentioned without ONLY");
@@ -592,10 +592,15 @@ incr_refcount_parenthood_statuses(void)
 
 /* Reset all cached statuses if needed (query end) */
 void
-decr_refcount_parenthood_statuses(void)
+decr_refcount_parenthood_statuses(bool entirely)
 {
 	Assert(per_table_parenthood_mapping_refcount > 0);
-	per_table_parenthood_mapping_refcount--;
+
+	/* Should we destroy the table right now? */
+	if (entirely)
+		per_table_parenthood_mapping_refcount = 0;
+	else
+		per_table_parenthood_mapping_refcount--;
 
 	/* Free resources if no one is using them */
 	if (per_table_parenthood_mapping_refcount == 0)
