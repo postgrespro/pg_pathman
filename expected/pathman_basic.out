@@ -190,8 +190,28 @@ SELECT COUNT(*) FROM ONLY test.num_range_rel;
      0
 (1 row)
 
+/* test special case: ONLY statement with not-ONLY for partitioned table */
 SELECT * FROM ONLY test.range_rel UNION SELECT * FROM test.range_rel;
 ERROR:  It is prohibited to apply ONLY modifier to partitioned tables which have already been mentioned without ONLY
+SELECT * FROM test.range_rel UNION SELECT * FROM ONLY test.range_rel;
+ERROR:  It is prohibited to apply ONLY modifier to partitioned tables which have already been mentioned without ONLY
+SELECT * FROM test.range_rel UNION SELECT * FROM test.range_rel UNION SELECT * FROM ONLY test.range_rel;
+ERROR:  It is prohibited to apply ONLY modifier to partitioned tables which have already been mentioned without ONLY
+SELECT * FROM ONLY test.range_rel UNION SELECT * FROM test.range_rel UNION SELECT * FROM test.range_rel;
+ERROR:  It is prohibited to apply ONLY modifier to partitioned tables which have already been mentioned without ONLY
+/* FIXME: result of next command execution is not right just yet */
+WITH q1 AS (SELECT * FROM test.range_rel), q2 AS (SELECT * FROM ONLY test.range_rel) SELECT * FROM q1 JOIN q2 USING(id);
+ERROR:  It is prohibited to apply ONLY modifier to partitioned tables which have already been mentioned without ONLY
+WITH q1 AS (SELECT * FROM ONLY test.range_rel) SELECT * FROM test.range_rel JOIN q1 USING(id);
+ id | dt | txt | dt | txt 
+----+----+-----+----+-----
+(0 rows)
+
+SELECT * FROM test.range_rel WHERE id = (SELECT id FROM ONLY test.range_rel LIMIT 1);
+ id | dt | txt 
+----+----+-----
+(0 rows)
+
 SET pg_pathman.enable_runtimeappend = OFF;
 SET pg_pathman.enable_runtimemergeappend = OFF;
 VACUUM;
