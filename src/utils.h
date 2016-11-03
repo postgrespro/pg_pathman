@@ -19,26 +19,6 @@
 #include "nodes/nodeFuncs.h"
 
 
-typedef struct
-{
-	Oid		old_varno;
-	Oid		new_varno;
-} change_varno_context;
-
-
-/*
- * Plan tree modification.
- */
-void plan_tree_walker(Plan *plan,
-					  void (*visitor) (Plan *plan, void *context),
-					  void *context);
-
-/*
- * Rowmark processing.
- */
-void rowmark_add_tableoids(Query *parse);
-void postprocess_lock_rows(List *rtable, Plan *plan);
-
 /*
  * Various traits.
  */

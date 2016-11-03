@@ -93,8 +93,6 @@ extern CustomExecMethods	partition_filter_exec_methods;
 
 void init_partition_filter_static_data(void);
 
-void add_partition_filters(List *rtable, Plan *plan);
-
 /* ResultPartsStorage init\fini\scan function */
 void init_result_parts_storage(ResultPartsStorage *parts_storage,
 							   EState *estate,

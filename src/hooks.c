@@ -13,6 +13,7 @@
 #include "init.h"
 #include "partition_filter.h"
 #include "pg_compat.h"
+#include "planner_tree_modification.h"
 #include "runtimeappend.h"
 #include "runtime_merge_append.h"
 #include "utils.h"
@@ -97,7 +98,8 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	{
 		WrapperNode *wrap;
 
-		InitWalkerContext(&context, inner_prel, NULL, false);
+		InitWalkerContext(&context, innerrel->relid,
+						  inner_prel, NULL, false);
 
 		wrap = walk_expr_tree((Expr *) lfirst(lc), &context);
 		paramsel *= wrap->paramsel;
@@ -198,12 +200,19 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 	if (set_rel_pathlist_hook_next != NULL)
 		set_rel_pathlist_hook_next(root, rel, rti, rte);
 
+	/* Make sure that pg_pathman is ready */
 	if (!IsPathmanReady())
-		return; /* pg_pathman is not ready */
+		return;
 
-	/* This works only for SELECT queries (at least for now) */
+	/* This works only for SELECTs on simple relations */
 	if (root->parse->commandType != CMD_SELECT ||
-		!list_member_oid(inheritance_enabled_relids, rte->relid))
+		rte->rtekind != RTE_RELATION ||
+		rte->relkind != RELKIND_RELATION)
+		return;
+
+	/* Skip if this table is not allowed to act as parent (see FROM ONLY) */
+	if (PARENTHOOD_DISALLOWED == get_rel_parenthood_status(root->parse->queryId,
+														   rte->relid))
 		return;
 
 	/* Proceed iff relation 'rel' is partitioned */
@@ -259,7 +268,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		ranges = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_COMPLETE));
 
 		/* Make wrappers over restrictions and collect final rangeset */
-		InitWalkerContext(&context, prel, NULL, false);
+		InitWalkerContext(&context, rti, prel, NULL, false);
 		wrappers = NIL;
 		foreach(lc, rel->baserestrictinfo)
 		{
@@ -444,28 +453,16 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 			proc((planned_stmt)->rtable, (Plan *) lfirst(lc)); \
 	} while (0)
 
-	PlannedStmt	  *result;
+	PlannedStmt *result;
+	uint32		 query_id = parse->queryId;
 
-	/* FIXME: fix these commands (traverse whole query tree) */
 	if (IsPathmanReady())
 	{
-		switch(parse->commandType)
-		{
-			case CMD_SELECT:
-				disable_inheritance(parse);
-				rowmark_add_tableoids(parse); /* add attributes for rowmarks */
-				break;
+		/* Increment parenthood_statuses refcount */
+		incr_refcount_parenthood_statuses();
 
-			case CMD_UPDATE:
-			case CMD_DELETE:
-				disable_inheritance_cte(parse);
-				disable_inheritance_subselect(parse);
-				handle_modification_query(parse);
-				break;
-
-			default:
-				break;
-		}
+		/* Modify query tree if needed */
+		pathman_transform_query(parse);
 	}
 
 	/* Invoke original hook if needed */
@@ -481,12 +478,13 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 
 		/* Add PartitionFilter node for INSERT queries */
 		ExecuteForPlanTree(result, add_partition_filters);
-	}
 
-	list_free(inheritance_disabled_relids);
-	list_free(inheritance_enabled_relids);
-	inheritance_disabled_relids = NIL;
-	inheritance_enabled_relids = NIL;
+		/* Decrement parenthood_statuses refcount */
+		decr_refcount_parenthood_statuses(false);
+
+		/* HACK: restore queryId set by pg_stat_statements */
+		result->queryId = query_id;
+	}
 
 	return result;
 }
@@ -522,9 +520,6 @@ pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
 	{
 		load_config(); /* perform main cache initialization */
 	}
-
-	inheritance_disabled_relids = NIL;
-	inheritance_enabled_relids = NIL;
 }
 
 /*

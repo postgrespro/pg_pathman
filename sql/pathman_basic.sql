@@ -57,7 +57,51 @@ INSERT INTO test.num_range_rel
 SELECT COUNT(*) FROM test.num_range_rel;
 SELECT COUNT(*) FROM ONLY test.num_range_rel;
 
-SELECT * FROM ONLY test.range_rel UNION SELECT * FROM test.range_rel;
+/* test special case: ONLY statement with not-ONLY for partitioned table */
+CREATE TABLE test.from_only_test(val INT NOT NULL);
+INSERT INTO test.from_only_test SELECT generate_series(1, 20);
+SELECT pathman.create_range_partitions('test.from_only_test', 'val', 1, 2);
+
+/* should be OK */
+EXPLAIN (COSTS OFF)
+SELECT * FROM ONLY test.from_only_test
+UNION SELECT * FROM test.from_only_test;
+
+/* should be OK */
+EXPLAIN (COSTS OFF)
+SELECT * FROM test.from_only_test
+UNION SELECT * FROM ONLY test.from_only_test;
+
+/* should be OK */
+EXPLAIN (COSTS OFF)
+SELECT * FROM test.from_only_test
+UNION SELECT * FROM test.from_only_test
+UNION SELECT * FROM ONLY test.from_only_test;
+
+/* should be OK */
+EXPLAIN (COSTS OFF)
+SELECT * FROM ONLY test.from_only_test
+UNION SELECT * FROM test.from_only_test
+UNION SELECT * FROM test.from_only_test;
+
+/* not ok, ONLY|non-ONLY in one query */
+EXPLAIN (COSTS OFF)
+SELECT * FROM test.from_only_test a JOIN ONLY test.from_only_test b USING(val);
+
+EXPLAIN (COSTS OFF)
+WITH q1 AS (SELECT * FROM test.from_only_test),
+	 q2 AS (SELECT * FROM ONLY test.from_only_test)
+SELECT * FROM q1 JOIN q2 USING(val);
+
+EXPLAIN (COSTS OFF)
+WITH q1 AS (SELECT * FROM ONLY test.from_only_test)
+SELECT * FROM test.from_only_test JOIN q1 USING(val);
+
+EXPLAIN (COSTS OFF)
+SELECT * FROM test.range_rel WHERE id = (SELECT id FROM ONLY test.range_rel LIMIT 1);
+
+DROP TABLE test.from_only_test CASCADE;
+
 
 SET pg_pathman.enable_runtimeappend = OFF;
 SET pg_pathman.enable_runtimemergeappend = OFF;
@@ -87,6 +131,11 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > 2500;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 1000 AND id < 3000;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 1500 AND id < 2500;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE (id >= 500 AND id < 1500) OR (id > 2500);
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (2500);
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (500, 1500);
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (-500, 500, 1500);
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (-1, -1, -1);
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (-1, -1, -1, NULL);
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt > '2015-02-15';
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-02-01' AND dt < '2015-03-01';
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-02-15' AND dt < '2015-03-15';
@@ -100,6 +149,12 @@ SET enable_seqscan = OFF;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2 OR value = 1;
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (2);
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (2, 1);
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (1, 2);
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (1, 2, -1);
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (0, 0, 0);
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (NULL::int, NULL, NULL);
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > 2500;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 1000 AND id < 3000;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 1500 AND id < 2500;
