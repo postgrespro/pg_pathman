@@ -517,6 +517,48 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE (id >= 500 AND id < 1
    ->  Seq Scan on num_range_rel_4
 (8 rows)
 
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (2500);
+            QUERY PLAN             
+-----------------------------------
+ Append
+   ->  Seq Scan on num_range_rel_3
+         Filter: (id = 2500)
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (500, 1500);
+                      QUERY PLAN                      
+------------------------------------------------------
+ Append
+   ->  Seq Scan on num_range_rel_1
+         Filter: (id = ANY ('{500,1500}'::integer[]))
+   ->  Seq Scan on num_range_rel_2
+         Filter: (id = ANY ('{500,1500}'::integer[]))
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (-500, 500, 1500);
+                        QUERY PLAN                         
+-----------------------------------------------------------
+ Append
+   ->  Seq Scan on num_range_rel_1
+         Filter: (id = ANY ('{-500,500,1500}'::integer[]))
+   ->  Seq Scan on num_range_rel_2
+         Filter: (id = ANY ('{-500,500,1500}'::integer[]))
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (-1, -1, -1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (-1, -1, -1, NULL);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt > '2015-02-15';
                                    QUERY PLAN                                   
 --------------------------------------------------------------------------------
@@ -586,6 +628,59 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2 OR value = 1;
    ->  Seq Scan on hash_rel_2
          Filter: (value = 1)
 (5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (2);
+          QUERY PLAN          
+------------------------------
+ Append
+   ->  Seq Scan on hash_rel_1
+         Filter: (value = 2)
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (2, 1);
+                     QUERY PLAN                     
+----------------------------------------------------
+ Append
+   ->  Seq Scan on hash_rel_1
+         Filter: (value = ANY ('{2,1}'::integer[]))
+   ->  Seq Scan on hash_rel_2
+         Filter: (value = ANY ('{2,1}'::integer[]))
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (1, 2);
+                     QUERY PLAN                     
+----------------------------------------------------
+ Append
+   ->  Seq Scan on hash_rel_1
+         Filter: (value = ANY ('{1,2}'::integer[]))
+   ->  Seq Scan on hash_rel_2
+         Filter: (value = ANY ('{1,2}'::integer[]))
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (1, 2, -1);
+                      QUERY PLAN                       
+-------------------------------------------------------
+ Append
+   ->  Seq Scan on hash_rel_1
+         Filter: (value = ANY ('{1,2,-1}'::integer[]))
+   ->  Seq Scan on hash_rel_2
+         Filter: (value = ANY ('{1,2,-1}'::integer[]))
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (0, 0, 0);
+                      QUERY PLAN                      
+------------------------------------------------------
+ Append
+   ->  Seq Scan on hash_rel_1
+         Filter: (value = ANY ('{0,0,0}'::integer[]))
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (NULL::int, NULL, NULL);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > 2500;
                            QUERY PLAN                           
