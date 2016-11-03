@@ -1878,12 +1878,15 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 
 			parallel_workers = Max(parallel_workers, path->parallel_workers);
 		}
-		Assert(parallel_workers > 0);
 
-		/* Generate a partial append path. */
-		appendpath = create_append_path(rel, partial_subpaths, NULL,
-										parallel_workers);
-		add_partial_path(rel, (Path *) appendpath);
+		if (parallel_workers > 0)
+		{
+
+			/* Generate a partial append path. */
+			appendpath = create_append_path(rel, partial_subpaths, NULL,
+					parallel_workers);
+			add_partial_path(rel, (Path *) appendpath);
+		}
 	}
 #endif
 

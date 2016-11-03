@@ -580,6 +580,22 @@ class PartitioningTests(unittest.TestCase):
             res_tuples = sorted(map(lambda x: x[0], res_tuples))
             expected = [1, 2, 3, 4, 5]
             self.assertEqual(res_tuples, expected)
+
+            # Check the case when none partition is selected in result plan
+            test_query = 'select * from range_partitioned where i < 1'
+            plan = con.execute('select query_plan(\'%s\')' % test_query)[0][0]
+            expected = json.loads("""
+            [
+               {
+                 "Plan": {
+                   "Node Type": "Result",
+                   "Parallel Aware": false,
+                   "One-Time Filter": "false"
+                 }
+               }
+            ]
+            """)
+            self.assertEqual(ordered(plan), ordered(expected))
             #  import ipdb; ipdb.set_trace()
 
         # Remove all objects for testing
