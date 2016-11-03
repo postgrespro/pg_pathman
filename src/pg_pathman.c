@@ -1289,7 +1289,9 @@ pull_var_param(const WalkerContext *ctx,
 						(Var *) left :
 						(Var *) ((RelabelType *) left)->arg;
 
-		if (v->varoattno == ctx->prel->attnum)
+		/* Check if 'v' is partitioned column of 'prel' */
+		if (v->varoattno == ctx->prel->attnum &&
+			v->varno == ctx->prel_varno)
 		{
 			*var_ptr = left;
 			*param_ptr = right;
@@ -1304,7 +1306,9 @@ pull_var_param(const WalkerContext *ctx,
 						(Var *) right :
 						(Var *) ((RelabelType *) right)->arg;
 
-		if (v->varoattno == ctx->prel->attnum)
+		/* Check if 'v' is partitioned column of 'prel' */
+		if (v->varoattno == ctx->prel->attnum &&
+			v->varno == ctx->prel_varno)
 		{
 			*var_ptr = right;
 			*param_ptr = left;
@@ -1409,7 +1413,8 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 
 		/* Skip if base types or attribute numbers do not match */
 		if (getBaseType(var->vartype) != getBaseType(prel->atttype) ||
-			var->varoattno != prel->attnum)
+			var->varoattno != prel->attnum ||	/* partitioned attribute */
+			var->varno != context->prel_varno)	/* partitioned table */
 		{
 			goto handle_arrexpr_return;
 		}

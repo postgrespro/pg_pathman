@@ -289,14 +289,18 @@ handle_modification_query(Query *parse)
 	WrapperNode			   *wrap;
 	Expr				   *expr;
 	WalkerContext			context;
+	Index					result_rel;
+
+	/* Fetch index of result relation */
+	result_rel = parse->resultRelation;
 
 	/* Exit if it's not a DELETE or UPDATE query */
-	if (parse->resultRelation == 0 ||
+	if (result_rel == 0 ||
 			(parse->commandType != CMD_UPDATE &&
 			 parse->commandType != CMD_DELETE))
 		return;
 
-	rte = rt_fetch(parse->resultRelation, parse->rtable);
+	rte = rt_fetch(result_rel, parse->rtable);
 	prel = get_pathman_relation_info(rte->relid);
 
 	/* Exit if it's not partitioned */
@@ -310,7 +314,7 @@ handle_modification_query(Query *parse)
 	if (!expr) return;
 
 	/* Parse syntax tree and extract partition ranges */
-	InitWalkerContext(&context, prel, NULL, false);
+	InitWalkerContext(&context, result_rel, prel, NULL, false);
 	wrap = walk_expr_tree(expr, &context);
 
 	ranges = irange_list_intersect(ranges, wrap->rangeset);

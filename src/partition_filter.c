@@ -307,7 +307,8 @@ find_partitions_for_value(Datum value, const PartRelationInfo *prel,
 	CopyToTempConst(constlen,    attlen);
 	CopyToTempConst(constbyval,  attbyval);
 
-	InitWalkerContext(&wcxt, prel, econtext, true);
+	/* We use 0 since varno doesn't matter for Const */
+	InitWalkerContext(&wcxt, 0, prel, econtext, true);
 	ranges = walk_expr_tree((Expr *) &temp_const, &wcxt)->rangeset;
 	return get_partition_oids(ranges, nparts, prel, false);
 }

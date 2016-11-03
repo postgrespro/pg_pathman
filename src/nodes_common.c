@@ -558,10 +558,10 @@ rescan_append_common(CustomScanState *node)
 	/* First we select all available partitions... */
 	ranges = list_make1_irange(make_irange(0, PrelLastChild(prel), false));
 
-	InitWalkerContext(&wcxt, prel, econtext, false);
+	InitWalkerContext(&wcxt, INDEX_VAR, prel, econtext, false);
 	foreach (lc, scan_state->custom_exprs)
 	{
-		WrapperNode	   *wn;
+		WrapperNode *wn;
 
 		/* ... then we cut off irrelevant ones using the provided clauses */
 		wn = walk_expr_tree((Expr *) lfirst(lc), &wcxt);

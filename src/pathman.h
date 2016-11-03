@@ -140,6 +140,7 @@ typedef struct
 
 typedef struct
 {
+	Index					prel_varno;	/* Var::varno associated with prel */
 	const PartRelationInfo *prel;		/* main partitioning structure */
 	ExprContext			   *econtext;	/* for ExecEvalExpr() */
 	bool					for_insert;	/* are we in PartitionFilter now? */
@@ -148,8 +149,9 @@ typedef struct
 /*
  * Usual initialization procedure for WalkerContext.
  */
-#define InitWalkerContext(context, prel_info, ecxt, for_ins) \
+#define InitWalkerContext(context, prel_vno, prel_info, ecxt, for_ins) \
 	do { \
+		(context)->prel_varno = (prel_vno); \
 		(context)->prel = (prel_info); \
 		(context)->econtext = (ecxt); \
 		(context)->for_insert = (for_ins); \
