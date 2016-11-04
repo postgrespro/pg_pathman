@@ -21,6 +21,7 @@
 #include "commands/extension.h"
 #include "miscadmin.h"
 #include "optimizer/var.h"
+#include "parser/parse_coerce.h"
 #include "parser/parse_oper.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
@@ -325,4 +326,65 @@ check_security_policy_internal(Oid relid, Oid role)
 		return false;
 
 	return true;
+}
+
+/*
+ * Try casting value of type 'in_type' to 'out_type'.
+ *
+ * This function might emit ERROR.
+ */
+Datum
+perform_type_cast(Datum value, Oid in_type, Oid out_type, bool *success)
+{
+	CoercionPathType	ret;
+	Oid					castfunc = InvalidOid;
+
+	/* Speculative success */
+	if (success) *success = true;
+
+	/* Fast and trivial path */
+	if (in_type == out_type)
+		return value;
+
+	/* Check that types are binary coercible */
+	if (IsBinaryCoercible(in_type, out_type))
+		return value;
+
+	/* If not, try to perfrom a type cast */
+	ret = find_coercion_pathway(out_type, in_type,
+								COERCION_EXPLICIT,
+								&castfunc);
+
+	/* Handle coercion paths */
+	switch (ret)
+	{
+		/* There's a function */
+		case COERCION_PATH_FUNC:
+			{
+				/* Perform conversion */
+				Assert(castfunc != InvalidOid);
+				return OidFunctionCall1(castfunc, value);
+			}
+
+		/* Types are binary compatible (no implicit cast) */
+		case COERCION_PATH_RELABELTYPE:
+			{
+				/* We don't perform any checks here */
+				return value;
+			}
+
+		/* TODO: implement these casts if needed */
+		case COERCION_PATH_ARRAYCOERCE:
+		case COERCION_PATH_COERCEVIAIO:
+
+		/* There's no cast available */
+		case COERCION_PATH_NONE:
+		default:
+			{
+				/* Oops, something is wrong */
+				if (success) *success = false;
+
+				return (Datum) 0;
+			}
+	}
 }

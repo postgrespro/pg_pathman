@@ -610,7 +610,7 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 	/* Check if relation is a partitioned table */
 	shout_if_prel_is_invalid(relid,
 							 /* We also lock the parent relation */
-							 get_pathman_relation_info_after_lock(relid, true),
+							 get_pathman_relation_info_after_lock(relid, true, NULL),
 							 /* Partitioning type does not matter here */
 							 PT_INDIFFERENT);
 	/*

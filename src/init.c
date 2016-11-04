@@ -27,7 +27,6 @@
 #include "catalog/pg_type.h"
 #include "miscadmin.h"
 #include "optimizer/clauses.h"
-#include "parser/parse_coerce.h"
 #include "utils/datum.h"
 #include "utils/inval.h"
 #include "utils/builtins.h"
@@ -925,6 +924,7 @@ read_opexpr_const(const OpExpr *opexpr,
 	const Node	   *right;
 	const Var	   *part_attr;	/* partitioned column */
 	const Const	   *constant;
+	bool			cast_success;
 
 	if (list_length(opexpr->args) != 2)
 		return false;
@@ -960,52 +960,18 @@ read_opexpr_const(const OpExpr *opexpr,
 
 	constant = (Const *) right;
 
-	/* Check that types are binary coercible */
-	if (IsBinaryCoercible(constant->consttype, prel->atttype))
+	/* Cast Const to a proper type if needed */
+	*val = perform_type_cast(constant->constvalue,
+							 getBaseType(constant->consttype),
+							 getBaseType(prel->atttype),
+							 &cast_success);
+
+	if (!cast_success)
 	{
-		*val = constant->constvalue;
-	}
-	/* If not, try to perfrom a type cast */
-	else
-	{
-		CoercionPathType	ret;
-		Oid					castfunc = InvalidOid;
+		elog(WARNING, "Constant type in some check constraint "
+					  "does not match the partitioned column's type");
 
-		ret = find_coercion_pathway(prel->atttype, constant->consttype,
-									COERCION_EXPLICIT, &castfunc);
-
-		switch (ret)
-		{
-			/* There's a function */
-			case COERCION_PATH_FUNC:
-				{
-					/* Perform conversion */
-					Assert(castfunc != InvalidOid);
-					*val = OidFunctionCall1(castfunc, constant->constvalue);
-				}
-				break;
-
-			/* Types are binary compatible (no implicit cast) */
-			case COERCION_PATH_RELABELTYPE:
-				{
-					/* We don't perform any checks here */
-					*val = constant->constvalue;
-				}
-				break;
-
-			/* TODO: implement these if needed */
-			case COERCION_PATH_ARRAYCOERCE:
-			case COERCION_PATH_COERCEVIAIO:
-
-			/* There's no cast available */
-			case COERCION_PATH_NONE:
-			default:
-				{
-					elog(WARNING, "Constant type in some check constraint "
-								  "does not match the partitioned column's type");
-					return false;
-				}
-		}
+		return false;
 	}
 
 	return true;

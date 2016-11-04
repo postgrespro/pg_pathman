@@ -38,14 +38,14 @@ char get_rel_persistence(Oid relid);
 #endif
 Oid get_rel_owner(Oid relid);
 
+Datum perform_type_cast(Datum value, Oid in_type, Oid out_type, bool *success);
+
 /*
  * Handy execution-stage functions.
  */
 char * get_rel_name_or_relid(Oid relid);
 Oid get_binary_operator_oid(char *opname, Oid arg1, Oid arg2);
-void fill_type_cmp_fmgr_info(FmgrInfo *finfo,
-							 Oid type1,
-							 Oid type2);
+void fill_type_cmp_fmgr_info(FmgrInfo *finfo, Oid type1, Oid type2);
 char * datum_to_cstring(Datum datum, Oid typid);
 
 #endif

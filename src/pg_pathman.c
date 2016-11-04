@@ -704,6 +704,7 @@ create_partitions_internal(Oid relid, Datum value, Oid value_type)
 	PG_TRY();
 	{
 		const PartRelationInfo *prel;
+		LockAcquireResult		lock_result; /* could we lock the parent? */
 		Datum					values[Natts_pathman_config];
 		bool					isnull[Natts_pathman_config];
 
@@ -713,57 +714,91 @@ create_partitions_internal(Oid relid, Datum value, Oid value_type)
 			Oid			base_atttype;		/* base type of prel->atttype */
 			Oid			base_value_type;	/* base type of value_type */
 
-			Datum		min_rvalue,			/* absolute MIN */
-						max_rvalue;			/* absolute MAX */
-
-			Oid			interval_type = InvalidOid;
-			Datum		interval_binary, /* assigned 'width' of a single partition */
-						interval_text;
-
-			FmgrInfo	interval_type_cmp;
-
 			/* Fetch PartRelationInfo by 'relid' */
-			prel = get_pathman_relation_info(relid);
+			prel = get_pathman_relation_info_after_lock(relid, true, &lock_result);
 			shout_if_prel_is_invalid(relid, prel, PT_RANGE);
 
 			/* Fetch base types of prel->atttype & value_type */
 			base_atttype = getBaseType(prel->atttype);
 			base_value_type = getBaseType(value_type);
 
-			/* Read max & min range values from PartRelationInfo */
-			min_rvalue = PrelGetRangesArray(prel)[0].min;
-			max_rvalue = PrelGetRangesArray(prel)[PrelLastChild(prel)].max;
+			/* Search for a suitable partition if we didn't hold it */
+			Assert(lock_result != LOCKACQUIRE_NOT_AVAIL);
+			if (lock_result == LOCKACQUIRE_OK)
+			{
+				Oid	   *parts;
+				int		nparts;
 
-			/* Copy datums on order to protect them from cache invalidation */
-			min_rvalue = datumCopy(min_rvalue, prel->attbyval, prel->attlen);
-			max_rvalue = datumCopy(max_rvalue, prel->attbyval, prel->attlen);
+				/* Search for matching partitions */
+				parts = find_partitions_for_value(value, value_type, prel, &nparts);
 
-			/* Retrieve interval as TEXT from tuple */
-			interval_text = values[Anum_pathman_config_range_interval - 1];
+				/* Shout if there's more than one */
+				if (nparts > 1)
+					elog(ERROR, ERR_PART_ATTR_MULTIPLE);
 
-			/* Convert interval to binary representation */
-			interval_binary = extract_binary_interval_from_text(interval_text,
-																base_atttype,
-																&interval_type);
+				/* It seems that we got a partition! */
+				else if (nparts == 1)
+				{
+					/* Unlock the parent (we're not going to spawn) */
+					xact_unlock_partitioned_rel(relid);
 
-			/* Fill the FmgrInfo struct with a cmp(value, part_attribute) function */
-			fill_type_cmp_fmgr_info(&interval_type_cmp, base_value_type, base_atttype);
+					/* Simply return the suitable partition */
+					partid = parts[0];
+				}
 
-			if (SPI_connect() != SPI_OK_CONNECT)
-				elog(ERROR, "could not connect using SPI");
+				/* Don't forget to free */
+				pfree(parts);
+			}
 
-			/* while (value >= MAX) ... */
-			spawn_partitions(PrelParentRelid(prel), value, max_rvalue,
-							 base_atttype, &interval_type_cmp, interval_binary,
-							 interval_type, true, &partid);
-
-			/* while (value < MIN) ... */
+			/* Else spawn a new one (we hold a lock on the parent) */
 			if (partid == InvalidOid)
-				spawn_partitions(PrelParentRelid(prel), value, min_rvalue,
-								 base_atttype, &interval_type_cmp, interval_binary,
-								 interval_type, false, &partid);
+			{
+				Datum		min_rvalue,			/* absolute MIN */
+							max_rvalue;			/* absolute MAX */
 
-			SPI_finish(); /* close SPI connection */
+				Oid			interval_type = InvalidOid;
+				Datum		interval_binary, /* assigned 'width' of one partition */
+							interval_text;
+
+				FmgrInfo	interval_type_cmp;
+
+				/* Read max & min range values from PartRelationInfo */
+				min_rvalue = PrelGetRangesArray(prel)[0].min;
+				max_rvalue = PrelGetRangesArray(prel)[PrelLastChild(prel)].max;
+
+				/* Copy datums on order to protect them from cache invalidation */
+				min_rvalue = datumCopy(min_rvalue, prel->attbyval, prel->attlen);
+				max_rvalue = datumCopy(max_rvalue, prel->attbyval, prel->attlen);
+
+				/* Retrieve interval as TEXT from tuple */
+				interval_text = values[Anum_pathman_config_range_interval - 1];
+
+				/* Convert interval to binary representation */
+				interval_binary = extract_binary_interval_from_text(interval_text,
+																	base_atttype,
+																	&interval_type);
+
+				/* Fill the FmgrInfo struct with a cmp(value, part_attribute) */
+				fill_type_cmp_fmgr_info(&interval_type_cmp,
+										base_value_type,
+										base_atttype);
+
+				if (SPI_connect() != SPI_OK_CONNECT)
+					elog(ERROR, "could not connect using SPI");
+
+				/* while (value >= MAX) ... */
+				spawn_partitions(PrelParentRelid(prel), value, max_rvalue,
+								 base_atttype, &interval_type_cmp,
+								 interval_binary, interval_type, true, &partid);
+
+				/* while (value < MIN) ... */
+				if (partid == InvalidOid)
+					spawn_partitions(PrelParentRelid(prel), value, min_rvalue,
+									 base_atttype, &interval_type_cmp,
+									 interval_binary, interval_type, false, &partid);
+
+				SPI_finish(); /* close SPI connection */
+			}
 		}
 		else
 			elog(ERROR, "pg_pathman's config does not contain relation \"%s\"",
@@ -1082,7 +1117,7 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 										PrelGetRangesArray(context->prel),
 										PrelChildrenCount(context->prel),
 										strategy,
-										result);
+										result); /* output */
 
 				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
 
@@ -1169,7 +1204,7 @@ search_range_partition_eq(const Datum value,
 							ranges,
 							nranges,
 							BTEqualStrategyNumber,
-							&result);
+							&result); /* output */
 
 	if (result.found_gap)
 	{
@@ -1220,7 +1255,7 @@ handle_const(const Const *c, WalkerContext *context)
 
 	/*
 	 * Had to add this check for queries like:
-	 *   select * from test.hash_rel where txt = NULL;
+	 *		select * from test.hash_rel where txt = NULL;
 	 */
 	if (!context->for_insert || c->constisnull)
 	{
@@ -1234,9 +1269,30 @@ handle_const(const Const *c, WalkerContext *context)
 	{
 		case PT_HASH:
 			{
-				Datum	value = OidFunctionCall1(prel->hash_proc, c->constvalue);
-				uint32	idx = hash_to_part_index(DatumGetInt32(value),
-												 PrelChildrenCount(prel));
+				Datum	value,	/* value to be hashed */
+						hash;	/* 32-bit hash */
+				uint32	idx;	/* index of partition */
+				bool	cast_success;
+
+				/* Peform type cast if types mismatch */
+				if (prel->atttype != c->consttype)
+				{
+					value = perform_type_cast(c->constvalue,
+											  getBaseType(c->consttype),
+											  getBaseType(prel->atttype),
+											  &cast_success);
+
+					if (!cast_success)
+						elog(ERROR, "Cannot select partition: "
+									"unable to perform type cast");
+				}
+				/* Else use the Const's value */
+				else value = c->constvalue;
+
+				/* Calculate 32-bit hash of 'value' and corresponding index */
+				hash = OidFunctionCall1(prel->hash_proc, value);
+				idx = hash_to_part_index(DatumGetInt32(hash),
+										 PrelChildrenCount(prel));
 
 				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
 				result->rangeset = list_make1_irange(make_irange(idx, idx, IR_LOSSY));
@@ -1245,7 +1301,7 @@ handle_const(const Const *c, WalkerContext *context)
 
 		case PT_RANGE:
 			{
-				FmgrInfo	cmp_finfo;
+				FmgrInfo cmp_finfo;
 
 				fill_type_cmp_fmgr_info(&cmp_finfo,
 										getBaseType(c->consttype),
@@ -1256,7 +1312,7 @@ handle_const(const Const *c, WalkerContext *context)
 										PrelGetRangesArray(context->prel),
 										PrelChildrenCount(context->prel),
 										strategy,
-										result);
+										result); /* output */
 
 				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
 			}

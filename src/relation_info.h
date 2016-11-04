@@ -14,6 +14,7 @@
 #include "postgres.h"
 #include "access/attnum.h"
 #include "port/atomics.h"
+#include "storage/lock.h"
 
 
 /*
@@ -126,7 +127,8 @@ void invalidate_pathman_relation_info(Oid relid, bool *found);
 void remove_pathman_relation_info(Oid relid);
 const PartRelationInfo *get_pathman_relation_info(Oid relid);
 const PartRelationInfo *get_pathman_relation_info_after_lock(Oid relid,
-															 bool unlock_if_not_found);
+															 bool unlock_if_not_found,
+															 LockAcquireResult *lock_result);
 
 void delay_pathman_shutdown(void);
 void delay_invalidation_parent_rel(Oid parent);

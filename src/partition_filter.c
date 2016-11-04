@@ -282,8 +282,9 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
  * Find matching partitions for 'value' using PartRelationInfo.
  */
 Oid *
-find_partitions_for_value(Datum value, const PartRelationInfo *prel,
-						  ExprContext *econtext, int *nparts)
+find_partitions_for_value(Datum value, Oid value_type,
+						  const PartRelationInfo *prel,
+						  int *nparts)
 {
 #define CopyToTempConst(const_field, attr_field) \
 	( temp_const.const_field = prel->attr_field )
@@ -308,7 +309,7 @@ find_partitions_for_value(Datum value, const PartRelationInfo *prel,
 	CopyToTempConst(constbyval,  attbyval);
 
 	/* We use 0 since varno doesn't matter for Const */
-	InitWalkerContext(&wcxt, 0, prel, econtext, true);
+	InitWalkerContext(&wcxt, 0, prel, NULL, true);
 	ranges = walk_expr_tree((Expr *) &temp_const, &wcxt)->rangeset;
 	return get_partition_oids(ranges, nparts, prel, false);
 }
@@ -429,9 +430,9 @@ partition_filter_exec(CustomScanState *node)
 		old_cxt = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 
 		/* Search for a matching partition */
-		rri_holder = select_partition_for_insert(prel,
-												 &state->result_parts,
-												 value, estate, true);
+		rri_holder = select_partition_for_insert(prel, &state->result_parts,
+												 value, prel->atttype,
+												 estate, true);
 		estate->es_result_relation_info = rri_holder->result_rel_info;
 
 		/* Switch back and clean up per-tuple context */
@@ -475,20 +476,18 @@ partition_filter_explain(CustomScanState *node, List *ancestors, ExplainState *e
 ResultRelInfoHolder *
 select_partition_for_insert(const PartRelationInfo *prel,
 							ResultPartsStorage *parts_storage,
-							Datum value, EState *estate,
+							Datum value, Oid value_type,
+							EState *estate,
 							bool spawn_partitions)
 {
 	MemoryContext			old_cxt;
-	ExprContext			   *econtext;
 	ResultRelInfoHolder	   *rri_holder;
 	Oid						selected_partid = InvalidOid;
 	Oid					   *parts;
 	int						nparts;
 
-	econtext = GetPerTupleExprContext(estate);
-
 	/* Search for matching partitions */
-	parts = find_partitions_for_value(value, prel, econtext, &nparts);
+	parts = find_partitions_for_value(value, value_type, prel, &nparts);
 
 	if (nparts > 1)
 		elog(ERROR, ERR_PART_ATTR_MULTIPLE);

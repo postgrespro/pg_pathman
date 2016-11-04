@@ -19,10 +19,10 @@
 /*
  * Transaction locks.
  */
-bool xact_lock_partitioned_rel(Oid relid, bool nowait);
+LockAcquireResult xact_lock_partitioned_rel(Oid relid, bool nowait);
 void xact_unlock_partitioned_rel(Oid relid);
 
-bool xact_lock_rel_exclusive(Oid relid, bool nowait);
+LockAcquireResult xact_lock_rel_exclusive(Oid relid, bool nowait);
 void xact_unlock_rel_exclusive(Oid relid);
 
 /*

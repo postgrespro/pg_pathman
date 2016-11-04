@@ -300,12 +300,22 @@ get_pathman_relation_info(Oid relid)
 
 /* Acquire lock on a table and try to get PartRelationInfo */
 const PartRelationInfo *
-get_pathman_relation_info_after_lock(Oid relid, bool unlock_if_not_found)
+get_pathman_relation_info_after_lock(Oid relid,
+									 bool unlock_if_not_found,
+									 LockAcquireResult *lock_result)
 {
 	const PartRelationInfo *prel;
+	LockAcquireResult		acquire_result;
 
 	/* Restrict concurrent partition creation (it's dangerous) */
-	xact_lock_partitioned_rel(relid, false);
+	acquire_result = xact_lock_partitioned_rel(relid, false);
+
+	/* Invalidate cache entry (see AcceptInvalidationMessages()) */
+	invalidate_pathman_relation_info(relid, NULL);
+
+	/* Set 'lock_result' if asked to */
+	if (lock_result)
+		*lock_result = acquire_result;
 
 	prel = get_pathman_relation_info(relid);
 	if (!prel && unlock_if_not_found)

@@ -106,8 +106,9 @@ ResultRelInfoHolder * scan_result_parts_storage(Oid partid,
 												ResultPartsStorage *storage);
 
 /* Find suitable partition using 'value' */
-Oid *find_partitions_for_value(Datum value, const PartRelationInfo *prel,
-							   ExprContext *econtext, int *nparts);
+Oid * find_partitions_for_value(Datum value, Oid value_type,
+								const PartRelationInfo *prel,
+								int *nparts);
 
 Plan * make_partition_filter(Plan *subplan,
 							 Oid partitioned_table,
@@ -131,7 +132,8 @@ void partition_filter_explain(CustomScanState *node,
 
 ResultRelInfoHolder * select_partition_for_insert(const PartRelationInfo *prel,
 												  ResultPartsStorage *parts_storage,
-												  Datum value, EState *estate,
+												  Datum value, Oid value_type,
+												  EState *estate,
 												  bool spawn_partitions);
 
 #endif
