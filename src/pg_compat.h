@@ -23,7 +23,9 @@ void set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel, Index rti);
 void adjust_targetlist_compat(PlannerInfo *root, RelOptInfo *dest,
 							  RelOptInfo *rel, AppendRelInfo *appinfo);
 
+
 #if PG_VERSION_NUM >= 90600
+
 
 #define get_parameterized_joinrel_size_compat(root, rel, outer_path, \
 											  inner_path, sjinfo, \
@@ -54,7 +56,9 @@ extern Result *make_result(List *tlist, Node *resconstantqual, Plan *subplan);
 #define make_result_compat(root, tlist, resconstantqual, subplan) \
 		make_result(tlist, resconstantqual, subplan)
 
+
 #else /* PG_VERSION_NUM >= 90500 */
+
 
 #define get_parameterized_joinrel_size_compat(root, rel, \
 											  outer_path, \
@@ -81,7 +85,10 @@ extern Result *make_result(List *tlist, Node *resconstantqual, Plan *subplan);
 
 #define create_plain_partial_paths_compat(root, rel) ((void) true)
 
-#endif
+void set_dummy_rel_pathlist(RelOptInfo *rel);
+
+
+#endif /* PG_VERSION_NUM */
 
 
 #endif /* PG_COMPAT_H */

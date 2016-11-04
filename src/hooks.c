@@ -218,7 +218,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 	/* Proceed iff relation 'rel' is partitioned */
 	if ((prel = get_pathman_relation_info(rte->relid)) != NULL)
 	{
-		Relation		parent_rel;				/* parent's relation (heap */
+		Relation		parent_rel;				/* parent's relation (heap) */
 		Oid			   *children;				/* selected children oids */
 		List		   *ranges,					/* a list of IndexRanges */
 					   *wrappers,				/* a list of WrapperNodes */

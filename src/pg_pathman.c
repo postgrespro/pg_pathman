@@ -33,6 +33,7 @@
 #include "fmgr.h"
 #include "miscadmin.h"
 #include "optimizer/clauses.h"
+#include "optimizer/plancat.h"
 #include "optimizer/prep.h"
 #include "optimizer/restrictinfo.h"
 #include "optimizer/cost.h"
@@ -276,6 +277,8 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 	Index			childRTindex;
 	PlanRowMark	   *parent_rowmark,
 				   *child_rowmark;
+	Node		   *childqual;
+	List		   *childquals;
 	ListCell	   *lc,
 				   *lc2;
 
@@ -323,10 +326,9 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 	 * Copy restrictions. If it's not the parent table, copy only
 	 * those restrictions that are related to this partition.
 	 */
-	child_rel->baserestrictinfo = NIL;
 	if (parent_rte->relid != child_oid)
 	{
-		List *childquals = NIL;
+		childquals = NIL;
 
 		forboth(lc, wrappers, lc2, parent_rel->baserestrictinfo)
 		{
@@ -345,24 +347,39 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 			Assert(new_clause);
 			childquals = lappend(childquals, new_clause);
 		}
-
-		childquals = (List *) adjust_appendrel_attrs(root,
-													 (Node *) childquals,
-													 appinfo);
-		childquals = make_restrictinfos_from_actual_clauses(root, childquals);
-		child_rel->baserestrictinfo = childquals;
 	}
 	/* If it's the parent table, copy all restrictions */
-	else
-	{
-		List *childquals = NIL;
+	else childquals = get_all_actual_clauses(parent_rel->baserestrictinfo);
 
-		childquals = get_all_actual_clauses(parent_rel->baserestrictinfo);
-		childquals = (List *) adjust_appendrel_attrs(root,
-													 (Node *) childquals,
-													 appinfo);
-		childquals = make_restrictinfos_from_actual_clauses(root, childquals);
-		child_rel->baserestrictinfo = childquals;
+	/* Now it's time to change varnos and rebuld quals */
+	childquals = (List *) adjust_appendrel_attrs(root,
+												 (Node *) childquals,
+												 appinfo);
+	childqual = eval_const_expressions(root, (Node *)
+									   make_ands_explicit(childquals));
+	if (childqual && IsA(childqual, Const) &&
+		(((Const *) childqual)->constisnull ||
+		 !DatumGetBool(((Const *) childqual)->constvalue)))
+	{
+		/*
+		 * Restriction reduces to constant FALSE or constant NULL after
+		 * substitution, so this child need not be scanned.
+		 */
+		set_dummy_rel_pathlist(child_rel);
+	}
+	childquals = make_ands_implicit((Expr *) childqual);
+	childquals = make_restrictinfos_from_actual_clauses(root, childquals);
+
+	/* Set new shiny childquals */
+	child_rel->baserestrictinfo = childquals;
+
+	if (relation_excluded_by_constraints(root, child_rel, child_rte))
+	{
+		/*
+		 * This child need not be scanned, so we can omit it from the
+		 * appendrel.
+		 */
+		set_dummy_rel_pathlist(child_rel);
 	}
 
 	/*
@@ -372,9 +389,6 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 	if (parent_rel->has_eclass_joins || has_useful_pathkeys(root, parent_rel))
 		add_child_rel_equivalences(root, appinfo, parent_rel, child_rel);
 	child_rel->has_eclass_joins = parent_rel->has_eclass_joins;
-
-	/* Recalc parent relation tuples count */
-	parent_rel->tuples += child_rel->tuples;
 
 	/* Close child relations, but keep locks */
 	heap_close(child_relation, NoLock);
@@ -1666,8 +1680,8 @@ set_plain_rel_size(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 static void
 set_plain_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 {
-	Relids		required_outer;
-	Path *path;
+	Relids	required_outer;
+	Path   *path;
 
 	/*
 	 * We don't support pushing join clauses into the quals of a seqscan, but
@@ -1753,11 +1767,11 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	 */
 	foreach(l, root->append_rel_list)
 	{
-		AppendRelInfo *appinfo = (AppendRelInfo *) lfirst(l);
-		Index		childRTindex;
-		RangeTblEntry *childRTE;
-		RelOptInfo *childrel;
-		ListCell   *lcp;
+		AppendRelInfo  *appinfo = (AppendRelInfo *) lfirst(l);
+		Index			childRTindex;
+		RangeTblEntry  *childRTE;
+		RelOptInfo	   *childrel;
+		ListCell	   *lcp;
 
 		/* append_rel_list contains all append rels; ignore others */
 		if (appinfo->parent_relid != parentRTindex)
@@ -1780,24 +1794,34 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 			set_rel_consider_parallel_compat(root, childrel, childRTE);
 #endif
 
-		/*
-		 * Compute the child's access paths.
-		 */
+		/* Compute child's access paths & sizes */
 		if (childRTE->relkind == RELKIND_FOREIGN_TABLE)
 		{
+			/* childrel->rows should be >= 1 */
 			set_foreign_size(root, childrel, childRTE);
+
+			/* If child IS dummy, ignore it */
+			if (IS_DUMMY_REL(childrel))
+				continue;
+
 			set_foreign_pathlist(root, childrel, childRTE);
 		}
 		else
 		{
+			/* childrel->rows should be >= 1 */
 			set_plain_rel_size(root, childrel, childRTE);
+
+			/* If child IS dummy, ignore it */
+			if (IS_DUMMY_REL(childrel))
+				continue;
+
 			set_plain_rel_pathlist(root, childrel, childRTE);
 		}
+
+		/* Set cheapest path for child */
 		set_cheapest(childrel);
 
-		/*
-		 * If child is dummy, ignore it.
-		 */
+		/* If child BECAME dummy, ignore it */
 		if (IS_DUMMY_REL(childrel))
 			continue;
 
