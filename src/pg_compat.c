@@ -58,7 +58,9 @@ set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel, Index rti)
 #endif
 	}
 
+	/* Set 'rows' for append relation */
 	rel->rows = parent_rows;
+
 #if PG_VERSION_NUM >= 90600
 	rel->reltarget->width = rint(parent_size / parent_rows);
 #else
@@ -314,4 +316,37 @@ create_plain_partial_paths(PlannerInfo *root, RelOptInfo *rel)
 	/* Add an unordered partial path based on a parallel sequential scan. */
 	add_partial_path(rel, create_seqscan_path(root, rel, NULL, parallel_workers));
 }
-#endif
+
+
+#else /* PG_VERSION_NUM >= 90500 */
+
+/*
+ * set_dummy_rel_pathlist
+ *	  Build a dummy path for a relation that's been excluded by constraints
+ *
+ * Rather than inventing a special "dummy" path type, we represent this as an
+ * AppendPath with no members (see also IS_DUMMY_PATH/IS_DUMMY_REL macros).
+ */
+void
+set_dummy_rel_pathlist(RelOptInfo *rel)
+{
+	/* Set dummy size estimates --- we leave attr_widths[] as zeroes */
+	rel->rows = 0;
+	rel->width = 0;
+
+	/* Discard any pre-existing paths; no further need for them */
+	rel->pathlist = NIL;
+
+	add_path(rel, (Path *) create_append_path(rel, NIL, NULL));
+
+	/*
+	 * We set the cheapest path immediately, to ensure that IS_DUMMY_REL()
+	 * will recognize the relation as dummy if anyone asks.  This is redundant
+	 * when we're called from set_rel_size(), but not when called from
+	 * elsewhere, and doing it twice is harmless anyway.
+	 */
+	set_cheapest(rel);
+}
+
+
+#endif /* PG_VERSION_NUM >= 90600 */
