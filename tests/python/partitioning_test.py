@@ -10,6 +10,7 @@ import unittest
 from testgres import get_new_node, stop_all
 import time
 import os
+import threading
 
 
 def if_fdw_enabled(func):
@@ -26,7 +27,6 @@ class PartitioningTests(unittest.TestCase):
 
     def setUp(self):
         self.setup_cmd = [
-            # 'create extension pg_pathman',
             'create table abc(id serial, t text)',
             'insert into abc select generate_series(1, 300000)',
             'select create_hash_partitions(\'abc\', \'id\', 3, partition_data := false)',
@@ -34,7 +34,6 @@ class PartitioningTests(unittest.TestCase):
 
     def tearDown(self):
         stop_all()
-        # clean_all()
 
     def start_new_pathman_cluster(self, name='test', allows_streaming=False):
         node = get_new_node(name)
@@ -571,7 +570,7 @@ class PartitioningTests(unittest.TestCase):
                   ]
                 }
               }
-            ] 
+            ]
             """)
             self.assertEqual(ordered(plan), ordered(expected))
 
@@ -596,12 +595,68 @@ class PartitioningTests(unittest.TestCase):
             ]
             """)
             self.assertEqual(ordered(plan), ordered(expected))
-            #  import ipdb; ipdb.set_trace()
 
         # Remove all objects for testing
         node.psql('postgres', 'drop table range_partitioned cascade')
         node.psql('postgres', 'drop table hash_partitioned cascade')
         node.psql('postgres', 'drop extension pg_pathman cascade')
+
+        # Stop instance and finish work
+        node.stop()
+        node.cleanup()
+
+    def test_conc_part_creation_insert(self):
+        """Test concurrent partition creation on INSERT"""
+
+        # Create and start new instance
+        node = self.start_new_pathman_cluster(allows_streaming=False)
+
+        # Create table 'ins_test' and partition it
+        with node.connect() as con0:
+            con0.begin()
+            con0.execute('create table ins_test(val int not null)')
+            con0.execute('insert into ins_test select generate_series(1, 50)')
+            con0.execute("select create_range_partitions('ins_test', 'val', 1, 10)")
+            con0.commit()
+
+        # Create two separate connections for this test
+        with node.connect() as con1, node.connect() as con2:
+
+            # Thread for connection #2 (it has to wait)
+            def con2_thread():
+                con2.execute('insert into ins_test values(51)')
+
+            # Step 1: lock partitioned table in con1
+            con1.begin()
+            con1.execute('lock table ins_test in share update exclusive mode')
+
+            # Step 2: try inserting new value in con2 (waiting)
+            t = threading.Thread(target=con2_thread)
+            t.start()
+
+            # Step 3: try inserting new value in con1 (success, unlock)
+            con1.execute('insert into ins_test values(52)')
+            con1.commit()
+
+            # Step 4: wait for con2
+            t.join()
+
+            rows = con1.execute("""
+                select * from pathman_partition_list
+                where parent = 'ins_test'::regclass
+                order by range_min, range_max
+            """)
+
+            # check number of partitions
+            self.assertEqual(len(rows), 6)
+
+            # check range_max of partitions
+            self.assertEqual(int(rows[0][5]), 11)
+            self.assertEqual(int(rows[1][5]), 21)
+            self.assertEqual(int(rows[2][5]), 31)
+            self.assertEqual(int(rows[3][5]), 41)
+            self.assertEqual(int(rows[4][5]), 51)
+            self.assertEqual(int(rows[5][5]), 61)
 
         # Stop instance and finish work
         node.stop()
