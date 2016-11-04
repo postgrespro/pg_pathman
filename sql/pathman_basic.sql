@@ -57,6 +57,27 @@ INSERT INTO test.num_range_rel
 SELECT COUNT(*) FROM test.num_range_rel;
 SELECT COUNT(*) FROM ONLY test.num_range_rel;
 
+
+/* since rel_1_2_beta: check append_child_relation(), make_ands_explicit(), dummy path */
+CREATE TABLE test.improved_dummy (id BIGSERIAL, name TEXT NOT NULL);
+INSERT INTO test.improved_dummy (name) SELECT md5(g::TEXT) FROM generate_series(1, 100) as g;
+SELECT pathman.create_range_partitions('test.improved_dummy', 'id', 1, 10);
+INSERT INTO test.improved_dummy (name) VALUES ('test'); /* spawns new partition */
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.improved_dummy WHERE id = 101 OR id = 5 AND name = 'ib';
+SELECT pathman.set_enable_parent('test.improved_dummy', true); /* enable parent */
+EXPLAIN (COSTS OFF) SELECT * FROM test.improved_dummy WHERE id = 101 OR id = 5 AND name = 'ib';
+SELECT pathman.set_enable_parent('test.improved_dummy', false); /* disable parent */
+
+ALTER TABLE test.improved_dummy_1 ADD CHECK (name != 'ib'); /* make test.improved_dummy_1 disappear */
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.improved_dummy WHERE id = 101 OR id = 5 AND name = 'ib';
+SELECT pathman.set_enable_parent('test.improved_dummy', true); /* enable parent */
+EXPLAIN (COSTS OFF) SELECT * FROM test.improved_dummy WHERE id = 101 OR id = 5 AND name = 'ib';
+
+DROP TABLE test.improved_dummy CASCADE;
+
+
 /* test special case: ONLY statement with not-ONLY for partitioned table */
 CREATE TABLE test.from_only_test(val INT NOT NULL);
 INSERT INTO test.from_only_test SELECT generate_series(1, 20);

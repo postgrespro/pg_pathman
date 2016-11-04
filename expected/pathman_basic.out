@@ -190,6 +190,78 @@ SELECT COUNT(*) FROM ONLY test.num_range_rel;
      0
 (1 row)
 
+/* since rel_1_2_beta: check append_child_relation(), make_ands_explicit(), dummy path */
+CREATE TABLE test.improved_dummy (id BIGSERIAL, name TEXT NOT NULL);
+INSERT INTO test.improved_dummy (name) SELECT md5(g::TEXT) FROM generate_series(1, 100) as g;
+SELECT pathman.create_range_partitions('test.improved_dummy', 'id', 1, 10);
+NOTICE:  sequence "improved_dummy_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                      10
+(1 row)
+
+INSERT INTO test.improved_dummy (name) VALUES ('test'); /* spawns new partition */
+EXPLAIN (COSTS OFF) SELECT * FROM test.improved_dummy WHERE id = 101 OR id = 5 AND name = 'ib';
+                     QUERY PLAN                     
+----------------------------------------------------
+ Append
+   ->  Seq Scan on improved_dummy_1
+         Filter: ((id = 5) AND (name = 'ib'::text))
+   ->  Seq Scan on improved_dummy_11
+         Filter: (id = 101)
+(5 rows)
+
+SELECT pathman.set_enable_parent('test.improved_dummy', true); /* enable parent */
+ set_enable_parent 
+-------------------
+ 
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.improved_dummy WHERE id = 101 OR id = 5 AND name = 'ib';
+                             QUERY PLAN                             
+--------------------------------------------------------------------
+ Append
+   ->  Seq Scan on improved_dummy
+         Filter: ((id = 101) OR ((id = 5) AND (name = 'ib'::text)))
+   ->  Seq Scan on improved_dummy_1
+         Filter: ((id = 5) AND (name = 'ib'::text))
+   ->  Seq Scan on improved_dummy_11
+         Filter: (id = 101)
+(7 rows)
+
+SELECT pathman.set_enable_parent('test.improved_dummy', false); /* disable parent */
+ set_enable_parent 
+-------------------
+ 
+(1 row)
+
+ALTER TABLE test.improved_dummy_1 ADD CHECK (name != 'ib'); /* make test.improved_dummy_1 disappear */
+EXPLAIN (COSTS OFF) SELECT * FROM test.improved_dummy WHERE id = 101 OR id = 5 AND name = 'ib';
+             QUERY PLAN              
+-------------------------------------
+ Append
+   ->  Seq Scan on improved_dummy_11
+         Filter: (id = 101)
+(3 rows)
+
+SELECT pathman.set_enable_parent('test.improved_dummy', true); /* enable parent */
+ set_enable_parent 
+-------------------
+ 
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.improved_dummy WHERE id = 101 OR id = 5 AND name = 'ib';
+                             QUERY PLAN                             
+--------------------------------------------------------------------
+ Append
+   ->  Seq Scan on improved_dummy
+         Filter: ((id = 101) OR ((id = 5) AND (name = 'ib'::text)))
+   ->  Seq Scan on improved_dummy_11
+         Filter: (id = 101)
+(5 rows)
+
+DROP TABLE test.improved_dummy CASCADE;
+NOTICE:  drop cascades to 11 other objects
 /* test special case: ONLY statement with not-ONLY for partitioned table */
 CREATE TABLE test.from_only_test(val INT NOT NULL);
 INSERT INTO test.from_only_test SELECT generate_series(1, 20);
@@ -1837,6 +1909,6 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.index_on_childs WHERE c1 > 100 AND c1 < 2
 (12 rows)
 
 DROP SCHEMA test CASCADE;
-NOTICE:  drop cascades to 46 other objects
+NOTICE:  drop cascades to 47 other objects
 DROP EXTENSION pg_pathman CASCADE;
 DROP SCHEMA pathman CASCADE;
