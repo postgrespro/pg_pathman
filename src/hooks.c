@@ -204,10 +204,11 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 	if (!IsPathmanReady())
 		return;
 
-	/* This works only for SELECTs on simple relations */
-	if (root->parse->commandType != CMD_SELECT ||
-		rte->rtekind != RTE_RELATION ||
-		rte->relkind != RELKIND_RELATION)
+	/* This works only for SELECTs or INSERTs on simple relations */
+	if (rte->rtekind != RTE_RELATION ||
+		rte->relkind != RELKIND_RELATION ||
+			(root->parse->commandType != CMD_SELECT &&
+			 root->parse->commandType != CMD_INSERT)) /* INSERT INTO ... SELECT ... */
 		return;
 
 	/* Skip if this table is not allowed to act as parent (see FROM ONLY) */

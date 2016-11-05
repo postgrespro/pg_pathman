@@ -78,6 +78,29 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.improved_dummy WHERE id = 101 OR id = 5 A
 DROP TABLE test.improved_dummy CASCADE;
 
 
+/* Test pathman_rel_pathlist_hook() with INSERT query */
+CREATE TABLE test.insert_into_select(val int NOT NULL);
+INSERT INTO test.insert_into_select SELECT generate_series(1, 100);
+SELECT pathman.create_range_partitions('test.insert_into_select', 'val', 1, 20);
+CREATE TABLE test.insert_into_select_copy (LIKE test.insert_into_select); /* INSERT INTO ... SELECT ... */
+
+EXPLAIN (COSTS OFF)
+INSERT INTO test.insert_into_select_copy
+SELECT * FROM test.insert_into_select
+WHERE val <= 80;
+
+SELECT pathman.set_enable_parent('test.insert_into_select', true);
+
+EXPLAIN (COSTS OFF)
+INSERT INTO test.insert_into_select_copy
+SELECT * FROM test.insert_into_select
+WHERE val <= 80;
+
+INSERT INTO test.insert_into_select_copy SELECT * FROM test.insert_into_select;
+SELECT count(*) FROM test.insert_into_select_copy;
+DROP TABLE test.insert_into_select_copy, test.insert_into_select CASCADE;
+
+
 /* test special case: ONLY statement with not-ONLY for partitioned table */
 CREATE TABLE test.from_only_test(val INT NOT NULL);
 INSERT INTO test.from_only_test SELECT generate_series(1, 20);
