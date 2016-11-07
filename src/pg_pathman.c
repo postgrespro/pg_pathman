@@ -1533,7 +1533,7 @@ handle_boolexpr(const BoolExpr *expr, WalkerContext *context)
 			default:
 				result->rangeset = list_make1_irange(make_irange(0,
 																 PrelLastChild(prel),
-																 false));
+																 true));
 				break;
 		}
 	}

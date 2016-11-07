@@ -1428,6 +1428,41 @@ EXPLAIN (COSTS OFF) SELECT * FROM messages;
    ->  Seq Scan on messages_2
 (3 rows)
 
+/* Testing NOT operator */
+CREATE TABLE bool_test(a serial, b BOOLEAN);
+SELECT create_hash_partitions('bool_test', 'a', 3);
+ create_hash_partitions 
+------------------------
+                      3
+(1 row)
+
+INSERT INTO bool_test SELECT g, (g % 2) = 0 FROM GENERATE_SERIES(1, 100) AS g;
+SELECT count(*) FROM bool_test;
+ count 
+-------
+   100
+(1 row)
+
+SELECT count(*) FROM bool_test WHERE (b = true AND b = false);
+ count 
+-------
+     0
+(1 row)
+
+SELECT count(*) FROM bool_test WHERE b = false;
+ count 
+-------
+    50
+(1 row)
+
+SELECT count(*) FROM bool_test WHERE b = false;
+ count 
+-------
+    50
+(1 row)
+
+DROP TABLE bool_test CASCADE;
+NOTICE:  drop cascades to 3 other objects
 DROP SCHEMA test CASCADE;
 NOTICE:  drop cascades to 13 other objects
 DROP EXTENSION pg_pathman CASCADE;

@@ -387,6 +387,15 @@ ALTER TABLE replies DROP CONSTRAINT replies_message_id_fkey;
 SELECT create_range_partitions('messages', 'id', 1, 100, 2);
 EXPLAIN (COSTS OFF) SELECT * FROM messages;
 
+/* Testing NOT operator */
+CREATE TABLE bool_test(a serial, b BOOLEAN);
+SELECT create_hash_partitions('bool_test', 'a', 3);
+INSERT INTO bool_test SELECT g, (g % 2) = 0 FROM GENERATE_SERIES(1, 100) AS g;
+SELECT count(*) FROM bool_test;
+SELECT count(*) FROM bool_test WHERE (b = true AND b = false);
+SELECT count(*) FROM bool_test WHERE b = false;
+SELECT count(*) FROM bool_test WHERE b = false;
+DROP TABLE bool_test CASCADE;
 
 DROP SCHEMA test CASCADE;
 DROP EXTENSION pg_pathman CASCADE;
