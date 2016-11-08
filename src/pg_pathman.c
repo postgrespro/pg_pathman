@@ -582,8 +582,7 @@ spawn_partitions(Oid partitioned_rel,		/* parent's Oid */
 	char	   *query;
 
 	/* Create querty statement */
-	query = psprintf("SELECT part::regclass "
-					 "FROM %s.create_single_range_partition($1, $2, $3) AS part",
+	query = psprintf("SELECT %s.create_single_range_partition($1, $2, $3) AS part",
 					 get_namespace_name(get_pathman_schema()));
 
 	/* Execute comparison function cmp(value, cur_part_leading) */

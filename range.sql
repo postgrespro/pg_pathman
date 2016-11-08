@@ -460,7 +460,7 @@ CREATE OR REPLACE FUNCTION @extschema@.create_single_range_partition(
 	end_value		ANYELEMENT,
 	partition_name	TEXT DEFAULT NULL,
 	tablespace		TEXT DEFAULT NULL)
-RETURNS TEXT AS
+RETURNS REGCLASS AS
 $$
 DECLARE
 	v_part_num				INT;
@@ -472,7 +472,7 @@ DECLARE
 	v_child_relname_exists	BOOL;
 	v_seq_name				TEXT;
 	v_init_callback			REGPROCEDURE;
-
+	v_result 				REGCLASS;
 BEGIN
 	v_attname := attname FROM @extschema@.pathman_config
 				 WHERE partrel = parent_relid;
@@ -535,13 +535,20 @@ BEGIN
 	ON params.partrel = parent_relid
 	INTO v_init_callback;
 
+	/*
+	 * Save the regclass value because in callback user may want to rename
+	 * partition
+	 */
+	v_result := v_child_relname::regclass;
+
+	/* Invoke callback */
 	PERFORM @extschema@.invoke_on_partition_created_callback(parent_relid,
 															 v_child_relname::REGCLASS,
 															 v_init_callback,
 															 start_value,
 															 end_value);
 
-	RETURN v_child_relname;
+	RETURN v_result;
 END
 $$ LANGUAGE plpgsql
 SET client_min_messages = WARNING;
