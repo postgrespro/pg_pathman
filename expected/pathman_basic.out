@@ -320,7 +320,7 @@ SELECT count(*) FROM test.insert_into_select_copy;
 
 DROP TABLE test.insert_into_select_copy, test.insert_into_select CASCADE;
 NOTICE:  drop cascades to 5 other objects
-/* test special case: ONLY statement with not-ONLY for partitioned table */
+/* Test special case: ONLY statement with not-ONLY for partitioned table */
 CREATE TABLE test.from_only_test(val INT NOT NULL);
 INSERT INTO test.from_only_test SELECT generate_series(1, 20);
 SELECT pathman.create_range_partitions('test.from_only_test', 'val', 1, 2);
@@ -1818,6 +1818,41 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt = '2015-12-15';
          Filter: (dt = 'Tue Dec 15 00:00:00 2015'::timestamp without time zone)
 (3 rows)
 
+/* Test NOT operator */
+CREATE TABLE bool_test(a INT NOT NULL, b BOOLEAN);
+SELECT create_hash_partitions('bool_test', 'a', 3);
+ create_hash_partitions 
+------------------------
+                      3
+(1 row)
+
+INSERT INTO bool_test SELECT g, (g % 4) = 0 FROM generate_series(1, 100) AS g;
+SELECT count(*) FROM bool_test;
+ count 
+-------
+   100
+(1 row)
+
+SELECT count(*) FROM bool_test WHERE (b = true AND b = false);
+ count 
+-------
+     0
+(1 row)
+
+SELECT count(*) FROM bool_test WHERE b = false;	/* 75 values */
+ count 
+-------
+    75
+(1 row)
+
+SELECT count(*) FROM bool_test WHERE b = true;	/* 25 values */
+ count 
+-------
+    25
+(1 row)
+
+DROP TABLE bool_test CASCADE;
+NOTICE:  drop cascades to 3 other objects
 /* Test foreign keys */
 CREATE TABLE test.messages(id SERIAL PRIMARY KEY, msg TEXT);
 CREATE TABLE test.replies(id SERIAL PRIMARY KEY, message_id INTEGER REFERENCES test.messages(id),  msg TEXT);
