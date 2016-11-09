@@ -101,7 +101,7 @@ SELECT count(*) FROM test.insert_into_select_copy;
 DROP TABLE test.insert_into_select_copy, test.insert_into_select CASCADE;
 
 
-/* test special case: ONLY statement with not-ONLY for partitioned table */
+/* Test special case: ONLY statement with not-ONLY for partitioned table */
 CREATE TABLE test.from_only_test(val INT NOT NULL);
 INSERT INTO test.from_only_test SELECT generate_series(1, 20);
 SELECT pathman.create_range_partitions('test.from_only_test', 'val', 1, 2);
@@ -468,6 +468,16 @@ SELECT create_partitions_from_range('test.range_rel', 'id', 1, 1000, 100);
 SELECT drop_partitions('test.range_rel', TRUE);
 SELECT create_partitions_from_range('test.range_rel', 'dt', '2015-01-01'::date, '2015-12-01'::date, '1 month'::interval);
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt = '2015-12-15';
+
+/* Test NOT operator */
+CREATE TABLE bool_test(a INT NOT NULL, b BOOLEAN);
+SELECT create_hash_partitions('bool_test', 'a', 3);
+INSERT INTO bool_test SELECT g, (g % 4) = 0 FROM generate_series(1, 100) AS g;
+SELECT count(*) FROM bool_test;
+SELECT count(*) FROM bool_test WHERE (b = true AND b = false);
+SELECT count(*) FROM bool_test WHERE b = false;	/* 75 values */
+SELECT count(*) FROM bool_test WHERE b = true;	/* 25 values */
+DROP TABLE bool_test CASCADE;
 
 /* Test foreign keys */
 CREATE TABLE test.messages(id SERIAL PRIMARY KEY, msg TEXT);
