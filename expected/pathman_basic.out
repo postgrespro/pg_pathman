@@ -1270,13 +1270,13 @@ SELECT split_range_partition('range_rel_1', '2010-02-15'::date);
 SELECT append_range_partition('range_rel');
  append_range_partition 
 ------------------------
- public.range_rel_14
+ range_rel_14
 (1 row)
 
 SELECT prepend_range_partition('range_rel');
  prepend_range_partition 
 -------------------------
- public.range_rel_15
+ range_rel_15
 (1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM range_rel WHERE dt < '2010-03-01';

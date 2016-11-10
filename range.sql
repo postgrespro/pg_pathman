@@ -460,7 +460,7 @@ CREATE OR REPLACE FUNCTION @extschema@.create_single_range_partition(
 	end_value		ANYELEMENT,
 	partition_name	TEXT DEFAULT NULL,
 	tablespace		TEXT DEFAULT NULL)
-RETURNS TEXT AS
+RETURNS REGCLASS AS
 $$
 DECLARE
 	v_part_num				INT;
@@ -541,7 +541,7 @@ BEGIN
 															 start_value,
 															 end_value);
 
-	RETURN v_child_relname;
+	RETURN v_child_relname::REGCLASS;
 END
 $$ LANGUAGE plpgsql
 SET client_min_messages = WARNING;
