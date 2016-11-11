@@ -8,7 +8,7 @@
  * ------------------------------------------------------------------------
  */
 
-#include "copy_stmt_hooking.h"
+#include "utility_stmt_hooking.h"
 #include "hooks.h"
 #include "init.h"
 #include "partition_filter.h"
@@ -24,6 +24,7 @@
 #include "optimizer/cost.h"
 #include "optimizer/restrictinfo.h"
 #include "utils/typcache.h"
+#include "utils/lsyscache.h"
 
 
 set_join_pathlist_hook_type		set_join_pathlist_next = NULL;
@@ -32,6 +33,10 @@ planner_hook_type				planner_hook_next = NULL;
 post_parse_analyze_hook_type	post_parse_analyze_hook_next = NULL;
 shmem_startup_hook_type			shmem_startup_hook_next = NULL;
 ProcessUtility_hook_type		process_utility_hook_next = NULL;
+
+
+#define is_table_rename_statement(s) \
+			IsA((s), RenameStmt) && ((RenameStmt *)(s))->renameType == OBJECT_TABLE
 
 
 /* Take care of joins */
@@ -627,17 +632,29 @@ pathman_process_utility_hook(Node *parsetree,
 							 char *completionTag)
 {
 	/* Override standard COPY statement if needed */
-	if (IsPathmanReady() && is_pathman_related_copy(parsetree))
+	if (IsPathmanReady())
 	{
-		uint64	processed;
+		if (is_pathman_related_copy(parsetree))
+		{
+			uint64	processed;
 
-		/* Handle our COPY case (and show a special cmd name) */
-		PathmanDoCopy((CopyStmt *) parsetree, queryString, &processed);
-		if (completionTag)
-			snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
-					 "PATHMAN COPY " UINT64_FORMAT, processed);
+			/* Handle our COPY case (and show a special cmd name) */
+			PathmanDoCopy((CopyStmt *) parsetree, queryString, &processed);
+			if (completionTag)
+				snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
+						 "PATHMAN COPY " UINT64_FORMAT, processed);
 
-		return; /* don't call standard_ProcessUtility() or hooks */
+			return; /* don't call standard_ProcessUtility() or hooks */
+		}
+
+		if (is_table_rename_statement(parsetree))
+		{
+			/*
+			 * Rename check constraint of a table if it is a partition managed
+			 * by pg_pathman
+			 */
+			PathmanDoRenameConstraint((RenameStmt *) parsetree);
+		}
 	}
 
 	/* Call hooks set by other extensions if needed */

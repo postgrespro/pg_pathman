@@ -598,7 +598,7 @@ find_inheritance_children_array(Oid parentrelId,
 char *
 build_check_constraint_name_internal(Oid relid, AttrNumber attno)
 {
-	return psprintf("pathman_%s_%u_check", get_rel_name(relid), attno);
+	return build_check_constraint_name_by_relname(get_rel_name(relid), attno);
 }
 
 /*

@@ -1,9 +1,11 @@
 \set VERBOSITY terse
 
 CREATE EXTENSION pg_pathman;
+
+/*
+ * Test COPY
+ */
 CREATE SCHEMA copy_stmt_hooking;
-
-
 CREATE TABLE copy_stmt_hooking.test(
 	val int not null,
 	comment text,
@@ -89,6 +91,50 @@ COPY copy_stmt_hooking.test FROM stdin;
 SELECT count(*) FROM ONLY copy_stmt_hooking.test;
 SELECT * FROM copy_stmt_hooking.test ORDER BY val;
 
-
 DROP SCHEMA copy_stmt_hooking CASCADE;
+
+/*
+ * Test auto check constraint renaming
+ */
+CREATE SCHEMA rename;
+
+CREATE TABLE rename.test(a serial, b int);
+SELECT create_hash_partitions('rename.test', 'a', 3);
+ALTER TABLE rename.test_0 RENAME TO test_one;
+/* We expect to find check constraint renamed as well */
+\d+ rename.test_one
+
+/* Generates check constraint for relation */
+CREATE OR REPLACE FUNCTION add_constraint(rel regclass, att text)
+RETURNS VOID AS $$
+declare
+    constraint_name text := build_check_constraint_name(rel, 'a');
+BEGIN
+    EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (a < 100);',
+                   rel, constraint_name);
+END
+$$
+LANGUAGE plpgsql;
+
+/*
+ * Check that it doesn't affect regular inherited tables that aren't managed
+ * by pg_pathman
+ */
+CREATE TABLE rename.test_inh (LIKE rename.test INCLUDING ALL);
+CREATE TABLE rename.test_inh_1 (LIKE rename.test INCLUDING ALL);
+ALTER TABLE rename.test_inh_1 INHERIT rename.test_inh;
+SELECT add_constraint('rename.test_inh_1', 'a');
+ALTER TABLE rename.test_inh_1 RENAME TO test_inh_one;
+\d+ rename.test_inh_one
+
+/* Check that plain tables are not affected too */
+CREATE TABLE rename.plain_test(a serial, b int);
+ALTER TABLE rename.plain_test RENAME TO plain_test_renamed;
+SELECT add_constraint('rename.plain_test_renamed', 'a');
+\d+ rename.plain_test_renamed
+ALTER TABLE rename.plain_test_renamed RENAME TO plain_test;
+\d+ rename.plain_test
+
+DROP SCHEMA rename CASCADE;
+
 DROP EXTENSION pg_pathman;

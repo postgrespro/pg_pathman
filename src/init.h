@@ -86,6 +86,15 @@ extern PathmanInitState 	pg_pathman_init_state;
 		pg_pathman_init_state.initialization_needed = true; \
 	} while (0)
 
+/*
+ * Generate check constraint name for given relname
+ */
+static inline char *
+build_check_constraint_name_by_relname(char *relname, AttrNumber attno)
+{
+	return psprintf("pathman_%s_%u_check", relname, attno);
+}
+
 
 /*
  * Save and restore PathmanInitState.

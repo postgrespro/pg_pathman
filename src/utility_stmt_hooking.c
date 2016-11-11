@@ -1,7 +1,8 @@
 /* ------------------------------------------------------------------------
  *
- * copy_stmt_hooking.c
- *		Override COPY TO/FROM statement for partitioned tables
+ * utility_stmt_hooking.c
+ *		Override COPY TO/FROM and ALTER TABLE ... RENAME statements
+ *		for partitioned tables
  *
  * Copyright (c) 2016, Postgres Professional
  * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
@@ -10,7 +11,7 @@
  * ------------------------------------------------------------------------
  */
 
-#include "copy_stmt_hooking.h"
+#include "utility_stmt_hooking.h"
 #include "init.h"
 #include "partition_filter.h"
 #include "relation_info.h"
@@ -22,6 +23,7 @@
 #include "catalog/pg_attribute.h"
 #include "commands/copy.h"
 #include "commands/trigger.h"
+#include "commands/tablecmds.h"
 #include "executor/executor.h"
 #include "foreign/fdwapi.h"
 #include "miscadmin.h"
@@ -621,4 +623,47 @@ prepare_rri_fdw_for_copy(EState *estate,
 	if (fdw_routine != NULL)
 		elog(ERROR, "cannot copy to foreign partition \"%s\"",
 			 get_rel_name(RelationGetRelid(rri->ri_RelationDesc)));
+}
+
+/*
+ * Rename check constraint of table if it is a partition 
+ */
+void
+PathmanDoRenameConstraint(const RenameStmt *stmt)
+{
+	Oid		partition = RangeVarGetRelid(stmt->relation, NoLock, true);
+	Oid		parent = get_rel_parent(partition);
+
+	if (partition != InvalidOid && parent != InvalidOid)
+	{
+		char   *old_constraint_name,
+			   *new_constraint_name;
+		const PartRelationInfo *prel = get_pathman_relation_info(parent);
+
+		if (prel)
+		{
+			RangeVar	   *rngVar;
+			RenameStmt	   *s;
+
+			/* Generate old constraint name */
+			old_constraint_name = build_check_constraint_name_by_relname(
+				get_rel_name(partition),
+				prel->attnum);
+
+			/* Generate new constraint name */
+			new_constraint_name = build_check_constraint_name_by_relname(
+				stmt->newname,
+				prel->attnum);
+
+			/* Build check constraint RENAME statement */
+			s = makeNode(RenameStmt);
+			s->renameType = OBJECT_TABCONSTRAINT;
+			s->relation = stmt->relation;
+			s->subname = old_constraint_name;
+			s->newname = new_constraint_name;
+			s->missing_ok = false;
+
+			RenameConstraint(s);
+		}
+	}
 }

@@ -37,6 +37,7 @@ List * list_reverse(List *l);
 char get_rel_persistence(Oid relid);
 #endif
 Oid get_rel_owner(Oid relid);
+Oid get_rel_parent(Oid relid);
 
 Datum perform_type_cast(Datum value, Oid in_type, Oid out_type, bool *success);
 
