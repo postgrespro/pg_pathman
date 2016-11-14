@@ -35,8 +35,13 @@ extern void copy_targetlist_compat(RelOptInfo *dest, RelOptInfo *rel);
 #define check_index_predicates_compat(rool, rel) \
 		check_index_predicates(root, rel)
 
+#ifndef PGPRO_VERSION
 #define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
 		create_append_path(rel, subpaths, required_outer, parallel_workers)
+#else
+#define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
+		create_append_path(rel, subpaths, required_outer, false, NIL, parallel_workers)
+#endif
 
 #define pull_var_clause_compat(node, aggbehavior, phbehavior) \
 		pull_var_clause(node, aggbehavior | phbehavior)
