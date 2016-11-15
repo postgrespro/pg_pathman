@@ -14,10 +14,10 @@
 #include "pathman.h"
 #include "init.h"
 #include "hooks.h"
-#include "utils.h"
 #include "partition_filter.h"
 #include "runtimeappend.h"
 #include "runtime_merge_append.h"
+#include "utils.h"
 #include "xact_handling.h"
 
 #include "postgres.h"
@@ -682,7 +682,7 @@ spawn_partitions(Oid partitioned_rel,		/* parent's Oid */
 	do { \
 		if (!is_cached) \
 		{ \
-			fmgr_info(get_binary_operator_oid((opname), (arg1), (arg2)), \
+			fmgr_info(oprfuncid(get_binary_operator((opname), (arg1), (arg2))), \
 					  (finfo)); \
 			is_cached = true; \
 		} \

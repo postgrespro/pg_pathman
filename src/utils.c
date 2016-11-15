@@ -530,22 +530,18 @@ is_date_type_internal(Oid typid)
  *
  * Returns operator function's Oid or throws an ERROR on InvalidOid.
  */
-Oid
-get_binary_operator_oid(char *oprname, Oid arg1, Oid arg2)
+Operator
+get_binary_operator(char *oprname, Oid arg1, Oid arg2)
 {
-	Oid			funcid = InvalidOid;
-	Operator	op;
+	Operator op;
 
-	op = oper(NULL, list_make1(makeString(oprname)), arg1, arg2, true, -1);
-	if (op)
-	{
-		funcid = oprfuncid(op);
-		ReleaseSysCache(op);
-	}
-	else
+	op = compatible_oper(NULL, list_make1(makeString(oprname)),
+						 arg1, arg2, true, -1);
+
+	if (!op)
 		elog(ERROR, "Cannot find operator \"%s\"(%u, %u)", oprname, arg1, arg2);
 
-	return funcid;
+	return op;
 }
 
 /*

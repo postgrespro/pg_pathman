@@ -1,30 +1,43 @@
-#include "pathman.h"
+﻿#include "pathman.h"
 #include "init.h"
 #include "partition_creation.h"
 
 #include "access/reloptions.h"
 #include "access/xact.h"
 #include "catalog/heap.h"
+#include "catalog/pg_type.h"
 #include "catalog/toasting.h"
-#include "commands/defrem.h"
 #include "commands/event_trigger.h"
+#include "commands/sequence.h"
 #include "commands/tablecmds.h"
+#include "parser/parse_func.h"
 #include "parser/parse_relation.h"
 #include "parser/parse_utilcmd.h"
 #include "tcop/utility.h"
 #include "utils/builtins.h"
+#include "utils/jsonb.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 
 
-static Oid create_single_partition(Oid parent_relid,
-								   RangeVar *partition_rv,
-								   char *tablespace,
-								   char **partitioned_column);
+static Oid create_single_partition_internal(Oid parent_relid,
+											RangeVar *partition_rv,
+											char *tablespace,
+											char **partitioned_column);
+
+static char *choose_partition_name(Oid parent_relid, Oid parent_nsp);
 
 static ObjectAddress create_table_using_stmt(CreateStmt *create_stmt,
 											 Oid relowner);
 
+static void copy_foreign_keys(Oid parent_relid, Oid partition_oid);
+
+
+/*
+ * ---------------------------------------
+ *  Public interface (partition creation)
+ * ---------------------------------------
+ */
 
 /* Create one RANGE partition [start_value, end_value) */
 Oid
@@ -35,44 +48,74 @@ create_single_range_partition_internal(Oid parent_relid,
 									   RangeVar *partition_rv,
 									   char *tablespace)
 {
-	Oid				partition;
-	Relation		child_relation;
-	Constraint	   *check_constr;
-	char		   *partitioned_column;
+	Oid						partition_relid;
+	Relation				child_relation;
+	Constraint			   *check_constr;
+	char				   *partitioned_column;
+	init_callback_params	callback_params;
 
 	/* Create a partition & get 'partitioned_column' */
-	partition = create_single_partition(parent_relid,
-										partition_rv,
-										tablespace,
-										&partitioned_column); /* get it */
+	partition_relid = create_single_partition_internal(parent_relid,
+													   partition_rv,
+													   tablespace,
+													   &partitioned_column);
 
 	/* Build check constraint for RANGE partition */
-	check_constr = build_range_check_constraint(partition,
+	check_constr = build_range_check_constraint(partition_relid,
 												partitioned_column,
 												start_value,
 												end_value,
 												value_type);
 
-	/* Open the relation and add new check constraint */
-	child_relation = heap_open(partition, AccessExclusiveLock);
+	/* Open the relation and add new check constraint & fkeys */
+	child_relation = heap_open(partition_relid, AccessExclusiveLock);
 	AddRelationNewConstraints(child_relation, NIL,
 							  list_make1(check_constr),
 							  false, true, true);
 	heap_close(child_relation, NoLock);
 
+	CommandCounterIncrement();
+
+	/* Finally invoke 'init_callback' */
+	MakeInitCallbackRangeParams(&callback_params, InvalidOid,
+								parent_relid, partition_relid,
+								start_value, end_value, value_type);
+	invoke_part_callback(&callback_params);
+
 	/* Return the Oid */
-	return partition;
+	return partition_relid;
+}
+
+
+/*
+ * --------------------
+ *  Partition creation
+ * --------------------
+ */
+
+/* Choose a good name for a partition */
+static char *
+choose_partition_name(Oid parent_relid, Oid parent_nsp)
+{
+	Datum	part_num;
+	Oid		part_seq_relid;
+
+	part_seq_relid = get_relname_relid(build_sequence_name_internal(parent_relid),
+									   parent_nsp);
+	part_num = DirectFunctionCall1(nextval_oid, ObjectIdGetDatum(part_seq_relid));
+
+	return psprintf("%s_%u", get_rel_name(parent_relid), DatumGetInt32(part_num));
 }
 
 /* Create a partition-like table (no constraints yet) */
 static Oid
-create_single_partition(Oid parent_relid,
-						RangeVar *partition_rv,
-						char *tablespace,
-						char **partitioned_column) /* to be set */
+create_single_partition_internal(Oid parent_relid,
+								 RangeVar *partition_rv,
+								 char *tablespace,
+								 char **partitioned_column) /* to be set */
 {
 	/* Value to be returned */
-	Oid					child_relid = InvalidOid; /* safety */
+	Oid					partition_relid = InvalidOid; /* safety */
 
 	/* Parent's namespace and name */
 	Oid					parent_nsp;
@@ -125,7 +168,7 @@ create_single_partition(Oid parent_relid,
 		char *part_name;
 
 		/* Make up a name for the partition */
-		part_name = ChooseRelationName(parent_name, NULL, "part", parent_nsp);
+		part_name = choose_partition_name(parent_relid, parent_nsp);
 
 		/* Make RangeVar for the partition */
 		partition_rv = makeRangeVar(parent_nsp_name, part_name, -1);
@@ -170,8 +213,11 @@ create_single_partition(Oid parent_relid,
 			child_relowner = get_rel_owner(parent_relid);
 
 			/* Create a partition and save its Oid */
-			child_relid = create_table_using_stmt((CreateStmt *) cur_stmt,
-												  child_relowner).objectId;
+			partition_relid = create_table_using_stmt((CreateStmt *) cur_stmt,
+													  child_relowner).objectId;
+
+			/* Copy FOREIGN KEYS of the parent table */
+			copy_foreign_keys(parent_relid, partition_relid);
 		}
 		else if (IsA(cur_stmt, CreateForeignTableStmt))
 		{
@@ -185,7 +231,7 @@ create_single_partition(Oid parent_relid,
 			 * event trigger context.
 			 */
 			ProcessUtility(cur_stmt,
-						   "have to provide query string",
+						   "we have to provide a query string",
 						   PROCESS_UTILITY_SUBCOMMAND,
 						   NULL,
 						   None_Receiver,
@@ -193,7 +239,7 @@ create_single_partition(Oid parent_relid,
 		}
 	}
 
-	return child_relid;
+	return partition_relid;
 }
 
 /* Create a new table using cooked CreateStmt */
@@ -235,6 +281,45 @@ create_table_using_stmt(CreateStmt *create_stmt, Oid relowner)
 	return table_addr;
 }
 
+/* Copy foreign keys of parent table */
+static void
+copy_foreign_keys(Oid parent_relid, Oid partition_oid)
+{
+	Oid						copy_fkeys_proc_args[] = { REGCLASSOID, REGCLASSOID };
+	List				   *copy_fkeys_proc_name;
+	FmgrInfo				copy_fkeys_proc_flinfo;
+	FunctionCallInfoData	copy_fkeys_proc_fcinfo;
+	char					*pathman_schema;
+
+	/* Fetch pg_pathman's schema */
+	pathman_schema = get_namespace_name(get_pathman_schema());
+
+	/* Build function's name */
+	copy_fkeys_proc_name = list_make2(makeString(pathman_schema),
+									  makeString(CppAsString(copy_foreign_keys)));
+
+	/* Lookup function's Oid and get FmgrInfo */
+	fmgr_info(LookupFuncName(copy_fkeys_proc_name, 2,
+							 copy_fkeys_proc_args, false),
+			  &copy_fkeys_proc_flinfo);
+
+	InitFunctionCallInfoData(copy_fkeys_proc_fcinfo, &copy_fkeys_proc_flinfo,
+							 2, InvalidOid, NULL, NULL);
+	copy_fkeys_proc_fcinfo.arg[0] = ObjectIdGetDatum(parent_relid);
+	copy_fkeys_proc_fcinfo.argnull[0] = false;
+	copy_fkeys_proc_fcinfo.arg[1] = ObjectIdGetDatum(partition_oid);
+	copy_fkeys_proc_fcinfo.argnull[1] = false;
+
+	/* Invoke the callback */
+	FunctionCallInvoke(&copy_fkeys_proc_fcinfo);
+}
+
+
+/*
+ * -----------------------------
+ *  Check constraint generation
+ * -----------------------------
+ */
 
 /* Build RANGE check constraint expression tree */
 Node *
@@ -321,14 +406,184 @@ build_range_check_constraint(Oid child_relid,
 	return range_constr;
 }
 
-/* Invoke 'init_callback' for a partition */
-void
-invoke_init_callback(Oid parent_relid,
-					 Oid child_relid,
-					 PartType part_type,
-					 Datum start_value,
-					 Datum end_value,
-					 Oid value_type)
+/* Check if range overlaps with any partitions */
+bool
+check_range_available(Oid parent_relid,
+					  Datum start_value,
+					  Datum end_value,
+					  Oid value_type,
+					  bool raise_error)
 {
-	/* TODO: implement callback invocation machinery */
+	const PartRelationInfo	   *prel;
+	RangeEntry				   *ranges;
+	FmgrInfo					cmp_func;
+	uint32						i;
+
+	/* Try fetching the PartRelationInfo structure */
+	prel = get_pathman_relation_info(parent_relid);
+
+	/* If there's no prel, return TRUE (overlap is not possible) */
+	if (!prel) return true;
+
+	/* Emit an error if it is not partitioned by RANGE */
+	shout_if_prel_is_invalid(parent_relid, prel, PT_RANGE);
+
+	/* Fetch comparison function */
+	fill_type_cmp_fmgr_info(&cmp_func,
+							getBaseType(value_type),
+							getBaseType(prel->atttype));
+
+	ranges = PrelGetRangesArray(prel);
+	for (i = 0; i < PrelChildrenCount(prel); i++)
+	{
+		int		c1 = FunctionCall2(&cmp_func, start_value, ranges[i].max),
+				c2 = FunctionCall2(&cmp_func, end_value, ranges[i].min);
+
+		/* There's someone! */
+		if (c1 < 0 && c2 > 0)
+		{
+			if (raise_error)
+				elog(ERROR, "specified range [%s, %s) overlaps "
+							"with existing partitions",
+					 datum_to_cstring(start_value, value_type),
+					 datum_to_cstring(end_value, value_type));
+			else
+				return false;
+		}
+	}
+
+	return true;
+}
+
+
+/*
+ * ---------------------
+ *  Callback invocation
+ * ---------------------
+ */
+
+/* Invoke 'init_callback' for a partition */
+static void
+invoke_init_callback_internal(init_callback_params *cb_params)
+{
+#define JSB_INIT_VAL(value, val_type, val_cstring) \
+	do { \
+		(value)->type = jbvString; \
+		(value)->val.string.len = strlen(val_cstring); \
+		(value)->val.string.val = val_cstring; \
+		pushJsonbValue(&jsonb_state, val_type, (value)); \
+	} while (0)
+
+	Oid						parent_oid = cb_params->parent_relid;
+	Oid						partition_oid = cb_params->partition_relid;
+
+	FmgrInfo				cb_flinfo;
+	FunctionCallInfoData	cb_fcinfo;
+
+	JsonbParseState		   *jsonb_state = NULL;
+	JsonbValue			   *result,
+							key,
+							val;
+
+	switch (cb_params->parttype)
+	{
+		case PT_HASH:
+			{
+				pushJsonbValue(&jsonb_state, WJB_BEGIN_OBJECT, NULL);
+
+				JSB_INIT_VAL(&key, WJB_KEY, "parent");
+				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(parent_oid));
+				JSB_INIT_VAL(&key, WJB_KEY, "partition");
+				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(partition_oid));
+				JSB_INIT_VAL(&key, WJB_KEY, "parttype");
+				JSB_INIT_VAL(&val, WJB_VALUE, PartTypeToCString(PT_HASH));
+
+				result = pushJsonbValue(&jsonb_state, WJB_END_OBJECT, NULL);
+			}
+			break;
+
+		case PT_RANGE:
+			{
+				char   *start_value,
+					   *end_value;
+				Datum	sv_datum	= cb_params->params.range_params.start_value,
+						ev_datum	= cb_params->params.range_params.end_value;
+				Oid		type		= cb_params->params.range_params.value_type;
+
+				/* Convert min & max to CSTRING */
+				start_value = datum_to_cstring(sv_datum, type);
+				end_value = datum_to_cstring(ev_datum, type);
+
+				pushJsonbValue(&jsonb_state, WJB_BEGIN_OBJECT, NULL);
+
+				JSB_INIT_VAL(&key, WJB_KEY, "parent");
+				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(parent_oid));
+				JSB_INIT_VAL(&key, WJB_KEY, "partition");
+				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(partition_oid));
+				JSB_INIT_VAL(&key, WJB_KEY, "parttype");
+				JSB_INIT_VAL(&val, WJB_VALUE, PartTypeToCString(PT_RANGE));
+				JSB_INIT_VAL(&key, WJB_KEY, "range_min");
+				JSB_INIT_VAL(&val, WJB_VALUE, start_value);
+				JSB_INIT_VAL(&key, WJB_KEY, "range_max");
+				JSB_INIT_VAL(&val, WJB_VALUE, end_value);
+
+				result = pushJsonbValue(&jsonb_state, WJB_END_OBJECT, NULL);
+			}
+			break;
+
+		default:
+			elog(ERROR, "Unknown partitioning type %u", cb_params->parttype);
+			break;
+	}
+
+	/* Fetch & cache callback's Oid if needed */
+	if (!cb_params->callback_is_cached)
+	{
+		Datum	param_values[Natts_pathman_config_params];
+		bool	param_isnull[Natts_pathman_config_params];
+
+		/* Search for init_callback entry in PATHMAN_CONFIG_PARAMS */
+		if (read_pathman_params(parent_oid, param_values, param_isnull))
+		{
+			Datum		init_cb_datum; /* Oid of init_callback */
+			AttrNumber	init_cb_attno = Anum_pathman_config_params_init_callback;
+
+			/* Extract Datum storing callback's Oid */
+			init_cb_datum = param_values[init_cb_attno - 1];
+
+			/* Cache init_callback's Oid */
+			cb_params->callback = DatumGetObjectId(init_cb_datum);
+		}
+	}
+
+	/* No callback is set, exit */
+	if (!OidIsValid(cb_params->callback))
+		return;
+
+	/* Validate the callback's signature */
+	validate_on_part_init_cb(cb_params->callback, true);
+
+	fmgr_info(cb_params->callback, &cb_flinfo);
+
+	InitFunctionCallInfoData(cb_fcinfo, &cb_flinfo, 1, InvalidOid, NULL, NULL);
+	cb_fcinfo.arg[0] = PointerGetDatum(JsonbValueToJsonb(result));
+	cb_fcinfo.argnull[0] = false;
+
+	/* Invoke the callback */
+	FunctionCallInvoke(&cb_fcinfo);
+}
+
+/* Invoke a callback of a specified type */
+void
+invoke_part_callback(init_callback_params *cb_params)
+{
+	switch (cb_params->cb_type)
+	{
+		case PT_INIT_CALLBACK:
+			invoke_init_callback_internal(cb_params);
+			break;
+
+		default:
+			elog(ERROR, "Unknown callback type: %u", cb_params->cb_type);
+	}
 }

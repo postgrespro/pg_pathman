@@ -116,6 +116,8 @@ Oid *find_inheritance_children_array(Oid parentrelId,
 char *build_check_constraint_name_internal(Oid relid,
 										   AttrNumber attno);
 
+char *build_sequence_name_internal(Oid relid);
+
 bool pathman_config_contains_relation(Oid relid,
 									  Datum *values,
 									  bool *isnull,

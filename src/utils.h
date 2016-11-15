@@ -14,6 +14,7 @@
 #include "pathman.h"
 
 #include "postgres.h"
+#include "parser/parse_oper.h"
 #include "utils/rel.h"
 #include "nodes/relation.h"
 #include "nodes/nodeFuncs.h"
@@ -63,7 +64,7 @@ Oid get_rel_owner(Oid relid);
  * Handy execution-stage functions.
  */
 char * get_rel_name_or_relid(Oid relid);
-Oid get_binary_operator_oid(char *opname, Oid arg1, Oid arg2);
+Operator get_binary_operator(char *opname, Oid arg1, Oid arg2);
 void fill_type_cmp_fmgr_info(FmgrInfo *finfo,
 							 Oid type1,
 							 Oid type2);

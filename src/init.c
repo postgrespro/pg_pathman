@@ -573,6 +573,17 @@ build_check_constraint_name_internal(Oid relid, AttrNumber attno)
 }
 
 /*
+ * Generate part sequence name for a parent.
+ *
+ * This function does not perform sanity checks at all.
+ */
+char *
+build_sequence_name_internal(Oid relid)
+{
+	return psprintf("%s_seq", get_rel_name(relid));
+}
+
+/*
  * Check that relation 'relid' is partitioned by pg_pathman.
  *
  * Extract tuple into 'values' and 'isnull' if they're provided.

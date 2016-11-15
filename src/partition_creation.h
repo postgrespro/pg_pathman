@@ -23,9 +23,73 @@ Node * build_raw_range_check_tree(char *attname,
 								  Datum end_value,
 								  Oid value_type);
 
-void invoke_init_callback(Oid parent_relid,
-						  Oid child_relid,
-						  PartType part_type,
-						  Datum start_value,
-						  Datum end_value,
-						  Oid value_type);
+bool check_range_available(Oid partition_relid,
+						   Datum start_value,
+						   Datum end_value,
+						   Oid value_type,
+						   bool raise_error);
+
+
+/* Partitioning callback type */
+typedef enum
+{
+	PT_INIT_CALLBACK = 0
+} part_callback_type;
+
+/* Args for partitioning 'init_callback' */
+typedef struct
+{
+	part_callback_type	cb_type;
+	Oid					callback;
+	bool				callback_is_cached;
+
+	PartType			parttype;
+
+	Oid					parent_relid;
+	Oid					partition_relid;
+
+	union
+	{
+		struct
+		{
+			/* nothing */
+		}	hash_params;
+
+		struct
+		{
+			Datum	start_value,
+					end_value;
+			Oid		value_type;
+		}	range_params;
+
+	}					params;
+} init_callback_params;
+
+#define MakeInitCallbackRangeParams(params_p, cb, parent, child, start, end, type) \
+	do \
+	{ \
+		memset((void *) (params_p), 0, sizeof(init_callback_params)); \
+		(params_p)->cb_type = PT_INIT_CALLBACK; \
+		(params_p)->callback = (cb); \
+		(params_p)->callback_is_cached = false; \
+		(params_p)->parttype = PT_RANGE; \
+		(params_p)->parent_relid = (parent); \
+		(params_p)->partition_relid = (child); \
+		(params_p)->params.range_params.start_value = (start); \
+		(params_p)->params.range_params.end_value = (end); \
+		(params_p)->params.range_params.value_type = (type); \
+	} while (0)
+
+#define MakeInitCallbackHashParams(params_p, cb, parent, child) \
+	do \
+	{ \
+		memset((void *) (params_p), 0, sizeof(init_callback_params)); \
+		(params_p)->callback = (cb); \
+		(params_p)->callback_is_cached = false; \
+		(params_p)->cb_type = PT_INIT_CALLBACK; \
+		(params_p)->parttype = PT_HASH; \
+		(params_p)->parent_relid = (parent); \
+		(params_p)->partition_relid = (child); \
+	} while (0)
+
+void invoke_part_callback(init_callback_params *cb_params);
