@@ -1180,7 +1180,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt BETWEEN '2014-12-15' A
 (3 rows)
 
 SELECT pathman.add_range_partition('test.range_rel', '2014-12-01'::DATE, '2015-01-02'::DATE);
-ERROR:  specified range overlaps with existing partitions
+ERROR:  specified range [12-01-2014, 01-02-2015) overlaps with existing partitions
 SELECT pathman.add_range_partition('test.range_rel', '2014-12-01'::DATE, '2015-01-01'::DATE);
  add_range_partition 
 ---------------------
@@ -1199,7 +1199,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt BETWEEN '2014-12-15' A
 
 CREATE TABLE test.range_rel_archive (LIKE test.range_rel INCLUDING ALL);
 SELECT pathman.attach_range_partition('test.range_rel', 'test.range_rel_archive', '2014-01-01'::DATE, '2015-01-01'::DATE);
-ERROR:  specified range overlaps with existing partitions
+ERROR:  specified range [01-01-2014, 01-01-2015) overlaps with existing partitions
 SELECT pathman.attach_range_partition('test.range_rel', 'test.range_rel_archive', '2014-01-01'::DATE, '2014-12-01'::DATE);
  attach_range_partition 
 ------------------------
@@ -1427,48 +1427,28 @@ SELECT pathman.create_range_partitions('test.num_range_rel', 'id', 1000, 1000, 4
                        4
 (1 row)
 
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 4001, 5000);
- check_overlap 
----------------
- t
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 4001, 5000);
+ERROR:  specified range [4001, 5000) overlaps with existing partitions
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 4000, 5000);
+ERROR:  specified range [4000, 5000) overlaps with existing partitions
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 3999, 5000);
+ERROR:  specified range [3999, 5000) overlaps with existing partitions
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 3000, 3500);
+ERROR:  specified range [3000, 3500) overlaps with existing partitions
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 0, 999);
+ check_range_available 
+-----------------------
+ 
 (1 row)
 
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 4000, 5000);
- check_overlap 
----------------
- t
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 0, 1000);
+ check_range_available 
+-----------------------
+ 
 (1 row)
 
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 3999, 5000);
- check_overlap 
----------------
- t
-(1 row)
-
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 3000, 3500);
- check_overlap 
----------------
- t
-(1 row)
-
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 0, 999);
- check_overlap 
----------------
- f
-(1 row)
-
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 0, 1000);
- check_overlap 
----------------
- f
-(1 row)
-
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 0, 1001);
- check_overlap 
----------------
- t
-(1 row)
-
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 0, 1001);
+ERROR:  specified range [0, 1001) overlaps with existing partitions
 /* CaMeL cAsE table names and attributes */
 CREATE TABLE test."TeSt" (a INT NOT NULL, b INT);
 SELECT pathman.create_hash_partitions('test.TeSt', 'a', 3);
@@ -1950,31 +1930,31 @@ NOTICE:  sequence "index_on_childs_seq" does not exist, skipping
 SELECT add_range_partition('test.index_on_childs', 1, 1000, 'test.index_on_childs_1_1K');
     add_range_partition    
 ---------------------------
- test.index_on_childs_1_1K
+ test.index_on_childs_1_1k
 (1 row)
 
 SELECT append_range_partition('test.index_on_childs', 'test.index_on_childs_1K_2K');
    append_range_partition   
 ----------------------------
- test.index_on_childs_1K_2K
+ test.index_on_childs_1k_2k
 (1 row)
 
 SELECT append_range_partition('test.index_on_childs', 'test.index_on_childs_2K_3K');
    append_range_partition   
 ----------------------------
- test.index_on_childs_2K_3K
+ test.index_on_childs_2k_3k
 (1 row)
 
 SELECT append_range_partition('test.index_on_childs', 'test.index_on_childs_3K_4K');
    append_range_partition   
 ----------------------------
- test.index_on_childs_3K_4K
+ test.index_on_childs_3k_4k
 (1 row)
 
 SELECT append_range_partition('test.index_on_childs', 'test.index_on_childs_4K_5K');
    append_range_partition   
 ----------------------------
- test.index_on_childs_4K_5K
+ test.index_on_childs_4k_5k
 (1 row)
 
 SELECT set_enable_parent('test.index_on_childs', true);

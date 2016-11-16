@@ -370,13 +370,13 @@ CREATE TABLE test.num_range_rel (
 	id	SERIAL PRIMARY KEY,
 	txt	TEXT);
 SELECT pathman.create_range_partitions('test.num_range_rel', 'id', 1000, 1000, 4);
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 4001, 5000);
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 4000, 5000);
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 3999, 5000);
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 3000, 3500);
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 0, 999);
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 0, 1000);
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 0, 1001);
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 4001, 5000);
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 4000, 5000);
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 3999, 5000);
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 3000, 3500);
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 0, 999);
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 0, 1000);
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 0, 1001);
 
 /* CaMeL cAsE table names and attributes */
 CREATE TABLE test."TeSt" (a INT NOT NULL, b INT);

@@ -163,9 +163,9 @@ typedef struct
 /*
  * Functions for partition creation, use create_partitions().
  */
-Oid create_partitions(Oid relid, Datum value, Oid value_type);
-Oid create_partitions_bg_worker(Oid relid, Datum value, Oid value_type);
-Oid create_partitions_internal(Oid relid, Datum value, Oid value_type);
+Oid create_partitions_for_value(Oid relid, Datum value, Oid value_type);
+Oid create_partitions_for_value_bg_worker(Oid relid, Datum value, Oid value_type);
+Oid create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type);
 
 void select_range_partitions(const Datum value,
 							 FmgrInfo *cmp_func,

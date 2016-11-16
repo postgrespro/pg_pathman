@@ -171,12 +171,12 @@ SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part
 (1 row)
 
 SELECT invoke_on_partition_created_callback(NULL, 'calamity.part_test', 1);
-ERROR:  parent_relid should not be null
+ERROR:  'parent_relid' should not be NULL
 SELECT invoke_on_partition_created_callback('calamity.part_test', NULL, 1);
-ERROR:  partition should not be null
+ERROR:  'partition' should not be NULL
 /* check function add_to_pathman_config() -- PHASE #1 */
 SELECT add_to_pathman_config('calamity.part_test', NULL);
-ERROR:  attname should not be null
+ERROR:  'attname' should not be NULL
 SELECT add_to_pathman_config('calamity.part_test', 'val');
  add_to_pathman_config 
 -----------------------

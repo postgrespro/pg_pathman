@@ -14,11 +14,12 @@
 #include "pathman.h"
 #include "init.h"
 #include "hooks.h"
-#include "utils.h"
+#include "partition_creation.h"
 #include "partition_filter.h"
 #include "planner_tree_modification.h"
 #include "runtimeappend.h"
 #include "runtime_merge_append.h"
+#include "utils.h"
 #include "xact_handling.h"
 
 #include "postgres.h"
@@ -47,6 +48,7 @@
 #include "utils/snapmgr.h"
 #include "utils/typcache.h"
 
+
 PG_MODULE_MAGIC;
 
 
@@ -58,68 +60,98 @@ Oid				pathman_config_params_relid = InvalidOid;
 /* pg module functions */
 void _PG_init(void);
 
-/* Utility functions */
-static Node *wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue);
 
 /* "Partition creation"-related functions */
 static Datum extract_binary_interval_from_text(Datum interval_text,
 											   Oid part_atttype,
 											   Oid *interval_type);
-static bool spawn_partitions(Oid partitioned_rel,
-							 Datum value,
-							 Datum leading_bound,
-							 Oid leading_bound_type,
-							 FmgrInfo *cmp_proc,
-							 Datum interval_binary,
-							 Oid interval_type,
-							 bool forward,
-							 Oid *last_partition);
+
+static Oid spawn_partitions_val(Oid parent_relid,
+								Datum range_bound_min,
+								Datum range_bound_max,
+								Oid range_bound_type,
+								Datum interval_binary,
+								Oid interval_type,
+								Datum value,
+								Oid value_type);
+
 
 /* Expression tree handlers */
+static Node *wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue);
+
 static WrapperNode *handle_const(const Const *c, WalkerContext *context);
-static void handle_binary_opexpr(WalkerContext *context, WrapperNode *result, const Node *varnode, const Const *c);
-static void handle_binary_opexpr_param(const PartRelationInfo *prel, WrapperNode *result, const Node *varnode);
+
+static void handle_binary_opexpr(WalkerContext *context,
+								 WrapperNode *result,
+								 const Node *varnode,
+								 const Const *c);
+
+static void handle_binary_opexpr_param(const PartRelationInfo *prel,
+									   WrapperNode *result,
+									   const Node *varnode);
+
 static WrapperNode *handle_opexpr(const OpExpr *expr, WalkerContext *context);
 static WrapperNode *handle_boolexpr(const BoolExpr *expr, WalkerContext *context);
 static WrapperNode *handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context);
-static double estimate_paramsel_using_prel(const PartRelationInfo *prel, int strategy);
-static bool pull_var_param(const WalkerContext *ctx, const OpExpr *expr, Node **var_ptr, Node **param_ptr);
 
+static double estimate_paramsel_using_prel(const PartRelationInfo *prel,
+										   int strategy);
+
+static bool pull_var_param(const WalkerContext *ctx,
+						   const OpExpr *expr,
+						   Node **var_ptr,
+						   Node **param_ptr);
+
+
+/* Misc */
 static List *make_inh_translation_list_simplified(Relation oldrelation,
 												  Relation newrelation,
 												  Index newvarno);
 
-/* copied from allpaths.h */
-static void set_plain_rel_size(PlannerInfo *root, RelOptInfo *rel,
-				   RangeTblEntry *rte);
-static void set_plain_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte);
+
+/* Copied from allpaths.h */
+static void set_plain_rel_size(PlannerInfo *root,
+							   RelOptInfo *rel,
+							   RangeTblEntry *rte);
+
+static void set_plain_rel_pathlist(PlannerInfo *root,
+								   RelOptInfo *rel,
+								   RangeTblEntry *rte);
+
 static List *accumulate_append_subpath(List *subpaths, Path *path);
-static void generate_mergeappend_paths(PlannerInfo *root, RelOptInfo *rel,
-						   List *live_childrels,
-						   List *all_child_pathkeys,
-						   PathKey *pathkeyAsc,
-						   PathKey *pathkeyDesc);
+
+static void generate_mergeappend_paths(PlannerInfo *root,
+									   RelOptInfo *rel,
+									   List *live_childrels,
+									   List *all_child_pathkeys,
+									   PathKey *pathkeyAsc,
+									   PathKey *pathkeyDesc);
+
 static Path *get_cheapest_parameterized_child_path(PlannerInfo *root,
 												   RelOptInfo *rel,
 												   Relids required_outer);
 
 
 /*
- * Compare two Datums with the given comarison function
+ * Compare two Datums using the given comarison function.
  *
- * flinfo is a pointer to an instance of FmgrInfo
- * arg1, arg2 are Datum instances
+ * flinfo is a pointer to FmgrInfo, arg1 & arg2 are Datums.
  */
 #define check_lt(finfo, arg1, arg2) \
-	((int) FunctionCall2(finfo, arg1, arg2) < 0)
+	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) < 0 )
+
 #define check_le(finfo, arg1, arg2) \
-	((int) FunctionCall2(finfo, arg1, arg2) <= 0)
+	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) <= 0 )
+
 #define check_eq(finfo, arg1, arg2) \
-	((int) FunctionCall2(finfo, arg1, arg2) == 0)
+	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) == 0 )
+
 #define check_ge(finfo, arg1, arg2) \
-	((int) FunctionCall2(finfo, arg1, arg2) >= 0)
+	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) >= 0 )
+
 #define check_gt(finfo, arg1, arg2) \
-	((int) FunctionCall2(finfo, arg1, arg2) > 0)
+	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) > 0 )
+
 
 /* We can transform Param into Const provided that 'econtext' is available */
 #define IsConstValue(wcxt, node) \
@@ -422,119 +454,6 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 	return childRTindex;
 }
 
-/* Convert wrapper into expression for given index */
-static Node *
-wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue)
-{
-	bool	lossy, found;
-
-	*alwaysTrue = false;
-	/*
-	 * TODO: use faster algorithm using knowledge that we enumerate indexes
-	 * sequntially.
-	 */
-	found = irange_list_find(wrap->rangeset, index, &lossy);
-
-	/* Return NULL for always true and always false. */
-	if (!found)
-		return NULL;
-
-	if (!lossy)
-	{
-		*alwaysTrue = true;
-		return NULL;
-	}
-
-	if (IsA(wrap->orig, BoolExpr))
-	{
-		const BoolExpr *expr = (const BoolExpr *) wrap->orig;
-		BoolExpr	   *result;
-
-		if (expr->boolop == OR_EXPR || expr->boolop == AND_EXPR)
-		{
-			ListCell   *lc;
-			List	   *args = NIL;
-
-			foreach (lc, wrap->args)
-			{
-				Node   *arg;
-				bool	childAlwaysTrue;
-
-				arg = wrapper_make_expression((WrapperNode *) lfirst(lc),
-											  index, &childAlwaysTrue);
-#ifdef USE_ASSERT_CHECKING
-				/*
-				 * We shouldn't get there for always true clause under OR and
-				 * always false clause under AND.
-				 */
-				if (expr->boolop == OR_EXPR)
-					Assert(!childAlwaysTrue);
-				if (expr->boolop == AND_EXPR)
-					Assert(arg || childAlwaysTrue);
-#endif
-				if (arg)
-					args = lappend(args, arg);
-			}
-
-			Assert(list_length(args) >= 1);
-
-			/* Remove redundant OR/AND when child is single. */
-			if (list_length(args) == 1)
-				return (Node *) linitial(args);
-
-			result = makeNode(BoolExpr);
-			result->xpr.type = T_BoolExpr;
-			result->args = args;
-			result->boolop = expr->boolop;
-			result->location = expr->location;
-			return (Node *) result;
-		}
-		else
-			return copyObject(wrap->orig);
-	}
-	else
-		return copyObject(wrap->orig);
-}
-
-/*
- * Recursive function to walk through conditions tree
- */
-WrapperNode *
-walk_expr_tree(Expr *expr, WalkerContext *context)
-{
-	WrapperNode *result;
-
-	switch (nodeTag(expr))
-	{
-		/* Useful for INSERT optimization */
-		case T_Const:
-			return handle_const((Const *) expr, context);
-
-		/* AND, OR, NOT expressions */
-		case T_BoolExpr:
-			return handle_boolexpr((BoolExpr *) expr, context);
-
-		/* =, !=, <, > etc. */
-		case T_OpExpr:
-			return handle_opexpr((OpExpr *) expr, context);
-
-		/* IN expression */
-		case T_ScalarArrayOpExpr:
-			return handle_arrexpr((ScalarArrayOpExpr *) expr, context);
-
-		default:
-			result = (WrapperNode *) palloc(sizeof(WrapperNode));
-			result->orig = (const Node *) expr;
-			result->args = NIL;
-			result->paramsel = 1.0;
-
-			result->rangeset = list_make1_irange(
-						make_irange(0, PrelLastChild(context->prel), IR_LOSSY));
-
-			return result;
-	}
-}
-
 /*
  * Append\prepend partitions if there's no partition to store 'value'.
  *
@@ -543,107 +462,112 @@ walk_expr_tree(Expr *expr, WalkerContext *context)
  * NB: 'value' type is not needed since we've already taken
  * it into account while searching for the 'cmp_proc'.
  */
-static bool
-spawn_partitions(Oid partitioned_rel,		/* parent's Oid */
-				 Datum value,				/* value to be INSERTed */
-				 Datum leading_bound,		/* current global min\max */
-				 Oid leading_bound_type,	/* type of the boundary */
-				 FmgrInfo *cmp_proc,		/* cmp(value, leading_bound) */
-				 Datum interval_binary,		/* interval in binary form */
-				 Oid interval_type,			/* INTERVALOID or prel->atttype */
-				 bool forward,				/* append\prepend */
-				 Oid *last_partition)		/* result (Oid of the last partition) */
+static Oid
+spawn_partitions_val(Oid parent_relid,			/* parent's Oid */
+					 Datum range_bound_min,		/* parent's MIN boundary */
+					 Datum range_bound_max,		/* parent's MAX boundary */
+					 Oid range_bound_type,		/* type of boundary's value */
+					 Datum interval_binary,		/* interval in binary form */
+					 Oid interval_type,			/* INTERVALOID or prel->atttype */
+					 Datum value,				/* value to be INSERTed */
+					 Oid value_type)			/* type of value */
 {
-/* Cache "+"(leading_bound, interval) or "-"(leading_bound, interval) operator */
-#define CacheOperator(finfo, opname, arg1, arg2, is_cached) \
-	do { \
-		if (!is_cached) \
-		{ \
-			fmgr_info(get_binary_operator_oid((opname), (arg1), (arg2)), \
-					  (finfo)); \
-			is_cached = true; \
-		} \
-	} while (0)
+	bool		should_append;				/* append or prepend? */
 
-/* Use "<" for prepend & ">=" for append */
-#define do_compare(compar, a, b, fwd) \
-	( \
-		(fwd) ? \
-			check_ge((compar), (a), (b)) : \
-			check_lt((compar), (a), (b)) \
-	)
+	Operator	move_bound_op;				/* descriptor */
+	Oid			move_bound_optype;			/* operator's ret type */
 
-	FmgrInfo 	interval_move_bound; /* function to move upper\lower boundary */
-	bool		interval_move_bound_cached = false; /* is it cached already? */
-	bool		spawned = false;
+	FmgrInfo	cmp_value_bound_finfo,		/* exec 'value (>=|<) bound' */
+				move_bound_finfo;			/* exec 'bound + interval' */
 
-	Datum		cur_part_leading = leading_bound;
+	Datum		cur_leading_bound,			/* boundaries of a new partition */
+				cur_following_bound;
 
-	char	   *query;
+	Oid			last_partition = InvalidOid;
 
-	/* Create querty statement */
-	query = psprintf("SELECT part::regclass "
-					 "FROM %s.create_single_range_partition($1, $2, $3) AS part",
-					 get_namespace_name(get_pathman_schema()));
 
-	/* Execute comparison function cmp(value, cur_part_leading) */
-	while (do_compare(cmp_proc, value, cur_part_leading, forward))
+	fill_type_cmp_fmgr_info(&cmp_value_bound_finfo, value_type, range_bound_type);
+
+	/* value >= MAX_BOUNDARY */
+	if (check_ge(&cmp_value_bound_finfo, value, range_bound_max))
 	{
-		char   *nulls = NULL; /* no params are NULL */
-		Oid		types[3] = { REGCLASSOID, leading_bound_type, leading_bound_type };
-		Datum	values[3];
-		int		ret;
+		should_append = true;
+		cur_leading_bound = range_bound_max;
+	}
+
+	/* value < MIN_BOUNDARY */
+	else if (check_lt(&cmp_value_bound_finfo, value, range_bound_min))
+	{
+		should_append = false;
+		cur_leading_bound = range_bound_min;
+	}
+
+	/* There's a gap, halt and emit ERROR */
+	else elog(ERROR, "cannot spawn a partition inside a gap");
+
+	/* Get "move bound operator" descriptor */
+	move_bound_op = get_binary_operator(should_append ? "+" : "-",
+										range_bound_type,
+										interval_type);
+	/* Get operator's ret type */
+	move_bound_optype = get_operator_ret_type(move_bound_op);
+
+	/* Get operator's underlying function */
+	fmgr_info(oprfuncid(move_bound_op), &move_bound_finfo);
+
+	/* Don't forget to release system cache */
+	ReleaseSysCache(move_bound_op);
+
+	/* Perform some casts if types don't match */
+	if (move_bound_optype != range_bound_type)
+	{
+		cur_leading_bound = perform_type_cast(cur_leading_bound,
+											  range_bound_type,
+											  move_bound_optype,
+											  NULL); /* might emit ERROR */
+
+		/* Update 'range_bound_type' */
+		range_bound_type = move_bound_optype;
+
+		/* Fetch new comparison function */
+		fill_type_cmp_fmgr_info(&cmp_value_bound_finfo,
+								value_type,
+								range_bound_type);
+	}
+
+	/* Execute comparison function cmp(value, cur_leading_bound) */
+	while (should_append ?
+				check_ge(&cmp_value_bound_finfo, value, cur_leading_bound) :
+				check_lt(&cmp_value_bound_finfo, value, cur_leading_bound))
+	{
+		Datum args[2];
 
 		/* Assign the 'following' boundary to current 'leading' value */
-		Datum	cur_part_following = cur_part_leading;
+		cur_following_bound = cur_leading_bound;
 
-		CacheOperator(&interval_move_bound, (forward ? "+" : "-"),
-					  leading_bound_type, interval_type, interval_move_bound_cached);
+		/* Move leading bound by interval (exec 'leading (+|-) INTERVAL') */
+		cur_leading_bound = FunctionCall2(&move_bound_finfo,
+										  cur_leading_bound,
+										  interval_binary);
 
-		/* Move leading bound by interval (leading +\- INTERVAL) */
-		cur_part_leading = FunctionCall2(&interval_move_bound,
-										 cur_part_leading,
-										 interval_binary);
+		args[0] = should_append ? cur_following_bound : cur_leading_bound;
+		args[1] = should_append ? cur_leading_bound : cur_following_bound;
 
-		/* Fill in 'values' with parent's Oid and correct boundaries... */
-		values[0] = partitioned_rel; /* partitioned table's Oid */
-		values[1] = forward ? cur_part_following : cur_part_leading; /* value #1 */
-		values[2] = forward ? cur_part_leading : cur_part_following; /* value #2 */
-
-		/* ...and create partition */
-		ret = SPI_execute_with_args(query, 3, types, values, nulls, false, 0);
-		if (ret != SPI_OK_SELECT)
-			elog(ERROR, "Could not spawn a partition");
-
-		/* Set 'last_partition' if necessary */
-		if (last_partition)
-		{
-			HeapTuple	htup = SPI_tuptable->vals[0];
-			Datum		partid;
-			bool		isnull;
-
-			Assert(SPI_processed == 1);
-			Assert(SPI_tuptable->tupdesc->natts == 1);
-			partid = SPI_getbinval(htup, SPI_tuptable->tupdesc, 1, &isnull);
-
-			*last_partition = DatumGetObjectId(partid);
-		}
+		last_partition = create_single_range_partition_internal(parent_relid,
+																args[0], args[1],
+																range_bound_type,
+																NULL, NULL);
 
 #ifdef USE_ASSERT_CHECKING
 		elog(DEBUG2, "%s partition with following='%s' & leading='%s' [%u]",
-			 (forward ? "Appending" : "Prepending"),
-			 DebugPrintDatum(cur_part_following, leading_bound_type),
-			 DebugPrintDatum(cur_part_leading, leading_bound_type),
+			 (should_append ? "Appending" : "Prepending"),
+			 DebugPrintDatum(cur_following_bound, range_bound_type),
+			 DebugPrintDatum(cur_leading_bound, range_bound_type),
 			 MyProcPid);
 #endif
-
-		/* We have spawned at least 1 partition */
-		spawned = true;
 	}
 
-	pfree(query);
-
-	return spawned;
+	return last_partition;
 }
 
 /*
@@ -710,7 +634,7 @@ extract_binary_interval_from_text(Datum interval_text,	/* interval as TEXT */
  * NB: This function should not be called directly, use create_partitions() instead.
  */
 Oid
-create_partitions_internal(Oid relid, Datum value, Oid value_type)
+create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type)
 {
 	MemoryContext	old_mcxt = CurrentMemoryContext;
 	Oid				partid = InvalidOid; /* last created partition (or InvalidOid) */
@@ -725,7 +649,7 @@ create_partitions_internal(Oid relid, Datum value, Oid value_type)
 		/* Get both PartRelationInfo & PATHMAN_CONFIG contents for this relation */
 		if (pathman_config_contains_relation(relid, values, isnull, NULL))
 		{
-			Oid			base_atttype;		/* base type of prel->atttype */
+			Oid			base_bound_type;		/* base type of prel->atttype */
 			Oid			base_value_type;	/* base type of value_type */
 
 			/* Fetch PartRelationInfo by 'relid' */
@@ -733,7 +657,7 @@ create_partitions_internal(Oid relid, Datum value, Oid value_type)
 			shout_if_prel_is_invalid(relid, prel, PT_RANGE);
 
 			/* Fetch base types of prel->atttype & value_type */
-			base_atttype = getBaseType(prel->atttype);
+			base_bound_type = getBaseType(prel->atttype);
 			base_value_type = getBaseType(value_type);
 
 			/* Search for a suitable partition if we didn't hold it */
@@ -767,51 +691,34 @@ create_partitions_internal(Oid relid, Datum value, Oid value_type)
 			/* Else spawn a new one (we hold a lock on the parent) */
 			if (partid == InvalidOid)
 			{
-				Datum		min_rvalue,			/* absolute MIN */
-							max_rvalue;			/* absolute MAX */
+				Datum		bound_min,			/* absolute MIN */
+							bound_max;			/* absolute MAX */
 
 				Oid			interval_type = InvalidOid;
 				Datum		interval_binary, /* assigned 'width' of one partition */
 							interval_text;
 
-				FmgrInfo	interval_type_cmp;
-
 				/* Read max & min range values from PartRelationInfo */
-				min_rvalue = PrelGetRangesArray(prel)[0].min;
-				max_rvalue = PrelGetRangesArray(prel)[PrelLastChild(prel)].max;
+				bound_min = PrelGetRangesArray(prel)[0].min;
+				bound_max = PrelGetRangesArray(prel)[PrelLastChild(prel)].max;
 
 				/* Copy datums on order to protect them from cache invalidation */
-				min_rvalue = datumCopy(min_rvalue, prel->attbyval, prel->attlen);
-				max_rvalue = datumCopy(max_rvalue, prel->attbyval, prel->attlen);
+				bound_min = datumCopy(bound_min, prel->attbyval, prel->attlen);
+				bound_max = datumCopy(bound_max, prel->attbyval, prel->attlen);
 
 				/* Retrieve interval as TEXT from tuple */
 				interval_text = values[Anum_pathman_config_range_interval - 1];
 
 				/* Convert interval to binary representation */
 				interval_binary = extract_binary_interval_from_text(interval_text,
-																	base_atttype,
+																	base_bound_type,
 																	&interval_type);
 
-				/* Fill the FmgrInfo struct with a cmp(value, part_attribute) */
-				fill_type_cmp_fmgr_info(&interval_type_cmp,
-										base_value_type,
-										base_atttype);
-
-				if (SPI_connect() != SPI_OK_CONNECT)
-					elog(ERROR, "could not connect using SPI");
-
-				/* while (value >= MAX) ... */
-				spawn_partitions(PrelParentRelid(prel), value, max_rvalue,
-								 base_atttype, &interval_type_cmp,
-								 interval_binary, interval_type, true, &partid);
-
-				/* while (value < MIN) ... */
-				if (partid == InvalidOid)
-					spawn_partitions(PrelParentRelid(prel), value, min_rvalue,
-									 base_atttype, &interval_type_cmp,
-									 interval_binary, interval_type, false, &partid);
-
-				SPI_finish(); /* close SPI connection */
+				/* At last, spawn partitions to store the value */
+				partid = spawn_partitions_val(PrelParentRelid(prel),
+											  bound_min, bound_max, base_bound_type,
+											  interval_binary, interval_type,
+											  value, base_value_type);
 			}
 		}
 		else
@@ -832,8 +739,6 @@ create_partitions_internal(Oid relid, Datum value, Oid value_type)
 
 		FreeErrorData(edata);
 
-		SPI_finish(); /* no problem if not connected */
-
 		/* Reset 'partid' in case of error */
 		partid = InvalidOid;
 	}
@@ -848,7 +753,7 @@ create_partitions_internal(Oid relid, Datum value, Oid value_type)
  * Returns Oid of the partition to store 'value'.
  */
 Oid
-create_partitions(Oid relid, Datum value, Oid value_type)
+create_partitions_for_value(Oid relid, Datum value, Oid value_type)
 {
 	TransactionId	rel_xmin;
 	Oid				last_partition = InvalidOid;
@@ -867,13 +772,17 @@ create_partitions(Oid relid, Datum value, Oid value_type)
 		if (part_in_prev_xact && !xact_bgw_conflicting_lock_exists(relid))
 		{
 			elog(DEBUG2, "create_partitions(): chose BGWorker [%u]", MyProcPid);
-			last_partition = create_partitions_bg_worker(relid, value, value_type);
+			last_partition = create_partitions_for_value_bg_worker(relid,
+																   value,
+																   value_type);
 		}
 		/* Else it'd be better for the current backend to create partitions */
 		else
 		{
 			elog(DEBUG2, "create_partitions(): chose backend [%u]", MyProcPid);
-			last_partition = create_partitions_internal(relid, value, value_type);
+			last_partition = create_partitions_for_value_internal(relid,
+																  value,
+																  value_type);
 		}
 	}
 	else
@@ -1064,6 +973,119 @@ select_range_partitions(const Datum value,
 		default:
 			elog(ERROR, "Unknown btree strategy (%u)", strategy);
 			break;
+	}
+}
+
+/* Convert wrapper into expression for given index */
+static Node *
+wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue)
+{
+	bool	lossy, found;
+
+	*alwaysTrue = false;
+	/*
+	 * TODO: use faster algorithm using knowledge that we enumerate indexes
+	 * sequntially.
+	 */
+	found = irange_list_find(wrap->rangeset, index, &lossy);
+
+	/* Return NULL for always true and always false. */
+	if (!found)
+		return NULL;
+
+	if (!lossy)
+	{
+		*alwaysTrue = true;
+		return NULL;
+	}
+
+	if (IsA(wrap->orig, BoolExpr))
+	{
+		const BoolExpr *expr = (const BoolExpr *) wrap->orig;
+		BoolExpr	   *result;
+
+		if (expr->boolop == OR_EXPR || expr->boolop == AND_EXPR)
+		{
+			ListCell   *lc;
+			List	   *args = NIL;
+
+			foreach (lc, wrap->args)
+			{
+				Node   *arg;
+				bool	childAlwaysTrue;
+
+				arg = wrapper_make_expression((WrapperNode *) lfirst(lc),
+											  index, &childAlwaysTrue);
+#ifdef USE_ASSERT_CHECKING
+				/*
+				 * We shouldn't get there for always true clause under OR and
+				 * always false clause under AND.
+				 */
+				if (expr->boolop == OR_EXPR)
+					Assert(!childAlwaysTrue);
+				if (expr->boolop == AND_EXPR)
+					Assert(arg || childAlwaysTrue);
+#endif
+				if (arg)
+					args = lappend(args, arg);
+			}
+
+			Assert(list_length(args) >= 1);
+
+			/* Remove redundant OR/AND when child is single. */
+			if (list_length(args) == 1)
+				return (Node *) linitial(args);
+
+			result = makeNode(BoolExpr);
+			result->xpr.type = T_BoolExpr;
+			result->args = args;
+			result->boolop = expr->boolop;
+			result->location = expr->location;
+			return (Node *) result;
+		}
+		else
+			return copyObject(wrap->orig);
+	}
+	else
+		return copyObject(wrap->orig);
+}
+
+/*
+ * Recursive function to walk through conditions tree
+ */
+WrapperNode *
+walk_expr_tree(Expr *expr, WalkerContext *context)
+{
+	WrapperNode *result;
+
+	switch (nodeTag(expr))
+	{
+		/* Useful for INSERT optimization */
+		case T_Const:
+			return handle_const((Const *) expr, context);
+
+		/* AND, OR, NOT expressions */
+		case T_BoolExpr:
+			return handle_boolexpr((BoolExpr *) expr, context);
+
+		/* =, !=, <, > etc. */
+		case T_OpExpr:
+			return handle_opexpr((OpExpr *) expr, context);
+
+		/* IN expression */
+		case T_ScalarArrayOpExpr:
+			return handle_arrexpr((ScalarArrayOpExpr *) expr, context);
+
+		default:
+			result = (WrapperNode *) palloc(sizeof(WrapperNode));
+			result->orig = (const Node *) expr;
+			result->args = NIL;
+			result->paramsel = 1.0;
+
+			result->rangeset = list_make1_irange(
+						make_irange(0, PrelLastChild(context->prel), IR_LOSSY));
+
+			return result;
 	}
 }
 

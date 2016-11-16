@@ -499,7 +499,7 @@ select_partition_for_insert(const PartRelationInfo *prel,
 		 */
 		if (prel->auto_partition && IsAutoPartitionEnabled() && spawn_partitions)
 		{
-			selected_partid = create_partitions(PrelParentRelid(prel),
+			selected_partid = create_partitions_for_value(PrelParentRelid(prel),
 												value, prel->atttype);
 
 			/* get_pathman_relation_info() will refresh this entry */

@@ -1,7 +1,7 @@
 /* ------------------------------------------------------------------------
  *
  * hash.sql
- *      HASH partitioning functions
+ *		HASH partitioning functions
  *
  * Copyright (c) 2015-2016, Postgres Professional
  *

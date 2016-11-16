@@ -281,7 +281,7 @@ create_partitions_bg_worker_segment(Oid relid, Datum value, Oid value_type)
  * NB: This function should not be called directly, use create_partitions() instead.
  */
 Oid
-create_partitions_bg_worker(Oid relid, Datum value, Oid value_type)
+create_partitions_for_value_bg_worker(Oid relid, Datum value, Oid value_type)
 {
 	dsm_segment			   *segment;
 	dsm_handle				segment_handle;
@@ -379,9 +379,9 @@ bgw_main_spawn_partitions(Datum main_arg)
 #endif
 
 	/* Create partitions and save the Oid of the last one */
-	args->result = create_partitions_internal(args->partitioned_table,
-											  value, /* unpacked Datum */
-											  args->value_type);
+	args->result = create_partitions_for_value_internal(args->partitioned_table,
+														value, /* unpacked Datum */
+														args->value_type);
 
 	/* Finish transaction in an appropriate way */
 	if (args->result == InvalidOid)
