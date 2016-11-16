@@ -58,6 +58,7 @@ List * list_reverse(List *l);
 char get_rel_persistence(Oid relid);
 #endif
 Oid get_rel_owner(Oid relid);
+Oid get_attribute_type(Oid relid, const char* attname);
 
 /*
  * Handy execution-stage functions.

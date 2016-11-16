@@ -201,24 +201,19 @@ Datum
 get_attribute_type_pl(PG_FUNCTION_ARGS)
 {
 	Oid			relid = PG_GETARG_OID(0);
-	text	   *attname = PG_GETARG_TEXT_P(1);
+	char	   *attname = text_to_cstring(PG_GETARG_TEXT_P(1));
 	Oid			result;
-	HeapTuple	tp;
 
-	/* NOTE: for now it's the most efficient way */
-	tp = SearchSysCacheAttName(relid, text_to_cstring(attname));
-	if (HeapTupleIsValid(tp))
+	if ((result = get_attribute_type(relid, attname)) != InvalidOid)
 	{
-		Form_pg_attribute att_tup = (Form_pg_attribute) GETSTRUCT(tp);
-		result = att_tup->atttypid;
-		ReleaseSysCache(tp);
-
 		PG_RETURN_OID(result);
 	}
 	else
+	{
 		elog(ERROR, "Cannot find type name for attribute \"%s\" "
 					"of relation \"%s\"",
-			 text_to_cstring(attname), get_rel_name_or_relid(relid));
+			 attname, get_rel_name_or_relid(relid));
+	}
 
 	PG_RETURN_NULL(); /* keep compiler happy */
 }

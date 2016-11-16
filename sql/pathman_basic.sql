@@ -236,6 +236,15 @@ ALTER TABLE test.hash_rel ADD COLUMN abc int;
 INSERT INTO test.hash_rel (id, value, abc) VALUES (123, 456, 789);
 SELECT * FROM test.hash_rel WHERE id = 123;
 
+/* Test replacing hash partition */
+CREATE TABLE test.hash_rel_extern (LIKE test.hash_rel INCLUDING ALL);
+SELECT pathman.replace_hash_partition('test.hash_rel_0', 'test.hash_rel_extern');
+\d+ test.hash_rel_0
+\d+ test.hash_rel_extern
+INSERT INTO test.hash_rel SELECT * FROM test.hash_rel_0;
+DROP TABLE test.hash_rel_0;
+EXPLAIN SELECT * FROM test.hash_rel;
+
 /*
  * Clean up
  */

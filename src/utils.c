@@ -633,6 +633,29 @@ get_rel_owner(Oid relid)
 }
 
 /*
+ * Get type oid of a given attribute
+ */
+Oid
+get_attribute_type(Oid relid, const char* attname)
+{
+	HeapTuple	tp;
+	Oid			result;
+
+	/* NOTE: for now it's the most efficient way */
+	tp = SearchSysCacheAttName(relid, attname);
+	if (HeapTupleIsValid(tp))
+	{
+		Form_pg_attribute att_tup = (Form_pg_attribute) GETSTRUCT(tp);
+		result = att_tup->atttypid;
+		ReleaseSysCache(tp);
+
+		return result;
+	}
+
+	return InvalidOid;
+}
+
+/*
  * Checks that callback function meets specific requirements.
  * It must have the only JSONB argument and BOOL return type.
  */

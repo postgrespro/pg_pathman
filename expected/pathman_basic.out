@@ -885,14 +885,58 @@ SELECT * FROM test.hash_rel WHERE id = 123;
  123 |   456 | 789
 (1 row)
 
+/* Test replacing hash partition */
+CREATE TABLE test.hash_rel_extern (LIKE test.hash_rel INCLUDING ALL);
+SELECT pathman.replace_hash_partition('test.hash_rel_0', 'test.hash_rel_extern');
+ replace_hash_partition 
+------------------------
+ test.hash_rel_extern
+(1 row)
+
+\d+ test.hash_rel_0
+                                               Table "test.hash_rel_0"
+ Column |  Type   |                         Modifiers                          | Storage | Stats target | Description 
+--------+---------+------------------------------------------------------------+---------+--------------+-------------
+ id     | integer | not null default nextval('test.hash_rel_id_seq'::regclass) | plain   |              | 
+ value  | integer | not null                                                   | plain   |              | 
+ abc    | integer |                                                            | plain   |              | 
+Indexes:
+    "hash_rel_0_pkey" PRIMARY KEY, btree (id)
+Triggers:
+    hash_rel_upd_trig BEFORE UPDATE ON test.hash_rel_0 FOR EACH ROW EXECUTE PROCEDURE test.hash_rel_upd_trig_func()
+
+\d+ test.hash_rel_extern
+                                             Table "test.hash_rel_extern"
+ Column |  Type   |                         Modifiers                          | Storage | Stats target | Description 
+--------+---------+------------------------------------------------------------+---------+--------------+-------------
+ id     | integer | not null default nextval('test.hash_rel_id_seq'::regclass) | plain   |              | 
+ value  | integer | not null                                                   | plain   |              | 
+ abc    | integer |                                                            | plain   |              | 
+Indexes:
+    "hash_rel_extern_pkey" PRIMARY KEY, btree (id)
+Check constraints:
+    "pathman_hash_rel_extern_2_check" CHECK (pathman.get_hash_part_idx(hashint4(value), 3) = 0)
+Inherits: test.hash_rel
+
+INSERT INTO test.hash_rel SELECT * FROM test.hash_rel_0;
+DROP TABLE test.hash_rel_0;
+EXPLAIN SELECT * FROM test.hash_rel;
+                                         QUERY PLAN                                          
+---------------------------------------------------------------------------------------------
+ Append  (cost=10000000000.00..30000000032.44 rows=2044 width=12)
+   ->  Seq Scan on hash_rel_extern  (cost=10000000000.00..10000000030.40 rows=2040 width=12)
+   ->  Seq Scan on hash_rel_1  (cost=10000000000.00..10000000001.02 rows=2 width=12)
+   ->  Seq Scan on hash_rel_2  (cost=10000000000.00..10000000001.02 rows=2 width=12)
+(4 rows)
+
 /*
  * Clean up
  */
 SELECT pathman.drop_partitions('test.hash_rel');
-NOTICE:  drop cascades to 3 other objects
-NOTICE:  2 rows copied from test.hash_rel_0
+NOTICE:  drop cascades to 2 other objects
 NOTICE:  3 rows copied from test.hash_rel_1
 NOTICE:  2 rows copied from test.hash_rel_2
+NOTICE:  2 rows copied from test.hash_rel_extern
  drop_partitions 
 -----------------
                3
