@@ -1,7 +1,21 @@
-﻿#include "pathman.h"
+﻿/*-------------------------------------------------------------------------
+ *
+ * partition_creation.c
+ *		Various functions for partition creation.
+ *
+ * Copyright (c) 2016, Postgres Professional
+ *
+ *-------------------------------------------------------------------------
+ */
+
 #include "init.h"
 #include "partition_creation.h"
+#include "partition_filter.h"
+#include "pathman.h"
+#include "pathman_workers.h"
+#include "xact_handling.h"
 
+#include "access/htup_details.h"
 #include "access/reloptions.h"
 #include "access/xact.h"
 #include "catalog/heap.h"
@@ -10,15 +24,30 @@
 #include "commands/event_trigger.h"
 #include "commands/sequence.h"
 #include "commands/tablecmds.h"
+#include "miscadmin.h"
 #include "parser/parse_func.h"
 #include "parser/parse_relation.h"
 #include "parser/parse_utilcmd.h"
 #include "tcop/utility.h"
 #include "utils/builtins.h"
+#include "utils/datum.h"
 #include "utils/jsonb.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 
+
+static Datum extract_binary_interval_from_text(Datum interval_text,
+											   Oid part_atttype,
+											   Oid *interval_type);
+
+static Oid spawn_partitions_val(Oid parent_relid,
+								Datum range_bound_min,
+								Datum range_bound_max,
+								Oid range_bound_type,
+								Datum interval_binary,
+								Oid interval_type,
+								Datum value,
+								Oid value_type);
 
 static Oid create_single_partition_internal(Oid parent_relid,
 											RangeVar *partition_rv,
@@ -88,12 +117,356 @@ create_single_range_partition_internal(Oid parent_relid,
 	return partition_relid;
 }
 
+/*
+ * Create RANGE partitions (if needed) using either BGW or current backend.
+ *
+ * Returns Oid of the partition to store 'value'.
+ */
+Oid
+create_partitions_for_value(Oid relid, Datum value, Oid value_type)
+{
+	TransactionId	rel_xmin;
+	Oid				last_partition = InvalidOid;
+
+	/* Check that table is partitioned and fetch xmin */
+	if (pathman_config_contains_relation(relid, NULL, NULL, &rel_xmin))
+	{
+		bool part_in_prev_xact =
+					TransactionIdPrecedes(rel_xmin, GetCurrentTransactionId()) ||
+					TransactionIdEquals(rel_xmin, FrozenTransactionId);
+
+		/*
+		 * If table has been partitioned in some previous xact AND
+		 * we don't hold any conflicting locks, run BGWorker.
+		 */
+		if (part_in_prev_xact && !xact_bgw_conflicting_lock_exists(relid))
+		{
+			elog(DEBUG2, "create_partitions(): chose BGWorker [%u]", MyProcPid);
+			last_partition = create_partitions_for_value_bg_worker(relid,
+																   value,
+																   value_type);
+		}
+		/* Else it'd be better for the current backend to create partitions */
+		else
+		{
+			elog(DEBUG2, "create_partitions(): chose backend [%u]", MyProcPid);
+			last_partition = create_partitions_for_value_internal(relid,
+																  value,
+																  value_type);
+		}
+	}
+	else
+		elog(ERROR, "relation \"%s\" is not partitioned by pg_pathman",
+			 get_rel_name_or_relid(relid));
+
+	/* Check that 'last_partition' is valid */
+	if (last_partition == InvalidOid)
+		elog(ERROR, "could not create new partitions for relation \"%s\"",
+			 get_rel_name_or_relid(relid));
+
+	return last_partition;
+}
+
 
 /*
  * --------------------
  *  Partition creation
  * --------------------
  */
+
+/*
+ * Create partitions (if needed) and return Oid of the partition to store 'value'.
+ *
+ * NB: This function should not be called directly,
+ * use create_partitions_for_value() instead.
+ */
+Oid
+create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type)
+{
+	MemoryContext	old_mcxt = CurrentMemoryContext;
+	Oid				partid = InvalidOid; /* last created partition (or InvalidOid) */
+
+	PG_TRY();
+	{
+		const PartRelationInfo *prel;
+		LockAcquireResult		lock_result; /* could we lock the parent? */
+		Datum					values[Natts_pathman_config];
+		bool					isnull[Natts_pathman_config];
+
+		/* Get both PartRelationInfo & PATHMAN_CONFIG contents for this relation */
+		if (pathman_config_contains_relation(relid, values, isnull, NULL))
+		{
+			Oid			base_bound_type;		/* base type of prel->atttype */
+			Oid			base_value_type;	/* base type of value_type */
+
+			/* Fetch PartRelationInfo by 'relid' */
+			prel = get_pathman_relation_info_after_lock(relid, true, &lock_result);
+			shout_if_prel_is_invalid(relid, prel, PT_RANGE);
+
+			/* Fetch base types of prel->atttype & value_type */
+			base_bound_type = getBaseType(prel->atttype);
+			base_value_type = getBaseType(value_type);
+
+			/* Search for a suitable partition if we didn't hold it */
+			Assert(lock_result != LOCKACQUIRE_NOT_AVAIL);
+			if (lock_result == LOCKACQUIRE_OK)
+			{
+				Oid	   *parts;
+				int		nparts;
+
+				/* Search for matching partitions */
+				parts = find_partitions_for_value(value, value_type, prel, &nparts);
+
+				/* Shout if there's more than one */
+				if (nparts > 1)
+					elog(ERROR, ERR_PART_ATTR_MULTIPLE);
+
+				/* It seems that we got a partition! */
+				else if (nparts == 1)
+				{
+					/* Unlock the parent (we're not going to spawn) */
+					xact_unlock_partitioned_rel(relid);
+
+					/* Simply return the suitable partition */
+					partid = parts[0];
+				}
+
+				/* Don't forget to free */
+				pfree(parts);
+			}
+
+			/* Else spawn a new one (we hold a lock on the parent) */
+			if (partid == InvalidOid)
+			{
+				Datum		bound_min,			/* absolute MIN */
+							bound_max;			/* absolute MAX */
+
+				Oid			interval_type = InvalidOid;
+				Datum		interval_binary, /* assigned 'width' of one partition */
+							interval_text;
+
+				/* Read max & min range values from PartRelationInfo */
+				bound_min = PrelGetRangesArray(prel)[0].min;
+				bound_max = PrelGetRangesArray(prel)[PrelLastChild(prel)].max;
+
+				/* Copy datums on order to protect them from cache invalidation */
+				bound_min = datumCopy(bound_min, prel->attbyval, prel->attlen);
+				bound_max = datumCopy(bound_max, prel->attbyval, prel->attlen);
+
+				/* Retrieve interval as TEXT from tuple */
+				interval_text = values[Anum_pathman_config_range_interval - 1];
+
+				/* Convert interval to binary representation */
+				interval_binary = extract_binary_interval_from_text(interval_text,
+																	base_bound_type,
+																	&interval_type);
+
+				/* At last, spawn partitions to store the value */
+				partid = spawn_partitions_val(PrelParentRelid(prel),
+											  bound_min, bound_max, base_bound_type,
+											  interval_binary, interval_type,
+											  value, base_value_type);
+			}
+		}
+		else
+			elog(ERROR, "pg_pathman's config does not contain relation \"%s\"",
+				 get_rel_name_or_relid(relid));
+	}
+	PG_CATCH();
+	{
+		ErrorData *edata;
+
+		/* Switch to the original context & copy edata */
+		MemoryContextSwitchTo(old_mcxt);
+		edata = CopyErrorData();
+		FlushErrorState();
+
+		elog(LOG, "create_partitions_internal(): %s [%u]",
+			 edata->message, MyProcPid);
+
+		FreeErrorData(edata);
+
+		/* Reset 'partid' in case of error */
+		partid = InvalidOid;
+	}
+	PG_END_TRY();
+
+	return partid;
+}
+
+/*
+ * Convert interval from TEXT to binary form using partitioned column's type.
+ */
+static Datum
+extract_binary_interval_from_text(Datum interval_text,	/* interval as TEXT */
+								  Oid part_atttype,		/* partitioned column's type */
+								  Oid *interval_type)	/* returned value */
+{
+	Datum		interval_binary;
+	const char *interval_cstring;
+
+	interval_cstring = TextDatumGetCString(interval_text);
+
+	/* If 'part_atttype' is a *date type*, cast 'range_interval' to INTERVAL */
+	if (is_date_type_internal(part_atttype))
+	{
+		int32	interval_typmod = PATHMAN_CONFIG_interval_typmod;
+
+		/* Convert interval from CSTRING to internal form */
+		interval_binary = DirectFunctionCall3(interval_in,
+											  CStringGetDatum(interval_cstring),
+											  ObjectIdGetDatum(InvalidOid),
+											  Int32GetDatum(interval_typmod));
+		if (interval_type)
+			*interval_type = INTERVALOID;
+	}
+	/* Otherwise cast it to the partitioned column's type */
+	else
+	{
+		HeapTuple	htup;
+		Oid			typein_proc = InvalidOid;
+
+		htup = SearchSysCache1(TYPEOID, ObjectIdGetDatum(part_atttype));
+		if (HeapTupleIsValid(htup))
+		{
+			typein_proc = ((Form_pg_type) GETSTRUCT(htup))->typinput;
+			ReleaseSysCache(htup);
+		}
+		else
+			elog(ERROR, "Cannot find input function for type %u", part_atttype);
+
+		/*
+		 * Convert interval from CSTRING to 'prel->atttype'.
+		 *
+		 * Note: We pass 3 arguments in case
+		 * 'typein_proc' also takes Oid & typmod.
+		 */
+		interval_binary = OidFunctionCall3(typein_proc,
+										   CStringGetDatum(interval_cstring),
+										   ObjectIdGetDatum(part_atttype),
+										   Int32GetDatum(-1));
+		if (interval_type)
+			*interval_type = part_atttype;
+	}
+
+	return interval_binary;
+}
+
+/*
+ * Append\prepend partitions if there's no partition to store 'value'.
+ *
+ * Used by create_partitions_for_value_internal().
+ *
+ * NB: 'value' type is not needed since we've already taken
+ * it into account while searching for the 'cmp_proc'.
+ */
+static Oid
+spawn_partitions_val(Oid parent_relid,			/* parent's Oid */
+					 Datum range_bound_min,		/* parent's MIN boundary */
+					 Datum range_bound_max,		/* parent's MAX boundary */
+					 Oid range_bound_type,		/* type of boundary's value */
+					 Datum interval_binary,		/* interval in binary form */
+					 Oid interval_type,			/* INTERVALOID or prel->atttype */
+					 Datum value,				/* value to be INSERTed */
+					 Oid value_type)			/* type of value */
+{
+	bool		should_append;				/* append or prepend? */
+
+	Operator	move_bound_op;				/* descriptor */
+	Oid			move_bound_optype;			/* operator's ret type */
+
+	FmgrInfo	cmp_value_bound_finfo,		/* exec 'value (>=|<) bound' */
+				move_bound_finfo;			/* exec 'bound + interval' */
+
+	Datum		cur_leading_bound,			/* boundaries of a new partition */
+				cur_following_bound;
+
+	Oid			last_partition = InvalidOid;
+
+
+	fill_type_cmp_fmgr_info(&cmp_value_bound_finfo, value_type, range_bound_type);
+
+	/* value >= MAX_BOUNDARY */
+	if (check_ge(&cmp_value_bound_finfo, value, range_bound_max))
+	{
+		should_append = true;
+		cur_leading_bound = range_bound_max;
+	}
+
+	/* value < MIN_BOUNDARY */
+	else if (check_lt(&cmp_value_bound_finfo, value, range_bound_min))
+	{
+		should_append = false;
+		cur_leading_bound = range_bound_min;
+	}
+
+	/* There's a gap, halt and emit ERROR */
+	else elog(ERROR, "cannot spawn a partition inside a gap");
+
+	/* Get "move bound operator" descriptor */
+	move_bound_op = get_binary_operator(should_append ? "+" : "-",
+										range_bound_type,
+										interval_type);
+	/* Get operator's ret type */
+	move_bound_optype = get_operator_ret_type(move_bound_op);
+
+	/* Get operator's underlying function */
+	fmgr_info(oprfuncid(move_bound_op), &move_bound_finfo);
+
+	/* Don't forget to release system cache */
+	ReleaseSysCache(move_bound_op);
+
+	/* Perform some casts if types don't match */
+	if (move_bound_optype != range_bound_type)
+	{
+		cur_leading_bound = perform_type_cast(cur_leading_bound,
+											  range_bound_type,
+											  move_bound_optype,
+											  NULL); /* might emit ERROR */
+
+		/* Update 'range_bound_type' */
+		range_bound_type = move_bound_optype;
+
+		/* Fetch new comparison function */
+		fill_type_cmp_fmgr_info(&cmp_value_bound_finfo,
+								value_type,
+								range_bound_type);
+	}
+
+	/* Execute comparison function cmp(value, cur_leading_bound) */
+	while (should_append ?
+				check_ge(&cmp_value_bound_finfo, value, cur_leading_bound) :
+				check_lt(&cmp_value_bound_finfo, value, cur_leading_bound))
+	{
+		Datum args[2];
+
+		/* Assign the 'following' boundary to current 'leading' value */
+		cur_following_bound = cur_leading_bound;
+
+		/* Move leading bound by interval (exec 'leading (+|-) INTERVAL') */
+		cur_leading_bound = FunctionCall2(&move_bound_finfo,
+										  cur_leading_bound,
+										  interval_binary);
+
+		args[0] = should_append ? cur_following_bound : cur_leading_bound;
+		args[1] = should_append ? cur_leading_bound : cur_following_bound;
+
+		last_partition = create_single_range_partition_internal(parent_relid,
+																args[0], args[1],
+																range_bound_type,
+																NULL, NULL);
+
+#ifdef USE_ASSERT_CHECKING
+		elog(DEBUG2, "%s partition with following='%s' & leading='%s' [%u]",
+			 (should_append ? "Appending" : "Prepending"),
+			 DebugPrintDatum(cur_following_bound, range_bound_type),
+			 DebugPrintDatum(cur_leading_bound, range_bound_type),
+			 MyProcPid);
+#endif
+	}
+
+	return last_partition;
+}
 
 /* Choose a good name for a partition */
 static char *

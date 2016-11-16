@@ -1,16 +1,28 @@
+/*-------------------------------------------------------------------------
+ *
+ * partition_creation.h
+ *		Various functions for partition creation.
+ *
+ * Copyright (c) 2016, Postgres Professional
+ *
+ *-------------------------------------------------------------------------
+ */
+
 #include "relation_info.h"
 
 #include "postgres.h"
 #include "nodes/parsenodes.h"
 
 
-Oid
-create_single_range_partition_internal(Oid parent_relid,
-									   Datum start_value,
-									   Datum end_value,
-									   Oid value_type,
-									   RangeVar *partition_rv,
-									   char *tablespace);
+Oid create_partitions_for_value(Oid relid, Datum value, Oid value_type);
+Oid create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type);
+
+Oid create_single_range_partition_internal(Oid parent_relid,
+										   Datum start_value,
+										   Datum end_value,
+										   Oid value_type,
+										   RangeVar *partition_rv,
+										   char *tablespace);
 
 Constraint * build_range_check_constraint(Oid child_relid,
 										  char *attname,

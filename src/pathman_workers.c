@@ -15,6 +15,7 @@
  */
 
 #include "init.h"
+#include "partition_creation.h"
 #include "pathman_workers.h"
 #include "relation_info.h"
 #include "utils.h"

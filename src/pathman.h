@@ -160,13 +160,6 @@ typedef struct
 /* Check that WalkerContext contains ExprContext (plan execution stage) */
 #define WcxtHasExprContext(wcxt) ( (wcxt)->econtext )
 
-/*
- * Functions for partition creation, use create_partitions().
- */
-Oid create_partitions_for_value(Oid relid, Datum value, Oid value_type);
-Oid create_partitions_for_value_bg_worker(Oid relid, Datum value, Oid value_type);
-Oid create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type);
-
 void select_range_partitions(const Datum value,
 							 FmgrInfo *cmp_func,
 							 const RangeEntry *ranges,
@@ -176,5 +169,27 @@ void select_range_partitions(const Datum value,
 
 /* Examine expression in order to select partitions. */
 WrapperNode *walk_expr_tree(Expr *expr, WalkerContext *context);
+
+
+/*
+ * Compare two Datums using the given comarison function.
+ *
+ * flinfo is a pointer to FmgrInfo, arg1 & arg2 are Datums.
+ */
+#define check_lt(finfo, arg1, arg2) \
+	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) < 0 )
+
+#define check_le(finfo, arg1, arg2) \
+	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) <= 0 )
+
+#define check_eq(finfo, arg1, arg2) \
+	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) == 0 )
+
+#define check_ge(finfo, arg1, arg2) \
+	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) >= 0 )
+
+#define check_gt(finfo, arg1, arg2) \
+	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) > 0 )
+
 
 #endif   /* PATHMAN_H */

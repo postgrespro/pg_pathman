@@ -10,6 +10,7 @@
 
 #include "init.h"
 #include "nodes_common.h"
+#include "partition_creation.h"
 #include "partition_filter.h"
 #include "planner_tree_modification.h"
 #include "utils.h"
