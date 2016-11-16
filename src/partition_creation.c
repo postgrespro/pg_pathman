@@ -24,6 +24,7 @@
 #include "commands/event_trigger.h"
 #include "commands/sequence.h"
 #include "commands/tablecmds.h"
+#include "commands/tablespace.h"
 #include "miscadmin.h"
 #include "parser/parse_func.h"
 #include "parser/parse_relation.h"
@@ -548,6 +549,10 @@ create_single_partition_internal(Oid parent_relid,
 		/* Make RangeVar for the partition */
 		partition_rv = makeRangeVar(parent_nsp_name, part_name, -1);
 	}
+
+	/* If no 'tablespace' is provided, get parent's tablespace */
+	if (!tablespace)
+		tablespace = get_tablespace_name(get_rel_tablespace(parent_relid));
 
 	/* Initialize TableLikeClause structure */
 	NodeSetTag(&like_clause, T_TableLikeClause);
