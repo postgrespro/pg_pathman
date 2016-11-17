@@ -41,6 +41,10 @@ static Datum extract_binary_interval_from_text(Datum interval_text,
 											   Oid part_atttype,
 											   Oid *interval_type);
 
+static void extract_op_func_and_ret_type(char *opname, Oid type1, Oid type2,
+										 Oid *move_bound_op_func,
+										 Oid *move_bound_op_ret_type);
+
 static Oid spawn_partitions_val(Oid parent_relid,
 								Datum range_bound_min,
 								Datum range_bound_max,
@@ -354,6 +358,29 @@ extract_binary_interval_from_text(Datum interval_text,	/* interval as TEXT */
 }
 
 /*
+ * Fetch binary operator by name and return it's function and ret type.
+ */
+static void
+extract_op_func_and_ret_type(char *opname, Oid type1, Oid type2,
+							 Oid *move_bound_op_func,		/* returned value #1 */
+							 Oid *move_bound_op_ret_type)	/* returned value #2 */
+{
+	Operator op;
+
+	/* Get "move bound operator" descriptor */
+	op = get_binary_operator(opname, type1, type2);
+	if (!op)
+		elog(ERROR, "missing %s operator for types %s and %s",
+			 opname, format_type_be(type1), format_type_be(type2));
+
+	*move_bound_op_func = oprfuncid(op);
+	*move_bound_op_ret_type = get_operator_ret_type(op);
+
+	/* Don't forget to release system cache */
+	ReleaseSysCache(op);
+}
+
+/*
  * Append\prepend partitions if there's no partition to store 'value'.
  *
  * Used by create_partitions_for_value_internal().
@@ -373,8 +400,8 @@ spawn_partitions_val(Oid parent_relid,			/* parent's Oid */
 {
 	bool		should_append;				/* append or prepend? */
 
-	Operator	move_bound_op;				/* descriptor */
-	Oid			move_bound_optype;			/* operator's ret type */
+	Oid			move_bound_op_func,			/* operator's function */
+				move_bound_op_ret_type;		/* operator's ret type */
 
 	FmgrInfo	cmp_value_bound_finfo,		/* exec 'value (>=|<) bound' */
 				move_bound_finfo;			/* exec 'bound + interval' */
@@ -404,35 +431,44 @@ spawn_partitions_val(Oid parent_relid,			/* parent's Oid */
 	/* There's a gap, halt and emit ERROR */
 	else elog(ERROR, "cannot spawn a partition inside a gap");
 
-	/* Get "move bound operator" descriptor */
-	move_bound_op = get_binary_operator(should_append ? "+" : "-",
-										range_bound_type,
-										interval_type);
-	/* Get operator's ret type */
-	move_bound_optype = get_operator_ret_type(move_bound_op);
+	/* Fetch operator's underlying function and ret type */
+	extract_op_func_and_ret_type(should_append ? "+" : "-",
+								 range_bound_type,
+								 interval_type,
+								 &move_bound_op_func,
+								 &move_bound_op_ret_type);
 
-	/* Get operator's underlying function */
-	fmgr_info(oprfuncid(move_bound_op), &move_bound_finfo);
-
-	/* Don't forget to release system cache */
-	ReleaseSysCache(move_bound_op);
-
-	/* Perform some casts if types don't match */
-	if (move_bound_optype != range_bound_type)
+	/* Perform casts if types don't match (e.g. date + interval = timestamp) */
+	if (move_bound_op_ret_type != range_bound_type)
 	{
+		/* Cast 'cur_leading_bound' to 'move_bound_op_ret_type' */
 		cur_leading_bound = perform_type_cast(cur_leading_bound,
 											  range_bound_type,
-											  move_bound_optype,
+											  move_bound_op_ret_type,
 											  NULL); /* might emit ERROR */
 
 		/* Update 'range_bound_type' */
-		range_bound_type = move_bound_optype;
+		range_bound_type = move_bound_op_ret_type;
 
 		/* Fetch new comparison function */
 		fill_type_cmp_fmgr_info(&cmp_value_bound_finfo,
 								value_type,
 								range_bound_type);
+
+		/* Since type has changed, fetch another operator */
+		extract_op_func_and_ret_type(should_append ? "+" : "-",
+									 range_bound_type,
+									 interval_type,
+									 &move_bound_op_func,
+									 &move_bound_op_ret_type);
+
+		/* What, again? Don't want to deal with this nightmare */
+		if (move_bound_op_ret_type != range_bound_type)
+			elog(ERROR, "error in spawn_partitions_val()");
 	}
+
+	/* Get operator's underlying function */
+	fmgr_info(move_bound_op_func, &move_bound_finfo);
 
 	/* Execute comparison function cmp(value, cur_leading_bound) */
 	while (should_append ?

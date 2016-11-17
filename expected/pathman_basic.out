@@ -320,6 +320,51 @@ SELECT count(*) FROM test.insert_into_select_copy;
 
 DROP TABLE test.insert_into_select_copy, test.insert_into_select CASCADE;
 NOTICE:  drop cascades to 5 other objects
+/* Test INSERT hooking with DATE type */
+CREATE TABLE test.insert_date_test(val DATE NOT NULL);
+SELECT pathman.create_partitions_from_range('test.insert_date_test', 'val',
+											date '20161001', date '20170101', interval '1 month');
+NOTICE:  sequence "insert_date_test_seq" does not exist, skipping
+ create_partitions_from_range 
+------------------------------
+                            4
+(1 row)
+
+INSERT INTO test.insert_date_test VALUES ('20161201'); /* just insert the date */
+SELECT count(*) FROM pathman.pathman_partition_list WHERE parent = 'test.insert_date_test'::REGCLASS;
+ count 
+-------
+     4
+(1 row)
+
+INSERT INTO test.insert_date_test VALUES ('20170311'); /* append new partitions */
+SELECT count(*) FROM pathman.pathman_partition_list WHERE parent = 'test.insert_date_test'::REGCLASS;
+ count 
+-------
+     6
+(1 row)
+
+INSERT INTO test.insert_date_test VALUES ('20160812'); /* prepend new partitions */
+SELECT count(*) FROM pathman.pathman_partition_list WHERE parent = 'test.insert_date_test'::REGCLASS;
+ count 
+-------
+     8
+(1 row)
+
+SELECT min(val) FROM test.insert_date_test; /* check first date */
+    min     
+------------
+ 08-12-2016
+(1 row)
+
+SELECT max(val) FROM test.insert_date_test; /* check last date */
+    max     
+------------
+ 03-11-2017
+(1 row)
+
+DROP TABLE test.insert_date_test CASCADE;
+NOTICE:  drop cascades to 8 other objects
 /* Test special case: ONLY statement with not-ONLY for partitioned table */
 CREATE TABLE test.from_only_test(val INT NOT NULL);
 INSERT INTO test.from_only_test SELECT generate_series(1, 20);
@@ -1982,6 +2027,6 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.index_on_childs WHERE c1 > 100 AND c1 < 2
 (12 rows)
 
 DROP SCHEMA test CASCADE;
-NOTICE:  drop cascades to 48 other objects
+NOTICE:  drop cascades to 49 other objects
 DROP EXTENSION pg_pathman CASCADE;
 DROP SCHEMA pathman CASCADE;

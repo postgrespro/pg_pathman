@@ -66,6 +66,12 @@ fill_type_cmp_fmgr_info(FmgrInfo *finfo, Oid type1, Oid type2)
 	Oid				cmp_proc_oid;
 	TypeCacheEntry *tce;
 
+	if (IsBinaryCoercible(type1, type2))
+		type1 = type2;
+
+	else if (IsBinaryCoercible(type2, type1))
+		type2 = type1;
+
 	tce = lookup_type_cache(type1, TYPECACHE_BTREE_OPFAMILY);
 
 	cmp_proc_oid = get_opfamily_proc(tce->btree_opf,

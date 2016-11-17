@@ -101,6 +101,26 @@ SELECT count(*) FROM test.insert_into_select_copy;
 DROP TABLE test.insert_into_select_copy, test.insert_into_select CASCADE;
 
 
+/* Test INSERT hooking with DATE type */
+CREATE TABLE test.insert_date_test(val DATE NOT NULL);
+SELECT pathman.create_partitions_from_range('test.insert_date_test', 'val',
+											date '20161001', date '20170101', interval '1 month');
+
+INSERT INTO test.insert_date_test VALUES ('20161201'); /* just insert the date */
+SELECT count(*) FROM pathman.pathman_partition_list WHERE parent = 'test.insert_date_test'::REGCLASS;
+
+INSERT INTO test.insert_date_test VALUES ('20170311'); /* append new partitions */
+SELECT count(*) FROM pathman.pathman_partition_list WHERE parent = 'test.insert_date_test'::REGCLASS;
+
+INSERT INTO test.insert_date_test VALUES ('20160812'); /* prepend new partitions */
+SELECT count(*) FROM pathman.pathman_partition_list WHERE parent = 'test.insert_date_test'::REGCLASS;
+
+SELECT min(val) FROM test.insert_date_test; /* check first date */
+SELECT max(val) FROM test.insert_date_test; /* check last date */
+
+DROP TABLE test.insert_date_test CASCADE;
+
+
 /* Test special case: ONLY statement with not-ONLY for partitioned table */
 CREATE TABLE test.from_only_test(val INT NOT NULL);
 INSERT INTO test.from_only_test SELECT generate_series(1, 20);
