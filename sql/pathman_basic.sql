@@ -275,6 +275,57 @@ EXPLAIN (COSTS OFF)
 	WITH ttt AS (SELECT * FROM test.hash_rel WHERE value = 2)
 SELECT * FROM ttt;
 
+
+/*
+ * Test CTE query (DELETE) - by @parihaaraka
+ */
+CREATE TABLE test.cte_del_xacts (id BIGSERIAL PRIMARY KEY, pdate DATE NOT NULL);
+INSERT INTO test.cte_del_xacts (pdate) SELECT gen_date FROM generate_series('2016-01-01'::date, '2016-04-9'::date, '1 day') AS gen_date;
+
+create table test.cte_del_xacts_specdata
+(
+	tid BIGINT PRIMARY KEY,
+	test_mode SMALLINT,
+	state_code SMALLINT NOT NULL DEFAULT 8,
+	regtime TIMESTAMP WITHOUT TIME ZONE NOT NULL
+);
+
+/* create 2 partitions */
+SELECT pathman.create_range_partitions('test.cte_del_xacts'::regclass, 'pdate', '2016-01-01'::date, '50 days'::interval);
+
+EXPLAIN (COSTS OFF)
+WITH tmp AS (
+	SELECT tid, test_mode, regtime::DATE AS pdate, state_code
+	FROM test.cte_del_xacts_specdata)
+DELETE FROM test.cte_del_xacts t USING tmp
+WHERE t.id = tmp.tid AND t.pdate = tmp.pdate AND tmp.test_mode > 0;
+
+SELECT pathman.drop_partitions('test.cte_del_xacts'); /* now drop partitions */
+
+/* create 1 partition */
+SELECT pathman.create_range_partitions('test.cte_del_xacts'::regclass, 'pdate', '2016-01-01'::date, '1 year'::interval);
+
+/* parent enabled! */
+SELECT pathman.set_enable_parent('test.cte_del_xacts', true);
+EXPLAIN (COSTS OFF)
+WITH tmp AS (
+	SELECT tid, test_mode, regtime::DATE AS pdate, state_code
+	FROM test.cte_del_xacts_specdata)
+DELETE FROM test.cte_del_xacts t USING tmp
+WHERE t.id = tmp.tid AND t.pdate = tmp.pdate AND tmp.test_mode > 0;
+
+/* parent disabled! */
+SELECT pathman.set_enable_parent('test.cte_del_xacts', false);
+EXPLAIN (COSTS OFF)
+WITH tmp AS (
+	SELECT tid, test_mode, regtime::DATE AS pdate, state_code
+	FROM test.cte_del_xacts_specdata)
+DELETE FROM test.cte_del_xacts t USING tmp
+WHERE t.id = tmp.tid AND t.pdate = tmp.pdate AND tmp.test_mode > 0;
+
+DROP TABLE test.cte_del_xacts, test.cte_del_xacts_specdata CASCADE;
+
+
 /*
  * Test split and merge
  */

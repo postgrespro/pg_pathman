@@ -306,6 +306,9 @@ handle_modification_query(Query *parse)
 	/* Exit if it's not partitioned */
 	if (!prel) return;
 
+	/* Exit if we must include parent */
+	if (prel->enable_parent) return;
+
 	/* Parse syntax tree and extract partition ranges */
 	ranges = list_make1_irange(make_irange(0, PrelLastChild(prel), false));
 	expr = (Expr *) eval_const_expressions(NULL, parse->jointree->quals);
