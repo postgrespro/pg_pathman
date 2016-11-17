@@ -354,6 +354,14 @@ class PartitioningTests(unittest.TestCase):
         master.start()
         master.psql('postgres', 'create extension pg_pathman')
         master.psql('postgres', 'create extension postgres_fdw')
+
+        # RANGE partitioning test with FDW:
+        #   - create range partitioned table in master 
+        #   - create foreign server
+        #   - create foreign table and insert some data into it
+        #   - attach foreign table to partitioned one
+        #   - try inserting data into foreign partition via parent
+        #   - drop partitions
         master.psql(
             'postgres',
             '''create table abc(id serial, name text);
@@ -405,6 +413,34 @@ class PartitioningTests(unittest.TestCase):
 
         # Testing drop partitions (including foreign partitions)
         master.safe_psql('postgres', 'select drop_partitions(\'abc\')')
+
+        # HASH partitioning with FDW:
+        #   - create hash partitioned table in master 
+        #   - create foreign table
+        #   - replace local partition with foreign one
+        #   - insert data
+        #   - drop partitions
+        master.psql(
+            'postgres',
+            '''create table hash_test(id serial, name text);
+            select create_hash_partitions('hash_test', 'id', 2)''')
+        fserv.safe_psql('postgres', 'create table f_hash_test(id serial, name text)')
+
+        master.safe_psql(
+            'postgres',
+            '''import foreign schema public limit to (f_hash_test)
+            from server fserv into public'''
+        )
+        master.safe_psql(
+            'postgres',
+            'select replace_hash_partition(\'hash_test_1\', \'f_hash_test\')')
+        master.safe_psql('postgres', 'insert into hash_test select generate_series(1,10)')
+
+        self.assertEqual(
+            master.safe_psql('postgres', 'select * from hash_test'),
+            '1|\n2|\n5|\n6|\n8|\n9|\n3|\n4|\n7|\n10|\n'
+        )
+        master.safe_psql('postgres', 'select drop_partitions(\'hash_test\')')
 
 
 if __name__ == "__main__":
