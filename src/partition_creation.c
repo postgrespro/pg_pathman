@@ -668,6 +668,15 @@ create_table_using_stmt(CreateStmt *create_stmt, Oid relowner)
 	ObjectAddress	table_addr;
 	Datum			toast_options;
 	static char	   *validnsps[] = HEAP_RELOPT_NAMESPACES;
+	int				guc_level;
+
+	/* Create new GUC level... */
+	guc_level = NewGUCNestLevel();
+
+	/* ... and set client_min_messages = WARNING */
+	(void) set_config_option("client_min_messages", "WARNING",
+							 PGC_USERSET, PGC_S_SESSION,
+							 GUC_ACTION_SAVE, true, 0, false);
 
 	/* Create new partition owned by parent's posessor */
 	table_addr = DefineRelation(create_stmt, RELKIND_RELATION, relowner, NULL);
@@ -692,6 +701,9 @@ create_table_using_stmt(CreateStmt *create_stmt, Oid relowner)
 
 	/* Now create the toast table if needed */
 	NewRelationCreateToastTable(table_addr.objectId, toast_options);
+
+	/* Restore original GUC values */
+	AtEOXact_GUC(true, guc_level);
 
 	/* Return the address */
 	return table_addr;
