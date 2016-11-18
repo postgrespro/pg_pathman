@@ -1109,7 +1109,7 @@ SELECT * FROM ttt;
 (5 rows)
 
 /*
- * Test CTE query (DELETE) - by @parihaaraka
+ * Test CTE query (DELETE) - by @parihaaraka (add varno to WalkerContext)
  */
 CREATE TABLE test.cte_del_xacts (id BIGSERIAL PRIMARY KEY, pdate DATE NOT NULL);
 INSERT INTO test.cte_del_xacts (pdate) SELECT gen_date FROM generate_series('2016-01-01'::date, '2016-04-9'::date, '1 day') AS gen_date;
