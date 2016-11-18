@@ -277,7 +277,7 @@ SELECT * FROM ttt;
 
 
 /*
- * Test CTE query (DELETE) - by @parihaaraka (add varno to WalkerContext)
+ * Test CTE query - by @parihaaraka (add varno to WalkerContext)
  */
 CREATE TABLE test.cte_del_xacts (id BIGSERIAL PRIMARY KEY, pdate DATE NOT NULL);
 INSERT INTO test.cte_del_xacts (pdate) SELECT gen_date FROM generate_series('2016-01-01'::date, '2016-04-9'::date, '1 day') AS gen_date;
@@ -289,6 +289,7 @@ create table test.cte_del_xacts_specdata
 	state_code SMALLINT NOT NULL DEFAULT 8,
 	regtime TIMESTAMP WITHOUT TIME ZONE NOT NULL
 );
+INSERT INTO test.cte_del_xacts_specdata VALUES(1, 1, 1, current_timestamp); /* for subquery test */
 
 /* create 2 partitions */
 SELECT pathman.create_range_partitions('test.cte_del_xacts'::regclass, 'pdate', '2016-01-01'::date, '50 days'::interval);
@@ -323,6 +324,29 @@ WITH tmp AS (
 DELETE FROM test.cte_del_xacts t USING tmp
 WHERE t.id = tmp.tid AND t.pdate = tmp.pdate AND tmp.test_mode > 0;
 
+/* create stub pl/PgSQL function */
+CREATE OR REPLACE FUNCTION test.cte_del_xacts_stab(name TEXT)
+RETURNS smallint AS
+$$
+begin
+	return 2::smallint;
+end
+$$
+LANGUAGE plpgsql STABLE;
+
+/* test subquery planning */
+WITH tmp AS (
+	SELECT tid FROM test.cte_del_xacts_specdata
+	WHERE state_code != test.cte_del_xacts_stab('test'))
+SELECT * FROM test.cte_del_xacts t JOIN tmp ON t.id = tmp.tid;
+
+/* test subquery planning (one more time) */
+WITH tmp AS (
+	SELECT tid FROM test.cte_del_xacts_specdata
+	WHERE state_code != test.cte_del_xacts_stab('test'))
+SELECT * FROM test.cte_del_xacts t JOIN tmp ON t.id = tmp.tid;
+
+DROP FUNCTION test.cte_del_xacts_stab(TEXT);
 DROP TABLE test.cte_del_xacts, test.cte_del_xacts_specdata CASCADE;
 
 
