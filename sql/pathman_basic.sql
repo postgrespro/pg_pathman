@@ -281,6 +281,18 @@ DROP FUNCTION test.sql_inline_func(int);
 DROP TABLE test.sql_inline CASCADE;
 
 /*
+ * Test by @baiyinqiqi (issue #60)
+ */
+CREATE TABLE test.hash_varchar(val VARCHAR(40) NOT NULL);
+INSERT INTO test.hash_varchar SELECT generate_series(1, 20);
+
+SELECT pathman.create_hash_partitions('test.hash_varchar', 'val', 4);
+SELECT * FROM test.hash_varchar WHERE val = 'a';
+SELECT * FROM test.hash_varchar WHERE val = '12'::TEXT;
+
+DROP TABLE test.hash_varchar CASCADE;
+
+/*
  * Test CTE query
  */
 EXPLAIN (COSTS OFF)
@@ -290,7 +302,6 @@ SELECT * FROM ttt;
 EXPLAIN (COSTS OFF)
 	WITH ttt AS (SELECT * FROM test.hash_rel WHERE value = 2)
 SELECT * FROM ttt;
-
 
 /*
  * Test CTE query - by @parihaaraka (add varno to WalkerContext)

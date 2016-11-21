@@ -1115,6 +1115,30 @@ DROP FUNCTION test.sql_inline_func(int);
 DROP TABLE test.sql_inline CASCADE;
 NOTICE:  drop cascades to 3 other objects
 /*
+ * Test by @baiyinqiqi (issue #60)
+ */
+CREATE TABLE test.hash_varchar(val VARCHAR(40) NOT NULL);
+INSERT INTO test.hash_varchar SELECT generate_series(1, 20);
+SELECT pathman.create_hash_partitions('test.hash_varchar', 'val', 4);
+ create_hash_partitions 
+------------------------
+                      4
+(1 row)
+
+SELECT * FROM test.hash_varchar WHERE val = 'a';
+ val 
+-----
+(0 rows)
+
+SELECT * FROM test.hash_varchar WHERE val = '12'::TEXT;
+ val 
+-----
+ 12
+(1 row)
+
+DROP TABLE test.hash_varchar CASCADE;
+NOTICE:  drop cascades to 4 other objects
+/*
  * Test CTE query
  */
 EXPLAIN (COSTS OFF)
