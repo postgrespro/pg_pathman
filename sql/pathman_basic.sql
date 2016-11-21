@@ -243,7 +243,12 @@ SELECT pathman.replace_hash_partition('test.hash_rel_0', 'test.hash_rel_extern')
 \d+ test.hash_rel_extern
 INSERT INTO test.hash_rel SELECT * FROM test.hash_rel_0;
 DROP TABLE test.hash_rel_0;
-EXPLAIN SELECT * FROM test.hash_rel;
+/* Table with which we are replacing partition must have exact same structure */
+CREATE TABLE test.hash_rel_wrong(
+	id		INTEGER NOT NULL,
+	value	INTEGER);
+SELECT pathman.replace_hash_partition('test.hash_rel_1', 'test.hash_rel_wrong');
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
 
 /*
  * Clean up

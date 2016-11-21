@@ -920,13 +920,19 @@ Inherits: test.hash_rel
 
 INSERT INTO test.hash_rel SELECT * FROM test.hash_rel_0;
 DROP TABLE test.hash_rel_0;
-EXPLAIN SELECT * FROM test.hash_rel;
-                                         QUERY PLAN                                          
----------------------------------------------------------------------------------------------
- Append  (cost=10000000000.00..30000000032.44 rows=2044 width=12)
-   ->  Seq Scan on hash_rel_extern  (cost=10000000000.00..10000000030.40 rows=2040 width=12)
-   ->  Seq Scan on hash_rel_1  (cost=10000000000.00..10000000001.02 rows=2 width=12)
-   ->  Seq Scan on hash_rel_2  (cost=10000000000.00..10000000001.02 rows=2 width=12)
+/* Table with which we are replacing partition must have exact same structure */
+CREATE TABLE test.hash_rel_wrong(
+	id		INTEGER NOT NULL,
+	value	INTEGER);
+SELECT pathman.replace_hash_partition('test.hash_rel_1', 'test.hash_rel_wrong');
+ERROR:  partition must have the exact same structure as parent
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
+            QUERY PLAN             
+-----------------------------------
+ Append
+   ->  Seq Scan on hash_rel_extern
+   ->  Seq Scan on hash_rel_1
+   ->  Seq Scan on hash_rel_2
 (4 rows)
 
 /*
@@ -1508,7 +1514,7 @@ SELECT count(*) FROM bool_test WHERE b = false;
 DROP TABLE bool_test CASCADE;
 NOTICE:  drop cascades to 3 other objects
 DROP SCHEMA test CASCADE;
-NOTICE:  drop cascades to 13 other objects
+NOTICE:  drop cascades to 14 other objects
 DROP EXTENSION pg_pathman CASCADE;
 NOTICE:  drop cascades to 3 other objects
 DROP SCHEMA pathman CASCADE;
