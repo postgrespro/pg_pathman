@@ -539,7 +539,11 @@ pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
 		{
 			char *spl_value; /* value of "shared_preload_libraries" GUC */
 
+#if PG_VERSION_NUM >= 90600
 			spl_value = GetConfigOptionByName("shared_preload_libraries", NULL, false);
+#else
+			spl_value = GetConfigOptionByName("shared_preload_libraries", NULL);
+#endif
 
 			ereport(ERROR,
 					(errmsg("extension conflict has been detected"),
