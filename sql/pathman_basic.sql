@@ -265,6 +265,22 @@ JOIN test.num_range_rel j3 on j3.id = j1.id
 WHERE j1.dt < '2015-03-01' AND j2.dt >= '2015-02-01' ORDER BY j2.dt;
 
 /*
+ * Test inlined SQL functions
+ */
+CREATE TABLE test.sql_inline (id INT NOT NULL);
+SELECT pathman.create_hash_partitions('test.sql_inline', 'id', 3);
+
+CREATE OR REPLACE FUNCTION test.sql_inline_func(i_id int) RETURNS SETOF INT AS $$
+	select * from test.sql_inline where id = i_id limit 1;
+$$ LANGUAGE sql STABLE;
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.sql_inline_func(5);
+EXPLAIN (COSTS OFF) SELECT * FROM test.sql_inline_func(1);
+
+DROP FUNCTION test.sql_inline_func(int);
+DROP TABLE test.sql_inline CASCADE;
+
+/*
  * Test CTE query
  */
 EXPLAIN (COSTS OFF)
