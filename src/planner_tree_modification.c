@@ -598,6 +598,14 @@ incr_refcount_parenthood_statuses(void)
 	per_table_parenthood_mapping_refcount++;
 }
 
+/* Return current value of usage counter */
+uint32
+get_refcount_parenthood_statuses(void)
+{
+	/* incr_refcount_parenthood_statuses() is called by pathman_planner_hook() */
+	return per_table_parenthood_mapping_refcount;
+}
+
 /* Reset all cached statuses if needed (query end) */
 void
 decr_refcount_parenthood_statuses(bool entirely)
