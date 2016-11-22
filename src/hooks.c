@@ -653,7 +653,7 @@ pathman_process_utility_hook(Node *parsetree,
 			 * Rename check constraint of a table if it is a partition managed
 			 * by pg_pathman
 			 */
-			PathmanDoRenameConstraint((RenameStmt *) parsetree);
+			PathmanRenameConstraint((RenameStmt *) parsetree);
 		}
 	}
 

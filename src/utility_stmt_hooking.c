@@ -626,44 +626,45 @@ prepare_rri_fdw_for_copy(EState *estate,
 }
 
 /*
- * Rename check constraint of table if it is a partition 
+ * Rename check constraint of table if it's a partition
  */
 void
-PathmanDoRenameConstraint(const RenameStmt *stmt)
+PathmanRenameConstraint(const RenameStmt *stmt)
 {
-	Oid		partition = RangeVarGetRelid(stmt->relation, NoLock, true);
-	Oid		parent = get_rel_parent(partition);
+	Oid						partition_relid,
+							parent_relid;
+	char				   *old_constraint_name,
+						   *new_constraint_name;
+	RenameStmt			   *rename_stmt;
+	const PartRelationInfo *prel;
 
-	if (partition != InvalidOid && parent != InvalidOid)
-	{
-		char   *old_constraint_name,
-			   *new_constraint_name;
-		const PartRelationInfo *prel = get_pathman_relation_info(parent);
+	partition_relid = RangeVarGetRelid(stmt->relation, AccessShareLock, false);
+	parent_relid = get_rel_parent(partition_relid);
 
-		if (prel)
-		{
-			RangeVar	   *rngVar;
-			RenameStmt	   *s;
+	/* Skip if there's no parent */
+	if (!OidIsValid(parent_relid)) return;
 
-			/* Generate old constraint name */
-			old_constraint_name = build_check_constraint_name_by_relname(
-				get_rel_name(partition),
-				prel->attnum);
+	/* Fetch partitioning data */
+	prel = get_pathman_relation_info(parent_relid);
 
-			/* Generate new constraint name */
-			new_constraint_name = build_check_constraint_name_by_relname(
-				stmt->newname,
-				prel->attnum);
+	/* Skip if this table is not partitioned */
+	if (!prel) return;
 
-			/* Build check constraint RENAME statement */
-			s = makeNode(RenameStmt);
-			s->renameType = OBJECT_TABCONSTRAINT;
-			s->relation = stmt->relation;
-			s->subname = old_constraint_name;
-			s->newname = new_constraint_name;
-			s->missing_ok = false;
+	/* Generate old constraint name */
+	old_constraint_name = build_check_constraint_name_relid_internal(partition_relid,
+																	 prel->attnum);
 
-			RenameConstraint(s);
-		}
-	}
+	/* Generate new constraint name */
+	new_constraint_name = build_check_constraint_name_relname_internal(stmt->newname,
+																	   prel->attnum);
+
+	/* Build check constraint RENAME statement */
+	rename_stmt = makeNode(RenameStmt);
+	rename_stmt->renameType = OBJECT_TABCONSTRAINT;
+	rename_stmt->relation = stmt->relation;
+	rename_stmt->subname = old_constraint_name;
+	rename_stmt->newname = new_constraint_name;
+	rename_stmt->missing_ok = false;
+
+	RenameConstraint(rename_stmt);
 }

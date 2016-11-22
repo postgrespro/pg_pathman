@@ -521,7 +521,7 @@ build_check_constraint_name_attnum(PG_FUNCTION_ARGS)
 		elog(ERROR, "Cannot build check constraint name: "
 					"invalid attribute number %i", attnum);
 
-	result = build_check_constraint_name_internal(relid, attnum);
+	result = build_check_constraint_name_relid_internal(relid, attnum);
 
 	PG_RETURN_TEXT_P(cstring_to_text(quote_identifier(result)));
 }
@@ -541,7 +541,7 @@ build_check_constraint_name_attname(PG_FUNCTION_ARGS)
 		elog(ERROR, "relation \"%s\" has no column \"%s\"",
 			 get_rel_name_or_relid(relid), text_to_cstring(attname));
 
-	result = build_check_constraint_name_internal(relid, attnum);
+	result = build_check_constraint_name_relid_internal(relid, attnum);
 
 	PG_RETURN_TEXT_P(cstring_to_text(quote_identifier(result)));
 }

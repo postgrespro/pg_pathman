@@ -19,6 +19,6 @@
 
 bool is_pathman_related_copy(Node *parsetree);
 void PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed);
-void PathmanDoRenameConstraint(const RenameStmt *stmt);
+void PathmanRenameConstraint(const RenameStmt *stmt);
 
 #endif
