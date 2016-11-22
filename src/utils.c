@@ -67,6 +67,7 @@ fill_type_cmp_fmgr_info(FmgrInfo *finfo, Oid type1, Oid type2)
 	TypeCacheEntry *tce_1,
 				   *tce_2;
 
+	/* Check type compatibility */
 	if (IsBinaryCoercible(type1, type2))
 		type1 = type2;
 
@@ -76,6 +77,7 @@ fill_type_cmp_fmgr_info(FmgrInfo *finfo, Oid type1, Oid type2)
 	tce_1 = lookup_type_cache(type1, TYPECACHE_BTREE_OPFAMILY);
 	tce_2 = lookup_type_cache(type2, TYPECACHE_BTREE_OPFAMILY);
 
+	/* Both types should belong to the same opfamily */
 	if (tce_1->btree_opf != tce_2->btree_opf)
 		goto fill_type_cmp_fmgr_info_error;
 
@@ -84,13 +86,16 @@ fill_type_cmp_fmgr_info(FmgrInfo *finfo, Oid type1, Oid type2)
 									 tce_2->btree_opintype,
 									 BTORDER_PROC);
 
-	if (cmp_proc_oid == InvalidOid)
+	/* No such function, emit ERROR */
+	if (!OidIsValid(cmp_proc_oid))
 		goto fill_type_cmp_fmgr_info_error;
 
+	/* Fill FmgrInfo struct */
 	fmgr_info(cmp_proc_oid, finfo);
 
-	return; /* exit safely */
+	return; /* everything is OK */
 
+/* Handle errors (no such function) */
 fill_type_cmp_fmgr_info_error:
 	elog(ERROR, "missing comparison function for types %s & %s",
 		 format_type_be(type1), format_type_be(type2));
