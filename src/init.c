@@ -870,9 +870,11 @@ cmp_range_entries(const void *p1, const void *p2, void *arg)
 
 	/* If range is half open */
 	if (v1->infinite_min)
+	{
 		if (v2->infinite_min)
 			return Int32GetDatum(0);
 		return Int32GetDatum(-1);
+	}
 
 	/* Else if range is closed */
 	return OidFunctionCall2(cmp_proc_oid, v1->min, v2->min);
