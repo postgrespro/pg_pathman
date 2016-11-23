@@ -320,7 +320,52 @@ SELECT count(*) FROM test.insert_into_select_copy;
 
 DROP TABLE test.insert_into_select_copy, test.insert_into_select CASCADE;
 NOTICE:  drop cascades to 5 other objects
-/* test special case: ONLY statement with not-ONLY for partitioned table */
+/* Test INSERT hooking with DATE type */
+CREATE TABLE test.insert_date_test(val DATE NOT NULL);
+SELECT pathman.create_partitions_from_range('test.insert_date_test', 'val',
+											date '20161001', date '20170101', interval '1 month');
+NOTICE:  sequence "insert_date_test_seq" does not exist, skipping
+ create_partitions_from_range 
+------------------------------
+                            4
+(1 row)
+
+INSERT INTO test.insert_date_test VALUES ('20161201'); /* just insert the date */
+SELECT count(*) FROM pathman.pathman_partition_list WHERE parent = 'test.insert_date_test'::REGCLASS;
+ count 
+-------
+     4
+(1 row)
+
+INSERT INTO test.insert_date_test VALUES ('20170311'); /* append new partitions */
+SELECT count(*) FROM pathman.pathman_partition_list WHERE parent = 'test.insert_date_test'::REGCLASS;
+ count 
+-------
+     6
+(1 row)
+
+INSERT INTO test.insert_date_test VALUES ('20160812'); /* prepend new partitions */
+SELECT count(*) FROM pathman.pathman_partition_list WHERE parent = 'test.insert_date_test'::REGCLASS;
+ count 
+-------
+     8
+(1 row)
+
+SELECT min(val) FROM test.insert_date_test; /* check first date */
+    min     
+------------
+ 08-12-2016
+(1 row)
+
+SELECT max(val) FROM test.insert_date_test; /* check last date */
+    max     
+------------
+ 03-11-2017
+(1 row)
+
+DROP TABLE test.insert_date_test CASCADE;
+NOTICE:  drop cascades to 8 other objects
+/* Test special case: ONLY statement with not-ONLY for partitioned table */
 CREATE TABLE test.from_only_test(val INT NOT NULL);
 INSERT INTO test.from_only_test SELECT generate_series(1, 20);
 SELECT pathman.create_range_partitions('test.from_only_test', 'val', 1, 2);
@@ -1036,6 +1081,64 @@ WHERE j1.dt < '2015-03-01' AND j2.dt >= '2015-02-01' ORDER BY j2.dt;
 (20 rows)
 
 /*
+ * Test inlined SQL functions
+ */
+CREATE TABLE test.sql_inline (id INT NOT NULL);
+SELECT pathman.create_hash_partitions('test.sql_inline', 'id', 3);
+ create_hash_partitions 
+------------------------
+                      3
+(1 row)
+
+CREATE OR REPLACE FUNCTION test.sql_inline_func(i_id int) RETURNS SETOF INT AS $$
+	select * from test.sql_inline where id = i_id limit 1;
+$$ LANGUAGE sql STABLE;
+EXPLAIN (COSTS OFF) SELECT * FROM test.sql_inline_func(5);
+              QUERY PLAN              
+--------------------------------------
+ Limit
+   ->  Append
+         ->  Seq Scan on sql_inline_0
+               Filter: (id = 5)
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.sql_inline_func(1);
+              QUERY PLAN              
+--------------------------------------
+ Limit
+   ->  Append
+         ->  Seq Scan on sql_inline_2
+               Filter: (id = 1)
+(4 rows)
+
+DROP FUNCTION test.sql_inline_func(int);
+DROP TABLE test.sql_inline CASCADE;
+NOTICE:  drop cascades to 3 other objects
+/*
+ * Test by @baiyinqiqi (issue #60)
+ */
+CREATE TABLE test.hash_varchar(val VARCHAR(40) NOT NULL);
+INSERT INTO test.hash_varchar SELECT generate_series(1, 20);
+SELECT pathman.create_hash_partitions('test.hash_varchar', 'val', 4);
+ create_hash_partitions 
+------------------------
+                      4
+(1 row)
+
+SELECT * FROM test.hash_varchar WHERE val = 'a';
+ val 
+-----
+(0 rows)
+
+SELECT * FROM test.hash_varchar WHERE val = '12'::TEXT;
+ val 
+-----
+ 12
+(1 row)
+
+DROP TABLE test.hash_varchar CASCADE;
+NOTICE:  drop cascades to 4 other objects
+/*
  * Test CTE query
  */
 EXPLAIN (COSTS OFF)
@@ -1063,6 +1166,169 @@ SELECT * FROM ttt;
                  Filter: (value = 2)
 (5 rows)
 
+/*
+ * Test CTE query - by @parihaaraka (add varno to WalkerContext)
+ */
+CREATE TABLE test.cte_del_xacts (id BIGSERIAL PRIMARY KEY, pdate DATE NOT NULL);
+INSERT INTO test.cte_del_xacts (pdate) SELECT gen_date FROM generate_series('2016-01-01'::date, '2016-04-9'::date, '1 day') AS gen_date;
+create table test.cte_del_xacts_specdata
+(
+	tid BIGINT PRIMARY KEY,
+	test_mode SMALLINT,
+	state_code SMALLINT NOT NULL DEFAULT 8,
+	regtime TIMESTAMP WITHOUT TIME ZONE NOT NULL
+);
+INSERT INTO test.cte_del_xacts_specdata VALUES(1, 1, 1, current_timestamp); /* for subquery test */
+/* create 2 partitions */
+SELECT pathman.create_range_partitions('test.cte_del_xacts'::regclass, 'pdate', '2016-01-01'::date, '50 days'::interval);
+NOTICE:  sequence "cte_del_xacts_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+EXPLAIN (COSTS OFF)
+WITH tmp AS (
+	SELECT tid, test_mode, regtime::DATE AS pdate, state_code
+	FROM test.cte_del_xacts_specdata)
+DELETE FROM test.cte_del_xacts t USING tmp
+WHERE t.id = tmp.tid AND t.pdate = tmp.pdate AND tmp.test_mode > 0;
+                                   QUERY PLAN                                   
+--------------------------------------------------------------------------------
+ Delete on cte_del_xacts t
+   Delete on cte_del_xacts t
+   Delete on cte_del_xacts_1 t_1
+   Delete on cte_del_xacts_2 t_2
+   CTE tmp
+     ->  Seq Scan on cte_del_xacts_specdata
+   ->  Hash Join
+         Hash Cond: ((tmp.tid = t.id) AND (tmp.pdate = t.pdate))
+         ->  CTE Scan on tmp
+               Filter: (test_mode > 0)
+         ->  Hash
+               ->  Index Scan using cte_del_xacts_pkey on cte_del_xacts t
+   ->  Hash Join
+         Hash Cond: ((tmp.tid = t_1.id) AND (tmp.pdate = t_1.pdate))
+         ->  CTE Scan on tmp
+               Filter: (test_mode > 0)
+         ->  Hash
+               ->  Index Scan using cte_del_xacts_1_pkey on cte_del_xacts_1 t_1
+   ->  Hash Join
+         Hash Cond: ((tmp.tid = t_2.id) AND (tmp.pdate = t_2.pdate))
+         ->  CTE Scan on tmp
+               Filter: (test_mode > 0)
+         ->  Hash
+               ->  Index Scan using cte_del_xacts_2_pkey on cte_del_xacts_2 t_2
+(24 rows)
+
+SELECT pathman.drop_partitions('test.cte_del_xacts'); /* now drop partitions */
+NOTICE:  function test.cte_del_xacts_upd_trig_func() does not exist, skipping
+NOTICE:  50 rows copied from test.cte_del_xacts_1
+NOTICE:  50 rows copied from test.cte_del_xacts_2
+ drop_partitions 
+-----------------
+               2
+(1 row)
+
+/* create 1 partition */
+SELECT pathman.create_range_partitions('test.cte_del_xacts'::regclass, 'pdate', '2016-01-01'::date, '1 year'::interval);
+ create_range_partitions 
+-------------------------
+                       1
+(1 row)
+
+/* parent enabled! */
+SELECT pathman.set_enable_parent('test.cte_del_xacts', true);
+ set_enable_parent 
+-------------------
+ 
+(1 row)
+
+EXPLAIN (COSTS OFF)
+WITH tmp AS (
+	SELECT tid, test_mode, regtime::DATE AS pdate, state_code
+	FROM test.cte_del_xacts_specdata)
+DELETE FROM test.cte_del_xacts t USING tmp
+WHERE t.id = tmp.tid AND t.pdate = tmp.pdate AND tmp.test_mode > 0;
+                                   QUERY PLAN                                   
+--------------------------------------------------------------------------------
+ Delete on cte_del_xacts t
+   Delete on cte_del_xacts t
+   Delete on cte_del_xacts_1 t_1
+   CTE tmp
+     ->  Seq Scan on cte_del_xacts_specdata
+   ->  Hash Join
+         Hash Cond: ((tmp.tid = t.id) AND (tmp.pdate = t.pdate))
+         ->  CTE Scan on tmp
+               Filter: (test_mode > 0)
+         ->  Hash
+               ->  Index Scan using cte_del_xacts_pkey on cte_del_xacts t
+   ->  Hash Join
+         Hash Cond: ((tmp.tid = t_1.id) AND (tmp.pdate = t_1.pdate))
+         ->  CTE Scan on tmp
+               Filter: (test_mode > 0)
+         ->  Hash
+               ->  Index Scan using cte_del_xacts_1_pkey on cte_del_xacts_1 t_1
+(17 rows)
+
+/* parent disabled! */
+SELECT pathman.set_enable_parent('test.cte_del_xacts', false);
+ set_enable_parent 
+-------------------
+ 
+(1 row)
+
+EXPLAIN (COSTS OFF)
+WITH tmp AS (
+	SELECT tid, test_mode, regtime::DATE AS pdate, state_code
+	FROM test.cte_del_xacts_specdata)
+DELETE FROM test.cte_del_xacts t USING tmp
+WHERE t.id = tmp.tid AND t.pdate = tmp.pdate AND tmp.test_mode > 0;
+                                  QUERY PLAN                                  
+------------------------------------------------------------------------------
+ Delete on cte_del_xacts_1 t
+   CTE tmp
+     ->  Seq Scan on cte_del_xacts_specdata
+   ->  Hash Join
+         Hash Cond: ((tmp.tid = t.id) AND (tmp.pdate = t.pdate))
+         ->  CTE Scan on tmp
+               Filter: (test_mode > 0)
+         ->  Hash
+               ->  Index Scan using cte_del_xacts_1_pkey on cte_del_xacts_1 t
+(9 rows)
+
+/* create stub pl/PgSQL function */
+CREATE OR REPLACE FUNCTION test.cte_del_xacts_stab(name TEXT)
+RETURNS smallint AS
+$$
+begin
+	return 2::smallint;
+end
+$$
+LANGUAGE plpgsql STABLE;
+/* test subquery planning */
+WITH tmp AS (
+	SELECT tid FROM test.cte_del_xacts_specdata
+	WHERE state_code != test.cte_del_xacts_stab('test'))
+SELECT * FROM test.cte_del_xacts t JOIN tmp ON t.id = tmp.tid;
+ id |   pdate    | tid 
+----+------------+-----
+  1 | 01-01-2016 |   1
+(1 row)
+
+/* test subquery planning (one more time) */
+WITH tmp AS (
+	SELECT tid FROM test.cte_del_xacts_specdata
+	WHERE state_code != test.cte_del_xacts_stab('test'))
+SELECT * FROM test.cte_del_xacts t JOIN tmp ON t.id = tmp.tid;
+ id |   pdate    | tid 
+----+------------+-----
+  1 | 01-01-2016 |   1
+(1 row)
+
+DROP FUNCTION test.cte_del_xacts_stab(TEXT);
+DROP TABLE test.cte_del_xacts, test.cte_del_xacts_specdata CASCADE;
+NOTICE:  drop cascades to table test.cte_del_xacts_1
 /*
  * Test split and merge
  */
@@ -1180,7 +1446,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt BETWEEN '2014-12-15' A
 (3 rows)
 
 SELECT pathman.add_range_partition('test.range_rel', '2014-12-01'::DATE, '2015-01-02'::DATE);
-ERROR:  specified range overlaps with existing partitions
+ERROR:  specified range [12-01-2014, 01-02-2015) overlaps with existing partitions
 SELECT pathman.add_range_partition('test.range_rel', '2014-12-01'::DATE, '2015-01-01'::DATE);
  add_range_partition 
 ---------------------
@@ -1199,7 +1465,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt BETWEEN '2014-12-15' A
 
 CREATE TABLE test.range_rel_archive (LIKE test.range_rel INCLUDING ALL);
 SELECT pathman.attach_range_partition('test.range_rel', 'test.range_rel_archive', '2014-01-01'::DATE, '2015-01-01'::DATE);
-ERROR:  specified range overlaps with existing partitions
+ERROR:  specified range [01-01-2014, 01-01-2015) overlaps with existing partitions
 SELECT pathman.attach_range_partition('test.range_rel', 'test.range_rel_archive', '2014-01-01'::DATE, '2014-12-01'::DATE);
  attach_range_partition 
 ------------------------
@@ -1427,48 +1693,28 @@ SELECT pathman.create_range_partitions('test.num_range_rel', 'id', 1000, 1000, 4
                        4
 (1 row)
 
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 4001, 5000);
- check_overlap 
----------------
- t
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 4001, 5000);
+ERROR:  specified range [4001, 5000) overlaps with existing partitions
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 4000, 5000);
+ERROR:  specified range [4000, 5000) overlaps with existing partitions
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 3999, 5000);
+ERROR:  specified range [3999, 5000) overlaps with existing partitions
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 3000, 3500);
+ERROR:  specified range [3000, 3500) overlaps with existing partitions
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 0, 999);
+ check_range_available 
+-----------------------
+ 
 (1 row)
 
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 4000, 5000);
- check_overlap 
----------------
- t
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 0, 1000);
+ check_range_available 
+-----------------------
+ 
 (1 row)
 
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 3999, 5000);
- check_overlap 
----------------
- t
-(1 row)
-
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 3000, 3500);
- check_overlap 
----------------
- t
-(1 row)
-
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 0, 999);
- check_overlap 
----------------
- f
-(1 row)
-
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 0, 1000);
- check_overlap 
----------------
- f
-(1 row)
-
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 0, 1001);
- check_overlap 
----------------
- t
-(1 row)
-
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 0, 1001);
+ERROR:  specified range [0, 1001) overlaps with existing partitions
 /* CaMeL cAsE table names and attributes */
 CREATE TABLE test."TeSt" (a INT NOT NULL, b INT);
 SELECT pathman.create_hash_partitions('test.TeSt', 'a', 3);
@@ -1818,6 +2064,41 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt = '2015-12-15';
          Filter: (dt = 'Tue Dec 15 00:00:00 2015'::timestamp without time zone)
 (3 rows)
 
+/* Test NOT operator */
+CREATE TABLE bool_test(a INT NOT NULL, b BOOLEAN);
+SELECT create_hash_partitions('bool_test', 'a', 3);
+ create_hash_partitions 
+------------------------
+                      3
+(1 row)
+
+INSERT INTO bool_test SELECT g, (g % 4) = 0 FROM generate_series(1, 100) AS g;
+SELECT count(*) FROM bool_test;
+ count 
+-------
+   100
+(1 row)
+
+SELECT count(*) FROM bool_test WHERE (b = true AND b = false);
+ count 
+-------
+     0
+(1 row)
+
+SELECT count(*) FROM bool_test WHERE b = false;	/* 75 values */
+ count 
+-------
+    75
+(1 row)
+
+SELECT count(*) FROM bool_test WHERE b = true;	/* 25 values */
+ count 
+-------
+    25
+(1 row)
+
+DROP TABLE bool_test CASCADE;
+NOTICE:  drop cascades to 3 other objects
 /* Test foreign keys */
 CREATE TABLE test.messages(id SERIAL PRIMARY KEY, msg TEXT);
 CREATE TABLE test.replies(id SERIAL PRIMARY KEY, message_id INTEGER REFERENCES test.messages(id),  msg TEXT);
@@ -1967,6 +2248,6 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.index_on_childs WHERE c1 > 100 AND c1 < 2
 (12 rows)
 
 DROP SCHEMA test CASCADE;
-NOTICE:  drop cascades to 48 other objects
+NOTICE:  drop cascades to 50 other objects
 DROP EXTENSION pg_pathman CASCADE;
 DROP SCHEMA pathman CASCADE;

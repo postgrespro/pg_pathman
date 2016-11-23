@@ -206,14 +206,12 @@ refresh_pathman_relation_info(Oid relid,
 	{
 		prel->enable_parent = param_values[Anum_pathman_config_params_enable_parent - 1];
 		prel->auto_partition = param_values[Anum_pathman_config_params_auto - 1];
-		prel->init_callback = param_values[Anum_pathman_config_params_init_callback - 1];
 	}
 	/* Else set default values if they cannot be found */
 	else
 	{
 		prel->enable_parent = false;
 		prel->auto_partition = true;
-		prel->init_callback = InvalidOid;
 	}
 
 	/* We've successfully built a cache entry */

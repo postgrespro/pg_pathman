@@ -129,6 +129,8 @@ char *build_check_constraint_name_relid_internal(Oid relid,
 char *build_check_constraint_name_relname_internal(const char *relname,
 												   AttrNumber attno);
 
+char *build_sequence_name_internal(Oid relid);
+
 bool pathman_config_contains_relation(Oid relid,
 									  Datum *values,
 									  bool *isnull,

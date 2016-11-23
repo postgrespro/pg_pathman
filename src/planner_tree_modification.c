@@ -306,6 +306,9 @@ handle_modification_query(Query *parse)
 	/* Exit if it's not partitioned */
 	if (!prel) return;
 
+	/* Exit if we must include parent */
+	if (prel->enable_parent) return;
+
 	/* Parse syntax tree and extract partition ranges */
 	ranges = list_make1_irange(make_irange(0, PrelLastChild(prel), false));
 	expr = (Expr *) eval_const_expressions(NULL, parse->jointree->quals);
@@ -593,6 +596,14 @@ incr_refcount_parenthood_statuses(void)
 {
 	Assert(per_table_parenthood_mapping_refcount >= 0);
 	per_table_parenthood_mapping_refcount++;
+}
+
+/* Return current value of usage counter */
+uint32
+get_refcount_parenthood_statuses(void)
+{
+	/* incr_refcount_parenthood_statuses() is called by pathman_planner_hook() */
+	return per_table_parenthood_mapping_refcount;
 }
 
 /* Reset all cached statuses if needed (query end) */

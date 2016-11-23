@@ -517,9 +517,7 @@ pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
 	if (query->commandType == CMD_UTILITY &&
 			(xact_is_transaction_stmt(query->utilityStmt) ||
 			 xact_is_set_transaction_stmt(query->utilityStmt)))
-	{
 		return;
-	}
 
 	/* Finish delayed invalidation jobs */
 	if (IsPathmanReady())
@@ -532,6 +530,32 @@ pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
 		get_pathman_schema() != InvalidOid)
 	{
 		load_config(); /* perform main cache initialization */
+	}
+
+	/* Process inlined SQL functions (we've already entered planning stage) */
+	if (IsPathmanReady() && get_refcount_parenthood_statuses() > 0)
+	{
+		/* Check that pg_pathman is the last extension loaded */
+		if (post_parse_analyze_hook != pathman_post_parse_analysis_hook)
+		{
+			char *spl_value; /* value of "shared_preload_libraries" GUC */
+
+#if PG_VERSION_NUM >= 90600
+			spl_value = GetConfigOptionByName("shared_preload_libraries", NULL, false);
+#else
+			spl_value = GetConfigOptionByName("shared_preload_libraries", NULL);
+#endif
+
+			ereport(ERROR,
+					(errmsg("extension conflict has been detected"),
+					 errdetail("shared_preload_libraries = \"%s\"", spl_value),
+					 errhint("pg_pathman should be the last extension listed in "
+							 "\"shared_preload_libraries\" GUC in order to "
+							 "prevent possible conflicts with other extensions")));
+		}
+
+		/* Modify query tree if needed */
+		pathman_transform_query(query);
 	}
 }
 

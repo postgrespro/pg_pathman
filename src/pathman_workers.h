@@ -188,4 +188,9 @@ UnpackDatumFromByteArray(Datum *datum, Size datum_size, bool typbyval,
 	return ((uint8 *) byte_array) + datum_size;
 }
 
+/*
+ * Create partition to store 'value' using specific BGW.
+ */
+Oid create_partitions_for_value_bg_worker(Oid relid, Datum value, Oid value_type);
+
 #endif

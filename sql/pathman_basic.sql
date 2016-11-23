@@ -101,7 +101,27 @@ SELECT count(*) FROM test.insert_into_select_copy;
 DROP TABLE test.insert_into_select_copy, test.insert_into_select CASCADE;
 
 
-/* test special case: ONLY statement with not-ONLY for partitioned table */
+/* Test INSERT hooking with DATE type */
+CREATE TABLE test.insert_date_test(val DATE NOT NULL);
+SELECT pathman.create_partitions_from_range('test.insert_date_test', 'val',
+											date '20161001', date '20170101', interval '1 month');
+
+INSERT INTO test.insert_date_test VALUES ('20161201'); /* just insert the date */
+SELECT count(*) FROM pathman.pathman_partition_list WHERE parent = 'test.insert_date_test'::REGCLASS;
+
+INSERT INTO test.insert_date_test VALUES ('20170311'); /* append new partitions */
+SELECT count(*) FROM pathman.pathman_partition_list WHERE parent = 'test.insert_date_test'::REGCLASS;
+
+INSERT INTO test.insert_date_test VALUES ('20160812'); /* prepend new partitions */
+SELECT count(*) FROM pathman.pathman_partition_list WHERE parent = 'test.insert_date_test'::REGCLASS;
+
+SELECT min(val) FROM test.insert_date_test; /* check first date */
+SELECT max(val) FROM test.insert_date_test; /* check last date */
+
+DROP TABLE test.insert_date_test CASCADE;
+
+
+/* Test special case: ONLY statement with not-ONLY for partitioned table */
 CREATE TABLE test.from_only_test(val INT NOT NULL);
 INSERT INTO test.from_only_test SELECT generate_series(1, 20);
 SELECT pathman.create_range_partitions('test.from_only_test', 'val', 1, 2);
@@ -245,6 +265,34 @@ JOIN test.num_range_rel j3 on j3.id = j1.id
 WHERE j1.dt < '2015-03-01' AND j2.dt >= '2015-02-01' ORDER BY j2.dt;
 
 /*
+ * Test inlined SQL functions
+ */
+CREATE TABLE test.sql_inline (id INT NOT NULL);
+SELECT pathman.create_hash_partitions('test.sql_inline', 'id', 3);
+
+CREATE OR REPLACE FUNCTION test.sql_inline_func(i_id int) RETURNS SETOF INT AS $$
+	select * from test.sql_inline where id = i_id limit 1;
+$$ LANGUAGE sql STABLE;
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.sql_inline_func(5);
+EXPLAIN (COSTS OFF) SELECT * FROM test.sql_inline_func(1);
+
+DROP FUNCTION test.sql_inline_func(int);
+DROP TABLE test.sql_inline CASCADE;
+
+/*
+ * Test by @baiyinqiqi (issue #60)
+ */
+CREATE TABLE test.hash_varchar(val VARCHAR(40) NOT NULL);
+INSERT INTO test.hash_varchar SELECT generate_series(1, 20);
+
+SELECT pathman.create_hash_partitions('test.hash_varchar', 'val', 4);
+SELECT * FROM test.hash_varchar WHERE val = 'a';
+SELECT * FROM test.hash_varchar WHERE val = '12'::TEXT;
+
+DROP TABLE test.hash_varchar CASCADE;
+
+/*
  * Test CTE query
  */
 EXPLAIN (COSTS OFF)
@@ -254,6 +302,80 @@ SELECT * FROM ttt;
 EXPLAIN (COSTS OFF)
 	WITH ttt AS (SELECT * FROM test.hash_rel WHERE value = 2)
 SELECT * FROM ttt;
+
+/*
+ * Test CTE query - by @parihaaraka (add varno to WalkerContext)
+ */
+CREATE TABLE test.cte_del_xacts (id BIGSERIAL PRIMARY KEY, pdate DATE NOT NULL);
+INSERT INTO test.cte_del_xacts (pdate) SELECT gen_date FROM generate_series('2016-01-01'::date, '2016-04-9'::date, '1 day') AS gen_date;
+
+create table test.cte_del_xacts_specdata
+(
+	tid BIGINT PRIMARY KEY,
+	test_mode SMALLINT,
+	state_code SMALLINT NOT NULL DEFAULT 8,
+	regtime TIMESTAMP WITHOUT TIME ZONE NOT NULL
+);
+INSERT INTO test.cte_del_xacts_specdata VALUES(1, 1, 1, current_timestamp); /* for subquery test */
+
+/* create 2 partitions */
+SELECT pathman.create_range_partitions('test.cte_del_xacts'::regclass, 'pdate', '2016-01-01'::date, '50 days'::interval);
+
+EXPLAIN (COSTS OFF)
+WITH tmp AS (
+	SELECT tid, test_mode, regtime::DATE AS pdate, state_code
+	FROM test.cte_del_xacts_specdata)
+DELETE FROM test.cte_del_xacts t USING tmp
+WHERE t.id = tmp.tid AND t.pdate = tmp.pdate AND tmp.test_mode > 0;
+
+SELECT pathman.drop_partitions('test.cte_del_xacts'); /* now drop partitions */
+
+/* create 1 partition */
+SELECT pathman.create_range_partitions('test.cte_del_xacts'::regclass, 'pdate', '2016-01-01'::date, '1 year'::interval);
+
+/* parent enabled! */
+SELECT pathman.set_enable_parent('test.cte_del_xacts', true);
+EXPLAIN (COSTS OFF)
+WITH tmp AS (
+	SELECT tid, test_mode, regtime::DATE AS pdate, state_code
+	FROM test.cte_del_xacts_specdata)
+DELETE FROM test.cte_del_xacts t USING tmp
+WHERE t.id = tmp.tid AND t.pdate = tmp.pdate AND tmp.test_mode > 0;
+
+/* parent disabled! */
+SELECT pathman.set_enable_parent('test.cte_del_xacts', false);
+EXPLAIN (COSTS OFF)
+WITH tmp AS (
+	SELECT tid, test_mode, regtime::DATE AS pdate, state_code
+	FROM test.cte_del_xacts_specdata)
+DELETE FROM test.cte_del_xacts t USING tmp
+WHERE t.id = tmp.tid AND t.pdate = tmp.pdate AND tmp.test_mode > 0;
+
+/* create stub pl/PgSQL function */
+CREATE OR REPLACE FUNCTION test.cte_del_xacts_stab(name TEXT)
+RETURNS smallint AS
+$$
+begin
+	return 2::smallint;
+end
+$$
+LANGUAGE plpgsql STABLE;
+
+/* test subquery planning */
+WITH tmp AS (
+	SELECT tid FROM test.cte_del_xacts_specdata
+	WHERE state_code != test.cte_del_xacts_stab('test'))
+SELECT * FROM test.cte_del_xacts t JOIN tmp ON t.id = tmp.tid;
+
+/* test subquery planning (one more time) */
+WITH tmp AS (
+	SELECT tid FROM test.cte_del_xacts_specdata
+	WHERE state_code != test.cte_del_xacts_stab('test'))
+SELECT * FROM test.cte_del_xacts t JOIN tmp ON t.id = tmp.tid;
+
+DROP FUNCTION test.cte_del_xacts_stab(TEXT);
+DROP TABLE test.cte_del_xacts, test.cte_del_xacts_specdata CASCADE;
+
 
 /*
  * Test split and merge
@@ -370,13 +492,13 @@ CREATE TABLE test.num_range_rel (
 	id	SERIAL PRIMARY KEY,
 	txt	TEXT);
 SELECT pathman.create_range_partitions('test.num_range_rel', 'id', 1000, 1000, 4);
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 4001, 5000);
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 4000, 5000);
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 3999, 5000);
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 3000, 3500);
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 0, 999);
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 0, 1000);
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 0, 1001);
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 4001, 5000);
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 4000, 5000);
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 3999, 5000);
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 3000, 3500);
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 0, 999);
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 0, 1000);
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 0, 1001);
 
 /* CaMeL cAsE table names and attributes */
 CREATE TABLE test."TeSt" (a INT NOT NULL, b INT);
@@ -468,6 +590,16 @@ SELECT create_partitions_from_range('test.range_rel', 'id', 1, 1000, 100);
 SELECT drop_partitions('test.range_rel', TRUE);
 SELECT create_partitions_from_range('test.range_rel', 'dt', '2015-01-01'::date, '2015-12-01'::date, '1 month'::interval);
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt = '2015-12-15';
+
+/* Test NOT operator */
+CREATE TABLE bool_test(a INT NOT NULL, b BOOLEAN);
+SELECT create_hash_partitions('bool_test', 'a', 3);
+INSERT INTO bool_test SELECT g, (g % 4) = 0 FROM generate_series(1, 100) AS g;
+SELECT count(*) FROM bool_test;
+SELECT count(*) FROM bool_test WHERE (b = true AND b = false);
+SELECT count(*) FROM bool_test WHERE b = false;	/* 75 values */
+SELECT count(*) FROM bool_test WHERE b = true;	/* 25 values */
+DROP TABLE bool_test CASCADE;
 
 /* Test foreign keys */
 CREATE TABLE test.messages(id SERIAL PRIMARY KEY, msg TEXT);
