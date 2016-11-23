@@ -240,22 +240,6 @@ EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_ok; /* check that pathman is ena
 
 ALTER TABLE calamity.wrong_partition
 ADD CONSTRAINT pathman_wrong_partition_1_check
-CHECK (val < 10); /* wrong constraint */
-SELECT add_to_pathman_config('calamity.part_test', 'val', '10');
-ERROR:  Wrong constraint format for RANGE partition "wrong_partition"
-EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_ok; /* check that pathman is enabled */
-         QUERY PLAN          
------------------------------
- Append
-   ->  Seq Scan on part_ok_0
-   ->  Seq Scan on part_ok_1
-   ->  Seq Scan on part_ok_2
-   ->  Seq Scan on part_ok_3
-(5 rows)
-
-ALTER TABLE calamity.wrong_partition DROP CONSTRAINT pathman_wrong_partition_1_check;
-ALTER TABLE calamity.wrong_partition
-ADD CONSTRAINT pathman_wrong_partition_1_check
 CHECK (val = 1 OR val = 2); /* wrong constraint */
 SELECT add_to_pathman_config('calamity.part_test', 'val', '10');
 ERROR:  Wrong constraint format for RANGE partition "wrong_partition"

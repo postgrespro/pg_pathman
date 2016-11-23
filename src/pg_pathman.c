@@ -446,8 +446,10 @@ select_range_partitions(const Datum value,
 		Assert(cmp_func);
 
 		/* Corner cases */
-		cmp_min = FunctionCall2(cmp_func, value, ranges[startidx].min),
-		cmp_max = FunctionCall2(cmp_func, value, ranges[endidx].max);
+		cmp_min = ranges[startidx].infinite_min ?
+			1 : DatumGetInt32(FunctionCall2(cmp_func, value, ranges[startidx].min));
+		cmp_max = ranges[endidx].infinite_max ?
+			-1 : DatumGetInt32(FunctionCall2(cmp_func, value, ranges[endidx].max));
 
 		if ((cmp_min <= 0 && strategy == BTLessStrategyNumber) ||
 			(cmp_min < 0 && (strategy == BTLessEqualStrategyNumber ||

@@ -166,12 +166,15 @@ check_range_available_pl(PG_FUNCTION_ARGS)
 
 	Datum	start_value	= PG_GETARG_DATUM(1),
 			end_value	= PG_GETARG_DATUM(2);
+	bool	start_null  = PG_ARGISNULL(1),
+			end_null    = PG_ARGISNULL(2);
 	Oid		value_type	= get_fn_expr_argtype(fcinfo->flinfo, 1);
 
 	/* Raise ERROR if range overlaps with any partition */
 	check_range_available(parent_relid,
 						  start_value,
 						  end_value,
+						  start_null, end_null,
 						  value_type,
 						  true);
 

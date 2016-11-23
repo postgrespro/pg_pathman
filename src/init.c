@@ -75,8 +75,8 @@ static int cmp_range_entries(const void *p1, const void *p2, void *arg);
 
 static bool validate_range_constraint(const Expr *expr,
 									  const PartRelationInfo *prel,
-									  Datum *min,
-									  Datum *max);
+									  Datum *lower, Datum *upper,
+									  bool *lower_null, bool *upper_null);
 
 static bool validate_hash_constraint(const Expr *expr,
 									 const PartRelationInfo *prel,
@@ -375,14 +375,18 @@ fill_prel_with_partitions(const Oid *partitions,
 
 			case PT_RANGE:
 				{
-					Datum	range_min, range_max;
+					Datum	lower, upper;
+					bool	lower_null, upper_null;
 
 					if (validate_range_constraint(con_expr, prel,
-												  &range_min, &range_max))
+												  &lower, &upper,
+												  &lower_null, &upper_null))
 					{
-						prel->ranges[i].child_oid	= partitions[i];
-						prel->ranges[i].min			= range_min;
-						prel->ranges[i].max			= range_max;
+						prel->ranges[i].child_oid	 = partitions[i];
+						prel->ranges[i].min			 = lower;
+						prel->ranges[i].max			 = upper;
+						prel->ranges[i].infinite_min = lower_null;
+						prel->ranges[i].infinite_max = upper_null;
 					}
 					else
 					{
@@ -864,61 +868,91 @@ cmp_range_entries(const void *p1, const void *p2, void *arg)
 
 	Oid					cmp_proc_oid = *(Oid *) arg;
 
+	/* If range is half open */
+	if (v1->infinite_min)
+		if (v2->infinite_min)
+			return Int32GetDatum(0);
+		return Int32GetDatum(-1);
+
+	/* Else if range is closed */
 	return OidFunctionCall2(cmp_proc_oid, v1->min, v2->min);
 }
 
 /*
- * Validates range constraint. It MUST have this exact format:
+ * Validates range constraint. It MUST have one of the following formats:
  *
  *		VARIABLE >= CONST AND VARIABLE < CONST
+ *		VARIABLE >= CONST
+ *		VARIABLE < CONST
  *
- * Writes 'min' & 'max' values on success.
+ * Writes 'lower' & 'upper' and 'lower_null' & 'upper_null' values on success.
  */
 static bool
 validate_range_constraint(const Expr *expr,
 						  const PartRelationInfo *prel,
-						  Datum *min,
-						  Datum *max)
+						  Datum *lower, Datum *upper,
+						  bool *lower_null, bool *upper_null)
 {
 	const TypeCacheEntry   *tce;
-	const BoolExpr		   *boolexpr = (const BoolExpr *) expr;
 	const OpExpr		   *opexpr;
 	int						strategy;
 
+/* Validates a single expression of kind VAR >= CONST or VAR < CONST */
+#define validate_range_expr(expr)											\
+	{																		\
+		Datum val;															\
+		opexpr = (OpExpr *) (expr);											\
+		strategy = get_op_opfamily_strategy(opexpr->opno, tce->btree_opf);	\
+																			\
+		/* Get const value */												\
+		if (!read_opexpr_const(opexpr, prel, &val))							\
+			return false;													\
+																			\
+		/* Set min or max depending on operator */							\
+		switch (strategy)													\
+		{																	\
+			case BTGreaterEqualStrategyNumber:								\
+				*lower_null = false;										\
+				*lower = val;												\
+				break;														\
+			case BTLessStrategyNumber:										\
+				*upper_null = false;										\
+				*upper = val;												\
+				break;														\
+			default:														\
+				return false;												\
+		}																	\
+	}
+
 	if (!expr)
 		return false;
-
-	/* it should be an AND operator on top */
-	if (!and_clause((Node *) expr))
-		return false;
-
+	*lower_null = *upper_null = false;
 	tce = lookup_type_cache(prel->atttype, TYPECACHE_BTREE_OPFAMILY);
 
-	/* check that left operand is >= operator */
-	opexpr = (OpExpr *) linitial(boolexpr->args);
-	strategy = get_op_opfamily_strategy(opexpr->opno, tce->btree_opf);
-
-	if (strategy == BTGreaterEqualStrategyNumber)
+	/* It could be either AND operator on top or just an OpExpr */
+	if (and_clause((Node *) expr))
 	{
-		if (!read_opexpr_const(opexpr, prel, min))
-			return false;
+		const BoolExpr	*boolexpr = (const BoolExpr *) expr;
+		ListCell		*lc;
+
+		foreach (lc, boolexpr->args)
+		{
+			Node	   *arg = lfirst(lc);
+
+			if(!IsA(arg, OpExpr))
+				return false;
+
+			validate_range_expr(arg);
+		}
+		return true;
 	}
-	else
-		return false;
-
-	/* check that right operand is < operator */
-	opexpr = (OpExpr *) lsecond(boolexpr->args);
-	strategy = get_op_opfamily_strategy(opexpr->opno, tce->btree_opf);
-
-	if (strategy == BTLessStrategyNumber)
+	else if(IsA(expr, OpExpr))
 	{
-		if (!read_opexpr_const(opexpr, prel, max))
-			return false;
+		validate_range_expr(expr);
+		return true;
 	}
-	else
-		return false;
 
-	return true;
+	return false;
 }
 
 /*

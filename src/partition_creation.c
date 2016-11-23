@@ -834,11 +834,29 @@ build_range_check_constraint(Oid child_relid,
 	return range_constr;
 }
 
+// static int16_t
+// cmp_boundaries(FmgrInfo cmp_func, Datum s1, Datum s2, bool s1_infinite, bool s2_infinite)
+// {
+// 	if (s1_infinite && s2_infinite)
+// 		elog(ERROR,
+// 			 "two half open ranges are overlap");
+
+// 	if (s1_infinite)
+// 		return -1;
+
+// 	if (s2_infinite)
+// 		return 1;
+
+// 	return DatumGetInt16(FunctionCall2(&cmp_func, start_value, ranges[i].max));
+// }
+
 /* Check if range overlaps with any partitions */
 bool
 check_range_available(Oid parent_relid,
 					  Datum start_value,
 					  Datum end_value,
+					  bool infinite_start,
+					  bool infinite_end,
 					  Oid value_type,
 					  bool raise_error)
 {
@@ -864,8 +882,32 @@ check_range_available(Oid parent_relid,
 	ranges = PrelGetRangesArray(prel);
 	for (i = 0; i < PrelChildrenCount(prel); i++)
 	{
-		int		c1 = FunctionCall2(&cmp_func, start_value, ranges[i].max),
-				c2 = FunctionCall2(&cmp_func, end_value, ranges[i].min);
+		// int c1 = cmp_boundaries(cmp_func, start_value, ranges[i].max, infinite_start, ranges[i].infinite_max);
+		// int c2 = cmp_boundaries(cmp_func, end_value, ranges[i].min, infinite_end, ranges[i].infinite_min);
+
+		/* If both ranges are half open then they are obviously overlap */
+		// if (infinite_start && ranges[i].infinite_max)
+		// 	return false;
+		// if (infinite_end && ranges[i].infinite_min)
+		// 	return false;
+
+		// int		c1 = FunctionCall2(&cmp_func, start_value, ranges[i].max),
+		// 		c2 = FunctionCall2(&cmp_func, end_value, ranges[i].min);
+		int c1, c2;
+
+		/*
+		 * If the range we're checking starts with minus infinity or current
+		 * range is ends in plus infinity then the left boundary of the first
+		 * one is on the left
+		 */
+		c1 = (infinite_start || ranges[i].infinite_max) ?
+			-1 : FunctionCall2(&cmp_func, start_value, ranges[i].max);
+		/*
+		 * Similary check the right boundary of first range is on the right
+		 * of the beginning of second one
+		 */
+		c2 = (infinite_end || ranges[i].infinite_min) ?
+			-1 : FunctionCall2(&cmp_func, end_value, ranges[i].max);
 
 		/* There's someone! */
 		if (c1 < 0 && c2 > 0)

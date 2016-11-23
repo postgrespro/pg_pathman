@@ -35,9 +35,11 @@ Node * build_raw_range_check_tree(char *attname,
 								  Datum end_value,
 								  Oid value_type);
 
-bool check_range_available(Oid partition_relid,
+bool check_range_available(Oid parent_relid,
 						   Datum start_value,
 						   Datum end_value,
+						   bool infinite_start,
+						   bool infinite_end,
 						   Oid value_type,
 						   bool raise_error);
 

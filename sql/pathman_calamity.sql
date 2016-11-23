@@ -87,13 +87,6 @@ EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_ok; /* check that pathman is ena
 
 ALTER TABLE calamity.wrong_partition
 ADD CONSTRAINT pathman_wrong_partition_1_check
-CHECK (val < 10); /* wrong constraint */
-SELECT add_to_pathman_config('calamity.part_test', 'val', '10');
-EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_ok; /* check that pathman is enabled */
-ALTER TABLE calamity.wrong_partition DROP CONSTRAINT pathman_wrong_partition_1_check;
-
-ALTER TABLE calamity.wrong_partition
-ADD CONSTRAINT pathman_wrong_partition_1_check
 CHECK (val = 1 OR val = 2); /* wrong constraint */
 SELECT add_to_pathman_config('calamity.part_test', 'val', '10');
 EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_ok; /* check that pathman is enabled */

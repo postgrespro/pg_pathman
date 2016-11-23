@@ -33,9 +33,10 @@ typedef enum
 typedef struct
 {
 	Oid				child_oid;
-
 	Datum			min,
 					max;
+	bool			infinite_min,
+					infinite_max;
 } RangeEntry;
 
 /*
