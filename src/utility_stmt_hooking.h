@@ -1,7 +1,8 @@
 /* ------------------------------------------------------------------------
  *
  * utility_stmt_hooking.h
- *		Transaction-specific locks and other functions
+ *		Override COPY TO/FROM and ALTER TABLE ... RENAME statements
+ *		for partitioned tables
  *
  * Copyright (c) 2016, Postgres Professional
  *
@@ -17,8 +18,16 @@
 #include "nodes/nodes.h"
 
 
+/* Various traits */
 bool is_pathman_related_copy(Node *parsetree);
+bool is_pathman_related_table_rename(Node *parsetree,
+									 Oid *partition_relid_out,
+									 AttrNumber *partitioned_col_out);
+
+/* Statement handlers */
 void PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed);
-void PathmanRenameConstraint(const RenameStmt *stmt);
+void PathmanRenameConstraint(Oid partition_relid,
+							 AttrNumber partitioned_col,
+							 const RenameStmt *partition_rename_stmt);
 
 #endif

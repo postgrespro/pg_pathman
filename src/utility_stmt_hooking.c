@@ -11,8 +11,8 @@
  * ------------------------------------------------------------------------
  */
 
-#include "utility_stmt_hooking.h"
 #include "init.h"
+#include "utility_stmt_hooking.h"
 #include "partition_filter.h"
 #include "relation_info.h"
 
@@ -20,18 +20,14 @@
 #include "access/sysattr.h"
 #include "access/xact.h"
 #include "catalog/namespace.h"
-#include "catalog/pg_attribute.h"
 #include "commands/copy.h"
 #include "commands/trigger.h"
 #include "commands/tablecmds.h"
-#include "executor/executor.h"
 #include "foreign/fdwapi.h"
 #include "miscadmin.h"
-#include "nodes/makefuncs.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
-#include "utils/rel.h"
 #include "utils/rls.h"
 
 #include "libpq/libpq.h"
@@ -74,7 +70,7 @@ bool
 is_pathman_related_copy(Node *parsetree)
 {
 	CopyStmt   *copy_stmt = (CopyStmt *) parsetree;
-	Oid			partitioned_table;
+	Oid			parent_relid;
 
 	Assert(IsPathmanReady());
 
@@ -93,14 +89,14 @@ is_pathman_related_copy(Node *parsetree)
 		return false;
 
 	/* Get partition's Oid while locking it */
-	partitioned_table = RangeVarGetRelid(copy_stmt->relation,
-										 (copy_stmt->is_from ?
-											  RowExclusiveLock :
-											  AccessShareLock),
-										 false);
+	parent_relid = RangeVarGetRelid(copy_stmt->relation,
+									(copy_stmt->is_from ?
+										RowExclusiveLock :
+										AccessShareLock),
+									false);
 
 	/* Check that relation is partitioned */
-	if (get_pathman_relation_info(partitioned_table))
+	if (get_pathman_relation_info(parent_relid))
 	{
 		ListCell *lc;
 
@@ -121,7 +117,7 @@ is_pathman_related_copy(Node *parsetree)
 			elog(ERROR, "COPY is not supported for partitioned tables on Windows");
 		#else
 			elog(DEBUG1, "Overriding default behavior for COPY [%u]",
-				 partitioned_table);
+				 parent_relid);
 		#endif
 
 		return true;
@@ -129,6 +125,57 @@ is_pathman_related_copy(Node *parsetree)
 
 	return false;
 }
+
+/*
+ * Is pg_pathman supposed to handle this table rename stmt?
+ */
+bool
+is_pathman_related_table_rename(Node *parsetree,
+								Oid *partition_relid_out,			/* ret value */
+								AttrNumber *partitioned_col_out)	/* ret value */
+{
+	RenameStmt			   *rename_stmt = (RenameStmt *) parsetree;
+	Oid						partition_relid,
+							parent_relid;
+	const PartRelationInfo *prel;
+	PartParentSearch		parent_search;
+
+	Assert(IsPathmanReady());
+
+	/* Set default values */
+	if (partition_relid_out) *partition_relid_out = InvalidOid;
+	if (partitioned_col_out) *partitioned_col_out = InvalidAttrNumber;
+
+	if (!IsA(parsetree, RenameStmt))
+		return false;
+
+	/* Are we going to rename some table? */
+	if (rename_stmt->renameType != OBJECT_TABLE)
+		return false;
+
+	/* Assume it's a partition, fetch its Oid */
+	partition_relid = RangeVarGetRelid(rename_stmt->relation,
+									   AccessShareLock,
+									   false);
+
+	/* Try fetching parent of this table */
+	parent_relid = get_parent_of_partition(partition_relid, &parent_search);
+	if (parent_search != PPS_ENTRY_PART_PARENT)
+		return false;
+
+	/* Is parent partitioned? */
+	if ((prel = get_pathman_relation_info(parent_relid)) != NULL)
+	{
+		/* Return 'partition_relid' and 'prel->attnum' */
+		if (partition_relid_out) *partition_relid_out = partition_relid;
+		if (partitioned_col_out) *partitioned_col_out = prel->attnum;
+
+		return true;
+	}
+
+	return false;
+}
+
 
 /*
  * CopyGetAttnums - build an integer list of attnums to be copied
@@ -238,6 +285,7 @@ PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
 						   "psql's \\copy command also works for anyone.")));
 	}
 
+	/* Check that we have a relation */
 	if (stmt->relation)
 	{
 		TupleDesc		tupDesc;
@@ -363,13 +411,9 @@ PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
 			rel = NULL;
 		}
 	}
-	else
-	{
-		Assert(stmt->query);
 
-		query = stmt->query;
-		rel = NULL;
-	}
+	/* This should never happen (see is_pathman_related_copy()) */
+	else elog(ERROR, "error in function \"%s\"", CppAsString(PathmanDoCopy));
 
 	/* COPY ... FROM ... */
 	if (is_from)
@@ -626,45 +670,35 @@ prepare_rri_fdw_for_copy(EState *estate,
 }
 
 /*
- * Rename check constraint of table if it's a partition
+ * Rename RANGE\HASH check constraint of a partition on table rename event.
  */
 void
-PathmanRenameConstraint(const RenameStmt *stmt)
+PathmanRenameConstraint(Oid partition_relid,				/* cached partition Oid */
+						AttrNumber partitioned_col,			/* partitioned column */
+						const RenameStmt *part_rename_stmt)	/* partition rename stmt */
 {
-	Oid						partition_relid,
-							parent_relid;
-	char				   *old_constraint_name,
-						   *new_constraint_name;
-	RenameStmt			   *rename_stmt;
-	const PartRelationInfo *prel;
-
-	partition_relid = RangeVarGetRelid(stmt->relation, AccessShareLock, false);
-	parent_relid = get_rel_parent(partition_relid);
-
-	/* Skip if there's no parent */
-	if (!OidIsValid(parent_relid)) return;
-
-	/* Fetch partitioning data */
-	prel = get_pathman_relation_info(parent_relid);
-
-	/* Skip if this table is not partitioned */
-	if (!prel) return;
+	char		   *old_constraint_name,
+				   *new_constraint_name;
+	RenameStmt		rename_stmt;
 
 	/* Generate old constraint name */
-	old_constraint_name = build_check_constraint_name_relid_internal(partition_relid,
-																	 prel->attnum);
+	old_constraint_name =
+			build_check_constraint_name_relid_internal(partition_relid,
+													   partitioned_col);
 
 	/* Generate new constraint name */
-	new_constraint_name = build_check_constraint_name_relname_internal(stmt->newname,
-																	   prel->attnum);
+	new_constraint_name =
+			build_check_constraint_name_relname_internal(part_rename_stmt->newname,
+														 partitioned_col);
 
 	/* Build check constraint RENAME statement */
-	rename_stmt = makeNode(RenameStmt);
-	rename_stmt->renameType = OBJECT_TABCONSTRAINT;
-	rename_stmt->relation = stmt->relation;
-	rename_stmt->subname = old_constraint_name;
-	rename_stmt->newname = new_constraint_name;
-	rename_stmt->missing_ok = false;
+	memset((void *) &rename_stmt, 0, sizeof(RenameStmt));
+	NodeSetTag(&rename_stmt, T_RenameStmt);
+	rename_stmt.renameType = OBJECT_TABCONSTRAINT;
+	rename_stmt.relation = part_rename_stmt->relation;
+	rename_stmt.subname = old_constraint_name;
+	rename_stmt.newname = new_constraint_name;
+	rename_stmt.missing_ok = false;
 
-	RenameConstraint(rename_stmt);
+	RenameConstraint(&rename_stmt);
 }

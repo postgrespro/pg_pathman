@@ -126,7 +126,7 @@ find_children_status find_inheritance_children_array(Oid parentrelId,
 char *build_check_constraint_name_relid_internal(Oid relid,
 												 AttrNumber attno);
 
-char *build_check_constraint_name_relname_internal(char *relname,
+char *build_check_constraint_name_relname_internal(const char *relname,
 												   AttrNumber attno);
 
 bool pathman_config_contains_relation(Oid relid,

@@ -35,10 +35,6 @@ shmem_startup_hook_type			shmem_startup_hook_next = NULL;
 ProcessUtility_hook_type		process_utility_hook_next = NULL;
 
 
-#define is_table_rename_statement(s) \
-			IsA((s), RenameStmt) && ((RenameStmt *)(s))->renameType == OBJECT_TABLE
-
-
 /* Take care of joins */
 void
 pathman_join_pathlist_hook(PlannerInfo *root,
@@ -631,9 +627,12 @@ pathman_process_utility_hook(Node *parsetree,
 							 DestReceiver *dest,
 							 char *completionTag)
 {
-	/* Override standard COPY statement if needed */
 	if (IsPathmanReady())
 	{
+		Oid			partition_relid;
+		AttrNumber	partitioned_col;
+
+		/* Override standard COPY statement if needed */
 		if (is_pathman_related_copy(parsetree))
 		{
 			uint64	processed;
@@ -647,14 +646,13 @@ pathman_process_utility_hook(Node *parsetree,
 			return; /* don't call standard_ProcessUtility() or hooks */
 		}
 
-		if (is_table_rename_statement(parsetree))
-		{
-			/*
-			 * Rename check constraint of a table if it is a partition managed
-			 * by pg_pathman
-			 */
-			PathmanRenameConstraint((RenameStmt *) parsetree);
-		}
+		/* Override standard RENAME statement if needed */
+		if (is_pathman_related_table_rename(parsetree,
+											&partition_relid,
+											&partitioned_col))
+			PathmanRenameConstraint(partition_relid,
+									partitioned_col,
+									(const RenameStmt *) parsetree);
 	}
 
 	/* Call hooks set by other extensions if needed */

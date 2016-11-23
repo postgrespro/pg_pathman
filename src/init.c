@@ -602,7 +602,7 @@ build_check_constraint_name_relid_internal(Oid relid, AttrNumber attno)
 }
 
 char *
-build_check_constraint_name_relname_internal(char *relname, AttrNumber attno)
+build_check_constraint_name_relname_internal(const char *relname, AttrNumber attno)
 {
 	return psprintf("pathman_%s_%u_check", relname, attno);
 }

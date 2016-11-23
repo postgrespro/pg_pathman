@@ -93,6 +93,7 @@ SELECT * FROM copy_stmt_hooking.test ORDER BY val;
 
 DROP SCHEMA copy_stmt_hooking CASCADE;
 
+
 /*
  * Test auto check constraint renaming
  */
@@ -108,17 +109,17 @@ ALTER TABLE rename.test_0 RENAME TO test_one;
 CREATE OR REPLACE FUNCTION add_constraint(rel regclass, att text)
 RETURNS VOID AS $$
 declare
-    constraint_name text := build_check_constraint_name(rel, 'a');
+	constraint_name text := build_check_constraint_name(rel, 'a');
 BEGIN
-    EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (a < 100);',
-                   rel, constraint_name);
+	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (a < 100);',
+				   rel, constraint_name);
 END
 $$
 LANGUAGE plpgsql;
 
 /*
- * Check that it doesn't affect regular inherited tables that aren't managed
- * by pg_pathman
+ * Check that it doesn't affect regular inherited
+ * tables that aren't managed by pg_pathman
  */
 CREATE TABLE rename.test_inh (LIKE rename.test INCLUDING ALL);
 CREATE TABLE rename.test_inh_1 (LIKE rename.test INCLUDING ALL);

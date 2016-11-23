@@ -260,35 +260,6 @@ get_rel_owner(Oid relid)
 }
 
 /*
- * Lookup for a parent table
- */
-Oid
-get_rel_parent(Oid relid)
-{
-	ScanKeyData		key[1];
-	Relation		relation;
-	HeapTuple		inheritsTuple;
-	Oid				inhparent = InvalidOid;
-	SysScanDesc		scan;
-
-	relation = heap_open(InheritsRelationId, AccessShareLock);
-	ScanKeyInit(&key[0],
-				Anum_pg_inherits_inhrelid,
-				BTEqualStrategyNumber, F_OIDEQ,
-				ObjectIdGetDatum(relid));
-	scan = systable_beginscan(relation, InvalidOid, false,
-							  NULL, 1, key);
-
-	if ((inheritsTuple = systable_getnext(scan)) != NULL)
-		inhparent = ((Form_pg_inherits) GETSTRUCT(inheritsTuple))->inhparent;
-
-	systable_endscan(scan);
-	heap_close(relation, AccessShareLock);
-
-	return inhparent;
-}
-
-/*
  * Checks that callback function meets specific requirements.
  * It must have the only JSONB argument and BOOL return type.
  */
