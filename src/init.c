@@ -593,12 +593,18 @@ find_inheritance_children_array(Oid parentrelId,
 /*
  * Generate check constraint name for a partition.
  *
- * This function does not perform sanity checks at all.
+ * These functions does not perform sanity checks at all.
  */
 char *
-build_check_constraint_name_internal(Oid relid, AttrNumber attno)
+build_check_constraint_name_relid_internal(Oid relid, AttrNumber attno)
 {
-	return psprintf("pathman_%s_%u_check", get_rel_name(relid), attno);
+	return build_check_constraint_name_relname_internal(get_rel_name(relid), attno);
+}
+
+char *
+build_check_constraint_name_relname_internal(const char *relname, AttrNumber attno)
+{
+	return psprintf("pathman_%s_%u_check", relname, attno);
 }
 
 /*
@@ -818,7 +824,7 @@ get_partition_constraint_expr(Oid partition, AttrNumber part_attno)
 	bool		conbin_isnull;
 	Expr	   *expr;			/* expression tree for constraint */
 
-	conname = build_check_constraint_name_internal(partition, part_attno);
+	conname = build_check_constraint_name_relid_internal(partition, part_attno);
 	conid = get_relation_constraint_oid(partition, conname, true);
 	if (conid == InvalidOid)
 	{

@@ -901,7 +901,8 @@ build_range_check_constraint(Oid child_relid,
 
 	/* Build a correct name for this constraint */
 	attnum = get_attnum(child_relid, attname);
-	range_constr_name = build_check_constraint_name_internal(child_relid, attnum);
+	range_constr_name = build_check_constraint_name_relid_internal(child_relid,
+																   attnum);
 
 	/* Initialize basic properties of a CHECK constraint */
 	hash_constr = make_constraint_common(range_constr_name,

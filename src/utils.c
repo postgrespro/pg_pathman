@@ -19,6 +19,7 @@
 #include "catalog/pg_extension.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_proc.h"
+#include "catalog/pg_inherits.h"
 #include "commands/extension.h"
 #include "miscadmin.h"
 #include "optimizer/var.h"

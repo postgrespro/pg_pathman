@@ -8,7 +8,7 @@
  * ------------------------------------------------------------------------
  */
 
-#include "copy_stmt_hooking.h"
+#include "utility_stmt_hooking.h"
 #include "hooks.h"
 #include "init.h"
 #include "partition_filter.h"
@@ -24,6 +24,7 @@
 #include "optimizer/cost.h"
 #include "optimizer/restrictinfo.h"
 #include "utils/typcache.h"
+#include "utils/lsyscache.h"
 
 
 set_join_pathlist_hook_type		set_join_pathlist_next = NULL;
@@ -650,18 +651,32 @@ pathman_process_utility_hook(Node *parsetree,
 							 DestReceiver *dest,
 							 char *completionTag)
 {
-	/* Override standard COPY statement if needed */
-	if (IsPathmanReady() && is_pathman_related_copy(parsetree))
+	if (IsPathmanReady())
 	{
-		uint64	processed;
+		Oid			partition_relid;
+		AttrNumber	partitioned_col;
 
-		/* Handle our COPY case (and show a special cmd name) */
-		PathmanDoCopy((CopyStmt *) parsetree, queryString, &processed);
-		if (completionTag)
-			snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
-					 "PATHMAN COPY " UINT64_FORMAT, processed);
+		/* Override standard COPY statement if needed */
+		if (is_pathman_related_copy(parsetree))
+		{
+			uint64	processed;
 
-		return; /* don't call standard_ProcessUtility() or hooks */
+			/* Handle our COPY case (and show a special cmd name) */
+			PathmanDoCopy((CopyStmt *) parsetree, queryString, &processed);
+			if (completionTag)
+				snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
+						 "PATHMAN COPY " UINT64_FORMAT, processed);
+
+			return; /* don't call standard_ProcessUtility() or hooks */
+		}
+
+		/* Override standard RENAME statement if needed */
+		if (is_pathman_related_table_rename(parsetree,
+											&partition_relid,
+											&partitioned_col))
+			PathmanRenameConstraint(partition_relid,
+									partitioned_col,
+									(const RenameStmt *) parsetree);
 	}
 
 	/* Call hooks set by other extensions if needed */
