@@ -15,10 +15,21 @@
 #include "utils.h"
 
 #include "catalog/namespace.h"
+#include "parser/parse_relation.h"
+#include "parser/parse_expr.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
+#include "utils/ruleutils.h"
 
+
+static char *deparse_constraint(Oid relid, Node *expr);
+static ArrayType *construct_infinitable_array(Infinitable **elems,
+											  uint32_t nelems,
+											  Oid elmtype,
+											  int elmlen,
+											  bool elmbyval,
+											  char elmalign);
 
 /* Function declarations */
 
@@ -48,8 +59,12 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 	Oid			parent_relid;
 
 	/* RANGE boundaries + value type */
-	Datum		start_value,
-				end_value;
+	// Datum		start_value,
+	// 			end_value;
+	// bool		infinite_start,
+	// 			infinite_end;
+	Infinitable	start,
+				end;
 	Oid			value_type;
 
 	/* Optional: name & tablespace */
@@ -64,19 +79,23 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 	if (PG_ARGISNULL(0))
 		elog(ERROR, "'parent_relid' should not be NULL");
 
-	/* Handle 'start_value' */
-	if (PG_ARGISNULL(1))
-		elog(ERROR, "'start_value' should not be NULL");
+	// /* Handle 'start_value' */
+	// if (PG_ARGISNULL(1))
+	// 	elog(ERROR, "'start_value' should not be NULL");
 
-	/* Handle 'end_value' */
-	if (PG_ARGISNULL(2))
-		elog(ERROR, "'end_value' should not be NULL");
+	// /* Handle 'end_value' */
+	// if (PG_ARGISNULL(2))
+	// 	elog(ERROR, "'end_value' should not be NULL");
 
 	/* Fetch mandatory args */
 	parent_relid	= PG_GETARG_OID(0);
-	start_value		= PG_GETARG_DATUM(1);
-	end_value		= PG_GETARG_DATUM(2);
+	// start_value		= PG_GETARG_DATUM(1);
+	// end_value		= PG_GETARG_DATUM(2);
+	// infinite_start	= PG_ARGISNULL(1);
+	// infinite_end	= PG_ARGISNULL(2);
 	value_type		= get_fn_expr_argtype(fcinfo->flinfo, 1);
+	MakeInfinitable(&start, PG_GETARG_DATUM(1), PG_ARGISNULL(1));
+	MakeInfinitable(&end, PG_GETARG_DATUM(2), PG_ARGISNULL(2));
 
 	/* Fetch 'partition_name' */
 	if (!PG_ARGISNULL(3))
@@ -99,8 +118,8 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 
 	/* Create a new RANGE partition and return its Oid */
 	partition_relid = create_single_range_partition_internal(parent_relid,
-															 start_value,
-															 end_value,
+															 &start,
+															 &end,
 															 value_type,
 															 partition_name_rv,
 															 tablespace);
@@ -164,17 +183,21 @@ check_range_available_pl(PG_FUNCTION_ARGS)
 {
 	Oid		parent_relid = PG_GETARG_OID(0);
 
-	Datum	start_value	= PG_GETARG_DATUM(1),
-			end_value	= PG_GETARG_DATUM(2);
-	bool	start_null  = PG_ARGISNULL(1),
-			end_null    = PG_ARGISNULL(2);
-	Oid		value_type	= get_fn_expr_argtype(fcinfo->flinfo, 1);
+	// Datum	start_value	= PG_GETARG_DATUM(1),
+	// 		end_value	= PG_GETARG_DATUM(2);
+	// bool	start_null  = PG_ARGISNULL(1),
+	// 		end_null    = PG_ARGISNULL(2);
+	Infinitable	start_value,
+				end_value;
+	Oid			value_type	= get_fn_expr_argtype(fcinfo->flinfo, 1);
+
+	MakeInfinitable(&start_value, PG_GETARG_DATUM(1), PG_ARGISNULL(1));
+	MakeInfinitable(&end_value, PG_GETARG_DATUM(2), PG_ARGISNULL(2));
 
 	/* Raise ERROR if range overlaps with any partition */
 	check_range_available(parent_relid,
-						  start_value,
-						  end_value,
-						  start_null, end_null,
+						  &start_value,
+						  &end_value,
 						  value_type,
 						  true);
 
@@ -224,11 +247,26 @@ get_part_range_by_oid(PG_FUNCTION_ARGS)
 		if (ranges[i].child_oid == partition_relid)
 		{
 			ArrayType  *arr;
-			Datum		elems[2] = { ranges[i].min, ranges[i].max };
+			// Datum		elems[2] = { InfinitableGetValue(&ranges[i].min),
+			// 						 InfinitableGetValue(&ranges[i].max) };
+			// bool		nulls[2] = { IsInfinite(&ranges[i].min),
+			// 						 IsInfinite(&ranges[i].max) };
+			// int			dims[1] = { 2 };
+			// int			lbs[1] = { 1 };
 
-			arr = construct_array(elems, 2, prel->atttype,
-								  prel->attlen, prel->attbyval,
-								  prel->attalign);
+			// arr = construct_md_array(elems, nulls, 1, dims, lbs,
+			// 					   prel->atttype, prel->attlen,
+			// 					   prel->attbyval, prel->attalign);
+
+			// arr = construct_array(elems, 2, prel->atttype,
+			// 					  prel->attlen, prel->attbyval,
+			// 					  prel->attalign);
+			Infinitable *elems[2] = { &ranges[i].min, &ranges[i].max };
+
+
+			arr = construct_infinitable_array(elems, 2,
+											  prel->atttype, prel->attlen,
+								   			  prel->attbyval, prel->attalign);
 
 			PG_RETURN_ARRAYTYPE_P(arr);
 		}
@@ -253,7 +291,8 @@ get_part_range_by_idx(PG_FUNCTION_ARGS)
 {
 	Oid						parent_relid = InvalidOid;
 	int						partition_idx = 0;
-	Datum					elems[2];
+	// Datum					elems[2];
+	Infinitable			   *elems[2];
 	RangeEntry			   *ranges;
 	const PartRelationInfo *prel;
 
@@ -287,14 +326,15 @@ get_part_range_by_idx(PG_FUNCTION_ARGS)
 
 	ranges = PrelGetRangesArray(prel);
 
-	elems[0] = ranges[partition_idx].min;
-	elems[1] = ranges[partition_idx].max;
+	elems[0] = &ranges[partition_idx].min;
+	elems[1] = &ranges[partition_idx].max;
 
-	PG_RETURN_ARRAYTYPE_P(construct_array(elems, 2,
-										  prel->atttype,
-										  prel->attlen,
-										  prel->attbyval,
-										  prel->attalign));
+	PG_RETURN_ARRAYTYPE_P(
+		construct_infinitable_array(elems, 2,
+									prel->atttype,
+									prel->attlen,
+									prel->attbyval,
+									prel->attalign));
 }
 
 
@@ -308,28 +348,58 @@ get_part_range_by_idx(PG_FUNCTION_ARGS)
 Datum
 build_range_condition(PG_FUNCTION_ARGS)
 {
-	text   *attname = PG_GETARG_TEXT_P(0);
+	Oid		relid = PG_GETARG_OID(0);
+	text   *attname = PG_GETARG_TEXT_P(1);
 
-	Datum	min_bound = PG_GETARG_DATUM(1),
-			max_bound = PG_GETARG_DATUM(2);
+	Infinitable min,
+				max;
+	Oid			bounds_type = get_fn_expr_argtype(fcinfo->flinfo, 2);
+	Constraint *con;
+	char	   *result;
 
-	Oid		min_bound_type = get_fn_expr_argtype(fcinfo->flinfo, 1),
-			max_bound_type = get_fn_expr_argtype(fcinfo->flinfo, 2);
+	MakeInfinitable(&min, PG_GETARG_DATUM(2), PG_ARGISNULL(2));
+	MakeInfinitable(&max, PG_GETARG_DATUM(3), PG_ARGISNULL(3));
 
-	char   *result;
+	con = build_range_check_constraint(relid, text_to_cstring(attname),
+									   &min, &max,
+									   bounds_type);
 
-	/* This is not going to trigger (not now, at least), just for the safety */
-	if (min_bound_type != max_bound_type)
-		elog(ERROR, "cannot build range condition: "
-					"boundaries should be of the same type");
-
-	/* Create range condition CSTRING */
-	result = psprintf("%1$s >= '%2$s' AND %1$s < '%3$s'",
-					  text_to_cstring(attname),
-					  datum_to_cstring(min_bound, min_bound_type),
-					  datum_to_cstring(max_bound, max_bound_type));
+	result = deparse_constraint(relid, con->raw_expr);
 
 	PG_RETURN_TEXT_P(cstring_to_text(result));
+}
+
+/*
+ * Transform constraint into cstring
+ */
+static char *
+deparse_constraint(Oid relid, Node *expr)
+{
+	Relation		rel;
+	RangeTblEntry  *rte;
+	Node		   *cooked_expr;
+	ParseState	   *pstate;
+	List		   *context;
+	char		   *result;
+
+	context = deparse_context_for(get_rel_name(relid), relid);
+
+	rel = heap_open(relid, NoLock);
+
+	/* Initialize parse state */
+	pstate = make_parsestate(NULL);
+	rte = addRangeTableEntryForRelation(pstate, rel, NULL, false, true);
+	addRTEtoQuery(pstate, rte, true, true, true);
+
+	/* Transform constraint into executable expression (i.e. cook it) */
+	cooked_expr = transformExpr(pstate, expr, EXPR_KIND_CHECK_CONSTRAINT);
+
+	/* Transform expression into string */
+	result = deparse_expression(cooked_expr, context, false, false);
+
+	heap_close(rel, NoLock);
+
+	return result;
 }
 
 Datum
@@ -346,4 +416,41 @@ build_sequence_name(PG_FUNCTION_ARGS)
 					  quote_identifier(build_sequence_name_internal(parent_relid)));
 
 	PG_RETURN_TEXT_P(cstring_to_text(result));
+}
+
+/*
+ * Build 1d array of Infinitable elements
+ *
+ *		The main difference from construct_array() is that it will substitute
+ *		infinite values with NULL's
+ */
+static ArrayType *
+construct_infinitable_array(Infinitable **elems,
+							uint32_t nelems,
+							Oid elmtype,
+							int elmlen,
+							bool elmbyval,
+							char elmalign)
+{
+	ArrayType  *arr;
+	Datum	   *data;
+	bool	   *nulls;
+	int			dims[1] = { nelems };
+	int			lbs[1] = { 1 };
+	int 		i;
+
+	data = palloc(sizeof(Datum) * nelems);
+	nulls = palloc(sizeof(bool) * nelems);
+
+	for (i = 0; i < nelems; i++)
+	{
+		data[i] = InfinitableGetValue(elems[i]);
+		nulls[i] = IsInfinite(elems[i]);
+	}
+
+	arr = construct_md_array(data, nulls, 1, dims, lbs,
+							 elmtype, elmlen,
+							 elmbyval, elmalign);
+
+	return arr;
 }

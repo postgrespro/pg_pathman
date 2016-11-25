@@ -17,6 +17,32 @@
 #include "storage/lock.h"
 
 
+/* Infinitable datum values */
+typedef struct
+{
+	Datum	value;
+	bool	is_infinite;
+} Infinitable;
+
+#define MakeInfinitable(inf, _value, _is_infinite)	\
+	do												\
+	{												\
+		(inf)->value = (_value);					\
+		(inf)->is_infinite = (_is_infinite);		\
+	} while (0)
+
+#define IsInfinite(i)			((i)->is_infinite)
+#define InfinitableGetValue(i)	((i)->value)
+#define CopyInfinitable(i_to, i_from, by_val, len)							\
+	do																		\
+	{																		\
+		(i_to)->value = !IsInfinite(i_from) ?								\
+			datumCopy((i_from)->value, (by_val), (len)) :					\
+			(Datum) 0;														\
+		(i_to)->is_infinite = IsInfinite(i_from);							\
+	} while (0)
+
+
 /*
  * Partitioning type.
  */
@@ -33,10 +59,10 @@ typedef enum
 typedef struct
 {
 	Oid				child_oid;
-	Datum			min,
+	Infinitable		min,
 					max;
-	bool			infinite_min,
-					infinite_max;
+	// bool			infinite_min,
+	// 				infinite_max;
 } RangeEntry;
 
 /*
@@ -159,19 +185,19 @@ FreeChildrenArray(PartRelationInfo *prel)
 	Assert(PrelIsValid(prel));
 
 	/* Remove relevant PartParentInfos */
-	if ((prel)->children)
+	if (prel->children)
 	{
 		for (i = 0; i < PrelChildrenCount(prel); i++)
 		{
-			Oid child = (prel)->children[i];
+			Oid child = prel->children[i];
 
 			/* If it's *always been* relid's partition, free cache */
 			if (PrelParentRelid(prel) == get_parent_of_partition(child, NULL))
 				forget_parent_of_partition(child, NULL);
 		}
 
-		pfree((prel)->children);
-		(prel)->children = NULL;
+		pfree(prel->children);
+		prel->children = NULL;
 	}
 }
 
@@ -183,20 +209,23 @@ FreeRangesArray(PartRelationInfo *prel)
 	Assert(PrelIsValid(prel));
 
 	/* Remove RangeEntries array */
-	if ((prel)->ranges)
+	if (prel->ranges)
 	{
 		/* Remove persistent entries if not byVal */
-		if (!(prel)->attbyval)
+		if (!prel->attbyval)
 		{
 			for (i = 0; i < PrelChildrenCount(prel); i++)
 			{
-				pfree(DatumGetPointer((prel)->ranges[i].min));
-				pfree(DatumGetPointer((prel)->ranges[i].max));
+				if (!IsInfinite(&prel->ranges[i].min))
+					pfree(DatumGetPointer(InfinitableGetValue(&prel->ranges[i].min)));
+
+				if (!IsInfinite(&prel->ranges[i].max))
+					pfree(DatumGetPointer(InfinitableGetValue(&prel->ranges[i].max)));
 			}
 		}
 
-		pfree((prel)->ranges);
-		(prel)->ranges = NULL;
+		pfree(prel->ranges);
+		prel->ranges = NULL;
 	}
 }
 

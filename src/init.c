@@ -383,10 +383,13 @@ fill_prel_with_partitions(const Oid *partitions,
 												  &lower_null, &upper_null))
 					{
 						prel->ranges[i].child_oid	 = partitions[i];
-						prel->ranges[i].min			 = lower;
-						prel->ranges[i].max			 = upper;
-						prel->ranges[i].infinite_min = lower_null;
-						prel->ranges[i].infinite_max = upper_null;
+						// prel->ranges[i].min			 = lower;
+						// prel->ranges[i].max			 = upper;
+						// prel->ranges[i].infinite_min = lower_null;
+						// prel->ranges[i].infinite_max = upper_null;
+						(&prel->ranges[i].min)->value = lower;
+						MakeInfinitable(&prel->ranges[i].min, lower, lower_null);
+						MakeInfinitable(&prel->ranges[i].max, upper, upper_null);
 					}
 					else
 					{
@@ -428,13 +431,21 @@ fill_prel_with_partitions(const Oid *partitions,
 		old_mcxt = MemoryContextSwitchTo(TopMemoryContext);
 		for (i = 0; i < PrelChildrenCount(prel); i++)
 		{
-			prel->ranges[i].max = datumCopy(prel->ranges[i].max,
-											prel->attbyval,
-											prel->attlen);
+			// prel->ranges[i].max = datumCopy(prel->ranges[i].max,
+			// 								prel->attbyval,
+			// 								prel->attlen);
+			CopyInfinitable(&(prel->ranges[i].max),
+							&(prel->ranges[i].max),
+							prel->attbyval,
+							prel->attlen);
 
-			prel->ranges[i].min = datumCopy(prel->ranges[i].min,
-											prel->attbyval,
-											prel->attlen);
+			// prel->ranges[i].min = datumCopy(prel->ranges[i].min,
+			// 								prel->attbyval,
+			// 								prel->attlen);
+			CopyInfinitable(&prel->ranges[i].min,
+							&prel->ranges[i].min,
+							prel->attbyval,
+							prel->attlen);
 		}
 		MemoryContextSwitchTo(old_mcxt);
 
@@ -869,15 +880,21 @@ cmp_range_entries(const void *p1, const void *p2, void *arg)
 	Oid					cmp_proc_oid = *(Oid *) arg;
 
 	/* If range is half open */
-	if (v1->infinite_min)
+	if (IsInfinite(&v1->min))
 	{
-		if (v2->infinite_min)
-			return Int32GetDatum(0);
+		// if (IsInfinite(&v2->min))
+		// 	return Int32GetDatum(0);
 		return Int32GetDatum(-1);
+	}
+	if (IsInfinite(&v2->min))
+	{
+		return Int32GetDatum(1);
 	}
 
 	/* Else if range is closed */
-	return OidFunctionCall2(cmp_proc_oid, v1->min, v2->min);
+	return OidFunctionCall2(cmp_proc_oid,
+							InfinitableGetValue(&v1->min),
+							InfinitableGetValue(&v2->min));
 }
 
 /*
@@ -928,7 +945,7 @@ validate_range_constraint(const Expr *expr,
 
 	if (!expr)
 		return false;
-	*lower_null = *upper_null = false;
+	*lower_null = *upper_null = true;
 	tce = lookup_type_cache(prel->atttype, TYPECACHE_BTREE_OPFAMILY);
 
 	/* It could be either AND operator on top or just an OpExpr */

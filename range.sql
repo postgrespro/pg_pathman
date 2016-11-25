@@ -505,7 +505,8 @@ BEGIN
 																 partition_name);
 
 	/* Copy data */
-	v_cond := @extschema@.build_range_condition(v_attname, split_value, p_range[2]);
+	v_cond := @extschema@.build_range_condition(v_new_partition::regclass,
+												v_attname, split_value, p_range[2]);
 	EXECUTE format('WITH part_data AS (DELETE FROM %s WHERE %s RETURNING *)
 					INSERT INTO %s SELECT * FROM part_data',
 				   partition::TEXT,
@@ -513,7 +514,8 @@ BEGIN
 				   v_new_partition);
 
 	/* Alter original partition */
-	v_cond := @extschema@.build_range_condition(v_attname, p_range[1], split_value);
+	v_cond := @extschema@.build_range_condition(partition::regclass,
+												v_attname, p_range[1], split_value);
 	v_check_name := @extschema@.build_check_constraint_name(partition, v_attname);
 
 	EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %s',
@@ -612,6 +614,8 @@ DECLARE
 	v_attname		TEXT;
 	v_atttype		REGTYPE;
 	v_check_name	TEXT;
+	v_lower_bound	dummy%TYPE;
+	v_upper_bound	dummy%TYPE;
 
 BEGIN
 	SELECT attname FROM @extschema@.pathman_config
@@ -642,13 +646,28 @@ BEGIN
 				   partition1::TEXT,
 				   v_check_name);
 
+	/* Determine left bound */
+	IF p_range[1] IS NULL OR p_range[3] IS NULL THEN
+		v_lower_bound := NULL;
+	ELSE
+		v_lower_bound := least(p_range[1], p_range[3]);
+	END IF;
+
+	/* Determine right bound */
+	IF p_range[2] IS NULL OR p_range[4] IS NULL THEN
+		v_upper_bound := NULL;
+	ELSE
+		v_upper_bound := greatest(p_range[2], p_range[4]);
+	END IF;
+
 	/* and create a new one */
 	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)',
 				   partition1::TEXT,
 				   v_check_name,
-				   @extschema@.build_range_condition(v_attname,
-													 least(p_range[1], p_range[3]),
-													 greatest(p_range[2], p_range[4])));
+				   @extschema@.build_range_condition(partition1,
+				   									 v_attname,
+													 v_lower_bound,
+													 v_upper_bound));
 
 	/* Copy data from second partition to the first one */
 	EXECUTE format('WITH part_data AS (DELETE FROM %s RETURNING *)
@@ -744,6 +763,10 @@ BEGIN
 				   v_atttype::TEXT)
 	USING parent_relid
 	INTO p_range;
+
+	IF p_range[2] IS NULL THEN
+		RAISE EXCEPTION 'Cannot append partition because last partition is half open';
+	END IF;
 
 	IF @extschema@.is_date_type(p_atttype) THEN
 		v_part_name := @extschema@.create_single_range_partition(
@@ -854,6 +877,10 @@ BEGIN
 				   v_atttype::TEXT)
 	USING parent_relid
 	INTO p_range;
+
+	IF p_range[1] IS NULL THEN
+		RAISE EXCEPTION 'Cannot prepend partition because first partition is half open';
+	END IF;
 
 	IF @extschema@.is_date_type(p_atttype) THEN
 		v_part_name := @extschema@.create_single_range_partition(
@@ -1045,7 +1072,8 @@ BEGIN
 	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)',
 				   partition::TEXT,
 				   @extschema@.build_check_constraint_name(partition, v_attname),
-				   @extschema@.build_range_condition(v_attname,
+				   @extschema@.build_range_condition(partition,
+													 v_attname,
 													 start_value,
 													 end_value));
 
@@ -1230,6 +1258,7 @@ SET client_min_messages = WARNING;
  * Construct CHECK constraint condition for a range partition.
  */
 CREATE OR REPLACE FUNCTION @extschema@.build_range_condition(
+	p_relid			REGCLASS,
 	p_attname		TEXT,
 	start_value		ANYELEMENT,
 	end_value		ANYELEMENT)
