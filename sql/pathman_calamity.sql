@@ -114,6 +114,14 @@ CREATE TABLE calamity.hash_two_times(val serial);
 SELECT create_hash_partitions('calamity.hash_two_times', 'val', 2);
 SELECT create_hash_partitions_internal('calamity.hash_two_times', 'val', 2);
 
+/* check function disable_pathman_for() */
+CREATE TABLE calamity.to_be_disabled(val INT NOT NULL);
+SELECT create_hash_partitions('calamity.to_be_disabled', 'val', 3);	/* add row to main config */
+SELECT set_enable_parent('calamity.to_be_disabled', true); /* add row to params */
+SELECT disable_pathman_for('calamity.to_be_disabled'); /* should delete both rows */
+SELECT count(*) FROM pathman_config WHERE partrel = 'calamity.to_be_disabled'::REGCLASS;
+SELECT count(*) FROM pathman_config_params WHERE partrel = 'calamity.to_be_disabled'::REGCLASS;
+
 
 DROP SCHEMA calamity CASCADE;
 DROP EXTENSION pg_pathman;

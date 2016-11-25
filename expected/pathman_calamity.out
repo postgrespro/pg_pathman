@@ -303,6 +303,39 @@ SELECT create_hash_partitions('calamity.hash_two_times', 'val', 2);
 
 SELECT create_hash_partitions_internal('calamity.hash_two_times', 'val', 2);
 ERROR:  cannot add new HASH partitions
+/* check function disable_pathman_for() */
+CREATE TABLE calamity.to_be_disabled(val INT NOT NULL);
+SELECT create_hash_partitions('calamity.to_be_disabled', 'val', 3);	/* add row to main config */
+ create_hash_partitions 
+------------------------
+                      3
+(1 row)
+
+SELECT set_enable_parent('calamity.to_be_disabled', true); /* add row to params */
+ set_enable_parent 
+-------------------
+ 
+(1 row)
+
+SELECT disable_pathman_for('calamity.to_be_disabled'); /* should delete both rows */
+NOTICE:  function calamity.to_be_disabled_upd_trig_func() does not exist, skipping
+ disable_pathman_for 
+---------------------
+ 
+(1 row)
+
+SELECT count(*) FROM pathman_config WHERE partrel = 'calamity.to_be_disabled'::REGCLASS;
+ count 
+-------
+     0
+(1 row)
+
+SELECT count(*) FROM pathman_config_params WHERE partrel = 'calamity.to_be_disabled'::REGCLASS;
+ count 
+-------
+     0
+(1 row)
+
 DROP SCHEMA calamity CASCADE;
-NOTICE:  drop cascades to 11 other objects
+NOTICE:  drop cascades to 15 other objects
 DROP EXTENSION pg_pathman;

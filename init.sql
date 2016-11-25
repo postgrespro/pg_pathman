@@ -340,7 +340,11 @@ $$
 BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
 
+	/* Delete rows from both config tables */
 	DELETE FROM @extschema@.pathman_config WHERE partrel = parent_relid;
+	DELETE FROM @extschema@.pathman_config_params WHERE partrel = parent_relid;
+
+	/* Drop triggers on update */
 	PERFORM @extschema@.drop_triggers(parent_relid);
 
 	/* Notify backend about changes */
