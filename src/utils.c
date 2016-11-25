@@ -261,7 +261,7 @@ get_rel_persistence(Oid relid)
 #endif
 
 /*
- * Returns relation owner
+ * Get relation owner.
  */
 Oid
 get_rel_owner(Oid relid)
@@ -279,6 +279,34 @@ get_rel_owner(Oid relid)
 
 		return owner;
 	}
+
+	return InvalidOid;
+}
+
+/*
+ * Get type of column by its name.
+ */
+Oid
+get_attribute_type(Oid relid, const char *attname, bool missing_ok)
+{
+	Oid			result;
+	HeapTuple	tp;
+
+	/* NOTE: for now it's the most efficient way */
+	tp = SearchSysCacheAttName(relid, attname);
+	if (HeapTupleIsValid(tp))
+	{
+		Form_pg_attribute att_tup = (Form_pg_attribute) GETSTRUCT(tp);
+		result = att_tup->atttypid;
+		ReleaseSysCache(tp);
+
+		return result;
+	}
+
+	if (!missing_ok)
+		elog(ERROR, "cannot find type name for attribute \"%s\" "
+					"of relation \"%s\"",
+			 attname, get_rel_name_or_relid(relid));
 
 	return InvalidOid;
 }

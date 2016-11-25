@@ -293,6 +293,16 @@ SHOW pg_pathman.enable;
  on
 (1 row)
 
+/* check function create_hash_partitions_internal() (called for the 2nd time) */
+CREATE TABLE calamity.hash_two_times(val serial);
+SELECT create_hash_partitions('calamity.hash_two_times', 'val', 2);
+ create_hash_partitions 
+------------------------
+                      2
+(1 row)
+
+SELECT create_hash_partitions_internal('calamity.hash_two_times', 'val', 2);
+ERROR:  cannot add new HASH partitions
 DROP SCHEMA calamity CASCADE;
-NOTICE:  drop cascades to 8 other objects
+NOTICE:  drop cascades to 11 other objects
 DROP EXTENSION pg_pathman;

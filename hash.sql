@@ -51,43 +51,10 @@ BEGIN
 	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype)
 	VALUES (parent_relid, attribute, 1);
 
-	/* Create partitions and update pg_pathman configuration */
-	FOR partnum IN 0..partitions_count-1
-	LOOP
-		v_child_relname := format('%s.%s',
-								  quote_ident(v_plain_schema),
-								  quote_ident(v_plain_relname || '_' || partnum));
-
-		EXECUTE format(
-			'CREATE TABLE %1$s (LIKE %2$s INCLUDING ALL) INHERITS (%2$s) TABLESPACE %s',
-			v_child_relname,
-			parent_relid::TEXT,
-			@extschema@.get_rel_tablespace_name(parent_relid));
-
-		EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s
-						CHECK (@extschema@.get_hash_part_idx(%s(%s), %s) = %s)',
-					   v_child_relname,
-					   @extschema@.build_check_constraint_name(v_child_relname::REGCLASS,
-															   attribute),
-					   v_hashfunc::TEXT,
-					   attribute,
-					   partitions_count,
-					   partnum);
-
-		PERFORM @extschema@.copy_foreign_keys(parent_relid, v_child_relname::REGCLASS);
-
-		/* Fetch init_callback from 'params' table */
-		WITH stub_callback(stub) as (values (0))
-		SELECT coalesce(init_callback, 0::REGPROCEDURE)
-		FROM stub_callback
-		LEFT JOIN @extschema@.pathman_config_params AS params
-		ON params.partrel = parent_relid
-		INTO v_init_callback;
-
-		PERFORM @extschema@.invoke_on_partition_created_callback(parent_relid,
-																 v_child_relname::REGCLASS,
-																 v_init_callback);
-	END LOOP;
+	/* Create partitions */
+	PERFORM @extschema@.create_hash_partitions_internal(parent_relid,
+														attribute,
+														partitions_count);
 
 	/* Notify backend about changes */
 	PERFORM @extschema@.on_create_partitions(parent_relid);
@@ -202,7 +169,7 @@ BEGIN
 				   old_fields, att_fmt, new_fields, child_relname_format,
 				   @extschema@.get_type_hash_func(atttype)::TEXT);
 
-	/* Create trigger on every partition */
+	/* Create trigger on each partition */
 	FOR num IN 0..partitions_count-1
 	LOOP
 		EXECUTE format(trigger,
@@ -214,6 +181,16 @@ BEGIN
 	return funcname;
 END
 $$ LANGUAGE plpgsql;
+
+/*
+ * Just create HASH partitions, called by create_hash_partitions().
+ */
+CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions_internal(
+	parent_relid		REGCLASS,
+	attribute			TEXT,
+	partitions_count	INTEGER)
+RETURNS VOID AS 'pg_pathman', 'create_hash_partitions_internal'
+LANGUAGE C STRICT;
 
 /*
  * Returns hash function OID for specified type

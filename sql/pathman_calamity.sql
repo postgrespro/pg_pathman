@@ -109,6 +109,11 @@ ALTER TABLE calamity.wrong_partition DROP CONSTRAINT pathman_wrong_partition_1_c
 /* check GUC variable */
 SHOW pg_pathman.enable;
 
+/* check function create_hash_partitions_internal() (called for the 2nd time) */
+CREATE TABLE calamity.hash_two_times(val serial);
+SELECT create_hash_partitions('calamity.hash_two_times', 'val', 2);
+SELECT create_hash_partitions_internal('calamity.hash_two_times', 'val', 2);
+
 
 DROP SCHEMA calamity CASCADE;
 DROP EXTENSION pg_pathman;
