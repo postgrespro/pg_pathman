@@ -11,6 +11,7 @@
 #include "pathman.h"
 #include "partition_creation.h"
 #include "relation_info.h"
+#include "utils.h"
 
 #include "utils/builtins.h"
 #include "utils/typcache.h"
