@@ -1075,7 +1075,7 @@ make_constraint_common(char *name, Node *raw_expr)
 	constraint->initdeferred	= false;
 	constraint->location		= -1;
 	constraint->contype			= CONSTR_CHECK;
-	constraint->is_no_inherit	= true;
+	constraint->is_no_inherit	= false;
 
 	/* Validate existing data using this constraint */
 	constraint->skip_validation	= false;
