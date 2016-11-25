@@ -45,19 +45,17 @@ BEGIN
 
 	/* Check if column has NULL values */
 	IF v_count > 0 AND (v_min IS NULL OR v_max IS NULL) THEN
-		RAISE EXCEPTION '''%'' column contains NULL values', attribute;
+		RAISE EXCEPTION 'column "%" contains NULL values', attribute;
 	END IF;
 
 	/* Check lower boundary */
 	IF start_value > v_min THEN
-		RAISE EXCEPTION 'start value is less than minimum value of ''%''',
-				attribute;
+		RAISE EXCEPTION 'start value is less than min value of "%"', attribute;
 	END IF;
 
 	/* Check upper boundary */
 	IF end_value <= v_max THEN
-		RAISE EXCEPTION 'not enough partitions to fit all values of ''%''',
-				attribute;
+		RAISE EXCEPTION 'not enough partitions to fit all values of "%"', attribute;
 	END IF;
 END
 $$ LANGUAGE plpgsql;
@@ -225,7 +223,7 @@ BEGIN
 		END IF;
 
 		IF v_max IS NULL THEN
-			RAISE EXCEPTION '''%'' column has NULL values', attribute;
+			RAISE EXCEPTION 'column "%" has NULL values', attribute;
 		END IF;
 
 		p_count := 0;
@@ -577,7 +575,7 @@ BEGIN
 
 	/* Check if this is a RANGE partition */
 	IF v_part_type != 2 THEN
-		RAISE EXCEPTION 'specified partitions aren''t RANGE partitions';
+		RAISE EXCEPTION 'specified partitions are not RANGE partitions';
 	END IF;
 
 	v_atttype := @extschema@.get_attribute_type(partition1, v_attname);
