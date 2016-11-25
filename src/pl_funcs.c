@@ -36,10 +36,11 @@ PG_FUNCTION_INFO_V1( on_partitions_created );
 PG_FUNCTION_INFO_V1( on_partitions_updated );
 PG_FUNCTION_INFO_V1( on_partitions_removed );
 
+PG_FUNCTION_INFO_V1( get_number_of_partitions_pl );
 PG_FUNCTION_INFO_V1( get_parent_of_partition_pl );
 PG_FUNCTION_INFO_V1( get_base_type_pl );
 PG_FUNCTION_INFO_V1( get_attribute_type_pl );
-PG_FUNCTION_INFO_V1( get_rel_tablespace_name );
+PG_FUNCTION_INFO_V1( get_tablespace_pl );
 
 PG_FUNCTION_INFO_V1( show_partition_list_internal );
 
@@ -48,6 +49,7 @@ PG_FUNCTION_INFO_V1( build_update_trigger_name );
 PG_FUNCTION_INFO_V1( build_check_constraint_name_attnum );
 PG_FUNCTION_INFO_V1( build_check_constraint_name_attname );
 
+PG_FUNCTION_INFO_V1( validate_relname );
 PG_FUNCTION_INFO_V1( is_date_type );
 PG_FUNCTION_INFO_V1( is_attribute_nullable );
 
@@ -159,6 +161,22 @@ on_partitions_removed(PG_FUNCTION_ARGS)
  */
 
 /*
+ * Get number of relation's partitions managed by pg_pathman.
+ */
+Datum
+get_number_of_partitions_pl(PG_FUNCTION_ARGS)
+{
+	Oid						parent = PG_GETARG_OID(0);
+	const PartRelationInfo *prel;
+
+	/* If we couldn't find PartRelationInfo, return 0 */
+	if ((prel = get_pathman_relation_info(parent)) == NULL)
+		PG_RETURN_INT32(0);
+
+	PG_RETURN_INT32(PrelChildrenCount(prel));
+}
+
+/*
  * Get parent of a specified partition.
  */
 Datum
@@ -211,7 +229,7 @@ get_attribute_type_pl(PG_FUNCTION_ARGS)
  * Return tablespace name for specified relation
  */
 Datum
-get_rel_tablespace_name(PG_FUNCTION_ARGS)
+get_tablespace_pl(PG_FUNCTION_ARGS)
 {
 	Oid			relid = PG_GETARG_OID(0);
 	Oid			tablespace_id;
@@ -418,6 +436,29 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
  *  Traits
  * --------
  */
+
+/* Check that relation exists. Usually we pass regclass as text, hence the name */
+Datum
+validate_relname(PG_FUNCTION_ARGS)
+{
+	Oid relid;
+
+	/* We don't accept NULL */
+	if (PG_ARGISNULL(0))
+		ereport(ERROR, (errmsg("relation should not be NULL"),
+						errdetail("function " CppAsString(validate_relname)
+								  " received NULL argument")));
+
+	/* Fetch relation's Oid */
+	relid = PG_GETARG_OID(0);
+
+	if (!check_relation_exists(relid))
+		ereport(ERROR, (errmsg("relation \"%u\" does not exist", relid),
+						errdetail("triggered in function "
+								  CppAsString(validate_relname))));
+
+	PG_RETURN_VOID();
+}
 
 Datum
 is_date_type(PG_FUNCTION_ARGS)
@@ -784,8 +825,8 @@ invoke_on_partition_created_callback(PG_FUNCTION_ARGS)
 			break;
 
 		default:
-			elog(ERROR, "error in function \"%s\"",
-				 CppAsString(invoke_on_partition_created_callback));
+			elog(ERROR, "error in function "
+						CppAsString(invoke_on_partition_created_callback));
 	}
 
 	/* Now it's time to call it! */

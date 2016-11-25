@@ -16,7 +16,12 @@ CREATE TABLE calamity.part_test(val serial);
 
 /* check function validate_relname() */
 SELECT validate_relname('calamity.part_test');
-/* SELECT validate_relname(NULL); -- FIXME: %s */
+SELECT validate_relname(1::REGCLASS);
+SELECT validate_relname(NULL);
+
+/* check function get_number_of_partitions() */
+SELECT get_number_of_partitions('calamity.part_test');
+SELECT get_number_of_partitions(NULL) IS NULL;
 
 /* check function get_parent_of_partition() */
 SELECT get_parent_of_partition('calamity.part_test');

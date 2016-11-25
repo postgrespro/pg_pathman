@@ -178,7 +178,8 @@ refresh_pathman_relation_info(Oid relid,
 
 		/* Error: unknown result code */
 		default:
-			elog(ERROR, "error in " CppAsString(find_inheritance_children_array));
+			elog(ERROR, "error in function "
+						CppAsString(find_inheritance_children_array));
 	}
 
 	/*

@@ -104,15 +104,6 @@ SELECT pg_catalog.pg_extension_config_dump('@extschema@.pathman_config', '');
 SELECT pg_catalog.pg_extension_config_dump('@extschema@.pathman_config_params', '');
 
 
-CREATE OR REPLACE FUNCTION @extschema@.partitions_count(relation REGCLASS)
-RETURNS INT AS
-$$
-BEGIN
-	RETURN count(*) FROM pg_inherits WHERE inhparent = relation;
-END
-$$
-LANGUAGE plpgsql STRICT;
-
 /*
  * Add a row describing the optional parameter to pathman_config_params.
  */
@@ -185,7 +176,8 @@ RETURNS TABLE (
 	 partattr	TEXT,
 	 range_min	TEXT,
 	 range_max	TEXT)
-AS 'pg_pathman', 'show_partition_list_internal' LANGUAGE C STRICT;
+AS 'pg_pathman', 'show_partition_list_internal'
+LANGUAGE C STRICT;
 
 /*
  * View for show_partition_list().
@@ -206,7 +198,8 @@ RETURNS TABLE (
 	relid		REGCLASS,
 	processed	INT,
 	status		TEXT)
-AS 'pg_pathman', 'show_concurrent_part_tasks_internal' LANGUAGE C STRICT;
+AS 'pg_pathman', 'show_concurrent_part_tasks_internal'
+LANGUAGE C STRICT;
 
 /*
  * View for show_concurrent_part_tasks().
@@ -354,28 +347,6 @@ $$
 LANGUAGE plpgsql STRICT;
 
 /*
- * Validates relation name. It must be schema qualified.
- */
-CREATE OR REPLACE FUNCTION @extschema@.validate_relname(
-	cls		REGCLASS)
-RETURNS TEXT AS
-$$
-DECLARE
-	relname	TEXT;
-
-BEGIN
-	relname = @extschema@.get_schema_qualified_name(cls);
-
-	IF relname IS NULL THEN
-		RAISE EXCEPTION 'relation %s does not exist', cls;
-	END IF;
-
-	RETURN relname;
-END
-$$
-LANGUAGE plpgsql;
-
-/*
  * Aggregates several common relation checks before partitioning.
  * Suitable for every partitioning type.
  */
@@ -440,25 +411,6 @@ BEGIN
 		   pg_catalog.pg_class.relname
 	FROM pg_catalog.pg_class WHERE oid = cls::oid
 	INTO schema, relname;
-END
-$$
-LANGUAGE plpgsql STRICT;
-
-/*
- * Returns the schema-qualified name of table.
- */
-CREATE OR REPLACE FUNCTION @extschema@.get_schema_qualified_name(
-	cls			REGCLASS,
-	delimiter	TEXT DEFAULT '.',
-	suffix		TEXT DEFAULT '')
-RETURNS TEXT AS
-$$
-BEGIN
-	RETURN (SELECT quote_ident(relnamespace::regnamespace::text) ||
-				   delimiter ||
-				   quote_ident(relname || suffix)
-			FROM pg_catalog.pg_class
-			WHERE oid = cls::oid);
 END
 $$
 LANGUAGE plpgsql STRICT;
@@ -663,16 +615,26 @@ LANGUAGE C STRICT;
 
 
 /*
+ * Get number of partitions managed by pg_pathman.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_number_of_partitions(
+	parent_relid		REGCLASS)
+RETURNS INT4 AS 'pg_pathman', 'get_number_of_partitions_pl'
+LANGUAGE C STRICT;
+
+/*
  * Get parent of pg_pathman's partition.
  */
-CREATE OR REPLACE FUNCTION @extschema@.get_parent_of_partition(REGCLASS)
+CREATE OR REPLACE FUNCTION @extschema@.get_parent_of_partition(
+	partition_relid		REGCLASS)
 RETURNS REGCLASS AS 'pg_pathman', 'get_parent_of_partition_pl'
 LANGUAGE C STRICT;
 
 /*
  * Extract basic type of a domain.
  */
-CREATE OR REPLACE FUNCTION @extschema@.get_base_type(REGTYPE)
+CREATE OR REPLACE FUNCTION @extschema@.get_base_type(
+	typid	REGTYPE)
 RETURNS REGTYPE AS 'pg_pathman', 'get_base_type_pl'
 LANGUAGE C STRICT;
 
@@ -680,23 +642,34 @@ LANGUAGE C STRICT;
  * Returns attribute type name for relation.
  */
 CREATE OR REPLACE FUNCTION @extschema@.get_attribute_type(
-	REGCLASS, TEXT)
+	relid	REGCLASS,
+	attname	TEXT)
 RETURNS REGTYPE AS 'pg_pathman', 'get_attribute_type_pl'
 LANGUAGE C STRICT;
 
 /*
  * Return tablespace name for specified relation.
  */
-CREATE OR REPLACE FUNCTION @extschema@.get_rel_tablespace_name(REGCLASS)
-RETURNS TEXT AS 'pg_pathman', 'get_rel_tablespace_name'
+CREATE OR REPLACE FUNCTION @extschema@.get_tablespace(
+	relid	REGCLASS)
+RETURNS TEXT AS 'pg_pathman', 'get_tablespace_pl'
 LANGUAGE C STRICT;
 
+
+/*
+ * Check that relation exists.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.validate_relname(
+	relid	REGCLASS)
+RETURNS VOID AS 'pg_pathman', 'validate_relname'
+LANGUAGE C;
 
 /*
  * Checks if attribute is nullable
  */
 CREATE OR REPLACE FUNCTION @extschema@.is_attribute_nullable(
-	REGCLASS, TEXT)
+	relid	REGCLASS,
+	attname	TEXT)
 RETURNS BOOLEAN AS 'pg_pathman', 'is_attribute_nullable'
 LANGUAGE C STRICT;
 
@@ -713,12 +686,14 @@ LANGUAGE C STRICT;
  * Build check constraint name for a specified relation's column.
  */
 CREATE OR REPLACE FUNCTION @extschema@.build_check_constraint_name(
-	REGCLASS, INT2)
+	partition_relid	REGCLASS,
+	partitioned_col	INT2)
 RETURNS TEXT AS 'pg_pathman', 'build_check_constraint_name_attnum'
 LANGUAGE C STRICT;
 
 CREATE OR REPLACE FUNCTION @extschema@.build_check_constraint_name(
-	REGCLASS, TEXT)
+	partition_relid	REGCLASS,
+	partitioned_col	TEXT)
 RETURNS TEXT AS 'pg_pathman', 'build_check_constraint_name_attname'
 LANGUAGE C STRICT;
 
@@ -726,12 +701,12 @@ LANGUAGE C STRICT;
  * Build update trigger and its underlying function's names.
  */
 CREATE OR REPLACE FUNCTION @extschema@.build_update_trigger_name(
-	REGCLASS)
+	relid			REGCLASS)
 RETURNS TEXT AS 'pg_pathman', 'build_update_trigger_name'
 LANGUAGE C STRICT;
 
 CREATE OR REPLACE FUNCTION @extschema@.build_update_trigger_func_name(
-	REGCLASS)
+	relid			REGCLASS)
 RETURNS TEXT AS 'pg_pathman', 'build_update_trigger_func_name'
 LANGUAGE C STRICT;
 
@@ -746,7 +721,8 @@ CREATE OR REPLACE FUNCTION @extschema@.add_to_pathman_config(
 RETURNS BOOLEAN AS 'pg_pathman', 'add_to_pathman_config'
 LANGUAGE C;
 
-CREATE OR REPLACE FUNCTION @extschema@.invalidate_relcache(relid OID)
+CREATE OR REPLACE FUNCTION @extschema@.invalidate_relcache(
+	OID)
 RETURNS VOID AS 'pg_pathman'
 LANGUAGE C STRICT;
 
@@ -755,18 +731,18 @@ LANGUAGE C STRICT;
  * Lock partitioned relation to restrict concurrent
  * modification of partitioning scheme.
  */
- CREATE OR REPLACE FUNCTION @extschema@.lock_partitioned_relation(
-	 REGCLASS)
- RETURNS VOID AS 'pg_pathman', 'lock_partitioned_relation'
- LANGUAGE C STRICT;
+CREATE OR REPLACE FUNCTION @extschema@.lock_partitioned_relation(
+	parent_relid	REGCLASS)
+RETURNS VOID AS 'pg_pathman', 'lock_partitioned_relation'
+LANGUAGE C STRICT;
 
 /*
  * Lock relation to restrict concurrent modification of data.
  */
- CREATE OR REPLACE FUNCTION @extschema@.prevent_relation_modification(
-	 REGCLASS)
- RETURNS VOID AS 'pg_pathman', 'prevent_relation_modification'
- LANGUAGE C STRICT;
+CREATE OR REPLACE FUNCTION @extschema@.prevent_relation_modification(
+	parent_relid	REGCLASS)
+RETURNS VOID AS 'pg_pathman', 'prevent_relation_modification'
+LANGUAGE C STRICT;
 
 
 /*

@@ -14,12 +14,28 @@ set client_min_messages = NOTICE;
 CREATE TABLE calamity.part_test(val serial);
 /* check function validate_relname() */
 SELECT validate_relname('calamity.part_test');
-  validate_relname  
---------------------
- calamity.part_test
+ validate_relname 
+------------------
+ 
 (1 row)
 
-/* SELECT validate_relname(NULL); -- FIXME: %s */
+SELECT validate_relname(1::REGCLASS);
+ERROR:  relation "1" does not exist
+SELECT validate_relname(NULL);
+ERROR:  relation should not be NULL
+/* check function get_number_of_partitions() */
+SELECT get_number_of_partitions('calamity.part_test');
+ get_number_of_partitions 
+--------------------------
+                        0
+(1 row)
+
+SELECT get_number_of_partitions(NULL) IS NULL;
+ ?column? 
+----------
+ t
+(1 row)
+
 /* check function get_parent_of_partition() */
 SELECT get_parent_of_partition('calamity.part_test');
 ERROR:  "part_test" is not a partition

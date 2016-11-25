@@ -556,7 +556,7 @@ spawn_partitions_val(Oid parent_relid,			/* parent's Oid */
 
 		/* What, again? Don't want to deal with this nightmare */
 		if (move_bound_op_ret_type != range_bound_type)
-			elog(ERROR, "error in spawn_partitions_val()");
+			elog(ERROR, "error in function " CppAsString(spawn_partitions_val));
 	}
 
 	/* Get operator's underlying function */

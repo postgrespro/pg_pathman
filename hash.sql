@@ -147,8 +147,7 @@ BEGIN
 		   att_val_fmt,
 		   att_fmt;
 
-	partitions_count := COUNT(*) FROM pg_catalog.pg_inherits
-						WHERE inhparent = parent_relid::oid;
+	partitions_count := @extschema@.get_number_of_partitions(parent_relid);
 
 	/* Build trigger & trigger function's names */
 	funcname := @extschema@.build_update_trigger_func_name(parent_relid);

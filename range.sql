@@ -158,7 +158,7 @@ BEGIN
 			parent_relid,
 			start_value,
 			start_value + p_interval,
-			@extschema@.get_rel_tablespace_name(parent_relid);
+			@extschema@.get_tablespace(parent_relid);
 
 		start_value := start_value + p_interval;
 	END LOOP;
@@ -270,7 +270,7 @@ BEGIN
 			parent_relid,
 			start_value,
 			start_value + p_interval,
-			tablespace := @extschema@.get_rel_tablespace_name(parent_relid));
+			tablespace := @extschema@.get_tablespace(parent_relid));
 
 		start_value := start_value + p_interval;
 	END LOOP;
@@ -343,7 +343,7 @@ BEGIN
 			parent_relid,
 			start_value,
 			start_value + p_interval,
-			tablespace := @extschema@.get_rel_tablespace_name(parent_relid));
+			tablespace := @extschema@.get_tablespace(parent_relid));
 
 		start_value := start_value + p_interval;
 		part_count := part_count + 1;
@@ -416,7 +416,7 @@ BEGIN
 			parent_relid,
 			start_value,
 			start_value + p_interval,
-			@extschema@.get_rel_tablespace_name(parent_relid);
+			@extschema@.get_tablespace(parent_relid);
 
 		start_value := start_value + p_interval;
 		part_count := part_count + 1;
@@ -733,7 +733,7 @@ DECLARE
 	v_atttype		REGTYPE;
 
 BEGIN
-	IF @extschema@.partitions_count(parent_relid) = 0 THEN
+	IF @extschema@.get_number_of_partitions(parent_relid) = 0 THEN
 		RAISE EXCEPTION 'cannot append to empty partitions set';
 	END IF;
 
@@ -843,7 +843,7 @@ DECLARE
 	v_atttype		REGTYPE;
 
 BEGIN
-	IF @extschema@.partitions_count(parent_relid) = 0 THEN
+	IF @extschema@.get_number_of_partitions(parent_relid) = 0 THEN
 		RAISE EXCEPTION 'cannot prepend to empty partitions set';
 	END IF;
 
@@ -907,7 +907,7 @@ BEGIN
 	END IF;
 
 	/* check range overlap */
-	IF @extschema@.partitions_count(parent_relid) > 0 THEN
+	IF @extschema@.get_number_of_partitions(parent_relid) > 0 THEN
 		PERFORM @extschema@.check_range_available(parent_relid,
 												  start_value,
 												  end_value);
