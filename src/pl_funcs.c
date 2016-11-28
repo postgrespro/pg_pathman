@@ -397,11 +397,17 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 
 					re = &PrelGetRangesArray(prel)[usercxt->child_number];
 
-					/* TODO: infinite */
-					rmin = CStringGetTextDatum(datum_to_cstring(InfinitableGetValue(&re->min),
-																prel->atttype));
-					rmax = CStringGetTextDatum(datum_to_cstring(InfinitableGetValue(&re->max),
-																prel->atttype));
+					/* Lower bound text */
+					rmin = !IsInfinite(&re->min) ?
+						CStringGetTextDatum(
+							datum_to_cstring(BoundGetValue(&re->min), prel->atttype)) :
+						CStringGetTextDatum("NULL");
+
+					/* Upper bound text */
+					rmax = !IsInfinite(&re->max) ?
+						CStringGetTextDatum(
+							datum_to_cstring(BoundGetValue(&re->max), prel->atttype)) :
+						CStringGetTextDatum("NULL");
 
 					values[Anum_pathman_pl_partition - 1] = re->child_oid;
 					values[Anum_pathman_pl_range_min - 1] = rmin;
@@ -781,8 +787,8 @@ invoke_on_partition_created_callback(PG_FUNCTION_ARGS)
 			{
 				// Datum	sv_datum,
 				// 		ev_datum;
-				Infinitable	start,
-							end;
+				Bound	start,
+						end;
 				Oid		value_type;
 
 				if (PG_ARGISNULL(ARG_RANGE_START) || PG_ARGISNULL(ARG_RANGE_END))
@@ -791,12 +797,12 @@ invoke_on_partition_created_callback(PG_FUNCTION_ARGS)
 				/* Fetch start & end values for RANGE + their type */
 				// sv_datum	= PG_GETARG_DATUM(ARG_RANGE_START);
 				// ev_datum	= PG_GETARG_DATUM(ARG_RANGE_END);
-				MakeInfinitable(&start,
-								PG_GETARG_DATUM(ARG_RANGE_START),
-								PG_ARGISNULL(ARG_RANGE_START));
-				MakeInfinitable(&end,
-								PG_GETARG_DATUM(ARG_RANGE_END),
-								PG_ARGISNULL(ARG_RANGE_END));
+				MakeBound(&start,
+						  PG_GETARG_DATUM(ARG_RANGE_START),
+						  PG_ARGISNULL(ARG_RANGE_START) ? MINUS_INFINITY : FINITE);
+				MakeBound(&end,
+						  PG_GETARG_DATUM(ARG_RANGE_END),
+						  PG_ARGISNULL(ARG_RANGE_END) ? PLUS_INFINITY : FINITE);
 				value_type	= get_fn_expr_argtype(fcinfo->flinfo, ARG_RANGE_START);
 
 				MakeInitCallbackRangeParams(&callback_params,

@@ -383,13 +383,12 @@ fill_prel_with_partitions(const Oid *partitions,
 												  &lower_null, &upper_null))
 					{
 						prel->ranges[i].child_oid	 = partitions[i];
-						// prel->ranges[i].min			 = lower;
-						// prel->ranges[i].max			 = upper;
-						// prel->ranges[i].infinite_min = lower_null;
-						// prel->ranges[i].infinite_max = upper_null;
-						(&prel->ranges[i].min)->value = lower;
-						MakeInfinitable(&prel->ranges[i].min, lower, lower_null);
-						MakeInfinitable(&prel->ranges[i].max, upper, upper_null);
+						MakeBound(&prel->ranges[i].min,
+								  lower,
+								  lower_null ? MINUS_INFINITY : FINITE);
+						MakeBound(&prel->ranges[i].max,
+								  upper,
+								  upper_null ? PLUS_INFINITY : FINITE);
 					}
 					else
 					{
@@ -417,11 +416,15 @@ fill_prel_with_partitions(const Oid *partitions,
 	if (prel->parttype == PT_RANGE)
 	{
 		MemoryContext	old_mcxt;
+		FmgrInfo		flinfo;
+
+		/* Prepare function info */
+		fmgr_info(prel->cmp_proc, &flinfo);
 
 		/* Sort partitions by RangeEntry->min asc */
 		qsort_arg((void *) prel->ranges, PrelChildrenCount(prel),
 				  sizeof(RangeEntry), cmp_range_entries,
-				  (void *) &prel->cmp_proc);
+				  (void *) &flinfo);
 
 		/* Initialize 'prel->children' array */
 		for (i = 0; i < PrelChildrenCount(prel); i++)
@@ -434,7 +437,7 @@ fill_prel_with_partitions(const Oid *partitions,
 			// prel->ranges[i].max = datumCopy(prel->ranges[i].max,
 			// 								prel->attbyval,
 			// 								prel->attlen);
-			CopyInfinitable(&(prel->ranges[i].max),
+			CopyBound(&(prel->ranges[i].max),
 							&(prel->ranges[i].max),
 							prel->attbyval,
 							prel->attlen);
@@ -442,7 +445,7 @@ fill_prel_with_partitions(const Oid *partitions,
 			// prel->ranges[i].min = datumCopy(prel->ranges[i].min,
 			// 								prel->attbyval,
 			// 								prel->attlen);
-			CopyInfinitable(&prel->ranges[i].min,
+			CopyBound(&prel->ranges[i].min,
 							&prel->ranges[i].min,
 							prel->attbyval,
 							prel->attlen);
@@ -876,25 +879,26 @@ cmp_range_entries(const void *p1, const void *p2, void *arg)
 {
 	const RangeEntry   *v1 = (const RangeEntry *) p1;
 	const RangeEntry   *v2 = (const RangeEntry *) p2;
+	FmgrInfo		   *flinfo = (FmgrInfo *) arg;
 
-	Oid					cmp_proc_oid = *(Oid *) arg;
+	return cmp_bounds(flinfo, &v1->min, &v2->min);
 
-	/* If range is half open */
-	if (IsInfinite(&v1->min))
-	{
-		// if (IsInfinite(&v2->min))
-		// 	return Int32GetDatum(0);
-		return Int32GetDatum(-1);
-	}
-	if (IsInfinite(&v2->min))
-	{
-		return Int32GetDatum(1);
-	}
+	// /* If range is half open */
+	// if (IsInfinite(&v1->min))
+	// {
+	// 	// if (IsInfinite(&v2->min))
+	// 	// 	return Int32GetDatum(0);
+	// 	return Int32GetDatum(-1);
+	// }
+	// if (IsInfinite(&v2->min))
+	// {
+	// 	return Int32GetDatum(1);
+	// }
 
-	/* Else if range is closed */
-	return OidFunctionCall2(cmp_proc_oid,
-							InfinitableGetValue(&v1->min),
-							InfinitableGetValue(&v2->min));
+	// /* Else if range is closed */
+	// return OidFunctionCall2(cmp_proc_oid,
+	// 						BoundGetValue(&v1->min),
+	// 						BoundGetValue(&v2->min));
 }
 
 /*

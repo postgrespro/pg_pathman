@@ -447,9 +447,9 @@ select_range_partitions(const Datum value,
 
 		/* Corner cases */
 		cmp_min = IsInfinite(&ranges[startidx].min) ?
-			1 : DatumGetInt32(FunctionCall2(cmp_func, value, InfinitableGetValue(&ranges[startidx].min)));
+			1 : DatumGetInt32(FunctionCall2(cmp_func, value, BoundGetValue(&ranges[startidx].min)));
 		cmp_max = IsInfinite(&ranges[endidx].max) ?
-			-1 : DatumGetInt32(FunctionCall2(cmp_func, value, InfinitableGetValue(&ranges[endidx].max)));
+			-1 : DatumGetInt32(FunctionCall2(cmp_func, value, BoundGetValue(&ranges[endidx].max)));
 
 		if ((cmp_min <= 0 && strategy == BTLessStrategyNumber) ||
 			(cmp_min < 0 && (strategy == BTLessEqualStrategyNumber ||
@@ -499,9 +499,9 @@ select_range_partitions(const Datum value,
 		// cmp_min = FunctionCall2(cmp_func, value, current_re->min);
 		// cmp_max = FunctionCall2(cmp_func, value, current_re->max);
 		cmp_min = IsInfinite(&current_re->min) ?
-			1 : FunctionCall2(cmp_func, value, InfinitableGetValue(&current_re->min));
+			1 : FunctionCall2(cmp_func, value, BoundGetValue(&current_re->min));
 		cmp_max = IsInfinite(&current_re->max) ?
-			-1 : FunctionCall2(cmp_func, value, InfinitableGetValue(&current_re->max));
+			-1 : FunctionCall2(cmp_func, value, BoundGetValue(&current_re->max));
 
 		is_less = (cmp_min < 0 || (cmp_min == 0 && strategy == BTLessStrategyNumber));
 		is_greater = (cmp_max > 0 || (cmp_max >= 0 && strategy != BTLessStrategyNumber));

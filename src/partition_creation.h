@@ -18,26 +18,26 @@ Oid create_partitions_for_value(Oid relid, Datum value, Oid value_type);
 Oid create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type);
 
 Oid create_single_range_partition_internal(Oid parent_relid,
-										   const Infinitable *start_value,
-										   const Infinitable *end_value,
+										   const Bound *start_value,
+										   const Bound *end_value,
 										   Oid value_type,
 										   RangeVar *partition_rv,
 										   char *tablespace);
 
 Constraint * build_range_check_constraint(Oid child_relid,
 										  char *attname,
-										  const Infinitable *start_value,
-										  const Infinitable *end_value,
+										  const Bound *start_value,
+										  const Bound *end_value,
 										  Oid value_type);
 
 Node * build_raw_range_check_tree(char *attname,
-								  const Infinitable *start_value,
-								  const Infinitable *end_value,
+								  const Bound *start_value,
+								  const Bound *end_value,
 								  Oid value_type);
 
 bool check_range_available(Oid parent_relid,
-						   const Infinitable *start_value,
-						   const Infinitable *end_value,
+						   const Bound *start_value,
+						   const Bound *end_value,
 						   Oid value_type,
 						   bool raise_error);
 
@@ -69,7 +69,7 @@ typedef struct
 
 		struct
 		{
-			Infinitable	start_value,
+			Bound		start_value,
 						end_value;
 			Oid			value_type;
 		}	range_params;

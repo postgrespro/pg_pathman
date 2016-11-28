@@ -24,7 +24,7 @@
 
 
 static char *deparse_constraint(Oid relid, Node *expr);
-static ArrayType *construct_infinitable_array(Infinitable **elems,
+static ArrayType *construct_infinitable_array(Bound **elems,
 											  uint32_t nelems,
 											  Oid elmtype,
 											  int elmlen,
@@ -63,7 +63,7 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 	// 			end_value;
 	// bool		infinite_start,
 	// 			infinite_end;
-	Infinitable	start,
+	Bound		start,
 				end;
 	Oid			value_type;
 
@@ -79,14 +79,6 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 	if (PG_ARGISNULL(0))
 		elog(ERROR, "'parent_relid' should not be NULL");
 
-	// /* Handle 'start_value' */
-	// if (PG_ARGISNULL(1))
-	// 	elog(ERROR, "'start_value' should not be NULL");
-
-	// /* Handle 'end_value' */
-	// if (PG_ARGISNULL(2))
-	// 	elog(ERROR, "'end_value' should not be NULL");
-
 	/* Fetch mandatory args */
 	parent_relid	= PG_GETARG_OID(0);
 	// start_value		= PG_GETARG_DATUM(1);
@@ -94,8 +86,12 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 	// infinite_start	= PG_ARGISNULL(1);
 	// infinite_end	= PG_ARGISNULL(2);
 	value_type		= get_fn_expr_argtype(fcinfo->flinfo, 1);
-	MakeInfinitable(&start, PG_GETARG_DATUM(1), PG_ARGISNULL(1));
-	MakeInfinitable(&end, PG_GETARG_DATUM(2), PG_ARGISNULL(2));
+	MakeBound(&start,
+			  PG_GETARG_DATUM(1),
+			  PG_ARGISNULL(1) ? MINUS_INFINITY : FINITE);
+	MakeBound(&end,
+			  PG_GETARG_DATUM(2),
+			  PG_ARGISNULL(2) ? PLUS_INFINITY : FINITE);
 
 	/* Fetch 'partition_name' */
 	if (!PG_ARGISNULL(3))
@@ -181,18 +177,17 @@ find_or_create_range_partition(PG_FUNCTION_ARGS)
 Datum
 check_range_available_pl(PG_FUNCTION_ARGS)
 {
-	Oid		parent_relid = PG_GETARG_OID(0);
-
-	// Datum	start_value	= PG_GETARG_DATUM(1),
-	// 		end_value	= PG_GETARG_DATUM(2);
-	// bool	start_null  = PG_ARGISNULL(1),
-	// 		end_null    = PG_ARGISNULL(2);
-	Infinitable	start_value,
+	Oid			parent_relid = PG_GETARG_OID(0);
+	Bound		start_value,
 				end_value;
 	Oid			value_type	= get_fn_expr_argtype(fcinfo->flinfo, 1);
 
-	MakeInfinitable(&start_value, PG_GETARG_DATUM(1), PG_ARGISNULL(1));
-	MakeInfinitable(&end_value, PG_GETARG_DATUM(2), PG_ARGISNULL(2));
+	MakeBound(&start_value,
+			  PG_GETARG_DATUM(1),
+			  PG_ARGISNULL(1) ? MINUS_INFINITY : FINITE);
+	MakeBound(&end_value,
+			  PG_GETARG_DATUM(2),
+			  PG_ARGISNULL(2) ? PLUS_INFINITY : FINITE);
 
 	/* Raise ERROR if range overlaps with any partition */
 	check_range_available(parent_relid,
@@ -261,7 +256,7 @@ get_part_range_by_oid(PG_FUNCTION_ARGS)
 			// arr = construct_array(elems, 2, prel->atttype,
 			// 					  prel->attlen, prel->attbyval,
 			// 					  prel->attalign);
-			Infinitable *elems[2] = { &ranges[i].min, &ranges[i].max };
+			Bound *elems[2] = { &ranges[i].min, &ranges[i].max };
 
 
 			arr = construct_infinitable_array(elems, 2,
@@ -292,7 +287,7 @@ get_part_range_by_idx(PG_FUNCTION_ARGS)
 	Oid						parent_relid = InvalidOid;
 	int						partition_idx = 0;
 	// Datum					elems[2];
-	Infinitable			   *elems[2];
+	Bound				   *elems[2];
 	RangeEntry			   *ranges;
 	const PartRelationInfo *prel;
 
@@ -351,14 +346,18 @@ build_range_condition(PG_FUNCTION_ARGS)
 	Oid		relid = PG_GETARG_OID(0);
 	text   *attname = PG_GETARG_TEXT_P(1);
 
-	Infinitable min,
+	Bound		min,
 				max;
 	Oid			bounds_type = get_fn_expr_argtype(fcinfo->flinfo, 2);
 	Constraint *con;
 	char	   *result;
 
-	MakeInfinitable(&min, PG_GETARG_DATUM(2), PG_ARGISNULL(2));
-	MakeInfinitable(&max, PG_GETARG_DATUM(3), PG_ARGISNULL(3));
+	MakeBound(&min,
+			  PG_GETARG_DATUM(2),
+			  PG_ARGISNULL(2) ? MINUS_INFINITY : FINITE);
+	MakeBound(&max,
+			  PG_GETARG_DATUM(3),
+			  PG_ARGISNULL(3) ? PLUS_INFINITY : FINITE);
 
 	con = build_range_check_constraint(relid, text_to_cstring(attname),
 									   &min, &max,
@@ -419,13 +418,13 @@ build_sequence_name(PG_FUNCTION_ARGS)
 }
 
 /*
- * Build 1d array of Infinitable elements
+ * Build an 1d array of Bound elements
  *
  *		The main difference from construct_array() is that it will substitute
  *		infinite values with NULL's
  */
 static ArrayType *
-construct_infinitable_array(Infinitable **elems,
+construct_infinitable_array(Bound **elems,
 							uint32_t nelems,
 							Oid elmtype,
 							int elmlen,
@@ -444,7 +443,7 @@ construct_infinitable_array(Infinitable **elems,
 
 	for (i = 0; i < nelems; i++)
 	{
-		data[i] = InfinitableGetValue(elems[i]);
+		data[i] = BoundGetValue(elems[i]);
 		nulls[i] = IsInfinite(elems[i]);
 	}
 

@@ -76,8 +76,8 @@ static void copy_foreign_keys(Oid parent_relid, Oid partition_oid);
 /* Create one RANGE partition [start_value, end_value) */
 Oid
 create_single_range_partition_internal(Oid parent_relid,
-									   const Infinitable *start_value,
-									   const Infinitable *end_value,
+									   const Bound *start_value,
+									   const Bound *end_value,
 									   Oid value_type,
 									   RangeVar *partition_rv,
 									   char *tablespace)
@@ -276,8 +276,8 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type)
 				/* TODO */
 				// bound_min = PrelGetRangesArray(prel)[0].min;
 				// bound_max = PrelGetRangesArray(prel)[PrelLastChild(prel)].max;
-				bound_min = InfinitableGetValue(&ranges[0].min);
-				bound_max = InfinitableGetValue(&ranges[PrelLastChild(prel)].max);
+				bound_min = BoundGetValue(&ranges[0].min);
+				bound_max = BoundGetValue(&ranges[PrelLastChild(prel)].max);
 
 				/* Copy datums on order to protect them from cache invalidation */
 				bound_min = datumCopy(bound_min, prel->attbyval, prel->attlen);
@@ -501,7 +501,7 @@ spawn_partitions_val(Oid parent_relid,			/* parent's Oid */
 				check_lt(&cmp_value_bound_finfo, value, cur_leading_bound))
 	{
 		Datum args[2];
-		Infinitable bounds[2];
+		Bound bounds[2];
 
 		/* Assign the 'following' boundary to current 'leading' value */
 		cur_following_bound = cur_leading_bound;
@@ -514,8 +514,8 @@ spawn_partitions_val(Oid parent_relid,			/* parent's Oid */
 		args[0] = should_append ? cur_following_bound : cur_leading_bound;
 		args[1] = should_append ? cur_leading_bound : cur_following_bound;
 
-		MakeInfinitable(&bounds[0], args[0], false);
-		MakeInfinitable(&bounds[1], args[1], false);
+		MakeBound(&bounds[0], args[0], FINITE);
+		MakeBound(&bounds[1], args[1], FINITE);
 
 		last_partition = create_single_range_partition_internal(parent_relid,
 																&bounds[0], &bounds[1],
@@ -781,8 +781,8 @@ copy_foreign_keys(Oid parent_relid, Oid partition_oid)
 /* Build RANGE check constraint expression tree */
 Node *
 build_raw_range_check_tree(char *attname,
-						   const Infinitable *start_value,
-						   const Infinitable *end_value,
+						   const Bound *start_value,
+						   const Bound *end_value,
 						   Oid value_type)
 {
 	BoolExpr   *and_oper	= makeNode(BoolExpr);
@@ -805,7 +805,7 @@ build_raw_range_check_tree(char *attname,
 	{
 		/* Left boundary */
 		left_const->val = *makeString(
-			datum_to_cstring(InfinitableGetValue(start_value), value_type));
+			datum_to_cstring(BoundGetValue(start_value), value_type));
 		left_const->location = -1;
 
 		left_arg->name		= list_make1(makeString(">="));
@@ -821,7 +821,7 @@ build_raw_range_check_tree(char *attname,
 	{
 		/* Right boundary */
 		right_const->val = *makeString(
-			datum_to_cstring(InfinitableGetValue(end_value), value_type));
+			datum_to_cstring(BoundGetValue(end_value), value_type));
 		right_const->location = -1;
 
 		right_arg->name		= list_make1(makeString("<"));
@@ -842,8 +842,8 @@ build_raw_range_check_tree(char *attname,
 Constraint *
 build_range_check_constraint(Oid child_relid,
 							 char *attname,
-							 const Infinitable *start_value,
-							 const Infinitable *end_value,
+							 const Bound *start_value,
+							 const Bound *end_value,
 							 Oid value_type)
 {
 	Constraint	   *range_constr;
@@ -879,8 +879,8 @@ build_range_check_constraint(Oid child_relid,
 /* Check if range overlaps with any partitions */
 bool
 check_range_available(Oid parent_relid,
-					  const Infinitable *start_value,
-					  const Infinitable *end_value,
+					  const Bound *start,
+					  const Bound *end,
 					  Oid value_type,
 					  bool raise_error)
 {
@@ -913,30 +913,32 @@ check_range_available(Oid parent_relid,
 		 * range ends in plus infinity then the left boundary of the first
 		 * range is on the left. Otherwise compare specific values
 		 */
-		c1 = (IsInfinite(start_value) || IsInfinite(&ranges[i].max)) ?
-			-1 :
-			FunctionCall2(&cmp_func, 
-						  InfinitableGetValue(start_value),
-						  InfinitableGetValue(&ranges[i].max));
+		// c1 = (IsInfinite(start) || IsInfinite(&ranges[i].max)) ?
+		// 	-1 :
+		// 	FunctionCall2(&cmp_func, 
+		// 				  BoundGetValue(start),
+		// 				  BoundGetValue(&ranges[i].max));
 		/*
 		 * Similary check that right boundary of the range we're checking is on
 		 * the right of the beginning of the current one
 		 */
-		c2 = (IsInfinite(end_value) || IsInfinite(&ranges[i].min)) ?
-			1 :
-			FunctionCall2(&cmp_func,
-						  InfinitableGetValue(end_value),
-						  InfinitableGetValue(&ranges[i].min));
+		// c2 = (IsInfinite(end) || IsInfinite(&ranges[i].min)) ?
+		// 	1 :
+		// 	FunctionCall2(&cmp_func,
+		// 				  BoundGetValue(end),
+		// 				  BoundGetValue(&ranges[i].min));
+
+		c1 = cmp_bounds(&cmp_func, start, &ranges[i].max);
+		c2 = cmp_bounds(&cmp_func, end, &ranges[i].min);
 
 		/* There's someone! */
 		if (c1 < 0 && c2 > 0)
 		{
 			if (raise_error)
-				/* TODO: print infinity */
 				elog(ERROR, "specified range [%s, %s) overlaps "
 							"with existing partitions",
-					 datum_to_cstring(InfinitableGetValue(start_value), value_type),
-					 datum_to_cstring(InfinitableGetValue(end_value), value_type));
+					 !IsInfinite(start) ? datum_to_cstring(BoundGetValue(start), value_type) : "NULL",
+					 !IsInfinite(end) ? datum_to_cstring(BoundGetValue(end), value_type) : "NULL");
 			else
 				return false;
 		}
@@ -1002,8 +1004,8 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 			{
 				char   *start_value,
 					   *end_value;
-				Infinitable	sv_datum	= cb_params->params.range_params.start_value,
-							ev_datum	= cb_params->params.range_params.end_value;
+				Bound	sv_datum	= cb_params->params.range_params.start_value,
+						ev_datum	= cb_params->params.range_params.end_value;
 				Oid		type		= cb_params->params.range_params.value_type;
 
 				/* Convert min & max to CSTRING */
@@ -1023,7 +1025,7 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 				JSB_INIT_VAL(&key, WJB_KEY, "range_min");
 				if (!IsInfinite(&sv_datum))
 				{
-					start_value = datum_to_cstring(InfinitableGetValue(&sv_datum), type);
+					start_value = datum_to_cstring(BoundGetValue(&sv_datum), type);
 					JSB_INIT_VAL(&val, WJB_VALUE, start_value);
 				}
 				else
@@ -1033,7 +1035,7 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 				JSB_INIT_VAL(&key, WJB_KEY, "range_max");
 				if (!IsInfinite(&ev_datum))
 				{
-					end_value = datum_to_cstring(InfinitableGetValue(&ev_datum), type);
+					end_value = datum_to_cstring(BoundGetValue(&ev_datum), type);
 					JSB_INIT_VAL(&val, WJB_VALUE, end_value);
 				}
 				else

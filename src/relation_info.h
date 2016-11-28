@@ -15,33 +15,60 @@
 #include "access/attnum.h"
 #include "port/atomics.h"
 #include "storage/lock.h"
+#include "fmgr.h"
 
+#define BOUND_INFINITY_MASK 0x01
+#define BOUND_NEGATIVE_MASK 0x02
 
-/* Infinitable datum values */
+/* Range bound */
 typedef struct
 {
-	Datum	value;
-	bool	is_infinite;
-} Infinitable;
+	Datum	value;				/* Actual value if not infinite */
+	uint8	is_infinite;		/* bitmask where the least significant bit
+								   is indicates if the bound is infinite and
+								   the second one indicates if bound
+								   is negative */
+} Bound;
 
-#define MakeInfinitable(inf, _value, _is_infinite)	\
-	do												\
-	{												\
-		(inf)->value = (_value);					\
-		(inf)->is_infinite = (_is_infinite);		\
+#define FINITE 0
+#define PLUS_INFINITY (0 | BOUND_INFINITY_MASK)
+#define MINUS_INFINITY (0 | BOUND_INFINITY_MASK | BOUND_NEGATIVE_MASK)
+
+#define MakeBound(inf, _value, _infinity_type)				\
+	do														\
+	{														\
+		(inf)->value = (_value);							\
+		(inf)->is_infinite = (_infinity_type);				\
 	} while (0)
 
-#define IsInfinite(i)			((i)->is_infinite)
-#define InfinitableGetValue(i)	((i)->value)
-#define CopyInfinitable(i_to, i_from, by_val, len)							\
-	do																		\
-	{																		\
-		(i_to)->value = !IsInfinite(i_from) ?								\
-			datumCopy((i_from)->value, (by_val), (len)) :					\
-			(Datum) 0;														\
-		(i_to)->is_infinite = IsInfinite(i_from);							\
+#define IsInfinite(i)			((i)->is_infinite & BOUND_INFINITY_MASK)
+#define IsPlusInfinity(i)		(IsInfinite(i) && !((i)->is_infinite & BOUND_NEGATIVE_MASK))
+#define IsMinusInfinity(i)		(IsInfinite(i) && ((i)->is_infinite & BOUND_NEGATIVE_MASK))
+#define BoundGetValue(i)	((i)->value)
+#define CopyBound(i_to, i_from, by_val, len)				\
+	do														\
+	{														\
+		(i_to)->value = !IsInfinite(i_from) ?				\
+			datumCopy((i_from)->value, (by_val), (len)) :	\
+			(Datum) 0;										\
+		(i_to)->is_infinite = (i_from)->is_infinite;			\
 	} while (0)
 
+/*
+ * Comparison macros for bounds
+ *		If both bounds are minus infinite or plus infinite then they are equal.
+ *		Else call original comparison function.
+ */
+inline static int8_t
+cmp_bounds(FmgrInfo *cmp_func, const Bound *b1, const Bound *b2)
+{
+	if (IsMinusInfinity(b1) || IsPlusInfinity(b2))
+		return -1;
+	if (IsMinusInfinity(b2) || IsPlusInfinity(b1))
+		return 1;
+
+	return FunctionCall2(cmp_func, BoundGetValue(b1), BoundGetValue(b2));
+}
 
 /*
  * Partitioning type.
@@ -59,10 +86,8 @@ typedef enum
 typedef struct
 {
 	Oid				child_oid;
-	Infinitable		min,
+	Bound			min,
 					max;
-	// bool			infinite_min,
-	// 				infinite_max;
 } RangeEntry;
 
 /*
@@ -217,10 +242,10 @@ FreeRangesArray(PartRelationInfo *prel)
 			for (i = 0; i < PrelChildrenCount(prel); i++)
 			{
 				if (!IsInfinite(&prel->ranges[i].min))
-					pfree(DatumGetPointer(InfinitableGetValue(&prel->ranges[i].min)));
+					pfree(DatumGetPointer(BoundGetValue(&prel->ranges[i].min)));
 
 				if (!IsInfinite(&prel->ranges[i].max))
-					pfree(DatumGetPointer(InfinitableGetValue(&prel->ranges[i].max)));
+					pfree(DatumGetPointer(BoundGetValue(&prel->ranges[i].max)));
 			}
 		}
 
