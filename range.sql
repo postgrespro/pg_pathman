@@ -138,13 +138,13 @@ BEGIN
 					   v_atttype::TEXT);
 	END IF;
 
-	/* Create sequence for child partitions names */
-	PERFORM @extschema@.create_or_replace_sequence(parent_relid)
-	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
-
 	/* Insert new entry to pathman config */
 	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype, range_interval)
 	VALUES (parent_relid, attribute, 2, p_interval::TEXT);
+
+	/* Create sequence for child partitions names */
+	PERFORM @extschema@.create_or_replace_sequence(parent_relid)
+	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
 
 	/* Create first partition */
 	FOR i IN 1..p_count
@@ -253,13 +253,13 @@ BEGIN
 											 end_value);
 	END IF;
 
-	/* Create sequence for child partitions names */
-	PERFORM @extschema@.create_or_replace_sequence(parent_relid)
-	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
-
 	/* Insert new entry to pathman config */
 	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype, range_interval)
 	VALUES (parent_relid, attribute, 2, p_interval::TEXT);
+
+	/* Create sequence for child partitions names */
+	PERFORM @extschema@.create_or_replace_sequence(parent_relid)
+	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
 
 	/* create first partition */
 	FOR i IN 1..p_count
@@ -327,13 +327,13 @@ BEGIN
 										 start_value,
 										 end_value);
 
-	/* Create sequence for child partitions names */
-	PERFORM @extschema@.create_or_replace_sequence(parent_relid)
-	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
-
 	/* Insert new entry to pathman config */
 	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype, range_interval)
 	VALUES (parent_relid, attribute, 2, p_interval::TEXT);
+
+	/* Create sequence for child partitions names */
+	PERFORM @extschema@.create_or_replace_sequence(parent_relid)
+	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
 
 	WHILE start_value <= end_value
 	LOOP
@@ -397,13 +397,13 @@ BEGIN
 										 start_value,
 										 end_value);
 
-	/* Create sequence for child partitions names */
-	PERFORM @extschema@.create_or_replace_sequence(parent_relid)
-	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
-
 	/* Insert new entry to pathman config */
 	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype, range_interval)
 	VALUES (parent_relid, attribute, 2, p_interval::TEXT);
+
+	/* Create sequence for child partitions names */
+	PERFORM @extschema@.create_or_replace_sequence(parent_relid)
+	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
 
 	WHILE start_value <= end_value
 	LOOP
