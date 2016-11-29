@@ -1228,11 +1228,11 @@ SET client_min_messages = WARNING;
  * Construct CHECK constraint condition for a range partition.
  */
 CREATE OR REPLACE FUNCTION @extschema@.build_range_condition(
-	p_attname		TEXT,
+	attribute		TEXT,
 	start_value		ANYELEMENT,
 	end_value		ANYELEMENT)
 RETURNS TEXT AS 'pg_pathman', 'build_range_condition'
-LANGUAGE C;
+LANGUAGE C STRICT;
 
 CREATE OR REPLACE FUNCTION @extschema@.build_sequence_name(
 	parent_relid	REGCLASS)

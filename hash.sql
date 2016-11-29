@@ -289,9 +289,9 @@ LANGUAGE C STRICT;
  * Build hash condition for a CHECK CONSTRAINT
  */
 CREATE OR REPLACE FUNCTION @extschema@.build_hash_condition(
-	parent_relid		REGCLASS,
+	attribute_type		REGTYPE,
 	attribute			TEXT,
-	part_count			INT4,
-	part_idx			INT4)
+	partitions_count	INT4,
+	partitions_index	INT4)
 RETURNS TEXT AS 'pg_pathman', 'build_hash_condition'
 LANGUAGE C STRICT;

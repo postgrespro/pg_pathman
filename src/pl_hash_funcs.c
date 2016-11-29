@@ -91,28 +91,24 @@ get_hash_part_idx(PG_FUNCTION_ARGS)
 Datum
 build_hash_condition(PG_FUNCTION_ARGS)
 {
-	Oid				parent = PG_GETARG_OID(0);
+	Oid				atttype = PG_GETARG_OID(0);
 	text		   *attname = PG_GETARG_TEXT_P(1);
-	uint32			part_count = PG_GETARG_UINT32(2);
-	uint32			part_idx = PG_GETARG_UINT32(3);
+	uint32			part_count = PG_GETARG_UINT32(2),
+					part_idx = PG_GETARG_UINT32(3);
 
 	TypeCacheEntry *tce;
-	Oid				attype;
 	char		   *attname_cstring = text_to_cstring(attname);
 
 	char		   *result;
 
 	if (part_idx >= part_count)
-		elog(ERROR, "'part_idx' must be lower than 'part_count'");
+		elog(ERROR, "'partition_index' must be lower than 'partitions_count'");
 
-	/* Get attribute type and its hash function oid */
-	attype = get_attribute_type(parent, attname_cstring, false);
-	if (attype == InvalidOid)
-		elog(ERROR, "relation \"%s\" has no attribute \"%s\"",
-					get_rel_name(parent),
-					attname_cstring);
+	tce = lookup_type_cache(atttype, TYPECACHE_HASH_PROC);
 
-	tce = lookup_type_cache(attype, TYPECACHE_HASH_PROC);
+	/* Check that HASH function exists */
+	if (!OidIsValid(tce->hash_proc))
+		elog(ERROR, "no hash function for type %s", format_type_be(atttype));
 
 	/* Create hash condition CSTRING */
 	result = psprintf("%s.get_hash_part_idx(%s(%s), %u) = %u",
