@@ -19,6 +19,7 @@
 #include "catalog/pg_extension.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_proc.h"
+#include "catalog/pg_inherits.h"
 #include "commands/extension.h"
 #include "miscadmin.h"
 #include "optimizer/var.h"
@@ -64,28 +65,41 @@ void
 fill_type_cmp_fmgr_info(FmgrInfo *finfo, Oid type1, Oid type2)
 {
 	Oid				cmp_proc_oid;
-	TypeCacheEntry *tce;
+	TypeCacheEntry *tce_1,
+				   *tce_2;
 
+	/* Check type compatibility */
 	if (IsBinaryCoercible(type1, type2))
 		type1 = type2;
 
 	else if (IsBinaryCoercible(type2, type1))
 		type2 = type1;
 
-	tce = lookup_type_cache(type1, TYPECACHE_BTREE_OPFAMILY);
+	tce_1 = lookup_type_cache(type1, TYPECACHE_BTREE_OPFAMILY);
+	tce_2 = lookup_type_cache(type2, TYPECACHE_BTREE_OPFAMILY);
 
-	cmp_proc_oid = get_opfamily_proc(tce->btree_opf,
-									 type1,
-									 type2,
+	/* Both types should belong to the same opfamily */
+	if (tce_1->btree_opf != tce_2->btree_opf)
+		goto fill_type_cmp_fmgr_info_error;
+
+	cmp_proc_oid = get_opfamily_proc(tce_1->btree_opf,
+									 tce_1->btree_opintype,
+									 tce_2->btree_opintype,
 									 BTORDER_PROC);
 
-	if (cmp_proc_oid == InvalidOid)
-		elog(ERROR, "missing comparison function for types %s & %s",
-			 format_type_be(type1), format_type_be(type2));
+	/* No such function, emit ERROR */
+	if (!OidIsValid(cmp_proc_oid))
+		goto fill_type_cmp_fmgr_info_error;
 
+	/* Fill FmgrInfo struct */
 	fmgr_info(cmp_proc_oid, finfo);
 
-	return;
+	return; /* everything is OK */
+
+/* Handle errors (no such function) */
+fill_type_cmp_fmgr_info_error:
+	elog(ERROR, "missing comparison function for types %s & %s",
+		 format_type_be(type1), format_type_be(type2));
 }
 
 List *
@@ -248,7 +262,7 @@ get_rel_persistence(Oid relid)
 #endif
 
 /*
- * Returns relation owner
+ * Get relation owner.
  */
 Oid
 get_rel_owner(Oid relid)
@@ -266,6 +280,34 @@ get_rel_owner(Oid relid)
 
 		return owner;
 	}
+
+	return InvalidOid;
+}
+
+/*
+ * Get type of column by its name.
+ */
+Oid
+get_attribute_type(Oid relid, const char *attname, bool missing_ok)
+{
+	Oid			result;
+	HeapTuple	tp;
+
+	/* NOTE: for now it's the most efficient way */
+	tp = SearchSysCacheAttName(relid, attname);
+	if (HeapTupleIsValid(tp))
+	{
+		Form_pg_attribute att_tup = (Form_pg_attribute) GETSTRUCT(tp);
+		result = att_tup->atttypid;
+		ReleaseSysCache(tp);
+
+		return result;
+	}
+
+	if (!missing_ok)
+		elog(ERROR, "cannot find type name for attribute \"%s\" "
+					"of relation \"%s\"",
+			 attname, get_rel_name_or_relid(relid));
 
 	return InvalidOid;
 }

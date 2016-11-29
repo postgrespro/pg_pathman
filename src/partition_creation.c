@@ -35,6 +35,7 @@
 #include "utils/jsonb.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
+#include "utils/typcache.h"
 
 
 static Datum extract_binary_interval_from_text(Datum interval_text,
@@ -54,17 +55,27 @@ static Oid spawn_partitions_val(Oid parent_relid,
 								Datum value,
 								Oid value_type);
 
+static void create_single_partition_common(Oid partition_relid,
+										   Constraint *check_constraint,
+										   init_callback_params *callback_params);
+
 static Oid create_single_partition_internal(Oid parent_relid,
 											RangeVar *partition_rv,
 											char *tablespace,
 											char **partitioned_column);
 
-static char *choose_partition_name(Oid parent_relid, Oid parent_nsp);
+static char *choose_range_partition_name(Oid parent_relid, Oid parent_nsp);
+static char *choose_hash_partition_name(Oid parent_relid, uint32 part_idx);
 
 static ObjectAddress create_table_using_stmt(CreateStmt *create_stmt,
 											 Oid relowner);
 
 static void copy_foreign_keys(Oid parent_relid, Oid partition_oid);
+
+static Constraint *make_constraint_common(char *name, Node *raw_expr);
+
+static Value make_string_value_struct(char *str);
+static Value make_int_value_struct(int int_val);
 
 
 /*
@@ -83,10 +94,21 @@ create_single_range_partition_internal(Oid parent_relid,
 									   char *tablespace)
 {
 	Oid						partition_relid;
-	Relation				child_relation;
 	Constraint			   *check_constr;
 	char				   *partitioned_column;
 	init_callback_params	callback_params;
+
+	/* Generate a name if asked to */
+	if (!partition_rv)
+	{
+		Oid		parent_nsp = get_rel_namespace(parent_relid);
+		char   *parent_nsp_name = get_namespace_name(parent_nsp);
+		char   *partition_name;
+
+		partition_name = choose_range_partition_name(parent_relid, parent_nsp);
+
+		partition_rv = makeRangeVar(parent_nsp_name, partition_name, -1);
+	}
 
 	/* Create a partition & get 'partitioned_column' */
 	partition_relid = create_single_partition_internal(parent_relid,
@@ -101,25 +123,95 @@ create_single_range_partition_internal(Oid parent_relid,
 												end_value,
 												value_type);
 
-	/* Open the relation and add new check constraint & fkeys */
-	child_relation = heap_open(partition_relid, AccessExclusiveLock);
-	AddRelationNewConstraints(child_relation, NIL,
-							  list_make1(check_constr),
-							  false, true, true);
-	heap_close(child_relation, NoLock);
-
-	CommandCounterIncrement();
-
-	/* Finally invoke 'init_callback' */
+	/* Cook args for init_callback */
 	MakeInitCallbackRangeParams(&callback_params, InvalidOid,
 								parent_relid, partition_relid,
 								*start_value, *end_value, value_type);
-	invoke_part_callback(&callback_params);
 
-	CommandCounterIncrement();
+	/* Add constraint & execute init_callback */
+	create_single_partition_common(partition_relid,
+								   check_constr,
+								   &callback_params);
 
 	/* Return the Oid */
 	return partition_relid;
+}
+
+/* Create one HASH partition */
+Oid
+create_single_hash_partition_internal(Oid parent_relid,
+									  uint32 part_idx,
+									  uint32 part_count,
+									  Oid value_type,
+									  RangeVar *partition_rv,
+									  char *tablespace)
+{
+	Oid						partition_relid;
+	Constraint			   *check_constr;
+	char				   *partitioned_column;
+	init_callback_params	callback_params;
+
+	/* Generate a name if asked to */
+	if (!partition_rv)
+	{
+		Oid		parent_nsp = get_rel_namespace(parent_relid);
+		char   *parent_nsp_name = get_namespace_name(parent_nsp);
+		char   *partition_name;
+
+		partition_name = choose_hash_partition_name(parent_relid, part_idx);
+
+		partition_rv = makeRangeVar(parent_nsp_name, partition_name, -1);
+	}
+
+	/* Create a partition & get 'partitioned_column' */
+	partition_relid = create_single_partition_internal(parent_relid,
+													   partition_rv,
+													   tablespace,
+													   &partitioned_column);
+
+	/* Build check constraint for HASH partition */
+	check_constr = build_hash_check_constraint(partition_relid,
+											   partitioned_column,
+											   part_idx,
+											   part_count,
+											   value_type);
+
+	/* Cook args for init_callback */
+	MakeInitCallbackHashParams(&callback_params, InvalidOid,
+							   parent_relid, partition_relid);
+
+	/* Add constraint & execute init_callback */
+	create_single_partition_common(partition_relid,
+								   check_constr,
+								   &callback_params);
+
+	/* Return the Oid */
+	return partition_relid;
+}
+
+/* Add constraint & execute init_callback */
+void
+create_single_partition_common(Oid partition_relid,
+							   Constraint *check_constraint,
+							   init_callback_params *callback_params)
+{
+	Relation child_relation;
+
+	/* Open the relation and add new check constraint & fkeys */
+	child_relation = heap_open(partition_relid, AccessExclusiveLock);
+	AddRelationNewConstraints(child_relation, NIL,
+							  list_make1(check_constraint),
+							  false, true, true);
+	heap_close(child_relation, NoLock);
+
+	/* Make constraint visible */
+	CommandCounterIncrement();
+
+	/* Finally invoke 'init_callback' */
+	invoke_part_callback(callback_params);
+
+	/* Make possible changes visible */
+	CommandCounterIncrement();
 }
 
 /*
@@ -489,7 +581,7 @@ spawn_partitions_val(Oid parent_relid,			/* parent's Oid */
 
 		/* What, again? Don't want to deal with this nightmare */
 		if (move_bound_op_ret_type != range_bound_type)
-			elog(ERROR, "error in spawn_partitions_val()");
+			elog(ERROR, "error in function " CppAsString(spawn_partitions_val));
 	}
 
 	/* Get operator's underlying function */
@@ -534,9 +626,9 @@ spawn_partitions_val(Oid parent_relid,			/* parent's Oid */
 	return last_partition;
 }
 
-/* Choose a good name for a partition */
+/* Choose a good name for a RANGE partition */
 static char *
-choose_partition_name(Oid parent_relid, Oid parent_nsp)
+choose_range_partition_name(Oid parent_relid, Oid parent_nsp)
 {
 	Datum	part_num;
 	Oid		part_seq_relid;
@@ -546,6 +638,13 @@ choose_partition_name(Oid parent_relid, Oid parent_nsp)
 	part_num = DirectFunctionCall1(nextval_oid, ObjectIdGetDatum(part_seq_relid));
 
 	return psprintf("%s_%u", get_rel_name(parent_relid), DatumGetInt32(part_num));
+}
+
+/* Choose a good name for a HASH partition */
+static char *
+choose_hash_partition_name(Oid parent_relid, uint32 part_idx)
+{
+	return psprintf("%s_%u", get_rel_name(parent_relid), part_idx);
 }
 
 /* Create a partition-like table (no constraints yet) */
@@ -603,17 +702,7 @@ create_single_partition_internal(Oid parent_relid,
 	/* Make up parent's RangeVar */
 	parent_rv = makeRangeVar(parent_nsp_name, parent_name, -1);
 
-	/* Generate a name if asked to */
-	if (!partition_rv)
-	{
-		char *part_name;
-
-		/* Make up a name for the partition */
-		part_name = choose_partition_name(parent_relid, parent_nsp);
-
-		/* Make RangeVar for the partition */
-		partition_rv = makeRangeVar(parent_nsp_name, part_name, -1);
-	}
+	Assert(partition_rv);
 
 	/* If no 'tablespace' is provided, get parent's tablespace */
 	if (!tablespace)
@@ -804,7 +893,7 @@ build_raw_range_check_tree(char *attname,
 	if (!IsInfinite(start_value))
 	{
 		/* Left boundary */
-		left_const->val = *makeString(
+		left_const->val = make_string_value_struct(
 			datum_to_cstring(BoundGetValue(start_value), value_type));
 		left_const->location = -1;
 
@@ -820,7 +909,7 @@ build_raw_range_check_tree(char *attname,
 	if (!IsInfinite(end_value))
 	{
 		/* Right boundary */
-		right_const->val = *makeString(
+		right_const->val = make_string_value_struct(
 			datum_to_cstring(BoundGetValue(end_value), value_type));
 		right_const->location = -1;
 
@@ -846,34 +935,23 @@ build_range_check_constraint(Oid child_relid,
 							 const Bound *end_value,
 							 Oid value_type)
 {
-	Constraint	   *range_constr;
+	Constraint	   *hash_constr;
 	char		   *range_constr_name;
 	AttrNumber		attnum;
 
 	/* Build a correct name for this constraint */
 	attnum = get_attnum(child_relid, attname);
-	range_constr_name = build_check_constraint_name_internal(child_relid, attnum);
+	range_constr_name = build_check_constraint_name_relid_internal(child_relid,
+																   attnum);
 
 	/* Initialize basic properties of a CHECK constraint */
-	range_constr = makeNode(Constraint);
-	range_constr->conname			= range_constr_name;
-	range_constr->deferrable		= false;
-	range_constr->initdeferred		= false;
-	range_constr->location			= -1;
-	range_constr->contype			= CONSTR_CHECK;
-	range_constr->is_no_inherit		= true;
-
-	/* Validate existing data using this constraint */
-	range_constr->skip_validation	= false;
-	range_constr->initially_valid	= true;
-
-	/* Finally we should build an expression tree */
-	range_constr->raw_expr = build_raw_range_check_tree(attname,
-														start_value,
-														end_value,
-														value_type);
+	hash_constr = make_constraint_common(range_constr_name,
+										 build_raw_range_check_tree(attname,
+																	start_value,
+																	end_value,
+																	value_type));
 	/* Everything seems to be fine */
-	return range_constr;
+	return hash_constr;
 }
 
 /* Check if range overlaps with any partitions */
@@ -945,6 +1023,152 @@ check_range_available(Oid parent_relid,
 	}
 
 	return true;
+}
+
+/* Build HASH check constraint expression tree */
+Node *
+build_raw_hash_check_tree(char *attname,
+						  uint32 part_idx,
+						  uint32 part_count,
+						  Oid value_type)
+{
+	A_Expr		   *eq_oper			= makeNode(A_Expr);
+	FuncCall	   *part_idx_call	= makeNode(FuncCall),
+				   *hash_call		= makeNode(FuncCall);
+	ColumnRef	   *hashed_column	= makeNode(ColumnRef);
+	A_Const		   *part_idx_c		= makeNode(A_Const),
+				   *part_count_c	= makeNode(A_Const);
+
+	List		   *get_hash_part_idx_proc;
+
+	Oid				hash_proc;
+	TypeCacheEntry *tce;
+
+	tce = lookup_type_cache(value_type, TYPECACHE_HASH_PROC);
+	hash_proc = tce->hash_proc;
+
+	/* Partitioned column */
+	hashed_column->fields = list_make1(makeString(attname));
+	hashed_column->location = -1;
+
+	/* Total amount of partitions */
+	part_count_c->val = make_int_value_struct(part_count);
+	part_count_c->location = -1;
+
+	/* Index of this partition (hash % total amount) */
+	part_idx_c->val = make_int_value_struct(part_idx);
+	part_idx_c->location = -1;
+
+	/* Call hash_proc() */
+	hash_call->funcname			= list_make1(makeString(get_func_name(hash_proc)));
+	hash_call->args				= list_make1(hashed_column);
+	hash_call->agg_order		= NIL;
+	hash_call->agg_filter		= NULL;
+	hash_call->agg_within_group	= false;
+	hash_call->agg_star			= false;
+	hash_call->agg_distinct		= false;
+	hash_call->func_variadic	= false;
+	hash_call->over				= NULL;
+	hash_call->location			= -1;
+
+	/* Build schema-qualified name of function get_hash_part_idx() */
+	get_hash_part_idx_proc =
+			list_make2(makeString(get_namespace_name(get_pathman_schema())),
+					   makeString("get_hash_part_idx"));
+
+	/* Call get_hash_part_idx() */
+	part_idx_call->funcname			= get_hash_part_idx_proc;
+	part_idx_call->args				= list_make2(hash_call, part_count_c);
+	part_idx_call->agg_order		= NIL;
+	part_idx_call->agg_filter		= NULL;
+	part_idx_call->agg_within_group	= false;
+	part_idx_call->agg_star			= false;
+	part_idx_call->agg_distinct		= false;
+	part_idx_call->func_variadic	= false;
+	part_idx_call->over				= NULL;
+	part_idx_call->location			= -1;
+
+	/* Construct equality operator */
+	eq_oper->kind = AEXPR_OP;
+	eq_oper->name = list_make1(makeString("="));
+	eq_oper->lexpr = (Node *) part_idx_call;
+	eq_oper->rexpr = (Node *) part_idx_c;
+	eq_oper->location = -1;
+
+	return (Node *) eq_oper;
+}
+
+/* Build complete HASH check constraint */
+Constraint *
+build_hash_check_constraint(Oid child_relid,
+							char *attname,
+							uint32 part_idx,
+							uint32 part_count,
+							Oid value_type)
+{
+	Constraint	   *hash_constr;
+	char		   *hash_constr_name;
+	AttrNumber		attnum;
+
+	/* Build a correct name for this constraint */
+	attnum = get_attnum(child_relid, attname);
+	hash_constr_name = build_check_constraint_name_relid_internal(child_relid,
+																  attnum);
+
+	/* Initialize basic properties of a CHECK constraint */
+	hash_constr = make_constraint_common(hash_constr_name,
+										 build_raw_hash_check_tree(attname,
+																   part_idx,
+																   part_count,
+																   value_type));
+	/* Everything seems to be fine */
+	return hash_constr;
+}
+
+static Constraint *
+make_constraint_common(char *name, Node *raw_expr)
+{
+	Constraint *constraint;
+
+	/* Initialize basic properties of a CHECK constraint */
+	constraint = makeNode(Constraint);
+	constraint->conname			= name;
+	constraint->deferrable		= false;
+	constraint->initdeferred	= false;
+	constraint->location		= -1;
+	constraint->contype			= CONSTR_CHECK;
+	constraint->is_no_inherit	= false;
+
+	/* Validate existing data using this constraint */
+	constraint->skip_validation	= false;
+	constraint->initially_valid	= true;
+
+	/* Finally we should build an expression tree */
+	constraint->raw_expr		= raw_expr;
+
+	return constraint;
+}
+
+static Value
+make_string_value_struct(char *str)
+{
+	Value val;
+
+	val.type = T_String;
+	val.val.str = str;
+
+	return val;
+}
+
+static Value
+make_int_value_struct(int int_val)
+{
+	Value val;
+
+	val.type = T_Integer;
+	val.val.ival = int_val;
+
+	return val;
 }
 
 

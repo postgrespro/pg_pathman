@@ -265,6 +265,34 @@ JOIN test.num_range_rel j3 on j3.id = j1.id
 WHERE j1.dt < '2015-03-01' AND j2.dt >= '2015-02-01' ORDER BY j2.dt;
 
 /*
+ * Test inlined SQL functions
+ */
+CREATE TABLE test.sql_inline (id INT NOT NULL);
+SELECT pathman.create_hash_partitions('test.sql_inline', 'id', 3);
+
+CREATE OR REPLACE FUNCTION test.sql_inline_func(i_id int) RETURNS SETOF INT AS $$
+	select * from test.sql_inline where id = i_id limit 1;
+$$ LANGUAGE sql STABLE;
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.sql_inline_func(5);
+EXPLAIN (COSTS OFF) SELECT * FROM test.sql_inline_func(1);
+
+DROP FUNCTION test.sql_inline_func(int);
+DROP TABLE test.sql_inline CASCADE;
+
+/*
+ * Test by @baiyinqiqi (issue #60)
+ */
+CREATE TABLE test.hash_varchar(val VARCHAR(40) NOT NULL);
+INSERT INTO test.hash_varchar SELECT generate_series(1, 20);
+
+SELECT pathman.create_hash_partitions('test.hash_varchar', 'val', 4);
+SELECT * FROM test.hash_varchar WHERE val = 'a';
+SELECT * FROM test.hash_varchar WHERE val = '12'::TEXT;
+
+DROP TABLE test.hash_varchar CASCADE;
+
+/*
  * Test CTE query
  */
 EXPLAIN (COSTS OFF)
@@ -274,7 +302,6 @@ SELECT * FROM ttt;
 EXPLAIN (COSTS OFF)
 	WITH ttt AS (SELECT * FROM test.hash_rel WHERE value = 2)
 SELECT * FROM ttt;
-
 
 /*
  * Test CTE query - by @parihaaraka (add varno to WalkerContext)
@@ -434,6 +461,20 @@ DROP TABLE test.zero CASCADE;
 ALTER TABLE test.hash_rel ADD COLUMN abc int;
 INSERT INTO test.hash_rel (id, value, abc) VALUES (123, 456, 789);
 SELECT * FROM test.hash_rel WHERE id = 123;
+
+/* Test replacing hash partition */
+CREATE TABLE test.hash_rel_extern (LIKE test.hash_rel INCLUDING ALL);
+SELECT pathman.replace_hash_partition('test.hash_rel_0', 'test.hash_rel_extern');
+\d+ test.hash_rel_0
+\d+ test.hash_rel_extern
+INSERT INTO test.hash_rel SELECT * FROM test.hash_rel_0;
+DROP TABLE test.hash_rel_0;
+/* Table with which we are replacing partition must have exact same structure */
+CREATE TABLE test.hash_rel_wrong(
+	id		INTEGER NOT NULL,
+	value	INTEGER);
+SELECT pathman.replace_hash_partition('test.hash_rel_1', 'test.hash_rel_wrong');
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
 
 /*
  * Clean up
@@ -617,11 +658,11 @@ CREATE TABLE test.index_on_childs(c1 integer not null, c2 integer);
 CREATE INDEX ON test.index_on_childs(c2);
 INSERT INTO test.index_on_childs SELECT i, (random()*10000)::integer FROM generate_series(1, 10000) i;
 SELECT create_range_partitions('test.index_on_childs', 'c1', 1, 1000, 0, false);
-SELECT add_range_partition('test.index_on_childs', 1, 1000, 'test.index_on_childs_1_1K');
-SELECT append_range_partition('test.index_on_childs', 'test.index_on_childs_1K_2K');
-SELECT append_range_partition('test.index_on_childs', 'test.index_on_childs_2K_3K');
-SELECT append_range_partition('test.index_on_childs', 'test.index_on_childs_3K_4K');
-SELECT append_range_partition('test.index_on_childs', 'test.index_on_childs_4K_5K');
+SELECT add_range_partition('test.index_on_childs', 1, 1000, 'test.index_on_childs_1_1k');
+SELECT append_range_partition('test.index_on_childs', 'test.index_on_childs_1k_2k');
+SELECT append_range_partition('test.index_on_childs', 'test.index_on_childs_2k_3k');
+SELECT append_range_partition('test.index_on_childs', 'test.index_on_childs_3k_4k');
+SELECT append_range_partition('test.index_on_childs', 'test.index_on_childs_4k_5k');
 SELECT set_enable_parent('test.index_on_childs', true);
 VACUUM ANALYZE test.index_on_childs;
 EXPLAIN (COSTS OFF) SELECT * FROM test.index_on_childs WHERE c1 > 100 AND c1 < 2500 AND c2 = 500;

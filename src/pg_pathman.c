@@ -710,7 +710,6 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 {
 	int						strategy;
 	TypeCacheEntry		   *tce;
-	FmgrInfo				cmp_func;
 	Oid						vartype;
 	const OpExpr		   *expr = (const OpExpr *) result->orig;
 	const PartRelationInfo *prel = context->prel;
@@ -736,10 +735,6 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 	if (strategy == 0)
 		goto binary_opexpr_return;
 
-	fill_type_cmp_fmgr_info(&cmp_func,
-							getBaseType(c->consttype),
-							getBaseType(prel->atttype));
-
 	switch (prel->parttype)
 	{
 		case PT_HASH:
@@ -760,6 +755,12 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 
 		case PT_RANGE:
 			{
+				FmgrInfo cmp_func;
+
+				fill_type_cmp_fmgr_info(&cmp_func,
+										getBaseType(c->consttype),
+										getBaseType(prel->atttype));
+
 				select_range_partitions(c->constvalue,
 										&cmp_func,
 										PrelGetRangesArray(context->prel),

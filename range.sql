@@ -45,19 +45,17 @@ BEGIN
 
 	/* Check if column has NULL values */
 	IF v_count > 0 AND (v_min IS NULL OR v_max IS NULL) THEN
-		RAISE EXCEPTION '''%'' column contains NULL values', attribute;
+		RAISE EXCEPTION 'column "%" contains NULL values', attribute;
 	END IF;
 
 	/* Check lower boundary */
 	IF start_value > v_min THEN
-		RAISE EXCEPTION 'start value is less than minimum value of ''%''',
-				attribute;
+		RAISE EXCEPTION 'start value is less than min value of "%"', attribute;
 	END IF;
 
 	/* Check upper boundary */
 	IF end_value <= v_max THEN
-		RAISE EXCEPTION 'not enough partitions to fit all values of ''%''',
-				attribute;
+		RAISE EXCEPTION 'not enough partitions to fit all values of "%"', attribute;
 	END IF;
 END
 $$ LANGUAGE plpgsql;
@@ -158,7 +156,7 @@ BEGIN
 			parent_relid,
 			start_value,
 			start_value + p_interval,
-			@extschema@.get_rel_tablespace_name(parent_relid);
+			@extschema@.get_tablespace(parent_relid);
 
 		start_value := start_value + p_interval;
 	END LOOP;
@@ -225,7 +223,7 @@ BEGIN
 		END IF;
 
 		IF v_max IS NULL THEN
-			RAISE EXCEPTION '''%'' column has NULL values', attribute;
+			RAISE EXCEPTION 'column "%" has NULL values', attribute;
 		END IF;
 
 		p_count := 0;
@@ -270,7 +268,7 @@ BEGIN
 			parent_relid,
 			start_value,
 			start_value + p_interval,
-			tablespace := @extschema@.get_rel_tablespace_name(parent_relid));
+			tablespace := @extschema@.get_tablespace(parent_relid));
 
 		start_value := start_value + p_interval;
 	END LOOP;
@@ -343,7 +341,7 @@ BEGIN
 			parent_relid,
 			start_value,
 			start_value + p_interval,
-			tablespace := @extschema@.get_rel_tablespace_name(parent_relid));
+			tablespace := @extschema@.get_tablespace(parent_relid));
 
 		start_value := start_value + p_interval;
 		part_count := part_count + 1;
@@ -416,7 +414,7 @@ BEGIN
 			parent_relid,
 			start_value,
 			start_value + p_interval,
-			@extschema@.get_rel_tablespace_name(parent_relid);
+			@extschema@.get_tablespace(parent_relid);
 
 		start_value := start_value + p_interval;
 		part_count := part_count + 1;
@@ -579,7 +577,7 @@ BEGIN
 
 	/* Check if this is a RANGE partition */
 	IF v_part_type != 2 THEN
-		RAISE EXCEPTION 'specified partitions aren''t RANGE partitions';
+		RAISE EXCEPTION 'specified partitions are not RANGE partitions';
 	END IF;
 
 	v_atttype := @extschema@.get_attribute_type(partition1, v_attname);
@@ -752,7 +750,7 @@ DECLARE
 	v_atttype		REGTYPE;
 
 BEGIN
-	IF @extschema@.partitions_count(parent_relid) = 0 THEN
+	IF @extschema@.get_number_of_partitions(parent_relid) = 0 THEN
 		RAISE EXCEPTION 'cannot append to empty partitions set';
 	END IF;
 
@@ -866,7 +864,7 @@ DECLARE
 	v_atttype		REGTYPE;
 
 BEGIN
-	IF @extschema@.partitions_count(parent_relid) = 0 THEN
+	IF @extschema@.get_number_of_partitions(parent_relid) = 0 THEN
 		RAISE EXCEPTION 'cannot prepend to empty partitions set';
 	END IF;
 
@@ -934,7 +932,7 @@ BEGIN
 	END IF;
 
 	/* check range overlap */
-	IF @extschema@.partitions_count(parent_relid) > 0 THEN
+	IF @extschema@.get_number_of_partitions(parent_relid) > 0 THEN
 		PERFORM @extschema@.check_range_available(parent_relid,
 												  start_value,
 												  end_value);

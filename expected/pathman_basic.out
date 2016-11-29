@@ -10,7 +10,7 @@ INSERT INTO test.hash_rel VALUES (1, 1);
 INSERT INTO test.hash_rel VALUES (2, 2);
 INSERT INTO test.hash_rel VALUES (3, 3);
 SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3);
-ERROR:  partitioning key 'value' must be NOT NULL
+ERROR:  partitioning key "value" must be NOT NULL
 ALTER TABLE test.hash_rel ALTER COLUMN value SET NOT NULL;
 SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3, partition_data:=false);
  create_hash_partitions 
@@ -131,10 +131,10 @@ CREATE INDEX ON test.range_rel (dt);
 INSERT INTO test.range_rel (dt, txt)
 SELECT g, md5(g::TEXT) FROM generate_series('2015-01-01', '2015-04-30', '1 day'::interval) as g;
 SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL, 2);
-ERROR:  partitioning key 'dt' must be NOT NULL
+ERROR:  partitioning key "dt" must be NOT NULL
 ALTER TABLE test.range_rel ALTER COLUMN dt SET NOT NULL;
 SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL, 2);
-ERROR:  not enough partitions to fit all values of 'dt'
+ERROR:  not enough partitions to fit all values of "dt"
 SELECT pathman.create_range_partitions('test.range_rel', 'DT', '2015-01-01'::DATE, '1 month'::INTERVAL);
 NOTICE:  sequence "range_rel_seq" does not exist, skipping
  create_range_partitions 
@@ -1081,6 +1081,64 @@ WHERE j1.dt < '2015-03-01' AND j2.dt >= '2015-02-01' ORDER BY j2.dt;
 (20 rows)
 
 /*
+ * Test inlined SQL functions
+ */
+CREATE TABLE test.sql_inline (id INT NOT NULL);
+SELECT pathman.create_hash_partitions('test.sql_inline', 'id', 3);
+ create_hash_partitions 
+------------------------
+                      3
+(1 row)
+
+CREATE OR REPLACE FUNCTION test.sql_inline_func(i_id int) RETURNS SETOF INT AS $$
+	select * from test.sql_inline where id = i_id limit 1;
+$$ LANGUAGE sql STABLE;
+EXPLAIN (COSTS OFF) SELECT * FROM test.sql_inline_func(5);
+              QUERY PLAN              
+--------------------------------------
+ Limit
+   ->  Append
+         ->  Seq Scan on sql_inline_0
+               Filter: (id = 5)
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.sql_inline_func(1);
+              QUERY PLAN              
+--------------------------------------
+ Limit
+   ->  Append
+         ->  Seq Scan on sql_inline_2
+               Filter: (id = 1)
+(4 rows)
+
+DROP FUNCTION test.sql_inline_func(int);
+DROP TABLE test.sql_inline CASCADE;
+NOTICE:  drop cascades to 3 other objects
+/*
+ * Test by @baiyinqiqi (issue #60)
+ */
+CREATE TABLE test.hash_varchar(val VARCHAR(40) NOT NULL);
+INSERT INTO test.hash_varchar SELECT generate_series(1, 20);
+SELECT pathman.create_hash_partitions('test.hash_varchar', 'val', 4);
+ create_hash_partitions 
+------------------------
+                      4
+(1 row)
+
+SELECT * FROM test.hash_varchar WHERE val = 'a';
+ val 
+-----
+(0 rows)
+
+SELECT * FROM test.hash_varchar WHERE val = '12'::TEXT;
+ val 
+-----
+ 12
+(1 row)
+
+DROP TABLE test.hash_varchar CASCADE;
+NOTICE:  drop cascades to 4 other objects
+/*
  * Test CTE query
  */
 EXPLAIN (COSTS OFF)
@@ -1563,14 +1621,64 @@ SELECT * FROM test.hash_rel WHERE id = 123;
  123 |   456 | 789
 (1 row)
 
+/* Test replacing hash partition */
+CREATE TABLE test.hash_rel_extern (LIKE test.hash_rel INCLUDING ALL);
+SELECT pathman.replace_hash_partition('test.hash_rel_0', 'test.hash_rel_extern');
+ replace_hash_partition 
+------------------------
+ test.hash_rel_extern
+(1 row)
+
+\d+ test.hash_rel_0
+                                               Table "test.hash_rel_0"
+ Column |  Type   |                         Modifiers                          | Storage | Stats target | Description 
+--------+---------+------------------------------------------------------------+---------+--------------+-------------
+ id     | integer | not null default nextval('test.hash_rel_id_seq'::regclass) | plain   |              | 
+ value  | integer | not null                                                   | plain   |              | 
+ abc    | integer |                                                            | plain   |              | 
+Indexes:
+    "hash_rel_0_pkey" PRIMARY KEY, btree (id)
+Triggers:
+    hash_rel_upd_trig BEFORE UPDATE ON test.hash_rel_0 FOR EACH ROW EXECUTE PROCEDURE test.hash_rel_upd_trig_func()
+
+\d+ test.hash_rel_extern
+                                             Table "test.hash_rel_extern"
+ Column |  Type   |                         Modifiers                          | Storage | Stats target | Description 
+--------+---------+------------------------------------------------------------+---------+--------------+-------------
+ id     | integer | not null default nextval('test.hash_rel_id_seq'::regclass) | plain   |              | 
+ value  | integer | not null                                                   | plain   |              | 
+ abc    | integer |                                                            | plain   |              | 
+Indexes:
+    "hash_rel_extern_pkey" PRIMARY KEY, btree (id)
+Check constraints:
+    "pathman_hash_rel_extern_2_check" CHECK (pathman.get_hash_part_idx(hashint4(value), 3) = 0)
+Inherits: test.hash_rel
+
+INSERT INTO test.hash_rel SELECT * FROM test.hash_rel_0;
+DROP TABLE test.hash_rel_0;
+/* Table with which we are replacing partition must have exact same structure */
+CREATE TABLE test.hash_rel_wrong(
+	id		INTEGER NOT NULL,
+	value	INTEGER);
+SELECT pathman.replace_hash_partition('test.hash_rel_1', 'test.hash_rel_wrong');
+ERROR:  partition must have the exact same structure as parent
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
+            QUERY PLAN             
+-----------------------------------
+ Append
+   ->  Seq Scan on hash_rel_extern
+   ->  Seq Scan on hash_rel_1
+   ->  Seq Scan on hash_rel_2
+(4 rows)
+
 /*
  * Clean up
  */
 SELECT pathman.drop_partitions('test.hash_rel');
-NOTICE:  drop cascades to 3 other objects
-NOTICE:  2 rows copied from test.hash_rel_0
+NOTICE:  drop cascades to 2 other objects
 NOTICE:  3 rows copied from test.hash_rel_1
 NOTICE:  2 rows copied from test.hash_rel_2
+NOTICE:  2 rows copied from test.hash_rel_extern
  drop_partitions 
 -----------------
                3
@@ -2191,31 +2299,31 @@ NOTICE:  sequence "index_on_childs_seq" does not exist, skipping
                        0
 (1 row)
 
-SELECT add_range_partition('test.index_on_childs', 1, 1000, 'test.index_on_childs_1_1K');
+SELECT add_range_partition('test.index_on_childs', 1, 1000, 'test.index_on_childs_1_1k');
     add_range_partition    
 ---------------------------
  test.index_on_childs_1_1k
 (1 row)
 
-SELECT append_range_partition('test.index_on_childs', 'test.index_on_childs_1K_2K');
+SELECT append_range_partition('test.index_on_childs', 'test.index_on_childs_1k_2k');
    append_range_partition   
 ----------------------------
  test.index_on_childs_1k_2k
 (1 row)
 
-SELECT append_range_partition('test.index_on_childs', 'test.index_on_childs_2K_3K');
+SELECT append_range_partition('test.index_on_childs', 'test.index_on_childs_2k_3k');
    append_range_partition   
 ----------------------------
  test.index_on_childs_2k_3k
 (1 row)
 
-SELECT append_range_partition('test.index_on_childs', 'test.index_on_childs_3K_4K');
+SELECT append_range_partition('test.index_on_childs', 'test.index_on_childs_3k_4k');
    append_range_partition   
 ----------------------------
  test.index_on_childs_3k_4k
 (1 row)
 
-SELECT append_range_partition('test.index_on_childs', 'test.index_on_childs_4K_5K');
+SELECT append_range_partition('test.index_on_childs', 'test.index_on_childs_4k_5k');
    append_range_partition   
 ----------------------------
  test.index_on_childs_4k_5k
@@ -2246,6 +2354,6 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.index_on_childs WHERE c1 > 100 AND c1 < 2
 (12 rows)
 
 DROP SCHEMA test CASCADE;
-NOTICE:  drop cascades to 50 other objects
+NOTICE:  drop cascades to 51 other objects
 DROP EXTENSION pg_pathman CASCADE;
 DROP SCHEMA pathman CASCADE;

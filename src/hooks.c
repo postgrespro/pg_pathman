@@ -8,7 +8,7 @@
  * ------------------------------------------------------------------------
  */
 
-#include "copy_stmt_hooking.h"
+#include "utility_stmt_hooking.h"
 #include "hooks.h"
 #include "init.h"
 #include "partition_filter.h"
@@ -24,6 +24,7 @@
 #include "optimizer/cost.h"
 #include "optimizer/restrictinfo.h"
 #include "utils/typcache.h"
+#include "utils/lsyscache.h"
 
 
 set_join_pathlist_hook_type		set_join_pathlist_next = NULL;
@@ -516,9 +517,7 @@ pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
 	if (query->commandType == CMD_UTILITY &&
 			(xact_is_transaction_stmt(query->utilityStmt) ||
 			 xact_is_set_transaction_stmt(query->utilityStmt)))
-	{
 		return;
-	}
 
 	/* Finish delayed invalidation jobs */
 	if (IsPathmanReady())
@@ -531,6 +530,32 @@ pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
 		get_pathman_schema() != InvalidOid)
 	{
 		load_config(); /* perform main cache initialization */
+	}
+
+	/* Process inlined SQL functions (we've already entered planning stage) */
+	if (IsPathmanReady() && get_refcount_parenthood_statuses() > 0)
+	{
+		/* Check that pg_pathman is the last extension loaded */
+		if (post_parse_analyze_hook != pathman_post_parse_analysis_hook)
+		{
+			char *spl_value; /* value of "shared_preload_libraries" GUC */
+
+#if PG_VERSION_NUM >= 90600
+			spl_value = GetConfigOptionByName("shared_preload_libraries", NULL, false);
+#else
+			spl_value = GetConfigOptionByName("shared_preload_libraries", NULL);
+#endif
+
+			ereport(ERROR,
+					(errmsg("extension conflict has been detected"),
+					 errdetail("shared_preload_libraries = \"%s\"", spl_value),
+					 errhint("pg_pathman should be the last extension listed in "
+							 "\"shared_preload_libraries\" GUC in order to "
+							 "prevent possible conflicts with other extensions")));
+		}
+
+		/* Modify query tree if needed */
+		pathman_transform_query(query);
 	}
 }
 
@@ -626,18 +651,32 @@ pathman_process_utility_hook(Node *parsetree,
 							 DestReceiver *dest,
 							 char *completionTag)
 {
-	/* Override standard COPY statement if needed */
-	if (IsPathmanReady() && is_pathman_related_copy(parsetree))
+	if (IsPathmanReady())
 	{
-		uint64	processed;
+		Oid			partition_relid;
+		AttrNumber	partitioned_col;
 
-		/* Handle our COPY case (and show a special cmd name) */
-		PathmanDoCopy((CopyStmt *) parsetree, queryString, &processed);
-		if (completionTag)
-			snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
-					 "PATHMAN COPY " UINT64_FORMAT, processed);
+		/* Override standard COPY statement if needed */
+		if (is_pathman_related_copy(parsetree))
+		{
+			uint64	processed;
 
-		return; /* don't call standard_ProcessUtility() or hooks */
+			/* Handle our COPY case (and show a special cmd name) */
+			PathmanDoCopy((CopyStmt *) parsetree, queryString, &processed);
+			if (completionTag)
+				snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
+						 "PATHMAN COPY " UINT64_FORMAT, processed);
+
+			return; /* don't call standard_ProcessUtility() or hooks */
+		}
+
+		/* Override standard RENAME statement if needed */
+		if (is_pathman_related_table_rename(parsetree,
+											&partition_relid,
+											&partitioned_col))
+			PathmanRenameConstraint(partition_relid,
+									partitioned_col,
+									(const RenameStmt *) parsetree);
 	}
 
 	/* Call hooks set by other extensions if needed */
