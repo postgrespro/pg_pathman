@@ -1672,7 +1672,8 @@ NOTICE:  drop cascades to 7 other objects
 /* Test automatic partition creation */
 CREATE TABLE test.range_rel (
 	id	SERIAL PRIMARY KEY,
-	dt	TIMESTAMP NOT NULL);
+	dt	TIMESTAMP NOT NULL,
+	data TEXT);
 SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '10 days'::INTERVAL, 1);
  create_range_partitions 
 -------------------------
@@ -1692,9 +1693,9 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt = '2014-12-15';
 (3 rows)
 
 SELECT * FROM test.range_rel WHERE dt = '2014-12-15';
- id  |            dt            
------+--------------------------
- 137 | Mon Dec 15 00:00:00 2014
+ id  |            dt            | data 
+-----+--------------------------+------
+ 137 | Mon Dec 15 00:00:00 2014 | 
 (1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt = '2015-03-15';
@@ -1706,9 +1707,9 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt = '2015-03-15';
 (3 rows)
 
 SELECT * FROM test.range_rel WHERE dt = '2015-03-15';
- id |            dt            
-----+--------------------------
- 74 | Sun Mar 15 00:00:00 2015
+ id |            dt            | data 
+----+--------------------------+------
+ 74 | Sun Mar 15 00:00:00 2015 | 
 (1 row)
 
 SELECT pathman.set_auto('test.range_rel', false);
@@ -1726,6 +1727,17 @@ SELECT pathman.set_auto('test.range_rel', true);
 (1 row)
 
 INSERT INTO test.range_rel (dt) VALUES ('2015-06-01');
+/*
+ * Test auto removing record from config on table DROP (but not on column drop
+ * as it used to be before version 1.2)
+ */
+ALTER TABLE test.range_rel DROP COLUMN data;
+SELECT * FROM pathman.pathman_config;
+    partrel     | attname | parttype | range_interval 
+----------------+---------+----------+----------------
+ test.range_rel | dt      |        2 | @ 10 days
+(1 row)
+
 DROP TABLE test.range_rel CASCADE;
 NOTICE:  drop cascades to 20 other objects
 SELECT * FROM pathman.pathman_config;

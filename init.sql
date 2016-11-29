@@ -464,7 +464,7 @@ BEGIN
 	SELECT array_agg(cfg.partrel) INTO relids
 	FROM pg_event_trigger_dropped_objects() AS events
 	JOIN @extschema@.pathman_config AS cfg ON cfg.partrel::oid = events.objid
-	WHERE events.classid = pg_class_oid;
+	WHERE events.classid = pg_class_oid AND events.objsubid = 0;
 
 	/* Cleanup pathman_config */
 	DELETE FROM @extschema@.pathman_config WHERE partrel = ANY(relids);
