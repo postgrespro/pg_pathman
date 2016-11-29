@@ -783,3 +783,23 @@ CREATE OR REPLACE FUNCTION @extschema@.invoke_on_partition_created_callback(
 	init_callback	REGPROCEDURE)
 RETURNS VOID AS 'pg_pathman', 'invoke_on_partition_created_callback'
 LANGUAGE C;
+
+/*
+ * Build hash condition for a CHECK CONSTRAINT
+ */
+CREATE OR REPLACE FUNCTION @extschema@.build_hash_condition(
+	parent_relid	REGCLASS,
+	attname			TEXT,
+	partitions_count INT,
+	partition_number INT)
+RETURNS TEXT AS 'pg_pathman', 'build_hash_condition'
+LANGUAGE C;
+
+/*
+ * Returns hash value for specified partition (0..N)
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_partition_hash(
+	parent_relid	REGCLASS,
+	partition		REGCLASS)
+RETURNS INT AS 'pg_pathman', 'get_partition_hash'
+LANGUAGE C;
