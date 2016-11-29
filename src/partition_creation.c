@@ -17,8 +17,10 @@
 
 #include "access/htup_details.h"
 #include "access/reloptions.h"
+#include "access/sysattr.h"
 #include "access/xact.h"
 #include "catalog/heap.h"
+#include "catalog/pg_authid.h"
 #include "catalog/pg_type.h"
 #include "catalog/toasting.h"
 #include "commands/event_trigger.h"
@@ -32,7 +34,9 @@
 #include "tcop/utility.h"
 #include "utils/builtins.h"
 #include "utils/datum.h"
+#include "utils/fmgroids.h"
 #include "utils/jsonb.h"
+#include "utils/snapmgr.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
@@ -71,6 +75,7 @@ static ObjectAddress create_table_using_stmt(CreateStmt *create_stmt,
 											 Oid relowner);
 
 static void copy_foreign_keys(Oid parent_relid, Oid partition_oid);
+static void copy_acl_privileges(Oid parent_relid, Oid partition_relid);
 
 static Constraint *make_constraint_common(char *name, Node *raw_expr);
 
@@ -603,10 +608,30 @@ choose_range_partition_name(Oid parent_relid, Oid parent_nsp)
 {
 	Datum	part_num;
 	Oid		part_seq_relid;
+	Oid		save_userid;
+	int		save_sec_context;
+	bool	need_priv_escalation = !superuser(); /* we might be a SU */
 
 	part_seq_relid = get_relname_relid(build_sequence_name_internal(parent_relid),
 									   parent_nsp);
+
+	/* Do we have to escalate privileges? */
+	if (need_priv_escalation)
+	{
+		/* Get current user's Oid and security context */
+		GetUserIdAndSecContext(&save_userid, &save_sec_context);
+
+		/* Become superuser in order to bypass sequence ACL checks */
+		SetUserIdAndSecContext(BOOTSTRAP_SUPERUSERID,
+							   save_sec_context | SECURITY_LOCAL_USERID_CHANGE);
+	}
+
+	/* Get next integer for partition name */
 	part_num = DirectFunctionCall1(nextval_oid, ObjectIdGetDatum(part_seq_relid));
+
+	/* Restore user's privileges */
+	if (need_priv_escalation)
+		SetUserIdAndSecContext(save_userid, save_sec_context);
 
 	return psprintf("%s_%u", get_rel_name(parent_relid), DatumGetInt32(part_num));
 }
@@ -644,6 +669,10 @@ create_single_partition_internal(Oid parent_relid,
 	List			   *create_stmts;
 	ListCell		   *lc;
 
+	/* Current user and security context */
+	Oid					save_userid;
+	int					save_sec_context;
+	bool				need_priv_escalation = !superuser(); /* we might be a SU */
 
 	/* Lock parent and check if it exists */
 	LockRelationOid(parent_relid, ShareUpdateExclusiveLock);
@@ -699,6 +728,27 @@ create_single_partition_internal(Oid parent_relid,
 	create_stmt.tablespacename	= tablespace;
 	create_stmt.if_not_exists	= false;
 
+	/* Do we have to escalate privileges? */
+	if (need_priv_escalation)
+	{
+		/* Get current user's Oid and security context */
+		GetUserIdAndSecContext(&save_userid, &save_sec_context);
+
+		/* Check that user's allowed to spawn partitions */
+		if (ACLCHECK_OK != pg_class_aclcheck(parent_relid, save_userid,
+											 ACL_SPAWN_PARTITIONS))
+			ereport(ERROR,
+					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+					 errmsg("permission denied for parent relation \"%s\"",
+							get_rel_name_or_relid(parent_relid)),
+					 errdetail("user is not allowed to create new partitions"),
+					 errhint("consider granting INSERT privilege")));
+
+		/* Become superuser in order to bypass various ACL checks */
+		SetUserIdAndSecContext(BOOTSTRAP_SUPERUSERID,
+							   save_sec_context | SECURITY_LOCAL_USERID_CHANGE);
+	}
+
 	/* Generate columns using the parent table */
 	create_stmts = transformCreateStmt(&create_stmt, NULL);
 
@@ -723,6 +773,12 @@ create_single_partition_internal(Oid parent_relid,
 
 			/* Copy FOREIGN KEYS of the parent table */
 			copy_foreign_keys(parent_relid, partition_relid);
+
+			/* Make changes visible */
+			CommandCounterIncrement();
+
+			/* Copy ACL privileges of the parent table */
+			copy_acl_privileges(parent_relid, partition_relid);
 		}
 		else if (IsA(cur_stmt, CreateForeignTableStmt))
 		{
@@ -746,6 +802,10 @@ create_single_partition_internal(Oid parent_relid,
 		/* Update config one more time */
 		CommandCounterIncrement();
 	}
+
+	/* Restore user's privileges */
+	if (need_priv_escalation)
+		SetUserIdAndSecContext(save_userid, save_sec_context);
 
 	return partition_relid;
 }
@@ -796,6 +856,192 @@ create_table_using_stmt(CreateStmt *create_stmt, Oid relowner)
 
 	/* Return the address */
 	return table_addr;
+}
+
+/* Copy ACL privileges of parent table */
+static void
+copy_acl_privileges(Oid parent_relid, Oid partition_relid)
+{
+	Relation		pg_class_rel,
+					pg_attribute_rel;
+
+	TupleDesc		pg_class_desc,
+					pg_attribute_desc;
+
+	HeapTuple		htup;
+	ScanKeyData		skey[2];
+	SysScanDesc		scan;
+
+	Datum			acl_datum;
+	bool			acl_null;
+
+	Snapshot		snapshot;
+
+	pg_class_rel = heap_open(RelationRelationId, RowExclusiveLock);
+	pg_attribute_rel = heap_open(AttributeRelationId, RowExclusiveLock);
+
+	/* Get most recent snapshot */
+	snapshot = RegisterSnapshot(GetLatestSnapshot());
+
+	pg_class_desc = RelationGetDescr(pg_class_rel);
+	pg_attribute_desc = RelationGetDescr(pg_attribute_rel);
+
+	htup = SearchSysCache1(RELOID, ObjectIdGetDatum(parent_relid));
+	if (!HeapTupleIsValid(htup))
+		elog(ERROR, "cache lookup failed for relation %u", parent_relid);
+
+	/* Get parent's ACL */
+	acl_datum = heap_getattr(htup, Anum_pg_class_relacl, pg_class_desc, &acl_null);
+
+	/* Copy datum if it's not NULL */
+	if (!acl_null)
+	{
+		Form_pg_attribute acl_column;
+
+		acl_column = pg_class_desc->attrs[Anum_pg_class_relacl - 1];
+
+		acl_datum = datumCopy(acl_datum, acl_column->attbyval, acl_column->attlen);
+	}
+
+	/* Release 'htup' */
+	ReleaseSysCache(htup);
+
+	/* Search for 'partition_relid' */
+	ScanKeyInit(&skey[0],
+				ObjectIdAttributeNumber,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(partition_relid));
+
+	scan = systable_beginscan(pg_class_rel, ClassOidIndexId,
+							  true, snapshot, 1, skey);
+
+	/* There should be exactly one tuple (our child) */
+	if (HeapTupleIsValid(htup = systable_getnext(scan)))
+	{
+		ItemPointerData		iptr;
+		Datum				values[Natts_pg_class] = { (Datum) 0 };
+		bool				nulls[Natts_pg_class] = { false };
+		bool				replaces[Natts_pg_class] = { false };
+
+		/* Copy ItemPointer of this tuple */
+		iptr = htup->t_self;
+
+		values[Anum_pg_class_relacl - 1] = acl_datum;	/* ACL array */
+		nulls[Anum_pg_class_relacl - 1] = acl_null;		/* do we have ACL? */
+		replaces[Anum_pg_class_relacl - 1] = true;
+
+		/* Build new tuple with parent's ACL */
+		htup = heap_modify_tuple(htup, pg_class_desc, values, nulls, replaces);
+
+		/* Update child's tuple */
+		simple_heap_update(pg_class_rel, &iptr, htup);
+
+		/* Don't forget to update indexes */
+		CatalogUpdateIndexes(pg_class_rel, htup);
+	}
+
+	systable_endscan(scan);
+
+
+	/* Search for 'parent_relid's columns */
+	ScanKeyInit(&skey[0],
+				Anum_pg_attribute_attrelid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(parent_relid));
+
+	/* Consider only user-defined columns (>0) */
+	ScanKeyInit(&skey[1],
+				Anum_pg_attribute_attnum,
+				BTEqualStrategyNumber, F_INT2GT,
+				Int16GetDatum(InvalidAttrNumber));
+
+	scan = systable_beginscan(pg_attribute_rel,
+							  AttributeRelidNumIndexId,
+							  true, snapshot, 2, skey);
+
+	/* Go through the list of parent's columns */
+	while (HeapTupleIsValid(htup = systable_getnext(scan)))
+	{
+		ScanKeyData		subskey[2];
+		SysScanDesc		subscan;
+		HeapTuple		subhtup;
+
+		AttrNumber		cur_attnum;
+		bool			cur_attnum_null;
+
+		/* Get parent column's ACL */
+		acl_datum = heap_getattr(htup, Anum_pg_attribute_attacl,
+								 pg_attribute_desc, &acl_null);
+
+		/* Copy datum if it's not NULL */
+		if (!acl_null)
+		{
+			Form_pg_attribute acl_column;
+
+			acl_column = pg_attribute_desc->attrs[Anum_pg_attribute_attacl - 1];
+
+			acl_datum = datumCopy(acl_datum,
+								  acl_column->attbyval,
+								  acl_column->attlen);
+		}
+
+		/* Fetch number of current column */
+		cur_attnum = DatumGetInt16(heap_getattr(htup, Anum_pg_attribute_attnum,
+												pg_attribute_desc, &cur_attnum_null));
+		Assert(cur_attnum_null == false); /* must not be NULL! */
+
+		/* Search for 'partition_relid' */
+		ScanKeyInit(&subskey[0],
+					Anum_pg_attribute_attrelid,
+					BTEqualStrategyNumber, F_OIDEQ,
+					ObjectIdGetDatum(partition_relid));
+
+		/* Search for 'partition_relid's columns */
+		ScanKeyInit(&subskey[1],
+					Anum_pg_attribute_attnum,
+					BTEqualStrategyNumber, F_INT2EQ,
+					Int16GetDatum(cur_attnum));
+
+		subscan = systable_beginscan(pg_attribute_rel,
+									 AttributeRelidNumIndexId,
+									 true, snapshot, 2, subskey);
+
+		/* There should be exactly one tuple (our child's column) */
+		if (HeapTupleIsValid(subhtup = systable_getnext(subscan)))
+		{
+			ItemPointerData		iptr;
+			Datum				values[Natts_pg_attribute] = { (Datum) 0 };
+			bool				nulls[Natts_pg_attribute] = { false };
+			bool				replaces[Natts_pg_attribute] = { false };
+
+			/* Copy ItemPointer of this tuple */
+			iptr = subhtup->t_self;
+
+			values[Anum_pg_attribute_attacl - 1] = acl_datum;	/* ACL array */
+			nulls[Anum_pg_attribute_attacl - 1] = acl_null;		/* do we have ACL? */
+			replaces[Anum_pg_attribute_attacl - 1] = true;
+
+			/* Build new tuple with parent's ACL */
+			subhtup = heap_modify_tuple(subhtup, pg_attribute_desc,
+										values, nulls, replaces);
+
+			/* Update child's tuple */
+			simple_heap_update(pg_attribute_rel, &iptr, subhtup);
+
+			/* Don't forget to update indexes */
+			CatalogUpdateIndexes(pg_attribute_rel, subhtup);
+		}
+
+		systable_endscan(subscan);
+	}
+
+	systable_endscan(scan);
+
+	/* Don't forget to free snapshot */
+	UnregisterSnapshot(snapshot);
+
+	heap_close(pg_class_rel, RowExclusiveLock);
+	heap_close(pg_attribute_rel, RowExclusiveLock);
 }
 
 /* Copy foreign keys of parent table */

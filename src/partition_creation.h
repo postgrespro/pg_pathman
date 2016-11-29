@@ -14,6 +14,10 @@
 #include "nodes/parsenodes.h"
 
 
+/* ACL privilege for partition creation */
+#define ACL_SPAWN_PARTITIONS	 ACL_INSERT
+
+
 /* Create RANGE partitions to store some value */
 Oid create_partitions_for_value(Oid relid, Datum value, Oid value_type);
 Oid create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type);
