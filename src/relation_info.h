@@ -56,8 +56,6 @@ typedef struct
 
 /*
  * Comparison macros for bounds
- *		If both bounds are minus infinite or plus infinite then they are equal.
- *		Else call original comparison function.
  */
 inline static int8_t
 cmp_bounds(FmgrInfo *cmp_func, const Bound *b1, const Bound *b2)

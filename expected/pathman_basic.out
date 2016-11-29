@@ -1452,6 +1452,62 @@ CREATE TABLE test.range_rel_test2 (
 	dt  TIMESTAMP);
 SELECT pathman.attach_range_partition('test.range_rel', 'test.range_rel_test2', '2013-01-01'::DATE, '2014-01-01'::DATE);
 ERROR:  partition must have the exact same structure as parent
+/* Half open ranges */
+SELECT pathman.add_range_partition('test.range_rel', NULL, '2014-12-01'::DATE, 'test.range_rel_minus_infinity');
+      add_range_partition      
+-------------------------------
+ test.range_rel_minus_infinity
+(1 row)
+
+SELECT pathman.add_range_partition('test.range_rel', '2015-06-01'::DATE, NULL, 'test.range_rel_plus_infinity');
+     add_range_partition      
+------------------------------
+ test.range_rel_plus_infinity
+(1 row)
+
+SELECT pathman.append_range_partition('test.range_rel');
+ERROR:  Cannot append partition because last partition's range is half open
+SELECT pathman.prepend_range_partition('test.range_rel');
+ERROR:  Cannot prepend partition because first partition's range is half open
+DROP TABLE test.range_rel_minus_infinity;
+CREATE TABLE test.range_rel_minus_infinity (LIKE test.range_rel INCLUDING ALL);
+SELECT pathman.attach_range_partition('test.range_rel', 'test.range_rel_minus_infinity', NULL, '2014-12-01'::DATE);
+    attach_range_partition     
+-------------------------------
+ test.range_rel_minus_infinity
+(1 row)
+
+SELECT * FROM pathman.pathman_partition_list WHERE parent = 'test.range_rel'::REGCLASS;
+     parent     |           partition           | parttype | partattr |        range_min         |        range_max         
+----------------+-------------------------------+----------+----------+--------------------------+--------------------------
+ test.range_rel | test.range_rel_minus_infinity |        2 | dt       | NULL                     | Mon Dec 01 00:00:00 2014
+ test.range_rel | test.range_rel_8              |        2 | dt       | Mon Dec 01 00:00:00 2014 | Thu Jan 01 00:00:00 2015
+ test.range_rel | test.range_rel_1              |        2 | dt       | Thu Jan 01 00:00:00 2015 | Sun Feb 01 00:00:00 2015
+ test.range_rel | test.range_rel_2              |        2 | dt       | Sun Feb 01 00:00:00 2015 | Sun Mar 01 00:00:00 2015
+ test.range_rel | test.range_rel_3              |        2 | dt       | Sun Mar 01 00:00:00 2015 | Wed Apr 01 00:00:00 2015
+ test.range_rel | test.range_rel_4              |        2 | dt       | Wed Apr 01 00:00:00 2015 | Fri May 01 00:00:00 2015
+ test.range_rel | test.range_rel_6              |        2 | dt       | Fri May 01 00:00:00 2015 | Mon Jun 01 00:00:00 2015
+ test.range_rel | test.range_rel_plus_infinity  |        2 | dt       | Mon Jun 01 00:00:00 2015 | NULL
+(8 rows)
+
+INSERT INTO test.range_rel (dt) VALUES ('2012-06-15');
+INSERT INTO test.range_rel (dt) VALUES ('2015-12-15');
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt < '2015-01-01';
+                 QUERY PLAN                 
+--------------------------------------------
+ Append
+   ->  Seq Scan on range_rel_minus_infinity
+   ->  Seq Scan on range_rel_8
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-05-01';
+                QUERY PLAN                 
+-------------------------------------------
+ Append
+   ->  Seq Scan on range_rel_6
+   ->  Seq Scan on range_rel_plus_infinity
+(3 rows)
+
 /*
  * Zero partitions count and adding partitions with specified name
  */
@@ -1560,7 +1616,7 @@ NOTICE:  0 rows copied from test.num_range_rel_6
 
 DROP TABLE test.num_range_rel CASCADE;
 DROP TABLE test.range_rel CASCADE;
-NOTICE:  drop cascades to 7 other objects
+NOTICE:  drop cascades to 9 other objects
 /* Test automatic partition creation */
 CREATE TABLE test.range_rel (
 	id	SERIAL PRIMARY KEY,

@@ -765,7 +765,7 @@ BEGIN
 	INTO p_range;
 
 	IF p_range[2] IS NULL THEN
-		RAISE EXCEPTION 'Cannot append partition because last partition is half open';
+		RAISE EXCEPTION 'Cannot append partition because last partition''s range is half open';
 	END IF;
 
 	IF @extschema@.is_date_type(p_atttype) THEN
@@ -879,7 +879,7 @@ BEGIN
 	INTO p_range;
 
 	IF p_range[1] IS NULL THEN
-		RAISE EXCEPTION 'Cannot prepend partition because first partition is half open';
+		RAISE EXCEPTION 'Cannot prepend partition because first partition''s range is half open';
 	END IF;
 
 	IF @extschema@.is_date_type(p_atttype) THEN
