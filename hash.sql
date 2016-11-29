@@ -22,8 +22,8 @@ DECLARE
 	v_child_relname		TEXT;
 	v_plain_schema		TEXT;
 	v_plain_relname		TEXT;
-	v_atttype			REGTYPE;
-	v_hashfunc			REGPROC;
+	-- v_atttype			REGTYPE;
+	-- v_hashfunc			REGPROC;
 	v_init_callback		REGPROCEDURE;
 
 BEGIN
@@ -41,8 +41,8 @@ BEGIN
 	PERFORM @extschema@.common_relation_checks(parent_relid, attribute);
 
 	/* Fetch atttype and its hash function */
-	v_atttype := @extschema@.get_attribute_type(parent_relid, attribute);
-	v_hashfunc := @extschema@.get_type_hash_func(v_atttype);
+	-- v_atttype := @extschema@.get_attribute_type(parent_relid, attribute);
+	-- v_hashfunc := @extschema@.get_type_hash_func(v_atttype);
 
 	SELECT * INTO v_plain_schema, v_plain_relname
 	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
@@ -71,6 +71,94 @@ BEGIN
 END
 $$ LANGUAGE plpgsql
 SET client_min_messages = WARNING;
+
+/*
+ * Replace hash partition with another one. It could be useful in case when
+ * someone wants to attach foreign table as a partition
+ */
+CREATE OR REPLACE FUNCTION @extschema@.replace_hash_partition(
+	old_partition		REGCLASS,
+	new_partition		REGCLASS)
+RETURNS REGCLASS AS
+$$
+DECLARE
+	v_attname			TEXT;
+	rel_persistence		CHAR;
+	v_init_callback		REGPROCEDURE;
+	v_parent_relid		REGCLASS;
+	v_part_count		INT;
+	v_part_num			INT;
+BEGIN
+	PERFORM @extschema@.validate_relname(old_partition);
+	PERFORM @extschema@.validate_relname(new_partition);
+
+	/* Parent relation */
+	v_parent_relid := @extschema@.get_parent_of_partition(old_partition);
+
+	/* Acquire lock on parent */
+	PERFORM @extschema@.lock_partitioned_relation(v_parent_relid);
+
+	/* Ignore temporary tables */
+	SELECT relpersistence FROM pg_catalog.pg_class
+	WHERE oid = new_partition INTO rel_persistence;
+
+	IF rel_persistence = 't'::CHAR THEN
+		RAISE EXCEPTION 'temporary table "%" cannot be used as a partition',
+						new_partition::TEXT;
+	END IF;
+
+	/* Check that new partition has an equal structure as parent does */
+	IF NOT @extschema@.validate_relations_equality(v_parent_relid, new_partition) THEN
+		RAISE EXCEPTION 'partition must have the exact same structure as parent';
+	END IF;
+
+	/* Get partitioning key */
+	v_attname := attname FROM @extschema@.pathman_config WHERE partrel = v_parent_relid;
+	IF v_attname IS NULL THEN
+		RAISE EXCEPTION 'table "%" is not partitioned', v_parent_relid::TEXT;
+	END IF;
+
+	/* Calculate partitions count and old partition's number */
+	v_part_count := count(*) FROM @extschema@.pathman_partition_list WHERE parent = v_parent_relid;
+	v_part_num := @extschema@.get_partition_hash(v_parent_relid, old_partition);
+
+	/* Detach old partition */
+	EXECUTE format('ALTER TABLE %s NO INHERIT %s', old_partition, v_parent_relid);
+	EXECUTE format('ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s',
+		old_partition,
+		@extschema@.build_check_constraint_name(old_partition::REGCLASS,
+												v_attname));
+
+	/* Attach new one */
+	EXECUTE format('ALTER TABLE %s INHERIT %s', new_partition, v_parent_relid);
+	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)',
+				   new_partition,
+				   @extschema@.build_check_constraint_name(new_partition::regclass,
+														   v_attname),
+				   @extschema@.build_hash_condition(new_partition::regclass,
+													v_attname,
+													v_part_count,
+													v_part_num));
+
+	/* Fetch init_callback from 'params' table */
+	WITH stub_callback(stub) as (values (0))
+	SELECT coalesce(init_callback, 0::REGPROCEDURE)
+	FROM stub_callback
+	LEFT JOIN @extschema@.pathman_config_params AS params
+	ON params.partrel = v_parent_relid
+	INTO v_init_callback;
+
+	PERFORM @extschema@.invoke_on_partition_created_callback(v_parent_relid,
+															 new_partition,
+															 v_init_callback);
+
+	/* Invalidate cache */
+	PERFORM @extschema@.on_update_partitions(v_parent_relid);
+
+	RETURN new_partition;
+END
+$$
+LANGUAGE plpgsql;
 
 /*
  * Creates an update trigger
