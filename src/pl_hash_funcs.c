@@ -22,10 +22,11 @@
 /* Function declarations */
 
 PG_FUNCTION_INFO_V1( create_hash_partitions_internal );
+
 PG_FUNCTION_INFO_V1( get_type_hash_func );
 PG_FUNCTION_INFO_V1( get_hash_part_idx );
+
 PG_FUNCTION_INFO_V1( build_hash_condition );
-PG_FUNCTION_INFO_V1( get_partition_hash );
 
 
 /*
@@ -90,68 +91,36 @@ get_hash_part_idx(PG_FUNCTION_ARGS)
 Datum
 build_hash_condition(PG_FUNCTION_ARGS)
 {
+	Oid				parent = PG_GETARG_OID(0);
+	text		   *attname = PG_GETARG_TEXT_P(1);
+	uint32			part_count = PG_GETARG_UINT32(2);
+	uint32			part_idx = PG_GETARG_UINT32(3);
+
 	TypeCacheEntry *tce;
+	Oid				attype;
+	char		   *attname_cstring = text_to_cstring(attname);
 
-	Oid		parent = PG_GETARG_OID(0);
-	text   *attname = PG_GETARG_TEXT_P(1);
-	uint32	partitions_count = PG_GETARG_UINT32(2);
-	uint32	partition_number = PG_GETARG_UINT32(3);
-	Oid		attyp;
-	char   *result;
+	char		   *result;
 
-	if (partition_number >= partitions_count)
-		elog(ERROR,
-			 "Partition number cannot exceed partitions count");
+	if (part_idx >= part_count)
+		elog(ERROR, "'part_idx' must be lower than 'part_count'");
 
 	/* Get attribute type and its hash function oid */
-	attyp = get_attribute_type(parent, text_to_cstring(attname), false);
-	if (attyp == InvalidOid)
-		elog(ERROR,
-			 "Relation '%s' has no attribute '%s'",
-			 get_rel_name(parent),
-			 text_to_cstring(attname));
+	attype = get_attribute_type(parent, attname_cstring, false);
+	if (attype == InvalidOid)
+		elog(ERROR, "relation \"%s\" has no attribute \"%s\"",
+					get_rel_name(parent),
+					attname_cstring);
 
-	tce = lookup_type_cache(attyp, TYPECACHE_HASH_PROC);
+	tce = lookup_type_cache(attype, TYPECACHE_HASH_PROC);
 
 	/* Create hash condition CSTRING */
 	result = psprintf("%s.get_hash_part_idx(%s(%s), %u) = %u",
 					  get_namespace_name(get_pathman_schema()),
 					  get_func_name(tce->hash_proc),
-					  text_to_cstring(attname),
-					  partitions_count,
-					  partition_number);
+					  attname_cstring,
+					  part_count,
+					  part_idx);
 
 	PG_RETURN_TEXT_P(cstring_to_text(result));
-}
-
-/*
- * Returns hash value for specified partition (0..N)
- */
-Datum
-get_partition_hash(PG_FUNCTION_ARGS)
-{
-	const PartRelationInfo *prel;
-	Oid		parent = PG_GETARG_OID(0);
-	Oid		partition = PG_GETARG_OID(1);
-	Oid	   *children;
-	int		i;
-
-	/* Validate partition type */
-	prel = get_pathman_relation_info(parent);
-	if (!prel || prel->parttype != PT_HASH)
-		elog(ERROR,
-			 "Relation '%s' isn't partitioned by hash",
-			 get_rel_name(parent));
-
-	/* Searching for partition */
-	children = PrelGetChildrenArray(prel);
-	for (i=0; i<prel->children_count; i++)
-		if (children[i] == partition)
-			PG_RETURN_UINT32(i);
-
-	/* If we get here then there is no such partition for specified parent */
-	elog(ERROR,
-		 "Relation '%s' isn't a part of partitioned table '%s'",
-		 get_rel_name(parent),
-		 get_rel_name(partition));
 }
