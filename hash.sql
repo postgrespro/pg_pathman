@@ -59,11 +59,14 @@ SET client_min_messages = WARNING;
 
 /*
  * Replace hash partition with another one. It could be useful in case when
- * someone wants to attach foreign table as a partition
+ * someone wants to attach foreign table as a partition.
+ *
+ * lock_parent - should we take an exclusive lock?
  */
 CREATE OR REPLACE FUNCTION @extschema@.replace_hash_partition(
 	old_partition		REGCLASS,
-	new_partition		REGCLASS)
+	new_partition		REGCLASS,
+	lock_parent			BOOL DEFAULT TRUE)
 RETURNS REGCLASS AS
 $$
 DECLARE
@@ -81,8 +84,13 @@ BEGIN
 	/* Parent relation */
 	parent_relid := @extschema@.get_parent_of_partition(old_partition);
 
-	/* Acquire lock on parent */
-	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+	IF lock_parent THEN
+		/* Acquire data modification lock (prevent further modifications) */
+		PERFORM @extschema@.prevent_relation_modification(parent_relid);
+	ELSE
+		/* Acquire lock on parent */
+		PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+	END IF;
 
 	/* Acquire data modification lock (prevent further modifications) */
 	PERFORM @extschema@.prevent_relation_modification(old_partition);
