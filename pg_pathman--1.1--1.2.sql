@@ -22,15 +22,7 @@ DROP FUNCTION @extschema@.validate_on_partition_created_callback(REGPROC);
 DROP FUNCTION @extschema@.get_sequence_name(TEXT, TEXT);
 DROP FUNCTION @extschema@.create_single_range_partition(REGCLASS, ANYELEMENT, ANYELEMENT, TEXT, TEXT);
 DROP FUNCTION @extschema@.check_overlap(REGCLASS, ANYELEMENT, ANYELEMENT);
-DROP FUNCTION @extschema@.split_range_partition(REGCLASS, ANYELEMENT, TEXT, ANYARRAY);
-
-
-/* ------------------------------------------------------------------------
- * Alter tables
- * ----------------------------------------------------------------------*/
-ALTER TABLE @extschema@.pathman_config_params ADD COLUMN spawn_using_bgw BOOLEAN NOT NULL DEFAULT FALSE;
-ALTER TABLE @extschema@.pathman_config_params ADD CHECK (@extschema@.validate_part_callback(init_callback));
-
+DROP FUNCTION @extschema@.split_range_partition(REGCLASS, ANYELEMENT, TEXT, OUT ANYARRAY);
 
 /* ------------------------------------------------------------------------
  * Alter functions' modifiers
@@ -1271,3 +1263,10 @@ CREATE OR REPLACE FUNCTION @extschema@.check_range_available(
 	range_max		ANYELEMENT)
 RETURNS VOID AS 'pg_pathman', 'check_range_available_pl'
 LANGUAGE C;
+
+
+/* ------------------------------------------------------------------------
+ * Alter tables
+ * ----------------------------------------------------------------------*/
+ALTER TABLE @extschema@.pathman_config_params ADD COLUMN spawn_using_bgw BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE @extschema@.pathman_config_params ADD CHECK (@extschema@.validate_part_callback(init_callback));
