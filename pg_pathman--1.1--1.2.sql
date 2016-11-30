@@ -23,6 +23,12 @@ DROP FUNCTION @extschema@.get_sequence_name(TEXT, TEXT);
 DROP FUNCTION @extschema@.create_single_range_partition(REGCLASS, ANYELEMENT, ANYELEMENT, TEXT, TEXT);
 DROP FUNCTION @extschema@.check_overlap(REGCLASS, ANYELEMENT, ANYELEMENT);
 DROP FUNCTION @extschema@.split_range_partition(REGCLASS, ANYELEMENT, TEXT, OUT ANYARRAY);
+DROP FUNCTION @extschema@.invalidate_relcache(OID);
+
+/* drop trigger and its function (PATHMAN_CONFIG_PARAMS) */
+DROP TRIGGER pathman_config_params_trigger;
+DROP FUNCTION @extschema@.pathman_config_params_trigger_func();
+
 
 /* ------------------------------------------------------------------------
  * Alter functions' modifiers
@@ -1263,6 +1269,16 @@ CREATE OR REPLACE FUNCTION @extschema@.check_range_available(
 	range_max		ANYELEMENT)
 RETURNS VOID AS 'pg_pathman', 'check_range_available_pl'
 LANGUAGE C;
+
+
+/* Finally create function and trigger (PATHMAN_CONFIG_PARAMS) */
+CREATE OR REPLACE FUNCTION @extschema@.pathman_config_params_trigger_func()
+RETURNS TRIGGER AS 'pg_pathman', 'pathman_config_params_trigger_func'
+LANGUAGE C;
+
+CREATE TRIGGER pathman_config_params_trigger
+BEFORE INSERT OR UPDATE OR DELETE ON @extschema@.pathman_config_params
+FOR EACH ROW EXECUTE PROCEDURE @extschema@.pathman_config_params_trigger_func();
 
 
 /* ------------------------------------------------------------------------
