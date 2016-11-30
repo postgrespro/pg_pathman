@@ -1,4 +1,4 @@
 # pg_pathman extension
-comment 'Partitioning tool ver. 1.1'
-default_version = '1.1'
+comment 'Partitioning tool'
+default_version = '1.2'
 module_pathname='$libdir/pg_pathman'

@@ -84,10 +84,9 @@ Done! Now it's time to setup your partitioning schemes.
 create_hash_partitions(relation         REGCLASS,
                        attribute        TEXT,
                        partitions_count INTEGER,
-                       partition_name   TEXT DEFAULT NULL,
                        partition_data   BOOLEAN DEFAULT TRUE)
 ```
-Performs HASH partitioning for `relation` by integer key `attribute`. The `partitions_count` parameter specifies the number of partitions to create; it cannot be changed afterwards. If `partition_data` is `true` then all the data will be automatically copied from the parent table to partitions. Note that data migration may took a while to finish and the table will be locked until transaction commits. See `partition_table_concurrently()` for a lock-free way to migrate data. Partition creation callback is invoked for each partition if set beforehand (see `set_part_init_callback()`).
+Performs HASH partitioning for `relation` by integer key `attribute`. The `partitions_count` parameter specifies the number of partitions to create; it cannot be changed afterwards. If `partition_data` is `true` then all the data will be automatically copied from the parent table to partitions. Note that data migration may took a while to finish and the table will be locked until transaction commits. See `partition_table_concurrently()` for a lock-free way to migrate data. Partition creation callback is invoked for each partition if set beforehand (see `set_init_callback()`).
 
 ```plpgsql
 create_range_partitions(relation       REGCLASS,
@@ -148,6 +147,14 @@ create_range_update_trigger(parent REGCLASS)
 Same as above, but for a RANGE-partitioned table.
 
 ### Post-creation partition management
+```plpgsql
+replace_hash_partition(old_partition       REGCLASS,
+                       new_partition       REGCLASS,
+                       lock_parent         BOOL DEFAULT TRUE)
+```
+Replaces specified partition of HASH-partitioned table with another table. The `lock_parent` parameter will prevent any INSERT/UPDATE/ALTER TABLE queries to parent table.
+
+
 ```plpgsql
 split_range_partition(partition      REGCLASS,
                       split_value    ANYELEMENT,
