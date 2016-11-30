@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
  */
 CREATE OR REPLACE FUNCTION @extschema@.validate_part_callback(
 	callback		REGPROC,
-	raise_error		BOOL DEFAULT FALSE)
+	raise_error		BOOL DEFAULT TRUE)
 RETURNS BOOL AS 'pg_pathman', 'validate_part_callback_pl'
 LANGUAGE C STRICT;
 
