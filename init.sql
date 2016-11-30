@@ -716,13 +716,13 @@ LANGUAGE C STRICT;
  */
 CREATE OR REPLACE FUNCTION @extschema@.build_check_constraint_name(
 	partition_relid	REGCLASS,
-	partitioned_col	INT2)
+	attribute	INT2)
 RETURNS TEXT AS 'pg_pathman', 'build_check_constraint_name_attnum'
 LANGUAGE C STRICT;
 
 CREATE OR REPLACE FUNCTION @extschema@.build_check_constraint_name(
 	partition_relid	REGCLASS,
-	partitioned_col	TEXT)
+	attribute	TEXT)
 RETURNS TEXT AS 'pg_pathman', 'build_check_constraint_name_attname'
 LANGUAGE C STRICT;
 
@@ -751,7 +751,7 @@ RETURNS BOOLEAN AS 'pg_pathman', 'add_to_pathman_config'
 LANGUAGE C;
 
 CREATE OR REPLACE FUNCTION @extschema@.invalidate_relcache(
-	OID)
+	relid			OID)
 RETURNS VOID AS 'pg_pathman'
 LANGUAGE C STRICT;
 

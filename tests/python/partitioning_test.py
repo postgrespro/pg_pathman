@@ -326,6 +326,12 @@ class PartitioningTests(unittest.TestCase):
 			'select add_range_partition(\'abc\', 41, 51, \'abc_added\')')
 		self.assertTrue(check_tablespace(node, 'abc_added', 'test_space'))
 
+		# check tablespace for split
+		node.psql(
+			'postgres',
+			'select split_range_partition(\'abc_added\', 45, \'abc_splitted\')')
+		self.assertTrue(check_tablespace(node, 'abc_splitted', 'test_space'))
+
 		# now let's specify tablespace explicitly
 		node.psql(
 			'postgres',
@@ -336,9 +342,13 @@ class PartitioningTests(unittest.TestCase):
 		node.psql(
 			'postgres',
 			'select add_range_partition(\'abc\', 61, 71, \'abc_added_2\', \'pg_default\')')
+		node.psql(
+			'postgres',
+			'select split_range_partition(\'abc_added_2\', 65, \'abc_splitted_2\', \'pg_default\')')
 		self.assertTrue(check_tablespace(node, 'abc_appended_2', 'pg_default'))
 		self.assertTrue(check_tablespace(node, 'abc_prepended_2', 'pg_default'))
 		self.assertTrue(check_tablespace(node, 'abc_added_2', 'pg_default'))
+		self.assertTrue(check_tablespace(node, 'abc_splitted_2', 'pg_default'))
 
 	@if_fdw_enabled
 	def test_foreign_table(self):
