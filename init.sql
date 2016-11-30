@@ -26,6 +26,20 @@ CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
 	CHECK (parttype IN (1, 2)) /* check for allowed part types */
 );
 
+
+/*
+ * Checks that callback function meets specific requirements.
+ * Particularly it must have the only JSONB argument and VOID return type.
+ *
+ * NOTE: this function is used in CHECK CONSTRAINT.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.validate_part_callback(
+	callback		REGPROC,
+	raise_error		BOOL DEFAULT FALSE)
+RETURNS BOOL AS 'pg_pathman', 'validate_part_callback_pl'
+LANGUAGE C STRICT;
+
+
 /*
  * Optional parameters for partitioned tables.
  *		partrel - regclass (relation type, stored as Oid)
@@ -37,10 +51,11 @@ CREATE TABLE IF NOT EXISTS @extschema@.pathman_config_params (
 	partrel			REGCLASS NOT NULL PRIMARY KEY,
 	enable_parent	BOOLEAN NOT NULL DEFAULT FALSE,
 	auto			BOOLEAN NOT NULL DEFAULT TRUE,
-	init_callback	REGPROCEDURE NOT NULL DEFAULT 0
+	init_callback	REGPROCEDURE NOT NULL DEFAULT 0,
+	spawn_using_bgw	BOOLEAN NOT NULL DEFAULT FALSE
+
+	CHECK (@extschema@.validate_part_callback(init_callback)) /* check signature */
 );
-CREATE UNIQUE INDEX i_pathman_config_params
-ON @extschema@.pathman_config_params(partrel);
 
 GRANT SELECT, INSERT, UPDATE, DELETE
 ON @extschema@.pathman_config, @extschema@.pathman_config_params
@@ -120,7 +135,7 @@ BEGIN
 	USING relation, value;
 END
 $$
-LANGUAGE plpgsql;
+LANGUAGE plpgsql STRICT;
 
 /*
  * Include\exclude parent relation in query plan.
@@ -159,11 +174,25 @@ CREATE OR REPLACE FUNCTION @extschema@.set_init_callback(
 RETURNS VOID AS
 $$
 BEGIN
-	PERFORM @extschema@.validate_on_partition_created_callback(callback);
 	PERFORM @extschema@.pathman_set_param(relation, 'init_callback', callback);
 END
 $$
-LANGUAGE plpgsql;
+LANGUAGE plpgsql STRICT;
+
+/*
+ * Set 'spawn using BGW' option
+ */
+CREATE OR REPLACE FUNCTION @extschema@.set_spawn_using_bgw(
+	relation	REGCLASS,
+	value		BOOLEAN)
+RETURNS VOID AS
+$$
+BEGIN
+	PERFORM @extschema@.pathman_set_param(relation, 'spawn_using_bgw', value);
+END
+$$
+LANGUAGE plpgsql STRICT;
+
 
 /*
  * Show all existing parents and partitions.
@@ -750,15 +779,6 @@ LANGUAGE C STRICT;
  */
 CREATE OR REPLACE FUNCTION @extschema@.debug_capture()
 RETURNS VOID AS 'pg_pathman', 'debug_capture'
-LANGUAGE C STRICT;
-
-/*
- * Checks that callback function meets specific requirements. Particularly it
- * must have the only JSONB argument and VOID return type.
- */
-CREATE OR REPLACE FUNCTION @extschema@.validate_on_partition_created_callback(
-	callback		REGPROC)
-RETURNS VOID AS 'pg_pathman', 'validate_on_part_init_callback_pl'
 LANGUAGE C STRICT;
 
 

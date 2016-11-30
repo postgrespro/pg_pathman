@@ -59,7 +59,7 @@ PG_FUNCTION_INFO_V1( invalidate_relcache );
 PG_FUNCTION_INFO_V1( lock_partitioned_relation );
 PG_FUNCTION_INFO_V1( prevent_relation_modification );
 
-PG_FUNCTION_INFO_V1( validate_on_part_init_callback_pl );
+PG_FUNCTION_INFO_V1( validate_part_callback_pl );
 PG_FUNCTION_INFO_V1( invoke_on_partition_created_callback );
 
 PG_FUNCTION_INFO_V1( check_security_policy );
@@ -753,11 +753,9 @@ prevent_relation_modification(PG_FUNCTION_ARGS)
  * It must have the only JSONB argument and BOOL return type.
  */
 Datum
-validate_on_part_init_callback_pl(PG_FUNCTION_ARGS)
+validate_part_callback_pl(PG_FUNCTION_ARGS)
 {
-	validate_on_part_init_cb(PG_GETARG_OID(0), true);
-
-	PG_RETURN_VOID();
+	PG_RETURN_BOOL(validate_part_callback(PG_GETARG_OID(0), PG_GETARG_BOOL(1)));
 }
 
 /*

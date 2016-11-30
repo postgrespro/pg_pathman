@@ -136,3 +136,4 @@ typedef struct
 
 
 void invoke_part_callback(init_callback_params *cb_params);
+bool validate_part_callback(Oid procid, bool emit_error);

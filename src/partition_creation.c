@@ -21,6 +21,7 @@
 #include "access/xact.h"
 #include "catalog/heap.h"
 #include "catalog/pg_authid.h"
+#include "catalog/pg_proc.h"
 #include "catalog/pg_type.h"
 #include "catalog/toasting.h"
 #include "commands/event_trigger.h"
@@ -129,7 +130,8 @@ create_single_range_partition_internal(Oid parent_relid,
 												value_type);
 
 	/* Cook args for init_callback */
-	MakeInitCallbackRangeParams(&callback_params, InvalidOid,
+	MakeInitCallbackRangeParams(&callback_params,
+								DEFAULT_INIT_CALLBACK,
 								parent_relid, partition_relid,
 								start_value, end_value, value_type);
 
@@ -182,7 +184,8 @@ create_single_hash_partition_internal(Oid parent_relid,
 											   value_type);
 
 	/* Cook args for init_callback */
-	MakeInitCallbackHashParams(&callback_params, InvalidOid,
+	MakeInitCallbackHashParams(&callback_params,
+							   DEFAULT_INIT_CALLBACK,
 							   parent_relid, partition_relid);
 
 	/* Add constraint & execute init_callback */
@@ -233,15 +236,36 @@ create_partitions_for_value(Oid relid, Datum value, Oid value_type)
 	/* Check that table is partitioned and fetch xmin */
 	if (pathman_config_contains_relation(relid, NULL, NULL, &rel_xmin))
 	{
-		bool part_in_prev_xact =
+		/* Was table partitioned in some previous transaction? */
+		bool	part_in_prev_xact =
 					TransactionIdPrecedes(rel_xmin, GetCurrentTransactionId()) ||
 					TransactionIdEquals(rel_xmin, FrozenTransactionId);
+
+		/* Take default values */
+		bool	spawn_using_bgw	= DEFAULT_SPAWN_USING_BGW,
+				enable_auto		= DEFAULT_AUTO;
+
+		/* Values to be extracted from PATHMAN_CONFIG_PARAMS */
+		Datum	values[Natts_pathman_config_params];
+		bool	isnull[Natts_pathman_config_params];
+
+		/* Try fetching options from PATHMAN_CONFIG_PARAMS */
+		if (read_pathman_params(relid, values, isnull))
+		{
+			enable_auto = values[Anum_pathman_config_params_auto - 1];
+			spawn_using_bgw = values[Anum_pathman_config_params_spawn_using_bgw - 1];
+		}
+
+		/* Emit ERROR if automatic partition creation is disabled */
+		if (!enable_auto || !IsAutoPartitionEnabled())
+			elog(ERROR, ERR_PART_ATTR_NO_PART, datum_to_cstring(value, value_type));
 
 		/*
 		 * If table has been partitioned in some previous xact AND
 		 * we don't hold any conflicting locks, run BGWorker.
 		 */
-		if (part_in_prev_xact && !xact_bgw_conflicting_lock_exists(relid))
+		if (spawn_using_bgw && part_in_prev_xact &&
+			!xact_bgw_conflicting_lock_exists(relid))
 		{
 			elog(DEBUG2, "create_partitions(): chose BGWorker [%u]", MyProcPid);
 			last_partition = create_partitions_for_value_bg_worker(relid,
@@ -1385,6 +1409,35 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 							key,
 							val;
 
+	/* Fetch & cache callback's Oid if needed */
+	if (!cb_params->callback_is_cached)
+	{
+		Datum	param_values[Natts_pathman_config_params];
+		bool	param_isnull[Natts_pathman_config_params];
+
+		/* Search for init_callback entry in PATHMAN_CONFIG_PARAMS */
+		if (read_pathman_params(parent_oid, param_values, param_isnull))
+		{
+			Datum		init_cb_datum; /* Oid of init_callback */
+			AttrNumber	init_cb_attno = Anum_pathman_config_params_init_callback;
+
+			/* Extract Datum storing callback's Oid */
+			init_cb_datum = param_values[init_cb_attno - 1];
+
+			/* Cache init_callback's Oid */
+			cb_params->callback = DatumGetObjectId(init_cb_datum);
+			cb_params->callback_is_cached = true;
+		}
+	}
+
+	/* No callback is set, exit */
+	if (!OidIsValid(cb_params->callback))
+		return;
+
+	/* Validate the callback's signature */
+	validate_part_callback(cb_params->callback, true);
+
+	/* Generate JSONB we're going to pass to callback */
 	switch (cb_params->parttype)
 	{
 		case PT_HASH:
@@ -1436,33 +1489,7 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 			break;
 	}
 
-	/* Fetch & cache callback's Oid if needed */
-	if (!cb_params->callback_is_cached)
-	{
-		Datum	param_values[Natts_pathman_config_params];
-		bool	param_isnull[Natts_pathman_config_params];
-
-		/* Search for init_callback entry in PATHMAN_CONFIG_PARAMS */
-		if (read_pathman_params(parent_oid, param_values, param_isnull))
-		{
-			Datum		init_cb_datum; /* Oid of init_callback */
-			AttrNumber	init_cb_attno = Anum_pathman_config_params_init_callback;
-
-			/* Extract Datum storing callback's Oid */
-			init_cb_datum = param_values[init_cb_attno - 1];
-
-			/* Cache init_callback's Oid */
-			cb_params->callback = DatumGetObjectId(init_cb_datum);
-		}
-	}
-
-	/* No callback is set, exit */
-	if (!OidIsValid(cb_params->callback))
-		return;
-
-	/* Validate the callback's signature */
-	validate_on_part_init_cb(cb_params->callback, true);
-
+	/* Fetch function call data */
 	fmgr_info(cb_params->callback, &cb_flinfo);
 
 	InitFunctionCallInfoData(cb_fcinfo, &cb_flinfo, 1, InvalidOid, NULL, NULL);
@@ -1486,4 +1513,39 @@ invoke_part_callback(init_callback_params *cb_params)
 		default:
 			elog(ERROR, "Unknown callback type: %u", cb_params->cb_type);
 	}
+}
+
+/*
+ * Checks that callback function meets specific requirements.
+ * It must have the only JSONB argument and BOOL return type.
+ */
+bool
+validate_part_callback(Oid procid, bool emit_error)
+{
+	HeapTuple		tp;
+	Form_pg_proc	functup;
+	bool			is_ok = true;
+
+	if (procid == DEFAULT_INIT_CALLBACK)
+		return true;
+
+	tp = SearchSysCache1(PROCOID, ObjectIdGetDatum(procid));
+	if (!HeapTupleIsValid(tp))
+		elog(ERROR, "cache lookup failed for function %u", procid);
+
+	functup = (Form_pg_proc) GETSTRUCT(tp);
+
+	if (functup->pronargs != 1 ||
+		functup->proargtypes.values[0] != JSONBOID ||
+		functup->prorettype != VOIDOID)
+		is_ok = false;
+
+	ReleaseSysCache(tp);
+
+	if (emit_error && !is_ok)
+		elog(ERROR,
+			 "Callback function must have the following signature: "
+			 "callback(arg JSONB) RETURNS VOID");
+
+	return is_ok;
 }

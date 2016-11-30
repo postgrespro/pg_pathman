@@ -87,6 +87,13 @@ extern PathmanInitState 	pg_pathman_init_state;
 	} while (0)
 
 
+/* Default column values for PATHMAN_CONFIG_PARAMS */
+#define DEFAULT_ENABLE_PARENT		false
+#define DEFAULT_AUTO				true
+#define DEFAULT_INIT_CALLBACK		InvalidOid
+#define DEFAULT_SPAWN_USING_BGW		false
+
+
 /*
  * Save and restore PathmanInitState.
  */

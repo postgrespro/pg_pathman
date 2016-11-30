@@ -432,8 +432,7 @@ partition_filter_exec(CustomScanState *node)
 
 		/* Search for a matching partition */
 		rri_holder = select_partition_for_insert(prel, &state->result_parts,
-												 value, prel->atttype,
-												 estate, true);
+												 value, prel->atttype, estate);
 		estate->es_result_relation_info = rri_holder->result_rel_info;
 
 		/* Switch back and clean up per-tuple context */
@@ -478,8 +477,7 @@ ResultRelInfoHolder *
 select_partition_for_insert(const PartRelationInfo *prel,
 							ResultPartsStorage *parts_storage,
 							Datum value, Oid value_type,
-							EState *estate,
-							bool spawn_partitions)
+							EState *estate)
 {
 	MemoryContext			old_cxt;
 	ResultRelInfoHolder	   *rri_holder;
@@ -494,21 +492,11 @@ select_partition_for_insert(const PartRelationInfo *prel,
 		elog(ERROR, ERR_PART_ATTR_MULTIPLE);
 	else if (nparts == 0)
 	{
-		/*
-		 * If auto partition propagation is enabled then try to create
-		 * new partitions for the key
-		 */
-		if (prel->auto_partition && IsAutoPartitionEnabled() && spawn_partitions)
-		{
-			selected_partid = create_partitions_for_value(PrelParentRelid(prel),
-												value, prel->atttype);
+		 selected_partid = create_partitions_for_value(PrelParentRelid(prel),
+													   value, prel->atttype);
 
-			/* get_pathman_relation_info() will refresh this entry */
-			invalidate_pathman_relation_info(PrelParentRelid(prel), NULL);
-		}
-		else
-			elog(ERROR, ERR_PART_ATTR_NO_PART,
-				 datum_to_cstring(value, prel->atttype));
+		 /* get_pathman_relation_info() will refresh this entry */
+		 invalidate_pathman_relation_info(PrelParentRelid(prel), NULL);
 	}
 	else selected_partid = parts[0];
 

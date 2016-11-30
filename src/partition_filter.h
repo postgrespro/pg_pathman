@@ -133,7 +133,6 @@ void partition_filter_explain(CustomScanState *node,
 ResultRelInfoHolder * select_partition_for_insert(const PartRelationInfo *prel,
 												  ResultPartsStorage *parts_storage,
 												  Datum value, Oid value_type,
-												  EState *estate,
-												  bool spawn_partitions);
+												  EState *estate);
 
 #endif
