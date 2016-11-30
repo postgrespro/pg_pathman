@@ -253,7 +253,7 @@ create_partitions_bg_worker_segment(Oid relid, Datum value, Oid value_type)
 	/* Initialize BGW args */
 	args = (SpawnPartitionArgs *) dsm_segment_address(segment);
 
-	args->userid = get_rel_owner(relid);
+	args->userid = GetUserId();
 	args->result = InvalidOid;
 	args->dbid = MyDatabaseId;
 	args->partitioned_table = relid;
