@@ -8,8 +8,9 @@
  * ------------------------------------------------------------------------
  */
 
-#ifndef RUNTIME_INSERT_H
-#define RUNTIME_INSERT_H
+#ifndef PARTITION_FILTER_H
+#define PARTITION_FILTER_H
+
 
 #include "relation_info.h"
 #include "utils.h"
@@ -135,4 +136,5 @@ ResultRelInfoHolder * select_partition_for_insert(const PartRelationInfo *prel,
 												  Datum value, Oid value_type,
 												  EState *estate);
 
-#endif
+
+#endif /* PARTITION_FILTER_H */

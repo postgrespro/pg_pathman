@@ -11,6 +11,7 @@
 #ifndef PATHMAN_H
 #define PATHMAN_H
 
+
 #include "relation_info.h"
 #include "rangeset.h"
 
@@ -193,4 +194,4 @@ WrapperNode *walk_expr_tree(Expr *expr, WalkerContext *context);
 	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) > 0 )
 
 
-#endif   /* PATHMAN_H */
+#endif /* PATHMAN_H */

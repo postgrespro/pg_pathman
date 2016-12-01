@@ -30,4 +30,5 @@ void PathmanRenameConstraint(Oid partition_relid,
 							 AttrNumber partitioned_col,
 							 const RenameStmt *partition_rename_stmt);
 
-#endif
+
+#endif /* COPY_STMT_HOOKING_H */

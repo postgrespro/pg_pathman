@@ -11,6 +11,7 @@
 #ifndef PATHMAN_INIT_H
 #define PATHMAN_INIT_H
 
+
 #include "relation_info.h"
 
 #include "postgres.h"
@@ -147,4 +148,5 @@ bool read_pathman_params(Oid relid,
 						 Datum *values,
 						 bool *isnull);
 
-#endif
+
+#endif /* PATHMAN_INIT_H */

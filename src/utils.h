@@ -11,6 +11,7 @@
 #ifndef PATHMAN_UTILS_H
 #define PATHMAN_UTILS_H
 
+
 #include "pathman.h"
 
 #include "postgres.h"
@@ -56,4 +57,5 @@ void fill_type_cmp_fmgr_info(FmgrInfo *finfo, Oid type1, Oid type2);
 char * datum_to_cstring(Datum datum, Oid typid);
 Datum perform_type_cast(Datum value, Oid in_type, Oid out_type, bool *success);
 
-#endif
+
+#endif /* PATHMAN_UTILS_H */

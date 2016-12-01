@@ -11,6 +11,7 @@
 #ifndef PG_COMPAT_H
 #define PG_COMPAT_H
 
+
 #include "postgres.h"
 
 #include "nodes/relation.h"

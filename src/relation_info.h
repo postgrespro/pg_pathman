@@ -11,6 +11,7 @@
 #ifndef RELATION_INFO_H
 #define RELATION_INFO_H
 
+
 #include "postgres.h"
 #include "access/attnum.h"
 #include "port/atomics.h"
@@ -198,4 +199,5 @@ FreeRangesArray(PartRelationInfo *prel)
 	}
 }
 
-#endif
+
+#endif /* RELATION_INFO_H */

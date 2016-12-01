@@ -8,6 +8,10 @@
  *-------------------------------------------------------------------------
  */
 
+#ifndef PARTITION_CREATION_H
+#define PARTITION_CREATION_H
+
+
 #include "relation_info.h"
 
 #include "postgres.h"
@@ -137,3 +141,6 @@ typedef struct
 
 void invoke_part_callback(init_callback_params *cb_params);
 bool validate_part_callback(Oid procid, bool emit_error);
+
+
+#endif /* PARTITION_CREATION_H */
