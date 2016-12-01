@@ -135,8 +135,10 @@ _PG_init(void)
 	/* NOTE: we don't need LWLocks now. RequestAddinLWLocks(1); */
 
 	/* Assign pg_pathman's initial state */
-	temp_init_state.initialization_needed = true;
 	temp_init_state.pg_pathman_enable = true;
+	temp_init_state.auto_partition = true;
+	temp_init_state.override_copy = true;
+	temp_init_state.initialization_needed = true;
 
 	/* Apply initial state */
 	restore_pathman_init_state(&temp_init_state);
