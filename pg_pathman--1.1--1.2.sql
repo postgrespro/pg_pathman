@@ -1281,6 +1281,11 @@ BEFORE INSERT OR UPDATE OR DELETE ON @extschema@.pathman_config_params
 FOR EACH ROW EXECUTE PROCEDURE @extschema@.pathman_config_params_trigger_func();
 
 
+CREATE OR REPLACE FUNCTION @extschema@.get_pathman_lib_version()
+RETURNS CSTRING AS 'pg_pathman', 'get_pathman_lib_version'
+LANGUAGE C STRICT;
+
+
 /* ------------------------------------------------------------------------
  * Alter tables
  * ----------------------------------------------------------------------*/

@@ -67,6 +67,7 @@ PG_FUNCTION_INFO_V1( invoke_on_partition_created_callback );
 PG_FUNCTION_INFO_V1( check_security_policy );
 
 PG_FUNCTION_INFO_V1( debug_capture );
+PG_FUNCTION_INFO_V1( get_pathman_lib_version );
 
 
 /*
@@ -912,4 +913,13 @@ debug_capture(PG_FUNCTION_ARGS)
 	elog(WARNING, "debug_capture [%u]", MyProcPid);
 
 	PG_RETURN_VOID();
+}
+
+/*
+ * NOTE: just in case.
+ */
+Datum
+get_pathman_lib_version(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_CSTRING(psprintf("%x", CURRENT_LIB_VERSION));
 }
