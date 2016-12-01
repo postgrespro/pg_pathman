@@ -26,7 +26,7 @@ DROP FUNCTION @extschema@.split_range_partition(REGCLASS, ANYELEMENT, TEXT, OUT 
 DROP FUNCTION @extschema@.invalidate_relcache(OID);
 
 /* drop trigger and its function (PATHMAN_CONFIG_PARAMS) */
-DROP TRIGGER pathman_config_params_trigger;
+DROP TRIGGER pathman_config_params_trigger ON @extschema@.pathman_config_params;
 DROP FUNCTION @extschema@.pathman_config_params_trigger_func();
 
 
@@ -1291,3 +1291,14 @@ LANGUAGE C STRICT;
  * ----------------------------------------------------------------------*/
 ALTER TABLE @extschema@.pathman_config_params ADD COLUMN spawn_using_bgw BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE @extschema@.pathman_config_params ADD CHECK (@extschema@.validate_part_callback(init_callback));
+
+
+/* ------------------------------------------------------------------------
+ * Final words of wisdom
+ * ----------------------------------------------------------------------*/
+DO language plpgsql
+$$
+	BEGIN
+		RAISE WARNING 'Don''t forget to execute "SET pg_pathman.enable = t" to activate pg_pathman';
+	END
+$$;
