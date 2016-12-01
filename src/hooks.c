@@ -614,8 +614,11 @@ pathman_relcache_hook(Datum arg, Oid relid)
 		/* Both syscache and pathman's cache say it isn't a partition */
 		case PPS_ENTRY_NOT_FOUND:
 			{
-				if (partitioned_table != InvalidOid)
-					delay_invalidation_parent_rel(partitioned_table);
+				Assert(partitioned_table == InvalidOid);
+
+				/* Which means that 'relid' might be parent */
+				if (relid != InvalidOid)
+					delay_invalidation_parent_rel(relid);
 #ifdef NOT_USED
 				elog(DEBUG2, "Invalidation message for relation %u [%u]",
 					 relid, MyProcPid);

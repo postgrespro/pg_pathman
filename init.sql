@@ -88,25 +88,8 @@ ALTER TABLE @extschema@.pathman_config_params ENABLE ROW LEVEL SECURITY;
  * Invalidate relcache every time someone changes parameters config.
  */
 CREATE OR REPLACE FUNCTION @extschema@.pathman_config_params_trigger_func()
-RETURNS TRIGGER AS
-$$
-BEGIN
-	IF TG_OP IN ('INSERT', 'UPDATE') THEN
-		PERFORM @extschema@.invalidate_relcache(NEW.partrel);
-	END IF;
-
-	IF TG_OP IN ('UPDATE', 'DELETE') THEN
-		PERFORM @extschema@.invalidate_relcache(OLD.partrel);
-	END IF;
-
-	IF TG_OP = 'DELETE' THEN
-		RETURN OLD;
-	ELSE
-		RETURN NEW;
-	END IF;
-END
-$$
-LANGUAGE plpgsql;
+RETURNS TRIGGER AS 'pg_pathman', 'pathman_config_params_trigger_func'
+LANGUAGE C;
 
 CREATE TRIGGER pathman_config_params_trigger
 BEFORE INSERT OR UPDATE OR DELETE ON @extschema@.pathman_config_params
@@ -749,11 +732,6 @@ CREATE OR REPLACE FUNCTION @extschema@.add_to_pathman_config(
 	range_interval	TEXT DEFAULT NULL)
 RETURNS BOOLEAN AS 'pg_pathman', 'add_to_pathman_config'
 LANGUAGE C;
-
-CREATE OR REPLACE FUNCTION @extschema@.invalidate_relcache(
-	relid			OID)
-RETURNS VOID AS 'pg_pathman'
-LANGUAGE C STRICT;
 
 
 /*
