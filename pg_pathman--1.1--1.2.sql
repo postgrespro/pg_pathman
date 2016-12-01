@@ -20,6 +20,7 @@ DROP FUNCTION @extschema@.get_schema_qualified_name(REGCLASS, TEXT, TEXT);
 DROP FUNCTION @extschema@.get_rel_tablespace_name(REGCLASS);
 DROP FUNCTION @extschema@.validate_on_partition_created_callback(REGPROC);
 DROP FUNCTION @extschema@.get_sequence_name(TEXT, TEXT);
+DROP FUNCTION @extschema@.create_or_replace_sequence(TEXT, TEXT);
 DROP FUNCTION @extschema@.create_single_range_partition(REGCLASS, ANYELEMENT, ANYELEMENT, TEXT, TEXT);
 DROP FUNCTION @extschema@.check_overlap(REGCLASS, ANYELEMENT, ANYELEMENT);
 DROP FUNCTION @extschema@.split_range_partition(REGCLASS, ANYELEMENT, TEXT, OUT ANYARRAY);
