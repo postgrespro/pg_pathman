@@ -1592,7 +1592,7 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		{
 
 			/* Generate a partial append path. */
-			appendpath = create_append_path(rel, partial_subpaths, NULL,
+			appendpath = create_append_path_compat(rel, partial_subpaths, NULL,
 					parallel_workers);
 			add_partial_path(rel, (Path *) appendpath);
 		}
