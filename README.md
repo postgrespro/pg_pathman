@@ -254,6 +254,11 @@ Set partition creation callback to be invoked for each attached or created parti
 }
 ```
 
+```plpgsql
+set_set_spawn_using_bgw(relation REGCLASS, value BOOLEAN)
+```
+When INSERTing new data beyond the partitioning range, use SpawnPartitionsWorker to create new partitions in a separate transaction.
+
 ## Views and tables
 
 #### `pathman_config` --- main config storage
@@ -262,19 +267,18 @@ CREATE TABLE IF NOT EXISTS pathman_config (
     partrel         REGCLASS NOT NULL PRIMARY KEY,
     attname         TEXT NOT NULL,
     parttype        INTEGER NOT NULL,
-    range_interval  TEXT,
-
-    CHECK (parttype IN (1, 2)) /* check for allowed part types */ );
+    range_interval  TEXT);
 ```
 This table stores a list of partitioned tables.
 
 #### `pathman_config_params` --- optional parameters
 ```plpgsql
 CREATE TABLE IF NOT EXISTS pathman_config_params (
-    partrel        REGCLASS NOT NULL PRIMARY KEY,
-    enable_parent  BOOLEAN NOT NULL DEFAULT TRUE,
-    auto           BOOLEAN NOT NULL DEFAULT TRUE,
-    init_callback  REGPROCEDURE NOT NULL DEFAULT 0);
+    partrel         REGCLASS NOT NULL PRIMARY KEY,
+    enable_parent   BOOLEAN NOT NULL DEFAULT TRUE,
+    auto            BOOLEAN NOT NULL DEFAULT TRUE,
+    init_callback   REGPROCEDURE NOT NULL DEFAULT 0,
+	spawn_using_bgw BOOLEAN NOT NULL DEFAULT FALSE);
 ```
 This table stores optional parameters which override standard behavior.
 
