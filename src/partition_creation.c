@@ -17,8 +17,11 @@
 
 #include "access/htup_details.h"
 #include "access/reloptions.h"
+#include "access/sysattr.h"
 #include "access/xact.h"
 #include "catalog/heap.h"
+#include "catalog/pg_authid.h"
+#include "catalog/pg_proc.h"
 #include "catalog/pg_type.h"
 #include "catalog/toasting.h"
 #include "commands/event_trigger.h"
@@ -32,7 +35,9 @@
 #include "tcop/utility.h"
 #include "utils/builtins.h"
 #include "utils/datum.h"
+#include "utils/fmgroids.h"
 #include "utils/jsonb.h"
+#include "utils/snapmgr.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
@@ -71,6 +76,7 @@ static ObjectAddress create_table_using_stmt(CreateStmt *create_stmt,
 											 Oid relowner);
 
 static void copy_foreign_keys(Oid parent_relid, Oid partition_oid);
+static void copy_acl_privileges(Oid parent_relid, Oid partition_relid);
 
 static Constraint *make_constraint_common(char *name, Node *raw_expr);
 
@@ -124,7 +130,8 @@ create_single_range_partition_internal(Oid parent_relid,
 												value_type);
 
 	/* Cook args for init_callback */
-	MakeInitCallbackRangeParams(&callback_params, InvalidOid,
+	MakeInitCallbackRangeParams(&callback_params,
+								DEFAULT_INIT_CALLBACK,
 								parent_relid, partition_relid,
 								*start_value, *end_value, value_type);
 
@@ -177,7 +184,8 @@ create_single_hash_partition_internal(Oid parent_relid,
 											   value_type);
 
 	/* Cook args for init_callback */
-	MakeInitCallbackHashParams(&callback_params, InvalidOid,
+	MakeInitCallbackHashParams(&callback_params,
+							   DEFAULT_INIT_CALLBACK,
 							   parent_relid, partition_relid);
 
 	/* Add constraint & execute init_callback */
@@ -228,15 +236,36 @@ create_partitions_for_value(Oid relid, Datum value, Oid value_type)
 	/* Check that table is partitioned and fetch xmin */
 	if (pathman_config_contains_relation(relid, NULL, NULL, &rel_xmin))
 	{
-		bool part_in_prev_xact =
+		/* Was table partitioned in some previous transaction? */
+		bool	part_in_prev_xact =
 					TransactionIdPrecedes(rel_xmin, GetCurrentTransactionId()) ||
 					TransactionIdEquals(rel_xmin, FrozenTransactionId);
+
+		/* Take default values */
+		bool	spawn_using_bgw	= DEFAULT_SPAWN_USING_BGW,
+				enable_auto		= DEFAULT_AUTO;
+
+		/* Values to be extracted from PATHMAN_CONFIG_PARAMS */
+		Datum	values[Natts_pathman_config_params];
+		bool	isnull[Natts_pathman_config_params];
+
+		/* Try fetching options from PATHMAN_CONFIG_PARAMS */
+		if (read_pathman_params(relid, values, isnull))
+		{
+			enable_auto = values[Anum_pathman_config_params_auto - 1];
+			spawn_using_bgw = values[Anum_pathman_config_params_spawn_using_bgw - 1];
+		}
+
+		/* Emit ERROR if automatic partition creation is disabled */
+		if (!enable_auto || !IsAutoPartitionEnabled())
+			elog(ERROR, ERR_PART_ATTR_NO_PART, datum_to_cstring(value, value_type));
 
 		/*
 		 * If table has been partitioned in some previous xact AND
 		 * we don't hold any conflicting locks, run BGWorker.
 		 */
-		if (part_in_prev_xact && !xact_bgw_conflicting_lock_exists(relid))
+		if (spawn_using_bgw && part_in_prev_xact &&
+			!xact_bgw_conflicting_lock_exists(relid))
 		{
 			elog(DEBUG2, "create_partitions(): chose BGWorker [%u]", MyProcPid);
 			last_partition = create_partitions_for_value_bg_worker(relid,
@@ -632,10 +661,30 @@ choose_range_partition_name(Oid parent_relid, Oid parent_nsp)
 {
 	Datum	part_num;
 	Oid		part_seq_relid;
+	Oid		save_userid;
+	int		save_sec_context;
+	bool	need_priv_escalation = !superuser(); /* we might be a SU */
 
 	part_seq_relid = get_relname_relid(build_sequence_name_internal(parent_relid),
 									   parent_nsp);
+
+	/* Do we have to escalate privileges? */
+	if (need_priv_escalation)
+	{
+		/* Get current user's Oid and security context */
+		GetUserIdAndSecContext(&save_userid, &save_sec_context);
+
+		/* Become superuser in order to bypass sequence ACL checks */
+		SetUserIdAndSecContext(BOOTSTRAP_SUPERUSERID,
+							   save_sec_context | SECURITY_LOCAL_USERID_CHANGE);
+	}
+
+	/* Get next integer for partition name */
 	part_num = DirectFunctionCall1(nextval_oid, ObjectIdGetDatum(part_seq_relid));
+
+	/* Restore user's privileges */
+	if (need_priv_escalation)
+		SetUserIdAndSecContext(save_userid, save_sec_context);
 
 	return psprintf("%s_%u", get_rel_name(parent_relid), DatumGetInt32(part_num));
 }
@@ -673,6 +722,10 @@ create_single_partition_internal(Oid parent_relid,
 	List			   *create_stmts;
 	ListCell		   *lc;
 
+	/* Current user and security context */
+	Oid					save_userid;
+	int					save_sec_context;
+	bool				need_priv_escalation = !superuser(); /* we might be a SU */
 
 	/* Lock parent and check if it exists */
 	LockRelationOid(parent_relid, ShareUpdateExclusiveLock);
@@ -728,6 +781,27 @@ create_single_partition_internal(Oid parent_relid,
 	create_stmt.tablespacename	= tablespace;
 	create_stmt.if_not_exists	= false;
 
+	/* Do we have to escalate privileges? */
+	if (need_priv_escalation)
+	{
+		/* Get current user's Oid and security context */
+		GetUserIdAndSecContext(&save_userid, &save_sec_context);
+
+		/* Check that user's allowed to spawn partitions */
+		if (ACLCHECK_OK != pg_class_aclcheck(parent_relid, save_userid,
+											 ACL_SPAWN_PARTITIONS))
+			ereport(ERROR,
+					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+					 errmsg("permission denied for parent relation \"%s\"",
+							get_rel_name_or_relid(parent_relid)),
+					 errdetail("user is not allowed to create new partitions"),
+					 errhint("consider granting INSERT privilege")));
+
+		/* Become superuser in order to bypass various ACL checks */
+		SetUserIdAndSecContext(BOOTSTRAP_SUPERUSERID,
+							   save_sec_context | SECURITY_LOCAL_USERID_CHANGE);
+	}
+
 	/* Generate columns using the parent table */
 	create_stmts = transformCreateStmt(&create_stmt, NULL);
 
@@ -752,6 +826,12 @@ create_single_partition_internal(Oid parent_relid,
 
 			/* Copy FOREIGN KEYS of the parent table */
 			copy_foreign_keys(parent_relid, partition_relid);
+
+			/* Make changes visible */
+			CommandCounterIncrement();
+
+			/* Copy ACL privileges of the parent table */
+			copy_acl_privileges(parent_relid, partition_relid);
 		}
 		else if (IsA(cur_stmt, CreateForeignTableStmt))
 		{
@@ -775,6 +855,10 @@ create_single_partition_internal(Oid parent_relid,
 		/* Update config one more time */
 		CommandCounterIncrement();
 	}
+
+	/* Restore user's privileges */
+	if (need_priv_escalation)
+		SetUserIdAndSecContext(save_userid, save_sec_context);
 
 	return partition_relid;
 }
@@ -825,6 +909,192 @@ create_table_using_stmt(CreateStmt *create_stmt, Oid relowner)
 
 	/* Return the address */
 	return table_addr;
+}
+
+/* Copy ACL privileges of parent table */
+static void
+copy_acl_privileges(Oid parent_relid, Oid partition_relid)
+{
+	Relation		pg_class_rel,
+					pg_attribute_rel;
+
+	TupleDesc		pg_class_desc,
+					pg_attribute_desc;
+
+	HeapTuple		htup;
+	ScanKeyData		skey[2];
+	SysScanDesc		scan;
+
+	Datum			acl_datum;
+	bool			acl_null;
+
+	Snapshot		snapshot;
+
+	pg_class_rel = heap_open(RelationRelationId, RowExclusiveLock);
+	pg_attribute_rel = heap_open(AttributeRelationId, RowExclusiveLock);
+
+	/* Get most recent snapshot */
+	snapshot = RegisterSnapshot(GetLatestSnapshot());
+
+	pg_class_desc = RelationGetDescr(pg_class_rel);
+	pg_attribute_desc = RelationGetDescr(pg_attribute_rel);
+
+	htup = SearchSysCache1(RELOID, ObjectIdGetDatum(parent_relid));
+	if (!HeapTupleIsValid(htup))
+		elog(ERROR, "cache lookup failed for relation %u", parent_relid);
+
+	/* Get parent's ACL */
+	acl_datum = heap_getattr(htup, Anum_pg_class_relacl, pg_class_desc, &acl_null);
+
+	/* Copy datum if it's not NULL */
+	if (!acl_null)
+	{
+		Form_pg_attribute acl_column;
+
+		acl_column = pg_class_desc->attrs[Anum_pg_class_relacl - 1];
+
+		acl_datum = datumCopy(acl_datum, acl_column->attbyval, acl_column->attlen);
+	}
+
+	/* Release 'htup' */
+	ReleaseSysCache(htup);
+
+	/* Search for 'partition_relid' */
+	ScanKeyInit(&skey[0],
+				ObjectIdAttributeNumber,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(partition_relid));
+
+	scan = systable_beginscan(pg_class_rel, ClassOidIndexId,
+							  true, snapshot, 1, skey);
+
+	/* There should be exactly one tuple (our child) */
+	if (HeapTupleIsValid(htup = systable_getnext(scan)))
+	{
+		ItemPointerData		iptr;
+		Datum				values[Natts_pg_class] = { (Datum) 0 };
+		bool				nulls[Natts_pg_class] = { false };
+		bool				replaces[Natts_pg_class] = { false };
+
+		/* Copy ItemPointer of this tuple */
+		iptr = htup->t_self;
+
+		values[Anum_pg_class_relacl - 1] = acl_datum;	/* ACL array */
+		nulls[Anum_pg_class_relacl - 1] = acl_null;		/* do we have ACL? */
+		replaces[Anum_pg_class_relacl - 1] = true;
+
+		/* Build new tuple with parent's ACL */
+		htup = heap_modify_tuple(htup, pg_class_desc, values, nulls, replaces);
+
+		/* Update child's tuple */
+		simple_heap_update(pg_class_rel, &iptr, htup);
+
+		/* Don't forget to update indexes */
+		CatalogUpdateIndexes(pg_class_rel, htup);
+	}
+
+	systable_endscan(scan);
+
+
+	/* Search for 'parent_relid's columns */
+	ScanKeyInit(&skey[0],
+				Anum_pg_attribute_attrelid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(parent_relid));
+
+	/* Consider only user-defined columns (>0) */
+	ScanKeyInit(&skey[1],
+				Anum_pg_attribute_attnum,
+				BTEqualStrategyNumber, F_INT2GT,
+				Int16GetDatum(InvalidAttrNumber));
+
+	scan = systable_beginscan(pg_attribute_rel,
+							  AttributeRelidNumIndexId,
+							  true, snapshot, 2, skey);
+
+	/* Go through the list of parent's columns */
+	while (HeapTupleIsValid(htup = systable_getnext(scan)))
+	{
+		ScanKeyData		subskey[2];
+		SysScanDesc		subscan;
+		HeapTuple		subhtup;
+
+		AttrNumber		cur_attnum;
+		bool			cur_attnum_null;
+
+		/* Get parent column's ACL */
+		acl_datum = heap_getattr(htup, Anum_pg_attribute_attacl,
+								 pg_attribute_desc, &acl_null);
+
+		/* Copy datum if it's not NULL */
+		if (!acl_null)
+		{
+			Form_pg_attribute acl_column;
+
+			acl_column = pg_attribute_desc->attrs[Anum_pg_attribute_attacl - 1];
+
+			acl_datum = datumCopy(acl_datum,
+								  acl_column->attbyval,
+								  acl_column->attlen);
+		}
+
+		/* Fetch number of current column */
+		cur_attnum = DatumGetInt16(heap_getattr(htup, Anum_pg_attribute_attnum,
+												pg_attribute_desc, &cur_attnum_null));
+		Assert(cur_attnum_null == false); /* must not be NULL! */
+
+		/* Search for 'partition_relid' */
+		ScanKeyInit(&subskey[0],
+					Anum_pg_attribute_attrelid,
+					BTEqualStrategyNumber, F_OIDEQ,
+					ObjectIdGetDatum(partition_relid));
+
+		/* Search for 'partition_relid's columns */
+		ScanKeyInit(&subskey[1],
+					Anum_pg_attribute_attnum,
+					BTEqualStrategyNumber, F_INT2EQ,
+					Int16GetDatum(cur_attnum));
+
+		subscan = systable_beginscan(pg_attribute_rel,
+									 AttributeRelidNumIndexId,
+									 true, snapshot, 2, subskey);
+
+		/* There should be exactly one tuple (our child's column) */
+		if (HeapTupleIsValid(subhtup = systable_getnext(subscan)))
+		{
+			ItemPointerData		iptr;
+			Datum				values[Natts_pg_attribute] = { (Datum) 0 };
+			bool				nulls[Natts_pg_attribute] = { false };
+			bool				replaces[Natts_pg_attribute] = { false };
+
+			/* Copy ItemPointer of this tuple */
+			iptr = subhtup->t_self;
+
+			values[Anum_pg_attribute_attacl - 1] = acl_datum;	/* ACL array */
+			nulls[Anum_pg_attribute_attacl - 1] = acl_null;		/* do we have ACL? */
+			replaces[Anum_pg_attribute_attacl - 1] = true;
+
+			/* Build new tuple with parent's ACL */
+			subhtup = heap_modify_tuple(subhtup, pg_attribute_desc,
+										values, nulls, replaces);
+
+			/* Update child's tuple */
+			simple_heap_update(pg_attribute_rel, &iptr, subhtup);
+
+			/* Don't forget to update indexes */
+			CatalogUpdateIndexes(pg_attribute_rel, subhtup);
+		}
+
+		systable_endscan(subscan);
+	}
+
+	systable_endscan(scan);
+
+	/* Don't forget to free snapshot */
+	UnregisterSnapshot(snapshot);
+
+	heap_close(pg_class_rel, RowExclusiveLock);
+	heap_close(pg_attribute_rel, RowExclusiveLock);
 }
 
 /* Copy foreign keys of parent table */
@@ -1207,6 +1477,35 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 							key,
 							val;
 
+	/* Fetch & cache callback's Oid if needed */
+	if (!cb_params->callback_is_cached)
+	{
+		Datum	param_values[Natts_pathman_config_params];
+		bool	param_isnull[Natts_pathman_config_params];
+
+		/* Search for init_callback entry in PATHMAN_CONFIG_PARAMS */
+		if (read_pathman_params(parent_oid, param_values, param_isnull))
+		{
+			Datum		init_cb_datum; /* Oid of init_callback */
+			AttrNumber	init_cb_attno = Anum_pathman_config_params_init_callback;
+
+			/* Extract Datum storing callback's Oid */
+			init_cb_datum = param_values[init_cb_attno - 1];
+
+			/* Cache init_callback's Oid */
+			cb_params->callback = DatumGetObjectId(init_cb_datum);
+			cb_params->callback_is_cached = true;
+		}
+	}
+
+	/* No callback is set, exit */
+	if (!OidIsValid(cb_params->callback))
+		return;
+
+	/* Validate the callback's signature */
+	validate_part_callback(cb_params->callback, true);
+
+	/* Generate JSONB we're going to pass to callback */
 	switch (cb_params->parttype)
 	{
 		case PT_HASH:
@@ -1275,33 +1574,7 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 			break;
 	}
 
-	/* Fetch & cache callback's Oid if needed */
-	if (!cb_params->callback_is_cached)
-	{
-		Datum	param_values[Natts_pathman_config_params];
-		bool	param_isnull[Natts_pathman_config_params];
-
-		/* Search for init_callback entry in PATHMAN_CONFIG_PARAMS */
-		if (read_pathman_params(parent_oid, param_values, param_isnull))
-		{
-			Datum		init_cb_datum; /* Oid of init_callback */
-			AttrNumber	init_cb_attno = Anum_pathman_config_params_init_callback;
-
-			/* Extract Datum storing callback's Oid */
-			init_cb_datum = param_values[init_cb_attno - 1];
-
-			/* Cache init_callback's Oid */
-			cb_params->callback = DatumGetObjectId(init_cb_datum);
-		}
-	}
-
-	/* No callback is set, exit */
-	if (!OidIsValid(cb_params->callback))
-		return;
-
-	/* Validate the callback's signature */
-	validate_on_part_init_cb(cb_params->callback, true);
-
+	/* Fetch function call data */
 	fmgr_info(cb_params->callback, &cb_flinfo);
 
 	InitFunctionCallInfoData(cb_fcinfo, &cb_flinfo, 1, InvalidOid, NULL, NULL);
@@ -1325,4 +1598,39 @@ invoke_part_callback(init_callback_params *cb_params)
 		default:
 			elog(ERROR, "Unknown callback type: %u", cb_params->cb_type);
 	}
+}
+
+/*
+ * Checks that callback function meets specific requirements.
+ * It must have the only JSONB argument and BOOL return type.
+ */
+bool
+validate_part_callback(Oid procid, bool emit_error)
+{
+	HeapTuple		tp;
+	Form_pg_proc	functup;
+	bool			is_ok = true;
+
+	if (procid == DEFAULT_INIT_CALLBACK)
+		return true;
+
+	tp = SearchSysCache1(PROCOID, ObjectIdGetDatum(procid));
+	if (!HeapTupleIsValid(tp))
+		elog(ERROR, "cache lookup failed for function %u", procid);
+
+	functup = (Form_pg_proc) GETSTRUCT(tp);
+
+	if (functup->pronargs != 1 ||
+		functup->proargtypes.values[0] != JSONBOID ||
+		functup->prorettype != VOIDOID)
+		is_ok = false;
+
+	ReleaseSysCache(tp);
+
+	if (emit_error && !is_ok)
+		elog(ERROR,
+			 "Callback function must have the following signature: "
+			 "callback(arg JSONB) RETURNS VOID");
+
+	return is_ok;
 }

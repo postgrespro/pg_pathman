@@ -8,8 +8,9 @@
  * ------------------------------------------------------------------------
  */
 
-#ifndef RUNTIME_INSERT_H
-#define RUNTIME_INSERT_H
+#ifndef PARTITION_FILTER_H
+#define PARTITION_FILTER_H
+
 
 #include "relation_info.h"
 #include "utils.h"
@@ -133,7 +134,7 @@ void partition_filter_explain(CustomScanState *node,
 ResultRelInfoHolder * select_partition_for_insert(const PartRelationInfo *prel,
 												  ResultPartsStorage *parts_storage,
 												  Datum value, Oid value_type,
-												  EState *estate,
-												  bool spawn_partitions);
+												  EState *estate);
 
-#endif
+
+#endif /* PARTITION_FILTER_H */

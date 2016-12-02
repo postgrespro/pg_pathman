@@ -17,9 +17,11 @@
 
 #include "access/htup_details.h"
 #include "access/nbtree.h"
+#include "access/xact.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_type.h"
 #include "commands/tablespace.h"
+#include "commands/trigger.h"
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "utils/builtins.h"
@@ -54,17 +56,18 @@ PG_FUNCTION_INFO_V1( is_date_type );
 PG_FUNCTION_INFO_V1( is_attribute_nullable );
 
 PG_FUNCTION_INFO_V1( add_to_pathman_config );
-PG_FUNCTION_INFO_V1( invalidate_relcache );
+PG_FUNCTION_INFO_V1( pathman_config_params_trigger_func );
 
 PG_FUNCTION_INFO_V1( lock_partitioned_relation );
 PG_FUNCTION_INFO_V1( prevent_relation_modification );
 
-PG_FUNCTION_INFO_V1( validate_on_part_init_callback_pl );
+PG_FUNCTION_INFO_V1( validate_part_callback_pl );
 PG_FUNCTION_INFO_V1( invoke_on_partition_created_callback );
 
 PG_FUNCTION_INFO_V1( check_security_policy );
 
 PG_FUNCTION_INFO_V1( debug_capture );
+PG_FUNCTION_INFO_V1( get_pathman_lib_version );
 
 
 /*
@@ -683,17 +686,51 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 
 
 /*
- * Invalidate relcache for a specified relation.
+ * Invalidate relcache to refresh PartRelationInfo.
  */
 Datum
-invalidate_relcache(PG_FUNCTION_ARGS)
+pathman_config_params_trigger_func(PG_FUNCTION_ARGS)
 {
-	Oid		relid = PG_GETARG_OID(0);
+	TriggerData	   *trigdata = (TriggerData *) fcinfo->context;
+	Oid				pathman_config_params = get_pathman_config_params_relid();
+	Oid				partrel;
+	Datum			partrel_datum;
+	bool			partrel_isnull;
 
-	if (check_relation_exists(relid))
-		CacheInvalidateRelcacheByRelid(relid);
+	/* Handle user calls */
+	if (!CALLED_AS_TRIGGER(fcinfo))
+		elog(ERROR, "this function should not be called directly");
 
-	PG_RETURN_VOID();
+	/* Handle wrong fire mode */
+	if (!TRIGGER_FIRED_FOR_ROW(trigdata->tg_event))
+		elog(ERROR, "%s: must be fired for row",
+			 trigdata->tg_trigger->tgname);
+
+	/* Handle wrong relation */
+	if (RelationGetRelid(trigdata->tg_relation) != pathman_config_params)
+		elog(ERROR, "%s: must be fired for relation \"%s\"",
+			 trigdata->tg_trigger->tgname,
+			 get_rel_name(pathman_config_params));
+
+	/* Extract partitioned relation's Oid */
+	partrel_datum = heap_getattr(trigdata->tg_trigtuple,
+								 Anum_pathman_config_params_partrel,
+								 RelationGetDescr(trigdata->tg_relation),
+								 &partrel_isnull);
+	Assert(partrel_isnull == false); /* partrel should not be NULL! */
+
+	partrel = DatumGetObjectId(partrel_datum);
+
+	/* Finally trigger pg_pathman's cache invalidation event */
+	if (check_relation_exists(partrel))
+		CacheInvalidateRelcacheByRelid(partrel);
+
+	/* Return the tuple we've been given */
+	if (trigdata->tg_event & TRIGGER_EVENT_UPDATE)
+		PG_RETURN_POINTER(trigdata->tg_newtuple);
+	else
+		PG_RETURN_POINTER(trigdata->tg_trigtuple);
+
 }
 
 
@@ -760,11 +797,9 @@ prevent_relation_modification(PG_FUNCTION_ARGS)
  * It must have the only JSONB argument and BOOL return type.
  */
 Datum
-validate_on_part_init_callback_pl(PG_FUNCTION_ARGS)
+validate_part_callback_pl(PG_FUNCTION_ARGS)
 {
-	validate_on_part_init_cb(PG_GETARG_OID(0), true);
-
-	PG_RETURN_VOID();
+	PG_RETURN_BOOL(validate_part_callback(PG_GETARG_OID(0), PG_GETARG_BOOL(1)));
 }
 
 /*
@@ -893,4 +928,13 @@ debug_capture(PG_FUNCTION_ARGS)
 	elog(WARNING, "debug_capture [%u]", MyProcPid);
 
 	PG_RETURN_VOID();
+}
+
+/*
+ * NOTE: just in case.
+ */
+Datum
+get_pathman_lib_version(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_CSTRING(psprintf("%x", CURRENT_LIB_VERSION));
 }

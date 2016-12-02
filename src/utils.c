@@ -18,7 +18,6 @@
 #include "catalog/pg_type.h"
 #include "catalog/pg_extension.h"
 #include "catalog/pg_operator.h"
-#include "catalog/pg_proc.h"
 #include "catalog/pg_inherits.h"
 #include "commands/extension.h"
 #include "miscadmin.h"
@@ -310,41 +309,6 @@ get_attribute_type(Oid relid, const char *attname, bool missing_ok)
 			 attname, get_rel_name_or_relid(relid));
 
 	return InvalidOid;
-}
-
-/*
- * Checks that callback function meets specific requirements.
- * It must have the only JSONB argument and BOOL return type.
- */
-bool
-validate_on_part_init_cb(Oid procid, bool emit_error)
-{
-	HeapTuple		tp;
-	Form_pg_proc	functup;
-	bool			is_ok = true;
-
-	if (procid == InvalidOid)
-		return true;
-
-	tp = SearchSysCache1(PROCOID, ObjectIdGetDatum(procid));
-	if (!HeapTupleIsValid(tp))
-		elog(ERROR, "cache lookup failed for function %u", procid);
-
-	functup = (Form_pg_proc) GETSTRUCT(tp);
-
-	if (functup->pronargs != 1 ||
-		functup->proargtypes.values[0] != JSONBOID ||
-		functup->prorettype != VOIDOID)
-		is_ok = false;
-
-	ReleaseSysCache(tp);
-
-	if (emit_error && !is_ok)
-		elog(ERROR,
-			 "Callback function must have the following signature: "
-			 "callback(arg JSONB) RETURNS VOID");
-
-	return is_ok;
 }
 
 /*

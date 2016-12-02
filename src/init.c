@@ -22,6 +22,7 @@
 #include "access/sysattr.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_constraint.h"
+#include "catalog/pg_extension.h"
 #include "catalog/pg_inherits.h"
 #include "catalog/pg_inherits_fn.h"
 #include "catalog/pg_type.h"
@@ -62,6 +63,7 @@ PathmanInitState 	pg_pathman_init_state;
 /* Shall we install new relcache callback? */
 static bool			relcache_callback_needed = true;
 
+
 /* Functions for various local caches */
 static bool init_pathman_relation_oids(void);
 static void fini_pathman_relation_oids(void);
@@ -88,6 +90,11 @@ static bool read_opexpr_const(const OpExpr *opexpr,
 
 static int oid_cmp(const void *p1, const void *p2);
 
+
+/* Validate SQL facade */
+static uint32 build_sql_facade_version(char *version_cstr);
+static uint32 get_sql_facade_version(void);
+static void validate_sql_facade_version(uint32 ver);
 
 /*
  * Save and restore main init state.
@@ -128,7 +135,7 @@ init_main_pathman_toggles(void)
 							 "Enables automatic partition creation",
 							 NULL,
 							 &pg_pathman_init_state.auto_partition,
-							 true,
+							 DEFAULT_AUTO,
 							 PGC_SUSET,
 							 0,
 							 NULL,
@@ -166,6 +173,9 @@ load_config(void)
 	 */
 	if (!init_pathman_relation_oids())
 		return false; /* remain 'uninitialized', exit before creating main caches */
+
+	/* Validate pg_pathman's Pl/PgSQL facade (might be outdated) */
+	validate_sql_facade_version(get_sql_facade_version());
 
 	init_local_cache();		/* create 'partitioned_rels' hash table */
 	read_pathman_config();	/* read PATHMAN_CONFIG table & fill cache */
@@ -748,6 +758,7 @@ read_pathman_params(Oid relid, Datum *values, bool *isnull)
 		Assert(!isnull[Anum_pathman_config_params_enable_parent - 1]);
 		Assert(!isnull[Anum_pathman_config_params_auto - 1]);
 		Assert(!isnull[Anum_pathman_config_params_init_callback - 1]);
+		Assert(!isnull[Anum_pathman_config_params_spawn_using_bgw - 1]);
 	}
 
 	/* Clean resources */
@@ -1153,4 +1164,90 @@ oid_cmp(const void *p1, const void *p2)
 	if (v1 > v2)
 		return 1;
 	return 0;
+}
+
+
+/* Parse cstring and build uint32 representing the version */
+static uint32
+build_sql_facade_version(char *version_cstr)
+{
+	uint32	version;
+
+	/* expect to see x+.y+.z+ */
+	version = strtol(version_cstr, &version_cstr, 10) & 0xFF;
+
+	version <<= 8;
+	if (strlen(version_cstr) > 1)
+		version |= (strtol(version_cstr + 1, &version_cstr, 10) & 0xFF);
+
+	version <<= 8;
+	if (strlen(version_cstr) > 1)
+		version |= (strtol(version_cstr + 1, &version_cstr, 10) & 0xFF);
+
+	return version;
+}
+
+/* Get version of pg_pathman's facade written in Pl/PgSQL */
+static uint32
+get_sql_facade_version(void)
+{
+	Relation		pg_extension_rel;
+	ScanKeyData		skey;
+	SysScanDesc		scan;
+	HeapTuple		htup;
+
+	Datum			datum;
+	bool			isnull;
+	char		   *version_cstr;
+
+	/* Look up the extension */
+	pg_extension_rel = heap_open(ExtensionRelationId, AccessShareLock);
+
+	ScanKeyInit(&skey,
+				Anum_pg_extension_extname,
+				BTEqualStrategyNumber, F_NAMEEQ,
+				CStringGetDatum("pg_pathman"));
+
+	scan = systable_beginscan(pg_extension_rel,
+							  ExtensionNameIndexId,
+							  true, NULL, 1, &skey);
+
+	htup = systable_getnext(scan);
+
+	/* Exit if pg_pathman's missing */
+	if (!HeapTupleIsValid(htup))
+		return 0;
+
+	datum = heap_getattr(htup, Anum_pg_extension_extversion,
+						 RelationGetDescr(pg_extension_rel), &isnull);
+	Assert(isnull == false); /* extversion should not be NULL */
+
+	/* Extract pg_pathman's version as cstring */
+	version_cstr = text_to_cstring(DatumGetTextPP(datum));
+
+	systable_endscan(scan);
+	heap_close(pg_extension_rel, AccessShareLock);
+
+	return build_sql_facade_version(version_cstr);
+}
+
+/* Check that current Pl/PgSQL facade is compatible with internals */
+static void
+validate_sql_facade_version(uint32 ver)
+{
+	Assert(ver > 0);
+
+	/* Compare ver to 'lowest compatible frontend' version */
+	if (ver < LOWEST_COMPATIBLE_FRONT)
+	{
+		elog(DEBUG1, "current version: %x, lowest compatible: %x",
+					 ver, LOWEST_COMPATIBLE_FRONT);
+
+		DisablePathman(); /* disable pg_pathman since config is broken */
+		ereport(ERROR,
+				(errmsg("pg_pathman's Pl/PgSQL frontend is incompatible with "
+						"its shared library"),
+				 errdetail("consider performing an update procedure"),
+				 errhint(INIT_ERROR_HINT)));
+	}
 }

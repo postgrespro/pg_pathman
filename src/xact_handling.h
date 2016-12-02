@@ -11,6 +11,7 @@
 #ifndef XACT_HANDLING_H
 #define XACT_HANDLING_H
 
+
 #include "pathman.h"
 
 #include "postgres.h"
@@ -33,4 +34,5 @@ bool xact_is_level_read_committed(void);
 bool xact_is_transaction_stmt(Node *stmt);
 bool xact_is_set_transaction_stmt(Node *stmt);
 
-#endif
+
+#endif /* XACT_HANDLING_H */

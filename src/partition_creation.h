@@ -8,10 +8,18 @@
  *-------------------------------------------------------------------------
  */
 
+#ifndef PARTITION_CREATION_H
+#define PARTITION_CREATION_H
+
+
 #include "relation_info.h"
 
 #include "postgres.h"
 #include "nodes/parsenodes.h"
+
+
+/* ACL privilege for partition creation */
+#define ACL_SPAWN_PARTITIONS	 ACL_INSERT
 
 
 /* Create RANGE partitions to store some value */
@@ -132,3 +140,7 @@ typedef struct
 
 
 void invoke_part_callback(init_callback_params *cb_params);
+bool validate_part_callback(Oid procid, bool emit_error);
+
+
+#endif /* PARTITION_CREATION_H */

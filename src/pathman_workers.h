@@ -17,6 +17,7 @@
 #ifndef PATHMAN_WORKERS_H
 #define PATHMAN_WORKERS_H
 
+
 #include "postgres.h"
 #include "storage/spin.h"
 
@@ -193,4 +194,5 @@ UnpackDatumFromByteArray(Datum *datum, Size datum_size, bool typbyval,
  */
 Oid create_partitions_for_value_bg_worker(Oid relid, Datum value, Oid value_type);
 
-#endif
+
+#endif /* PATHMAN_WORKERS_H */

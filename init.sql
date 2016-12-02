@@ -26,6 +26,20 @@ CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
 	CHECK (parttype IN (1, 2)) /* check for allowed part types */
 );
 
+
+/*
+ * Checks that callback function meets specific requirements.
+ * Particularly it must have the only JSONB argument and VOID return type.
+ *
+ * NOTE: this function is used in CHECK CONSTRAINT.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.validate_part_callback(
+	callback		REGPROC,
+	raise_error		BOOL DEFAULT TRUE)
+RETURNS BOOL AS 'pg_pathman', 'validate_part_callback_pl'
+LANGUAGE C STRICT;
+
+
 /*
  * Optional parameters for partitioned tables.
  *		partrel - regclass (relation type, stored as Oid)
@@ -37,10 +51,11 @@ CREATE TABLE IF NOT EXISTS @extschema@.pathman_config_params (
 	partrel			REGCLASS NOT NULL PRIMARY KEY,
 	enable_parent	BOOLEAN NOT NULL DEFAULT FALSE,
 	auto			BOOLEAN NOT NULL DEFAULT TRUE,
-	init_callback	REGPROCEDURE NOT NULL DEFAULT 0
+	init_callback	REGPROCEDURE NOT NULL DEFAULT 0,
+	spawn_using_bgw	BOOLEAN NOT NULL DEFAULT FALSE
+
+	CHECK (@extschema@.validate_part_callback(init_callback)) /* check signature */
 );
-CREATE UNIQUE INDEX i_pathman_config_params
-ON @extschema@.pathman_config_params(partrel);
 
 GRANT SELECT, INSERT, UPDATE, DELETE
 ON @extschema@.pathman_config, @extschema@.pathman_config_params
@@ -73,25 +88,8 @@ ALTER TABLE @extschema@.pathman_config_params ENABLE ROW LEVEL SECURITY;
  * Invalidate relcache every time someone changes parameters config.
  */
 CREATE OR REPLACE FUNCTION @extschema@.pathman_config_params_trigger_func()
-RETURNS TRIGGER AS
-$$
-BEGIN
-	IF TG_OP IN ('INSERT', 'UPDATE') THEN
-		PERFORM @extschema@.invalidate_relcache(NEW.partrel);
-	END IF;
-
-	IF TG_OP IN ('UPDATE', 'DELETE') THEN
-		PERFORM @extschema@.invalidate_relcache(OLD.partrel);
-	END IF;
-
-	IF TG_OP = 'DELETE' THEN
-		RETURN OLD;
-	ELSE
-		RETURN NEW;
-	END IF;
-END
-$$
-LANGUAGE plpgsql;
+RETURNS TRIGGER AS 'pg_pathman', 'pathman_config_params_trigger_func'
+LANGUAGE C;
 
 CREATE TRIGGER pathman_config_params_trigger
 BEFORE INSERT OR UPDATE OR DELETE ON @extschema@.pathman_config_params
@@ -120,7 +118,7 @@ BEGIN
 	USING relation, value;
 END
 $$
-LANGUAGE plpgsql;
+LANGUAGE plpgsql STRICT;
 
 /*
  * Include\exclude parent relation in query plan.
@@ -159,11 +157,25 @@ CREATE OR REPLACE FUNCTION @extschema@.set_init_callback(
 RETURNS VOID AS
 $$
 BEGIN
-	PERFORM @extschema@.validate_on_partition_created_callback(callback);
 	PERFORM @extschema@.pathman_set_param(relation, 'init_callback', callback);
 END
 $$
-LANGUAGE plpgsql;
+LANGUAGE plpgsql STRICT;
+
+/*
+ * Set 'spawn using BGW' option
+ */
+CREATE OR REPLACE FUNCTION @extschema@.set_spawn_using_bgw(
+	relation	REGCLASS,
+	value		BOOLEAN)
+RETURNS VOID AS
+$$
+BEGIN
+	PERFORM @extschema@.pathman_set_param(relation, 'spawn_using_bgw', value);
+END
+$$
+LANGUAGE plpgsql STRICT;
+
 
 /*
  * Show all existing parents and partitions.
@@ -464,7 +476,7 @@ BEGIN
 	SELECT array_agg(cfg.partrel) INTO relids
 	FROM pg_event_trigger_dropped_objects() AS events
 	JOIN @extschema@.pathman_config AS cfg ON cfg.partrel::oid = events.objid
-	WHERE events.classid = pg_class_oid;
+	WHERE events.classid = pg_class_oid AND events.objsubid = 0;
 
 	/* Cleanup pathman_config */
 	DELETE FROM @extschema@.pathman_config WHERE partrel = ANY(relids);
@@ -687,13 +699,13 @@ LANGUAGE C STRICT;
  */
 CREATE OR REPLACE FUNCTION @extschema@.build_check_constraint_name(
 	partition_relid	REGCLASS,
-	partitioned_col	INT2)
+	attribute	INT2)
 RETURNS TEXT AS 'pg_pathman', 'build_check_constraint_name_attnum'
 LANGUAGE C STRICT;
 
 CREATE OR REPLACE FUNCTION @extschema@.build_check_constraint_name(
 	partition_relid	REGCLASS,
-	partitioned_col	TEXT)
+	attribute	TEXT)
 RETURNS TEXT AS 'pg_pathman', 'build_check_constraint_name_attname'
 LANGUAGE C STRICT;
 
@@ -721,11 +733,6 @@ CREATE OR REPLACE FUNCTION @extschema@.add_to_pathman_config(
 RETURNS BOOLEAN AS 'pg_pathman', 'add_to_pathman_config'
 LANGUAGE C;
 
-CREATE OR REPLACE FUNCTION @extschema@.invalidate_relcache(
-	OID)
-RETURNS VOID AS 'pg_pathman'
-LANGUAGE C STRICT;
-
 
 /*
  * Lock partitioned relation to restrict concurrent
@@ -752,13 +759,8 @@ CREATE OR REPLACE FUNCTION @extschema@.debug_capture()
 RETURNS VOID AS 'pg_pathman', 'debug_capture'
 LANGUAGE C STRICT;
 
-/*
- * Checks that callback function meets specific requirements. Particularly it
- * must have the only JSONB argument and VOID return type.
- */
-CREATE OR REPLACE FUNCTION @extschema@.validate_on_partition_created_callback(
-	callback		REGPROC)
-RETURNS VOID AS 'pg_pathman', 'validate_on_part_init_callback_pl'
+CREATE OR REPLACE FUNCTION @extschema@.get_pathman_lib_version()
+RETURNS CSTRING AS 'pg_pathman', 'get_pathman_lib_version'
 LANGUAGE C STRICT;
 
 
@@ -782,24 +784,4 @@ CREATE OR REPLACE FUNCTION @extschema@.invoke_on_partition_created_callback(
 	partition		REGCLASS,
 	init_callback	REGPROCEDURE)
 RETURNS VOID AS 'pg_pathman', 'invoke_on_partition_created_callback'
-LANGUAGE C;
-
-/*
- * Build hash condition for a CHECK CONSTRAINT
- */
-CREATE OR REPLACE FUNCTION @extschema@.build_hash_condition(
-	parent_relid	REGCLASS,
-	attname			TEXT,
-	partitions_count INT,
-	partition_number INT)
-RETURNS TEXT AS 'pg_pathman', 'build_hash_condition'
-LANGUAGE C;
-
-/*
- * Returns hash value for specified partition (0..N)
- */
-CREATE OR REPLACE FUNCTION @extschema@.get_partition_hash(
-	parent_relid	REGCLASS,
-	partition		REGCLASS)
-RETURNS INT AS 'pg_pathman', 'get_partition_hash'
 LANGUAGE C;

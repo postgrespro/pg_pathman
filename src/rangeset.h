@@ -141,4 +141,5 @@ List *irange_list_intersection(List *a, List *b);
 int irange_list_length(List *rangeset);
 bool irange_list_find(List *rangeset, int index, bool *lossy);
 
-#endif
+
+#endif /* PATHMAN_RANGESET_H */

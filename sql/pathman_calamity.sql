@@ -14,6 +14,19 @@ set client_min_messages = NOTICE;
 CREATE TABLE calamity.part_test(val serial);
 
 
+/* check function build_hash_condition() */
+SELECT build_hash_condition('int4', 'val', 10, 1);
+SELECT build_hash_condition('text', 'val', 10, 1);
+SELECT build_hash_condition('int4', 'val', 1, 1);
+SELECT build_hash_condition('int4', 'val', 10, 20);
+SELECT build_hash_condition('text', 'val', 10, NULL) IS NULL;
+SELECT build_hash_condition('calamity.part_test', 'val', 10, 1);
+
+/* check function build_range_condition() */
+SELECT build_range_condition('calamity.part_test', 'val', 10, 20);
+SELECT build_range_condition('calamity.part_test', 'val', 10, NULL);
+SELECT build_range_condition('calamity.part_test', 'val', NULL, 10);
+
 /* check function validate_relname() */
 SELECT validate_relname('calamity.part_test');
 SELECT validate_relname(1::REGCLASS);

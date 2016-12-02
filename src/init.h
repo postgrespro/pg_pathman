@@ -11,6 +11,7 @@
 #ifndef PATHMAN_INIT_H
 #define PATHMAN_INIT_H
 
+
 #include "relation_info.h"
 
 #include "postgres.h"
@@ -87,6 +88,18 @@ extern PathmanInitState 	pg_pathman_init_state;
 	} while (0)
 
 
+/* Default column values for PATHMAN_CONFIG_PARAMS */
+#define DEFAULT_ENABLE_PARENT		false
+#define DEFAULT_AUTO				true
+#define DEFAULT_INIT_CALLBACK		InvalidOid
+#define DEFAULT_SPAWN_USING_BGW		false
+
+
+/* Lowest version of Pl/PgSQL frontend compatible with internals (0xAA_BB_CC) */
+#define LOWEST_COMPATIBLE_FRONT		0x010200
+#define CURRENT_LIB_VERSION			0x010200
+
+
 /*
  * Save and restore PathmanInitState.
  */
@@ -140,4 +153,5 @@ bool read_pathman_params(Oid relid,
 						 Datum *values,
 						 bool *isnull);
 
-#endif
+
+#endif /* PATHMAN_INIT_H */

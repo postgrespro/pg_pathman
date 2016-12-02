@@ -11,6 +11,7 @@
 #ifndef RELATION_INFO_H
 #define RELATION_INFO_H
 
+
 #include "postgres.h"
 #include "access/attnum.h"
 #include "port/atomics.h"
@@ -97,7 +98,6 @@ typedef struct
 	Oid				key;			/* partitioned table's Oid */
 	bool			valid;			/* is this entry valid? */
 	bool			enable_parent;	/* include parent to the plan */
-	bool			auto_partition; /* auto partition creation */
 
 	uint32			children_count;
 	Oid			   *children;		/* Oids of child partitions */
@@ -252,4 +252,5 @@ FreeRangesArray(PartRelationInfo *prel)
 	}
 }
 
-#endif
+
+#endif /* RELATION_INFO_H */

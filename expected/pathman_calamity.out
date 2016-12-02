@@ -12,6 +12,50 @@ SELECT debug_capture();
 set client_min_messages = NOTICE;
 /* create table to be partitioned */
 CREATE TABLE calamity.part_test(val serial);
+/* check function build_hash_condition() */
+SELECT build_hash_condition('int4', 'val', 10, 1);
+              build_hash_condition               
+-------------------------------------------------
+ public.get_hash_part_idx(hashint4(val), 10) = 1
+(1 row)
+
+SELECT build_hash_condition('text', 'val', 10, 1);
+              build_hash_condition               
+-------------------------------------------------
+ public.get_hash_part_idx(hashtext(val), 10) = 1
+(1 row)
+
+SELECT build_hash_condition('int4', 'val', 1, 1);
+ERROR:  'partition_index' must be lower than 'partitions_count'
+SELECT build_hash_condition('int4', 'val', 10, 20);
+ERROR:  'partition_index' must be lower than 'partitions_count'
+SELECT build_hash_condition('text', 'val', 10, NULL) IS NULL;
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT build_hash_condition('calamity.part_test', 'val', 10, 1);
+ERROR:  no hash function for type calamity.part_test
+/* check function build_range_condition() */
+SELECT build_range_condition('calamity.part_test', 'val', 10, 20);
+    build_range_condition     
+------------------------------
+ ((val >= 10) AND (val < 20))
+(1 row)
+
+SELECT build_range_condition('calamity.part_test', 'val', 10, NULL);
+ build_range_condition 
+-----------------------
+ ((val >= 10))
+(1 row)
+
+SELECT build_range_condition('calamity.part_test', 'val', NULL, 10);
+ build_range_condition 
+-----------------------
+ ((val < 10))
+(1 row)
+
 /* check function validate_relname() */
 SELECT validate_relname('calamity.part_test');
  validate_relname 

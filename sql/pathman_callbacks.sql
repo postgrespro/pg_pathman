@@ -22,11 +22,18 @@ SELECT set_init_callback('callbacks.abc',
 						 'callbacks.abc_on_part_created_callback');
 
 INSERT INTO callbacks.abc VALUES (123, 1);
-INSERT INTO callbacks.abc VALUES (223, 1);
+INSERT INTO callbacks.abc VALUES (223, 1); /* show warning */
+
+SELECT set_spawn_using_bgw('callbacks.abc', true);
+SELECT get_number_of_partitions('callbacks.abc');
+INSERT INTO callbacks.abc VALUES (323, 1);
+SELECT get_number_of_partitions('callbacks.abc'); /* +1 partition (created by BGW) */
+SELECT set_spawn_using_bgw('callbacks.abc', false);
+
 
 SELECT append_range_partition('callbacks.abc');
 SELECT prepend_range_partition('callbacks.abc');
-SELECT add_range_partition('callbacks.abc', 401, 502);
+SELECT add_range_partition('callbacks.abc', 501, 602);
 
 SELECT drop_partitions('callbacks.abc');
 

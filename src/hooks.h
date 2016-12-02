@@ -8,8 +8,9 @@
  * ------------------------------------------------------------------------
  */
 
-#ifndef JOIN_HOOK_H
-#define JOIN_HOOK_H
+#ifndef PATHMAN_HOOKS_H
+#define PATHMAN_HOOKS_H
+
 
 #include "postgres.h"
 #include "optimizer/planner.h"
@@ -59,4 +60,5 @@ void pathman_process_utility_hook(Node *parsetree,
 								  DestReceiver *dest,
 								  char *completionTag);
 
-#endif
+
+#endif /* PATHMAN_HOOKS_H */

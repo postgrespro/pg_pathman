@@ -494,7 +494,8 @@ DROP TABLE test.range_rel CASCADE;
 /* Test automatic partition creation */
 CREATE TABLE test.range_rel (
 	id	SERIAL PRIMARY KEY,
-	dt	TIMESTAMP NOT NULL);
+	dt	TIMESTAMP NOT NULL,
+	data TEXT);
 SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '10 days'::INTERVAL, 1);
 INSERT INTO test.range_rel (dt)
 SELECT generate_series('2015-01-01', '2015-04-30', '1 day'::interval);
@@ -512,6 +513,12 @@ INSERT INTO test.range_rel (dt) VALUES ('2015-06-01');
 SELECT pathman.set_auto('test.range_rel', true);
 INSERT INTO test.range_rel (dt) VALUES ('2015-06-01');
 
+/*
+ * Test auto removing record from config on table DROP (but not on column drop
+ * as it used to be before version 1.2)
+ */
+ALTER TABLE test.range_rel DROP COLUMN data;
+SELECT * FROM pathman.pathman_config;
 DROP TABLE test.range_rel CASCADE;
 SELECT * FROM pathman.pathman_config;
 

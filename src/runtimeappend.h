@@ -11,6 +11,7 @@
 #ifndef RUNTIME_APPEND_H
 #define RUNTIME_APPEND_H
 
+
 #include "pathman.h"
 #include "nodes_common.h"
 
@@ -91,4 +92,5 @@ void runtimeappend_explain(CustomScanState *node,
 						   List *ancestors,
 						   ExplainState *es);
 
-#endif
+
+#endif /* RUNTIME_APPEND_H */

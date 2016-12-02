@@ -26,26 +26,52 @@ SELECT set_init_callback('callbacks.abc',
 (1 row)
 
 INSERT INTO callbacks.abc VALUES (123, 1);
-INSERT INTO callbacks.abc VALUES (223, 1);
-SELECT append_range_partition('callbacks.abc');
-WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_4", "range_max": "401", "range_min": "301"}
- append_range_partition 
-------------------------
- callbacks.abc_4
+INSERT INTO callbacks.abc VALUES (223, 1); /* show warning */
+WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_3", "range_max": "301", "range_min": "201"}
+SELECT set_spawn_using_bgw('callbacks.abc', true);
+ set_spawn_using_bgw 
+---------------------
+ 
 (1 row)
 
-SELECT prepend_range_partition('callbacks.abc');
-WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_5", "range_max": "1", "range_min": "-99"}
- prepend_range_partition 
--------------------------
+SELECT get_number_of_partitions('callbacks.abc');
+ get_number_of_partitions 
+--------------------------
+                        3
+(1 row)
+
+INSERT INTO callbacks.abc VALUES (323, 1);
+SELECT get_number_of_partitions('callbacks.abc'); /* +1 partition (created by BGW) */
+ get_number_of_partitions 
+--------------------------
+                        4
+(1 row)
+
+SELECT set_spawn_using_bgw('callbacks.abc', false);
+ set_spawn_using_bgw 
+---------------------
+ 
+(1 row)
+
+SELECT append_range_partition('callbacks.abc');
+WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_5", "range_max": "501", "range_min": "401"}
+ append_range_partition 
+------------------------
  callbacks.abc_5
 (1 row)
 
-SELECT add_range_partition('callbacks.abc', 401, 502);
-WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_6", "range_max": "502", "range_min": "401"}
+SELECT prepend_range_partition('callbacks.abc');
+WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_6", "range_max": "1", "range_min": "-99"}
+ prepend_range_partition 
+-------------------------
+ callbacks.abc_6
+(1 row)
+
+SELECT add_range_partition('callbacks.abc', 501, 602);
+WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_7", "range_max": "602", "range_min": "501"}
  add_range_partition 
 ---------------------
- callbacks.abc_6
+ callbacks.abc_7
 (1 row)
 
 SELECT drop_partitions('callbacks.abc');
@@ -53,12 +79,13 @@ NOTICE:  function callbacks.abc_upd_trig_func() does not exist, skipping
 NOTICE:  0 rows copied from callbacks.abc_1
 NOTICE:  1 rows copied from callbacks.abc_2
 NOTICE:  1 rows copied from callbacks.abc_3
-NOTICE:  0 rows copied from callbacks.abc_4
+NOTICE:  1 rows copied from callbacks.abc_4
 NOTICE:  0 rows copied from callbacks.abc_5
 NOTICE:  0 rows copied from callbacks.abc_6
+NOTICE:  0 rows copied from callbacks.abc_7
  drop_partitions 
 -----------------
-               6
+               7
 (1 row)
 
 /* set callback to be called on HASH partitions */

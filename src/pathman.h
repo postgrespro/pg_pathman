@@ -11,6 +11,7 @@
 #ifndef PATHMAN_H
 #define PATHMAN_H
 
+
 #include "relation_info.h"
 #include "rangeset.h"
 
@@ -55,11 +56,12 @@
  * Definitions for the "pathman_config_params" table.
  */
 #define PATHMAN_CONFIG_PARAMS						"pathman_config_params"
-#define Natts_pathman_config_params					4
+#define Natts_pathman_config_params					5
 #define Anum_pathman_config_params_partrel			1	/* primary key */
 #define Anum_pathman_config_params_enable_parent	2	/* include parent into plan */
 #define Anum_pathman_config_params_auto				3	/* auto partitions creation */
 #define Anum_pathman_config_params_init_callback	4	/* partition action callback */
+#define Anum_pathman_config_params_spawn_using_bgw	5	/* should we use spawn BGW? */
 
 /*
  * Definitions for the "pathman_partition_list" view.
@@ -192,4 +194,4 @@ WrapperNode *walk_expr_tree(Expr *expr, WalkerContext *context);
 	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) > 0 )
 
 
-#endif   /* PATHMAN_H */
+#endif /* PATHMAN_H */
