@@ -657,7 +657,9 @@ choose_range_partition_name(Oid parent_relid, Oid parent_nsp)
 	if (need_priv_escalation)
 		SetUserIdAndSecContext(save_userid, save_sec_context);
 
-	return psprintf("%s_%u", get_rel_name(parent_relid), DatumGetInt32(part_num));
+	return psprintf("%s_" UINT64_FORMAT,
+					get_rel_name(parent_relid),
+					DatumGetUInt64(part_num));
 }
 
 /* Choose a good name for a HASH partition */
