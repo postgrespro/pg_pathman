@@ -659,7 +659,7 @@ choose_range_partition_name(Oid parent_relid, Oid parent_nsp)
 
 	return psprintf("%s_" UINT64_FORMAT,
 					get_rel_name(parent_relid),
-					DatumGetUInt64(part_num));
+					(uint64) DatumGetInt64(part_num)); /* can't use UInt64 on 9.5 */
 }
 
 /* Choose a good name for a HASH partition */
