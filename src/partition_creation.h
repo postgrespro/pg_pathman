@@ -97,7 +97,7 @@ typedef struct
 	{
 		struct
 		{
-			/* nothing */
+			void   *none; /* nothing (struct should have at least 1 element) */
 		}	hash_params;
 
 		struct
@@ -130,9 +130,9 @@ typedef struct
 	do \
 	{ \
 		memset((void *) (params_p), 0, sizeof(init_callback_params)); \
+		(params_p)->cb_type = PT_INIT_CALLBACK; \
 		(params_p)->callback = (cb); \
 		(params_p)->callback_is_cached = false; \
-		(params_p)->cb_type = PT_INIT_CALLBACK; \
 		(params_p)->parttype = PT_HASH; \
 		(params_p)->parent_relid = (parent); \
 		(params_p)->partition_relid = (child); \
