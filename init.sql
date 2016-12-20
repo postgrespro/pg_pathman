@@ -314,11 +314,6 @@ CREATE OR REPLACE FUNCTION @extschema@.partition_data(
 	OUT p_total		BIGINT)
 AS
 $$
-DECLARE
-	relname		TEXT;
-	rec			RECORD;
-	cnt			BIGINT := 0;
-
 BEGIN
 	p_total := 0;
 
@@ -699,13 +694,13 @@ LANGUAGE C STRICT;
  */
 CREATE OR REPLACE FUNCTION @extschema@.build_check_constraint_name(
 	partition_relid	REGCLASS,
-	attribute	INT2)
+	attribute		INT2)
 RETURNS TEXT AS 'pg_pathman', 'build_check_constraint_name_attnum'
 LANGUAGE C STRICT;
 
 CREATE OR REPLACE FUNCTION @extschema@.build_check_constraint_name(
 	partition_relid	REGCLASS,
-	attribute	TEXT)
+	attribute		TEXT)
 RETURNS TEXT AS 'pg_pathman', 'build_check_constraint_name_attname'
 LANGUAGE C STRICT;
 
