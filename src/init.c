@@ -486,25 +486,28 @@ find_inheritance_children_array(Oid parentrelId,
 	SysScanDesc scan;
 	ScanKeyData key[1];
 	HeapTuple	inheritsTuple;
-	Oid			inhrelid;
+
 	Oid		   *oidarr;
 	uint32		maxoids,
-				numoids,
-				i;
+				numoids;
+
+	Oid		   *result = NULL;
+	uint32		nresult = 0;
+
+	uint32		i;
+
+	Assert(lockmode != NoLock);
+
+	/* Init safe return values */
+	*children_size = 0;
+	*children = NULL;
 
 	/*
-	 * Can skip the scan if pg_class shows the relation has never had a
-	 * subclass.
+	 * Can skip the scan if pg_class shows the
+	 * relation has never had a subclass.
 	 */
 	if (!has_subclass(parentrelId))
-	{
-		/* Init return values */
-		*children_size = 0;
-		children = NULL;
-
-		/* Ok, could not find any children */
 		return FCS_NO_CHILDREN;
-	}
 
 	/*
 	 * Scan pg_inherits and build a working array of subclass OIDs.
@@ -525,6 +528,8 @@ find_inheritance_children_array(Oid parentrelId,
 
 	while ((inheritsTuple = systable_getnext(scan)) != NULL)
 	{
+		Oid inhrelid;
+
 		inhrelid = ((Form_pg_inherits) GETSTRUCT(inheritsTuple))->inhrelid;
 		if (numoids >= maxoids)
 		{
@@ -547,12 +552,10 @@ find_inheritance_children_array(Oid parentrelId,
 	if (numoids > 1)
 		qsort(oidarr, numoids, sizeof(Oid), oid_cmp);
 
-	/*
-	 * Acquire locks and build the result list.
-	 */
+	/* Acquire locks and build the result list */
 	for (i = 0; i < numoids; i++)
 	{
-		inhrelid = oidarr[i];
+		Oid inhrelid = oidarr[i];
 
 		if (lockmode != NoLock)
 		{
@@ -567,9 +570,7 @@ find_inheritance_children_array(Oid parentrelId,
 					for (j = 0; j < i; j++)
 						UnlockRelationOid(oidarr[j], lockmode);
 
-					/* Init return values */
-					*children_size = numoids;
-					*children = oidarr;
+					pfree(oidarr);
 
 					/* We couldn't lock this child, retreat! */
 					return FCS_COULD_NOT_LOCK;
@@ -586,18 +587,28 @@ find_inheritance_children_array(Oid parentrelId,
 			{
 				/* Release useless lock */
 				UnlockRelationOid(inhrelid, lockmode);
+
 				/* And ignore this relation */
 				continue;
 			}
 		}
+
+		/* Alloc array if it's the first time */
+		if (nresult == 0)
+			result = palloc(numoids * sizeof(Oid));
+
+		/* Save Oid of the existing relation */
+		result[nresult++] = inhrelid;
 	}
 
-	/* Init return values */
-	*children_size = numoids;
-	*children = oidarr;
+	/* Set return values */
+	*children_size = nresult;
+	*children = result;
 
-	/* Ok, we have children */
-	return FCS_FOUND;
+	pfree(oidarr);
+
+	/* Do we have children? */
+	return nresult > 0 ? FCS_FOUND : FCS_NO_CHILDREN;
 }
 
 /*

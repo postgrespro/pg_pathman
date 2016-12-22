@@ -19,6 +19,7 @@
 #include "pathman_workers.h"
 #include "relation_info.h"
 #include "utils.h"
+#include "xact_handling.h"
 
 #include "access/htup_details.h"
 #include "access/xact.h"
@@ -601,11 +602,12 @@ bgw_main_concurrent_part(Datum main_arg)
 Datum
 partition_table_concurrently(PG_FUNCTION_ARGS)
 {
-	Oid		relid = PG_GETARG_OID(0);
-	int32	batch_size = PG_GETARG_INT32(1);
-	float8	sleep_time = PG_GETARG_FLOAT8(2);
-	int		empty_slot_idx = -1,		/* do we have a slot for BGWorker? */
-			i;
+	Oid				relid = PG_GETARG_OID(0);
+	int32			batch_size = PG_GETARG_INT32(1);
+	float8			sleep_time = PG_GETARG_FLOAT8(2);
+	int				empty_slot_idx = -1,		/* do we have a slot for BGWorker? */
+					i;
+	TransactionId	rel_xmin;
 
 	/* Check batch_size */
 	if (batch_size < 1 || batch_size > 10000)
@@ -622,6 +624,16 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 							 get_pathman_relation_info_after_lock(relid, true, NULL),
 							 /* Partitioning type does not matter here */
 							 PT_INDIFFERENT);
+
+	/* Check that partitioning operation result is visible */
+	if (pathman_config_contains_relation(relid, NULL, NULL, &rel_xmin))
+	{
+		if (!xact_object_is_visible(rel_xmin))
+			ereport(ERROR, (errmsg("cannot start %s", concurrent_part_bgw),
+							errdetail("table is being partitioned now")));
+	}
+	else elog(ERROR, "cannot find relation %d", relid);
+
 	/*
 	 * Look for an empty slot and also check that a concurrent
 	 * partitioning operation for this table hasn't been started yet
@@ -686,7 +698,8 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 	/* Tell user everything's fine */
 	elog(NOTICE,
 		 "worker started, you can stop it "
-		 "with the following command: select %s('%s');",
+		 "with the following command: select %s.%s('%s');",
+		 get_namespace_name(get_pathman_schema()),
 		 CppAsString(stop_concurrent_part_task),
 		 get_rel_name(relid));
 

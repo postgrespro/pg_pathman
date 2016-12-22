@@ -236,11 +236,6 @@ create_partitions_for_value(Oid relid, Datum value, Oid value_type)
 	/* Check that table is partitioned and fetch xmin */
 	if (pathman_config_contains_relation(relid, NULL, NULL, &rel_xmin))
 	{
-		/* Was table partitioned in some previous transaction? */
-		bool	part_in_prev_xact =
-					TransactionIdPrecedes(rel_xmin, GetCurrentTransactionId()) ||
-					TransactionIdEquals(rel_xmin, FrozenTransactionId);
-
 		/* Take default values */
 		bool	spawn_using_bgw	= DEFAULT_SPAWN_USING_BGW,
 				enable_auto		= DEFAULT_AUTO;
@@ -264,7 +259,8 @@ create_partitions_for_value(Oid relid, Datum value, Oid value_type)
 		 * If table has been partitioned in some previous xact AND
 		 * we don't hold any conflicting locks, run BGWorker.
 		 */
-		if (spawn_using_bgw && part_in_prev_xact &&
+		if (spawn_using_bgw &&
+			xact_object_is_visible(rel_xmin) &&
 			!xact_bgw_conflicting_lock_exists(relid))
 		{
 			elog(DEBUG2, "create_partitions(): chose BGWorker [%u]", MyProcPid);

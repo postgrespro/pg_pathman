@@ -162,17 +162,26 @@ refresh_pathman_relation_info(Oid relid,
 	{
 		/* If there's no children at all, remove this entry */
 		case FCS_NO_CHILDREN:
+			elog(DEBUG2, "refresh: relation %u has no children [%u]",
+						 relid, MyProcPid);
+
 			UnlockRelationOid(relid, lockmode);
 			remove_pathman_relation_info(relid);
 			return NULL; /* exit */
 
 		/* If can't lock children, leave an invalid entry */
 		case FCS_COULD_NOT_LOCK:
+			elog(DEBUG2, "refresh: cannot lock children of relation %u [%u]",
+						 relid, MyProcPid);
+
 			UnlockRelationOid(relid, lockmode);
 			return NULL; /* exit */
 
 		/* Found some children, just unlock parent */
 		case FCS_FOUND:
+			elog(DEBUG2, "refresh: found children of relation %u [%u]",
+						 relid, MyProcPid);
+
 			UnlockRelationOid(relid, lockmode);
 			break; /* continue */
 
@@ -200,7 +209,8 @@ refresh_pathman_relation_info(Oid relid,
 		UnlockRelationOid(prel_children[i], lockmode);
 	}
 
-	pfree(prel_children);
+	if (prel_children)
+		pfree(prel_children);
 
 	/* Read additional parameters ('enable_parent' and 'auto' at the moment) */
 	if (read_pathman_params(relid, param_values, param_isnull))
@@ -291,6 +301,9 @@ get_pathman_relation_info(Oid relid)
 	elog(DEBUG2,
 		 "Fetching %s record for relation %u from pg_pathman's cache [%u]",
 		 (prel ? "live" : "NULL"), relid, MyProcPid);
+
+	/* Make sure that 'prel' is valid */
+	Assert(PrelIsValid(prel));
 
 	return prel;
 }
