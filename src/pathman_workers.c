@@ -36,6 +36,7 @@
 #include "utils/datum.h"
 #include "utils/memutils.h"
 #include "utils/lsyscache.h"
+#include "utils/syscache.h"
 #include "utils/typcache.h"
 #include "utils/resowner.h"
 #include "utils/snapmgr.h"
@@ -488,6 +489,17 @@ bgw_main_concurrent_part(Datum main_arg)
 			int		ret;
 			bool	isnull;
 
+			/* Make sure that relation exists and has partitions */
+			if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(part_slot->relid)) ||
+				get_pathman_relation_info(part_slot->relid) == NULL)
+			{
+				/* Fail fast */
+				failures_count = PART_WORKER_MAX_ATTEMPTS;
+
+				elog(ERROR, "relation %u is not partitioned (or does not exist)",
+							part_slot->relid);
+			}
+
 			ret = SPI_execute_with_args(sql, 2, types, vals, nulls, false, 0);
 			if (ret == SPI_OK_SELECT)
 			{
@@ -525,25 +537,6 @@ bgw_main_concurrent_part(Datum main_arg)
 
 			FreeErrorData(error);
 
-			/*
-			 * The most common exception we can catch here is a deadlock with
-			 * concurrent user queries. Check that attempts count doesn't exceed
-			 * some reasonable value
-			 */
-			if (failures_count >= PART_WORKER_MAX_ATTEMPTS)
-			{
-				/* Mark slot as FREE */
-				cps_set_status(part_slot, CPS_FREE);
-
-				elog(LOG,
-					 "concurrent partitioning worker has canceled the task because "
-					 "maximum amount of attempts (%d) had been exceeded, "
-					 "see the error message below",
-					 PART_WORKER_MAX_ATTEMPTS);
-
-				return; /* exit quickly */
-			}
-
 			/* Set 'failed' flag */
 			failed = true;
 		}
@@ -552,7 +545,27 @@ bgw_main_concurrent_part(Datum main_arg)
 		SPI_finish();
 		PopActiveSnapshot();
 
-		if (failed)
+		/*
+		 * The most common exception we can catch here is a deadlock with
+		 * concurrent user queries. Check that attempts count doesn't exceed
+		 * some reasonable value
+		 */
+		if (failures_count >= PART_WORKER_MAX_ATTEMPTS)
+		{
+			AbortCurrentTransaction();
+
+			/* Mark slot as FREE */
+			cps_set_status(part_slot, CPS_FREE);
+
+			elog(LOG,
+				 "concurrent partitioning worker has canceled the task because "
+				 "maximum amount of attempts (%d) had been exceeded, "
+				 "see the error message below",
+				 PART_WORKER_MAX_ATTEMPTS);
+
+			return;
+		}
+		else if (failed)
 		{
 			/* Abort transaction and sleep for a second */
 			AbortCurrentTransaction();
