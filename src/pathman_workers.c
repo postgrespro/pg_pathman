@@ -486,35 +486,42 @@ bgw_main_concurrent_part(Datum main_arg)
 		/* Exec ret = _partition_data_concurrent() */
 		PG_TRY();
 		{
-			int		ret;
-			bool	isnull;
-
 			/* Make sure that relation exists and has partitions */
-			if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(part_slot->relid)) ||
-				get_pathman_relation_info(part_slot->relid) == NULL)
+			if (SearchSysCacheExists1(RELOID, ObjectIdGetDatum(part_slot->relid)) &&
+				get_pathman_relation_info(part_slot->relid) != NULL)
 			{
-				/* Fail fast */
+				int		ret;
+				bool	isnull;
+
+				ret = SPI_execute_with_args(sql, 2, types, vals, nulls, false, 0);
+				if (ret == SPI_OK_SELECT)
+				{
+					TupleDesc	tupdesc = SPI_tuptable->tupdesc;
+					HeapTuple	tuple = SPI_tuptable->vals[0];
+
+					Assert(SPI_processed == 1); /* there should be 1 result at most */
+
+					rows = DatumGetInt32(SPI_getbinval(tuple, tupdesc, 1, &isnull));
+
+					Assert(!isnull); /* ... and ofc it must not be NULL */
+				}
+			}
+			/* Otherwise it's time to exit */
+			else
+			{
 				failures_count = PART_WORKER_MAX_ATTEMPTS;
 
-				elog(ERROR, "relation %u is not partitioned (or does not exist)",
-							part_slot->relid);
-			}
-
-			ret = SPI_execute_with_args(sql, 2, types, vals, nulls, false, 0);
-			if (ret == SPI_OK_SELECT)
-			{
-				TupleDesc	tupdesc = SPI_tuptable->tupdesc;
-				HeapTuple	tuple = SPI_tuptable->vals[0];
-
-				Assert(SPI_processed == 1); /* there should be 1 result at most */
-
-				rows = DatumGetInt32(SPI_getbinval(tuple, tupdesc, 1, &isnull));
-
-				Assert(!isnull); /* ... and ofc it must not be NULL */
+				elog(LOG, "relation %u is not partitioned (or does not exist)",
+						  part_slot->relid);
 			}
 		}
 		PG_CATCH();
 		{
+			/*
+			 * The most common exception we can catch here is a deadlock with
+			 * concurrent user queries. Check that attempts count doesn't exceed
+			 * some reasonable value
+			 */
 			ErrorData  *error;
 			char	   *sleep_time_str;
 
@@ -545,11 +552,7 @@ bgw_main_concurrent_part(Datum main_arg)
 		SPI_finish();
 		PopActiveSnapshot();
 
-		/*
-		 * The most common exception we can catch here is a deadlock with
-		 * concurrent user queries. Check that attempts count doesn't exceed
-		 * some reasonable value
-		 */
+		/* We've run out of attempts, exit */
 		if (failures_count >= PART_WORKER_MAX_ATTEMPTS)
 		{
 			AbortCurrentTransaction();
@@ -563,14 +566,19 @@ bgw_main_concurrent_part(Datum main_arg)
 				 "see the error message below",
 				 PART_WORKER_MAX_ATTEMPTS);
 
-			return;
+			return; /* time to exit */
 		}
+
+		/* Failed this time, wait */
 		else if (failed)
 		{
 			/* Abort transaction and sleep for a second */
 			AbortCurrentTransaction();
+
 			DirectFunctionCall1(pg_sleep, Float8GetDatum(part_slot->sleep_time));
 		}
+
+		/* Everything is fine */
 		else
 		{
 			/* Commit transaction and reset 'failures_count' */
@@ -592,7 +600,7 @@ bgw_main_concurrent_part(Datum main_arg)
 		if (cps_check_status(part_slot) == CPS_STOPPING)
 			break;
 	}
-	while(rows > 0 || failed);  /* do while there's still rows to be relocated */
+	while(rows > 0 || failed); /* do while there's still rows to be relocated */
 
 	/* Reclaim the resources */
 	pfree(sql);
