@@ -12,6 +12,127 @@ SELECT debug_capture();
 set client_min_messages = NOTICE;
 /* create table to be partitioned */
 CREATE TABLE calamity.part_test(val serial);
+/* test pg_pathman's cache */
+INSERT INTO calamity.part_test SELECT generate_series(1, 30);
+SELECT create_range_partitions('calamity.part_test', 'val', 1, 10);
+NOTICE:  sequence "part_test_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                       3
+(1 row)
+
+SELECT drop_partitions('calamity.part_test');
+NOTICE:  function calamity.part_test_upd_trig_func() does not exist, skipping
+NOTICE:  10 rows copied from calamity.part_test_1
+NOTICE:  10 rows copied from calamity.part_test_2
+NOTICE:  10 rows copied from calamity.part_test_3
+ drop_partitions 
+-----------------
+               3
+(1 row)
+
+SELECT create_range_partitions('calamity.part_test', 'val', 1, 10);
+ create_range_partitions 
+-------------------------
+                       3
+(1 row)
+
+SELECT drop_partitions('calamity.part_test');
+NOTICE:  function calamity.part_test_upd_trig_func() does not exist, skipping
+NOTICE:  10 rows copied from calamity.part_test_1
+NOTICE:  10 rows copied from calamity.part_test_2
+NOTICE:  10 rows copied from calamity.part_test_3
+ drop_partitions 
+-----------------
+               3
+(1 row)
+
+SELECT create_range_partitions('calamity.part_test', 'val', 1, 10);
+ create_range_partitions 
+-------------------------
+                       3
+(1 row)
+
+SELECT append_range_partition('calamity.part_test');
+ append_range_partition 
+------------------------
+ calamity.part_test_4
+(1 row)
+
+SELECT drop_partitions('calamity.part_test');
+NOTICE:  function calamity.part_test_upd_trig_func() does not exist, skipping
+NOTICE:  10 rows copied from calamity.part_test_1
+NOTICE:  10 rows copied from calamity.part_test_2
+NOTICE:  10 rows copied from calamity.part_test_3
+NOTICE:  0 rows copied from calamity.part_test_4
+ drop_partitions 
+-----------------
+               4
+(1 row)
+
+SELECT create_range_partitions('calamity.part_test', 'val', 1, 10);
+ create_range_partitions 
+-------------------------
+                       3
+(1 row)
+
+SELECT append_range_partition('calamity.part_test');
+ append_range_partition 
+------------------------
+ calamity.part_test_4
+(1 row)
+
+SELECT drop_partitions('calamity.part_test');
+NOTICE:  function calamity.part_test_upd_trig_func() does not exist, skipping
+NOTICE:  10 rows copied from calamity.part_test_1
+NOTICE:  10 rows copied from calamity.part_test_2
+NOTICE:  10 rows copied from calamity.part_test_3
+NOTICE:  0 rows copied from calamity.part_test_4
+ drop_partitions 
+-----------------
+               4
+(1 row)
+
+SELECT count(*) FROM calamity.part_test;
+ count 
+-------
+    30
+(1 row)
+
+DELETE FROM calamity.part_test;
+/* test stub 'enable_parent' value for PATHMAN_CONFIG_PARAMS */
+INSERT INTO calamity.part_test SELECT generate_series(1, 30);
+SELECT create_range_partitions('calamity.part_test', 'val', 1, 10);
+ create_range_partitions 
+-------------------------
+                       3
+(1 row)
+
+DELETE FROM pathman_config_params WHERE partrel = 'calamity.part_test'::regclass;
+SELECT append_range_partition('calamity.part_test');
+ append_range_partition 
+------------------------
+ calamity.part_test_4
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_test;
+          QUERY PLAN           
+-------------------------------
+ Append
+   ->  Seq Scan on part_test_1
+   ->  Seq Scan on part_test_2
+   ->  Seq Scan on part_test_3
+   ->  Seq Scan on part_test_4
+(5 rows)
+
+SELECT drop_partitions('calamity.part_test', true);
+NOTICE:  function calamity.part_test_upd_trig_func() does not exist, skipping
+ drop_partitions 
+-----------------
+               4
+(1 row)
+
+DELETE FROM calamity.part_test;
 /* check function build_hash_condition() */
 SELECT build_hash_condition('int4', 'val', 10, 1);
               build_hash_condition               
@@ -204,6 +325,9 @@ SELECT build_update_trigger_func_name(NULL) IS NULL;
  t
 (1 row)
 
+/* check function stop_concurrent_part_task() */
+SELECT stop_concurrent_part_task(1::regclass);
+ERROR:  cannot find worker for relation "1"
 /* check invoke_on_partition_created_callback() for RANGE */
 SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part_test', 1, NULL, NULL::int);
 ERROR:  both bounds must be provided for RANGE partition
@@ -393,5 +517,5 @@ SELECT count(*) FROM pathman_config_params WHERE partrel = 'calamity.to_be_disab
 (1 row)
 
 DROP SCHEMA calamity CASCADE;
-NOTICE:  drop cascades to 15 other objects
+NOTICE:  drop cascades to 16 other objects
 DROP EXTENSION pg_pathman;
