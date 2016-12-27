@@ -17,8 +17,13 @@
 #ifndef PATHMAN_WORKERS_H
 #define PATHMAN_WORKERS_H
 
+
 #include "postgres.h"
 #include "storage/spin.h"
+
+#if PG_VERSION_NUM >= 90600
+#include "storage/lock.h"
+#endif
 
 
 /*
@@ -31,6 +36,12 @@ typedef struct
 	Oid		result;			/* target partition */
 	Oid		dbid;			/* database which stores 'partitioned_table' */
 	Oid		partitioned_table;
+
+#if PG_VERSION_NUM >= 90600
+	/* Args for BecomeLockGroupMember() function */
+	PGPROC *parallel_master_pgproc;
+	pid_t	parallel_master_pid;
+#endif
 
 	/* Needed to decode Datum from 'values' */
 	Oid		value_type;
@@ -178,4 +189,10 @@ UnpackDatumFromByteArray(Datum *datum, Size datum_size, bool typbyval,
 	return ((uint8 *) byte_array) + datum_size;
 }
 
-#endif
+/*
+ * Create partition to store 'value' using specific BGW.
+ */
+Oid create_partitions_for_value_bg_worker(Oid relid, Datum value, Oid value_type);
+
+
+#endif /* PATHMAN_WORKERS_H */

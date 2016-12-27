@@ -11,45 +11,32 @@
 
 #include "pg_compat.h"
 
-#include "pathman.h"
 #include "init.h"
 #include "hooks.h"
-#include "utils.h"
+#include "pathman.h"
 #include "partition_filter.h"
+#include "planner_tree_modification.h"
 #include "runtimeappend.h"
 #include "runtime_merge_append.h"
-#include "xact_handling.h"
 
 #include "postgres.h"
-#include "access/heapam.h"
-#include "access/htup_details.h"
-#include "access/transam.h"
-#include "access/xact.h"
-#include "catalog/pg_cast.h"
-#include "catalog/pg_type.h"
-#include "executor/spi.h"
 #include "foreign/fdwapi.h"
-#include "fmgr.h"
 #include "miscadmin.h"
 #include "optimizer/clauses.h"
+#include "optimizer/plancat.h"
 #include "optimizer/prep.h"
 #include "optimizer/restrictinfo.h"
 #include "optimizer/cost.h"
-#include "utils/builtins.h"
 #include "utils/datum.h"
 #include "utils/lsyscache.h"
-#include "utils/memutils.h"
 #include "utils/rel.h"
-#include "utils/syscache.h"
 #include "utils/selfuncs.h"
-#include "utils/snapmgr.h"
 #include "utils/typcache.h"
+
 
 PG_MODULE_MAGIC;
 
 
-List		   *inheritance_disabled_relids = NIL;
-List		   *inheritance_enabled_relids = NIL;
 PathmanState   *pmstate;
 Oid				pathman_config_relid = InvalidOid;
 Oid				pathman_config_params_relid = InvalidOid;
@@ -58,71 +45,73 @@ Oid				pathman_config_params_relid = InvalidOid;
 /* pg module functions */
 void _PG_init(void);
 
-/* Utility functions */
-static Node *wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue);
-static bool disable_inheritance_subselect_walker(Node *node, void *context);
-
-/* "Partition creation"-related functions */
-static Datum extract_binary_interval_from_text(Datum interval_text,
-											   Oid part_atttype,
-											   Oid *interval_type);
-static bool spawn_partitions(Oid partitioned_rel,
-							 Datum value,
-							 Datum leading_bound,
-							 Oid leading_bound_type,
-							 FmgrInfo *cmp_proc,
-							 Datum interval_binary,
-							 Oid interval_type,
-							 bool forward,
-							 Oid *last_partition);
 
 /* Expression tree handlers */
+static Node *wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue);
+
 static WrapperNode *handle_const(const Const *c, WalkerContext *context);
-static void handle_binary_opexpr(WalkerContext *context, WrapperNode *result, const Node *varnode, const Const *c);
-static void handle_binary_opexpr_param(const PartRelationInfo *prel, WrapperNode *result, const Node *varnode);
+
+static void handle_binary_opexpr(WalkerContext *context,
+								 WrapperNode *result,
+								 const Node *varnode,
+								 const Const *c);
+
+static void handle_binary_opexpr_param(const PartRelationInfo *prel,
+									   WrapperNode *result,
+									   const Node *varnode);
+
 static WrapperNode *handle_opexpr(const OpExpr *expr, WalkerContext *context);
 static WrapperNode *handle_boolexpr(const BoolExpr *expr, WalkerContext *context);
 static WrapperNode *handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context);
-static double estimate_paramsel_using_prel(const PartRelationInfo *prel, int strategy);
-static RestrictInfo *rebuild_restrictinfo(Node *clause, RestrictInfo *old_rinfo);
-static bool pull_var_param(const WalkerContext *ctx, const OpExpr *expr, Node **var_ptr, Node **param_ptr);
 
-/* copied from allpaths.h */
-static void set_plain_rel_size(PlannerInfo *root, RelOptInfo *rel,
-				   RangeTblEntry *rte);
-static void set_plain_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte);
+static double estimate_paramsel_using_prel(const PartRelationInfo *prel,
+										   int strategy);
+
+static bool pull_var_param(const WalkerContext *ctx,
+						   const OpExpr *expr,
+						   Node **var_ptr,
+						   Node **param_ptr);
+
+
+/* Misc */
+static List *make_inh_translation_list_simplified(Relation oldrelation,
+												  Relation newrelation,
+												  Index newvarno);
+
+
+/* Copied from allpaths.h */
+static void set_plain_rel_size(PlannerInfo *root,
+							   RelOptInfo *rel,
+							   RangeTblEntry *rte);
+
+static void set_plain_rel_pathlist(PlannerInfo *root,
+								   RelOptInfo *rel,
+								   RangeTblEntry *rte);
+
 static List *accumulate_append_subpath(List *subpaths, Path *path);
-static void generate_mergeappend_paths(PlannerInfo *root, RelOptInfo *rel,
-						   List *live_childrels,
-						   List *all_child_pathkeys,
-						   PathKey *pathkeyAsc,
-						   PathKey *pathkeyDesc);
-static Path *get_cheapest_parameterized_child_path(PlannerInfo *root, RelOptInfo *rel, Relids required_outer);
 
+static void generate_mergeappend_paths(PlannerInfo *root,
+									   RelOptInfo *rel,
+									   List *live_childrels,
+									   List *all_child_pathkeys,
+									   PathKey *pathkeyAsc,
+									   PathKey *pathkeyDesc);
 
-/*
- * Compare two Datums with the given comarison function
- *
- * flinfo is a pointer to an instance of FmgrInfo
- * arg1, arg2 are Datum instances
- */
-#define check_lt(finfo, arg1, arg2) \
-	((int) FunctionCall2(finfo, arg1, arg2) < 0)
-#define check_le(finfo, arg1, arg2) \
-	((int) FunctionCall2(finfo, arg1, arg2) <= 0)
-#define check_eq(finfo, arg1, arg2) \
-	((int) FunctionCall2(finfo, arg1, arg2) == 0)
-#define check_ge(finfo, arg1, arg2) \
-	((int) FunctionCall2(finfo, arg1, arg2) >= 0)
-#define check_gt(finfo, arg1, arg2) \
-	((int) FunctionCall2(finfo, arg1, arg2) > 0)
+static Path *get_cheapest_parameterized_child_path(PlannerInfo *root,
+												   RelOptInfo *rel,
+												   Relids required_outer);
+
 
 /* We can transform Param into Const provided that 'econtext' is available */
 #define IsConstValue(wcxt, node) \
 	( IsA((node), Const) || (WcxtHasExprContext(wcxt) ? IsA((node), Param) : false) )
 
 #define ExtractConst(wcxt, node) \
-	( IsA((node), Param) ? extract_const((wcxt), (Param *) (node)) : ((Const *) (node)) )
+	( \
+		IsA((node), Param) ? \
+				extract_const((wcxt), (Param *) (node)) : \
+				((Const *) (node)) \
+	)
 
 
 /*
@@ -146,8 +135,10 @@ _PG_init(void)
 	/* NOTE: we don't need LWLocks now. RequestAddinLWLocks(1); */
 
 	/* Assign pg_pathman's initial state */
-	temp_init_state.initialization_needed = true;
 	temp_init_state.pg_pathman_enable = true;
+	temp_init_state.auto_partition = true;
+	temp_init_state.override_copy = true;
+	temp_init_state.initialization_needed = true;
 
 	/* Apply initial state */
 	restore_pathman_init_state(&temp_init_state);
@@ -174,348 +165,229 @@ _PG_init(void)
 }
 
 /*
- * Disables inheritance for partitioned by pathman relations.
- * It must be done to prevent PostgresSQL from exhaustive search.
+ * Build the list of translations from parent Vars to child Vars
+ * for an inheritance child.
+ *
+ * NOTE: Inspired by function make_inh_translation_list().
  */
-void
-disable_inheritance(Query *parse)
+static List *
+make_inh_translation_list_simplified(Relation oldrelation,
+									 Relation newrelation,
+									 Index newvarno)
 {
-	const PartRelationInfo *prel;
-	RangeTblEntry		   *rte;
-	MemoryContext			oldcontext;
-	ListCell			   *lc;
+	List	   *vars = NIL;
+	TupleDesc	old_tupdesc = RelationGetDescr(oldrelation);
+	TupleDesc	new_tupdesc = RelationGetDescr(newrelation);
+	int			oldnatts = RelationGetNumberOfAttributes(oldrelation);
+	int			newnatts = RelationGetNumberOfAttributes(newrelation);
+	int			old_attno;
 
-	/* If query contains CTE (WITH statement) then handle subqueries too */
-	disable_inheritance_cte(parse);
+	/* Amounts of attributes must match */
+	if (oldnatts != newnatts)
+		goto inh_translation_list_error;
 
-	/* If query contains subselects */
-	disable_inheritance_subselect(parse);
-
-	foreach(lc, parse->rtable)
+	/* We expect that parent and partition have an identical tupdesc */
+	for (old_attno = 0; old_attno < oldnatts; old_attno++)
 	{
-		rte = (RangeTblEntry *) lfirst(lc);
+		Form_pg_attribute	old_att,
+							new_att;
+		Oid					atttypid;
+		int32				atttypmod;
+		Oid					attcollation;
 
-		switch(rte->rtekind)
+		old_att = old_tupdesc->attrs[old_attno];
+		new_att = new_tupdesc->attrs[old_attno];
+
+		/* Attribute definitions must match */
+		if (old_att->attisdropped != new_att->attisdropped ||
+			old_att->atttypid != new_att->atttypid ||
+			old_att->atttypmod != new_att->atttypmod ||
+			old_att->attcollation != new_att->attcollation ||
+			strcmp(NameStr(old_att->attname), NameStr(new_att->attname)) != 0)
 		{
-			case RTE_RELATION:
-				if (rte->inh)
-				{
-					/* Look up this relation in pathman local cache */
-					prel = get_pathman_relation_info(rte->relid);
-					if (prel)
-					{
-						/* We'll set this flag later */
-						rte->inh = false;
-
-						/*
-						 * Sometimes user uses the ONLY statement and in this case
-						 * rte->inh is also false. We should differ the case
-						 * when user uses ONLY statement from case when we
-						 * make rte->inh false intentionally.
-						 */
-						oldcontext = MemoryContextSwitchTo(TopMemoryContext);
-						inheritance_enabled_relids = \
-							lappend_oid(inheritance_enabled_relids, rte->relid);
-						MemoryContextSwitchTo(oldcontext);
-
-						/*
-						 * Check if relation was already found with ONLY modifier. In
-						 * this case throw an error because we cannot handle
-						 * situations when partitioned table used both with and
-						 * without ONLY modifier in SELECT queries
-						 */
-						if (list_member_oid(inheritance_disabled_relids, rte->relid))
-							goto disable_error;
-
-						goto disable_next;
-					}
-				}
-
-				oldcontext = MemoryContextSwitchTo(TopMemoryContext);
-				inheritance_disabled_relids = \
-					lappend_oid(inheritance_disabled_relids, rte->relid);
-				MemoryContextSwitchTo(oldcontext);
-
-				/* Check if relation was already found withoud ONLY modifier */
-				if (list_member_oid(inheritance_enabled_relids, rte->relid))
-						goto disable_error;
-				break;
-			case RTE_SUBQUERY:
-				/* Recursively disable inheritance for subqueries */
-				disable_inheritance(rte->subquery);
-				break;
-			default:
-				break;
+			goto inh_translation_list_error;
 		}
 
-disable_next:
-		;
-	}
-
-	return;
-
-disable_error:
-	elog(ERROR, "It is prohibited to query partitioned tables both "
-				"with and without ONLY modifier");
-}
-
-void
-disable_inheritance_cte(Query *parse)
-{
-	ListCell	  *lc;
-
-	foreach(lc, parse->cteList)
-	{
-		CommonTableExpr *cte = (CommonTableExpr*) lfirst(lc);
-
-		if (IsA(cte->ctequery, Query))
-			disable_inheritance((Query *) cte->ctequery);
-	}
-}
-
-void
-disable_inheritance_subselect(Query *parse)
-{
-	Node		*quals;
-
-	if (!parse->jointree || !parse->jointree->quals)
-		return;
-
-	quals = parse->jointree->quals;
-	disable_inheritance_subselect_walker(quals, NULL);
-}
-
-static bool
-disable_inheritance_subselect_walker(Node *node, void *context)
-{
-	if (node == NULL)
-		return false;
-
-	if (IsA(node, SubLink))
-	{
-		disable_inheritance((Query *) (((SubLink *) node)->subselect));
-		return false;
-	}
-
-	return expression_tree_walker(node, disable_inheritance_subselect_walker, (void *) context);
-}
-
-/*
- * Checks if query affects only one partition. If true then substitute
- */
-void
-handle_modification_query(Query *parse)
-{
-	const PartRelationInfo *prel;
-	List				   *ranges;
-	RangeTblEntry		   *rte;
-	WrapperNode			   *wrap;
-	Expr				   *expr;
-	WalkerContext			context;
-
-	Assert(parse->commandType == CMD_UPDATE ||
-		   parse->commandType == CMD_DELETE);
-	Assert(parse->resultRelation > 0);
-
-	rte = rt_fetch(parse->resultRelation, parse->rtable);
-	prel = get_pathman_relation_info(rte->relid);
-
-	if (!prel)
-		return;
-
-	/* Parse syntax tree and extract partition ranges */
-	ranges = list_make1_irange(make_irange(0, PrelLastChild(prel), false));
-	expr = (Expr *) eval_const_expressions(NULL, parse->jointree->quals);
-	if (!expr)
-		return;
-
-	/* Parse syntax tree and extract partition ranges */
-	InitWalkerContext(&context, prel, NULL, false);
-	wrap = walk_expr_tree(expr, &context);
-
-	ranges = irange_list_intersect(ranges, wrap->rangeset);
-
-	/* If only one partition is affected then substitute parent table with partition */
-	if (irange_list_length(ranges) == 1)
-	{
-		IndexRange irange = linitial_irange(ranges);
-		if (irange.ir_lower == irange.ir_upper)
+		if (old_att->attisdropped)
 		{
-			Oid *children = PrelGetChildrenArray(prel);
-			rte->relid = children[irange.ir_lower];
-			rte->inh = false;
+			/* Just put NULL into this list entry */
+			vars = lappend(vars, NULL);
+			continue;
 		}
+
+		atttypid = old_att->atttypid;
+		atttypmod = old_att->atttypmod;
+		attcollation = old_att->attcollation;
+
+		vars = lappend(vars, makeVar(newvarno,
+									 (AttrNumber) (old_attno + 1),
+									 atttypid,
+									 atttypmod,
+									 attcollation,
+									 0));
 	}
 
-	return;
+	/* Everything's ok */
+	return vars;
+
+/* We end up here if any attribute differs */
+inh_translation_list_error:
+	elog(ERROR, "partition \"%s\" must have exact"
+				"same structure as parent \"%s\"",
+		 RelationGetRelationName(newrelation),
+		 RelationGetRelationName(oldrelation));
+
+	return NIL; /* keep compiler happy */
 }
 
 /*
  * Creates child relation and adds it to root.
- * Returns child index in simple_rel_array
+ * Returns child index in simple_rel_array.
+ *
+ * NOTE: This code is partially based on the expand_inherited_rtentry() function.
  */
 int
-append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
-	RangeTblEntry *rte, int index, Oid childOid, List *wrappers)
+append_child_relation(PlannerInfo *root, Relation parent_relation,
+					  Index parent_rti, int ir_index, Oid child_oid,
+					  List *wrappers)
 {
-	RangeTblEntry  *childrte;
-	RelOptInfo	   *childrel;
-	Index			childRTindex;
+	RangeTblEntry  *parent_rte,
+				   *child_rte;
+	RelOptInfo	   *parent_rel,
+				   *child_rel;
+	Relation		child_relation;
 	AppendRelInfo  *appinfo;
+	Index			childRTindex;
+	PlanRowMark	   *parent_rowmark,
+				   *child_rowmark;
+	Node		   *childqual;
+	List		   *childquals;
 	ListCell	   *lc,
 				   *lc2;
-	Relation		newrelation;
-	PlanRowMark	   *parent_rowmark;
-	PlanRowMark	   *child_rowmark;
-	AttrNumber		i;
+
+	parent_rel = root->simple_rel_array[parent_rti];
+	parent_rte = root->simple_rte_array[parent_rti];
 
 	/* FIXME: acquire a suitable lock on partition */
-	newrelation = heap_open(childOid, NoLock);
+	child_relation = heap_open(child_oid, NoLock);
 
-	/*
-	 * Create RangeTblEntry for child relation.
-	 * This code partially based on expand_inherited_rtentry() function.
-	 */
-	childrte = copyObject(rte);
-	childrte->relid = childOid;
-	childrte->relkind = newrelation->rd_rel->relkind;
-	childrte->inh = false;
-	childrte->requiredPerms = 0;
-	root->parse->rtable = lappend(root->parse->rtable, childrte);
+	/* Create RangeTblEntry for child relation */
+	child_rte = copyObject(parent_rte);
+	child_rte->relid = child_oid;
+	child_rte->relkind = child_relation->rd_rel->relkind;
+	child_rte->inh = false;
+	child_rte->requiredPerms = 0;
+
+	/* Add 'child_rte' to rtable and 'root->simple_rte_array' */
+	root->parse->rtable = lappend(root->parse->rtable, child_rte);
 	childRTindex = list_length(root->parse->rtable);
-	root->simple_rte_array[childRTindex] = childrte;
+	root->simple_rte_array[childRTindex] = child_rte;
 
-	/* Create RelOptInfo */
-	childrel = build_simple_rel(root, childRTindex, RELOPT_OTHER_MEMBER_REL);
+	/* Create RelOptInfo for this child (and make some estimates as well) */
+	child_rel = build_simple_rel(root, childRTindex, RELOPT_OTHER_MEMBER_REL);
 
-	/* Copy targetlist */
-	copy_targetlist_compat(childrel, rel);
+	/* Increase total_table_pages using the 'child_rel' */
+	root->total_table_pages += (double) child_rel->pages;
 
-	/* Copy attr_needed & attr_widths */
-	childrel->attr_needed = (Relids *)
-		palloc0((rel->max_attr - rel->min_attr + 1) * sizeof(Relids));
-	childrel->attr_widths = (int32 *)
-		palloc0((rel->max_attr - rel->min_attr + 1) * sizeof(int32));
 
-	for (i = 0; i < rel->max_attr - rel->min_attr + 1; i++)
-		childrel->attr_needed[i] = bms_copy(rel->attr_needed[i]);
+	/* Build an AppendRelInfo for this child */
+	appinfo = makeNode(AppendRelInfo);
+	appinfo->parent_relid = parent_rti;
+	appinfo->child_relid = childRTindex;
+	appinfo->parent_reloid = parent_rte->relid;
+	appinfo->translated_vars = make_inh_translation_list_simplified(parent_relation,
+																	child_relation,
+																	childRTindex);
 
-	memcpy(childrel->attr_widths, rel->attr_widths,
-		   (rel->max_attr - rel->min_attr + 1) * sizeof(int32));
+	/* Now append 'appinfo' to 'root->append_rel_list' */
+	root->append_rel_list = lappend(root->append_rel_list, appinfo);
+
+	/* Adjust target list for this child */
+	adjust_targetlist_compat(root, child_rel, parent_rel, appinfo);
 
 	/*
-	 * Copy restrictions. If it's not the parent table then copy only those
-	 * restrictions that reference to this partition
+	 * Copy restrictions. If it's not the parent table, copy only
+	 * those restrictions that are related to this partition.
 	 */
-	childrel->baserestrictinfo = NIL;
-	if (rte->relid != childOid)
+	if (parent_rte->relid != child_oid)
 	{
-		forboth(lc, wrappers, lc2, rel->baserestrictinfo)
-		{
-			bool alwaysTrue;
-			WrapperNode *wrap = (WrapperNode *) lfirst(lc);
-			Node *new_clause = wrapper_make_expression(wrap, index, &alwaysTrue);
-			RestrictInfo *old_rinfo = (RestrictInfo *) lfirst(lc2);
+		childquals = NIL;
 
-			if (alwaysTrue)
-			{
+		forboth(lc, wrappers, lc2, parent_rel->baserestrictinfo)
+		{
+			WrapperNode	   *wrap = (WrapperNode *) lfirst(lc);
+			Node		   *new_clause;
+			bool			always_true;
+
+			/* Generate a set of clauses for this child using WrapperNode */
+			new_clause = wrapper_make_expression(wrap, ir_index, &always_true);
+
+			/* Don't add this clause if it's always true */
+			if (always_true)
 				continue;
-			}
+
+			/* Clause should not be NULL */
 			Assert(new_clause);
-
-			if (and_clause((Node *) new_clause))
-			{
-				ListCell *alc;
-
-				foreach(alc, ((BoolExpr *) new_clause)->args)
-				{
-					Node *arg = (Node *) lfirst(alc);
-					RestrictInfo *new_rinfo = rebuild_restrictinfo(arg, old_rinfo);
-
-					change_varnos((Node *)new_rinfo, rel->relid, childrel->relid);
-					childrel->baserestrictinfo = lappend(childrel->baserestrictinfo,
-														 new_rinfo);
-				}
-			}
-			else
-			{
-				RestrictInfo *new_rinfo = rebuild_restrictinfo(new_clause, old_rinfo);
-
-				/* Replace old relids with new ones */
-				change_varnos((Node *)new_rinfo, rel->relid, childrel->relid);
-
-				childrel->baserestrictinfo = lappend(childrel->baserestrictinfo,
-													 (void *) new_rinfo);
-			}
+			childquals = lappend(childquals, new_clause);
 		}
 	}
-	/* If it's the parent table then copy all restrictions */
-	else
+	/* If it's the parent table, copy all restrictions */
+	else childquals = get_all_actual_clauses(parent_rel->baserestrictinfo);
+
+	/* Now it's time to change varnos and rebuld quals */
+	childquals = (List *) adjust_appendrel_attrs(root,
+												 (Node *) childquals,
+												 appinfo);
+	childqual = eval_const_expressions(root, (Node *)
+									   make_ands_explicit(childquals));
+	if (childqual && IsA(childqual, Const) &&
+		(((Const *) childqual)->constisnull ||
+		 !DatumGetBool(((Const *) childqual)->constvalue)))
 	{
-		foreach(lc, rel->baserestrictinfo)
-		{
-			RestrictInfo *rinfo = (RestrictInfo *) lfirst(lc);
-			RestrictInfo *new_rinfo = (RestrictInfo *) copyObject(rinfo);
-
-			change_varnos((Node *)new_rinfo, rel->relid, childrel->relid);
-			childrel->baserestrictinfo = lappend(childrel->baserestrictinfo,
-												 (void *) new_rinfo);
-		}
+		/*
+		 * Restriction reduces to constant FALSE or constant NULL after
+		 * substitution, so this child need not be scanned.
+		 */
+		set_dummy_rel_pathlist(child_rel);
 	}
+	childquals = make_ands_implicit((Expr *) childqual);
+	childquals = make_restrictinfos_from_actual_clauses(root, childquals);
 
-	/* Build an AppendRelInfo for this parent and child */
-	appinfo = makeNode(AppendRelInfo);
-	appinfo->parent_relid = rti;
-	appinfo->child_relid = childRTindex;
-	appinfo->parent_reloid = rte->relid;
-	root->append_rel_list = lappend(root->append_rel_list, appinfo);
-	root->total_table_pages += (double) childrel->pages;
+	/* Set new shiny childquals */
+	child_rel->baserestrictinfo = childquals;
 
-	/* Add equivalence members */
-	foreach(lc, root->eq_classes)
+	if (relation_excluded_by_constraints(root, child_rel, child_rte))
 	{
-		EquivalenceClass *cur_ec = (EquivalenceClass *) lfirst(lc);
-
-		/* Copy equivalence member from parent and make some modifications */
-		foreach(lc2, cur_ec->ec_members)
-		{
-			EquivalenceMember *cur_em = (EquivalenceMember *) lfirst(lc2);
-			EquivalenceMember *em;
-
-			if (!bms_is_member(rti, cur_em->em_relids))
-				continue;
-
-			em = makeNode(EquivalenceMember);
-			em->em_expr = copyObject(cur_em->em_expr);
-			change_varnos((Node *) em->em_expr, rti, childRTindex);
-			em->em_relids = bms_add_member(NULL, childRTindex);
-			em->em_nullable_relids = cur_em->em_nullable_relids;
-			em->em_is_const = false;
-			em->em_is_child = true;
-			em->em_datatype = cur_em->em_datatype;
-			cur_ec->ec_members = lappend(cur_ec->ec_members, em);
-		}
+		/*
+		 * This child need not be scanned, so we can omit it from the
+		 * appendrel.
+		 */
+		set_dummy_rel_pathlist(child_rel);
 	}
-	childrel->has_eclass_joins = rel->has_eclass_joins;
 
-	/* Recalc parent relation tuples count */
-	rel->tuples += childrel->tuples;
+	/*
+	 * We have to make child entries in the EquivalenceClass data
+	 * structures as well.
+	 */
+	if (parent_rel->has_eclass_joins || has_useful_pathkeys(root, parent_rel))
+		add_child_rel_equivalences(root, appinfo, parent_rel, child_rel);
+	child_rel->has_eclass_joins = parent_rel->has_eclass_joins;
 
 	/* Close child relations, but keep locks */
-	heap_close(newrelation, NoLock);
+	heap_close(child_relation, NoLock);
 
 
 	/* Create rowmarks required for child rels */
-	parent_rowmark = get_plan_rowmark(root->rowMarks, rti);
+	parent_rowmark = get_plan_rowmark(root->rowMarks, parent_rti);
 	if (parent_rowmark)
 	{
 		child_rowmark = makeNode(PlanRowMark);
 
 		child_rowmark->rti = childRTindex;
-		child_rowmark->prti = rti;
+		child_rowmark->prti = parent_rti;
 		child_rowmark->rowmarkId = parent_rowmark->rowmarkId;
 		/* Reselect rowmark type, because relkind might not match parent */
-		child_rowmark->markType = select_rowmark_type(childrte,
+		child_rowmark->markType = select_rowmark_type(child_rte,
 													  parent_rowmark->strength);
 		child_rowmark->allMarkTypes = (1 << child_rowmark->markType);
 		child_rowmark->strength = parent_rowmark->strength;
@@ -533,17 +405,183 @@ append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	return childRTindex;
 }
 
-/* Create new restriction based on clause */
-static RestrictInfo *
-rebuild_restrictinfo(Node *clause, RestrictInfo *old_rinfo)
+/*
+ * Given RangeEntry array and 'value', return selected
+ * RANGE partitions inside the WrapperNode.
+ */
+void
+select_range_partitions(const Datum value,
+						FmgrInfo *cmp_func,
+						const RangeEntry *ranges,
+						const int nranges,
+						const int strategy,
+						WrapperNode *result)
 {
-	return make_restrictinfo((Expr *) clause,
-							 old_rinfo->is_pushed_down,
-							 old_rinfo->outerjoin_delayed,
-							 old_rinfo->pseudoconstant,
-							 old_rinfo->required_relids,
-							 old_rinfo->outer_relids,
-							 old_rinfo->nullable_relids);
+	const RangeEntry   *current_re;
+	bool				lossy = false,
+						is_less,
+						is_greater;
+
+#ifdef USE_ASSERT_CHECKING
+	bool				found = false;
+	int					counter = 0;
+#endif
+
+	int					i,
+						startidx = 0,
+						endidx = nranges - 1,
+						cmp_min,
+						cmp_max;
+
+	/* Initial value (no missing partitions found) */
+	result->found_gap = false;
+
+	/* Check boundaries */
+	if (nranges == 0)
+	{
+		result->rangeset = NIL;
+		return;
+	}
+	else
+	{
+		Assert(ranges);
+		Assert(cmp_func);
+
+		/* Corner cases */
+		cmp_min = FunctionCall2(cmp_func, value, ranges[startidx].min),
+		cmp_max = FunctionCall2(cmp_func, value, ranges[endidx].max);
+
+		if ((cmp_min <= 0 && strategy == BTLessStrategyNumber) ||
+			(cmp_min < 0 && (strategy == BTLessEqualStrategyNumber ||
+							 strategy == BTEqualStrategyNumber)))
+		{
+			result->rangeset = NIL;
+			return;
+		}
+
+		if (cmp_max >= 0 && (strategy == BTGreaterEqualStrategyNumber ||
+							 strategy == BTGreaterStrategyNumber ||
+							 strategy == BTEqualStrategyNumber))
+		{
+			result->rangeset = NIL;
+			return;
+		}
+
+		if ((cmp_min < 0 && strategy == BTGreaterStrategyNumber) ||
+			(cmp_min <= 0 && strategy == BTGreaterEqualStrategyNumber))
+		{
+			result->rangeset = list_make1_irange(make_irange(startidx,
+															 endidx,
+															 IR_COMPLETE));
+			return;
+		}
+
+		if (cmp_max >= 0 && (strategy == BTLessEqualStrategyNumber ||
+							 strategy == BTLessStrategyNumber))
+		{
+			result->rangeset = list_make1_irange(make_irange(startidx,
+															 endidx,
+															 IR_COMPLETE));
+			return;
+		}
+	}
+
+	/* Binary search */
+	while (true)
+	{
+		Assert(cmp_func);
+
+		i = startidx + (endidx - startidx) / 2;
+		Assert(i >= 0 && i < nranges);
+
+		current_re = &ranges[i];
+
+		cmp_min = FunctionCall2(cmp_func, value, current_re->min);
+		cmp_max = FunctionCall2(cmp_func, value, current_re->max);
+
+		is_less = (cmp_min < 0 || (cmp_min == 0 && strategy == BTLessStrategyNumber));
+		is_greater = (cmp_max > 0 || (cmp_max >= 0 && strategy != BTLessStrategyNumber));
+
+		if (!is_less && !is_greater)
+		{
+			if (strategy == BTGreaterEqualStrategyNumber && cmp_min == 0)
+				lossy = false;
+			else if (strategy == BTLessStrategyNumber && cmp_max == 0)
+				lossy = false;
+			else
+				lossy = true;
+#ifdef USE_ASSERT_CHECKING
+			found = true;
+#endif
+			break;
+		}
+
+		/* If we still haven't found partition then it doesn't exist */
+		if (startidx >= endidx)
+		{
+			result->rangeset = NIL;
+			result->found_gap = true;
+			return;
+		}
+
+		if (is_less)
+			endidx = i - 1;
+		else if (is_greater)
+			startidx = i + 1;
+
+		/* For debug's sake */
+		Assert(++counter < 100);
+	}
+
+	Assert(found);
+
+	/* Filter partitions */
+	switch(strategy)
+	{
+		case BTLessStrategyNumber:
+		case BTLessEqualStrategyNumber:
+			if (lossy)
+			{
+				result->rangeset = list_make1_irange(make_irange(i, i, IR_LOSSY));
+				if (i > 0)
+					result->rangeset = lcons_irange(make_irange(0, i - 1, IR_COMPLETE),
+													result->rangeset);
+			}
+			else
+			{
+				result->rangeset = list_make1_irange(make_irange(0, i, IR_COMPLETE));
+			}
+			break;
+
+		case BTEqualStrategyNumber:
+			result->rangeset = list_make1_irange(make_irange(i, i, IR_LOSSY));
+			break;
+
+		case BTGreaterEqualStrategyNumber:
+		case BTGreaterStrategyNumber:
+			if (lossy)
+			{
+				result->rangeset = list_make1_irange(make_irange(i, i, IR_LOSSY));
+				if (i < nranges - 1)
+					result->rangeset =
+							lappend_irange(result->rangeset,
+										   make_irange(i + 1,
+													   nranges - 1,
+													   IR_COMPLETE));
+			}
+			else
+			{
+				result->rangeset =
+						list_make1_irange(make_irange(i,
+													  nranges - 1,
+													  IR_COMPLETE));
+			}
+			break;
+
+		default:
+			elog(ERROR, "Unknown btree strategy (%u)", strategy);
+			break;
+	}
 }
 
 /* Convert wrapper into expression for given index */
@@ -562,6 +600,7 @@ wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue)
 	/* Return NULL for always true and always false. */
 	if (!found)
 		return NULL;
+
 	if (!lossy)
 	{
 		*alwaysTrue = true;
@@ -575,8 +614,8 @@ wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue)
 
 		if (expr->boolop == OR_EXPR || expr->boolop == AND_EXPR)
 		{
-			ListCell *lc;
-			List *args = NIL;
+			ListCell   *lc;
+			List	   *args = NIL;
 
 			foreach (lc, wrap->args)
 			{
@@ -652,502 +691,9 @@ walk_expr_tree(Expr *expr, WalkerContext *context)
 			result->paramsel = 1.0;
 
 			result->rangeset = list_make1_irange(
-						make_irange(0, PrelLastChild(context->prel), true));
+						make_irange(0, PrelLastChild(context->prel), IR_LOSSY));
 
 			return result;
-	}
-}
-
-/*
- * Append\prepend partitions if there's no partition to store 'value'.
- *
- * Used by create_partitions_internal().
- *
- * NB: 'value' type is not needed since we've already taken
- * it into account while searching for the 'cmp_proc'.
- */
-static bool
-spawn_partitions(Oid partitioned_rel,		/* parent's Oid */
-				 Datum value,				/* value to be INSERTed */
-				 Datum leading_bound,		/* current global min\max */
-				 Oid leading_bound_type,	/* type of the boundary */
-				 FmgrInfo *cmp_proc,		/* cmp(value, leading_bound) */
-				 Datum interval_binary,		/* interval in binary form */
-				 Oid interval_type,			/* INTERVALOID or prel->atttype */
-				 bool forward,				/* append\prepend */
-				 Oid *last_partition)		/* result (Oid of the last partition) */
-{
-/* Cache "+"(leading_bound, interval) or "-"(leading_bound, interval) operator */
-#define CacheOperator(finfo, opname, arg1, arg2, is_cached) \
-	do { \
-		if (!is_cached) \
-		{ \
-			fmgr_info(get_binary_operator_oid((opname), (arg1), (arg2)), \
-					  (finfo)); \
-			is_cached = true; \
-		} \
-	} while (0)
-
-/* Use "<" for prepend & ">=" for append */
-#define do_compare(compar, a, b, fwd) \
-	( \
-		(fwd) ? \
-			check_ge((compar), (a), (b)) : \
-			check_lt((compar), (a), (b)) \
-	)
-
-	FmgrInfo 	interval_move_bound; /* function to move upper\lower boundary */
-	bool		interval_move_bound_cached = false; /* is it cached already? */
-	bool		spawned = false;
-
-	Datum		cur_part_leading = leading_bound;
-
-	char	   *query;
-
-	/* Create querty statement */
-	query = psprintf("SELECT part::regclass "
-					 "FROM %s.create_single_range_partition($1, $2, $3) AS part",
-					 get_namespace_name(get_pathman_schema()));
-
-	/* Execute comparison function cmp(value, cur_part_leading) */
-	while (do_compare(cmp_proc, value, cur_part_leading, forward))
-	{
-		char   *nulls = NULL; /* no params are NULL */
-		Oid		types[3] = { REGCLASSOID, leading_bound_type, leading_bound_type };
-		Datum	values[3];
-		int		ret;
-
-		/* Assign the 'following' boundary to current 'leading' value */
-		Datum	cur_part_following = cur_part_leading;
-
-		CacheOperator(&interval_move_bound, (forward ? "+" : "-"),
-					  leading_bound_type, interval_type, interval_move_bound_cached);
-
-		/* Move leading bound by interval (leading +\- INTERVAL) */
-		cur_part_leading = FunctionCall2(&interval_move_bound,
-										 cur_part_leading,
-										 interval_binary);
-
-		/* Fill in 'values' with parent's Oid and correct boundaries... */
-		values[0] = partitioned_rel; /* partitioned table's Oid */
-		values[1] = forward ? cur_part_following : cur_part_leading; /* value #1 */
-		values[2] = forward ? cur_part_leading : cur_part_following; /* value #2 */
-
-		/* ...and create partition */
-		ret = SPI_execute_with_args(query, 3, types, values, nulls, false, 0);
-		if (ret != SPI_OK_SELECT)
-			elog(ERROR, "Could not spawn a partition");
-
-		/* Set 'last_partition' if necessary */
-		if (last_partition)
-		{
-			HeapTuple	htup = SPI_tuptable->vals[0];
-			Datum		partid;
-			bool		isnull;
-
-			Assert(SPI_processed == 1);
-			Assert(SPI_tuptable->tupdesc->natts == 1);
-			partid = SPI_getbinval(htup, SPI_tuptable->tupdesc, 1, &isnull);
-
-			*last_partition = DatumGetObjectId(partid);
-		}
-
-#ifdef USE_ASSERT_CHECKING
-		elog(DEBUG2, "%s partition with following='%s' & leading='%s' [%u]",
-			 (forward ? "Appending" : "Prepending"),
-			 DebugPrintDatum(cur_part_following, leading_bound_type),
-			 DebugPrintDatum(cur_part_leading, leading_bound_type),
-			 MyProcPid);
-#endif
-
-		/* We have spawned at least 1 partition */
-		spawned = true;
-	}
-
-	pfree(query);
-
-	return spawned;
-}
-
-/*
- * Convert interval from TEXT to binary form using partitioned column's type.
- */
-static Datum
-extract_binary_interval_from_text(Datum interval_text,	/* interval as TEXT */
-								  Oid part_atttype,		/* partitioned column's type */
-								  Oid *interval_type)	/* returned value */
-{
-	Datum		interval_binary;
-	const char *interval_cstring;
-
-	interval_cstring = TextDatumGetCString(interval_text);
-
-	/* If 'part_atttype' is a *date type*, cast 'range_interval' to INTERVAL */
-	if (is_date_type_internal(part_atttype))
-	{
-		int32	interval_typmod = PATHMAN_CONFIG_interval_typmod;
-
-		/* Convert interval from CSTRING to internal form */
-		interval_binary = DirectFunctionCall3(interval_in,
-											  CStringGetDatum(interval_cstring),
-											  ObjectIdGetDatum(InvalidOid),
-											  Int32GetDatum(interval_typmod));
-		if (interval_type)
-			*interval_type = INTERVALOID;
-	}
-	/* Otherwise cast it to the partitioned column's type */
-	else
-	{
-		HeapTuple	htup;
-		Oid			typein_proc = InvalidOid;
-
-		htup = SearchSysCache1(TYPEOID, ObjectIdGetDatum(part_atttype));
-		if (HeapTupleIsValid(htup))
-		{
-			typein_proc = ((Form_pg_type) GETSTRUCT(htup))->typinput;
-			ReleaseSysCache(htup);
-		}
-		else
-			elog(ERROR, "Cannot find input function for type %u", part_atttype);
-
-		/*
-		 * Convert interval from CSTRING to 'prel->atttype'.
-		 *
-		 * Note: We pass 3 arguments in case
-		 * 'typein_proc' also takes Oid & typmod.
-		 */
-		interval_binary = OidFunctionCall3(typein_proc,
-										   CStringGetDatum(interval_cstring),
-										   ObjectIdGetDatum(part_atttype),
-										   Int32GetDatum(-1));
-		if (interval_type)
-			*interval_type = part_atttype;
-	}
-
-	return interval_binary;
-}
-
-/*
- * Append partitions (if needed) and return Oid of the partition to contain value.
- *
- * NB: This function should not be called directly, use create_partitions() instead.
- */
-Oid
-create_partitions_internal(Oid relid, Datum value, Oid value_type)
-{
-	MemoryContext	old_mcxt = CurrentMemoryContext;
-	Oid				partid = InvalidOid; /* last created partition (or InvalidOid) */
-
-	PG_TRY();
-	{
-		const PartRelationInfo *prel;
-		Datum					values[Natts_pathman_config];
-		bool					isnull[Natts_pathman_config];
-
-		/* Get both PartRelationInfo & PATHMAN_CONFIG contents for this relation */
-		if (pathman_config_contains_relation(relid, values, isnull, NULL))
-		{
-			Oid			base_atttype;		/* base type of prel->atttype */
-			Oid			base_value_type;	/* base type of value_type */
-
-			Datum		min_rvalue,			/* absolute MIN */
-						max_rvalue;			/* absolute MAX */
-
-			Oid			interval_type = InvalidOid;
-			Datum		interval_binary, /* assigned 'width' of a single partition */
-						interval_text;
-
-			FmgrInfo	interval_type_cmp;
-
-			/* Fetch PartRelationInfo by 'relid' */
-			prel = get_pathman_relation_info(relid);
-			shout_if_prel_is_invalid(relid, prel, PT_RANGE);
-
-			/* Fetch base types of prel->atttype & value_type */
-			base_atttype = getBaseType(prel->atttype);
-			base_value_type = getBaseType(value_type);
-
-			/* Read max & min range values from PartRelationInfo */
-			min_rvalue = PrelGetRangesArray(prel)[0].min;
-			max_rvalue = PrelGetRangesArray(prel)[PrelLastChild(prel)].max;
-
-			/* Copy datums on order to protect them from cache invalidation */
-			min_rvalue = datumCopy(min_rvalue, prel->attbyval, prel->attlen);
-			max_rvalue = datumCopy(max_rvalue, prel->attbyval, prel->attlen);
-
-			/* Retrieve interval as TEXT from tuple */
-			interval_text = values[Anum_pathman_config_range_interval - 1];
-
-			/* Convert interval to binary representation */
-			interval_binary = extract_binary_interval_from_text(interval_text,
-																base_atttype,
-																&interval_type);
-
-			/* Fill the FmgrInfo struct with a cmp(value, part_attribute) function */
-			fill_type_cmp_fmgr_info(&interval_type_cmp, base_value_type, base_atttype);
-
-			if (SPI_connect() != SPI_OK_CONNECT)
-				elog(ERROR, "could not connect using SPI");
-
-			/* while (value >= MAX) ... */
-			spawn_partitions(PrelParentRelid(prel), value, max_rvalue,
-							 base_atttype, &interval_type_cmp, interval_binary,
-							 interval_type, true, &partid);
-
-			/* while (value < MIN) ... */
-			if (partid == InvalidOid)
-				spawn_partitions(PrelParentRelid(prel), value, min_rvalue,
-								 base_atttype, &interval_type_cmp, interval_binary,
-								 interval_type, false, &partid);
-
-			SPI_finish(); /* close SPI connection */
-		}
-		else
-			elog(ERROR, "pg_pathman's config does not contain relation \"%s\"",
-				 get_rel_name_or_relid(relid));
-	}
-	PG_CATCH();
-	{
-		ErrorData *edata;
-
-		/* Switch to the original context & copy edata */
-		MemoryContextSwitchTo(old_mcxt);
-		edata = CopyErrorData();
-		FlushErrorState();
-
-		elog(LOG, "create_partitions_internal(): %s [%u]",
-			 edata->message, MyProcPid);
-
-		FreeErrorData(edata);
-
-		SPI_finish(); /* no problem if not connected */
-
-		/* Reset 'partid' in case of error */
-		partid = InvalidOid;
-	}
-	PG_END_TRY();
-
-	return partid;
-}
-
-/*
- * Create RANGE partitions (if needed) using either BGW or current backend.
- *
- * Returns Oid of the partition to store 'value'.
- */
-Oid
-create_partitions(Oid relid, Datum value, Oid value_type)
-{
-	TransactionId	rel_xmin;
-	Oid				last_partition = InvalidOid;
-
-	/* Check that table is partitioned and fetch xmin */
-	if (pathman_config_contains_relation(relid, NULL, NULL, &rel_xmin))
-	{
-		bool part_in_prev_xact =
-					TransactionIdPrecedes(rel_xmin, GetCurrentTransactionId()) ||
-					TransactionIdEquals(rel_xmin, FrozenTransactionId);
-
-		/*
-		 * If table has been partitioned in some previous xact AND
-		 * we don't hold any conflicting locks, run BGWorker.
-		 */
-		if (part_in_prev_xact && !xact_bgw_conflicting_lock_exists(relid))
-		{
-			elog(DEBUG2, "create_partitions(): chose BGWorker [%u]", MyProcPid);
-			last_partition = create_partitions_bg_worker(relid, value, value_type);
-		}
-		/* Else it'd be better for the current backend to create partitions */
-		else
-		{
-			elog(DEBUG2, "create_partitions(): chose backend [%u]", MyProcPid);
-			last_partition = create_partitions_internal(relid, value, value_type);
-		}
-	}
-	else
-		elog(ERROR, "relation \"%s\" is not partitioned by pg_pathman",
-			 get_rel_name_or_relid(relid));
-
-	/* Check that 'last_partition' is valid */
-	if (last_partition == InvalidOid)
-		elog(ERROR, "could not create new partitions for relation \"%s\"",
-			 get_rel_name_or_relid(relid));
-
-	return last_partition;
-}
-
-/*
- * Given RangeEntry array and 'value', return selected
- * RANGE partitions inside the WrapperNode.
- */
-void
-select_range_partitions(const Datum value,
-						FmgrInfo *cmp_func,
-						const RangeEntry *ranges,
-						const int nranges,
-						const int strategy,
-						WrapperNode *result)
-{
-	const RangeEntry   *current_re;
-	bool				lossy = false,
-						is_less,
-						is_greater;
-
-#ifdef USE_ASSERT_CHECKING
-	bool				found = false;
-	int					counter = 0;
-#endif
-
-	int					i,
-						startidx = 0,
-						endidx = nranges - 1,
-						cmp_min,
-						cmp_max;
-
-	/* Initial value (no missing partitions found) */
-	result->found_gap = false;
-
-	/* Check boundaries */
-	if (nranges == 0)
-	{
-		result->rangeset = NIL;
-		return;
-	}
-	else
-	{
-		Assert(ranges);
-		Assert(cmp_func);
-
-		/* Corner cases */
-		cmp_min = FunctionCall2(cmp_func, value, ranges[startidx].min),
-		cmp_max = FunctionCall2(cmp_func, value, ranges[endidx].max);
-
-		if ((cmp_min <= 0 && strategy == BTLessStrategyNumber) ||
-			(cmp_min < 0 && (strategy == BTLessEqualStrategyNumber ||
-							 strategy == BTEqualStrategyNumber)))
-		{
-			result->rangeset = NIL;
-			return;
-		}
-
-		if (cmp_max >= 0 && (strategy == BTGreaterEqualStrategyNumber ||
-							 strategy == BTGreaterStrategyNumber ||
-							 strategy == BTEqualStrategyNumber))
-		{
-			result->rangeset = NIL;
-			return;
-		}
-
-		if ((cmp_min < 0 && strategy == BTGreaterStrategyNumber) ||
-			(cmp_min <= 0 && strategy == BTGreaterEqualStrategyNumber))
-		{
-			result->rangeset = list_make1_irange(make_irange(startidx, endidx, false));
-			return;
-		}
-
-		if (cmp_max >= 0 && (strategy == BTLessEqualStrategyNumber ||
-							 strategy == BTLessStrategyNumber))
-		{
-			result->rangeset = list_make1_irange(make_irange(startidx, endidx, false));
-			return;
-		}
-	}
-
-	/* Binary search */
-	while (true)
-	{
-		Assert(cmp_func);
-
-		i = startidx + (endidx - startidx) / 2;
-		Assert(i >= 0 && i < nranges);
-
-		current_re = &ranges[i];
-
-		cmp_min = FunctionCall2(cmp_func, value, current_re->min);
-		cmp_max = FunctionCall2(cmp_func, value, current_re->max);
-
-		is_less = (cmp_min < 0 || (cmp_min == 0 && strategy == BTLessStrategyNumber));
-		is_greater = (cmp_max > 0 || (cmp_max >= 0 && strategy != BTLessStrategyNumber));
-
-		if (!is_less && !is_greater)
-		{
-			if (strategy == BTGreaterEqualStrategyNumber && cmp_min == 0)
-				lossy = false;
-			else if (strategy == BTLessStrategyNumber && cmp_max == 0)
-				lossy = false;
-			else
-				lossy = true;
-#ifdef USE_ASSERT_CHECKING
-			found = true;
-#endif
-			break;
-		}
-
-		/* If we still haven't found partition then it doesn't exist */
-		if (startidx >= endidx)
-		{
-			result->rangeset = NIL;
-			result->found_gap = true;
-			return;
-		}
-
-		if (is_less)
-			endidx = i - 1;
-		else if (is_greater)
-			startidx = i + 1;
-
-		/* For debug's sake */
-		Assert(++counter < 100);
-	}
-
-	Assert(found);
-
-	/* Filter partitions */
-	switch(strategy)
-	{
-		case BTLessStrategyNumber:
-		case BTLessEqualStrategyNumber:
-			if (lossy)
-			{
-				result->rangeset = list_make1_irange(make_irange(i, i, true));
-				if (i > 0)
-					result->rangeset = lcons_irange(make_irange(0, i - 1, false),
-													result->rangeset);
-			}
-			else
-			{
-				result->rangeset = list_make1_irange(make_irange(0, i, false));
-			}
-			break;
-
-		case BTEqualStrategyNumber:
-			result->rangeset = list_make1_irange(make_irange(i, i, true));
-			break;
-
-		case BTGreaterEqualStrategyNumber:
-		case BTGreaterStrategyNumber:
-			if (lossy)
-			{
-				result->rangeset = list_make1_irange(make_irange(i, i, true));
-				if (i < nranges - 1)
-					result->rangeset =
-							lappend_irange(result->rangeset,
-										   make_irange(i + 1,
-													   nranges - 1,
-													   false));
-			}
-			else
-			{
-				result->rangeset =
-						list_make1_irange(make_irange(i,
-													  nranges - 1,
-													  false));
-			}
-			break;
-
-		default:
-			elog(ERROR, "Unknown btree strategy (%u)", strategy);
-			break;
 	}
 }
 
@@ -1160,7 +706,6 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 {
 	int						strategy;
 	TypeCacheEntry		   *tce;
-	FmgrInfo				cmp_func;
 	Oid						vartype;
 	const OpExpr		   *expr = (const OpExpr *) result->orig;
 	const PartRelationInfo *prel = context->prel;
@@ -1186,10 +731,6 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 	if (strategy == 0)
 		goto binary_opexpr_return;
 
-	fill_type_cmp_fmgr_info(&cmp_func,
-							getBaseType(c->consttype),
-							getBaseType(prel->atttype));
-
 	switch (prel->parttype)
 	{
 		case PT_HASH:
@@ -1201,7 +742,7 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 												 PrelChildrenCount(prel));
 
 				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
-				result->rangeset = list_make1_irange(make_irange(idx, idx, true));
+				result->rangeset = list_make1_irange(make_irange(idx, idx, IR_LOSSY));
 
 				return; /* exit on equal */
 			}
@@ -1210,12 +751,18 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 
 		case PT_RANGE:
 			{
+				FmgrInfo cmp_func;
+
+				fill_type_cmp_fmgr_info(&cmp_func,
+										getBaseType(c->consttype),
+										getBaseType(prel->atttype));
+
 				select_range_partitions(c->constvalue,
 										&cmp_func,
 										PrelGetRangesArray(context->prel),
 										PrelChildrenCount(context->prel),
 										strategy,
-										result);
+										result); /* output */
 
 				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
 
@@ -1227,7 +774,7 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 	}
 
 binary_opexpr_return:
-	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), true));
+	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_LOSSY));
 	result->paramsel = 1.0;
 }
 
@@ -1253,7 +800,7 @@ handle_binary_opexpr_param(const PartRelationInfo *prel,
 	tce = lookup_type_cache(vartype, TYPECACHE_BTREE_OPFAMILY);
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
 
-	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), true));
+	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_LOSSY));
 	result->paramsel = estimate_paramsel_using_prel(prel, strategy);
 }
 
@@ -1302,7 +849,7 @@ search_range_partition_eq(const Datum value,
 							ranges,
 							nranges,
 							BTEqualStrategyNumber,
-							&result);
+							&result); /* output */
 
 	if (result.found_gap)
 	{
@@ -1317,13 +864,13 @@ search_range_partition_eq(const Datum value,
 		IndexRange irange = linitial_irange(result.rangeset);
 
 		Assert(list_length(result.rangeset) == 1);
-		Assert(irange.ir_lower == irange.ir_upper);
-		Assert(irange.ir_valid);
+		Assert(irange_lower(irange) == irange_upper(irange));
+		Assert(is_irange_valid(irange));
 
 		/* Write result to the 'out_rentry' if necessary */
 		if (out_re)
 			memcpy((void *) out_re,
-				   (const void *) &ranges[irange.ir_lower],
+				   (const void *) &ranges[irange_lower(irange)],
 				   sizeof(RangeEntry));
 
 		return SEARCH_RANGEREL_FOUND;
@@ -1353,7 +900,7 @@ handle_const(const Const *c, WalkerContext *context)
 
 	/*
 	 * Had to add this check for queries like:
-	 *   select * from test.hash_rel where txt = NULL;
+	 *		select * from test.hash_rel where txt = NULL;
 	 */
 	if (!context->for_insert || c->constisnull)
 	{
@@ -1367,18 +914,39 @@ handle_const(const Const *c, WalkerContext *context)
 	{
 		case PT_HASH:
 			{
-				Datum	value = OidFunctionCall1(prel->hash_proc, c->constvalue);
-				uint32	idx = hash_to_part_index(DatumGetInt32(value),
-												 PrelChildrenCount(prel));
+				Datum	value,	/* value to be hashed */
+						hash;	/* 32-bit hash */
+				uint32	idx;	/* index of partition */
+				bool	cast_success;
+
+				/* Peform type cast if types mismatch */
+				if (prel->atttype != c->consttype)
+				{
+					value = perform_type_cast(c->constvalue,
+											  getBaseType(c->consttype),
+											  getBaseType(prel->atttype),
+											  &cast_success);
+
+					if (!cast_success)
+						elog(ERROR, "Cannot select partition: "
+									"unable to perform type cast");
+				}
+				/* Else use the Const's value */
+				else value = c->constvalue;
+
+				/* Calculate 32-bit hash of 'value' and corresponding index */
+				hash = OidFunctionCall1(prel->hash_proc, value);
+				idx = hash_to_part_index(DatumGetInt32(hash),
+										 PrelChildrenCount(prel));
 
 				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
-				result->rangeset = list_make1_irange(make_irange(idx, idx, true));
+				result->rangeset = list_make1_irange(make_irange(idx, idx, IR_LOSSY));
 			}
 			break;
 
 		case PT_RANGE:
 			{
-				FmgrInfo	cmp_finfo;
+				FmgrInfo cmp_finfo;
 
 				fill_type_cmp_fmgr_info(&cmp_finfo,
 										getBaseType(c->consttype),
@@ -1389,7 +957,7 @@ handle_const(const Const *c, WalkerContext *context)
 										PrelGetRangesArray(context->prel),
 										PrelChildrenCount(context->prel),
 										strategy,
-										result);
+										result); /* output */
 
 				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
 			}
@@ -1433,7 +1001,7 @@ handle_opexpr(const OpExpr *expr, WalkerContext *context)
 		}
 	}
 
-	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), true));
+	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_LOSSY));
 	result->paramsel = 1.0;
 	return result;
 }
@@ -1462,7 +1030,9 @@ pull_var_param(const WalkerContext *ctx,
 						(Var *) left :
 						(Var *) ((RelabelType *) left)->arg;
 
-		if (v->varoattno == ctx->prel->attnum)
+		/* Check if 'v' is partitioned column of 'prel' */
+		if (v->varoattno == ctx->prel->attnum &&
+			v->varno == ctx->prel_varno)
 		{
 			*var_ptr = left;
 			*param_ptr = right;
@@ -1477,7 +1047,9 @@ pull_var_param(const WalkerContext *ctx,
 						(Var *) right :
 						(Var *) ((RelabelType *) right)->arg;
 
-		if (v->varoattno == ctx->prel->attnum)
+		/* Check if 'v' is partitioned column of 'prel' */
+		if (v->varoattno == ctx->prel->attnum &&
+			v->varno == ctx->prel_varno)
 		{
 			*var_ptr = right;
 			*param_ptr = left;
@@ -1506,7 +1078,7 @@ handle_boolexpr(const BoolExpr *expr, WalkerContext *context)
 	if (expr->boolop == AND_EXPR)
 		result->rangeset = list_make1_irange(make_irange(0,
 														 PrelLastChild(prel),
-														 false));
+														 IR_COMPLETE));
 	else
 		result->rangeset = NIL;
 
@@ -1525,15 +1097,15 @@ handle_boolexpr(const BoolExpr *expr, WalkerContext *context)
 				break;
 
 			case AND_EXPR:
-				result->rangeset = irange_list_intersect(result->rangeset,
-														 arg->rangeset);
+				result->rangeset = irange_list_intersection(result->rangeset,
+															arg->rangeset);
 				result->paramsel *= arg->paramsel;
 				break;
 
 			default:
 				result->rangeset = list_make1_irange(make_irange(0,
 																 PrelLastChild(prel),
-																 false));
+																 IR_LOSSY));
 				break;
 		}
 	}
@@ -1544,8 +1116,8 @@ handle_boolexpr(const BoolExpr *expr, WalkerContext *context)
 
 		foreach (lc, result->args)
 		{
-			WrapperNode *arg = (WrapperNode *) lfirst(lc);
-			int len = irange_list_length(arg->rangeset);
+			WrapperNode	   *arg = (WrapperNode *) lfirst(lc);
+			int				len = irange_list_length(arg->rangeset);
 
 			result->paramsel *= (1.0 - arg->paramsel * (double)len / (double)totallen);
 		}
@@ -1582,7 +1154,8 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 
 		/* Skip if base types or attribute numbers do not match */
 		if (getBaseType(var->vartype) != getBaseType(prel->atttype) ||
-			var->varoattno != prel->attnum)
+			var->varoattno != prel->attnum ||	/* partitioned attribute */
+			var->varno != context->prel_varno)	/* partitioned table */
 		{
 			goto handle_arrexpr_return;
 		}
@@ -1635,7 +1208,7 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 							idx = hash_to_part_index(DatumGetUInt32(value),
 													 PrelChildrenCount(prel));
 
-							irange = list_make1_irange(make_irange(idx, idx, true));
+							irange = list_make1_irange(make_irange(idx, idx, IR_LOSSY));
 						}
 						/* No children if Const is NULL */
 						else irange = NIL;
@@ -1704,7 +1277,7 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 		result->paramsel = DEFAULT_INEQ_SEL;
 
 handle_arrexpr_return:
-	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), true));
+	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_LOSSY));
 	result->paramsel = 1.0;
 	return result;
 }
@@ -1738,8 +1311,8 @@ set_plain_rel_size(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 static void
 set_plain_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 {
-	Relids		required_outer;
-	Path *path;
+	Relids	required_outer;
+	Path   *path;
 
 	/*
 	 * We don't support pushing join clauses into the quals of a seqscan, but
@@ -1755,6 +1328,12 @@ set_plain_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 	path = create_seqscan_path(root, rel, required_outer);
 #endif
 	add_path(rel, path);
+
+#if PG_VERSION_NUM >= 90600
+	/* If appropriate, consider parallel sequential scan */
+	if (rel->consider_parallel && required_outer == NULL)
+		create_plain_partial_paths_compat(root, rel);
+#endif
 
 	/* Consider index scans */
 	create_index_paths(root, rel);
@@ -1796,14 +1375,17 @@ set_foreign_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
  *	  Build access paths for an "append relation"
  */
 void
-set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel,
-						Index rti, RangeTblEntry *rte,
+set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 						PathKey *pathkeyAsc, PathKey *pathkeyDesc)
 {
 	Index		parentRTindex = rti;
 	List	   *live_childrels = NIL;
 	List	   *subpaths = NIL;
 	bool		subpaths_valid = true;
+#if PG_VERSION_NUM >= 90600
+	List	   *partial_subpaths = NIL;
+	bool		partial_subpaths_valid = true;
+#endif
 	List	   *all_child_pathkeys = NIL;
 	List	   *all_child_outers = NIL;
 	ListCell   *l;
@@ -1816,11 +1398,11 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel,
 	 */
 	foreach(l, root->append_rel_list)
 	{
-		AppendRelInfo *appinfo = (AppendRelInfo *) lfirst(l);
-		Index		childRTindex;
-		RangeTblEntry *childRTE;
-		RelOptInfo *childrel;
-		ListCell   *lcp;
+		AppendRelInfo  *appinfo = (AppendRelInfo *) lfirst(l);
+		Index			childRTindex;
+		RangeTblEntry  *childRTE;
+		RelOptInfo	   *childrel;
+		ListCell	   *lcp;
 
 		/* append_rel_list contains all append rels; ignore others */
 		if (appinfo->parent_relid != parentRTindex)
@@ -1831,24 +1413,46 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel,
 		childRTE = root->simple_rte_array[childRTindex];
 		childrel = root->simple_rel_array[childRTindex];
 
+#if PG_VERSION_NUM >= 90600
 		/*
-		 * Compute the child's access paths.
+		 * If parallelism is allowable for this query in general and for parent
+		 * appendrel, see whether it's allowable for this childrel in
+		 * particular.
+		 *
+		 * For consistency, do this before calling set_rel_size() for the child.
 		 */
+		if (root->glob->parallelModeOK && rel->consider_parallel)
+			set_rel_consider_parallel_compat(root, childrel, childRTE);
+#endif
+
+		/* Compute child's access paths & sizes */
 		if (childRTE->relkind == RELKIND_FOREIGN_TABLE)
 		{
+			/* childrel->rows should be >= 1 */
 			set_foreign_size(root, childrel, childRTE);
+
+			/* If child IS dummy, ignore it */
+			if (IS_DUMMY_REL(childrel))
+				continue;
+
 			set_foreign_pathlist(root, childrel, childRTE);
 		}
 		else
 		{
+			/* childrel->rows should be >= 1 */
 			set_plain_rel_size(root, childrel, childRTE);
+
+			/* If child IS dummy, ignore it */
+			if (IS_DUMMY_REL(childrel))
+				continue;
+
 			set_plain_rel_pathlist(root, childrel, childRTE);
 		}
+
+		/* Set cheapest path for child */
 		set_cheapest(childrel);
 
-		/*
-		 * If child is dummy, ignore it.
-		 */
+		/* If child BECAME dummy, ignore it */
 		if (IS_DUMMY_REL(childrel))
 			continue;
 
@@ -1856,6 +1460,18 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel,
 		 * Child is live, so add it to the live_childrels list for use below.
 		 */
 		live_childrels = lappend(live_childrels, childrel);
+
+#if PG_VERSION_NUM >= 90600
+		/*
+		 * If any live child is not parallel-safe, treat the whole appendrel
+		 * as not parallel-safe.  In future we might be able to generate plans
+		 * in which some children are farmed out to workers while others are
+		 * not; but we don't have that today, so it's a waste to consider
+		 * partial paths anywhere in the appendrel unless it's all safe.
+		 */
+		if (!childrel->consider_parallel)
+			rel->consider_parallel = false;
+#endif
 
 		/*
 		 * If child has an unparameterized cheapest-total path, add that to
@@ -1867,6 +1483,15 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel,
 											  childrel->cheapest_total_path);
 		else
 			subpaths_valid = false;
+
+#if PG_VERSION_NUM >= 90600
+		/* Same idea, but for a partial plan. */
+		if (childrel->partial_pathlist != NIL)
+			partial_subpaths = accumulate_append_subpath(partial_subpaths,
+									   linitial(childrel->partial_pathlist));
+		else
+			partial_subpaths_valid = false;
+#endif
 
 		/*
 		 * Collect lists of all the available path orderings and
@@ -1941,6 +1566,40 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel,
 	if (subpaths_valid)
 		add_path(rel,
 				 (Path *) create_append_path_compat(rel, subpaths, NULL, 0));
+
+#if PG_VERSION_NUM >= 90600
+	/*
+	 * Consider an append of partial unordered, unparameterized partial paths.
+	 */
+	if (partial_subpaths_valid)
+	{
+		AppendPath *appendpath;
+		ListCell   *lc;
+		int			parallel_workers = 0;
+
+		/*
+		 * Decide on the number of workers to request for this append path.
+		 * For now, we just use the maximum value from among the members.  It
+		 * might be useful to use a higher number if the Append node were
+		 * smart enough to spread out the workers, but it currently isn't.
+		 */
+		foreach(lc, partial_subpaths)
+		{
+			Path	   *path = lfirst(lc);
+
+			parallel_workers = Max(parallel_workers, path->parallel_workers);
+		}
+
+		if (parallel_workers > 0)
+		{
+
+			/* Generate a partial append path. */
+			appendpath = create_append_path_compat(rel, partial_subpaths, NULL,
+					parallel_workers);
+			add_partial_path(rel, (Path *) appendpath);
+		}
+	}
+#endif
 
 	/*
 	 * Also build unparameterized MergeAppend paths based on the collected

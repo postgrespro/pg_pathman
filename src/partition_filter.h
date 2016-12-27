@@ -8,8 +8,9 @@
  * ------------------------------------------------------------------------
  */
 
-#ifndef RUNTIME_INSERT_H
-#define RUNTIME_INSERT_H
+#ifndef PARTITION_FILTER_H
+#define PARTITION_FILTER_H
+
 
 #include "relation_info.h"
 #include "utils.h"
@@ -93,8 +94,6 @@ extern CustomExecMethods	partition_filter_exec_methods;
 
 void init_partition_filter_static_data(void);
 
-void add_partition_filters(List *rtable, Plan *plan);
-
 /* ResultPartsStorage init\fini\scan function */
 void init_result_parts_storage(ResultPartsStorage *parts_storage,
 							   EState *estate,
@@ -108,8 +107,9 @@ ResultRelInfoHolder * scan_result_parts_storage(Oid partid,
 												ResultPartsStorage *storage);
 
 /* Find suitable partition using 'value' */
-Oid *find_partitions_for_value(Datum value, const PartRelationInfo *prel,
-							   ExprContext *econtext, int *nparts);
+Oid * find_partitions_for_value(Datum value, Oid value_type,
+								const PartRelationInfo *prel,
+								int *nparts);
 
 Plan * make_partition_filter(Plan *subplan,
 							 Oid partitioned_table,
@@ -133,7 +133,8 @@ void partition_filter_explain(CustomScanState *node,
 
 ResultRelInfoHolder * select_partition_for_insert(const PartRelationInfo *prel,
 												  ResultPartsStorage *parts_storage,
-												  Datum value, EState *estate,
-												  bool spawn_partitions);
+												  Datum value, Oid value_type,
+												  EState *estate);
 
-#endif
+
+#endif /* PARTITION_FILTER_H */

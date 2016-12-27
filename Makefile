@@ -4,13 +4,17 @@ MODULE_big = pg_pathman
 OBJS = src/init.o src/relation_info.o src/utils.o src/partition_filter.o \
 	src/runtimeappend.o src/runtime_merge_append.o src/pg_pathman.o src/rangeset.o \
 	src/pl_funcs.o src/pl_range_funcs.o src/pl_hash_funcs.o src/pathman_workers.o \
-	src/hooks.o src/nodes_common.o src/xact_handling.o src/copy_stmt_hooking.o \
-	src/pg_compat.o $(WIN32RES)
+	src/hooks.o src/nodes_common.o src/xact_handling.o src/utility_stmt_hooking.o \
+	src/planner_tree_modification.o src/debug_print.o src/pg_compat.o \
+	src/partition_creation.o $(WIN32RES)
 
 EXTENSION = pg_pathman
-EXTVERSION = 1.1
+EXTVERSION = 1.2
 DATA_built = pg_pathman--$(EXTVERSION).sql
-DATA = pg_pathman--1.0.sql pg_pathman--1.0--1.1.sql
+DATA = pg_pathman--1.0.sql \
+	pg_pathman--1.0--1.1.sql \
+	pg_pathman--1.1.sql \
+	pg_pathman--1.1--1.2.sql
 PGFILEDESC = "pg_pathman - partitioning tool"
 
 REGRESS = pathman_basic \
@@ -20,7 +24,7 @@ REGRESS = pathman_basic \
 		  pathman_foreign_keys \
 		  pathman_permissions \
 		  pathman_rowmarks \
-		  pathman_copy_stmt_hooking \
+		  pathman_utility_stmt_hooking \
 		  pathman_calamity
 EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add
 EXTRA_CLEAN = pg_pathman--$(EXTVERSION).sql ./isolation_output

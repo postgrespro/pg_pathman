@@ -22,12 +22,12 @@
 #include "access/sysattr.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_constraint.h"
+#include "catalog/pg_extension.h"
 #include "catalog/pg_inherits.h"
 #include "catalog/pg_inherits_fn.h"
 #include "catalog/pg_type.h"
 #include "miscadmin.h"
 #include "optimizer/clauses.h"
-#include "parser/parse_coerce.h"
 #include "utils/datum.h"
 #include "utils/inval.h"
 #include "utils/builtins.h"
@@ -63,6 +63,7 @@ PathmanInitState 	pg_pathman_init_state;
 /* Shall we install new relcache callback? */
 static bool			relcache_callback_needed = true;
 
+
 /* Functions for various local caches */
 static bool init_pathman_relation_oids(void);
 static void fini_pathman_relation_oids(void);
@@ -89,6 +90,11 @@ static bool read_opexpr_const(const OpExpr *opexpr,
 
 static int oid_cmp(const void *p1, const void *p2);
 
+
+/* Validate SQL facade */
+static uint32 build_sql_facade_version(char *version_cstr);
+static uint32 get_sql_facade_version(void);
+static void validate_sql_facade_version(uint32 ver);
 
 /*
  * Save and restore main init state.
@@ -129,7 +135,7 @@ init_main_pathman_toggles(void)
 							 "Enables automatic partition creation",
 							 NULL,
 							 &pg_pathman_init_state.auto_partition,
-							 true,
+							 DEFAULT_AUTO,
 							 PGC_SUSET,
 							 0,
 							 NULL,
@@ -167,6 +173,9 @@ load_config(void)
 	 */
 	if (!init_pathman_relation_oids())
 		return false; /* remain 'uninitialized', exit before creating main caches */
+
+	/* Validate pg_pathman's Pl/PgSQL facade (might be outdated) */
+	validate_sql_facade_version(get_sql_facade_version());
 
 	init_local_cache();		/* create 'partitioned_rels' hash table */
 	read_pathman_config();	/* read PATHMAN_CONFIG table & fill cache */
@@ -466,28 +475,39 @@ fill_prel_with_partitions(const Oid *partitions,
  *
  * borrowed from pg_inherits.c
  */
-Oid *
-find_inheritance_children_array(Oid parentrelId, LOCKMODE lockmode, uint32 *size)
+find_children_status
+find_inheritance_children_array(Oid parentrelId,
+								LOCKMODE lockmode,
+								bool nowait,
+								uint32 *children_size,	/* ret value #1 */
+								Oid **children)			/* ret value #2 */
 {
 	Relation	relation;
 	SysScanDesc scan;
 	ScanKeyData key[1];
 	HeapTuple	inheritsTuple;
-	Oid			inhrelid;
+
 	Oid		   *oidarr;
 	uint32		maxoids,
-				numoids,
-				i;
+				numoids;
+
+	Oid		   *result = NULL;
+	uint32		nresult = 0;
+
+	uint32		i;
+
+	Assert(lockmode != NoLock);
+
+	/* Init safe return values */
+	*children_size = 0;
+	*children = NULL;
 
 	/*
-	 * Can skip the scan if pg_class shows the relation has never had a
-	 * subclass.
+	 * Can skip the scan if pg_class shows the
+	 * relation has never had a subclass.
 	 */
 	if (!has_subclass(parentrelId))
-	{
-		*size = 0;
-		return NULL;
-	}
+		return FCS_NO_CHILDREN;
 
 	/*
 	 * Scan pg_inherits and build a working array of subclass OIDs.
@@ -508,6 +528,8 @@ find_inheritance_children_array(Oid parentrelId, LOCKMODE lockmode, uint32 *size
 
 	while ((inheritsTuple = systable_getnext(scan)) != NULL)
 	{
+		Oid inhrelid;
+
 		inhrelid = ((Form_pg_inherits) GETSTRUCT(inheritsTuple))->inhrelid;
 		if (numoids >= maxoids)
 		{
@@ -530,17 +552,31 @@ find_inheritance_children_array(Oid parentrelId, LOCKMODE lockmode, uint32 *size
 	if (numoids > 1)
 		qsort(oidarr, numoids, sizeof(Oid), oid_cmp);
 
-	/*
-	 * Acquire locks and build the result list.
-	 */
+	/* Acquire locks and build the result list */
 	for (i = 0; i < numoids; i++)
 	{
-		inhrelid = oidarr[i];
+		Oid inhrelid = oidarr[i];
 
 		if (lockmode != NoLock)
 		{
 			/* Get the lock to synchronize against concurrent drop */
-			LockRelationOid(inhrelid, lockmode);
+			if (nowait)
+			{
+				if (!ConditionalLockRelationOid(inhrelid, lockmode))
+				{
+					uint32 j;
+
+					/* Unlock all previously locked children */
+					for (j = 0; j < i; j++)
+						UnlockRelationOid(oidarr[j], lockmode);
+
+					pfree(oidarr);
+
+					/* We couldn't lock this child, retreat! */
+					return FCS_COULD_NOT_LOCK;
+				}
+			}
+			else LockRelationOid(inhrelid, lockmode);
 
 			/*
 			 * Now that we have the lock, double-check to see if the relation
@@ -551,25 +587,56 @@ find_inheritance_children_array(Oid parentrelId, LOCKMODE lockmode, uint32 *size
 			{
 				/* Release useless lock */
 				UnlockRelationOid(inhrelid, lockmode);
+
 				/* And ignore this relation */
 				continue;
 			}
 		}
+
+		/* Alloc array if it's the first time */
+		if (nresult == 0)
+			result = palloc(numoids * sizeof(Oid));
+
+		/* Save Oid of the existing relation */
+		result[nresult++] = inhrelid;
 	}
 
-	*size = numoids;
-	return oidarr;
+	/* Set return values */
+	*children_size = nresult;
+	*children = result;
+
+	pfree(oidarr);
+
+	/* Do we have children? */
+	return nresult > 0 ? FCS_FOUND : FCS_NO_CHILDREN;
 }
 
 /*
  * Generate check constraint name for a partition.
  *
+ * These functions does not perform sanity checks at all.
+ */
+char *
+build_check_constraint_name_relid_internal(Oid relid, AttrNumber attno)
+{
+	return build_check_constraint_name_relname_internal(get_rel_name(relid), attno);
+}
+
+char *
+build_check_constraint_name_relname_internal(const char *relname, AttrNumber attno)
+{
+	return psprintf("pathman_%s_%u_check", relname, attno);
+}
+
+/*
+ * Generate part sequence name for a parent.
+ *
  * This function does not perform sanity checks at all.
  */
 char *
-build_check_constraint_name_internal(Oid relid, AttrNumber attno)
+build_sequence_name_internal(Oid relid)
 {
-	return psprintf("pathman_%s_%u_check", get_rel_name(relid), attno);
+	return psprintf("%s_seq", get_rel_name(relid));
 }
 
 /*
@@ -684,6 +751,7 @@ read_pathman_params(Oid relid, Datum *values, bool *isnull)
 		Assert(!isnull[Anum_pathman_config_params_enable_parent - 1]);
 		Assert(!isnull[Anum_pathman_config_params_auto - 1]);
 		Assert(!isnull[Anum_pathman_config_params_init_callback - 1]);
+		Assert(!isnull[Anum_pathman_config_params_spawn_using_bgw - 1]);
 	}
 
 	/* Clean resources */
@@ -752,7 +820,9 @@ read_pathman_config(void)
 		}
 
 		/* Create or update PartRelationInfo for this partitioned table */
-		refresh_pathman_relation_info(relid, parttype, text_to_cstring(attname));
+		refresh_pathman_relation_info(relid, parttype,
+									  text_to_cstring(attname),
+									  true); /* allow lazy prel loading */
 	}
 
 	/* Clean resources */
@@ -776,7 +846,7 @@ get_partition_constraint_expr(Oid partition, AttrNumber part_attno)
 	bool		conbin_isnull;
 	Expr	   *expr;			/* expression tree for constraint */
 
-	conname = build_check_constraint_name_internal(partition, part_attno);
+	conname = build_check_constraint_name_relid_internal(partition, part_attno);
 	conid = get_relation_constraint_oid(partition, conname, true);
 	if (conid == InvalidOid)
 	{
@@ -893,6 +963,7 @@ read_opexpr_const(const OpExpr *opexpr,
 	const Node	   *right;
 	const Var	   *part_attr;	/* partitioned column */
 	const Const	   *constant;
+	bool			cast_success;
 
 	if (list_length(opexpr->args) != 2)
 		return false;
@@ -928,52 +999,18 @@ read_opexpr_const(const OpExpr *opexpr,
 
 	constant = (Const *) right;
 
-	/* Check that types are binary coercible */
-	if (IsBinaryCoercible(constant->consttype, prel->atttype))
+	/* Cast Const to a proper type if needed */
+	*val = perform_type_cast(constant->constvalue,
+							 getBaseType(constant->consttype),
+							 getBaseType(prel->atttype),
+							 &cast_success);
+
+	if (!cast_success)
 	{
-		*val = constant->constvalue;
-	}
-	/* If not, try to perfrom a type cast */
-	else
-	{
-		CoercionPathType	ret;
-		Oid					castfunc = InvalidOid;
+		elog(WARNING, "Constant type in some check constraint "
+					  "does not match the partitioned column's type");
 
-		ret = find_coercion_pathway(prel->atttype, constant->consttype,
-									COERCION_EXPLICIT, &castfunc);
-
-		switch (ret)
-		{
-			/* There's a function */
-			case COERCION_PATH_FUNC:
-				{
-					/* Perform conversion */
-					Assert(castfunc != InvalidOid);
-					*val = OidFunctionCall1(castfunc, constant->constvalue);
-				}
-				break;
-
-			/* Types are binary compatible (no implicit cast) */
-			case COERCION_PATH_RELABELTYPE:
-				{
-					/* We don't perform any checks here */
-					*val = constant->constvalue;
-				}
-				break;
-
-			/* TODO: implement these if needed */
-			case COERCION_PATH_ARRAYCOERCE:
-			case COERCION_PATH_COERCEVIAIO:
-
-			/* There's no cast available */
-			case COERCION_PATH_NONE:
-			default:
-				{
-					elog(WARNING, "Constant type in some check constraint "
-								  "does not match the partitioned column's type");
-					return false;
-				}
-		}
+		return false;
 	}
 
 	return true;
@@ -1081,4 +1118,90 @@ oid_cmp(const void *p1, const void *p2)
 	if (v1 > v2)
 		return 1;
 	return 0;
+}
+
+
+/* Parse cstring and build uint32 representing the version */
+static uint32
+build_sql_facade_version(char *version_cstr)
+{
+	uint32	version;
+
+	/* expect to see x+.y+.z+ */
+	version = strtol(version_cstr, &version_cstr, 10) & 0xFF;
+
+	version <<= 8;
+	if (strlen(version_cstr) > 1)
+		version |= (strtol(version_cstr + 1, &version_cstr, 10) & 0xFF);
+
+	version <<= 8;
+	if (strlen(version_cstr) > 1)
+		version |= (strtol(version_cstr + 1, &version_cstr, 10) & 0xFF);
+
+	return version;
+}
+
+/* Get version of pg_pathman's facade written in Pl/PgSQL */
+static uint32
+get_sql_facade_version(void)
+{
+	Relation		pg_extension_rel;
+	ScanKeyData		skey;
+	SysScanDesc		scan;
+	HeapTuple		htup;
+
+	Datum			datum;
+	bool			isnull;
+	char		   *version_cstr;
+
+	/* Look up the extension */
+	pg_extension_rel = heap_open(ExtensionRelationId, AccessShareLock);
+
+	ScanKeyInit(&skey,
+				Anum_pg_extension_extname,
+				BTEqualStrategyNumber, F_NAMEEQ,
+				CStringGetDatum("pg_pathman"));
+
+	scan = systable_beginscan(pg_extension_rel,
+							  ExtensionNameIndexId,
+							  true, NULL, 1, &skey);
+
+	htup = systable_getnext(scan);
+
+	/* Exit if pg_pathman's missing */
+	if (!HeapTupleIsValid(htup))
+		return 0;
+
+	datum = heap_getattr(htup, Anum_pg_extension_extversion,
+						 RelationGetDescr(pg_extension_rel), &isnull);
+	Assert(isnull == false); /* extversion should not be NULL */
+
+	/* Extract pg_pathman's version as cstring */
+	version_cstr = text_to_cstring(DatumGetTextPP(datum));
+
+	systable_endscan(scan);
+	heap_close(pg_extension_rel, AccessShareLock);
+
+	return build_sql_facade_version(version_cstr);
+}
+
+/* Check that current Pl/PgSQL facade is compatible with internals */
+static void
+validate_sql_facade_version(uint32 ver)
+{
+	Assert(ver > 0);
+
+	/* Compare ver to 'lowest compatible frontend' version */
+	if (ver < LOWEST_COMPATIBLE_FRONT)
+	{
+		elog(DEBUG1, "current version: %x, lowest compatible: %x",
+					 ver, LOWEST_COMPATIBLE_FRONT);
+
+		DisablePathman(); /* disable pg_pathman since config is broken */
+		ereport(ERROR,
+				(errmsg("pg_pathman's Pl/PgSQL frontend is incompatible with "
+						"its shared library"),
+				 errdetail("consider performing an update procedure"),
+				 errhint(INIT_ERROR_HINT)));
+	}
 }

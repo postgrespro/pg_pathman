@@ -11,6 +11,7 @@
 #ifndef PATHMAN_H
 #define PATHMAN_H
 
+
 #include "relation_info.h"
 #include "rangeset.h"
 
@@ -55,11 +56,12 @@
  * Definitions for the "pathman_config_params" table.
  */
 #define PATHMAN_CONFIG_PARAMS						"pathman_config_params"
-#define Natts_pathman_config_params					4
+#define Natts_pathman_config_params					5
 #define Anum_pathman_config_params_partrel			1	/* primary key */
 #define Anum_pathman_config_params_enable_parent	2	/* include parent into plan */
 #define Anum_pathman_config_params_auto				3	/* auto partitions creation */
 #define Anum_pathman_config_params_init_callback	4	/* partition action callback */
+#define Anum_pathman_config_params_spawn_using_bgw	5	/* should we use spawn BGW? */
 
 /*
  * Definitions for the "pathman_partition_list" view.
@@ -107,24 +109,14 @@ typedef enum
 
 
 /*
- * The list of partitioned relation relids that must be handled by pg_pathman
- */
-extern List			   *inheritance_enabled_relids;
-
-/*
- * This list is used to ensure that partitioned relation isn't used both
- * with and without ONLY modifiers
- */
-extern List			   *inheritance_disabled_relids;
-
-/*
  * pg_pathman's global state.
  */
 extern PathmanState    *pmstate;
 
 
-int append_child_relation(PlannerInfo *root, RelOptInfo *rel, Index rti,
-						  RangeTblEntry *rte, int index, Oid childOID, List *wrappers);
+int append_child_relation(PlannerInfo *root, Relation parent_relation,
+						  Index parent_rti, int ir_index, Oid child_oid,
+						  List *wrappers);
 
 search_rangerel_result search_range_partition_eq(const Datum value,
 												 FmgrInfo *cmp_func,
@@ -133,17 +125,11 @@ search_rangerel_result search_range_partition_eq(const Datum value,
 
 uint32 hash_to_part_index(uint32 value, uint32 partitions);
 
-void handle_modification_query(Query *parse);
-void disable_inheritance(Query *parse);
-void disable_inheritance_cte(Query *parse);
-void disable_inheritance_subselect(Query *parse);
-
 /* copied from allpaths.h */
 void set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
 						 Index rti, RangeTblEntry *rte);
 void set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
-							 RangeTblEntry *rte, PathKey *pathkeyAsc,
-							 PathKey *pathkeyDesc);
+							 PathKey *pathkeyAsc, PathKey *pathkeyDesc);
 
 typedef struct
 {
@@ -156,6 +142,7 @@ typedef struct
 
 typedef struct
 {
+	Index					prel_varno;	/* Var::varno associated with prel */
 	const PartRelationInfo *prel;		/* main partitioning structure */
 	ExprContext			   *econtext;	/* for ExecEvalExpr() */
 	bool					for_insert;	/* are we in PartitionFilter now? */
@@ -164,8 +151,9 @@ typedef struct
 /*
  * Usual initialization procedure for WalkerContext.
  */
-#define InitWalkerContext(context, prel_info, ecxt, for_ins) \
+#define InitWalkerContext(context, prel_vno, prel_info, ecxt, for_ins) \
 	do { \
+		(context)->prel_varno = (prel_vno); \
 		(context)->prel = (prel_info); \
 		(context)->econtext = (ecxt); \
 		(context)->for_insert = (for_ins); \
@@ -173,13 +161,6 @@ typedef struct
 
 /* Check that WalkerContext contains ExprContext (plan execution stage) */
 #define WcxtHasExprContext(wcxt) ( (wcxt)->econtext )
-
-/*
- * Functions for partition creation, use create_partitions().
- */
-Oid create_partitions(Oid relid, Datum value, Oid value_type);
-Oid create_partitions_bg_worker(Oid relid, Datum value, Oid value_type);
-Oid create_partitions_internal(Oid relid, Datum value, Oid value_type);
 
 void select_range_partitions(const Datum value,
 							 FmgrInfo *cmp_func,
@@ -191,4 +172,26 @@ void select_range_partitions(const Datum value,
 /* Examine expression in order to select partitions. */
 WrapperNode *walk_expr_tree(Expr *expr, WalkerContext *context);
 
-#endif   /* PATHMAN_H */
+
+/*
+ * Compare two Datums using the given comarison function.
+ *
+ * flinfo is a pointer to FmgrInfo, arg1 & arg2 are Datums.
+ */
+#define check_lt(finfo, arg1, arg2) \
+	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) < 0 )
+
+#define check_le(finfo, arg1, arg2) \
+	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) <= 0 )
+
+#define check_eq(finfo, arg1, arg2) \
+	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) == 0 )
+
+#define check_ge(finfo, arg1, arg2) \
+	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) >= 0 )
+
+#define check_gt(finfo, arg1, arg2) \
+	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) > 0 )
+
+
+#endif /* PATHMAN_H */

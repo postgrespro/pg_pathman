@@ -11,14 +11,17 @@
 #include "init.h"
 #include "utils.h"
 #include "pathman.h"
+#include "partition_creation.h"
 #include "relation_info.h"
 #include "xact_handling.h"
 
 #include "access/htup_details.h"
 #include "access/nbtree.h"
+#include "access/xact.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_type.h"
 #include "commands/tablespace.h"
+#include "commands/trigger.h"
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "utils/builtins.h"
@@ -35,10 +38,11 @@ PG_FUNCTION_INFO_V1( on_partitions_created );
 PG_FUNCTION_INFO_V1( on_partitions_updated );
 PG_FUNCTION_INFO_V1( on_partitions_removed );
 
+PG_FUNCTION_INFO_V1( get_number_of_partitions_pl );
 PG_FUNCTION_INFO_V1( get_parent_of_partition_pl );
 PG_FUNCTION_INFO_V1( get_base_type_pl );
 PG_FUNCTION_INFO_V1( get_attribute_type_pl );
-PG_FUNCTION_INFO_V1( get_rel_tablespace_name );
+PG_FUNCTION_INFO_V1( get_tablespace_pl );
 
 PG_FUNCTION_INFO_V1( show_partition_list_internal );
 
@@ -47,21 +51,23 @@ PG_FUNCTION_INFO_V1( build_update_trigger_name );
 PG_FUNCTION_INFO_V1( build_check_constraint_name_attnum );
 PG_FUNCTION_INFO_V1( build_check_constraint_name_attname );
 
+PG_FUNCTION_INFO_V1( validate_relname );
 PG_FUNCTION_INFO_V1( is_date_type );
 PG_FUNCTION_INFO_V1( is_attribute_nullable );
 
 PG_FUNCTION_INFO_V1( add_to_pathman_config );
-PG_FUNCTION_INFO_V1( invalidate_relcache );
+PG_FUNCTION_INFO_V1( pathman_config_params_trigger_func );
 
 PG_FUNCTION_INFO_V1( lock_partitioned_relation );
 PG_FUNCTION_INFO_V1( prevent_relation_modification );
 
-PG_FUNCTION_INFO_V1( validate_on_part_init_callback_pl );
+PG_FUNCTION_INFO_V1( validate_part_callback_pl );
 PG_FUNCTION_INFO_V1( invoke_on_partition_created_callback );
 
 PG_FUNCTION_INFO_V1( check_security_policy );
 
 PG_FUNCTION_INFO_V1( debug_capture );
+PG_FUNCTION_INFO_V1( get_pathman_lib_version );
 
 
 /*
@@ -158,6 +164,22 @@ on_partitions_removed(PG_FUNCTION_ARGS)
  */
 
 /*
+ * Get number of relation's partitions managed by pg_pathman.
+ */
+Datum
+get_number_of_partitions_pl(PG_FUNCTION_ARGS)
+{
+	Oid						parent = PG_GETARG_OID(0);
+	const PartRelationInfo *prel;
+
+	/* If we couldn't find PartRelationInfo, return 0 */
+	if ((prel = get_pathman_relation_info(parent)) == NULL)
+		PG_RETURN_INT32(0);
+
+	PG_RETURN_INT32(PrelChildrenCount(prel));
+}
+
+/*
  * Get parent of a specified partition.
  */
 Datum
@@ -200,34 +222,17 @@ get_base_type_pl(PG_FUNCTION_ARGS)
 Datum
 get_attribute_type_pl(PG_FUNCTION_ARGS)
 {
-	Oid			relid = PG_GETARG_OID(0);
-	text	   *attname = PG_GETARG_TEXT_P(1);
-	Oid			result;
-	HeapTuple	tp;
+	Oid		relid = PG_GETARG_OID(0);
+	text   *attname = PG_GETARG_TEXT_P(1);
 
-	/* NOTE: for now it's the most efficient way */
-	tp = SearchSysCacheAttName(relid, text_to_cstring(attname));
-	if (HeapTupleIsValid(tp))
-	{
-		Form_pg_attribute att_tup = (Form_pg_attribute) GETSTRUCT(tp);
-		result = att_tup->atttypid;
-		ReleaseSysCache(tp);
-
-		PG_RETURN_OID(result);
-	}
-	else
-		elog(ERROR, "Cannot find type name for attribute \"%s\" "
-					"of relation \"%s\"",
-			 text_to_cstring(attname), get_rel_name_or_relid(relid));
-
-	PG_RETURN_NULL(); /* keep compiler happy */
+	PG_RETURN_OID(get_attribute_type(relid, text_to_cstring(attname), false));
 }
 
 /*
  * Return tablespace name for specified relation
  */
 Datum
-get_rel_tablespace_name(PG_FUNCTION_ARGS)
+get_tablespace_pl(PG_FUNCTION_ARGS)
 {
 	Oid			relid = PG_GETARG_OID(0);
 	Oid			tablespace_id;
@@ -435,6 +440,29 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
  * --------
  */
 
+/* Check that relation exists. Usually we pass regclass as text, hence the name */
+Datum
+validate_relname(PG_FUNCTION_ARGS)
+{
+	Oid relid;
+
+	/* We don't accept NULL */
+	if (PG_ARGISNULL(0))
+		ereport(ERROR, (errmsg("relation should not be NULL"),
+						errdetail("function " CppAsString(validate_relname)
+								  " received NULL argument")));
+
+	/* Fetch relation's Oid */
+	relid = PG_GETARG_OID(0);
+
+	if (!check_relation_exists(relid))
+		ereport(ERROR, (errmsg("relation \"%u\" does not exist", relid),
+						errdetail("triggered in function "
+								  CppAsString(validate_relname))));
+
+	PG_RETURN_VOID();
+}
+
 Datum
 is_date_type(PG_FUNCTION_ARGS)
 {
@@ -521,7 +549,7 @@ build_check_constraint_name_attnum(PG_FUNCTION_ARGS)
 		elog(ERROR, "Cannot build check constraint name: "
 					"invalid attribute number %i", attnum);
 
-	result = build_check_constraint_name_internal(relid, attnum);
+	result = build_check_constraint_name_relid_internal(relid, attnum);
 
 	PG_RETURN_TEXT_P(cstring_to_text(quote_identifier(result)));
 }
@@ -541,7 +569,7 @@ build_check_constraint_name_attname(PG_FUNCTION_ARGS)
 		elog(ERROR, "relation \"%s\" has no column \"%s\"",
 			 get_rel_name_or_relid(relid), text_to_cstring(attname));
 
-	result = build_check_constraint_name_internal(relid, attnum);
+	result = build_check_constraint_name_relid_internal(relid, attnum);
 
 	PG_RETURN_TEXT_P(cstring_to_text(quote_identifier(result)));
 }
@@ -573,10 +601,10 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	MemoryContext		old_mcxt = CurrentMemoryContext;
 
 	if (PG_ARGISNULL(0))
-		elog(ERROR, "parent_relid should not be null");
+		elog(ERROR, "'parent_relid' should not be NULL");
 
 	if (PG_ARGISNULL(1))
-		elog(ERROR, "attname should not be null");
+		elog(ERROR, "'attname' should not be NULL");
 
 	/* Read parameters */
 	relid = PG_GETARG_OID(0);
@@ -623,7 +651,9 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 		/* Some flags might change during refresh attempt */
 		save_pathman_init_state(&init_state);
 
-		refresh_pathman_relation_info(relid, parttype, text_to_cstring(attname));
+		refresh_pathman_relation_info(relid, parttype,
+									  text_to_cstring(attname),
+									  false); /* initialize immediately */
 	}
 	PG_CATCH();
 	{
@@ -649,17 +679,51 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 
 
 /*
- * Invalidate relcache for a specified relation.
+ * Invalidate relcache to refresh PartRelationInfo.
  */
 Datum
-invalidate_relcache(PG_FUNCTION_ARGS)
+pathman_config_params_trigger_func(PG_FUNCTION_ARGS)
 {
-	Oid		relid = PG_GETARG_OID(0);
+	TriggerData	   *trigdata = (TriggerData *) fcinfo->context;
+	Oid				pathman_config_params = get_pathman_config_params_relid();
+	Oid				partrel;
+	Datum			partrel_datum;
+	bool			partrel_isnull;
 
-	if (check_relation_exists(relid))
-		CacheInvalidateRelcacheByRelid(relid);
+	/* Handle user calls */
+	if (!CALLED_AS_TRIGGER(fcinfo))
+		elog(ERROR, "this function should not be called directly");
 
-	PG_RETURN_VOID();
+	/* Handle wrong fire mode */
+	if (!TRIGGER_FIRED_FOR_ROW(trigdata->tg_event))
+		elog(ERROR, "%s: must be fired for row",
+			 trigdata->tg_trigger->tgname);
+
+	/* Handle wrong relation */
+	if (RelationGetRelid(trigdata->tg_relation) != pathman_config_params)
+		elog(ERROR, "%s: must be fired for relation \"%s\"",
+			 trigdata->tg_trigger->tgname,
+			 get_rel_name(pathman_config_params));
+
+	/* Extract partitioned relation's Oid */
+	partrel_datum = heap_getattr(trigdata->tg_trigtuple,
+								 Anum_pathman_config_params_partrel,
+								 RelationGetDescr(trigdata->tg_relation),
+								 &partrel_isnull);
+	Assert(partrel_isnull == false); /* partrel should not be NULL! */
+
+	partrel = DatumGetObjectId(partrel_datum);
+
+	/* Finally trigger pg_pathman's cache invalidation event */
+	if (check_relation_exists(partrel))
+		CacheInvalidateRelcacheByRelid(partrel);
+
+	/* Return the tuple we've been given */
+	if (trigdata->tg_event & TRIGGER_EVENT_UPDATE)
+		PG_RETURN_POINTER(trigdata->tg_newtuple);
+	else
+		PG_RETURN_POINTER(trigdata->tg_trigtuple);
+
 }
 
 
@@ -726,11 +790,9 @@ prevent_relation_modification(PG_FUNCTION_ARGS)
  * It must have the only JSONB argument and BOOL return type.
  */
 Datum
-validate_on_part_init_callback_pl(PG_FUNCTION_ARGS)
+validate_part_callback_pl(PG_FUNCTION_ARGS)
 {
-	validate_on_part_init_cb(PG_GETARG_OID(0), true);
-
-	PG_RETURN_VOID();
+	PG_RETURN_BOOL(validate_part_callback(PG_GETARG_OID(0), PG_GETARG_BOOL(1)));
 }
 
 /*
@@ -740,14 +802,6 @@ validate_on_part_init_callback_pl(PG_FUNCTION_ARGS)
 Datum
 invoke_on_partition_created_callback(PG_FUNCTION_ARGS)
 {
-#define JSB_INIT_VAL(value, val_type, val_cstring) \
-	do { \
-		(value)->type = jbvString; \
-		(value)->val.string.len = strlen(val_cstring); \
-		(value)->val.string.val = val_cstring; \
-		pushJsonbValue(&jsonb_state, val_type, (value)); \
-	} while (0)
-
 #define ARG_PARENT			0	/* parent table */
 #define ARG_CHILD			1	/* partition */
 #define ARG_CALLBACK		2	/* callback to be invoked */
@@ -756,108 +810,62 @@ invoke_on_partition_created_callback(PG_FUNCTION_ARGS)
 
 	Oid						parent_oid		= PG_GETARG_OID(ARG_PARENT),
 							partition_oid	= PG_GETARG_OID(ARG_CHILD);
-	PartType				part_type;
 
-	Oid						cb_oid			= PG_GETARG_OID(ARG_CALLBACK);
-	FmgrInfo				cb_flinfo;
-	FunctionCallInfoData	cb_fcinfo;
+	Oid						callback_oid	= PG_GETARG_OID(ARG_CALLBACK);
 
-	JsonbParseState		   *jsonb_state = NULL;
-	JsonbValue			   *result,
-							key,
-							val;
+	init_callback_params	callback_params;
+
 
 	/* If there's no callback function specified, we're done */
-	if (PG_ARGISNULL(ARG_CALLBACK) || cb_oid == InvalidOid)
+	if (PG_ARGISNULL(ARG_CALLBACK) || callback_oid == InvalidOid)
 		PG_RETURN_VOID();
 
 	if (PG_ARGISNULL(ARG_PARENT))
-		elog(ERROR, "parent_relid should not be null");
+		elog(ERROR, "'parent_relid' should not be NULL");
 
 	if (PG_ARGISNULL(ARG_CHILD))
-		elog(ERROR, "partition should not be null");
+		elog(ERROR, "'partition' should not be NULL");
 
 	switch (PG_NARGS())
 	{
 		case 3:
-			part_type = PT_HASH;
+			MakeInitCallbackHashParams(&callback_params,
+									   callback_oid,
+									   parent_oid,
+									   partition_oid);
 			break;
 
 		case 5:
 			{
+				Datum	sv_datum,
+						ev_datum;
+				Oid		value_type;
+
 				if (PG_ARGISNULL(ARG_RANGE_START) || PG_ARGISNULL(ARG_RANGE_END))
 					elog(ERROR, "both bounds must be provided for RANGE partition");
 
-				part_type = PT_RANGE;
+				/* Fetch start & end values for RANGE + their type */
+				sv_datum	= PG_GETARG_DATUM(ARG_RANGE_START);
+				ev_datum	= PG_GETARG_DATUM(ARG_RANGE_END);
+				value_type	= get_fn_expr_argtype(fcinfo->flinfo, ARG_RANGE_START);
+
+				MakeInitCallbackRangeParams(&callback_params,
+											callback_oid,
+											parent_oid,
+											partition_oid,
+											sv_datum,
+											ev_datum,
+											value_type);
 			}
 			break;
 
 		default:
-			elog(ERROR, "error in function \"%s\"",
-				 CppAsString(invoke_on_partition_created_callback));
+			elog(ERROR, "error in function "
+						CppAsString(invoke_on_partition_created_callback));
 	}
 
-	/* Build JSONB according to partitioning type */
-	switch (part_type)
-	{
-		case PT_HASH:
-			{
-				pushJsonbValue(&jsonb_state, WJB_BEGIN_OBJECT, NULL);
-
-				JSB_INIT_VAL(&key, WJB_KEY, "parent");
-				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(parent_oid));
-				JSB_INIT_VAL(&key, WJB_KEY, "partition");
-				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(partition_oid));
-				JSB_INIT_VAL(&key, WJB_KEY, "parttype");
-				JSB_INIT_VAL(&val, WJB_VALUE, PartTypeToCString(PT_HASH));
-
-				result = pushJsonbValue(&jsonb_state, WJB_END_OBJECT, NULL);
-			}
-			break;
-
-		case PT_RANGE:
-			{
-				char   *start_value,
-					   *end_value;
-				Oid		type = get_fn_expr_argtype(fcinfo->flinfo, ARG_RANGE_START);
-
-				/* Convert min & max to CSTRING */
-				start_value = datum_to_cstring(PG_GETARG_DATUM(ARG_RANGE_START), type);
-				end_value = datum_to_cstring(PG_GETARG_DATUM(ARG_RANGE_END), type);
-
-				pushJsonbValue(&jsonb_state, WJB_BEGIN_OBJECT, NULL);
-
-				JSB_INIT_VAL(&key, WJB_KEY, "parent");
-				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(parent_oid));
-				JSB_INIT_VAL(&key, WJB_KEY, "partition");
-				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(partition_oid));
-				JSB_INIT_VAL(&key, WJB_KEY, "parttype");
-				JSB_INIT_VAL(&val, WJB_VALUE, PartTypeToCString(PT_RANGE));
-				JSB_INIT_VAL(&key, WJB_KEY, "range_min");
-				JSB_INIT_VAL(&val, WJB_VALUE, start_value);
-				JSB_INIT_VAL(&key, WJB_KEY, "range_max");
-				JSB_INIT_VAL(&val, WJB_VALUE, end_value);
-
-				result = pushJsonbValue(&jsonb_state, WJB_END_OBJECT, NULL);
-			}
-			break;
-
-		default:
-			elog(ERROR, "Unknown partitioning type %u", part_type);
-			break;
-	}
-
-	/* Validate the callback's signature */
-	validate_on_part_init_cb(cb_oid, true);
-
-	fmgr_info(cb_oid, &cb_flinfo);
-
-	InitFunctionCallInfoData(cb_fcinfo, &cb_flinfo, 1, InvalidOid, NULL, NULL);
-	cb_fcinfo.arg[0] = PointerGetDatum(JsonbValueToJsonb(result));
-	cb_fcinfo.argnull[0] = false;
-
-	/* Invoke the callback */
-	FunctionCallInvoke(&cb_fcinfo);
+	/* Now it's time to call it! */
+	invoke_part_callback(&callback_params);
 
 	PG_RETURN_VOID();
 }
@@ -905,4 +913,13 @@ debug_capture(PG_FUNCTION_ARGS)
 	elog(WARNING, "debug_capture [%u]", MyProcPid);
 
 	PG_RETURN_VOID();
+}
+
+/*
+ * NOTE: just in case.
+ */
+Datum
+get_pathman_lib_version(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_CSTRING(psprintf("%x", CURRENT_LIB_VERSION));
 }

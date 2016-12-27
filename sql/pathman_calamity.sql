@@ -14,9 +14,26 @@ set client_min_messages = NOTICE;
 CREATE TABLE calamity.part_test(val serial);
 
 
+/* check function build_hash_condition() */
+SELECT build_hash_condition('int4', 'val', 10, 1);
+SELECT build_hash_condition('text', 'val', 10, 1);
+SELECT build_hash_condition('int4', 'val', 1, 1);
+SELECT build_hash_condition('int4', 'val', 10, 20);
+SELECT build_hash_condition('text', 'val', 10, NULL) IS NULL;
+SELECT build_hash_condition('calamity.part_test', 'val', 10, 1);
+
+/* check function build_range_condition() */
+SELECT build_range_condition('val', 10, 20);
+SELECT build_range_condition('val', 10, NULL) IS NULL;
+
 /* check function validate_relname() */
 SELECT validate_relname('calamity.part_test');
-/* SELECT validate_relname(NULL); -- FIXME: %s */
+SELECT validate_relname(1::REGCLASS);
+SELECT validate_relname(NULL);
+
+/* check function get_number_of_partitions() */
+SELECT get_number_of_partitions('calamity.part_test');
+SELECT get_number_of_partitions(NULL) IS NULL;
 
 /* check function get_parent_of_partition() */
 SELECT get_parent_of_partition('calamity.part_test');
@@ -108,6 +125,20 @@ ALTER TABLE calamity.wrong_partition DROP CONSTRAINT pathman_wrong_partition_1_c
 
 /* check GUC variable */
 SHOW pg_pathman.enable;
+
+/* check function create_hash_partitions_internal() (called for the 2nd time) */
+CREATE TABLE calamity.hash_two_times(val serial);
+SELECT create_hash_partitions_internal('calamity.hash_two_times', 'val', 2);
+SELECT create_hash_partitions('calamity.hash_two_times', 'val', 2);
+SELECT create_hash_partitions_internal('calamity.hash_two_times', 'val', 2);
+
+/* check function disable_pathman_for() */
+CREATE TABLE calamity.to_be_disabled(val INT NOT NULL);
+SELECT create_hash_partitions('calamity.to_be_disabled', 'val', 3);	/* add row to main config */
+SELECT set_enable_parent('calamity.to_be_disabled', true); /* add row to params */
+SELECT disable_pathman_for('calamity.to_be_disabled'); /* should delete both rows */
+SELECT count(*) FROM pathman_config WHERE partrel = 'calamity.to_be_disabled'::REGCLASS;
+SELECT count(*) FROM pathman_config_params WHERE partrel = 'calamity.to_be_disabled'::REGCLASS;
 
 
 DROP SCHEMA calamity CASCADE;

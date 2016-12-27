@@ -11,6 +11,7 @@
 #ifndef NODES_COMMON_H
 #define NODES_COMMON_H
 
+
 #include "relation_info.h"
 
 #include "postgres.h"
@@ -100,4 +101,5 @@ void explain_append_common(CustomScanState *node,
 						   HTAB *children_table,
 						   ExplainState *es);
 
-#endif
+
+#endif /* NODES_COMMON_H */

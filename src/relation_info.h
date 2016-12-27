@@ -11,9 +11,11 @@
 #ifndef RELATION_INFO_H
 #define RELATION_INFO_H
 
+
 #include "postgres.h"
 #include "access/attnum.h"
 #include "port/atomics.h"
+#include "storage/lock.h"
 
 
 /*
@@ -46,8 +48,6 @@ typedef struct
 	Oid				key;			/* partitioned table's Oid */
 	bool			valid;			/* is this entry valid? */
 	bool			enable_parent;	/* include parent to the plan */
-	bool			auto_partition; /* auto partition creation */
-	Oid				init_callback;	/* callback for partition creation */
 
 	uint32			children_count;
 	Oid			   *children;		/* Oids of child partitions */
@@ -120,12 +120,14 @@ PrelLastChild(const PartRelationInfo *prel)
 
 const PartRelationInfo *refresh_pathman_relation_info(Oid relid,
 													  PartType partitioning_type,
-													  const char *part_column_name);
+													  const char *part_column_name,
+													  bool allow_incomplete);
 void invalidate_pathman_relation_info(Oid relid, bool *found);
 void remove_pathman_relation_info(Oid relid);
 const PartRelationInfo *get_pathman_relation_info(Oid relid);
 const PartRelationInfo *get_pathman_relation_info_after_lock(Oid relid,
-															 bool unlock_if_not_found);
+															 bool unlock_if_not_found,
+															 LockAcquireResult *lock_result);
 
 void delay_pathman_shutdown(void);
 void delay_invalidation_parent_rel(Oid parent);
@@ -197,4 +199,5 @@ FreeRangesArray(PartRelationInfo *prel)
 	}
 }
 
-#endif
+
+#endif /* RELATION_INFO_H */

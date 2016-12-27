@@ -13,6 +13,7 @@
 #ifndef RUNTIME_MERGE_APPEND_H
 #define RUNTIME_MERGE_APPEND_H
 
+
 #include "runtimeappend.h"
 #include "pathman.h"
 
@@ -78,4 +79,5 @@ void runtimemergeappend_explain(CustomScanState *node,
 								List *ancestors,
 								ExplainState *es);
 
-#endif
+
+#endif /* RUNTIME_MERGE_APPEND_H */

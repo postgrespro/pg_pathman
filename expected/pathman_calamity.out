@@ -12,14 +12,68 @@ SELECT debug_capture();
 set client_min_messages = NOTICE;
 /* create table to be partitioned */
 CREATE TABLE calamity.part_test(val serial);
-/* check function validate_relname() */
-SELECT validate_relname('calamity.part_test');
-  validate_relname  
---------------------
- calamity.part_test
+/* check function build_hash_condition() */
+SELECT build_hash_condition('int4', 'val', 10, 1);
+              build_hash_condition               
+-------------------------------------------------
+ public.get_hash_part_idx(hashint4(val), 10) = 1
 (1 row)
 
-/* SELECT validate_relname(NULL); -- FIXME: %s */
+SELECT build_hash_condition('text', 'val', 10, 1);
+              build_hash_condition               
+-------------------------------------------------
+ public.get_hash_part_idx(hashtext(val), 10) = 1
+(1 row)
+
+SELECT build_hash_condition('int4', 'val', 1, 1);
+ERROR:  'partition_index' must be lower than 'partitions_count'
+SELECT build_hash_condition('int4', 'val', 10, 20);
+ERROR:  'partition_index' must be lower than 'partitions_count'
+SELECT build_hash_condition('text', 'val', 10, NULL) IS NULL;
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT build_hash_condition('calamity.part_test', 'val', 10, 1);
+ERROR:  no hash function for type calamity.part_test
+/* check function build_range_condition() */
+SELECT build_range_condition('val', 10, 20);
+   build_range_condition    
+----------------------------
+ val >= '10' AND val < '20'
+(1 row)
+
+SELECT build_range_condition('val', 10, NULL) IS NULL;
+ ?column? 
+----------
+ t
+(1 row)
+
+/* check function validate_relname() */
+SELECT validate_relname('calamity.part_test');
+ validate_relname 
+------------------
+ 
+(1 row)
+
+SELECT validate_relname(1::REGCLASS);
+ERROR:  relation "1" does not exist
+SELECT validate_relname(NULL);
+ERROR:  relation should not be NULL
+/* check function get_number_of_partitions() */
+SELECT get_number_of_partitions('calamity.part_test');
+ get_number_of_partitions 
+--------------------------
+                        0
+(1 row)
+
+SELECT get_number_of_partitions(NULL) IS NULL;
+ ?column? 
+----------
+ t
+(1 row)
+
 /* check function get_parent_of_partition() */
 SELECT get_parent_of_partition('calamity.part_test');
 ERROR:  "part_test" is not a partition
@@ -171,12 +225,12 @@ SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part
 (1 row)
 
 SELECT invoke_on_partition_created_callback(NULL, 'calamity.part_test', 1);
-ERROR:  parent_relid should not be null
+ERROR:  'parent_relid' should not be NULL
 SELECT invoke_on_partition_created_callback('calamity.part_test', NULL, 1);
-ERROR:  partition should not be null
+ERROR:  'partition' should not be NULL
 /* check function add_to_pathman_config() -- PHASE #1 */
 SELECT add_to_pathman_config('calamity.part_test', NULL);
-ERROR:  attname should not be null
+ERROR:  'attname' should not be NULL
 SELECT add_to_pathman_config('calamity.part_test', 'val');
  add_to_pathman_config 
 -----------------------
@@ -293,6 +347,51 @@ SHOW pg_pathman.enable;
  on
 (1 row)
 
+/* check function create_hash_partitions_internal() (called for the 2nd time) */
+CREATE TABLE calamity.hash_two_times(val serial);
+SELECT create_hash_partitions_internal('calamity.hash_two_times', 'val', 2);
+ERROR:  table "hash_two_times" is not partitioned
+SELECT create_hash_partitions('calamity.hash_two_times', 'val', 2);
+ create_hash_partitions 
+------------------------
+                      2
+(1 row)
+
+SELECT create_hash_partitions_internal('calamity.hash_two_times', 'val', 2);
+ERROR:  cannot add new HASH partitions
+/* check function disable_pathman_for() */
+CREATE TABLE calamity.to_be_disabled(val INT NOT NULL);
+SELECT create_hash_partitions('calamity.to_be_disabled', 'val', 3);	/* add row to main config */
+ create_hash_partitions 
+------------------------
+                      3
+(1 row)
+
+SELECT set_enable_parent('calamity.to_be_disabled', true); /* add row to params */
+ set_enable_parent 
+-------------------
+ 
+(1 row)
+
+SELECT disable_pathman_for('calamity.to_be_disabled'); /* should delete both rows */
+NOTICE:  function calamity.to_be_disabled_upd_trig_func() does not exist, skipping
+ disable_pathman_for 
+---------------------
+ 
+(1 row)
+
+SELECT count(*) FROM pathman_config WHERE partrel = 'calamity.to_be_disabled'::REGCLASS;
+ count 
+-------
+     0
+(1 row)
+
+SELECT count(*) FROM pathman_config_params WHERE partrel = 'calamity.to_be_disabled'::REGCLASS;
+ count 
+-------
+     0
+(1 row)
+
 DROP SCHEMA calamity CASCADE;
-NOTICE:  drop cascades to 8 other objects
+NOTICE:  drop cascades to 15 other objects
 DROP EXTENSION pg_pathman;

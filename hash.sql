@@ -1,7 +1,7 @@
 /* ------------------------------------------------------------------------
  *
  * hash.sql
- *      HASH partitioning functions
+ *		HASH partitioning functions
  *
  * Copyright (c) 2015-2016, Postgres Professional
  *
@@ -18,14 +18,6 @@ CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions(
 	partition_data		BOOLEAN DEFAULT TRUE)
 RETURNS INTEGER AS
 $$
-DECLARE
-	v_child_relname		TEXT;
-	v_plain_schema		TEXT;
-	v_plain_relname		TEXT;
-	v_atttype			REGTYPE;
-	v_hashfunc			REGPROC;
-	v_init_callback		REGPROCEDURE;
-
 BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
 
@@ -40,54 +32,14 @@ BEGIN
 	attribute := lower(attribute);
 	PERFORM @extschema@.common_relation_checks(parent_relid, attribute);
 
-	/* Fetch atttype and its hash function */
-	v_atttype := @extschema@.get_attribute_type(parent_relid, attribute);
-	v_hashfunc := @extschema@.get_type_hash_func(v_atttype);
-
-	SELECT * INTO v_plain_schema, v_plain_relname
-	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
-
 	/* Insert new entry to pathman config */
 	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype)
 	VALUES (parent_relid, attribute, 1);
 
-	/* Create partitions and update pg_pathman configuration */
-	FOR partnum IN 0..partitions_count-1
-	LOOP
-		v_child_relname := format('%s.%s',
-								  quote_ident(v_plain_schema),
-								  quote_ident(v_plain_relname || '_' || partnum));
-
-		EXECUTE format(
-			'CREATE TABLE %1$s (LIKE %2$s INCLUDING ALL) INHERITS (%2$s) TABLESPACE %s',
-			v_child_relname,
-			parent_relid::TEXT,
-			@extschema@.get_rel_tablespace_name(parent_relid));
-
-		EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s
-						CHECK (@extschema@.get_hash_part_idx(%s(%s), %s) = %s)',
-					   v_child_relname,
-					   @extschema@.build_check_constraint_name(v_child_relname::REGCLASS,
-															   attribute),
-					   v_hashfunc::TEXT,
-					   attribute,
-					   partitions_count,
-					   partnum);
-
-		PERFORM @extschema@.copy_foreign_keys(parent_relid, v_child_relname::REGCLASS);
-
-		/* Fetch init_callback from 'params' table */
-		WITH stub_callback(stub) as (values (0))
-		SELECT coalesce(init_callback, 0::REGPROCEDURE)
-		FROM stub_callback
-		LEFT JOIN @extschema@.pathman_config_params AS params
-		ON params.partrel = parent_relid
-		INTO v_init_callback;
-
-		PERFORM @extschema@.invoke_on_partition_created_callback(parent_relid,
-																 v_child_relname::REGCLASS,
-																 v_init_callback);
-	END LOOP;
+	/* Create partitions */
+	PERFORM @extschema@.create_hash_partitions_internal(parent_relid,
+														attribute,
+														partitions_count);
 
 	/* Notify backend about changes */
 	PERFORM @extschema@.on_create_partitions(parent_relid);
@@ -104,6 +56,109 @@ BEGIN
 END
 $$ LANGUAGE plpgsql
 SET client_min_messages = WARNING;
+
+/*
+ * Replace hash partition with another one. It could be useful in case when
+ * someone wants to attach foreign table as a partition.
+ *
+ * lock_parent - should we take an exclusive lock?
+ */
+CREATE OR REPLACE FUNCTION @extschema@.replace_hash_partition(
+	old_partition		REGCLASS,
+	new_partition		REGCLASS,
+	lock_parent			BOOL DEFAULT TRUE)
+RETURNS REGCLASS AS
+$$
+DECLARE
+	parent_relid		REGCLASS;
+	part_attname		TEXT;		/* partitioned column */
+	old_constr_name		TEXT;		/* name of old_partition's constraint */
+	old_constr_def		TEXT;		/* definition of old_partition's constraint */
+	rel_persistence		CHAR;
+	p_init_callback		REGPROCEDURE;
+
+BEGIN
+	PERFORM @extschema@.validate_relname(old_partition);
+	PERFORM @extschema@.validate_relname(new_partition);
+
+	/* Parent relation */
+	parent_relid := @extschema@.get_parent_of_partition(old_partition);
+
+	IF lock_parent THEN
+		/* Acquire data modification lock (prevent further modifications) */
+		PERFORM @extschema@.prevent_relation_modification(parent_relid);
+	ELSE
+		/* Acquire lock on parent */
+		PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+	END IF;
+
+	/* Acquire data modification lock (prevent further modifications) */
+	PERFORM @extschema@.prevent_relation_modification(old_partition);
+	PERFORM @extschema@.prevent_relation_modification(new_partition);
+
+	/* Ignore temporary tables */
+	SELECT relpersistence FROM pg_catalog.pg_class
+	WHERE oid = new_partition INTO rel_persistence;
+
+	IF rel_persistence = 't'::CHAR THEN
+		RAISE EXCEPTION 'temporary table "%" cannot be used as a partition',
+						new_partition::TEXT;
+	END IF;
+
+	/* Check that new partition has an equal structure as parent does */
+	IF NOT @extschema@.validate_relations_equality(parent_relid, new_partition) THEN
+		RAISE EXCEPTION 'partition must have the exact same structure as parent';
+	END IF;
+
+	/* Get partitioning key */
+	part_attname := attname FROM @extschema@.pathman_config WHERE partrel = parent_relid;
+	IF part_attname IS NULL THEN
+		RAISE EXCEPTION 'table "%" is not partitioned', parent_relid::TEXT;
+	END IF;
+
+	/* Fetch name of old_partition's HASH constraint */
+	old_constr_name = @extschema@.build_check_constraint_name(old_partition::REGCLASS,
+															  part_attname);
+
+	/* Fetch definition of old_partition's HASH constraint */
+	SELECT pg_catalog.pg_get_constraintdef(oid) FROM pg_catalog.pg_constraint
+	WHERE conrelid = old_partition AND conname = old_constr_name
+	INTO old_constr_def;
+
+	/* Detach old partition */
+	EXECUTE format('ALTER TABLE %s NO INHERIT %s', old_partition, parent_relid);
+	EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %s',
+				   old_partition,
+				   old_constr_name);
+
+	/* Attach the new one */
+	EXECUTE format('ALTER TABLE %s INHERIT %s', new_partition, parent_relid);
+	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s %s',
+				   new_partition,
+				   @extschema@.build_check_constraint_name(new_partition::REGCLASS,
+														   part_attname),
+				   old_constr_def);
+
+	/* Fetch init_callback from 'params' table */
+	WITH stub_callback(stub) as (values (0))
+	SELECT coalesce(init_callback, 0::REGPROCEDURE)
+	FROM stub_callback
+	LEFT JOIN @extschema@.pathman_config_params AS params
+	ON params.partrel = parent_relid
+	INTO p_init_callback;
+
+	/* Finally invoke init_callback */
+	PERFORM @extschema@.invoke_on_partition_created_callback(parent_relid,
+															 new_partition,
+															 p_init_callback);
+
+	/* Invalidate cache */
+	PERFORM @extschema@.on_update_partitions(parent_relid);
+
+	RETURN new_partition;
+END
+$$
+LANGUAGE plpgsql;
 
 /*
  * Creates an update trigger
@@ -180,8 +235,7 @@ BEGIN
 		   att_val_fmt,
 		   att_fmt;
 
-	partitions_count := COUNT(*) FROM pg_catalog.pg_inherits
-						WHERE inhparent = parent_relid::oid;
+	partitions_count := @extschema@.get_number_of_partitions(parent_relid);
 
 	/* Build trigger & trigger function's names */
 	funcname := @extschema@.build_update_trigger_func_name(parent_relid);
@@ -202,7 +256,7 @@ BEGIN
 				   old_fields, att_fmt, new_fields, child_relname_format,
 				   @extschema@.get_type_hash_func(atttype)::TEXT);
 
-	/* Create trigger on every partition */
+	/* Create trigger on each partition */
 	FOR num IN 0..partitions_count-1
 	LOOP
 		EXECUTE format(trigger,
@@ -216,6 +270,16 @@ END
 $$ LANGUAGE plpgsql;
 
 /*
+ * Just create HASH partitions, called by create_hash_partitions().
+ */
+CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions_internal(
+	parent_relid		REGCLASS,
+	attribute			TEXT,
+	partitions_count	INTEGER)
+RETURNS VOID AS 'pg_pathman', 'create_hash_partitions_internal'
+LANGUAGE C STRICT;
+
+/*
  * Returns hash function OID for specified type
  */
 CREATE OR REPLACE FUNCTION @extschema@.get_type_hash_func(REGTYPE)
@@ -227,4 +291,15 @@ LANGUAGE C STRICT;
  */
 CREATE OR REPLACE FUNCTION @extschema@.get_hash_part_idx(INTEGER, INTEGER)
 RETURNS INTEGER AS 'pg_pathman', 'get_hash_part_idx'
+LANGUAGE C STRICT;
+
+/*
+ * Build hash condition for a CHECK CONSTRAINT
+ */
+CREATE OR REPLACE FUNCTION @extschema@.build_hash_condition(
+	attribute_type		REGTYPE,
+	attribute			TEXT,
+	partitions_count	INT4,
+	partitions_index	INT4)
+RETURNS TEXT AS 'pg_pathman', 'build_hash_condition'
 LANGUAGE C STRICT;

@@ -303,8 +303,8 @@ get_partition_oids(List *ranges, int *n, const PartRelationInfo *prel,
 	foreach (range_cell, ranges)
 	{
 		uint32	i;
-		uint32	a = lfirst_irange(range_cell).ir_lower,
-				b = lfirst_irange(range_cell).ir_upper;
+		uint32	a = irange_lower(lfirst_irange(range_cell)),
+				b = irange_upper(lfirst_irange(range_cell));
 
 		for (i = a; i <= b; i++)
 		{
@@ -556,16 +556,16 @@ rescan_append_common(CustomScanState *node)
 	Assert(prel);
 
 	/* First we select all available partitions... */
-	ranges = list_make1_irange(make_irange(0, PrelLastChild(prel), false));
+	ranges = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_COMPLETE));
 
-	InitWalkerContext(&wcxt, prel, econtext, false);
+	InitWalkerContext(&wcxt, INDEX_VAR, prel, econtext, false);
 	foreach (lc, scan_state->custom_exprs)
 	{
-		WrapperNode	   *wn;
+		WrapperNode *wn;
 
 		/* ... then we cut off irrelevant ones using the provided clauses */
 		wn = walk_expr_tree((Expr *) lfirst(lc), &wcxt);
-		ranges = irange_list_intersect(ranges, wn->rangeset);
+		ranges = irange_list_intersection(ranges, wn->rangeset);
 	}
 
 	/* Get Oids of the required partitions */

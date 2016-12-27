@@ -9,17 +9,21 @@ CREATE ROLE user2 LOGIN;
 GRANT USAGE, CREATE ON SCHEMA permissions TO user1;
 GRANT USAGE, CREATE ON SCHEMA permissions TO user2;
 
-ALTER DEFAULT PRIVILEGES FOR ROLE user1
-IN SCHEMA permissions
-GRANT SELECT, INSERT ON TABLES
-TO user2;
 
 /* Switch to #1 */
 SET ROLE user1;
 CREATE TABLE permissions.user1_table(id serial, a int);
 INSERT INTO permissions.user1_table SELECT g, g FROM generate_series(1, 20) as g;
 
-/* Should fail */
+/* Should fail (can't SELECT) */
+SET ROLE user2;
+SELECT create_range_partitions('permissions.user1_table', 'id', 1, 10, 2);
+
+/* Grant SELECT to user2 */
+SET ROLE user1;
+GRANT SELECT ON permissions.user1_table TO user2;
+
+/* Should fail (don't own parent) */
 SET ROLE user2;
 SELECT create_range_partitions('permissions.user1_table', 'id', 1, 10, 2);
 
@@ -46,12 +50,34 @@ WHERE partrel = 'permissions.user1_table'::regclass;
 SET ROLE user2;
 INSERT INTO permissions.user1_table (id, a) VALUES (35, 0);
 
-/* Have rights, should be ok (bgw connects as user1) */
+/* No rights to create partitions (need INSERT privilege) */
+SET ROLE user2;
+SELECT prepend_range_partition('permissions.user1_table');
+
+/* Allow user2 to create partitions */
 SET ROLE user1;
 GRANT INSERT ON permissions.user1_table TO user2;
+GRANT UPDATE(a) ON permissions.user1_table TO user2; /* per-column ACL */
+
+/* Should be able to prepend a partition */
+SET ROLE user2;
+SELECT prepend_range_partition('permissions.user1_table');
+SELECT attname, attacl from pg_attribute
+WHERE attrelid = (SELECT partition FROM pathman_partition_list
+				  WHERE parent = 'permissions.user1_table'::REGCLASS
+				  ORDER BY range_min::int ASC /* prepend */
+				  LIMIT 1)
+ORDER BY attname; /* check ACL for each column */
+
+/* Have rights, should be ok (parent's ACL is shared by new children) */
 SET ROLE user2;
 INSERT INTO permissions.user1_table (id, a) VALUES (35, 0) RETURNING *;
-SELECT relacl FROM pg_class WHERE oid = 'permissions.user1_table_4'::regclass;
+SELECT relname, relacl FROM pg_class
+WHERE oid = ANY (SELECT partition FROM pathman_partition_list
+				 WHERE parent = 'permissions.user1_table'::REGCLASS
+				 ORDER BY range_max::int DESC /* append */
+				 LIMIT 3)
+ORDER BY relname; /* we also check ACL for "user1_table_2" */
 
 /* Try to drop partition, should fail */
 SELECT drop_range_partition('permissions.user1_table_4');

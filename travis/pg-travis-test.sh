@@ -97,7 +97,7 @@ source /tmp/envs/pg_pathman/bin/activate
 pip install $pip_packages
 
 # run python tests
-cd tests
+cd tests/python
 PG_CONFIG=$config_path python -m unittest partitioning_test || status=$?
 cd ..
 

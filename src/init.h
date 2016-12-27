@@ -11,6 +11,7 @@
 #ifndef PATHMAN_INIT_H
 #define PATHMAN_INIT_H
 
+
 #include "relation_info.h"
 
 #include "postgres.h"
@@ -87,6 +88,20 @@ extern PathmanInitState 	pg_pathman_init_state;
 	} while (0)
 
 
+/* Default column values for PATHMAN_CONFIG_PARAMS */
+#define DEFAULT_ENABLE_PARENT		false
+#define DEFAULT_AUTO				true
+#define DEFAULT_INIT_CALLBACK		InvalidOid
+#define DEFAULT_SPAWN_USING_BGW		false
+
+
+/* Lowest version of Pl/PgSQL frontend compatible with internals (0xAA_BB_CC) */
+#define LOWEST_COMPATIBLE_FRONT		0x010200
+
+/* Current version on native C library (0xAA_BB_CC) */
+#define CURRENT_LIB_VERSION			0x010201
+
+
 /*
  * Save and restore PathmanInitState.
  */
@@ -109,12 +124,27 @@ void fill_prel_with_partitions(const Oid *partitions,
 							   const uint32 parts_count,
 							   PartRelationInfo *prel);
 
-Oid *find_inheritance_children_array(Oid parentrelId,
-									 LOCKMODE lockmode,
-									 uint32 *size);
+/* Result of find_inheritance_children_array() */
+typedef enum
+{
+	FCS_NO_CHILDREN = 0,	/* could not find any children (GOOD) */
+	FCS_COULD_NOT_LOCK,		/* could not lock one of the children */
+	FCS_FOUND				/* found some children (GOOD) */
+} find_children_status;
 
-char *build_check_constraint_name_internal(Oid relid,
-										   AttrNumber attno);
+find_children_status find_inheritance_children_array(Oid parentrelId,
+													 LOCKMODE lockmode,
+													 bool nowait,
+													 uint32 *children_size,
+													 Oid **children);
+
+char *build_check_constraint_name_relid_internal(Oid relid,
+												 AttrNumber attno);
+
+char *build_check_constraint_name_relname_internal(const char *relname,
+												   AttrNumber attno);
+
+char *build_sequence_name_internal(Oid relid);
 
 bool pathman_config_contains_relation(Oid relid,
 									  Datum *values,
@@ -125,4 +155,5 @@ bool read_pathman_params(Oid relid,
 						 Datum *values,
 						 bool *isnull);
 
-#endif
+
+#endif /* PATHMAN_INIT_H */

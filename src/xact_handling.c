@@ -11,32 +11,48 @@
 #include "xact_handling.h"
 
 #include "postgres.h"
+#include "access/transam.h"
 #include "access/xact.h"
 #include "catalog/catalog.h"
 #include "miscadmin.h"
 #include "storage/lmgr.h"
+#include "utils/inval.h"
 
 
 static inline void SetLocktagRelationOid(LOCKTAG *tag, Oid relid);
 static inline bool do_we_hold_the_lock(Oid relid, LOCKMODE lockmode);
 
 
+
+static LockAcquireResult
+LockAcquireOid(Oid relid, LOCKMODE lockmode, bool sessionLock, bool dontWait)
+{
+	LOCKTAG				tag;
+	LockAcquireResult	res;
+
+	/* Create a tag for lock */
+	SetLocktagRelationOid(&tag, relid);
+
+	res = LockAcquire(&tag, lockmode, sessionLock, dontWait);
+
+	/*
+	 * Now that we have the lock, check for invalidation messages;
+	 * see notes in LockRelationOid.
+	 */
+	if (res != LOCKACQUIRE_ALREADY_HELD)
+		AcceptInvalidationMessages();
+
+	return res;
+}
+
+
 /*
  * Lock certain partitioned relation to disable concurrent access.
  */
-bool
+LockAcquireResult
 xact_lock_partitioned_rel(Oid relid, bool nowait)
 {
-	if (nowait)
-	{
-		if (ConditionalLockRelationOid(relid, ShareUpdateExclusiveLock))
-			return true;
-		return false;
-	}
-	else
-		LockRelationOid(relid, ShareUpdateExclusiveLock);
-
-	return true;
+	return LockAcquireOid(relid, ShareUpdateExclusiveLock, false, nowait);
 }
 
 /*
@@ -51,19 +67,10 @@ xact_unlock_partitioned_rel(Oid relid)
 /*
  * Lock relation exclusively (SELECTs are possible).
  */
-bool
+LockAcquireResult
 xact_lock_rel_exclusive(Oid relid, bool nowait)
 {
-	if (nowait)
-	{
-		if (ConditionalLockRelationOid(relid, ExclusiveLock))
-			return true;
-		return false;
-	}
-	else
-		LockRelationOid(relid, ExclusiveLock);
-
-	return true;
+	return LockAcquireOid(relid, ExclusiveLock, false, nowait);
 }
 
 /*
@@ -82,6 +89,10 @@ xact_unlock_rel_exclusive(Oid relid)
 bool
 xact_bgw_conflicting_lock_exists(Oid relid)
 {
+#if PG_VERSION_NUM >= 90600
+	/* We use locking groups for 9.6+ */
+	return false;
+#else
 	LOCKMODE	lockmode;
 
 	/* Try each lock >= ShareUpdateExclusiveLock */
@@ -94,6 +105,7 @@ xact_bgw_conflicting_lock_exists(Oid relid)
 	}
 
 	return false;
+#endif
 }
 
 
@@ -143,6 +155,16 @@ xact_is_set_transaction_stmt(Node *stmt)
 	}
 
 	return false;
+}
+
+/*
+ * Check if object is visible in newer transactions.
+ */
+bool
+xact_object_is_visible(TransactionId obj_xmin)
+{
+	return TransactionIdPrecedes(obj_xmin, GetCurrentTransactionId()) ||
+		   TransactionIdEquals(obj_xmin, FrozenTransactionId);
 }
 
 /*

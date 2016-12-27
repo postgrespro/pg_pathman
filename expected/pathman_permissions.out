@@ -5,18 +5,20 @@ CREATE ROLE user1 LOGIN;
 CREATE ROLE user2 LOGIN;
 GRANT USAGE, CREATE ON SCHEMA permissions TO user1;
 GRANT USAGE, CREATE ON SCHEMA permissions TO user2;
-ALTER DEFAULT PRIVILEGES FOR ROLE user1
-IN SCHEMA permissions
-GRANT SELECT, INSERT ON TABLES
-TO user2;
 /* Switch to #1 */
 SET ROLE user1;
 CREATE TABLE permissions.user1_table(id serial, a int);
 INSERT INTO permissions.user1_table SELECT g, g FROM generate_series(1, 20) as g;
-/* Should fail */
+/* Should fail (can't SELECT) */
 SET ROLE user2;
 SELECT create_range_partitions('permissions.user1_table', 'id', 1, 10, 2);
-NOTICE:  sequence "user1_table_seq" does not exist, skipping
+ERROR:  permission denied for relation user1_table
+/* Grant SELECT to user2 */
+SET ROLE user1;
+GRANT SELECT ON permissions.user1_table TO user2;
+/* Should fail (don't own parent) */
+SET ROLE user2;
+SELECT create_range_partitions('permissions.user1_table', 'id', 1, 10, 2);
 WARNING:  only the owner or superuser can change partitioning configuration of table "user1_table"
 ERROR:  new row violates row-level security policy for table "pathman_config"
 /* Should be ok */
@@ -37,9 +39,9 @@ SELECT * FROM pathman_config;
 (1 row)
 
 SELECT * FROM pathman_config_params;
-         partrel         | enable_parent | auto | init_callback 
--------------------------+---------------+------+---------------
- permissions.user1_table | f             | t    | -
+         partrel         | enable_parent | auto | init_callback | spawn_using_bgw 
+-------------------------+---------------+------+---------------+-----------------
+ permissions.user1_table | f             | t    | -             | f
 (1 row)
 
 /* Should fail */
@@ -58,9 +60,42 @@ WARNING:  only the owner or superuser can change partitioning configuration of t
 /* No rights to insert, should fail */
 SET ROLE user2;
 INSERT INTO permissions.user1_table (id, a) VALUES (35, 0);
-/* Have rights, should be ok (bgw connects as user1) */
+ERROR:  permission denied for relation user1_table
+/* No rights to create partitions (need INSERT privilege) */
+SET ROLE user2;
+SELECT prepend_range_partition('permissions.user1_table');
+ERROR:  permission denied for parent relation "user1_table"
+/* Allow user2 to create partitions */
 SET ROLE user1;
 GRANT INSERT ON permissions.user1_table TO user2;
+GRANT UPDATE(a) ON permissions.user1_table TO user2; /* per-column ACL */
+/* Should be able to prepend a partition */
+SET ROLE user2;
+SELECT prepend_range_partition('permissions.user1_table');
+  prepend_range_partition  
+---------------------------
+ permissions.user1_table_4
+(1 row)
+
+SELECT attname, attacl from pg_attribute
+WHERE attrelid = (SELECT partition FROM pathman_partition_list
+				  WHERE parent = 'permissions.user1_table'::REGCLASS
+				  ORDER BY range_min::int ASC /* prepend */
+				  LIMIT 1)
+ORDER BY attname; /* check ACL for each column */
+ attname  |     attacl      
+----------+-----------------
+ a        | {user2=w/user1}
+ cmax     | 
+ cmin     | 
+ ctid     | 
+ id       | 
+ tableoid | 
+ xmax     | 
+ xmin     | 
+(8 rows)
+
+/* Have rights, should be ok (parent's ACL is shared by new children) */
 SET ROLE user2;
 INSERT INTO permissions.user1_table (id, a) VALUES (35, 0) RETURNING *;
  id | a 
@@ -68,11 +103,18 @@ INSERT INTO permissions.user1_table (id, a) VALUES (35, 0) RETURNING *;
  35 | 0
 (1 row)
 
-SELECT relacl FROM pg_class WHERE oid = 'permissions.user1_table_4'::regclass;
-                relacl                
---------------------------------------
- {user1=arwdDxt/user1,user2=ar/user1}
-(1 row)
+SELECT relname, relacl FROM pg_class
+WHERE oid = ANY (SELECT partition FROM pathman_partition_list
+				 WHERE parent = 'permissions.user1_table'::REGCLASS
+				 ORDER BY range_max::int DESC /* append */
+				 LIMIT 3)
+ORDER BY relname; /* we also check ACL for "user1_table_2" */
+    relname    |                relacl                
+---------------+--------------------------------------
+ user1_table_2 | {user1=arwdDxt/user1,user2=r/user1}
+ user1_table_5 | {user1=arwdDxt/user1,user2=ar/user1}
+ user1_table_6 | {user1=arwdDxt/user1,user2=ar/user1}
+(3 rows)
 
 /* Try to drop partition, should fail */
 SELECT drop_range_partition('permissions.user1_table_4');
@@ -95,11 +137,12 @@ SELECT drop_partitions('permissions.user1_table');
 NOTICE:  function permissions.user1_table_upd_trig_func() does not exist, skipping
 NOTICE:  10 rows copied from permissions.user1_table_1
 NOTICE:  10 rows copied from permissions.user1_table_2
-NOTICE:  0 rows copied from permissions.user1_table_3
-NOTICE:  2 rows copied from permissions.user1_table_4
+NOTICE:  0 rows copied from permissions.user1_table_4
+NOTICE:  0 rows copied from permissions.user1_table_5
+NOTICE:  1 rows copied from permissions.user1_table_6
  drop_partitions 
 -----------------
-               4
+               5
 (1 row)
 
 /* Switch to #2 */

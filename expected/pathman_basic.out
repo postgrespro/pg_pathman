@@ -10,7 +10,7 @@ INSERT INTO test.hash_rel VALUES (1, 1);
 INSERT INTO test.hash_rel VALUES (2, 2);
 INSERT INTO test.hash_rel VALUES (3, 3);
 SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3);
-ERROR:  partitioning key 'value' must be NOT NULL
+ERROR:  partitioning key "value" must be NOT NULL
 ALTER TABLE test.hash_rel ALTER COLUMN value SET NOT NULL;
 SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3, partition_data:=false);
  create_hash_partitions 
@@ -131,10 +131,10 @@ CREATE INDEX ON test.range_rel (dt);
 INSERT INTO test.range_rel (dt, txt)
 SELECT g, md5(g::TEXT) FROM generate_series('2015-01-01', '2015-04-30', '1 day'::interval) as g;
 SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL, 2);
-ERROR:  partitioning key 'dt' must be NOT NULL
+ERROR:  partitioning key "dt" must be NOT NULL
 ALTER TABLE test.range_rel ALTER COLUMN dt SET NOT NULL;
 SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL, 2);
-ERROR:  not enough partitions to fit all values of 'dt'
+ERROR:  not enough partitions to fit all values of "dt"
 SELECT pathman.create_range_partitions('test.range_rel', 'DT', '2015-01-01'::DATE, '1 month'::INTERVAL);
 NOTICE:  sequence "range_rel_seq" does not exist, skipping
  create_range_partitions 
@@ -190,8 +190,382 @@ SELECT COUNT(*) FROM ONLY test.num_range_rel;
      0
 (1 row)
 
-SELECT * FROM ONLY test.range_rel UNION SELECT * FROM test.range_rel;
-ERROR:  It is prohibited to query partitioned tables both with and without ONLY modifier
+/* since rel_1_2_beta: check append_child_relation(), make_ands_explicit(), dummy path */
+CREATE TABLE test.improved_dummy (id BIGSERIAL, name TEXT NOT NULL);
+INSERT INTO test.improved_dummy (name) SELECT md5(g::TEXT) FROM generate_series(1, 100) as g;
+SELECT pathman.create_range_partitions('test.improved_dummy', 'id', 1, 10);
+NOTICE:  sequence "improved_dummy_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                      10
+(1 row)
+
+INSERT INTO test.improved_dummy (name) VALUES ('test'); /* spawns new partition */
+EXPLAIN (COSTS OFF) SELECT * FROM test.improved_dummy WHERE id = 101 OR id = 5 AND name = 'ib';
+                     QUERY PLAN                     
+----------------------------------------------------
+ Append
+   ->  Seq Scan on improved_dummy_1
+         Filter: ((id = 5) AND (name = 'ib'::text))
+   ->  Seq Scan on improved_dummy_11
+         Filter: (id = 101)
+(5 rows)
+
+SELECT pathman.set_enable_parent('test.improved_dummy', true); /* enable parent */
+ set_enable_parent 
+-------------------
+ 
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.improved_dummy WHERE id = 101 OR id = 5 AND name = 'ib';
+                             QUERY PLAN                             
+--------------------------------------------------------------------
+ Append
+   ->  Seq Scan on improved_dummy
+         Filter: ((id = 101) OR ((id = 5) AND (name = 'ib'::text)))
+   ->  Seq Scan on improved_dummy_1
+         Filter: ((id = 5) AND (name = 'ib'::text))
+   ->  Seq Scan on improved_dummy_11
+         Filter: (id = 101)
+(7 rows)
+
+SELECT pathman.set_enable_parent('test.improved_dummy', false); /* disable parent */
+ set_enable_parent 
+-------------------
+ 
+(1 row)
+
+ALTER TABLE test.improved_dummy_1 ADD CHECK (name != 'ib'); /* make test.improved_dummy_1 disappear */
+EXPLAIN (COSTS OFF) SELECT * FROM test.improved_dummy WHERE id = 101 OR id = 5 AND name = 'ib';
+             QUERY PLAN              
+-------------------------------------
+ Append
+   ->  Seq Scan on improved_dummy_11
+         Filter: (id = 101)
+(3 rows)
+
+SELECT pathman.set_enable_parent('test.improved_dummy', true); /* enable parent */
+ set_enable_parent 
+-------------------
+ 
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.improved_dummy WHERE id = 101 OR id = 5 AND name = 'ib';
+                             QUERY PLAN                             
+--------------------------------------------------------------------
+ Append
+   ->  Seq Scan on improved_dummy
+         Filter: ((id = 101) OR ((id = 5) AND (name = 'ib'::text)))
+   ->  Seq Scan on improved_dummy_11
+         Filter: (id = 101)
+(5 rows)
+
+DROP TABLE test.improved_dummy CASCADE;
+NOTICE:  drop cascades to 11 other objects
+/* Test pathman_rel_pathlist_hook() with INSERT query */
+CREATE TABLE test.insert_into_select(val int NOT NULL);
+INSERT INTO test.insert_into_select SELECT generate_series(1, 100);
+SELECT pathman.create_range_partitions('test.insert_into_select', 'val', 1, 20);
+NOTICE:  sequence "insert_into_select_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                       5
+(1 row)
+
+CREATE TABLE test.insert_into_select_copy (LIKE test.insert_into_select); /* INSERT INTO ... SELECT ... */
+EXPLAIN (COSTS OFF)
+INSERT INTO test.insert_into_select_copy
+SELECT * FROM test.insert_into_select
+WHERE val <= 80;
+                  QUERY PLAN                  
+----------------------------------------------
+ Insert on insert_into_select_copy
+   ->  Append
+         ->  Seq Scan on insert_into_select_1
+         ->  Seq Scan on insert_into_select_2
+         ->  Seq Scan on insert_into_select_3
+         ->  Seq Scan on insert_into_select_4
+               Filter: (val <= 80)
+(7 rows)
+
+SELECT pathman.set_enable_parent('test.insert_into_select', true);
+ set_enable_parent 
+-------------------
+ 
+(1 row)
+
+EXPLAIN (COSTS OFF)
+INSERT INTO test.insert_into_select_copy
+SELECT * FROM test.insert_into_select
+WHERE val <= 80;
+                  QUERY PLAN                  
+----------------------------------------------
+ Insert on insert_into_select_copy
+   ->  Append
+         ->  Seq Scan on insert_into_select
+               Filter: (val <= 80)
+         ->  Seq Scan on insert_into_select_1
+         ->  Seq Scan on insert_into_select_2
+         ->  Seq Scan on insert_into_select_3
+         ->  Seq Scan on insert_into_select_4
+               Filter: (val <= 80)
+(9 rows)
+
+INSERT INTO test.insert_into_select_copy SELECT * FROM test.insert_into_select;
+SELECT count(*) FROM test.insert_into_select_copy;
+ count 
+-------
+   100
+(1 row)
+
+DROP TABLE test.insert_into_select_copy, test.insert_into_select CASCADE;
+NOTICE:  drop cascades to 5 other objects
+/* Test INSERT hooking with DATE type */
+CREATE TABLE test.insert_date_test(val DATE NOT NULL);
+SELECT pathman.create_partitions_from_range('test.insert_date_test', 'val',
+											date '20161001', date '20170101', interval '1 month');
+NOTICE:  sequence "insert_date_test_seq" does not exist, skipping
+ create_partitions_from_range 
+------------------------------
+                            4
+(1 row)
+
+INSERT INTO test.insert_date_test VALUES ('20161201'); /* just insert the date */
+SELECT count(*) FROM pathman.pathman_partition_list WHERE parent = 'test.insert_date_test'::REGCLASS;
+ count 
+-------
+     4
+(1 row)
+
+INSERT INTO test.insert_date_test VALUES ('20170311'); /* append new partitions */
+SELECT count(*) FROM pathman.pathman_partition_list WHERE parent = 'test.insert_date_test'::REGCLASS;
+ count 
+-------
+     6
+(1 row)
+
+INSERT INTO test.insert_date_test VALUES ('20160812'); /* prepend new partitions */
+SELECT count(*) FROM pathman.pathman_partition_list WHERE parent = 'test.insert_date_test'::REGCLASS;
+ count 
+-------
+     8
+(1 row)
+
+SELECT min(val) FROM test.insert_date_test; /* check first date */
+    min     
+------------
+ 08-12-2016
+(1 row)
+
+SELECT max(val) FROM test.insert_date_test; /* check last date */
+    max     
+------------
+ 03-11-2017
+(1 row)
+
+DROP TABLE test.insert_date_test CASCADE;
+NOTICE:  drop cascades to 8 other objects
+/* Test special case: ONLY statement with not-ONLY for partitioned table */
+CREATE TABLE test.from_only_test(val INT NOT NULL);
+INSERT INTO test.from_only_test SELECT generate_series(1, 20);
+SELECT pathman.create_range_partitions('test.from_only_test', 'val', 1, 2);
+NOTICE:  sequence "from_only_test_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                      10
+(1 row)
+
+/* should be OK */
+EXPLAIN (COSTS OFF)
+SELECT * FROM ONLY test.from_only_test
+UNION SELECT * FROM test.from_only_test;
+                   QUERY PLAN                    
+-------------------------------------------------
+ HashAggregate
+   Group Key: from_only_test.val
+   ->  Append
+         ->  Seq Scan on from_only_test
+         ->  Append
+               ->  Seq Scan on from_only_test_1
+               ->  Seq Scan on from_only_test_2
+               ->  Seq Scan on from_only_test_3
+               ->  Seq Scan on from_only_test_4
+               ->  Seq Scan on from_only_test_5
+               ->  Seq Scan on from_only_test_6
+               ->  Seq Scan on from_only_test_7
+               ->  Seq Scan on from_only_test_8
+               ->  Seq Scan on from_only_test_9
+               ->  Seq Scan on from_only_test_10
+(15 rows)
+
+/* should be OK */
+EXPLAIN (COSTS OFF)
+SELECT * FROM test.from_only_test
+UNION SELECT * FROM ONLY test.from_only_test;
+                   QUERY PLAN                    
+-------------------------------------------------
+ HashAggregate
+   Group Key: from_only_test_1.val
+   ->  Append
+         ->  Append
+               ->  Seq Scan on from_only_test_1
+               ->  Seq Scan on from_only_test_2
+               ->  Seq Scan on from_only_test_3
+               ->  Seq Scan on from_only_test_4
+               ->  Seq Scan on from_only_test_5
+               ->  Seq Scan on from_only_test_6
+               ->  Seq Scan on from_only_test_7
+               ->  Seq Scan on from_only_test_8
+               ->  Seq Scan on from_only_test_9
+               ->  Seq Scan on from_only_test_10
+         ->  Seq Scan on from_only_test
+(15 rows)
+
+/* should be OK */
+EXPLAIN (COSTS OFF)
+SELECT * FROM test.from_only_test
+UNION SELECT * FROM test.from_only_test
+UNION SELECT * FROM ONLY test.from_only_test;
+                             QUERY PLAN                              
+---------------------------------------------------------------------
+ HashAggregate
+   Group Key: from_only_test_1.val
+   ->  Append
+         ->  Append
+               ->  Seq Scan on from_only_test_1
+               ->  Seq Scan on from_only_test_2
+               ->  Seq Scan on from_only_test_3
+               ->  Seq Scan on from_only_test_4
+               ->  Seq Scan on from_only_test_5
+               ->  Seq Scan on from_only_test_6
+               ->  Seq Scan on from_only_test_7
+               ->  Seq Scan on from_only_test_8
+               ->  Seq Scan on from_only_test_9
+               ->  Seq Scan on from_only_test_10
+         ->  Append
+               ->  Seq Scan on from_only_test_1 from_only_test_1_1
+               ->  Seq Scan on from_only_test_2 from_only_test_2_1
+               ->  Seq Scan on from_only_test_3 from_only_test_3_1
+               ->  Seq Scan on from_only_test_4 from_only_test_4_1
+               ->  Seq Scan on from_only_test_5 from_only_test_5_1
+               ->  Seq Scan on from_only_test_6 from_only_test_6_1
+               ->  Seq Scan on from_only_test_7 from_only_test_7_1
+               ->  Seq Scan on from_only_test_8 from_only_test_8_1
+               ->  Seq Scan on from_only_test_9 from_only_test_9_1
+               ->  Seq Scan on from_only_test_10 from_only_test_10_1
+         ->  Seq Scan on from_only_test
+(26 rows)
+
+/* should be OK */
+EXPLAIN (COSTS OFF)
+SELECT * FROM ONLY test.from_only_test
+UNION SELECT * FROM test.from_only_test
+UNION SELECT * FROM test.from_only_test;
+                             QUERY PLAN                              
+---------------------------------------------------------------------
+ HashAggregate
+   Group Key: from_only_test.val
+   ->  Append
+         ->  Seq Scan on from_only_test
+         ->  Append
+               ->  Seq Scan on from_only_test_1
+               ->  Seq Scan on from_only_test_2
+               ->  Seq Scan on from_only_test_3
+               ->  Seq Scan on from_only_test_4
+               ->  Seq Scan on from_only_test_5
+               ->  Seq Scan on from_only_test_6
+               ->  Seq Scan on from_only_test_7
+               ->  Seq Scan on from_only_test_8
+               ->  Seq Scan on from_only_test_9
+               ->  Seq Scan on from_only_test_10
+         ->  Append
+               ->  Seq Scan on from_only_test_1 from_only_test_1_1
+               ->  Seq Scan on from_only_test_2 from_only_test_2_1
+               ->  Seq Scan on from_only_test_3 from_only_test_3_1
+               ->  Seq Scan on from_only_test_4 from_only_test_4_1
+               ->  Seq Scan on from_only_test_5 from_only_test_5_1
+               ->  Seq Scan on from_only_test_6 from_only_test_6_1
+               ->  Seq Scan on from_only_test_7 from_only_test_7_1
+               ->  Seq Scan on from_only_test_8 from_only_test_8_1
+               ->  Seq Scan on from_only_test_9 from_only_test_9_1
+               ->  Seq Scan on from_only_test_10 from_only_test_10_1
+(26 rows)
+
+/* not ok, ONLY|non-ONLY in one query */
+EXPLAIN (COSTS OFF)
+SELECT * FROM test.from_only_test a JOIN ONLY test.from_only_test b USING(val);
+ERROR:  It is prohibited to apply ONLY modifier to partitioned tables which have already been mentioned without ONLY
+EXPLAIN (COSTS OFF)
+WITH q1 AS (SELECT * FROM test.from_only_test),
+	 q2 AS (SELECT * FROM ONLY test.from_only_test)
+SELECT * FROM q1 JOIN q2 USING(val);
+                 QUERY PLAN                  
+---------------------------------------------
+ Hash Join
+   Hash Cond: (q1.val = q2.val)
+   CTE q1
+     ->  Append
+           ->  Seq Scan on from_only_test_1
+           ->  Seq Scan on from_only_test_2
+           ->  Seq Scan on from_only_test_3
+           ->  Seq Scan on from_only_test_4
+           ->  Seq Scan on from_only_test_5
+           ->  Seq Scan on from_only_test_6
+           ->  Seq Scan on from_only_test_7
+           ->  Seq Scan on from_only_test_8
+           ->  Seq Scan on from_only_test_9
+           ->  Seq Scan on from_only_test_10
+   CTE q2
+     ->  Seq Scan on from_only_test
+   ->  CTE Scan on q1
+   ->  Hash
+         ->  CTE Scan on q2
+(19 rows)
+
+EXPLAIN (COSTS OFF)
+WITH q1 AS (SELECT * FROM ONLY test.from_only_test)
+SELECT * FROM test.from_only_test JOIN q1 USING(val);
+                  QUERY PLAN                  
+----------------------------------------------
+ Hash Join
+   Hash Cond: (from_only_test_1.val = q1.val)
+   CTE q1
+     ->  Seq Scan on from_only_test
+   ->  Append
+         ->  Seq Scan on from_only_test_1
+         ->  Seq Scan on from_only_test_2
+         ->  Seq Scan on from_only_test_3
+         ->  Seq Scan on from_only_test_4
+         ->  Seq Scan on from_only_test_5
+         ->  Seq Scan on from_only_test_6
+         ->  Seq Scan on from_only_test_7
+         ->  Seq Scan on from_only_test_8
+         ->  Seq Scan on from_only_test_9
+         ->  Seq Scan on from_only_test_10
+   ->  Hash
+         ->  CTE Scan on q1
+(17 rows)
+
+EXPLAIN (COSTS OFF)
+SELECT * FROM test.range_rel WHERE id = (SELECT id FROM ONLY test.range_rel LIMIT 1);
+                       QUERY PLAN                       
+--------------------------------------------------------
+ Append
+   InitPlan 1 (returns $0)
+     ->  Limit
+           ->  Seq Scan on range_rel
+   ->  Index Scan using range_rel_1_pkey on range_rel_1
+         Index Cond: (id = $0)
+   ->  Index Scan using range_rel_2_pkey on range_rel_2
+         Index Cond: (id = $0)
+   ->  Index Scan using range_rel_3_pkey on range_rel_3
+         Index Cond: (id = $0)
+   ->  Index Scan using range_rel_4_pkey on range_rel_4
+         Index Cond: (id = $0)
+(12 rows)
+
+DROP TABLE test.from_only_test CASCADE;
+NOTICE:  drop cascades to 10 other objects
 SET pg_pathman.enable_runtimeappend = OFF;
 SET pg_pathman.enable_runtimemergeappend = OFF;
 VACUUM;
@@ -268,16 +642,6 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2 OR value = 1;
          Filter: (value = 1)
 (5 rows)
 
--- Temporarily commented out
--- EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value BETWEEN 1 AND 2;
---                    QUERY PLAN
--- -------------------------------------------------
---  Append
---    ->  Seq Scan on hash_rel_1
---          Filter: ((value >= 1) AND (value <= 2))
---    ->  Seq Scan on hash_rel_2
---          Filter: ((value >= 1) AND (value <= 2))
--- (5 rows)
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > 2500;
             QUERY PLAN             
 -----------------------------------
@@ -317,6 +681,48 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE (id >= 500 AND id < 1
          Filter: (id > 2500)
    ->  Seq Scan on num_range_rel_4
 (8 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (2500);
+            QUERY PLAN             
+-----------------------------------
+ Append
+   ->  Seq Scan on num_range_rel_3
+         Filter: (id = 2500)
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (500, 1500);
+                      QUERY PLAN                      
+------------------------------------------------------
+ Append
+   ->  Seq Scan on num_range_rel_1
+         Filter: (id = ANY ('{500,1500}'::integer[]))
+   ->  Seq Scan on num_range_rel_2
+         Filter: (id = ANY ('{500,1500}'::integer[]))
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (-500, 500, 1500);
+                        QUERY PLAN                         
+-----------------------------------------------------------
+ Append
+   ->  Seq Scan on num_range_rel_1
+         Filter: (id = ANY ('{-500,500,1500}'::integer[]))
+   ->  Seq Scan on num_range_rel_2
+         Filter: (id = ANY ('{-500,500,1500}'::integer[]))
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (-1, -1, -1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (-1, -1, -1, NULL);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt > '2015-02-15';
                                    QUERY PLAN                                   
@@ -387,6 +793,59 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2 OR value = 1;
    ->  Seq Scan on hash_rel_2
          Filter: (value = 1)
 (5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (2);
+          QUERY PLAN          
+------------------------------
+ Append
+   ->  Seq Scan on hash_rel_1
+         Filter: (value = 2)
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (2, 1);
+                     QUERY PLAN                     
+----------------------------------------------------
+ Append
+   ->  Seq Scan on hash_rel_1
+         Filter: (value = ANY ('{2,1}'::integer[]))
+   ->  Seq Scan on hash_rel_2
+         Filter: (value = ANY ('{2,1}'::integer[]))
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (1, 2);
+                     QUERY PLAN                     
+----------------------------------------------------
+ Append
+   ->  Seq Scan on hash_rel_1
+         Filter: (value = ANY ('{1,2}'::integer[]))
+   ->  Seq Scan on hash_rel_2
+         Filter: (value = ANY ('{1,2}'::integer[]))
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (1, 2, -1);
+                      QUERY PLAN                       
+-------------------------------------------------------
+ Append
+   ->  Seq Scan on hash_rel_1
+         Filter: (value = ANY ('{1,2,-1}'::integer[]))
+   ->  Seq Scan on hash_rel_2
+         Filter: (value = ANY ('{1,2,-1}'::integer[]))
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (0, 0, 0);
+                      QUERY PLAN                      
+------------------------------------------------------
+ Append
+   ->  Seq Scan on hash_rel_1
+         Filter: (value = ANY ('{0,0,0}'::integer[]))
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (NULL::int, NULL, NULL);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > 2500;
                            QUERY PLAN                           
@@ -622,6 +1081,64 @@ WHERE j1.dt < '2015-03-01' AND j2.dt >= '2015-02-01' ORDER BY j2.dt;
 (20 rows)
 
 /*
+ * Test inlined SQL functions
+ */
+CREATE TABLE test.sql_inline (id INT NOT NULL);
+SELECT pathman.create_hash_partitions('test.sql_inline', 'id', 3);
+ create_hash_partitions 
+------------------------
+                      3
+(1 row)
+
+CREATE OR REPLACE FUNCTION test.sql_inline_func(i_id int) RETURNS SETOF INT AS $$
+	select * from test.sql_inline where id = i_id limit 1;
+$$ LANGUAGE sql STABLE;
+EXPLAIN (COSTS OFF) SELECT * FROM test.sql_inline_func(5);
+              QUERY PLAN              
+--------------------------------------
+ Limit
+   ->  Append
+         ->  Seq Scan on sql_inline_0
+               Filter: (id = 5)
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.sql_inline_func(1);
+              QUERY PLAN              
+--------------------------------------
+ Limit
+   ->  Append
+         ->  Seq Scan on sql_inline_2
+               Filter: (id = 1)
+(4 rows)
+
+DROP FUNCTION test.sql_inline_func(int);
+DROP TABLE test.sql_inline CASCADE;
+NOTICE:  drop cascades to 3 other objects
+/*
+ * Test by @baiyinqiqi (issue #60)
+ */
+CREATE TABLE test.hash_varchar(val VARCHAR(40) NOT NULL);
+INSERT INTO test.hash_varchar SELECT generate_series(1, 20);
+SELECT pathman.create_hash_partitions('test.hash_varchar', 'val', 4);
+ create_hash_partitions 
+------------------------
+                      4
+(1 row)
+
+SELECT * FROM test.hash_varchar WHERE val = 'a';
+ val 
+-----
+(0 rows)
+
+SELECT * FROM test.hash_varchar WHERE val = '12'::TEXT;
+ val 
+-----
+ 12
+(1 row)
+
+DROP TABLE test.hash_varchar CASCADE;
+NOTICE:  drop cascades to 4 other objects
+/*
  * Test CTE query
  */
 EXPLAIN (COSTS OFF)
@@ -649,6 +1166,169 @@ SELECT * FROM ttt;
                  Filter: (value = 2)
 (5 rows)
 
+/*
+ * Test CTE query - by @parihaaraka (add varno to WalkerContext)
+ */
+CREATE TABLE test.cte_del_xacts (id BIGSERIAL PRIMARY KEY, pdate DATE NOT NULL);
+INSERT INTO test.cte_del_xacts (pdate) SELECT gen_date FROM generate_series('2016-01-01'::date, '2016-04-9'::date, '1 day') AS gen_date;
+create table test.cte_del_xacts_specdata
+(
+	tid BIGINT PRIMARY KEY,
+	test_mode SMALLINT,
+	state_code SMALLINT NOT NULL DEFAULT 8,
+	regtime TIMESTAMP WITHOUT TIME ZONE NOT NULL
+);
+INSERT INTO test.cte_del_xacts_specdata VALUES(1, 1, 1, current_timestamp); /* for subquery test */
+/* create 2 partitions */
+SELECT pathman.create_range_partitions('test.cte_del_xacts'::regclass, 'pdate', '2016-01-01'::date, '50 days'::interval);
+NOTICE:  sequence "cte_del_xacts_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+EXPLAIN (COSTS OFF)
+WITH tmp AS (
+	SELECT tid, test_mode, regtime::DATE AS pdate, state_code
+	FROM test.cte_del_xacts_specdata)
+DELETE FROM test.cte_del_xacts t USING tmp
+WHERE t.id = tmp.tid AND t.pdate = tmp.pdate AND tmp.test_mode > 0;
+                                   QUERY PLAN                                   
+--------------------------------------------------------------------------------
+ Delete on cte_del_xacts t
+   Delete on cte_del_xacts t
+   Delete on cte_del_xacts_1 t_1
+   Delete on cte_del_xacts_2 t_2
+   CTE tmp
+     ->  Seq Scan on cte_del_xacts_specdata
+   ->  Hash Join
+         Hash Cond: ((tmp.tid = t.id) AND (tmp.pdate = t.pdate))
+         ->  CTE Scan on tmp
+               Filter: (test_mode > 0)
+         ->  Hash
+               ->  Index Scan using cte_del_xacts_pkey on cte_del_xacts t
+   ->  Hash Join
+         Hash Cond: ((tmp.tid = t_1.id) AND (tmp.pdate = t_1.pdate))
+         ->  CTE Scan on tmp
+               Filter: (test_mode > 0)
+         ->  Hash
+               ->  Index Scan using cte_del_xacts_1_pkey on cte_del_xacts_1 t_1
+   ->  Hash Join
+         Hash Cond: ((tmp.tid = t_2.id) AND (tmp.pdate = t_2.pdate))
+         ->  CTE Scan on tmp
+               Filter: (test_mode > 0)
+         ->  Hash
+               ->  Index Scan using cte_del_xacts_2_pkey on cte_del_xacts_2 t_2
+(24 rows)
+
+SELECT pathman.drop_partitions('test.cte_del_xacts'); /* now drop partitions */
+NOTICE:  function test.cte_del_xacts_upd_trig_func() does not exist, skipping
+NOTICE:  50 rows copied from test.cte_del_xacts_1
+NOTICE:  50 rows copied from test.cte_del_xacts_2
+ drop_partitions 
+-----------------
+               2
+(1 row)
+
+/* create 1 partition */
+SELECT pathman.create_range_partitions('test.cte_del_xacts'::regclass, 'pdate', '2016-01-01'::date, '1 year'::interval);
+ create_range_partitions 
+-------------------------
+                       1
+(1 row)
+
+/* parent enabled! */
+SELECT pathman.set_enable_parent('test.cte_del_xacts', true);
+ set_enable_parent 
+-------------------
+ 
+(1 row)
+
+EXPLAIN (COSTS OFF)
+WITH tmp AS (
+	SELECT tid, test_mode, regtime::DATE AS pdate, state_code
+	FROM test.cte_del_xacts_specdata)
+DELETE FROM test.cte_del_xacts t USING tmp
+WHERE t.id = tmp.tid AND t.pdate = tmp.pdate AND tmp.test_mode > 0;
+                                   QUERY PLAN                                   
+--------------------------------------------------------------------------------
+ Delete on cte_del_xacts t
+   Delete on cte_del_xacts t
+   Delete on cte_del_xacts_1 t_1
+   CTE tmp
+     ->  Seq Scan on cte_del_xacts_specdata
+   ->  Hash Join
+         Hash Cond: ((tmp.tid = t.id) AND (tmp.pdate = t.pdate))
+         ->  CTE Scan on tmp
+               Filter: (test_mode > 0)
+         ->  Hash
+               ->  Index Scan using cte_del_xacts_pkey on cte_del_xacts t
+   ->  Hash Join
+         Hash Cond: ((tmp.tid = t_1.id) AND (tmp.pdate = t_1.pdate))
+         ->  CTE Scan on tmp
+               Filter: (test_mode > 0)
+         ->  Hash
+               ->  Index Scan using cte_del_xacts_1_pkey on cte_del_xacts_1 t_1
+(17 rows)
+
+/* parent disabled! */
+SELECT pathman.set_enable_parent('test.cte_del_xacts', false);
+ set_enable_parent 
+-------------------
+ 
+(1 row)
+
+EXPLAIN (COSTS OFF)
+WITH tmp AS (
+	SELECT tid, test_mode, regtime::DATE AS pdate, state_code
+	FROM test.cte_del_xacts_specdata)
+DELETE FROM test.cte_del_xacts t USING tmp
+WHERE t.id = tmp.tid AND t.pdate = tmp.pdate AND tmp.test_mode > 0;
+                                  QUERY PLAN                                  
+------------------------------------------------------------------------------
+ Delete on cte_del_xacts_1 t
+   CTE tmp
+     ->  Seq Scan on cte_del_xacts_specdata
+   ->  Hash Join
+         Hash Cond: ((tmp.tid = t.id) AND (tmp.pdate = t.pdate))
+         ->  CTE Scan on tmp
+               Filter: (test_mode > 0)
+         ->  Hash
+               ->  Index Scan using cte_del_xacts_1_pkey on cte_del_xacts_1 t
+(9 rows)
+
+/* create stub pl/PgSQL function */
+CREATE OR REPLACE FUNCTION test.cte_del_xacts_stab(name TEXT)
+RETURNS smallint AS
+$$
+begin
+	return 2::smallint;
+end
+$$
+LANGUAGE plpgsql STABLE;
+/* test subquery planning */
+WITH tmp AS (
+	SELECT tid FROM test.cte_del_xacts_specdata
+	WHERE state_code != test.cte_del_xacts_stab('test'))
+SELECT * FROM test.cte_del_xacts t JOIN tmp ON t.id = tmp.tid;
+ id |   pdate    | tid 
+----+------------+-----
+  1 | 01-01-2016 |   1
+(1 row)
+
+/* test subquery planning (one more time) */
+WITH tmp AS (
+	SELECT tid FROM test.cte_del_xacts_specdata
+	WHERE state_code != test.cte_del_xacts_stab('test'))
+SELECT * FROM test.cte_del_xacts t JOIN tmp ON t.id = tmp.tid;
+ id |   pdate    | tid 
+----+------------+-----
+  1 | 01-01-2016 |   1
+(1 row)
+
+DROP FUNCTION test.cte_del_xacts_stab(TEXT);
+DROP TABLE test.cte_del_xacts, test.cte_del_xacts_specdata CASCADE;
+NOTICE:  drop cascades to table test.cte_del_xacts_1
 /*
  * Test split and merge
  */
@@ -766,7 +1446,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt BETWEEN '2014-12-15' A
 (3 rows)
 
 SELECT pathman.add_range_partition('test.range_rel', '2014-12-01'::DATE, '2015-01-02'::DATE);
-ERROR:  specified range overlaps with existing partitions
+ERROR:  specified range [12-01-2014, 01-02-2015) overlaps with existing partitions
 SELECT pathman.add_range_partition('test.range_rel', '2014-12-01'::DATE, '2015-01-01'::DATE);
  add_range_partition 
 ---------------------
@@ -785,7 +1465,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt BETWEEN '2014-12-15' A
 
 CREATE TABLE test.range_rel_archive (LIKE test.range_rel INCLUDING ALL);
 SELECT pathman.attach_range_partition('test.range_rel', 'test.range_rel_archive', '2014-01-01'::DATE, '2015-01-01'::DATE);
-ERROR:  specified range overlaps with existing partitions
+ERROR:  specified range [01-01-2014, 01-01-2015) overlaps with existing partitions
 SELECT pathman.attach_range_partition('test.range_rel', 'test.range_rel_archive', '2014-01-01'::DATE, '2014-12-01'::DATE);
  attach_range_partition 
 ------------------------
@@ -885,14 +1565,64 @@ SELECT * FROM test.hash_rel WHERE id = 123;
  123 |   456 | 789
 (1 row)
 
+/* Test replacing hash partition */
+CREATE TABLE test.hash_rel_extern (LIKE test.hash_rel INCLUDING ALL);
+SELECT pathman.replace_hash_partition('test.hash_rel_0', 'test.hash_rel_extern');
+ replace_hash_partition 
+------------------------
+ test.hash_rel_extern
+(1 row)
+
+\d+ test.hash_rel_0
+                                               Table "test.hash_rel_0"
+ Column |  Type   |                         Modifiers                          | Storage | Stats target | Description 
+--------+---------+------------------------------------------------------------+---------+--------------+-------------
+ id     | integer | not null default nextval('test.hash_rel_id_seq'::regclass) | plain   |              | 
+ value  | integer | not null                                                   | plain   |              | 
+ abc    | integer |                                                            | plain   |              | 
+Indexes:
+    "hash_rel_0_pkey" PRIMARY KEY, btree (id)
+Triggers:
+    hash_rel_upd_trig BEFORE UPDATE ON test.hash_rel_0 FOR EACH ROW EXECUTE PROCEDURE test.hash_rel_upd_trig_func()
+
+\d+ test.hash_rel_extern
+                                             Table "test.hash_rel_extern"
+ Column |  Type   |                         Modifiers                          | Storage | Stats target | Description 
+--------+---------+------------------------------------------------------------+---------+--------------+-------------
+ id     | integer | not null default nextval('test.hash_rel_id_seq'::regclass) | plain   |              | 
+ value  | integer | not null                                                   | plain   |              | 
+ abc    | integer |                                                            | plain   |              | 
+Indexes:
+    "hash_rel_extern_pkey" PRIMARY KEY, btree (id)
+Check constraints:
+    "pathman_hash_rel_extern_2_check" CHECK (pathman.get_hash_part_idx(hashint4(value), 3) = 0)
+Inherits: test.hash_rel
+
+INSERT INTO test.hash_rel SELECT * FROM test.hash_rel_0;
+DROP TABLE test.hash_rel_0;
+/* Table with which we are replacing partition must have exact same structure */
+CREATE TABLE test.hash_rel_wrong(
+	id		INTEGER NOT NULL,
+	value	INTEGER);
+SELECT pathman.replace_hash_partition('test.hash_rel_1', 'test.hash_rel_wrong');
+ERROR:  partition must have the exact same structure as parent
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
+            QUERY PLAN             
+-----------------------------------
+ Append
+   ->  Seq Scan on hash_rel_extern
+   ->  Seq Scan on hash_rel_1
+   ->  Seq Scan on hash_rel_2
+(4 rows)
+
 /*
  * Clean up
  */
 SELECT pathman.drop_partitions('test.hash_rel');
-NOTICE:  drop cascades to 3 other objects
-NOTICE:  2 rows copied from test.hash_rel_0
+NOTICE:  drop cascades to 2 other objects
 NOTICE:  3 rows copied from test.hash_rel_1
 NOTICE:  2 rows copied from test.hash_rel_2
+NOTICE:  2 rows copied from test.hash_rel_extern
  drop_partitions 
 -----------------
                3
@@ -942,7 +1672,8 @@ NOTICE:  drop cascades to 7 other objects
 /* Test automatic partition creation */
 CREATE TABLE test.range_rel (
 	id	SERIAL PRIMARY KEY,
-	dt	TIMESTAMP NOT NULL);
+	dt	TIMESTAMP NOT NULL,
+	data TEXT);
 SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '10 days'::INTERVAL, 1);
  create_range_partitions 
 -------------------------
@@ -962,9 +1693,9 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt = '2014-12-15';
 (3 rows)
 
 SELECT * FROM test.range_rel WHERE dt = '2014-12-15';
- id  |            dt            
------+--------------------------
- 137 | Mon Dec 15 00:00:00 2014
+ id  |            dt            | data 
+-----+--------------------------+------
+ 137 | Mon Dec 15 00:00:00 2014 | 
 (1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt = '2015-03-15';
@@ -976,9 +1707,9 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt = '2015-03-15';
 (3 rows)
 
 SELECT * FROM test.range_rel WHERE dt = '2015-03-15';
- id |            dt            
-----+--------------------------
- 74 | Sun Mar 15 00:00:00 2015
+ id |            dt            | data 
+----+--------------------------+------
+ 74 | Sun Mar 15 00:00:00 2015 | 
 (1 row)
 
 SELECT pathman.set_auto('test.range_rel', false);
@@ -996,6 +1727,17 @@ SELECT pathman.set_auto('test.range_rel', true);
 (1 row)
 
 INSERT INTO test.range_rel (dt) VALUES ('2015-06-01');
+/*
+ * Test auto removing record from config on table DROP (but not on column drop
+ * as it used to be before version 1.2)
+ */
+ALTER TABLE test.range_rel DROP COLUMN data;
+SELECT * FROM pathman.pathman_config;
+    partrel     | attname | parttype | range_interval 
+----------------+---------+----------+----------------
+ test.range_rel | dt      |        2 | @ 10 days
+(1 row)
+
 DROP TABLE test.range_rel CASCADE;
 NOTICE:  drop cascades to 20 other objects
 SELECT * FROM pathman.pathman_config;
@@ -1013,48 +1755,28 @@ SELECT pathman.create_range_partitions('test.num_range_rel', 'id', 1000, 1000, 4
                        4
 (1 row)
 
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 4001, 5000);
- check_overlap 
----------------
- t
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 4001, 5000);
+ERROR:  specified range [4001, 5000) overlaps with existing partitions
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 4000, 5000);
+ERROR:  specified range [4000, 5000) overlaps with existing partitions
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 3999, 5000);
+ERROR:  specified range [3999, 5000) overlaps with existing partitions
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 3000, 3500);
+ERROR:  specified range [3000, 3500) overlaps with existing partitions
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 0, 999);
+ check_range_available 
+-----------------------
+ 
 (1 row)
 
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 4000, 5000);
- check_overlap 
----------------
- t
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 0, 1000);
+ check_range_available 
+-----------------------
+ 
 (1 row)
 
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 3999, 5000);
- check_overlap 
----------------
- t
-(1 row)
-
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 3000, 3500);
- check_overlap 
----------------
- t
-(1 row)
-
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 0, 999);
- check_overlap 
----------------
- f
-(1 row)
-
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 0, 1000);
- check_overlap 
----------------
- f
-(1 row)
-
-SELECT pathman.check_overlap('test.num_range_rel'::regclass::oid, 0, 1001);
- check_overlap 
----------------
- t
-(1 row)
-
+SELECT pathman.check_range_available('test.num_range_rel'::regclass, 0, 1001);
+ERROR:  specified range [0, 1001) overlaps with existing partitions
 /* CaMeL cAsE table names and attributes */
 CREATE TABLE test."TeSt" (a INT NOT NULL, b INT);
 SELECT pathman.create_hash_partitions('test.TeSt', 'a', 3);
@@ -1217,20 +1939,20 @@ SELECT pathman.create_partitions_from_range('test."RangeRel"', 'id', 1, 300, 100
 DROP TABLE test."RangeRel" CASCADE;
 NOTICE:  drop cascades to 3 other objects
 DROP EXTENSION pg_pathman;
-/* Test that everithing works fine without schemas */
+/* Test that everything works fine without schemas */
 CREATE EXTENSION pg_pathman;
 /* Hash */
-CREATE TABLE hash_rel (
+CREATE TABLE test.hash_rel (
 	id		SERIAL PRIMARY KEY,
 	value	INTEGER NOT NULL);
-INSERT INTO hash_rel (value) SELECT g FROM generate_series(1, 10000) as g;
-SELECT create_hash_partitions('hash_rel', 'value', 3);
+INSERT INTO test.hash_rel (value) SELECT g FROM generate_series(1, 10000) as g;
+SELECT create_hash_partitions('test.hash_rel', 'value', 3);
  create_hash_partitions 
 ------------------------
                       3
 (1 row)
 
-EXPLAIN (COSTS OFF) SELECT * FROM hash_rel WHERE id = 1234;
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE id = 1234;
                       QUERY PLAN                      
 ------------------------------------------------------
  Append
@@ -1243,43 +1965,42 @@ EXPLAIN (COSTS OFF) SELECT * FROM hash_rel WHERE id = 1234;
 (7 rows)
 
 /* Range */
-CREATE TABLE range_rel (
+CREATE TABLE test.range_rel (
 	id		SERIAL PRIMARY KEY,
 	dt		TIMESTAMP NOT NULL,
 	value	INTEGER);
-INSERT INTO range_rel (dt, value) SELECT g, extract(day from g) FROM generate_series('2010-01-01'::date, '2010-12-31'::date, '1 day') as g;
-SELECT create_range_partitions('range_rel', 'dt', '2010-01-01'::date, '1 month'::interval, 12);
-NOTICE:  sequence "range_rel_seq" does not exist, skipping
+INSERT INTO test.range_rel (dt, value) SELECT g, extract(day from g) FROM generate_series('2010-01-01'::date, '2010-12-31'::date, '1 day') as g;
+SELECT create_range_partitions('test.range_rel', 'dt', '2010-01-01'::date, '1 month'::interval, 12);
  create_range_partitions 
 -------------------------
                       12
 (1 row)
 
-SELECT merge_range_partitions('range_rel_1', 'range_rel_2');
+SELECT merge_range_partitions('test.range_rel_1', 'test.range_rel_2');
  merge_range_partitions 
 ------------------------
  
 (1 row)
 
-SELECT split_range_partition('range_rel_1', '2010-02-15'::date);
+SELECT split_range_partition('test.range_rel_1', '2010-02-15'::date);
   split_range_partition  
 -------------------------
  {01-01-2010,03-01-2010}
 (1 row)
 
-SELECT append_range_partition('range_rel');
+SELECT append_range_partition('test.range_rel');
  append_range_partition 
 ------------------------
- public.range_rel_14
+ test.range_rel_14
 (1 row)
 
-SELECT prepend_range_partition('range_rel');
+SELECT prepend_range_partition('test.range_rel');
  prepend_range_partition 
 -------------------------
- public.range_rel_15
+ test.range_rel_15
 (1 row)
 
-EXPLAIN (COSTS OFF) SELECT * FROM range_rel WHERE dt < '2010-03-01';
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt < '2010-03-01';
            QUERY PLAN           
 --------------------------------
  Append
@@ -1288,7 +2009,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM range_rel WHERE dt < '2010-03-01';
    ->  Seq Scan on range_rel_13
 (4 rows)
 
-EXPLAIN (COSTS OFF) SELECT * FROM range_rel WHERE dt > '2010-12-15';
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt > '2010-12-15';
                                    QUERY PLAN                                   
 --------------------------------------------------------------------------------
  Append
@@ -1298,10 +2019,10 @@ EXPLAIN (COSTS OFF) SELECT * FROM range_rel WHERE dt > '2010-12-15';
 (4 rows)
 
 /* Temporary table for JOINs */
-CREATE TABLE tmp (id INTEGER NOT NULL, value INTEGER NOT NULL);
-INSERT INTO tmp VALUES (1, 1), (2, 2);
+CREATE TABLE test.tmp (id INTEGER NOT NULL, value INTEGER NOT NULL);
+INSERT INTO test.tmp VALUES (1, 1), (2, 2);
 /* Test UPDATE and DELETE */
-EXPLAIN (COSTS OFF) UPDATE range_rel SET value = 111 WHERE dt = '2010-06-15';
+EXPLAIN (COSTS OFF) UPDATE test.range_rel SET value = 111 WHERE dt = '2010-06-15';
                                    QUERY PLAN                                   
 --------------------------------------------------------------------------------
  Update on range_rel_6
@@ -1309,14 +2030,14 @@ EXPLAIN (COSTS OFF) UPDATE range_rel SET value = 111 WHERE dt = '2010-06-15';
          Filter: (dt = 'Tue Jun 15 00:00:00 2010'::timestamp without time zone)
 (3 rows)
 
-UPDATE range_rel SET value = 111 WHERE dt = '2010-06-15';
-SELECT * FROM range_rel WHERE dt = '2010-06-15';
+UPDATE test.range_rel SET value = 111 WHERE dt = '2010-06-15';
+SELECT * FROM test.range_rel WHERE dt = '2010-06-15';
  id  |            dt            | value 
 -----+--------------------------+-------
  166 | Tue Jun 15 00:00:00 2010 |   111
 (1 row)
 
-EXPLAIN (COSTS OFF) DELETE FROM range_rel WHERE dt = '2010-06-15';
+EXPLAIN (COSTS OFF) DELETE FROM test.range_rel WHERE dt = '2010-06-15';
                                    QUERY PLAN                                   
 --------------------------------------------------------------------------------
  Delete on range_rel_6
@@ -1324,13 +2045,13 @@ EXPLAIN (COSTS OFF) DELETE FROM range_rel WHERE dt = '2010-06-15';
          Filter: (dt = 'Tue Jun 15 00:00:00 2010'::timestamp without time zone)
 (3 rows)
 
-DELETE FROM range_rel WHERE dt = '2010-06-15';
-SELECT * FROM range_rel WHERE dt = '2010-06-15';
+DELETE FROM test.range_rel WHERE dt = '2010-06-15';
+SELECT * FROM test.range_rel WHERE dt = '2010-06-15';
  id | dt | value 
 ----+----+-------
 (0 rows)
 
-EXPLAIN (COSTS OFF) UPDATE range_rel r SET value = t.value FROM tmp t WHERE r.dt = '2010-01-01' AND r.id = t.id;
+EXPLAIN (COSTS OFF) UPDATE test.range_rel r SET value = t.value FROM test.tmp t WHERE r.dt = '2010-01-01' AND r.id = t.id;
                                          QUERY PLAN                                         
 --------------------------------------------------------------------------------------------
  Update on range_rel_1 r
@@ -1342,8 +2063,8 @@ EXPLAIN (COSTS OFF) UPDATE range_rel r SET value = t.value FROM tmp t WHERE r.dt
                      Filter: (dt = 'Fri Jan 01 00:00:00 2010'::timestamp without time zone)
 (7 rows)
 
-UPDATE range_rel r SET value = t.value FROM tmp t WHERE r.dt = '2010-01-01' AND r.id = t.id;
-EXPLAIN (COSTS OFF) DELETE FROM range_rel r USING tmp t WHERE r.dt = '2010-01-02' AND r.id = t.id;
+UPDATE test.range_rel r SET value = t.value FROM test.tmp t WHERE r.dt = '2010-01-01' AND r.id = t.id;
+EXPLAIN (COSTS OFF) DELETE FROM test.range_rel r USING test.tmp t WHERE r.dt = '2010-01-02' AND r.id = t.id;
                                          QUERY PLAN                                         
 --------------------------------------------------------------------------------------------
  Delete on range_rel_1 r
@@ -1355,49 +2076,49 @@ EXPLAIN (COSTS OFF) DELETE FROM range_rel r USING tmp t WHERE r.dt = '2010-01-02
                      Filter: (dt = 'Sat Jan 02 00:00:00 2010'::timestamp without time zone)
 (7 rows)
 
-DELETE FROM range_rel r USING tmp t WHERE r.dt = '2010-01-02' AND r.id = t.id;
+DELETE FROM test.range_rel r USING test.tmp t WHERE r.dt = '2010-01-02' AND r.id = t.id;
 /* Create range partitions from whole range */
-SELECT drop_partitions('range_rel');
-NOTICE:  function public.range_rel_upd_trig_func() does not exist, skipping
-NOTICE:  44 rows copied from range_rel_1
-NOTICE:  31 rows copied from range_rel_3
-NOTICE:  30 rows copied from range_rel_4
-NOTICE:  31 rows copied from range_rel_5
-NOTICE:  29 rows copied from range_rel_6
-NOTICE:  31 rows copied from range_rel_7
-NOTICE:  31 rows copied from range_rel_8
-NOTICE:  30 rows copied from range_rel_9
-NOTICE:  31 rows copied from range_rel_10
-NOTICE:  30 rows copied from range_rel_11
-NOTICE:  31 rows copied from range_rel_12
-NOTICE:  14 rows copied from range_rel_13
-NOTICE:  0 rows copied from range_rel_14
-NOTICE:  0 rows copied from range_rel_15
+SELECT drop_partitions('test.range_rel');
+NOTICE:  function test.range_rel_upd_trig_func() does not exist, skipping
+NOTICE:  44 rows copied from test.range_rel_1
+NOTICE:  31 rows copied from test.range_rel_3
+NOTICE:  30 rows copied from test.range_rel_4
+NOTICE:  31 rows copied from test.range_rel_5
+NOTICE:  29 rows copied from test.range_rel_6
+NOTICE:  31 rows copied from test.range_rel_7
+NOTICE:  31 rows copied from test.range_rel_8
+NOTICE:  30 rows copied from test.range_rel_9
+NOTICE:  31 rows copied from test.range_rel_10
+NOTICE:  30 rows copied from test.range_rel_11
+NOTICE:  31 rows copied from test.range_rel_12
+NOTICE:  14 rows copied from test.range_rel_13
+NOTICE:  0 rows copied from test.range_rel_14
+NOTICE:  0 rows copied from test.range_rel_15
  drop_partitions 
 -----------------
               14
 (1 row)
 
-SELECT create_partitions_from_range('range_rel', 'id', 1, 1000, 100);
+SELECT create_partitions_from_range('test.range_rel', 'id', 1, 1000, 100);
  create_partitions_from_range 
 ------------------------------
                            10
 (1 row)
 
-SELECT drop_partitions('range_rel', TRUE);
-NOTICE:  function public.range_rel_upd_trig_func() does not exist, skipping
+SELECT drop_partitions('test.range_rel', TRUE);
+NOTICE:  function test.range_rel_upd_trig_func() does not exist, skipping
  drop_partitions 
 -----------------
               10
 (1 row)
 
-SELECT create_partitions_from_range('range_rel', 'dt', '2015-01-01'::date, '2015-12-01'::date, '1 month'::interval);
+SELECT create_partitions_from_range('test.range_rel', 'dt', '2015-01-01'::date, '2015-12-01'::date, '1 month'::interval);
  create_partitions_from_range 
 ------------------------------
                            12
 (1 row)
 
-EXPLAIN (COSTS OFF) SELECT * FROM range_rel WHERE dt = '2015-12-15';
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt = '2015-12-15';
                                    QUERY PLAN                                   
 --------------------------------------------------------------------------------
  Append
@@ -1405,22 +2126,58 @@ EXPLAIN (COSTS OFF) SELECT * FROM range_rel WHERE dt = '2015-12-15';
          Filter: (dt = 'Tue Dec 15 00:00:00 2015'::timestamp without time zone)
 (3 rows)
 
-CREATE TABLE messages(id SERIAL PRIMARY KEY, msg TEXT);
-CREATE TABLE replies(id SERIAL PRIMARY KEY, message_id INTEGER REFERENCES messages(id),  msg TEXT);
-INSERT INTO messages SELECT g, md5(g::text) FROM generate_series(1, 10) as g;
-INSERT INTO replies SELECT g, g, md5(g::text) FROM generate_series(1, 10) as g;
-SELECT create_range_partitions('messages', 'id', 1, 100, 2);
-WARNING:  foreign key "replies_message_id_fkey" references relation "messages"
-ERROR:  relation "messages" is referenced from other relations
-ALTER TABLE replies DROP CONSTRAINT replies_message_id_fkey;
-SELECT create_range_partitions('messages', 'id', 1, 100, 2);
+/* Test NOT operator */
+CREATE TABLE bool_test(a INT NOT NULL, b BOOLEAN);
+SELECT create_hash_partitions('bool_test', 'a', 3);
+ create_hash_partitions 
+------------------------
+                      3
+(1 row)
+
+INSERT INTO bool_test SELECT g, (g % 4) = 0 FROM generate_series(1, 100) AS g;
+SELECT count(*) FROM bool_test;
+ count 
+-------
+   100
+(1 row)
+
+SELECT count(*) FROM bool_test WHERE (b = true AND b = false);
+ count 
+-------
+     0
+(1 row)
+
+SELECT count(*) FROM bool_test WHERE b = false;	/* 75 values */
+ count 
+-------
+    75
+(1 row)
+
+SELECT count(*) FROM bool_test WHERE b = true;	/* 25 values */
+ count 
+-------
+    25
+(1 row)
+
+DROP TABLE bool_test CASCADE;
+NOTICE:  drop cascades to 3 other objects
+/* Test foreign keys */
+CREATE TABLE test.messages(id SERIAL PRIMARY KEY, msg TEXT);
+CREATE TABLE test.replies(id SERIAL PRIMARY KEY, message_id INTEGER REFERENCES test.messages(id),  msg TEXT);
+INSERT INTO test.messages SELECT g, md5(g::text) FROM generate_series(1, 10) as g;
+INSERT INTO test.replies SELECT g, g, md5(g::text) FROM generate_series(1, 10) as g;
+SELECT create_range_partitions('test.messages', 'id', 1, 100, 2);
+WARNING:  foreign key "replies_message_id_fkey" references relation "test.messages"
+ERROR:  relation "test.messages" is referenced from other relations
+ALTER TABLE test.replies DROP CONSTRAINT replies_message_id_fkey;
+SELECT create_range_partitions('test.messages', 'id', 1, 100, 2);
 NOTICE:  sequence "messages_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                        2
 (1 row)
 
-EXPLAIN (COSTS OFF) SELECT * FROM messages;
+EXPLAIN (COSTS OFF) SELECT * FROM test.messages;
           QUERY PLAN          
 ------------------------------
  Append
@@ -1428,8 +2185,131 @@ EXPLAIN (COSTS OFF) SELECT * FROM messages;
    ->  Seq Scan on messages_2
 (3 rows)
 
+DROP TABLE test.messages, test.replies CASCADE;
+NOTICE:  drop cascades to 2 other objects
+/* Special test case (quals generation) -- fixing commit f603e6c5 */
+CREATE TABLE test.special_case_1_ind_o_s(val serial, comment text);
+INSERT INTO test.special_case_1_ind_o_s SELECT generate_series(1, 200), NULL;
+SELECT create_range_partitions('test.special_case_1_ind_o_s', 'val', 1, 50);
+NOTICE:  sequence "special_case_1_ind_o_s_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                       4
+(1 row)
+
+INSERT INTO test.special_case_1_ind_o_s_2 SELECT 75 FROM generate_series(1, 6000);
+CREATE INDEX ON test.special_case_1_ind_o_s_2 (val, comment);
+VACUUM ANALYZE test.special_case_1_ind_o_s_2;
+EXPLAIN (COSTS OFF) SELECT * FROM test.special_case_1_ind_o_s WHERE val < 75 AND comment = 'a';
+                                            QUERY PLAN                                            
+--------------------------------------------------------------------------------------------------
+ Append
+   ->  Seq Scan on special_case_1_ind_o_s_1
+         Filter: (comment = 'a'::text)
+   ->  Index Only Scan using special_case_1_ind_o_s_2_val_comment_idx on special_case_1_ind_o_s_2
+         Index Cond: ((val < 75) AND (comment = 'a'::text))
+(5 rows)
+
+SELECT set_enable_parent('test.special_case_1_ind_o_s', true);
+ set_enable_parent 
+-------------------
+ 
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.special_case_1_ind_o_s WHERE val < 75 AND comment = 'a';
+                                            QUERY PLAN                                            
+--------------------------------------------------------------------------------------------------
+ Append
+   ->  Seq Scan on special_case_1_ind_o_s
+         Filter: ((val < 75) AND (comment = 'a'::text))
+   ->  Seq Scan on special_case_1_ind_o_s_1
+         Filter: (comment = 'a'::text)
+   ->  Index Only Scan using special_case_1_ind_o_s_2_val_comment_idx on special_case_1_ind_o_s_2
+         Index Cond: ((val < 75) AND (comment = 'a'::text))
+(7 rows)
+
+SELECT set_enable_parent('test.special_case_1_ind_o_s', false);
+ set_enable_parent 
+-------------------
+ 
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.special_case_1_ind_o_s WHERE val < 75 AND comment = 'a';
+                                            QUERY PLAN                                            
+--------------------------------------------------------------------------------------------------
+ Append
+   ->  Seq Scan on special_case_1_ind_o_s_1
+         Filter: (comment = 'a'::text)
+   ->  Index Only Scan using special_case_1_ind_o_s_2_val_comment_idx on special_case_1_ind_o_s_2
+         Index Cond: ((val < 75) AND (comment = 'a'::text))
+(5 rows)
+
+/* Test index scans on child relation under enable_parent is set */
+CREATE TABLE test.index_on_childs(c1 integer not null, c2 integer);
+CREATE INDEX ON test.index_on_childs(c2);
+INSERT INTO test.index_on_childs SELECT i, (random()*10000)::integer FROM generate_series(1, 10000) i;
+SELECT create_range_partitions('test.index_on_childs', 'c1', 1, 1000, 0, false);
+NOTICE:  sequence "index_on_childs_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                       0
+(1 row)
+
+SELECT add_range_partition('test.index_on_childs', 1, 1000, 'test.index_on_childs_1_1k');
+    add_range_partition    
+---------------------------
+ test.index_on_childs_1_1k
+(1 row)
+
+SELECT append_range_partition('test.index_on_childs', 'test.index_on_childs_1k_2k');
+   append_range_partition   
+----------------------------
+ test.index_on_childs_1k_2k
+(1 row)
+
+SELECT append_range_partition('test.index_on_childs', 'test.index_on_childs_2k_3k');
+   append_range_partition   
+----------------------------
+ test.index_on_childs_2k_3k
+(1 row)
+
+SELECT append_range_partition('test.index_on_childs', 'test.index_on_childs_3k_4k');
+   append_range_partition   
+----------------------------
+ test.index_on_childs_3k_4k
+(1 row)
+
+SELECT append_range_partition('test.index_on_childs', 'test.index_on_childs_4k_5k');
+   append_range_partition   
+----------------------------
+ test.index_on_childs_4k_5k
+(1 row)
+
+SELECT set_enable_parent('test.index_on_childs', true);
+ set_enable_parent 
+-------------------
+ 
+(1 row)
+
+VACUUM ANALYZE test.index_on_childs;
+EXPLAIN (COSTS OFF) SELECT * FROM test.index_on_childs WHERE c1 > 100 AND c1 < 2500 AND c2 = 500;
+                                  QUERY PLAN                                  
+------------------------------------------------------------------------------
+ Append
+   ->  Index Scan using index_on_childs_c2_idx on index_on_childs
+         Index Cond: (c2 = 500)
+         Filter: ((c1 > 100) AND (c1 < 2500))
+   ->  Index Scan using index_on_childs_1_1k_c2_idx on index_on_childs_1_1k
+         Index Cond: (c2 = 500)
+         Filter: (c1 > 100)
+   ->  Index Scan using index_on_childs_1k_2k_c2_idx on index_on_childs_1k_2k
+         Index Cond: (c2 = 500)
+   ->  Index Scan using index_on_childs_2k_3k_c2_idx on index_on_childs_2k_3k
+         Index Cond: (c2 = 500)
+         Filter: (c1 < 2500)
+(12 rows)
+
 DROP SCHEMA test CASCADE;
-NOTICE:  drop cascades to 13 other objects
+NOTICE:  drop cascades to 51 other objects
 DROP EXTENSION pg_pathman CASCADE;
-NOTICE:  drop cascades to 3 other objects
 DROP SCHEMA pathman CASCADE;
