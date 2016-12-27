@@ -99,7 +99,7 @@ pip install $pip_packages
 # run python tests
 cd tests/python
 PG_CONFIG=$config_path python -m unittest partitioning_test || status=$?
-cd ..
+cd ../..
 
 set -u
 
