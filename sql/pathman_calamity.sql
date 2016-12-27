@@ -14,6 +14,37 @@ set client_min_messages = NOTICE;
 CREATE TABLE calamity.part_test(val serial);
 
 
+/* test pg_pathman's cache */
+INSERT INTO calamity.part_test SELECT generate_series(1, 30);
+
+SELECT create_range_partitions('calamity.part_test', 'val', 1, 10);
+SELECT drop_partitions('calamity.part_test');
+SELECT create_range_partitions('calamity.part_test', 'val', 1, 10);
+SELECT drop_partitions('calamity.part_test');
+
+SELECT create_range_partitions('calamity.part_test', 'val', 1, 10);
+SELECT append_range_partition('calamity.part_test');
+SELECT drop_partitions('calamity.part_test');
+
+SELECT create_range_partitions('calamity.part_test', 'val', 1, 10);
+SELECT append_range_partition('calamity.part_test');
+SELECT drop_partitions('calamity.part_test');
+
+SELECT count(*) FROM calamity.part_test;
+
+DELETE FROM calamity.part_test;
+
+
+/* test stub 'enable_parent' value for PATHMAN_CONFIG_PARAMS */
+INSERT INTO calamity.part_test SELECT generate_series(1, 30);
+SELECT create_range_partitions('calamity.part_test', 'val', 1, 10);
+DELETE FROM pathman_config_params WHERE partrel = 'calamity.part_test'::regclass;
+SELECT append_range_partition('calamity.part_test');
+EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_test;
+SELECT drop_partitions('calamity.part_test', true);
+DELETE FROM calamity.part_test;
+
+
 /* check function build_hash_condition() */
 SELECT build_hash_condition('int4', 'val', 10, 1);
 SELECT build_hash_condition('text', 'val', 10, 1);
@@ -70,6 +101,9 @@ SELECT build_update_trigger_name(NULL) IS NULL;
 /* check function build_update_trigger_func_name() */
 SELECT build_update_trigger_func_name('calamity.part_test');
 SELECT build_update_trigger_func_name(NULL) IS NULL;
+
+/* check function stop_concurrent_part_task() */
+SELECT stop_concurrent_part_task(1::regclass);
 
 /* check invoke_on_partition_created_callback() for RANGE */
 SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part_test', 1, NULL, NULL::int);
