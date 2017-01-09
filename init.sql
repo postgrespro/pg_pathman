@@ -182,12 +182,12 @@ LANGUAGE plpgsql STRICT;
  */
 CREATE OR REPLACE FUNCTION @extschema@.show_partition_list()
 RETURNS TABLE (
-	 parent		REGCLASS,
-	 partition	REGCLASS,
-	 parttype	INT4,
-	 partattr	TEXT,
-	 range_min	TEXT,
-	 range_max	TEXT)
+	 parent			REGCLASS,
+	 "partition"	REGCLASS,
+	 parttype		INT4,
+	 partattr		TEXT,
+	 range_min		TEXT,
+	 range_max		TEXT)
 AS 'pg_pathman', 'show_partition_list_internal'
 LANGUAGE C STRICT;
 
@@ -580,7 +580,7 @@ SET pg_pathman.enable_partitionfilter = off; /* ensures that PartitionFilter is 
  */
 CREATE OR REPLACE FUNCTION @extschema@.copy_foreign_keys(
 	parent_relid	REGCLASS,
-	partition		REGCLASS)
+	partition_relid	REGCLASS)
 RETURNS VOID AS
 $$
 DECLARE
@@ -588,17 +588,28 @@ DECLARE
 
 BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
-	PERFORM @extschema@.validate_relname(partition);
+	PERFORM @extschema@.validate_relname(partition_relid);
 
 	FOR rec IN (SELECT oid as conid FROM pg_catalog.pg_constraint
 				WHERE conrelid = parent_relid AND contype = 'f')
 	LOOP
 		EXECUTE format('ALTER TABLE %s ADD %s',
-					   partition::TEXT,
+					   partition_relid::TEXT,
 					   pg_catalog.pg_get_constraintdef(rec.conid));
 	END LOOP;
 END
 $$ LANGUAGE plpgsql STRICT;
+
+
+/*
+ * Partitioning key
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_partition_key(relid REGCLASS)
+RETURNS TEXT AS
+$$
+	SELECT attname FROM pathman_config WHERE partrel = relid;
+$$
+LANGUAGE sql STRICT;
 
 
 /*
@@ -657,6 +668,14 @@ CREATE OR REPLACE FUNCTION @extschema@.get_attribute_type(
 	relid	REGCLASS,
 	attname	TEXT)
 RETURNS REGTYPE AS 'pg_pathman', 'get_attribute_type_pl'
+LANGUAGE C STRICT;
+
+/*
+ * Return partition key type
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_partition_key_type(
+	relid	REGCLASS)
+RETURNS REGTYPE AS 'pg_pathman', 'get_partition_key_type'
 LANGUAGE C STRICT;
 
 /*
@@ -769,7 +788,7 @@ LANGUAGE C STRICT;
  */
 CREATE OR REPLACE FUNCTION @extschema@.invoke_on_partition_created_callback(
 	parent_relid	REGCLASS,
-	partition		REGCLASS,
+	"partition"		REGCLASS,
 	init_callback	REGPROCEDURE,
 	start_value		ANYELEMENT,
 	end_value		ANYELEMENT)
@@ -781,7 +800,7 @@ LANGUAGE C;
  */
 CREATE OR REPLACE FUNCTION @extschema@.invoke_on_partition_created_callback(
 	parent_relid	REGCLASS,
-	partition		REGCLASS,
+	"partition"		REGCLASS,
 	init_callback	REGPROCEDURE)
 RETURNS VOID AS 'pg_pathman', 'invoke_on_partition_created_callback'
 LANGUAGE C;

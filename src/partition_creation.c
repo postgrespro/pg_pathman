@@ -780,6 +780,9 @@ create_single_partition_internal(Oid parent_relid,
 	create_stmt.oncommit		= ONCOMMIT_NOOP;
 	create_stmt.tablespacename	= tablespace;
 	create_stmt.if_not_exists	= false;
+#ifdef PGPRO_VERSION
+	create_stmt.partition_info  = NULL;
+#endif
 
 	/* Do we have to escalate privileges? */
 	if (need_priv_escalation)

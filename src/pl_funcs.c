@@ -42,6 +42,7 @@ PG_FUNCTION_INFO_V1( get_number_of_partitions_pl );
 PG_FUNCTION_INFO_V1( get_parent_of_partition_pl );
 PG_FUNCTION_INFO_V1( get_base_type_pl );
 PG_FUNCTION_INFO_V1( get_attribute_type_pl );
+PG_FUNCTION_INFO_V1( get_partition_key_type );
 PG_FUNCTION_INFO_V1( get_tablespace_pl );
 
 PG_FUNCTION_INFO_V1( show_partition_list_internal );
@@ -229,6 +230,23 @@ get_attribute_type_pl(PG_FUNCTION_ARGS)
 }
 
 /*
+ * Return partition key type
+ */
+Datum
+get_partition_key_type(PG_FUNCTION_ARGS)
+{
+	Oid					relid = PG_GETARG_OID(0);
+	const PartRelationInfo   *prel = get_pathman_relation_info(relid);
+
+	if (!prel)
+		elog(ERROR,
+			 "Relation '%s' isn't partitioned by pg_pathman",
+			 get_rel_name(relid));
+
+	PG_RETURN_OID(prel->atttype);
+}
+
+/*
  * Return tablespace name for specified relation
  */
 Datum
@@ -253,7 +271,6 @@ get_tablespace_pl(PG_FUNCTION_ARGS)
 	result = get_tablespace_name(tablespace_id);
 	PG_RETURN_TEXT_P(cstring_to_text(result));
 }
-
 
 /*
  * ----------------------
