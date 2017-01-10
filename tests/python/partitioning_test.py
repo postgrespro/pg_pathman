@@ -7,9 +7,12 @@
 """
 
 import unittest
+import math
 from testgres import get_new_node, stop_all
 import time
 import os
+import re
+import subprocess
 import threading
 
 
@@ -703,6 +706,56 @@ class PartitioningTests(unittest.TestCase):
 			self.assertEqual(int(rows[3][5]), 41)
 			self.assertEqual(int(rows[4][5]), 51)
 			self.assertEqual(int(rows[5][5]), 61)
+
+		# Stop instance and finish work
+		node.stop()
+		node.cleanup()
+
+	def test_concurrent_detach(self):
+		"""Test concurrent detach partition with contiguous tuple inserting and spawning new partitions"""
+
+		# Init parameters
+		num_insert_workers = 8
+		detach_timeout = 0.1			# time in sec between successive inserts and detachs
+		num_detachs = 100				# estimated number of detachs
+		inserts_advance = 1				# abvance in sec of inserts process under detachs
+		test_interval = int(math.ceil(detach_timeout * num_detachs))
+
+		# Create and start new instance
+		node = self.start_new_pathman_cluster(allows_streaming=False)
+
+		# Create partitioned table for testing that spawns new partition on each next *detach_timeout* sec
+		with node.connect() as con0:
+			con0.begin()
+			con0.execute('create table ts_range_partitioned(ts timestamp not null)')
+			con0.execute("select create_range_partitions('ts_range_partitioned', 'ts', current_timestamp, interval '%f', 1)" % detach_timeout)
+			con0.commit()
+
+		# Run in background inserts and detachs processes
+		FNULL = open(os.devnull, 'w')
+		inserts = node.pgbench(stdout=FNULL, stderr=subprocess.PIPE, options=[
+				"-j", "%i" % num_insert_workers,
+				"-c", "%i" % num_insert_workers,
+				"-f", "pgbench_scripts/insert_current_timestamp.pgbench",
+				"-T", "%i" % (test_interval+inserts_advance)
+			])
+		time.sleep(inserts_advance)
+		detachs = node.pgbench(stdout=FNULL, stderr=subprocess.PIPE, options=[
+				"-D", "timeout=%f" % detach_timeout,
+				"-f", "pgbench_scripts/detachs_in_timeout.pgbench",
+				"-T", "%i" % test_interval
+			])
+
+		# Wait for completion of processes
+		inserts.wait()
+		detachs.wait()
+
+		# Obtain error log from inserts process
+		inserts_errors = inserts.stderr.read()
+
+		self.assertIsNone(
+				re.search("ERROR:  constraint", inserts_errors),
+				msg="Race condition between detach and concurrent inserts with append partition is expired")
 
 		# Stop instance and finish work
 		node.stop()
