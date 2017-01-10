@@ -11,6 +11,7 @@
 #include "xact_handling.h"
 
 #include "postgres.h"
+#include "access/transam.h"
 #include "access/xact.h"
 #include "catalog/catalog.h"
 #include "miscadmin.h"
@@ -154,6 +155,16 @@ xact_is_set_transaction_stmt(Node *stmt)
 	}
 
 	return false;
+}
+
+/*
+ * Check if object is visible in newer transactions.
+ */
+bool
+xact_object_is_visible(TransactionId obj_xmin)
+{
+	return TransactionIdPrecedes(obj_xmin, GetCurrentTransactionId()) ||
+		   TransactionIdEquals(obj_xmin, FrozenTransactionId);
 }
 
 /*

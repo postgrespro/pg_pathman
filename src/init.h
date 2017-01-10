@@ -97,7 +97,9 @@ extern PathmanInitState 	pg_pathman_init_state;
 
 /* Lowest version of Pl/PgSQL frontend compatible with internals (0xAA_BB_CC) */
 #define LOWEST_COMPATIBLE_FRONT		0x010200
-#define CURRENT_LIB_VERSION			0x010200
+
+/* Current version on native C library (0xAA_BB_CC) */
+#define CURRENT_LIB_VERSION			0x010201
 
 
 /*

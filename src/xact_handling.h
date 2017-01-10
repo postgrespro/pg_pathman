@@ -33,6 +33,7 @@ bool xact_bgw_conflicting_lock_exists(Oid relid);
 bool xact_is_level_read_committed(void);
 bool xact_is_transaction_stmt(Node *stmt);
 bool xact_is_set_transaction_stmt(Node *stmt);
+bool xact_object_is_visible(TransactionId obj_xmin);
 
 
 #endif /* XACT_HANDLING_H */

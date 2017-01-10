@@ -301,6 +301,10 @@ handle_modification_query(Query *parse)
 		return;
 
 	rte = rt_fetch(result_rel, parse->rtable);
+
+	/* Exit if it's DELETE FROM ONLY table */
+	if (!rte->inh) return;
+
 	prel = get_pathman_relation_info(rte->relid);
 
 	/* Exit if it's not partitioned */
