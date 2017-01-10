@@ -303,7 +303,7 @@ get_pathman_relation_info(Oid relid)
 		 (prel ? "live" : "NULL"), relid, MyProcPid);
 
 	/* Make sure that 'prel' is valid */
-	Assert(PrelIsValid(prel));
+	Assert(!prel || PrelIsValid(prel));
 
 	return prel;
 }
