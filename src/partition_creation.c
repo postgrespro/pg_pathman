@@ -76,7 +76,7 @@ static ObjectAddress create_table_using_stmt(CreateStmt *create_stmt,
 											 Oid relowner);
 
 static void copy_foreign_keys(Oid parent_relid, Oid partition_oid);
-static void copy_acl_privileges(Oid parent_relid, Oid partition_relid);
+static void postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid);
 
 static Constraint *make_constraint_common(char *name, Node *raw_expr);
 
@@ -799,8 +799,8 @@ create_single_partition_internal(Oid parent_relid,
 			/* Make changes visible */
 			CommandCounterIncrement();
 
-			/* Copy ACL privileges of the parent table */
-			copy_acl_privileges(parent_relid, partition_relid);
+			/* Copy ACL privileges of the parent table and set "attislocal" */
+			postprocess_child_table_and_atts(parent_relid, partition_relid);
 		}
 		else if (IsA(cur_stmt, CreateForeignTableStmt))
 		{
@@ -880,9 +880,9 @@ create_table_using_stmt(CreateStmt *create_stmt, Oid relowner)
 	return table_addr;
 }
 
-/* Copy ACL privileges of parent table */
+/* Copy ACL privileges of parent table and set "attislocal" = true */
 static void
-copy_acl_privileges(Oid parent_relid, Oid partition_relid)
+postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid)
 {
 	Relation		pg_class_rel,
 					pg_attribute_rel;
@@ -1039,9 +1039,15 @@ copy_acl_privileges(Oid parent_relid, Oid partition_relid)
 			/* Copy ItemPointer of this tuple */
 			iptr = subhtup->t_self;
 
+			/* Change ACL of this column */
 			values[Anum_pg_attribute_attacl - 1] = acl_datum;	/* ACL array */
 			nulls[Anum_pg_attribute_attacl - 1] = acl_null;		/* do we have ACL? */
 			replaces[Anum_pg_attribute_attacl - 1] = true;
+
+			/* Change 'attislocal' for DROP COLUMN */
+			values[Anum_pg_attribute_attislocal - 1] = false;	/* should not be local */
+			nulls[Anum_pg_attribute_attislocal - 1] = false;	/* NOT NULL */
+			replaces[Anum_pg_attribute_attislocal - 1] = true;
 
 			/* Build new tuple with parent's ACL */
 			subhtup = heap_modify_tuple(subhtup, pg_attribute_desc,
