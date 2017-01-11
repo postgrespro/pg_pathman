@@ -15,6 +15,7 @@
 #include "planner_tree_modification.h"
 #include "utils.h"
 
+#include "catalog/pg_type.h"
 #include "foreign/fdwapi.h"
 #include "foreign/foreign.h"
 #include "nodes/nodeFuncs.h"
@@ -65,7 +66,7 @@ CustomExecMethods	partition_filter_exec_methods;
 
 
 static estate_mod_data * fetch_estate_mod_data(EState *estate);
-static List * pfilter_build_tlist(List *tlist);
+static List * pfilter_build_tlist(Relation parent_rel, List *tlist);
 static Index append_rte_to_estate(EState *estate, RangeTblEntry *rte);
 static int append_rri_to_estate(EState *estate, ResultRelInfo *rri);
 static void prepare_rri_fdw_for_insert(EState *estate,
@@ -317,10 +318,11 @@ find_partitions_for_value(Datum value, Oid value_type,
 
 
 Plan *
-make_partition_filter(Plan *subplan, Oid partitioned_table,
+make_partition_filter(Plan *subplan, Oid parent_relid,
 					  OnConflictAction conflict_action)
 {
 	CustomScan *cscan = makeNode(CustomScan);
+	Relation	parent_rel;
 
 	cscan->scan.plan.startup_cost = subplan->startup_cost;
 	cscan->scan.plan.total_cost = subplan->total_cost;
@@ -330,14 +332,17 @@ make_partition_filter(Plan *subplan, Oid partitioned_table,
 	cscan->methods = &partition_filter_plan_methods;
 	cscan->custom_plans = list_make1(subplan);
 
-	cscan->scan.plan.targetlist = pfilter_build_tlist(subplan->targetlist);
+	parent_rel = RelationIdGetRelation(parent_relid);
+	cscan->scan.plan.targetlist = pfilter_build_tlist(parent_rel,
+													  subplan->targetlist);
+	RelationClose(parent_rel);
 
 	/* No relation will be scanned */
 	cscan->scan.scanrelid = 0;
 	cscan->custom_scan_tlist = subplan->targetlist;
 
 	/* Pack partitioned table's Oid and conflict_action */
-	cscan->custom_private = list_make2_int(partitioned_table, conflict_action);
+	cscan->custom_private = list_make2_int(parent_relid, conflict_action);
 
 	return &cscan->scan.plan;
 }
@@ -755,7 +760,7 @@ append_rri_to_estate(EState *estate, ResultRelInfo *rri)
  * Build partition filter's target list pointing to subplan tuple's elements
  */
 static List *
-pfilter_build_tlist(List *tlist)
+pfilter_build_tlist(Relation parent_rel, List *tlist)
 {
 	List	   *result_tlist = NIL;
 	ListCell   *lc;
@@ -763,17 +768,42 @@ pfilter_build_tlist(List *tlist)
 
 	foreach (lc, tlist)
 	{
-		TargetEntry *tle = (TargetEntry *) lfirst(lc);
+		TargetEntry		   *tle = (TargetEntry *) lfirst(lc);
+		Expr			   *col_expr;
+		Form_pg_attribute	attr;
 
-		Var *var = makeVar(INDEX_VAR,	/* point to subplan's elements */
-						   i,			/* direct attribute mapping */
-						   exprType((Node *) tle->expr),
-						   exprTypmod((Node *) tle->expr),
-						   exprCollation((Node *) tle->expr),
-						   0);
+		/* Make sure that this attribute exists */
+		if (i > RelationGetDescr(parent_rel)->natts)
+			elog(ERROR, "error in function " CppAsString(pfilter_build_tlist));
+
+		/* Fetch pg_attribute entry for this column */
+		attr = RelationGetDescr(parent_rel)->attrs[i - 1];
+
+		/* If this column is dropped, create a placeholder Const */
+		if (attr->attisdropped)
+		{
+			/* Insert NULL for dropped column */
+			col_expr = (Expr *) makeConst(INT4OID,
+										  -1,
+										  InvalidOid,
+										  sizeof(int32),
+										  (Datum) 0,
+										  true,
+										  true);
+		}
+		/* Otherwise we should create a Var referencing subplan's output */
+		else
+		{
+			col_expr = (Expr *) makeVar(INDEX_VAR,	/* point to subplan's elements */
+										i,			/* direct attribute mapping */
+										exprType((Node *) tle->expr),
+										exprTypmod((Node *) tle->expr),
+										exprCollation((Node *) tle->expr),
+										0);
+		}
 
 		result_tlist = lappend(result_tlist,
-							   makeTargetEntry((Expr *) var,
+							   makeTargetEntry(col_expr,
 											   i,
 											   NULL,
 											   tle->resjunk));
