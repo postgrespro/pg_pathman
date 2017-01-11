@@ -239,6 +239,17 @@ make_inh_translation_list(Relation oldrelation, Relation newrelation,
 			for (new_attno = 0; new_attno < newnatts; new_attno++)
 			{
 				att = new_tupdesc->attrs[new_attno];
+
+				/*
+				 * Make clang analyzer happy:
+				 *
+				 * Access to field 'attisdropped' results
+				 * in a dereference of a null pointer
+				 */
+				if (!att)
+					elog(ERROR, "error in function "
+								CppAsString(make_inh_translation_list));
+
 				if (!att->attisdropped && att->attinhcount != 0 &&
 					strcmp(attname, NameStr(att->attname)) == 0)
 					break;
