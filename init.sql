@@ -597,6 +597,40 @@ $$ LANGUAGE plpgsql STRICT;
 
 
 /*
+ * Set new relname, schema and tablespace
+ */
+CREATE OR REPLACE FUNCTION @extschema@.alter_partition(relation REGCLASS,
+													   new_name TEXT,
+													   new_schema REGNAMESPACE,
+													   new_tablespace TEXT)
+RETURNS VOID AS
+$$
+DECLARE
+	orig_name TEXT;
+	orig_schema OID;
+BEGIN
+	SELECT relname, relnamespace FROM pg_class WHERE oid = relation
+	INTO orig_name, orig_schema;
+
+	/* Alter table name */
+	IF new_name != orig_name THEN
+		EXECUTE format('ALTER TABLE %s RENAME TO %s', relation, new_name);
+	END IF;
+
+	/* Alter table schema */
+	IF new_schema != orig_schema THEN
+		EXECUTE format('ALTER TABLE %s SET SCHEMA %s', relation, new_schema);
+	END IF;
+
+	/* Move to another tablespace */
+	IF NOT new_tablespace IS NULL THEN
+		EXECUTE format('ALTER TABLE %s SET TABLESPACE %s', relation, new_tablespace);
+	END IF;
+END
+$$ LANGUAGE plpgsql;
+
+
+/*
  * Partitioning key
  */
 CREATE OR REPLACE FUNCTION @extschema@.get_partition_key(relid REGCLASS)

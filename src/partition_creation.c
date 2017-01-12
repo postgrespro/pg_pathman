@@ -363,42 +363,26 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type)
 				RangeEntry *ranges = PrelGetRangesArray(prel);
 				Datum		bound_min,			/* absolute MIN */
 							bound_max;			/* absolute MAX */
-				// Infinitable	bound_min,		/* lower bound of all partitions */
-				// 			bound_max;		/* upper bound of all partitions */
-				// Infinitable	start,
-				// 			end; 
 
 				Oid			interval_type = InvalidOid;
 				Datum		interval_binary, /* assigned 'width' of one partition */
 							interval_text;
 
-				// bound_min = ranges[0].min;
-				// bound_max = ranges[PrelLastChild(prel)].max;
-
-				// start.value = !IsInfinite(&bound_min) ?
-				// 	datumCopy(InfinitableGetValue(&bound_min),
-				// 			  prel->attbyval,
-				// 			  prel->attlen) :
-				// 	(Datum) 0;
-				// start.is_infinite = IsInfinite(&bound_min);
-
-				// end.value = !IsInfinite(&bound_max) ?
-				// 	datumCopy(InfinitableGetValue(&bound_max),
-				// 			  prel->attbyval,
-				// 			  prel->attlen) :
-				// 	(Datum) 0;
-				// end.is_infinite = IsInfinite(&bound_max);
-
 				/* Read max & min range values from PartRelationInfo */
-				/* TODO */
-				// bound_min = PrelGetRangesArray(prel)[0].min;
-				// bound_max = PrelGetRangesArray(prel)[PrelLastChild(prel)].max;
 				bound_min = BoundGetValue(&ranges[0].min);
 				bound_max = BoundGetValue(&ranges[PrelLastChild(prel)].max);
 
 				/* Copy datums on order to protect them from cache invalidation */
 				bound_min = datumCopy(bound_min, prel->attbyval, prel->attlen);
 				bound_max = datumCopy(bound_max, prel->attbyval, prel->attlen);
+
+				/* Check if interval is set */
+				if (isnull[Anum_pathman_config_range_interval - 1])
+				{
+					elog(ERROR,
+						 "Could not find appropriate partition for key '%s'",
+						 datum_to_cstring(value, value_type));
+				}
 
 				/* Retrieve interval as TEXT from tuple */
 				interval_text = values[Anum_pathman_config_range_interval - 1];
