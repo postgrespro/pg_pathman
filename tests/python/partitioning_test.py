@@ -721,6 +721,17 @@ class PartitioningTests(unittest.TestCase):
 		inserts_advance = 1				# abvance in sec of inserts process under detachs
 		test_interval = int(math.ceil(detach_timeout * num_detachs))
 
+		insert_pgbench_script = os.path.dirname(os.path.realpath(__file__)) \
+					+ "/pgbench_scripts/insert_current_timestamp.pgbench"
+		detach_pgbench_script = os.path.dirname(os.path.realpath(__file__)) \
+					+ "/pgbench_scripts/detachs_in_timeout.pgbench"
+
+		# Check pgbench scripts on existance
+		self.assertTrue(os.path.isfile(insert_pgbench_script),
+				msg="pgbench script with insert timestamp doesn't exist")
+		self.assertTrue(os.path.isfile(detach_pgbench_script),
+				msg="pgbench script with detach letfmost partition doesn't exist")
+
 		# Create and start new instance
 		node = self.start_new_pathman_cluster(allows_streaming=False)
 
@@ -733,16 +744,21 @@ class PartitioningTests(unittest.TestCase):
 
 		# Run in background inserts and detachs processes
 		FNULL = open(os.devnull, 'w')
+
+		# init pgbench's utility tables
+		init_pgbench = node.pgbench(stdout=FNULL, stderr=FNULL, options=["-i"])
+		init_pgbench.wait()
+
 		inserts = node.pgbench(stdout=FNULL, stderr=subprocess.PIPE, options=[
 				"-j", "%i" % num_insert_workers,
 				"-c", "%i" % num_insert_workers,
-				"-f", "pgbench_scripts/insert_current_timestamp.pgbench",
+				"-f", insert_pgbench_script,
 				"-T", "%i" % (test_interval+inserts_advance)
 			])
 		time.sleep(inserts_advance)
 		detachs = node.pgbench(stdout=FNULL, stderr=subprocess.PIPE, options=[
 				"-D", "timeout=%f" % detach_timeout,
-				"-f", "pgbench_scripts/detachs_in_timeout.pgbench",
+				"-f", detach_pgbench_script,
 				"-T", "%i" % test_interval
 			])
 
@@ -752,14 +768,7 @@ class PartitioningTests(unittest.TestCase):
 
 		# Obtain error log from inserts process
 		inserts_errors = inserts.stderr.read()
-		expected_errors = ('starting vacuum...ERROR:  relation "pgbench_branches" does not exist\n'
-				   '(ignoring this error and continuing anyway)\n'
-				   'ERROR:  relation "pgbench_tellers" does not exist\n'
-				   '(ignoring this error and continuing anyway)\n'
-				   'ERROR:  relation "pgbench_history" does not exist\n'
-				   '(ignoring this error and continuing anyway)\n'
-				   'end.\n')
-		self.assertEqual(inserts_errors, expected_errors,
+		self.assertIsNone(re.search("ERROR|FATAL|PANIC", inserts_errors),
 			msg="Race condition between detach and concurrent inserts with append partition is expired")
 
 		# Stop instance and finish work
