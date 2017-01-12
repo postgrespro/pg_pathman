@@ -752,10 +752,15 @@ class PartitioningTests(unittest.TestCase):
 
 		# Obtain error log from inserts process
 		inserts_errors = inserts.stderr.read()
-
-		self.assertIsNone(
-				re.search("ERROR:  constraint", inserts_errors),
-				msg="Race condition between detach and concurrent inserts with append partition is expired")
+		expected_errors = ('starting vacuum...ERROR:  relation "pgbench_branches" does not exist\n'
+				   '(ignoring this error and continuing anyway)\n'
+				   'ERROR:  relation "pgbench_tellers" does not exist\n'
+				   '(ignoring this error and continuing anyway)\n'
+				   'ERROR:  relation "pgbench_history" does not exist\n'
+				   '(ignoring this error and continuing anyway)\n'
+				   'end.\n')
+		self.assertEqual(inserts_errors, expected_errors,
+			msg="Race condition between detach and concurrent inserts with append partition is expired")
 
 		# Stop instance and finish work
 		node.stop()
