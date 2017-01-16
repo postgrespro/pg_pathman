@@ -750,6 +750,7 @@ $$
 DECLARE
 	v_part_name		TEXT;
 	v_atttype		REGTYPE;
+	v_args_format	TEXT;
 
 BEGIN
 	IF @extschema@.get_number_of_partitions(parent_relid) = 0 THEN
@@ -769,25 +770,21 @@ BEGIN
 	END IF;
 
 	IF @extschema@.is_date_type(p_atttype) THEN
-		v_part_name := @extschema@.create_single_range_partition(
-			parent_relid,
-			p_range[2],
-			p_range[2] + p_interval::interval,
-			partition_name,
-			tablespace);
+		v_args_format := format('$1, $2, ($2 + $3::interval)::%s, $4, $5', v_atttype::TEXT);
 	ELSE
-		EXECUTE
-			format('SELECT @extschema@.create_single_range_partition($1, $2, $2 + $3::%s, $4, $5)',
-				   v_atttype::TEXT)
-		USING
-			parent_relid,
-			p_range[2],
-			p_interval,
-			partition_name,
-			tablespace
-		INTO
-			v_part_name;
+		v_args_format := format('$1, $2, $2 + $3::%s, $4, $5', v_atttype::TEXT);
 	END IF;
+
+	EXECUTE
+		format('SELECT @extschema@.create_single_range_partition(%s)', v_args_format)
+	USING
+		parent_relid,
+		p_range[2],
+		p_interval,
+		partition_name,
+		tablespace
+	INTO
+		v_part_name;
 
 	RETURN v_part_name;
 END
@@ -864,6 +861,7 @@ $$
 DECLARE
 	v_part_name		TEXT;
 	v_atttype		REGTYPE;
+	v_args_format	TEXT;
 
 BEGIN
 	IF @extschema@.get_number_of_partitions(parent_relid) = 0 THEN
@@ -883,25 +881,21 @@ BEGIN
 	END IF;
 
 	IF @extschema@.is_date_type(p_atttype) THEN
-		v_part_name := @extschema@.create_single_range_partition(
-			parent_relid,
-			p_range[1] - p_interval::interval,
-			p_range[1],
-			partition_name,
-			tablespace);
+		v_args_format := format('$1, ($2 - $3::interval)::%s, $2, $4, $5', v_atttype::TEXT);
 	ELSE
-		EXECUTE
-			format('SELECT @extschema@.create_single_range_partition($1, $2 - $3::%s, $2, $4, $5)',
-				   v_atttype::TEXT)
-		USING
-			parent_relid,
-			p_range[1],
-			p_interval,
-			partition_name,
-			tablespace
-		INTO
-			v_part_name;
+		v_args_format := format('$1, $2 - $3::%s, $2, $4, $5', v_atttype::TEXT);
 	END IF;
+
+	EXECUTE
+		format('SELECT @extschema@.create_single_range_partition(%s)', v_args_format)
+	USING
+		parent_relid,
+		p_range[1],
+		p_interval,
+		partition_name,
+		tablespace
+	INTO
+		v_part_name;
 
 	RETURN v_part_name;
 END
