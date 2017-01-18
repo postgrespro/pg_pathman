@@ -15,7 +15,9 @@ CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions(
 	parent_relid		REGCLASS,
 	attribute			TEXT,
 	partitions_count	INTEGER,
-	partition_data		BOOLEAN DEFAULT TRUE)
+	partition_data		BOOLEAN DEFAULT TRUE,
+	relnames			TEXT[] DEFAULT NULL,
+	tablespaces			TEXT[] DEFAULT NULL)
 RETURNS INTEGER AS
 $$
 BEGIN
@@ -39,7 +41,9 @@ BEGIN
 	/* Create partitions */
 	PERFORM @extschema@.create_hash_partitions_internal(parent_relid,
 														attribute,
-														partitions_count);
+														partitions_count,
+														relnames,
+														tablespaces);
 
 	/* Notify backend about changes */
 	PERFORM @extschema@.on_create_partitions(parent_relid);
@@ -275,9 +279,11 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions_internal(
 	parent_relid		REGCLASS,
 	attribute			TEXT,
-	partitions_count	INTEGER)
+	partitions_count	INTEGER,
+	relnames			TEXT[] DEFAULT NULL,
+	tablespaces			TEXT[] DEFAULT NULL)
 RETURNS VOID AS 'pg_pathman', 'create_hash_partitions_internal'
-LANGUAGE C STRICT;
+LANGUAGE C;
 
 /*
  * Returns hash function OID for specified type

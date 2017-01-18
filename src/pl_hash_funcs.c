@@ -13,10 +13,13 @@
 #include "relation_info.h"
 #include "utils.h"
 
+#include "catalog/namespace.h"
+#include "catalog/pg_type.h"
 #include "utils/builtins.h"
 #include "utils/typcache.h"
 #include "utils/lsyscache.h"
 #include "utils/builtins.h"
+#include "utils/array.h"
 
 
 /* Function declarations */
@@ -27,6 +30,9 @@ PG_FUNCTION_INFO_V1( get_type_hash_func );
 PG_FUNCTION_INFO_V1( get_hash_part_idx );
 
 PG_FUNCTION_INFO_V1( build_hash_condition );
+
+
+static char **deconstruct_text_array(Datum arr, int *num_elems);
 
 
 /*
@@ -41,6 +47,13 @@ create_hash_partitions_internal(PG_FUNCTION_ARGS)
 	uint32	part_count = PG_GETARG_INT32(2),
 			i;
 
+	/* Partitions names and tablespaces */
+	char  **names = NULL,
+		  **tablespaces = NULL;
+	int		names_size = 0,
+			tablespaces_size = 0;
+	RangeVar **rangevars = NULL;
+
 	/* Check that there's no partitions yet */
 	if (get_pathman_relation_info(parent_relid))
 		elog(ERROR, "cannot add new HASH partitions");
@@ -49,14 +62,82 @@ create_hash_partitions_internal(PG_FUNCTION_ARGS)
 											  TextDatumGetCString(partitioned_col_name),
 											  false);
 
+	/* Get partition names and tablespaces */
+	if (!PG_ARGISNULL(3))
+		names = deconstruct_text_array(PG_GETARG_DATUM(3), &names_size);
+
+	if (!PG_ARGISNULL(4))
+		tablespaces = deconstruct_text_array(PG_GETARG_DATUM(4), &tablespaces_size);
+
+	/* Convert partition names into RangeVars */
+	if (names_size > 0)
+	{
+		rangevars = palloc(sizeof(RangeVar) * names_size);
+		for (i = 0; i < names_size; i++)
+		{
+			List *nl = stringToQualifiedNameList(names[i]);
+
+			rangevars[i] = makeRangeVarFromNameList(nl);
+		}
+	}
+
 	for (i = 0; i < part_count; i++)
 	{
+		RangeVar   *rel = rangevars != NULL ? rangevars[i] : NULL;
+		char 	   *tablespace = tablespaces != NULL ? tablespaces[i] : NULL;
+
 		/* Create a partition (copy FKs, invoke callbacks etc) */
 		create_single_hash_partition_internal(parent_relid, i, part_count,
-											  partitioned_col_type, NULL, NULL);
+											  partitioned_col_type,
+											  rel, tablespace);
 	}
 
 	PG_RETURN_VOID();
+}
+
+/*
+ * Convert Datum into cstring array
+ */
+static char **
+deconstruct_text_array(Datum arr, int *num_elems)
+{
+	ArrayType  *arrayval;
+	int16		elemlen;
+	bool		elembyval;
+	char		elemalign;
+	Datum	   *elem_values;
+	bool	   *elem_nulls;
+	int16		i;
+
+	arrayval = DatumGetArrayTypeP(arr);
+
+	Assert(ARR_ELEMTYPE(arrayval) == TEXTOID);
+
+	get_typlenbyvalalign(ARR_ELEMTYPE(arrayval),
+						 &elemlen, &elembyval, &elemalign);
+	deconstruct_array(arrayval,
+					  ARR_ELEMTYPE(arrayval),
+					  elemlen, elembyval, elemalign,
+					  &elem_values, &elem_nulls, num_elems);
+
+	/* If there are actual values then convert them into cstrings */
+	if (num_elems > 0)
+	{
+		char **strings = palloc(sizeof(char *) * *num_elems);
+
+		for (i = 0; i < *num_elems; i++)
+		{
+			if (elem_nulls[i])
+				elog(ERROR,
+					 "Partition name and tablespace arrays cannot contain nulls");
+
+			strings[i] = TextDatumGetCString(elem_values[i]);
+		}
+
+		return strings;
+	}
+
+	return NULL;
 }
 
 /*
