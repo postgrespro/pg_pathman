@@ -83,6 +83,8 @@ static Constraint *make_constraint_common(char *name, Node *raw_expr);
 static Value make_string_value_struct(char *str);
 static Value make_int_value_struct(int int_val);
 
+static RangeVar *makeRangeVarFromRelid(Oid relid);
+
 
 /*
  * ---------------------------------------
@@ -1424,6 +1426,40 @@ make_int_value_struct(int int_val)
 	val.val.ival = int_val;
 
 	return val;
+}
+
+void
+drop_check_constraint(Oid relid, AttrNumber attnum)
+{
+	char		   *constr_name;
+	AlterTableStmt *stmt;
+	AlterTableCmd  *cmd;
+
+	/* Build a correct name for this constraint */
+	constr_name = build_check_constraint_name_relid_internal(relid, attnum);
+
+	stmt = makeNode(AlterTableStmt);
+	stmt->relation = makeRangeVarFromRelid(relid);
+	stmt->relkind = OBJECT_TABLE;
+
+	cmd = makeNode(AlterTableCmd);
+	cmd->subtype = AT_DropConstraint;
+	cmd->name = constr_name;
+	cmd->behavior = DROP_RESTRICT;
+	cmd->missing_ok = true;
+
+	stmt->cmds = list_make1(cmd);
+
+	AlterTable(relid, ShareUpdateExclusiveLock, stmt);
+}
+
+static RangeVar *
+makeRangeVarFromRelid(Oid relid)
+{
+	char *relname = get_rel_name(relid);
+	char *namespace = get_namespace_name(get_rel_namespace(relid));
+
+	return makeRangeVar(namespace, relname, -1);
 }
 
 

@@ -234,7 +234,6 @@ get_rel_name_or_relid(Oid relid)
 	return relname;
 }
 
-
 #if PG_VERSION_NUM < 90600
 /*
  * Returns the relpersistence associated with a given relation.

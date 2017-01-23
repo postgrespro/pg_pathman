@@ -13,8 +13,13 @@
 #include "partition_creation.h"
 #include "relation_info.h"
 #include "utils.h"
+#include "xact_handling.h"
 
+#include "access/xact.h"
 #include "catalog/namespace.h"
+#include "catalog/pg_type.h"
+#include "catalog/heap.h"
+#include "executor/spi.h"
 #include "parser/parse_relation.h"
 #include "parser/parse_expr.h"
 #include "utils/array.h"
@@ -30,6 +35,14 @@ static ArrayType *construct_infinitable_array(Bound **elems,
 											  int elmlen,
 											  bool elmbyval,
 											  char elmalign);
+static void check_adjacence(Oid cmp_proc, List *ranges);
+static void merge_range_partitions_internal(Oid parent, Oid *partitions, uint32 npart);
+static void recreate_range_constraint(Oid partition,
+									  const char *attname,
+									  AttrNumber attnum,
+									  Oid atttype,
+									  const Bound *lower,
+									  const Bound *upper);
 
 /* Function declarations */
 
@@ -42,6 +55,7 @@ PG_FUNCTION_INFO_V1( get_part_range_by_idx );
 
 PG_FUNCTION_INFO_V1( build_range_condition );
 PG_FUNCTION_INFO_V1( build_sequence_name );
+PG_FUNCTION_INFO_V1( merge_range_partitions );
 
 
 /*
@@ -59,10 +73,6 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 	Oid			parent_relid;
 
 	/* RANGE boundaries + value type */
-	// Datum		start_value,
-	// 			end_value;
-	// bool		infinite_start,
-	// 			infinite_end;
 	Bound		start,
 				end;
 	Oid			value_type;
@@ -81,10 +91,6 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 
 	/* Fetch mandatory args */
 	parent_relid	= PG_GETARG_OID(0);
-	// start_value		= PG_GETARG_DATUM(1);
-	// end_value		= PG_GETARG_DATUM(2);
-	// infinite_start	= PG_ARGISNULL(1);
-	// infinite_end	= PG_ARGISNULL(2);
 	value_type		= get_fn_expr_argtype(fcinfo->flinfo, 1);
 	MakeBound(&start,
 			  PG_GETARG_DATUM(1),
@@ -242,22 +248,7 @@ get_part_range_by_oid(PG_FUNCTION_ARGS)
 		if (ranges[i].child_oid == partition_relid)
 		{
 			ArrayType  *arr;
-			// Datum		elems[2] = { InfinitableGetValue(&ranges[i].min),
-			// 						 InfinitableGetValue(&ranges[i].max) };
-			// bool		nulls[2] = { IsInfinite(&ranges[i].min),
-			// 						 IsInfinite(&ranges[i].max) };
-			// int			dims[1] = { 2 };
-			// int			lbs[1] = { 1 };
-
-			// arr = construct_md_array(elems, nulls, 1, dims, lbs,
-			// 					   prel->atttype, prel->attlen,
-			// 					   prel->attbyval, prel->attalign);
-
-			// arr = construct_array(elems, 2, prel->atttype,
-			// 					  prel->attlen, prel->attbyval,
-			// 					  prel->attalign);
 			Bound *elems[2] = { &ranges[i].min, &ranges[i].max };
-
 
 			arr = construct_infinitable_array(elems, 2,
 											  prel->atttype, prel->attlen,
@@ -286,7 +277,6 @@ get_part_range_by_idx(PG_FUNCTION_ARGS)
 {
 	Oid						parent_relid = InvalidOid;
 	int						partition_idx = 0;
-	// Datum					elems[2];
 	Bound				   *elems[2];
 	RangeEntry			   *ranges;
 	const PartRelationInfo *prel;
@@ -452,4 +442,211 @@ construct_infinitable_array(Bound **elems,
 							 elmbyval, elmalign);
 
 	return arr;
+}
+
+
+Datum
+merge_range_partitions(PG_FUNCTION_ARGS)
+{
+	Oid			parent = InvalidOid;
+	PartParentSearch parent_search;
+	ArrayType  *arr = PG_GETARG_ARRAYTYPE_P(0);
+
+	Oid		   *partitions;
+	Datum	   *datums;
+	bool	   *nulls;
+	int			npart;
+	int16		typlen;
+	bool		typbyval;
+	char		typalign;
+	int			i;
+
+	Assert(ARR_ELEMTYPE(arr) == REGCLASSOID);
+
+	/* Extract Oids */
+	get_typlenbyvalalign(REGCLASSOID, &typlen, &typbyval, &typalign);
+	deconstruct_array(arr, REGCLASSOID, 
+					  typlen, typbyval, typalign,
+					  &datums, &nulls, &npart);
+
+	partitions = palloc(sizeof(Oid) * npart);
+	for (i = 0; i < npart; i++)
+		partitions[i] = DatumGetObjectId(datums[i]);
+
+	if (npart < 2)
+		elog(ERROR,
+			 "There must be at least two partitions to merge");
+
+	/* Check if all partitions are from the same parent */
+	for (i = 0; i < npart; i++)
+	{
+		Oid p = get_parent_of_partition(partitions[i], &parent_search);
+
+		if (parent_search != PPS_ENTRY_PART_PARENT)
+			elog(ERROR, "Relation '%s' is not a partition",
+				 get_rel_name(partitions[i]));
+
+		if (parent == InvalidOid)
+			parent = p;
+
+		if (p != parent)
+			elog(ERROR, "All relations must have the same parent");
+	}
+
+	merge_range_partitions_internal(parent, partitions, npart);
+
+	PG_RETURN_VOID();
+}
+
+
+static void
+merge_range_partitions_internal(Oid parent, Oid *partitions, uint32 npart)
+{
+	RangeEntry		   *ranges;
+	int					i,
+						j;
+	List			   *plist = NIL;
+	RangeEntry		   *first, *last;
+	const PartRelationInfo   *prel;
+
+	prel = get_pathman_relation_info(parent);
+	shout_if_prel_is_invalid(parent, prel, PT_RANGE);
+
+	if (prel->parttype != PT_RANGE)
+		elog(ERROR, "Only range partitions can be merged");
+
+	ranges = PrelGetRangesArray(prel);
+
+	/* Lock parent till transaction's end */
+	xact_lock_partitioned_rel(parent, false);
+
+	/* Lock partitions */
+	for (i = 0; i < npart; i++)
+	{
+		prevent_relation_modification_internal(partitions[0]);
+
+		/* Look for the specified partition */
+		for (j = 0; j < PrelChildrenCount(prel); j++)
+			if (ranges[j].child_oid == partitions[i])
+			{
+				plist = lappend(plist, &ranges[j]);
+				break;
+			}
+	}
+
+	check_adjacence(prel->cmp_proc, plist);
+
+	/* Create a new one */
+	first = (RangeEntry *) linitial(plist);
+	last = (RangeEntry *) llast(plist);
+	recreate_range_constraint(first->child_oid,
+							  get_relid_attribute_name(prel->key, prel->attnum),
+							  prel->attnum,
+							  prel->atttype,
+							  &first->min,
+							  &last->max);
+
+	/* Make constraint visible */
+	CommandCounterIncrement();
+
+	if (SPI_connect() != SPI_OK_CONNECT)
+		elog(ERROR, "could not connect using SPI");
+
+	/* Migrate the data from all partition to the first one */
+	for (i = 1; i < npart; i++)
+	{
+		char *query = psprintf("WITH part_data AS (DELETE FROM %s RETURNING *) "
+							   "INSERT INTO %s SELECT * FROM part_data",
+							   get_rel_name(partitions[i]),
+							   get_rel_name(partitions[0]));
+
+		SPI_exec(query, 0);
+	}
+
+	/*
+	 * Drop old partitions
+	 *
+	 * XXX Rewrite this in C
+	 */
+	for (i = 1; i < npart; i++)
+	{
+		char *query = psprintf("DROP TABLE %s",
+							   get_rel_name(partitions[i]));
+
+		SPI_exec(query, 0);
+	}
+
+	SPI_finish();
+}
+
+/*
+ * Check that range entries are adjacent
+ */
+static void
+check_adjacence(Oid cmp_proc, List *ranges)
+{
+	ListCell   *lc;
+	RangeEntry *last = NULL;
+	FmgrInfo	finfo;
+
+	fmgr_info(cmp_proc, &finfo);
+
+	foreach(lc, ranges)
+	{
+		RangeEntry *cur = (RangeEntry *) lfirst(lc);
+
+		/* Skip first iteration */
+		if (!last)
+		{
+			last = cur;
+			continue;
+		}
+
+		/*
+		 * Compare upper bound of previous range entry and lower bound
+		 * of current
+		 */
+		if (cmp_bounds(&finfo, &last->max, &cur->min) != 0)
+			elog(ERROR,
+				 "Partitions '%s' and '%s' aren't adjacent",
+				 get_rel_name(last->child_oid), get_rel_name(cur->child_oid));
+
+		last = cur;
+	}
+}
+
+/*
+ * Drops old partition constraint and creates a new one with specified
+ * boundaries
+ */
+static void
+recreate_range_constraint(Oid partition,
+						  const char *attname,
+						  AttrNumber attnum,
+						  Oid atttype,
+						  const Bound *lower,
+						  const Bound *upper)
+{
+	Constraint	   *constraint;
+	Relation		partition_rel;
+	char		   *attname_nonconst = pstrdup(attname);
+
+	/* Drop old constraint */
+	drop_check_constraint(partition, attnum);
+
+	/* Build a new one */
+	constraint = build_range_check_constraint(partition,
+											  attname_nonconst,
+											  lower,
+											  upper,
+											  atttype);
+
+	/* Open the relation and add new check constraint */
+	partition_rel = heap_open(partition, AccessExclusiveLock);
+	AddRelationNewConstraints(partition_rel, NIL,
+							  list_make1(constraint),
+							  false, true, true);
+	heap_close(partition_rel, NoLock);
+
+	pfree(attname_nonconst);
 }

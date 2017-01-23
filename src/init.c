@@ -910,23 +910,6 @@ cmp_range_entries(const void *p1, const void *p2, void *arg)
 	FmgrInfo		   *flinfo = (FmgrInfo *) arg;
 
 	return cmp_bounds(flinfo, &v1->min, &v2->min);
-
-	// /* If range is half open */
-	// if (IsInfinite(&v1->min))
-	// {
-	// 	// if (IsInfinite(&v2->min))
-	// 	// 	return Int32GetDatum(0);
-	// 	return Int32GetDatum(-1);
-	// }
-	// if (IsInfinite(&v2->min))
-	// {
-	// 	return Int32GetDatum(1);
-	// }
-
-	// /* Else if range is closed */
-	// return OidFunctionCall2(cmp_proc_oid,
-	// 						BoundGetValue(&v1->min),
-	// 						BoundGetValue(&v2->min));
 }
 
 /*

@@ -779,25 +779,7 @@ prevent_relation_modification(PG_FUNCTION_ARGS)
 {
 	Oid			relid = PG_GETARG_OID(0);
 
-	/*
-	 * Check that isolation level is READ COMMITTED.
-	 * Else we won't be able to see new rows
-	 * which could slip through locks.
-	 */
-	if (!xact_is_level_read_committed())
-		ereport(ERROR,
-				(errmsg("Cannot perform blocking partitioning operation"),
-				 errdetail("Expected READ COMMITTED isolation level")));
-
-	/*
-	 * Check if table is being modified
-	 * concurrently in a separate transaction.
-	 */
-	if (!xact_lock_rel_exclusive(relid, true))
-		ereport(ERROR,
-				(errmsg("Cannot perform blocking partitioning operation"),
-				 errdetail("Table \"%s\" is being modified concurrently",
-						   get_rel_name_or_relid(relid))));
+	(void) prevent_relation_modification_internal(relid);
 
 	PG_RETURN_VOID();
 }

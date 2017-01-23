@@ -681,6 +681,13 @@ END
 $$ LANGUAGE plpgsql;
 
 
+CREATE OR REPLACE FUNCTION @extschema@.merge_range_partitions(
+	parent			REGCLASS,
+	partitions		REGCLASS[])
+RETURNS VOID AS 'pg_pathman', 'merge_range_partitions'
+LANGUAGE C STRICT;
+
+
 /*
  * Append new partition.
  */

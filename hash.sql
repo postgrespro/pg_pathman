@@ -38,6 +38,14 @@ BEGIN
 	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype)
 	VALUES (parent_relid, attribute, 1);
 
+	IF array_length(relnames) != partitions_count THEN
+		RAISE EXCEPTION 'Partition names array size must be equal the partitions count';
+	END IF;
+
+	IF array_length(tablespaces) != partitions_count THEN
+		RAISE EXCEPTION 'Partition tablespaces array size must be equal the partitions count';
+	END IF;
+
 	/* Create partitions */
 	PERFORM @extschema@.create_hash_partitions_internal(parent_relid,
 														attribute,

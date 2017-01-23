@@ -74,6 +74,8 @@ Node * build_raw_hash_check_tree(char *attname,
 								 uint32 part_idx,
 								 uint32 part_count, Oid value_type);
 
+void drop_check_constraint(Oid relid, AttrNumber attnum);
+
 
 /* Partitioning callback type */
 typedef enum
