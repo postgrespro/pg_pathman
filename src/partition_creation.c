@@ -78,6 +78,8 @@ static ObjectAddress create_table_using_stmt(CreateStmt *create_stmt,
 static void copy_foreign_keys(Oid parent_relid, Oid partition_oid);
 static void copy_acl_privileges(Oid parent_relid, Oid partition_relid);
 
+static Oid text2regprocedure(text *proname_args);
+
 static Constraint *make_constraint_common(char *name, Node *raw_expr);
 
 static Value make_string_value_struct(char *str);
@@ -1377,6 +1379,34 @@ make_int_value_struct(int int_val)
 	return val;
 }
 
+/*
+ * Utility function that converts signature of procedure into regprocedure.
+ *
+ * Precondition: proname_args != NULL.
+ *
+ * Returns InvalidOid if proname_args is not found.
+ * Raise error if it's incorrect.
+ */
+static Oid
+text2regprocedure(text *proname_args)
+{
+	FunctionCallInfoData fcinfo;
+	Datum           result;
+
+	InitFunctionCallInfoData(fcinfo, NULL, 1, InvalidOid, NULL, NULL);
+
+#if PG_VERSION_NUM >= 90600
+	fcinfo.arg[0] = PointerGetDatum(proname_args);
+#else
+	fcinfo.arg[0] = CStringGetDatum(text_to_cstring(proname_args));
+#endif
+	fcinfo.argnull[0] = false;
+
+	result = to_regprocedure(&fcinfo);
+
+	return DatumGetObjectId(result);
+}
+
 
 /*
  * ---------------------
@@ -1416,14 +1446,26 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 		/* Search for init_callback entry in PATHMAN_CONFIG_PARAMS */
 		if (read_pathman_params(parent_oid, param_values, param_isnull))
 		{
-			Datum		init_cb_datum; /* Oid of init_callback */
+			Datum		init_cb_datum; /* signature of init_callback */
 			AttrNumber	init_cb_attno = Anum_pathman_config_params_init_callback;
 
-			/* Extract Datum storing callback's Oid */
+			/* Extract Datum storing callback's signature */
 			init_cb_datum = param_values[init_cb_attno - 1];
 
 			/* Cache init_callback's Oid */
-			cb_params->callback = DatumGetObjectId(init_cb_datum);
+			if (init_cb_datum)
+			{
+				cb_params->callback = text2regprocedure(
+						DatumGetTextP(init_cb_datum));
+
+				if (!RegProcedureIsValid(cb_params->callback))
+					ereport(ERROR,
+							(errcode(ERRCODE_INTEGRITY_CONSTRAINT_VIOLATION),
+							 errmsg("callback function \"%s\" doesn't exist",
+								 DatumGetCString(init_cb_datum))));
+			}
+			else
+				cb_params->callback = InvalidOid;
 			cb_params->callback_is_cached = true;
 		}
 	}

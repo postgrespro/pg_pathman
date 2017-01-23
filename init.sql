@@ -34,10 +34,10 @@ CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
  * NOTE: this function is used in CHECK CONSTRAINT.
  */
 CREATE OR REPLACE FUNCTION @extschema@.validate_part_callback(
-	callback		REGPROC,
+	callback		TEXT,
 	raise_error		BOOL DEFAULT TRUE)
 RETURNS BOOL AS 'pg_pathman', 'validate_part_callback_pl'
-LANGUAGE C STRICT;
+LANGUAGE C;
 
 
 /*
@@ -45,13 +45,14 @@ LANGUAGE C STRICT;
  *		partrel - regclass (relation type, stored as Oid)
  *		enable_parent - add parent table to plan
  *		auto - enable automatic partition creation
- *		init_callback - cb to be executed on partition creation
+ *		init_callback - text signature of cb to be executed on partition
+ * 						creation
  */
 CREATE TABLE IF NOT EXISTS @extschema@.pathman_config_params (
 	partrel			REGCLASS NOT NULL PRIMARY KEY,
 	enable_parent	BOOLEAN NOT NULL DEFAULT FALSE,
 	auto			BOOLEAN NOT NULL DEFAULT TRUE,
-	init_callback	REGPROCEDURE NOT NULL DEFAULT 0,
+	init_callback	TEXT,
 	spawn_using_bgw	BOOLEAN NOT NULL DEFAULT FALSE
 
 	CHECK (@extschema@.validate_part_callback(init_callback)) /* check signature */
@@ -118,7 +119,7 @@ BEGIN
 	USING relation, value;
 END
 $$
-LANGUAGE plpgsql STRICT;
+LANGUAGE plpgsql;
 
 /*
  * Include\exclude parent relation in query plan.
@@ -157,7 +158,11 @@ CREATE OR REPLACE FUNCTION @extschema@.set_init_callback(
 RETURNS VOID AS
 $$
 BEGIN
-	PERFORM @extschema@.pathman_set_param(relation, 'init_callback', callback);
+	PERFORM @extschema@.pathman_set_param(relation, 'init_callback',
+		CASE WHEN callback <> 0
+			THEN regprocedureout(callback)::text
+			ELSE NULL END);
+
 END
 $$
 LANGUAGE plpgsql STRICT;
