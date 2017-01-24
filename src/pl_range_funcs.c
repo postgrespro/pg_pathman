@@ -43,6 +43,7 @@ static void recreate_range_constraint(Oid partition,
 									  Oid atttype,
 									  const Bound *lower,
 									  const Bound *upper);
+static char *get_qualified_rel_name(Oid relid);
 
 /* Function declarations */
 
@@ -508,6 +509,7 @@ merge_range_partitions_internal(Oid parent, Oid *partitions, uint32 npart)
 	List			   *plist = NIL;
 	RangeEntry		   *first, *last;
 	const PartRelationInfo   *prel;
+	FmgrInfo			finfo;
 
 	prel = get_pathman_relation_info(parent);
 	shout_if_prel_is_invalid(parent, prel, PT_RANGE);
@@ -536,10 +538,21 @@ merge_range_partitions_internal(Oid parent, Oid *partitions, uint32 npart)
 
 	check_adjacence(prel->cmp_proc, plist);
 
-	/* Create a new one */
+	/* Create a new constraint. To do this first determine the bounds */
 	first = (RangeEntry *) linitial(plist);
 	last = (RangeEntry *) llast(plist);
-	recreate_range_constraint(first->child_oid,
+
+	/* If last range is less than first one then swap them */
+	fmgr_info(prel->cmp_proc, &finfo);
+	if (cmp_bounds(&finfo, &last->min, &first->min) < 0)
+	{
+		RangeEntry *tmp = last;
+		last = first;
+		first = tmp;
+	}
+
+	/* Drop old constraint and create a new one */
+	recreate_range_constraint(partitions[0],
 							  get_relid_attribute_name(prel->key, prel->attnum),
 							  prel->attnum,
 							  prel->atttype,
@@ -557,8 +570,8 @@ merge_range_partitions_internal(Oid parent, Oid *partitions, uint32 npart)
 	{
 		char *query = psprintf("WITH part_data AS (DELETE FROM %s RETURNING *) "
 							   "INSERT INTO %s SELECT * FROM part_data",
-							   get_rel_name(partitions[i]),
-							   get_rel_name(partitions[0]));
+							   get_qualified_rel_name(partitions[i]),
+							   get_qualified_rel_name(partitions[0]));
 
 		SPI_exec(query, 0);
 	}
@@ -571,7 +584,7 @@ merge_range_partitions_internal(Oid parent, Oid *partitions, uint32 npart)
 	for (i = 1; i < npart; i++)
 	{
 		char *query = psprintf("DROP TABLE %s",
-							   get_rel_name(partitions[i]));
+							   get_qualified_rel_name(partitions[i]));
 
 		SPI_exec(query, 0);
 	}
@@ -603,10 +616,10 @@ check_adjacence(Oid cmp_proc, List *ranges)
 		}
 
 		/*
-		 * Compare upper bound of previous range entry and lower bound
-		 * of current
+		 * Check that last and current partitions are adjacent
 		 */
-		if (cmp_bounds(&finfo, &last->max, &cur->min) != 0)
+		if ((cmp_bounds(&finfo, &last->max, &cur->min) != 0)
+			&& (cmp_bounds(&finfo, &cur->max, &last->min) != 0))
 			elog(ERROR,
 				 "Partitions '%s' and '%s' aren't adjacent",
 				 get_rel_name(last->child_oid), get_rel_name(cur->child_oid));
@@ -649,4 +662,17 @@ recreate_range_constraint(Oid partition,
 	heap_close(partition_rel, NoLock);
 
 	pfree(attname_nonconst);
+}
+
+/*
+ * Return palloced fully qualified relation name as a cstring
+ */
+static char *
+get_qualified_rel_name(Oid relid)
+{
+	Oid namespace = get_rel_namespace(relid);
+
+	return psprintf("%s.%s",
+					quote_identifier(get_namespace_name(namespace)),
+					quote_identifier(get_rel_name(relid)));
 }

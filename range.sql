@@ -596,96 +596,26 @@ LANGUAGE plpgsql;
 
 
 /*
- * Merge two partitions. All data will be copied to the first one. Second
- * partition will be destroyed.
- *
- * NOTE: dummy field is used to pass the element type to the function
- * (it is necessary because of pseudo-types used in function).
+ * Merge multiple partitions. All data will be copied to the first one. The rest
+ * of partitions will be dropped
  */
-CREATE OR REPLACE FUNCTION @extschema@.merge_range_partitions_internal(
-	parent_relid	REGCLASS,
-	partition1		REGCLASS,
-	partition2		REGCLASS,
-	dummy			ANYELEMENT,
-	OUT p_range		ANYARRAY)
-RETURNS ANYARRAY AS
-$$
-DECLARE
-	v_attname		TEXT;
-	v_atttype		REGTYPE;
-	v_check_name	TEXT;
-	v_lower_bound	dummy%TYPE;
-	v_upper_bound	dummy%TYPE;
-
-BEGIN
-	SELECT attname FROM @extschema@.pathman_config
-	WHERE partrel = parent_relid
-	INTO v_attname;
-
-	IF v_attname IS NULL THEN
-		RAISE EXCEPTION 'table "%" is not partitioned', parent_relid::TEXT;
-	END IF;
-
-	v_atttype = @extschema@.get_attribute_type(parent_relid, v_attname);
-
-	/* We have to pass fake NULL casted to column's type */
-	EXECUTE format('SELECT @extschema@.get_part_range($1, NULL::%1$s) ||
-						   @extschema@.get_part_range($2, NULL::%1$s)',
-				   @extschema@.get_base_type(v_atttype)::TEXT)
-	USING partition1, partition2
-	INTO p_range;
-
-	/* Check if ranges are adjacent */
-	IF p_range[1] != p_range[4] AND p_range[2] != p_range[3] THEN
-		RAISE EXCEPTION 'merge failed, partitions must be adjacent';
-	END IF;
-
-	/* Drop constraint on first partition... */
-	v_check_name := @extschema@.build_check_constraint_name(partition1, v_attname);
-	EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %s',
-				   partition1::TEXT,
-				   v_check_name);
-
-	/* Determine left bound */
-	IF p_range[1] IS NULL OR p_range[3] IS NULL THEN
-		v_lower_bound := NULL;
-	ELSE
-		v_lower_bound := least(p_range[1], p_range[3]);
-	END IF;
-
-	/* Determine right bound */
-	IF p_range[2] IS NULL OR p_range[4] IS NULL THEN
-		v_upper_bound := NULL;
-	ELSE
-		v_upper_bound := greatest(p_range[2], p_range[4]);
-	END IF;
-
-	/* and create a new one */
-	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)',
-				   partition1::TEXT,
-				   v_check_name,
-				   @extschema@.build_range_condition(partition1,
-				   									 v_attname,
-													 v_lower_bound,
-													 v_upper_bound));
-
-	/* Copy data from second partition to the first one */
-	EXECUTE format('WITH part_data AS (DELETE FROM %s RETURNING *)
-					INSERT INTO %s SELECT * FROM part_data',
-				   partition2::TEXT,
-				   partition1::TEXT);
-
-	/* Remove second partition */
-	EXECUTE format('DROP TABLE %s', partition2::TEXT);
-END
-$$ LANGUAGE plpgsql;
-
-
 CREATE OR REPLACE FUNCTION @extschema@.merge_range_partitions(
-	parent			REGCLASS,
 	partitions		REGCLASS[])
 RETURNS VOID AS 'pg_pathman', 'merge_range_partitions'
 LANGUAGE C STRICT;
+
+/*
+ * The special case of merging two partitions
+ */
+CREATE OR REPLACE FUNCTION @extschema@.merge_range_partitions(
+	partition1		REGCLASS,
+	partition2		REGCLASS)
+RETURNS VOID AS
+$$
+BEGIN
+	PERFORM @extschema@.merge_range_partitions(array[partition1, partition2]::regclass[]);
+END
+$$ LANGUAGE plpgsql;
 
 
 /*
