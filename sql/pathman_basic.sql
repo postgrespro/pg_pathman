@@ -400,6 +400,11 @@ SELECT pathman.prepend_range_partition('test.num_range_rel');
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id < 0;
 SELECT pathman.drop_range_partition('test.num_range_rel_7');
 
+SELECT pathman.drop_range_partition_expand_next('test.num_range_rel_4');
+SELECT * FROM pathman.pathman_partition_list WHERE parent = 'test.num_range_rel'::regclass;
+SELECT pathman.drop_range_partition_expand_next('test.num_range_rel_6');
+SELECT * FROM pathman.pathman_partition_list WHERE parent = 'test.num_range_rel'::regclass;
+
 SELECT pathman.append_range_partition('test.range_rel');
 SELECT pathman.prepend_range_partition('test.range_rel');
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt BETWEEN '2014-12-15' AND '2015-01-15';

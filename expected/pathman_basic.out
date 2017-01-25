@@ -1409,6 +1409,35 @@ SELECT pathman.drop_range_partition('test.num_range_rel_7');
  test.num_range_rel_7
 (1 row)
 
+SELECT pathman.drop_range_partition_expand_next('test.num_range_rel_4');
+ drop_range_partition_expand_next 
+----------------------------------
+ 
+(1 row)
+
+SELECT * FROM pathman.pathman_partition_list WHERE parent = 'test.num_range_rel'::regclass;
+       parent       |      partition       | parttype | partattr | range_min | range_max 
+--------------------+----------------------+----------+----------+-----------+-----------
+ test.num_range_rel | test.num_range_rel_1 |        2 | id       | 0         | 1000
+ test.num_range_rel | test.num_range_rel_2 |        2 | id       | 1000      | 2000
+ test.num_range_rel | test.num_range_rel_3 |        2 | id       | 2000      | 3000
+ test.num_range_rel | test.num_range_rel_6 |        2 | id       | 3000      | 5000
+(4 rows)
+
+SELECT pathman.drop_range_partition_expand_next('test.num_range_rel_6');
+ drop_range_partition_expand_next 
+----------------------------------
+ 
+(1 row)
+
+SELECT * FROM pathman.pathman_partition_list WHERE parent = 'test.num_range_rel'::regclass;
+       parent       |      partition       | parttype | partattr | range_min | range_max 
+--------------------+----------------------+----------+----------+-----------+-----------
+ test.num_range_rel | test.num_range_rel_1 |        2 | id       | 0         | 1000
+ test.num_range_rel | test.num_range_rel_2 |        2 | id       | 1000      | 2000
+ test.num_range_rel | test.num_range_rel_3 |        2 | id       | 2000      | 3000
+(3 rows)
+
 SELECT pathman.append_range_partition('test.range_rel');
  append_range_partition 
 ------------------------
@@ -1711,15 +1740,13 @@ SELECT COUNT(*) FROM ONLY test.hash_rel;
 
 DROP TABLE test.hash_rel CASCADE;
 SELECT pathman.drop_partitions('test.num_range_rel');
-NOTICE:  drop cascades to 4 other objects
+NOTICE:  drop cascades to 3 other objects
 NOTICE:  998 rows copied from test.num_range_rel_1
 NOTICE:  1000 rows copied from test.num_range_rel_2
 NOTICE:  1000 rows copied from test.num_range_rel_3
-NOTICE:  2 rows copied from test.num_range_rel_4
-NOTICE:  0 rows copied from test.num_range_rel_6
  drop_partitions 
 -----------------
-               5
+               3
 (1 row)
 
 DROP TABLE test.num_range_rel CASCADE;

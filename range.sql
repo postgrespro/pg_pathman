@@ -533,68 +533,6 @@ END
 $$
 LANGUAGE plpgsql;
 
-
-/*
- * Merge RANGE partitions
- */
-CREATE OR REPLACE FUNCTION @extschema@.merge_range_partitions(
-	partition1		REGCLASS,
-	partition2		REGCLASS)
-RETURNS VOID AS
-$$
-DECLARE
-	v_parent1		REGCLASS;
-	v_parent2		REGCLASS;
-	v_attname		TEXT;
-	v_part_type		INTEGER;
-	v_atttype		REGTYPE;
-
-BEGIN
-	IF partition1 = partition2 THEN
-		RAISE EXCEPTION 'cannot merge partition with itself';
-	END IF;
-
-	v_parent1 := @extschema@.get_parent_of_partition(partition1);
-	v_parent2 := @extschema@.get_parent_of_partition(partition2);
-
-	/* Acquire data modification locks (prevent further modifications) */
-	PERFORM @extschema@.prevent_relation_modification(partition1);
-	PERFORM @extschema@.prevent_relation_modification(partition2);
-
-	IF v_parent1 != v_parent2 THEN
-		RAISE EXCEPTION 'cannot merge partitions with different parents';
-	END IF;
-
-	/* Acquire lock on parent */
-	PERFORM @extschema@.lock_partitioned_relation(v_parent1);
-
-	SELECT attname, parttype
-	FROM @extschema@.pathman_config
-	WHERE partrel = v_parent1
-	INTO v_attname, v_part_type;
-
-	IF v_attname IS NULL THEN
-		RAISE EXCEPTION 'table "%" is not partitioned', v_parent1::TEXT;
-	END IF;
-
-	/* Check if this is a RANGE partition */
-	IF v_part_type != 2 THEN
-		RAISE EXCEPTION 'specified partitions are not RANGE partitions';
-	END IF;
-
-	v_atttype := @extschema@.get_attribute_type(partition1, v_attname);
-
-	EXECUTE format('SELECT @extschema@.merge_range_partitions_internal($1, $2, $3, NULL::%s)',
-				   @extschema@.get_base_type(v_atttype)::TEXT)
-	USING v_parent1, partition1, partition2;
-
-	/* Tell backend to reload configuration */
-	PERFORM @extschema@.on_update_partitions(v_parent1);
-END
-$$
-LANGUAGE plpgsql;
-
-
 /*
  * Merge multiple partitions. All data will be copied to the first one. The rest
  * of partitions will be dropped
@@ -616,7 +554,6 @@ BEGIN
 	PERFORM @extschema@.merge_range_partitions(array[partition1, partition2]::regclass[]);
 END
 $$ LANGUAGE plpgsql;
-
 
 /*
  * Append new partition.
@@ -950,6 +887,19 @@ END
 $$
 LANGUAGE plpgsql
 SET pg_pathman.enable_partitionfilter = off; /* ensures that PartitionFilter is OFF */
+
+
+/*
+ * Drops partition and expands the next partition so that it cover dropped
+ * one
+ *
+ * This function was written in order to support Oracle-like ALTER TABLE ...
+ * DROP PARTITION. In Oracle partitions only have upper bound and when
+ * partition is dropped the next one automatically covers freed range
+ */
+CREATE OR REPLACE FUNCTION @extschema@.drop_range_partition_expand_next(relid REGCLASS)
+RETURNS VOID AS 'pg_pathman', 'drop_range_partition_expand_next'
+LANGUAGE C STRICT;
 
 
 /*

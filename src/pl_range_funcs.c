@@ -59,6 +59,7 @@ PG_FUNCTION_INFO_V1( get_part_range_by_idx );
 PG_FUNCTION_INFO_V1( build_range_condition );
 PG_FUNCTION_INFO_V1( build_sequence_name );
 PG_FUNCTION_INFO_V1( merge_range_partitions );
+PG_FUNCTION_INFO_V1( drop_range_partition_expand_next );
 
 
 /*
@@ -689,4 +690,63 @@ drop_table(Oid relid)
 	n->concurrent = false;
 
 	RemoveRelations(n);
+}
+
+/*
+ * Drops partition and expands the next partition so that it cover dropped
+ * one
+ *
+ * This function was written in order to support Oracle-like ALTER TABLE ...
+ * DROP PARTITION. In Oracle partitions only have upper bound and when
+ * partition is dropped the next one automatically covers freed range
+ */
+Datum
+drop_range_partition_expand_next(PG_FUNCTION_ARGS)
+{
+	PartParentSearch		parent_search;
+	const PartRelationInfo *prel;
+	RangeEntry	   *ranges;
+	Oid				relid = PG_GETARG_OID(0),
+					parent;
+	int				i;
+
+	/* Get parent relid */
+	parent = get_parent_of_partition(relid, &parent_search);
+	if (parent_search != PPS_ENTRY_PART_PARENT)
+		elog(ERROR, "relation \"%s\" is not a partition",
+			 get_rel_name_or_relid(relid));
+
+	prel = get_pathman_relation_info(parent);
+	shout_if_prel_is_invalid(parent, prel, PT_RANGE);
+
+	ranges = PrelGetRangesArray(prel);
+
+	/* Looking for partition in child relations */
+	for (i = 0; i < prel->children_count; i++)
+		if (ranges[i].child_oid == relid)
+			break;
+
+	/*
+	 * It must be in ranges array because we already know that table
+	 * is a partition
+	 */
+	Assert(i < prel->children_count);
+
+	/* If there is next partition then expand it */
+	if (i < prel->children_count - 1)
+	{
+		RangeEntry	   *cur = &ranges[i],
+					   *next = &ranges[i+1];
+
+		recreate_range_constraint(next->child_oid,
+						get_relid_attribute_name(prel->key, prel->attnum),
+						prel->attnum,
+						prel->atttype,
+						&cur->min,
+						&next->max);
+	}
+
+	drop_table(relid);
+
+	PG_RETURN_VOID();	
 }
