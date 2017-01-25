@@ -690,6 +690,10 @@ pathman_config_params_trigger_func(PG_FUNCTION_ARGS)
 	Datum			partrel_datum;
 	bool			partrel_isnull;
 
+    /* Handle pg_pathman disabled case */
+    if (!OidIsValid(pathman_config_params))
+        goto _return;
+
 	/* Handle user calls */
 	if (!CALLED_AS_TRIGGER(fcinfo))
 		elog(ERROR, "this function should not be called directly");
@@ -719,6 +723,7 @@ pathman_config_params_trigger_func(PG_FUNCTION_ARGS)
 		CacheInvalidateRelcacheByRelid(partrel);
 
 	/* Return the tuple we've been given */
+_return:
 	if (trigdata->tg_event & TRIGGER_EVENT_UPDATE)
 		PG_RETURN_POINTER(trigdata->tg_newtuple);
 	else
