@@ -19,6 +19,7 @@
 #include "catalog/namespace.h"
 #include "catalog/pg_type.h"
 #include "catalog/heap.h"
+#include "commands/tablecmds.h"
 #include "executor/spi.h"
 #include "parser/parse_relation.h"
 #include "parser/parse_expr.h"
@@ -44,6 +45,7 @@ static void recreate_range_constraint(Oid partition,
 									  const Bound *lower,
 									  const Bound *upper);
 static char *get_qualified_rel_name(Oid relid);
+static void drop_table(Oid relid);
 
 /* Function declarations */
 
@@ -565,7 +567,9 @@ merge_range_partitions_internal(Oid parent, Oid *partitions, uint32 npart)
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "could not connect using SPI");
 
-	/* Migrate the data from all partition to the first one */
+	/*
+	 * Migrate the data from all partition to the first one
+	 */
 	for (i = 1; i < npart; i++)
 	{
 		char *query = psprintf("WITH part_data AS (DELETE FROM %s RETURNING *) "
@@ -576,20 +580,14 @@ merge_range_partitions_internal(Oid parent, Oid *partitions, uint32 npart)
 		SPI_exec(query, 0);
 	}
 
+	SPI_finish();
+
 	/*
 	 * Drop old partitions
-	 *
-	 * XXX Rewrite this in C
 	 */
 	for (i = 1; i < npart; i++)
-	{
-		char *query = psprintf("DROP TABLE %s",
-							   get_qualified_rel_name(partitions[i]));
+		drop_table(partitions[i]);
 
-		SPI_exec(query, 0);
-	}
-
-	SPI_finish();
 }
 
 /*
@@ -675,4 +673,20 @@ get_qualified_rel_name(Oid relid)
 	return psprintf("%s.%s",
 					quote_identifier(get_namespace_name(namespace)),
 					quote_identifier(get_rel_name(relid)));
+}
+
+static void
+drop_table(Oid relid)
+{
+	DropStmt	   *n = makeNode(DropStmt);
+	const char	   *relname = get_qualified_rel_name(relid);
+
+	n->removeType = OBJECT_TABLE;
+	n->missing_ok = false;
+	n->objects = list_make1(stringToQualifiedNameList(relname));
+	n->arguments = NIL;
+	n->behavior = DROP_RESTRICT;  // default behaviour
+	n->concurrent = false;
+
+	RemoveRelations(n);
 }
