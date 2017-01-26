@@ -646,6 +646,8 @@ choose_range_partition_name(Oid parent_relid, Oid parent_nsp)
 	Oid		save_userid;
 	int		save_sec_context;
 	bool	need_priv_escalation = !superuser(); /* we might be a SU */
+	char   *relname;
+	int		attempts_cnt = 1000;
 
 	part_seq_relid = get_relname_relid(build_sequence_name_internal(parent_relid),
 									   parent_nsp);
@@ -661,16 +663,34 @@ choose_range_partition_name(Oid parent_relid, Oid parent_nsp)
 							   save_sec_context | SECURITY_LOCAL_USERID_CHANGE);
 	}
 
-	/* Get next integer for partition name */
-	part_num = DirectFunctionCall1(nextval_oid, ObjectIdGetDatum(part_seq_relid));
+	/* Generate unique name */
+	while (true)
+	{
+		/* Get next integer for partition name */
+		part_num = DirectFunctionCall1(nextval_oid, ObjectIdGetDatum(part_seq_relid));
+
+		relname = psprintf("%s_" UINT64_FORMAT,
+						   get_rel_name(parent_relid),
+						   (uint64) DatumGetInt64(part_num)); /* can't use UInt64 on 9.5 */
+
+		/*
+		 * If we found a unique name or attemps number exceeds some reasonable
+		 * value then we quit
+		 *
+		 * XXX Should we throw an exception if max attempts number is reached?
+		 */
+		if (get_relname_relid(relname, parent_nsp) == InvalidOid || attempts_cnt < 0)
+			break;
+
+		pfree(relname);
+		attempts_cnt--;
+	}
 
 	/* Restore user's privileges */
 	if (need_priv_escalation)
 		SetUserIdAndSecContext(save_userid, save_sec_context);
 
-	return psprintf("%s_" UINT64_FORMAT,
-					get_rel_name(parent_relid),
-					(uint64) DatumGetInt64(part_num)); /* can't use UInt64 on 9.5 */
+	return relname;
 }
 
 /* Choose a good name for a HASH partition */
