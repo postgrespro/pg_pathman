@@ -1450,8 +1450,12 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 
 				JSB_INIT_VAL(&key, WJB_KEY, "parent");
 				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(parent_oid));
+				JSB_INIT_VAL(&key, WJB_KEY, "parent_schema");
+				JSB_INIT_VAL(&val, WJB_VALUE, get_namespace_name(get_rel_namespace(parent_oid)));
 				JSB_INIT_VAL(&key, WJB_KEY, "partition");
 				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(partition_oid));
+				JSB_INIT_VAL(&key, WJB_KEY, "partition_schema");
+				JSB_INIT_VAL(&val, WJB_VALUE, get_namespace_name(get_rel_namespace(partition_oid)));
 				JSB_INIT_VAL(&key, WJB_KEY, "parttype");
 				JSB_INIT_VAL(&val, WJB_VALUE, PartTypeToCString(PT_HASH));
 
@@ -1475,8 +1479,12 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 
 				JSB_INIT_VAL(&key, WJB_KEY, "parent");
 				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(parent_oid));
+				JSB_INIT_VAL(&key, WJB_KEY, "parent_schema");
+				JSB_INIT_VAL(&val, WJB_VALUE, get_namespace_name(get_rel_namespace(parent_oid)));
 				JSB_INIT_VAL(&key, WJB_KEY, "partition");
 				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(partition_oid));
+				JSB_INIT_VAL(&key, WJB_KEY, "partition_schema");
+				JSB_INIT_VAL(&val, WJB_VALUE, get_namespace_name(get_rel_namespace(partition_oid)));
 				JSB_INIT_VAL(&key, WJB_KEY, "parttype");
 				JSB_INIT_VAL(&val, WJB_VALUE, PartTypeToCString(PT_RANGE));
 				JSB_INIT_VAL(&key, WJB_KEY, "range_min");
