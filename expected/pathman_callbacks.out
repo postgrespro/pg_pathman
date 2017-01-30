@@ -27,7 +27,7 @@ SELECT set_init_callback('callbacks.abc',
 
 INSERT INTO callbacks.abc VALUES (123, 1);
 INSERT INTO callbacks.abc VALUES (223, 1); /* show warning */
-WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_3", "range_max": "301", "range_min": "201"}
+WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_3", "range_max": "301", "range_min": "201", "parent_schema": "callbacks", "partition_schema": "callbacks"}
 SELECT set_spawn_using_bgw('callbacks.abc', true);
  set_spawn_using_bgw 
 ---------------------
@@ -54,21 +54,21 @@ SELECT set_spawn_using_bgw('callbacks.abc', false);
 (1 row)
 
 SELECT append_range_partition('callbacks.abc');
-WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_5", "range_max": "501", "range_min": "401"}
+WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_5", "range_max": "501", "range_min": "401", "parent_schema": "callbacks", "partition_schema": "callbacks"}
  append_range_partition 
 ------------------------
  callbacks.abc_5
 (1 row)
 
 SELECT prepend_range_partition('callbacks.abc');
-WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_6", "range_max": "1", "range_min": "-99"}
+WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_6", "range_max": "1", "range_min": "-99", "parent_schema": "callbacks", "partition_schema": "callbacks"}
  prepend_range_partition 
 -------------------------
  callbacks.abc_6
 (1 row)
 
 SELECT add_range_partition('callbacks.abc', 501, 602);
-WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_7", "range_max": "602", "range_min": "501"}
+WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_7", "range_max": "602", "range_min": "501", "parent_schema": "callbacks", "partition_schema": "callbacks"}
  add_range_partition 
 ---------------------
  callbacks.abc_7
@@ -97,16 +97,38 @@ SELECT set_init_callback('callbacks.abc',
 (1 row)
 
 SELECT create_hash_partitions('callbacks.abc', 'a', 5);
-WARNING:  callback arg: {"parent": "abc", "parttype": "1", "partition": "abc_0"}
-WARNING:  callback arg: {"parent": "abc", "parttype": "1", "partition": "abc_1"}
-WARNING:  callback arg: {"parent": "abc", "parttype": "1", "partition": "abc_2"}
-WARNING:  callback arg: {"parent": "abc", "parttype": "1", "partition": "abc_3"}
-WARNING:  callback arg: {"parent": "abc", "parttype": "1", "partition": "abc_4"}
+WARNING:  callback arg: {"parent": "abc", "parttype": "1", "partition": "abc_0", "parent_schema": "callbacks", "partition_schema": "callbacks"}
+WARNING:  callback arg: {"parent": "abc", "parttype": "1", "partition": "abc_1", "parent_schema": "callbacks", "partition_schema": "callbacks"}
+WARNING:  callback arg: {"parent": "abc", "parttype": "1", "partition": "abc_2", "parent_schema": "callbacks", "partition_schema": "callbacks"}
+WARNING:  callback arg: {"parent": "abc", "parttype": "1", "partition": "abc_3", "parent_schema": "callbacks", "partition_schema": "callbacks"}
+WARNING:  callback arg: {"parent": "abc", "parttype": "1", "partition": "abc_4", "parent_schema": "callbacks", "partition_schema": "callbacks"}
  create_hash_partitions 
 ------------------------
                       5
 (1 row)
 
+DROP TABLE callbacks.abc CASCADE;
+NOTICE:  drop cascades to 5 other objects
+/* create table in public schema */
+CREATE TABLE abc(a serial, b int);
+SELECT set_init_callback('abc',
+						 'callbacks.abc_on_part_created_callback');
+ set_init_callback 
+-------------------
+ 
+(1 row)
+
+SELECT create_range_partitions('abc', 'a', 1, 100, 2);
+NOTICE:  sequence "abc_seq" does not exist, skipping
+WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_1", "range_max": "101", "range_min": "1", "parent_schema": "public", "partition_schema": "public"}
+WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_2", "range_max": "201", "range_min": "101", "parent_schema": "public", "partition_schema": "public"}
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+DROP TABLE abc CASCADE;
+NOTICE:  drop cascades to 2 other objects
 DROP SCHEMA callbacks CASCADE;
-NOTICE:  drop cascades to 8 other objects
+NOTICE:  drop cascades to 2 other objects
 DROP EXTENSION pg_pathman CASCADE;
