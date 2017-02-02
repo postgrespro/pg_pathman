@@ -1,0 +1,104 @@
+\set VERBOSITY terse
+
+SET search_path = 'public';
+CREATE EXTENSION pg_pathman;
+CREATE SCHEMA test_inserts;
+
+
+/* create a partitioned table */
+CREATE TABLE test_inserts.storage(a INT4, b INT4 NOT NULL, c NUMERIC, d TEXT);
+INSERT INTO test_inserts.storage SELECT i * 2, i, i, i::text FROM generate_series(1, 100) i;
+SELECT create_range_partitions('test_inserts.storage', 'b', 1, 10);
+
+
+/* implicitly prepend a partition (no columns have been dropped yet) */
+INSERT INTO test_inserts.storage VALUES(0, 0, 0, 'PREPEND.') RETURNING *;
+SELECT * FROM test_inserts.storage_11;
+
+INSERT INTO test_inserts.storage VALUES(0, 0, 0, 'PREPEND..') RETURNING tableoid::regclass;
+SELECT * FROM test_inserts.storage_11;
+
+INSERT INTO test_inserts.storage VALUES(3, 0, 0, 'PREPEND...') RETURNING a + b / 3;
+SELECT * FROM test_inserts.storage_11;
+
+
+/* drop first column */
+ALTER TABLE test_inserts.storage DROP COLUMN a CASCADE;
+
+
+/* will have 3 columns (b, c, d) */
+SELECT append_range_partition('test_inserts.storage');
+INSERT INTO test_inserts.storage (b, c, d) VALUES (101, 17, '3 cols!');
+SELECT * FROM test_inserts.storage_12; /* direct access */
+SELECT * FROM test_inserts.storage WHERE b > 100; /* via parent */
+
+/* spawn a new partition (b, c, d) */
+INSERT INTO test_inserts.storage (b, c, d) VALUES (111, 17, '3 cols as well!');
+SELECT * FROM test_inserts.storage_13; /* direct access */
+SELECT * FROM test_inserts.storage WHERE b > 110; /* via parent */
+
+
+/* column 'a' has been dropped */
+INSERT INTO test_inserts.storage VALUES(111, 0, 'DROP_COL_1.') RETURNING *, 17;
+INSERT INTO test_inserts.storage VALUES(111, 0, 'DROP_COL_1..') RETURNING tableoid::regclass;
+INSERT INTO test_inserts.storage VALUES(111, 0, 'DROP_COL_1...') RETURNING b * 2, b;
+
+
+/* drop third column */
+ALTER TABLE test_inserts.storage DROP COLUMN c CASCADE;
+
+
+/* will have 3 columns (b, c, d) */
+SELECT append_range_partition('test_inserts.storage');
+INSERT INTO test_inserts.storage (b, d) VALUES (121, '2 cols!');
+SELECT * FROM test_inserts.storage_14; /* direct access */
+SELECT * FROM test_inserts.storage WHERE b > 120; /* via parent */
+
+
+/* column 'c' has been dropped */
+INSERT INTO test_inserts.storage VALUES(121, 'DROP_COL_2.') RETURNING *;
+INSERT INTO test_inserts.storage VALUES(121, 'DROP_COL_2..') RETURNING tableoid::regclass;
+INSERT INTO test_inserts.storage VALUES(121, 'DROP_COL_2...') RETURNING d || '0_0', b * 3;
+
+
+
+INSERT INTO test_inserts.storage VALUES(121, 'query_1')
+RETURNING (SELECT 1);
+
+INSERT INTO test_inserts.storage VALUES(121, 'query_2')
+RETURNING (SELECT generate_series(1, 10) LIMIT 1);
+
+INSERT INTO test_inserts.storage VALUES(121, 'query_3')
+RETURNING (SELECT attname
+		   FROM pathman_config
+		   WHERE partrel = 'test_inserts.storage'::regclass);
+
+INSERT INTO test_inserts.storage VALUES(121, 'query_4')
+RETURNING 1, 2, 3, 4;
+
+
+
+/* show number of columns in each partition */
+SELECT partition, range_min, range_max, count(partition)
+FROM pathman_partition_list JOIN pg_attribute ON partition = attrelid
+WHERE attnum > 0
+GROUP BY partition, range_min, range_max
+ORDER BY range_min::INT4;
+
+
+/* check the data */
+SELECT *, tableoid::regclass FROM test_inserts.storage ORDER BY b, d;
+
+
+/* drop data */
+TRUNCATE test_inserts.storage;
+
+
+/* one more time! */
+INSERT INTO test_inserts.storage SELECT i, i FROM generate_series(-2, 120) i;
+SELECT *, tableoid::regclass FROM test_inserts.storage ORDER BY b, d;
+
+
+
+DROP SCHEMA test_inserts CASCADE;
+DROP EXTENSION pg_pathman CASCADE;

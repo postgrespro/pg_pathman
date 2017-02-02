@@ -1,0 +1,461 @@
+\set VERBOSITY terse
+SET search_path = 'public';
+CREATE EXTENSION pg_pathman;
+CREATE SCHEMA test_inserts;
+/* create a partitioned table */
+CREATE TABLE test_inserts.storage(a INT4, b INT4 NOT NULL, c NUMERIC, d TEXT);
+INSERT INTO test_inserts.storage SELECT i * 2, i, i, i::text FROM generate_series(1, 100) i;
+SELECT create_range_partitions('test_inserts.storage', 'b', 1, 10);
+NOTICE:  sequence "storage_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                      10
+(1 row)
+
+/* implicitly prepend a partition (no columns have been dropped yet) */
+INSERT INTO test_inserts.storage VALUES(0, 0, 0, 'PREPEND.') RETURNING *;
+ a | b | c |    d     
+---+---+---+----------
+ 0 | 0 | 0 | PREPEND.
+(1 row)
+
+SELECT * FROM test_inserts.storage_11;
+ a | b | c |    d     
+---+---+---+----------
+ 0 | 0 | 0 | PREPEND.
+(1 row)
+
+INSERT INTO test_inserts.storage VALUES(0, 0, 0, 'PREPEND..') RETURNING tableoid::regclass;
+        tableoid         
+-------------------------
+ test_inserts.storage_11
+(1 row)
+
+SELECT * FROM test_inserts.storage_11;
+ a | b | c |     d     
+---+---+---+-----------
+ 0 | 0 | 0 | PREPEND.
+ 0 | 0 | 0 | PREPEND..
+(2 rows)
+
+INSERT INTO test_inserts.storage VALUES(3, 0, 0, 'PREPEND...') RETURNING a + b / 3;
+ ?column? 
+----------
+        3
+(1 row)
+
+SELECT * FROM test_inserts.storage_11;
+ a | b | c |     d      
+---+---+---+------------
+ 0 | 0 | 0 | PREPEND.
+ 0 | 0 | 0 | PREPEND..
+ 3 | 0 | 0 | PREPEND...
+(3 rows)
+
+/* drop first column */
+ALTER TABLE test_inserts.storage DROP COLUMN a CASCADE;
+/* will have 3 columns (b, c, d) */
+SELECT append_range_partition('test_inserts.storage');
+ append_range_partition  
+-------------------------
+ test_inserts.storage_12
+(1 row)
+
+INSERT INTO test_inserts.storage (b, c, d) VALUES (101, 17, '3 cols!');
+SELECT * FROM test_inserts.storage_12; /* direct access */
+  b  | c  |    d    
+-----+----+---------
+ 101 | 17 | 3 cols!
+(1 row)
+
+SELECT * FROM test_inserts.storage WHERE b > 100; /* via parent */
+  b  | c  |    d    
+-----+----+---------
+ 101 | 17 | 3 cols!
+(1 row)
+
+/* spawn a new partition (b, c, d) */
+INSERT INTO test_inserts.storage (b, c, d) VALUES (111, 17, '3 cols as well!');
+SELECT * FROM test_inserts.storage_13; /* direct access */
+  b  | c  |        d        
+-----+----+-----------------
+ 111 | 17 | 3 cols as well!
+(1 row)
+
+SELECT * FROM test_inserts.storage WHERE b > 110; /* via parent */
+  b  | c  |        d        
+-----+----+-----------------
+ 111 | 17 | 3 cols as well!
+(1 row)
+
+/* column 'a' has been dropped */
+INSERT INTO test_inserts.storage VALUES(111, 0, 'DROP_COL_1.') RETURNING *, 17;
+  b  | c |      d      | ?column? 
+-----+---+-------------+----------
+ 111 | 0 | DROP_COL_1. |       17
+(1 row)
+
+INSERT INTO test_inserts.storage VALUES(111, 0, 'DROP_COL_1..') RETURNING tableoid::regclass;
+        tableoid         
+-------------------------
+ test_inserts.storage_13
+(1 row)
+
+INSERT INTO test_inserts.storage VALUES(111, 0, 'DROP_COL_1...') RETURNING b * 2, b;
+ ?column? |  b  
+----------+-----
+      222 | 111
+(1 row)
+
+/* drop third column */
+ALTER TABLE test_inserts.storage DROP COLUMN c CASCADE;
+/* will have 3 columns (b, c, d) */
+SELECT append_range_partition('test_inserts.storage');
+ append_range_partition  
+-------------------------
+ test_inserts.storage_14
+(1 row)
+
+INSERT INTO test_inserts.storage (b, d) VALUES (121, '2 cols!');
+SELECT * FROM test_inserts.storage_14; /* direct access */
+  b  |    d    
+-----+---------
+ 121 | 2 cols!
+(1 row)
+
+SELECT * FROM test_inserts.storage WHERE b > 120; /* via parent */
+  b  |    d    
+-----+---------
+ 121 | 2 cols!
+(1 row)
+
+/* column 'c' has been dropped */
+INSERT INTO test_inserts.storage VALUES(121, 'DROP_COL_2.') RETURNING *;
+  b  |      d      
+-----+-------------
+ 121 | DROP_COL_2.
+(1 row)
+
+INSERT INTO test_inserts.storage VALUES(121, 'DROP_COL_2..') RETURNING tableoid::regclass;
+        tableoid         
+-------------------------
+ test_inserts.storage_14
+(1 row)
+
+INSERT INTO test_inserts.storage VALUES(121, 'DROP_COL_2...') RETURNING d || '0_0', b * 3;
+     ?column?     | ?column? 
+------------------+----------
+ DROP_COL_2...0_0 |      363
+(1 row)
+
+INSERT INTO test_inserts.storage VALUES(121, 'query_1')
+RETURNING (SELECT 1);
+ ?column? 
+----------
+        1
+(1 row)
+
+INSERT INTO test_inserts.storage VALUES(121, 'query_2')
+RETURNING (SELECT generate_series(1, 10) LIMIT 1);
+ generate_series 
+-----------------
+               1
+(1 row)
+
+INSERT INTO test_inserts.storage VALUES(121, 'query_3')
+RETURNING (SELECT attname
+		   FROM pathman_config
+		   WHERE partrel = 'test_inserts.storage'::regclass);
+ attname 
+---------
+ b
+(1 row)
+
+INSERT INTO test_inserts.storage VALUES(121, 'query_4')
+RETURNING 1, 2, 3, 4;
+ ?column? | ?column? | ?column? | ?column? 
+----------+----------+----------+----------
+        1 |        2 |        3 |        4
+(1 row)
+
+/* show number of columns in each partition */
+SELECT partition, range_min, range_max, count(partition)
+FROM pathman_partition_list JOIN pg_attribute ON partition = attrelid
+WHERE attnum > 0
+GROUP BY partition, range_min, range_max
+ORDER BY range_min::INT4;
+        partition        | range_min | range_max | count 
+-------------------------+-----------+-----------+-------
+ test_inserts.storage_11 | -9        | 1         |     4
+ test_inserts.storage_1  | 1         | 11        |     4
+ test_inserts.storage_2  | 11        | 21        |     4
+ test_inserts.storage_3  | 21        | 31        |     4
+ test_inserts.storage_4  | 31        | 41        |     4
+ test_inserts.storage_5  | 41        | 51        |     4
+ test_inserts.storage_6  | 51        | 61        |     4
+ test_inserts.storage_7  | 61        | 71        |     4
+ test_inserts.storage_8  | 71        | 81        |     4
+ test_inserts.storage_9  | 81        | 91        |     4
+ test_inserts.storage_10 | 91        | 101       |     4
+ test_inserts.storage_12 | 101       | 111       |     3
+ test_inserts.storage_13 | 111       | 121       |     3
+ test_inserts.storage_14 | 121       | 131       |     2
+(14 rows)
+
+/* check the data */
+SELECT *, tableoid::regclass FROM test_inserts.storage ORDER BY b, d;
+  b  |        d        |        tableoid         
+-----+-----------------+-------------------------
+   0 | PREPEND.        | test_inserts.storage_11
+   0 | PREPEND..       | test_inserts.storage_11
+   0 | PREPEND...      | test_inserts.storage_11
+   1 | 1               | test_inserts.storage_1
+   2 | 2               | test_inserts.storage_1
+   3 | 3               | test_inserts.storage_1
+   4 | 4               | test_inserts.storage_1
+   5 | 5               | test_inserts.storage_1
+   6 | 6               | test_inserts.storage_1
+   7 | 7               | test_inserts.storage_1
+   8 | 8               | test_inserts.storage_1
+   9 | 9               | test_inserts.storage_1
+  10 | 10              | test_inserts.storage_1
+  11 | 11              | test_inserts.storage_2
+  12 | 12              | test_inserts.storage_2
+  13 | 13              | test_inserts.storage_2
+  14 | 14              | test_inserts.storage_2
+  15 | 15              | test_inserts.storage_2
+  16 | 16              | test_inserts.storage_2
+  17 | 17              | test_inserts.storage_2
+  18 | 18              | test_inserts.storage_2
+  19 | 19              | test_inserts.storage_2
+  20 | 20              | test_inserts.storage_2
+  21 | 21              | test_inserts.storage_3
+  22 | 22              | test_inserts.storage_3
+  23 | 23              | test_inserts.storage_3
+  24 | 24              | test_inserts.storage_3
+  25 | 25              | test_inserts.storage_3
+  26 | 26              | test_inserts.storage_3
+  27 | 27              | test_inserts.storage_3
+  28 | 28              | test_inserts.storage_3
+  29 | 29              | test_inserts.storage_3
+  30 | 30              | test_inserts.storage_3
+  31 | 31              | test_inserts.storage_4
+  32 | 32              | test_inserts.storage_4
+  33 | 33              | test_inserts.storage_4
+  34 | 34              | test_inserts.storage_4
+  35 | 35              | test_inserts.storage_4
+  36 | 36              | test_inserts.storage_4
+  37 | 37              | test_inserts.storage_4
+  38 | 38              | test_inserts.storage_4
+  39 | 39              | test_inserts.storage_4
+  40 | 40              | test_inserts.storage_4
+  41 | 41              | test_inserts.storage_5
+  42 | 42              | test_inserts.storage_5
+  43 | 43              | test_inserts.storage_5
+  44 | 44              | test_inserts.storage_5
+  45 | 45              | test_inserts.storage_5
+  46 | 46              | test_inserts.storage_5
+  47 | 47              | test_inserts.storage_5
+  48 | 48              | test_inserts.storage_5
+  49 | 49              | test_inserts.storage_5
+  50 | 50              | test_inserts.storage_5
+  51 | 51              | test_inserts.storage_6
+  52 | 52              | test_inserts.storage_6
+  53 | 53              | test_inserts.storage_6
+  54 | 54              | test_inserts.storage_6
+  55 | 55              | test_inserts.storage_6
+  56 | 56              | test_inserts.storage_6
+  57 | 57              | test_inserts.storage_6
+  58 | 58              | test_inserts.storage_6
+  59 | 59              | test_inserts.storage_6
+  60 | 60              | test_inserts.storage_6
+  61 | 61              | test_inserts.storage_7
+  62 | 62              | test_inserts.storage_7
+  63 | 63              | test_inserts.storage_7
+  64 | 64              | test_inserts.storage_7
+  65 | 65              | test_inserts.storage_7
+  66 | 66              | test_inserts.storage_7
+  67 | 67              | test_inserts.storage_7
+  68 | 68              | test_inserts.storage_7
+  69 | 69              | test_inserts.storage_7
+  70 | 70              | test_inserts.storage_7
+  71 | 71              | test_inserts.storage_8
+  72 | 72              | test_inserts.storage_8
+  73 | 73              | test_inserts.storage_8
+  74 | 74              | test_inserts.storage_8
+  75 | 75              | test_inserts.storage_8
+  76 | 76              | test_inserts.storage_8
+  77 | 77              | test_inserts.storage_8
+  78 | 78              | test_inserts.storage_8
+  79 | 79              | test_inserts.storage_8
+  80 | 80              | test_inserts.storage_8
+  81 | 81              | test_inserts.storage_9
+  82 | 82              | test_inserts.storage_9
+  83 | 83              | test_inserts.storage_9
+  84 | 84              | test_inserts.storage_9
+  85 | 85              | test_inserts.storage_9
+  86 | 86              | test_inserts.storage_9
+  87 | 87              | test_inserts.storage_9
+  88 | 88              | test_inserts.storage_9
+  89 | 89              | test_inserts.storage_9
+  90 | 90              | test_inserts.storage_9
+  91 | 91              | test_inserts.storage_10
+  92 | 92              | test_inserts.storage_10
+  93 | 93              | test_inserts.storage_10
+  94 | 94              | test_inserts.storage_10
+  95 | 95              | test_inserts.storage_10
+  96 | 96              | test_inserts.storage_10
+  97 | 97              | test_inserts.storage_10
+  98 | 98              | test_inserts.storage_10
+  99 | 99              | test_inserts.storage_10
+ 100 | 100             | test_inserts.storage_10
+ 101 | 3 cols!         | test_inserts.storage_12
+ 111 | 3 cols as well! | test_inserts.storage_13
+ 111 | DROP_COL_1.     | test_inserts.storage_13
+ 111 | DROP_COL_1..    | test_inserts.storage_13
+ 111 | DROP_COL_1...   | test_inserts.storage_13
+ 121 | 2 cols!         | test_inserts.storage_14
+ 121 | DROP_COL_2.     | test_inserts.storage_14
+ 121 | DROP_COL_2..    | test_inserts.storage_14
+ 121 | DROP_COL_2...   | test_inserts.storage_14
+ 121 | query_1         | test_inserts.storage_14
+ 121 | query_2         | test_inserts.storage_14
+ 121 | query_3         | test_inserts.storage_14
+ 121 | query_4         | test_inserts.storage_14
+(116 rows)
+
+/* drop data */
+TRUNCATE test_inserts.storage;
+/* one more time! */
+INSERT INTO test_inserts.storage SELECT i, i FROM generate_series(-2, 120) i;
+SELECT *, tableoid::regclass FROM test_inserts.storage ORDER BY b, d;
+  b  |  d  |        tableoid         
+-----+-----+-------------------------
+  -2 | -2  | test_inserts.storage_11
+  -1 | -1  | test_inserts.storage_11
+   0 | 0   | test_inserts.storage_11
+   1 | 1   | test_inserts.storage_1
+   2 | 2   | test_inserts.storage_1
+   3 | 3   | test_inserts.storage_1
+   4 | 4   | test_inserts.storage_1
+   5 | 5   | test_inserts.storage_1
+   6 | 6   | test_inserts.storage_1
+   7 | 7   | test_inserts.storage_1
+   8 | 8   | test_inserts.storage_1
+   9 | 9   | test_inserts.storage_1
+  10 | 10  | test_inserts.storage_1
+  11 | 11  | test_inserts.storage_2
+  12 | 12  | test_inserts.storage_2
+  13 | 13  | test_inserts.storage_2
+  14 | 14  | test_inserts.storage_2
+  15 | 15  | test_inserts.storage_2
+  16 | 16  | test_inserts.storage_2
+  17 | 17  | test_inserts.storage_2
+  18 | 18  | test_inserts.storage_2
+  19 | 19  | test_inserts.storage_2
+  20 | 20  | test_inserts.storage_2
+  21 | 21  | test_inserts.storage_3
+  22 | 22  | test_inserts.storage_3
+  23 | 23  | test_inserts.storage_3
+  24 | 24  | test_inserts.storage_3
+  25 | 25  | test_inserts.storage_3
+  26 | 26  | test_inserts.storage_3
+  27 | 27  | test_inserts.storage_3
+  28 | 28  | test_inserts.storage_3
+  29 | 29  | test_inserts.storage_3
+  30 | 30  | test_inserts.storage_3
+  31 | 31  | test_inserts.storage_4
+  32 | 32  | test_inserts.storage_4
+  33 | 33  | test_inserts.storage_4
+  34 | 34  | test_inserts.storage_4
+  35 | 35  | test_inserts.storage_4
+  36 | 36  | test_inserts.storage_4
+  37 | 37  | test_inserts.storage_4
+  38 | 38  | test_inserts.storage_4
+  39 | 39  | test_inserts.storage_4
+  40 | 40  | test_inserts.storage_4
+  41 | 41  | test_inserts.storage_5
+  42 | 42  | test_inserts.storage_5
+  43 | 43  | test_inserts.storage_5
+  44 | 44  | test_inserts.storage_5
+  45 | 45  | test_inserts.storage_5
+  46 | 46  | test_inserts.storage_5
+  47 | 47  | test_inserts.storage_5
+  48 | 48  | test_inserts.storage_5
+  49 | 49  | test_inserts.storage_5
+  50 | 50  | test_inserts.storage_5
+  51 | 51  | test_inserts.storage_6
+  52 | 52  | test_inserts.storage_6
+  53 | 53  | test_inserts.storage_6
+  54 | 54  | test_inserts.storage_6
+  55 | 55  | test_inserts.storage_6
+  56 | 56  | test_inserts.storage_6
+  57 | 57  | test_inserts.storage_6
+  58 | 58  | test_inserts.storage_6
+  59 | 59  | test_inserts.storage_6
+  60 | 60  | test_inserts.storage_6
+  61 | 61  | test_inserts.storage_7
+  62 | 62  | test_inserts.storage_7
+  63 | 63  | test_inserts.storage_7
+  64 | 64  | test_inserts.storage_7
+  65 | 65  | test_inserts.storage_7
+  66 | 66  | test_inserts.storage_7
+  67 | 67  | test_inserts.storage_7
+  68 | 68  | test_inserts.storage_7
+  69 | 69  | test_inserts.storage_7
+  70 | 70  | test_inserts.storage_7
+  71 | 71  | test_inserts.storage_8
+  72 | 72  | test_inserts.storage_8
+  73 | 73  | test_inserts.storage_8
+  74 | 74  | test_inserts.storage_8
+  75 | 75  | test_inserts.storage_8
+  76 | 76  | test_inserts.storage_8
+  77 | 77  | test_inserts.storage_8
+  78 | 78  | test_inserts.storage_8
+  79 | 79  | test_inserts.storage_8
+  80 | 80  | test_inserts.storage_8
+  81 | 81  | test_inserts.storage_9
+  82 | 82  | test_inserts.storage_9
+  83 | 83  | test_inserts.storage_9
+  84 | 84  | test_inserts.storage_9
+  85 | 85  | test_inserts.storage_9
+  86 | 86  | test_inserts.storage_9
+  87 | 87  | test_inserts.storage_9
+  88 | 88  | test_inserts.storage_9
+  89 | 89  | test_inserts.storage_9
+  90 | 90  | test_inserts.storage_9
+  91 | 91  | test_inserts.storage_10
+  92 | 92  | test_inserts.storage_10
+  93 | 93  | test_inserts.storage_10
+  94 | 94  | test_inserts.storage_10
+  95 | 95  | test_inserts.storage_10
+  96 | 96  | test_inserts.storage_10
+  97 | 97  | test_inserts.storage_10
+  98 | 98  | test_inserts.storage_10
+  99 | 99  | test_inserts.storage_10
+ 100 | 100 | test_inserts.storage_10
+ 101 | 101 | test_inserts.storage_12
+ 102 | 102 | test_inserts.storage_12
+ 103 | 103 | test_inserts.storage_12
+ 104 | 104 | test_inserts.storage_12
+ 105 | 105 | test_inserts.storage_12
+ 106 | 106 | test_inserts.storage_12
+ 107 | 107 | test_inserts.storage_12
+ 108 | 108 | test_inserts.storage_12
+ 109 | 109 | test_inserts.storage_12
+ 110 | 110 | test_inserts.storage_12
+ 111 | 111 | test_inserts.storage_13
+ 112 | 112 | test_inserts.storage_13
+ 113 | 113 | test_inserts.storage_13
+ 114 | 114 | test_inserts.storage_13
+ 115 | 115 | test_inserts.storage_13
+ 116 | 116 | test_inserts.storage_13
+ 117 | 117 | test_inserts.storage_13
+ 118 | 118 | test_inserts.storage_13
+ 119 | 119 | test_inserts.storage_13
+ 120 | 120 | test_inserts.storage_13
+(123 rows)
+
+DROP SCHEMA test_inserts CASCADE;
+NOTICE:  drop cascades to 16 other objects
+DROP EXTENSION pg_pathman CASCADE;
