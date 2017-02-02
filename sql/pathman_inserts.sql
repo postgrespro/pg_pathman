@@ -89,14 +89,34 @@ ORDER BY range_min::INT4;
 /* check the data */
 SELECT *, tableoid::regclass FROM test_inserts.storage ORDER BY b, d;
 
-
 /* drop data */
 TRUNCATE test_inserts.storage;
 
 
 /* one more time! */
-INSERT INTO test_inserts.storage SELECT i, i FROM generate_series(-2, 120) i;
+INSERT INTO test_inserts.storage (b, d) SELECT i, i FROM generate_series(-2, 120) i;
 SELECT *, tableoid::regclass FROM test_inserts.storage ORDER BY b, d;
+
+/* drop data */
+TRUNCATE test_inserts.storage;
+
+
+/* add new column */
+ALTER TABLE test_inserts.storage ADD COLUMN e INT8 NOT NULL;
+
+
+/* one more time! x2 */
+INSERT INTO test_inserts.storage (b, d, e) SELECT i, i, i FROM generate_series(-2, 120) i;
+SELECT *, tableoid::regclass FROM test_inserts.storage ORDER BY b, d;
+
+/* drop data */
+TRUNCATE test_inserts.storage;
+
+
+/* now test RETURNING list using our new column 'e' */
+INSERT INTO test_inserts.storage (b, d, e) SELECT i, i, i
+FROM generate_series(-2, 130, 5) i
+RETURNING e * 2, b, tableoid::regclass;
 
 
 
