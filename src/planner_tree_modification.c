@@ -373,7 +373,8 @@ partition_filter_visitor(Plan *plan, void *context)
 	List		   *rtable = (List *) context;
 	ModifyTable	   *modify_table = (ModifyTable *) plan;
 	ListCell	   *lc1,
-				   *lc2;
+				   *lc2,
+				   *lc3;
 
 	/* Skip if not ModifyTable with 'INSERT' command */
 	if (!IsA(modify_table, ModifyTable) || modify_table->operation != CMD_INSERT)
@@ -381,6 +382,7 @@ partition_filter_visitor(Plan *plan, void *context)
 
 	Assert(rtable && IsA(rtable, List));
 
+	lc3 = list_head(modify_table->returningLists);
 	forboth (lc1, modify_table->plans, lc2, modify_table->resultRelations)
 	{
 		Index					rindex = lfirst_int(lc2);
@@ -389,9 +391,21 @@ partition_filter_visitor(Plan *plan, void *context)
 
 		/* Check that table is partitioned */
 		if (prel)
+		{
+			List *returning_list = NIL;
+
+			/* Extract returning list if possible */
+			if (lc3)
+			{
+				returning_list = lfirst(lc3);
+				lc3 = lnext(lc3);
+			}
+
 			lfirst(lc1) = make_partition_filter((Plan *) lfirst(lc1),
 												relid,
-												modify_table->onConflictAction);
+												modify_table->onConflictAction,
+												returning_list);
+		}
 	}
 }
 

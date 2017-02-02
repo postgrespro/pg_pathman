@@ -844,7 +844,7 @@ create_table_using_stmt(CreateStmt *create_stmt, Oid relowner)
 	/* Create new GUC level... */
 	guc_level = NewGUCNestLevel();
 
-	/* ... and set client_min_messages = WARNING */
+	/* ... and set client_min_messages = warning */
 	(void) set_config_option("client_min_messages", "WARNING",
 							 PGC_USERSET, PGC_S_SESSION,
 							 GUC_ACTION_SAVE, true, 0, false);

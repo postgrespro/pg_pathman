@@ -58,9 +58,10 @@ static uint64 PathmanCopyFrom(CopyState cstate,
 							  List *range_table,
 							  bool old_protocol);
 
-static void prepare_rri_fdw_for_copy(EState *estate,
-									 ResultRelInfoHolder *rri_holder,
-									 void *arg);
+static void prepare_rri_for_copy(EState *estate,
+								 ResultRelInfoHolder *rri_holder,
+								 const ResultPartsStorage *rps_storage,
+								 void *arg);
 
 
 /*
@@ -500,7 +501,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	/* Initialize ResultPartsStorage */
 	init_result_parts_storage(&parts_storage, estate, false,
 							  ResultPartsStorageStandard,
-							  prepare_rri_fdw_for_copy, NULL);
+							  prepare_rri_for_copy, NULL);
 	parts_storage.saved_rel_info = parent_result_rel;
 
 	/* Set up a tuple slot too */
@@ -656,9 +657,10 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
  * COPY FROM does not support FDWs, emit ERROR.
  */
 static void
-prepare_rri_fdw_for_copy(EState *estate,
-						 ResultRelInfoHolder *rri_holder,
-						 void *arg)
+prepare_rri_for_copy(EState *estate,
+					 ResultRelInfoHolder *rri_holder,
+					 const ResultPartsStorage *rps_storage,
+					 void *arg)
 {
 	ResultRelInfo  *rri = rri_holder->result_rel_info;
 	FdwRoutine	   *fdw_routine = rri->ri_FdwRoutine;
