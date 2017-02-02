@@ -122,6 +122,7 @@ void unload_config(void);
 
 void fill_prel_with_partitions(const Oid *partitions,
 							   const uint32 parts_count,
+							   const char *part_column_name,
 							   PartRelationInfo *prel);
 
 /* Result of find_inheritance_children_array() */
