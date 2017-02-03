@@ -374,20 +374,28 @@ make_partition_filter(Plan *subplan, Oid parent_relid,
 	CustomScan *cscan = makeNode(CustomScan);
 	Relation	parent_rel;
 
+	/* Currenly we don't support ON CONFLICT clauses */
+	if (conflict_action != ONCONFLICT_NONE)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("ON CONFLICT clause is not supported with partitioned tables")));
+
+	/* Copy costs etc */
 	cscan->scan.plan.startup_cost = subplan->startup_cost;
 	cscan->scan.plan.total_cost = subplan->total_cost;
 	cscan->scan.plan.plan_rows = subplan->plan_rows;
 	cscan->scan.plan.plan_width = subplan->plan_width;
 
+	/* Setup methods and child plan */
 	cscan->methods = &partition_filter_plan_methods;
 	cscan->custom_plans = list_make1(subplan);
 
+	/* Build an appropriate target list using a cached Relation entry */
 	parent_rel = RelationIdGetRelation(parent_relid);
-	cscan->scan.plan.targetlist = pfilter_build_tlist(parent_rel,
-													  subplan->targetlist);
+	cscan->scan.plan.targetlist = pfilter_build_tlist(parent_rel, subplan->targetlist);
 	RelationClose(parent_rel);
 
-	/* No relation will be scanned */
+	/* No physical relation will be scanned */
 	cscan->scan.scanrelid = 0;
 	cscan->custom_scan_tlist = subplan->targetlist;
 
