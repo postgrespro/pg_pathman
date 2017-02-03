@@ -5,6 +5,7 @@ CREATE SCHEMA test_inserts;
 /* create a partitioned table */
 CREATE TABLE test_inserts.storage(a INT4, b INT4 NOT NULL, c NUMERIC, d TEXT);
 INSERT INTO test_inserts.storage SELECT i * 2, i, i, i::text FROM generate_series(1, 100) i;
+CREATE UNIQUE INDEX ON test_inserts.storage(a);
 SELECT create_range_partitions('test_inserts.storage', 'b', 1, 10);
 NOTICE:  sequence "storage_seq" does not exist, skipping
  create_range_partitions 
@@ -12,6 +13,13 @@ NOTICE:  sequence "storage_seq" does not exist, skipping
                       10
 (1 row)
 
+/* we don't support ON CONLICT */
+INSERT INTO test_inserts.storage VALUES(0, 0, 0, 'UNSUPPORTED_1')
+ON CONFLICT (a) DO UPDATE SET a = 3;
+ERROR:  ON CONFLICT clause is not supported with partitioned tables
+INSERT INTO test_inserts.storage VALUES(0, 0, 0, 'UNSUPPORTED_2')
+ON CONFLICT (a) DO NOTHING;
+ERROR:  ON CONFLICT clause is not supported with partitioned tables
 /* implicitly prepend a partition (no columns have been dropped yet) */
 INSERT INTO test_inserts.storage VALUES(0, 0, 0, 'PREPEND.') RETURNING *;
  a | b | c |    d     
@@ -25,7 +33,7 @@ SELECT * FROM test_inserts.storage_11;
  0 | 0 | 0 | PREPEND.
 (1 row)
 
-INSERT INTO test_inserts.storage VALUES(0, 0, 0, 'PREPEND..') RETURNING tableoid::regclass;
+INSERT INTO test_inserts.storage VALUES(1, 0, 0, 'PREPEND..') RETURNING tableoid::regclass;
         tableoid         
 -------------------------
  test_inserts.storage_11
@@ -35,7 +43,7 @@ SELECT * FROM test_inserts.storage_11;
  a | b | c |     d     
 ---+---+---+-----------
  0 | 0 | 0 | PREPEND.
- 0 | 0 | 0 | PREPEND..
+ 1 | 0 | 0 | PREPEND..
 (2 rows)
 
 INSERT INTO test_inserts.storage VALUES(3, 0, 0, 'PREPEND...') RETURNING a + b / 3;
@@ -48,10 +56,13 @@ SELECT * FROM test_inserts.storage_11;
  a | b | c |     d      
 ---+---+---+------------
  0 | 0 | 0 | PREPEND.
- 0 | 0 | 0 | PREPEND..
+ 1 | 0 | 0 | PREPEND..
  3 | 0 | 0 | PREPEND...
 (3 rows)
 
+/* cause a conflict (a = 0) */
+INSERT INTO test_inserts.storage VALUES(0, 0, 0, 'CONFLICT') RETURNING *;
+ERROR:  duplicate key value violates unique constraint "storage_11_a_idx"
 /* drop first column */
 ALTER TABLE test_inserts.storage DROP COLUMN a CASCADE;
 /* will have 3 columns (b, c, d) */

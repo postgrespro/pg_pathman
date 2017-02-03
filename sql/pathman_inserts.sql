@@ -8,18 +8,29 @@ CREATE SCHEMA test_inserts;
 /* create a partitioned table */
 CREATE TABLE test_inserts.storage(a INT4, b INT4 NOT NULL, c NUMERIC, d TEXT);
 INSERT INTO test_inserts.storage SELECT i * 2, i, i, i::text FROM generate_series(1, 100) i;
+CREATE UNIQUE INDEX ON test_inserts.storage(a);
 SELECT create_range_partitions('test_inserts.storage', 'b', 1, 10);
+
+
+/* we don't support ON CONLICT */
+INSERT INTO test_inserts.storage VALUES(0, 0, 0, 'UNSUPPORTED_1')
+ON CONFLICT (a) DO UPDATE SET a = 3;
+INSERT INTO test_inserts.storage VALUES(0, 0, 0, 'UNSUPPORTED_2')
+ON CONFLICT (a) DO NOTHING;
 
 
 /* implicitly prepend a partition (no columns have been dropped yet) */
 INSERT INTO test_inserts.storage VALUES(0, 0, 0, 'PREPEND.') RETURNING *;
 SELECT * FROM test_inserts.storage_11;
 
-INSERT INTO test_inserts.storage VALUES(0, 0, 0, 'PREPEND..') RETURNING tableoid::regclass;
+INSERT INTO test_inserts.storage VALUES(1, 0, 0, 'PREPEND..') RETURNING tableoid::regclass;
 SELECT * FROM test_inserts.storage_11;
 
 INSERT INTO test_inserts.storage VALUES(3, 0, 0, 'PREPEND...') RETURNING a + b / 3;
 SELECT * FROM test_inserts.storage_11;
+
+/* cause a conflict (a = 0) */
+INSERT INTO test_inserts.storage VALUES(0, 0, 0, 'CONFLICT') RETURNING *;
 
 
 /* drop first column */

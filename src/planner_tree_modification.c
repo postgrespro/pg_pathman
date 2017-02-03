@@ -43,7 +43,7 @@ static List *get_tableoids_list(List *tlist);
  * cant't be used with both and without ONLY modifiers.
  */
 static HTAB	   *per_table_parenthood_mapping = NULL;
-static uint32	per_table_parenthood_mapping_refcount = 0;
+static int		per_table_parenthood_mapping_refcount = 0;
 
 /*
  * We have to mark each Query with a unique id in order
@@ -564,10 +564,7 @@ assign_rel_parenthood_status(uint32 query_id,
 		/* Saved status conflicts with 'new_status' */
 		if (status_entry->parenthood_status != new_status)
 		{
-			/* Don't forget to clear ALL tracked statuses! */
-			decr_refcount_parenthood_statuses(true);
-
-			elog(ERROR, "It is prohibited to apply ONLY modifier to partitioned "
+			elog(ERROR, "it is prohibited to apply ONLY modifier to partitioned "
 						"tables which have already been mentioned without ONLY");
 		}
 	}
@@ -612,8 +609,10 @@ get_rel_parenthood_status(uint32 query_id, Oid relid)
 void
 incr_refcount_parenthood_statuses(void)
 {
-	Assert(per_table_parenthood_mapping_refcount >= 0);
-	per_table_parenthood_mapping_refcount++;
+	/* Increment reference counter */
+	if (++per_table_parenthood_mapping_refcount <= 0)
+		elog(WARNING, "imbalanced %s",
+			 CppAsString(incr_refcount_parenthood_statuses));
 }
 
 /* Return current value of usage counter */
@@ -626,15 +625,12 @@ get_refcount_parenthood_statuses(void)
 
 /* Reset all cached statuses if needed (query end) */
 void
-decr_refcount_parenthood_statuses(bool entirely)
+decr_refcount_parenthood_statuses(void)
 {
-	Assert(per_table_parenthood_mapping_refcount > 0);
-
-	/* Should we destroy the table right now? */
-	if (entirely)
-		per_table_parenthood_mapping_refcount = 0;
-	else
-		per_table_parenthood_mapping_refcount--;
+	/* Decrement reference counter */
+	if (--per_table_parenthood_mapping_refcount < 0)
+		elog(WARNING, "imbalanced %s",
+			 CppAsString(decr_refcount_parenthood_statuses));
 
 	/* Free resources if no one is using them */
 	if (per_table_parenthood_mapping_refcount == 0)
