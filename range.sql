@@ -435,6 +435,30 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
+
+/*
+ * Set (or reset) default interval for auto created partitions
+ */
+CREATE OR REPLACE FUNCTION @extschema@.set_interval(parent REGCLASS, value ANYELEMENT)
+RETURNS VOID AS
+$$
+DECLARE
+	affected INTEGER;
+BEGIN
+	UPDATE @extschema@.pathman_config
+	SET range_interval = value::text
+	WHERE partrel = parent;
+
+	GET DIAGNOSTICS affected = ROW_COUNT;
+
+	IF affected = 0 THEN
+		RAISE EXCEPTION 'table "%" is not partitioned', parent;
+	END IF;
+END
+$$
+LANGUAGE plpgsql;
+
+
 /*
  * Split RANGE partition
  */

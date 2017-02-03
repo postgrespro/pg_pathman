@@ -8,6 +8,19 @@
  * ------------------------------------------------------------------------
  */
 
+
+/*
+ * Takes text representation of interval value and checks if it is corresponds
+ * to partitioning key. The function throws an error if it fails to convert
+ * text to Datum
+ */
+CREATE OR REPLACE FUNCTION @extschema@.validate_interval_value(
+	parent			REGCLASS,
+	interval_value	TEXT)
+RETURNS BOOL AS 'pg_pathman', 'validate_interval_value'
+LANGUAGE C STRICT;
+
+
 /*
  * Pathman config
  *		partrel - regclass (relation type, stored as Oid)
@@ -23,7 +36,8 @@ CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
 	parttype		INTEGER NOT NULL,
 	range_interval	TEXT,
 
-	CHECK (parttype IN (1, 2)) /* check for allowed part types */
+	CHECK (parttype IN (1, 2)), /* check for allowed part types */
+	CHECK (@extschema@.validate_interval_value(partrel, range_interval))
 );
 
 

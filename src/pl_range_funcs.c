@@ -60,6 +60,7 @@ PG_FUNCTION_INFO_V1( build_range_condition );
 PG_FUNCTION_INFO_V1( build_sequence_name );
 PG_FUNCTION_INFO_V1( merge_range_partitions );
 PG_FUNCTION_INFO_V1( drop_range_partition_expand_next );
+PG_FUNCTION_INFO_V1( validate_interval_value );
 
 
 /*
@@ -749,4 +750,26 @@ drop_range_partition_expand_next(PG_FUNCTION_ARGS)
 	drop_table(relid);
 
 	PG_RETURN_VOID();	
+}
+
+/*
+ * Takes text representation of interval value and checks if it is corresponds
+ * to partitioning key. The function throws an error if it fails to convert
+ * text to Datum
+ */
+Datum
+validate_interval_value(PG_FUNCTION_ARGS)
+{
+	const PartRelationInfo *prel;
+	Oid		parent = PG_GETARG_OID(0);
+	Datum	interval = PG_GETARG_DATUM(1);
+
+	/* TODO!!! */
+	prel = get_pathman_relation_info(parent);
+	if (!prel)
+		PG_RETURN_BOOL(true);
+
+	extract_binary_interval_from_text(interval, prel->atttype, NULL);
+
+	PG_RETURN_BOOL(true);
 }
