@@ -661,13 +661,25 @@ VACUUM ANALYZE test.index_on_childs;
 EXPLAIN (COSTS OFF) SELECT * FROM test.index_on_childs WHERE c1 > 100 AND c1 < 2500 AND c2 = 500;
 
 /* Test recursive CTE */
-create table test.recursive_cte_test_tbl(id int not null, name text not null);
-select * from create_hash_partitions('test.recursive_cte_test_tbl', 'id', 2);
-insert into test.recursive_cte_test_tbl (id, name) select id, 'name'||id from generate_series(1,100) f(id);
-insert into test.recursive_cte_test_tbl (id, name) select id, 'name'||(id + 1) from generate_series(1,100) f(id);
-insert into test.recursive_cte_test_tbl (id, name) select id, 'name'||(id + 2) from generate_series(1,100) f(id);
-select * from test.recursive_cte_test_tbl where id = 5;
-with recursive test as (select min(name) as name from test.recursive_cte_test_tbl where id = 5 union all select (select min(name) from test.recursive_cte_test_tbl where id = 5 and name > test.name) from test where name is not null) select * from test;
+CREATE TABLE test.recursive_cte_test_tbl(id INT NOT NULL, name TEXT NOT NULL);
+SELECT * FROM create_hash_partitions('test.recursive_cte_test_tbl', 'id', 2);
+INSERT INTO test.recursive_cte_test_tbl (id, name) SELECT id, 'name'||id FROM generate_series(1,100) f(id);
+INSERT INTO test.recursive_cte_test_tbl (id, name) SELECT id, 'name'||(id + 1) FROM generate_series(1,100) f(id);
+INSERT INTO test.recursive_cte_test_tbl (id, name) SELECT id, 'name'||(id + 2) FROM generate_series(1,100) f(id);
+SELECT * FROM test.recursive_cte_test_tbl WHERE id = 5;
+
+WITH RECURSIVE test AS (
+	SELECT min(name) AS name
+	FROM test.recursive_cte_test_tbl
+	WHERE id = 5
+	UNION ALL
+	SELECT (SELECT min(name)
+			FROM test.recursive_cte_test_tbl
+			WHERE id = 5 AND name > test.name)
+	FROM test
+	WHERE name IS NOT NULL)
+SELECT * FROM test;
+
 
 DROP SCHEMA test CASCADE;
 DROP EXTENSION pg_pathman CASCADE;
