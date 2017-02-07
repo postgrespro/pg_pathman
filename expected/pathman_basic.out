@@ -494,7 +494,7 @@ UNION SELECT * FROM test.from_only_test;
 /* not ok, ONLY|non-ONLY in one query */
 EXPLAIN (COSTS OFF)
 SELECT * FROM test.from_only_test a JOIN ONLY test.from_only_test b USING(val);
-ERROR:  It is prohibited to apply ONLY modifier to partitioned tables which have already been mentioned without ONLY
+ERROR:  it is prohibited to apply ONLY modifier to partitioned tables which have already been mentioned without ONLY
 EXPLAIN (COSTS OFF)
 WITH q1 AS (SELECT * FROM test.from_only_test),
 	 q2 AS (SELECT * FROM ONLY test.from_only_test)

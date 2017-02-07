@@ -18,6 +18,7 @@ DATA = pg_pathman--1.0.sql \
 PGFILEDESC = "pg_pathman - partitioning tool"
 
 REGRESS = pathman_basic \
+		  pathman_inserts \
 		  pathman_runtime_nodes \
 		  pathman_callbacks \
 		  pathman_domains \

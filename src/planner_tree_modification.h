@@ -46,7 +46,7 @@ void assign_rel_parenthood_status(uint32 query_id, Oid relid,
 rel_parenthood_status get_rel_parenthood_status(uint32 query_id, Oid relid);
 void incr_refcount_parenthood_statuses(void);
 uint32 get_refcount_parenthood_statuses(void);
-void decr_refcount_parenthood_statuses(bool entirely);
+void decr_refcount_parenthood_statuses(void);
 
 
 #endif /* PLANNER_TREE_MODIFICATION_H */

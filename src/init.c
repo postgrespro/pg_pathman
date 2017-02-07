@@ -77,15 +77,18 @@ static int cmp_range_entries(const void *p1, const void *p2, void *arg);
 
 static bool validate_range_constraint(const Expr *expr,
 									  const PartRelationInfo *prel,
+									  const AttrNumber part_attno,
 									  Datum *lower, Datum *upper,
 									  bool *lower_null, bool *upper_null);
 
 static bool validate_hash_constraint(const Expr *expr,
 									 const PartRelationInfo *prel,
+									 const AttrNumber part_attno,
 									 uint32 *part_hash);
 
 static bool read_opexpr_const(const OpExpr *opexpr,
 							  const PartRelationInfo *prel,
+							  const AttrNumber part_attno,
 							  Datum *val);
 
 static int oid_cmp(const void *p1, const void *p2);
@@ -347,6 +350,7 @@ init_shmem_config(void)
 void
 fill_prel_with_partitions(const Oid *partitions,
 						  const uint32 parts_count,
+						  const char *part_column_name,
 						  PartRelationInfo *prel)
 {
 	uint32			i;
@@ -361,7 +365,18 @@ fill_prel_with_partitions(const Oid *partitions,
 
 	for (i = 0; i < PrelChildrenCount(prel); i++)
 	{
-		con_expr = get_partition_constraint_expr(partitions[i], prel->attnum);
+		AttrNumber part_attno;
+
+		/* NOTE: Partitions may have different TupleDescs */
+		part_attno = get_attnum(partitions[i], part_column_name);
+
+		/* Raise ERROR if there's no such column */
+		if (part_attno == InvalidAttrNumber)
+			elog(ERROR, "partition \"%s\" has no column \"%s\"",
+				 get_rel_name_or_relid(partitions[i]),
+				 part_column_name);
+
+		con_expr = get_partition_constraint_expr(partitions[i], part_attno);
 
 		/* Perform a partitioning_type-dependent task */
 		switch (prel->parttype)
@@ -370,13 +385,13 @@ fill_prel_with_partitions(const Oid *partitions,
 				{
 					uint32	hash; /* hash value < parts_count */
 
-					if (validate_hash_constraint(con_expr, prel, &hash))
+					if (validate_hash_constraint(con_expr, prel, part_attno, &hash))
 						prel->children[hash] = partitions[i];
 					else
 					{
 						DisablePathman(); /* disable pg_pathman since config is broken */
 						ereport(ERROR,
-								(errmsg("Wrong constraint format for HASH partition \"%s\"",
+								(errmsg("wrong constraint format for HASH partition \"%s\"",
 										get_rel_name_or_relid(partitions[i])),
 								 errhint(INIT_ERROR_HINT)));
 					}
@@ -388,7 +403,7 @@ fill_prel_with_partitions(const Oid *partitions,
 					Datum	lower, upper;
 					bool	lower_null, upper_null;
 
-					if (validate_range_constraint(con_expr, prel,
+					if (validate_range_constraint(con_expr, prel, part_attno,
 												  &lower, &upper,
 												  &lower_null, &upper_null))
 					{
@@ -404,7 +419,7 @@ fill_prel_with_partitions(const Oid *partitions,
 					{
 						DisablePathman(); /* disable pg_pathman since config is broken */
 						ereport(ERROR,
-								(errmsg("Wrong constraint format for RANGE partition \"%s\"",
+								(errmsg("wrong constraint format for RANGE partition \"%s\"",
 										get_rel_name_or_relid(partitions[i])),
 								 errhint(INIT_ERROR_HINT)));
 					}
@@ -924,6 +939,7 @@ cmp_range_entries(const void *p1, const void *p2, void *arg)
 static bool
 validate_range_constraint(const Expr *expr,
 						  const PartRelationInfo *prel,
+						  const AttrNumber part_attno,
 						  Datum *lower, Datum *upper,
 						  bool *lower_null, bool *upper_null)
 {
@@ -932,14 +948,14 @@ validate_range_constraint(const Expr *expr,
 	int						strategy;
 
 /* Validates a single expression of kind VAR >= CONST or VAR < CONST */
-#define validate_range_expr(expr)											\
+#define validate_range_expr(expr, part_attno)								\
 	{																		\
 		Datum val;															\
 		opexpr = (OpExpr *) (expr);											\
 		strategy = get_op_opfamily_strategy(opexpr->opno, tce->btree_opf);	\
 																			\
 		/* Get const value */												\
-		if (!read_opexpr_const(opexpr, prel, &val))							\
+		if (!read_opexpr_const(opexpr, prel, part_attno, &val))				\
 			return false;													\
 																			\
 		/* Set min or max depending on operator */							\
@@ -976,13 +992,13 @@ validate_range_constraint(const Expr *expr,
 			if(!IsA(arg, OpExpr))
 				return false;
 
-			validate_range_expr(arg);
+			validate_range_expr(arg, part_attno);
 		}
 		return true;
 	}
 	else if(IsA(expr, OpExpr))
 	{
-		validate_range_expr(expr);
+		validate_range_expr(expr, part_attno);
 		return true;
 	}
 
@@ -997,6 +1013,7 @@ validate_range_constraint(const Expr *expr,
 static bool
 read_opexpr_const(const OpExpr *opexpr,
 				  const PartRelationInfo *prel,
+				  const AttrNumber part_attno,
 				  Datum *val)
 {
 	const Node	   *left;
@@ -1030,7 +1047,7 @@ read_opexpr_const(const OpExpr *opexpr,
 	else return false;
 
 	/* VAR.attno == partitioned attribute number */
-	if (part_attr->varoattno != prel->attnum)
+	if (part_attr->varoattno != part_attno)
 		return false;
 
 	/* CONST is NOT NULL */
@@ -1066,6 +1083,7 @@ read_opexpr_const(const OpExpr *opexpr,
 static bool
 validate_hash_constraint(const Expr *expr,
 						 const PartRelationInfo *prel,
+						 const AttrNumber part_attno,
 						 uint32 *part_hash)
 {
 	const TypeCacheEntry   *tce;
@@ -1119,7 +1137,7 @@ validate_hash_constraint(const Expr *expr,
 			var = (Var *) linitial(type_hash_proc_expr->args);
 
 		/* Check that 'var' is the partitioning key attribute */
-		if (var->varoattno != prel->attnum)
+		if (var->varoattno != part_attno)
 			return false;
 
 		/* Check that PARTITIONS_COUNT is equal to total amount of partitions */
