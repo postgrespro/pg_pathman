@@ -660,6 +660,15 @@ SELECT set_enable_parent('test.index_on_childs', true);
 VACUUM ANALYZE test.index_on_childs;
 EXPLAIN (COSTS OFF) SELECT * FROM test.index_on_childs WHERE c1 > 100 AND c1 < 2500 AND c2 = 500;
 
+/* Test recursive CTE */
+create table test.recursive_cte_test_tbl(id int not null, name text not null);
+select * from create_hash_partitions('test.recursive_cte_test_tbl', 'id', 2);
+insert into test.recursive_cte_test_tbl (id, name) select id, 'name'||id from generate_series(1,100) f(id);
+insert into test.recursive_cte_test_tbl (id, name) select id, 'name'||(id + 1) from generate_series(1,100) f(id);
+insert into test.recursive_cte_test_tbl (id, name) select id, 'name'||(id + 2) from generate_series(1,100) f(id);
+select * from test.recursive_cte_test_tbl where id = 5;
+with recursive test as (select min(name) as name from test.recursive_cte_test_tbl where id = 5 union all select (select min(name) from test.recursive_cte_test_tbl where id = 5 and name > test.name) from test where name is not null) select * from test;
+
 DROP SCHEMA test CASCADE;
 DROP EXTENSION pg_pathman CASCADE;
 DROP SCHEMA pathman CASCADE;
