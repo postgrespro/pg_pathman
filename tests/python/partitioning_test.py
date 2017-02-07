@@ -780,6 +780,7 @@ class PartitioningTests(unittest.TestCase):
 			con.commit()
 
 		# compare strategies
+		CMP_OK, PLANS_MISMATCH, CONTENTS_MISMATCH = range(3)
 		def cmp_full(con1, con2):
 			"""Compare selection partitions in plan and contents in partitioned tables"""
 
@@ -794,11 +795,15 @@ class PartitioningTests(unittest.TestCase):
 			for table_ref in table_refs:
 				plan_initial = con1.execute(plan_query % table_ref)[0][0][0]['Plan']
 				plan_copy = con2.execute(plan_query % table_ref)[0][0][0]['Plan']
-				self.assertEqual(ordered(plan_initial), ordered(plan_copy))
+				if ordered(plan_initial) != ordered(plan_copy):
+					return PLANS_MISMATCH
 
 				content_initial = [x[0] for x in con1.execute(content_query % table_ref)]
 				content_copy = [x[0] for x in con2.execute(content_query % table_ref)]
-				self.assertEqual(content_initial, content_copy)
+				if content_initial != content_copy:
+					return CONTENTS_MISMATCH
+
+				return CMP_OK
 
 		def turnoff_pathman(node):
 			node.psql('initial', 'alter system set pg_pathman.enable to off')
@@ -845,12 +850,15 @@ class PartitioningTests(unittest.TestCase):
 		]
 		for preproc, postproc, pg_dump_params, pg_restore_params, cmp_dbs in test_params:
 
+			dump_restore_cmd = " | ".join((' '.join(pg_dump_params), ' '.join(pg_restore_params)))
+
 			if (preproc != None):
 				preproc(node)
 
 			# transfer and restore data
+			FNULL = open(os.devnull, 'w')
 			p1 = subprocess.Popen(pg_dump_params, stdout=subprocess.PIPE)
-			p2 = subprocess.Popen(pg_restore_params, stdin=p1.stdout, stdout=subprocess.PIPE)
+			p2 = subprocess.Popen(pg_restore_params, stdin=p1.stdout, stdout=FNULL, stderr=FNULL)
 			p1.stdout.close()  # Allow p1 to receive a SIGPIPE if p2 exits.
 			p2.communicate()
 
@@ -861,7 +869,11 @@ class PartitioningTests(unittest.TestCase):
 			with node.connect('initial') as con1, node.connect('copy') as con2:
 
 				# compare plans and contents of initial and copy
-				cmp_dbs(con1, con2)
+				cmp_result = cmp_dbs(con1, con2)
+				self.assertNotEqual(cmp_result, PLANS_MISMATCH,
+						"mismatch in plans of select query on partitioned tables under the command: %s" % dump_restore_cmd)
+				self.assertNotEqual(cmp_result, CONTENTS_MISMATCH,
+						"mismatch in contents of partitioned tables under the command: %s" % dump_restore_cmd)
 
 				# compare enable_parent flag and callback function
 				config_params_query = """
@@ -872,7 +884,8 @@ class PartitioningTests(unittest.TestCase):
 					config_params_initial[row[0]] = row[1:]
 				for row in con2.execute(config_params_query):
 					config_params_copy[row[0]] = row[1:]
-				self.assertEqual(config_params_initial, config_params_copy)
+				self.assertEqual(config_params_initial, config_params_copy, \
+						"mismatch in pathman_config_params under the command: %s" % dump_restore_cmd)
 
 				# compare constraints on each partition
 				constraints_query = """
@@ -885,7 +898,8 @@ class PartitioningTests(unittest.TestCase):
 					constraints_initial[row[0]] = row[1:]
 				for row in con2.execute(constraints_query):
 					constraints_copy[row[0]] = row[1:]
-				self.assertEqual(constraints_initial, constraints_copy)
+				self.assertEqual(constraints_initial, constraints_copy, \
+						"mismatch in partitions' constraints under the command: %s" % dump_restore_cmd)
 
 			# clear copy database
 			node.psql('copy', 'drop schema public cascade')
