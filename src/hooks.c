@@ -605,7 +605,7 @@ pathman_relcache_hook(Datum arg, Oid relid)
 		return;
 
 	/* Invalidation event for PATHMAN_CONFIG table (probably DROP) */
-	if (relid == get_pathman_config_relid())
+	if (relid == get_pathman_config_relid(false))
 		delay_pathman_shutdown();
 
 	/* Invalidate PartParentInfo cache if needed */

@@ -85,8 +85,8 @@ extern Oid	pathman_config_params_relid;
 /*
  * Just to clarify our intentions (return the corresponding relid).
  */
-Oid get_pathman_config_relid(void);
-Oid get_pathman_config_params_relid(void);
+Oid get_pathman_config_relid(bool invalid_is_ok);
+Oid get_pathman_config_params_relid(bool invalid_is_ok);
 
 /*
  * pg_pathman's global state structure.

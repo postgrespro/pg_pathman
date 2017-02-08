@@ -417,7 +417,7 @@ finish_delayed_invalidation(void)
 
 			/* Check that PATHMAN_CONFIG table has indeed been dropped */
 			if (cur_pathman_config_relid == InvalidOid ||
-				cur_pathman_config_relid != get_pathman_config_relid())
+				cur_pathman_config_relid != get_pathman_config_relid(true))
 			{
 				/* Ok, let's unload pg_pathman's config */
 				unload_config();
