@@ -1,0 +1,2 @@
+select detach_range_partition(partition) from (select partition from pathman_partition_list where parent='ts_range_partitioned'::regclass order by range_min limit 1) t;
+select pg_sleep(:timeout);
