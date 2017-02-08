@@ -235,13 +235,11 @@ get_attribute_type_pl(PG_FUNCTION_ARGS)
 Datum
 get_partition_key_type(PG_FUNCTION_ARGS)
 {
-	Oid					relid = PG_GETARG_OID(0);
-	const PartRelationInfo   *prel = get_pathman_relation_info(relid);
+	Oid						relid = PG_GETARG_OID(0);
+	const PartRelationInfo *prel;
 
-	if (!prel)
-		elog(ERROR,
-			 "Relation '%s' isn't partitioned by pg_pathman",
-			 get_rel_name(relid));
+	prel = get_pathman_relation_info(relid);
+	shout_if_prel_is_invalid(relid, prel, PT_INDIFFERENT);
 
 	PG_RETURN_OID(prel->atttype);
 }
@@ -420,15 +418,17 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 
 					/* Lower bound text */
 					rmin = !IsInfinite(&re->min) ?
-						CStringGetTextDatum(
-							datum_to_cstring(BoundGetValue(&re->min), prel->atttype)) :
-						CStringGetTextDatum("NULL");
+								CStringGetTextDatum(
+										datum_to_cstring(BoundGetValue(&re->min),
+														 prel->atttype)) :
+								CStringGetTextDatum("NULL");
 
 					/* Upper bound text */
 					rmax = !IsInfinite(&re->max) ?
-						CStringGetTextDatum(
-							datum_to_cstring(BoundGetValue(&re->max), prel->atttype)) :
-						CStringGetTextDatum("NULL");
+								CStringGetTextDatum(
+										datum_to_cstring(BoundGetValue(&re->max),
+														 prel->atttype)) :
+								CStringGetTextDatum("NULL");
 
 					values[Anum_pathman_pl_partition - 1] = re->child_oid;
 					values[Anum_pathman_pl_range_min - 1] = rmin;
@@ -843,8 +843,6 @@ invoke_on_partition_created_callback(PG_FUNCTION_ARGS)
 
 		case 5:
 			{
-				// Datum	sv_datum,
-				// 		ev_datum;
 				Bound	start,
 						end;
 				Oid		value_type;
@@ -853,15 +851,15 @@ invoke_on_partition_created_callback(PG_FUNCTION_ARGS)
 					elog(ERROR, "both bounds must be provided for RANGE partition");
 
 				/* Fetch start & end values for RANGE + their type */
-				// sv_datum	= PG_GETARG_DATUM(ARG_RANGE_START);
-				// ev_datum	= PG_GETARG_DATUM(ARG_RANGE_END);
-				MakeBound(&start,
-						  PG_GETARG_DATUM(ARG_RANGE_START),
-						  PG_ARGISNULL(ARG_RANGE_START) ? MINUS_INFINITY : FINITE);
-				MakeBound(&end,
-						  PG_GETARG_DATUM(ARG_RANGE_END),
-						  PG_ARGISNULL(ARG_RANGE_END) ? PLUS_INFINITY : FINITE);
-				value_type	= get_fn_expr_argtype(fcinfo->flinfo, ARG_RANGE_START);
+				start = PG_ARGISNULL(ARG_RANGE_START) ?
+								MakeBoundInf(MINUS_INFINITY) :
+								MakeBound(PG_GETARG_DATUM(ARG_RANGE_START));
+
+				end = PG_ARGISNULL(ARG_RANGE_END) ?
+								MakeBoundInf(PLUS_INFINITY) :
+								MakeBound(PG_GETARG_DATUM(ARG_RANGE_END));
+
+				value_type = get_fn_expr_argtype(fcinfo->flinfo, ARG_RANGE_START);
 
 				MakeInitCallbackRangeParams(&callback_params,
 											callback_oid,

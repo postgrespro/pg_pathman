@@ -407,13 +407,15 @@ fill_prel_with_partitions(const Oid *partitions,
 												  &lower, &upper,
 												  &lower_null, &upper_null))
 					{
-						prel->ranges[i].child_oid	 = partitions[i];
-						MakeBound(&prel->ranges[i].min,
-								  lower,
-								  lower_null ? MINUS_INFINITY : FINITE);
-						MakeBound(&prel->ranges[i].max,
-								  upper,
-								  upper_null ? PLUS_INFINITY : FINITE);
+						prel->ranges[i].child_oid = partitions[i];
+
+						prel->ranges[i].min = lower_null ?
+													MakeBoundInf(MINUS_INFINITY) :
+													MakeBound(lower);
+
+						prel->ranges[i].max = upper_null ?
+													MakeBoundInf(PLUS_INFINITY) :
+													MakeBound(upper);
 					}
 					else
 					{
@@ -459,24 +461,15 @@ fill_prel_with_partitions(const Oid *partitions,
 		old_mcxt = MemoryContextSwitchTo(TopMemoryContext);
 		for (i = 0; i < PrelChildrenCount(prel); i++)
 		{
-			// prel->ranges[i].max = datumCopy(prel->ranges[i].max,
-			// 								prel->attbyval,
-			// 								prel->attlen);
-			CopyBound(&(prel->ranges[i].max),
-							&(prel->ranges[i].max),
-							prel->attbyval,
-							prel->attlen);
+			prel->ranges[i].min = CopyBound(&prel->ranges[i].min,
+											prel->attbyval,
+											prel->attlen);
 
-			// prel->ranges[i].min = datumCopy(prel->ranges[i].min,
-			// 								prel->attbyval,
-			// 								prel->attlen);
-			CopyBound(&prel->ranges[i].min,
-							&prel->ranges[i].min,
-							prel->attbyval,
-							prel->attlen);
+			prel->ranges[i].max = CopyBound(&prel->ranges[i].max,
+											prel->attbyval,
+											prel->attlen);
 		}
 		MemoryContextSwitchTo(old_mcxt);
-
 	}
 
 #ifdef USE_ASSERT_CHECKING
@@ -847,7 +840,7 @@ read_pathman_config(void)
 		{
 			DisablePathman(); /* disable pg_pathman since config is broken */
 			ereport(ERROR,
-					(errmsg("Table \"%s\" contains nonexistent relation %u",
+					(errmsg("table \"%s\" contains nonexistent relation %u",
 							PATHMAN_CONFIG, relid),
 					 errhint(INIT_ERROR_HINT)));
 		}

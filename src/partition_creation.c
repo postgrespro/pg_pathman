@@ -48,8 +48,8 @@ static void extract_op_func_and_ret_type(char *opname, Oid type1, Oid type2,
 										 Oid *move_bound_op_ret_type);
 
 static Oid spawn_partitions_val(Oid parent_relid,
-								Datum range_bound_min,
-								Datum range_bound_max,
+								const Bound *range_bound_min,
+								const Bound *range_bound_max,
 								Oid range_bound_type,
 								Datum interval_binary,
 								Oid interval_type,
@@ -359,26 +359,27 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type)
 			if (partid == InvalidOid)
 			{
 				RangeEntry *ranges = PrelGetRangesArray(prel);
-				Datum		bound_min,			/* absolute MIN */
+				Bound		bound_min,			/* absolute MIN */
 							bound_max;			/* absolute MAX */
 
 				Oid			interval_type = InvalidOid;
 				Datum		interval_binary, /* assigned 'width' of one partition */
 							interval_text;
 
-				/* Read max & min range values from PartRelationInfo */
-				bound_min = BoundGetValue(&ranges[0].min);
-				bound_max = BoundGetValue(&ranges[PrelLastChild(prel)].max);
+				/* Copy datums in order to protect them from cache invalidation */
+				bound_min = CopyBound(&ranges[0].min,
+									  prel->attbyval,
+									  prel->attlen);
 
-				/* Copy datums on order to protect them from cache invalidation */
-				bound_min = datumCopy(bound_min, prel->attbyval, prel->attlen);
-				bound_max = datumCopy(bound_max, prel->attbyval, prel->attlen);
+				bound_max = CopyBound(&ranges[PrelLastChild(prel)].max,
+									  prel->attbyval,
+									  prel->attlen);
 
 				/* Check if interval is set */
 				if (isnull[Anum_pathman_config_range_interval - 1])
 				{
 					elog(ERROR,
-						 "Could not find appropriate partition for key '%s'",
+						 "cannot find appropriate partition for key '%s'",
 						 datum_to_cstring(value, value_type));
 				}
 
@@ -392,7 +393,7 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type)
 
 				/* At last, spawn partitions to store the value */
 				partid = spawn_partitions_val(PrelParentRelid(prel),
-											  bound_min, bound_max, base_bound_type,
+											  &bound_min, &bound_max, base_bound_type,
 											  interval_binary, interval_type,
 											  value, base_value_type);
 			}
@@ -455,14 +456,14 @@ extract_op_func_and_ret_type(char *opname, Oid type1, Oid type2,
  * it into account while searching for the 'cmp_proc'.
  */
 static Oid
-spawn_partitions_val(Oid parent_relid,			/* parent's Oid */
-					 Datum range_bound_min,		/* parent's MIN boundary */
-					 Datum range_bound_max,		/* parent's MAX boundary */
-					 Oid range_bound_type,		/* type of boundary's value */
-					 Datum interval_binary,		/* interval in binary form */
-					 Oid interval_type,			/* INTERVALOID or prel->atttype */
-					 Datum value,				/* value to be INSERTed */
-					 Oid value_type)			/* type of value */
+spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
+					 const Bound *range_bound_min,	/* parent's MIN boundary */
+					 const Bound *range_bound_max,	/* parent's MAX boundary */
+					 Oid range_bound_type,			/* type of boundary's value */
+					 Datum interval_binary,			/* interval in binary form */
+					 Oid interval_type,				/* INTERVALOID or prel->atttype */
+					 Datum value,					/* value to be INSERTed */
+					 Oid value_type)				/* type of value */
 {
 	bool		should_append;				/* append or prepend? */
 
@@ -475,27 +476,37 @@ spawn_partitions_val(Oid parent_relid,			/* parent's Oid */
 	Datum		cur_leading_bound,			/* boundaries of a new partition */
 				cur_following_bound;
 
+	Bound		value_bound = MakeBound(value);
+
 	Oid			last_partition = InvalidOid;
 
 
 	fill_type_cmp_fmgr_info(&cmp_value_bound_finfo, value_type, range_bound_type);
 
+	/* Is it possible to append\prepend a partition? */
+	if (IsInfinite(range_bound_min) && IsInfinite(range_bound_max))
+		ereport(ERROR, (errmsg("cannot spawn a partition"),
+						errdetail("both bounds are infinite")));
+
 	/* value >= MAX_BOUNDARY */
-	if (check_ge(&cmp_value_bound_finfo, value, range_bound_max))
+	else if (cmp_bounds(&cmp_value_bound_finfo,
+						&value_bound, range_bound_max) >= 0)
 	{
 		should_append = true;
-		cur_leading_bound = range_bound_max;
+		cur_leading_bound = BoundGetValue(range_bound_max);
 	}
 
 	/* value < MIN_BOUNDARY */
-	else if (check_lt(&cmp_value_bound_finfo, value, range_bound_min))
+	else if (cmp_bounds(&cmp_value_bound_finfo,
+						&value_bound, range_bound_min) < 0)
 	{
 		should_append = false;
-		cur_leading_bound = range_bound_min;
+		cur_leading_bound = BoundGetValue(range_bound_min);
 	}
 
 	/* There's a gap, halt and emit ERROR */
-	else elog(ERROR, "cannot spawn a partition inside a gap");
+	else ereport(ERROR, (errmsg("cannot spawn a partition"),
+						 errdetail("there is a gap")));
 
 	/* Fetch operator's underlying function and ret type */
 	extract_op_func_and_ret_type(should_append ? "+" : "-",
@@ -541,7 +552,6 @@ spawn_partitions_val(Oid parent_relid,			/* parent's Oid */
 				check_ge(&cmp_value_bound_finfo, value, cur_leading_bound) :
 				check_lt(&cmp_value_bound_finfo, value, cur_leading_bound))
 	{
-		Datum args[2];
 		Bound bounds[2];
 
 		/* Assign the 'following' boundary to current 'leading' value */
@@ -552,11 +562,8 @@ spawn_partitions_val(Oid parent_relid,			/* parent's Oid */
 										  cur_leading_bound,
 										  interval_binary);
 
-		args[0] = should_append ? cur_following_bound : cur_leading_bound;
-		args[1] = should_append ? cur_leading_bound : cur_following_bound;
-
-		MakeBound(&bounds[0], args[0], FINITE);
-		MakeBound(&bounds[1], args[1], FINITE);
+		bounds[0] = MakeBound(should_append ? cur_following_bound : cur_leading_bound);
+		bounds[1] = MakeBound(should_append ? cur_leading_bound : cur_following_bound);
 
 		last_partition = create_single_range_partition_internal(parent_relid,
 																&bounds[0], &bounds[1],
@@ -1143,7 +1150,7 @@ build_raw_range_check_tree(char *attname,
 	}
 
 	if (and_oper->args == NIL)
-		elog(ERROR, "Cannot create infinite range constraint");
+		elog(ERROR, "cannot create infinite range constraint");
 
 	return (Node *) and_oper;
 }
@@ -1207,39 +1214,23 @@ check_range_available(Oid parent_relid,
 	{
 		int c1, c2;
 
-		/*
-		 * If the range we're checking starts with minus infinity or current
-		 * range ends in plus infinity then the left boundary of the first
-		 * range is on the left. Otherwise compare specific values
-		 */
-		// c1 = (IsInfinite(start) || IsInfinite(&ranges[i].max)) ?
-		// 	-1 :
-		// 	FunctionCall2(&cmp_func, 
-		// 				  BoundGetValue(start),
-		// 				  BoundGetValue(&ranges[i].max));
-		/*
-		 * Similary check that right boundary of the range we're checking is on
-		 * the right of the beginning of the current one
-		 */
-		// c2 = (IsInfinite(end) || IsInfinite(&ranges[i].min)) ?
-		// 	1 :
-		// 	FunctionCall2(&cmp_func,
-		// 				  BoundGetValue(end),
-		// 				  BoundGetValue(&ranges[i].min));
-
 		c1 = cmp_bounds(&cmp_func, start, &ranges[i].max);
 		c2 = cmp_bounds(&cmp_func, end, &ranges[i].min);
 
-		/* There's someone! */
+		/* There's something! */
 		if (c1 < 0 && c2 > 0)
 		{
 			if (raise_error)
 				elog(ERROR, "specified range [%s, %s) overlaps "
 							"with existing partitions",
-					 !IsInfinite(start) ? datum_to_cstring(BoundGetValue(start), value_type) : "NULL",
-					 !IsInfinite(end) ? datum_to_cstring(BoundGetValue(end), value_type) : "NULL");
-			else
-				return false;
+					 !IsInfinite(start) ?
+						 datum_to_cstring(BoundGetValue(start), value_type) :
+						 "NULL",
+					 !IsInfinite(end) ?
+						 datum_to_cstring(BoundGetValue(end), value_type) :
+						 "NULL");
+
+			else return false;
 		}
 	}
 

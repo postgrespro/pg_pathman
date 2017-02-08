@@ -14,12 +14,11 @@
 
 #include "postgres.h"
 #include "access/attnum.h"
+#include "fmgr.h"
 #include "port/atomics.h"
 #include "storage/lock.h"
-#include "fmgr.h"
+#include "utils/datum.h"
 
-#define BOUND_INFINITY_MASK 0x01
-#define BOUND_NEGATIVE_MASK 0x02
 
 /* Range bound */
 typedef struct
@@ -31,34 +30,57 @@ typedef struct
 								   is negative */
 } Bound;
 
-#define FINITE 0
-#define PLUS_INFINITY (0 | BOUND_INFINITY_MASK)
-#define MINUS_INFINITY (0 | BOUND_INFINITY_MASK | BOUND_NEGATIVE_MASK)
 
-#define MakeBound(inf, _value, _infinity_type)				\
-	do														\
-	{														\
-		(inf)->value = (_value);							\
-		(inf)->is_infinite = (_infinity_type);				\
-	} while (0)
+#define BOUND_INFINITY_MASK		0x01
+#define BOUND_NEGATIVE_MASK		0x02
+
+#define FINITE					0
+#define PLUS_INFINITY			(BOUND_INFINITY_MASK)
+#define MINUS_INFINITY			(BOUND_INFINITY_MASK | BOUND_NEGATIVE_MASK)
 
 #define IsInfinite(i)			((i)->is_infinite & BOUND_INFINITY_MASK)
 #define IsPlusInfinity(i)		(IsInfinite(i) && !((i)->is_infinite & BOUND_NEGATIVE_MASK))
 #define IsMinusInfinity(i)		(IsInfinite(i) && ((i)->is_infinite & BOUND_NEGATIVE_MASK))
-#define BoundGetValue(i)	((i)->value)
-#define CopyBound(i_to, i_from, by_val, len)				\
-	do														\
-	{														\
-		(i_to)->value = !IsInfinite(i_from) ?				\
-			datumCopy((i_from)->value, (by_val), (len)) :	\
-			(Datum) 0;										\
-		(i_to)->is_infinite = (i_from)->is_infinite;			\
-	} while (0)
 
-/*
- * Comparison macros for bounds
- */
-inline static int8_t
+
+inline static Bound
+CopyBound(const Bound *src, bool byval, int typlen)
+{
+	Bound bound = {
+		IsInfinite(src) ?
+			src->value :
+			datumCopy(src->value, byval, typlen),
+		src->is_infinite
+	};
+
+	return bound;
+}
+
+inline static Bound
+MakeBound(Datum value)
+{
+	Bound bound = { value, FINITE };
+
+	return bound;
+}
+
+inline static Bound
+MakeBoundInf(uint8 infinity_type)
+{
+	Bound bound = { (Datum) 0, infinity_type };
+
+	return bound;
+}
+
+inline static Datum
+BoundGetValue(const Bound *bound)
+{
+	Assert(!IsInfinite(bound));
+
+	return bound->value;
+}
+
+inline static int
 cmp_bounds(FmgrInfo *cmp_func, const Bound *b1, const Bound *b2)
 {
 	if (IsMinusInfinity(b1) || IsPlusInfinity(b2))
@@ -66,8 +88,11 @@ cmp_bounds(FmgrInfo *cmp_func, const Bound *b1, const Bound *b2)
 	if (IsMinusInfinity(b2) || IsPlusInfinity(b1))
 		return 1;
 
+	Assert(cmp_func);
+
 	return FunctionCall2(cmp_func, BoundGetValue(b1), BoundGetValue(b2));
 }
+
 
 /*
  * Partitioning type.

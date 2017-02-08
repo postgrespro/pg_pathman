@@ -95,14 +95,16 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 		elog(ERROR, "'parent_relid' should not be NULL");
 
 	/* Fetch mandatory args */
-	parent_relid	= PG_GETARG_OID(0);
-	value_type		= get_fn_expr_argtype(fcinfo->flinfo, 1);
-	MakeBound(&start,
-			  PG_GETARG_DATUM(1),
-			  PG_ARGISNULL(1) ? MINUS_INFINITY : FINITE);
-	MakeBound(&end,
-			  PG_GETARG_DATUM(2),
-			  PG_ARGISNULL(2) ? PLUS_INFINITY : FINITE);
+	parent_relid = PG_GETARG_OID(0);
+	value_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
+
+	start = PG_ARGISNULL(1) ?
+				MakeBoundInf(MINUS_INFINITY) :
+				MakeBound(PG_GETARG_DATUM(1));
+
+	end = PG_ARGISNULL(2) ?
+				MakeBoundInf(PLUS_INFINITY) :
+				MakeBound(PG_GETARG_DATUM(2));
 
 	/* Fetch 'partition_name' */
 	if (!PG_ARGISNULL(3))
@@ -189,21 +191,22 @@ Datum
 check_range_available_pl(PG_FUNCTION_ARGS)
 {
 	Oid			parent_relid = PG_GETARG_OID(0);
-	Bound		start_value,
-				end_value;
+	Bound		start,
+				end;
 	Oid			value_type	= get_fn_expr_argtype(fcinfo->flinfo, 1);
 
-	MakeBound(&start_value,
-			  PG_GETARG_DATUM(1),
-			  PG_ARGISNULL(1) ? MINUS_INFINITY : FINITE);
-	MakeBound(&end_value,
-			  PG_GETARG_DATUM(2),
-			  PG_ARGISNULL(2) ? PLUS_INFINITY : FINITE);
+	start = PG_ARGISNULL(1) ?
+				MakeBoundInf(MINUS_INFINITY) :
+				MakeBound(PG_GETARG_DATUM(1));
+
+	end = PG_ARGISNULL(2) ?
+				MakeBoundInf(PLUS_INFINITY) :
+				MakeBound(PG_GETARG_DATUM(2));
 
 	/* Raise ERROR if range overlaps with any partition */
 	check_range_available(parent_relid,
-						  &start_value,
-						  &end_value,
+						  &start,
+						  &end,
 						  value_type,
 						  true);
 
@@ -257,7 +260,7 @@ get_part_range_by_oid(PG_FUNCTION_ARGS)
 
 			arr = construct_infinitable_array(elems, 2,
 											  prel->atttype, prel->attlen,
-								   			  prel->attbyval, prel->attalign);
+											  prel->attbyval, prel->attalign);
 
 			PG_RETURN_ARRAYTYPE_P(arr);
 		}
@@ -338,8 +341,8 @@ get_part_range_by_idx(PG_FUNCTION_ARGS)
 Datum
 build_range_condition(PG_FUNCTION_ARGS)
 {
-	Oid		relid = PG_GETARG_OID(0);
-	text   *attname = PG_GETARG_TEXT_P(1);
+	Oid			relid = PG_GETARG_OID(0);
+	text	   *attname = PG_GETARG_TEXT_P(1);
 
 	Bound		min,
 				max;
@@ -347,12 +350,13 @@ build_range_condition(PG_FUNCTION_ARGS)
 	Constraint *con;
 	char	   *result;
 
-	MakeBound(&min,
-			  PG_GETARG_DATUM(2),
-			  PG_ARGISNULL(2) ? MINUS_INFINITY : FINITE);
-	MakeBound(&max,
-			  PG_GETARG_DATUM(3),
-			  PG_ARGISNULL(3) ? PLUS_INFINITY : FINITE);
+	min = PG_ARGISNULL(2) ?
+				MakeBoundInf(MINUS_INFINITY) :
+				MakeBound(PG_GETARG_DATUM(2));
+
+	max = PG_ARGISNULL(3) ?
+				MakeBoundInf(PLUS_INFINITY) :
+				MakeBound(PG_GETARG_DATUM(3));
 
 	con = build_range_check_constraint(relid, text_to_cstring(attname),
 									   &min, &max,
@@ -415,62 +419,70 @@ build_sequence_name(PG_FUNCTION_ARGS)
 /*
  * Build an 1d array of Bound elements
  *
- *		The main difference from construct_array() is that it will substitute
- *		infinite values with NULL's
+ *		The main difference from construct_array() is that
+ *		it will substitute infinite values with NULLs
  */
 static ArrayType *
 construct_infinitable_array(Bound **elems,
 							uint32_t nelems,
-							Oid elmtype,
-							int elmlen,
-							bool elmbyval,
-							char elmalign)
+							Oid elemtype,
+							int elemlen,
+							bool elembyval,
+							char elemalign)
 {
 	ArrayType  *arr;
-	Datum	   *data;
+	Datum	   *datums;
 	bool	   *nulls;
 	int			dims[1] = { nelems };
 	int			lbs[1] = { 1 };
 	int 		i;
 
-	data = palloc(sizeof(Datum) * nelems);
+	datums = palloc(sizeof(Datum) * nelems);
 	nulls = palloc(sizeof(bool) * nelems);
 
 	for (i = 0; i < nelems; i++)
 	{
-		data[i] = BoundGetValue(elems[i]);
+		datums[i] = IsInfinite(elems[i]) ?
+						(Datum) 0 :
+						BoundGetValue(elems[i]);
 		nulls[i] = IsInfinite(elems[i]);
 	}
 
-	arr = construct_md_array(data, nulls, 1, dims, lbs,
-							 elmtype, elmlen,
-							 elmbyval, elmalign);
+	arr = construct_md_array(datums, nulls, 1,
+							 dims, lbs,
+							 elemtype, elemlen,
+							 elembyval, elemalign);
 
 	return arr;
 }
 
 
+/*
+ * Merge multiple partitions. All data will be copied to the first one.
+ * The rest of partitions will be dropped.
+ */
 Datum
 merge_range_partitions(PG_FUNCTION_ARGS)
 {
-	Oid			parent = InvalidOid;
-	PartParentSearch parent_search;
-	ArrayType  *arr = PG_GETARG_ARRAYTYPE_P(0);
+	Oid					parent = InvalidOid;
+	PartParentSearch	parent_search;
+	ArrayType		   *arr = PG_GETARG_ARRAYTYPE_P(0);
 
-	Oid		   *partitions;
-	Datum	   *datums;
-	bool	   *nulls;
-	int			npart;
-	int16		typlen;
-	bool		typbyval;
-	char		typalign;
-	int			i;
+	Oid				   *partitions;
+	Datum			   *datums;
+	bool			   *nulls;
+	int					npart;
+	int16				typlen;
+	bool				typbyval;
+	char				typalign;
+	int					i;
 
+	/* Validate array type */
 	Assert(ARR_ELEMTYPE(arr) == REGCLASSOID);
 
 	/* Extract Oids */
 	get_typlenbyvalalign(REGCLASSOID, &typlen, &typbyval, &typalign);
-	deconstruct_array(arr, REGCLASSOID, 
+	deconstruct_array(arr, REGCLASSOID,
 					  typlen, typbyval, typalign,
 					  &datums, &nulls, &npart);
 
@@ -479,8 +491,7 @@ merge_range_partitions(PG_FUNCTION_ARGS)
 		partitions[i] = DatumGetObjectId(datums[i]);
 
 	if (npart < 2)
-		elog(ERROR,
-			 "There must be at least two partitions to merge");
+		elog(ERROR, "there must be at least two partitions to merge");
 
 	/* Check if all partitions are from the same parent */
 	for (i = 0; i < npart; i++)
@@ -488,14 +499,14 @@ merge_range_partitions(PG_FUNCTION_ARGS)
 		Oid p = get_parent_of_partition(partitions[i], &parent_search);
 
 		if (parent_search != PPS_ENTRY_PART_PARENT)
-			elog(ERROR, "Relation '%s' is not a partition",
-				 get_rel_name(partitions[i]));
+			elog(ERROR, "relation '%s' is not a partition",
+				 get_rel_name_or_relid(partitions[i]));
 
 		if (parent == InvalidOid)
 			parent = p;
 
 		if (p != parent)
-			elog(ERROR, "All relations must have the same parent");
+			elog(ERROR, "all relations must share the same parent");
 	}
 
 	merge_range_partitions_internal(parent, partitions, npart);
@@ -629,8 +640,8 @@ check_adjacence(Oid cmp_proc, List *ranges)
 }
 
 /*
- * Drops old partition constraint and creates a new one with specified
- * boundaries
+ * Drop old partition constraint and create a new one
+ * with specified boundaries
  */
 static void
 recreate_range_constraint(Oid partition,
@@ -737,7 +748,7 @@ drop_range_partition_expand_next(PG_FUNCTION_ARGS)
 	if (i < prel->children_count - 1)
 	{
 		RangeEntry	   *cur = &ranges[i],
-					   *next = &ranges[i+1];
+					   *next = &ranges[i + 1];
 
 		recreate_range_constraint(next->child_oid,
 						get_relid_attribute_name(prel->key, prel->attnum),
@@ -749,7 +760,7 @@ drop_range_partition_expand_next(PG_FUNCTION_ARGS)
 
 	drop_table(relid);
 
-	PG_RETURN_VOID();	
+	PG_RETURN_VOID();
 }
 
 /*

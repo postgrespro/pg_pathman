@@ -558,8 +558,8 @@ $$
 LANGUAGE plpgsql;
 
 /*
- * Merge multiple partitions. All data will be copied to the first one. The rest
- * of partitions will be dropped
+ * Merge multiple partitions. All data will be copied to the first one.
+ * The rest of partitions will be dropped.
  */
 CREATE OR REPLACE FUNCTION @extschema@.merge_range_partitions(
 	partitions		REGCLASS[])
