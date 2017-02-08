@@ -76,7 +76,7 @@ static ObjectAddress create_table_using_stmt(CreateStmt *create_stmt,
 											 Oid relowner);
 
 static void copy_foreign_keys(Oid parent_relid, Oid partition_oid);
-static void copy_acl_privileges(Oid parent_relid, Oid partition_relid);
+static void postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid);
 
 static Oid text2regprocedure(text *proname_args);
 
@@ -801,8 +801,8 @@ create_single_partition_internal(Oid parent_relid,
 			/* Make changes visible */
 			CommandCounterIncrement();
 
-			/* Copy ACL privileges of the parent table */
-			copy_acl_privileges(parent_relid, partition_relid);
+			/* Copy ACL privileges of the parent table and set "attislocal" */
+			postprocess_child_table_and_atts(parent_relid, partition_relid);
 		}
 		else if (IsA(cur_stmt, CreateForeignTableStmt))
 		{
@@ -846,7 +846,7 @@ create_table_using_stmt(CreateStmt *create_stmt, Oid relowner)
 	/* Create new GUC level... */
 	guc_level = NewGUCNestLevel();
 
-	/* ... and set client_min_messages = WARNING */
+	/* ... and set client_min_messages = warning */
 	(void) set_config_option("client_min_messages", "WARNING",
 							 PGC_USERSET, PGC_S_SESSION,
 							 GUC_ACTION_SAVE, true, 0, false);
@@ -882,9 +882,9 @@ create_table_using_stmt(CreateStmt *create_stmt, Oid relowner)
 	return table_addr;
 }
 
-/* Copy ACL privileges of parent table */
+/* Copy ACL privileges of parent table and set "attislocal" = true */
 static void
-copy_acl_privileges(Oid parent_relid, Oid partition_relid)
+postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid)
 {
 	Relation		pg_class_rel,
 					pg_attribute_rel;
@@ -1041,9 +1041,15 @@ copy_acl_privileges(Oid parent_relid, Oid partition_relid)
 			/* Copy ItemPointer of this tuple */
 			iptr = subhtup->t_self;
 
+			/* Change ACL of this column */
 			values[Anum_pg_attribute_attacl - 1] = acl_datum;	/* ACL array */
 			nulls[Anum_pg_attribute_attacl - 1] = acl_null;		/* do we have ACL? */
 			replaces[Anum_pg_attribute_attacl - 1] = true;
+
+			/* Change 'attislocal' for DROP COLUMN */
+			values[Anum_pg_attribute_attislocal - 1] = false;	/* should not be local */
+			nulls[Anum_pg_attribute_attislocal - 1] = false;	/* NOT NULL */
+			replaces[Anum_pg_attribute_attislocal - 1] = true;
 
 			/* Build new tuple with parent's ACL */
 			subhtup = heap_modify_tuple(subhtup, pg_attribute_desc,
@@ -1486,8 +1492,12 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 
 				JSB_INIT_VAL(&key, WJB_KEY, "parent");
 				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(parent_oid));
+				JSB_INIT_VAL(&key, WJB_KEY, "parent_schema");
+				JSB_INIT_VAL(&val, WJB_VALUE, get_namespace_name(get_rel_namespace(parent_oid)));
 				JSB_INIT_VAL(&key, WJB_KEY, "partition");
 				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(partition_oid));
+				JSB_INIT_VAL(&key, WJB_KEY, "partition_schema");
+				JSB_INIT_VAL(&val, WJB_VALUE, get_namespace_name(get_rel_namespace(partition_oid)));
 				JSB_INIT_VAL(&key, WJB_KEY, "parttype");
 				JSB_INIT_VAL(&val, WJB_VALUE, PartTypeToCString(PT_HASH));
 
@@ -1511,8 +1521,12 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 
 				JSB_INIT_VAL(&key, WJB_KEY, "parent");
 				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(parent_oid));
+				JSB_INIT_VAL(&key, WJB_KEY, "parent_schema");
+				JSB_INIT_VAL(&val, WJB_VALUE, get_namespace_name(get_rel_namespace(parent_oid)));
 				JSB_INIT_VAL(&key, WJB_KEY, "partition");
 				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(partition_oid));
+				JSB_INIT_VAL(&key, WJB_KEY, "partition_schema");
+				JSB_INIT_VAL(&val, WJB_VALUE, get_namespace_name(get_rel_namespace(partition_oid)));
 				JSB_INIT_VAL(&key, WJB_KEY, "parttype");
 				JSB_INIT_VAL(&val, WJB_VALUE, PartTypeToCString(PT_RANGE));
 				JSB_INIT_VAL(&key, WJB_KEY, "range_min");
