@@ -43,6 +43,15 @@ SELECT set_init_callback('callbacks.abc',
 						 'callbacks.abc_on_part_created_callback');
 SELECT create_hash_partitions('callbacks.abc', 'a', 5);
 
+DROP TABLE callbacks.abc CASCADE;
+
+/* create table in public schema */
+CREATE TABLE abc(a serial, b int);
+SELECT set_init_callback('abc',
+						 'callbacks.abc_on_part_created_callback');
+SELECT create_range_partitions('abc', 'a', 1, 100, 2);
+
+DROP TABLE abc CASCADE;
 
 DROP SCHEMA callbacks CASCADE;
 DROP EXTENSION pg_pathman CASCADE;

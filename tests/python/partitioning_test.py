@@ -7,9 +7,12 @@
 """
 
 import unittest
+import math
 from testgres import get_new_node, stop_all
 import time
 import os
+import re
+import subprocess
 import threading
 
 
@@ -905,6 +908,70 @@ class PartitioningTests(unittest.TestCase):
 			node.psql('copy', 'drop schema public cascade')
 			node.psql('copy', 'create schema public')
 			node.psql('copy', 'drop extension pg_pathman cascade')
+
+		# Stop instance and finish work
+		node.stop()
+		node.cleanup()
+
+	def test_concurrent_detach(self):
+		"""Test concurrent detach partition with contiguous tuple inserting and spawning new partitions"""
+
+		# Init parameters
+		num_insert_workers = 8
+		detach_timeout = 0.1			# time in sec between successive inserts and detachs
+		num_detachs = 100				# estimated number of detachs
+		inserts_advance = 1				# abvance in sec of inserts process under detachs
+		test_interval = int(math.ceil(detach_timeout * num_detachs))
+
+		insert_pgbench_script = os.path.dirname(os.path.realpath(__file__)) \
+					+ "/pgbench_scripts/insert_current_timestamp.pgbench"
+		detach_pgbench_script = os.path.dirname(os.path.realpath(__file__)) \
+					+ "/pgbench_scripts/detachs_in_timeout.pgbench"
+
+		# Check pgbench scripts on existance
+		self.assertTrue(os.path.isfile(insert_pgbench_script),
+				msg="pgbench script with insert timestamp doesn't exist")
+		self.assertTrue(os.path.isfile(detach_pgbench_script),
+				msg="pgbench script with detach letfmost partition doesn't exist")
+
+		# Create and start new instance
+		node = self.start_new_pathman_cluster(allows_streaming=False)
+
+		# Create partitioned table for testing that spawns new partition on each next *detach_timeout* sec
+		with node.connect() as con0:
+			con0.begin()
+			con0.execute('create table ts_range_partitioned(ts timestamp not null)')
+			con0.execute("select create_range_partitions('ts_range_partitioned', 'ts', current_timestamp, interval '%f', 1)" % detach_timeout)
+			con0.commit()
+
+		# Run in background inserts and detachs processes
+		FNULL = open(os.devnull, 'w')
+
+		# init pgbench's utility tables
+		init_pgbench = node.pgbench(stdout=FNULL, stderr=FNULL, options=["-i"])
+		init_pgbench.wait()
+
+		inserts = node.pgbench(stdout=FNULL, stderr=subprocess.PIPE, options=[
+				"-j", "%i" % num_insert_workers,
+				"-c", "%i" % num_insert_workers,
+				"-f", insert_pgbench_script,
+				"-T", "%i" % (test_interval+inserts_advance)
+			])
+		time.sleep(inserts_advance)
+		detachs = node.pgbench(stdout=FNULL, stderr=subprocess.PIPE, options=[
+				"-D", "timeout=%f" % detach_timeout,
+				"-f", detach_pgbench_script,
+				"-T", "%i" % test_interval
+			])
+
+		# Wait for completion of processes
+		inserts.wait()
+		detachs.wait()
+
+		# Obtain error log from inserts process
+		inserts_errors = inserts.stderr.read()
+		self.assertIsNone(re.search("ERROR|FATAL|PANIC", inserts_errors),
+			msg="Race condition between detach and concurrent inserts with append partition is expired")
 
 		# Stop instance and finish work
 		node.stop()

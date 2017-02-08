@@ -16,6 +16,7 @@
 #include "utils.h"
 
 #include "postgres.h"
+#include "access/tupconvert.h"
 #include "commands/explain.h"
 #include "optimizer/planner.h"
 
@@ -34,21 +35,28 @@
  */
 typedef struct
 {
-	Oid					partid;					/* partition's relid */
-	ResultRelInfo	   *result_rel_info;		/* cached ResultRelInfo */
+	Oid					partid;				/* partition's relid */
+	ResultRelInfo	   *result_rel_info;	/* cached ResultRelInfo */
+	TupleConversionMap *tuple_map;			/* tuple conversion map (parent => child) */
 } ResultRelInfoHolder;
+
+
+/* Forward declaration (for on_new_rri_holder()) */
+struct ResultPartsStorage;
+typedef struct ResultPartsStorage ResultPartsStorage;
 
 /*
  * Callback to be fired at rri_holder creation.
  */
 typedef void (*on_new_rri_holder)(EState *estate,
 								  ResultRelInfoHolder *rri_holder,
+								  const ResultPartsStorage *rps_storage,
 								  void *arg);
 
 /*
  * Cached ResultRelInfos of partitions.
  */
-typedef struct
+struct ResultPartsStorage
 {
 	ResultRelInfo	   *saved_rel_info;			/* original ResultRelInfo (parent) */
 	HTAB			   *result_rels_table;
@@ -64,7 +72,7 @@ typedef struct
 	CmdType				command_type;			/* currenly we only allow INSERT */
 	LOCKMODE			head_open_lock_mode;
 	LOCKMODE			heap_close_lock_mode;
-} ResultPartsStorage;
+};
 
 /*
  * Standard size of ResultPartsStorage entry.
@@ -77,11 +85,16 @@ typedef struct
 
 	Oid					partitioned_table;
 	OnConflictAction	on_conflict_action;
+	List			   *returning_list;
 
 	Plan			   *subplan;				/* proxy variable to store subplan */
 	ResultPartsStorage	result_parts;			/* partition ResultRelInfo cache */
 
 	bool				warning_triggered;		/* warning message counter */
+
+	TupleTableSlot	   *tup_convert_slot;		/* slot for rebuilt tuples */
+
+	ExprContext		   *tup_convert_econtext;	/* ExprContext for projections */
 } PartitionFilterState;
 
 
@@ -112,8 +125,9 @@ Oid * find_partitions_for_value(Datum value, Oid value_type,
 								int *nparts);
 
 Plan * make_partition_filter(Plan *subplan,
-							 Oid partitioned_table,
-							 OnConflictAction conflict_action);
+							 Oid parent_relid,
+							 OnConflictAction conflict_action,
+							 List *returning_list);
 
 Node * partition_filter_create_scan_state(CustomScan *node);
 

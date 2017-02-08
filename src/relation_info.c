@@ -197,7 +197,9 @@ refresh_pathman_relation_info(Oid relid,
 	 * will try to refresh it again (and again), until the error is fixed
 	 * by user manually (i.e. invalid check constraints etc).
 	 */
-	fill_prel_with_partitions(prel_children, prel_children_count, prel);
+	fill_prel_with_partitions(prel_children,
+							  prel_children_count,
+							  part_column_name, prel);
 
 	/* Peform some actions for each child */
 	for (i = 0; i < prel_children_count; i++)

@@ -234,6 +234,18 @@ get_rel_name_or_relid(Oid relid)
 	return relname;
 }
 
+char *
+get_qualified_rel_name_or_relid(Oid relid)
+{
+	char *relname = get_rel_name(relid);
+	char *namespace = get_namespace_name(get_rel_namespace(relid));
+
+	if (!relname)
+		return DatumGetCString(DirectFunctionCall1(oidout,
+												   ObjectIdGetDatum(relid)));
+	return psprintf("%s.%s", namespace, relname);
+}
+
 
 #if PG_VERSION_NUM < 90600
 /*

@@ -1087,7 +1087,7 @@ BEGIN
 	parent_relid := @extschema@.get_parent_of_partition(partition);
 
 	/* Acquire lock on parent */
-	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+	PERFORM @extschema@.prevent_relation_modification(parent_relid);
 
 	v_attname := attname
 	FROM @extschema@.pathman_config
