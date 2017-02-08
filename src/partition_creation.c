@@ -405,8 +405,14 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type)
 		edata = CopyErrorData();
 		FlushErrorState();
 
-		elog(LOG, "create_partitions_internal(): %s [%u]",
-			 edata->message, MyProcPid);
+		if (IsBackgroundWorker)
+			ereport(LOG,
+					(errmsg("create_partitions_internal(): %s [%u]", edata->message, MyProcPid),
+					 (edata->detail) ? errdetail("%s", edata->detail) : 0));
+		else
+			ereport(ERROR,
+					(errmsg("create_partitions_internal(): %s", edata->message),
+					 (edata->detail) ? errdetail("%s", edata->detail) : 0));
 
 		FreeErrorData(edata);
 
