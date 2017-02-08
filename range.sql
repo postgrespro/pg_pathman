@@ -488,21 +488,17 @@ BEGIN
 	/* Acquire data modification lock (prevent further modifications) */
 	PERFORM @extschema@.prevent_relation_modification(partition_relid);
 
+	v_atttype = @extschema@.get_partition_key_type(v_parent);
+
 	SELECT attname, parttype
 	FROM @extschema@.pathman_config
 	WHERE partrel = v_parent
 	INTO v_attname, v_part_type;
 
-	IF v_attname IS NULL THEN
-		RAISE EXCEPTION 'table "%" is not partitioned', v_parent::TEXT;
-	END IF;
-
 	/* Check if this is a RANGE partition */
 	IF v_part_type != 2 THEN
 		RAISE EXCEPTION '"%" is not a RANGE partition', partition_relid::TEXT;
 	END IF;
-
-	v_atttype = @extschema@.get_attribute_type(v_parent, v_attname);
 
 	/* Get partition values range */
 	EXECUTE format('SELECT @extschema@.get_part_range($1, NULL::%s)',
@@ -589,7 +585,6 @@ CREATE OR REPLACE FUNCTION @extschema@.append_range_partition(
 RETURNS TEXT AS
 $$
 DECLARE
-	v_attname		TEXT;
 	v_atttype		REGTYPE;
 	v_part_name		TEXT;
 	v_interval		TEXT;
@@ -600,16 +595,12 @@ BEGIN
 	/* Acquire lock on parent */
 	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 
-	SELECT attname, range_interval
+	v_atttype := @extschema@.get_partition_key_type(parent_relid);
+
+	SELECT range_interval
 	FROM @extschema@.pathman_config
 	WHERE partrel = parent_relid
-	INTO v_attname, v_interval;
-
-	IF v_attname IS NULL THEN
-		RAISE EXCEPTION 'table "%" is not partitioned', parent_relid::TEXT;
-	END IF;
-
-	v_atttype := @extschema@.get_attribute_type(parent_relid, v_attname);
+	INTO v_interval;
 
 	EXECUTE
 		format('SELECT @extschema@.append_partition_internal($1, $2, $3, ARRAY[]::%s[], $4, $5)',
@@ -700,7 +691,6 @@ CREATE OR REPLACE FUNCTION @extschema@.prepend_range_partition(
 RETURNS TEXT AS
 $$
 DECLARE
-	v_attname		TEXT;
 	v_atttype		REGTYPE;
 	v_part_name		TEXT;
 	v_interval		TEXT;
@@ -711,16 +701,12 @@ BEGIN
 	/* Acquire lock on parent */
 	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 
-	SELECT attname, range_interval
+	v_atttype := @extschema@.get_partition_key_type(parent_relid);
+
+	SELECT range_interval
 	FROM @extschema@.pathman_config
 	WHERE partrel = parent_relid
-	INTO v_attname, v_interval;
-
-	IF v_attname IS NULL THEN
-		RAISE EXCEPTION 'table "%" is not partitioned', parent_relid::TEXT;
-	END IF;
-
-	v_atttype := @extschema@.get_attribute_type(parent_relid, v_attname);
+	INTO v_interval;
 
 	EXECUTE
 		format('SELECT @extschema@.prepend_partition_internal($1, $2, $3, ARRAY[]::%s[], $4, $5)',

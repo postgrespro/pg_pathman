@@ -705,15 +705,6 @@ RETURNS REGTYPE AS 'pg_pathman', 'get_base_type_pl'
 LANGUAGE C STRICT;
 
 /*
- * Returns attribute type name for relation.
- */
-CREATE OR REPLACE FUNCTION @extschema@.get_attribute_type(
-	relid	REGCLASS,
-	attname	TEXT)
-RETURNS REGTYPE AS 'pg_pathman', 'get_attribute_type_pl'
-LANGUAGE C STRICT;
-
-/*
  * Return partition key type
  */
 CREATE OR REPLACE FUNCTION @extschema@.get_partition_key_type(

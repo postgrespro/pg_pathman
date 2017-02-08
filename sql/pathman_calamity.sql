@@ -77,11 +77,10 @@ SELECT get_base_type('int4'::regtype);
 SELECT get_base_type('calamity.test_domain'::regtype);
 SELECT get_base_type(NULL) IS NULL;
 
-/* check function get_attribute_type() */
-SELECT get_attribute_type('calamity.part_test', 'val');
-SELECT get_attribute_type('calamity.part_test', NULL) IS NULL;
-SELECT get_attribute_type(NULL, 'val') IS NULL;
-SELECT get_attribute_type(NULL, NULL) IS NULL;
+/* check function get_partition_key_type() */
+SELECT get_partition_key_type('calamity.part_test');
+SELECT get_partition_key_type(0::regclass);
+SELECT get_partition_key_type(NULL) IS NULL;
 
 /* check function build_check_constraint_name_attnum() */
 SELECT build_check_constraint_name('calamity.part_test', 1::int2);

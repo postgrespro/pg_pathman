@@ -218,18 +218,6 @@ get_base_type_pl(PG_FUNCTION_ARGS)
 }
 
 /*
- * Get type (as REGTYPE) of a given attribute.
- */
-Datum
-get_attribute_type_pl(PG_FUNCTION_ARGS)
-{
-	Oid		relid = PG_GETARG_OID(0);
-	text   *attname = PG_GETARG_TEXT_P(1);
-
-	PG_RETURN_OID(get_attribute_type(relid, text_to_cstring(attname), false));
-}
-
-/*
  * Return partition key type
  */
 Datum
