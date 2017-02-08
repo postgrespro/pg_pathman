@@ -765,9 +765,7 @@ lock_partitioned_relation(PG_FUNCTION_ARGS)
 Datum
 prevent_relation_modification(PG_FUNCTION_ARGS)
 {
-	Oid			relid = PG_GETARG_OID(0);
-
-	(void) prevent_relation_modification_internal(relid);
+	prevent_relation_modification_internal(PG_GETARG_OID(0));
 
 	PG_RETURN_VOID();
 }

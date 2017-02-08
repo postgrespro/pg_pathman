@@ -45,6 +45,18 @@ SELECT drop_partitions('calamity.part_test', true);
 DELETE FROM calamity.part_test;
 
 
+/* check function validate_interval_value() */
+SELECT set_interval('pg_catalog.pg_class', 100); /* not ok */
+
+INSERT INTO calamity.part_test SELECT generate_series(1, 30);
+SELECT create_range_partitions('calamity.part_test', 'val', 1, 10);
+SELECT set_interval('calamity.part_test', 100);				/* ok */
+SELECT set_interval('calamity.part_test', 15.6);			/* not ok */
+SELECT set_interval('calamity.part_test', 'abc'::text);		/* not ok */
+SELECT drop_partitions('calamity.part_test', true);
+DELETE FROM calamity.part_test;
+
+
 /* check function build_hash_condition() */
 SELECT build_hash_condition('int4', 'val', 10, 1);
 SELECT build_hash_condition('text', 'val', 10, 1);

@@ -450,7 +450,7 @@ extract_binary_interval_from_text(Datum interval_text,	/* interval as TEXT */
 			ReleaseSysCache(htup);
 		}
 		else
-			elog(ERROR, "Cannot find input function for type %u", part_atttype);
+			elog(ERROR, "cannot find input function for type %u", part_atttype);
 
 		/*
 		 * Convert interval from CSTRING to 'prel->atttype'.

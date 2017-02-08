@@ -610,16 +610,33 @@ drop_range_partition_expand_next(PG_FUNCTION_ARGS)
 Datum
 validate_interval_value(PG_FUNCTION_ARGS)
 {
-	const PartRelationInfo *prel;
-	Oid		parent = PG_GETARG_OID(0);
-	Datum	interval = PG_GETARG_DATUM(1);
+	Oid			partrel = PG_GETARG_OID(0);
+	text	   *attname = PG_GETARG_TEXT_P(1);
+	PartType	parttype = DatumGetPartType(PG_GETARG_DATUM(2));
+	Datum		range_interval = PG_GETARG_DATUM(3);
 
-	/* TODO!!! */
-	prel = get_pathman_relation_info(parent);
-	if (!prel)
-		PG_RETURN_BOOL(true);
+	char	   *attname_cstr;
+	Oid			atttype; /* type of partitioned attribute */
 
-	extract_binary_interval_from_text(interval, prel->atttype, NULL);
+	if (PG_ARGISNULL(0))
+		elog(ERROR, "'partrel' should not be NULL");
+
+	if (PG_ARGISNULL(1))
+		elog(ERROR, "'attname' should not be NULL");
+
+	if (PG_ARGISNULL(2))
+		elog(ERROR, "'parttype' should not be NULL");
+
+	/* it's OK if interval is NULL and table is HASH-partitioned */
+	if (PG_ARGISNULL(3))
+		PG_RETURN_BOOL(parttype == PT_HASH);
+
+	/* Convert attname to CSTRING and fetch column's type */
+	attname_cstr = text_to_cstring(attname);
+	atttype = get_attribute_type(partrel, attname_cstr, false);
+
+	/* Try converting textual representation */
+	extract_binary_interval_from_text(range_interval, atttype, NULL);
 
 	PG_RETURN_BOOL(true);
 }

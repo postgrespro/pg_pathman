@@ -133,6 +133,34 @@ NOTICE:  function calamity.part_test_upd_trig_func() does not exist, skipping
 (1 row)
 
 DELETE FROM calamity.part_test;
+/* check function validate_interval_value() */
+SELECT set_interval('pg_catalog.pg_class', 100); /* not ok */
+ERROR:  table "pg_class" is not partitioned by RANGE
+INSERT INTO calamity.part_test SELECT generate_series(1, 30);
+SELECT create_range_partitions('calamity.part_test', 'val', 1, 10);
+ create_range_partitions 
+-------------------------
+                       3
+(1 row)
+
+SELECT set_interval('calamity.part_test', 100);				/* ok */
+ set_interval 
+--------------
+ 
+(1 row)
+
+SELECT set_interval('calamity.part_test', 15.6);			/* not ok */
+ERROR:  invalid input syntax for integer: "15.6"
+SELECT set_interval('calamity.part_test', 'abc'::text);		/* not ok */
+ERROR:  invalid input syntax for integer: "abc"
+SELECT drop_partitions('calamity.part_test', true);
+NOTICE:  function calamity.part_test_upd_trig_func() does not exist, skipping
+ drop_partitions 
+-----------------
+               3
+(1 row)
+
+DELETE FROM calamity.part_test;
 /* check function build_hash_condition() */
 SELECT build_hash_condition('int4', 'val', 10, 1);
               build_hash_condition               
