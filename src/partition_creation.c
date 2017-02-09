@@ -1136,12 +1136,12 @@ build_raw_range_check_tree(char *attname,
 	ColumnRef  *col_ref		= makeNode(ColumnRef);
 
 	/* Partitioned column */
-	col_ref->fields = list_make1(makeString(attname));
+	col_ref->fields	= list_make1(makeString(attname));
 	col_ref->location = -1;
 
-	and_oper->boolop = AND_EXPR;
-	and_oper->args = NIL;
-	and_oper->location = -1;
+	and_oper->boolop	= AND_EXPR;
+	and_oper->args		= NIL;
+	and_oper->location	= -1;
 
 	/* Left comparison (VAR >= start_value) */
 	if (!IsInfinite(start_value))
@@ -1156,6 +1156,7 @@ build_raw_range_check_tree(char *attname,
 		left_arg->lexpr		= (Node *) col_ref;
 		left_arg->rexpr		= (Node *) left_const;
 		left_arg->location	= -1;
+
 		and_oper->args = lappend(and_oper->args, left_arg);
 	}
 
@@ -1172,9 +1173,11 @@ build_raw_range_check_tree(char *attname,
 		right_arg->lexpr	= (Node *) col_ref;
 		right_arg->rexpr	= (Node *) right_const;
 		right_arg->location	= -1;
+
 		and_oper->args = lappend(and_oper->args, right_arg);
 	}
 
+	/* (-inf, +inf) */
 	if (and_oper->args == NIL)
 		elog(ERROR, "cannot create infinite range constraint");
 

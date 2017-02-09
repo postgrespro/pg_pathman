@@ -646,17 +646,20 @@ $$ LANGUAGE plpgsql STRICT;
 /*
  * Set new relname, schema and tablespace
  */
-CREATE OR REPLACE FUNCTION @extschema@.alter_partition(relation REGCLASS,
-													   new_name TEXT,
-													   new_schema REGNAMESPACE,
-													   new_tablespace TEXT)
+CREATE OR REPLACE FUNCTION @extschema@.alter_partition(
+	relation		REGCLASS,
+	new_name		TEXT,
+	new_schema		REGNAMESPACE,
+	new_tablespace	TEXT)
 RETURNS VOID AS
 $$
 DECLARE
-	orig_name TEXT;
-	orig_schema OID;
+	orig_name	TEXT;
+	orig_schema	OID;
+
 BEGIN
-	SELECT relname, relnamespace FROM pg_class WHERE oid = relation
+	SELECT relname, relnamespace FROM pg_class
+	WHERE oid = relation
 	INTO orig_name, orig_schema;
 
 	/* Alter table name */
@@ -680,7 +683,8 @@ $$ LANGUAGE plpgsql;
 /*
  * Partitioning key
  */
-CREATE OR REPLACE FUNCTION @extschema@.get_partition_key(relid REGCLASS)
+CREATE OR REPLACE FUNCTION @extschema@.get_partition_key(
+	relid	REGCLASS)
 RETURNS TEXT AS
 $$
 	SELECT attname FROM pathman_config WHERE partrel = relid;
