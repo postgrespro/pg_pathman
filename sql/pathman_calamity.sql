@@ -35,6 +35,13 @@ SELECT count(*) FROM calamity.part_test;
 DELETE FROM calamity.part_test;
 
 
+/* test function create_hash_partitions() */
+SELECT create_hash_partitions('calamity.part_test', 'val', 2,
+							  relnames := ARRAY['calamity.p1']::TEXT[]);
+SELECT create_hash_partitions('calamity.part_test', 'val', 2,
+							  tablespaces := ARRAY['abcd']::TEXT[]);
+
+
 /* test stub 'enable_parent' value for PATHMAN_CONFIG_PARAMS */
 INSERT INTO calamity.part_test SELECT generate_series(1, 30);
 SELECT create_range_partitions('calamity.part_test', 'val', 1, 10);

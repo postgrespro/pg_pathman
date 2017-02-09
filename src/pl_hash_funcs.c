@@ -54,7 +54,7 @@ create_hash_partitions_internal(PG_FUNCTION_ARGS)
 	Oid			parent_relid = PG_GETARG_OID(0);
 	const char *partitioned_col_name = TextDatumGetCString(PG_GETARG_DATUM(1));
 	Oid			partitioned_col_type;
-	uint32		part_count = PG_GETARG_INT32(2),
+	uint32		partitions_count = PG_GETARG_INT32(2),
 				i;
 
 	/* Partition names and tablespaces */
@@ -84,6 +84,14 @@ create_hash_partitions_internal(PG_FUNCTION_ARGS)
 	if (relnames && tablespaces && relnames_size != tablespaces_size)
 		elog(ERROR, "sizes of arrays 'relnames' and 'tablespaces' are different");
 
+	/* Validate size of 'relnames' */
+	if (relnames && relnames_size != partitions_count)
+		elog(ERROR, "size of array 'relnames' must be equal to 'partitions_count'");
+
+	/* Validate size of 'tablespaces' */
+	if (tablespaces && tablespaces_size != partitions_count)
+		elog(ERROR, "size of array 'tablespaces' must be equal to 'partitions_count'");
+
 	/* Convert partition names into RangeVars */
 	if (relnames)
 	{
@@ -97,13 +105,13 @@ create_hash_partitions_internal(PG_FUNCTION_ARGS)
 	}
 
 	/* Finally create HASH partitions */
-	for (i = 0; i < part_count; i++)
+	for (i = 0; i < partitions_count; i++)
 	{
 		RangeVar   *partition_rv	= rangevars ? rangevars[i] : NULL;
 		char 	   *tablespace		= tablespaces ? tablespaces[i] : NULL;
 
 		/* Create a partition (copy FKs, invoke callbacks etc) */
-		create_single_hash_partition_internal(parent_relid, i, part_count,
+		create_single_hash_partition_internal(parent_relid, i, partitions_count,
 											  partitioned_col_type,
 											  partition_rv, tablespace);
 	}
