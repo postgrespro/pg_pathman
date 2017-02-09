@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS @extschema@.pathman_config_params (
 	partrel			REGCLASS NOT NULL PRIMARY KEY,
 	enable_parent	BOOLEAN NOT NULL DEFAULT FALSE,
 	auto			BOOLEAN NOT NULL DEFAULT TRUE,
-	init_callback	TEXT,
+	init_callback	TEXT DEFAULT NULL,
 	spawn_using_bgw	BOOLEAN NOT NULL DEFAULT FALSE
 
 	CHECK (@extschema@.validate_part_callback(init_callback)) /* check signature */
@@ -157,12 +157,21 @@ CREATE OR REPLACE FUNCTION @extschema@.set_init_callback(
 	callback	REGPROC DEFAULT 0)
 RETURNS VOID AS
 $$
+DECLARE
+	regproc_text	TEXT;
 BEGIN
-	PERFORM @extschema@.pathman_set_param(relation, 'init_callback',
-		CASE WHEN callback <> 0
-			THEN regprocedureout(callback)::text
-			ELSE NULL END);
-
+	IF callback != 0 THEN
+		EXECUTE 'SELECT quote_ident(nspname) || ''.'' || quote_ident(proname)'
+				'	|| ''('' || (SELECT string_agg(x.argtype::regtype::text, '','')'
+				'				 FROM unnest(proargtypes) AS x(argtype))'
+				'	|| '')'''
+				'FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE p.oid=$1'
+			INTO regproc_text
+			USING callback;
+	ELSE
+		regproc_text := NULL;
+	END IF;
+	PERFORM @extschema@.pathman_set_param(relation, 'init_callback', regproc_text);
 END
 $$
 LANGUAGE plpgsql STRICT;
