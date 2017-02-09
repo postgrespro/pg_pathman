@@ -453,6 +453,7 @@ select_range_partitions(const Datum value,
 						const RangeEntry *ranges,
 						const int nranges,
 						const int strategy,
+						Oid collid,
 						WrapperNode *result)
 {
 	const RangeEntry   *current_re;
@@ -487,9 +488,9 @@ select_range_partitions(const Datum value,
 
 		/* Corner cases */
 		cmp_min = IsInfinite(&ranges[startidx].min) ?
-			1 : DatumGetInt32(FunctionCall2(cmp_func, value, BoundGetValue(&ranges[startidx].min)));
+			1 : DatumGetInt32(FunctionCall2Coll(cmp_func, collid, value, BoundGetValue(&ranges[startidx].min)));
 		cmp_max = IsInfinite(&ranges[endidx].max) ?
-			-1 : DatumGetInt32(FunctionCall2(cmp_func, value, BoundGetValue(&ranges[endidx].max)));
+			-1 : DatumGetInt32(FunctionCall2Coll(cmp_func, collid, value, BoundGetValue(&ranges[endidx].max)));
 
 		if ((cmp_min <= 0 && strategy == BTLessStrategyNumber) ||
 			(cmp_min < 0 && (strategy == BTLessEqualStrategyNumber ||
@@ -745,8 +746,10 @@ walk_expr_tree(Expr *expr, WalkerContext *context)
  * This function determines which partitions should appear in query plan.
  */
 static void
-handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
-					 const Node *varnode, const Const *c)
+handle_binary_opexpr(WalkerContext *context,
+					 WrapperNode *result,
+					 const Node *varnode,
+					 const Const *c)
 {
 	int						strategy;
 	TypeCacheEntry		   *tce;
@@ -795,7 +798,20 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 
 		case PT_RANGE:
 			{
-				FmgrInfo cmp_func;
+				FmgrInfo	cmp_func;
+				Oid			collid;
+
+				/*
+				 * If operator collation is different from default attribute
+				 * collation then we cannot guarantee that we return correct
+				 * partitions. So in this case we just return all of them
+				 */
+				if (expr->opcollid != prel->attcollid && strategy != BTEqualStrategyNumber)
+					goto binary_opexpr_return;
+
+				collid = OidIsValid(expr->opcollid) ?
+							expr->opcollid :
+							prel->attcollid;
 
 				fill_type_cmp_fmgr_info(&cmp_func,
 										getBaseType(c->consttype),
@@ -806,6 +822,7 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 										PrelGetRangesArray(context->prel),
 										PrelChildrenCount(context->prel),
 										strategy,
+										collid,
 										result); /* output */
 
 				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
@@ -893,6 +910,7 @@ search_range_partition_eq(const Datum value,
 							ranges,
 							nranges,
 							BTEqualStrategyNumber,
+							prel->attcollid,
 							&result); /* output */
 
 	if (result.found_gap)
@@ -1001,6 +1019,7 @@ handle_const(const Const *c, WalkerContext *context)
 										PrelGetRangesArray(context->prel),
 										PrelChildrenCount(context->prel),
 										strategy,
+										prel->attcollid,
 										result); /* output */
 
 				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
