@@ -26,7 +26,9 @@
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
+#include "utils/numeric.h"
 #include "utils/ruleutils.h"
+#include "utils/syscache.h"
 
 
 static char *deparse_constraint(Oid relid, Node *expr);
@@ -48,7 +50,9 @@ static void modify_range_constraint(Oid child_relid,
 									const Bound *upper);
 static char *get_qualified_rel_name(Oid relid);
 static void drop_table_by_oid(Oid relid);
-
+static bool interval_is_trivial(Oid atttype,
+								Datum interval,
+								Oid interval_type);
 
 /* Function declarations */
 
@@ -620,7 +624,9 @@ validate_interval_value(PG_FUNCTION_ARGS)
 	Oid			partrel = PG_GETARG_OID(0);
 	text	   *attname = PG_GETARG_TEXT_P(1);
 	PartType	parttype = DatumGetPartType(PG_GETARG_DATUM(2));
-	Datum		range_interval = PG_GETARG_DATUM(3);
+	Datum		interval_text = PG_GETARG_DATUM(3);
+	Datum		interval_value;
+	Oid			interval_type;
 
 	char	   *attname_cstr;
 	Oid			atttype; /* type of partitioned attribute */
@@ -643,9 +649,103 @@ validate_interval_value(PG_FUNCTION_ARGS)
 	atttype = get_attribute_type(partrel, attname_cstr, false);
 
 	/* Try converting textual representation */
-	extract_binary_interval_from_text(range_interval, atttype, NULL);
+	interval_value = extract_binary_interval_from_text(interval_text,
+													   atttype,
+													   &interval_type);
+
+	/* Check that interval isn't trivial */
+	if (interval_is_trivial(atttype, interval_value, interval_type))
+		elog(ERROR, "Interval must not be trivial");
 
 	PG_RETURN_BOOL(true);
+}
+
+
+/*
+ * Check that interval is somehow significant to avoid of infinite loops while
+ * adding new partitions
+ *
+ * The main idea behind this function is to add specified interval to some
+ * default value (zero for numeric types and '1970-01-01' for datetime types)
+ * and look if it is changed. If it is then return true.
+ */
+static bool
+interval_is_trivial(Oid atttype, Datum interval, Oid interval_type)
+{
+	Datum		default_value;
+	Datum		op_result;
+	Oid			op_result_type;
+	Operator	op;
+	Oid			op_func;
+	FmgrInfo	cmp_func;
+
+	/* Generate default value */
+	switch(atttype)
+	{
+		case INT2OID:
+		case INT4OID:
+		case INT8OID:
+			default_value = Int16GetDatum(0);
+			break;
+		case FLOAT4OID:
+			default_value = Float4GetDatum(0);
+			break;
+		case FLOAT8OID:
+			default_value = Float8GetDatum(0);
+			break;
+		case NUMERICOID:
+			default_value = NumericGetDatum(0);
+			break;
+		case TIMESTAMPOID:
+		case TIMESTAMPTZOID:
+			default_value = TimestampGetDatum(GetCurrentTimestamp());
+			break;
+		case DATEOID:
+			{
+				Datum		ts = TimestampGetDatum(GetCurrentTimestamp());
+
+				default_value = perform_type_cast(ts, TIMESTAMPTZOID, DATEOID, NULL);
+			}
+			break;
+		default:
+			return false;
+	}
+
+	/* Find suitable addition operator for default value and interval */
+	op = get_binary_operator("+", atttype, interval_type);
+	if (!op)
+		elog(ERROR, "missing \"+\" operator for types %s and %s",
+			 format_type_be(atttype),
+			 format_type_be(interval_type));
+
+	op_func = oprfuncid(op);
+	op_result_type = get_operator_ret_type(op);
+	ReleaseSysCache(op);
+
+	/* Invoke addition operator and get a result*/
+	op_result = OidFunctionCall2(op_func, default_value, interval);
+
+	/*
+	 * If operator result type isn't the same as original value then
+	 * convert it
+	 */
+	if (op_result_type != atttype)
+	{
+		op_result = perform_type_cast(op_result, op_result_type, atttype, NULL);
+		op_result_type = atttype;
+	}
+
+	/*
+	 * Compare it to the default_value. If they are the same then obviously
+	 * interval is trivial
+	 */
+	fill_type_cmp_fmgr_info(&cmp_func,
+							getBaseType(atttype),
+							getBaseType(op_result_type));
+	if (DatumGetInt32(FunctionCall2(&cmp_func, default_value, op_result)) == 0)
+		return true;
+
+	return false;
 }
 
 
