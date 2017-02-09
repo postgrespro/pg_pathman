@@ -23,24 +23,18 @@
 /* Range bound */
 typedef struct
 {
-	Datum	value;				/* Actual value if not infinite */
-	uint8	is_infinite;		/* bitmask where the least significant bit
-								   is indicates if the bound is infinite and
-								   the second one indicates if bound
-								   is negative */
+	Datum	value;				/* actual value if not infinite */
+	int8	is_infinite;		/* -inf | +inf | finite */
 } Bound;
 
 
-#define BOUND_INFINITY_MASK		0x01
-#define BOUND_NEGATIVE_MASK		0x02
+#define FINITE					(  0 )
+#define PLUS_INFINITY			( +1 )
+#define MINUS_INFINITY			( -1 )
 
-#define FINITE					0
-#define PLUS_INFINITY			(BOUND_INFINITY_MASK)
-#define MINUS_INFINITY			(BOUND_INFINITY_MASK | BOUND_NEGATIVE_MASK)
-
-#define IsInfinite(i)			((i)->is_infinite & BOUND_INFINITY_MASK)
-#define IsPlusInfinity(i)		(IsInfinite(i) && !((i)->is_infinite & BOUND_NEGATIVE_MASK))
-#define IsMinusInfinity(i)		(IsInfinite(i) && ((i)->is_infinite & BOUND_NEGATIVE_MASK))
+#define IsInfinite(i)			( (i)->is_infinite != FINITE )
+#define IsPlusInfinity(i)		( (i)->is_infinite == PLUS_INFINITY )
+#define IsMinusInfinity(i)		( (i)->is_infinite == MINUS_INFINITY )
 
 
 inline static Bound
@@ -65,7 +59,7 @@ MakeBound(Datum value)
 }
 
 inline static Bound
-MakeBoundInf(uint8 infinity_type)
+MakeBoundInf(int8 infinity_type)
 {
 	Bound bound = { (Datum) 0, infinity_type };
 
