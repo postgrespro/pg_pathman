@@ -56,10 +56,10 @@ CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
  * NOTE: this function is used in CHECK CONSTRAINT.
  */
 CREATE OR REPLACE FUNCTION @extschema@.validate_part_callback(
-	callback		TEXT,
+	callback		REGPROCEDURE,
 	raise_error		BOOL DEFAULT TRUE)
 RETURNS BOOL AS 'pg_pathman', 'validate_part_callback_pl'
-LANGUAGE C;
+LANGUAGE C STRICT;
 
 
 /*
@@ -77,7 +77,11 @@ CREATE TABLE IF NOT EXISTS @extschema@.pathman_config_params (
 	init_callback	TEXT DEFAULT NULL,
 	spawn_using_bgw	BOOLEAN NOT NULL DEFAULT FALSE
 
-	CHECK (@extschema@.validate_part_callback(init_callback)) /* check signature */
+	/* check callback's signature */
+	CHECK (@extschema@.validate_part_callback(CASE WHEN init_callback IS NULL
+											  THEN 0::REGPROCEDURE
+											  ELSE init_callback::REGPROCEDURE
+											  END))
 );
 
 GRANT SELECT, INSERT, UPDATE, DELETE
@@ -176,7 +180,7 @@ LANGUAGE plpgsql STRICT;
  */
 CREATE OR REPLACE FUNCTION @extschema@.set_init_callback(
 	relation	REGCLASS,
-	callback	REGPROC DEFAULT 0)
+	callback	REGPROCEDURE DEFAULT 0)
 RETURNS VOID AS
 $$
 DECLARE

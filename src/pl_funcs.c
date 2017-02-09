@@ -792,17 +792,8 @@ prevent_relation_modification(PG_FUNCTION_ARGS)
 Datum
 validate_part_callback_pl(PG_FUNCTION_ARGS)
 {
-	const char	   *cb_cstring;
-	Oid				cb_oid;
-
-	if (PG_ARGISNULL(0))
-		PG_RETURN_BOOL(true);
-
-	cb_cstring = text_to_cstring(PG_GETARG_TEXT_P(0));
-	cb_oid = DatumGetObjectId(DirectFunctionCall1(regprocedurein,
-				CStringGetDatum(cb_cstring)));
-
-	PG_RETURN_BOOL(validate_part_callback(cb_oid, PG_GETARG_BOOL(1)));
+	PG_RETURN_BOOL(validate_part_callback(PG_GETARG_OID(0),
+										  PG_GETARG_BOOL(1)));
 }
 
 /*

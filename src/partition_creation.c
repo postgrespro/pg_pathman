@@ -1622,7 +1622,7 @@ validate_part_callback(Oid procid, bool emit_error)
 
 	tp = SearchSysCache1(PROCOID, ObjectIdGetDatum(procid));
 	if (!HeapTupleIsValid(tp))
-		elog(ERROR, "cache lookup failed for function %u", procid);
+		elog(ERROR, "callback function %u does not exist", procid);
 
 	functup = (Form_pg_proc) GETSTRUCT(tp);
 
@@ -1635,7 +1635,7 @@ validate_part_callback(Oid procid, bool emit_error)
 
 	if (emit_error && !is_ok)
 		elog(ERROR,
-			 "Callback function must have the following signature: "
+			 "callback function must have the following signature: "
 			 "callback(arg JSONB) RETURNS VOID");
 
 	return is_ok;
