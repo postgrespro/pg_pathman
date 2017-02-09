@@ -1095,6 +1095,32 @@ copy_foreign_keys(Oid parent_relid, Oid partition_oid)
  * -----------------------------
  */
 
+/* Drop pg_pathman's check constraint by 'relid' and 'attnum' */
+void
+drop_check_constraint(Oid relid, AttrNumber attnum)
+{
+	char		   *constr_name;
+	AlterTableStmt *stmt;
+	AlterTableCmd  *cmd;
+
+	/* Build a correct name for this constraint */
+	constr_name = build_check_constraint_name_relid_internal(relid, attnum);
+
+	stmt = makeNode(AlterTableStmt);
+	stmt->relation	= makeRangeVarFromRelid(relid);
+	stmt->relkind	= OBJECT_TABLE;
+
+	cmd = makeNode(AlterTableCmd);
+	cmd->subtype	= AT_DropConstraint;
+	cmd->name		= constr_name;
+	cmd->behavior	= DROP_RESTRICT;
+	cmd->missing_ok	= true;
+
+	stmt->cmds = list_make1(cmd);
+
+	AlterTable(relid, ShareUpdateExclusiveLock, stmt);
+}
+
 /* Build RANGE check constraint expression tree */
 Node *
 build_raw_range_check_tree(char *attname,
@@ -1381,31 +1407,6 @@ make_int_value_struct(int int_val)
 	val.val.ival = int_val;
 
 	return val;
-}
-
-void
-drop_check_constraint(Oid relid, AttrNumber attnum)
-{
-	char		   *constr_name;
-	AlterTableStmt *stmt;
-	AlterTableCmd  *cmd;
-
-	/* Build a correct name for this constraint */
-	constr_name = build_check_constraint_name_relid_internal(relid, attnum);
-
-	stmt = makeNode(AlterTableStmt);
-	stmt->relation = makeRangeVarFromRelid(relid);
-	stmt->relkind = OBJECT_TABLE;
-
-	cmd = makeNode(AlterTableCmd);
-	cmd->subtype = AT_DropConstraint;
-	cmd->name = constr_name;
-	cmd->behavior = DROP_RESTRICT;
-	cmd->missing_ok = true;
-
-	stmt->cmds = list_make1(cmd);
-
-	AlterTable(relid, ShareUpdateExclusiveLock, stmt);
 }
 
 static RangeVar *
