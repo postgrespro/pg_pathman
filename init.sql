@@ -158,19 +158,23 @@ CREATE OR REPLACE FUNCTION @extschema@.set_init_callback(
 RETURNS VOID AS
 $$
 DECLARE
-	regproc_text	TEXT;
+	regproc_text	TEXT := NULL;
+
 BEGIN
+
+	/* Fetch schema-qualified name of callback */
 	IF callback != 0 THEN
-		EXECUTE 'SELECT quote_ident(nspname) || ''.'' || quote_ident(proname)'
-				'	|| ''('' || (SELECT string_agg(x.argtype::regtype::text, '','')'
-				'				 FROM unnest(proargtypes) AS x(argtype))'
-				'	|| '')'''
-				'FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE p.oid=$1'
-			INTO regproc_text
-			USING callback;
-	ELSE
-		regproc_text := NULL;
+		SELECT quote_ident(nspname) || '.' ||
+			   quote_ident(proname) || '(' ||
+					(SELECT string_agg(x.argtype::REGTYPE::TEXT, ',')
+					 FROM unnest(proargtypes) AS x(argtype)) ||
+			   ')'
+		FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n
+		ON n.oid = p.pronamespace
+		WHERE p.oid = callback
+		INTO regproc_text; /* <= result */
 	END IF;
+
 	PERFORM @extschema@.pathman_set_param(relation, 'init_callback', regproc_text);
 END
 $$
