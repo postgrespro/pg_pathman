@@ -53,7 +53,7 @@ static void drop_table_by_oid(Oid relid);
 /* Function declarations */
 
 PG_FUNCTION_INFO_V1( create_single_range_partition_pl );
-PG_FUNCTION_INFO_V1( find_or_create_range_partition);
+PG_FUNCTION_INFO_V1( find_or_create_range_partition );
 PG_FUNCTION_INFO_V1( check_range_available_pl );
 
 PG_FUNCTION_INFO_V1( get_part_range_by_oid );
@@ -322,6 +322,7 @@ get_part_range_by_idx(PG_FUNCTION_ARGS)
 
 	ranges = PrelGetRangesArray(prel);
 
+	/* Build args for construct_infinitable_array() */
 	elems[0] = ranges[partition_idx].min;
 	elems[1] = ranges[partition_idx].max;
 
@@ -369,6 +370,7 @@ build_range_condition(PG_FUNCTION_ARGS)
 	PG_RETURN_TEXT_P(cstring_to_text(result));
 }
 
+/* Build name for sequence for auto partition naming */
 Datum
 build_sequence_name(PG_FUNCTION_ARGS)
 {
@@ -544,8 +546,8 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 
 
 /*
- * Drops partition and expands the next partition so that it cover dropped
- * one
+ * Drops partition and expands the next partition
+ * so that it could cover the dropped one
  *
  * This function was written in order to support Oracle-like ALTER TABLE ...
  * DROP PARTITION. In Oracle partitions only have upper bound and when
@@ -554,49 +556,54 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 Datum
 drop_range_partition_expand_next(PG_FUNCTION_ARGS)
 {
-	PartParentSearch		parent_search;
 	const PartRelationInfo *prel;
-	RangeEntry	   *ranges;
-	Oid				relid = PG_GETARG_OID(0),
-					parent;
-	int				i;
+	PartParentSearch		parent_search;
+	Oid						relid = PG_GETARG_OID(0),
+							parent;
+	RangeEntry			   *ranges;
+	int						i;
 
-	/* Get parent relid */
+	/* Get parent's relid */
 	parent = get_parent_of_partition(relid, &parent_search);
 	if (parent_search != PPS_ENTRY_PART_PARENT)
 		elog(ERROR, "relation \"%s\" is not a partition",
 			 get_rel_name_or_relid(relid));
 
+	/* Fetch PartRelationInfo and perform some checks */
 	prel = get_pathman_relation_info(parent);
 	shout_if_prel_is_invalid(parent, prel, PT_RANGE);
 
+	/* Fetch ranges array */
 	ranges = PrelGetRangesArray(prel);
 
 	/* Looking for partition in child relations */
-	for (i = 0; i < prel->children_count; i++)
+	for (i = 0; i < PrelChildrenCount(prel); i++)
 		if (ranges[i].child_oid == relid)
 			break;
 
 	/*
-	 * It must be in ranges array because we already know that table
-	 * is a partition
+	 * It must be in ranges array because we already
+	 * know that this table is a partition
 	 */
-	Assert(i < prel->children_count);
+	Assert(i < PrelChildrenCount(prel));
 
-	/* If there is next partition then expand it */
-	if (i < prel->children_count - 1)
+	/* Expand next partition if it exists */
+	if (i < PrelChildrenCount(prel) - 1)
 	{
 		RangeEntry	   *cur = &ranges[i],
 					   *next = &ranges[i + 1];
 
+		/* Drop old constraint and create a new one */
 		modify_range_constraint(next->child_oid,
-						get_relid_attribute_name(prel->key, prel->attnum),
-						prel->attnum,
-						prel->atttype,
-						&cur->min,
-						&next->max);
+								get_relid_attribute_name(prel->key,
+														 prel->attnum),
+								prel->attnum,
+								prel->atttype,
+								&cur->min,
+								&next->max);
 	}
 
+	/* Finally drop this partition */
 	drop_table_by_oid(relid);
 
 	PG_RETURN_VOID();
@@ -646,7 +653,6 @@ validate_interval_value(PG_FUNCTION_ARGS)
  * ------------------
  *  Helper functions
  * ------------------
- *
  */
 
 /*

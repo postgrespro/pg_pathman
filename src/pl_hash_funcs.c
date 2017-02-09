@@ -22,6 +22,9 @@
 #include "utils/array.h"
 
 
+static char **deconstruct_text_array(Datum arr, int *num_elems);
+
+
 /* Function declarations */
 
 PG_FUNCTION_INFO_V1( create_hash_partitions_internal );
@@ -32,112 +35,85 @@ PG_FUNCTION_INFO_V1( get_hash_part_idx );
 PG_FUNCTION_INFO_V1( build_hash_condition );
 
 
-static char **deconstruct_text_array(Datum arr, int *num_elems);
-
-
 /*
  * Create HASH partitions implementation (written in C).
  */
 Datum
 create_hash_partitions_internal(PG_FUNCTION_ARGS)
 {
-	Oid		parent_relid = PG_GETARG_OID(0);
-	Datum	partitioned_col_name = PG_GETARG_DATUM(1);
-	Oid		partitioned_col_type;
-	uint32	part_count = PG_GETARG_INT32(2),
-			i;
+/* Free allocated arrays */
+#define DeepFreeArray(arr, arr_len) \
+	do { \
+		int arr_elem; \
+		if (!arr) break; \
+		for (arr_elem = 0; arr_elem < arr_len; arr_elem++) \
+			pfree(arr[arr_elem]); \
+		pfree(arr); \
+	} while (0)
 
-	/* Partitions names and tablespaces */
-	char  **names = NULL,
-		  **tablespaces = NULL;
-	int		names_size = 0,
-			tablespaces_size = 0;
-	RangeVar **rangevars = NULL;
+	Oid			parent_relid = PG_GETARG_OID(0);
+	const char *partitioned_col_name = TextDatumGetCString(PG_GETARG_DATUM(1));
+	Oid			partitioned_col_type;
+	uint32		part_count = PG_GETARG_INT32(2),
+				i;
+
+	/* Partition names and tablespaces */
+	char	  **relnames			= NULL,
+			  **tablespaces			= NULL;
+	int			relnames_size		= 0,
+				tablespaces_size	= 0;
+	RangeVar  **rangevars			= NULL;
 
 	/* Check that there's no partitions yet */
 	if (get_pathman_relation_info(parent_relid))
 		elog(ERROR, "cannot add new HASH partitions");
 
 	partitioned_col_type = get_attribute_type(parent_relid,
-											  TextDatumGetCString(partitioned_col_name),
+											  partitioned_col_name,
 											  false);
 
-	/* Get partition names and tablespaces */
+	/* Extract partition names */
 	if (!PG_ARGISNULL(3))
-		names = deconstruct_text_array(PG_GETARG_DATUM(3), &names_size);
+		relnames = deconstruct_text_array(PG_GETARG_DATUM(3), &relnames_size);
 
+	/* Extract partition tablespaces */
 	if (!PG_ARGISNULL(4))
 		tablespaces = deconstruct_text_array(PG_GETARG_DATUM(4), &tablespaces_size);
 
+	/* If both arrays are present, check that their lengths are equal */
+	if (relnames && tablespaces && relnames_size != tablespaces_size)
+		elog(ERROR, "sizes of arrays 'relnames' and 'tablespaces' are different");
+
 	/* Convert partition names into RangeVars */
-	if (names_size > 0)
+	if (relnames)
 	{
-		rangevars = palloc(sizeof(RangeVar) * names_size);
-		for (i = 0; i < names_size; i++)
+		rangevars = palloc(sizeof(RangeVar) * relnames_size);
+		for (i = 0; i < relnames_size; i++)
 		{
-			List *nl = stringToQualifiedNameList(names[i]);
+			List *nl = stringToQualifiedNameList(relnames[i]);
 
 			rangevars[i] = makeRangeVarFromNameList(nl);
 		}
 	}
 
+	/* Finally create HASH partitions */
 	for (i = 0; i < part_count; i++)
 	{
-		RangeVar   *rel = rangevars != NULL ? rangevars[i] : NULL;
-		char 	   *tablespace = tablespaces != NULL ? tablespaces[i] : NULL;
+		RangeVar   *partition_rv	= rangevars ? rangevars[i] : NULL;
+		char 	   *tablespace		= tablespaces ? tablespaces[i] : NULL;
 
 		/* Create a partition (copy FKs, invoke callbacks etc) */
 		create_single_hash_partition_internal(parent_relid, i, part_count,
 											  partitioned_col_type,
-											  rel, tablespace);
+											  partition_rv, tablespace);
 	}
+
+	/* Free arrays */
+	DeepFreeArray(relnames, relnames_size);
+	DeepFreeArray(tablespaces, tablespaces_size);
+	DeepFreeArray(rangevars, relnames_size);
 
 	PG_RETURN_VOID();
-}
-
-/*
- * Convert Datum into cstring array
- */
-static char **
-deconstruct_text_array(Datum arr, int *num_elems)
-{
-	ArrayType  *arrayval;
-	int16		elemlen;
-	bool		elembyval;
-	char		elemalign;
-	Datum	   *elem_values;
-	bool	   *elem_nulls;
-	int16		i;
-
-	arrayval = DatumGetArrayTypeP(arr);
-
-	Assert(ARR_ELEMTYPE(arrayval) == TEXTOID);
-
-	get_typlenbyvalalign(ARR_ELEMTYPE(arrayval),
-						 &elemlen, &elembyval, &elemalign);
-	deconstruct_array(arrayval,
-					  ARR_ELEMTYPE(arrayval),
-					  elemlen, elembyval, elemalign,
-					  &elem_values, &elem_nulls, num_elems);
-
-	/* If there are actual values then convert them into cstrings */
-	if (num_elems > 0)
-	{
-		char **strings = palloc(sizeof(char *) * *num_elems);
-
-		for (i = 0; i < *num_elems; i++)
-		{
-			if (elem_nulls[i])
-				elog(ERROR,
-					 "Partition name and tablespace arrays cannot contain nulls");
-
-			strings[i] = TextDatumGetCString(elem_values[i]);
-		}
-
-		return strings;
-	}
-
-	return NULL;
 }
 
 /*
@@ -200,4 +176,54 @@ build_hash_condition(PG_FUNCTION_ARGS)
 					  part_idx);
 
 	PG_RETURN_TEXT_P(cstring_to_text(result));
+}
+
+
+/*
+ * ------------------
+ *  Helper functions
+ * ------------------
+ */
+
+/* Convert Datum into CSTRING array */
+static char **
+deconstruct_text_array(Datum arr, int *num_elems)
+{
+	ArrayType  *arrayval;
+	int16		elemlen;
+	bool		elembyval;
+	char		elemalign;
+	Datum	   *elem_values;
+	bool	   *elem_nulls;
+	int16		i;
+
+	arrayval = DatumGetArrayTypeP(arr);
+
+	Assert(ARR_ELEMTYPE(arrayval) == TEXTOID);
+
+	get_typlenbyvalalign(ARR_ELEMTYPE(arrayval),
+						 &elemlen, &elembyval, &elemalign);
+	deconstruct_array(arrayval,
+					  ARR_ELEMTYPE(arrayval),
+					  elemlen, elembyval, elemalign,
+					  &elem_values, &elem_nulls, num_elems);
+
+	/* If there are actual values then convert them into CSTRINGs */
+	if (num_elems > 0)
+	{
+		char **strings = palloc(sizeof(char *) * *num_elems);
+
+		for (i = 0; i < *num_elems; i++)
+		{
+			if (elem_nulls[i])
+				elog(ERROR, "partition name and tablespace arrays "
+							"may not contain nulls");
+
+			strings[i] = TextDatumGetCString(elem_values[i]);
+		}
+
+		return strings;
+	}
+
+	return NULL;
 }
