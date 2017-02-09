@@ -261,7 +261,7 @@ BEGIN
 							quote_ident(plain_relname || '_%s');
 
 	/* Fetch base hash function for atttype */
-	atttype := @extschema@.get_attribute_type(parent_relid, attr);
+	atttype := @extschema@.get_partition_key_type(parent_relid);
 
 	/* Format function definition and execute it */
 	EXECUTE format(func, funcname, attr, partitions_count, att_val_fmt,

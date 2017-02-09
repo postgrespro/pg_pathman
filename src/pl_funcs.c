@@ -218,18 +218,6 @@ get_base_type_pl(PG_FUNCTION_ARGS)
 }
 
 /*
- * Get type (as REGTYPE) of a given attribute.
- */
-Datum
-get_attribute_type_pl(PG_FUNCTION_ARGS)
-{
-	Oid		relid = PG_GETARG_OID(0);
-	text   *attname = PG_GETARG_TEXT_P(1);
-
-	PG_RETURN_OID(get_attribute_type(relid, text_to_cstring(attname), false));
-}
-
-/*
  * Return partition key type
  */
 Datum
@@ -777,9 +765,7 @@ lock_partitioned_relation(PG_FUNCTION_ARGS)
 Datum
 prevent_relation_modification(PG_FUNCTION_ARGS)
 {
-	Oid			relid = PG_GETARG_OID(0);
-
-	(void) prevent_relation_modification_internal(relid);
+	prevent_relation_modification_internal(PG_GETARG_OID(0));
 
 	PG_RETURN_VOID();
 }

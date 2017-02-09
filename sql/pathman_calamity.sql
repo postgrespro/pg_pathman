@@ -45,6 +45,18 @@ SELECT drop_partitions('calamity.part_test', true);
 DELETE FROM calamity.part_test;
 
 
+/* check function validate_interval_value() */
+SELECT set_interval('pg_catalog.pg_class', 100); /* not ok */
+
+INSERT INTO calamity.part_test SELECT generate_series(1, 30);
+SELECT create_range_partitions('calamity.part_test', 'val', 1, 10);
+SELECT set_interval('calamity.part_test', 100);				/* ok */
+SELECT set_interval('calamity.part_test', 15.6);			/* not ok */
+SELECT set_interval('calamity.part_test', 'abc'::text);		/* not ok */
+SELECT drop_partitions('calamity.part_test', true);
+DELETE FROM calamity.part_test;
+
+
 /* check function build_hash_condition() */
 SELECT build_hash_condition('int4', 'val', 10, 1);
 SELECT build_hash_condition('text', 'val', 10, 1);
@@ -77,11 +89,10 @@ SELECT get_base_type('int4'::regtype);
 SELECT get_base_type('calamity.test_domain'::regtype);
 SELECT get_base_type(NULL) IS NULL;
 
-/* check function get_attribute_type() */
-SELECT get_attribute_type('calamity.part_test', 'val');
-SELECT get_attribute_type('calamity.part_test', NULL) IS NULL;
-SELECT get_attribute_type(NULL, 'val') IS NULL;
-SELECT get_attribute_type(NULL, NULL) IS NULL;
+/* check function get_partition_key_type() */
+SELECT get_partition_key_type('calamity.part_test');
+SELECT get_partition_key_type(0::regclass);
+SELECT get_partition_key_type(NULL) IS NULL;
 
 /* check function build_check_constraint_name_attnum() */
 SELECT build_check_constraint_name('calamity.part_test', 1::int2);

@@ -15,10 +15,12 @@
  * text to Datum
  */
 CREATE OR REPLACE FUNCTION @extschema@.validate_interval_value(
-	parent			REGCLASS,
-	interval_value	TEXT)
+	partrel			REGCLASS,
+	attname			TEXT,
+	parttype		INTEGER,
+	range_interval	TEXT)
 RETURNS BOOL AS 'pg_pathman', 'validate_interval_value'
-LANGUAGE C STRICT;
+LANGUAGE C;
 
 
 /*
@@ -36,8 +38,14 @@ CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
 	parttype		INTEGER NOT NULL,
 	range_interval	TEXT,
 
-	CHECK (parttype IN (1, 2)), /* check for allowed part types */
-	CHECK (@extschema@.validate_interval_value(partrel, range_interval))
+	/* check for allowed part types */
+	CHECK (parttype IN (1, 2)),
+
+	/* check for correct interval */
+	CHECK (@extschema@.validate_interval_value(partrel,
+											   attname,
+											   parttype,
+											   range_interval))
 );
 
 
@@ -189,6 +197,31 @@ BEGIN
 END
 $$
 LANGUAGE plpgsql STRICT;
+
+/*
+ * Set (or reset) default interval for auto created partitions
+ */
+CREATE OR REPLACE FUNCTION @extschema@.set_interval(
+	relation		REGCLASS,
+	value			ANYELEMENT)
+RETURNS VOID AS
+$$
+DECLARE
+	affected	INTEGER;
+BEGIN
+	UPDATE @extschema@.pathman_config
+	SET range_interval = value::text
+	WHERE partrel = relation AND parttype = 2;
+
+	/* Check number of affected rows */
+	GET DIAGNOSTICS affected = ROW_COUNT;
+
+	IF affected = 0 THEN
+		RAISE EXCEPTION 'table "%" is not partitioned by RANGE', relation;
+	END IF;
+END
+$$
+LANGUAGE plpgsql;
 
 
 /*
@@ -702,15 +735,6 @@ LANGUAGE C STRICT;
 CREATE OR REPLACE FUNCTION @extschema@.get_base_type(
 	typid	REGTYPE)
 RETURNS REGTYPE AS 'pg_pathman', 'get_base_type_pl'
-LANGUAGE C STRICT;
-
-/*
- * Returns attribute type name for relation.
- */
-CREATE OR REPLACE FUNCTION @extschema@.get_attribute_type(
-	relid	REGCLASS,
-	attname	TEXT)
-RETURNS REGTYPE AS 'pg_pathman', 'get_attribute_type_pl'
 LANGUAGE C STRICT;
 
 /*

@@ -11,6 +11,34 @@ INSERT INTO test_inserts.storage SELECT i * 2, i, i, i::text FROM generate_serie
 CREATE UNIQUE INDEX ON test_inserts.storage(a);
 SELECT create_range_partitions('test_inserts.storage', 'b', 1, 10);
 
+/*
+ * attach before and after insertion triggers to partitioned table
+ */
+/* prepare trigger functions */
+CREATE OR REPLACE FUNCTION test_inserts.print_cols_before_change() RETURNS TRIGGER AS $$
+BEGIN
+	RAISE NOTICE 'BEFORE INSERTION TRIGGER ON TABLE % HAS EXPIRED. INSERTED ROW: %', tg_table_name, new;
+	RETURN new;
+END;
+$$ LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION test_inserts.print_cols_after_change() RETURNS TRIGGER AS $$
+BEGIN
+	RAISE NOTICE 'AFTER INSERTION TRIGGER ON TABLE % HAS EXPIRED. INSERTED ROW: %', tg_table_name, new;
+	RETURN new;
+END;
+$$ LANGUAGE plpgsql;
+/* set triggers on existing first partition and new generated partitions */
+CREATE TRIGGER print_new_row_before_insert BEFORE INSERT ON test_inserts.storage_1
+	FOR EACH ROW EXECUTE PROCEDURE test_inserts.print_cols_before_change();
+CREATE TRIGGER print_new_row_after_insert AFTER INSERT ON test_inserts.storage_1
+	FOR EACH ROW EXECUTE PROCEDURE test_inserts.print_cols_after_change();
+CREATE OR REPLACE FUNCTION test_inserts.set_triggers(args jsonb) RETURNS VOID AS $$
+BEGIN
+	EXECUTE format('create trigger print_new_row_before_insert before insert on %s.%s for each row execute procedure test_inserts.print_cols_before_change();', args->>'partition_schema', args->>'partition');
+	EXECUTE format('create trigger print_new_row_after_insert after insert on %s.%s for each row execute procedure test_inserts.print_cols_after_change();', args->>'partition_schema', args->>'partition');
+END;
+$$ LANGUAGE plpgsql;
+SELECT set_init_callback('test_inserts.storage', 'test_inserts.set_triggers');
 
 /* we don't support ON CONLICT */
 INSERT INTO test_inserts.storage VALUES(0, 0, 0, 'UNSUPPORTED_1')
@@ -29,7 +57,7 @@ SELECT * FROM test_inserts.storage_11;
 INSERT INTO test_inserts.storage VALUES(3, 0, 0, 'PREPEND...') RETURNING a + b / 3;
 SELECT * FROM test_inserts.storage_11;
 
-/* cause a conflict (a = 0) */
+/* cause an unique index conflict (a = 0) */
 INSERT INTO test_inserts.storage VALUES(0, 0, 0, 'CONFLICT') RETURNING *;
 
 
@@ -59,7 +87,7 @@ INSERT INTO test_inserts.storage VALUES(111, 0, 'DROP_COL_1...') RETURNING b * 2
 ALTER TABLE test_inserts.storage DROP COLUMN c CASCADE;
 
 
-/* will have 3 columns (b, c, d) */
+/* will have 2 columns (b, d) */
 SELECT append_range_partition('test_inserts.storage');
 INSERT INTO test_inserts.storage (b, d) VALUES (121, '2 cols!');
 SELECT * FROM test_inserts.storage_14; /* direct access */

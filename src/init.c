@@ -80,6 +80,12 @@ static bool validate_range_constraint(const Expr *expr,
 									  const AttrNumber part_attno,
 									  Datum *lower, Datum *upper,
 									  bool *lower_null, bool *upper_null);
+static bool validate_range_opexpr(const Expr *expr,
+								  const PartRelationInfo *prel,
+								  const TypeCacheEntry *tce,
+								  const AttrNumber part_attno,
+								  Datum *lower, Datum *upper,
+								  bool *lower_null, bool *upper_null);
 
 static bool validate_hash_constraint(const Expr *expr,
 									 const PartRelationInfo *prel,
@@ -920,6 +926,65 @@ cmp_range_entries(const void *p1, const void *p2, void *arg)
 	return cmp_bounds(flinfo, &v1->min, &v2->min);
 }
 
+/* Validates a single expression of kind VAR >= CONST or VAR < CONST */
+static bool
+validate_range_opexpr(const Expr *expr,
+					  const PartRelationInfo *prel,
+					  const TypeCacheEntry *tce,
+					  const AttrNumber part_attno,
+					  Datum *lower, Datum *upper,
+					  bool *lower_null, bool *upper_null)
+{
+	const OpExpr   *opexpr;
+	Datum			val;
+
+	if (!expr)
+		return false;
+
+	/* Fail fast if it's not an OpExpr node */
+	if(!IsA(expr, OpExpr))
+		return false;
+
+	/* Perform cast */
+	opexpr = (const OpExpr *) expr;
+
+	/* Try reading Const value */
+	if (!read_opexpr_const(opexpr, prel, part_attno, &val))
+		return false;
+
+	/* Examine the strategy (expect '>=' OR '<') */
+	switch (get_op_opfamily_strategy(opexpr->opno, tce->btree_opf))
+	{
+		case BTGreaterEqualStrategyNumber:
+			{
+				/* Bound already exists */
+				if (*lower_null == false)
+					return false;
+
+				*lower_null = false;
+				*lower = val;
+
+				return true;
+			}
+
+		case BTLessStrategyNumber:
+			{
+				/* Bound already exists */
+				if (*upper_null == false)
+					return false;
+
+				*upper_null = false;
+				*upper = val;
+
+				return true;
+			}
+
+		default:
+			return false;
+	}
+}
+
+
 /*
  * Validates range constraint. It MUST have one of the following formats:
  *
@@ -936,66 +1001,41 @@ validate_range_constraint(const Expr *expr,
 						  Datum *lower, Datum *upper,
 						  bool *lower_null, bool *upper_null)
 {
-	const TypeCacheEntry   *tce;
-	const OpExpr		   *opexpr;
-	int						strategy;
-
-/* Validates a single expression of kind VAR >= CONST or VAR < CONST */
-#define validate_range_expr(expr, part_attno)								\
-	{																		\
-		Datum val;															\
-		opexpr = (OpExpr *) (expr);											\
-		strategy = get_op_opfamily_strategy(opexpr->opno, tce->btree_opf);	\
-																			\
-		/* Get const value */												\
-		if (!read_opexpr_const(opexpr, prel, part_attno, &val))				\
-			return false;													\
-																			\
-		/* Set min or max depending on operator */							\
-		switch (strategy)													\
-		{																	\
-			case BTGreaterEqualStrategyNumber:								\
-				*lower_null = false;										\
-				*lower = val;												\
-				break;														\
-			case BTLessStrategyNumber:										\
-				*upper_null = false;										\
-				*upper = val;												\
-				break;														\
-			default:														\
-				return false;												\
-		}																	\
-	}
+	const TypeCacheEntry *tce;
 
 	if (!expr)
 		return false;
+
+	/* Set default values */
 	*lower_null = *upper_null = true;
+
+	/* Find type cache entry for partitioned column's type */
 	tce = lookup_type_cache(prel->atttype, TYPECACHE_BTREE_OPFAMILY);
 
-	/* It could be either AND operator on top or just an OpExpr */
+	/* Is it an AND clause? */
 	if (and_clause((Node *) expr))
 	{
-		const BoolExpr	*boolexpr = (const BoolExpr *) expr;
-		ListCell		*lc;
+		const BoolExpr *boolexpr = (const BoolExpr *) expr;
+		ListCell	   *lc;
 
+		/* Walk through boolexpr's args */
 		foreach (lc, boolexpr->args)
 		{
-			Node	   *arg = lfirst(lc);
+			const OpExpr *opexpr = (const OpExpr *) lfirst(lc);
 
-			if(!IsA(arg, OpExpr))
+			/* Exit immediately if something is wrong */
+			if (!validate_range_opexpr((const Expr *) opexpr, prel, tce, part_attno,
+									   lower, upper, lower_null, upper_null))
 				return false;
-
-			validate_range_expr(arg, part_attno);
 		}
-		return true;
-	}
-	else if(IsA(expr, OpExpr))
-	{
-		validate_range_expr(expr, part_attno);
+
+		/* Everything seems to be fine */
 		return true;
 	}
 
-	return false;
+	/* It might be just an OpExpr clause */
+	else return validate_range_opexpr(expr, prel, tce, part_attno,
+									  lower, upper, lower_null, upper_null);
 }
 
 /*

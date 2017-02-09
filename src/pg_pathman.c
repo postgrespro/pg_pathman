@@ -537,12 +537,14 @@ select_range_partitions(const Datum value,
 
 		current_re = &ranges[i];
 
-		// cmp_min = FunctionCall2(cmp_func, value, current_re->min);
-		// cmp_max = FunctionCall2(cmp_func, value, current_re->max);
 		cmp_min = IsInfinite(&current_re->min) ?
-			1 : FunctionCall2(cmp_func, value, BoundGetValue(&current_re->min));
+						1 :
+						FunctionCall2(cmp_func, value,
+									  BoundGetValue(&current_re->min));
 		cmp_max = IsInfinite(&current_re->max) ?
-			-1 : FunctionCall2(cmp_func, value, BoundGetValue(&current_re->max));
+						-1 :
+						FunctionCall2(cmp_func, value,
+									  BoundGetValue(&current_re->max));
 
 		is_less = (cmp_min < 0 || (cmp_min == 0 && strategy == BTLessStrategyNumber));
 		is_greater = (cmp_max > 0 || (cmp_max >= 0 && strategy != BTLessStrategyNumber));

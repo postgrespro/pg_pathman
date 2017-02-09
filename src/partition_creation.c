@@ -1511,10 +1511,6 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 						ev_datum	= cb_params->params.range_params.end_value;
 				Oid		type		= cb_params->params.range_params.value_type;
 
-				/* Convert min & max to CSTRING */
-				// start_value = datum_to_cstring(sv_datum, type);
-				// end_value = datum_to_cstring(ev_datum, type);
-
 				pushJsonbValue(&jsonb_state, WJB_BEGIN_OBJECT, NULL);
 
 				JSB_INIT_VAL(&key, WJB_KEY, "parent");
@@ -1532,6 +1528,7 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 				JSB_INIT_VAL(&key, WJB_KEY, "range_min");
 				if (!IsInfinite(&sv_datum))
 				{
+					/* Convert min to CSTRING */
 					start_value = datum_to_cstring(BoundGetValue(&sv_datum), type);
 					JSB_INIT_VAL(&val, WJB_VALUE, start_value);
 				}
@@ -1542,12 +1539,12 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 				JSB_INIT_VAL(&key, WJB_KEY, "range_max");
 				if (!IsInfinite(&ev_datum))
 				{
+					/* Convert max to CSTRING */
 					end_value = datum_to_cstring(BoundGetValue(&ev_datum), type);
 					JSB_INIT_VAL(&val, WJB_VALUE, end_value);
 				}
 				else
 					JSB_INIT_NULL_VAL(&val, WJB_VALUE);
-				// JSB_INIT_VAL(&val, WJB_VALUE, end_value);
 
 				result = pushJsonbValue(&jsonb_state, WJB_END_OBJECT, NULL);
 			}
