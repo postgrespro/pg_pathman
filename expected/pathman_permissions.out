@@ -41,7 +41,7 @@ SELECT * FROM pathman_config;
 SELECT * FROM pathman_config_params;
          partrel         | enable_parent | auto | init_callback | spawn_using_bgw 
 -------------------------+---------------+------+---------------+-----------------
- permissions.user1_table | f             | t    | -             | f
+ permissions.user1_table | f             | t    |               | f
 (1 row)
 
 /* Should fail */

@@ -145,7 +145,7 @@ BEGIN
 
 	/* Fetch init_callback from 'params' table */
 	WITH stub_callback(stub) as (values (0))
-	SELECT coalesce(init_callback, 0::REGPROCEDURE)
+	SELECT init_callback
 	FROM stub_callback
 	LEFT JOIN @extschema@.pathman_config_params AS params
 	ON params.partrel = parent_relid

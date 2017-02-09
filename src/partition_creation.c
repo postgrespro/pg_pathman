@@ -74,6 +74,8 @@ static ObjectAddress create_table_using_stmt(CreateStmt *create_stmt,
 static void copy_foreign_keys(Oid parent_relid, Oid partition_oid);
 static void postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid);
 
+static Oid text_to_regprocedure(text *proname_args);
+
 static Constraint *make_constraint_common(char *name, Node *raw_expr);
 
 static Value make_string_value_struct(char *str);
@@ -406,13 +408,20 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type)
 	{
 		ErrorData *edata;
 
+		/* Simply rethrow ERROR if we're in backend */
+		if (!IsBackgroundWorker)
+			PG_RE_THROW();
+
 		/* Switch to the original context & copy edata */
 		MemoryContextSwitchTo(old_mcxt);
 		edata = CopyErrorData();
 		FlushErrorState();
 
-		elog(LOG, "create_partitions_internal(): %s [%u]",
-			 edata->message, MyProcPid);
+		/* Produce log message if we're in BGW */
+		ereport(LOG,
+				(errmsg(CppAsString(create_partitions_for_value_internal) ": %s [%u]",
+						edata->message, MyProcPid),
+				(edata->detail) ? errdetail("%s", edata->detail) : 0));
 
 		FreeErrorData(edata);
 
@@ -1466,14 +1475,26 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 		/* Search for init_callback entry in PATHMAN_CONFIG_PARAMS */
 		if (read_pathman_params(parent_oid, param_values, param_isnull))
 		{
-			Datum		init_cb_datum; /* Oid of init_callback */
+			Datum		init_cb_datum; /* signature of init_callback */
 			AttrNumber	init_cb_attno = Anum_pathman_config_params_init_callback;
 
-			/* Extract Datum storing callback's Oid */
+			/* Extract Datum storing callback's signature */
 			init_cb_datum = param_values[init_cb_attno - 1];
 
 			/* Cache init_callback's Oid */
-			cb_params->callback = DatumGetObjectId(init_cb_datum);
+			if (init_cb_datum)
+			{
+				/* Try fetching callback's Oid */
+				cb_params->callback = text_to_regprocedure(DatumGetTextP(init_cb_datum));
+
+				if (!RegProcedureIsValid(cb_params->callback))
+					ereport(ERROR,
+							(errcode(ERRCODE_INTEGRITY_CONSTRAINT_VIOLATION),
+							 errmsg("callback function \"%s\" does not exist",
+									TextDatumGetCString(init_cb_datum))));
+			}
+			else
+				cb_params->callback = InvalidOid;
 			cb_params->callback_is_cached = true;
 		}
 	}
@@ -1618,4 +1639,32 @@ validate_part_callback(Oid procid, bool emit_error)
 			 "callback(arg JSONB) RETURNS VOID");
 
 	return is_ok;
+}
+
+/*
+ * Utility function that converts signature of procedure into regprocedure.
+ *
+ * Precondition: proc_signature != NULL.
+ *
+ * Returns InvalidOid if proname_args is not found.
+ * Raise error if it's incorrect.
+ */
+static Oid
+text_to_regprocedure(text *proc_signature)
+{
+	FunctionCallInfoData	fcinfo;
+	Datum					result;
+
+	InitFunctionCallInfoData(fcinfo, NULL, 1, InvalidOid, NULL, NULL);
+
+#if PG_VERSION_NUM >= 90600
+	fcinfo.arg[0] = PointerGetDatum(proc_signature);
+#else
+	fcinfo.arg[0] = CStringGetDatum(text_to_cstring(proc_signature));
+#endif
+	fcinfo.argnull[0] = false;
+
+	result = to_regprocedure(&fcinfo);
+
+	return DatumGetObjectId(result);
 }
