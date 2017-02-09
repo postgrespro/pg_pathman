@@ -1930,8 +1930,16 @@ generate_mergeappend_paths(PlannerInfo *root, RelOptInfo *rel,
  * Get cached PATHMAN_CONFIG relation Oid.
  */
 Oid
-get_pathman_config_relid(void)
+get_pathman_config_relid(bool invalid_is_ok)
 {
+	/* Raise ERROR if Oid is invalid */
+	if (!OidIsValid(pathman_config_relid) && !invalid_is_ok)
+		elog(ERROR,
+			 (!IsPathmanInitialized() ?
+				"pg_pathman is not initialized yet" :
+				"unexpected error in function "
+						  CppAsString(get_pathman_config_relid)));
+
 	return pathman_config_relid;
 }
 
@@ -1939,7 +1947,15 @@ get_pathman_config_relid(void)
  * Get cached PATHMAN_CONFIG_PARAMS relation Oid.
  */
 Oid
-get_pathman_config_params_relid(void)
+get_pathman_config_params_relid(bool invalid_is_ok)
 {
+	/* Raise ERROR if Oid is invalid */
+	if (!OidIsValid(pathman_config_relid) && !invalid_is_ok)
+		elog(ERROR,
+			 (!IsPathmanInitialized() ?
+				"pg_pathman is not initialized yet" :
+				"unexpected error in function "
+						  CppAsString(get_pathman_config_params_relid)));
+
 	return pathman_config_params_relid;
 }
