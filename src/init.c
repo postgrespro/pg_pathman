@@ -676,7 +676,7 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 				ObjectIdGetDatum(relid));
 
 	/* Open PATHMAN_CONFIG with latest snapshot available */
-	rel = heap_open(get_pathman_config_relid(), AccessShareLock);
+	rel = heap_open(get_pathman_config_relid(false), AccessShareLock);
 
 	/* Check that 'partrel' column is if regclass type */
 	Assert(RelationGetDescr(rel)->
@@ -750,7 +750,7 @@ read_pathman_params(Oid relid, Datum *values, bool *isnull)
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(relid));
 
-	rel = heap_open(get_pathman_config_params_relid(), AccessShareLock);
+	rel = heap_open(get_pathman_config_params_relid(false), AccessShareLock);
 	snapshot = RegisterSnapshot(GetLatestSnapshot());
 	scan = heap_beginscan(rel, snapshot, 1, key);
 
@@ -788,7 +788,7 @@ read_pathman_config(void)
 	HeapTuple		htup;
 
 	/* Open PATHMAN_CONFIG with latest snapshot available */
-	rel = heap_open(get_pathman_config_relid(), AccessShareLock);
+	rel = heap_open(get_pathman_config_relid(false), AccessShareLock);
 
 	/* Check that 'partrel' column is if regclass type */
 	Assert(RelationGetDescr(rel)->
