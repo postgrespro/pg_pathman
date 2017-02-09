@@ -1394,13 +1394,13 @@ make_int_value_struct(int int_val)
 /*
  * Utility function that converts signature of procedure into regprocedure.
  *
- * Precondition: proname_args != NULL.
+ * Precondition: proc_signature != NULL.
  *
  * Returns InvalidOid if proname_args is not found.
  * Raise error if it's incorrect.
  */
 static Oid
-text2regprocedure(text *proname_args)
+text2regprocedure(text *proc_signature)
 {
 	FunctionCallInfoData fcinfo;
 	Datum           result;
@@ -1408,9 +1408,9 @@ text2regprocedure(text *proname_args)
 	InitFunctionCallInfoData(fcinfo, NULL, 1, InvalidOid, NULL, NULL);
 
 #if PG_VERSION_NUM >= 90600
-	fcinfo.arg[0] = PointerGetDatum(proname_args);
+	fcinfo.arg[0] = PointerGetDatum(proc_signature);
 #else
-	fcinfo.arg[0] = CStringGetDatum(text_to_cstring(proname_args));
+	fcinfo.arg[0] = CStringGetDatum(text_to_cstring(proc_signature));
 #endif
 	fcinfo.argnull[0] = false;
 
