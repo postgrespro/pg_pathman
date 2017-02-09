@@ -54,7 +54,8 @@ static Oid spawn_partitions_val(Oid parent_relid,
 								Datum interval_binary,
 								Oid interval_type,
 								Datum value,
-								Oid value_type);
+								Oid value_type,
+								Oid collid);
 
 static void create_single_partition_common(Oid partition_relid,
 										   Constraint *check_constraint,
@@ -395,7 +396,8 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type)
 				partid = spawn_partitions_val(PrelParentRelid(prel),
 											  &bound_min, &bound_max, base_bound_type,
 											  interval_binary, interval_type,
-											  value, base_value_type);
+											  value, base_value_type,
+											  prel->attcollid);
 			}
 		}
 		else
@@ -463,7 +465,8 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 					 Datum interval_binary,			/* interval in binary form */
 					 Oid interval_type,				/* INTERVALOID or prel->atttype */
 					 Datum value,					/* value to be INSERTed */
-					 Oid value_type)				/* type of value */
+					 Oid value_type,				/* type of value */
+					 Oid collid)					/* collation id */
 {
 	bool		should_append;				/* append or prepend? */
 
@@ -489,7 +492,7 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 						errdetail("both bounds are infinite")));
 
 	/* value >= MAX_BOUNDARY */
-	else if (cmp_bounds(&cmp_value_bound_finfo,
+	else if (cmp_bounds(&cmp_value_bound_finfo, collid,
 						&value_bound, range_bound_max) >= 0)
 	{
 		should_append = true;
@@ -497,7 +500,7 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 	}
 
 	/* value < MIN_BOUNDARY */
-	else if (cmp_bounds(&cmp_value_bound_finfo,
+	else if (cmp_bounds(&cmp_value_bound_finfo, collid,
 						&value_bound, range_bound_min) < 0)
 	{
 		should_append = false;
@@ -1214,8 +1217,8 @@ check_range_available(Oid parent_relid,
 	{
 		int c1, c2;
 
-		c1 = cmp_bounds(&cmp_func, start, &ranges[i].max);
-		c2 = cmp_bounds(&cmp_func, end, &ranges[i].min);
+		c1 = cmp_bounds(&cmp_func, prel->attcollid, start, &ranges[i].max);
+		c2 = cmp_bounds(&cmp_func, prel->attcollid, end, &ranges[i].min);
 
 		/* There's something! */
 		if (c1 < 0 && c2 > 0)

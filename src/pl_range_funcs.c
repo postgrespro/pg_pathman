@@ -36,7 +36,7 @@ static ArrayType *construct_infinitable_array(Bound *elems,
 											  int elmlen,
 											  bool elmbyval,
 											  char elmalign);
-static void check_range_adjacence(Oid cmp_proc, List *ranges);
+static void check_range_adjacence(Oid cmp_proc, Oid collid, List *ranges);
 static void merge_range_partitions_internal(Oid parent,
 											Oid *parts,
 											uint32 nparts);
@@ -490,7 +490,7 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 	}
 
 	/* Check that partitions are adjacent */
-	check_range_adjacence(prel->cmp_proc, rentry_list);
+	check_range_adjacence(prel->cmp_proc, prel->attcollid, rentry_list);
 
 	/* First determine the bounds of a new constraint */
 	first = (RangeEntry *) linitial(rentry_list);
@@ -498,7 +498,7 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 
 	/* Swap ranges if 'last' < 'first' */
 	fmgr_info(prel->cmp_proc, &cmp_proc);
-	if (cmp_bounds(&cmp_proc, &last->min, &first->min) < 0)
+	if (cmp_bounds(&cmp_proc, prel->attcollid, &last->min, &first->min) < 0)
 	{
 		RangeEntry *tmp = last;
 
@@ -762,7 +762,7 @@ construct_infinitable_array(Bound *elems,
  * Check that range entries are adjacent
  */
 static void
-check_range_adjacence(Oid cmp_proc, List *ranges)
+check_range_adjacence(Oid cmp_proc, Oid collid, List *ranges)
 {
 	ListCell   *lc;
 	RangeEntry *last = NULL;
@@ -782,8 +782,8 @@ check_range_adjacence(Oid cmp_proc, List *ranges)
 		}
 
 		/* Check that last and current partitions are adjacent */
-		if ((cmp_bounds(&finfo, &last->max, &cur->min) != 0) &&
-			(cmp_bounds(&finfo, &cur->max, &last->min) != 0))
+		if ((cmp_bounds(&finfo, collid, &last->max, &cur->min) != 0) &&
+			(cmp_bounds(&finfo, collid, &cur->max, &last->min) != 0))
 		{
 			elog(ERROR, "partitions \"%s\" and \"%s\" are not adjacent",
 						get_rel_name(last->child_oid),

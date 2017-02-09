@@ -81,7 +81,7 @@ BoundGetValue(const Bound *bound)
 }
 
 inline static int
-cmp_bounds(FmgrInfo *cmp_func, const Bound *b1, const Bound *b2)
+cmp_bounds(FmgrInfo *cmp_func, Oid collid, const Bound *b1, const Bound *b2)
 {
 	if (IsMinusInfinity(b1) || IsPlusInfinity(b2))
 		return -1;
@@ -90,7 +90,11 @@ cmp_bounds(FmgrInfo *cmp_func, const Bound *b1, const Bound *b2)
 
 	Assert(cmp_func);
 
-	return FunctionCall2(cmp_func, BoundGetValue(b1), BoundGetValue(b2));
+	return DatumGetInt32(
+				FunctionCall2Coll(cmp_func,
+								  collid,
+								  BoundGetValue(b1),
+								  BoundGetValue(b2)));
 }
 
 
