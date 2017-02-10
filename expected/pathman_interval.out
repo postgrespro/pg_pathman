@@ -16,7 +16,7 @@ SELECT set_interval('abc', NULL::INTEGER);
 
 /* pg_pathman shouldn't be able to create a new partition */
 INSERT INTO abc VALUES (250);
-ERROR:  could not create new partitions for relation "abc"
+ERROR:  cannot find appropriate partition for key '250'
 /* Set a trivial interval */
 SELECT set_interval('abc', 0);
 ERROR:  interval must not be trivial
