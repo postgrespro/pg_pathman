@@ -668,6 +668,12 @@ validate_interval_value(PG_FUNCTION_ARGS)
 
 
 /*
+ * ------------------
+ *  Helper functions
+ * ------------------
+ */
+
+/*
  * Check if interval is insignificant to avoid infinite loops while adding
  * new partitions
  *
@@ -678,17 +684,19 @@ validate_interval_value(PG_FUNCTION_ARGS)
 static bool
 interval_is_trivial(Oid atttype, Datum interval, Oid interval_type)
 {
+	Oid			plus_op_func;
+	Datum		plus_op_result;
+	Oid			plus_op_result_type;
+
 	Datum		default_value;
-	Datum		op_result;
-	Oid			op_result_type;
-	Operator	op;
-	Oid			op_func;
+
 	FmgrInfo	cmp_func;
 	int32		cmp_result;
 
 	/*
-	 * Generate default value. For float4 and float8 values we also check
-	 * that they aren't NaN or INF
+	 * Generate default value.
+	 *
+	 * For float4 and float8 values we also check that they aren't NaN or INF.
 	 */
 	switch(atttype)
 	{
@@ -697,69 +705,70 @@ interval_is_trivial(Oid atttype, Datum interval, Oid interval_type)
 		case INT8OID:
 			default_value = Int16GetDatum(0);
 			break;
+
 		case FLOAT4OID:
 			{
-				float4	f = DatumGetFloat4(interval);
+				float4 f = DatumGetFloat4(interval);
 
 				if (isnan(f) || is_infinite(f))
 					elog(ERROR, "invalid floating point interval");
 				default_value = Float4GetDatum(0);
-				break;
 			}
+			break;
+
 		case FLOAT8OID:
 			{
-				float8	f = DatumGetFloat8(interval);
+				float8 f = DatumGetFloat8(interval);
 
 				if (isnan(f) || is_infinite(f))
 					elog(ERROR, "invalid floating point interval");
 				default_value = Float8GetDatum(0);
-				break;
 			}
+			break;
+
 		case NUMERICOID:
 			{
-				Numeric		ni = DatumGetNumeric(interval);
-				Numeric		numeric;
+				Numeric		ni = DatumGetNumeric(interval),
+							numeric;
 
 				/* Test for NaN */
 				if (numeric_is_nan(ni))
 					elog(ERROR, "invalid numeric interval");
 
 				/* Building default value */
-				numeric = DatumGetNumeric(DirectFunctionCall3(numeric_in,
-												CStringGetDatum("0"),
-												ObjectIdGetDatum(InvalidOid),
-												Int32GetDatum(-1)));
+				numeric = DatumGetNumeric(
+								DirectFunctionCall3(numeric_in,
+													CStringGetDatum("0"),
+													ObjectIdGetDatum(InvalidOid),
+													Int32GetDatum(-1)));
 				default_value = NumericGetDatum(numeric);
-				break;
 			}
+			break;
+
 		case TIMESTAMPOID:
 		case TIMESTAMPTZOID:
 			default_value = TimestampGetDatum(GetCurrentTimestamp());
 			break;
+
 		case DATEOID:
 			{
-				Datum		ts = TimestampGetDatum(GetCurrentTimestamp());
+				Datum ts = TimestampGetDatum(GetCurrentTimestamp());
 
 				default_value = perform_type_cast(ts, TIMESTAMPTZOID, DATEOID, NULL);
-				break;
 			}
+			break;
+
 		default:
 			return false;
 	}
 
 	/* Find suitable addition operator for default value and interval */
-	op = get_binary_operator("+", atttype, interval_type);
-	if (!op)
-		elog(ERROR, "missing \"+\" operator for types %s and %s",
-			 format_type_be(atttype),
-			 format_type_be(interval_type));
+	extract_op_func_and_ret_type("+", atttype, interval_type,
+								 &plus_op_func,
+								 &plus_op_result_type);
 
-	op_func = oprfuncid(op);
-	op_result_type = get_operator_ret_type(op);
-	ReleaseSysCache(op);
-
-	/* Invoke addition operator and get a result*/
-	op_result = OidFunctionCall2(op_func, default_value, interval);
+	/* Invoke addition operator and get a result */
+	plus_op_result = OidFunctionCall2(plus_op_func, default_value, interval);
 
 	/*
 	 * If operator result type isn't the same as original value then
@@ -768,39 +777,37 @@ interval_is_trivial(Oid atttype, Datum interval, Oid interval_type)
 	 * to a date then we'll get a timestamp which is one second later than
 	 * original date (obviously). But when we convert it back to a date we will
 	 * get the same original value meaning that one second interval wouldn't
-	 * change original value anyhow. We should consider such interval
-	 * as trivial
+	 * change original value anyhow. We should consider such interval as trivial
 	 */
-	if (op_result_type != atttype)
+	if (plus_op_result_type != atttype)
 	{
-		op_result = perform_type_cast(op_result, op_result_type, atttype, NULL);
-		op_result_type = atttype;
+		plus_op_result = perform_type_cast(plus_op_result,
+										   plus_op_result_type,
+										   atttype, NULL);
+		plus_op_result_type = atttype;
 	}
 
 	/*
-	 * Compare it to the default_value. If they are the same then obviously
-	 * interval is trivial
+	 * Compare it to the default_value.
+	 *
+	 * If they are the same then obviously interval is trivial.
 	 */
 	fill_type_cmp_fmgr_info(&cmp_func,
 							getBaseType(atttype),
-							getBaseType(op_result_type));
+							getBaseType(plus_op_result_type));
+
 	cmp_result = DatumGetInt32(FunctionCall2(&cmp_func,
 											 default_value,
-											 op_result));
+											 plus_op_result));
 	if (cmp_result == 0)
 		return true;
-	else if (cmp_result > 0)	/* Negative interval? */
+
+	else if (cmp_result > 0) /* Negative interval? */
 		elog(ERROR, "interval must not be negative");
 
+	/* Everything is OK */
 	return false;
 }
-
-
-/*
- * ------------------
- *  Helper functions
- * ------------------
- */
 
 /*
  * Drop old partition constraint and create

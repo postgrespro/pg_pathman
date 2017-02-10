@@ -43,10 +43,6 @@
 #include "utils/typcache.h"
 
 
-static void extract_op_func_and_ret_type(char *opname, Oid type1, Oid type2,
-										 Oid *move_bound_op_func,
-										 Oid *move_bound_op_ret_type);
-
 static Oid spawn_partitions_val(Oid parent_relid,
 								const Bound *range_bound_min,
 								const Bound *range_bound_max,
@@ -431,29 +427,6 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type)
 	PG_END_TRY();
 
 	return partid;
-}
-
-/*
- * Fetch binary operator by name and return it's function and ret type.
- */
-static void
-extract_op_func_and_ret_type(char *opname, Oid type1, Oid type2,
-							 Oid *move_bound_op_func,		/* returned value #1 */
-							 Oid *move_bound_op_ret_type)	/* returned value #2 */
-{
-	Operator op;
-
-	/* Get "move bound operator" descriptor */
-	op = get_binary_operator(opname, type1, type2);
-	if (!op)
-		elog(ERROR, "missing %s operator for types %s and %s",
-			 opname, format_type_be(type1), format_type_be(type2));
-
-	*move_bound_op_func = oprfuncid(op);
-	*move_bound_op_ret_type = get_operator_ret_type(op);
-
-	/* Don't forget to release system cache */
-	ReleaseSysCache(op);
 }
 
 /*
