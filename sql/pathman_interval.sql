@@ -30,6 +30,46 @@ SELECT set_interval('abc', '1 month'::INTERVAL);
 SELECT * FROM pathman_config;
 DROP TABLE abc cascade;
 
+/* Range partitions for FLOAT4 type */
+CREATE TABLE abc (x FLOAT4 NOT NULL);
+SELECT create_range_partitions('abc', 'x', 0, 100, 2);
+SELECT set_interval('abc', NULL::FLOAT4);
+/* Set a trivial interval */
+SELECT set_interval('abc', 0);
+/* Set NaN float as interval */
+SELECT set_interval('abc', 'NaN'::FLOAT4);
+/* Set INF float as interval */
+SELECT set_interval('abc', 'Infinity'::FLOAT4);
+/* Set a normal interval */
+SELECT set_interval('abc', 100);
+DROP TABLE abc cascade;
+
+/* Range partitions for FLOAT8 type */
+CREATE TABLE abc (x FLOAT4 NOT NULL);
+SELECT create_range_partitions('abc', 'x', 0, 100, 2);
+SELECT set_interval('abc', NULL::FLOAT8);
+/* Set a trivial interval */
+SELECT set_interval('abc', 0);
+/* Set NaN float as interval */
+SELECT set_interval('abc', 'NaN'::FLOAT8);
+/* Set INF float as interval */
+SELECT set_interval('abc', 'Infinity'::FLOAT8);
+/* Set a normal interval */
+SELECT set_interval('abc', 100);
+DROP TABLE abc cascade;
+
+/* Range partitions for NUMERIC type */
+CREATE TABLE abc (x NUMERIC NOT NULL);
+SELECT create_range_partitions('abc', 'x', 0, 100, 2);
+SELECT set_interval('abc', NULL::NUMERIC);
+/* Set a trivial interval */
+SELECT set_interval('abc', 0);
+/* Set NaN numeric as interval */
+SELECT set_interval('abc', 'NaN'::NUMERIC);
+/* Set a normal interval */
+SELECT set_interval('abc', 100);
+DROP TABLE abc cascade;
+
 /* Hash partitioned table shouldn't accept any interval value */
 CREATE TABLE abc (id SERIAL);
 SELECT create_hash_partitions('abc', 'id', 3);

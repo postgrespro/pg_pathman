@@ -231,7 +231,7 @@ Drop partitions of the `parent` table (both foreign and local relations). If `de
 ```plpgsql
 set_interval(relation REGCLASS, value ANYELEMENT)
 ```
-Update RANGE partitioned table interval.
+Update RANGE partitioned table interval. Note that interval must not be negative and it must not be trivial, i.e. its value should be greater than zero for numeric types, at least 1 microsecond for `TIMESTAMP` and at least 1 day for `DATE`.
 
 ```plpgsql
 set_enable_parent(relation REGCLASS, value BOOLEAN)
