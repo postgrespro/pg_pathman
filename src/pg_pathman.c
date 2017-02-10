@@ -74,9 +74,8 @@ static bool pull_var_param(const WalkerContext *ctx,
 
 
 /* Misc */
-static List *make_inh_translation_list_simplified(Relation oldrelation,
-												  Relation newrelation,
-												  Index newvarno);
+static void make_inh_translation_list(Relation oldrelation, Relation newrelation,
+									  Index newvarno, List **translated_vars);
 
 
 /* Copied from allpaths.h */
@@ -165,79 +164,118 @@ _PG_init(void)
 }
 
 /*
- * Build the list of translations from parent Vars to child Vars
- * for an inheritance child.
+ * make_inh_translation_list
+ *	  Build the list of translations from parent Vars to child Vars for
+ *	  an inheritance child.
  *
- * NOTE: Inspired by function make_inh_translation_list().
+ * For paranoia's sake, we match type/collation as well as attribute name.
+ *
+ * NOTE: borrowed from prepunion.c
  */
-static List *
-make_inh_translation_list_simplified(Relation oldrelation,
-									 Relation newrelation,
-									 Index newvarno)
+static void
+make_inh_translation_list(Relation oldrelation, Relation newrelation,
+						  Index newvarno, List **translated_vars)
 {
 	List	   *vars = NIL;
 	TupleDesc	old_tupdesc = RelationGetDescr(oldrelation);
 	TupleDesc	new_tupdesc = RelationGetDescr(newrelation);
-	int			oldnatts = RelationGetNumberOfAttributes(oldrelation);
-	int			newnatts = RelationGetNumberOfAttributes(newrelation);
+	int			oldnatts = old_tupdesc->natts;
+	int			newnatts = new_tupdesc->natts;
 	int			old_attno;
 
-	/* Amounts of attributes must match */
-	if (oldnatts != newnatts)
-		goto inh_translation_list_error;
-
-	/* We expect that parent and partition have an identical tupdesc */
 	for (old_attno = 0; old_attno < oldnatts; old_attno++)
 	{
-		Form_pg_attribute	old_att,
-							new_att;
-		Oid					atttypid;
-		int32				atttypmod;
-		Oid					attcollation;
+		Form_pg_attribute att;
+		char	   *attname;
+		Oid			atttypid;
+		int32		atttypmod;
+		Oid			attcollation;
+		int			new_attno;
 
-		old_att = old_tupdesc->attrs[old_attno];
-		new_att = new_tupdesc->attrs[old_attno];
-
-		/* Attribute definitions must match */
-		if (old_att->attisdropped != new_att->attisdropped ||
-			old_att->atttypid != new_att->atttypid ||
-			old_att->atttypmod != new_att->atttypmod ||
-			old_att->attcollation != new_att->attcollation ||
-			strcmp(NameStr(old_att->attname), NameStr(new_att->attname)) != 0)
-		{
-			goto inh_translation_list_error;
-		}
-
-		if (old_att->attisdropped)
+		att = old_tupdesc->attrs[old_attno];
+		if (att->attisdropped)
 		{
 			/* Just put NULL into this list entry */
 			vars = lappend(vars, NULL);
 			continue;
 		}
+		attname = NameStr(att->attname);
+		atttypid = att->atttypid;
+		atttypmod = att->atttypmod;
+		attcollation = att->attcollation;
 
-		atttypid = old_att->atttypid;
-		atttypmod = old_att->atttypmod;
-		attcollation = old_att->attcollation;
+		/*
+		 * When we are generating the "translation list" for the parent table
+		 * of an inheritance set, no need to search for matches.
+		 */
+		if (oldrelation == newrelation)
+		{
+			vars = lappend(vars, makeVar(newvarno,
+										 (AttrNumber) (old_attno + 1),
+										 atttypid,
+										 atttypmod,
+										 attcollation,
+										 0));
+			continue;
+		}
+
+		/*
+		 * Otherwise we have to search for the matching column by name.
+		 * There's no guarantee it'll have the same column position, because
+		 * of cases like ALTER TABLE ADD COLUMN and multiple inheritance.
+		 * However, in simple cases it will be the same column number, so try
+		 * that before we go groveling through all the columns.
+		 *
+		 * Note: the test for (att = ...) != NULL cannot fail, it's just a
+		 * notational device to include the assignment into the if-clause.
+		 */
+		if (old_attno < newnatts &&
+			(att = new_tupdesc->attrs[old_attno]) != NULL &&
+			!att->attisdropped && att->attinhcount != 0 &&
+			strcmp(attname, NameStr(att->attname)) == 0)
+			new_attno = old_attno;
+		else
+		{
+			for (new_attno = 0; new_attno < newnatts; new_attno++)
+			{
+				att = new_tupdesc->attrs[new_attno];
+
+				/*
+				 * Make clang analyzer happy:
+				 *
+				 * Access to field 'attisdropped' results
+				 * in a dereference of a null pointer
+				 */
+				if (!att)
+					elog(ERROR, "error in function "
+								CppAsString(make_inh_translation_list));
+
+				if (!att->attisdropped && att->attinhcount != 0 &&
+					strcmp(attname, NameStr(att->attname)) == 0)
+					break;
+			}
+			if (new_attno >= newnatts)
+				elog(ERROR, "could not find inherited attribute \"%s\" of relation \"%s\"",
+					 attname, RelationGetRelationName(newrelation));
+		}
+
+		/* Found it, check type and collation match */
+		if (atttypid != att->atttypid || atttypmod != att->atttypmod)
+			elog(ERROR, "attribute \"%s\" of relation \"%s\" does not match parent's type",
+				 attname, RelationGetRelationName(newrelation));
+		if (attcollation != att->attcollation)
+			elog(ERROR, "attribute \"%s\" of relation \"%s\" does not match parent's collation",
+				 attname, RelationGetRelationName(newrelation));
 
 		vars = lappend(vars, makeVar(newvarno,
-									 (AttrNumber) (old_attno + 1),
+									 (AttrNumber) (new_attno + 1),
 									 atttypid,
 									 atttypmod,
 									 attcollation,
 									 0));
 	}
 
-	/* Everything's ok */
-	return vars;
-
-/* We end up here if any attribute differs */
-inh_translation_list_error:
-	elog(ERROR, "partition \"%s\" must have exact"
-				"same structure as parent \"%s\"",
-		 RelationGetRelationName(newrelation),
-		 RelationGetRelationName(oldrelation));
-
-	return NIL; /* keep compiler happy */
+	*translated_vars = vars;
 }
 
 /*
@@ -295,9 +333,9 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 	appinfo->parent_relid = parent_rti;
 	appinfo->child_relid = childRTindex;
 	appinfo->parent_reloid = parent_rte->relid;
-	appinfo->translated_vars = make_inh_translation_list_simplified(parent_relation,
-																	child_relation,
-																	childRTindex);
+
+	make_inh_translation_list(parent_relation, child_relation, childRTindex,
+							  &appinfo->translated_vars);
 
 	/* Now append 'appinfo' to 'root->append_rel_list' */
 	root->append_rel_list = lappend(root->append_rel_list, appinfo);
@@ -1884,8 +1922,16 @@ generate_mergeappend_paths(PlannerInfo *root, RelOptInfo *rel,
  * Get cached PATHMAN_CONFIG relation Oid.
  */
 Oid
-get_pathman_config_relid(void)
+get_pathman_config_relid(bool invalid_is_ok)
 {
+	/* Raise ERROR if Oid is invalid */
+	if (!OidIsValid(pathman_config_relid) && !invalid_is_ok)
+		elog(ERROR,
+			 (!IsPathmanInitialized() ?
+				"pg_pathman is not initialized yet" :
+				"unexpected error in function "
+						  CppAsString(get_pathman_config_relid)));
+
 	return pathman_config_relid;
 }
 
@@ -1893,7 +1939,15 @@ get_pathman_config_relid(void)
  * Get cached PATHMAN_CONFIG_PARAMS relation Oid.
  */
 Oid
-get_pathman_config_params_relid(void)
+get_pathman_config_params_relid(bool invalid_is_ok)
 {
+	/* Raise ERROR if Oid is invalid */
+	if (!OidIsValid(pathman_config_relid) && !invalid_is_ok)
+		elog(ERROR,
+			 (!IsPathmanInitialized() ?
+				"pg_pathman is not initialized yet" :
+				"unexpected error in function "
+						  CppAsString(get_pathman_config_params_relid)));
+
 	return pathman_config_params_relid;
 }

@@ -466,39 +466,52 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 			proc((planned_stmt)->rtable, (Plan *) lfirst(lc)); \
 	} while (0)
 
-	PlannedStmt *result;
-	uint32		 query_id = parse->queryId;
+	PlannedStmt	   *result;
+	uint32			query_id = parse->queryId;
 
-	if (IsPathmanReady())
+	PG_TRY();
 	{
-		/* Increment parenthood_statuses refcount */
-		incr_refcount_parenthood_statuses();
+		if (IsPathmanReady())
+		{
+			/* Increment parenthood_statuses refcount */
+			incr_refcount_parenthood_statuses();
 
-		/* Modify query tree if needed */
-		pathman_transform_query(parse);
+			/* Modify query tree if needed */
+			pathman_transform_query(parse);
+		}
+
+		/* Invoke original hook if needed */
+		if (planner_hook_next)
+			result = planner_hook_next(parse, cursorOptions, boundParams);
+		else
+			result = standard_planner(parse, cursorOptions, boundParams);
+
+		if (IsPathmanReady())
+		{
+			/* Give rowmark-related attributes correct names */
+			ExecuteForPlanTree(result, postprocess_lock_rows);
+
+			/* Add PartitionFilter node for INSERT queries */
+			ExecuteForPlanTree(result, add_partition_filters);
+
+			/* Decrement parenthood_statuses refcount */
+			decr_refcount_parenthood_statuses();
+
+			/* HACK: restore queryId set by pg_stat_statements */
+			result->queryId = query_id;
+		}
 	}
-
-	/* Invoke original hook if needed */
-	if (planner_hook_next)
-		result = planner_hook_next(parse, cursorOptions, boundParams);
-	else
-		result = standard_planner(parse, cursorOptions, boundParams);
-
-	if (IsPathmanReady())
+	/* We must decrease parenthood statuses refcount on ERROR */
+	PG_CATCH();
 	{
-		/* Give rowmark-related attributes correct names */
-		ExecuteForPlanTree(result, postprocess_lock_rows);
+		/* Caught an ERROR, decrease refcount */
+		decr_refcount_parenthood_statuses();
 
-		/* Add PartitionFilter node for INSERT queries */
-		ExecuteForPlanTree(result, add_partition_filters);
-
-		/* Decrement parenthood_statuses refcount */
-		decr_refcount_parenthood_statuses(false);
-
-		/* HACK: restore queryId set by pg_stat_statements */
-		result->queryId = query_id;
+		PG_RE_THROW();
 	}
+	PG_END_TRY();
 
+	/* Finally return the Plan */
 	return result;
 }
 
@@ -592,7 +605,7 @@ pathman_relcache_hook(Datum arg, Oid relid)
 		return;
 
 	/* Invalidation event for PATHMAN_CONFIG table (probably DROP) */
-	if (relid == get_pathman_config_relid())
+	if (relid == get_pathman_config_relid(false))
 		delay_pathman_shutdown();
 
 	/* Invalidate PartParentInfo cache if needed */

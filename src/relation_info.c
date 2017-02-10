@@ -197,7 +197,9 @@ refresh_pathman_relation_info(Oid relid,
 	 * will try to refresh it again (and again), until the error is fixed
 	 * by user manually (i.e. invalid check constraints etc).
 	 */
-	fill_prel_with_partitions(prel_children, prel_children_count, prel);
+	fill_prel_with_partitions(prel_children,
+							  prel_children_count,
+							  part_column_name, prel);
 
 	/* Peform some actions for each child */
 	for (i = 0; i < prel_children_count; i++)
@@ -303,7 +305,7 @@ get_pathman_relation_info(Oid relid)
 		 (prel ? "live" : "NULL"), relid, MyProcPid);
 
 	/* Make sure that 'prel' is valid */
-	Assert(PrelIsValid(prel));
+	Assert(!prel || PrelIsValid(prel));
 
 	return prel;
 }
@@ -415,7 +417,7 @@ finish_delayed_invalidation(void)
 
 			/* Check that PATHMAN_CONFIG table has indeed been dropped */
 			if (cur_pathman_config_relid == InvalidOid ||
-				cur_pathman_config_relid != get_pathman_config_relid())
+				cur_pathman_config_relid != get_pathman_config_relid(true))
 			{
 				/* Ok, let's unload pg_pathman's config */
 				unload_config();

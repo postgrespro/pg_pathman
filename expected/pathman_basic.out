@@ -494,7 +494,7 @@ UNION SELECT * FROM test.from_only_test;
 /* not ok, ONLY|non-ONLY in one query */
 EXPLAIN (COSTS OFF)
 SELECT * FROM test.from_only_test a JOIN ONLY test.from_only_test b USING(val);
-ERROR:  It is prohibited to apply ONLY modifier to partitioned tables which have already been mentioned without ONLY
+ERROR:  it is prohibited to apply ONLY modifier to partitioned tables which have already been mentioned without ONLY
 EXPLAIN (COSTS OFF)
 WITH q1 AS (SELECT * FROM test.from_only_test),
 	 q2 AS (SELECT * FROM ONLY test.from_only_test)
@@ -2309,7 +2309,45 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.index_on_childs WHERE c1 > 100 AND c1 < 2
          Filter: (c1 < 2500)
 (12 rows)
 
+/* Test recursive CTE */
+CREATE TABLE test.recursive_cte_test_tbl(id INT NOT NULL, name TEXT NOT NULL);
+SELECT * FROM create_hash_partitions('test.recursive_cte_test_tbl', 'id', 2);
+ create_hash_partitions 
+------------------------
+                      2
+(1 row)
+
+INSERT INTO test.recursive_cte_test_tbl (id, name) SELECT id, 'name'||id FROM generate_series(1,100) f(id);
+INSERT INTO test.recursive_cte_test_tbl (id, name) SELECT id, 'name'||(id + 1) FROM generate_series(1,100) f(id);
+INSERT INTO test.recursive_cte_test_tbl (id, name) SELECT id, 'name'||(id + 2) FROM generate_series(1,100) f(id);
+SELECT * FROM test.recursive_cte_test_tbl WHERE id = 5;
+ id | name  
+----+-------
+  5 | name5
+  5 | name6
+  5 | name7
+(3 rows)
+
+WITH RECURSIVE test AS (
+	SELECT min(name) AS name
+	FROM test.recursive_cte_test_tbl
+	WHERE id = 5
+	UNION ALL
+	SELECT (SELECT min(name)
+			FROM test.recursive_cte_test_tbl
+			WHERE id = 5 AND name > test.name)
+	FROM test
+	WHERE name IS NOT NULL)
+SELECT * FROM test;
+ name  
+-------
+ name5
+ name6
+ name7
+ 
+(4 rows)
+
 DROP SCHEMA test CASCADE;
-NOTICE:  drop cascades to 51 other objects
+NOTICE:  drop cascades to 54 other objects
 DROP EXTENSION pg_pathman CASCADE;
 DROP SCHEMA pathman CASCADE;
