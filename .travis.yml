@@ -20,3 +20,6 @@ env:
   - PGVERSION=9.5 CHECK_CODE=false
 
 script: bash ./travis/pg-travis-test.sh
+
+after_success:
+  - bash <(curl -s https://codecov.io/bash)

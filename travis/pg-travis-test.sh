@@ -66,7 +66,7 @@ if [ $CHECK_CODE = "true" ]; then
 fi
 
 # build pg_pathman (using CFLAGS_SL for gcov)
-make USE_PGXS=1 PG_CONFIG=$config_path CFLAGS_SL="$($config_path --cflags_sl) -fprofile-arcs -ftest-coverage"
+make USE_PGXS=1 PG_CONFIG=$config_path CFLAGS_SL="$($config_path --cflags_sl) -coverage"
 sudo make install USE_PGXS=1 PG_CONFIG=$config_path
 
 # set permission to write postgres locks
@@ -103,10 +103,9 @@ cd ../..
 
 set -u
 
-# finally report code coverage
-sudo apt-get install -qq -y lcov
-gem install coveralls-lcov
-lcov --no-extern --capture --directory src --output-file coverage.info
-coveralls-lcov coverage.info
+
+#generate *.gcov files
+gcov src/*.c src/*.h
+
 
 exit $status
