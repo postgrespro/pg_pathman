@@ -13,6 +13,8 @@ pip_packages="testgres"
 status=0
 
 # pg_config path
+pg_ctl_path=/usr/lib/postgresql/$PGVERSION/bin/pg_ctl
+initdb_path=/usr/lib/postgresql/$PGVERSION/bin/initdb
 config_path=/usr/lib/postgresql/$PGVERSION/bin/pg_config
 
 
@@ -29,7 +31,9 @@ sudo chmod a+x /etc/init.d/postgresql
 sudo apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" -y install -qq $apt_packages
 
 # create cluster 'test'
-sudo pg_createcluster --start $PGVERSION test -p 55435 -- -A trust
+CLUSTER_PATH=$(pwd)/test_cluster
+$initdb_path -D $CLUSTER_PATH -U $USER -A trust
+
 
 # perform code analysis if necessary
 if [ $CHECK_CODE = "true" ]; then
@@ -61,16 +65,24 @@ if [ $CHECK_CODE = "true" ]; then
 	make clean USE_PGXS=1 PG_CONFIG=$config_path
 fi
 
-# build pg_pathman
-make USE_PGXS=1 PG_CONFIG=$config_path
+# build pg_pathman (using CFLAGS_SL for gcov)
+make USE_PGXS=1 PG_CONFIG=$config_path CFLAGS_SL="$($config_path --cflags_sl) -coverage"
 sudo make install USE_PGXS=1 PG_CONFIG=$config_path
 
+# set permission to write postgres locks
+sudo chown $USER /var/run/postgresql/
+
+# check build
+status=$?
+if [ $status -ne 0 ]; then exit $status; fi
+
 # add pg_pathman to shared_preload_libraries and restart cluster 'test'
-sudo bash -c "echo \"shared_preload_libraries = 'pg_pathman'\" >> /etc/postgresql/$PGVERSION/test/postgresql.conf"
-sudo pg_ctlcluster $PGVERSION test restart
+echo "shared_preload_libraries = 'pg_pathman'" >> $CLUSTER_PATH/postgresql.conf
+echo "port = 55435" >> $CLUSTER_PATH/postgresql.conf
+$pg_ctl_path -D $CLUSTER_PATH start -l postgres.log -w
 
 # run regression tests
-PGPORT=55435 make installcheck USE_PGXS=1 PGUSER=postgres PG_CONFIG=$config_path || status=$?
+PGPORT=55435 PGUSER=$USER PG_CONFIG=$config_path make installcheck USE_PGXS=1 || status=$?
 
 # show diff if it exists
 if test -f regression.diffs; then cat regression.diffs; fi
@@ -84,13 +96,16 @@ source /tmp/envs/pg_pathman/bin/activate
 # install pip packages
 pip install $pip_packages
 
-# set permission to write postgres locks
-sudo chmod a+w /var/run/postgresql/
-
 # run python tests
 cd tests/python
 PG_CONFIG=$config_path python -m unittest partitioning_test || status=$?
+cd ../..
 
 set -u
+
+
+#generate *.gcov files
+gcov src/*.c src/*.h
+
 
 exit $status
