@@ -273,6 +273,7 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
+
 /*
  * Just create HASH partitions, called by create_hash_partitions().
  */

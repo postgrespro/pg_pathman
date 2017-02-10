@@ -95,8 +95,7 @@ CREATE OR REPLACE FUNCTION @extschema@.check_security_policy(relation regclass)
 RETURNS BOOL AS 'pg_pathman', 'check_security_policy' LANGUAGE C STRICT;
 
 /*
- * Row security policy to restrict partitioning operations to owner and
- * superusers only
+ * Row security policy to restrict partitioning operations to owner and superusers only
  */
 CREATE POLICY deny_modification ON @extschema@.pathman_config
 FOR ALL USING (check_security_policy(partrel));
