@@ -15,7 +15,9 @@ CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions(
 	parent_relid		REGCLASS,
 	attribute			TEXT,
 	partitions_count	INTEGER,
-	partition_data		BOOLEAN DEFAULT TRUE)
+	partition_data		BOOLEAN DEFAULT TRUE,
+	relnames			TEXT[] DEFAULT NULL,
+	tablespaces			TEXT[] DEFAULT NULL)
 RETURNS INTEGER AS
 $$
 BEGIN
@@ -39,7 +41,9 @@ BEGIN
 	/* Create partitions */
 	PERFORM @extschema@.create_hash_partitions_internal(parent_relid,
 														attribute,
-														partitions_count);
+														partitions_count,
+														relnames,
+														tablespaces);
 
 	/* Notify backend about changes */
 	PERFORM @extschema@.on_create_partitions(parent_relid);
@@ -141,7 +145,7 @@ BEGIN
 
 	/* Fetch init_callback from 'params' table */
 	WITH stub_callback(stub) as (values (0))
-	SELECT coalesce(init_callback, 0::REGPROCEDURE)
+	SELECT init_callback
 	FROM stub_callback
 	LEFT JOIN @extschema@.pathman_config_params AS params
 	ON params.partrel = parent_relid
@@ -249,7 +253,7 @@ BEGIN
 							quote_ident(plain_relname || '_%s');
 
 	/* Fetch base hash function for atttype */
-	atttype := @extschema@.get_attribute_type(parent_relid, attr);
+	atttype := @extschema@.get_partition_key_type(parent_relid);
 
 	/* Format function definition and execute it */
 	EXECUTE format(func, funcname, attr, partitions_count, att_val_fmt,
@@ -269,15 +273,18 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
+
 /*
  * Just create HASH partitions, called by create_hash_partitions().
  */
 CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions_internal(
 	parent_relid		REGCLASS,
 	attribute			TEXT,
-	partitions_count	INTEGER)
+	partitions_count	INTEGER,
+	relnames			TEXT[] DEFAULT NULL,
+	tablespaces			TEXT[] DEFAULT NULL)
 RETURNS VOID AS 'pg_pathman', 'create_hash_partitions_internal'
-LANGUAGE C STRICT;
+LANGUAGE C;
 
 /*
  * Returns hash function OID for specified type

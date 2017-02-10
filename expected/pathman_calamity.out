@@ -100,6 +100,13 @@ SELECT count(*) FROM calamity.part_test;
 (1 row)
 
 DELETE FROM calamity.part_test;
+/* test function create_hash_partitions() */
+SELECT create_hash_partitions('calamity.part_test', 'val', 2,
+							  relnames := ARRAY['calamity.p1']::TEXT[]);
+ERROR:  size of array 'relnames' must be equal to 'partitions_count'
+SELECT create_hash_partitions('calamity.part_test', 'val', 2,
+							  tablespaces := ARRAY['abcd']::TEXT[]);
+ERROR:  size of array 'tablespaces' must be equal to 'partitions_count'
 /* test stub 'enable_parent' value for PATHMAN_CONFIG_PARAMS */
 INSERT INTO calamity.part_test SELECT generate_series(1, 30);
 SELECT create_range_partitions('calamity.part_test', 'val', 1, 10);
@@ -133,6 +140,34 @@ NOTICE:  function calamity.part_test_upd_trig_func() does not exist, skipping
 (1 row)
 
 DELETE FROM calamity.part_test;
+/* check function validate_interval_value() */
+SELECT set_interval('pg_catalog.pg_class', 100); /* not ok */
+ERROR:  table "pg_class" is not partitioned by RANGE
+INSERT INTO calamity.part_test SELECT generate_series(1, 30);
+SELECT create_range_partitions('calamity.part_test', 'val', 1, 10);
+ create_range_partitions 
+-------------------------
+                       3
+(1 row)
+
+SELECT set_interval('calamity.part_test', 100);				/* ok */
+ set_interval 
+--------------
+ 
+(1 row)
+
+SELECT set_interval('calamity.part_test', 15.6);			/* not ok */
+ERROR:  invalid input syntax for integer: "15.6"
+SELECT set_interval('calamity.part_test', 'abc'::text);		/* not ok */
+ERROR:  invalid input syntax for integer: "abc"
+SELECT drop_partitions('calamity.part_test', true);
+NOTICE:  function calamity.part_test_upd_trig_func() does not exist, skipping
+ drop_partitions 
+-----------------
+               3
+(1 row)
+
+DELETE FROM calamity.part_test;
 /* check function build_hash_condition() */
 SELECT build_hash_condition('int4', 'val', 10, 1);
               build_hash_condition               
@@ -159,16 +194,22 @@ SELECT build_hash_condition('text', 'val', 10, NULL) IS NULL;
 SELECT build_hash_condition('calamity.part_test', 'val', 10, 1);
 ERROR:  no hash function for type calamity.part_test
 /* check function build_range_condition() */
-SELECT build_range_condition('val', 10, 20);
-   build_range_condition    
-----------------------------
- val >= '10' AND val < '20'
+SELECT build_range_condition('calamity.part_test', 'val', 10, 20);
+    build_range_condition     
+------------------------------
+ ((val >= 10) AND (val < 20))
 (1 row)
 
-SELECT build_range_condition('val', 10, NULL) IS NULL;
- ?column? 
-----------
- t
+SELECT build_range_condition('calamity.part_test', 'val', 10, NULL);
+ build_range_condition 
+-----------------------
+ ((val >= 10))
+(1 row)
+
+SELECT build_range_condition('calamity.part_test', 'val', NULL, 10);
+ build_range_condition 
+-----------------------
+ ((val < 10))
 (1 row)
 
 /* check function validate_relname() */
@@ -224,26 +265,12 @@ SELECT get_base_type(NULL) IS NULL;
  t
 (1 row)
 
-/* check function get_attribute_type() */
-SELECT get_attribute_type('calamity.part_test', 'val');
- get_attribute_type 
---------------------
- integer
-(1 row)
-
-SELECT get_attribute_type('calamity.part_test', NULL) IS NULL;
- ?column? 
-----------
- t
-(1 row)
-
-SELECT get_attribute_type(NULL, 'val') IS NULL;
- ?column? 
-----------
- t
-(1 row)
-
-SELECT get_attribute_type(NULL, NULL) IS NULL;
+/* check function get_partition_key_type() */
+SELECT get_partition_key_type('calamity.part_test');
+ERROR:  relation "part_test" has no partitions
+SELECT get_partition_key_type(0::regclass);
+ERROR:  relation "0" has no partitions
+SELECT get_partition_key_type(NULL) IS NULL;
  ?column? 
 ----------
  t
@@ -328,6 +355,15 @@ SELECT build_update_trigger_func_name(NULL) IS NULL;
 /* check function stop_concurrent_part_task() */
 SELECT stop_concurrent_part_task(1::regclass);
 ERROR:  cannot find worker for relation "1"
+/* check function drop_range_partition_expand_next() */
+SELECT drop_range_partition_expand_next('pg_class');
+ERROR:  relation "pg_class" is not a partition
+SELECT drop_range_partition_expand_next(NULL) IS NULL;
+ ?column? 
+----------
+ t
+(1 row)
+
 /* check invoke_on_partition_created_callback() for RANGE */
 SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part_test', 1, NULL, NULL::int);
 ERROR:  both bounds must be provided for RANGE partition
@@ -416,22 +452,6 @@ EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_ok; /* check that pathman is ena
    ->  Seq Scan on part_ok_3
 (5 rows)
 
-ALTER TABLE calamity.wrong_partition
-ADD CONSTRAINT pathman_wrong_partition_1_check
-CHECK (val < 10); /* wrong constraint */
-SELECT add_to_pathman_config('calamity.part_test', 'val', '10');
-ERROR:  wrong constraint format for RANGE partition "wrong_partition"
-EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_ok; /* check that pathman is enabled */
-         QUERY PLAN          
------------------------------
- Append
-   ->  Seq Scan on part_ok_0
-   ->  Seq Scan on part_ok_1
-   ->  Seq Scan on part_ok_2
-   ->  Seq Scan on part_ok_3
-(5 rows)
-
-ALTER TABLE calamity.wrong_partition DROP CONSTRAINT pathman_wrong_partition_1_check;
 ALTER TABLE calamity.wrong_partition
 ADD CONSTRAINT pathman_wrong_partition_1_check
 CHECK (val = 1 OR val = 2); /* wrong constraint */

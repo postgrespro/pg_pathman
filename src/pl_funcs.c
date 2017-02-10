@@ -42,6 +42,7 @@ PG_FUNCTION_INFO_V1( get_number_of_partitions_pl );
 PG_FUNCTION_INFO_V1( get_parent_of_partition_pl );
 PG_FUNCTION_INFO_V1( get_base_type_pl );
 PG_FUNCTION_INFO_V1( get_attribute_type_pl );
+PG_FUNCTION_INFO_V1( get_partition_key_type );
 PG_FUNCTION_INFO_V1( get_tablespace_pl );
 
 PG_FUNCTION_INFO_V1( show_partition_list_internal );
@@ -217,15 +218,18 @@ get_base_type_pl(PG_FUNCTION_ARGS)
 }
 
 /*
- * Get type (as REGTYPE) of a given attribute.
+ * Return partition key type
  */
 Datum
-get_attribute_type_pl(PG_FUNCTION_ARGS)
+get_partition_key_type(PG_FUNCTION_ARGS)
 {
-	Oid		relid = PG_GETARG_OID(0);
-	text   *attname = PG_GETARG_TEXT_P(1);
+	Oid						relid = PG_GETARG_OID(0);
+	const PartRelationInfo *prel;
 
-	PG_RETURN_OID(get_attribute_type(relid, text_to_cstring(attname), false));
+	prel = get_pathman_relation_info(relid);
+	shout_if_prel_is_invalid(relid, prel, PT_INDIFFERENT);
+
+	PG_RETURN_OID(prel->atttype);
 }
 
 /*
@@ -253,7 +257,6 @@ get_tablespace_pl(PG_FUNCTION_ARGS)
 	result = get_tablespace_name(tablespace_id);
 	PG_RETURN_TEXT_P(cstring_to_text(result));
 }
-
 
 /*
  * ----------------------
@@ -401,10 +404,19 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 
 					re = &PrelGetRangesArray(prel)[usercxt->child_number];
 
-					rmin = CStringGetTextDatum(datum_to_cstring(re->min,
-																prel->atttype));
-					rmax = CStringGetTextDatum(datum_to_cstring(re->max,
-																prel->atttype));
+					/* Lower bound text */
+					rmin = !IsInfinite(&re->min) ?
+								CStringGetTextDatum(
+										datum_to_cstring(BoundGetValue(&re->min),
+														 prel->atttype)) :
+								CStringGetTextDatum("NULL");
+
+					/* Upper bound text */
+					rmax = !IsInfinite(&re->max) ?
+								CStringGetTextDatum(
+										datum_to_cstring(BoundGetValue(&re->max),
+														 prel->atttype)) :
+								CStringGetTextDatum("NULL");
 
 					values[Anum_pathman_pl_partition - 1] = re->child_oid;
 					values[Anum_pathman_pl_range_min - 1] = rmin;
@@ -761,27 +773,7 @@ lock_partitioned_relation(PG_FUNCTION_ARGS)
 Datum
 prevent_relation_modification(PG_FUNCTION_ARGS)
 {
-	Oid			relid = PG_GETARG_OID(0);
-
-	/*
-	 * Check that isolation level is READ COMMITTED.
-	 * Else we won't be able to see new rows
-	 * which could slip through locks.
-	 */
-	if (!xact_is_level_read_committed())
-		ereport(ERROR,
-				(errmsg("Cannot perform blocking partitioning operation"),
-				 errdetail("Expected READ COMMITTED isolation level")));
-
-	/*
-	 * Check if table is being modified
-	 * concurrently in a separate transaction.
-	 */
-	if (!xact_lock_rel_exclusive(relid, true))
-		ereport(ERROR,
-				(errmsg("Cannot perform blocking partitioning operation"),
-				 errdetail("Table \"%s\" is being modified concurrently",
-						   get_rel_name_or_relid(relid))));
+	prevent_relation_modification_internal(PG_GETARG_OID(0));
 
 	PG_RETURN_VOID();
 }
@@ -800,7 +792,8 @@ prevent_relation_modification(PG_FUNCTION_ARGS)
 Datum
 validate_part_callback_pl(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_BOOL(validate_part_callback(PG_GETARG_OID(0), PG_GETARG_BOOL(1)));
+	PG_RETURN_BOOL(validate_part_callback(PG_GETARG_OID(0),
+										  PG_GETARG_BOOL(1)));
 }
 
 /*
@@ -845,24 +838,30 @@ invoke_on_partition_created_callback(PG_FUNCTION_ARGS)
 
 		case 5:
 			{
-				Datum	sv_datum,
-						ev_datum;
+				Bound	start,
+						end;
 				Oid		value_type;
 
 				if (PG_ARGISNULL(ARG_RANGE_START) || PG_ARGISNULL(ARG_RANGE_END))
 					elog(ERROR, "both bounds must be provided for RANGE partition");
 
 				/* Fetch start & end values for RANGE + their type */
-				sv_datum	= PG_GETARG_DATUM(ARG_RANGE_START);
-				ev_datum	= PG_GETARG_DATUM(ARG_RANGE_END);
-				value_type	= get_fn_expr_argtype(fcinfo->flinfo, ARG_RANGE_START);
+				start = PG_ARGISNULL(ARG_RANGE_START) ?
+								MakeBoundInf(MINUS_INFINITY) :
+								MakeBound(PG_GETARG_DATUM(ARG_RANGE_START));
+
+				end = PG_ARGISNULL(ARG_RANGE_END) ?
+								MakeBoundInf(PLUS_INFINITY) :
+								MakeBound(PG_GETARG_DATUM(ARG_RANGE_END));
+
+				value_type = get_fn_expr_argtype(fcinfo->flinfo, ARG_RANGE_START);
 
 				MakeInitCallbackRangeParams(&callback_params,
 											callback_oid,
 											parent_oid,
 											partition_oid,
-											sv_datum,
-											ev_datum,
+											start,
+											end,
 											value_type);
 			}
 			break;

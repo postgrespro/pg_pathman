@@ -29,8 +29,8 @@ Oid create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type)
 
 /* Create one RANGE partition */
 Oid create_single_range_partition_internal(Oid parent_relid,
-										   Datum start_value,
-										   Datum end_value,
+										   const Bound *start_value,
+										   const Bound *end_value,
 										   Oid value_type,
 										   RangeVar *partition_rv,
 										   char *tablespace);
@@ -47,18 +47,18 @@ Oid create_single_hash_partition_internal(Oid parent_relid,
 /* RANGE constraints */
 Constraint * build_range_check_constraint(Oid child_relid,
 										  char *attname,
-										  Datum start_value,
-										  Datum end_value,
+										  const Bound *start_value,
+										  const Bound *end_value,
 										  Oid value_type);
 
 Node * build_raw_range_check_tree(char *attname,
-								  Datum start_value,
-								  Datum end_value,
+								  const Bound *start_value,
+								  const Bound *end_value,
 								  Oid value_type);
 
-bool check_range_available(Oid partition_relid,
-						   Datum start_value,
-						   Datum end_value,
+bool check_range_available(Oid parent_relid,
+						   const Bound *start_value,
+						   const Bound *end_value,
 						   Oid value_type,
 						   bool raise_error);
 
@@ -73,6 +73,8 @@ Constraint * build_hash_check_constraint(Oid child_relid,
 Node * build_raw_hash_check_tree(char *attname,
 								 uint32 part_idx,
 								 uint32 part_count, Oid value_type);
+
+void drop_check_constraint(Oid relid, AttrNumber attnum);
 
 
 /* Partitioning callback type */
@@ -102,9 +104,9 @@ typedef struct
 
 		struct
 		{
-			Datum	start_value,
-					end_value;
-			Oid		value_type;
+			Bound		start_value,
+						end_value;
+			Oid			value_type;
 		}	range_params;
 
 	}					params;

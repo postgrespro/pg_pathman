@@ -63,7 +63,7 @@ GRANT UPDATE(a) ON permissions.user1_table TO user2; /* per-column ACL */
 SET ROLE user2;
 SELECT prepend_range_partition('permissions.user1_table');
 SELECT attname, attacl from pg_attribute
-WHERE attrelid = (SELECT partition FROM pathman_partition_list
+WHERE attrelid = (SELECT "partition" FROM pathman_partition_list
 				  WHERE parent = 'permissions.user1_table'::REGCLASS
 				  ORDER BY range_min::int ASC /* prepend */
 				  LIMIT 1)
@@ -73,7 +73,7 @@ ORDER BY attname; /* check ACL for each column */
 SET ROLE user2;
 INSERT INTO permissions.user1_table (id, a) VALUES (35, 0) RETURNING *;
 SELECT relname, relacl FROM pg_class
-WHERE oid = ANY (SELECT partition FROM pathman_partition_list
+WHERE oid = ANY (SELECT "partition" FROM pathman_partition_list
 				 WHERE parent = 'permissions.user1_table'::REGCLASS
 				 ORDER BY range_max::int DESC /* append */
 				 LIMIT 3)

@@ -400,6 +400,11 @@ SELECT pathman.prepend_range_partition('test.num_range_rel');
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id < 0;
 SELECT pathman.drop_range_partition('test.num_range_rel_7');
 
+SELECT pathman.drop_range_partition_expand_next('test.num_range_rel_4');
+SELECT * FROM pathman.pathman_partition_list WHERE parent = 'test.num_range_rel'::regclass;
+SELECT pathman.drop_range_partition_expand_next('test.num_range_rel_6');
+SELECT * FROM pathman.pathman_partition_list WHERE parent = 'test.num_range_rel'::regclass;
+
 SELECT pathman.append_range_partition('test.range_rel');
 SELECT pathman.prepend_range_partition('test.range_rel');
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt BETWEEN '2014-12-15' AND '2015-01-15';
@@ -424,6 +429,20 @@ CREATE TABLE test.range_rel_test2 (
 	id  SERIAL PRIMARY KEY,
 	dt  TIMESTAMP);
 SELECT pathman.attach_range_partition('test.range_rel', 'test.range_rel_test2', '2013-01-01'::DATE, '2014-01-01'::DATE);
+
+/* Half open ranges */
+SELECT pathman.add_range_partition('test.range_rel', NULL, '2014-12-01'::DATE, 'test.range_rel_minus_infinity');
+SELECT pathman.add_range_partition('test.range_rel', '2015-06-01'::DATE, NULL, 'test.range_rel_plus_infinity');
+SELECT pathman.append_range_partition('test.range_rel');
+SELECT pathman.prepend_range_partition('test.range_rel');
+DROP TABLE test.range_rel_minus_infinity;
+CREATE TABLE test.range_rel_minus_infinity (LIKE test.range_rel INCLUDING ALL);
+SELECT pathman.attach_range_partition('test.range_rel', 'test.range_rel_minus_infinity', NULL, '2014-12-01'::DATE);
+SELECT * FROM pathman.pathman_partition_list WHERE parent = 'test.range_rel'::REGCLASS;
+INSERT INTO test.range_rel (dt) VALUES ('2012-06-15');
+INSERT INTO test.range_rel (dt) VALUES ('2015-12-15');
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt < '2015-01-01';
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-05-01';
 
 /*
  * Zero partitions count and adding partitions with specified name

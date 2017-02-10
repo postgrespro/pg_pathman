@@ -234,19 +234,6 @@ get_rel_name_or_relid(Oid relid)
 	return relname;
 }
 
-char *
-get_qualified_rel_name_or_relid(Oid relid)
-{
-	char *relname = get_rel_name(relid);
-	char *namespace = get_namespace_name(get_rel_namespace(relid));
-
-	if (!relname)
-		return DatumGetCString(DirectFunctionCall1(oidout,
-												   ObjectIdGetDatum(relid)));
-	return psprintf("%s.%s", namespace, relname);
-}
-
-
 #if PG_VERSION_NUM < 90600
 /*
  * Returns the relpersistence associated with a given relation.
@@ -422,4 +409,62 @@ perform_type_cast(Datum value, Oid in_type, Oid out_type, bool *success)
 				return (Datum) 0;
 			}
 	}
+}
+
+/*
+ * Convert interval from TEXT to binary form using partitioned column's type.
+ */
+Datum
+extract_binary_interval_from_text(Datum interval_text,	/* interval as TEXT */
+								  Oid part_atttype,		/* partitioned column's type */
+								  Oid *interval_type)	/* returned value */
+{
+	Datum		interval_binary;
+	const char *interval_cstring;
+
+	interval_cstring = TextDatumGetCString(interval_text);
+
+	/* If 'part_atttype' is a *date type*, cast 'range_interval' to INTERVAL */
+	if (is_date_type_internal(part_atttype))
+	{
+		int32	interval_typmod = PATHMAN_CONFIG_interval_typmod;
+
+		/* Convert interval from CSTRING to internal form */
+		interval_binary = DirectFunctionCall3(interval_in,
+											  CStringGetDatum(interval_cstring),
+											  ObjectIdGetDatum(InvalidOid),
+											  Int32GetDatum(interval_typmod));
+		if (interval_type)
+			*interval_type = INTERVALOID;
+	}
+	/* Otherwise cast it to the partitioned column's type */
+	else
+	{
+		HeapTuple	htup;
+		Oid			typein_proc = InvalidOid;
+
+		htup = SearchSysCache1(TYPEOID, ObjectIdGetDatum(part_atttype));
+		if (HeapTupleIsValid(htup))
+		{
+			typein_proc = ((Form_pg_type) GETSTRUCT(htup))->typinput;
+			ReleaseSysCache(htup);
+		}
+		else
+			elog(ERROR, "cannot find input function for type %u", part_atttype);
+
+		/*
+		 * Convert interval from CSTRING to 'prel->atttype'.
+		 *
+		 * Note: We pass 3 arguments in case
+		 * 'typein_proc' also takes Oid & typmod.
+		 */
+		interval_binary = OidFunctionCall3(typein_proc,
+										   CStringGetDatum(interval_cstring),
+										   ObjectIdGetDatum(part_atttype),
+										   Int32GetDatum(-1));
+		if (interval_type)
+			*interval_type = part_atttype;
+	}
+
+	return interval_binary;
 }

@@ -773,8 +773,8 @@ class PartitioningTests(unittest.TestCase):
 				end
 				$$ language plpgsql;
 			""")
-			con.execute('select set_init_callback(\'range_partitioned\', \'init_partition_stub_callback\')')
-			con.execute('select set_init_callback(\'hash_partitioned\', \'init_partition_stub_callback\')')
+			con.execute('select set_init_callback(\'range_partitioned\', \'init_partition_stub_callback(jsonb)\')')
+			con.execute('select set_init_callback(\'hash_partitioned\', \'init_partition_stub_callback(jsonb)\')')
 
 			# turn off enable_parent option
 			con.execute('select set_enable_parent(\'range_partitioned\', false)')

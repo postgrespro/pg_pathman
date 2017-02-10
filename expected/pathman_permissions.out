@@ -41,7 +41,7 @@ SELECT * FROM pathman_config;
 SELECT * FROM pathman_config_params;
          partrel         | enable_parent | auto | init_callback | spawn_using_bgw 
 -------------------------+---------------+------+---------------+-----------------
- permissions.user1_table | f             | t    | -             | f
+ permissions.user1_table | f             | t    |               | f
 (1 row)
 
 /* Should fail */
@@ -78,7 +78,7 @@ SELECT prepend_range_partition('permissions.user1_table');
 (1 row)
 
 SELECT attname, attacl from pg_attribute
-WHERE attrelid = (SELECT partition FROM pathman_partition_list
+WHERE attrelid = (SELECT "partition" FROM pathman_partition_list
 				  WHERE parent = 'permissions.user1_table'::REGCLASS
 				  ORDER BY range_min::int ASC /* prepend */
 				  LIMIT 1)
@@ -104,7 +104,7 @@ INSERT INTO permissions.user1_table (id, a) VALUES (35, 0) RETURNING *;
 (1 row)
 
 SELECT relname, relacl FROM pg_class
-WHERE oid = ANY (SELECT partition FROM pathman_partition_list
+WHERE oid = ANY (SELECT "partition" FROM pathman_partition_list
 				 WHERE parent = 'permissions.user1_table'::REGCLASS
 				 ORDER BY range_max::int DESC /* append */
 				 LIMIT 3)

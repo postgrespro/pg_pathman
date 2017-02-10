@@ -35,5 +35,7 @@ bool xact_is_transaction_stmt(Node *stmt);
 bool xact_is_set_transaction_stmt(Node *stmt);
 bool xact_object_is_visible(TransactionId obj_xmin);
 
+void prevent_relation_modification_internal(Oid relid);
+
 
 #endif /* XACT_HANDLING_H */

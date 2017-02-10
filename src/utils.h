@@ -39,7 +39,6 @@ List * list_reverse(List *l);
  */
 Oid get_rel_owner(Oid relid);
 char * get_rel_name_or_relid(Oid relid);
-char * get_qualified_rel_name_or_relid(Oid relid);
 Oid get_attribute_type(Oid relid, const char *attname, bool missing_ok);
 #if PG_VERSION_NUM < 90600
 char get_rel_persistence(Oid relid);
@@ -57,6 +56,9 @@ void fill_type_cmp_fmgr_info(FmgrInfo *finfo, Oid type1, Oid type2);
  */
 char * datum_to_cstring(Datum datum, Oid typid);
 Datum perform_type_cast(Datum value, Oid in_type, Oid out_type, bool *success);
+Datum extract_binary_interval_from_text(Datum interval_text,
+										Oid part_atttype,
+										Oid *interval_type);
 
 
 #endif /* PATHMAN_UTILS_H */

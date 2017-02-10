@@ -296,8 +296,13 @@ get_pathman_relation_info(Oid relid)
 			/* TODO: possible refactoring, pass found 'prel' instead of searching */
 			prel = refresh_pathman_relation_info(relid, part_type, attname, false);
 		}
+
 		/* Else clear remaining cache entry */
-		else remove_pathman_relation_info(relid);
+		else
+		{
+			remove_pathman_relation_info(relid);
+			prel = NULL; /* don't forget to reset 'prel' */
+		}
 	}
 
 	elog(DEBUG2,

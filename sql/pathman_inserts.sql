@@ -38,7 +38,7 @@ BEGIN
 	EXECUTE format('create trigger print_new_row_after_insert after insert on %s.%s for each row execute procedure test_inserts.print_cols_after_change();', args->>'partition_schema', args->>'partition');
 END;
 $$ LANGUAGE plpgsql;
-SELECT set_init_callback('test_inserts.storage', 'test_inserts.set_triggers');
+SELECT set_init_callback('test_inserts.storage', 'test_inserts.set_triggers(jsonb)');
 
 /* we don't support ON CONLICT */
 INSERT INTO test_inserts.storage VALUES(0, 0, 0, 'UNSUPPORTED_1')

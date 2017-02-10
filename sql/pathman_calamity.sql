@@ -35,12 +35,31 @@ SELECT count(*) FROM calamity.part_test;
 DELETE FROM calamity.part_test;
 
 
+/* test function create_hash_partitions() */
+SELECT create_hash_partitions('calamity.part_test', 'val', 2,
+							  relnames := ARRAY['calamity.p1']::TEXT[]);
+SELECT create_hash_partitions('calamity.part_test', 'val', 2,
+							  tablespaces := ARRAY['abcd']::TEXT[]);
+
+
 /* test stub 'enable_parent' value for PATHMAN_CONFIG_PARAMS */
 INSERT INTO calamity.part_test SELECT generate_series(1, 30);
 SELECT create_range_partitions('calamity.part_test', 'val', 1, 10);
 DELETE FROM pathman_config_params WHERE partrel = 'calamity.part_test'::regclass;
 SELECT append_range_partition('calamity.part_test');
 EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_test;
+SELECT drop_partitions('calamity.part_test', true);
+DELETE FROM calamity.part_test;
+
+
+/* check function validate_interval_value() */
+SELECT set_interval('pg_catalog.pg_class', 100); /* not ok */
+
+INSERT INTO calamity.part_test SELECT generate_series(1, 30);
+SELECT create_range_partitions('calamity.part_test', 'val', 1, 10);
+SELECT set_interval('calamity.part_test', 100);				/* ok */
+SELECT set_interval('calamity.part_test', 15.6);			/* not ok */
+SELECT set_interval('calamity.part_test', 'abc'::text);		/* not ok */
 SELECT drop_partitions('calamity.part_test', true);
 DELETE FROM calamity.part_test;
 
@@ -54,8 +73,9 @@ SELECT build_hash_condition('text', 'val', 10, NULL) IS NULL;
 SELECT build_hash_condition('calamity.part_test', 'val', 10, 1);
 
 /* check function build_range_condition() */
-SELECT build_range_condition('val', 10, 20);
-SELECT build_range_condition('val', 10, NULL) IS NULL;
+SELECT build_range_condition('calamity.part_test', 'val', 10, 20);
+SELECT build_range_condition('calamity.part_test', 'val', 10, NULL);
+SELECT build_range_condition('calamity.part_test', 'val', NULL, 10);
 
 /* check function validate_relname() */
 SELECT validate_relname('calamity.part_test');
@@ -76,11 +96,10 @@ SELECT get_base_type('int4'::regtype);
 SELECT get_base_type('calamity.test_domain'::regtype);
 SELECT get_base_type(NULL) IS NULL;
 
-/* check function get_attribute_type() */
-SELECT get_attribute_type('calamity.part_test', 'val');
-SELECT get_attribute_type('calamity.part_test', NULL) IS NULL;
-SELECT get_attribute_type(NULL, 'val') IS NULL;
-SELECT get_attribute_type(NULL, NULL) IS NULL;
+/* check function get_partition_key_type() */
+SELECT get_partition_key_type('calamity.part_test');
+SELECT get_partition_key_type(0::regclass);
+SELECT get_partition_key_type(NULL) IS NULL;
 
 /* check function build_check_constraint_name_attnum() */
 SELECT build_check_constraint_name('calamity.part_test', 1::int2);
@@ -104,6 +123,10 @@ SELECT build_update_trigger_func_name(NULL) IS NULL;
 
 /* check function stop_concurrent_part_task() */
 SELECT stop_concurrent_part_task(1::regclass);
+
+/* check function drop_range_partition_expand_next() */
+SELECT drop_range_partition_expand_next('pg_class');
+SELECT drop_range_partition_expand_next(NULL) IS NULL;
 
 /* check invoke_on_partition_created_callback() for RANGE */
 SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part_test', 1, NULL, NULL::int);
@@ -135,13 +158,6 @@ EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_ok; /* check that pathman is ena
 
 SELECT add_to_pathman_config('calamity.part_test', 'val', '10');
 EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_ok; /* check that pathman is enabled */
-
-ALTER TABLE calamity.wrong_partition
-ADD CONSTRAINT pathman_wrong_partition_1_check
-CHECK (val < 10); /* wrong constraint */
-SELECT add_to_pathman_config('calamity.part_test', 'val', '10');
-EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_ok; /* check that pathman is enabled */
-ALTER TABLE calamity.wrong_partition DROP CONSTRAINT pathman_wrong_partition_1_check;
 
 ALTER TABLE calamity.wrong_partition
 ADD CONSTRAINT pathman_wrong_partition_1_check

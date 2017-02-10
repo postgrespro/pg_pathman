@@ -439,7 +439,7 @@ $$ LANGUAGE plpgsql;
  * Split RANGE partition
  */
 CREATE OR REPLACE FUNCTION @extschema@.split_range_partition(
-	partition		REGCLASS,
+	partition_relid	REGCLASS,
 	split_value		ANYELEMENT,
 	partition_name	TEXT DEFAULT NULL,
 	tablespace		TEXT DEFAULT NULL,
@@ -456,34 +456,30 @@ DECLARE
 	v_check_name	TEXT;
 
 BEGIN
-	v_parent = @extschema@.get_parent_of_partition(partition);
+	v_parent = @extschema@.get_parent_of_partition(partition_relid);
 
 	/* Acquire lock on parent */
 	PERFORM @extschema@.lock_partitioned_relation(v_parent);
 
 	/* Acquire data modification lock (prevent further modifications) */
-	PERFORM @extschema@.prevent_relation_modification(partition);
+	PERFORM @extschema@.prevent_relation_modification(partition_relid);
+
+	v_atttype = @extschema@.get_partition_key_type(v_parent);
 
 	SELECT attname, parttype
 	FROM @extschema@.pathman_config
 	WHERE partrel = v_parent
 	INTO v_attname, v_part_type;
 
-	IF v_attname IS NULL THEN
-		RAISE EXCEPTION 'table "%" is not partitioned', v_parent::TEXT;
-	END IF;
-
 	/* Check if this is a RANGE partition */
 	IF v_part_type != 2 THEN
-		RAISE EXCEPTION '"%" is not a RANGE partition', partition::TEXT;
+		RAISE EXCEPTION '"%" is not a RANGE partition', partition_relid::TEXT;
 	END IF;
-
-	v_atttype = @extschema@.get_attribute_type(v_parent, v_attname);
 
 	/* Get partition values range */
 	EXECUTE format('SELECT @extschema@.get_part_range($1, NULL::%s)',
 				   @extschema@.get_base_type(v_atttype)::TEXT)
-	USING partition
+	USING partition_relid
 	INTO p_range;
 
 	IF p_range IS NULL THEN
@@ -505,23 +501,25 @@ BEGIN
 																 tablespace);
 
 	/* Copy data */
-	v_cond := @extschema@.build_range_condition(v_attname, split_value, p_range[2]);
+	v_cond := @extschema@.build_range_condition(v_new_partition::regclass,
+												v_attname, split_value, p_range[2]);
 	EXECUTE format('WITH part_data AS (DELETE FROM %s WHERE %s RETURNING *)
 					INSERT INTO %s SELECT * FROM part_data',
-				   partition::TEXT,
+				   partition_relid::TEXT,
 				   v_cond,
 				   v_new_partition);
 
 	/* Alter original partition */
-	v_cond := @extschema@.build_range_condition(v_attname, p_range[1], split_value);
-	v_check_name := @extschema@.build_check_constraint_name(partition, v_attname);
+	v_cond := @extschema@.build_range_condition(partition_relid::regclass,
+												v_attname, p_range[1], split_value);
+	v_check_name := @extschema@.build_check_constraint_name(partition_relid, v_attname);
 
 	EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %s',
-				   partition::TEXT,
+				   partition_relid::TEXT,
 				   v_check_name);
 
 	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)',
-				   partition::TEXT,
+				   partition_relid::TEXT,
 				   v_check_name,
 				   v_cond);
 
@@ -531,136 +529,18 @@ END
 $$
 LANGUAGE plpgsql;
 
-
 /*
- * Merge RANGE partitions
+ * The special case of merging two partitions
  */
 CREATE OR REPLACE FUNCTION @extschema@.merge_range_partitions(
 	partition1		REGCLASS,
 	partition2		REGCLASS)
 RETURNS VOID AS
 $$
-DECLARE
-	v_parent1		REGCLASS;
-	v_parent2		REGCLASS;
-	v_attname		TEXT;
-	v_part_type		INTEGER;
-	v_atttype		REGTYPE;
-
 BEGIN
-	IF partition1 = partition2 THEN
-		RAISE EXCEPTION 'cannot merge partition with itself';
-	END IF;
-
-	v_parent1 := @extschema@.get_parent_of_partition(partition1);
-	v_parent2 := @extschema@.get_parent_of_partition(partition2);
-
-	/* Acquire data modification locks (prevent further modifications) */
-	PERFORM @extschema@.prevent_relation_modification(partition1);
-	PERFORM @extschema@.prevent_relation_modification(partition2);
-
-	IF v_parent1 != v_parent2 THEN
-		RAISE EXCEPTION 'cannot merge partitions with different parents';
-	END IF;
-
-	/* Acquire lock on parent */
-	PERFORM @extschema@.lock_partitioned_relation(v_parent1);
-
-	SELECT attname, parttype
-	FROM @extschema@.pathman_config
-	WHERE partrel = v_parent1
-	INTO v_attname, v_part_type;
-
-	IF v_attname IS NULL THEN
-		RAISE EXCEPTION 'table "%" is not partitioned', v_parent1::TEXT;
-	END IF;
-
-	/* Check if this is a RANGE partition */
-	IF v_part_type != 2 THEN
-		RAISE EXCEPTION 'specified partitions are not RANGE partitions';
-	END IF;
-
-	v_atttype := @extschema@.get_attribute_type(partition1, v_attname);
-
-	EXECUTE format('SELECT @extschema@.merge_range_partitions_internal($1, $2, $3, NULL::%s)',
-				   @extschema@.get_base_type(v_atttype)::TEXT)
-	USING v_parent1, partition1, partition2;
-
-	/* Tell backend to reload configuration */
-	PERFORM @extschema@.on_update_partitions(v_parent1);
-END
-$$
-LANGUAGE plpgsql;
-
-
-/*
- * Merge two partitions. All data will be copied to the first one. Second
- * partition will be destroyed.
- *
- * NOTE: dummy field is used to pass the element type to the function
- * (it is necessary because of pseudo-types used in function).
- */
-CREATE OR REPLACE FUNCTION @extschema@.merge_range_partitions_internal(
-	parent_relid	REGCLASS,
-	partition1		REGCLASS,
-	partition2		REGCLASS,
-	dummy			ANYELEMENT,
-	OUT p_range		ANYARRAY)
-RETURNS ANYARRAY AS
-$$
-DECLARE
-	v_attname		TEXT;
-	v_atttype		REGTYPE;
-	v_check_name	TEXT;
-
-BEGIN
-	SELECT attname FROM @extschema@.pathman_config
-	WHERE partrel = parent_relid
-	INTO v_attname;
-
-	IF v_attname IS NULL THEN
-		RAISE EXCEPTION 'table "%" is not partitioned', parent_relid::TEXT;
-	END IF;
-
-	v_atttype = @extschema@.get_attribute_type(parent_relid, v_attname);
-
-	/* We have to pass fake NULL casted to column's type */
-	EXECUTE format('SELECT @extschema@.get_part_range($1, NULL::%1$s) ||
-						   @extschema@.get_part_range($2, NULL::%1$s)',
-				   @extschema@.get_base_type(v_atttype)::TEXT)
-	USING partition1, partition2
-	INTO p_range;
-
-	/* Check if ranges are adjacent */
-	IF p_range[1] != p_range[4] AND p_range[2] != p_range[3] THEN
-		RAISE EXCEPTION 'merge failed, partitions must be adjacent';
-	END IF;
-
-	/* Drop constraint on first partition... */
-	v_check_name := @extschema@.build_check_constraint_name(partition1, v_attname);
-	EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %s',
-				   partition1::TEXT,
-				   v_check_name);
-
-	/* and create a new one */
-	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)',
-				   partition1::TEXT,
-				   v_check_name,
-				   @extschema@.build_range_condition(v_attname,
-													 least(p_range[1], p_range[3]),
-													 greatest(p_range[2], p_range[4])));
-
-	/* Copy data from second partition to the first one */
-	EXECUTE format('WITH part_data AS (DELETE FROM %s RETURNING *)
-					INSERT INTO %s SELECT * FROM part_data',
-				   partition2::TEXT,
-				   partition1::TEXT);
-
-	/* Remove second partition */
-	EXECUTE format('DROP TABLE %s', partition2::TEXT);
+	PERFORM @extschema@.merge_range_partitions(array[partition1, partition2]::regclass[]);
 END
 $$ LANGUAGE plpgsql;
-
 
 /*
  * Append new partition.
@@ -672,7 +552,6 @@ CREATE OR REPLACE FUNCTION @extschema@.append_range_partition(
 RETURNS TEXT AS
 $$
 DECLARE
-	v_attname		TEXT;
 	v_atttype		REGTYPE;
 	v_part_name		TEXT;
 	v_interval		TEXT;
@@ -683,16 +562,12 @@ BEGIN
 	/* Acquire lock on parent */
 	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 
-	SELECT attname, range_interval
+	v_atttype := @extschema@.get_partition_key_type(parent_relid);
+
+	SELECT range_interval
 	FROM @extschema@.pathman_config
 	WHERE partrel = parent_relid
-	INTO v_attname, v_interval;
-
-	IF v_attname IS NULL THEN
-		RAISE EXCEPTION 'table "%" is not partitioned', parent_relid::TEXT;
-	END IF;
-
-	v_atttype := @extschema@.get_attribute_type(parent_relid, v_attname);
+	INTO v_interval;
 
 	EXECUTE
 		format('SELECT @extschema@.append_partition_internal($1, $2, $3, ARRAY[]::%s[], $4, $5)',
@@ -731,6 +606,7 @@ $$
 DECLARE
 	v_part_name		TEXT;
 	v_atttype		REGTYPE;
+	v_args_format	TEXT;
 
 BEGIN
 	IF @extschema@.get_number_of_partitions(parent_relid) = 0 THEN
@@ -745,32 +621,31 @@ BEGIN
 	USING parent_relid
 	INTO p_range;
 
-	IF @extschema@.is_date_type(p_atttype) THEN
-		v_part_name := @extschema@.create_single_range_partition(
-			parent_relid,
-			p_range[2],
-			p_range[2] + p_interval::interval,
-			partition_name,
-			tablespace);
-	ELSE
-		EXECUTE
-			format('SELECT @extschema@.create_single_range_partition($1, $2, $2 + $3::%s, $4, $5)',
-				   v_atttype::TEXT)
-		USING
-			parent_relid,
-			p_range[2],
-			p_interval,
-			partition_name,
-			tablespace
-		INTO
-			v_part_name;
+	IF p_range[2] IS NULL THEN
+		RAISE EXCEPTION 'Cannot append partition because last partition''s range is half open';
 	END IF;
+
+	IF @extschema@.is_date_type(p_atttype) THEN
+		v_args_format := format('$1, $2, ($2 + $3::interval)::%s, $4, $5', v_atttype::TEXT);
+	ELSE
+		v_args_format := format('$1, $2, $2 + $3::%s, $4, $5', v_atttype::TEXT);
+	END IF;
+
+	EXECUTE
+		format('SELECT @extschema@.create_single_range_partition(%s)', v_args_format)
+	USING
+		parent_relid,
+		p_range[2],
+		p_interval,
+		partition_name,
+		tablespace
+	INTO
+		v_part_name;
 
 	RETURN v_part_name;
 END
 $$
 LANGUAGE plpgsql;
-
 
 /*
  * Prepend new partition.
@@ -782,7 +657,6 @@ CREATE OR REPLACE FUNCTION @extschema@.prepend_range_partition(
 RETURNS TEXT AS
 $$
 DECLARE
-	v_attname		TEXT;
 	v_atttype		REGTYPE;
 	v_part_name		TEXT;
 	v_interval		TEXT;
@@ -793,16 +667,12 @@ BEGIN
 	/* Acquire lock on parent */
 	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 
-	SELECT attname, range_interval
+	v_atttype := @extschema@.get_partition_key_type(parent_relid);
+
+	SELECT range_interval
 	FROM @extschema@.pathman_config
 	WHERE partrel = parent_relid
-	INTO v_attname, v_interval;
-
-	IF v_attname IS NULL THEN
-		RAISE EXCEPTION 'table "%" is not partitioned', parent_relid::TEXT;
-	END IF;
-
-	v_atttype := @extschema@.get_attribute_type(parent_relid, v_attname);
+	INTO v_interval;
 
 	EXECUTE
 		format('SELECT @extschema@.prepend_partition_internal($1, $2, $3, ARRAY[]::%s[], $4, $5)',
@@ -841,6 +711,7 @@ $$
 DECLARE
 	v_part_name		TEXT;
 	v_atttype		REGTYPE;
+	v_args_format	TEXT;
 
 BEGIN
 	IF @extschema@.get_number_of_partitions(parent_relid) = 0 THEN
@@ -855,32 +726,31 @@ BEGIN
 	USING parent_relid
 	INTO p_range;
 
-	IF @extschema@.is_date_type(p_atttype) THEN
-		v_part_name := @extschema@.create_single_range_partition(
-			parent_relid,
-			p_range[1] - p_interval::interval,
-			p_range[1],
-			partition_name,
-			tablespace);
-	ELSE
-		EXECUTE
-			format('SELECT @extschema@.create_single_range_partition($1, $2 - $3::%s, $2, $4, $5)',
-				   v_atttype::TEXT)
-		USING
-			parent_relid,
-			p_range[1],
-			p_interval,
-			partition_name,
-			tablespace
-		INTO
-			v_part_name;
+	IF p_range[1] IS NULL THEN
+		RAISE EXCEPTION 'Cannot prepend partition because first partition''s range is half open';
 	END IF;
+
+	IF @extschema@.is_date_type(p_atttype) THEN
+		v_args_format := format('$1, ($2 - $3::interval)::%s, $2, $4, $5', v_atttype::TEXT);
+	ELSE
+		v_args_format := format('$1, $2 - $3::%s, $2, $4, $5', v_atttype::TEXT);
+	END IF;
+
+	EXECUTE
+		format('SELECT @extschema@.create_single_range_partition(%s)', v_args_format)
+	USING
+		parent_relid,
+		p_range[1],
+		p_interval,
+		partition_name,
+		tablespace
+	INTO
+		v_part_name;
 
 	RETURN v_part_name;
 END
 $$
 LANGUAGE plpgsql;
-
 
 /*
  * Add new partition
@@ -926,12 +796,11 @@ END
 $$
 LANGUAGE plpgsql;
 
-
 /*
  * Drop range partition
  */
 CREATE OR REPLACE FUNCTION @extschema@.drop_range_partition(
-	partition		REGCLASS,
+	partition_relid	REGCLASS,
 	delete_data		BOOLEAN DEFAULT TRUE)
 RETURNS TEXT AS
 $$
@@ -943,8 +812,8 @@ DECLARE
 	v_part_type		INTEGER;
 
 BEGIN
-	parent_relid := @extschema@.get_parent_of_partition(partition);
-	part_name := partition::TEXT; /* save the name to be returned */
+	parent_relid := @extschema@.get_parent_of_partition(partition_relid);
+	part_name := partition_relid::TEXT; /* save the name to be returned */
 
 	SELECT parttype
 	FROM @extschema@.pathman_config
@@ -953,7 +822,7 @@ BEGIN
 
 	/* Check if this is a RANGE partition */
 	IF v_part_type != 2 THEN
-		RAISE EXCEPTION '"%" is not a RANGE partition', partition::TEXT;
+		RAISE EXCEPTION '"%" is not a RANGE partition', partition_relid::TEXT;
 	END IF;
 
 	/* Acquire lock on parent */
@@ -962,15 +831,15 @@ BEGIN
 	IF NOT delete_data THEN
 		EXECUTE format('INSERT INTO %s SELECT * FROM %s',
 						parent_relid::TEXT,
-						partition::TEXT);
+						partition_relid::TEXT);
 		GET DIAGNOSTICS v_rows = ROW_COUNT;
 
 		/* Show number of copied rows */
-		RAISE NOTICE '% rows copied from %', v_rows, partition::TEXT;
+		RAISE NOTICE '% rows copied from %', v_rows, partition_relid::TEXT;
 	END IF;
 
 	SELECT relkind FROM pg_catalog.pg_class
-	WHERE oid = partition
+	WHERE oid = partition_relid
 	INTO v_relkind;
 
 	/*
@@ -979,9 +848,9 @@ BEGIN
 	 * DROP TABLE or DROP FOREIGN TABLE.
 	 */
 	IF v_relkind = 'f' THEN
-		EXECUTE format('DROP FOREIGN TABLE %s', partition::TEXT);
+		EXECUTE format('DROP FOREIGN TABLE %s', partition_relid::TEXT);
 	ELSE
-		EXECUTE format('DROP TABLE %s', partition::TEXT);
+		EXECUTE format('DROP TABLE %s', partition_relid::TEXT);
 	END IF;
 
 	/* Invalidate cache */
@@ -993,13 +862,12 @@ $$
 LANGUAGE plpgsql
 SET pg_pathman.enable_partitionfilter = off; /* ensures that PartitionFilter is OFF */
 
-
 /*
  * Attach range partition
  */
 CREATE OR REPLACE FUNCTION @extschema@.attach_range_partition(
 	parent_relid	REGCLASS,
-	partition		REGCLASS,
+	partition_relid	REGCLASS,
 	start_value		ANYELEMENT,
 	end_value		ANYELEMENT)
 RETURNS TEXT AS
@@ -1011,29 +879,29 @@ DECLARE
 
 BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
-	PERFORM @extschema@.validate_relname(partition);
+	PERFORM @extschema@.validate_relname(partition_relid);
 
 	/* Acquire lock on parent */
 	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 
 	/* Ignore temporary tables */
 	SELECT relpersistence FROM pg_catalog.pg_class
-	WHERE oid = partition INTO rel_persistence;
+	WHERE oid = partition_relid INTO rel_persistence;
 
 	IF rel_persistence = 't'::CHAR THEN
 		RAISE EXCEPTION 'temporary table "%" cannot be used as a partition',
-						partition::TEXT;
+						partition_relid::TEXT;
 	END IF;
 
 	/* check range overlap */
 	PERFORM @extschema@.check_range_available(parent_relid, start_value, end_value);
 
-	IF NOT @extschema@.validate_relations_equality(parent_relid, partition) THEN
+	IF NOT @extschema@.validate_relations_equality(parent_relid, partition_relid) THEN
 		RAISE EXCEPTION 'partition must have the exact same structure as parent';
 	END IF;
 
 	/* Set inheritance */
-	EXECUTE format('ALTER TABLE %s INHERIT %s', partition, parent_relid);
+	EXECUTE format('ALTER TABLE %s INHERIT %s', partition_relid, parent_relid);
 
 	v_attname := attname FROM @extschema@.pathman_config WHERE partrel = parent_relid;
 
@@ -1043,22 +911,23 @@ BEGIN
 
 	/* Set check constraint */
 	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)',
-				   partition::TEXT,
-				   @extschema@.build_check_constraint_name(partition, v_attname),
-				   @extschema@.build_range_condition(v_attname,
+				   partition_relid::TEXT,
+				   @extschema@.build_check_constraint_name(partition_relid, v_attname),
+				   @extschema@.build_range_condition(partition_relid,
+													 v_attname,
 													 start_value,
 													 end_value));
 
 	/* Fetch init_callback from 'params' table */
 	WITH stub_callback(stub) as (values (0))
-	SELECT coalesce(init_callback, 0::REGPROCEDURE)
+	SELECT init_callback
 	FROM stub_callback
 	LEFT JOIN @extschema@.pathman_config_params AS params
 	ON params.partrel = parent_relid
 	INTO v_init_callback;
 
 	PERFORM @extschema@.invoke_on_partition_created_callback(parent_relid,
-															 partition,
+															 partition_relid,
 															 v_init_callback,
 															 start_value,
 															 end_value);
@@ -1066,17 +935,16 @@ BEGIN
 	/* Invalidate cache */
 	PERFORM @extschema@.on_update_partitions(parent_relid);
 
-	RETURN partition;
+	RETURN partition_relid;
 END
 $$
 LANGUAGE plpgsql;
-
 
 /*
  * Detach range partition
  */
 CREATE OR REPLACE FUNCTION @extschema@.detach_range_partition(
-	partition		REGCLASS)
+	partition_relid		REGCLASS)
 RETURNS TEXT AS
 $$
 DECLARE
@@ -1084,7 +952,7 @@ DECLARE
 	parent_relid	REGCLASS;
 
 BEGIN
-	parent_relid := @extschema@.get_parent_of_partition(partition);
+	parent_relid := @extschema@.get_parent_of_partition(partition_relid);
 
 	/* Acquire lock on parent */
 	PERFORM @extschema@.prevent_relation_modification(parent_relid);
@@ -1099,22 +967,21 @@ BEGIN
 
 	/* Remove inheritance */
 	EXECUTE format('ALTER TABLE %s NO INHERIT %s',
-				   partition::TEXT,
+				   partition_relid::TEXT,
 				   parent_relid::TEXT);
 
 	/* Remove check constraint */
 	EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %s',
-				   partition::TEXT,
-				   @extschema@.build_check_constraint_name(partition, v_attname));
+				   partition_relid::TEXT,
+				   @extschema@.build_check_constraint_name(partition_relid, v_attname));
 
 	/* Invalidate cache */
 	PERFORM @extschema@.on_update_partitions(parent_relid);
 
-	RETURN partition;
+	RETURN partition_relid;
 END
 $$
 LANGUAGE plpgsql;
-
 
 /*
  * Creates an update trigger
@@ -1212,6 +1079,29 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
+
+/*
+ * Merge multiple partitions. All data will be copied to the first one.
+ * The rest of partitions will be dropped.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.merge_range_partitions(
+	partitions		REGCLASS[])
+RETURNS VOID AS 'pg_pathman', 'merge_range_partitions'
+LANGUAGE C STRICT;
+
+/*
+ * Drops partition and expands the next partition so that it cover dropped
+ * one
+ *
+ * This function was written in order to support Oracle-like ALTER TABLE ...
+ * DROP PARTITION. In Oracle partitions only have upper bound and when
+ * partition is dropped the next one automatically covers freed range
+ */
+CREATE OR REPLACE FUNCTION @extschema@.drop_range_partition_expand_next(
+	partition		REGCLASS)
+RETURNS VOID AS 'pg_pathman', 'drop_range_partition_expand_next'
+LANGUAGE C STRICT;
+
 /*
  * Creates new RANGE partition. Returns partition name.
  * NOTE: This function SHOULD NOT take xact_handling lock (BGWs in 9.5).
@@ -1230,11 +1120,12 @@ SET client_min_messages = WARNING;
  * Construct CHECK constraint condition for a range partition.
  */
 CREATE OR REPLACE FUNCTION @extschema@.build_range_condition(
+	p_relid			REGCLASS,
 	attribute		TEXT,
 	start_value		ANYELEMENT,
 	end_value		ANYELEMENT)
 RETURNS TEXT AS 'pg_pathman', 'build_range_condition'
-LANGUAGE C STRICT;
+LANGUAGE C;
 
 CREATE OR REPLACE FUNCTION @extschema@.build_sequence_name(
 	parent_relid	REGCLASS)

@@ -14,8 +14,78 @@
 
 #include "postgres.h"
 #include "access/attnum.h"
+#include "fmgr.h"
 #include "port/atomics.h"
 #include "storage/lock.h"
+#include "utils/datum.h"
+
+
+/* Range bound */
+typedef struct
+{
+	Datum	value;				/* actual value if not infinite */
+	int8	is_infinite;		/* -inf | +inf | finite */
+} Bound;
+
+
+#define FINITE					(  0 )
+#define PLUS_INFINITY			( +1 )
+#define MINUS_INFINITY			( -1 )
+
+#define IsInfinite(i)			( (i)->is_infinite != FINITE )
+#define IsPlusInfinity(i)		( (i)->is_infinite == PLUS_INFINITY )
+#define IsMinusInfinity(i)		( (i)->is_infinite == MINUS_INFINITY )
+
+
+inline static Bound
+CopyBound(const Bound *src, bool byval, int typlen)
+{
+	Bound bound = {
+		IsInfinite(src) ?
+			src->value :
+			datumCopy(src->value, byval, typlen),
+		src->is_infinite
+	};
+
+	return bound;
+}
+
+inline static Bound
+MakeBound(Datum value)
+{
+	Bound bound = { value, FINITE };
+
+	return bound;
+}
+
+inline static Bound
+MakeBoundInf(int8 infinity_type)
+{
+	Bound bound = { (Datum) 0, infinity_type };
+
+	return bound;
+}
+
+inline static Datum
+BoundGetValue(const Bound *bound)
+{
+	Assert(!IsInfinite(bound));
+
+	return bound->value;
+}
+
+inline static int
+cmp_bounds(FmgrInfo *cmp_func, const Bound *b1, const Bound *b2)
+{
+	if (IsMinusInfinity(b1) || IsPlusInfinity(b2))
+		return -1;
+	if (IsMinusInfinity(b2) || IsPlusInfinity(b1))
+		return 1;
+
+	Assert(cmp_func);
+
+	return FunctionCall2(cmp_func, BoundGetValue(b1), BoundGetValue(b2));
+}
 
 
 /*
@@ -34,8 +104,7 @@ typedef enum
 typedef struct
 {
 	Oid				child_oid;
-
-	Datum			min,
+	Bound			min,
 					max;
 } RangeEntry;
 
@@ -158,19 +227,19 @@ FreeChildrenArray(PartRelationInfo *prel)
 	Assert(PrelIsValid(prel));
 
 	/* Remove relevant PartParentInfos */
-	if ((prel)->children)
+	if (prel->children)
 	{
 		for (i = 0; i < PrelChildrenCount(prel); i++)
 		{
-			Oid child = (prel)->children[i];
+			Oid child = prel->children[i];
 
 			/* If it's *always been* relid's partition, free cache */
 			if (PrelParentRelid(prel) == get_parent_of_partition(child, NULL))
 				forget_parent_of_partition(child, NULL);
 		}
 
-		pfree((prel)->children);
-		(prel)->children = NULL;
+		pfree(prel->children);
+		prel->children = NULL;
 	}
 }
 
@@ -182,20 +251,23 @@ FreeRangesArray(PartRelationInfo *prel)
 	Assert(PrelIsValid(prel));
 
 	/* Remove RangeEntries array */
-	if ((prel)->ranges)
+	if (prel->ranges)
 	{
 		/* Remove persistent entries if not byVal */
-		if (!(prel)->attbyval)
+		if (!prel->attbyval)
 		{
 			for (i = 0; i < PrelChildrenCount(prel); i++)
 			{
-				pfree(DatumGetPointer((prel)->ranges[i].min));
-				pfree(DatumGetPointer((prel)->ranges[i].max));
+				if (!IsInfinite(&prel->ranges[i].min))
+					pfree(DatumGetPointer(BoundGetValue(&prel->ranges[i].min)));
+
+				if (!IsInfinite(&prel->ranges[i].max))
+					pfree(DatumGetPointer(BoundGetValue(&prel->ranges[i].max)));
 			}
 		}
 
-		pfree((prel)->ranges);
-		(prel)->ranges = NULL;
+		pfree(prel->ranges);
+		prel->ranges = NULL;
 	}
 }
 

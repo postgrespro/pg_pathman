@@ -28,7 +28,6 @@ typedef struct {
 	uint32	upper;	/* lossy + upper_bound */
 } IndexRange;
 
-
 /* Convenience macros for make_irange(...) */
 #define IR_LOSSY				true
 #define IR_COMPLETE				false
@@ -42,7 +41,6 @@ typedef struct {
 #define is_irange_lossy(irange)	( (irange.upper & IRANGE_SPECIAL_BIT) > 0 )
 #define irange_lower(irange)	( (uint32) (irange.lower & IRANGE_BONDARY_MASK) )
 #define irange_upper(irange)	( (uint32) (irange.upper & IRANGE_BONDARY_MASK) )
-
 
 #define lfirst_irange(lc)				( *(IndexRange *) lfirst(lc) )
 #define lappend_irange(list, irange)	( lappend((list), alloc_irange(irange)) )

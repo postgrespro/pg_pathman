@@ -103,7 +103,7 @@ create_range_partitions(relation       REGCLASS,
                         p_count        INTEGER DEFAULT NULL,
                         partition_data BOOLEAN DEFAULT TRUE)
 ```
-Performs RANGE partitioning for `relation` by partitioning key `attribute`. `start_value` argument specifies initial value, `interval` sets the range of values in a single partition, `count` is the number of premade partitions (if not set then pathman tries to determine it based on attribute values). Partition creation callback is invoked for each partition if set beforehand.
+Performs RANGE partitioning for `relation` by partitioning key `attribute`, `start_value` argument specifies initial value, `p_interval` sets the default range for auto created partitions or partitions created with `append_range_partition()` or `prepend_range_partition()` (if `NULL` then auto partition creation feature won't work), `p_count` is the number of premade partitions (if not set then `pg_pathman` tries to determine it based on attribute values). Partition creation callback is invoked for each partition if set beforehand.
 
 ```plpgsql
 create_partitions_from_range(relation       REGCLASS,
@@ -168,6 +168,11 @@ merge_range_partitions(partition1 REGCLASS, partition2 REGCLASS)
 Merge two adjacent RANGE partitions. First, data from `partition2` is copied to `partition1`, then `partition2` is removed.
 
 ```plpgsql
+merge_range_partitions(partitions    REGCLASS[])
+```
+Merge several adjacent RANGE partitions (partitions must be specified in ascending or descending order). All the data will be accumulated in the first partition.
+
+```plpgsql
 append_range_partition(parent         REGCLASS,
                        partition_name TEXT DEFAULT NULL,
                        tablespace     TEXT DEFAULT NULL)
@@ -188,7 +193,7 @@ add_range_partition(relation       REGCLASS,
                     partition_name TEXT DEFAULT NULL,
                     tablespace     TEXT DEFAULT NULL)
 ```
-Create new RANGE partition for `relation` with specified range bounds.
+Create new RANGE partition for `relation` with specified range bounds. If `start_value` or `end_value` are NULL then corresponding range bound will be infinite.
 
 ```plpgsql
 drop_range_partition(partition TEXT, delete_data BOOLEAN DEFAULT TRUE)
@@ -221,6 +226,12 @@ Drop partitions of the `parent` table (both foreign and local relations). If `de
 
 
 ### Additional parameters
+
+
+```plpgsql
+set_interval(relation REGCLASS, value ANYELEMENT)
+```
+Update RANGE partitioned table interval.
 
 ```plpgsql
 set_enable_parent(relation REGCLASS, value BOOLEAN)

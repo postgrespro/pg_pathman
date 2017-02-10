@@ -8,6 +8,21 @@
  * ------------------------------------------------------------------------
  */
 
+
+/*
+ * Takes text representation of interval value and checks if it is corresponds
+ * to partitioning key. The function throws an error if it fails to convert
+ * text to Datum
+ */
+CREATE OR REPLACE FUNCTION @extschema@.validate_interval_value(
+	partrel			REGCLASS,
+	attname			TEXT,
+	parttype		INTEGER,
+	range_interval	TEXT)
+RETURNS BOOL AS 'pg_pathman', 'validate_interval_value'
+LANGUAGE C;
+
+
 /*
  * Pathman config
  *		partrel - regclass (relation type, stored as Oid)
@@ -23,7 +38,14 @@ CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
 	parttype		INTEGER NOT NULL,
 	range_interval	TEXT,
 
-	CHECK (parttype IN (1, 2)) /* check for allowed part types */
+	/* check for allowed part types */
+	CHECK (parttype IN (1, 2)),
+
+	/* check for correct interval */
+	CHECK (@extschema@.validate_interval_value(partrel,
+											   attname,
+											   parttype,
+											   range_interval))
 );
 
 
@@ -34,7 +56,7 @@ CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
  * NOTE: this function is used in CHECK CONSTRAINT.
  */
 CREATE OR REPLACE FUNCTION @extschema@.validate_part_callback(
-	callback		REGPROC,
+	callback		REGPROCEDURE,
 	raise_error		BOOL DEFAULT TRUE)
 RETURNS BOOL AS 'pg_pathman', 'validate_part_callback_pl'
 LANGUAGE C STRICT;
@@ -45,16 +67,21 @@ LANGUAGE C STRICT;
  *		partrel - regclass (relation type, stored as Oid)
  *		enable_parent - add parent table to plan
  *		auto - enable automatic partition creation
- *		init_callback - cb to be executed on partition creation
+ *		init_callback - text signature of cb to be executed on partition
+ * 						creation
  */
 CREATE TABLE IF NOT EXISTS @extschema@.pathman_config_params (
 	partrel			REGCLASS NOT NULL PRIMARY KEY,
 	enable_parent	BOOLEAN NOT NULL DEFAULT FALSE,
 	auto			BOOLEAN NOT NULL DEFAULT TRUE,
-	init_callback	REGPROCEDURE NOT NULL DEFAULT 0,
+	init_callback	TEXT DEFAULT NULL,
 	spawn_using_bgw	BOOLEAN NOT NULL DEFAULT FALSE
 
-	CHECK (@extschema@.validate_part_callback(init_callback)) /* check signature */
+	/* check callback's signature */
+	CHECK (@extschema@.validate_part_callback(CASE WHEN init_callback IS NULL
+											  THEN 0::REGPROCEDURE
+											  ELSE init_callback::REGPROCEDURE
+											  END))
 );
 
 GRANT SELECT, INSERT, UPDATE, DELETE
@@ -68,8 +95,7 @@ CREATE OR REPLACE FUNCTION @extschema@.check_security_policy(relation regclass)
 RETURNS BOOL AS 'pg_pathman', 'check_security_policy' LANGUAGE C STRICT;
 
 /*
- * Row security policy to restrict partitioning operations to owner and
- * superusers only
+ * Row security policy to restrict partitioning operations to owner and superusers only
  */
 CREATE POLICY deny_modification ON @extschema@.pathman_config
 FOR ALL USING (check_security_policy(partrel));
@@ -118,7 +144,7 @@ BEGIN
 	USING relation, value;
 END
 $$
-LANGUAGE plpgsql STRICT;
+LANGUAGE plpgsql;
 
 /*
  * Include\exclude parent relation in query plan.
@@ -153,11 +179,28 @@ LANGUAGE plpgsql STRICT;
  */
 CREATE OR REPLACE FUNCTION @extschema@.set_init_callback(
 	relation	REGCLASS,
-	callback	REGPROC DEFAULT 0)
+	callback	REGPROCEDURE DEFAULT 0)
 RETURNS VOID AS
 $$
+DECLARE
+	regproc_text	TEXT := NULL;
+
 BEGIN
-	PERFORM @extschema@.pathman_set_param(relation, 'init_callback', callback);
+
+	/* Fetch schema-qualified name of callback */
+	IF callback != 0 THEN
+		SELECT quote_ident(nspname) || '.' ||
+			   quote_ident(proname) || '(' ||
+					(SELECT string_agg(x.argtype::REGTYPE::TEXT, ',')
+					 FROM unnest(proargtypes) AS x(argtype)) ||
+			   ')'
+		FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n
+		ON n.oid = p.pronamespace
+		WHERE p.oid = callback
+		INTO regproc_text; /* <= result */
+	END IF;
+
+	PERFORM @extschema@.pathman_set_param(relation, 'init_callback', regproc_text);
 END
 $$
 LANGUAGE plpgsql STRICT;
@@ -176,18 +219,43 @@ END
 $$
 LANGUAGE plpgsql STRICT;
 
+/*
+ * Set (or reset) default interval for auto created partitions
+ */
+CREATE OR REPLACE FUNCTION @extschema@.set_interval(
+	relation		REGCLASS,
+	value			ANYELEMENT)
+RETURNS VOID AS
+$$
+DECLARE
+	affected	INTEGER;
+BEGIN
+	UPDATE @extschema@.pathman_config
+	SET range_interval = value::text
+	WHERE partrel = relation AND parttype = 2;
+
+	/* Check number of affected rows */
+	GET DIAGNOSTICS affected = ROW_COUNT;
+
+	IF affected = 0 THEN
+		RAISE EXCEPTION 'table "%" is not partitioned by RANGE', relation;
+	END IF;
+END
+$$
+LANGUAGE plpgsql;
+
 
 /*
  * Show all existing parents and partitions.
  */
 CREATE OR REPLACE FUNCTION @extschema@.show_partition_list()
 RETURNS TABLE (
-	 parent		REGCLASS,
-	 partition	REGCLASS,
-	 parttype	INT4,
-	 partattr	TEXT,
-	 range_min	TEXT,
-	 range_max	TEXT)
+	 parent			REGCLASS,
+	 "partition"	REGCLASS,
+	 parttype		INT4,
+	 partattr		TEXT,
+	 range_min		TEXT,
+	 range_max		TEXT)
 AS 'pg_pathman', 'show_partition_list_internal'
 LANGUAGE C STRICT;
 
@@ -575,7 +643,7 @@ SET pg_pathman.enable_partitionfilter = off; /* ensures that PartitionFilter is 
  */
 CREATE OR REPLACE FUNCTION @extschema@.copy_foreign_keys(
 	parent_relid	REGCLASS,
-	partition		REGCLASS)
+	partition_relid	REGCLASS)
 RETURNS VOID AS
 $$
 DECLARE
@@ -583,17 +651,66 @@ DECLARE
 
 BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
-	PERFORM @extschema@.validate_relname(partition);
+	PERFORM @extschema@.validate_relname(partition_relid);
 
 	FOR rec IN (SELECT oid as conid FROM pg_catalog.pg_constraint
 				WHERE conrelid = parent_relid AND contype = 'f')
 	LOOP
 		EXECUTE format('ALTER TABLE %s ADD %s',
-					   partition::TEXT,
+					   partition_relid::TEXT,
 					   pg_catalog.pg_get_constraintdef(rec.conid));
 	END LOOP;
 END
 $$ LANGUAGE plpgsql STRICT;
+
+
+/*
+ * Set new relname, schema and tablespace
+ */
+CREATE OR REPLACE FUNCTION @extschema@.alter_partition(
+	relation		REGCLASS,
+	new_name		TEXT,
+	new_schema		REGNAMESPACE,
+	new_tablespace	TEXT)
+RETURNS VOID AS
+$$
+DECLARE
+	orig_name	TEXT;
+	orig_schema	OID;
+
+BEGIN
+	SELECT relname, relnamespace FROM pg_class
+	WHERE oid = relation
+	INTO orig_name, orig_schema;
+
+	/* Alter table name */
+	IF new_name != orig_name THEN
+		EXECUTE format('ALTER TABLE %s RENAME TO %s', relation, new_name);
+	END IF;
+
+	/* Alter table schema */
+	IF new_schema != orig_schema THEN
+		EXECUTE format('ALTER TABLE %s SET SCHEMA %s', relation, new_schema);
+	END IF;
+
+	/* Move to another tablespace */
+	IF NOT new_tablespace IS NULL THEN
+		EXECUTE format('ALTER TABLE %s SET TABLESPACE %s', relation, new_tablespace);
+	END IF;
+END
+$$ LANGUAGE plpgsql;
+
+
+/*
+ * Partitioning key
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_partition_key(
+	relid	REGCLASS)
+RETURNS TEXT AS
+$$
+	SELECT attname FROM pathman_config WHERE partrel = relid;
+$$
+LANGUAGE sql STRICT;
 
 
 /*
@@ -646,12 +763,11 @@ RETURNS REGTYPE AS 'pg_pathman', 'get_base_type_pl'
 LANGUAGE C STRICT;
 
 /*
- * Returns attribute type name for relation.
+ * Return partition key type
  */
-CREATE OR REPLACE FUNCTION @extschema@.get_attribute_type(
-	relid	REGCLASS,
-	attname	TEXT)
-RETURNS REGTYPE AS 'pg_pathman', 'get_attribute_type_pl'
+CREATE OR REPLACE FUNCTION @extschema@.get_partition_key_type(
+	relid	REGCLASS)
+RETURNS REGTYPE AS 'pg_pathman', 'get_partition_key_type'
 LANGUAGE C STRICT;
 
 /*
@@ -764,7 +880,7 @@ LANGUAGE C STRICT;
  */
 CREATE OR REPLACE FUNCTION @extschema@.invoke_on_partition_created_callback(
 	parent_relid	REGCLASS,
-	partition		REGCLASS,
+	"partition"		REGCLASS,
 	init_callback	REGPROCEDURE,
 	start_value		ANYELEMENT,
 	end_value		ANYELEMENT)
@@ -776,7 +892,7 @@ LANGUAGE C;
  */
 CREATE OR REPLACE FUNCTION @extschema@.invoke_on_partition_created_callback(
 	parent_relid	REGCLASS,
-	partition		REGCLASS,
+	"partition"		REGCLASS,
 	init_callback	REGPROCEDURE)
 RETURNS VOID AS 'pg_pathman', 'invoke_on_partition_created_callback'
 LANGUAGE C;

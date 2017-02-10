@@ -115,7 +115,7 @@ SELECT create_hash_partitions('domains.dom_table', 'val', 5);
 (1 row)
 
 SELECT * FROM pathman_partition_list
-ORDER BY partition::TEXT;
+ORDER BY "partition"::TEXT;
       parent       |      partition      | parttype | partattr | range_min | range_max 
 -------------------+---------------------+----------+----------+-----------+-----------
  domains.dom_table | domains.dom_table_0 |        1 | val      |           | 

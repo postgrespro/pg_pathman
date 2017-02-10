@@ -78,8 +78,14 @@ static int cmp_range_entries(const void *p1, const void *p2, void *arg);
 static bool validate_range_constraint(const Expr *expr,
 									  const PartRelationInfo *prel,
 									  const AttrNumber part_attno,
-									  Datum *min,
-									  Datum *max);
+									  Datum *lower, Datum *upper,
+									  bool *lower_null, bool *upper_null);
+static bool validate_range_opexpr(const Expr *expr,
+								  const PartRelationInfo *prel,
+								  const TypeCacheEntry *tce,
+								  const AttrNumber part_attno,
+								  Datum *lower, Datum *upper,
+								  bool *lower_null, bool *upper_null);
 
 static bool validate_hash_constraint(const Expr *expr,
 									 const PartRelationInfo *prel,
@@ -400,14 +406,22 @@ fill_prel_with_partitions(const Oid *partitions,
 
 			case PT_RANGE:
 				{
-					Datum	range_min, range_max;
+					Datum	lower, upper;
+					bool	lower_null, upper_null;
 
 					if (validate_range_constraint(con_expr, prel, part_attno,
-												  &range_min, &range_max))
+												  &lower, &upper,
+												  &lower_null, &upper_null))
 					{
-						prel->ranges[i].child_oid	= partitions[i];
-						prel->ranges[i].min			= range_min;
-						prel->ranges[i].max			= range_max;
+						prel->ranges[i].child_oid = partitions[i];
+
+						prel->ranges[i].min = lower_null ?
+													MakeBoundInf(MINUS_INFINITY) :
+													MakeBound(lower);
+
+						prel->ranges[i].max = upper_null ?
+													MakeBoundInf(PLUS_INFINITY) :
+													MakeBound(upper);
 					}
 					else
 					{
@@ -435,11 +449,15 @@ fill_prel_with_partitions(const Oid *partitions,
 	if (prel->parttype == PT_RANGE)
 	{
 		MemoryContext	old_mcxt;
+		FmgrInfo		flinfo;
+
+		/* Prepare function info */
+		fmgr_info(prel->cmp_proc, &flinfo);
 
 		/* Sort partitions by RangeEntry->min asc */
 		qsort_arg((void *) prel->ranges, PrelChildrenCount(prel),
 				  sizeof(RangeEntry), cmp_range_entries,
-				  (void *) &prel->cmp_proc);
+				  (void *) &flinfo);
 
 		/* Initialize 'prel->children' array */
 		for (i = 0; i < PrelChildrenCount(prel); i++)
@@ -449,16 +467,15 @@ fill_prel_with_partitions(const Oid *partitions,
 		old_mcxt = MemoryContextSwitchTo(TopMemoryContext);
 		for (i = 0; i < PrelChildrenCount(prel); i++)
 		{
-			prel->ranges[i].max = datumCopy(prel->ranges[i].max,
+			prel->ranges[i].min = CopyBound(&prel->ranges[i].min,
 											prel->attbyval,
 											prel->attlen);
 
-			prel->ranges[i].min = datumCopy(prel->ranges[i].min,
+			prel->ranges[i].max = CopyBound(&prel->ranges[i].max,
 											prel->attbyval,
 											prel->attlen);
 		}
 		MemoryContextSwitchTo(old_mcxt);
-
 	}
 
 #ifdef USE_ASSERT_CHECKING
@@ -765,7 +782,6 @@ read_pathman_params(Oid relid, Datum *values, bool *isnull)
 		Assert(!isnull[Anum_pathman_config_params_partrel - 1]);
 		Assert(!isnull[Anum_pathman_config_params_enable_parent - 1]);
 		Assert(!isnull[Anum_pathman_config_params_auto - 1]);
-		Assert(!isnull[Anum_pathman_config_params_init_callback - 1]);
 		Assert(!isnull[Anum_pathman_config_params_spawn_using_bgw - 1]);
 	}
 
@@ -829,7 +845,7 @@ read_pathman_config(void)
 		{
 			DisablePathman(); /* disable pg_pathman since config is broken */
 			ereport(ERROR,
-					(errmsg("Table \"%s\" contains nonexistent relation %u",
+					(errmsg("table \"%s\" contains nonexistent relation %u",
 							PATHMAN_CONFIG, relid),
 					 errhint(INIT_ERROR_HINT)));
 		}
@@ -904,63 +920,121 @@ cmp_range_entries(const void *p1, const void *p2, void *arg)
 {
 	const RangeEntry   *v1 = (const RangeEntry *) p1;
 	const RangeEntry   *v2 = (const RangeEntry *) p2;
+	FmgrInfo		   *flinfo = (FmgrInfo *) arg;
 
-	Oid					cmp_proc_oid = *(Oid *) arg;
-
-	return OidFunctionCall2(cmp_proc_oid, v1->min, v2->min);
+	return cmp_bounds(flinfo, &v1->min, &v2->min);
 }
 
+/* Validates a single expression of kind VAR >= CONST or VAR < CONST */
+static bool
+validate_range_opexpr(const Expr *expr,
+					  const PartRelationInfo *prel,
+					  const TypeCacheEntry *tce,
+					  const AttrNumber part_attno,
+					  Datum *lower, Datum *upper,
+					  bool *lower_null, bool *upper_null)
+{
+	const OpExpr   *opexpr;
+	Datum			val;
+
+	if (!expr)
+		return false;
+
+	/* Fail fast if it's not an OpExpr node */
+	if(!IsA(expr, OpExpr))
+		return false;
+
+	/* Perform cast */
+	opexpr = (const OpExpr *) expr;
+
+	/* Try reading Const value */
+	if (!read_opexpr_const(opexpr, prel, part_attno, &val))
+		return false;
+
+	/* Examine the strategy (expect '>=' OR '<') */
+	switch (get_op_opfamily_strategy(opexpr->opno, tce->btree_opf))
+	{
+		case BTGreaterEqualStrategyNumber:
+			{
+				/* Bound already exists */
+				if (*lower_null == false)
+					return false;
+
+				*lower_null = false;
+				*lower = val;
+
+				return true;
+			}
+
+		case BTLessStrategyNumber:
+			{
+				/* Bound already exists */
+				if (*upper_null == false)
+					return false;
+
+				*upper_null = false;
+				*upper = val;
+
+				return true;
+			}
+
+		default:
+			return false;
+	}
+}
+
+
 /*
- * Validates range constraint. It MUST have this exact format:
+ * Validates range constraint. It MUST have one of the following formats:
  *
  *		VARIABLE >= CONST AND VARIABLE < CONST
+ *		VARIABLE >= CONST
+ *		VARIABLE < CONST
  *
- * Writes 'min' & 'max' values on success.
+ * Writes 'lower' & 'upper' and 'lower_null' & 'upper_null' values on success.
  */
 static bool
 validate_range_constraint(const Expr *expr,
 						  const PartRelationInfo *prel,
 						  const AttrNumber part_attno,
-						  Datum *min,
-						  Datum *max)
+						  Datum *lower, Datum *upper,
+						  bool *lower_null, bool *upper_null)
 {
-	const TypeCacheEntry   *tce;
-	const BoolExpr		   *boolexpr = (const BoolExpr *) expr;
-	const OpExpr		   *opexpr;
-	int						strategy;
+	const TypeCacheEntry *tce;
 
 	if (!expr)
 		return false;
 
-	/* it should be an AND operator on top */
-	if (!and_clause((Node *) expr))
-		return false;
+	/* Set default values */
+	*lower_null = *upper_null = true;
 
+	/* Find type cache entry for partitioned column's type */
 	tce = lookup_type_cache(prel->atttype, TYPECACHE_BTREE_OPFAMILY);
 
-	/* check that left operand is >= operator */
-	opexpr = (OpExpr *) linitial(boolexpr->args);
-	strategy = get_op_opfamily_strategy(opexpr->opno, tce->btree_opf);
-
-	if (strategy == BTGreaterEqualStrategyNumber)
+	/* Is it an AND clause? */
+	if (and_clause((Node *) expr))
 	{
-		if (!read_opexpr_const(opexpr, prel, part_attno, min))
-			return false;
+		const BoolExpr *boolexpr = (const BoolExpr *) expr;
+		ListCell	   *lc;
+
+		/* Walk through boolexpr's args */
+		foreach (lc, boolexpr->args)
+		{
+			const OpExpr *opexpr = (const OpExpr *) lfirst(lc);
+
+			/* Exit immediately if something is wrong */
+			if (!validate_range_opexpr((const Expr *) opexpr, prel, tce, part_attno,
+									   lower, upper, lower_null, upper_null))
+				return false;
+		}
+
+		/* Everything seems to be fine */
+		return true;
 	}
-	else return false;
 
-	/* check that right operand is < operator */
-	opexpr = (OpExpr *) lsecond(boolexpr->args);
-	strategy = get_op_opfamily_strategy(opexpr->opno, tce->btree_opf);
-
-	if (strategy == BTLessStrategyNumber)
-	{
-		if (!read_opexpr_const(opexpr, prel, part_attno, max))
-			return false;
-	}
-	else return false;
-
-	return true;
+	/* It might be just an OpExpr clause */
+	else return validate_range_opexpr(expr, prel, tce, part_attno,
+									  lower, upper, lower_null, upper_null);
 }
 
 /*
