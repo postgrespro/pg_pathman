@@ -11,10 +11,8 @@ OBJS = src/init.o src/relation_info.o src/utils.o src/partition_filter.o \
 EXTENSION = pg_pathman
 EXTVERSION = 1.2
 DATA_built = pg_pathman--$(EXTVERSION).sql
-DATA = pg_pathman--1.0.sql \
-	pg_pathman--1.0--1.1.sql \
-	pg_pathman--1.1.sql \
-	pg_pathman--1.1--1.2.sql
+DATA = pg_pathman--1.0--1.1.sql \
+	   pg_pathman--1.1--1.2.sql
 PGFILEDESC = "pg_pathman - partitioning tool"
 
 REGRESS = pathman_basic \
