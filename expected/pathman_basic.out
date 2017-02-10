@@ -2430,6 +2430,31 @@ SELECT * FROM test;
  
 (4 rows)
 
+/* Test create_range_partitions() + relnames */
+CREATE TABLE test.provided_part_names(id INT NOT NULL);
+INSERT INTO test.provided_part_names SELECT generate_series(1, 10);
+SELECT create_hash_partitions('test.provided_part_names', 'id', 2,
+							  relnames := ARRAY[]::TEXT[]);				/* not ok */
+ERROR:  size of array 'relnames' must be equal to 'partitions_count'
+SELECT create_hash_partitions('test.provided_part_names', 'id', 2,
+							  relnames := ARRAY['p1', 'p2']::TEXT[]);	/* ok */
+ create_hash_partitions 
+------------------------
+                      2
+(1 row)
+
+/* list partitions */
+SELECT partition FROM pathman_partition_list
+WHERE parent = 'test.provided_part_names'::REGCLASS
+ORDER BY partition;
+ partition 
+-----------
+ p1
+ p2
+(2 rows)
+
+DROP TABLE test.provided_part_names CASCADE;
+NOTICE:  drop cascades to 2 other objects
 DROP SCHEMA test CASCADE;
 NOTICE:  drop cascades to 54 other objects
 DROP EXTENSION pg_pathman CASCADE;

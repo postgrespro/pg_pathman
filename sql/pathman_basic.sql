@@ -700,6 +700,21 @@ WITH RECURSIVE test AS (
 SELECT * FROM test;
 
 
+/* Test create_range_partitions() + relnames */
+CREATE TABLE test.provided_part_names(id INT NOT NULL);
+INSERT INTO test.provided_part_names SELECT generate_series(1, 10);
+SELECT create_hash_partitions('test.provided_part_names', 'id', 2,
+							  relnames := ARRAY[]::TEXT[]);				/* not ok */
+SELECT create_hash_partitions('test.provided_part_names', 'id', 2,
+							  relnames := ARRAY['p1', 'p2']::TEXT[]);	/* ok */
+/* list partitions */
+SELECT partition FROM pathman_partition_list
+WHERE parent = 'test.provided_part_names'::REGCLASS
+ORDER BY partition;
+
+DROP TABLE test.provided_part_names CASCADE;
+
+
 DROP SCHEMA test CASCADE;
 DROP EXTENSION pg_pathman CASCADE;
 DROP SCHEMA pathman CASCADE;
