@@ -9,6 +9,8 @@ SELECT set_interval('abc', NULL::INTEGER);
 INSERT INTO abc VALUES (250);
 /* Set a trivial interval */
 SELECT set_interval('abc', 0);
+/* Set a negative interval */
+SELECT set_interval('abc', -100);
 /* We also shouldn't be able to set a trivial interval directly in pathman_config table */
 UPDATE pathman_config SET range_interval = '0' WHERE partrel = 'abc'::REGCLASS;
 /* Set a normal interval */

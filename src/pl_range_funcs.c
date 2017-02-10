@@ -684,6 +684,7 @@ interval_is_trivial(Oid atttype, Datum interval, Oid interval_type)
 	Operator	op;
 	Oid			op_func;
 	FmgrInfo	cmp_func;
+	int32		cmp_result;
 
 	/* Generate default value */
 	switch(atttype)
@@ -754,8 +755,13 @@ interval_is_trivial(Oid atttype, Datum interval, Oid interval_type)
 	fill_type_cmp_fmgr_info(&cmp_func,
 							getBaseType(atttype),
 							getBaseType(op_result_type));
-	if (DatumGetInt32(FunctionCall2(&cmp_func, default_value, op_result)) == 0)
+	cmp_result = DatumGetInt32(FunctionCall2(&cmp_func,
+											 default_value,
+											 op_result));
+	if (cmp_result == 0)
 		return true;
+	else if (cmp_result > 0)	/* Negative interval? */
+		elog(ERROR, "interval must not be negative");
 
 	return false;
 }
