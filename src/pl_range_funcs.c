@@ -628,9 +628,6 @@ validate_interval_value(PG_FUNCTION_ARGS)
 	Datum		interval_value;
 	Oid			interval_type;
 
-	char	   *attname_cstr;
-	Oid			atttype; /* type of partitioned attribute */
-
 	if (PG_ARGISNULL(0))
 		elog(ERROR, "'partrel' should not be NULL");
 
@@ -640,34 +637,43 @@ validate_interval_value(PG_FUNCTION_ARGS)
 	if (PG_ARGISNULL(2))
 		elog(ERROR, "'parttype' should not be NULL");
 
-	/* it's OK if interval is NULL and table is HASH-partitioned */
-	if (PG_ARGISNULL(3))
-		PG_RETURN_BOOL(parttype == PT_HASH);
+	/*
+	 * NULL interval is fine for both HASH and RANGE. But for RANGE we need
+	 * to make some additional checks
+	 */
+	if (!PG_ARGISNULL(3))
+	{
+		char	   *attname_cstr;
+		Oid			atttype; /* type of partitioned attribute */
 
-	/* Convert attname to CSTRING and fetch column's type */
-	attname_cstr = text_to_cstring(attname);
-	atttype = get_attribute_type(partrel, attname_cstr, false);
+		if (parttype == PT_HASH)
+			elog(ERROR, "interval must be NULL for HASH partitioned table");
 
-	/* Try converting textual representation */
-	interval_value = extract_binary_interval_from_text(interval_text,
-													   atttype,
-													   &interval_type);
+		/* Convert attname to CSTRING and fetch column's type */
+		attname_cstr = text_to_cstring(attname);
+		atttype = get_attribute_type(partrel, attname_cstr, false);
 
-	/* Check that interval isn't trivial */
-	if (interval_is_trivial(atttype, interval_value, interval_type))
-		elog(ERROR, "Interval must not be trivial");
+		/* Try converting textual representation */
+		interval_value = extract_binary_interval_from_text(interval_text,
+														   atttype,
+														   &interval_type);
+
+		/* Check that interval isn't trivial */
+		if (interval_is_trivial(atttype, interval_value, interval_type))
+			elog(ERROR, "interval must not be trivial");
+	}
 
 	PG_RETURN_BOOL(true);
 }
 
 
 /*
- * Check that interval is somehow significant to avoid of infinite loops while
- * adding new partitions
+ * Check if interval is insignificant to avoid infinite loops while adding
+ * new partitions
  *
  * The main idea behind this function is to add specified interval to some
- * default value (zero for numeric types and '1970-01-01' for datetime types)
- * and look if it is changed. If it is then return true.
+ * default value (zero for numeric types and current date/timestamp for datetime
+ * types) and look if it is changed. If it is then return true.
  */
 static bool
 interval_is_trivial(Oid atttype, Datum interval, Oid interval_type)
@@ -727,7 +733,13 @@ interval_is_trivial(Oid atttype, Datum interval, Oid interval_type)
 
 	/*
 	 * If operator result type isn't the same as original value then
-	 * convert it
+	 * convert it. We need this to make sure that specified interval would
+	 * change the _origianal_ value somehow. For example, if we add one second
+	 * to a date then we'll get a timestamp which is one second later than
+	 * original date (obviously). But when we convert it back to a date we will
+	 * get the same original value meaning that one second interval wouldn't
+	 * change original value anyhow. We should consider such interval
+	 * as trivial
 	 */
 	if (op_result_type != atttype)
 	{
