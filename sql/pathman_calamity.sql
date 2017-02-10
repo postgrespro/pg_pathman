@@ -124,6 +124,10 @@ SELECT build_update_trigger_func_name(NULL) IS NULL;
 /* check function stop_concurrent_part_task() */
 SELECT stop_concurrent_part_task(1::regclass);
 
+/* check function drop_range_partition_expand_next() */
+SELECT drop_range_partition_expand_next('pg_class');
+SELECT drop_range_partition_expand_next(NULL) IS NULL;
+
 /* check invoke_on_partition_created_callback() for RANGE */
 SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part_test', 1, NULL, NULL::int);
 SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part_test', 1, 1, NULL);

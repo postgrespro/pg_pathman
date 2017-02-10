@@ -934,12 +934,12 @@ drop_table_by_oid(Oid relid)
 	DropStmt	   *n = makeNode(DropStmt);
 	const char	   *relname = get_qualified_rel_name(relid);
 
-	n->removeType = OBJECT_TABLE;
-	n->missing_ok = false;
-	n->objects = list_make1(stringToQualifiedNameList(relname));
-	n->arguments = NIL;
-	n->behavior = DROP_RESTRICT;  /* default behavior */
-	n->concurrent = false;
+	n->removeType	= OBJECT_TABLE;
+	n->missing_ok	= false;
+	n->objects		= list_make1(stringToQualifiedNameList(relname));
+	n->arguments	= NIL;
+	n->behavior		= DROP_RESTRICT;  /* default behavior */
+	n->concurrent	= false;
 
 	RemoveRelations(n);
 }
