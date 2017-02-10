@@ -686,7 +686,10 @@ interval_is_trivial(Oid atttype, Datum interval, Oid interval_type)
 	FmgrInfo	cmp_func;
 	int32		cmp_result;
 
-	/* Generate default value */
+	/*
+	 * Generate default value. For float4 and float8 values we also check
+	 * that they aren't NaN or INF
+	 */
 	switch(atttype)
 	{
 		case INT2OID:
@@ -695,14 +698,40 @@ interval_is_trivial(Oid atttype, Datum interval, Oid interval_type)
 			default_value = Int16GetDatum(0);
 			break;
 		case FLOAT4OID:
-			default_value = Float4GetDatum(0);
-			break;
+			{
+				float4	f = DatumGetFloat4(interval);
+
+				if (isnan(f) || is_infinite(f))
+					elog(ERROR, "invalid floating point interval");
+				default_value = Float4GetDatum(0);
+				break;
+			}
 		case FLOAT8OID:
-			default_value = Float8GetDatum(0);
-			break;
+			{
+				float8	f = DatumGetFloat8(interval);
+
+				if (isnan(f) || is_infinite(f))
+					elog(ERROR, "invalid floating point interval");
+				default_value = Float8GetDatum(0);
+				break;
+			}
 		case NUMERICOID:
-			default_value = NumericGetDatum(0);
-			break;
+			{
+				Numeric		ni = DatumGetNumeric(interval);
+				Numeric		numeric;
+
+				/* Test for NaN */
+				if (numeric_is_nan(ni))
+					elog(ERROR, "invalid numeric interval");
+
+				/* Building default value */
+				numeric = DatumGetNumeric(DirectFunctionCall3(numeric_in,
+												CStringGetDatum("0"),
+												ObjectIdGetDatum(InvalidOid),
+												Int32GetDatum(-1)));
+				default_value = NumericGetDatum(numeric);
+				break;
+			}
 		case TIMESTAMPOID:
 		case TIMESTAMPTZOID:
 			default_value = TimestampGetDatum(GetCurrentTimestamp());
@@ -712,8 +741,8 @@ interval_is_trivial(Oid atttype, Datum interval, Oid interval_type)
 				Datum		ts = TimestampGetDatum(GetCurrentTimestamp());
 
 				default_value = perform_type_cast(ts, TIMESTAMPTZOID, DATEOID, NULL);
+				break;
 			}
-			break;
 		default:
 			return false;
 	}
