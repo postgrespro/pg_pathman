@@ -389,9 +389,13 @@ ERROR:  'parent_relid' should not be NULL
 SELECT invoke_on_partition_created_callback('calamity.part_test', NULL, 1);
 ERROR:  'partition' should not be NULL
 /* check function add_to_pathman_config() -- PHASE #1 */
-SELECT add_to_pathman_config('calamity.part_test', NULL);
+SELECT add_to_pathman_config(NULL, 'val');						/* no table */
+ERROR:  'parent_relid' should not be NULL
+SELECT add_to_pathman_config('calamity.part_test', NULL);		/* no column */
 ERROR:  'attname' should not be NULL
-SELECT add_to_pathman_config('calamity.part_test', 'val');
+SELECT add_to_pathman_config('calamity.part_test', 'V_A_L');	/* wrong column */
+ERROR:  relation "part_test" has no column "V_A_L"
+SELECT add_to_pathman_config('calamity.part_test', 'val');		/* OK */
  add_to_pathman_config 
 -----------------------
  t
@@ -404,7 +408,7 @@ NOTICE:  function calamity.part_test_upd_trig_func() does not exist, skipping
  
 (1 row)
 
-SELECT add_to_pathman_config('calamity.part_test', 'val', '10');
+SELECT add_to_pathman_config('calamity.part_test', 'val', '10'); /* OK */
  add_to_pathman_config 
 -----------------------
  t

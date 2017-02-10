@@ -140,10 +140,12 @@ SELECT invoke_on_partition_created_callback(NULL, 'calamity.part_test', 1);
 SELECT invoke_on_partition_created_callback('calamity.part_test', NULL, 1);
 
 /* check function add_to_pathman_config() -- PHASE #1 */
-SELECT add_to_pathman_config('calamity.part_test', NULL);
-SELECT add_to_pathman_config('calamity.part_test', 'val');
+SELECT add_to_pathman_config(NULL, 'val');						/* no table */
+SELECT add_to_pathman_config('calamity.part_test', NULL);		/* no column */
+SELECT add_to_pathman_config('calamity.part_test', 'V_A_L');	/* wrong column */
+SELECT add_to_pathman_config('calamity.part_test', 'val');		/* OK */
 SELECT disable_pathman_for('calamity.part_test');
-SELECT add_to_pathman_config('calamity.part_test', 'val', '10');
+SELECT add_to_pathman_config('calamity.part_test', 'val', '10'); /* OK */
 SELECT disable_pathman_for('calamity.part_test');
 
 
