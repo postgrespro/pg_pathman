@@ -40,7 +40,7 @@ SELECT * FROM pathman_config;
  abc     | id      |        2 | 1000
 (1 row)
 
-DROP TABLE abc cascade;
+DROP TABLE abc CASCADE;
 NOTICE:  drop cascades to 3 other objects
 /* Range partitions for DATE type */
 CREATE TABLE abc (dt DATE NOT NULL);
@@ -72,7 +72,7 @@ SELECT * FROM pathman_config;
  abc     | dt      |        2 | @ 1 mon
 (1 row)
 
-DROP TABLE abc cascade;
+DROP TABLE abc CASCADE;
 NOTICE:  drop cascades to 2 other objects
 /* Range partitions for FLOAT4 type */
 CREATE TABLE abc (x FLOAT4 NOT NULL);
@@ -104,10 +104,10 @@ SELECT set_interval('abc', 100);
  
 (1 row)
 
-DROP TABLE abc cascade;
+DROP TABLE abc CASCADE;
 NOTICE:  drop cascades to 2 other objects
 /* Range partitions for FLOAT8 type */
-CREATE TABLE abc (x FLOAT4 NOT NULL);
+CREATE TABLE abc (x FLOAT8 NOT NULL);
 SELECT create_range_partitions('abc', 'x', 0, 100, 2);
  create_range_partitions 
 -------------------------
@@ -136,7 +136,7 @@ SELECT set_interval('abc', 100);
  
 (1 row)
 
-DROP TABLE abc cascade;
+DROP TABLE abc CASCADE;
 NOTICE:  drop cascades to 2 other objects
 /* Range partitions for NUMERIC type */
 CREATE TABLE abc (x NUMERIC NOT NULL);
@@ -165,7 +165,7 @@ SELECT set_interval('abc', 100);
  
 (1 row)
 
-DROP TABLE abc cascade;
+DROP TABLE abc CASCADE;
 NOTICE:  drop cascades to 2 other objects
 /* Hash partitioned table shouldn't accept any interval value */
 CREATE TABLE abc (id SERIAL);
@@ -179,6 +179,6 @@ SELECT set_interval('abc', 100);
 ERROR:  table "abc" is not partitioned by RANGE
 SELECT set_interval('abc', NULL::INTEGER);
 ERROR:  table "abc" is not partitioned by RANGE
-DROP TABLE abc cascade;
+DROP TABLE abc CASCADE;
 NOTICE:  drop cascades to 3 other objects
 DROP EXTENSION pg_pathman;
