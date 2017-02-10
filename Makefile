@@ -9,7 +9,7 @@ OBJS = src/init.o src/relation_info.o src/utils.o src/partition_filter.o \
 	src/partition_creation.o $(WIN32RES)
 
 EXTENSION = pg_pathman
-EXTVERSION = 1.2
+EXTVERSION = 1.3
 DATA_built = pg_pathman--$(EXTVERSION).sql
 DATA = pg_pathman--1.0--1.1.sql \
 	   pg_pathman--1.1--1.2.sql
