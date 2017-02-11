@@ -588,8 +588,6 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.index_on_childs WHERE c1 > 100 AND c1 < 2
 CREATE TABLE test.provided_part_names(id INT NOT NULL);
 INSERT INTO test.provided_part_names SELECT generate_series(1, 10);
 SELECT create_hash_partitions('test.provided_part_names', 'id', 2,
-							  relnames := ARRAY[]::TEXT[]);				/* not ok */
-SELECT create_hash_partitions('test.provided_part_names', 'id', 2,
 							  relnames := ARRAY['p1', 'p2']::TEXT[]);	/* ok */
 /* list partitions */
 SELECT partition FROM pathman_partition_list

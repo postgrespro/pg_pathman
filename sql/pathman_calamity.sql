@@ -37,9 +37,19 @@ DELETE FROM calamity.part_test;
 
 /* test function create_hash_partitions() */
 SELECT create_hash_partitions('calamity.part_test', 'val', 2,
-							  relnames := ARRAY['calamity.p1']::TEXT[]);
+							  relnames := ARRAY[]::TEXT[]); /* not ok */
+
 SELECT create_hash_partitions('calamity.part_test', 'val', 2,
-							  tablespaces := ARRAY['abcd']::TEXT[]);
+							  relnames := ARRAY[ 'p1', NULL ]::TEXT[]); /* not ok */
+
+SELECT create_hash_partitions('calamity.part_test', 'val', 2,
+							  relnames := ARRAY[ ['p1'], ['p2'] ]::TEXT[]); /* not ok */
+
+SELECT create_hash_partitions('calamity.part_test', 'val', 2,
+							  relnames := ARRAY['calamity.p1']::TEXT[]); /* not ok */
+
+SELECT create_hash_partitions('calamity.part_test', 'val', 2,
+							  tablespaces := ARRAY['abcd']::TEXT[]); /* not ok */
 
 
 /* test stub 'enable_parent' value for PATHMAN_CONFIG_PARAMS */

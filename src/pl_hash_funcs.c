@@ -22,7 +22,7 @@
 #include "utils/array.h"
 
 
-static char **deconstruct_text_array(Datum arr, int *num_elems);
+static char **deconstruct_text_array(Datum array, int *array_size);
 
 
 /* Function declarations */
@@ -80,17 +80,13 @@ create_hash_partitions_internal(PG_FUNCTION_ARGS)
 	if (!PG_ARGISNULL(4))
 		tablespaces = deconstruct_text_array(PG_GETARG_DATUM(4), &tablespaces_size);
 
-	/* If both arrays are present, check that their lengths are equal */
-	if (relnames && tablespaces && relnames_size != tablespaces_size)
-		elog(ERROR, "sizes of arrays 'relnames' and 'tablespaces' are different");
-
 	/* Validate size of 'relnames' */
 	if (relnames && relnames_size != partitions_count)
-		elog(ERROR, "size of array 'relnames' must be equal to 'partitions_count'");
+		elog(ERROR, "size of 'relnames' must be equal to 'partitions_count'");
 
 	/* Validate size of 'tablespaces' */
 	if (tablespaces && tablespaces_size != partitions_count)
-		elog(ERROR, "size of array 'tablespaces' must be equal to 'partitions_count'");
+		elog(ERROR, "size of 'tablespaces' must be equal to 'partitions_count'");
 
 	/* Convert partition names into RangeVars */
 	if (relnames)
@@ -195,43 +191,54 @@ build_hash_condition(PG_FUNCTION_ARGS)
 
 /* Convert Datum into CSTRING array */
 static char **
-deconstruct_text_array(Datum arr, int *num_elems)
+deconstruct_text_array(Datum array, int *array_size)
 {
-	ArrayType  *arrayval;
+	ArrayType  *array_ptr = DatumGetArrayTypeP(array);
 	int16		elemlen;
 	bool		elembyval;
 	char		elemalign;
+
 	Datum	   *elem_values;
 	bool	   *elem_nulls;
-	int16		i;
 
-	arrayval = DatumGetArrayTypeP(arr);
+	int			arr_size = 0;
 
-	Assert(ARR_ELEMTYPE(arrayval) == TEXTOID);
+	/* Check type invariant */
+	Assert(ARR_ELEMTYPE(array_ptr) == TEXTOID);
 
-	get_typlenbyvalalign(ARR_ELEMTYPE(arrayval),
+	/* Check number of dimensions */
+	if (ARR_NDIM(array_ptr) > 1)
+		elog(ERROR, "'relnames' and 'tablespaces' may contain only 1 dimension");
+
+	get_typlenbyvalalign(ARR_ELEMTYPE(array_ptr),
 						 &elemlen, &elembyval, &elemalign);
-	deconstruct_array(arrayval,
-					  ARR_ELEMTYPE(arrayval),
+
+	deconstruct_array(array_ptr,
+					  ARR_ELEMTYPE(array_ptr),
 					  elemlen, elembyval, elemalign,
-					  &elem_values, &elem_nulls, num_elems);
+					  &elem_values, &elem_nulls, &arr_size);
 
-	/* If there are actual values then convert them into CSTRINGs */
-	if (num_elems > 0)
+	/* If there are actual values, convert them into CSTRINGs */
+	if (arr_size > 0)
 	{
-		char **strings = palloc(sizeof(char *) * *num_elems);
+		char  **strings = palloc(arr_size * sizeof(char *));
+		int		i;
 
-		for (i = 0; i < *num_elems; i++)
+		for (i = 0; i < arr_size; i++)
 		{
 			if (elem_nulls[i])
-				elog(ERROR, "partition name and tablespace arrays "
-							"may not contain nulls");
+				elog(ERROR, "'relnames' and 'tablespaces' may not contain NULLs");
 
 			strings[i] = TextDatumGetCString(elem_values[i]);
 		}
 
+		/* Return an array and it's size */
+		*array_size = arr_size;
 		return strings;
 	}
+	/* Else emit ERROR */
+	else elog(ERROR, "'relnames' and 'tablespaces' may not be empty");
 
+	/* Keep compiler happy */
 	return NULL;
 }
