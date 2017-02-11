@@ -79,31 +79,31 @@ SELECT create_hash_partitions('callbacks.abc', 'a', 5);
 DROP TABLE callbacks.abc CASCADE;
 
 /* create table in public schema */
-CREATE TABLE abc(a serial, b int);
-SELECT set_init_callback('abc',
+CREATE TABLE callbacks.abc(a serial, b int);
+SELECT set_init_callback('callbacks.abc',
 						 'callbacks.abc_on_part_created_callback(jsonb)');
-SELECT create_range_partitions('abc', 'a', 1, 100, 2);
+SELECT create_range_partitions('callbacks.abc', 'a', 1, 100, 2);
 
-DROP TABLE abc CASCADE;
+DROP TABLE callbacks.abc CASCADE;
 
 /* test the temprary deletion of callback function */
-CREATE TABLE abc(a serial, b int);
-SELECT set_init_callback('abc',
+CREATE TABLE callbacks.abc(a serial, b int);
+SELECT set_init_callback('callbacks.abc',
 						 'callbacks.abc_on_part_created_callback(jsonb)');
-SELECT create_range_partitions('abc', 'a', 1, 100, 2);
+SELECT create_range_partitions('callbacks.abc', 'a', 1, 100, 2);
 
-INSERT INTO abc VALUES (201, 0);
+INSERT INTO callbacks.abc VALUES (201, 0);
 DROP FUNCTION callbacks.abc_on_part_created_callback(jsonb);
-INSERT INTO abc VALUES (301, 0);
+INSERT INTO callbacks.abc VALUES (301, 0);
 CREATE OR REPLACE FUNCTION callbacks.abc_on_part_created_callback(args JSONB)
 RETURNS VOID AS $$
 BEGIN
 	RAISE WARNING 'callback arg: %', args::TEXT;
 END
 $$ language plpgsql;
-INSERT INTO abc VALUES (301, 0);
+INSERT INTO callbacks.abc VALUES (301, 0);
 
-DROP TABLE abc CASCADE;
+DROP TABLE callbacks.abc CASCADE;
 
 
 DROP SCHEMA callbacks CASCADE;

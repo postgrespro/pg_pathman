@@ -1,184 +1,190 @@
 \set VERBOSITY terse
 CREATE EXTENSION pg_pathman;
+CREATE SCHEMA test_interval;
 /* Range partitions for INTEGER type */
-CREATE TABLE abc (id SERIAL);
-SELECT create_range_partitions('abc', 'id', 0, 100, 2);
+CREATE TABLE test_interval.abc (id SERIAL);
+SELECT create_range_partitions('test_interval.abc', 'id', 0, 100, 2);
+NOTICE:  sequence "abc_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                        2
 (1 row)
 
-SELECT set_interval('abc', NULL::INTEGER);
+SELECT set_interval('test_interval.abc', NULL::INTEGER);
  set_interval 
 --------------
  
 (1 row)
 
 /* pg_pathman shouldn't be able to create a new partition */
-INSERT INTO abc VALUES (250);
+INSERT INTO test_interval.abc VALUES (250);
 ERROR:  cannot find appropriate partition for key '250'
 /* Set a trivial interval */
-SELECT set_interval('abc', 0);
+SELECT set_interval('test_interval.abc', 0);
 ERROR:  interval must not be trivial
 /* Set a negative interval */
-SELECT set_interval('abc', -100);
+SELECT set_interval('test_interval.abc', -100);
 ERROR:  interval must not be negative
-/* We also shouldn't be able to set a trivial interval directly in pathman_config table */
-UPDATE pathman_config SET range_interval = '0' WHERE partrel = 'abc'::REGCLASS;
+/* We also shouldn't be able to set a trivial interval directly */
+UPDATE pathman_config SET range_interval = '0'
+WHERE partrel = 'test_interval.abc'::REGCLASS;
 ERROR:  interval must not be trivial
 /* Set a normal interval */
-SELECT set_interval('abc', 1000);
+SELECT set_interval('test_interval.abc', 1000);
  set_interval 
 --------------
  
 (1 row)
 
-INSERT INTO abc VALUES (250);
+INSERT INTO test_interval.abc VALUES (250);
 SELECT * FROM pathman_config;
- partrel | attname | parttype | range_interval 
----------+---------+----------+----------------
- abc     | id      |        2 | 1000
+      partrel      | attname | parttype | range_interval 
+-------------------+---------+----------+----------------
+ test_interval.abc | id      |        2 | 1000
 (1 row)
 
-DROP TABLE abc CASCADE;
+DROP TABLE test_interval.abc CASCADE;
 NOTICE:  drop cascades to 3 other objects
 /* Range partitions for DATE type */
-CREATE TABLE abc (dt DATE NOT NULL);
-SELECT create_range_partitions('abc', 'dt', '2016-01-01'::DATE, '1 day'::INTERVAL, 2);
+CREATE TABLE test_interval.abc (dt DATE NOT NULL);
+SELECT create_range_partitions('test_interval.abc', 'dt',
+							   '2016-01-01'::DATE, '1 day'::INTERVAL, 2);
  create_range_partitions 
 -------------------------
                        2
 (1 row)
 
-SELECT set_interval('abc', NULL::INTERVAL);
+SELECT set_interval('test_interval.abc', NULL::INTERVAL);
  set_interval 
 --------------
  
 (1 row)
 
 /* Set a trivial interval */
-SELECT set_interval('abc', '1 second'::INTERVAL);
+SELECT set_interval('test_interval.abc', '1 second'::INTERVAL);
 ERROR:  interval must not be trivial
 /* Set a normal interval */
-SELECT set_interval('abc', '1 month'::INTERVAL);
+SELECT set_interval('test_interval.abc', '1 month'::INTERVAL);
  set_interval 
 --------------
  
 (1 row)
 
 SELECT * FROM pathman_config;
- partrel | attname | parttype | range_interval 
----------+---------+----------+----------------
- abc     | dt      |        2 | @ 1 mon
+      partrel      | attname | parttype | range_interval 
+-------------------+---------+----------+----------------
+ test_interval.abc | dt      |        2 | @ 1 mon
 (1 row)
 
-DROP TABLE abc CASCADE;
+DROP TABLE test_interval.abc CASCADE;
 NOTICE:  drop cascades to 2 other objects
 /* Range partitions for FLOAT4 type */
-CREATE TABLE abc (x FLOAT4 NOT NULL);
-SELECT create_range_partitions('abc', 'x', 0, 100, 2);
+CREATE TABLE test_interval.abc (x FLOAT4 NOT NULL);
+SELECT create_range_partitions('test_interval.abc', 'x', 0, 100, 2);
  create_range_partitions 
 -------------------------
                        2
 (1 row)
 
-SELECT set_interval('abc', NULL::FLOAT4);
+SELECT set_interval('test_interval.abc', NULL::FLOAT4);
  set_interval 
 --------------
  
 (1 row)
 
 /* Set a trivial interval */
-SELECT set_interval('abc', 0);
+SELECT set_interval('test_interval.abc', 0);
 ERROR:  interval must not be trivial
 /* Set NaN float as interval */
-SELECT set_interval('abc', 'NaN'::FLOAT4);
+SELECT set_interval('test_interval.abc', 'NaN'::FLOAT4);
 ERROR:  invalid floating point interval
 /* Set INF float as interval */
-SELECT set_interval('abc', 'Infinity'::FLOAT4);
+SELECT set_interval('test_interval.abc', 'Infinity'::FLOAT4);
 ERROR:  invalid floating point interval
 /* Set a normal interval */
-SELECT set_interval('abc', 100);
+SELECT set_interval('test_interval.abc', 100);
  set_interval 
 --------------
  
 (1 row)
 
-DROP TABLE abc CASCADE;
+DROP TABLE test_interval.abc CASCADE;
 NOTICE:  drop cascades to 2 other objects
 /* Range partitions for FLOAT8 type */
-CREATE TABLE abc (x FLOAT8 NOT NULL);
-SELECT create_range_partitions('abc', 'x', 0, 100, 2);
+CREATE TABLE test_interval.abc (x FLOAT8 NOT NULL);
+SELECT create_range_partitions('test_interval.abc', 'x', 0, 100, 2);
  create_range_partitions 
 -------------------------
                        2
 (1 row)
 
-SELECT set_interval('abc', NULL::FLOAT8);
+SELECT set_interval('test_interval.abc', NULL::FLOAT8);
  set_interval 
 --------------
  
 (1 row)
 
 /* Set a trivial interval */
-SELECT set_interval('abc', 0);
+SELECT set_interval('test_interval.abc', 0);
 ERROR:  interval must not be trivial
 /* Set NaN float as interval */
-SELECT set_interval('abc', 'NaN'::FLOAT8);
+SELECT set_interval('test_interval.abc', 'NaN'::FLOAT8);
 ERROR:  invalid floating point interval
 /* Set INF float as interval */
-SELECT set_interval('abc', 'Infinity'::FLOAT8);
+SELECT set_interval('test_interval.abc', 'Infinity'::FLOAT8);
 ERROR:  invalid floating point interval
 /* Set a normal interval */
-SELECT set_interval('abc', 100);
+SELECT set_interval('test_interval.abc', 100);
  set_interval 
 --------------
  
 (1 row)
 
-DROP TABLE abc CASCADE;
+DROP TABLE test_interval.abc CASCADE;
 NOTICE:  drop cascades to 2 other objects
 /* Range partitions for NUMERIC type */
-CREATE TABLE abc (x NUMERIC NOT NULL);
-SELECT create_range_partitions('abc', 'x', 0, 100, 2);
+CREATE TABLE test_interval.abc (x NUMERIC NOT NULL);
+SELECT create_range_partitions('test_interval.abc', 'x', 0, 100, 2);
  create_range_partitions 
 -------------------------
                        2
 (1 row)
 
-SELECT set_interval('abc', NULL::NUMERIC);
+SELECT set_interval('test_interval.abc', NULL::NUMERIC);
  set_interval 
 --------------
  
 (1 row)
 
 /* Set a trivial interval */
-SELECT set_interval('abc', 0);
+SELECT set_interval('test_interval.abc', 0);
 ERROR:  interval must not be trivial
 /* Set NaN numeric as interval */
-SELECT set_interval('abc', 'NaN'::NUMERIC);
+SELECT set_interval('test_interval.abc', 'NaN'::NUMERIC);
 ERROR:  invalid numeric interval
 /* Set a normal interval */
-SELECT set_interval('abc', 100);
+SELECT set_interval('test_interval.abc', 100);
  set_interval 
 --------------
  
 (1 row)
 
-DROP TABLE abc CASCADE;
+DROP TABLE test_interval.abc CASCADE;
 NOTICE:  drop cascades to 2 other objects
 /* Hash partitioned table shouldn't accept any interval value */
-CREATE TABLE abc (id SERIAL);
-SELECT create_hash_partitions('abc', 'id', 3);
+CREATE TABLE test_interval.abc (id SERIAL);
+SELECT create_hash_partitions('test_interval.abc', 'id', 3);
  create_hash_partitions 
 ------------------------
                       3
 (1 row)
 
-SELECT set_interval('abc', 100);
-ERROR:  table "abc" is not partitioned by RANGE
-SELECT set_interval('abc', NULL::INTEGER);
-ERROR:  table "abc" is not partitioned by RANGE
-DROP TABLE abc CASCADE;
+SELECT set_interval('test_interval.abc', 100);
+ERROR:  table "test_interval.abc" is not partitioned by RANGE
+SELECT set_interval('test_interval.abc', NULL::INTEGER);
+ERROR:  table "test_interval.abc" is not partitioned by RANGE
+DROP TABLE test_interval.abc CASCADE;
 NOTICE:  drop cascades to 3 other objects
+DROP SCHEMA test_interval CASCADE;
+NOTICE:  drop cascades to sequence test_interval.abc_seq
 DROP EXTENSION pg_pathman;

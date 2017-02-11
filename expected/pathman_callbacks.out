@@ -168,46 +168,45 @@ WARNING:  callback arg: {"parent": "abc", "parttype": "1", "partition": "abc_4",
 DROP TABLE callbacks.abc CASCADE;
 NOTICE:  drop cascades to 5 other objects
 /* create table in public schema */
-CREATE TABLE abc(a serial, b int);
-SELECT set_init_callback('abc',
+CREATE TABLE callbacks.abc(a serial, b int);
+SELECT set_init_callback('callbacks.abc',
 						 'callbacks.abc_on_part_created_callback(jsonb)');
  set_init_callback 
 -------------------
  
 (1 row)
 
-SELECT create_range_partitions('abc', 'a', 1, 100, 2);
-NOTICE:  sequence "abc_seq" does not exist, skipping
-WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_1", "range_max": "101", "range_min": "1", "parent_schema": "public", "partition_schema": "public"}
-WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_2", "range_max": "201", "range_min": "101", "parent_schema": "public", "partition_schema": "public"}
+SELECT create_range_partitions('callbacks.abc', 'a', 1, 100, 2);
+WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_1", "range_max": "101", "range_min": "1", "parent_schema": "callbacks", "partition_schema": "callbacks"}
+WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_2", "range_max": "201", "range_min": "101", "parent_schema": "callbacks", "partition_schema": "callbacks"}
  create_range_partitions 
 -------------------------
                        2
 (1 row)
 
-DROP TABLE abc CASCADE;
+DROP TABLE callbacks.abc CASCADE;
 NOTICE:  drop cascades to 2 other objects
 /* test the temprary deletion of callback function */
-CREATE TABLE abc(a serial, b int);
-SELECT set_init_callback('abc',
+CREATE TABLE callbacks.abc(a serial, b int);
+SELECT set_init_callback('callbacks.abc',
 						 'callbacks.abc_on_part_created_callback(jsonb)');
  set_init_callback 
 -------------------
  
 (1 row)
 
-SELECT create_range_partitions('abc', 'a', 1, 100, 2);
-WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_1", "range_max": "101", "range_min": "1", "parent_schema": "public", "partition_schema": "public"}
-WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_2", "range_max": "201", "range_min": "101", "parent_schema": "public", "partition_schema": "public"}
+SELECT create_range_partitions('callbacks.abc', 'a', 1, 100, 2);
+WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_1", "range_max": "101", "range_min": "1", "parent_schema": "callbacks", "partition_schema": "callbacks"}
+WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_2", "range_max": "201", "range_min": "101", "parent_schema": "callbacks", "partition_schema": "callbacks"}
  create_range_partitions 
 -------------------------
                        2
 (1 row)
 
-INSERT INTO abc VALUES (201, 0);
-WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_3", "range_max": "301", "range_min": "201", "parent_schema": "public", "partition_schema": "public"}
+INSERT INTO callbacks.abc VALUES (201, 0);
+WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_3", "range_max": "301", "range_min": "201", "parent_schema": "callbacks", "partition_schema": "callbacks"}
 DROP FUNCTION callbacks.abc_on_part_created_callback(jsonb);
-INSERT INTO abc VALUES (301, 0);
+INSERT INTO callbacks.abc VALUES (301, 0);
 ERROR:  callback function "callbacks.abc_on_part_created_callback(jsonb)" does not exist
 CREATE OR REPLACE FUNCTION callbacks.abc_on_part_created_callback(args JSONB)
 RETURNS VOID AS $$
@@ -215,9 +214,9 @@ BEGIN
 	RAISE WARNING 'callback arg: %', args::TEXT;
 END
 $$ language plpgsql;
-INSERT INTO abc VALUES (301, 0);
-WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_5", "range_max": "401", "range_min": "301", "parent_schema": "public", "partition_schema": "public"}
-DROP TABLE abc CASCADE;
+INSERT INTO callbacks.abc VALUES (301, 0);
+WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_5", "range_max": "401", "range_min": "301", "parent_schema": "callbacks", "partition_schema": "callbacks"}
+DROP TABLE callbacks.abc CASCADE;
 NOTICE:  drop cascades to 4 other objects
 DROP SCHEMA callbacks CASCADE;
 NOTICE:  drop cascades to 2 other objects

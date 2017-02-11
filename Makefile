@@ -1,6 +1,7 @@
 # contrib/pg_pathman/Makefile
 
 MODULE_big = pg_pathman
+
 OBJS = src/init.o src/relation_info.o src/utils.o src/partition_filter.o \
 	src/runtimeappend.o src/runtime_merge_append.o src/pg_pathman.o src/rangeset.o \
 	src/pl_funcs.o src/pl_range_funcs.o src/pl_hash_funcs.o src/pathman_workers.o \
@@ -9,24 +10,31 @@ OBJS = src/init.o src/relation_info.o src/utils.o src/partition_filter.o \
 	src/partition_creation.o $(WIN32RES)
 
 EXTENSION = pg_pathman
+
 EXTVERSION = 1.3
+
 DATA_built = pg_pathman--$(EXTVERSION).sql
+
 DATA = pg_pathman--1.0--1.1.sql \
 	   pg_pathman--1.1--1.2.sql
+
 PGFILEDESC = "pg_pathman - partitioning tool"
 
 REGRESS = pathman_basic \
-		  pathman_inserts \
-		  pathman_runtime_nodes \
-		  pathman_callbacks \
+		  pathman_cte \
 		  pathman_domains \
+		  pathman_interval \
+		  pathman_callbacks \
 		  pathman_foreign_keys \
 		  pathman_permissions \
 		  pathman_rowmarks \
+		  pathman_inserts \
+		  pathman_runtime_nodes \
 		  pathman_utility_stmt_hooking \
-		  pathman_calamity \
-		  pathman_interval
+		  pathman_calamity
+
 EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add
+
 EXTRA_CLEAN = pg_pathman--$(EXTVERSION).sql ./isolation_output
 
 ifdef USE_PGXS
