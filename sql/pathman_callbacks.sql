@@ -84,16 +84,16 @@ SELECT set_init_callback('callbacks.abc',
 						 'callbacks.abc_on_part_created_callback(jsonb)');
 SELECT create_range_partitions('callbacks.abc', 'a', 1, 100, 2);
 
-INSERT INTO callbacks.abc VALUES (201, 0);
+INSERT INTO callbacks.abc VALUES (201, 0); /* +1 new partition */
 DROP FUNCTION callbacks.abc_on_part_created_callback(jsonb);
-INSERT INTO callbacks.abc VALUES (301, 0);
+INSERT INTO callbacks.abc VALUES (301, 0); /* +0 new partitions (ERROR) */
 CREATE OR REPLACE FUNCTION callbacks.abc_on_part_created_callback(args JSONB)
 RETURNS VOID AS $$
 BEGIN
 	RAISE WARNING 'callback arg: %', args::TEXT;
 END
 $$ language plpgsql;
-INSERT INTO callbacks.abc VALUES (301, 0);
+INSERT INTO callbacks.abc VALUES (301, 0); /* +1 new partition */
 
 DROP TABLE callbacks.abc CASCADE;
 

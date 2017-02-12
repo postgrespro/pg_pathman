@@ -33,7 +33,7 @@ CREATE TRIGGER print_new_row_before_insert BEFORE INSERT ON test_inserts.storage
 CREATE TRIGGER print_new_row_after_insert AFTER INSERT ON test_inserts.storage_1
 	FOR EACH ROW EXECUTE PROCEDURE test_inserts.print_cols_after_change();
 
-/* set partition init callback */
+/* set partition init callback that will add triggers to partitions */
 CREATE OR REPLACE FUNCTION test_inserts.set_triggers(args jsonb) RETURNS VOID AS $$
 BEGIN
 	EXECUTE format('create trigger print_new_row_before_insert before insert on %s.%s

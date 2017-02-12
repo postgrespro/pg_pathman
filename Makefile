@@ -22,13 +22,14 @@ PGFILEDESC = "pg_pathman - partitioning tool"
 
 REGRESS = pathman_basic \
 		  pathman_cte \
+		  pathman_bgw \
+		  pathman_inserts \
 		  pathman_domains \
 		  pathman_interval \
 		  pathman_callbacks \
 		  pathman_foreign_keys \
 		  pathman_permissions \
 		  pathman_rowmarks \
-		  pathman_inserts \
 		  pathman_runtime_nodes \
 		  pathman_utility_stmt_hooking \
 		  pathman_calamity
