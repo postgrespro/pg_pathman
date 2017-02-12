@@ -570,14 +570,19 @@ choose_range_partition_name(Oid parent_relid, Oid parent_nsp)
 {
 	Datum	part_num;
 	Oid		part_seq_relid;
+	char   *part_seq_relname;
 	Oid		save_userid;
 	int		save_sec_context;
 	bool	need_priv_escalation = !superuser(); /* we might be a SU */
 	char   *relname;
 	int		attempts_cnt = 1000;
 
-	part_seq_relid = get_relname_relid(build_sequence_name_internal(parent_relid),
-									   parent_nsp);
+	part_seq_relname = build_sequence_name_internal(parent_relid);
+	part_seq_relid = get_relname_relid(part_seq_relname, parent_nsp);
+
+	/* Could not find part number generating sequence */
+	if (!OidIsValid(part_seq_relid))
+		elog(ERROR, "auto naming sequence \"%s\" does not exist", part_seq_relname);
 
 	/* Do we have to escalate privileges? */
 	if (need_priv_escalation)
@@ -1161,7 +1166,7 @@ build_raw_range_check_tree(char *attname,
 
 	/* (-inf, +inf) */
 	if (and_oper->args == NIL)
-		elog(ERROR, "cannot create infinite range constraint");
+		elog(ERROR, "cannot create partition with range (-inf, +inf)");
 
 	return (Node *) and_oper;
 }

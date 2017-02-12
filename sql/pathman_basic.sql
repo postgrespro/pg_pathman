@@ -584,11 +584,11 @@ SELECT set_enable_parent('test.index_on_childs', true);
 VACUUM ANALYZE test.index_on_childs;
 EXPLAIN (COSTS OFF) SELECT * FROM test.index_on_childs WHERE c1 > 100 AND c1 < 2500 AND c2 = 500;
 
-/* Test create_range_partitions() + relnames */
+/* Test create_range_partitions() + partition_names */
 CREATE TABLE test.provided_part_names(id INT NOT NULL);
 INSERT INTO test.provided_part_names SELECT generate_series(1, 10);
 SELECT create_hash_partitions('test.provided_part_names', 'id', 2,
-							  relnames := ARRAY['p1', 'p2']::TEXT[]);	/* ok */
+							  partition_names := ARRAY['p1', 'p2']::TEXT[]); /* ok */
 /* list partitions */
 SELECT partition FROM pathman_partition_list
 WHERE parent = 'test.provided_part_names'::REGCLASS

@@ -78,14 +78,6 @@ SELECT create_hash_partitions('callbacks.abc', 'a', 5);
 
 DROP TABLE callbacks.abc CASCADE;
 
-/* create table in public schema */
-CREATE TABLE callbacks.abc(a serial, b int);
-SELECT set_init_callback('callbacks.abc',
-						 'callbacks.abc_on_part_created_callback(jsonb)');
-SELECT create_range_partitions('callbacks.abc', 'a', 1, 100, 2);
-
-DROP TABLE callbacks.abc CASCADE;
-
 /* test the temprary deletion of callback function */
 CREATE TABLE callbacks.abc(a serial, b int);
 SELECT set_init_callback('callbacks.abc',

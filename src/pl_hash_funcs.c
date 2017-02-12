@@ -58,11 +58,11 @@ create_hash_partitions_internal(PG_FUNCTION_ARGS)
 				i;
 
 	/* Partition names and tablespaces */
-	char	  **relnames			= NULL,
-			  **tablespaces			= NULL;
-	int			relnames_size		= 0,
-				tablespaces_size	= 0;
-	RangeVar  **rangevars			= NULL;
+	char	  **partition_names			= NULL,
+			  **tablespaces				= NULL;
+	int			partition_names_size	= 0,
+				tablespaces_size		= 0;
+	RangeVar  **rangevars				= NULL;
 
 	/* Check that there's no partitions yet */
 	if (get_pathman_relation_info(parent_relid))
@@ -74,27 +74,27 @@ create_hash_partitions_internal(PG_FUNCTION_ARGS)
 
 	/* Extract partition names */
 	if (!PG_ARGISNULL(3))
-		relnames = deconstruct_text_array(PG_GETARG_DATUM(3), &relnames_size);
+		partition_names = deconstruct_text_array(PG_GETARG_DATUM(3), &partition_names_size);
 
 	/* Extract partition tablespaces */
 	if (!PG_ARGISNULL(4))
 		tablespaces = deconstruct_text_array(PG_GETARG_DATUM(4), &tablespaces_size);
 
-	/* Validate size of 'relnames' */
-	if (relnames && relnames_size != partitions_count)
-		elog(ERROR, "size of 'relnames' must be equal to 'partitions_count'");
+	/* Validate size of 'partition_names' */
+	if (partition_names && partition_names_size != partitions_count)
+		elog(ERROR, "size of 'partition_names' must be equal to 'partitions_count'");
 
 	/* Validate size of 'tablespaces' */
 	if (tablespaces && tablespaces_size != partitions_count)
 		elog(ERROR, "size of 'tablespaces' must be equal to 'partitions_count'");
 
 	/* Convert partition names into RangeVars */
-	if (relnames)
+	if (partition_names)
 	{
-		rangevars = palloc(sizeof(RangeVar) * relnames_size);
-		for (i = 0; i < relnames_size; i++)
+		rangevars = palloc(sizeof(RangeVar) * partition_names_size);
+		for (i = 0; i < partition_names_size; i++)
 		{
-			List *nl = stringToQualifiedNameList(relnames[i]);
+			List *nl = stringToQualifiedNameList(partition_names[i]);
 
 			rangevars[i] = makeRangeVarFromNameList(nl);
 		}
@@ -113,9 +113,9 @@ create_hash_partitions_internal(PG_FUNCTION_ARGS)
 	}
 
 	/* Free arrays */
-	DeepFreeArray(relnames, relnames_size);
+	DeepFreeArray(partition_names, partition_names_size);
 	DeepFreeArray(tablespaces, tablespaces_size);
-	DeepFreeArray(rangevars, relnames_size);
+	DeepFreeArray(rangevars, partition_names_size);
 
 	PG_RETURN_VOID();
 }
@@ -208,7 +208,7 @@ deconstruct_text_array(Datum array, int *array_size)
 
 	/* Check number of dimensions */
 	if (ARR_NDIM(array_ptr) > 1)
-		elog(ERROR, "'relnames' and 'tablespaces' may contain only 1 dimension");
+		elog(ERROR, "'partition_names' and 'tablespaces' may contain only 1 dimension");
 
 	get_typlenbyvalalign(ARR_ELEMTYPE(array_ptr),
 						 &elemlen, &elembyval, &elemalign);
@@ -227,7 +227,7 @@ deconstruct_text_array(Datum array, int *array_size)
 		for (i = 0; i < arr_size; i++)
 		{
 			if (elem_nulls[i])
-				elog(ERROR, "'relnames' and 'tablespaces' may not contain NULLs");
+				elog(ERROR, "'partition_names' and 'tablespaces' may not contain NULLs");
 
 			strings[i] = TextDatumGetCString(elem_values[i]);
 		}
@@ -237,7 +237,7 @@ deconstruct_text_array(Datum array, int *array_size)
 		return strings;
 	}
 	/* Else emit ERROR */
-	else elog(ERROR, "'relnames' and 'tablespaces' may not be empty");
+	else elog(ERROR, "'partition_names' and 'tablespaces' may not be empty");
 
 	/* Keep compiler happy */
 	return NULL;

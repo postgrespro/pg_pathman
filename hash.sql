@@ -16,7 +16,7 @@ CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions(
 	attribute			TEXT,
 	partitions_count	INTEGER,
 	partition_data		BOOLEAN DEFAULT TRUE,
-	relnames			TEXT[] DEFAULT NULL,
+	partition_names		TEXT[] DEFAULT NULL,
 	tablespaces			TEXT[] DEFAULT NULL)
 RETURNS INTEGER AS
 $$
@@ -42,7 +42,7 @@ BEGIN
 	PERFORM @extschema@.create_hash_partitions_internal(parent_relid,
 														attribute,
 														partitions_count,
-														relnames,
+														partition_names,
 														tablespaces);
 
 	/* Notify backend about changes */
@@ -281,7 +281,7 @@ CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions_internal(
 	parent_relid		REGCLASS,
 	attribute			TEXT,
 	partitions_count	INTEGER,
-	relnames			TEXT[] DEFAULT NULL,
+	partition_names		TEXT[] DEFAULT NULL,
 	tablespaces			TEXT[] DEFAULT NULL)
 RETURNS VOID AS 'pg_pathman', 'create_hash_partitions_internal'
 LANGUAGE C;

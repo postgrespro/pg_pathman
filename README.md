@@ -84,7 +84,9 @@ Done! Now it's time to setup your partitioning schemes.
 create_hash_partitions(relation         REGCLASS,
                        attribute        TEXT,
                        partitions_count INTEGER,
-                       partition_data   BOOLEAN DEFAULT TRUE)
+                       partition_data   BOOLEAN DEFAULT TRUE,
+					   partition_names  TEXT[] DEFAULT NULL,
+					   tablespaces      TEXT[] DEFAULT NULL)
 ```
 Performs HASH partitioning for `relation` by integer key `attribute`. The `partitions_count` parameter specifies the number of partitions to create; it cannot be changed afterwards. If `partition_data` is `true` then all the data will be automatically copied from the parent table to partitions. Note that data migration may took a while to finish and the table will be locked until transaction commits. See `partition_table_concurrently()` for a lock-free way to migrate data. Partition creation callback is invoked for each partition if set beforehand (see `set_init_callback()`).
 
@@ -148,9 +150,9 @@ Same as above, but for a RANGE-partitioned table.
 
 ### Post-creation partition management
 ```plpgsql
-replace_hash_partition(old_partition       REGCLASS,
-                       new_partition       REGCLASS,
-                       lock_parent         BOOL DEFAULT TRUE)
+replace_hash_partition(old_partition REGCLASS,
+                       new_partition REGCLASS,
+                       lock_parent   BOOL DEFAULT TRUE)
 ```
 Replaces specified partition of HASH-partitioned table with another table. The `lock_parent` parameter will prevent any INSERT/UPDATE/ALTER TABLE queries to parent table.
 
@@ -168,7 +170,7 @@ merge_range_partitions(partition1 REGCLASS, partition2 REGCLASS)
 Merge two adjacent RANGE partitions. First, data from `partition2` is copied to `partition1`, then `partition2` is removed.
 
 ```plpgsql
-merge_range_partitions(partitions    REGCLASS[])
+merge_range_partitions(partitions REGCLASS[])
 ```
 Merge several adjacent RANGE partitions (partitions must be specified in ascending or descending order). All the data will be accumulated in the first partition.
 

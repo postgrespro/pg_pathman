@@ -102,20 +102,43 @@ SELECT count(*) FROM calamity.part_test;
 DELETE FROM calamity.part_test;
 /* test function create_hash_partitions() */
 SELECT create_hash_partitions('calamity.part_test', 'val', 2,
-							  relnames := ARRAY[]::TEXT[]); /* not ok */
-ERROR:  'relnames' and 'tablespaces' may not be empty
+							  partition_names := ARRAY[]::TEXT[]); /* not ok */
+ERROR:  'partition_names' and 'tablespaces' may not be empty
 SELECT create_hash_partitions('calamity.part_test', 'val', 2,
-							  relnames := ARRAY[ 'p1', NULL ]::TEXT[]); /* not ok */
-ERROR:  'relnames' and 'tablespaces' may not contain NULLs
+							  partition_names := ARRAY[ 'p1', NULL ]::TEXT[]); /* not ok */
+ERROR:  'partition_names' and 'tablespaces' may not contain NULLs
 SELECT create_hash_partitions('calamity.part_test', 'val', 2,
-							  relnames := ARRAY[ ['p1'], ['p2'] ]::TEXT[]); /* not ok */
-ERROR:  'relnames' and 'tablespaces' may contain only 1 dimension
+							  partition_names := ARRAY[ ['p1'], ['p2'] ]::TEXT[]); /* not ok */
+ERROR:  'partition_names' and 'tablespaces' may contain only 1 dimension
 SELECT create_hash_partitions('calamity.part_test', 'val', 2,
-							  relnames := ARRAY['calamity.p1']::TEXT[]); /* not ok */
-ERROR:  size of 'relnames' must be equal to 'partitions_count'
+							  partition_names := ARRAY['calamity.p1']::TEXT[]); /* not ok */
+ERROR:  size of 'partition_names' must be equal to 'partitions_count'
 SELECT create_hash_partitions('calamity.part_test', 'val', 2,
 							  tablespaces := ARRAY['abcd']::TEXT[]); /* not ok */
 ERROR:  size of 'tablespaces' must be equal to 'partitions_count'
+/* test case when naming sequence does not exist */
+CREATE TABLE calamity.no_naming_seq(val INT4 NOT NULL);
+SELECT add_to_pathman_config('calamity.no_naming_seq', 'val', '100');
+ add_to_pathman_config 
+-----------------------
+ t
+(1 row)
+
+select add_range_partition(' calamity.no_naming_seq', 10, 20);
+ERROR:  auto naming sequence "no_naming_seq_seq" does not exist
+DROP TABLE calamity.no_naming_seq CASCADE;
+/* test (-inf, +inf) partition creation */
+CREATE TABLE calamity.double_inf(val INT4 NOT NULL);
+SELECT add_to_pathman_config('calamity.double_inf', 'val', '10');
+ add_to_pathman_config 
+-----------------------
+ t
+(1 row)
+
+select add_range_partition('calamity.double_inf', NULL::INT4, NULL::INT4,
+						   partition_name := 'double_inf_part');
+ERROR:  cannot create partition with range (-inf, +inf)
+DROP TABLE calamity.double_inf CASCADE;
 /* test stub 'enable_parent' value for PATHMAN_CONFIG_PARAMS */
 INSERT INTO calamity.part_test SELECT generate_series(1, 30);
 SELECT create_range_partitions('calamity.part_test', 'val', 1, 10);
