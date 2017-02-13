@@ -468,10 +468,11 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 
 	PlannedStmt	   *result;
 	uint32			query_id = parse->queryId;
+	bool			pathman_ready = IsPathmanReady(); /* in case it changes */
 
 	PG_TRY();
 	{
-		if (IsPathmanReady())
+		if (pathman_ready)
 		{
 			/* Increment parenthood_statuses refcount */
 			incr_refcount_parenthood_statuses();
@@ -486,7 +487,7 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 		else
 			result = standard_planner(parse, cursorOptions, boundParams);
 
-		if (IsPathmanReady())
+		if (pathman_ready)
 		{
 			/* Give rowmark-related attributes correct names */
 			ExecuteForPlanTree(result, postprocess_lock_rows);
@@ -504,9 +505,13 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	/* We must decrease parenthood statuses refcount on ERROR */
 	PG_CATCH();
 	{
-		/* Caught an ERROR, decrease refcount */
-		decr_refcount_parenthood_statuses();
+		if (pathman_ready)
+		{
+			/* Caught an ERROR, decrease refcount */
+			decr_refcount_parenthood_statuses();
+		}
 
+		/* Rethrow ERROR further */
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
