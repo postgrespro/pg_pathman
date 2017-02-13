@@ -701,9 +701,16 @@ interval_is_trivial(Oid atttype, Datum interval, Oid interval_type)
 	switch(atttype)
 	{
 		case INT2OID:
-		case INT4OID:
-		case INT8OID:
 			default_value = Int16GetDatum(0);
+			break;
+
+		case INT4OID:
+			default_value = Int32GetDatum(0);
+			break;
+
+		/* Take care of 32-bit platforms */
+		case INT8OID:
+			default_value = Int64GetDatum(0);
 			break;
 
 		case FLOAT4OID:
