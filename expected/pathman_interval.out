@@ -1,8 +1,8 @@
 \set VERBOSITY terse
 CREATE EXTENSION pg_pathman;
 CREATE SCHEMA test_interval;
-/* Range partitions for INTEGER type */
-CREATE TABLE test_interval.abc (id SERIAL);
+/* Range partitions for INT2 type */
+CREATE TABLE test_interval.abc (id INT2 NOT NULL);
 SELECT create_range_partitions('test_interval.abc', 'id', 0, 100, 2);
 NOTICE:  sequence "abc_seq" does not exist, skipping
  create_range_partitions 
@@ -10,7 +10,93 @@ NOTICE:  sequence "abc_seq" does not exist, skipping
                        2
 (1 row)
 
-SELECT set_interval('test_interval.abc', NULL::INTEGER);
+SELECT set_interval('test_interval.abc', NULL::INT2);
+ set_interval 
+--------------
+ 
+(1 row)
+
+/* pg_pathman shouldn't be able to create a new partition */
+INSERT INTO test_interval.abc VALUES (250);
+ERROR:  cannot find appropriate partition for key '250'
+/* Set a trivial interval */
+SELECT set_interval('test_interval.abc', 0);
+ERROR:  interval must not be trivial
+/* Set a negative interval */
+SELECT set_interval('test_interval.abc', -100);
+ERROR:  interval must not be negative
+/* We also shouldn't be able to set a trivial interval directly */
+UPDATE pathman_config SET range_interval = '0'
+WHERE partrel = 'test_interval.abc'::REGCLASS;
+ERROR:  interval must not be trivial
+/* Set a normal interval */
+SELECT set_interval('test_interval.abc', 1000);
+ set_interval 
+--------------
+ 
+(1 row)
+
+INSERT INTO test_interval.abc VALUES (250);
+SELECT * FROM pathman_config;
+      partrel      | attname | parttype | range_interval 
+-------------------+---------+----------+----------------
+ test_interval.abc | id      |        2 | 1000
+(1 row)
+
+DROP TABLE test_interval.abc CASCADE;
+NOTICE:  drop cascades to 3 other objects
+/* Range partitions for INT4 type */
+CREATE TABLE test_interval.abc (id INT4 NOT NULL);
+SELECT create_range_partitions('test_interval.abc', 'id', 0, 100, 2);
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+SELECT set_interval('test_interval.abc', NULL::INT4);
+ set_interval 
+--------------
+ 
+(1 row)
+
+/* pg_pathman shouldn't be able to create a new partition */
+INSERT INTO test_interval.abc VALUES (250);
+ERROR:  cannot find appropriate partition for key '250'
+/* Set a trivial interval */
+SELECT set_interval('test_interval.abc', 0);
+ERROR:  interval must not be trivial
+/* Set a negative interval */
+SELECT set_interval('test_interval.abc', -100);
+ERROR:  interval must not be negative
+/* We also shouldn't be able to set a trivial interval directly */
+UPDATE pathman_config SET range_interval = '0'
+WHERE partrel = 'test_interval.abc'::REGCLASS;
+ERROR:  interval must not be trivial
+/* Set a normal interval */
+SELECT set_interval('test_interval.abc', 1000);
+ set_interval 
+--------------
+ 
+(1 row)
+
+INSERT INTO test_interval.abc VALUES (250);
+SELECT * FROM pathman_config;
+      partrel      | attname | parttype | range_interval 
+-------------------+---------+----------+----------------
+ test_interval.abc | id      |        2 | 1000
+(1 row)
+
+DROP TABLE test_interval.abc CASCADE;
+NOTICE:  drop cascades to 3 other objects
+/* Range partitions for INT8 type */
+CREATE TABLE test_interval.abc (id INT8 NOT NULL);
+SELECT create_range_partitions('test_interval.abc', 'id', 0, 100, 2);
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+SELECT set_interval('test_interval.abc', NULL::INT8);
  set_interval 
 --------------
  
