@@ -841,9 +841,6 @@ invoke_on_partition_created_callback(PG_FUNCTION_ARGS)
 						end;
 				Oid		value_type;
 
-				if (PG_ARGISNULL(ARG_RANGE_START) || PG_ARGISNULL(ARG_RANGE_END))
-					elog(ERROR, "both bounds must be provided for RANGE partition");
-
 				/* Fetch start & end values for RANGE + their type */
 				start = PG_ARGISNULL(ARG_RANGE_START) ?
 								MakeBoundInf(MINUS_INFINITY) :

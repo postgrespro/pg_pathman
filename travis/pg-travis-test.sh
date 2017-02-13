@@ -51,6 +51,7 @@ if [ $CHECK_CODE = "true" ]; then
 			--enable=warning,portability,performance \
 			--suppress=redundantAssignment \
 			--suppress=uselessAssignmentPtrArg \
+			--suppress=incorrectStringBooleanError \
 			--std=c89 src/*.c src/*.h 2> cppcheck.log
 
 		if [ -s cppcheck.log ]; then

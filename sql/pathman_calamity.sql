@@ -7,6 +7,7 @@ CREATE SCHEMA calamity;
 /* call for coverage test */
 set client_min_messages = ERROR;
 SELECT debug_capture();
+SELECT get_pathman_lib_version();
 set client_min_messages = NOTICE;
 
 
@@ -153,16 +154,32 @@ SELECT stop_concurrent_part_task(1::regclass);
 SELECT drop_range_partition_expand_next('pg_class');
 SELECT drop_range_partition_expand_next(NULL) IS NULL;
 
-/* check invoke_on_partition_created_callback() for RANGE */
-SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part_test', 1, NULL, NULL::int);
-SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part_test', 1, 1, NULL);
-SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part_test', 1, NULL, 1);
 
-/* check invoke_on_partition_created_callback() for HASH */
-SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part_test', NULL);
-SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part_test', 0);
+/* check invoke_on_partition_created_callback() */
+CREATE FUNCTION calamity.dummy_cb(arg jsonb) RETURNS void AS $$
+	begin
+		raise warning 'arg: %', arg::text;
+	end
+$$ LANGUAGE plpgsql;
+
+/* Invalid args */
 SELECT invoke_on_partition_created_callback(NULL, 'calamity.part_test', 1);
 SELECT invoke_on_partition_created_callback('calamity.part_test', NULL, 1);
+SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part_test', 0);
+SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part_test', 1);
+SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part_test', NULL);
+
+/* HASH */
+SELECT invoke_on_partition_created_callback(0::regclass, 1::regclass, 'calamity.dummy_cb(jsonb)'::regprocedure);
+
+/* RANGE */
+SELECT invoke_on_partition_created_callback('calamity.part_test'::regclass, 'pg_class'::regclass, 'calamity.dummy_cb(jsonb)'::regprocedure, NULL::int, NULL);
+SELECT invoke_on_partition_created_callback(0::regclass, 1::regclass, 'calamity.dummy_cb(jsonb)'::regprocedure, NULL::int, NULL);
+SELECT invoke_on_partition_created_callback(0::regclass, 1::regclass, 'calamity.dummy_cb(jsonb)'::regprocedure, 1, NULL);
+SELECT invoke_on_partition_created_callback(0::regclass, 1::regclass, 'calamity.dummy_cb(jsonb)'::regprocedure, NULL, 1);
+
+DROP FUNCTION calamity.dummy_cb(arg jsonb);
+
 
 /* check function add_to_pathman_config() -- PHASE #1 */
 SELECT add_to_pathman_config(NULL, 'val');						/* no table */

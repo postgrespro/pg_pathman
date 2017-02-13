@@ -6,6 +6,7 @@ CREATE EXTENSION pg_pathman;
  * Test COPY
  */
 CREATE SCHEMA copy_stmt_hooking;
+
 CREATE TABLE copy_stmt_hooking.test(
 	val int not null,
 	comment text,
@@ -69,14 +70,61 @@ COPY copy_stmt_hooking.test FROM stdin;
 \.
 SELECT * FROM copy_stmt_hooking.test WHERE val > 20;
 
-/* COPY TO (partitioned column is not specified) */
+/* COPY FROM (partitioned column is not specified) */
 COPY copy_stmt_hooking.test(comment) FROM stdin;
 test_no_part
 \.
 
+/* COPY FROM (we don't support FREEZE) */
+COPY copy_stmt_hooking.test FROM stdin WITH (FREEZE);
 
-/* delete all data */
-SELECT drop_partitions('copy_stmt_hooking.test', true);
+
+/* Drop column (make use of 'tuple_map') */
+ALTER TABLE copy_stmt_hooking.test DROP COLUMN comment;
+
+
+/* create new partition */
+SELECT get_number_of_partitions('copy_stmt_hooking.test');
+INSERT INTO copy_stmt_hooking.test (val, c3, c4) VALUES (26, 1, 2);
+SELECT get_number_of_partitions('copy_stmt_hooking.test');
+
+/* check number of columns in 'test' */
+SELECT count(*) FROM pg_attribute
+WHERE attnum > 0 AND attrelid = 'copy_stmt_hooking.test'::REGCLASS;
+
+/* check number of columns in 'test_6' */
+SELECT count(*) FROM pg_attribute
+WHERE attnum > 0 AND attrelid = 'copy_stmt_hooking.test_6'::REGCLASS;
+
+
+/* COPY FROM (test transformed tuples) */
+COPY copy_stmt_hooking.test (val, c3, c4) TO stdout;
+
+/* COPY TO (insert into table with dropped column) */
+COPY copy_stmt_hooking.test(val, c3, c4) FROM stdin;
+2	1	2
+\.
+
+/* COPY TO (insert into table without dropped column) */
+COPY copy_stmt_hooking.test(val, c3, c4) FROM stdin;
+27	1	2
+\.
+
+/* check tuples from last partition (without dropped column) */
+SELECT *, tableoid::REGCLASS FROM copy_stmt_hooking.test ORDER BY val;
+
+
+/* drop modified table */
+DROP TABLE copy_stmt_hooking.test CASCADE;
+
+
+/* create table again */
+CREATE TABLE copy_stmt_hooking.test(
+	val int not null,
+	comment text,
+	c3 int,
+	c4 int);
+CREATE INDEX ON copy_stmt_hooking.test(val);
 
 
 /* test for HASH partitioning */

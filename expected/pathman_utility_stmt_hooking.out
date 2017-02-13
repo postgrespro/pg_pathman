@@ -157,17 +157,82 @@ SELECT * FROM copy_stmt_hooking.test WHERE val > 20;
   21 | test_no_part |  0 |  0
 (1 row)
 
-/* COPY TO (partitioned column is not specified) */
+/* COPY FROM (partitioned column is not specified) */
 COPY copy_stmt_hooking.test(comment) FROM stdin;
 ERROR:  partitioned column's value should not be NULL
-/* delete all data */
-SELECT drop_partitions('copy_stmt_hooking.test', true);
-NOTICE:  function copy_stmt_hooking.test_upd_trig_func() does not exist, skipping
- drop_partitions 
------------------
-               5
+/* COPY FROM (we don't support FREEZE) */
+COPY copy_stmt_hooking.test FROM stdin WITH (FREEZE);
+ERROR:  freeze is not supported for partitioned tables
+/* Drop column (make use of 'tuple_map') */
+ALTER TABLE copy_stmt_hooking.test DROP COLUMN comment;
+/* create new partition */
+SELECT get_number_of_partitions('copy_stmt_hooking.test');
+ get_number_of_partitions 
+--------------------------
+                        5
 (1 row)
 
+INSERT INTO copy_stmt_hooking.test (val, c3, c4) VALUES (26, 1, 2);
+SELECT get_number_of_partitions('copy_stmt_hooking.test');
+ get_number_of_partitions 
+--------------------------
+                        6
+(1 row)
+
+/* check number of columns in 'test' */
+SELECT count(*) FROM pg_attribute
+WHERE attnum > 0 AND attrelid = 'copy_stmt_hooking.test'::REGCLASS;
+ count 
+-------
+     4
+(1 row)
+
+/* check number of columns in 'test_6' */
+SELECT count(*) FROM pg_attribute
+WHERE attnum > 0 AND attrelid = 'copy_stmt_hooking.test_6'::REGCLASS;
+ count 
+-------
+     3
+(1 row)
+
+/* COPY FROM (test transformed tuples) */
+COPY copy_stmt_hooking.test (val, c3, c4) TO stdout;
+1	0	0
+6	0	0
+7	0	0
+11	0	0
+16	0	0
+21	0	0
+26	1	2
+/* COPY TO (insert into table with dropped column) */
+COPY copy_stmt_hooking.test(val, c3, c4) FROM stdin;
+/* COPY TO (insert into table without dropped column) */
+COPY copy_stmt_hooking.test(val, c3, c4) FROM stdin;
+/* check tuples from last partition (without dropped column) */
+SELECT *, tableoid::REGCLASS FROM copy_stmt_hooking.test ORDER BY val;
+ val | c3 | c4 |         tableoid         
+-----+----+----+--------------------------
+   1 |  0 |  0 | copy_stmt_hooking.test_1
+   2 |  1 |  2 | copy_stmt_hooking.test_1
+   6 |  0 |  0 | copy_stmt_hooking.test_2
+   7 |  0 |  0 | copy_stmt_hooking.test_2
+  11 |  0 |  0 | copy_stmt_hooking.test_3
+  16 |  0 |  0 | copy_stmt_hooking.test_4
+  21 |  0 |  0 | copy_stmt_hooking.test_5
+  26 |  1 |  2 | copy_stmt_hooking.test_6
+  27 |  1 |  2 | copy_stmt_hooking.test_6
+(9 rows)
+
+/* drop modified table */
+DROP TABLE copy_stmt_hooking.test CASCADE;
+NOTICE:  drop cascades to 6 other objects
+/* create table again */
+CREATE TABLE copy_stmt_hooking.test(
+	val int not null,
+	comment text,
+	c3 int,
+	c4 int);
+CREATE INDEX ON copy_stmt_hooking.test(val);
 /* test for HASH partitioning */
 SELECT create_hash_partitions('copy_stmt_hooking.test', 'val', 5);
  create_hash_partitions 
