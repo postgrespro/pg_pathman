@@ -251,7 +251,7 @@ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION @extschema@.show_partition_list()
 RETURNS TABLE (
 	 parent			REGCLASS,
-	 "partition"	REGCLASS,
+	 partition		REGCLASS,
 	 parttype		INT4,
 	 partattr		TEXT,
 	 range_min		TEXT,
@@ -643,7 +643,7 @@ SET pg_pathman.enable_partitionfilter = off; /* ensures that PartitionFilter is 
  */
 CREATE OR REPLACE FUNCTION @extschema@.copy_foreign_keys(
 	parent_relid	REGCLASS,
-	partition_relid	REGCLASS)
+	partition		REGCLASS)
 RETURNS VOID AS
 $$
 DECLARE
@@ -651,13 +651,13 @@ DECLARE
 
 BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
-	PERFORM @extschema@.validate_relname(partition_relid);
+	PERFORM @extschema@.validate_relname(partition);
 
 	FOR rec IN (SELECT oid as conid FROM pg_catalog.pg_constraint
 				WHERE conrelid = parent_relid AND contype = 'f')
 	LOOP
 		EXECUTE format('ALTER TABLE %s ADD %s',
-					   partition_relid::TEXT,
+					   partition::TEXT,
 					   pg_catalog.pg_get_constraintdef(rec.conid));
 	END LOOP;
 END
@@ -880,7 +880,7 @@ LANGUAGE C STRICT;
  */
 CREATE OR REPLACE FUNCTION @extschema@.invoke_on_partition_created_callback(
 	parent_relid	REGCLASS,
-	"partition"		REGCLASS,
+	partition		REGCLASS,
 	init_callback	REGPROCEDURE,
 	start_value		ANYELEMENT,
 	end_value		ANYELEMENT)
@@ -892,7 +892,7 @@ LANGUAGE C;
  */
 CREATE OR REPLACE FUNCTION @extschema@.invoke_on_partition_created_callback(
 	parent_relid	REGCLASS,
-	"partition"		REGCLASS,
+	partition		REGCLASS,
 	init_callback	REGPROCEDURE)
 RETURNS VOID AS 'pg_pathman', 'invoke_on_partition_created_callback'
 LANGUAGE C;
