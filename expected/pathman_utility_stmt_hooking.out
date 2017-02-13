@@ -157,9 +157,12 @@ SELECT * FROM copy_stmt_hooking.test WHERE val > 20;
   21 | test_no_part |  0 |  0
 (1 row)
 
-/* COPY TO (partitioned column is not specified) */
+/* COPY FROM (partitioned column is not specified) */
 COPY copy_stmt_hooking.test(comment) FROM stdin;
 ERROR:  partitioned column's value should not be NULL
+/* COPY FROM (we don't support FREEZE) */
+COPY copy_stmt_hooking.test FROM stdin WITH (FREEZE);
+ERROR:  freeze is not supported for partitioned tables
 /* Drop column (make use of 'tuple_map') */
 ALTER TABLE copy_stmt_hooking.test DROP COLUMN comment;
 /* create new partition */
