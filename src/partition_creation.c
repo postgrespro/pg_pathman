@@ -271,7 +271,7 @@ create_partitions_for_value(Oid relid, Datum value, Oid value_type)
 			last_partition = create_partitions_for_value_internal(relid,
 																  value,
 																  value_type,
-																  false);
+																  false); /* backend */
 		}
 	}
 	else
@@ -300,7 +300,8 @@ create_partitions_for_value(Oid relid, Datum value, Oid value_type)
  * use create_partitions_for_value() instead.
  */
 Oid
-create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type, bool IsBgWorker)
+create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
+									 bool is_background_worker)
 {
 	MemoryContext	old_mcxt = CurrentMemoryContext;
 	Oid				partid = InvalidOid; /* last created partition (or InvalidOid) */
@@ -406,7 +407,7 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type, boo
 		ErrorData *edata;
 
 		/* Simply rethrow ERROR if we're in backend */
-		if (!IsBgWorker)
+		if (!is_background_worker)
 			PG_RE_THROW();
 
 		/* Switch to the original context & copy edata */

@@ -393,7 +393,7 @@ bgw_main_spawn_partitions(Datum main_arg)
 	args->result = create_partitions_for_value_internal(args->partitioned_table,
 														value, /* unpacked Datum */
 														args->value_type,
-														true); /* run under background woker */
+														true); /* background woker */
 
 	/* Finish transaction in an appropriate way */
 	if (args->result == InvalidOid)
