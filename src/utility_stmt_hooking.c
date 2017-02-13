@@ -533,7 +533,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 		Oid						tuple_oid = InvalidOid;
 
 		const PartRelationInfo *prel;
-		ResultRelInfoHolder	   *rri_holder_child;
+		ResultRelInfoHolder	   *rri_holder;
 		ResultRelInfo		   *child_result_rel;
 
 		CHECK_FOR_INTERRUPTS();
@@ -553,14 +553,26 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 			elog(ERROR, ERR_PART_ATTR_NULL);
 
 		/* Search for a matching partition */
-		rri_holder_child = select_partition_for_insert(prel, &parts_storage,
-													   values[prel->attnum - 1],
-													   prel->atttype, estate);
-		child_result_rel = rri_holder_child->result_rel_info;
+		rri_holder = select_partition_for_insert(prel, &parts_storage,
+												 values[prel->attnum - 1],
+												 prel->atttype, estate);
+		child_result_rel = rri_holder->result_rel_info;
 		estate->es_result_relation_info = child_result_rel;
 
 		/* And now we can form the input tuple. */
 		tuple = heap_form_tuple(tupDesc, values, nulls);
+
+		/* If there's a transform map, rebuild the tuple */
+		if (rri_holder->tuple_map)
+		{
+			HeapTuple tuple_old;
+
+			/* TODO: use 'tuple_map' directly instead of do_convert_tuple() */
+			tuple_old = tuple;
+			tuple = do_convert_tuple(tuple, rri_holder->tuple_map);
+			heap_freetuple(tuple_old);
+		}
+
 		if (tuple_oid != InvalidOid)
 			HeapTupleSetOid(tuple, tuple_oid);
 

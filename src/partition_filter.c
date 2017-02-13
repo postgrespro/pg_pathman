@@ -177,12 +177,12 @@ init_result_parts_storage(ResultPartsStorage *parts_storage,
 void
 fini_result_parts_storage(ResultPartsStorage *parts_storage, bool close_rels)
 {
-	/* Close partitions and their indices if asked to */
+	HASH_SEQ_STATUS			stat;
+	ResultRelInfoHolder	   *rri_holder; /* ResultRelInfo holder */
+
+	/* Close partitions and free free conversion-related stuff */
 	if (close_rels)
 	{
-		HASH_SEQ_STATUS			stat;
-		ResultRelInfoHolder	   *rri_holder; /* ResultRelInfo holder */
-
 		hash_seq_init(&stat, parts_storage->result_rels_table);
 		while ((rri_holder = (ResultRelInfoHolder *) hash_seq_search(&stat)) != NULL)
 		{
@@ -191,14 +191,31 @@ fini_result_parts_storage(ResultPartsStorage *parts_storage, bool close_rels)
 			heap_close(rri_holder->result_rel_info->ri_RelationDesc,
 					   parts_storage->heap_close_lock_mode);
 
-			/* Drop TupleConversionMap as well as TupleDescs */
-			if (rri_holder->tuple_map)
-			{
-				FreeTupleDesc(rri_holder->tuple_map->indesc);
-				FreeTupleDesc(rri_holder->tuple_map->outdesc);
+			/* Skip if there's no map */
+			if (!rri_holder->tuple_map)
+				continue;
 
-				free_conversion_map(rri_holder->tuple_map);
-			}
+			FreeTupleDesc(rri_holder->tuple_map->indesc);
+			FreeTupleDesc(rri_holder->tuple_map->outdesc);
+
+			free_conversion_map(rri_holder->tuple_map);
+		}
+	}
+
+	/* Else just free conversion-related stuff */
+	else
+	{
+		hash_seq_init(&stat, parts_storage->result_rels_table);
+		while ((rri_holder = (ResultRelInfoHolder *) hash_seq_search(&stat)) != NULL)
+		{
+			/* Skip if there's no map */
+			if (!rri_holder->tuple_map)
+				continue;
+
+			FreeTupleDesc(rri_holder->tuple_map->indesc);
+			FreeTupleDesc(rri_holder->tuple_map->outdesc);
+
+			free_conversion_map(rri_holder->tuple_map);
 		}
 	}
 
