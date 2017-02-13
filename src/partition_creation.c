@@ -270,7 +270,8 @@ create_partitions_for_value(Oid relid, Datum value, Oid value_type)
 			elog(DEBUG2, "create_partitions(): chose backend [%u]", MyProcPid);
 			last_partition = create_partitions_for_value_internal(relid,
 																  value,
-																  value_type);
+																  value_type,
+																  false);
 		}
 	}
 	else
@@ -299,7 +300,7 @@ create_partitions_for_value(Oid relid, Datum value, Oid value_type)
  * use create_partitions_for_value() instead.
  */
 Oid
-create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type)
+create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type, bool IsBgWorker)
 {
 	MemoryContext	old_mcxt = CurrentMemoryContext;
 	Oid				partid = InvalidOid; /* last created partition (or InvalidOid) */
@@ -405,7 +406,7 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type)
 		ErrorData *edata;
 
 		/* Simply rethrow ERROR if we're in backend */
-		if (!IsBackgroundWorker)
+		if (!IsBgWorker)
 			PG_RE_THROW();
 
 		/* Switch to the original context & copy edata */
