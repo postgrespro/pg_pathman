@@ -9,6 +9,12 @@ SELECT debug_capture();
  
 (1 row)
 
+SELECT get_pathman_lib_version();
+ get_pathman_lib_version 
+-------------------------
+ 10300
+(1 row)
+
 set client_min_messages = NOTICE;
 /* create table to be partitioned */
 CREATE TABLE calamity.part_test(val serial);
@@ -396,30 +402,69 @@ SELECT drop_range_partition_expand_next(NULL) IS NULL;
  t
 (1 row)
 
-/* check invoke_on_partition_created_callback() for RANGE */
-SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part_test', 1, NULL, NULL::int);
-ERROR:  both bounds must be provided for RANGE partition
-SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part_test', 1, 1, NULL);
-ERROR:  both bounds must be provided for RANGE partition
-SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part_test', 1, NULL, 1);
-ERROR:  both bounds must be provided for RANGE partition
-/* check invoke_on_partition_created_callback() for HASH */
-SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part_test', NULL);
- invoke_on_partition_created_callback 
---------------------------------------
- 
-(1 row)
-
+/* check invoke_on_partition_created_callback() */
+CREATE FUNCTION calamity.dummy_cb(arg jsonb) RETURNS void AS $$
+	begin
+		raise warning 'arg: %', arg::text;
+	end
+$$ LANGUAGE plpgsql;
+/* Invalid args */
+SELECT invoke_on_partition_created_callback(NULL, 'calamity.part_test', 1);
+ERROR:  'parent_relid' should not be NULL
+SELECT invoke_on_partition_created_callback('calamity.part_test', NULL, 1);
+ERROR:  'partition' should not be NULL
 SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part_test', 0);
  invoke_on_partition_created_callback 
 --------------------------------------
  
 (1 row)
 
-SELECT invoke_on_partition_created_callback(NULL, 'calamity.part_test', 1);
-ERROR:  'parent_relid' should not be NULL
-SELECT invoke_on_partition_created_callback('calamity.part_test', NULL, 1);
-ERROR:  'partition' should not be NULL
+SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part_test', 1);
+ERROR:  callback function 1 does not exist
+SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part_test', NULL);
+ invoke_on_partition_created_callback 
+--------------------------------------
+ 
+(1 row)
+
+/* HASH */
+SELECT invoke_on_partition_created_callback(0::regclass, 1::regclass, 'calamity.dummy_cb(jsonb)'::regprocedure);
+WARNING:  arg: {"parent": null, "parttype": "1", "partition": null, "parent_schema": null, "partition_schema": null}
+ invoke_on_partition_created_callback 
+--------------------------------------
+ 
+(1 row)
+
+/* RANGE */
+SELECT invoke_on_partition_created_callback('calamity.part_test'::regclass, 'pg_class'::regclass, 'calamity.dummy_cb(jsonb)'::regprocedure, NULL::int, NULL);
+WARNING:  arg: {"parent": "part_test", "parttype": "2", "partition": "pg_class", "range_max": null, "range_min": null, "parent_schema": "calamity", "partition_schema": "pg_catalog"}
+ invoke_on_partition_created_callback 
+--------------------------------------
+ 
+(1 row)
+
+SELECT invoke_on_partition_created_callback(0::regclass, 1::regclass, 'calamity.dummy_cb(jsonb)'::regprocedure, NULL::int, NULL);
+WARNING:  arg: {"parent": null, "parttype": "2", "partition": null, "range_max": null, "range_min": null, "parent_schema": null, "partition_schema": null}
+ invoke_on_partition_created_callback 
+--------------------------------------
+ 
+(1 row)
+
+SELECT invoke_on_partition_created_callback(0::regclass, 1::regclass, 'calamity.dummy_cb(jsonb)'::regprocedure, 1, NULL);
+WARNING:  arg: {"parent": null, "parttype": "2", "partition": null, "range_max": null, "range_min": "1", "parent_schema": null, "partition_schema": null}
+ invoke_on_partition_created_callback 
+--------------------------------------
+ 
+(1 row)
+
+SELECT invoke_on_partition_created_callback(0::regclass, 1::regclass, 'calamity.dummy_cb(jsonb)'::regprocedure, NULL, 1);
+WARNING:  arg: {"parent": null, "parttype": "2", "partition": null, "range_max": "1", "range_min": null, "parent_schema": null, "partition_schema": null}
+ invoke_on_partition_created_callback 
+--------------------------------------
+ 
+(1 row)
+
+DROP FUNCTION calamity.dummy_cb(arg jsonb);
 /* check function add_to_pathman_config() -- PHASE #1 */
 SELECT add_to_pathman_config(NULL, 'val');						/* no table */
 ERROR:  'parent_relid' should not be NULL

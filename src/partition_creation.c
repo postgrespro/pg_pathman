@@ -1422,15 +1422,18 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 {
 #define JSB_INIT_VAL(value, val_type, val_cstring) \
 	do { \
-		(value)->type = jbvString; \
-		(value)->val.string.len = strlen(val_cstring); \
-		(value)->val.string.val = val_cstring; \
-		pushJsonbValue(&jsonb_state, val_type, (value)); \
-	} while (0)
-
-#define JSB_INIT_NULL_VAL(value, val_type)	\
-	do {	\
-		(value)->type = jbvNull;	\
+		if ((val_cstring) != NULL) \
+		{ \
+			(value)->type = jbvString; \
+			(value)->val.string.len = strlen(val_cstring); \
+			(value)->val.string.val = val_cstring; \
+		} \
+		else \
+		{ \
+			(value)->type = jbvNull; \
+			Assert((val_type) != WJB_KEY); \
+		} \
+		\
 		pushJsonbValue(&jsonb_state, val_type, (value)); \
 	} while (0)
 
@@ -1444,6 +1447,12 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 	JsonbValue			   *result,
 							key,
 							val;
+
+	char				   *parent_name,
+						   *parent_namespace,
+						   *partition_name,
+						   *partition_namespace;
+
 
 	/* Fetch & cache callback's Oid if needed */
 	if (!cb_params->callback_is_cached)
@@ -1472,8 +1481,10 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 							 errmsg("callback function \"%s\" does not exist",
 									TextDatumGetCString(init_cb_datum))));
 			}
-			else
-				cb_params->callback = InvalidOid;
+			/* There's no callback */
+			else cb_params->callback = InvalidOid;
+
+			/* We've made a lookup */
 			cb_params->callback_is_cached = true;
 		}
 	}
@@ -1485,6 +1496,12 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 	/* Validate the callback's signature */
 	validate_part_callback(cb_params->callback, true);
 
+	parent_name = get_rel_name(parent_oid);
+	parent_namespace = get_namespace_name(get_rel_namespace(parent_oid));
+
+	partition_name = get_rel_name(partition_oid);
+	partition_namespace = get_namespace_name(get_rel_namespace(partition_oid));
+
 	/* Generate JSONB we're going to pass to callback */
 	switch (cb_params->parttype)
 	{
@@ -1493,13 +1510,13 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 				pushJsonbValue(&jsonb_state, WJB_BEGIN_OBJECT, NULL);
 
 				JSB_INIT_VAL(&key, WJB_KEY, "parent");
-				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(parent_oid));
+				JSB_INIT_VAL(&val, WJB_VALUE, parent_name);
 				JSB_INIT_VAL(&key, WJB_KEY, "parent_schema");
-				JSB_INIT_VAL(&val, WJB_VALUE, get_namespace_name(get_rel_namespace(parent_oid)));
+				JSB_INIT_VAL(&val, WJB_VALUE, parent_namespace);
 				JSB_INIT_VAL(&key, WJB_KEY, "partition");
-				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(partition_oid));
+				JSB_INIT_VAL(&val, WJB_VALUE, partition_name);
 				JSB_INIT_VAL(&key, WJB_KEY, "partition_schema");
-				JSB_INIT_VAL(&val, WJB_VALUE, get_namespace_name(get_rel_namespace(partition_oid)));
+				JSB_INIT_VAL(&val, WJB_VALUE, partition_namespace);
 				JSB_INIT_VAL(&key, WJB_KEY, "parttype");
 				JSB_INIT_VAL(&val, WJB_VALUE, PartTypeToCString(PT_HASH));
 
@@ -1509,46 +1526,40 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 
 		case PT_RANGE:
 			{
-				char   *start_value,
-					   *end_value;
+				char   *start_value	= NULL,
+					   *end_value	= NULL;
 				Bound	sv_datum	= cb_params->params.range_params.start_value,
 						ev_datum	= cb_params->params.range_params.end_value;
 				Oid		type		= cb_params->params.range_params.value_type;
 
+				/* Convert min to CSTRING */
+				if (!IsInfinite(&sv_datum))
+					start_value = datum_to_cstring(BoundGetValue(&sv_datum), type);
+
+				/* Convert max to CSTRING */
+				if (!IsInfinite(&ev_datum))
+					end_value = datum_to_cstring(BoundGetValue(&ev_datum), type);
+
 				pushJsonbValue(&jsonb_state, WJB_BEGIN_OBJECT, NULL);
 
 				JSB_INIT_VAL(&key, WJB_KEY, "parent");
-				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(parent_oid));
+				JSB_INIT_VAL(&val, WJB_VALUE, parent_name);
 				JSB_INIT_VAL(&key, WJB_KEY, "parent_schema");
-				JSB_INIT_VAL(&val, WJB_VALUE, get_namespace_name(get_rel_namespace(parent_oid)));
+				JSB_INIT_VAL(&val, WJB_VALUE, parent_namespace);
 				JSB_INIT_VAL(&key, WJB_KEY, "partition");
-				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(partition_oid));
+				JSB_INIT_VAL(&val, WJB_VALUE, partition_name);
 				JSB_INIT_VAL(&key, WJB_KEY, "partition_schema");
-				JSB_INIT_VAL(&val, WJB_VALUE, get_namespace_name(get_rel_namespace(partition_oid)));
+				JSB_INIT_VAL(&val, WJB_VALUE, partition_namespace);
 				JSB_INIT_VAL(&key, WJB_KEY, "parttype");
 				JSB_INIT_VAL(&val, WJB_VALUE, PartTypeToCString(PT_RANGE));
 
 				/* Lower bound */
 				JSB_INIT_VAL(&key, WJB_KEY, "range_min");
-				if (!IsInfinite(&sv_datum))
-				{
-					/* Convert min to CSTRING */
-					start_value = datum_to_cstring(BoundGetValue(&sv_datum), type);
-					JSB_INIT_VAL(&val, WJB_VALUE, start_value);
-				}
-				else
-					JSB_INIT_NULL_VAL(&val, WJB_VALUE);
+				JSB_INIT_VAL(&val, WJB_VALUE, start_value);
 
 				/* Upper bound */
 				JSB_INIT_VAL(&key, WJB_KEY, "range_max");
-				if (!IsInfinite(&ev_datum))
-				{
-					/* Convert max to CSTRING */
-					end_value = datum_to_cstring(BoundGetValue(&ev_datum), type);
-					JSB_INIT_VAL(&val, WJB_VALUE, end_value);
-				}
-				else
-					JSB_INIT_NULL_VAL(&val, WJB_VALUE);
+				JSB_INIT_VAL(&val, WJB_VALUE, end_value);
 
 				result = pushJsonbValue(&jsonb_state, WJB_END_OBJECT, NULL);
 			}
