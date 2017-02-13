@@ -617,6 +617,56 @@ SELECT count(*) FROM pathman_config_params WHERE partrel = 'calamity.to_be_disab
      0
 (1 row)
 
+/* check function get_part_range_by_idx() */
+CREATE TABLE calamity.test_range_idx(val INT4 NOT NULL);
+SELECT create_range_partitions('calamity.test_range_idx', 'val', 1, 10, 1);
+NOTICE:  sequence "test_range_idx_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                       1
+(1 row)
+
+SELECT get_part_range(NULL, 1, NULL::INT4);							/* not ok */
+ERROR:  'parent_relid' should not be NULL
+SELECT get_part_range('calamity.test_range_idx', NULL, NULL::INT4);	/* not ok */
+ERROR:  'partition_idx' should not be NULL
+SELECT get_part_range('calamity.test_range_idx', 0, NULL::INT2);	/* not ok */
+ERROR:  pg_typeof(dummy) should be integer
+SELECT get_part_range('calamity.test_range_idx', -2, NULL::INT4);	/* not ok */
+ERROR:  negative indices other than -1 (last partition) are not allowed
+SELECT get_part_range('calamity.test_range_idx', 4, NULL::INT4);	/* not ok */
+ERROR:  partition #4 does not exist (total amount is 1)
+SELECT get_part_range('calamity.test_range_idx', 0, NULL::INT4);	/* OK */
+ get_part_range 
+----------------
+ {1,11}
+(1 row)
+
+DROP TABLE calamity.test_range_idx CASCADE;
+NOTICE:  drop cascades to table calamity.test_range_idx_1
+/* check function get_part_range_by_oid() */
+CREATE TABLE calamity.test_range_oid(val INT4 NOT NULL);
+SELECT create_range_partitions('calamity.test_range_oid', 'val', 1, 10, 1);
+NOTICE:  sequence "test_range_oid_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                       1
+(1 row)
+
+SELECT get_part_range(NULL, NULL::INT4);							/* not ok */
+ERROR:  'partition_relid' should not be NULL
+SELECT get_part_range('pg_class', NULL::INT4);						/* not ok */
+ERROR:  relation "pg_class" is not a partition
+SELECT get_part_range('calamity.test_range_oid_1', NULL::INT2);		/* not ok */
+ERROR:  pg_typeof(dummy) should be integer
+SELECT get_part_range('calamity.test_range_oid_1', NULL::INT4);		/* OK */
+ get_part_range 
+----------------
+ {1,11}
+(1 row)
+
+DROP TABLE calamity.test_range_oid CASCADE;
+NOTICE:  drop cascades to table calamity.test_range_oid_1
 DROP SCHEMA calamity CASCADE;
-NOTICE:  drop cascades to 16 other objects
+NOTICE:  drop cascades to 18 other objects
 DROP EXTENSION pg_pathman;

@@ -256,6 +256,12 @@ get_part_range_by_oid(PG_FUNCTION_ARGS)
 	prel = get_pathman_relation_info(parent_relid);
 	shout_if_prel_is_invalid(parent_relid, prel, PT_RANGE);
 
+	/* Check type of 'dummy' (for correct output) */
+	if (getBaseType(get_fn_expr_argtype(fcinfo->flinfo, 1)) != getBaseType(prel->atttype))
+		elog(ERROR, "pg_typeof(dummy) should be %s",
+			 format_type_be(getBaseType(prel->atttype)));
+
+
 	ranges = PrelGetRangesArray(prel);
 
 	/* Look for the specified partition */
@@ -308,6 +314,12 @@ get_part_range_by_idx(PG_FUNCTION_ARGS)
 
 	prel = get_pathman_relation_info(parent_relid);
 	shout_if_prel_is_invalid(parent_relid, prel, PT_RANGE);
+
+	/* Check type of 'dummy' (for correct output) */
+	if (getBaseType(get_fn_expr_argtype(fcinfo->flinfo, 2)) != getBaseType(prel->atttype))
+		elog(ERROR, "pg_typeof(dummy) should be %s",
+			 format_type_be(getBaseType(prel->atttype)));
+
 
 	/* Now we have to deal with 'idx' */
 	if (partition_idx < -1)

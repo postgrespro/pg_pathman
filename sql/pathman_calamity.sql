@@ -235,5 +235,32 @@ SELECT count(*) FROM pathman_config WHERE partrel = 'calamity.to_be_disabled'::R
 SELECT count(*) FROM pathman_config_params WHERE partrel = 'calamity.to_be_disabled'::REGCLASS;
 
 
+/* check function get_part_range_by_idx() */
+CREATE TABLE calamity.test_range_idx(val INT4 NOT NULL);
+SELECT create_range_partitions('calamity.test_range_idx', 'val', 1, 10, 1);
+
+SELECT get_part_range(NULL, 1, NULL::INT4);							/* not ok */
+SELECT get_part_range('calamity.test_range_idx', NULL, NULL::INT4);	/* not ok */
+SELECT get_part_range('calamity.test_range_idx', 0, NULL::INT2);	/* not ok */
+SELECT get_part_range('calamity.test_range_idx', -2, NULL::INT4);	/* not ok */
+SELECT get_part_range('calamity.test_range_idx', 4, NULL::INT4);	/* not ok */
+SELECT get_part_range('calamity.test_range_idx', 0, NULL::INT4);	/* OK */
+
+DROP TABLE calamity.test_range_idx CASCADE;
+
+
+/* check function get_part_range_by_oid() */
+CREATE TABLE calamity.test_range_oid(val INT4 NOT NULL);
+SELECT create_range_partitions('calamity.test_range_oid', 'val', 1, 10, 1);
+
+SELECT get_part_range(NULL, NULL::INT4);							/* not ok */
+SELECT get_part_range('pg_class', NULL::INT4);						/* not ok */
+SELECT get_part_range('calamity.test_range_oid_1', NULL::INT2);		/* not ok */
+SELECT get_part_range('calamity.test_range_oid_1', NULL::INT4);		/* OK */
+
+DROP TABLE calamity.test_range_oid CASCADE;
+
+
+
 DROP SCHEMA calamity CASCADE;
 DROP EXTENSION pg_pathman;
