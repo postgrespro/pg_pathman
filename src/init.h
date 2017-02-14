@@ -102,6 +102,11 @@ extern PathmanInitState 	pg_pathman_init_state;
 #define CURRENT_LIB_VERSION			0x010300
 
 
+void *pathman_cache_search_relid(HTAB *cache_table,
+								 Oid relid,
+								 HASHACTION action,
+								 bool *found);
+
 /*
  * Save and restore PathmanInitState.
  */
