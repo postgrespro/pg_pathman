@@ -63,13 +63,11 @@ DROP FUNCTION @extschema@.get_attribute_type(REGCLASS, TEXT);
 DROP FUNCTION @extschema@.create_hash_partitions(REGCLASS, TEXT, INTEGER, BOOLEAN);
 DROP FUNCTION @extschema@.create_hash_partitions_internal(REGCLASS, TEXT, INTEGER);
 DROP FUNCTION @extschema@.build_range_condition(TEXT, ANYELEMENT, ANYELEMENT);
-DROP FUNCTION @extschema@.copy_foreign_keys(REGCLASS, REGCLASS);
-DROP FUNCTION @extschema@.invoke_on_partition_created_callback(REGCLASS, REGCLASS, REGPROCEDURE, ANYELEMENT, ANYELEMENT);
-DROP FUNCTION @extschema@.invoke_on_partition_created_callback(REGCLASS, REGCLASS, REGPROCEDURE);
 DROP FUNCTION @extschema@.split_range_partition(REGCLASS, ANYELEMENT, TEXT, TEXT, OUT ANYARRAY);
 DROP FUNCTION @extschema@.drop_range_partition(REGCLASS, BOOLEAN);
 DROP FUNCTION @extschema@.attach_range_partition(REGCLASS, REGCLASS, ANYELEMENT, ANYELEMENT);
 DROP FUNCTION @extschema@.detach_range_partition(REGCLASS);
+DROP FUNCTION @extschema@.merge_range_partitions_internal(REGCLASS, REGCLASS, REGCLASS, ANYELEMENT);
 
 /* ------------------------------------------------------------------------
  * Alter functions' modifiers
@@ -933,7 +931,7 @@ SET pg_pathman.enable_partitionfilter = off;
 
 
 CREATE OR REPLACE FUNCTION @extschema@.drop_range_partition_expand_next(
-	partition		REGCLASS)
+	partition_relid	REGCLASS)
 RETURNS VOID AS 'pg_pathman', 'drop_range_partition_expand_next'
 LANGUAGE C STRICT;
 
@@ -945,3 +943,14 @@ CREATE OR REPLACE FUNCTION @extschema@.build_range_condition(
 	end_value		ANYELEMENT)
 RETURNS TEXT AS 'pg_pathman', 'build_range_condition'
 LANGUAGE C;
+
+
+/* ------------------------------------------------------------------------
+ * Final words of wisdom
+ * ----------------------------------------------------------------------*/
+DO language plpgsql
+$$
+	BEGIN
+		RAISE WARNING 'Don''t forget to execute "SET pg_pathman.enable = t" to activate pg_pathman';
+	END
+$$;
