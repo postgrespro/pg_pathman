@@ -14,13 +14,19 @@ ALTER TABLE @extschema@.pathman_config
 ADD CHECK (@extschema@.validate_interval_value(partrel,
 											   attname,
 											   parttype,
-											   range_interval))
+											   range_interval));
 
-/* TODO! Write a convertation */
+/* Change type for init_callback attribute */
 ALTER TABLE @extschema@.pathman_config_params
-ALTER COLUMN init_callback TYPE TEXT DEFAULT NULL;
+ALTER COLUMN init_callback TYPE TEXT,
+ALTER COLUMN init_callback SET DEFAULT NULL;
 
-DROP FUNCTION validate_part_callback(REGPROC, BOOL);
+/* Set init_callback to NULL where it used to be 0 */
+UPDATE @extschema@.pathman_config_params
+SET init_callback = NULL
+WHERE init_callback = '-';
+
+DROP FUNCTION @extschema@.validate_part_callback(REGPROC, BOOL);
 
 CREATE OR REPLACE FUNCTION @extschema@.validate_part_callback(
 	callback		REGPROCEDURE,
@@ -32,7 +38,7 @@ ALTER TABLE @extschema@.pathman_config_params
 ADD CHECK (@extschema@.validate_part_callback(CASE WHEN init_callback IS NULL
 											  THEN 0::REGPROCEDURE
 											  ELSE init_callback::REGPROCEDURE
-											  END))
+											  END));
 
 /* ------------------------------------------------------------------------
  * Drop irrelevant objects
