@@ -16,17 +16,22 @@ ADD CHECK (@extschema@.validate_interval_value(partrel,
 											   parttype,
 											   range_interval));
 
+/*
+ * Drop check constraint to be able to update column type. We recreate it
+ * later and it will be slightly different
+ */
+DROP FUNCTION @extschema@.validate_part_callback(REGPROC, BOOL) CASCADE;
+
 /* Change type for init_callback attribute */
 ALTER TABLE @extschema@.pathman_config_params
 ALTER COLUMN init_callback TYPE TEXT,
+ALTER COLUMN init_callback DROP NOT NULL,
 ALTER COLUMN init_callback SET DEFAULT NULL;
 
 /* Set init_callback to NULL where it used to be 0 */
 UPDATE @extschema@.pathman_config_params
 SET init_callback = NULL
 WHERE init_callback = '-';
-
-DROP FUNCTION @extschema@.validate_part_callback(REGPROC, BOOL);
 
 CREATE OR REPLACE FUNCTION @extschema@.validate_part_callback(
 	callback		REGPROCEDURE,
