@@ -115,23 +115,22 @@ pathman_cache_search_relid(HTAB *cache_table,
 						   HASHACTION action,
 						   bool *found)
 {
-	switch (action)
-	{
-		case HASH_FIND:
-		case HASH_REMOVE:
-		case HASH_ENTER:
-			if (!cache_table)
+	/* Table is NULL, take some actions */
+	if (cache_table == NULL)
+		switch (action)
+		{
+			case HASH_FIND:
+			case HASH_ENTER:
+			case HASH_REMOVE:
 				elog(ERROR, "pg_pathman is not initialized yet");
-			break;
+				break;
 
-		/* Something strange has just happened */
-		default:
-			elog(ERROR, "unexpected action in function "
-				 CppAsString(pathman_cache_search_relid));
-			break;
-	}
-
-	AssertArg(cache_table);
+			/* Something strange has just happened */
+			default:
+				elog(ERROR, "unexpected action in function "
+					 CppAsString(pathman_cache_search_relid));
+				break;
+		}
 
 	/* Everything is fine */
 	return hash_search(cache_table, (const void *) &relid, action, found);
