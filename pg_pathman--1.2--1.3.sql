@@ -68,15 +68,71 @@ DROP FUNCTION @extschema@.drop_range_partition(REGCLASS, BOOLEAN);
 DROP FUNCTION @extschema@.attach_range_partition(REGCLASS, REGCLASS, ANYELEMENT, ANYELEMENT);
 DROP FUNCTION @extschema@.detach_range_partition(REGCLASS);
 DROP FUNCTION @extschema@.merge_range_partitions_internal(REGCLASS, REGCLASS, REGCLASS, ANYELEMENT);
+DROP FUNCTION @extschema@.copy_foreign_keys(REGCLASS, REGCLASS);
+DROP FUNCTION @extschema@.invoke_on_partition_created_callback(REGCLASS, REGCLASS, REGPROCEDURE, ANYELEMENT, ANYELEMENT);
+DROP FUNCTION @extschema@.invoke_on_partition_created_callback(REGCLASS, REGCLASS, REGPROCEDURE);
+
 
 /* ------------------------------------------------------------------------
  * Alter functions' modifiers
  * ----------------------------------------------------------------------*/
 ALTER FUNCTION @extschema@.pathman_set_param(REGCLASS, TEXT, ANYELEMENT) STRICT;
 
+
 /* ------------------------------------------------------------------------
  * (Re)create functions
  * ----------------------------------------------------------------------*/
+
+/*
+ * Invoke init_callback on RANGE partition.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.invoke_on_partition_created_callback(
+	parent_relid	REGCLASS,
+	partition_relid	REGCLASS,
+	init_callback	REGPROCEDURE,
+	start_value		ANYELEMENT,
+	end_value		ANYELEMENT)
+RETURNS VOID AS 'pg_pathman', 'invoke_on_partition_created_callback'
+LANGUAGE C;
+
+
+/*
+ * Invoke init_callback on HASH partition.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.invoke_on_partition_created_callback(
+	parent_relid	REGCLASS,
+	partition_relid	REGCLASS,
+	init_callback	REGPROCEDURE)
+RETURNS VOID AS 'pg_pathman', 'invoke_on_partition_created_callback'
+LANGUAGE C;
+
+
+/*
+ * Copy all of parent's foreign keys.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.copy_foreign_keys(
+	parent_relid	REGCLASS,
+	partition_relid	REGCLASS)
+RETURNS VOID AS
+$$
+DECLARE
+	rec		RECORD;
+
+BEGIN
+	PERFORM @extschema@.validate_relname(parent_relid);
+	PERFORM @extschema@.validate_relname(partition_relid);
+
+	FOR rec IN (SELECT oid as conid FROM pg_catalog.pg_constraint
+				WHERE conrelid = parent_relid AND contype = 'f')
+	LOOP
+		EXECUTE format('ALTER TABLE %s ADD %s',
+					   partition_relid::TEXT,
+					   pg_catalog.pg_get_constraintdef(rec.conid));
+	END LOOP;
+END
+$$ LANGUAGE plpgsql STRICT;
+
+
 CREATE OR REPLACE FUNCTION @extschema@.set_init_callback(
 	relation	REGCLASS,
 	callback	REGPROCEDURE DEFAULT 0)
@@ -943,6 +999,50 @@ CREATE OR REPLACE FUNCTION @extschema@.build_range_condition(
 	end_value		ANYELEMENT)
 RETURNS TEXT AS 'pg_pathman', 'build_range_condition'
 LANGUAGE C;
+
+
+/*
+ * Old school way to distribute rows to partitions.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.partition_data(
+	parent_relid	REGCLASS,
+	OUT p_total		BIGINT)
+AS
+$$
+BEGIN
+	p_total := 0;
+
+	/* Create partitions and copy rest of the data */
+	EXECUTE format('WITH part_data AS (DELETE FROM ONLY %1$s RETURNING *)
+					INSERT INTO %1$s SELECT * FROM part_data',
+				   parent_relid::TEXT);
+
+	/* Get number of inserted rows */
+	GET DIAGNOSTICS p_total = ROW_COUNT;
+	RETURN;
+END
+$$
+LANGUAGE plpgsql STRICT
+SET pg_pathman.enable_partitionfilter = on;
+
+/*
+ * Add a row describing the optional parameter to pathman_config_params.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.pathman_set_param(
+	relation	REGCLASS,
+	param		TEXT,
+	value		ANYELEMENT)
+RETURNS VOID AS
+$$
+BEGIN
+	EXECUTE format('INSERT INTO @extschema@.pathman_config_params
+					(partrel, %1$s) VALUES ($1, $2)
+					ON CONFLICT (partrel) DO UPDATE SET %1$s = $2', param)
+	USING relation, value;
+END
+$$
+LANGUAGE plpgsql;
+
 
 
 /* ------------------------------------------------------------------------
