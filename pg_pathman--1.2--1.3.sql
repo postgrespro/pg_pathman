@@ -63,7 +63,13 @@ DROP FUNCTION @extschema@.get_attribute_type(REGCLASS, TEXT);
 DROP FUNCTION @extschema@.create_hash_partitions(REGCLASS, TEXT, INTEGER, BOOLEAN);
 DROP FUNCTION @extschema@.create_hash_partitions_internal(REGCLASS, TEXT, INTEGER);
 DROP FUNCTION @extschema@.build_range_condition(TEXT, ANYELEMENT, ANYELEMENT);
-DROP FUNCTION @extschema@.get_part_range(REGCLASS, ANYELEMENT);
+DROP FUNCTION @extschema@.copy_foreign_keys(REGCLASS, REGCLASS);
+DROP FUNCTION @extschema@.invoke_on_partition_created_callback(REGCLASS, REGCLASS, REGPROCEDURE, ANYELEMENT, ANYELEMENT);
+DROP FUNCTION @extschema@.invoke_on_partition_created_callback(REGCLASS, REGCLASS, REGPROCEDURE);
+DROP FUNCTION @extschema@.split_range_partition(REGCLASS, ANYELEMENT, TEXT, TEXT, OUT ANYARRAY);
+DROP FUNCTION @extschema@.drop_range_partition(REGCLASS, BOOLEAN);
+DROP FUNCTION @extschema@.attach_range_partition(REGCLASS, REGCLASS, ANYELEMENT, ANYELEMENT);
+DROP FUNCTION @extschema@.detach_range_partition(REGCLASS);
 
 /* ------------------------------------------------------------------------
  * Alter functions' modifiers
@@ -441,7 +447,7 @@ LANGUAGE C;
 
 
 CREATE OR REPLACE FUNCTION @extschema@.split_range_partition(
-	partition		REGCLASS,
+	partition_relid	REGCLASS,
 	split_value		ANYELEMENT,
 	partition_name	TEXT DEFAULT NULL,
 	tablespace		TEXT DEFAULT NULL,
@@ -458,13 +464,13 @@ DECLARE
 	v_check_name	TEXT;
 
 BEGIN
-	v_parent = @extschema@.get_parent_of_partition(partition);
+	v_parent = @extschema@.get_parent_of_partition(partition_relid);
 
 	/* Acquire lock on parent */
 	PERFORM @extschema@.lock_partitioned_relation(v_parent);
 
 	/* Acquire data modification lock (prevent further modifications) */
-	PERFORM @extschema@.prevent_relation_modification(partition);
+	PERFORM @extschema@.prevent_relation_modification(partition_relid);
 
 	v_atttype = @extschema@.get_partition_key_type(v_parent);
 
@@ -475,13 +481,13 @@ BEGIN
 
 	/* Check if this is a RANGE partition */
 	IF v_part_type != 2 THEN
-		RAISE EXCEPTION '"%" is not a RANGE partition', partition::TEXT;
+		RAISE EXCEPTION '"%" is not a RANGE partition', partition_relid::TEXT;
 	END IF;
 
 	/* Get partition values range */
 	EXECUTE format('SELECT @extschema@.get_part_range($1, NULL::%s)',
 				   @extschema@.get_base_type(v_atttype)::TEXT)
-	USING partition
+	USING partition_relid
 	INTO p_range;
 
 	IF p_range IS NULL THEN
@@ -507,21 +513,21 @@ BEGIN
 												v_attname, split_value, p_range[2]);
 	EXECUTE format('WITH part_data AS (DELETE FROM %s WHERE %s RETURNING *)
 					INSERT INTO %s SELECT * FROM part_data',
-				   partition::TEXT,
+				   partition_relid::TEXT,
 				   v_cond,
 				   v_new_partition);
 
 	/* Alter original partition */
-	v_cond := @extschema@.build_range_condition(partition::regclass,
+	v_cond := @extschema@.build_range_condition(partition_relid::regclass,
 												v_attname, p_range[1], split_value);
-	v_check_name := @extschema@.build_check_constraint_name(partition, v_attname);
+	v_check_name := @extschema@.build_check_constraint_name(partition_relid, v_attname);
 
 	EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %s',
-				   partition::TEXT,
+				   partition_relid::TEXT,
 				   v_check_name);
 
 	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)',
-				   partition::TEXT,
+				   partition_relid::TEXT,
 				   v_check_name,
 				   v_cond);
 
@@ -747,7 +753,7 @@ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION @extschema@.attach_range_partition(
 	parent_relid	REGCLASS,
-	partition		REGCLASS,
+	partition_relid	REGCLASS,
 	start_value		ANYELEMENT,
 	end_value		ANYELEMENT)
 RETURNS TEXT AS
@@ -759,29 +765,29 @@ DECLARE
 
 BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
-	PERFORM @extschema@.validate_relname(partition);
+	PERFORM @extschema@.validate_relname(partition_relid);
 
 	/* Acquire lock on parent */
 	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 
 	/* Ignore temporary tables */
 	SELECT relpersistence FROM pg_catalog.pg_class
-	WHERE oid = partition INTO rel_persistence;
+	WHERE oid = partition_relid INTO rel_persistence;
 
 	IF rel_persistence = 't'::CHAR THEN
 		RAISE EXCEPTION 'temporary table "%" cannot be used as a partition',
-						partition::TEXT;
+						partition_relid::TEXT;
 	END IF;
 
 	/* check range overlap */
 	PERFORM @extschema@.check_range_available(parent_relid, start_value, end_value);
 
-	IF NOT @extschema@.validate_relations_equality(parent_relid, partition) THEN
+	IF NOT @extschema@.validate_relations_equality(parent_relid, partition_relid) THEN
 		RAISE EXCEPTION 'partition must have the exact same structure as parent';
 	END IF;
 
 	/* Set inheritance */
-	EXECUTE format('ALTER TABLE %s INHERIT %s', partition, parent_relid);
+	EXECUTE format('ALTER TABLE %s INHERIT %s', partition_relid, parent_relid);
 
 	v_attname := attname FROM @extschema@.pathman_config WHERE partrel = parent_relid;
 
@@ -791,9 +797,9 @@ BEGIN
 
 	/* Set check constraint */
 	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)',
-				   partition::TEXT,
-				   @extschema@.build_check_constraint_name(partition, v_attname),
-				   @extschema@.build_range_condition(partition,
+				   partition_relid::TEXT,
+				   @extschema@.build_check_constraint_name(partition_relid, v_attname),
+				   @extschema@.build_range_condition(partition_relid,
 													 v_attname,
 													 start_value,
 													 end_value));
@@ -807,7 +813,7 @@ BEGIN
 	INTO v_init_callback;
 
 	PERFORM @extschema@.invoke_on_partition_created_callback(parent_relid,
-															 partition,
+															 partition_relid,
 															 v_init_callback,
 															 start_value,
 															 end_value);
@@ -815,14 +821,14 @@ BEGIN
 	/* Invalidate cache */
 	PERFORM @extschema@.on_update_partitions(parent_relid);
 
-	RETURN partition;
+	RETURN partition_relid;
 END
 $$
 LANGUAGE plpgsql;
 
 
 CREATE OR REPLACE FUNCTION @extschema@.detach_range_partition(
-	partition		REGCLASS)
+	partition_relid	REGCLASS)
 RETURNS TEXT AS
 $$
 DECLARE
@@ -830,7 +836,7 @@ DECLARE
 	parent_relid	REGCLASS;
 
 BEGIN
-	parent_relid := @extschema@.get_parent_of_partition(partition);
+	parent_relid := @extschema@.get_parent_of_partition(partition_relid);
 
 	/* Acquire lock on parent */
 	PERFORM @extschema@.prevent_relation_modification(parent_relid);
@@ -845,21 +851,85 @@ BEGIN
 
 	/* Remove inheritance */
 	EXECUTE format('ALTER TABLE %s NO INHERIT %s',
-				   partition::TEXT,
+				   partition_relid::TEXT,
 				   parent_relid::TEXT);
 
 	/* Remove check constraint */
 	EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %s',
-				   partition::TEXT,
-				   @extschema@.build_check_constraint_name(partition, v_attname));
+				   partition_relid::TEXT,
+				   @extschema@.build_check_constraint_name(partition_relid, v_attname));
 
 	/* Invalidate cache */
 	PERFORM @extschema@.on_update_partitions(parent_relid);
 
-	RETURN partition;
+	RETURN partition_relid;
 END
 $$
 LANGUAGE plpgsql;
+
+
+CREATE OR REPLACE FUNCTION @extschema@.drop_range_partition(
+	partition_relid	REGCLASS,
+	delete_data		BOOLEAN DEFAULT TRUE)
+RETURNS TEXT AS
+$$
+DECLARE
+	parent_relid	REGCLASS;
+	part_name		TEXT;
+	v_relkind		CHAR;
+	v_rows			BIGINT;
+	v_part_type		INTEGER;
+
+BEGIN
+	parent_relid := @extschema@.get_parent_of_partition(partition_relid);
+	part_name := partition_relid::TEXT; /* save the name to be returned */
+
+	SELECT parttype
+	FROM @extschema@.pathman_config
+	WHERE partrel = parent_relid
+	INTO v_part_type;
+
+	/* Check if this is a RANGE partition */
+	IF v_part_type != 2 THEN
+		RAISE EXCEPTION '"%" is not a RANGE partition', partition_relid::TEXT;
+	END IF;
+
+	/* Acquire lock on parent */
+	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+
+	IF NOT delete_data THEN
+		EXECUTE format('INSERT INTO %s SELECT * FROM %s',
+						parent_relid::TEXT,
+						partition_relid::TEXT);
+		GET DIAGNOSTICS v_rows = ROW_COUNT;
+
+		/* Show number of copied rows */
+		RAISE NOTICE '% rows copied from %', v_rows, partition_relid::TEXT;
+	END IF;
+
+	SELECT relkind FROM pg_catalog.pg_class
+	WHERE oid = partition_relid
+	INTO v_relkind;
+
+	/*
+	 * Determine the kind of child relation. It can be either regular
+	 * table (r) or foreign table (f). Depending on relkind we use
+	 * DROP TABLE or DROP FOREIGN TABLE.
+	 */
+	IF v_relkind = 'f' THEN
+		EXECUTE format('DROP FOREIGN TABLE %s', partition_relid::TEXT);
+	ELSE
+		EXECUTE format('DROP TABLE %s', partition_relid::TEXT);
+	END IF;
+
+	/* Invalidate cache */
+	PERFORM @extschema@.on_update_partitions(parent_relid);
+
+	RETURN part_name;
+END
+$$
+LANGUAGE plpgsql
+SET pg_pathman.enable_partitionfilter = off;
 
 
 CREATE OR REPLACE FUNCTION @extschema@.drop_range_partition_expand_next(
@@ -874,11 +944,4 @@ CREATE OR REPLACE FUNCTION @extschema@.build_range_condition(
 	start_value		ANYELEMENT,
 	end_value		ANYELEMENT)
 RETURNS TEXT AS 'pg_pathman', 'build_range_condition'
-LANGUAGE C;
-
-
-CREATE OR REPLACE FUNCTION @extschema@.get_part_range(
-	partition		REGCLASS,
-	dummy			ANYELEMENT)
-RETURNS ANYARRAY AS 'pg_pathman', 'get_part_range_by_oid'
 LANGUAGE C;
