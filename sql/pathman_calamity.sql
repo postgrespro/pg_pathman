@@ -261,6 +261,44 @@ SELECT get_part_range('calamity.test_range_oid_1', NULL::INT4);		/* OK */
 DROP TABLE calamity.test_range_oid CASCADE;
 
 
+DROP SCHEMA calamity CASCADE;
+DROP EXTENSION pg_pathman;
+
+
+
+/*
+ * ------------------------------------------
+ *  Special tests (uninitialized pg_pathman)
+ * ------------------------------------------
+ */
+
+CREATE SCHEMA calamity;
+CREATE EXTENSION pg_pathman;
+
+
+/* check function pathman_cache_search_relid() */
+CREATE TABLE calamity.survivor(val INT NOT NULL);
+SELECT create_range_partitions('calamity.survivor', 'val', 1, 10, 2);
+
+DROP EXTENSION pg_pathman CASCADE;
+SET pg_pathman.enable = f; /* DON'T LOAD CONFIG */
+CREATE EXTENSION pg_pathman;
+SHOW pg_pathman.enable;
+
+SELECT add_to_pathman_config('calamity.survivor', 'val', '10');	/* not ok */
+SELECT * FROM pathman_partition_list;							/* not ok */
+SELECT get_part_range('calamity.survivor', 0, NULL::INT);		/* not ok */
+EXPLAIN (COSTS OFF) SELECT * FROM calamity.survivor;			/* OK */
+
+SET pg_pathman.enable = t; /* LOAD CONFIG */
+
+SELECT add_to_pathman_config('calamity.survivor', 'val', '10');	/* OK */
+SELECT * FROM pathman_partition_list;							/* OK */
+SELECT get_part_range('calamity.survivor', 0, NULL::INT);		/* OK */
+EXPLAIN (COSTS OFF) SELECT * FROM calamity.survivor;			/* OK */
+
+DROP TABLE calamity.survivor CASCADE;
+
 
 DROP SCHEMA calamity CASCADE;
 DROP EXTENSION pg_pathman;

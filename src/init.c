@@ -117,14 +117,8 @@ pathman_cache_search_relid(HTAB *cache_table,
 {
 	switch (action)
 	{
-		/* May return NULL */
 		case HASH_FIND:
 		case HASH_REMOVE:
-			if (!cache_table)
-				return NULL;
-			break;
-
-		/* Must return valid pointer */
 		case HASH_ENTER:
 			if (!cache_table)
 				elog(ERROR, "pg_pathman is not initialized yet");
@@ -137,7 +131,7 @@ pathman_cache_search_relid(HTAB *cache_table,
 			break;
 	}
 
-	Assert(cache_table);
+	AssertArg(cache_table);
 
 	/* Everything is fine */
 	return hash_search(cache_table, (const void *) &relid, action, found);
