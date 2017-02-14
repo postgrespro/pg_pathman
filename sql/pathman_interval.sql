@@ -5,10 +5,62 @@ CREATE SCHEMA test_interval;
 
 
 
-/* Range partitions for INTEGER type */
-CREATE TABLE test_interval.abc (id SERIAL);
+/* Range partitions for INT2 type */
+CREATE TABLE test_interval.abc (id INT2 NOT NULL);
 SELECT create_range_partitions('test_interval.abc', 'id', 0, 100, 2);
-SELECT set_interval('test_interval.abc', NULL::INTEGER);
+SELECT set_interval('test_interval.abc', NULL::INT2);
+
+/* pg_pathman shouldn't be able to create a new partition */
+INSERT INTO test_interval.abc VALUES (250);
+
+/* Set a trivial interval */
+SELECT set_interval('test_interval.abc', 0);
+
+/* Set a negative interval */
+SELECT set_interval('test_interval.abc', -100);
+
+/* We also shouldn't be able to set a trivial interval directly */
+UPDATE pathman_config SET range_interval = '0'
+WHERE partrel = 'test_interval.abc'::REGCLASS;
+
+/* Set a normal interval */
+SELECT set_interval('test_interval.abc', 1000);
+INSERT INTO test_interval.abc VALUES (250);
+SELECT * FROM pathman_config;
+
+DROP TABLE test_interval.abc CASCADE;
+
+
+/* Range partitions for INT4 type */
+CREATE TABLE test_interval.abc (id INT4 NOT NULL);
+SELECT create_range_partitions('test_interval.abc', 'id', 0, 100, 2);
+SELECT set_interval('test_interval.abc', NULL::INT4);
+
+/* pg_pathman shouldn't be able to create a new partition */
+INSERT INTO test_interval.abc VALUES (250);
+
+/* Set a trivial interval */
+SELECT set_interval('test_interval.abc', 0);
+
+/* Set a negative interval */
+SELECT set_interval('test_interval.abc', -100);
+
+/* We also shouldn't be able to set a trivial interval directly */
+UPDATE pathman_config SET range_interval = '0'
+WHERE partrel = 'test_interval.abc'::REGCLASS;
+
+/* Set a normal interval */
+SELECT set_interval('test_interval.abc', 1000);
+INSERT INTO test_interval.abc VALUES (250);
+SELECT * FROM pathman_config;
+
+DROP TABLE test_interval.abc CASCADE;
+
+
+/* Range partitions for INT8 type */
+CREATE TABLE test_interval.abc (id INT8 NOT NULL);
+SELECT create_range_partitions('test_interval.abc', 'id', 0, 100, 2);
+SELECT set_interval('test_interval.abc', NULL::INT8);
 
 /* pg_pathman shouldn't be able to create a new partition */
 INSERT INTO test_interval.abc VALUES (250);
