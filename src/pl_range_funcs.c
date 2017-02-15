@@ -269,7 +269,10 @@ get_part_range_by_oid(PG_FUNCTION_ARGS)
 		if (ranges[i].child_oid == partition_relid)
 		{
 			ArrayType  *arr;
-			Bound		elems[2] = { ranges[i].min, ranges[i].max };
+			Bound		elems[2];
+
+			elems[0] = ranges[i].min;
+			elems[1] = ranges[i].max;
 
 			arr = construct_infinitable_array(elems, 2,
 											  prel->atttype, prel->attlen,
