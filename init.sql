@@ -551,15 +551,64 @@ $$
 LANGUAGE plpgsql;
 
 /*
- * Drop triggers.
+ * Function for update triggers
+ */
+CREATE OR REPLACE FUNCTION @extschema@.update_trigger_func()
+RETURNS TRIGGER AS 'pg_pathman', 'update_trigger_func'
+LANGUAGE C;
+
+/*
+ * Creates an update trigger
+ */
+CREATE OR REPLACE FUNCTION @extschema@.create_update_triggers(
+	IN parent_relid	REGCLASS)
+RETURNS VOID AS
+$$
+DECLARE
+	trigger			TEXT := 'CREATE TRIGGER %s 
+							 BEFORE UPDATE ON %s 
+							 FOR EACH ROW EXECUTE PROCEDURE 
+							 @extschema@.update_trigger_func()';
+	triggername		TEXT;
+	rec				RECORD;
+
+BEGIN
+	triggername := @extschema@.build_update_trigger_name(parent_relid);
+
+	/* Create trigger on every partition */
+	FOR rec in (SELECT * FROM pg_catalog.pg_inherits
+				WHERE inhparent = parent_relid)
+	LOOP
+		EXECUTE format(trigger,
+					   triggername,
+					   rec.inhrelid::REGCLASS::TEXT);
+	END LOOP;
+END
+$$ LANGUAGE plpgsql;
+
+/*
+ * Drop triggers
  */
 CREATE OR REPLACE FUNCTION @extschema@.drop_triggers(
 	parent_relid	REGCLASS)
 RETURNS VOID AS
 $$
+DECLARE
+	triggername	TEXT;
+	rec			RECORD;
+
 BEGIN
-	EXECUTE format('DROP FUNCTION IF EXISTS %s() CASCADE',
-				   @extschema@.build_update_trigger_func_name(parent_relid));
+	triggername := @extschema@.build_update_trigger_name(parent_relid);
+
+	/* Drop trigger for each partition if exists */
+	FOR rec IN (SELECT pg_catalog.pg_inherits.* FROM pg_catalog.pg_inherits
+				JOIN pg_catalog.pg_trigger on inhrelid = tgrelid
+				WHERE inhparent = parent_relid AND tgname = triggername)
+	LOOP
+		EXECUTE format('DROP TRIGGER IF EXISTS %s ON %s',
+					   triggername,
+					   rec.inhrelid::REGCLASS::TEXT);
+	END LOOP;
 END
 $$ LANGUAGE plpgsql STRICT;
 
@@ -896,43 +945,3 @@ CREATE OR REPLACE FUNCTION @extschema@.invoke_on_partition_created_callback(
 	init_callback	REGPROCEDURE)
 RETURNS VOID AS 'pg_pathman', 'invoke_on_partition_created_callback'
 LANGUAGE C;
-
-
-/*
- * Function for update triggers
- */
-CREATE OR REPLACE FUNCTION @extschema@.update_trigger_func()
-RETURNS TRIGGER AS 'pg_pathman', 'update_trigger_func'
-LANGUAGE C;
-
-
-/*
- * Creates an update trigger
- */
-CREATE OR REPLACE FUNCTION @extschema@.create_update_trigger(
-	IN parent_relid	REGCLASS)
-RETURNS TEXT AS
-$$
-DECLARE
-	trigger			TEXT := 'CREATE TRIGGER %s 
-							 BEFORE UPDATE ON %s 
-							 FOR EACH ROW EXECUTE PROCEDURE 
-							 @extschema@.update_trigger_func()';
-	triggername		TEXT;
-	rec				RECORD;
-
-BEGIN
-	triggername := @extschema@.build_update_trigger_name(parent_relid);
-
-	/* Create trigger on every partition */
-	FOR rec in (SELECT * FROM pg_catalog.pg_inherits
-				WHERE inhparent = parent_relid)
-	LOOP
-		EXECUTE format(trigger,
-					   triggername,
-					   rec.inhrelid::REGCLASS::TEXT);
-	END LOOP;
-
-	RETURN 'update_trigger_func()';
-END
-$$ LANGUAGE plpgsql;

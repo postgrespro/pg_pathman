@@ -173,12 +173,12 @@ SET pg_pathman.enable_runtimemergeappend = OFF;
 VACUUM;
 
 /* update triggers test */
-SELECT pathman.create_hash_update_trigger('test.hash_rel');
+SELECT pathman.create_update_triggers('test.hash_rel');
 UPDATE test.hash_rel SET value = 7 WHERE value = 6;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 7;
 SELECT * FROM test.hash_rel WHERE value = 7;
 
-SELECT pathman.create_range_update_trigger('test.num_range_rel');
+SELECT pathman.create_update_triggers('test.num_range_rel');
 UPDATE test.num_range_rel SET id = 3001 WHERE id = 1;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id = 3001;
 SELECT * FROM test.num_range_rel WHERE id = 3001;
@@ -464,7 +464,7 @@ INSERT INTO test."TeSt" VALUES (1, 1);
 INSERT INTO test."TeSt" VALUES (2, 2);
 INSERT INTO test."TeSt" VALUES (3, 3);
 SELECT * FROM test."TeSt";
-SELECT pathman.create_hash_update_trigger('test."TeSt"');
+SELECT pathman.create_update_triggers('test."TeSt"');
 UPDATE test."TeSt" SET a = 1;
 SELECT * FROM test."TeSt";
 SELECT * FROM test."TeSt" WHERE a = 1;

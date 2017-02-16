@@ -88,7 +88,6 @@ ORDER BY range_min::INT, range_max::INT;
 (14 rows)
 
 SELECT drop_partitions('domains.dom_table');
-NOTICE:  function domains.dom_table_upd_trig_func() does not exist, skipping
 NOTICE:  49 rows copied from domains.dom_table_1
 NOTICE:  100 rows copied from domains.dom_table_3
 NOTICE:  100 rows copied from domains.dom_table_4

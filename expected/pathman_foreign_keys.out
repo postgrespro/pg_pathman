@@ -20,7 +20,6 @@ INSERT INTO fkeys.test_fkey VALUES(1, 'wrong');
 ERROR:  insert or update on table "test_fkey_1" violates foreign key constraint "test_fkey_1_comment_fkey"
 INSERT INTO fkeys.test_fkey VALUES(1, 'test');
 SELECT drop_partitions('fkeys.test_fkey');
-NOTICE:  function fkeys.test_fkey_upd_trig_func() does not exist, skipping
 NOTICE:  101 rows copied from fkeys.test_fkey_1
 NOTICE:  100 rows copied from fkeys.test_fkey_2
 NOTICE:  100 rows copied from fkeys.test_fkey_3
@@ -46,7 +45,6 @@ INSERT INTO fkeys.test_fkey VALUES(1, 'wrong');
 ERROR:  insert or update on table "test_fkey_0" violates foreign key constraint "test_fkey_0_comment_fkey"
 INSERT INTO fkeys.test_fkey VALUES(1, 'test');
 SELECT drop_partitions('fkeys.test_fkey');
-NOTICE:  function fkeys.test_fkey_upd_trig_func() does not exist, skipping
 NOTICE:  100 rows copied from fkeys.test_fkey_0
 NOTICE:  90 rows copied from fkeys.test_fkey_1
 NOTICE:  90 rows copied from fkeys.test_fkey_2
