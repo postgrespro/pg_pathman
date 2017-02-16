@@ -5,6 +5,9 @@
  *
  * Copyright (c) 2016, Postgres Professional
  *
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1994, Regents of the University of California
+ *
  * ------------------------------------------------------------------------
  */
 
@@ -22,6 +25,7 @@
 #include <math.h>
 
 
+/* Common code */
 void
 set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel, Index rti)
 {
@@ -51,6 +55,7 @@ set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel, Index rti)
 		Assert(childrel->rows > 0);
 
 		parent_rows += childrel->rows;
+
 #if PG_VERSION_NUM >= 90600
 		parent_size += childrel->reltarget->width * childrel->rows;
 #else
@@ -66,27 +71,20 @@ set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel, Index rti)
 #else
 	rel->width = rint(parent_size / parent_rows);
 #endif
+
 	rel->tuples = parent_rows;
 }
 
-void
-adjust_targetlist_compat(PlannerInfo *root, RelOptInfo *dest,
-						 RelOptInfo *rel, AppendRelInfo *appinfo)
-{
-#if PG_VERSION_NUM >= 90600
-	dest->reltarget->exprs = (List *)
-			adjust_appendrel_attrs(root,
-								   (Node *) rel->reltarget->exprs,
-								   appinfo);
-#else
-	dest->reltargetlist = (List *)
-			adjust_appendrel_attrs(root,
-								   (Node *) rel->reltargetlist,
-								   appinfo);
-#endif
-}
+
+/*
+ * ----------
+ *  Variants
+ * ----------
+ */
 
 #if PG_VERSION_NUM >= 90600
+
+
 /*
  * make_result
  *	  Build a Result plan node
@@ -107,6 +105,7 @@ make_result(List *tlist,
 
 	return node;
 }
+
 
 /*
  * If this relation could possibly be scanned from within a worker, then set
@@ -256,6 +255,7 @@ set_rel_consider_parallel(PlannerInfo *root, RelOptInfo *rel,
 	rel->consider_parallel = true;
 }
 
+
 /*
  * create_plain_partial_paths
  *	  Build partial access paths for parallel scan of a plain relation
@@ -319,6 +319,7 @@ create_plain_partial_paths(PlannerInfo *root, RelOptInfo *rel)
 
 
 #else /* PG_VERSION_NUM >= 90500 */
+
 
 /*
  * set_dummy_rel_pathlist

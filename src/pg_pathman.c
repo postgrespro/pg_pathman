@@ -341,7 +341,7 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 	root->append_rel_list = lappend(root->append_rel_list, appinfo);
 
 	/* Adjust target list for this child */
-	adjust_targetlist_compat(root, child_rel, parent_rel, appinfo);
+	adjust_rel_targetlist_compat(root, child_rel, parent_rel, appinfo);
 
 	/*
 	 * Copy restrictions. If it's not the parent table, copy only
