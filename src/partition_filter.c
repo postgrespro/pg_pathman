@@ -132,8 +132,12 @@ init_partition_filter_static_data(void)
 
 
 /*
- * Initialize ResultPartsStorage (hash table etc).
+ * ---------------------------
+ *  Partition Storage (cache)
+ * ---------------------------
  */
+
+/* Initialize ResultPartsStorage (hash table etc) */
 void
 init_result_parts_storage(ResultPartsStorage *parts_storage,
 						  EState *estate,
@@ -171,9 +175,7 @@ init_result_parts_storage(ResultPartsStorage *parts_storage,
 	parts_storage->heap_close_lock_mode = NoLock;
 }
 
-/*
- * Free ResultPartsStorage (close relations etc).
- */
+/* Free ResultPartsStorage (close relations etc) */
 void
 fini_result_parts_storage(ResultPartsStorage *parts_storage, bool close_rels)
 {
@@ -223,9 +225,7 @@ fini_result_parts_storage(ResultPartsStorage *parts_storage, bool close_rels)
 	hash_destroy(parts_storage->result_rels_table);
 }
 
-/*
- * Find a ResultRelInfo for the partition using ResultPartsStorage.
- */
+/* Find a ResultRelInfo for the partition using ResultPartsStorage */
 ResultRelInfoHolder *
 scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 {
@@ -248,8 +248,6 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 					   *parent_rte;
 		Index			child_rte_idx;
 		ResultRelInfo  *child_result_rel_info;
-		TupleDesc		child_tupdesc,
-						parent_tupdesc;
 
 		/* Lock partition and check if it exists */
 		LockRelationOid(partid, parts_storage->head_open_lock_mode);
@@ -313,24 +311,8 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 		rri_holder->partid = partid;
 		rri_holder->result_rel_info = child_result_rel_info;
 
-		/* Use fake 'tdtypeid' in order to fool convert_tuples_by_name() */
-		child_tupdesc = CreateTupleDescCopy(RelationGetDescr(child_rel));
-		child_tupdesc->tdtypeid = InvalidOid;
-
-		parent_tupdesc = CreateTupleDescCopy(RelationGetDescr(parent_rel));
-		parent_tupdesc->tdtypeid = InvalidOid;
-
 		/* Generate tuple transformation map and some other stuff */
-		rri_holder->tuple_map = convert_tuples_by_name(parent_tupdesc,
-													   child_tupdesc,
-													   "could not convert row type");
-
-		/* If map is one-to-one, free unused TupleDescs */
-		if (!rri_holder->tuple_map)
-		{
-			FreeTupleDesc(child_tupdesc);
-			FreeTupleDesc(parent_tupdesc);
-		}
+		rri_holder->tuple_map = build_part_tuple_map(parent_rel, child_rel);
 
 		/* Call on_new_rri_holder_callback() if needed */
 		if (parts_storage->on_new_rri_holder_callback)
@@ -345,6 +327,44 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 
 	return rri_holder;
 }
+
+
+/* Build tuple conversion map (e.g. parent has a dropped column) */
+TupleConversionMap *
+build_part_tuple_map(Relation parent_rel, Relation child_rel)
+{
+	TupleConversionMap *tuple_map;
+	TupleDesc			child_tupdesc,
+						parent_tupdesc;
+
+	/* Use fake 'tdtypeid' in order to fool convert_tuples_by_name() */
+	child_tupdesc = CreateTupleDescCopy(RelationGetDescr(child_rel));
+	child_tupdesc->tdtypeid = InvalidOid;
+
+	parent_tupdesc = CreateTupleDescCopy(RelationGetDescr(parent_rel));
+	parent_tupdesc->tdtypeid = InvalidOid;
+
+	/* Generate tuple transformation map and some other stuff */
+	tuple_map = convert_tuples_by_name(parent_tupdesc,
+									   child_tupdesc,
+									   "could not convert row type for partition");
+
+	/* If map is one-to-one, free unused TupleDescs */
+	if (!tuple_map)
+	{
+		FreeTupleDesc(child_tupdesc);
+		FreeTupleDesc(parent_tupdesc);
+	}
+
+	return tuple_map;
+}
+
+
+/*
+ * -----------------------------------
+ *  Partition search helper functions
+ * -----------------------------------
+ */
 
 /*
  * Find matching partitions for 'value' using PartRelationInfo.
@@ -366,11 +386,11 @@ find_partitions_for_value(Datum value, Oid value_type,
 	temp_const.location = -1;
 
 	/* Fill const with value ... */
-	temp_const.constvalue = value;
-	temp_const.constisnull = false;
+	temp_const.constvalue	= value;
+	temp_const.consttype	= value_type;
+	temp_const.constisnull	= false;
 
 	/* ... and some other important data */
-	CopyToTempConst(consttype,   atttype);
 	CopyToTempConst(consttypmod, atttypmod);
 	CopyToTempConst(constcollid, attcollid);
 	CopyToTempConst(constlen,    attlen);
@@ -379,9 +399,59 @@ find_partitions_for_value(Datum value, Oid value_type,
 	/* We use 0 since varno doesn't matter for Const */
 	InitWalkerContext(&wcxt, 0, prel, NULL, true);
 	ranges = walk_expr_tree((Expr *) &temp_const, &wcxt)->rangeset;
+
 	return get_partition_oids(ranges, nparts, prel, false);
 }
 
+/*
+ * Smart wrapper for scan_result_parts_storage().
+ */
+ResultRelInfoHolder *
+select_partition_for_insert(Datum value, Oid value_type,
+							const PartRelationInfo *prel,
+							ResultPartsStorage *parts_storage,
+							EState *estate)
+{
+	MemoryContext			old_cxt;
+	ResultRelInfoHolder	   *rri_holder;
+	Oid						selected_partid = InvalidOid;
+	Oid					   *parts;
+	int						nparts;
+
+	/* Search for matching partitions */
+	parts = find_partitions_for_value(value, value_type, prel, &nparts);
+
+	if (nparts > 1)
+		elog(ERROR, ERR_PART_ATTR_MULTIPLE);
+	else if (nparts == 0)
+	{
+		 selected_partid = create_partitions_for_value(PrelParentRelid(prel),
+													   value, prel->atttype);
+
+		 /* get_pathman_relation_info() will refresh this entry */
+		 invalidate_pathman_relation_info(PrelParentRelid(prel), NULL);
+	}
+	else selected_partid = parts[0];
+
+	/* Replace parent table with a suitable partition */
+	old_cxt = MemoryContextSwitchTo(estate->es_query_cxt);
+	rri_holder = scan_result_parts_storage(selected_partid, parts_storage);
+	MemoryContextSwitchTo(old_cxt);
+
+	/* Could not find suitable partition */
+	if (rri_holder == NULL)
+		elog(ERROR, ERR_PART_ATTR_NO_PART,
+			 datum_to_cstring(value, prel->atttype));
+
+	return rri_holder;
+}
+
+
+/*
+ * --------------------------------
+ *  PartitionFilter implementation
+ * --------------------------------
+ */
 
 Plan *
 make_partition_filter(Plan *subplan, Oid parent_relid,
@@ -516,8 +586,8 @@ partition_filter_exec(CustomScanState *node)
 		old_cxt = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 
 		/* Search for a matching partition */
-		rri_holder = select_partition_for_insert(prel, &state->result_parts,
-												 value, prel->atttype, estate);
+		rri_holder = select_partition_for_insert(value, prel->atttype, prel,
+												 &state->result_parts, estate);
 
 		/* Switch back and clean up per-tuple context */
 		MemoryContextSwitchTo(old_cxt);
@@ -582,49 +652,6 @@ partition_filter_explain(CustomScanState *node, List *ancestors, ExplainState *e
 	/* Nothing to do here now */
 }
 
-
-/*
- * Smart wrapper for scan_result_parts_storage().
- */
-ResultRelInfoHolder *
-select_partition_for_insert(const PartRelationInfo *prel,
-							ResultPartsStorage *parts_storage,
-							Datum value, Oid value_type,
-							EState *estate)
-{
-	MemoryContext			old_cxt;
-	ResultRelInfoHolder	   *rri_holder;
-	Oid						selected_partid = InvalidOid;
-	Oid					   *parts;
-	int						nparts;
-
-	/* Search for matching partitions */
-	parts = find_partitions_for_value(value, value_type, prel, &nparts);
-
-	if (nparts > 1)
-		elog(ERROR, ERR_PART_ATTR_MULTIPLE);
-	else if (nparts == 0)
-	{
-		 selected_partid = create_partitions_for_value(PrelParentRelid(prel),
-													   value, prel->atttype);
-
-		 /* get_pathman_relation_info() will refresh this entry */
-		 invalidate_pathman_relation_info(PrelParentRelid(prel), NULL);
-	}
-	else selected_partid = parts[0];
-
-	/* Replace parent table with a suitable partition */
-	old_cxt = MemoryContextSwitchTo(estate->es_query_cxt);
-	rri_holder = scan_result_parts_storage(selected_partid, parts_storage);
-	MemoryContextSwitchTo(old_cxt);
-
-	/* Could not find suitable partition */
-	if (rri_holder == NULL)
-		elog(ERROR, ERR_PART_ATTR_NO_PART,
-			 datum_to_cstring(value, prel->atttype));
-
-	return rri_holder;
-}
 
 
 /*
@@ -958,9 +985,7 @@ fix_returning_list_mutator(Node *node, void *state)
  * -------------------------------------
  */
 
-/*
- * Append RangeTblEntry 'rte' to estate->es_range_table.
- */
+/* Append RangeTblEntry 'rte' to estate->es_range_table */
 static Index
 append_rte_to_estate(EState *estate, RangeTblEntry *rte)
 {
@@ -978,9 +1003,7 @@ append_rte_to_estate(EState *estate, RangeTblEntry *rte)
 	return list_length(estate->es_range_table);
 }
 
-/*
- * Append ResultRelInfo 'rri' to estate->es_result_relations.
- */
+/* Append ResultRelInfo 'rri' to estate->es_result_relations */
 static int
 append_rri_to_estate(EState *estate, ResultRelInfo *rri)
 {
@@ -1021,15 +1044,11 @@ append_rri_to_estate(EState *estate, ResultRelInfo *rri)
  * --------------------------------------
  */
 
-/*
- * Used by fetch_estate_mod_data() to find estate_mod_data.
- */
+/* Used by fetch_estate_mod_data() to find estate_mod_data */
 static void
 pf_memcxt_callback(void *arg) { elog(DEBUG1, "EState is destroyed"); }
 
-/*
- * Fetch (or create) a estate_mod_data structure we've hidden inside es_query_cxt.
- */
+/* Fetch (or create) a estate_mod_data structure we've hidden inside es_query_cxt */
 static estate_mod_data *
 fetch_estate_mod_data(EState *estate)
 {

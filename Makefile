@@ -25,6 +25,7 @@ REGRESS = pathman_basic \
 		  pathman_cte \
 		  pathman_bgw \
 		  pathman_inserts \
+		  pathman_updates \
 		  pathman_domains \
 		  pathman_interval \
 		  pathman_callbacks \

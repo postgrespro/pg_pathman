@@ -553,9 +553,9 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 			elog(ERROR, ERR_PART_ATTR_NULL);
 
 		/* Search for a matching partition */
-		rri_holder = select_partition_for_insert(prel, &parts_storage,
-												 values[prel->attnum - 1],
-												 prel->atttype, estate);
+		rri_holder = select_partition_for_insert(values[prel->attnum - 1],
+												 prel->atttype, prel,
+												 &parts_storage, estate);
 		child_result_rel = rri_holder->result_rel_info;
 		estate->es_result_relation_info = child_result_rel;
 
