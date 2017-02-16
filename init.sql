@@ -896,3 +896,43 @@ CREATE OR REPLACE FUNCTION @extschema@.invoke_on_partition_created_callback(
 	init_callback	REGPROCEDURE)
 RETURNS VOID AS 'pg_pathman', 'invoke_on_partition_created_callback'
 LANGUAGE C;
+
+
+/*
+ * Function for update triggers
+ */
+CREATE OR REPLACE FUNCTION @extschema@.update_trigger_func()
+RETURNS TRIGGER AS 'pg_pathman', 'update_trigger_func'
+LANGUAGE C;
+
+
+/*
+ * Creates an update trigger
+ */
+CREATE OR REPLACE FUNCTION @extschema@.create_update_trigger(
+	IN parent_relid	REGCLASS)
+RETURNS TEXT AS
+$$
+DECLARE
+	trigger			TEXT := 'CREATE TRIGGER %s 
+							 BEFORE UPDATE ON %s 
+							 FOR EACH ROW EXECUTE PROCEDURE 
+							 @extschema@.update_trigger_func()';
+	triggername		TEXT;
+	rec				RECORD;
+
+BEGIN
+	triggername := @extschema@.build_update_trigger_name(parent_relid);
+
+	/* Create trigger on every partition */
+	FOR rec in (SELECT * FROM pg_catalog.pg_inherits
+				WHERE inhparent = parent_relid)
+	LOOP
+		EXECUTE format(trigger,
+					   triggername,
+					   rec.inhrelid::REGCLASS::TEXT);
+	END LOOP;
+
+	RETURN 'update_trigger_func()';
+END
+$$ LANGUAGE plpgsql;

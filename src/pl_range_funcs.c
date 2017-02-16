@@ -31,6 +31,13 @@
 #include "utils/syscache.h"
 
 
+/* TODO */
+#include "commands/trigger.h"
+#include "access/htup_details.h"
+#include "access/tupconvert.h"
+#include "partition_filter.h"
+
+
 static char *deparse_constraint(Oid relid, Node *expr);
 static ArrayType *construct_infinitable_array(Bound *elems,
 											  int nelems,
@@ -54,6 +61,8 @@ static bool interval_is_trivial(Oid atttype,
 								Datum interval,
 								Oid interval_type);
 
+static Oid get_partition_for_key(const PartRelationInfo *prel, Datum key);
+
 /* Function declarations */
 
 PG_FUNCTION_INFO_V1( create_single_range_partition_pl );
@@ -68,6 +77,8 @@ PG_FUNCTION_INFO_V1( build_sequence_name );
 PG_FUNCTION_INFO_V1( merge_range_partitions );
 PG_FUNCTION_INFO_V1( drop_range_partition_expand_next );
 PG_FUNCTION_INFO_V1( validate_interval_value );
+
+PG_FUNCTION_INFO_V1( update_trigger_func );
 
 
 /*
@@ -1006,4 +1017,111 @@ drop_table_by_oid(Oid relid)
 	n->concurrent	= false;
 
 	RemoveRelations(n);
+}
+
+/*
+ * Update trigger
+ */
+Datum
+update_trigger_func(PG_FUNCTION_ARGS)
+{
+	const PartRelationInfo *prel;
+	PartParentSearch parent_search;
+	Oid				parent;
+	TriggerData	   *trigdata = (TriggerData *) fcinfo->context;
+	char		   *key_name;
+	Datum			key;
+	bool			isnull;
+	TupleConversionMap *conversion_map;
+
+	TupleDesc		source_tupdesc;
+	HeapTuple		source_tuple;
+	Oid				source_relid;
+	AttrNumber		source_key;
+
+	Relation		target_rel;
+	TupleDesc		target_tupdesc;
+	HeapTuple		target_tuple;
+	Oid				target_relid;
+
+	/* This function can only be invoked as a trigger */
+	if (!CALLED_AS_TRIGGER(fcinfo))
+		elog(ERROR, "Function invoked not in a trigger context");
+
+	/* tuple to return to executor */
+	if (!TRIGGER_FIRED_BY_UPDATE(trigdata->tg_event))
+		elog(ERROR, "This function must only be used as UPDATE trigger");
+
+	source_relid = trigdata->tg_relation->rd_id;
+	source_tuple = trigdata->tg_newtuple;
+	source_tupdesc = trigdata->tg_relation->rd_att;
+
+	parent = get_parent_of_partition(source_relid, &parent_search);
+	if (parent_search != PPS_ENTRY_PART_PARENT)
+		elog(ERROR, "relation \"%s\" is not a partition",
+			 get_rel_name_or_relid(source_relid));
+
+	prel = get_pathman_relation_info(parent);
+	shout_if_prel_is_invalid(parent, prel, PT_INDIFFERENT);
+
+	/*
+	 * Find partitioning key attribute of source partition. Keep in mind that
+	 * there could be dropped columns in parent relation or partition and so
+	 * key attribute may have different number
+	 */
+	key_name = get_attname(parent, prel->attnum);
+	source_key = get_attnum(source_relid, key_name);
+	key = heap_getattr(source_tuple, source_key, source_tupdesc, &isnull);
+
+	/* Find partition it should go into */
+	target_relid = get_partition_for_key(prel, key);
+
+	/* If target partition is the same then do nothing */
+	if (target_relid == source_relid)
+		return PointerGetDatum(source_tuple);
+
+	target_rel = heap_open(target_relid, RowExclusiveLock);
+	target_tupdesc = target_rel->rd_att;
+
+	/*
+	 * Else if it's a different partition then build a TupleConversionMap
+	 * between original partition and new one. And then do a convertation
+	 */
+	conversion_map = convert_tuples_by_name(source_tupdesc,
+					   						target_tupdesc,
+											"Failed to convert tuple");
+	target_tuple = do_convert_tuple(source_tuple, conversion_map);
+
+	/* Delete old tuple from original partition */
+	simple_heap_delete(trigdata->tg_relation, &trigdata->tg_trigtuple->t_self);
+
+	/* Insert tuple into new partition */
+	simple_heap_insert(target_rel, target_tuple);
+
+	heap_close(target_rel, RowExclusiveLock);
+
+	PG_RETURN_VOID();
+}
+
+/*
+ * Returns Oid of partition corresponding to partitioning key value. Throws
+ * an error if no partition found
+ */
+static Oid
+get_partition_for_key(const PartRelationInfo *prel, Datum key)
+{
+	Oid	   *parts;
+	int		nparts;
+
+	/* Search for matching partitions */
+	parts = find_partitions_for_value(key, prel->atttype, prel, &nparts);
+
+	if (nparts > 1)
+		elog(ERROR, ERR_PART_ATTR_MULTIPLE);
+	else if (nparts == 0)
+		elog(ERROR,
+			 "There is not partition to fit partition key \"%s\"",
+			 datum_to_cstring(key, prel->atttype));
+	else
+		return parts[0];
 }

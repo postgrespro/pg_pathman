@@ -992,6 +992,7 @@ END
 $$
 LANGUAGE plpgsql;
 
+
 /*
  * Creates an update trigger
  */
@@ -1000,79 +1001,15 @@ CREATE OR REPLACE FUNCTION @extschema@.create_range_update_trigger(
 RETURNS TEXT AS
 $$
 DECLARE
-	func			TEXT := 'CREATE OR REPLACE FUNCTION %1$s()
-							 RETURNS TRIGGER AS
-							 $body$
-							 DECLARE
-								old_oid		Oid;
-								new_oid		Oid;
-
-							 BEGIN
-								old_oid := TG_RELID;
-								new_oid := @extschema@.find_or_create_range_partition(
-												''%2$s''::regclass, NEW.%3$s);
-
-								IF old_oid = new_oid THEN
-									RETURN NEW;
-								END IF;
-
-								EXECUTE format(''DELETE FROM %%s WHERE %5$s'',
-											   old_oid::regclass::text)
-								USING %6$s;
-
-								EXECUTE format(''INSERT INTO %%s VALUES (%7$s)'',
-											   new_oid::regclass::text)
-								USING %8$s;
-
-								RETURN NULL;
-							 END $body$
-							 LANGUAGE plpgsql';
-
-	trigger			TEXT := 'CREATE TRIGGER %s ' ||
-							'BEFORE UPDATE ON %s ' ||
-							'FOR EACH ROW EXECUTE PROCEDURE %s()';
-
+	trigger			TEXT := 'CREATE TRIGGER %s 
+							 BEFORE UPDATE ON %s 
+							 FOR EACH ROW EXECUTE PROCEDURE 
+							 @extschema@.update_trigger_func()';
 	triggername		TEXT;
-	funcname		TEXT;
-	att_names		TEXT;
-	old_fields		TEXT;
-	new_fields		TEXT;
-	att_val_fmt		TEXT;
-	att_fmt			TEXT;
-	attr			TEXT;
 	rec				RECORD;
 
 BEGIN
-	attr := attname FROM @extschema@.pathman_config WHERE partrel = parent_relid;
-
-	IF attr IS NULL THEN
-		RAISE EXCEPTION 'table "%" is not partitioned', parent_relid::TEXT;
-	END IF;
-
-	SELECT string_agg(attname, ', '),
-		   string_agg('OLD.' || attname, ', '),
-		   string_agg('NEW.' || attname, ', '),
-		   string_agg('CASE WHEN NOT $' || attnum || ' IS NULL THEN ' ||
-							attname || ' = $' || attnum || ' ' ||
-					  'ELSE ' ||
-							attname || ' IS NULL END',
-					  ' AND '),
-		   string_agg('$' || attnum, ', ')
-	FROM pg_attribute
-	WHERE attrelid::REGCLASS = parent_relid AND attnum > 0
-	INTO att_names,
-		 old_fields,
-		 new_fields,
-		 att_val_fmt,
-		 att_fmt;
-
-	/* Build trigger & trigger function's names */
-	funcname := @extschema@.build_update_trigger_func_name(parent_relid);
 	triggername := @extschema@.build_update_trigger_name(parent_relid);
-
-	/* Create function for trigger */
-	EXECUTE format(func, funcname, parent_relid, attr, 0, att_val_fmt,
-				   old_fields, att_fmt, new_fields);
 
 	/* Create trigger on every partition */
 	FOR rec in (SELECT * FROM pg_catalog.pg_inherits
@@ -1080,11 +1017,10 @@ BEGIN
 	LOOP
 		EXECUTE format(trigger,
 					   triggername,
-					   rec.inhrelid::REGCLASS::TEXT,
-					   funcname);
+					   rec.inhrelid::REGCLASS::TEXT);
 	END LOOP;
 
-	RETURN funcname;
+	RETURN 'update_trigger_func()';
 END
 $$ LANGUAGE plpgsql;
 
