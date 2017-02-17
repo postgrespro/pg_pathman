@@ -113,7 +113,7 @@ build_update_trigger_name_internal(Oid relid)
 	if (!check_relation_exists(relid))
 		elog(ERROR, "Invalid relation %u", relid);
 
-	return (char *) quote_identifier(psprintf("%s_upd_trig", get_rel_name(relid)));
+	return (char *) psprintf("%s_upd_trig", get_rel_name(relid));
 }
 
 /*

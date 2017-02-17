@@ -38,6 +38,7 @@
 
 static Oid get_partition_for_key(const PartRelationInfo *prel, Datum key);
 static void create_single_update_trigger_internal(Oid relid,
+												  const char *trigname,
 												  const char *attname);
 static bool update_trigger_exists(Oid relid, char *trigname);
 
@@ -540,7 +541,7 @@ build_update_trigger_name(PG_FUNCTION_ARGS)
 	Oid			relid = PG_GETARG_OID(0);
 	const char *result; /* trigger's name can't be qualified */
 
-	result = build_update_trigger_name_internal(relid);
+	result = quote_identifier(build_update_trigger_name_internal(relid));
 
 	PG_RETURN_TEXT_P(cstring_to_text(result));
 }
@@ -1066,7 +1067,7 @@ create_update_triggers(PG_FUNCTION_ARGS)
 			  errmsg("trigger \"%s\" for relation \"%s\" already exists",
 					 trigname, get_rel_name_or_relid(children[i]))));
 
-		create_single_update_trigger_internal(children[i], attname);
+		create_single_update_trigger_internal(children[i], trigname, attname);
 	}
 
 	PG_RETURN_VOID();
@@ -1115,7 +1116,8 @@ create_single_update_trigger(PG_FUNCTION_ARGS)
 	Oid					partition = PG_GETARG_OID(0);
 	Oid					parent;
 	PartParentSearch	parent_search;
-	char			   *attname;
+	char			   *trigname,
+					   *attname;
 
 	/* Get parent's Oid */
 	parent = get_parent_of_partition(partition, &parent_search);
@@ -1126,15 +1128,19 @@ create_single_update_trigger(PG_FUNCTION_ARGS)
 	/* Determine partitioning key name */
 	prel = get_pathman_relation_info(parent);
 	shout_if_prel_is_invalid(partition, prel, PT_INDIFFERENT);
+
+	trigname = build_update_trigger_name_internal(parent);
 	attname = get_attname(prel->key, prel->attnum);
 
-	create_single_update_trigger_internal(partition, attname);
+	create_single_update_trigger_internal(partition, trigname, attname);
 
 	PG_RETURN_VOID();
 }
 
 static void
-create_single_update_trigger_internal(Oid relid, const char *attname)
+create_single_update_trigger_internal(Oid relid,
+									  const char *trigname,
+									  const char *attname)
 {
 	CreateTrigStmt	   *stmt;
 	List			   *func;
@@ -1143,7 +1149,7 @@ create_single_update_trigger_internal(Oid relid, const char *attname)
 					  makeString("update_trigger_func"));
 
 	stmt = makeNode(CreateTrigStmt);
-	stmt->trigname = build_update_trigger_name_internal(relid);
+	stmt->trigname = (char *) trigname;
 	stmt->relation = makeRangeVarFromRelid(relid);
 	stmt->funcname = func;
 	stmt->args = NIL;
@@ -1152,9 +1158,9 @@ create_single_update_trigger_internal(Oid relid, const char *attname)
 	stmt->events = TRIGGER_TYPE_UPDATE;
 	stmt->columns = list_make1(makeString((char *) attname));
 	stmt->whenClause = NULL;
-	stmt->isconstraint  = false;
-	stmt->deferrable	 = false;
-	stmt->initdeferred  = false;
+	stmt->isconstraint = false;
+	stmt->deferrable = false;
+	stmt->initdeferred = false;
 	stmt->constrrel = NULL;
 
 	(void) CreateTrigger(stmt, NULL, InvalidOid, InvalidOid,

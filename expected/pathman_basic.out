@@ -1476,7 +1476,7 @@ SELECT pathman.replace_hash_partition('test.hash_rel_0', 'test.hash_rel_extern')
 Indexes:
     "hash_rel_0_pkey" PRIMARY KEY, btree (id)
 Triggers:
-    hash_rel_upd_trig BEFORE UPDATE ON test.hash_rel_0 FOR EACH ROW EXECUTE PROCEDURE pathman.update_trigger_func()
+    hash_rel_upd_trig BEFORE UPDATE OF value ON test.hash_rel_0 FOR EACH ROW EXECUTE PROCEDURE pathman.update_trigger_func()
 
 \d+ test.hash_rel_extern
                                              Table "test.hash_rel_extern"
