@@ -103,7 +103,18 @@ check_security_policy_internal(Oid relid, Oid role)
 	return true;
 }
 
+/*
+ * Create an update trigger name
+ */
+char *
+build_update_trigger_name_internal(Oid relid)
+{
+	/* Check that relation exists */
+	if (!check_relation_exists(relid))
+		elog(ERROR, "Invalid relation %u", relid);
 
+	return (char *) quote_identifier(psprintf("%s_upd_trig", get_rel_name(relid)));
+}
 
 /*
  * Return pg_pathman schema's Oid or InvalidOid if that's not possible.
@@ -255,6 +266,23 @@ get_rel_persistence(Oid relid)
 }
 #endif
 
+RangeVar *
+makeRangeVarFromRelid(Oid relid)
+{
+	char *relname = get_rel_name(relid);
+	char *namespace = get_namespace_name(get_rel_namespace(relid));
+
+	return makeRangeVar(namespace, relname, -1);
+}
+
+/*
+ * Extracted common check.
+ */
+bool
+check_relation_exists(Oid relid)
+{
+	return get_rel_type_id(relid) != InvalidOid;
+}
 
 
 /*

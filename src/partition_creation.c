@@ -77,8 +77,6 @@ static Constraint *make_constraint_common(char *name, Node *raw_expr);
 static Value make_string_value_struct(char *str);
 static Value make_int_value_struct(int int_val);
 
-static RangeVar *makeRangeVarFromRelid(Oid relid);
-
 
 /*
  * ---------------------------------------
@@ -1400,15 +1398,6 @@ make_int_value_struct(int int_val)
 	val.val.ival = int_val;
 
 	return val;
-}
-
-static RangeVar *
-makeRangeVarFromRelid(Oid relid)
-{
-	char *relname = get_rel_name(relid);
-	char *namespace = get_namespace_name(get_rel_namespace(relid));
-
-	return makeRangeVar(namespace, relname, -1);
 }
 
 

@@ -21,12 +21,14 @@
 #include "access/htup_details.h"
 #include "access/xact.h"
 #include "catalog/indexing.h"
+#include "catalog/pg_trigger.h"
 #include "catalog/pg_type.h"
 #include "commands/tablespace.h"
 #include "commands/trigger.h"
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "utils/builtins.h"
+#include "utils/fmgroids.h"
 #include "utils/inval.h"
 #include "utils/jsonb.h"
 #include "utils/snapmgr.h"
@@ -35,6 +37,9 @@
 
 
 static Oid get_partition_for_key(const PartRelationInfo *prel, Datum key);
+static void create_single_update_trigger_internal(Oid relid,
+												  const char *attname);
+static bool update_trigger_exists(Oid relid, char *trigname);
 
 
 /* Function declarations */
@@ -74,7 +79,9 @@ PG_FUNCTION_INFO_V1( check_security_policy );
 PG_FUNCTION_INFO_V1( debug_capture );
 PG_FUNCTION_INFO_V1( get_pathman_lib_version );
 
+PG_FUNCTION_INFO_V1( create_update_triggers );
 PG_FUNCTION_INFO_V1( update_trigger_func );
+PG_FUNCTION_INFO_V1( create_single_update_trigger );
 
 
 /*
@@ -95,16 +102,6 @@ typedef struct
 static void on_partitions_created_internal(Oid partitioned_table, bool add_callbacks);
 static void on_partitions_updated_internal(Oid partitioned_table, bool add_callbacks);
 static void on_partitions_removed_internal(Oid partitioned_table, bool add_callbacks);
-
-
-/*
- * Extracted common check.
- */
-static bool
-check_relation_exists(Oid relid)
-{
-	return get_rel_type_id(relid) != InvalidOid;
-}
 
 
 /*
@@ -543,11 +540,7 @@ build_update_trigger_name(PG_FUNCTION_ARGS)
 	Oid			relid = PG_GETARG_OID(0);
 	const char *result; /* trigger's name can't be qualified */
 
-	/* Check that relation exists */
-	if (!check_relation_exists(relid))
-		elog(ERROR, "Invalid relation %u", relid);
-
-	result = quote_identifier(psprintf("%s_upd_trig", get_rel_name(relid)));
+	result = build_update_trigger_name_internal(relid);
 
 	PG_RETURN_TEXT_P(cstring_to_text(result));
 }
@@ -1020,6 +1013,7 @@ update_trigger_func(PG_FUNCTION_ARGS)
 	PG_RETURN_VOID();
 }
 
+
 /*
  * Returns Oid of partition corresponding to partitioning key value. Throws
  * an error if no partition found
@@ -1041,4 +1035,128 @@ get_partition_for_key(const PartRelationInfo *prel, Datum key)
 			 datum_to_cstring(key, prel->atttype));
 	else
 		return parts[0];
+}
+
+/*
+ * Create UPDATE triggers for all partitions
+ */
+Datum
+create_update_triggers(PG_FUNCTION_ARGS)
+{
+	const PartRelationInfo *prel;
+	Oid			parent = PG_GETARG_OID(0);
+	Oid		   *children;
+	char	   *attname,
+			   *trigname;
+	int			i;
+
+	prel = get_pathman_relation_info(parent);
+	shout_if_prel_is_invalid(parent, prel, PT_INDIFFERENT);
+
+	attname = get_attname(prel->key, prel->attnum);
+	children = PrelGetChildrenArray(prel);
+	trigname = build_update_trigger_name_internal(parent);
+
+	/* Create triggers for each partition */
+	for (i = 0; i < PrelChildrenCount(prel); i++)
+	{
+		if (update_trigger_exists(children[i], trigname))
+			ereport(ERROR,
+					(errcode(ERRCODE_DUPLICATE_OBJECT),
+			  errmsg("trigger \"%s\" for relation \"%s\" already exists",
+					 trigname, get_rel_name_or_relid(children[i]))));
+
+		create_single_update_trigger_internal(children[i], attname);
+	}
+
+	PG_RETURN_VOID();
+}
+
+static bool
+update_trigger_exists(Oid relid, char *trigname)
+{
+	bool		res = false;
+	Relation	tgrel;
+	SysScanDesc tgscan;
+	ScanKeyData key;
+	HeapTuple	tuple;
+
+	tgrel = heap_open(TriggerRelationId, RowExclusiveLock);
+
+	ScanKeyInit(&key,
+				Anum_pg_trigger_tgrelid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(relid));
+	tgscan = systable_beginscan(tgrel, TriggerRelidNameIndexId, true,
+								NULL, 1, &key);
+	while (HeapTupleIsValid(tuple = systable_getnext(tgscan)))
+	{
+		Form_pg_trigger pg_trigger = (Form_pg_trigger) GETSTRUCT(tuple);
+
+		if (namestrcmp(&(pg_trigger->tgname), trigname) == 0)
+		{
+			res = true;
+			break;
+		}
+	}
+	systable_endscan(tgscan);
+	heap_close(tgrel, RowExclusiveLock);
+
+	return res;
+}
+
+/*
+ * Create an UPDATE trigger for partition
+ */
+Datum
+create_single_update_trigger(PG_FUNCTION_ARGS)
+{
+	const PartRelationInfo *prel;
+	Oid					partition = PG_GETARG_OID(0);
+	Oid					parent;
+	PartParentSearch	parent_search;
+	char			   *attname;
+
+	/* Get parent's Oid */
+	parent = get_parent_of_partition(partition, &parent_search);
+	if (parent_search != PPS_ENTRY_PART_PARENT)
+		elog(ERROR, "\"%s\" is not a partition",
+			 get_rel_name_or_relid(partition));
+
+	/* Determine partitioning key name */
+	prel = get_pathman_relation_info(parent);
+	shout_if_prel_is_invalid(partition, prel, PT_INDIFFERENT);
+	attname = get_attname(prel->key, prel->attnum);
+
+	create_single_update_trigger_internal(partition, attname);
+
+	PG_RETURN_VOID();
+}
+
+static void
+create_single_update_trigger_internal(Oid relid, const char *attname)
+{
+	CreateTrigStmt	   *stmt;
+	List			   *func;
+
+	func = list_make2(makeString(get_namespace_name(get_pathman_schema())),
+					  makeString("update_trigger_func"));
+
+	stmt = makeNode(CreateTrigStmt);
+	stmt->trigname = build_update_trigger_name_internal(relid);
+	stmt->relation = makeRangeVarFromRelid(relid);
+	stmt->funcname = func;
+	stmt->args = NIL;
+	stmt->row = true;
+	stmt->timing = TRIGGER_TYPE_BEFORE;
+	stmt->events = TRIGGER_TYPE_UPDATE;
+	stmt->columns = list_make1(makeString((char *) attname));
+	stmt->whenClause = NULL;
+	stmt->isconstraint  = false;
+	stmt->deferrable	 = false;
+	stmt->initdeferred  = false;
+	stmt->constrrel = NULL;
+
+	(void) CreateTrigger(stmt, NULL, InvalidOid, InvalidOid,
+						 InvalidOid, InvalidOid, false);
 }

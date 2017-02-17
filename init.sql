@@ -560,31 +560,9 @@ LANGUAGE C;
 /*
  * Creates an update trigger
  */
-CREATE OR REPLACE FUNCTION @extschema@.create_update_triggers(
-	IN parent_relid	REGCLASS)
-RETURNS VOID AS
-$$
-DECLARE
-	trigger			TEXT := 'CREATE TRIGGER %s 
-							 BEFORE UPDATE ON %s 
-							 FOR EACH ROW EXECUTE PROCEDURE 
-							 @extschema@.update_trigger_func()';
-	triggername		TEXT;
-	rec				RECORD;
-
-BEGIN
-	triggername := @extschema@.build_update_trigger_name(parent_relid);
-
-	/* Create trigger on every partition */
-	FOR rec in (SELECT * FROM pg_catalog.pg_inherits
-				WHERE inhparent = parent_relid)
-	LOOP
-		EXECUTE format(trigger,
-					   triggername,
-					   rec.inhrelid::REGCLASS::TEXT);
-	END LOOP;
-END
-$$ LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION @extschema@.create_update_triggers(parent_relid REGCLASS)
+RETURNS VOID AS 'pg_pathman', 'create_update_triggers'
+LANGUAGE C;
 
 /*
  * Drop triggers
