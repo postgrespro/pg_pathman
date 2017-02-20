@@ -267,8 +267,10 @@ Set partition creation callback to be invoked for each attached or created parti
 /* RANGE-partitioned table abc (child abc_4) */
 {
     "parent":    "abc",
+    "parent_schema": "public",
     "parttype":  "2",
     "partition": "abc_4",
+    "partition_schema": "public",
     "range_max": "401",
     "range_min": "301"
 }
@@ -276,8 +278,10 @@ Set partition creation callback to be invoked for each attached or created parti
 /* HASH-partitioned table abc (child abc_0) */
 {
     "parent":    "abc",
+    "parent_schema": "public",
     "parttype":  "1",
     "partition": "abc_0"
+    "partition_schema": "public"
 }
 ```
 
