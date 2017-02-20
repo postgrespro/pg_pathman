@@ -976,7 +976,7 @@ validate_range_opexpr(const Expr *expr,
 		return false;
 
 	/* Fail fast if it's not an OpExpr node */
-	if(!IsA(expr, OpExpr))
+	if (!IsA(expr, OpExpr))
 		return false;
 
 	/* Perform cast */

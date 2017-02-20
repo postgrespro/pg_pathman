@@ -251,7 +251,7 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 
 		/* Lock partition and check if it exists */
 		LockRelationOid(partid, parts_storage->head_open_lock_mode);
-		if(!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(partid)))
+		if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(partid)))
 		{
 			UnlockRelationOid(partid, parts_storage->head_open_lock_mode);
 			return NULL;
