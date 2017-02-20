@@ -398,28 +398,32 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 			case PT_RANGE:
 				{
 					RangeEntry *re;
-					Datum		rmin,
-								rmax;
 
 					re = &PrelGetRangesArray(prel)[usercxt->child_number];
 
+					values[Anum_pathman_pl_partition - 1] = re->child_oid;
+
 					/* Lower bound text */
-					rmin = !IsInfinite(&re->min) ?
-								CStringGetTextDatum(
+					if (!IsInfinite(&re->min))
+					{
+						Datum rmin = CStringGetTextDatum(
 										datum_to_cstring(BoundGetValue(&re->min),
-														 prel->atttype)) :
-								CStringGetTextDatum("NULL");
+														 prel->atttype));
+
+						values[Anum_pathman_pl_range_min - 1] = rmin;
+					}
+					else isnull[Anum_pathman_pl_range_min - 1] = true;
 
 					/* Upper bound text */
-					rmax = !IsInfinite(&re->max) ?
-								CStringGetTextDatum(
+					if (!IsInfinite(&re->max))
+					{
+						Datum rmax = CStringGetTextDatum(
 										datum_to_cstring(BoundGetValue(&re->max),
-														 prel->atttype)) :
-								CStringGetTextDatum("NULL");
+														 prel->atttype));
 
-					values[Anum_pathman_pl_partition - 1] = re->child_oid;
-					values[Anum_pathman_pl_range_min - 1] = rmin;
-					values[Anum_pathman_pl_range_max - 1] = rmax;
+						values[Anum_pathman_pl_range_max - 1] = rmax;
+					}
+					else isnull[Anum_pathman_pl_range_max - 1] = true;
 				}
 				break;
 
