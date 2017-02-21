@@ -935,6 +935,12 @@ BEGIN
 	ON params.partrel = parent_relid
 	INTO v_init_callback;
 
+	/* If update trigger is enabled then create one for this partition */
+	if @extschema@.is_update_trigger_enabled(parent_relid) THEN
+		PERFORM @extschema@.create_single_update_trigger(parent_relid, partition_relid);
+	END IF;
+
+	/* Invoke an initialization callback */
 	PERFORM @extschema@.invoke_on_partition_created_callback(parent_relid,
 															 partition_relid,
 															 v_init_callback,
@@ -983,6 +989,11 @@ BEGIN
 	EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %s',
 				   partition_relid::TEXT,
 				   @extschema@.build_check_constraint_name(partition_relid, v_attname));
+
+	/* Remove update trigger */
+	EXECUTE format('DROP TRIGGER IF EXISTS %s ON %s',
+				   @extschema@.build_update_trigger_name(parent_relid),
+				   partition_relid::TEXT);
 
 	/* Invalidate cache */
 	PERFORM @extschema@.on_update_partitions(parent_relid);

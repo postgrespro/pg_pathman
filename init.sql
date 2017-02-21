@@ -562,7 +562,17 @@ LANGUAGE C;
  */
 CREATE OR REPLACE FUNCTION @extschema@.create_update_triggers(parent_relid REGCLASS)
 RETURNS VOID AS 'pg_pathman', 'create_update_triggers'
-LANGUAGE C;
+LANGUAGE C STRICT;
+
+CREATE OR REPLACE FUNCTION @extschema@.create_single_update_trigger(
+	parent_relid	REGCLASS,
+	partition_relid	REGCLASS)
+RETURNS VOID AS 'pg_pathman', 'create_single_update_trigger'
+LANGUAGE C STRICT;
+
+CREATE OR REPLACE FUNCTION @extschema@.is_update_trigger_enabled(parent_relid REGCLASS)
+RETURNS BOOL AS 'pg_pathman', 'is_update_trigger_enabled'
+LANGUAGE C STRICT;
 
 /*
  * Drop triggers
@@ -580,13 +590,22 @@ BEGIN
 
 	/* Drop trigger for each partition if exists */
 	FOR rec IN (SELECT pg_catalog.pg_inherits.* FROM pg_catalog.pg_inherits
-				JOIN pg_catalog.pg_trigger on inhrelid = tgrelid
+				JOIN pg_catalog.pg_trigger ON inhrelid = tgrelid
 				WHERE inhparent = parent_relid AND tgname = triggername)
 	LOOP
 		EXECUTE format('DROP TRIGGER IF EXISTS %s ON %s',
 					   triggername,
 					   rec.inhrelid::REGCLASS::TEXT);
 	END LOOP;
+
+	/* Drop trigger on parent */
+	IF EXISTS (SELECT * FROM pg_catalog.pg_trigger
+			   WHERE tgname = triggername AND tgrelid = parent_relid)
+	THEN
+		EXECUTE format('DROP TRIGGER IF EXISTS %s ON %s',
+					   triggername,
+					   parent_relid::TEXT);
+	END IF;
 END
 $$ LANGUAGE plpgsql STRICT;
 

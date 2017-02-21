@@ -77,6 +77,12 @@ Node * build_raw_hash_check_tree(char *attname,
 
 void drop_check_constraint(Oid relid, AttrNumber attnum);
 
+/* Update triggers */
+void create_single_update_trigger_internal(Oid relid,
+										   const char *trigname,
+										   const char *attname);
+bool is_update_trigger_enabled_internal(Oid parent);
+
 
 /* Partitioning callback type */
 typedef enum

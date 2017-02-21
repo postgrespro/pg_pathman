@@ -471,6 +471,7 @@ SELECT * FROM test."TeSt" WHERE a = 1;
 EXPLAIN (COSTS OFF) SELECT * FROM test."TeSt" WHERE a = 1;
 SELECT pathman.drop_partitions('test."TeSt"');
 SELECT * FROM test."TeSt";
+DROP TABLE test."TeSt" CASCADE;
 
 CREATE TABLE test."RangeRel" (
 	id	SERIAL PRIMARY KEY,

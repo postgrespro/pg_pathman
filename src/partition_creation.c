@@ -22,12 +22,14 @@
 #include "catalog/heap.h"
 #include "catalog/pg_authid.h"
 #include "catalog/pg_proc.h"
+#include "catalog/pg_trigger.h"
 #include "catalog/pg_type.h"
 #include "catalog/toasting.h"
 #include "commands/event_trigger.h"
 #include "commands/sequence.h"
 #include "commands/tablecmds.h"
 #include "commands/tablespace.h"
+#include "commands/trigger.h"
 #include "miscadmin.h"
 #include "parser/parse_func.h"
 #include "parser/parse_relation.h"
@@ -52,9 +54,11 @@ static Oid spawn_partitions_val(Oid parent_relid,
 								Datum value,
 								Oid value_type);
 
-static void create_single_partition_common(Oid partition_relid,
+static void create_single_partition_common(Oid parent_relid,
+										   Oid partition_relid,
 										   Constraint *check_constraint,
-										   init_callback_params *callback_params);
+										   init_callback_params *callback_params,
+										   const char *attname);
 
 static Oid create_single_partition_internal(Oid parent_relid,
 											RangeVar *partition_rv,
@@ -76,6 +80,8 @@ static Constraint *make_constraint_common(char *name, Node *raw_expr);
 
 static Value make_string_value_struct(char *str);
 static Value make_int_value_struct(int int_val);
+
+static bool update_trigger_exists(Oid relid, char *trigname);
 
 
 /*
@@ -130,9 +136,11 @@ create_single_range_partition_internal(Oid parent_relid,
 								*start_value, *end_value, value_type);
 
 	/* Add constraint & execute init_callback */
-	create_single_partition_common(partition_relid,
+	create_single_partition_common(parent_relid,
+								   partition_relid,
 								   check_constr,
-								   &callback_params);
+								   &callback_params,
+								   partitioned_column);
 
 	/* Return the Oid */
 	return partition_relid;
@@ -183,9 +191,11 @@ create_single_hash_partition_internal(Oid parent_relid,
 							   parent_relid, partition_relid);
 
 	/* Add constraint & execute init_callback */
-	create_single_partition_common(partition_relid,
+	create_single_partition_common(parent_relid,
+								   partition_relid,
 								   check_constr,
-								   &callback_params);
+								   &callback_params,
+								   partitioned_column);
 
 	/* Return the Oid */
 	return partition_relid;
@@ -193,11 +203,13 @@ create_single_hash_partition_internal(Oid parent_relid,
 
 /* Add constraint & execute init_callback */
 void
-create_single_partition_common(Oid partition_relid,
+create_single_partition_common(Oid parent_relid,
+							   Oid partition_relid,
 							   Constraint *check_constraint,
-							   init_callback_params *callback_params)
+							   init_callback_params *callback_params,
+							   const char *attname)
 {
-	Relation child_relation;
+	Relation	child_relation;
 
 	/* Open the relation and add new check constraint & fkeys */
 	child_relation = heap_open(partition_relid, AccessExclusiveLock);
@@ -207,6 +219,20 @@ create_single_partition_common(Oid partition_relid,
 	heap_close(child_relation, NoLock);
 
 	/* Make constraint visible */
+	CommandCounterIncrement();
+
+	/* Create trigger */
+	if (is_update_trigger_enabled_internal(parent_relid))
+	{
+		char	   *trigname;
+
+		trigname = build_update_trigger_name_internal(parent_relid);
+		create_single_update_trigger_internal(partition_relid,
+											  trigname,
+											  attname);
+	}
+	
+	/* Make trigger visible */
 	CommandCounterIncrement();
 
 	/* Finally invoke 'init_callback' */
@@ -1648,4 +1674,83 @@ text_to_regprocedure(text *proc_signature)
 	result = to_regprocedure(&fcinfo);
 
 	return DatumGetObjectId(result);
+}
+
+/*
+ * Create trigger for partition
+ */
+void
+create_single_update_trigger_internal(Oid relid,
+									  const char *trigname,
+									  const char *attname)
+{
+	CreateTrigStmt	   *stmt;
+	List			   *func;
+
+	func = list_make2(makeString(get_namespace_name(get_pathman_schema())),
+					  makeString("update_trigger_func"));
+
+	stmt = makeNode(CreateTrigStmt);
+	stmt->trigname = (char *) trigname;
+	stmt->relation = makeRangeVarFromRelid(relid);
+	stmt->funcname = func;
+	stmt->args = NIL;
+	stmt->row = true;
+	stmt->timing = TRIGGER_TYPE_BEFORE;
+	stmt->events = TRIGGER_TYPE_UPDATE;
+	stmt->columns = list_make1(makeString((char *) attname));
+	stmt->whenClause = NULL;
+	stmt->isconstraint = false;
+	stmt->deferrable = false;
+	stmt->initdeferred = false;
+	stmt->constrrel = NULL;
+
+	(void) CreateTrigger(stmt, NULL, InvalidOid, InvalidOid,
+						 InvalidOid, InvalidOid, false);
+}
+
+/*
+ * Check if update trigger is enabled. Basicly it returns true if update
+ * trigger exists for parent table
+ */
+bool
+is_update_trigger_enabled_internal(Oid parent)
+{
+	char	   *trigname;
+
+	trigname = build_update_trigger_name_internal(parent);
+	return update_trigger_exists(parent, trigname);
+}
+
+static bool
+update_trigger_exists(Oid relid, char *trigname)
+{
+	bool		res = false;
+	Relation	tgrel;
+	SysScanDesc tgscan;
+	ScanKeyData key;
+	HeapTuple	tuple;
+
+	tgrel = heap_open(TriggerRelationId, RowExclusiveLock);
+
+	ScanKeyInit(&key,
+				Anum_pg_trigger_tgrelid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(relid));
+	tgscan = systable_beginscan(tgrel, TriggerRelidNameIndexId, true,
+								NULL, 1, &key);
+	while (HeapTupleIsValid(tuple = systable_getnext(tgscan)))
+	{
+		Form_pg_trigger pg_trigger = (Form_pg_trigger) GETSTRUCT(tuple);
+
+		if (namestrcmp(&(pg_trigger->tgname), trigname) == 0)
+		{
+			res = true;
+			break;
+		}
+	}
+	systable_endscan(tgscan);
+	heap_close(tgrel, RowExclusiveLock);
+
+	return res;
 }
