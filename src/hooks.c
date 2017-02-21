@@ -8,14 +8,15 @@
  * ------------------------------------------------------------------------
  */
 
-#include "utility_stmt_hooking.h"
+#include "compat/pg_compat.h"
+
 #include "hooks.h"
 #include "init.h"
 #include "partition_filter.h"
-#include "pg_compat.h"
 #include "planner_tree_modification.h"
 #include "runtimeappend.h"
 #include "runtime_merge_append.h"
+#include "utility_stmt_hooking.h"
 #include "utils.h"
 #include "xact_handling.h"
 

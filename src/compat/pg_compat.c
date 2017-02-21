@@ -11,7 +11,7 @@
  * ------------------------------------------------------------------------
  */
 
-#include "pg_compat.h"
+#include "compat/pg_compat.h"
 
 #include "catalog/pg_proc.h"
 #include "foreign/fdwapi.h"

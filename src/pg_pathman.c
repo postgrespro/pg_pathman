@@ -9,7 +9,7 @@
  * ------------------------------------------------------------------------
  */
 
-#include "pg_compat.h"
+#include "compat/pg_compat.h"
 
 #include "init.h"
 #include "hooks.h"
