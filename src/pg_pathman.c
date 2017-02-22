@@ -9,7 +9,7 @@
  * ------------------------------------------------------------------------
  */
 
-#include "pg_compat.h"
+#include "compat/pg_compat.h"
 
 #include "init.h"
 #include "hooks.h"
@@ -341,7 +341,7 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 	root->append_rel_list = lappend(root->append_rel_list, appinfo);
 
 	/* Adjust target list for this child */
-	adjust_targetlist_compat(root, child_rel, parent_rel, appinfo);
+	adjust_rel_targetlist_compat(root, child_rel, parent_rel, appinfo);
 
 	/*
 	 * Copy restrictions. If it's not the parent table, copy only
@@ -456,44 +456,43 @@ select_range_partitions(const Datum value,
 						Oid collid,
 						WrapperNode *result)
 {
-#define cmp_call(value1, value2) \
-	DatumGetInt32(FunctionCall2Coll(cmp_func, collid, value1, value2))
-
-	const RangeEntry   *current_re;
-	bool				lossy = false,
-						is_less,
-						is_greater;
+	bool	lossy = false,
+			is_less,
+			is_greater;
 
 #ifdef USE_ASSERT_CHECKING
-	bool				found = false;
-	int					counter = 0;
+	bool	found = false;
+	int		counter = 0;
 #endif
 
-	int					i,
-						startidx = 0,
-						endidx = nranges - 1,
-						cmp_min,
-						cmp_max;
+	int		startidx = 0,
+			endidx = nranges - 1,
+			cmp_min,
+			cmp_max,
+			i;
+
+	Bound	value_bound = MakeBound(value); /* convert value to Bound */
+
 
 	/* Initial value (no missing partitions found) */
 	result->found_gap = false;
 
-	/* Check boundaries */
+	/* Check 'ranges' array */
 	if (nranges == 0)
 	{
 		result->rangeset = NIL;
 		return;
 	}
+
+	/* Check corner cases */
 	else
 	{
 		Assert(ranges);
 		Assert(cmp_func);
 
-		/* Corner cases */
-		cmp_min = IsInfinite(&ranges[startidx].min) ?
-					1 : cmp_call(value, BoundGetValue(&ranges[startidx].min));
-		cmp_max = IsInfinite(&ranges[endidx].max) ?
-					-1 : cmp_call(value, BoundGetValue(&ranges[endidx].max));
+		/* Compare 'value' to absolute MIN and MAX bounds */
+		cmp_min = cmp_bounds(cmp_func, collid, &value_bound, &ranges[startidx].min);
+		cmp_max = cmp_bounds(cmp_func, collid, &value_bound, &ranges[endidx].max);
 
 		if ((cmp_min <= 0 && strategy == BTLessStrategyNumber) ||
 			(cmp_min < 0 && (strategy == BTLessEqualStrategyNumber ||
@@ -533,17 +532,16 @@ select_range_partitions(const Datum value,
 	/* Binary search */
 	while (true)
 	{
+		Assert(ranges);
 		Assert(cmp_func);
 
+		/* Calculate new pivot */
 		i = startidx + (endidx - startidx) / 2;
 		Assert(i >= 0 && i < nranges);
 
-		current_re = &ranges[i];
-
-		cmp_min = IsInfinite(&current_re->min) ?
-					1 : cmp_call(value, BoundGetValue(&current_re->min));
-		cmp_max = IsInfinite(&current_re->max) ?
-					-1 : cmp_call(value, BoundGetValue(&current_re->max));
+		/* Compare 'value' to current MIN and MAX bounds */
+		cmp_min = cmp_bounds(cmp_func, collid, &value_bound, &ranges[i].min);
+		cmp_max = cmp_bounds(cmp_func, collid, &value_bound, &ranges[i].max);
 
 		is_less = (cmp_min < 0 || (cmp_min == 0 && strategy == BTLessStrategyNumber));
 		is_greater = (cmp_max > 0 || (cmp_max >= 0 && strategy != BTLessStrategyNumber));
@@ -556,13 +554,14 @@ select_range_partitions(const Datum value,
 				lossy = false;
 			else
 				lossy = true;
+
 #ifdef USE_ASSERT_CHECKING
 			found = true;
 #endif
 			break;
 		}
 
-		/* If we still haven't found partition then it doesn't exist */
+		/* Indices have met, looks like there's no partition */
 		if (startidx >= endidx)
 		{
 			result->rangeset = NIL;
@@ -579,6 +578,7 @@ select_range_partitions(const Datum value,
 		Assert(++counter < 100);
 	}
 
+	/* Should've been found by now */
 	Assert(found);
 
 	/* Filter partitions */
@@ -638,8 +638,8 @@ wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue)
 
 	*alwaysTrue = false;
 	/*
-	 * TODO: use faster algorithm using knowledge that we enumerate indexes
-	 * sequntially.
+	 * TODO: use faster algorithm using knowledge
+	 * that we enumerate indexes sequntially.
 	 */
 	found = irange_list_find(wrap->rangeset, index, &lossy);
 
@@ -670,16 +670,19 @@ wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue)
 
 				arg = wrapper_make_expression((WrapperNode *) lfirst(lc),
 											  index, &childAlwaysTrue);
+
 #ifdef USE_ASSERT_CHECKING
 				/*
-				 * We shouldn't get there for always true clause under OR and
-				 * always false clause under AND.
+				 * We shouldn't get there for always true clause
+				 * under OR and always false clause under AND.
 				 */
 				if (expr->boolop == OR_EXPR)
 					Assert(!childAlwaysTrue);
+
 				if (expr->boolop == AND_EXPR)
 					Assert(arg || childAlwaysTrue);
 #endif
+
 				if (arg)
 					args = lappend(args, arg);
 			}
@@ -1948,8 +1951,16 @@ generate_mergeappend_paths(PlannerInfo *root, RelOptInfo *rel,
  * Get cached PATHMAN_CONFIG relation Oid.
  */
 Oid
-get_pathman_config_relid(void)
+get_pathman_config_relid(bool invalid_is_ok)
 {
+	/* Raise ERROR if Oid is invalid */
+	if (!OidIsValid(pathman_config_relid) && !invalid_is_ok)
+		elog(ERROR,
+			 (!IsPathmanInitialized() ?
+				"pg_pathman is not initialized yet" :
+				"unexpected error in function "
+						  CppAsString(get_pathman_config_relid)));
+
 	return pathman_config_relid;
 }
 
@@ -1957,7 +1968,15 @@ get_pathman_config_relid(void)
  * Get cached PATHMAN_CONFIG_PARAMS relation Oid.
  */
 Oid
-get_pathman_config_params_relid(void)
+get_pathman_config_params_relid(bool invalid_is_ok)
 {
+	/* Raise ERROR if Oid is invalid */
+	if (!OidIsValid(pathman_config_relid) && !invalid_is_ok)
+		elog(ERROR,
+			 (!IsPathmanInitialized() ?
+				"pg_pathman is not initialized yet" :
+				"unexpected error in function "
+						  CppAsString(get_pathman_config_params_relid)));
+
 	return pathman_config_params_relid;
 }

@@ -9,6 +9,7 @@
  */
 
 #include "xact_handling.h"
+#include "utils.h"
 
 #include "postgres.h"
 #include "access/transam.h"

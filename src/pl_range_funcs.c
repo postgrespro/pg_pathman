@@ -26,7 +26,9 @@
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
+#include "utils/numeric.h"
 #include "utils/ruleutils.h"
+#include "utils/syscache.h"
 
 
 static char *deparse_constraint(Oid relid, Node *expr);
@@ -48,12 +50,14 @@ static void modify_range_constraint(Oid child_relid,
 									const Bound *upper);
 static char *get_qualified_rel_name(Oid relid);
 static void drop_table_by_oid(Oid relid);
-
+static bool interval_is_trivial(Oid atttype,
+								Datum interval,
+								Oid interval_type);
 
 /* Function declarations */
 
 PG_FUNCTION_INFO_V1( create_single_range_partition_pl );
-PG_FUNCTION_INFO_V1( find_or_create_range_partition);
+PG_FUNCTION_INFO_V1( find_or_create_range_partition );
 PG_FUNCTION_INFO_V1( check_range_available_pl );
 
 PG_FUNCTION_INFO_V1( get_part_range_by_oid );
@@ -252,6 +256,12 @@ get_part_range_by_oid(PG_FUNCTION_ARGS)
 	prel = get_pathman_relation_info(parent_relid);
 	shout_if_prel_is_invalid(parent_relid, prel, PT_RANGE);
 
+	/* Check type of 'dummy' (for correct output) */
+	if (getBaseType(get_fn_expr_argtype(fcinfo->flinfo, 1)) != getBaseType(prel->atttype))
+		elog(ERROR, "pg_typeof(dummy) should be %s",
+			 format_type_be(getBaseType(prel->atttype)));
+
+
 	ranges = PrelGetRangesArray(prel);
 
 	/* Look for the specified partition */
@@ -259,7 +269,10 @@ get_part_range_by_oid(PG_FUNCTION_ARGS)
 		if (ranges[i].child_oid == partition_relid)
 		{
 			ArrayType  *arr;
-			Bound		elems[2] = { ranges[i].min, ranges[i].max };
+			Bound		elems[2];
+
+			elems[0] = ranges[i].min;
+			elems[1] = ranges[i].max;
 
 			arr = construct_infinitable_array(elems, 2,
 											  prel->atttype, prel->attlen,
@@ -305,6 +318,12 @@ get_part_range_by_idx(PG_FUNCTION_ARGS)
 	prel = get_pathman_relation_info(parent_relid);
 	shout_if_prel_is_invalid(parent_relid, prel, PT_RANGE);
 
+	/* Check type of 'dummy' (for correct output) */
+	if (getBaseType(get_fn_expr_argtype(fcinfo->flinfo, 2)) != getBaseType(prel->atttype))
+		elog(ERROR, "pg_typeof(dummy) should be %s",
+			 format_type_be(getBaseType(prel->atttype)));
+
+
 	/* Now we have to deal with 'idx' */
 	if (partition_idx < -1)
 	{
@@ -322,6 +341,7 @@ get_part_range_by_idx(PG_FUNCTION_ARGS)
 
 	ranges = PrelGetRangesArray(prel);
 
+	/* Build args for construct_infinitable_array() */
 	elems[0] = ranges[partition_idx].min;
 	elems[1] = ranges[partition_idx].max;
 
@@ -369,6 +389,7 @@ build_range_condition(PG_FUNCTION_ARGS)
 	PG_RETURN_TEXT_P(cstring_to_text(result));
 }
 
+/* Build name for sequence for auto partition naming */
 Datum
 build_sequence_name(PG_FUNCTION_ARGS)
 {
@@ -544,8 +565,8 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 
 
 /*
- * Drops partition and expands the next partition so that it cover dropped
- * one
+ * Drops partition and expands the next partition
+ * so that it could cover the dropped one
  *
  * This function was written in order to support Oracle-like ALTER TABLE ...
  * DROP PARTITION. In Oracle partitions only have upper bound and when
@@ -554,49 +575,54 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 Datum
 drop_range_partition_expand_next(PG_FUNCTION_ARGS)
 {
-	PartParentSearch		parent_search;
 	const PartRelationInfo *prel;
-	RangeEntry	   *ranges;
-	Oid				relid = PG_GETARG_OID(0),
-					parent;
-	int				i;
+	PartParentSearch		parent_search;
+	Oid						relid = PG_GETARG_OID(0),
+							parent;
+	RangeEntry			   *ranges;
+	int						i;
 
-	/* Get parent relid */
+	/* Get parent's relid */
 	parent = get_parent_of_partition(relid, &parent_search);
 	if (parent_search != PPS_ENTRY_PART_PARENT)
 		elog(ERROR, "relation \"%s\" is not a partition",
 			 get_rel_name_or_relid(relid));
 
+	/* Fetch PartRelationInfo and perform some checks */
 	prel = get_pathman_relation_info(parent);
 	shout_if_prel_is_invalid(parent, prel, PT_RANGE);
 
+	/* Fetch ranges array */
 	ranges = PrelGetRangesArray(prel);
 
 	/* Looking for partition in child relations */
-	for (i = 0; i < prel->children_count; i++)
+	for (i = 0; i < PrelChildrenCount(prel); i++)
 		if (ranges[i].child_oid == relid)
 			break;
 
 	/*
-	 * It must be in ranges array because we already know that table
-	 * is a partition
+	 * It must be in ranges array because we already
+	 * know that this table is a partition
 	 */
-	Assert(i < prel->children_count);
+	Assert(i < PrelChildrenCount(prel));
 
-	/* If there is next partition then expand it */
-	if (i < prel->children_count - 1)
+	/* Expand next partition if it exists */
+	if (i < PrelChildrenCount(prel) - 1)
 	{
 		RangeEntry	   *cur = &ranges[i],
 					   *next = &ranges[i + 1];
 
+		/* Drop old constraint and create a new one */
 		modify_range_constraint(next->child_oid,
-						get_relid_attribute_name(prel->key, prel->attnum),
-						prel->attnum,
-						prel->atttype,
-						&cur->min,
-						&next->max);
+								get_relid_attribute_name(prel->key,
+														 prel->attnum),
+								prel->attnum,
+								prel->atttype,
+								&cur->min,
+								&next->max);
 	}
 
+	/* Finally drop this partition */
 	drop_table_by_oid(relid);
 
 	PG_RETURN_VOID();
@@ -613,10 +639,9 @@ validate_interval_value(PG_FUNCTION_ARGS)
 	Oid			partrel = PG_GETARG_OID(0);
 	text	   *attname = PG_GETARG_TEXT_P(1);
 	PartType	parttype = DatumGetPartType(PG_GETARG_DATUM(2));
-	Datum		range_interval = PG_GETARG_DATUM(3);
-
-	char	   *attname_cstr;
-	Oid			atttype; /* type of partitioned attribute */
+	Datum		interval_text = PG_GETARG_DATUM(3);
+	Datum		interval_value;
+	Oid			interval_type;
 
 	if (PG_ARGISNULL(0))
 		elog(ERROR, "'partrel' should not be NULL");
@@ -627,16 +652,31 @@ validate_interval_value(PG_FUNCTION_ARGS)
 	if (PG_ARGISNULL(2))
 		elog(ERROR, "'parttype' should not be NULL");
 
-	/* it's OK if interval is NULL and table is HASH-partitioned */
-	if (PG_ARGISNULL(3))
-		PG_RETURN_BOOL(parttype == PT_HASH);
+	/*
+	 * NULL interval is fine for both HASH and RANGE. But for RANGE we need
+	 * to make some additional checks
+	 */
+	if (!PG_ARGISNULL(3))
+	{
+		char	   *attname_cstr;
+		Oid			atttype; /* type of partitioned attribute */
 
-	/* Convert attname to CSTRING and fetch column's type */
-	attname_cstr = text_to_cstring(attname);
-	atttype = get_attribute_type(partrel, attname_cstr, false);
+		if (parttype == PT_HASH)
+			elog(ERROR, "interval must be NULL for HASH partitioned table");
 
-	/* Try converting textual representation */
-	extract_binary_interval_from_text(range_interval, atttype, NULL);
+		/* Convert attname to CSTRING and fetch column's type */
+		attname_cstr = text_to_cstring(attname);
+		atttype = get_attribute_type(partrel, attname_cstr, false);
+
+		/* Try converting textual representation */
+		interval_value = extract_binary_interval_from_text(interval_text,
+														   atttype,
+														   &interval_type);
+
+		/* Check that interval isn't trivial */
+		if (interval_is_trivial(atttype, interval_value, interval_type))
+			elog(ERROR, "interval must not be trivial");
+	}
 
 	PG_RETURN_BOOL(true);
 }
@@ -646,8 +686,150 @@ validate_interval_value(PG_FUNCTION_ARGS)
  * ------------------
  *  Helper functions
  * ------------------
- *
  */
+
+/*
+ * Check if interval is insignificant to avoid infinite loops while adding
+ * new partitions
+ *
+ * The main idea behind this function is to add specified interval to some
+ * default value (zero for numeric types and current date/timestamp for datetime
+ * types) and look if it is changed. If it is then return true.
+ */
+static bool
+interval_is_trivial(Oid atttype, Datum interval, Oid interval_type)
+{
+	Oid			plus_op_func;
+	Datum		plus_op_result;
+	Oid			plus_op_result_type;
+
+	Datum		default_value;
+
+	FmgrInfo	cmp_func;
+	int32		cmp_result;
+
+	/*
+	 * Generate default value.
+	 *
+	 * For float4 and float8 values we also check that they aren't NaN or INF.
+	 */
+	switch(atttype)
+	{
+		case INT2OID:
+			default_value = Int16GetDatum(0);
+			break;
+
+		case INT4OID:
+			default_value = Int32GetDatum(0);
+			break;
+
+		/* Take care of 32-bit platforms */
+		case INT8OID:
+			default_value = Int64GetDatum(0);
+			break;
+
+		case FLOAT4OID:
+			{
+				float4 f = DatumGetFloat4(interval);
+
+				if (isnan(f) || is_infinite(f))
+					elog(ERROR, "invalid floating point interval");
+				default_value = Float4GetDatum(0);
+			}
+			break;
+
+		case FLOAT8OID:
+			{
+				float8 f = DatumGetFloat8(interval);
+
+				if (isnan(f) || is_infinite(f))
+					elog(ERROR, "invalid floating point interval");
+				default_value = Float8GetDatum(0);
+			}
+			break;
+
+		case NUMERICOID:
+			{
+				Numeric		ni = DatumGetNumeric(interval),
+							numeric;
+
+				/* Test for NaN */
+				if (numeric_is_nan(ni))
+					elog(ERROR, "invalid numeric interval");
+
+				/* Building default value */
+				numeric = DatumGetNumeric(
+								DirectFunctionCall3(numeric_in,
+													CStringGetDatum("0"),
+													ObjectIdGetDatum(InvalidOid),
+													Int32GetDatum(-1)));
+				default_value = NumericGetDatum(numeric);
+			}
+			break;
+
+		case TIMESTAMPOID:
+		case TIMESTAMPTZOID:
+			default_value = TimestampGetDatum(GetCurrentTimestamp());
+			break;
+
+		case DATEOID:
+			{
+				Datum ts = TimestampGetDatum(GetCurrentTimestamp());
+
+				default_value = perform_type_cast(ts, TIMESTAMPTZOID, DATEOID, NULL);
+			}
+			break;
+
+		default:
+			return false;
+	}
+
+	/* Find suitable addition operator for default value and interval */
+	extract_op_func_and_ret_type("+", atttype, interval_type,
+								 &plus_op_func,
+								 &plus_op_result_type);
+
+	/* Invoke addition operator and get a result */
+	plus_op_result = OidFunctionCall2(plus_op_func, default_value, interval);
+
+	/*
+	 * If operator result type isn't the same as original value then
+	 * convert it. We need this to make sure that specified interval would
+	 * change the _origianal_ value somehow. For example, if we add one second
+	 * to a date then we'll get a timestamp which is one second later than
+	 * original date (obviously). But when we convert it back to a date we will
+	 * get the same original value meaning that one second interval wouldn't
+	 * change original value anyhow. We should consider such interval as trivial
+	 */
+	if (plus_op_result_type != atttype)
+	{
+		plus_op_result = perform_type_cast(plus_op_result,
+										   plus_op_result_type,
+										   atttype, NULL);
+		plus_op_result_type = atttype;
+	}
+
+	/*
+	 * Compare it to the default_value.
+	 *
+	 * If they are the same then obviously interval is trivial.
+	 */
+	fill_type_cmp_fmgr_info(&cmp_func,
+							getBaseType(atttype),
+							getBaseType(plus_op_result_type));
+
+	cmp_result = DatumGetInt32(FunctionCall2(&cmp_func,
+											 default_value,
+											 plus_op_result));
+	if (cmp_result == 0)
+		return true;
+
+	else if (cmp_result > 0) /* Negative interval? */
+		elog(ERROR, "interval must not be negative");
+
+	/* Everything is OK */
+	return false;
+}
 
 /*
  * Drop old partition constraint and create
@@ -816,12 +998,12 @@ drop_table_by_oid(Oid relid)
 	DropStmt	   *n = makeNode(DropStmt);
 	const char	   *relname = get_qualified_rel_name(relid);
 
-	n->removeType = OBJECT_TABLE;
-	n->missing_ok = false;
-	n->objects = list_make1(stringToQualifiedNameList(relname));
-	n->arguments = NIL;
-	n->behavior = DROP_RESTRICT;  /* default behavior */
-	n->concurrent = false;
+	n->removeType	= OBJECT_TABLE;
+	n->missing_ok	= false;
+	n->objects		= list_make1(stringToQualifiedNameList(relname));
+	n->arguments	= NIL;
+	n->behavior		= DROP_RESTRICT;  /* default behavior */
+	n->concurrent	= false;
 
 	RemoveRelations(n);
 }

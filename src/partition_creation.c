@@ -43,10 +43,6 @@
 #include "utils/typcache.h"
 
 
-static void extract_op_func_and_ret_type(char *opname, Oid type1, Oid type2,
-										 Oid *move_bound_op_func,
-										 Oid *move_bound_op_ret_type);
-
 static Oid spawn_partitions_val(Oid parent_relid,
 								const Bound *range_bound_min,
 								const Bound *range_bound_max,
@@ -74,6 +70,8 @@ static ObjectAddress create_table_using_stmt(CreateStmt *create_stmt,
 
 static void copy_foreign_keys(Oid parent_relid, Oid partition_oid);
 static void postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid);
+
+static Oid text_to_regprocedure(text *proname_args);
 
 static Constraint *make_constraint_common(char *name, Node *raw_expr);
 
@@ -273,7 +271,8 @@ create_partitions_for_value(Oid relid, Datum value, Oid value_type)
 			elog(DEBUG2, "create_partitions(): chose backend [%u]", MyProcPid);
 			last_partition = create_partitions_for_value_internal(relid,
 																  value,
-																  value_type);
+																  value_type,
+																  false); /* backend */
 		}
 	}
 	else
@@ -302,7 +301,8 @@ create_partitions_for_value(Oid relid, Datum value, Oid value_type)
  * use create_partitions_for_value() instead.
  */
 Oid
-create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type)
+create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
+									 bool is_background_worker)
 {
 	MemoryContext	old_mcxt = CurrentMemoryContext;
 	Oid				partid = InvalidOid; /* last created partition (or InvalidOid) */
@@ -408,13 +408,20 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type)
 	{
 		ErrorData *edata;
 
+		/* Simply rethrow ERROR if we're in backend */
+		if (!is_background_worker)
+			PG_RE_THROW();
+
 		/* Switch to the original context & copy edata */
 		MemoryContextSwitchTo(old_mcxt);
 		edata = CopyErrorData();
 		FlushErrorState();
 
-		elog(LOG, "create_partitions_internal(): %s [%u]",
-			 edata->message, MyProcPid);
+		/* Produce log message if we're in BGW */
+		ereport(LOG,
+				(errmsg(CppAsString(create_partitions_for_value_internal) ": %s [%u]",
+						edata->message, MyProcPid),
+				(edata->detail) ? errdetail("%s", edata->detail) : 0));
 
 		FreeErrorData(edata);
 
@@ -424,29 +431,6 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type)
 	PG_END_TRY();
 
 	return partid;
-}
-
-/*
- * Fetch binary operator by name and return it's function and ret type.
- */
-static void
-extract_op_func_and_ret_type(char *opname, Oid type1, Oid type2,
-							 Oid *move_bound_op_func,		/* returned value #1 */
-							 Oid *move_bound_op_ret_type)	/* returned value #2 */
-{
-	Operator op;
-
-	/* Get "move bound operator" descriptor */
-	op = get_binary_operator(opname, type1, type2);
-	if (!op)
-		elog(ERROR, "missing %s operator for types %s and %s",
-			 opname, format_type_be(type1), format_type_be(type2));
-
-	*move_bound_op_func = oprfuncid(op);
-	*move_bound_op_ret_type = get_operator_ret_type(op);
-
-	/* Don't forget to release system cache */
-	ReleaseSysCache(op);
 }
 
 /*
@@ -591,14 +575,19 @@ choose_range_partition_name(Oid parent_relid, Oid parent_nsp)
 {
 	Datum	part_num;
 	Oid		part_seq_relid;
+	char   *part_seq_relname;
 	Oid		save_userid;
 	int		save_sec_context;
 	bool	need_priv_escalation = !superuser(); /* we might be a SU */
 	char   *relname;
 	int		attempts_cnt = 1000;
 
-	part_seq_relid = get_relname_relid(build_sequence_name_internal(parent_relid),
-									   parent_nsp);
+	part_seq_relname = build_sequence_name_internal(parent_relid);
+	part_seq_relid = get_relname_relid(part_seq_relname, parent_nsp);
+
+	/* Could not find part number generating sequence */
+	if (!OidIsValid(part_seq_relid))
+		elog(ERROR, "auto naming sequence \"%s\" does not exist", part_seq_relname);
 
 	/* Do we have to escalate privileges? */
 	if (need_priv_escalation)
@@ -732,8 +721,9 @@ create_single_partition_internal(Oid parent_relid,
 	create_stmt.oncommit		= ONCOMMIT_NOOP;
 	create_stmt.tablespacename	= tablespace;
 	create_stmt.if_not_exists	= false;
-#ifdef PGPRO_VERSION
-	create_stmt.partition_info  = NULL;
+
+#if defined(PGPRO_EE) && PG_VERSION_NUM >= 90600
+	create_stmt.partition_info	= NULL;
 #endif
 
 	/* Do we have to escalate privileges? */
@@ -1098,6 +1088,32 @@ copy_foreign_keys(Oid parent_relid, Oid partition_oid)
  * -----------------------------
  */
 
+/* Drop pg_pathman's check constraint by 'relid' and 'attnum' */
+void
+drop_check_constraint(Oid relid, AttrNumber attnum)
+{
+	char		   *constr_name;
+	AlterTableStmt *stmt;
+	AlterTableCmd  *cmd;
+
+	/* Build a correct name for this constraint */
+	constr_name = build_check_constraint_name_relid_internal(relid, attnum);
+
+	stmt = makeNode(AlterTableStmt);
+	stmt->relation	= makeRangeVarFromRelid(relid);
+	stmt->relkind	= OBJECT_TABLE;
+
+	cmd = makeNode(AlterTableCmd);
+	cmd->subtype	= AT_DropConstraint;
+	cmd->name		= constr_name;
+	cmd->behavior	= DROP_RESTRICT;
+	cmd->missing_ok	= true;
+
+	stmt->cmds = list_make1(cmd);
+
+	AlterTable(relid, ShareUpdateExclusiveLock, stmt);
+}
+
 /* Build RANGE check constraint expression tree */
 Node *
 build_raw_range_check_tree(char *attname,
@@ -1113,12 +1129,12 @@ build_raw_range_check_tree(char *attname,
 	ColumnRef  *col_ref		= makeNode(ColumnRef);
 
 	/* Partitioned column */
-	col_ref->fields = list_make1(makeString(attname));
+	col_ref->fields	= list_make1(makeString(attname));
 	col_ref->location = -1;
 
-	and_oper->boolop = AND_EXPR;
-	and_oper->args = NIL;
-	and_oper->location = -1;
+	and_oper->boolop	= AND_EXPR;
+	and_oper->args		= NIL;
+	and_oper->location	= -1;
 
 	/* Left comparison (VAR >= start_value) */
 	if (!IsInfinite(start_value))
@@ -1133,6 +1149,7 @@ build_raw_range_check_tree(char *attname,
 		left_arg->lexpr		= (Node *) col_ref;
 		left_arg->rexpr		= (Node *) left_const;
 		left_arg->location	= -1;
+
 		and_oper->args = lappend(and_oper->args, left_arg);
 	}
 
@@ -1149,11 +1166,13 @@ build_raw_range_check_tree(char *attname,
 		right_arg->lexpr	= (Node *) col_ref;
 		right_arg->rexpr	= (Node *) right_const;
 		right_arg->location	= -1;
+
 		and_oper->args = lappend(and_oper->args, right_arg);
 	}
 
+	/* (-inf, +inf) */
 	if (and_oper->args == NIL)
-		elog(ERROR, "cannot create infinite range constraint");
+		elog(ERROR, "cannot create partition with range (-inf, +inf)");
 
 	return (Node *) and_oper;
 }
@@ -1386,31 +1405,6 @@ make_int_value_struct(int int_val)
 	return val;
 }
 
-void
-drop_check_constraint(Oid relid, AttrNumber attnum)
-{
-	char		   *constr_name;
-	AlterTableStmt *stmt;
-	AlterTableCmd  *cmd;
-
-	/* Build a correct name for this constraint */
-	constr_name = build_check_constraint_name_relid_internal(relid, attnum);
-
-	stmt = makeNode(AlterTableStmt);
-	stmt->relation = makeRangeVarFromRelid(relid);
-	stmt->relkind = OBJECT_TABLE;
-
-	cmd = makeNode(AlterTableCmd);
-	cmd->subtype = AT_DropConstraint;
-	cmd->name = constr_name;
-	cmd->behavior = DROP_RESTRICT;
-	cmd->missing_ok = true;
-
-	stmt->cmds = list_make1(cmd);
-
-	AlterTable(relid, ShareUpdateExclusiveLock, stmt);
-}
-
 static RangeVar *
 makeRangeVarFromRelid(Oid relid)
 {
@@ -1433,15 +1427,18 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 {
 #define JSB_INIT_VAL(value, val_type, val_cstring) \
 	do { \
-		(value)->type = jbvString; \
-		(value)->val.string.len = strlen(val_cstring); \
-		(value)->val.string.val = val_cstring; \
-		pushJsonbValue(&jsonb_state, val_type, (value)); \
-	} while (0)
-
-#define JSB_INIT_NULL_VAL(value, val_type)	\
-	do {	\
-		(value)->type = jbvNull;	\
+		if ((val_cstring) != NULL) \
+		{ \
+			(value)->type = jbvString; \
+			(value)->val.string.len = strlen(val_cstring); \
+			(value)->val.string.val = val_cstring; \
+		} \
+		else \
+		{ \
+			(value)->type = jbvNull; \
+			Assert((val_type) != WJB_KEY); \
+		} \
+		\
 		pushJsonbValue(&jsonb_state, val_type, (value)); \
 	} while (0)
 
@@ -1456,6 +1453,12 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 							key,
 							val;
 
+	char				   *parent_name,
+						   *parent_namespace,
+						   *partition_name,
+						   *partition_namespace;
+
+
 	/* Fetch & cache callback's Oid if needed */
 	if (!cb_params->callback_is_cached)
 	{
@@ -1465,14 +1468,28 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 		/* Search for init_callback entry in PATHMAN_CONFIG_PARAMS */
 		if (read_pathman_params(parent_oid, param_values, param_isnull))
 		{
-			Datum		init_cb_datum; /* Oid of init_callback */
+			Datum		init_cb_datum; /* signature of init_callback */
 			AttrNumber	init_cb_attno = Anum_pathman_config_params_init_callback;
 
-			/* Extract Datum storing callback's Oid */
+			/* Extract Datum storing callback's signature */
 			init_cb_datum = param_values[init_cb_attno - 1];
 
 			/* Cache init_callback's Oid */
-			cb_params->callback = DatumGetObjectId(init_cb_datum);
+			if (init_cb_datum)
+			{
+				/* Try fetching callback's Oid */
+				cb_params->callback = text_to_regprocedure(DatumGetTextP(init_cb_datum));
+
+				if (!RegProcedureIsValid(cb_params->callback))
+					ereport(ERROR,
+							(errcode(ERRCODE_INTEGRITY_CONSTRAINT_VIOLATION),
+							 errmsg("callback function \"%s\" does not exist",
+									TextDatumGetCString(init_cb_datum))));
+			}
+			/* There's no callback */
+			else cb_params->callback = InvalidOid;
+
+			/* We've made a lookup */
 			cb_params->callback_is_cached = true;
 		}
 	}
@@ -1484,6 +1501,12 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 	/* Validate the callback's signature */
 	validate_part_callback(cb_params->callback, true);
 
+	parent_name = get_rel_name(parent_oid);
+	parent_namespace = get_namespace_name(get_rel_namespace(parent_oid));
+
+	partition_name = get_rel_name(partition_oid);
+	partition_namespace = get_namespace_name(get_rel_namespace(partition_oid));
+
 	/* Generate JSONB we're going to pass to callback */
 	switch (cb_params->parttype)
 	{
@@ -1492,13 +1515,13 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 				pushJsonbValue(&jsonb_state, WJB_BEGIN_OBJECT, NULL);
 
 				JSB_INIT_VAL(&key, WJB_KEY, "parent");
-				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(parent_oid));
+				JSB_INIT_VAL(&val, WJB_VALUE, parent_name);
 				JSB_INIT_VAL(&key, WJB_KEY, "parent_schema");
-				JSB_INIT_VAL(&val, WJB_VALUE, get_namespace_name(get_rel_namespace(parent_oid)));
+				JSB_INIT_VAL(&val, WJB_VALUE, parent_namespace);
 				JSB_INIT_VAL(&key, WJB_KEY, "partition");
-				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(partition_oid));
+				JSB_INIT_VAL(&val, WJB_VALUE, partition_name);
 				JSB_INIT_VAL(&key, WJB_KEY, "partition_schema");
-				JSB_INIT_VAL(&val, WJB_VALUE, get_namespace_name(get_rel_namespace(partition_oid)));
+				JSB_INIT_VAL(&val, WJB_VALUE, partition_namespace);
 				JSB_INIT_VAL(&key, WJB_KEY, "parttype");
 				JSB_INIT_VAL(&val, WJB_VALUE, PartTypeToCString(PT_HASH));
 
@@ -1508,46 +1531,40 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 
 		case PT_RANGE:
 			{
-				char   *start_value,
-					   *end_value;
+				char   *start_value	= NULL,
+					   *end_value	= NULL;
 				Bound	sv_datum	= cb_params->params.range_params.start_value,
 						ev_datum	= cb_params->params.range_params.end_value;
 				Oid		type		= cb_params->params.range_params.value_type;
 
+				/* Convert min to CSTRING */
+				if (!IsInfinite(&sv_datum))
+					start_value = datum_to_cstring(BoundGetValue(&sv_datum), type);
+
+				/* Convert max to CSTRING */
+				if (!IsInfinite(&ev_datum))
+					end_value = datum_to_cstring(BoundGetValue(&ev_datum), type);
+
 				pushJsonbValue(&jsonb_state, WJB_BEGIN_OBJECT, NULL);
 
 				JSB_INIT_VAL(&key, WJB_KEY, "parent");
-				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(parent_oid));
+				JSB_INIT_VAL(&val, WJB_VALUE, parent_name);
 				JSB_INIT_VAL(&key, WJB_KEY, "parent_schema");
-				JSB_INIT_VAL(&val, WJB_VALUE, get_namespace_name(get_rel_namespace(parent_oid)));
+				JSB_INIT_VAL(&val, WJB_VALUE, parent_namespace);
 				JSB_INIT_VAL(&key, WJB_KEY, "partition");
-				JSB_INIT_VAL(&val, WJB_VALUE, get_rel_name_or_relid(partition_oid));
+				JSB_INIT_VAL(&val, WJB_VALUE, partition_name);
 				JSB_INIT_VAL(&key, WJB_KEY, "partition_schema");
-				JSB_INIT_VAL(&val, WJB_VALUE, get_namespace_name(get_rel_namespace(partition_oid)));
+				JSB_INIT_VAL(&val, WJB_VALUE, partition_namespace);
 				JSB_INIT_VAL(&key, WJB_KEY, "parttype");
 				JSB_INIT_VAL(&val, WJB_VALUE, PartTypeToCString(PT_RANGE));
 
 				/* Lower bound */
 				JSB_INIT_VAL(&key, WJB_KEY, "range_min");
-				if (!IsInfinite(&sv_datum))
-				{
-					/* Convert min to CSTRING */
-					start_value = datum_to_cstring(BoundGetValue(&sv_datum), type);
-					JSB_INIT_VAL(&val, WJB_VALUE, start_value);
-				}
-				else
-					JSB_INIT_NULL_VAL(&val, WJB_VALUE);
+				JSB_INIT_VAL(&val, WJB_VALUE, start_value);
 
 				/* Upper bound */
 				JSB_INIT_VAL(&key, WJB_KEY, "range_max");
-				if (!IsInfinite(&ev_datum))
-				{
-					/* Convert max to CSTRING */
-					end_value = datum_to_cstring(BoundGetValue(&ev_datum), type);
-					JSB_INIT_VAL(&val, WJB_VALUE, end_value);
-				}
-				else
-					JSB_INIT_NULL_VAL(&val, WJB_VALUE);
+				JSB_INIT_VAL(&val, WJB_VALUE, end_value);
 
 				result = pushJsonbValue(&jsonb_state, WJB_END_OBJECT, NULL);
 			}
@@ -1600,7 +1617,7 @@ validate_part_callback(Oid procid, bool emit_error)
 
 	tp = SearchSysCache1(PROCOID, ObjectIdGetDatum(procid));
 	if (!HeapTupleIsValid(tp))
-		elog(ERROR, "cache lookup failed for function %u", procid);
+		elog(ERROR, "callback function %u does not exist", procid);
 
 	functup = (Form_pg_proc) GETSTRUCT(tp);
 
@@ -1613,8 +1630,36 @@ validate_part_callback(Oid procid, bool emit_error)
 
 	if (emit_error && !is_ok)
 		elog(ERROR,
-			 "Callback function must have the following signature: "
+			 "callback function must have the following signature: "
 			 "callback(arg JSONB) RETURNS VOID");
 
 	return is_ok;
+}
+
+/*
+ * Utility function that converts signature of procedure into regprocedure.
+ *
+ * Precondition: proc_signature != NULL.
+ *
+ * Returns InvalidOid if proname_args is not found.
+ * Raise error if it's incorrect.
+ */
+static Oid
+text_to_regprocedure(text *proc_signature)
+{
+	FunctionCallInfoData	fcinfo;
+	Datum					result;
+
+	InitFunctionCallInfoData(fcinfo, NULL, 1, InvalidOid, NULL, NULL);
+
+#if PG_VERSION_NUM >= 90600
+	fcinfo.arg[0] = PointerGetDatum(proc_signature);
+#else
+	fcinfo.arg[0] = CStringGetDatum(text_to_cstring(proc_signature));
+#endif
+	fcinfo.argnull[0] = false;
+
+	result = to_regprocedure(&fcinfo);
+
+	return DatumGetObjectId(result);
 }

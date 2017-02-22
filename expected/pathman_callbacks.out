@@ -2,14 +2,18 @@
 CREATE EXTENSION pg_pathman;
 CREATE SCHEMA callbacks;
 /* Check callbacks */
-CREATE OR REPLACE FUNCTION callbacks.abc_on_part_created_callback(
-	args JSONB)
+CREATE OR REPLACE FUNCTION callbacks.abc_on_part_created_callback(args JSONB)
 RETURNS VOID AS $$
 BEGIN
 	RAISE WARNING 'callback arg: %', args::TEXT;
 END
 $$ language plpgsql;
-/* set callback to be called on RANGE partitions */
+/* callback is in public namespace, must be schema-qualified */
+CREATE OR REPLACE FUNCTION public.dummy_cb(args JSONB)
+RETURNS VOID AS $$
+BEGIN
+END
+$$ language plpgsql;
 CREATE TABLE callbacks.abc(a serial, b int);
 SELECT create_range_partitions('callbacks.abc', 'a', 1, 100, 2);
 NOTICE:  sequence "abc_seq" does not exist, skipping
@@ -18,8 +22,62 @@ NOTICE:  sequence "abc_seq" does not exist, skipping
                        2
 (1 row)
 
+SELECT set_init_callback('callbacks.abc', 'public.dummy_cb(jsonb)');
+ set_init_callback 
+-------------------
+ 
+(1 row)
+
+/* check that callback is schema-qualified */
+SELECT init_callback FROM pathman_config_params
+WHERE partrel = 'callbacks.abc'::REGCLASS;
+     init_callback      
+------------------------
+ public.dummy_cb(jsonb)
+(1 row)
+
+/* reset callback */
+SELECT set_init_callback('callbacks.abc');
+ set_init_callback 
+-------------------
+ 
+(1 row)
+
+/* should return NULL */
+SELECT init_callback FROM pathman_config_params
+WHERE partrel = 'callbacks.abc'::REGCLASS;
+ init_callback 
+---------------
+ 
+(1 row)
+
 SELECT set_init_callback('callbacks.abc',
-						 'callbacks.abc_on_part_created_callback');
+						 'callbacks.abc_on_part_created_callback(jsonb)');
+ set_init_callback 
+-------------------
+ 
+(1 row)
+
+/* check that callback is schema-qualified */
+SELECT init_callback FROM pathman_config_params
+WHERE partrel = 'callbacks.abc'::REGCLASS;
+                 init_callback                 
+-----------------------------------------------
+ callbacks.abc_on_part_created_callback(jsonb)
+(1 row)
+
+DROP TABLE callbacks.abc CASCADE;
+NOTICE:  drop cascades to 2 other objects
+/* set callback to be called on RANGE partitions */
+CREATE TABLE callbacks.abc(a serial, b int);
+SELECT create_range_partitions('callbacks.abc', 'a', 1, 100, 2);
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+SELECT set_init_callback('callbacks.abc',
+						 'callbacks.abc_on_part_created_callback(jsonb)');
  set_init_callback 
 -------------------
  
@@ -90,7 +148,7 @@ NOTICE:  0 rows copied from callbacks.abc_7
 
 /* set callback to be called on HASH partitions */
 SELECT set_init_callback('callbacks.abc',
-						 'callbacks.abc_on_part_created_callback');
+						 'callbacks.abc_on_part_created_callback(jsonb)');
  set_init_callback 
 -------------------
  
@@ -109,26 +167,38 @@ WARNING:  callback arg: {"parent": "abc", "parttype": "1", "partition": "abc_4",
 
 DROP TABLE callbacks.abc CASCADE;
 NOTICE:  drop cascades to 5 other objects
-/* create table in public schema */
-CREATE TABLE abc(a serial, b int);
-SELECT set_init_callback('abc',
-						 'callbacks.abc_on_part_created_callback');
+/* test the temprary deletion of callback function */
+CREATE TABLE callbacks.abc(a serial, b int);
+SELECT set_init_callback('callbacks.abc',
+						 'callbacks.abc_on_part_created_callback(jsonb)');
  set_init_callback 
 -------------------
  
 (1 row)
 
-SELECT create_range_partitions('abc', 'a', 1, 100, 2);
-NOTICE:  sequence "abc_seq" does not exist, skipping
-WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_1", "range_max": "101", "range_min": "1", "parent_schema": "public", "partition_schema": "public"}
-WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_2", "range_max": "201", "range_min": "101", "parent_schema": "public", "partition_schema": "public"}
+SELECT create_range_partitions('callbacks.abc', 'a', 1, 100, 2);
+WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_1", "range_max": "101", "range_min": "1", "parent_schema": "callbacks", "partition_schema": "callbacks"}
+WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_2", "range_max": "201", "range_min": "101", "parent_schema": "callbacks", "partition_schema": "callbacks"}
  create_range_partitions 
 -------------------------
                        2
 (1 row)
 
-DROP TABLE abc CASCADE;
-NOTICE:  drop cascades to 2 other objects
+INSERT INTO callbacks.abc VALUES (201, 0); /* +1 new partition */
+WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_3", "range_max": "301", "range_min": "201", "parent_schema": "callbacks", "partition_schema": "callbacks"}
+DROP FUNCTION callbacks.abc_on_part_created_callback(jsonb);
+INSERT INTO callbacks.abc VALUES (301, 0); /* +0 new partitions (ERROR) */
+ERROR:  callback function "callbacks.abc_on_part_created_callback(jsonb)" does not exist
+CREATE OR REPLACE FUNCTION callbacks.abc_on_part_created_callback(args JSONB)
+RETURNS VOID AS $$
+BEGIN
+	RAISE WARNING 'callback arg: %', args::TEXT;
+END
+$$ language plpgsql;
+INSERT INTO callbacks.abc VALUES (301, 0); /* +1 new partition */
+WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_5", "range_max": "401", "range_min": "301", "parent_schema": "callbacks", "partition_schema": "callbacks"}
+DROP TABLE callbacks.abc CASCADE;
+NOTICE:  drop cascades to 4 other objects
 DROP SCHEMA callbacks CASCADE;
 NOTICE:  drop cascades to 2 other objects
 DROP EXTENSION pg_pathman CASCADE;

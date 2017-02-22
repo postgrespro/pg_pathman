@@ -16,7 +16,7 @@ CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions(
 	attribute			TEXT,
 	partitions_count	INTEGER,
 	partition_data		BOOLEAN DEFAULT TRUE,
-	relnames			TEXT[] DEFAULT NULL,
+	partition_names		TEXT[] DEFAULT NULL,
 	tablespaces			TEXT[] DEFAULT NULL)
 RETURNS INTEGER AS
 $$
@@ -38,19 +38,11 @@ BEGIN
 	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype)
 	VALUES (parent_relid, attribute, 1);
 
-	IF array_length(relnames, 1) != partitions_count THEN
-		RAISE EXCEPTION 'Partition names array size must be equal the partitions count';
-	END IF;
-
-	IF array_length(tablespaces, 1) != partitions_count THEN
-		RAISE EXCEPTION 'Partition tablespaces array size must be equal the partitions count';
-	END IF;
-
 	/* Create partitions */
 	PERFORM @extschema@.create_hash_partitions_internal(parent_relid,
 														attribute,
 														partitions_count,
-														relnames,
+														partition_names,
 														tablespaces);
 
 	/* Notify backend about changes */
@@ -153,7 +145,7 @@ BEGIN
 
 	/* Fetch init_callback from 'params' table */
 	WITH stub_callback(stub) as (values (0))
-	SELECT coalesce(init_callback, 0::REGPROCEDURE)
+	SELECT init_callback
 	FROM stub_callback
 	LEFT JOIN @extschema@.pathman_config_params AS params
 	ON params.partrel = parent_relid
@@ -281,6 +273,7 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
+
 /*
  * Just create HASH partitions, called by create_hash_partitions().
  */
@@ -288,7 +281,7 @@ CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions_internal(
 	parent_relid		REGCLASS,
 	attribute			TEXT,
 	partitions_count	INTEGER,
-	relnames			TEXT[] DEFAULT NULL,
+	partition_names		TEXT[] DEFAULT NULL,
 	tablespaces			TEXT[] DEFAULT NULL)
 RETURNS VOID AS 'pg_pathman', 'create_hash_partitions_internal'
 LANGUAGE C;

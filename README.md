@@ -1,5 +1,6 @@
 [![Build Status](https://travis-ci.org/postgrespro/pg_pathman.svg?branch=master)](https://travis-ci.org/postgrespro/pg_pathman)
 [![PGXN version](https://badge.fury.io/pg/pg_pathman.svg)](https://badge.fury.io/pg/pg_pathman)
+[![codecov](https://codecov.io/gh/postgrespro/pg_pathman/branch/master/graph/badge.svg)](https://codecov.io/gh/postgrespro/pg_pathman)
 
 # pg_pathman
 
@@ -77,6 +78,19 @@ Done! Now it's time to setup your partitioning schemes.
 
 > **Important:** Don't forget to set the `PG_CONFIG` variable in case you want to test `pg_pathman` on a custom build of PostgreSQL. Read more [here](https://wiki.postgresql.org/wiki/Building_and_Installing_PostgreSQL_Extension_Modules).
 
+## How to update
+In order to update pg_pathman:
+
+1. Install the latest _stable_ release of pg_pathman.
+2. Restart your PostgreSQL cluster.
+3. Execute the following queries:
+
+```plpgsql
+/* replace X.Y with the version number, e.g. 1.3 */
+ALTER EXTENSION pg_pathman UPDATE TO "X.Y";
+SET pg_pathman.enable = t;
+```
+
 ## Available functions
 
 ### Partition creation
@@ -84,7 +98,9 @@ Done! Now it's time to setup your partitioning schemes.
 create_hash_partitions(relation         REGCLASS,
                        attribute        TEXT,
                        partitions_count INTEGER,
-                       partition_data   BOOLEAN DEFAULT TRUE)
+                       partition_data   BOOLEAN DEFAULT TRUE,
+					   partition_names  TEXT[] DEFAULT NULL,
+					   tablespaces      TEXT[] DEFAULT NULL)
 ```
 Performs HASH partitioning for `relation` by integer key `attribute`. The `partitions_count` parameter specifies the number of partitions to create; it cannot be changed afterwards. If `partition_data` is `true` then all the data will be automatically copied from the parent table to partitions. Note that data migration may took a while to finish and the table will be locked until transaction commits. See `partition_table_concurrently()` for a lock-free way to migrate data. Partition creation callback is invoked for each partition if set beforehand (see `set_init_callback()`).
 
@@ -103,7 +119,7 @@ create_range_partitions(relation       REGCLASS,
                         p_count        INTEGER DEFAULT NULL,
                         partition_data BOOLEAN DEFAULT TRUE)
 ```
-Performs RANGE partitioning for `relation` by partitioning key `attribute`. `start_value` argument specifies initial value, `interval` sets the range of values in a single partition, `count` is the number of premade partitions (if not set then pathman tries to determine it based on attribute values). Partition creation callback is invoked for each partition if set beforehand.
+Performs RANGE partitioning for `relation` by partitioning key `attribute`, `start_value` argument specifies initial value, `p_interval` sets the default range for auto created partitions or partitions created with `append_range_partition()` or `prepend_range_partition()` (if `NULL` then auto partition creation feature won't work), `p_count` is the number of premade partitions (if not set then `pg_pathman` tries to determine it based on attribute values). Partition creation callback is invoked for each partition if set beforehand.
 
 ```plpgsql
 create_partitions_from_range(relation       REGCLASS,
@@ -148,9 +164,9 @@ Same as above, but for a RANGE-partitioned table.
 
 ### Post-creation partition management
 ```plpgsql
-replace_hash_partition(old_partition       REGCLASS,
-                       new_partition       REGCLASS,
-                       lock_parent         BOOL DEFAULT TRUE)
+replace_hash_partition(old_partition REGCLASS,
+                       new_partition REGCLASS,
+                       lock_parent   BOOL DEFAULT TRUE)
 ```
 Replaces specified partition of HASH-partitioned table with another table. The `lock_parent` parameter will prevent any INSERT/UPDATE/ALTER TABLE queries to parent table.
 
@@ -166,6 +182,11 @@ Split RANGE `partition` in two by `split_value`. Partition creation callback is 
 merge_range_partitions(partition1 REGCLASS, partition2 REGCLASS)
 ```
 Merge two adjacent RANGE partitions. First, data from `partition2` is copied to `partition1`, then `partition2` is removed.
+
+```plpgsql
+merge_range_partitions(partitions REGCLASS[])
+```
+Merge several adjacent RANGE partitions (partitions must be specified in ascending or descending order). All the data will be accumulated in the first partition.
 
 ```plpgsql
 append_range_partition(parent         REGCLASS,
@@ -188,7 +209,7 @@ add_range_partition(relation       REGCLASS,
                     partition_name TEXT DEFAULT NULL,
                     tablespace     TEXT DEFAULT NULL)
 ```
-Create new RANGE partition for `relation` with specified range bounds.
+Create new RANGE partition for `relation` with specified range bounds. If `start_value` or `end_value` are NULL then corresponding range bound will be infinite.
 
 ```plpgsql
 drop_range_partition(partition TEXT, delete_data BOOLEAN DEFAULT TRUE)
@@ -222,6 +243,12 @@ Drop partitions of the `parent` table (both foreign and local relations). If `de
 
 ### Additional parameters
 
+
+```plpgsql
+set_interval(relation REGCLASS, value ANYELEMENT)
+```
+Update RANGE partitioned table interval. Note that interval must not be negative and it must not be trivial, i.e. its value should be greater than zero for numeric types, at least 1 microsecond for `TIMESTAMP` and at least 1 day for `DATE`.
+
 ```plpgsql
 set_enable_parent(relation REGCLASS, value BOOLEAN)
 ```
@@ -240,8 +267,10 @@ Set partition creation callback to be invoked for each attached or created parti
 /* RANGE-partitioned table abc (child abc_4) */
 {
     "parent":    "abc",
+    "parent_schema": "public",
     "parttype":  "2",
     "partition": "abc_4",
+    "partition_schema": "public",
     "range_max": "401",
     "range_min": "301"
 }
@@ -249,8 +278,10 @@ Set partition creation callback to be invoked for each attached or created parti
 /* HASH-partitioned table abc (child abc_0) */
 {
     "parent":    "abc",
+    "parent_schema": "public",
     "parttype":  "1",
     "partition": "abc_0"
+    "partition_schema": "public"
 }
 ```
 
@@ -641,3 +672,4 @@ Do not hesitate to post your issues, questions and new ideas at the [issues](htt
 Ildar Musin <i.musin@postgrespro.ru> Postgres Professional Ltd., Russia		
 Alexander Korotkov <a.korotkov@postgrespro.ru> Postgres Professional Ltd., Russia		
 Dmitry Ivanov <d.ivanov@postgrespro.ru> Postgres Professional Ltd., Russia		
+

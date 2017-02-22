@@ -62,6 +62,37 @@ NOTICE:  94 rows copied from fkeys.test_fkey_9
               10
 (1 row)
 
+/* Try to partition table that's being referenced */
+CREATE TABLE fkeys.messages(
+	id			SERIAL PRIMARY KEY,
+	msg			TEXT);
+CREATE TABLE fkeys.replies(
+	id			SERIAL PRIMARY KEY,
+	message_id	INTEGER REFERENCES fkeys.messages(id),
+	msg			TEXT);
+INSERT INTO fkeys.messages SELECT g, md5(g::text) FROM generate_series(1, 10) as g;
+INSERT INTO fkeys.replies SELECT g, g, md5(g::text) FROM generate_series(1, 10) as g;
+SELECT create_range_partitions('fkeys.messages', 'id', 1, 100, 2); /* not ok */
+WARNING:  foreign key "replies_message_id_fkey" references relation "fkeys.messages"
+ERROR:  relation "fkeys.messages" is referenced from other relations
+ALTER TABLE fkeys.replies DROP CONSTRAINT replies_message_id_fkey;
+SELECT create_range_partitions('fkeys.messages', 'id', 1, 100, 2); /* ok */
+NOTICE:  sequence "messages_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM fkeys.messages;
+          QUERY PLAN          
+------------------------------
+ Append
+   ->  Seq Scan on messages_1
+   ->  Seq Scan on messages_2
+(3 rows)
+
+DROP TABLE fkeys.messages, fkeys.replies CASCADE;
+NOTICE:  drop cascades to 2 other objects
 DROP SCHEMA fkeys CASCADE;
-NOTICE:  drop cascades to 3 other objects
+NOTICE:  drop cascades to 4 other objects
 DROP EXTENSION pg_pathman CASCADE;

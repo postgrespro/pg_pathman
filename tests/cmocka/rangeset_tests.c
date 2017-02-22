@@ -64,13 +64,13 @@ test_irange_basic(void **state)
 
 	/* test irb_succ() */
 	assert_int_equal(100, irb_succ(99));
-	assert_int_equal(IRANGE_BONDARY_MASK, irb_succ(IRANGE_BONDARY_MASK));
-	assert_int_equal(IRANGE_BONDARY_MASK, irb_succ(IRANGE_BONDARY_MASK + 1));
+	assert_int_equal(IRANGE_BOUNDARY_MASK, irb_succ(IRANGE_BOUNDARY_MASK));
+	assert_int_equal(IRANGE_BOUNDARY_MASK, irb_succ(IRANGE_BOUNDARY_MASK + 1));
 
 	/* test convenience macros */
-	irange = make_irange(0, IRANGE_BONDARY_MASK, IR_LOSSY);
+	irange = make_irange(0, IRANGE_BOUNDARY_MASK, IR_LOSSY);
 	assert_int_equal(irange_lower(irange), 0);
-	assert_int_equal(irange_upper(irange), IRANGE_BONDARY_MASK);
+	assert_int_equal(irange_upper(irange), IRANGE_BOUNDARY_MASK);
 	assert_true(is_irange_lossy(irange));
 	assert_true(is_irange_valid(irange));
 

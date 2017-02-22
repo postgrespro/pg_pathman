@@ -33,14 +33,14 @@ typedef struct {
 #define IR_COMPLETE				false
 
 #define IRANGE_SPECIAL_BIT		( (uint32) ( ((uint32) 1) << 31) )
-#define IRANGE_BONDARY_MASK		( (uint32) (~IRANGE_SPECIAL_BIT) )
+#define IRANGE_BOUNDARY_MASK	( (uint32) (~IRANGE_SPECIAL_BIT) )
 
 #define InvalidIndexRange		{ 0, 0 }
 
 #define is_irange_valid(irange) ( (irange.lower & IRANGE_SPECIAL_BIT) > 0 )
 #define is_irange_lossy(irange)	( (irange.upper & IRANGE_SPECIAL_BIT) > 0 )
-#define irange_lower(irange)	( (uint32) (irange.lower & IRANGE_BONDARY_MASK) )
-#define irange_upper(irange)	( (uint32) (irange.upper & IRANGE_BONDARY_MASK) )
+#define irange_lower(irange)	( (uint32) (irange.lower & IRANGE_BOUNDARY_MASK) )
+#define irange_upper(irange)	( (uint32) (irange.upper & IRANGE_BOUNDARY_MASK) )
 
 #define lfirst_irange(lc)				( *(IndexRange *) lfirst(lc) )
 #define lappend_irange(list, irange)	( lappend((list), alloc_irange(irange)) )
@@ -53,8 +53,8 @@ typedef struct {
 inline static IndexRange
 make_irange(uint32 lower, uint32 upper, bool lossy)
 {
-	IndexRange result = { lower & IRANGE_BONDARY_MASK,
-						  upper & IRANGE_BONDARY_MASK };
+	IndexRange result = { lower & IRANGE_BOUNDARY_MASK,
+						  upper & IRANGE_BOUNDARY_MASK };
 
 	/* Set VALID */
 	result.lower |= IRANGE_SPECIAL_BIT;
@@ -83,7 +83,7 @@ inline static uint32
 irb_pred(uint32 boundary)
 {
 	if (boundary > 0)
-		return (boundary - 1) & IRANGE_BONDARY_MASK;
+		return (boundary - 1) & IRANGE_BOUNDARY_MASK;
 
 	return 0;
 }
@@ -92,8 +92,8 @@ irb_pred(uint32 boundary)
 inline static uint32
 irb_succ(uint32 boundary)
 {
-	if (boundary >= IRANGE_BONDARY_MASK)
-		return IRANGE_BONDARY_MASK;
+	if (boundary >= IRANGE_BOUNDARY_MASK)
+		return IRANGE_BOUNDARY_MASK;
 
 	return boundary + 1;
 }

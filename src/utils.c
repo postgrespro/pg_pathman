@@ -58,64 +58,55 @@ clause_contains_params_walker(Node *node, void *context)
 }
 
 /*
- * Get BTORDER_PROC for two types described by Oids
+ * Check if this is a "date"-related type.
  */
-void
-fill_type_cmp_fmgr_info(FmgrInfo *finfo, Oid type1, Oid type2)
+bool
+is_date_type_internal(Oid typid)
 {
-	Oid				cmp_proc_oid;
-	TypeCacheEntry *tce_1,
-				   *tce_2;
-
-	/* Check type compatibility */
-	if (IsBinaryCoercible(type1, type2))
-		type1 = type2;
-
-	else if (IsBinaryCoercible(type2, type1))
-		type2 = type1;
-
-	tce_1 = lookup_type_cache(type1, TYPECACHE_BTREE_OPFAMILY);
-	tce_2 = lookup_type_cache(type2, TYPECACHE_BTREE_OPFAMILY);
-
-	/* Both types should belong to the same opfamily */
-	if (tce_1->btree_opf != tce_2->btree_opf)
-		goto fill_type_cmp_fmgr_info_error;
-
-	cmp_proc_oid = get_opfamily_proc(tce_1->btree_opf,
-									 tce_1->btree_opintype,
-									 tce_2->btree_opintype,
-									 BTORDER_PROC);
-
-	/* No such function, emit ERROR */
-	if (!OidIsValid(cmp_proc_oid))
-		goto fill_type_cmp_fmgr_info_error;
-
-	/* Fill FmgrInfo struct */
-	fmgr_info(cmp_proc_oid, finfo);
-
-	return; /* everything is OK */
-
-/* Handle errors (no such function) */
-fill_type_cmp_fmgr_info_error:
-	elog(ERROR, "missing comparison function for types %s & %s",
-		 format_type_be(type1), format_type_be(type2));
-}
-
-List *
-list_reverse(List *l)
-{
-	List *result = NIL;
-	ListCell *lc;
-
-	foreach (lc, l)
-	{
-		result = lcons(lfirst(lc), result);
-	}
-	return result;
+	return typid == TIMESTAMPOID ||
+		   typid == TIMESTAMPTZOID ||
+		   typid == DATEOID;
 }
 
 /*
- * Returns pg_pathman schema's Oid or InvalidOid if that's not possible.
+ * Check if user can alter/drop specified relation. This function is used to
+ * make sure that current user can change pg_pathman's config. Returns true
+ * if user can manage relation, false otherwise.
+ *
+ * XXX currently we just check if user is a table owner. Probably it's
+ * better to check user permissions in order to let other users participate.
+ */
+bool
+check_security_policy_internal(Oid relid, Oid role)
+{
+	Oid owner;
+
+	/* Superuser is allowed to do anything */
+	if (superuser())
+		return true;
+
+	/* Fetch the owner */
+	owner = get_rel_owner(relid);
+
+	/*
+	 * Sometimes the relation doesn't exist anymore but there is still
+	 * a record in config. For instance, it happens in DDL event trigger.
+	 * Still we should be able to remove this record.
+	 */
+	if (owner == InvalidOid)
+		return true;
+
+	/* Check if current user is the owner of the relation */
+	if (owner != role)
+		return false;
+
+	return true;
+}
+
+
+
+/*
+ * Return pg_pathman schema's Oid or InvalidOid if that's not possible.
  */
 Oid
 get_pathman_schema(void)
@@ -159,105 +150,20 @@ get_pathman_schema(void)
 	return result;
 }
 
-/*
- * Check if this is a "date"-related type.
- */
-bool
-is_date_type_internal(Oid typid)
+List *
+list_reverse(List *l)
 {
-	return typid == TIMESTAMPOID ||
-		   typid == TIMESTAMPTZOID ||
-		   typid == DATEOID;
-}
+	List *result = NIL;
+	ListCell *lc;
 
-
-/*
- * Try to find binary operator.
- *
- * Returns operator function's Oid or throws an ERROR on InvalidOid.
- */
-Operator
-get_binary_operator(char *oprname, Oid arg1, Oid arg2)
-{
-	Operator op;
-
-	op = compatible_oper(NULL, list_make1(makeString(oprname)),
-						 arg1, arg2, true, -1);
-
-	if (!op)
-		elog(ERROR, "Cannot find operator \"%s\"(%u, %u)", oprname, arg1, arg2);
-
-	return op;
-}
-
-/* Get operator's result type */
-Oid
-get_operator_ret_type(Operator op)
-{
-	Form_pg_operator pgopform = (Form_pg_operator) GETSTRUCT(op);
-
-	return pgopform->oprresult;
-}
-
-/*
- * Get CSTRING representation of Datum using the type Oid.
- */
-char *
-datum_to_cstring(Datum datum, Oid typid)
-{
-	char	   *result;
-	HeapTuple	tup = SearchSysCache1(TYPEOID, ObjectIdGetDatum(typid));
-
-	if (HeapTupleIsValid(tup))
+	foreach (lc, l)
 	{
-		Form_pg_type typtup = (Form_pg_type) GETSTRUCT(tup);
-		result = OidOutputFunctionCall(typtup->typoutput, datum);
-		ReleaseSysCache(tup);
+		result = lcons(lfirst(lc), result);
 	}
-	else
-		result = pstrdup("[error]");
-
 	return result;
 }
 
-/*
- * Try to get relname or at least relid as cstring.
- */
-char *
-get_rel_name_or_relid(Oid relid)
-{
-	char *relname = get_rel_name(relid);
 
-	if (!relname)
-		return DatumGetCString(DirectFunctionCall1(oidout,
-												   ObjectIdGetDatum(relid)));
-	return relname;
-}
-
-#if PG_VERSION_NUM < 90600
-/*
- * Returns the relpersistence associated with a given relation.
- *
- * NOTE: this function is implemented in 9.6
- */
-char
-get_rel_persistence(Oid relid)
-{
-	HeapTuple		tp;
-	Form_pg_class	reltup;
-	char 			result;
-
-	tp = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
-	if (!HeapTupleIsValid(tp))
-		elog(ERROR, "cache lookup failed for relation %u", relid);
-
-	reltup = (Form_pg_class) GETSTRUCT(tp);
-	result = reltup->relpersistence;
-	ReleaseSysCache(tp);
-
-	return result;
-}
-#endif
 
 /*
  * Get relation owner.
@@ -280,6 +186,20 @@ get_rel_owner(Oid relid)
 	}
 
 	return InvalidOid;
+}
+
+/*
+ * Try to get relname or at least relid as cstring.
+ */
+char *
+get_rel_name_or_relid(Oid relid)
+{
+	char *relname = get_rel_name(relid);
+
+	if (!relname)
+		return DatumGetCString(DirectFunctionCall1(oidout,
+												   ObjectIdGetDatum(relid)));
+	return relname;
 }
 
 /*
@@ -310,40 +230,144 @@ get_attribute_type(Oid relid, const char *attname, bool missing_ok)
 	return InvalidOid;
 }
 
+#if PG_VERSION_NUM < 90600
 /*
- * Check if user can alter/drop specified relation. This function is used to
- * make sure that current user can change pg_pathman's config. Returns true
- * if user can manage relation, false otherwise.
+ * Returns the relpersistence associated with a given relation.
  *
- * XXX currently we just check if user is a table owner. Probably it's
- * better to check user permissions in order to let other users participate.
+ * NOTE: this function is implemented in 9.6
  */
-bool
-check_security_policy_internal(Oid relid, Oid role)
+char
+get_rel_persistence(Oid relid)
 {
-	Oid owner;
+	HeapTuple		tp;
+	Form_pg_class	reltup;
+	char 			result;
 
-	/* Superuser is allowed to do anything */
-	if (superuser())
-		return true;
+	tp = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
+	if (!HeapTupleIsValid(tp))
+		elog(ERROR, "cache lookup failed for relation %u", relid);
 
-	/* Fetch the owner */
-	owner = get_rel_owner(relid);
+	reltup = (Form_pg_class) GETSTRUCT(tp);
+	result = reltup->relpersistence;
+	ReleaseSysCache(tp);
 
-	/*
-	 * Sometimes the relation doesn't exist anymore but there is still
-	 * a record in config. For instance, it happens in DDL event trigger.
-	 * Still we should be able to remove this record.
-	 */
-	if (owner == InvalidOid)
-		return true;
-
-	/* Check if current user is the owner of the relation */
-	if (owner != role)
-		return false;
-
-	return true;
+	return result;
 }
+#endif
+
+
+
+/*
+ * Try to find binary operator.
+ *
+ * Returns operator function's Oid or throws an ERROR on InvalidOid.
+ */
+Operator
+get_binary_operator(char *oprname, Oid arg1, Oid arg2)
+{
+	Operator op;
+
+	op = compatible_oper(NULL, list_make1(makeString(oprname)),
+						 arg1, arg2, true, -1);
+
+	if (!op)
+		elog(ERROR, "Cannot find operator \"%s\"(%u, %u)", oprname, arg1, arg2);
+
+	return op;
+}
+
+/*
+ * Get BTORDER_PROC for two types described by Oids.
+ */
+void
+fill_type_cmp_fmgr_info(FmgrInfo *finfo, Oid type1, Oid type2)
+{
+	Oid				cmp_proc_oid;
+	TypeCacheEntry *tce_1,
+				   *tce_2;
+
+	/* Check type compatibility */
+	if (IsBinaryCoercible(type1, type2))
+		type1 = type2;
+
+	else if (IsBinaryCoercible(type2, type1))
+		type2 = type1;
+
+	tce_1 = lookup_type_cache(type1, TYPECACHE_BTREE_OPFAMILY);
+	tce_2 = lookup_type_cache(type2, TYPECACHE_BTREE_OPFAMILY);
+
+	/* Both types should belong to the same opfamily */
+	if (tce_1->btree_opf != tce_2->btree_opf)
+		goto fill_type_cmp_fmgr_info_error;
+
+	cmp_proc_oid = get_opfamily_proc(tce_1->btree_opf,
+									 tce_1->btree_opintype,
+									 tce_2->btree_opintype,
+									 BTORDER_PROC);
+
+	/* No such function, emit ERROR */
+	if (!OidIsValid(cmp_proc_oid))
+		goto fill_type_cmp_fmgr_info_error;
+
+	/* Fill FmgrInfo struct */
+	fmgr_info(cmp_proc_oid, finfo);
+
+	return; /* everything is OK */
+
+/* Handle errors (no such function) */
+fill_type_cmp_fmgr_info_error:
+	elog(ERROR, "missing comparison function for types %s & %s",
+		 format_type_be(type1), format_type_be(type2));
+}
+
+/*
+ * Fetch binary operator by name and return it's function and ret type.
+ */
+void
+extract_op_func_and_ret_type(char *opname,
+							 Oid type1, Oid type2,
+							 Oid *op_func,		/* returned value #1 */
+							 Oid *op_ret_type)	/* returned value #2 */
+{
+	Operator op;
+
+	/* Get "move bound operator" descriptor */
+	op = get_binary_operator(opname, type1, type2);
+	if (!op)
+		elog(ERROR, "missing %s operator for types %s and %s",
+			 opname, format_type_be(type1), format_type_be(type2));
+
+	*op_func = oprfuncid(op);
+	*op_ret_type = ((Form_pg_operator) GETSTRUCT(op))->oprresult;
+
+	/* Don't forget to release system cache */
+	ReleaseSysCache(op);
+}
+
+
+
+/*
+ * Get CSTRING representation of Datum using the type Oid.
+ */
+char *
+datum_to_cstring(Datum datum, Oid typid)
+{
+	char	   *result;
+	HeapTuple	tup = SearchSysCache1(TYPEOID, ObjectIdGetDatum(typid));
+
+	if (HeapTupleIsValid(tup))
+	{
+		Form_pg_type typtup = (Form_pg_type) GETSTRUCT(tup);
+		result = OidOutputFunctionCall(typtup->typoutput, datum);
+		ReleaseSysCache(tup);
+	}
+	else
+		result = pstrdup("[error]");
+
+	return result;
+}
+
+
 
 /*
  * Try casting value of type 'in_type' to 'out_type'.

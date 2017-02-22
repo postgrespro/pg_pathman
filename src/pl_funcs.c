@@ -41,7 +41,6 @@ PG_FUNCTION_INFO_V1( on_partitions_removed );
 PG_FUNCTION_INFO_V1( get_number_of_partitions_pl );
 PG_FUNCTION_INFO_V1( get_parent_of_partition_pl );
 PG_FUNCTION_INFO_V1( get_base_type_pl );
-PG_FUNCTION_INFO_V1( get_attribute_type_pl );
 PG_FUNCTION_INFO_V1( get_partition_key_type );
 PG_FUNCTION_INFO_V1( get_tablespace_pl );
 
@@ -288,7 +287,7 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 		usercxt = (show_partition_list_cxt *) palloc(sizeof(show_partition_list_cxt));
 
 		/* Open PATHMAN_CONFIG with latest snapshot available */
-		usercxt->pathman_config = heap_open(get_pathman_config_relid(),
+		usercxt->pathman_config = heap_open(get_pathman_config_relid(false),
 											AccessShareLock);
 		usercxt->snapshot = RegisterSnapshot(GetLatestSnapshot());
 		usercxt->pathman_config_scan = heap_beginscan(usercxt->pathman_config,
@@ -399,28 +398,32 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 			case PT_RANGE:
 				{
 					RangeEntry *re;
-					Datum		rmin,
-								rmax;
 
 					re = &PrelGetRangesArray(prel)[usercxt->child_number];
 
+					values[Anum_pathman_pl_partition - 1] = re->child_oid;
+
 					/* Lower bound text */
-					rmin = !IsInfinite(&re->min) ?
-								CStringGetTextDatum(
+					if (!IsInfinite(&re->min))
+					{
+						Datum rmin = CStringGetTextDatum(
 										datum_to_cstring(BoundGetValue(&re->min),
-														 prel->atttype)) :
-								CStringGetTextDatum("NULL");
+														 prel->atttype));
+
+						values[Anum_pathman_pl_range_min - 1] = rmin;
+					}
+					else isnull[Anum_pathman_pl_range_min - 1] = true;
 
 					/* Upper bound text */
-					rmax = !IsInfinite(&re->max) ?
-								CStringGetTextDatum(
+					if (!IsInfinite(&re->max))
+					{
+						Datum rmax = CStringGetTextDatum(
 										datum_to_cstring(BoundGetValue(&re->max),
-														 prel->atttype)) :
-								CStringGetTextDatum("NULL");
+														 prel->atttype));
 
-					values[Anum_pathman_pl_partition - 1] = re->child_oid;
-					values[Anum_pathman_pl_range_min - 1] = rmin;
-					values[Anum_pathman_pl_range_max - 1] = rmax;
+						values[Anum_pathman_pl_range_max - 1] = rmax;
+					}
+					else isnull[Anum_pathman_pl_range_max - 1] = true;
 				}
 				break;
 
@@ -649,7 +652,7 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	isnull[Anum_pathman_config_range_interval - 1]	= PG_ARGISNULL(2);
 
 	/* Insert new row into PATHMAN_CONFIG */
-	pathman_config = heap_open(get_pathman_config_relid(), RowExclusiveLock);
+	pathman_config = heap_open(get_pathman_config_relid(false), RowExclusiveLock);
 	htup = heap_form_tuple(RelationGetDescr(pathman_config), values, isnull);
 	simple_heap_insert(pathman_config, htup);
 	indstate = CatalogOpenIndexes(pathman_config);
@@ -697,10 +700,17 @@ Datum
 pathman_config_params_trigger_func(PG_FUNCTION_ARGS)
 {
 	TriggerData	   *trigdata = (TriggerData *) fcinfo->context;
-	Oid				pathman_config_params = get_pathman_config_params_relid();
+	Oid				pathman_config_params;
 	Oid				partrel;
 	Datum			partrel_datum;
 	bool			partrel_isnull;
+
+	/* Fetch Oid of PATHMAN_CONFIG_PARAMS */
+	pathman_config_params = get_pathman_config_params_relid(true);
+
+	/* Handle "pg_pathman.enabled = t" case */
+	if (!OidIsValid(pathman_config_params))
+		goto pathman_config_params_trigger_func_return;
 
 	/* Handle user calls */
 	if (!CALLED_AS_TRIGGER(fcinfo))
@@ -730,6 +740,7 @@ pathman_config_params_trigger_func(PG_FUNCTION_ARGS)
 	if (check_relation_exists(partrel))
 		CacheInvalidateRelcacheByRelid(partrel);
 
+pathman_config_params_trigger_func_return:
 	/* Return the tuple we've been given */
 	if (trigdata->tg_event & TRIGGER_EVENT_UPDATE)
 		PG_RETURN_POINTER(trigdata->tg_newtuple);
@@ -784,7 +795,8 @@ prevent_relation_modification(PG_FUNCTION_ARGS)
 Datum
 validate_part_callback_pl(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_BOOL(validate_part_callback(PG_GETARG_OID(0), PG_GETARG_BOOL(1)));
+	PG_RETURN_BOOL(validate_part_callback(PG_GETARG_OID(0),
+										  PG_GETARG_BOOL(1)));
 }
 
 /*
@@ -832,9 +844,6 @@ invoke_on_partition_created_callback(PG_FUNCTION_ARGS)
 				Bound	start,
 						end;
 				Oid		value_type;
-
-				if (PG_ARGISNULL(ARG_RANGE_START) || PG_ARGISNULL(ARG_RANGE_END))
-					elog(ERROR, "both bounds must be provided for RANGE partition");
 
 				/* Fetch start & end values for RANGE + their type */
 				start = PG_ARGISNULL(ARG_RANGE_START) ?

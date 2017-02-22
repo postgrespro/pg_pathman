@@ -107,6 +107,7 @@ extern CustomExecMethods	partition_filter_exec_methods;
 
 void init_partition_filter_static_data(void);
 
+
 /* ResultPartsStorage init\fini\scan function */
 void init_result_parts_storage(ResultPartsStorage *parts_storage,
 							   EState *estate,
@@ -114,20 +115,32 @@ void init_result_parts_storage(ResultPartsStorage *parts_storage,
 							   Size table_entry_size,
 							   on_new_rri_holder on_new_rri_holder_cb,
 							   void *on_new_rri_holder_cb_arg);
+
 void fini_result_parts_storage(ResultPartsStorage *parts_storage,
 							   bool close_rels);
+
 ResultRelInfoHolder * scan_result_parts_storage(Oid partid,
 												ResultPartsStorage *storage);
+
+TupleConversionMap * build_part_tuple_map(Relation parent_rel, Relation child_rel);
+
 
 /* Find suitable partition using 'value' */
 Oid * find_partitions_for_value(Datum value, Oid value_type,
 								const PartRelationInfo *prel,
 								int *nparts);
 
+ResultRelInfoHolder * select_partition_for_insert(Datum value, Oid value_type,
+												  const PartRelationInfo *prel,
+												  ResultPartsStorage *parts_storage,
+												  EState *estate);
+
+
 Plan * make_partition_filter(Plan *subplan,
 							 Oid parent_relid,
 							 OnConflictAction conflict_action,
 							 List *returning_list);
+
 
 Node * partition_filter_create_scan_state(CustomScan *node);
 
@@ -144,11 +157,6 @@ void partition_filter_rescan(CustomScanState *node);
 void partition_filter_explain(CustomScanState *node,
 							  List *ancestors,
 							  ExplainState *es);
-
-ResultRelInfoHolder * select_partition_for_insert(const PartRelationInfo *prel,
-												  ResultPartsStorage *parts_storage,
-												  Datum value, Oid value_type,
-												  EState *estate);
 
 
 #endif /* PARTITION_FILTER_H */

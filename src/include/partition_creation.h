@@ -24,7 +24,8 @@
 
 /* Create RANGE partitions to store some value */
 Oid create_partitions_for_value(Oid relid, Datum value, Oid value_type);
-Oid create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type);
+Oid create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
+										 bool is_background_worker);
 
 
 /* Create one RANGE partition */

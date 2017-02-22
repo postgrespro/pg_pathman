@@ -8,14 +8,15 @@
  * ------------------------------------------------------------------------
  */
 
-#include "utility_stmt_hooking.h"
+#include "compat/pg_compat.h"
+
 #include "hooks.h"
 #include "init.h"
 #include "partition_filter.h"
-#include "pg_compat.h"
 #include "planner_tree_modification.h"
 #include "runtimeappend.h"
 #include "runtime_merge_append.h"
+#include "utility_stmt_hooking.h"
 #include "utils.h"
 #include "xact_handling.h"
 
@@ -468,10 +469,11 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 
 	PlannedStmt	   *result;
 	uint32			query_id = parse->queryId;
+	bool			pathman_ready = IsPathmanReady(); /* in case it changes */
 
 	PG_TRY();
 	{
-		if (IsPathmanReady())
+		if (pathman_ready)
 		{
 			/* Increment parenthood_statuses refcount */
 			incr_refcount_parenthood_statuses();
@@ -486,7 +488,7 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 		else
 			result = standard_planner(parse, cursorOptions, boundParams);
 
-		if (IsPathmanReady())
+		if (pathman_ready)
 		{
 			/* Give rowmark-related attributes correct names */
 			ExecuteForPlanTree(result, postprocess_lock_rows);
@@ -504,9 +506,13 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	/* We must decrease parenthood statuses refcount on ERROR */
 	PG_CATCH();
 	{
-		/* Caught an ERROR, decrease refcount */
-		decr_refcount_parenthood_statuses();
+		if (pathman_ready)
+		{
+			/* Caught an ERROR, decrease refcount */
+			decr_refcount_parenthood_statuses();
+		}
 
+		/* Rethrow ERROR further */
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
@@ -605,7 +611,7 @@ pathman_relcache_hook(Datum arg, Oid relid)
 		return;
 
 	/* Invalidation event for PATHMAN_CONFIG table (probably DROP) */
-	if (relid == get_pathman_config_relid())
+	if (relid == get_pathman_config_relid(false))
 		delay_pathman_shutdown();
 
 	/* Invalidate PartParentInfo cache if needed */

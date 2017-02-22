@@ -7,6 +7,7 @@ CREATE SCHEMA calamity;
 /* call for coverage test */
 set client_min_messages = ERROR;
 SELECT debug_capture();
+SELECT get_pathman_lib_version();
 set client_min_messages = NOTICE;
 
 
@@ -33,6 +34,38 @@ SELECT drop_partitions('calamity.part_test');
 SELECT count(*) FROM calamity.part_test;
 
 DELETE FROM calamity.part_test;
+
+
+/* test function create_hash_partitions() */
+SELECT create_hash_partitions('calamity.part_test', 'val', 2,
+							  partition_names := ARRAY[]::TEXT[]); /* not ok */
+
+SELECT create_hash_partitions('calamity.part_test', 'val', 2,
+							  partition_names := ARRAY[ 'p1', NULL ]::TEXT[]); /* not ok */
+
+SELECT create_hash_partitions('calamity.part_test', 'val', 2,
+							  partition_names := ARRAY[ ['p1'], ['p2'] ]::TEXT[]); /* not ok */
+
+SELECT create_hash_partitions('calamity.part_test', 'val', 2,
+							  partition_names := ARRAY['calamity.p1']::TEXT[]); /* not ok */
+
+SELECT create_hash_partitions('calamity.part_test', 'val', 2,
+							  tablespaces := ARRAY['abcd']::TEXT[]); /* not ok */
+
+
+/* test case when naming sequence does not exist */
+CREATE TABLE calamity.no_naming_seq(val INT4 NOT NULL);
+SELECT add_to_pathman_config('calamity.no_naming_seq', 'val', '100');
+select add_range_partition(' calamity.no_naming_seq', 10, 20);
+DROP TABLE calamity.no_naming_seq CASCADE;
+
+
+/* test (-inf, +inf) partition creation */
+CREATE TABLE calamity.double_inf(val INT4 NOT NULL);
+SELECT add_to_pathman_config('calamity.double_inf', 'val', '10');
+select add_range_partition('calamity.double_inf', NULL::INT4, NULL::INT4,
+						   partition_name := 'double_inf_part');
+DROP TABLE calamity.double_inf CASCADE;
 
 
 /* test stub 'enable_parent' value for PATHMAN_CONFIG_PARAMS */
@@ -117,22 +150,44 @@ SELECT build_update_trigger_func_name(NULL) IS NULL;
 /* check function stop_concurrent_part_task() */
 SELECT stop_concurrent_part_task(1::regclass);
 
-/* check invoke_on_partition_created_callback() for RANGE */
-SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part_test', 1, NULL, NULL::int);
-SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part_test', 1, 1, NULL);
-SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part_test', 1, NULL, 1);
+/* check function drop_range_partition_expand_next() */
+SELECT drop_range_partition_expand_next('pg_class');
+SELECT drop_range_partition_expand_next(NULL) IS NULL;
 
-/* check invoke_on_partition_created_callback() for HASH */
-SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part_test', NULL);
-SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part_test', 0);
+
+/* check invoke_on_partition_created_callback() */
+CREATE FUNCTION calamity.dummy_cb(arg jsonb) RETURNS void AS $$
+	begin
+		raise warning 'arg: %', arg::text;
+	end
+$$ LANGUAGE plpgsql;
+
+/* Invalid args */
 SELECT invoke_on_partition_created_callback(NULL, 'calamity.part_test', 1);
 SELECT invoke_on_partition_created_callback('calamity.part_test', NULL, 1);
+SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part_test', 0);
+SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part_test', 1);
+SELECT invoke_on_partition_created_callback('calamity.part_test', 'calamity.part_test', NULL);
+
+/* HASH */
+SELECT invoke_on_partition_created_callback(0::regclass, 1::regclass, 'calamity.dummy_cb(jsonb)'::regprocedure);
+
+/* RANGE */
+SELECT invoke_on_partition_created_callback('calamity.part_test'::regclass, 'pg_class'::regclass, 'calamity.dummy_cb(jsonb)'::regprocedure, NULL::int, NULL);
+SELECT invoke_on_partition_created_callback(0::regclass, 1::regclass, 'calamity.dummy_cb(jsonb)'::regprocedure, NULL::int, NULL);
+SELECT invoke_on_partition_created_callback(0::regclass, 1::regclass, 'calamity.dummy_cb(jsonb)'::regprocedure, 1, NULL);
+SELECT invoke_on_partition_created_callback(0::regclass, 1::regclass, 'calamity.dummy_cb(jsonb)'::regprocedure, NULL, 1);
+
+DROP FUNCTION calamity.dummy_cb(arg jsonb);
+
 
 /* check function add_to_pathman_config() -- PHASE #1 */
-SELECT add_to_pathman_config('calamity.part_test', NULL);
-SELECT add_to_pathman_config('calamity.part_test', 'val');
+SELECT add_to_pathman_config(NULL, 'val');						/* no table */
+SELECT add_to_pathman_config('calamity.part_test', NULL);		/* no column */
+SELECT add_to_pathman_config('calamity.part_test', 'V_A_L');	/* wrong column */
+SELECT add_to_pathman_config('calamity.part_test', 'val');		/* OK */
 SELECT disable_pathman_for('calamity.part_test');
-SELECT add_to_pathman_config('calamity.part_test', 'val', '10');
+SELECT add_to_pathman_config('calamity.part_test', 'val', '10'); /* OK */
 SELECT disable_pathman_for('calamity.part_test');
 
 
@@ -178,6 +233,71 @@ SELECT set_enable_parent('calamity.to_be_disabled', true); /* add row to params 
 SELECT disable_pathman_for('calamity.to_be_disabled'); /* should delete both rows */
 SELECT count(*) FROM pathman_config WHERE partrel = 'calamity.to_be_disabled'::REGCLASS;
 SELECT count(*) FROM pathman_config_params WHERE partrel = 'calamity.to_be_disabled'::REGCLASS;
+
+
+/* check function get_part_range_by_idx() */
+CREATE TABLE calamity.test_range_idx(val INT4 NOT NULL);
+SELECT create_range_partitions('calamity.test_range_idx', 'val', 1, 10, 1);
+
+SELECT get_part_range(NULL, 1, NULL::INT4);							/* not ok */
+SELECT get_part_range('calamity.test_range_idx', NULL, NULL::INT4);	/* not ok */
+SELECT get_part_range('calamity.test_range_idx', 0, NULL::INT2);	/* not ok */
+SELECT get_part_range('calamity.test_range_idx', -2, NULL::INT4);	/* not ok */
+SELECT get_part_range('calamity.test_range_idx', 4, NULL::INT4);	/* not ok */
+SELECT get_part_range('calamity.test_range_idx', 0, NULL::INT4);	/* OK */
+
+DROP TABLE calamity.test_range_idx CASCADE;
+
+
+/* check function get_part_range_by_oid() */
+CREATE TABLE calamity.test_range_oid(val INT4 NOT NULL);
+SELECT create_range_partitions('calamity.test_range_oid', 'val', 1, 10, 1);
+
+SELECT get_part_range(NULL, NULL::INT4);							/* not ok */
+SELECT get_part_range('pg_class', NULL::INT4);						/* not ok */
+SELECT get_part_range('calamity.test_range_oid_1', NULL::INT2);		/* not ok */
+SELECT get_part_range('calamity.test_range_oid_1', NULL::INT4);		/* OK */
+
+DROP TABLE calamity.test_range_oid CASCADE;
+
+
+DROP SCHEMA calamity CASCADE;
+DROP EXTENSION pg_pathman;
+
+
+
+/*
+ * ------------------------------------------
+ *  Special tests (uninitialized pg_pathman)
+ * ------------------------------------------
+ */
+
+CREATE SCHEMA calamity;
+CREATE EXTENSION pg_pathman;
+
+
+/* check function pathman_cache_search_relid() */
+CREATE TABLE calamity.survivor(val INT NOT NULL);
+SELECT create_range_partitions('calamity.survivor', 'val', 1, 10, 2);
+
+DROP EXTENSION pg_pathman CASCADE;
+SET pg_pathman.enable = f; /* DON'T LOAD CONFIG */
+CREATE EXTENSION pg_pathman;
+SHOW pg_pathman.enable;
+
+SELECT add_to_pathman_config('calamity.survivor', 'val', '10');	/* not ok */
+SELECT * FROM pathman_partition_list;							/* not ok */
+SELECT get_part_range('calamity.survivor', 0, NULL::INT);		/* not ok */
+EXPLAIN (COSTS OFF) SELECT * FROM calamity.survivor;			/* OK */
+
+SET pg_pathman.enable = t; /* LOAD CONFIG */
+
+SELECT add_to_pathman_config('calamity.survivor', 'val', '10');	/* OK */
+SELECT * FROM pathman_partition_list;							/* OK */
+SELECT get_part_range('calamity.survivor', 0, NULL::INT);		/* OK */
+EXPLAIN (COSTS OFF) SELECT * FROM calamity.survivor;			/* OK */
+
+DROP TABLE calamity.survivor CASCADE;
 
 
 DROP SCHEMA calamity CASCADE;

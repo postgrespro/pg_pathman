@@ -114,6 +114,37 @@ static uint32 build_sql_facade_version(char *version_cstr);
 static uint32 get_sql_facade_version(void);
 static void validate_sql_facade_version(uint32 ver);
 
+
+/*
+ * Safe hash search (takes care of disabled pg_pathman).
+ */
+void *
+pathman_cache_search_relid(HTAB *cache_table,
+						   Oid relid,
+						   HASHACTION action,
+						   bool *found)
+{
+	/* Table is NULL, take some actions */
+	if (cache_table == NULL)
+		switch (action)
+		{
+			case HASH_FIND:
+			case HASH_ENTER:
+			case HASH_REMOVE:
+				elog(ERROR, "pg_pathman is not initialized yet");
+				break;
+
+			/* Something strange has just happened */
+			default:
+				elog(ERROR, "unexpected action in function "
+					 CppAsString(pathman_cache_search_relid));
+				break;
+		}
+
+	/* Everything is fine */
+	return hash_search(cache_table, (const void *) &relid, action, found);
+}
+
 /*
  * Save and restore main init state.
  */
@@ -287,6 +318,10 @@ static void
 init_local_cache(void)
 {
 	HASHCTL ctl;
+
+	/* Destroy caches, just in case */
+	hash_destroy(partitioned_rels);
+	hash_destroy(parent_cache);
 
 	memset(&ctl, 0, sizeof(ctl));
 	ctl.keysize = sizeof(Oid);
@@ -703,7 +738,7 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 				ObjectIdGetDatum(relid));
 
 	/* Open PATHMAN_CONFIG with latest snapshot available */
-	rel = heap_open(get_pathman_config_relid(), AccessShareLock);
+	rel = heap_open(get_pathman_config_relid(false), AccessShareLock);
 
 	/* Check that 'partrel' column is if regclass type */
 	Assert(RelationGetDescr(rel)->
@@ -777,7 +812,7 @@ read_pathman_params(Oid relid, Datum *values, bool *isnull)
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(relid));
 
-	rel = heap_open(get_pathman_config_params_relid(), AccessShareLock);
+	rel = heap_open(get_pathman_config_params_relid(false), AccessShareLock);
 	snapshot = RegisterSnapshot(GetLatestSnapshot());
 	scan = heap_beginscan(rel, snapshot, 1, key);
 
@@ -792,7 +827,6 @@ read_pathman_params(Oid relid, Datum *values, bool *isnull)
 		Assert(!isnull[Anum_pathman_config_params_partrel - 1]);
 		Assert(!isnull[Anum_pathman_config_params_enable_parent - 1]);
 		Assert(!isnull[Anum_pathman_config_params_auto - 1]);
-		Assert(!isnull[Anum_pathman_config_params_init_callback - 1]);
 		Assert(!isnull[Anum_pathman_config_params_spawn_using_bgw - 1]);
 	}
 
@@ -816,7 +850,7 @@ read_pathman_config(void)
 	HeapTuple		htup;
 
 	/* Open PATHMAN_CONFIG with latest snapshot available */
-	rel = heap_open(get_pathman_config_relid(), AccessShareLock);
+	rel = heap_open(get_pathman_config_relid(false), AccessShareLock);
 
 	/* Check that 'partrel' column is if regclass type */
 	Assert(RelationGetDescr(rel)->
@@ -952,7 +986,7 @@ validate_range_opexpr(const Expr *expr,
 		return false;
 
 	/* Fail fast if it's not an OpExpr node */
-	if(!IsA(expr, OpExpr))
+	if (!IsA(expr, OpExpr))
 		return false;
 
 	/* Perform cast */

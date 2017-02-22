@@ -8,4 +8,5 @@ regression.out
 *.pyc
 *.gcda
 *.gcno
-pg_pathman--1.2.sql
+*.gcov
+pg_pathman--*.sql

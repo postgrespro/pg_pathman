@@ -656,7 +656,6 @@ END
 $$
 LANGUAGE plpgsql;
 
-
 /*
  * Prepend new partition.
  */
@@ -762,7 +761,6 @@ END
 $$
 LANGUAGE plpgsql;
 
-
 /*
  * Add new partition
  */
@@ -806,7 +804,6 @@ BEGIN
 END
 $$
 LANGUAGE plpgsql;
-
 
 /*
  * Drop range partition
@@ -874,20 +871,6 @@ $$
 LANGUAGE plpgsql
 SET pg_pathman.enable_partitionfilter = off; /* ensures that PartitionFilter is OFF */
 
-
-/*
- * Drops partition and expands the next partition so that it cover dropped
- * one
- *
- * This function was written in order to support Oracle-like ALTER TABLE ...
- * DROP PARTITION. In Oracle partitions only have upper bound and when
- * partition is dropped the next one automatically covers freed range
- */
-CREATE OR REPLACE FUNCTION @extschema@.drop_range_partition_expand_next(relid REGCLASS)
-RETURNS VOID AS 'pg_pathman', 'drop_range_partition_expand_next'
-LANGUAGE C STRICT;
-
-
 /*
  * Attach range partition
  */
@@ -946,7 +929,7 @@ BEGIN
 
 	/* Fetch init_callback from 'params' table */
 	WITH stub_callback(stub) as (values (0))
-	SELECT coalesce(init_callback, 0::REGPROCEDURE)
+	SELECT init_callback
 	FROM stub_callback
 	LEFT JOIN @extschema@.pathman_config_params AS params
 	ON params.partrel = parent_relid
@@ -966,12 +949,11 @@ END
 $$
 LANGUAGE plpgsql;
 
-
 /*
  * Detach range partition
  */
 CREATE OR REPLACE FUNCTION @extschema@.detach_range_partition(
-	partition_relid		REGCLASS)
+	partition_relid	REGCLASS)
 RETURNS TEXT AS
 $$
 DECLARE
@@ -1009,7 +991,6 @@ BEGIN
 END
 $$
 LANGUAGE plpgsql;
-
 
 /*
  * Creates an update trigger
@@ -1106,6 +1087,20 @@ BEGIN
 	RETURN funcname;
 END
 $$ LANGUAGE plpgsql;
+
+
+/*
+ * Drops partition and expands the next partition so that it cover dropped
+ * one
+ *
+ * This function was written in order to support Oracle-like ALTER TABLE ...
+ * DROP PARTITION. In Oracle partitions only have upper bound and when
+ * partition is dropped the next one automatically covers freed range
+ */
+CREATE OR REPLACE FUNCTION @extschema@.drop_range_partition_expand_next(
+	partition_relid		REGCLASS)
+RETURNS VOID AS 'pg_pathman', 'drop_range_partition_expand_next'
+LANGUAGE C STRICT;
 
 /*
  * Creates new RANGE partition. Returns partition name.

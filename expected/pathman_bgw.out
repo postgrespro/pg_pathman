@@ -1,0 +1,114 @@
+\set VERBOSITY terse
+SET search_path = 'public';
+CREATE EXTENSION pg_pathman;
+CREATE SCHEMA test_bgw;
+/*
+ * Tests for SpawnPartitionsWorker
+ */
+/* int4, size of Datum == 4 */
+CREATE TABLE test_bgw.test_1(val INT4 NOT NULL);
+SELECT create_range_partitions('test_bgw.test_1', 'val', 1, 5, 2);
+NOTICE:  sequence "test_1_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+SELECT set_spawn_using_bgw('test_bgw.test_1', true);
+ set_spawn_using_bgw 
+---------------------
+ 
+(1 row)
+
+INSERT INTO test_bgw.test_1 VALUES (11);
+SELECT * FROM pathman_partition_list ORDER BY partition; /* should contain 3 partitions */
+     parent      |     partition     | parttype | partattr | range_min | range_max 
+-----------------+-------------------+----------+----------+-----------+-----------
+ test_bgw.test_1 | test_bgw.test_1_1 |        2 | val      | 1         | 6
+ test_bgw.test_1 | test_bgw.test_1_2 |        2 | val      | 6         | 11
+ test_bgw.test_1 | test_bgw.test_1_3 |        2 | val      | 11        | 16
+(3 rows)
+
+DROP TABLE test_bgw.test_1 CASCADE;
+NOTICE:  drop cascades to 3 other objects
+/* int8, size of Datum == 8 */
+CREATE TABLE test_bgw.test_2(val INT8 NOT NULL);
+SELECT create_range_partitions('test_bgw.test_2', 'val', 1, 5, 2);
+NOTICE:  sequence "test_2_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+SELECT set_spawn_using_bgw('test_bgw.test_2', true);
+ set_spawn_using_bgw 
+---------------------
+ 
+(1 row)
+
+INSERT INTO test_bgw.test_2 VALUES (11);
+SELECT * FROM pathman_partition_list ORDER BY partition; /* should contain 3 partitions */
+     parent      |     partition     | parttype | partattr | range_min | range_max 
+-----------------+-------------------+----------+----------+-----------+-----------
+ test_bgw.test_2 | test_bgw.test_2_1 |        2 | val      | 1         | 6
+ test_bgw.test_2 | test_bgw.test_2_2 |        2 | val      | 6         | 11
+ test_bgw.test_2 | test_bgw.test_2_3 |        2 | val      | 11        | 16
+(3 rows)
+
+DROP TABLE test_bgw.test_2 CASCADE;
+NOTICE:  drop cascades to 3 other objects
+/* numeric, size of Datum == var */
+CREATE TABLE test_bgw.test_3(val NUMERIC NOT NULL);
+SELECT create_range_partitions('test_bgw.test_3', 'val', 1, 5, 2);
+NOTICE:  sequence "test_3_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+SELECT set_spawn_using_bgw('test_bgw.test_3', true);
+ set_spawn_using_bgw 
+---------------------
+ 
+(1 row)
+
+INSERT INTO test_bgw.test_3 VALUES (11);
+SELECT * FROM pathman_partition_list ORDER BY partition; /* should contain 3 partitions */
+     parent      |     partition     | parttype | partattr | range_min | range_max 
+-----------------+-------------------+----------+----------+-----------+-----------
+ test_bgw.test_3 | test_bgw.test_3_1 |        2 | val      | 1         | 6
+ test_bgw.test_3 | test_bgw.test_3_2 |        2 | val      | 6         | 11
+ test_bgw.test_3 | test_bgw.test_3_3 |        2 | val      | 11        | 16
+(3 rows)
+
+DROP TABLE test_bgw.test_3 CASCADE;
+NOTICE:  drop cascades to 3 other objects
+/* date, size of Datum == var */
+CREATE TABLE test_bgw.test_4(val DATE NOT NULL);
+SELECT create_range_partitions('test_bgw.test_4', 'val', '20170213'::date, '1 day'::interval, 2);
+NOTICE:  sequence "test_4_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+SELECT set_spawn_using_bgw('test_bgw.test_4', true);
+ set_spawn_using_bgw 
+---------------------
+ 
+(1 row)
+
+INSERT INTO test_bgw.test_4 VALUES ('20170215');
+SELECT * FROM pathman_partition_list ORDER BY partition; /* should contain 3 partitions */
+     parent      |     partition     | parttype | partattr | range_min  | range_max  
+-----------------+-------------------+----------+----------+------------+------------
+ test_bgw.test_4 | test_bgw.test_4_1 |        2 | val      | 02-13-2017 | 02-14-2017
+ test_bgw.test_4 | test_bgw.test_4_2 |        2 | val      | 02-14-2017 | 02-15-2017
+ test_bgw.test_4 | test_bgw.test_4_3 |        2 | val      | 02-15-2017 | 02-16-2017
+(3 rows)
+
+DROP TABLE test_bgw.test_4 CASCADE;
+NOTICE:  drop cascades to 3 other objects
+DROP SCHEMA test_bgw CASCADE;
+NOTICE:  drop cascades to 4 other objects
+DROP EXTENSION pg_pathman;
