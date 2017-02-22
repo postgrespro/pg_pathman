@@ -17,8 +17,10 @@
 #include "catalog/pg_type.h"
 #include "miscadmin.h"
 #include "optimizer/clauses.h"
+#include "storage/lmgr.h"
 #include "utils/builtins.h"
 #include "utils/memutils.h"
+#include "utils/syscache.h"
 
 
 /* Special column name for rowmarks */
@@ -337,11 +339,46 @@ handle_modification_query(Query *parse)
 		/* Exactly one partition (bounds are equal) */
 		if (irange_lower(irange) == irange_upper(irange))
 		{
-			Oid *children = PrelGetChildrenArray(prel);
+			Oid		   *children	= PrelGetChildrenArray(prel),
+						child		= children[irange_lower(irange)],
+						parent		= rte->relid;
 
-			rte->relid = children[irange_lower(irange)];
+			Relation	child_rel,
+						parent_rel;
 
-			/* Disable standard planning */
+			void	   *tuple_map; /* we don't need the map itself */
+
+			LOCKMODE	lockmode = RowExclusiveLock; /* UPDATE | DELETE */
+
+			/* Make sure that 'child' exists */
+			LockRelationOid(child, lockmode);
+			if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(child)))
+			{
+				UnlockRelationOid(child, lockmode);
+				return; /* nothing to do here */
+			}
+
+			/* Both tables are already locked */
+			child_rel = heap_open(child, NoLock);
+			parent_rel = heap_open(parent, NoLock);
+
+			/* Build a conversion map (may be trivial, i.e. NULL) */
+			tuple_map = build_part_tuple_map(parent_rel, child_rel);
+			if (tuple_map)
+				free_conversion_map((TupleConversionMap *) tuple_map);
+
+			/* Close relations (should remain locked, though) */
+			heap_close(child_rel, NoLock);
+			heap_close(parent_rel, NoLock);
+
+			/* Exit if tuple map was NOT trivial */
+			if (tuple_map) /* just checking the pointer! */
+				return;
+
+			/* Update RTE's relid */
+			rte->relid = child;
+
+			/* Finally disable standard planning */
 			rte->inh = false;
 		}
 	}

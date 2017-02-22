@@ -1,5 +1,6 @@
 [![Build Status](https://travis-ci.org/postgrespro/pg_pathman.svg?branch=master)](https://travis-ci.org/postgrespro/pg_pathman)
 [![PGXN version](https://badge.fury.io/pg/pg_pathman.svg)](https://badge.fury.io/pg/pg_pathman)
+[![codecov](https://codecov.io/gh/postgrespro/pg_pathman/branch/master/graph/badge.svg)](https://codecov.io/gh/postgrespro/pg_pathman)
 
 # pg_pathman
 
@@ -76,6 +77,19 @@ CREATE EXTENSION pg_pathman;
 Done! Now it's time to setup your partitioning schemes.
 
 > **Important:** Don't forget to set the `PG_CONFIG` variable in case you want to test `pg_pathman` on a custom build of PostgreSQL. Read more [here](https://wiki.postgresql.org/wiki/Building_and_Installing_PostgreSQL_Extension_Modules).
+
+## How to update
+In order to update pg_pathman:
+
+1. Install the latest _stable_ release of pg_pathman.
+2. Restart your PostgreSQL cluster.
+3. Execute the following queries:
+
+```plpgsql
+/* replace X.Y with the version number, e.g. 1.3 */
+ALTER EXTENSION pg_pathman UPDATE TO "X.Y";
+SET pg_pathman.enable = t;
+```
 
 ## Available functions
 
@@ -253,8 +267,10 @@ Set partition creation callback to be invoked for each attached or created parti
 /* RANGE-partitioned table abc (child abc_4) */
 {
     "parent":    "abc",
+    "parent_schema": "public",
     "parttype":  "2",
     "partition": "abc_4",
+    "partition_schema": "public",
     "range_max": "401",
     "range_min": "301"
 }
@@ -262,8 +278,10 @@ Set partition creation callback to be invoked for each attached or created parti
 /* HASH-partitioned table abc (child abc_0) */
 {
     "parent":    "abc",
+    "parent_schema": "public",
     "parttype":  "1",
     "partition": "abc_0"
+    "partition_schema": "public"
 }
 ```
 
@@ -654,3 +672,4 @@ Do not hesitate to post your issues, questions and new ideas at the [issues](htt
 Ildar Musin <i.musin@postgrespro.ru> Postgres Professional Ltd., Russia		
 Alexander Korotkov <a.korotkov@postgrespro.ru> Postgres Professional Ltd., Russia		
 Dmitry Ivanov <d.ivanov@postgrespro.ru> Postgres Professional Ltd., Russia		
+

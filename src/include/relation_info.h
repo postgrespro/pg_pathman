@@ -79,12 +79,15 @@ cmp_bounds(FmgrInfo *cmp_func, const Bound *b1, const Bound *b2)
 {
 	if (IsMinusInfinity(b1) || IsPlusInfinity(b2))
 		return -1;
+
 	if (IsMinusInfinity(b2) || IsPlusInfinity(b1))
 		return 1;
 
 	Assert(cmp_func);
 
-	return FunctionCall2(cmp_func, BoundGetValue(b1), BoundGetValue(b2));
+	return DatumGetInt32(FunctionCall2(cmp_func,
+									   BoundGetValue(b1),
+									   BoundGetValue(b2)));
 }
 
 

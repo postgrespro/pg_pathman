@@ -10,7 +10,7 @@
  * ------------------------------------------------------------------------
  */
 
-#include "pg_compat.h"
+#include "compat/pg_compat.h"
 
 #include "runtime_merge_append.h"
 #include "pathman.h"

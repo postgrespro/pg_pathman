@@ -106,7 +106,7 @@ set -u
 
 
 #generate *.gcov files
-gcov src/*.c src/*.h
+gcov src/*.c src/compat/*.c src/include/*.h src/include/compat/*.h
 
 
 exit $status

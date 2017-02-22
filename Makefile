@@ -6,8 +6,10 @@ OBJS = src/init.o src/relation_info.o src/utils.o src/partition_filter.o \
 	src/runtimeappend.o src/runtime_merge_append.o src/pg_pathman.o src/rangeset.o \
 	src/pl_funcs.o src/pl_range_funcs.o src/pl_hash_funcs.o src/pathman_workers.o \
 	src/hooks.o src/nodes_common.o src/xact_handling.o src/utility_stmt_hooking.o \
-	src/planner_tree_modification.o src/debug_print.o src/pg_compat.o \
-	src/partition_creation.o $(WIN32RES)
+	src/planner_tree_modification.o src/debug_print.o src/partition_creation.o \
+	src/compat/pg_compat.o $(WIN32RES)
+
+PG_CPPFLAGS = -I$(CURDIR)/src/include
 
 EXTENSION = pg_pathman
 
@@ -25,6 +27,7 @@ REGRESS = pathman_basic \
 		  pathman_cte \
 		  pathman_bgw \
 		  pathman_inserts \
+		  pathman_updates \
 		  pathman_domains \
 		  pathman_interval \
 		  pathman_callbacks \

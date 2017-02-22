@@ -1376,14 +1376,14 @@ SELECT pathman.attach_range_partition('test.range_rel', 'test.range_rel_minus_in
 SELECT * FROM pathman.pathman_partition_list WHERE parent = 'test.range_rel'::REGCLASS;
      parent     |           partition           | parttype | partattr |        range_min         |        range_max         
 ----------------+-------------------------------+----------+----------+--------------------------+--------------------------
- test.range_rel | test.range_rel_minus_infinity |        2 | dt       | NULL                     | Mon Dec 01 00:00:00 2014
+ test.range_rel | test.range_rel_minus_infinity |        2 | dt       |                          | Mon Dec 01 00:00:00 2014
  test.range_rel | test.range_rel_8              |        2 | dt       | Mon Dec 01 00:00:00 2014 | Thu Jan 01 00:00:00 2015
  test.range_rel | test.range_rel_1              |        2 | dt       | Thu Jan 01 00:00:00 2015 | Sun Feb 01 00:00:00 2015
  test.range_rel | test.range_rel_2              |        2 | dt       | Sun Feb 01 00:00:00 2015 | Sun Mar 01 00:00:00 2015
  test.range_rel | test.range_rel_3              |        2 | dt       | Sun Mar 01 00:00:00 2015 | Wed Apr 01 00:00:00 2015
  test.range_rel | test.range_rel_4              |        2 | dt       | Wed Apr 01 00:00:00 2015 | Fri May 01 00:00:00 2015
  test.range_rel | test.range_rel_6              |        2 | dt       | Fri May 01 00:00:00 2015 | Mon Jun 01 00:00:00 2015
- test.range_rel | test.range_rel_plus_infinity  |        2 | dt       | Mon Jun 01 00:00:00 2015 | NULL
+ test.range_rel | test.range_rel_plus_infinity  |        2 | dt       | Mon Jun 01 00:00:00 2015 | 
 (8 rows)
 
 INSERT INTO test.range_rel (dt) VALUES ('2012-06-15');
