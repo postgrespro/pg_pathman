@@ -95,12 +95,16 @@ rte_attach_tag(const uint32 query_id,
 	if (found)
 	{
 		const char *current_key;
+		List	   *existing_kvp;
 
 		/* Extract key of this KVP */
 		rte_deconstruct_tag(key_value_pair, &current_key, NULL);
 
 		/* Check if this KVP already exists */
-		return relation_tags_search(htab_entry->relation_tags, current_key);
+		existing_kvp = relation_tags_search(htab_entry->relation_tags,
+											current_key);
+		if (existing_kvp)
+			return existing_kvp; /* return KVP with duplicate key */
 	}
 
 	/* Don't forget to initialize list! */
