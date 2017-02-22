@@ -61,6 +61,7 @@ PG_FUNCTION_INFO_V1( build_check_constraint_name_attname );
 PG_FUNCTION_INFO_V1( validate_relname );
 PG_FUNCTION_INFO_V1( is_date_type );
 PG_FUNCTION_INFO_V1( is_attribute_nullable );
+PG_FUNCTION_INFO_V1( tuple_format_is_convertable );
 
 PG_FUNCTION_INFO_V1( add_to_pathman_config );
 PG_FUNCTION_INFO_V1( pathman_config_params_trigger_func );
@@ -507,6 +508,38 @@ is_attribute_nullable(PG_FUNCTION_ARGS)
 			 text_to_cstring(attname), get_rel_name_or_relid(relid));
 
 	PG_RETURN_BOOL(result); /* keep compiler happy */
+}
+
+Datum
+tuple_format_is_convertable(PG_FUNCTION_ARGS)
+{
+	Oid			relid1 = PG_GETARG_OID(0),
+				relid2 = PG_GETARG_OID(1);
+	Relation	rel1,
+				rel2;
+	bool		res = true;
+
+	/* Relations should be already locked */
+	rel1 = heap_open(relid1, NoLock);
+	rel2 = heap_open(relid2, NoLock);
+
+	PG_TRY();
+	{
+		/* Try to build a conversion map */
+		(void) convert_tuples_by_name_map(rel1->rd_att,
+						   				  rel2->rd_att,
+							   			  "doesn't matter");
+	}
+	PG_CATCH();
+	{
+		res = false;
+	}
+	PG_END_TRY();
+
+	heap_close(rel1, NoLock);
+	heap_close(rel2, NoLock);
+
+	PG_RETURN_BOOL(res);
 }
 
 

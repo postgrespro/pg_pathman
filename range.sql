@@ -905,8 +905,8 @@ BEGIN
 	/* check range overlap */
 	PERFORM @extschema@.check_range_available(parent_relid, start_value, end_value);
 
-	IF NOT @extschema@.validate_relations_equality(parent_relid, partition_relid) THEN
-		RAISE EXCEPTION 'partition must have the exact same structure as parent';
+	IF NOT @extschema@.tuple_format_is_convertable(parent_relid, partition_relid) THEN
+		RAISE EXCEPTION 'partition must have a compatible tuple format';
 	END IF;
 
 	/* Set inheritance */
