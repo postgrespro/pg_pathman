@@ -8,6 +8,8 @@
  * ------------------------------------------------------------------------
  */
 
+#include "compat/relation_tags.h"
+
 #include "nodes_common.h"
 #include "partition_filter.h"
 #include "planner_tree_modification.h"
@@ -19,7 +21,6 @@
 #include "optimizer/clauses.h"
 #include "storage/lmgr.h"
 #include "utils/builtins.h"
-#include "utils/memutils.h"
 #include "utils/syscache.h"
 
 
@@ -39,13 +40,8 @@ static void partition_filter_visitor(Plan *plan, void *context);
 static void lock_rows_visitor(Plan *plan, void *context);
 static List *get_tableoids_list(List *tlist);
 
+static rel_parenthood_status tag_extract_parenthood_status(List *relation_tag);
 
-/*
- * This table is used to ensure that partitioned relation
- * cant't be used with both and without ONLY modifiers.
- */
-static HTAB	   *per_table_parenthood_mapping = NULL;
-static int		per_table_parenthood_mapping_refcount = 0;
 
 /*
  * We have to mark each Query with a unique id in order
@@ -54,7 +50,8 @@ static int		per_table_parenthood_mapping_refcount = 0;
 #define QUERY_ID_INITIAL 0
 static uint32	latest_query_id = QUERY_ID_INITIAL;
 
-static inline void
+
+void
 assign_query_id(Query *query)
 {
 	uint32	prev_id = latest_query_id++;
@@ -65,7 +62,7 @@ assign_query_id(Query *query)
 	query->queryId = latest_query_id;
 }
 
-static inline void
+void
 reset_query_id_generator(void)
 {
 	latest_query_id = QUERY_ID_INITIAL;
@@ -222,14 +219,12 @@ disable_standard_inheritance(Query *parse)
 				rte->inh = false;
 
 				/* Try marking it using PARENTHOOD_ALLOWED */
-				assign_rel_parenthood_status(parse->queryId,
-											 rte->relid,
+				assign_rel_parenthood_status(parse->queryId, rte,
 											 PARENTHOOD_ALLOWED);
 			}
 		}
 		/* Else try marking it using PARENTHOOD_DISALLOWED */
-		else assign_rel_parenthood_status(parse->queryId,
-										  rte->relid,
+		else assign_rel_parenthood_status(parse->queryId, rte,
 										  PARENTHOOD_DISALLOWED);
 	}
 }
@@ -557,124 +552,55 @@ lock_rows_visitor(Plan *plan, void *context)
  * -----------------------------------------------
  */
 
-/* private struct stored by parenthood lists */
-typedef struct
-{
-	Oid						relid;		/* key (part #1) */
-	uint32					queryId;	/* key (part #2) */
-	rel_parenthood_status	parenthood_status;
-} cached_parenthood_status;
-
-
 /* Set parenthood status (per query level) */
 void
 assign_rel_parenthood_status(uint32 query_id,
-							 Oid relid,
+							 RangeTblEntry *rte,
 							 rel_parenthood_status new_status)
 {
-	cached_parenthood_status   *status_entry,
-								key = { relid, query_id, PARENTHOOD_NOT_SET };
-	bool						found;
 
-	/* We prefer to init this table lazily */
-	if (per_table_parenthood_mapping == NULL)
+	List *old_relation_tag;
+
+	old_relation_tag = rte_attach_tag(query_id, rte,
+									  make_rte_tag_int(PARENTHOOD_TAG,
+													   new_status));
+
+	/* We already have a PARENTHOOD_TAG, examine it's value */
+	if (old_relation_tag &&
+		tag_extract_parenthood_status(old_relation_tag) != new_status)
 	{
-		const long	start_elems = 50;
-		HASHCTL		hashctl;
-
-		memset(&hashctl, 0, sizeof(HASHCTL));
-		hashctl.entrysize = sizeof(cached_parenthood_status);
-		hashctl.keysize = offsetof(cached_parenthood_status, parenthood_status);
-		hashctl.hcxt = TopTransactionContext;
-
-		per_table_parenthood_mapping = hash_create("Parenthood Storage",
-												   start_elems, &hashctl,
-												   HASH_ELEM | HASH_BLOBS);
-	}
-
-	/* Search by 'key' */
-	status_entry = hash_search(per_table_parenthood_mapping,
-							   &key, HASH_ENTER, &found);
-
-	if (found)
-	{
-		/* Saved status conflicts with 'new_status' */
-		if (status_entry->parenthood_status != new_status)
-		{
-			elog(ERROR, "it is prohibited to apply ONLY modifier to partitioned "
-						"tables which have already been mentioned without ONLY");
-		}
-	}
-	else
-	{
-		/* This should NEVER happen! */
-		Assert(new_status != PARENTHOOD_NOT_SET);
-
-		status_entry->parenthood_status = new_status;
+		elog(ERROR,
+			 "it is prohibited to apply ONLY modifier to partitioned "
+			 "tables which have already been mentioned without ONLY");
 	}
 }
 
 /* Get parenthood status (per query level) */
 rel_parenthood_status
-get_rel_parenthood_status(uint32 query_id, Oid relid)
+get_rel_parenthood_status(uint32 query_id, RangeTblEntry *rte)
 {
-	cached_parenthood_status   *status_entry,
-								key = { relid, query_id, PARENTHOOD_NOT_SET };
+	List *relation_tag;
 
-	/* Skip if table is not initialized */
-	if (per_table_parenthood_mapping)
-	{
-		/* Search by 'key' */
-		status_entry = hash_search(per_table_parenthood_mapping,
-								   &key, HASH_FIND, NULL);
-
-		if (status_entry)
-		{
-			/* This should NEVER happen! */
-			Assert(status_entry->parenthood_status != PARENTHOOD_NOT_SET);
-
-			/* Return cached parenthood status */
-			return status_entry->parenthood_status;
-		}
-	}
+	relation_tag = rte_fetch_tag(query_id, rte, PARENTHOOD_TAG);
+	if (relation_tag)
+		return tag_extract_parenthood_status(relation_tag);
 
 	/* Not found, return stub value */
 	return PARENTHOOD_NOT_SET;
 }
 
-/* Increate usage counter by 1 */
-void
-incr_refcount_parenthood_statuses(void)
+static rel_parenthood_status
+tag_extract_parenthood_status(List *relation_tag)
 {
-	/* Increment reference counter */
-	if (++per_table_parenthood_mapping_refcount <= 0)
-		elog(WARNING, "imbalanced %s",
-			 CppAsString(incr_refcount_parenthood_statuses));
-}
+	const Value			   *value;
+	rel_parenthood_status	status;
 
-/* Return current value of usage counter */
-uint32
-get_refcount_parenthood_statuses(void)
-{
-	/* incr_refcount_parenthood_statuses() is called by pathman_planner_hook() */
-	return per_table_parenthood_mapping_refcount;
-}
+	rte_deconstruct_tag(relation_tag, NULL, &value);
+	Assert(value && IsA(value, Integer));
 
-/* Reset all cached statuses if needed (query end) */
-void
-decr_refcount_parenthood_statuses(void)
-{
-	/* Decrement reference counter */
-	if (--per_table_parenthood_mapping_refcount < 0)
-		elog(WARNING, "imbalanced %s",
-			 CppAsString(decr_refcount_parenthood_statuses));
+	status = (rel_parenthood_status) intVal(value);
+	Assert(status >= PARENTHOOD_NOT_SET &&
+		   status <= PARENTHOOD_ALLOWED);
 
-	/* Free resources if no one is using them */
-	if (per_table_parenthood_mapping_refcount == 0)
-	{
-		reset_query_id_generator();
-
-		hash_destroy(per_table_parenthood_mapping);
-		per_table_parenthood_mapping = NULL;
-	}
+	return status;
 }

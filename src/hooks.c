@@ -9,6 +9,7 @@
  */
 
 #include "compat/pg_compat.h"
+#include "compat/relation_tags.h"
 
 #include "hooks.h"
 #include "init.h"
@@ -214,8 +215,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		return;
 
 	/* Skip if this table is not allowed to act as parent (see FROM ONLY) */
-	if (PARENTHOOD_DISALLOWED == get_rel_parenthood_status(root->parse->queryId,
-														   rte->relid))
+	if (PARENTHOOD_DISALLOWED == get_rel_parenthood_status(root->parse->queryId, rte))
 		return;
 
 	/* Proceed iff relation 'rel' is partitioned */
@@ -476,7 +476,7 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 		if (pathman_ready)
 		{
 			/* Increment parenthood_statuses refcount */
-			incr_refcount_parenthood_statuses();
+			incr_refcount_relation_tags();
 
 			/* Modify query tree if needed */
 			pathman_transform_query(parse);
@@ -497,7 +497,7 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 			ExecuteForPlanTree(result, add_partition_filters);
 
 			/* Decrement parenthood_statuses refcount */
-			decr_refcount_parenthood_statuses();
+			decr_refcount_relation_tags();
 
 			/* HACK: restore queryId set by pg_stat_statements */
 			result->queryId = query_id;
@@ -509,7 +509,7 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 		if (pathman_ready)
 		{
 			/* Caught an ERROR, decrease refcount */
-			decr_refcount_parenthood_statuses();
+			decr_refcount_relation_tags();
 		}
 
 		/* Rethrow ERROR further */
@@ -552,7 +552,7 @@ pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
 	}
 
 	/* Process inlined SQL functions (we've already entered planning stage) */
-	if (IsPathmanReady() && get_refcount_parenthood_statuses() > 0)
+	if (IsPathmanReady() && get_refcount_relation_tags() > 0)
 	{
 		/* Check that pg_pathman is the last extension loaded */
 		if (post_parse_analyze_hook != pathman_post_parse_analysis_hook)

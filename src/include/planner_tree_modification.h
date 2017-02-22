@@ -20,6 +20,10 @@
 #include "nodes/nodeFuncs.h"
 
 
+/* Query ID generator */
+void assign_query_id(Query *query);
+void reset_query_id_generator(void);
+
 /* Plan tree rewriting utility */
 void plan_tree_walker(Plan *plan,
 					  void (*visitor) (Plan *plan, void *context),
@@ -41,12 +45,12 @@ typedef enum
 	PARENTHOOD_ALLOWED		/* children are enabled (default) */
 } rel_parenthood_status;
 
-void assign_rel_parenthood_status(uint32 query_id, Oid relid,
+#define PARENTHOOD_TAG CppAsString(PARENTHOOD)
+
+void assign_rel_parenthood_status(uint32 query_id,
+								  RangeTblEntry *rte,
 								  rel_parenthood_status new_status);
-rel_parenthood_status get_rel_parenthood_status(uint32 query_id, Oid relid);
-void incr_refcount_parenthood_statuses(void);
-uint32 get_refcount_parenthood_statuses(void);
-void decr_refcount_parenthood_statuses(void);
+rel_parenthood_status get_rel_parenthood_status(uint32 query_id, RangeTblEntry *rte);
 
 
 #endif /* PLANNER_TREE_MODIFICATION_H */
