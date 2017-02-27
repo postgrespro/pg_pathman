@@ -795,7 +795,7 @@ interval_is_trivial(Oid atttype, Datum interval, Oid interval_type)
 	/*
 	 * If operator result type isn't the same as original value then
 	 * convert it. We need this to make sure that specified interval would
-	 * change the _origianal_ value somehow. For example, if we add one second
+	 * change the _original_ value somehow. For example, if we add one second
 	 * to a date then we'll get a timestamp which is one second later than
 	 * original date (obviously). But when we convert it back to a date we will
 	 * get the same original value meaning that one second interval wouldn't

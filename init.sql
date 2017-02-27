@@ -896,3 +896,13 @@ CREATE OR REPLACE FUNCTION @extschema@.invoke_on_partition_created_callback(
 	init_callback	REGPROCEDURE)
 RETURNS VOID AS 'pg_pathman', 'invoke_on_partition_created_callback'
 LANGUAGE C;
+
+/*
+ *
+ */
+CREATE OR REPLACE FUNCTION @extschema@.is_operator_supported(
+	type_oid	OID,
+	opname		TEXT)
+RETURNS BOOLEAN AS 'pg_pathman', 'is_operator_supported'
+LANGUAGE C;
+

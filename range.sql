@@ -573,6 +573,10 @@ BEGIN
 
 	v_atttype := @extschema@.get_partition_key_type(parent_relid);
 
+	IF NOT @extschema@.is_operator_supported(v_atttype, '+') THEN
+		RAISE EXCEPTION 'Type % doesn''t support ''+'' operator', v_atttype::regtype;
+	END IF;
+
 	SELECT range_interval
 	FROM @extschema@.pathman_config
 	WHERE partrel = parent_relid
@@ -677,6 +681,10 @@ BEGIN
 	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 
 	v_atttype := @extschema@.get_partition_key_type(parent_relid);
+
+	IF NOT @extschema@.is_operator_supported(v_atttype, '-') THEN
+		RAISE EXCEPTION 'Type % doesn''t support ''-'' operator', v_atttype::regtype;
+	END IF;
 
 	SELECT range_interval
 	FROM @extschema@.pathman_config

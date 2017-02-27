@@ -69,6 +69,8 @@ PG_FUNCTION_INFO_V1( check_security_policy );
 PG_FUNCTION_INFO_V1( debug_capture );
 PG_FUNCTION_INFO_V1( get_pathman_lib_version );
 
+PG_FUNCTION_INFO_V1( is_operator_supported );
+
 
 /*
  * User context for function show_partition_list_internal().
@@ -897,6 +899,20 @@ check_security_policy(PG_FUNCTION_ARGS)
 	}
 
 	/* Else return TRUE */
+	PG_RETURN_BOOL(true);
+}
+
+Datum
+is_operator_supported(PG_FUNCTION_ARGS)
+{
+	Oid		tp = PG_GETARG_OID(0);
+	char   *opname = TextDatumGetCString(PG_GETARG_TEXT_P(1));
+	Oid		opid;
+
+	opid = compatible_oper_opid(list_make1(makeString(opname)), tp, tp, true);
+	if (!OidIsValid(opid))
+		PG_RETURN_BOOL(false);
+
 	PG_RETURN_BOOL(true);
 }
 
