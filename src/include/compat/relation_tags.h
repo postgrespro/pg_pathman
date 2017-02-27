@@ -21,8 +21,13 @@
 
 
 
-/* Memory context we're going to use for TAGs */
-#define TAG_MEMORY_CONTEXT TopTransactionContext
+/* Does RTE contain 'custom_tags' list? */
+// TODO: fix this macro once PgPro contains 'relation_tags' patch
+// #define NATIVE_RELATION_TAGS
+
+/* Memory context we're going to use for tags */
+#define RELATION_TAG_MCXT TopTransactionContext
+
 
 /* Safe TAG constructor (Integer) */
 static inline List *
@@ -32,13 +37,12 @@ make_rte_tag_int(char *key, int value)
 	MemoryContext	old_mcxt;
 
 	/* Allocate TAG in a persistent memory context */
-	old_mcxt = MemoryContextSwitchTo(TAG_MEMORY_CONTEXT);
+	old_mcxt = MemoryContextSwitchTo(RELATION_TAG_MCXT);
 	kvp = list_make2(makeString(key), makeInteger(value));
 	MemoryContextSwitchTo(old_mcxt);
 
 	return kvp;
 }
-
 
 
 List *rte_fetch_tag(const uint32 query_id,

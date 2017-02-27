@@ -14,21 +14,30 @@
 #include "nodes/nodes.h"
 
 
+#ifndef NATIVE_RELATION_TAGS
+
 /*
  * This table is used to ensure that partitioned relation
- * cant't be used with both and without ONLY modifiers.
+ * cant't be referenced as ONLY and non-ONLY at the same time.
  */
-static HTAB	   *per_table_relation_tags = NULL;
-static int		per_table_relation_tags_refcount = 0;
+static HTAB *per_table_relation_tags = NULL;
 
-
-/* private struct stored by parenthood lists */
+/*
+ * Single row of 'per_table_relation_tags'.
+ * NOTE: do not reorder these fields.
+ */
 typedef struct
 {
 	Oid			relid;		/* key (part #1) */
 	uint32		queryId;	/* key (part #2) */
 	List	   *relation_tags;
 } relation_tags_entry;
+
+#endif
+
+/* Also used in get_refcount_relation_tags() etc... */
+static int per_table_relation_tags_refcount = 0;
+
 
 
 /* Look through RTE's relation tags */
@@ -37,11 +46,14 @@ rte_fetch_tag(const uint32 query_id,
 			  const RangeTblEntry *rte,
 			  const char *key)
 {
+#ifdef NATIVE_RELATION_TAGS
+
+	return relation_tags_search(rte->custom_tags, key);
+
+#else
+
 	relation_tags_entry	   *htab_entry,
 							htab_key = { rte->relid, query_id, NIL /* unused */ };
-
-	AssertArg(rte);
-	AssertArg(key);
 
 	/* Skip if table is not initialized */
 	if (per_table_relation_tags)
@@ -56,6 +68,8 @@ rte_fetch_tag(const uint32 query_id,
 
 	/* Not found, return stub value */
 	return NIL;
+
+#endif
 }
 
 /* Attach new relation tag to RTE. Returns KVP with duplicate key. */
@@ -64,13 +78,23 @@ rte_attach_tag(const uint32 query_id,
 			   RangeTblEntry *rte,
 			   List *key_value_pair)
 {
+	/* Common variables */
+	MemoryContext			old_mcxt;
+	const char			   *current_key;
+	List				   *existing_kvp,
+						   *temp_tags;		/* rte->custom_tags OR
+											   htab_entry->relation_tags */
+
+#ifdef NATIVE_RELATION_TAGS
+
+	/* Load relation tags to 'temp_tags' */
+	temp_tags = rte->custom_tags;
+
+#else
+
 	relation_tags_entry	   *htab_entry,
 							htab_key = { rte->relid, query_id, NIL /* unused */ };
 	bool					found;
-	MemoryContext			old_mcxt;
-
-	AssertArg(rte);
-	AssertArg(key_value_pair && list_length(key_value_pair) == 2);
 
 	/* We prefer to initialize this table lazily */
 	if (!per_table_relation_tags)
@@ -81,7 +105,7 @@ rte_attach_tag(const uint32 query_id,
 		memset(&hashctl, 0, sizeof(HASHCTL));
 		hashctl.entrysize = sizeof(relation_tags_entry);
 		hashctl.keysize = offsetof(relation_tags_entry, relation_tags);
-		hashctl.hcxt = TAG_MEMORY_CONTEXT;
+		hashctl.hcxt = RELATION_TAG_MCXT;
 
 		per_table_relation_tags = hash_create("Custom tags for RangeTblEntry",
 											  start_elems, &hashctl,
@@ -92,29 +116,37 @@ rte_attach_tag(const uint32 query_id,
 	htab_entry = hash_search(per_table_relation_tags,
 							 &htab_key, HASH_ENTER, &found);
 
-	if (found)
-	{
-		const char *current_key;
-		List	   *existing_kvp;
-
-		/* Extract key of this KVP */
-		rte_deconstruct_tag(key_value_pair, &current_key, NULL);
-
-		/* Check if this KVP already exists */
-		existing_kvp = relation_tags_search(htab_entry->relation_tags,
-											current_key);
-		if (existing_kvp)
-			return existing_kvp; /* return KVP with duplicate key */
-	}
-
 	/* Don't forget to initialize list! */
-	else htab_entry->relation_tags = NIL;
+	if (!found)
+		htab_entry->relation_tags = NIL;
 
-	/* Add this KVP */
-	old_mcxt = MemoryContextSwitchTo(TAG_MEMORY_CONTEXT);
-	htab_entry->relation_tags = lappend(htab_entry->relation_tags,
-										key_value_pair);
+	/* Load relation tags to 'temp_tags' */
+	temp_tags = htab_entry->relation_tags;
+
+#endif
+
+	/* Check that 'key_value_pair' is valid */
+	AssertArg(key_value_pair && list_length(key_value_pair) == 2);
+
+	/* Extract key of this KVP */
+	rte_deconstruct_tag(key_value_pair, &current_key, NULL);
+
+	/* Check if KVP with such key already exists */
+	existing_kvp = relation_tags_search(temp_tags, current_key);
+	if (existing_kvp)
+		return existing_kvp; /* return KVP with duplicate key */
+
+	/* Add this KVP to relation tags list */
+	old_mcxt = MemoryContextSwitchTo(RELATION_TAG_MCXT);
+	temp_tags = lappend(temp_tags, key_value_pair);
 	MemoryContextSwitchTo(old_mcxt);
+
+/* Finally store 'temp_tags' to relation tags list */
+#ifdef NATIVE_RELATION_TAGS
+	rte->custom_tags = temp_tags;
+#else
+	htab_entry->relation_tags = temp_tags;
+#endif
 
 	/* Success! */
 	return NIL;
@@ -128,8 +160,8 @@ rte_deconstruct_tag(const List *key_value_pair,
 					const char **key,		/* ret value #1 */
 					const Value **value)	/* ret value #2 */
 {
-	const char *r_key;
-	const Value *r_value;
+	const char	   *r_key;
+	const Value	   *r_value;
 
 	AssertArg(key_value_pair && list_length(key_value_pair) == 2);
 
@@ -210,7 +242,9 @@ decr_refcount_relation_tags(void)
 	{
 		reset_query_id_generator();
 
+#ifndef NATIVE_RELATION_TAGS
 		hash_destroy(per_table_relation_tags);
 		per_table_relation_tags = NULL;
+#endif
 	}
 }

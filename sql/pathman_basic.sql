@@ -121,52 +121,6 @@ SELECT max(val) FROM test.insert_date_test; /* check last date */
 DROP TABLE test.insert_date_test CASCADE;
 
 
-/* Test special case: ONLY statement with not-ONLY for partitioned table */
-CREATE TABLE test.from_only_test(val INT NOT NULL);
-INSERT INTO test.from_only_test SELECT generate_series(1, 20);
-SELECT pathman.create_range_partitions('test.from_only_test', 'val', 1, 2);
-
-/* should be OK */
-EXPLAIN (COSTS OFF)
-SELECT * FROM ONLY test.from_only_test
-UNION SELECT * FROM test.from_only_test;
-
-/* should be OK */
-EXPLAIN (COSTS OFF)
-SELECT * FROM test.from_only_test
-UNION SELECT * FROM ONLY test.from_only_test;
-
-/* should be OK */
-EXPLAIN (COSTS OFF)
-SELECT * FROM test.from_only_test
-UNION SELECT * FROM test.from_only_test
-UNION SELECT * FROM ONLY test.from_only_test;
-
-/* should be OK */
-EXPLAIN (COSTS OFF)
-SELECT * FROM ONLY test.from_only_test
-UNION SELECT * FROM test.from_only_test
-UNION SELECT * FROM test.from_only_test;
-
-/* not ok, ONLY|non-ONLY in one query */
-EXPLAIN (COSTS OFF)
-SELECT * FROM test.from_only_test a JOIN ONLY test.from_only_test b USING(val);
-
-EXPLAIN (COSTS OFF)
-WITH q1 AS (SELECT * FROM test.from_only_test),
-	 q2 AS (SELECT * FROM ONLY test.from_only_test)
-SELECT * FROM q1 JOIN q2 USING(val);
-
-EXPLAIN (COSTS OFF)
-WITH q1 AS (SELECT * FROM ONLY test.from_only_test)
-SELECT * FROM test.from_only_test JOIN q1 USING(val);
-
-EXPLAIN (COSTS OFF)
-SELECT * FROM test.range_rel WHERE id = (SELECT id FROM ONLY test.range_rel LIMIT 1);
-
-DROP TABLE test.from_only_test CASCADE;
-
-
 SET pg_pathman.enable_runtimeappend = OFF;
 SET pg_pathman.enable_runtimemergeappend = OFF;
 

@@ -24,6 +24,7 @@ DATA = pg_pathman--1.0--1.1.sql \
 PGFILEDESC = "pg_pathman - partitioning tool"
 
 REGRESS = pathman_basic \
+		  pathman_only \
 		  pathman_cte \
 		  pathman_bgw \
 		  pathman_inserts \
