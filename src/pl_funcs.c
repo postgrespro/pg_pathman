@@ -8,6 +8,8 @@
  * ------------------------------------------------------------------------
  */
 
+#include "compat/pg_compat.h"
+
 #include "init.h"
 #include "utils.h"
 #include "pathman.h"

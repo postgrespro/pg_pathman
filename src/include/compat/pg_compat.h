@@ -20,11 +20,13 @@
 #include "optimizer/paths.h"
 
 
-void set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel, Index rti);
-
+/*
+ * ----------
+ *  Variants
+ * ----------
+ */
 
 #if PG_VERSION_NUM >= 90600
-
 
 /* adjust_appendrel_attrs() */
 #define adjust_rel_targetlist_compat(root, dst_rel, src_rel, appinfo) \
@@ -91,7 +93,6 @@ extern void set_rel_consider_parallel(PlannerInfo *root,
 
 #else /* PG_VERSION_NUM >= 90500 */
 
-
 /* adjust_appendrel_attrs() */
 #define adjust_rel_targetlist_compat(root, dst_rel, src_rel, appinfo) \
 	do { \
@@ -145,7 +146,19 @@ extern void set_rel_consider_parallel(PlannerInfo *root,
 void set_dummy_rel_pathlist(RelOptInfo *rel);
 
 
+/* get_rel_persistence() */
+char get_rel_persistence(Oid relid);
+
 #endif /* PG_VERSION_NUM */
+
+
+/*
+ * -------------
+ *  Common code
+ * -------------
+ */
+
+void set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel, Index rti);
 
 
 #endif /* PG_COMPAT_H */
