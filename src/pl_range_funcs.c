@@ -69,6 +69,8 @@ PG_FUNCTION_INFO_V1( merge_range_partitions );
 PG_FUNCTION_INFO_V1( drop_range_partition_expand_next );
 PG_FUNCTION_INFO_V1( validate_interval_value );
 
+PG_FUNCTION_INFO_V1( create_range_partitions_internal );
+
 
 /*
  * -----------------------------
@@ -1006,4 +1008,75 @@ drop_table_by_oid(Oid relid)
 	n->concurrent	= false;
 
 	RemoveRelations(n);
+}
+
+
+Datum
+create_range_partitions_internal(PG_FUNCTION_ARGS)
+{
+	Oid				relid = PG_GETARG_OID(0);
+	// char		   *attname = TextDatumGetCString(PG_GETARG_TEXT_P(1));
+	int16			typlen;
+	bool			typbyval;
+	char			typalign;
+	FmgrInfo		cmp_func;
+
+	/* bounds */
+	ArrayType	   *arr = PG_GETARG_ARRAYTYPE_P(1);
+	Oid				elemtype = ARR_ELEMTYPE(arr);
+	Datum		   *datums;
+	bool		   *nulls;
+	int				ndatums;
+	int				i;
+
+	/* Extract bounds */
+	get_typlenbyvalalign(elemtype, &typlen, &typbyval, &typalign);
+	deconstruct_array(arr, elemtype,
+					  typlen, typbyval, typalign,
+					  &datums, &nulls, &ndatums);
+
+	/* Check if bounds array is ascending */
+	fill_type_cmp_fmgr_info(&cmp_func,
+							getBaseType(elemtype),
+							getBaseType(elemtype));
+	for (i = 0; i < ndatums-1; i++)
+	{
+		/*
+		 * Only first bound can be NULL
+		 *
+		 * XXX Probably the last one too...
+		 */
+		if (nulls[i])
+		{
+			if (i == 0)
+				continue;
+			else
+				elog(ERROR,
+					 "Only first bound can be NULL");
+		}
+
+		if (DatumGetInt32(FunctionCall2(&cmp_func, datums[i], datums[i+1])) >= 0)
+			elog(ERROR,
+				 "Bounds array must be ascending");
+	}
+
+	/* Create partitions */
+	for (i = 0; i < ndatums-1; i++)
+	{
+		Bound	start = nulls[i] ?
+						MakeBoundInf(MINUS_INFINITY) :
+						MakeBound(datums[i]);
+		Bound	end   = nulls[i+1] ?
+						MakeBoundInf(PLUS_INFINITY) :
+						MakeBound(datums[i+1]);
+
+		(void) create_single_range_partition_internal(relid,
+													  &start,
+													  &end,
+													  elemtype,
+													  NULL,
+													  NULL);
+	}
+
+	PG_RETURN_VOID();
 }
