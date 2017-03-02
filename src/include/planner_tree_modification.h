@@ -34,7 +34,6 @@ void pathman_transform_query(Query *parse);
 
 /* These functions scribble on Plan tree */
 void add_partition_filters(List *rtable, Plan *plan);
-void postprocess_lock_rows(List *rtable, Plan *plan);
 
 
 /* used by assign_rel_parenthood_status() etc */
@@ -45,12 +44,12 @@ typedef enum
 	PARENTHOOD_ALLOWED		/* children are enabled (default) */
 } rel_parenthood_status;
 
-#define PARENTHOOD_TAG CppAsString(PARENTHOOD)
-
 void assign_rel_parenthood_status(uint32 query_id,
 								  RangeTblEntry *rte,
 								  rel_parenthood_status new_status);
-rel_parenthood_status get_rel_parenthood_status(uint32 query_id, RangeTblEntry *rte);
+
+rel_parenthood_status get_rel_parenthood_status(uint32 query_id,
+												RangeTblEntry *rte);
 
 
 #endif /* PLANNER_TREE_MODIFICATION_H */

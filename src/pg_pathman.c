@@ -9,6 +9,7 @@
  * ------------------------------------------------------------------------
  */
 
+#include "compat/expand_rte_hook.h"
 #include "compat/pg_compat.h"
 
 #include "init.h"
@@ -155,6 +156,9 @@ _PG_init(void)
 	planner_hook					= pathman_planner_hook;
 	process_utility_hook_next		= ProcessUtility_hook;
 	ProcessUtility_hook				= pathman_process_utility_hook;
+
+	/* Initialize PgPro-specific subsystems */
+	init_expand_rte_hook();
 
 	/* Initialize static data for all subsystems */
 	init_main_pathman_toggles();
@@ -313,7 +317,7 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 	child_rte = copyObject(parent_rte);
 	child_rte->relid = child_oid;
 	child_rte->relkind = child_relation->rd_rel->relkind;
-	child_rte->inh = false;
+	child_rte->inh = false; /* relation has no children */
 	child_rte->requiredPerms = 0;
 
 	/* Add 'child_rte' to rtable and 'root->simple_rte_array' */

@@ -30,7 +30,7 @@
 
 
 /*
- * NOTE: 'estate->es_query_cxt' as data storage
+ * HACK: 'estate->es_query_cxt' as data storage
  *
  * We use this struct as an argument for fake
  * MemoryContextCallback pf_memcxt_callback()

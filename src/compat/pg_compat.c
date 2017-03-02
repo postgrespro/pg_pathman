@@ -1,7 +1,7 @@
 /* ------------------------------------------------------------------------
  *
  * pg_compat.c
- *		Compatibility tools
+ *		Compatibility tools for PostgreSQL API
  *
  * Copyright (c) 2016, Postgres Professional
  *

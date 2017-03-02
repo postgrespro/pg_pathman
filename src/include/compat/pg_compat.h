@@ -1,7 +1,7 @@
 /* ------------------------------------------------------------------------
  *
  * pg_compat.h
- *		Compatibility tools
+ *		Compatibility tools for PostgreSQL API
  *
  * Copyright (c) 2016, Postgres Professional
  *
@@ -11,9 +11,9 @@
 #ifndef PG_COMPAT_H
 #define PG_COMPAT_H
 
+#include "compat/debug_compat_features.h"
 
 #include "postgres.h"
-
 #include "nodes/relation.h"
 #include "nodes/pg_list.h"
 #include "optimizer/cost.h"

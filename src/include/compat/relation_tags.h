@@ -2,6 +2,7 @@
  *
  * relation_tags.h
  *		Attach custom (Key, Value) pairs to an arbitrary RangeTblEntry
+ *		NOTE: implementations for vanilla and PostgresPro differ
  *
  * Copyright (c) 2017, Postgres Professional
  *
@@ -11,8 +12,7 @@
 #ifndef RELATION_TAGS_H
 #define RELATION_TAGS_H
 
-
-#include "pathman.h"
+#include "compat/debug_compat_features.h"
 
 #include "postgres.h"
 #include "nodes/relation.h"
@@ -20,10 +20,12 @@
 #include "utils/memutils.h"
 
 
-
 /* Does RTE contain 'custom_tags' list? */
-// TODO: fix this macro once PgPro contains 'relation_tags' patch
-// #define NATIVE_RELATION_TAGS
+/* TODO: fix this definition once PgPro contains 'relation_tags' patch */
+#if defined(ENABLE_PGPRO_PATCHES) && \
+	defined(ENABLE_RELATION_TAGS) /* && ... */
+#define NATIVE_RELATION_TAGS
+#endif
 
 /* Memory context we're going to use for tags */
 #define RELATION_TAG_MCXT TopTransactionContext
@@ -50,8 +52,8 @@ List *rte_fetch_tag(const uint32 query_id,
 					const char *key);
 
 List *rte_attach_tag(const uint32 query_id,
-					RangeTblEntry *rte,
-					List *key_value_pair);
+					 RangeTblEntry *rte,
+					 List *key_value_pair);
 
 
 List *relation_tags_search(List *custom_tags,

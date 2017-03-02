@@ -2,6 +2,7 @@
  *
  * relation_tags.c
  *		Attach custom (Key, Value) pairs to an arbitrary RangeTblEntry
+ *		NOTE: implementations for vanilla and PostgresPro differ
  *
  * Copyright (c) 2017, Postgres Professional
  *

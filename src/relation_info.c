@@ -214,7 +214,7 @@ refresh_pathman_relation_info(Oid relid,
 	if (prel_children)
 		pfree(prel_children);
 
-	/* Read additional parameters ('enable_parent' and 'auto' at the moment) */
+	/* Read additional parameters ('enable_parent' at the moment) */
 	if (read_pathman_params(relid, param_values, param_isnull))
 	{
 		prel->enable_parent = param_values[Anum_pathman_config_params_enable_parent - 1];

@@ -10,6 +10,7 @@
 
 #include "compat/pg_compat.h"
 #include "compat/relation_tags.h"
+#include "compat/rowmarks_fix.h"
 
 #include "hooks.h"
 #include "init.h"
@@ -207,14 +208,16 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 	if (!IsPathmanReady())
 		return;
 
-	/* This works only for SELECTs or INSERTs on simple relations */
+	/*
+	 * Skip if it's a result relation (UPDATE | DELETE | INSERT),
+	 * or not a (partitioned) physical relation at all.
+	 */
 	if (rte->rtekind != RTE_RELATION ||
 		rte->relkind != RELKIND_RELATION ||
-			(root->parse->commandType != CMD_SELECT &&
-			 root->parse->commandType != CMD_INSERT)) /* INSERT INTO ... SELECT ... */
+		root->parse->resultRelation == rti)
 		return;
 
-	/* Skip if this table is not allowed to act as parent (see FROM ONLY) */
+	/* Skip if this table is not allowed to act as parent (e.g. FROM ONLY) */
 	if (PARENTHOOD_DISALLOWED == get_rel_parenthood_status(root->parse->queryId, rte))
 		return;
 
@@ -245,7 +248,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			int32			type_mod;
 			TypeCacheEntry *tce;
 
-			/* Make Var from patition column */
+			/* Make Var from partition column */
 			get_rte_attribute_type(rte, prel->attnum,
 								   &vartypeid, &type_mod, &varcollid);
 			var = makeVar(rti, prel->attnum, vartypeid, type_mod, varcollid, 0);
@@ -255,17 +258,18 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			tce = lookup_type_cache(var->vartype, TYPECACHE_LT_OPR | TYPECACHE_GT_OPR);
 
 			/* Make pathkeys */
-			pathkeys = build_expression_pathkey(root, (Expr *)var, NULL,
+			pathkeys = build_expression_pathkey(root, (Expr *) var, NULL,
 												tce->lt_opr, NULL, false);
 			if (pathkeys)
 				pathkeyAsc = (PathKey *) linitial(pathkeys);
-			pathkeys = build_expression_pathkey(root, (Expr *)var, NULL,
+			pathkeys = build_expression_pathkey(root, (Expr *) var, NULL,
 												tce->gt_opr, NULL, false);
 			if (pathkeys)
 				pathkeyDesc = (PathKey *) linitial(pathkeys);
 		}
 
-		rte->inh = true; /* we must restore 'inh' flag! */
+		/* HACK: we must restore 'inh' flag! */
+		rte->inh = true;
 
 		children = PrelGetChildrenArray(prel);
 		ranges = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_COMPLETE));
@@ -475,7 +479,7 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	{
 		if (pathman_ready)
 		{
-			/* Increment parenthood_statuses refcount */
+			/* Increment relation tags refcount */
 			incr_refcount_relation_tags();
 
 			/* Modify query tree if needed */
@@ -496,7 +500,7 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 			/* Add PartitionFilter node for INSERT queries */
 			ExecuteForPlanTree(result, add_partition_filters);
 
-			/* Decrement parenthood_statuses refcount */
+			/* Decrement relation tags refcount */
 			decr_refcount_relation_tags();
 
 			/* HACK: restore queryId set by pg_stat_statements */

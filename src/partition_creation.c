@@ -316,7 +316,7 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
 		/* Get both PartRelationInfo & PATHMAN_CONFIG contents for this relation */
 		if (pathman_config_contains_relation(relid, values, isnull, NULL))
 		{
-			Oid			base_bound_type;		/* base type of prel->atttype */
+			Oid			base_bound_type;	/* base type of prel->atttype */
 			Oid			base_value_type;	/* base type of value_type */
 
 			/* Fetch PartRelationInfo by 'relid' */
