@@ -396,23 +396,30 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 
 	cscan = makeNode(CustomScan);
 	cscan->custom_scan_tlist = NIL; /* initial value (empty list) */
-	cscan->scan.plan.targetlist = NIL;
 
 	if (custom_plans)
 	{
 		ListCell   *lc1,
 				   *lc2;
+		bool		processed_rel_tlist = false;
+
+		Assert(list_length(rpath->cpath.custom_paths) == list_length(custom_plans));
 
 		forboth (lc1, rpath->cpath.custom_paths, lc2, custom_plans)
 		{
 			Plan		   *child_plan = (Plan *) lfirst(lc2);
 			RelOptInfo 	   *child_rel = ((Path *) lfirst(lc1))->parent;
 
-			/* Replace rel's tlist with a matching one */
-			if (!cscan->scan.plan.targetlist)
+			/* Replace rel's tlist with a matching one (for ExecQual()) */
+			if (!processed_rel_tlist)
+			{
 				tlist = replace_tlist_varnos(child_plan->targetlist,
 											 child_rel->relid,
 											 rel->relid);
+
+				/* Done, new target list has been built */
+				processed_rel_tlist = true;
+			}
 
 			/* Add partition attribute if necessary (for ExecQual()) */
 			child_plan->targetlist = append_part_attr_to_tlist(child_plan->targetlist,
