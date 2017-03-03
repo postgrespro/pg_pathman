@@ -196,9 +196,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 						  RangeTblEntry *rte)
 {
 	const PartRelationInfo *prel;
-	RangeTblEntry		  **new_rte_array;
-	RelOptInfo			  **new_rel_array;
-	int						len;
+	int						irange_len;
 
 	/* Invoke original hook if needed */
 	if (set_rel_pathlist_hook_next != NULL)
@@ -290,35 +288,34 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		}
 
 		/* Get number of selected partitions */
-		len = irange_list_length(ranges);
+		irange_len = irange_list_length(ranges);
 		if (prel->enable_parent)
-			len++; /* add parent too */
+			irange_len++; /* also add parent */
 
 		/* Expand simple_rte_array and simple_rel_array */
-		if (len > 0)
+		if (irange_len > 0)
 		{
-			/* Expand simple_rel_array and simple_rte_array */
-			new_rel_array = (RelOptInfo **)
-				palloc0((root->simple_rel_array_size + len) * sizeof(RelOptInfo *));
+			int current_len	= root->simple_rel_array_size,
+				new_len		= current_len + irange_len;
 
-			/* simple_rte_array is an array equivalent of the rtable list */
-			new_rte_array = (RangeTblEntry **)
-				palloc0((root->simple_rel_array_size + len) * sizeof(RangeTblEntry *));
+			/* Expand simple_rel_array */
+			root->simple_rel_array = (RelOptInfo **)
+					repalloc(root->simple_rel_array,
+							 new_len * sizeof(RelOptInfo *));
 
-			/* Copy relations to the new arrays */
-			for (i = 0; i < root->simple_rel_array_size; i++)
-			{
-				new_rel_array[i] = root->simple_rel_array[i];
-				new_rte_array[i] = root->simple_rte_array[i];
-			}
+			memset((void *) &root->simple_rel_array[current_len], 0,
+				   irange_len * sizeof(RelOptInfo *));
 
-			/* Free old arrays */
-			pfree(root->simple_rel_array);
-			pfree(root->simple_rte_array);
+			/* Expand simple_rte_array */
+			root->simple_rte_array = (RangeTblEntry **)
+					repalloc(root->simple_rte_array,
+							 new_len * sizeof(RangeTblEntry *));
 
-			root->simple_rel_array_size += len;
-			root->simple_rel_array = new_rel_array;
-			root->simple_rte_array = new_rte_array;
+			memset((void *) &root->simple_rte_array[current_len], 0,
+				   irange_len * sizeof(RangeTblEntry *));
+
+			/* Don't forget to update array size! */
+			root->simple_rel_array_size = new_len;
 		}
 
 		/* Parent has already been locked by rewriter */
