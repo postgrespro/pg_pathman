@@ -96,12 +96,14 @@ CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions(
 RETURNS INTEGER AS
 $$
 DECLARE
-	v_rows_count		BIGINT;
-	v_atttype			REGTYPE;
-	v_max				start_value%TYPE;
-	v_cur_value			start_value%TYPE := start_value;
-	end_value			start_value%TYPE;
-	i					INTEGER;
+	v_rows_count	BIGINT;
+	v_atttype		REGTYPE;
+	v_tablespace	TEXT;
+	v_max			start_value%TYPE;
+	v_cur_value		start_value%TYPE := start_value;
+	end_value		start_value%TYPE;
+	part_count		INTEGER;
+	i				INTEGER;
 
 BEGIN
 	attribute := lower(attribute);
@@ -159,20 +161,11 @@ BEGIN
 	PERFORM @extschema@.create_or_replace_sequence(parent_relid)
 	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
 
-	/* Create first partition */
-	FOR i IN 1..p_count
-	LOOP
-		EXECUTE
-			format('SELECT @extschema@.create_single_range_partition($1, $2, $3::%s, tablespace:=$4)',
-				   v_atttype::TEXT)
-		USING
-			parent_relid,
-			start_value,
-			start_value + p_interval,
-			@extschema@.get_tablespace(parent_relid);
-
-		start_value := start_value + p_interval;
-	END LOOP;
+	part_count := @extschema@.create_range_partitions_internal(
+						parent_relid,
+						@extschema@.generate_bounds(start_value, p_interval, p_count),
+						NULL,
+						NULL);
 
 	/* Notify backend about changes */
 	PERFORM @extschema@.on_create_partitions(parent_relid);
@@ -185,7 +178,7 @@ BEGIN
 		PERFORM @extschema@.set_enable_parent(parent_relid, true);
 	END IF;
 
-	RETURN p_count;
+	RETURN part_count;
 END
 $$ LANGUAGE plpgsql;
 
@@ -202,11 +195,12 @@ CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions(
 RETURNS INTEGER AS
 $$
 DECLARE
-	v_rows_count		BIGINT;
-	v_max				start_value%TYPE;
-	v_cur_value			start_value%TYPE := start_value;
-	end_value			start_value%TYPE;
-	i					INTEGER;
+	v_rows_count	BIGINT;
+	v_max			start_value%TYPE;
+	v_cur_value		start_value%TYPE := start_value;
+	end_value		start_value%TYPE;
+	part_count		INTEGER;
+	i				INTEGER;
 
 BEGIN
 	attribute := lower(attribute);
@@ -264,17 +258,11 @@ BEGIN
 	PERFORM @extschema@.create_or_replace_sequence(parent_relid)
 	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
 
-	/* create first partition */
-	FOR i IN 1..p_count
-	LOOP
-		PERFORM @extschema@.create_single_range_partition(
-			parent_relid,
-			start_value,
-			start_value + p_interval,
-			tablespace := @extschema@.get_tablespace(parent_relid));
-
-		start_value := start_value + p_interval;
-	END LOOP;
+	part_count := @extschema@.create_range_partitions_internal(
+					parent_relid,
+					@extschema@.generate_bounds(start_value, p_interval, p_count),
+					NULL,
+					NULL);
 
 	/* Notify backend about changes */
 	PERFORM @extschema@.on_create_partitions(parent_relid);
@@ -480,6 +468,22 @@ CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions_internal(
 	relnames		TEXT[],
 	tablespaces		TEXT[])
 RETURNS REGCLASS AS 'pg_pathman', 'create_range_partitions_internal'
+LANGUAGE C;
+
+
+CREATE OR REPLACE FUNCTION @extschema@.generate_bounds(
+    p_start ANYELEMENT,
+    p_interval INTERVAL,
+    p_count INTEGER)
+RETURNS ANYARRAY AS 'pg_pathman', 'generate_bounds'
+LANGUAGE C;
+
+
+CREATE OR REPLACE FUNCTION @extschema@.generate_bounds(
+    p_start ANYELEMENT,
+    p_interval ANYELEMENT,
+    p_count INTEGER)
+RETURNS ANYARRAY AS 'pg_pathman', 'generate_bounds'
 LANGUAGE C;
 
 

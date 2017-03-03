@@ -70,6 +70,7 @@ PG_FUNCTION_INFO_V1( drop_range_partition_expand_next );
 PG_FUNCTION_INFO_V1( validate_interval_value );
 
 PG_FUNCTION_INFO_V1( create_range_partitions_internal );
+PG_FUNCTION_INFO_V1( generate_bounds );
 
 
 /*
@@ -1108,4 +1109,65 @@ create_range_partitions_internal(PG_FUNCTION_ARGS)
 	}
 
 	PG_RETURN_INT32(ndatums-1);
+}
+
+
+Datum
+generate_bounds(PG_FUNCTION_ARGS)
+{
+	/* input params */
+	Datum		value = PG_GETARG_DATUM(0);
+	Oid			v_type = get_fn_expr_argtype(fcinfo->flinfo, 0);
+	Datum		interval = PG_GETARG_DATUM(1);
+	Oid			i_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
+	int			count = PG_GETARG_INT32(2);
+	int			i;
+
+	/* operator */
+	Oid			plus_op_func;
+	Datum		plus_op_result;
+	Oid			plus_op_result_type;
+
+	/* array */
+	ArrayType  *arr;
+	int16		elemlen;
+	bool		elembyval;
+	char		elemalign;
+	Datum	   *datums;
+
+	if (count < 1)
+		elog(ERROR, "Partitions count must be greater than zero");
+
+	/* Find suitable addition operator for given value and interval */
+	extract_op_func_and_ret_type("+", v_type, i_type,
+								 &plus_op_func,
+								 &plus_op_result_type);
+
+	get_typlenbyvalalign(v_type, &elemlen, &elembyval, &elemalign);
+
+	datums = palloc(sizeof(Datum) * (count + 1));
+	// datums[0] = datumCopy(value, elembyval, elemlen);
+	datums[0] = value;
+
+	/* calculate bounds */
+	for (i = 1; i <= count; i++)
+	{
+		/* Invoke addition operator and get a result */
+		plus_op_result = OidFunctionCall2(plus_op_func, value, interval);
+
+		if (plus_op_result_type != v_type)
+			plus_op_result = perform_type_cast(plus_op_result,
+											   plus_op_result_type,
+											   v_type, NULL);
+
+		value = datums[i] = plus_op_result;
+	}
+
+	/* build an array based on calculated datums */
+	arr = construct_array(datums, count + 1, v_type,
+						  elemlen, elembyval, elemalign);
+
+	pfree(datums);
+
+	PG_RETURN_ARRAYTYPE_P(arr);
 }
