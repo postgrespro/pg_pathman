@@ -38,9 +38,8 @@
 PG_MODULE_MAGIC;
 
 
-PathmanState   *pmstate;
-Oid				pathman_config_relid = InvalidOid;
-Oid				pathman_config_params_relid = InvalidOid;
+Oid		pathman_config_relid = InvalidOid,
+		pathman_config_params_relid = InvalidOid;
 
 
 /* pg module functions */
@@ -49,8 +48,10 @@ void _PG_init(void);
 
 /* Expression tree handlers */
 static Node *wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue);
-
 static WrapperNode *handle_const(const Const *c, WalkerContext *context);
+static WrapperNode *handle_boolexpr(const BoolExpr *expr, WalkerContext *context);
+static WrapperNode *handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context);
+static WrapperNode *handle_opexpr(const OpExpr *expr, WalkerContext *context);
 
 static void handle_binary_opexpr(WalkerContext *context,
 								 WrapperNode *result,
@@ -61,25 +62,23 @@ static void handle_binary_opexpr_param(const PartRelationInfo *prel,
 									   WrapperNode *result,
 									   const Node *varnode);
 
-static WrapperNode *handle_opexpr(const OpExpr *expr, WalkerContext *context);
-static WrapperNode *handle_boolexpr(const BoolExpr *expr, WalkerContext *context);
-static WrapperNode *handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context);
-
-static double estimate_paramsel_using_prel(const PartRelationInfo *prel,
-										   int strategy);
-
 static bool pull_var_param(const WalkerContext *ctx,
 						   const OpExpr *expr,
 						   Node **var_ptr,
 						   Node **param_ptr);
 
+static Const *extract_const(WalkerContext *wcxt, Param *param);
 
-/* Misc */
+static double estimate_paramsel_using_prel(const PartRelationInfo *prel,
+										   int strategy);
+
+
+/* Copied from PostgreSQL (prepunion.c) */
 static void make_inh_translation_list(Relation oldrelation, Relation newrelation,
 									  Index newvarno, List **translated_vars);
 
 
-/* Copied from allpaths.h */
+/* Copied from PostgreSQL (allpaths.c) */
 static void set_plain_rel_size(PlannerInfo *root,
 							   RelOptInfo *rel,
 							   RangeTblEntry *rte);
@@ -114,13 +113,18 @@ static Path *get_cheapest_parameterized_child_path(PlannerInfo *root,
 	)
 
 
+
 /*
- * Set initial values for all Postmaster's forks.
+ * -------------------
+ *  General functions
+ * -------------------
  */
+
+/* Set initial values for all Postmaster's forks */
 void
 _PG_init(void)
 {
-	PathmanInitState	temp_init_state;
+	PathmanInitState temp_init_state;
 
 	if (!process_shared_preload_libraries_in_progress)
 	{
@@ -132,13 +136,11 @@ _PG_init(void)
 	/* Request additional shared resources */
 	RequestAddinShmemSpace(estimate_pathman_shmem_size());
 
-	/* NOTE: we don't need LWLocks now. RequestAddinLWLocks(1); */
-
 	/* Assign pg_pathman's initial state */
-	temp_init_state.pg_pathman_enable = true;
-	temp_init_state.auto_partition = true;
-	temp_init_state.override_copy = true;
-	temp_init_state.initialization_needed = true;
+	temp_init_state.pg_pathman_enable		= DEFAULT_PATHMAN_ENABLE;
+	temp_init_state.auto_partition			= DEFAULT_AUTO;
+	temp_init_state.override_copy			= DEFAULT_OVERRIDE_COPY;
+	temp_init_state.initialization_needed	= true; /* ofc it's needed! */
 
 	/* Apply initial state */
 	restore_pathman_init_state(&temp_init_state);
@@ -167,128 +169,51 @@ _PG_init(void)
 	init_partition_filter_static_data();
 }
 
-/*
- * make_inh_translation_list
- *	  Build the list of translations from parent Vars to child Vars for
- *	  an inheritance child.
- *
- * For paranoia's sake, we match type/collation as well as attribute name.
- *
- * NOTE: borrowed from prepunion.c
- */
-static void
-make_inh_translation_list(Relation oldrelation, Relation newrelation,
-						  Index newvarno, List **translated_vars)
+/* Get cached PATHMAN_CONFIG relation Oid */
+Oid
+get_pathman_config_relid(bool invalid_is_ok)
 {
-	List	   *vars = NIL;
-	TupleDesc	old_tupdesc = RelationGetDescr(oldrelation);
-	TupleDesc	new_tupdesc = RelationGetDescr(newrelation);
-	int			oldnatts = old_tupdesc->natts;
-	int			newnatts = new_tupdesc->natts;
-	int			old_attno;
+	/* Raise ERROR if Oid is invalid */
+	if (!OidIsValid(pathman_config_relid) && !invalid_is_ok)
+		elog(ERROR,
+			 (!IsPathmanInitialized() ?
+				"pg_pathman is not initialized yet" :
+				"unexpected error in function "
+						  CppAsString(get_pathman_config_relid)));
 
-	for (old_attno = 0; old_attno < oldnatts; old_attno++)
-	{
-		Form_pg_attribute att;
-		char	   *attname;
-		Oid			atttypid;
-		int32		atttypmod;
-		Oid			attcollation;
-		int			new_attno;
-
-		att = old_tupdesc->attrs[old_attno];
-		if (att->attisdropped)
-		{
-			/* Just put NULL into this list entry */
-			vars = lappend(vars, NULL);
-			continue;
-		}
-		attname = NameStr(att->attname);
-		atttypid = att->atttypid;
-		atttypmod = att->atttypmod;
-		attcollation = att->attcollation;
-
-		/*
-		 * When we are generating the "translation list" for the parent table
-		 * of an inheritance set, no need to search for matches.
-		 */
-		if (oldrelation == newrelation)
-		{
-			vars = lappend(vars, makeVar(newvarno,
-										 (AttrNumber) (old_attno + 1),
-										 atttypid,
-										 atttypmod,
-										 attcollation,
-										 0));
-			continue;
-		}
-
-		/*
-		 * Otherwise we have to search for the matching column by name.
-		 * There's no guarantee it'll have the same column position, because
-		 * of cases like ALTER TABLE ADD COLUMN and multiple inheritance.
-		 * However, in simple cases it will be the same column number, so try
-		 * that before we go groveling through all the columns.
-		 *
-		 * Note: the test for (att = ...) != NULL cannot fail, it's just a
-		 * notational device to include the assignment into the if-clause.
-		 */
-		if (old_attno < newnatts &&
-			(att = new_tupdesc->attrs[old_attno]) != NULL &&
-			!att->attisdropped && att->attinhcount != 0 &&
-			strcmp(attname, NameStr(att->attname)) == 0)
-			new_attno = old_attno;
-		else
-		{
-			for (new_attno = 0; new_attno < newnatts; new_attno++)
-			{
-				att = new_tupdesc->attrs[new_attno];
-
-				/*
-				 * Make clang analyzer happy:
-				 *
-				 * Access to field 'attisdropped' results
-				 * in a dereference of a null pointer
-				 */
-				if (!att)
-					elog(ERROR, "error in function "
-								CppAsString(make_inh_translation_list));
-
-				if (!att->attisdropped && att->attinhcount != 0 &&
-					strcmp(attname, NameStr(att->attname)) == 0)
-					break;
-			}
-			if (new_attno >= newnatts)
-				elog(ERROR, "could not find inherited attribute \"%s\" of relation \"%s\"",
-					 attname, RelationGetRelationName(newrelation));
-		}
-
-		/* Found it, check type and collation match */
-		if (atttypid != att->atttypid || atttypmod != att->atttypmod)
-			elog(ERROR, "attribute \"%s\" of relation \"%s\" does not match parent's type",
-				 attname, RelationGetRelationName(newrelation));
-		if (attcollation != att->attcollation)
-			elog(ERROR, "attribute \"%s\" of relation \"%s\" does not match parent's collation",
-				 attname, RelationGetRelationName(newrelation));
-
-		vars = lappend(vars, makeVar(newvarno,
-									 (AttrNumber) (new_attno + 1),
-									 atttypid,
-									 atttypmod,
-									 attcollation,
-									 0));
-	}
-
-	*translated_vars = vars;
+	return pathman_config_relid;
 }
+
+/* Get cached PATHMAN_CONFIG_PARAMS relation Oid */
+Oid
+get_pathman_config_params_relid(bool invalid_is_ok)
+{
+	/* Raise ERROR if Oid is invalid */
+	if (!OidIsValid(pathman_config_relid) && !invalid_is_ok)
+		elog(ERROR,
+			 (!IsPathmanInitialized() ?
+				"pg_pathman is not initialized yet" :
+				"unexpected error in function "
+						  CppAsString(get_pathman_config_params_relid)));
+
+	return pathman_config_params_relid;
+}
+
+
+
+/*
+ * ----------------------------------------
+ *  RTE expansion (add RTE for partitions)
+ * ----------------------------------------
+ */
 
 /*
  * Creates child relation and adds it to root.
  * Returns child index in simple_rel_array.
  *
- * NOTE: This code is partially based on the expand_inherited_rtentry() function.
+ * NOTE: partially based on the expand_inherited_rtentry() function.
  */
-int
+Index
 append_child_relation(PlannerInfo *root, Relation parent_relation,
 					  Index parent_rti, int ir_index, Oid child_oid,
 					  List *wrappers)
@@ -319,6 +244,8 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 	child_rte->relkind = child_relation->rd_rel->relkind;
 	child_rte->inh = false; /* relation has no children */
 	child_rte->requiredPerms = 0;
+
+	/* FIXME: call translate_col_privs() on this RTE's column bitmapsets */
 
 	/* Add 'child_rte' to rtable and 'root->simple_rte_array' */
 	root->parse->rtable = lappend(root->parse->rtable, child_rte);
@@ -447,17 +374,22 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 	return childRTindex;
 }
 
+
+
 /*
- * Given RangeEntry array and 'value', return selected
- * RANGE partitions inside the WrapperNode.
+ * --------------------------
+ *  RANGE partition prunning
+ * --------------------------
  */
+
+/* Given 'value' and 'ranges', return selected partitions list */
 void
 select_range_partitions(const Datum value,
 						FmgrInfo *cmp_func,
 						const RangeEntry *ranges,
 						const int nranges,
 						const int strategy,
-						WrapperNode *result)
+						WrapperNode *result) /* returned partitions */
 {
 	bool	lossy = false,
 			is_less,
@@ -633,6 +565,98 @@ select_range_partitions(const Datum value,
 	}
 }
 
+/* Fetch RangeEntry of RANGE partition which suits 'value' */
+search_rangerel_result
+search_range_partition_eq(const Datum value,
+						  FmgrInfo *cmp_func,
+						  const PartRelationInfo *prel,
+						  RangeEntry *out_re) /* returned RangeEntry */
+{
+	RangeEntry *ranges;
+	int			nranges;
+	WrapperNode	result;
+
+	ranges = PrelGetRangesArray(prel);
+	nranges = PrelChildrenCount(prel);
+
+	select_range_partitions(value,
+							cmp_func,
+							ranges,
+							nranges,
+							BTEqualStrategyNumber,
+							&result); /* output */
+
+	if (result.found_gap)
+	{
+		return SEARCH_RANGEREL_GAP;
+	}
+	else if (result.rangeset == NIL)
+	{
+		return SEARCH_RANGEREL_OUT_OF_RANGE;
+	}
+	else
+	{
+		IndexRange irange = linitial_irange(result.rangeset);
+
+		Assert(list_length(result.rangeset) == 1);
+		Assert(irange_lower(irange) == irange_upper(irange));
+		Assert(is_irange_valid(irange));
+
+		/* Write result to the 'out_rentry' if necessary */
+		if (out_re)
+			memcpy((void *) out_re,
+				   (const void *) &ranges[irange_lower(irange)],
+				   sizeof(RangeEntry));
+
+		return SEARCH_RANGEREL_FOUND;
+	}
+}
+
+
+
+/*
+ * ---------------------------------
+ *  walk_expr_tree() implementation
+ * ---------------------------------
+ */
+
+/* Examine expression in order to select partitions */
+WrapperNode *
+walk_expr_tree(Expr *expr, WalkerContext *context)
+{
+	WrapperNode *result;
+
+	switch (nodeTag(expr))
+	{
+		/* Useful for INSERT optimization */
+		case T_Const:
+			return handle_const((Const *) expr, context);
+
+		/* AND, OR, NOT expressions */
+		case T_BoolExpr:
+			return handle_boolexpr((BoolExpr *) expr, context);
+
+		/* =, !=, <, > etc. */
+		case T_OpExpr:
+			return handle_opexpr((OpExpr *) expr, context);
+
+		/* IN expression */
+		case T_ScalarArrayOpExpr:
+			return handle_arrexpr((ScalarArrayOpExpr *) expr, context);
+
+		default:
+			result = (WrapperNode *) palloc(sizeof(WrapperNode));
+			result->orig = (const Node *) expr;
+			result->args = NIL;
+			result->paramsel = 1.0;
+
+			result->rangeset = list_make1_irange(
+						make_irange(0, PrelLastChild(context->prel), IR_LOSSY));
+
+			return result;
+	}
+}
+
 /* Convert wrapper into expression for given index */
 static Node *
 wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue)
@@ -710,237 +734,7 @@ wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue)
 		return copyObject(wrap->orig);
 }
 
-/*
- * Recursive function to walk through conditions tree
- */
-WrapperNode *
-walk_expr_tree(Expr *expr, WalkerContext *context)
-{
-	WrapperNode *result;
-
-	switch (nodeTag(expr))
-	{
-		/* Useful for INSERT optimization */
-		case T_Const:
-			return handle_const((Const *) expr, context);
-
-		/* AND, OR, NOT expressions */
-		case T_BoolExpr:
-			return handle_boolexpr((BoolExpr *) expr, context);
-
-		/* =, !=, <, > etc. */
-		case T_OpExpr:
-			return handle_opexpr((OpExpr *) expr, context);
-
-		/* IN expression */
-		case T_ScalarArrayOpExpr:
-			return handle_arrexpr((ScalarArrayOpExpr *) expr, context);
-
-		default:
-			result = (WrapperNode *) palloc(sizeof(WrapperNode));
-			result->orig = (const Node *) expr;
-			result->args = NIL;
-			result->paramsel = 1.0;
-
-			result->rangeset = list_make1_irange(
-						make_irange(0, PrelLastChild(context->prel), IR_LOSSY));
-
-			return result;
-	}
-}
-
-/*
- * This function determines which partitions should appear in query plan.
- */
-static void
-handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
-					 const Node *varnode, const Const *c)
-{
-	int						strategy;
-	TypeCacheEntry		   *tce;
-	Oid						vartype;
-	const OpExpr		   *expr = (const OpExpr *) result->orig;
-	const PartRelationInfo *prel = context->prel;
-
-	Assert(IsA(varnode, Var) || IsA(varnode, RelabelType));
-
-	vartype = !IsA(varnode, RelabelType) ?
-			((Var *) varnode)->vartype :
-			((RelabelType *) varnode)->resulttype;
-
-	/* Exit if Constant is NULL */
-	if (c->constisnull)
-	{
-		result->rangeset = NIL;
-		result->paramsel = 1.0;
-		return;
-	}
-
-	tce = lookup_type_cache(vartype, TYPECACHE_BTREE_OPFAMILY);
-	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
-
-	/* There's no strategy for this operator, go to end */
-	if (strategy == 0)
-		goto binary_opexpr_return;
-
-	switch (prel->parttype)
-	{
-		case PT_HASH:
-			/* If strategy is "=", select one partiton */
-			if (strategy == BTEqualStrategyNumber)
-			{
-				Datum	value = OidFunctionCall1(prel->hash_proc, c->constvalue);
-				uint32	idx = hash_to_part_index(DatumGetInt32(value),
-												 PrelChildrenCount(prel));
-
-				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
-				result->rangeset = list_make1_irange(make_irange(idx, idx, IR_LOSSY));
-
-				return; /* exit on equal */
-			}
-			/* Else go to end */
-			else goto binary_opexpr_return;
-
-		case PT_RANGE:
-			{
-				FmgrInfo cmp_func;
-
-				fill_type_cmp_fmgr_info(&cmp_func,
-										getBaseType(c->consttype),
-										getBaseType(prel->atttype));
-
-				select_range_partitions(c->constvalue,
-										&cmp_func,
-										PrelGetRangesArray(context->prel),
-										PrelChildrenCount(context->prel),
-										strategy,
-										result); /* output */
-
-				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
-
-				return; /* done, now exit */
-			}
-
-		default:
-			elog(ERROR, "Unknown partitioning type %u", prel->parttype);
-	}
-
-binary_opexpr_return:
-	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_LOSSY));
-	result->paramsel = 1.0;
-}
-
-/*
- * Estimate selectivity of parametrized quals.
- */
-static void
-handle_binary_opexpr_param(const PartRelationInfo *prel,
-						   WrapperNode *result, const Node *varnode)
-{
-	const OpExpr	   *expr = (const OpExpr *) result->orig;
-	TypeCacheEntry	   *tce;
-	int					strategy;
-	Oid					vartype;
-
-	Assert(IsA(varnode, Var) || IsA(varnode, RelabelType));
-
-	vartype = !IsA(varnode, RelabelType) ?
-			((Var *) varnode)->vartype :
-			((RelabelType *) varnode)->resulttype;
-
-	/* Determine operator type */
-	tce = lookup_type_cache(vartype, TYPECACHE_BTREE_OPFAMILY);
-	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
-
-	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_LOSSY));
-	result->paramsel = estimate_paramsel_using_prel(prel, strategy);
-}
-
-/*
- * Extracted common 'paramsel' estimator.
- */
-static double
-estimate_paramsel_using_prel(const PartRelationInfo *prel, int strategy)
-{
-	/* If it's "=", divide by partitions number */
-	if (strategy == BTEqualStrategyNumber)
-		return 1.0 / (double) PrelChildrenCount(prel);
-
-	/* Default selectivity estimate for inequalities */
-	else if (prel->parttype == PT_RANGE && strategy > 0)
-		return DEFAULT_INEQ_SEL;
-
-	/* Else there's not much to do */
-	else return 1.0;
-}
-
-/*
- * Convert hash value to the partition index.
- */
-uint32
-hash_to_part_index(uint32 value, uint32 partitions)
-{
-	return value % partitions;
-}
-
-search_rangerel_result
-search_range_partition_eq(const Datum value,
-						  FmgrInfo *cmp_func,
-						  const PartRelationInfo *prel,
-						  RangeEntry *out_re) /* returned RangeEntry */
-{
-	RangeEntry *ranges;
-	int			nranges;
-	WrapperNode	result;
-
-	ranges = PrelGetRangesArray(prel);
-	nranges = PrelChildrenCount(prel);
-
-	select_range_partitions(value,
-							cmp_func,
-							ranges,
-							nranges,
-							BTEqualStrategyNumber,
-							&result); /* output */
-
-	if (result.found_gap)
-	{
-		return SEARCH_RANGEREL_GAP;
-	}
-	else if (result.rangeset == NIL)
-	{
-		return SEARCH_RANGEREL_OUT_OF_RANGE;
-	}
-	else
-	{
-		IndexRange irange = linitial_irange(result.rangeset);
-
-		Assert(list_length(result.rangeset) == 1);
-		Assert(irange_lower(irange) == irange_upper(irange));
-		Assert(is_irange_valid(irange));
-
-		/* Write result to the 'out_rentry' if necessary */
-		if (out_re)
-			memcpy((void *) out_re,
-				   (const void *) &ranges[irange_lower(irange)],
-				   sizeof(RangeEntry));
-
-		return SEARCH_RANGEREL_FOUND;
-	}
-}
-
-static Const *
-extract_const(WalkerContext *wcxt, Param *param)
-{
-	ExprState  *estate = ExecInitExpr((Expr *) param, NULL);
-	bool		isnull;
-	Datum		value = ExecEvalExpr(estate, wcxt->econtext, &isnull, NULL);
-
-	return makeConst(param->paramtype, param->paramtypmod,
-					 param->paramcollid, get_typlen(param->paramtype),
-					 value, isnull, get_typbyval(param->paramtype));
-}
-
+/* Const handler */
 static WrapperNode *
 handle_const(const Const *c, WalkerContext *context)
 {
@@ -1023,99 +817,7 @@ handle_const(const Const *c, WalkerContext *context)
 	return result;
 }
 
-/*
- * Operator expression handler
- */
-static WrapperNode *
-handle_opexpr(const OpExpr *expr, WalkerContext *context)
-{
-	WrapperNode	*result = (WrapperNode *) palloc0(sizeof(WrapperNode));
-	Node		*var, *param;
-	const PartRelationInfo *prel = context->prel;
-
-	result->orig = (const Node *) expr;
-	result->args = NIL;
-
-	if (list_length(expr->args) == 2)
-	{
-		if (pull_var_param(context, expr, &var, &param))
-		{
-			if (IsConstValue(context, param))
-			{
-				handle_binary_opexpr(context, result, var, ExtractConst(context, param));
-				return result;
-			}
-			else if (IsA(param, Param) || IsA(param, Var))
-			{
-				handle_binary_opexpr_param(prel, result, var);
-				return result;
-			}
-		}
-	}
-
-	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_LOSSY));
-	result->paramsel = 1.0;
-	return result;
-}
-
-/*
- * Checks if expression is a KEY OP PARAM or PARAM OP KEY,
- * where KEY is partition key (it could be Var or RelableType) and PARAM is
- * whatever. Function returns variable (or RelableType) and param via var_ptr
- * and param_ptr pointers. If partition key isn't in expression then function
- * returns false.
- */
-static bool
-pull_var_param(const WalkerContext *ctx,
-			   const OpExpr *expr,
-			   Node **var_ptr,
-			   Node **param_ptr)
-{
-	Node   *left = linitial(expr->args),
-		   *right = lsecond(expr->args);
-	Var	   *v = NULL;
-
-	/* Check the case when variable is on the left side */
-	if (IsA(left, Var) || IsA(left, RelabelType))
-	{
-		v = !IsA(left, RelabelType) ?
-						(Var *) left :
-						(Var *) ((RelabelType *) left)->arg;
-
-		/* Check if 'v' is partitioned column of 'prel' */
-		if (v->varoattno == ctx->prel->attnum &&
-			v->varno == ctx->prel_varno)
-		{
-			*var_ptr = left;
-			*param_ptr = right;
-			return true;
-		}
-	}
-
-	/* ... variable is on the right side */
-	if (IsA(right, Var) || IsA(right, RelabelType))
-	{
-		v = !IsA(right, RelabelType) ?
-						(Var *) right :
-						(Var *) ((RelabelType *) right)->arg;
-
-		/* Check if 'v' is partitioned column of 'prel' */
-		if (v->varoattno == ctx->prel->attnum &&
-			v->varno == ctx->prel_varno)
-		{
-			*var_ptr = right;
-			*param_ptr = left;
-			return true;
-		}
-	}
-
-	/* Variable isn't a partitionig key */
-	return false;
-}
-
-/*
- * Boolean expression handler
- */
+/* Boolean expression handler */
 static WrapperNode *
 handle_boolexpr(const BoolExpr *expr, WalkerContext *context)
 {
@@ -1179,9 +881,7 @@ handle_boolexpr(const BoolExpr *expr, WalkerContext *context)
 	return result;
 }
 
-/*
- * Scalar array expression
- */
+/* Scalar array expression handler */
 static WrapperNode *
 handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 {
@@ -1334,9 +1034,232 @@ handle_arrexpr_return:
 	return result;
 }
 
+/* Operator expression handler */
+static WrapperNode *
+handle_opexpr(const OpExpr *expr, WalkerContext *context)
+{
+	WrapperNode	*result = (WrapperNode *) palloc0(sizeof(WrapperNode));
+	Node		*var, *param;
+	const PartRelationInfo *prel = context->prel;
+
+	result->orig = (const Node *) expr;
+	result->args = NIL;
+
+	if (list_length(expr->args) == 2)
+	{
+		if (pull_var_param(context, expr, &var, &param))
+		{
+			if (IsConstValue(context, param))
+			{
+				handle_binary_opexpr(context, result, var, ExtractConst(context, param));
+				return result;
+			}
+			else if (IsA(param, Param) || IsA(param, Var))
+			{
+				handle_binary_opexpr_param(prel, result, var);
+				return result;
+			}
+		}
+	}
+
+	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_LOSSY));
+	result->paramsel = 1.0;
+	return result;
+}
+
+/* Binary operator handler */
+static void
+handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
+					 const Node *varnode, const Const *c)
+{
+	int						strategy;
+	TypeCacheEntry		   *tce;
+	Oid						vartype;
+	const OpExpr		   *expr = (const OpExpr *) result->orig;
+	const PartRelationInfo *prel = context->prel;
+
+	Assert(IsA(varnode, Var) || IsA(varnode, RelabelType));
+
+	vartype = !IsA(varnode, RelabelType) ?
+			((Var *) varnode)->vartype :
+			((RelabelType *) varnode)->resulttype;
+
+	/* Exit if Constant is NULL */
+	if (c->constisnull)
+	{
+		result->rangeset = NIL;
+		result->paramsel = 1.0;
+		return;
+	}
+
+	tce = lookup_type_cache(vartype, TYPECACHE_BTREE_OPFAMILY);
+	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
+
+	/* There's no strategy for this operator, go to end */
+	if (strategy == 0)
+		goto binary_opexpr_return;
+
+	switch (prel->parttype)
+	{
+		case PT_HASH:
+			/* If strategy is "=", select one partiton */
+			if (strategy == BTEqualStrategyNumber)
+			{
+				Datum	value = OidFunctionCall1(prel->hash_proc, c->constvalue);
+				uint32	idx = hash_to_part_index(DatumGetInt32(value),
+												 PrelChildrenCount(prel));
+
+				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
+				result->rangeset = list_make1_irange(make_irange(idx, idx, IR_LOSSY));
+
+				return; /* exit on equal */
+			}
+			/* Else go to end */
+			else goto binary_opexpr_return;
+
+		case PT_RANGE:
+			{
+				FmgrInfo cmp_func;
+
+				fill_type_cmp_fmgr_info(&cmp_func,
+										getBaseType(c->consttype),
+										getBaseType(prel->atttype));
+
+				select_range_partitions(c->constvalue,
+										&cmp_func,
+										PrelGetRangesArray(context->prel),
+										PrelChildrenCount(context->prel),
+										strategy,
+										result); /* output */
+
+				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
+
+				return; /* done, now exit */
+			}
+
+		default:
+			elog(ERROR, "Unknown partitioning type %u", prel->parttype);
+	}
+
+binary_opexpr_return:
+	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_LOSSY));
+	result->paramsel = 1.0;
+}
+
+/* Estimate selectivity of parametrized quals */
+static void
+handle_binary_opexpr_param(const PartRelationInfo *prel,
+						   WrapperNode *result, const Node *varnode)
+{
+	const OpExpr	   *expr = (const OpExpr *) result->orig;
+	TypeCacheEntry	   *tce;
+	int					strategy;
+	Oid					vartype;
+
+	Assert(IsA(varnode, Var) || IsA(varnode, RelabelType));
+
+	vartype = !IsA(varnode, RelabelType) ?
+			((Var *) varnode)->vartype :
+			((RelabelType *) varnode)->resulttype;
+
+	/* Determine operator type */
+	tce = lookup_type_cache(vartype, TYPECACHE_BTREE_OPFAMILY);
+	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
+
+	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_LOSSY));
+	result->paramsel = estimate_paramsel_using_prel(prel, strategy);
+}
+
 /*
- * These functions below are copied from allpaths.c with (or without) some
- * modifications. Couldn't use original because of 'static' modifier.
+ * Checks if expression is a KEY OP PARAM or PARAM OP KEY, where KEY is
+ * partition key (it could be Var or RelableType) and PARAM is whatever.
+ *
+ * NOTE: returns false if partition key is not in expression.
+ */
+static bool
+pull_var_param(const WalkerContext *ctx,
+			   const OpExpr *expr,
+			   Node **var_ptr,
+			   Node **param_ptr)
+{
+	Node   *left = linitial(expr->args),
+		   *right = lsecond(expr->args);
+	Var	   *v = NULL;
+
+	/* Check the case when variable is on the left side */
+	if (IsA(left, Var) || IsA(left, RelabelType))
+	{
+		v = !IsA(left, RelabelType) ?
+						(Var *) left :
+						(Var *) ((RelabelType *) left)->arg;
+
+		/* Check if 'v' is partitioned column of 'prel' */
+		if (v->varoattno == ctx->prel->attnum &&
+			v->varno == ctx->prel_varno)
+		{
+			*var_ptr = left;
+			*param_ptr = right;
+			return true;
+		}
+	}
+
+	/* ... variable is on the right side */
+	if (IsA(right, Var) || IsA(right, RelabelType))
+	{
+		v = !IsA(right, RelabelType) ?
+						(Var *) right :
+						(Var *) ((RelabelType *) right)->arg;
+
+		/* Check if 'v' is partitioned column of 'prel' */
+		if (v->varoattno == ctx->prel->attnum &&
+			v->varno == ctx->prel_varno)
+		{
+			*var_ptr = right;
+			*param_ptr = left;
+			return true;
+		}
+	}
+
+	/* Variable isn't a partitionig key */
+	return false;
+}
+
+/* Extract (evaluate) Const from Param node */
+static Const *
+extract_const(WalkerContext *wcxt, Param *param)
+{
+	ExprState  *estate = ExecInitExpr((Expr *) param, NULL);
+	bool		isnull;
+	Datum		value = ExecEvalExpr(estate, wcxt->econtext, &isnull, NULL);
+
+	return makeConst(param->paramtype, param->paramtypmod,
+					 param->paramcollid, get_typlen(param->paramtype),
+					 value, isnull, get_typbyval(param->paramtype));
+}
+
+/* Selectivity estimator for common 'paramsel' */
+static double
+estimate_paramsel_using_prel(const PartRelationInfo *prel, int strategy)
+{
+	/* If it's "=", divide by partitions number */
+	if (strategy == BTEqualStrategyNumber)
+		return 1.0 / (double) PrelChildrenCount(prel);
+
+	/* Default selectivity estimate for inequalities */
+	else if (prel->parttype == PT_RANGE && strategy > 0)
+		return DEFAULT_INEQ_SEL;
+
+	/* Else there's not much to do */
+	else return 1.0;
+}
+
+
+
+/*
+ * ----------------------------------------------------------------------------------
+ *  NOTE: The following functions below are copied from PostgreSQL with (or without)
+ *  some modifications. Couldn't use original because of 'static' modifier.
+ * ----------------------------------------------------------------------------------
  */
 
 /*
@@ -1422,9 +1345,352 @@ set_foreign_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 	rel->fdwroutine->GetForeignPaths(root, rel, rte->relid);
 }
 
+
+static List *
+accumulate_append_subpath(List *subpaths, Path *path)
+{
+	return lappend(subpaths, path);
+}
+
+/*
+ * get_cheapest_parameterized_child_path
+ *		Get cheapest path for this relation that has exactly the requested
+ *		parameterization.
+ *
+ * Returns NULL if unable to create such a path.
+ */
+static Path *
+get_cheapest_parameterized_child_path(PlannerInfo *root, RelOptInfo *rel,
+									  Relids required_outer)
+{
+	Path	   *cheapest;
+	ListCell   *lc;
+
+	/*
+	 * Look up the cheapest existing path with no more than the needed
+	 * parameterization.  If it has exactly the needed parameterization, we're
+	 * done.
+	 */
+	cheapest = get_cheapest_path_for_pathkeys(rel->pathlist,
+											  NIL,
+											  required_outer,
+											  TOTAL_COST);
+	Assert(cheapest != NULL);
+	if (bms_equal(PATH_REQ_OUTER(cheapest), required_outer))
+		return cheapest;
+
+	/*
+	 * Otherwise, we can "reparameterize" an existing path to match the given
+	 * parameterization, which effectively means pushing down additional
+	 * joinquals to be checked within the path's scan.  However, some existing
+	 * paths might check the available joinquals already while others don't;
+	 * therefore, it's not clear which existing path will be cheapest after
+	 * reparameterization.  We have to go through them all and find out.
+	 */
+	cheapest = NULL;
+	foreach(lc, rel->pathlist)
+	{
+		Path	   *path = (Path *) lfirst(lc);
+
+		/* Can't use it if it needs more than requested parameterization */
+		if (!bms_is_subset(PATH_REQ_OUTER(path), required_outer))
+			continue;
+
+		/*
+		 * Reparameterization can only increase the path's cost, so if it's
+		 * already more expensive than the current cheapest, forget it.
+		 */
+		if (cheapest != NULL &&
+			compare_path_costs(cheapest, path, TOTAL_COST) <= 0)
+			continue;
+
+		/* Reparameterize if needed, then recheck cost */
+		if (!bms_equal(PATH_REQ_OUTER(path), required_outer))
+		{
+			path = reparameterize_path(root, path, required_outer, 1.0);
+			if (path == NULL)
+				continue;		/* failed to reparameterize this one */
+			Assert(bms_equal(PATH_REQ_OUTER(path), required_outer));
+
+			if (cheapest != NULL &&
+				compare_path_costs(cheapest, path, TOTAL_COST) <= 0)
+				continue;
+		}
+
+		/* We have a new best path */
+		cheapest = path;
+	}
+
+	/* Return the best path, or NULL if we found no suitable candidate */
+	return cheapest;
+}
+
+/*
+ * generate_mergeappend_paths
+ *		Generate MergeAppend paths for an append relation
+ *
+ * Generate a path for each ordering (pathkey list) appearing in
+ * all_child_pathkeys.
+ *
+ * We consider both cheapest-startup and cheapest-total cases, ie, for each
+ * interesting ordering, collect all the cheapest startup subpaths and all the
+ * cheapest total paths, and build a MergeAppend path for each case.
+ *
+ * We don't currently generate any parameterized MergeAppend paths.  While
+ * it would not take much more code here to do so, it's very unclear that it
+ * is worth the planning cycles to investigate such paths: there's little
+ * use for an ordered path on the inside of a nestloop.  In fact, it's likely
+ * that the current coding of add_path would reject such paths out of hand,
+ * because add_path gives no credit for sort ordering of parameterized paths,
+ * and a parameterized MergeAppend is going to be more expensive than the
+ * corresponding parameterized Append path.  If we ever try harder to support
+ * parameterized mergejoin plans, it might be worth adding support for
+ * parameterized MergeAppends to feed such joins.  (See notes in
+ * optimizer/README for why that might not ever happen, though.)
+ */
+static void
+generate_mergeappend_paths(PlannerInfo *root, RelOptInfo *rel,
+						   List *live_childrels,
+						   List *all_child_pathkeys,
+						   PathKey *pathkeyAsc, PathKey *pathkeyDesc)
+{
+	ListCell   *lcp;
+
+	foreach(lcp, all_child_pathkeys)
+	{
+		List	   *pathkeys = (List *) lfirst(lcp);
+		List	   *startup_subpaths = NIL;
+		List	   *total_subpaths = NIL;
+		bool		startup_neq_total = false;
+		bool		presorted = true;
+		ListCell   *lcr;
+
+		/* Select the child paths for this ordering... */
+		foreach(lcr, live_childrels)
+		{
+			RelOptInfo *childrel = (RelOptInfo *) lfirst(lcr);
+			Path	   *cheapest_startup,
+					   *cheapest_total;
+
+			/* Locate the right paths, if they are available. */
+			cheapest_startup =
+				get_cheapest_path_for_pathkeys(childrel->pathlist,
+											   pathkeys,
+											   NULL,
+											   STARTUP_COST);
+			cheapest_total =
+				get_cheapest_path_for_pathkeys(childrel->pathlist,
+											   pathkeys,
+											   NULL,
+											   TOTAL_COST);
+
+			/*
+			 * If we can't find any paths with the right order just use the
+			 * cheapest-total path; we'll have to sort it later.
+			 */
+			if (cheapest_startup == NULL || cheapest_total == NULL)
+			{
+				cheapest_startup = cheapest_total =
+					childrel->cheapest_total_path;
+				/* Assert we do have an unparameterized path for this child */
+				Assert(cheapest_total->param_info == NULL);
+				presorted = false;
+			}
+
+			/*
+			 * Notice whether we actually have different paths for the
+			 * "cheapest" and "total" cases; frequently there will be no point
+			 * in two create_merge_append_path() calls.
+			 */
+			if (cheapest_startup != cheapest_total)
+				startup_neq_total = true;
+
+			startup_subpaths =
+				accumulate_append_subpath(startup_subpaths, cheapest_startup);
+			total_subpaths =
+				accumulate_append_subpath(total_subpaths, cheapest_total);
+		}
+
+		/*
+		 * When first pathkey matching ascending/descending sort by partition
+		 * column then build path with Append node, because MergeAppend is not
+		 * required in this case.
+		 */
+		if ((PathKey *) linitial(pathkeys) == pathkeyAsc && presorted)
+		{
+			Path *path;
+
+			path = (Path *) create_append_path_compat(rel, startup_subpaths,
+													  NULL, 0);
+			path->pathkeys = pathkeys;
+			add_path(rel, path);
+
+			if (startup_neq_total)
+			{
+				path = (Path *) create_append_path_compat(rel, total_subpaths,
+														  NULL, 0);
+				path->pathkeys = pathkeys;
+				add_path(rel, path);
+			}
+		}
+		else if ((PathKey *) linitial(pathkeys) == pathkeyDesc && presorted)
+		{
+			/*
+			 * When pathkey is descending sort by partition column then we
+			 * need to scan partitions in reversed order.
+			 */
+			Path *path;
+
+			path = (Path *) create_append_path_compat(rel,
+								list_reverse(startup_subpaths), NULL, 0);
+			path->pathkeys = pathkeys;
+			add_path(rel, path);
+
+			if (startup_neq_total)
+			{
+				path = (Path *) create_append_path_compat(rel,
+								list_reverse(total_subpaths), NULL, 0);
+				path->pathkeys = pathkeys;
+				add_path(rel, path);
+			}
+		}
+		else
+		{
+			/* ... and build the MergeAppend paths */
+			add_path(rel, (Path *) create_merge_append_path(root,
+															rel,
+															startup_subpaths,
+															pathkeys,
+															NULL));
+			if (startup_neq_total)
+				add_path(rel, (Path *) create_merge_append_path(root,
+																rel,
+																total_subpaths,
+																pathkeys,
+																NULL));
+		}
+	}
+}
+
+/*
+ * make_inh_translation_list
+ *	  Build the list of translations from parent Vars to child Vars for
+ *	  an inheritance child.
+ *
+ * For paranoia's sake, we match type/collation as well as attribute name.
+ */
+static void
+make_inh_translation_list(Relation oldrelation, Relation newrelation,
+						  Index newvarno, List **translated_vars)
+{
+	List	   *vars = NIL;
+	TupleDesc	old_tupdesc = RelationGetDescr(oldrelation);
+	TupleDesc	new_tupdesc = RelationGetDescr(newrelation);
+	int			oldnatts = old_tupdesc->natts;
+	int			newnatts = new_tupdesc->natts;
+	int			old_attno;
+
+	for (old_attno = 0; old_attno < oldnatts; old_attno++)
+	{
+		Form_pg_attribute att;
+		char	   *attname;
+		Oid			atttypid;
+		int32		atttypmod;
+		Oid			attcollation;
+		int			new_attno;
+
+		att = old_tupdesc->attrs[old_attno];
+		if (att->attisdropped)
+		{
+			/* Just put NULL into this list entry */
+			vars = lappend(vars, NULL);
+			continue;
+		}
+		attname = NameStr(att->attname);
+		atttypid = att->atttypid;
+		atttypmod = att->atttypmod;
+		attcollation = att->attcollation;
+
+		/*
+		 * When we are generating the "translation list" for the parent table
+		 * of an inheritance set, no need to search for matches.
+		 */
+		if (oldrelation == newrelation)
+		{
+			vars = lappend(vars, makeVar(newvarno,
+										 (AttrNumber) (old_attno + 1),
+										 atttypid,
+										 atttypmod,
+										 attcollation,
+										 0));
+			continue;
+		}
+
+		/*
+		 * Otherwise we have to search for the matching column by name.
+		 * There's no guarantee it'll have the same column position, because
+		 * of cases like ALTER TABLE ADD COLUMN and multiple inheritance.
+		 * However, in simple cases it will be the same column number, so try
+		 * that before we go groveling through all the columns.
+		 *
+		 * Note: the test for (att = ...) != NULL cannot fail, it's just a
+		 * notational device to include the assignment into the if-clause.
+		 */
+		if (old_attno < newnatts &&
+			(att = new_tupdesc->attrs[old_attno]) != NULL &&
+			!att->attisdropped && att->attinhcount != 0 &&
+			strcmp(attname, NameStr(att->attname)) == 0)
+			new_attno = old_attno;
+		else
+		{
+			for (new_attno = 0; new_attno < newnatts; new_attno++)
+			{
+				att = new_tupdesc->attrs[new_attno];
+
+				/*
+				 * Make clang analyzer happy:
+				 *
+				 * Access to field 'attisdropped' results
+				 * in a dereference of a null pointer
+				 */
+				if (!att)
+					elog(ERROR, "error in function "
+								CppAsString(make_inh_translation_list));
+
+				if (!att->attisdropped && att->attinhcount != 0 &&
+					strcmp(attname, NameStr(att->attname)) == 0)
+					break;
+			}
+			if (new_attno >= newnatts)
+				elog(ERROR, "could not find inherited attribute \"%s\" of relation \"%s\"",
+					 attname, RelationGetRelationName(newrelation));
+		}
+
+		/* Found it, check type and collation match */
+		if (atttypid != att->atttypid || atttypmod != att->atttypmod)
+			elog(ERROR, "attribute \"%s\" of relation \"%s\" does not match parent's type",
+				 attname, RelationGetRelationName(newrelation));
+		if (attcollation != att->attcollation)
+			elog(ERROR, "attribute \"%s\" of relation \"%s\" does not match parent's collation",
+				 attname, RelationGetRelationName(newrelation));
+
+		vars = lappend(vars, makeVar(newvarno,
+									 (AttrNumber) (new_attno + 1),
+									 atttypid,
+									 atttypmod,
+									 attcollation,
+									 0));
+	}
+
+	*translated_vars = vars;
+}
+
+
 /*
  * set_append_rel_pathlist
  *	  Build access paths for an "append relation"
+ *
+ * NOTE: this function is 'public' (used in hooks.c)
  */
 void
 set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
@@ -1704,264 +1970,4 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 			add_path(rel, (Path *)
 					 create_append_path_compat(rel, subpaths, required_outer, 0));
 	}
-}
-
-static List *
-accumulate_append_subpath(List *subpaths, Path *path)
-{
-	return lappend(subpaths, path);
-}
-
-/*
- * get_cheapest_parameterized_child_path
- *		Get cheapest path for this relation that has exactly the requested
- *		parameterization.
- *
- * Returns NULL if unable to create such a path.
- */
-static Path *
-get_cheapest_parameterized_child_path(PlannerInfo *root, RelOptInfo *rel,
-									  Relids required_outer)
-{
-	Path	   *cheapest;
-	ListCell   *lc;
-
-	/*
-	 * Look up the cheapest existing path with no more than the needed
-	 * parameterization.  If it has exactly the needed parameterization, we're
-	 * done.
-	 */
-	cheapest = get_cheapest_path_for_pathkeys(rel->pathlist,
-											  NIL,
-											  required_outer,
-											  TOTAL_COST);
-	Assert(cheapest != NULL);
-	if (bms_equal(PATH_REQ_OUTER(cheapest), required_outer))
-		return cheapest;
-
-	/*
-	 * Otherwise, we can "reparameterize" an existing path to match the given
-	 * parameterization, which effectively means pushing down additional
-	 * joinquals to be checked within the path's scan.  However, some existing
-	 * paths might check the available joinquals already while others don't;
-	 * therefore, it's not clear which existing path will be cheapest after
-	 * reparameterization.  We have to go through them all and find out.
-	 */
-	cheapest = NULL;
-	foreach(lc, rel->pathlist)
-	{
-		Path	   *path = (Path *) lfirst(lc);
-
-		/* Can't use it if it needs more than requested parameterization */
-		if (!bms_is_subset(PATH_REQ_OUTER(path), required_outer))
-			continue;
-
-		/*
-		 * Reparameterization can only increase the path's cost, so if it's
-		 * already more expensive than the current cheapest, forget it.
-		 */
-		if (cheapest != NULL &&
-			compare_path_costs(cheapest, path, TOTAL_COST) <= 0)
-			continue;
-
-		/* Reparameterize if needed, then recheck cost */
-		if (!bms_equal(PATH_REQ_OUTER(path), required_outer))
-		{
-			path = reparameterize_path(root, path, required_outer, 1.0);
-			if (path == NULL)
-				continue;		/* failed to reparameterize this one */
-			Assert(bms_equal(PATH_REQ_OUTER(path), required_outer));
-
-			if (cheapest != NULL &&
-				compare_path_costs(cheapest, path, TOTAL_COST) <= 0)
-				continue;
-		}
-
-		/* We have a new best path */
-		cheapest = path;
-	}
-
-	/* Return the best path, or NULL if we found no suitable candidate */
-	return cheapest;
-}
-
-/*
- * generate_mergeappend_paths
- *		Generate MergeAppend paths for an append relation
- *
- * Generate a path for each ordering (pathkey list) appearing in
- * all_child_pathkeys.
- *
- * We consider both cheapest-startup and cheapest-total cases, ie, for each
- * interesting ordering, collect all the cheapest startup subpaths and all the
- * cheapest total paths, and build a MergeAppend path for each case.
- *
- * We don't currently generate any parameterized MergeAppend paths.  While
- * it would not take much more code here to do so, it's very unclear that it
- * is worth the planning cycles to investigate such paths: there's little
- * use for an ordered path on the inside of a nestloop.  In fact, it's likely
- * that the current coding of add_path would reject such paths out of hand,
- * because add_path gives no credit for sort ordering of parameterized paths,
- * and a parameterized MergeAppend is going to be more expensive than the
- * corresponding parameterized Append path.  If we ever try harder to support
- * parameterized mergejoin plans, it might be worth adding support for
- * parameterized MergeAppends to feed such joins.  (See notes in
- * optimizer/README for why that might not ever happen, though.)
- */
-static void
-generate_mergeappend_paths(PlannerInfo *root, RelOptInfo *rel,
-						   List *live_childrels,
-						   List *all_child_pathkeys,
-						   PathKey *pathkeyAsc, PathKey *pathkeyDesc)
-{
-	ListCell   *lcp;
-
-	foreach(lcp, all_child_pathkeys)
-	{
-		List	   *pathkeys = (List *) lfirst(lcp);
-		List	   *startup_subpaths = NIL;
-		List	   *total_subpaths = NIL;
-		bool		startup_neq_total = false;
-		bool		presorted = true;
-		ListCell   *lcr;
-
-		/* Select the child paths for this ordering... */
-		foreach(lcr, live_childrels)
-		{
-			RelOptInfo *childrel = (RelOptInfo *) lfirst(lcr);
-			Path	   *cheapest_startup,
-					   *cheapest_total;
-
-			/* Locate the right paths, if they are available. */
-			cheapest_startup =
-				get_cheapest_path_for_pathkeys(childrel->pathlist,
-											   pathkeys,
-											   NULL,
-											   STARTUP_COST);
-			cheapest_total =
-				get_cheapest_path_for_pathkeys(childrel->pathlist,
-											   pathkeys,
-											   NULL,
-											   TOTAL_COST);
-
-			/*
-			 * If we can't find any paths with the right order just use the
-			 * cheapest-total path; we'll have to sort it later.
-			 */
-			if (cheapest_startup == NULL || cheapest_total == NULL)
-			{
-				cheapest_startup = cheapest_total =
-					childrel->cheapest_total_path;
-				/* Assert we do have an unparameterized path for this child */
-				Assert(cheapest_total->param_info == NULL);
-				presorted = false;
-			}
-
-			/*
-			 * Notice whether we actually have different paths for the
-			 * "cheapest" and "total" cases; frequently there will be no point
-			 * in two create_merge_append_path() calls.
-			 */
-			if (cheapest_startup != cheapest_total)
-				startup_neq_total = true;
-
-			startup_subpaths =
-				accumulate_append_subpath(startup_subpaths, cheapest_startup);
-			total_subpaths =
-				accumulate_append_subpath(total_subpaths, cheapest_total);
-		}
-
-		/*
-		 * When first pathkey matching ascending/descending sort by partition
-		 * column then build path with Append node, because MergeAppend is not
-		 * required in this case.
-		 */
-		if ((PathKey *) linitial(pathkeys) == pathkeyAsc && presorted)
-		{
-			Path *path;
-
-			path = (Path *) create_append_path_compat(rel, startup_subpaths,
-													  NULL, 0);
-			path->pathkeys = pathkeys;
-			add_path(rel, path);
-
-			if (startup_neq_total)
-			{
-				path = (Path *) create_append_path_compat(rel, total_subpaths,
-														  NULL, 0);
-				path->pathkeys = pathkeys;
-				add_path(rel, path);
-			}
-		}
-		else if ((PathKey *) linitial(pathkeys) == pathkeyDesc && presorted)
-		{
-			/*
-			 * When pathkey is descending sort by partition column then we
-			 * need to scan partitions in reversed order.
-			 */
-			Path *path;
-
-			path = (Path *) create_append_path_compat(rel,
-								list_reverse(startup_subpaths), NULL, 0);
-			path->pathkeys = pathkeys;
-			add_path(rel, path);
-
-			if (startup_neq_total)
-			{
-				path = (Path *) create_append_path_compat(rel,
-								list_reverse(total_subpaths), NULL, 0);
-				path->pathkeys = pathkeys;
-				add_path(rel, path);
-			}
-		}
-		else
-		{
-			/* ... and build the MergeAppend paths */
-			add_path(rel, (Path *) create_merge_append_path(root,
-															rel,
-															startup_subpaths,
-															pathkeys,
-															NULL));
-			if (startup_neq_total)
-				add_path(rel, (Path *) create_merge_append_path(root,
-																rel,
-																total_subpaths,
-																pathkeys,
-																NULL));
-		}
-	}
-}
-
-/*
- * Get cached PATHMAN_CONFIG relation Oid.
- */
-Oid
-get_pathman_config_relid(bool invalid_is_ok)
-{
-	/* Raise ERROR if Oid is invalid */
-	if (!OidIsValid(pathman_config_relid) && !invalid_is_ok)
-		elog(ERROR,
-			 (!IsPathmanInitialized() ?
-				"pg_pathman is not initialized yet" :
-				"unexpected error in function "
-						  CppAsString(get_pathman_config_relid)));
-
-	return pathman_config_relid;
-}
-
-/*
- * Get cached PATHMAN_CONFIG_PARAMS relation Oid.
- */
-Oid
-get_pathman_config_params_relid(bool invalid_is_ok)
-{
-	/* Raise ERROR if Oid is invalid */
-	if (!OidIsValid(pathman_config_relid) && !invalid_is_ok)
-		elog(ERROR,
-			 (!IsPathmanInitialized() ?
-				"pg_pathman is not initialized yet" :
-				"unexpected error in function "
-						  CppAsString(get_pathman_config_params_relid)));
-
-	return pathman_config_params_relid;
 }

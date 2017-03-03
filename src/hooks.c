@@ -15,6 +15,7 @@
 #include "hooks.h"
 #include "init.h"
 #include "partition_filter.h"
+#include "pathman_workers.h"
 #include "planner_tree_modification.h"
 #include "runtimeappend.h"
 #include "runtime_merge_append.h"
@@ -591,7 +592,7 @@ pathman_shmem_startup_hook(void)
 
 	/* Allocate shared memory objects */
 	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
-	init_shmem_config();
+	init_concurrent_part_task_slots();
 	LWLockRelease(AddinShmemInitLock);
 }
 

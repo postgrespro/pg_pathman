@@ -51,7 +51,6 @@ void extract_op_func_and_ret_type(char *opname,
 								  Oid *op_func,
 								  Oid *op_ret_type);
 
-
 /*
  * Print values and cast types.
  */

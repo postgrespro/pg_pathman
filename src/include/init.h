@@ -94,11 +94,15 @@ extern PathmanInitState 	pg_pathman_init_state;
 #define DEFAULT_INIT_CALLBACK		InvalidOid
 #define DEFAULT_SPAWN_USING_BGW		false
 
+/* Other default values (for GUCs etc) */
+#define DEFAULT_PATHMAN_ENABLE		true
+#define DEFAULT_OVERRIDE_COPY		true
+
 
 /* Lowest version of Pl/PgSQL frontend compatible with internals (0xAA_BB_CC) */
 #define LOWEST_COMPATIBLE_FRONT		0x010300
 
-/* Current version on native C library (0xAA_BB_CC) */
+/* Current version of native C library (0xAA_BB_CC) */
 #define CURRENT_LIB_VERSION			0x010300
 
 
@@ -118,9 +122,10 @@ void restore_pathman_init_state(const PathmanInitState *temp_init_state);
  */
 void init_main_pathman_toggles(void);
 
+/*
+ * Shared & local config.
+ */
 Size estimate_pathman_shmem_size(void);
-void init_shmem_config(void);
-
 bool load_config(void);
 void unload_config(void);
 
