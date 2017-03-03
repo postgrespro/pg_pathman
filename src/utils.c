@@ -15,6 +15,7 @@
 #include "access/sysattr.h"
 #include "access/xact.h"
 #include "catalog/heap.h"
+#include "catalog/namespace.h"
 #include "catalog/pg_type.h"
 #include "catalog/pg_extension.h"
 #include "catalog/pg_operator.h"
@@ -491,4 +492,83 @@ extract_binary_interval_from_text(Datum interval_text,	/* interval as TEXT */
 	}
 
 	return interval_binary;
+}
+
+
+/* Convert Datum into CSTRING array */
+char **
+deconstruct_text_array(Datum array, int *array_size)
+{
+	ArrayType  *array_ptr = DatumGetArrayTypeP(array);
+	int16		elemlen;
+	bool		elembyval;
+	char		elemalign;
+
+	Datum	   *elem_values;
+	bool	   *elem_nulls;
+
+	int			arr_size = 0;
+
+	/* Check type invariant */
+	Assert(ARR_ELEMTYPE(array_ptr) == TEXTOID);
+
+	/* Check number of dimensions */
+	if (ARR_NDIM(array_ptr) > 1)
+		elog(ERROR, "'partition_names' and 'tablespaces' may contain only 1 dimension");
+
+	get_typlenbyvalalign(ARR_ELEMTYPE(array_ptr),
+						 &elemlen, &elembyval, &elemalign);
+
+	deconstruct_array(array_ptr,
+					  ARR_ELEMTYPE(array_ptr),
+					  elemlen, elembyval, elemalign,
+					  &elem_values, &elem_nulls, &arr_size);
+
+	/* If there are actual values, convert them into CSTRINGs */
+	if (arr_size > 0)
+	{
+		char  **strings = palloc(arr_size * sizeof(char *));
+		int		i;
+
+		for (i = 0; i < arr_size; i++)
+		{
+			if (elem_nulls[i])
+				elog(ERROR, "'partition_names' and 'tablespaces' may not contain NULLs");
+
+			strings[i] = TextDatumGetCString(elem_values[i]);
+		}
+
+		/* Return an array and it's size */
+		*array_size = arr_size;
+		return strings;
+	}
+	/* Else emit ERROR */
+	else elog(ERROR, "'partition_names' and 'tablespaces' may not be empty");
+
+	/* Keep compiler happy */
+	return NULL;
+}
+
+/*
+ * Convert schema qualified relation names array to RangeVars array
+ */
+RangeVar **
+qualified_relnames_to_rangevars(char **relnames, size_t nrelnames)
+{
+	RangeVar  **rangevars = NULL;
+	int			i;
+
+	/* Convert partition names into RangeVars */
+	if (relnames)
+	{
+		rangevars = palloc(sizeof(RangeVar) * nrelnames);
+		for (i = 0; i < nrelnames; i++)
+		{
+			List *nl = stringToQualifiedNameList(relnames[i]);
+
+			rangevars[i] = makeRangeVarFromNameList(nl);
+		}
+	}
+
+	return rangevars;
 }

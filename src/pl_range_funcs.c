@@ -1015,11 +1015,17 @@ Datum
 create_range_partitions_internal(PG_FUNCTION_ARGS)
 {
 	Oid				relid = PG_GETARG_OID(0);
-	// char		   *attname = TextDatumGetCString(PG_GETARG_TEXT_P(1));
 	int16			typlen;
 	bool			typbyval;
 	char			typalign;
 	FmgrInfo		cmp_func;
+
+	/* partition names and tablespaces */
+	char		  **partnames = NULL;
+	RangeVar	  **rangevars = NULL;
+	char		  **tablespaces = NULL;
+	int				npartnames = 0;
+	int				ntablespaces = 0;
 
 	/* bounds */
 	ArrayType	   *arr = PG_GETARG_ARRAYTYPE_P(1);
@@ -1029,11 +1035,32 @@ create_range_partitions_internal(PG_FUNCTION_ARGS)
 	int				ndatums;
 	int				i;
 
+	/* Extract partition names */
+	if (!PG_ARGISNULL(2))
+	{
+		partnames = deconstruct_text_array(PG_GETARG_DATUM(2), &npartnames);
+		rangevars = qualified_relnames_to_rangevars(partnames, npartnames);
+	}
+
+	/* Extract partition tablespaces */
+	if (!PG_ARGISNULL(3))
+		tablespaces = deconstruct_text_array(PG_GETARG_DATUM(3), &ntablespaces);
+
 	/* Extract bounds */
 	get_typlenbyvalalign(elemtype, &typlen, &typbyval, &typalign);
 	deconstruct_array(arr, elemtype,
 					  typlen, typbyval, typalign,
 					  &datums, &nulls, &ndatums);
+
+	if (partnames && npartnames != ndatums-1)
+		ereport(ERROR, (errmsg("wrong length of relnames array"),
+						errdetail("relnames number must be less than "
+								  "bounds array length by one")));
+
+	if (tablespaces && ntablespaces != ndatums-1)
+		ereport(ERROR, (errmsg("wrong length of tablespaces array"),
+						errdetail("tablespaces number must be less than "
+								  "bounds array length by one")));
 
 	/* Check if bounds array is ascending */
 	fill_type_cmp_fmgr_info(&cmp_func,
@@ -1069,14 +1096,16 @@ create_range_partitions_internal(PG_FUNCTION_ARGS)
 		Bound	end   = nulls[i+1] ?
 						MakeBoundInf(PLUS_INFINITY) :
 						MakeBound(datums[i+1]);
+		RangeVar *rv = npartnames > 0 ? rangevars[i] : NULL;
+		char   *tablespace = ntablespaces > 0 ? tablespaces[i] : NULL;
 
 		(void) create_single_range_partition_internal(relid,
 													  &start,
 													  &end,
 													  elemtype,
-													  NULL,
-													  NULL);
+													  rv,
+													  tablespace);
 	}
 
-	PG_RETURN_VOID();
+	PG_RETURN_INT32(ndatums-1);
 }

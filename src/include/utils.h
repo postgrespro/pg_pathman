@@ -63,7 +63,8 @@ Datum perform_type_cast(Datum value, Oid in_type, Oid out_type, bool *success);
 Datum extract_binary_interval_from_text(Datum interval_text,
 										Oid part_atttype,
 										Oid *interval_type);
-
+char **deconstruct_text_array(Datum array, int *array_size);
+RangeVar ** qualified_relnames_to_rangevars(char **relnames, size_t nrelnames);
 
 
 #endif /* PATHMAN_UTILS_H */

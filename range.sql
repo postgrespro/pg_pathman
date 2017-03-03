@@ -60,6 +60,29 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
+
+CREATE OR REPLACE FUNCTION @extschema@.prepare_for_partitioning(
+	parent_relid	REGCLASS,
+	attribute		TEXT,
+	partition_data	BOOLEAN)
+RETURNS VOID AS
+$$
+BEGIN
+	PERFORM @extschema@.validate_relname(parent_relid);
+
+	IF partition_data = true THEN
+		/* Acquire data modification lock */
+		PERFORM @extschema@.prevent_relation_modification(parent_relid);
+	ELSE
+		/* Acquire lock on parent */
+		PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+	END IF;
+
+	attribute := lower(attribute);
+	PERFORM @extschema@.common_relation_checks(parent_relid, attribute);
+END
+$$ LANGUAGE plpgsql;
+
 /*
  * Creates RANGE partitions for specified relation based on datetime attribute
  */
@@ -81,18 +104,8 @@ DECLARE
 	i					INTEGER;
 
 BEGIN
-	PERFORM @extschema@.validate_relname(parent_relid);
-
-	IF partition_data = true THEN
-		/* Acquire data modification lock */
-		PERFORM @extschema@.prevent_relation_modification(parent_relid);
-	ELSE
-		/* Acquire lock on parent */
-		PERFORM @extschema@.lock_partitioned_relation(parent_relid);
-	END IF;
-
 	attribute := lower(attribute);
-	PERFORM @extschema@.common_relation_checks(parent_relid, attribute);
+	PERFORM @extschema@.prepare_for_partitioning(parent_relid, attribute, partition_data);
 
 	IF p_count < 0 THEN
 		RAISE EXCEPTION '"p_count" must not be less than 0';
@@ -196,18 +209,8 @@ DECLARE
 	i					INTEGER;
 
 BEGIN
-	PERFORM @extschema@.validate_relname(parent_relid);
-
-	IF partition_data = true THEN
-		/* Acquire data modification lock */
-		PERFORM @extschema@.prevent_relation_modification(parent_relid);
-	ELSE
-		/* Acquire lock on parent */
-		PERFORM @extschema@.lock_partitioned_relation(parent_relid);
-	END IF;
-
 	attribute := lower(attribute);
-	PERFORM @extschema@.common_relation_checks(parent_relid, attribute);
+	PERFORM @extschema@.prepare_for_partitioning(parent_relid, attribute, partition_data);
 
 	IF p_count < 0 THEN
 		RAISE EXCEPTION 'partitions count must not be less than zero';
@@ -304,18 +307,8 @@ DECLARE
 	part_count		INTEGER := 0;
 
 BEGIN
-	PERFORM @extschema@.validate_relname(parent_relid);
-
-	IF partition_data = true THEN
-		/* Acquire data modification lock */
-		PERFORM @extschema@.prevent_relation_modification(parent_relid);
-	ELSE
-		/* Acquire lock on parent */
-		PERFORM @extschema@.lock_partitioned_relation(parent_relid);
-	END IF;
-
 	attribute := lower(attribute);
-	PERFORM @extschema@.common_relation_checks(parent_relid, attribute);
+	PERFORM @extschema@.prepare_for_partitioning(parent_relid, attribute, partition_data);
 
 	/* Check boundaries */
 	PERFORM @extschema@.check_boundaries(parent_relid,
@@ -374,18 +367,8 @@ DECLARE
 	part_count		INTEGER := 0;
 
 BEGIN
-	PERFORM @extschema@.validate_relname(parent_relid);
-
-	IF partition_data = true THEN
-		/* Acquire data modification lock */
-		PERFORM @extschema@.prevent_relation_modification(parent_relid);
-	ELSE
-		/* Acquire lock on parent */
-		PERFORM @extschema@.lock_partitioned_relation(parent_relid);
-	END IF;
-
 	attribute := lower(attribute);
-	PERFORM @extschema@.common_relation_checks(parent_relid, attribute);
+	PERFORM @extschema@.prepare_for_partitioning(parent_relid, attribute, partition_data);
 
 	/* Check boundaries */
 	PERFORM @extschema@.check_boundaries(parent_relid,
@@ -435,7 +418,10 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions2(
 	parent_relid	REGCLASS,
 	attribute		TEXT,
-	bounds			ANYARRAY)
+	bounds			ANYARRAY,
+	relnames		TEXT[] DEFAULT NULL,
+	tablespaces		TEXT[] DEFAULT NULL,
+	partition_data	BOOLEAN DEFAULT TRUE)
 RETURNS INTEGER AS
 $$
 DECLARE
@@ -449,18 +435,8 @@ BEGIN
 		RAISE EXCEPTION 'Bounds array must have at least two values';
 	END IF;
 
-	PERFORM @extschema@.validate_relname(parent_relid);
-
-	IF partition_data = true THEN
-		/* Acquire data modification lock */
-		PERFORM @extschema@.prevent_relation_modification(parent_relid);
-	ELSE
-		/* Acquire lock on parent */
-		PERFORM @extschema@.lock_partitioned_relation(parent_relid);
-	END IF;
-
 	attribute := lower(attribute);
-	PERFORM @extschema@.common_relation_checks(parent_relid, attribute);
+	PERFORM @extschema@.prepare_for_partitioning(parent_relid, attribute, partition_data);
 
 	/* Check boundaries */
 	PERFORM @extschema@.check_boundaries(parent_relid,
@@ -476,7 +452,10 @@ BEGIN
 	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
 
 	/* Create partitions */
-	part_count := @extschema@.create_range_partitions_internal(parent_relid, bounds);
+	part_count := @extschema@.create_range_partitions_internal(parent_relid,
+															   bounds,
+															   relnames,
+															   tablespaces);
 
 	/* Notify backend about changes */
 	PERFORM @extschema@.on_create_partitions(parent_relid);
@@ -489,7 +468,7 @@ BEGIN
 		PERFORM @extschema@.set_enable_parent(parent_relid, true);
 	END IF;
 
-	RETURN 0;
+	RETURN part_count;
 END
 $$
 LANGUAGE plpgsql;
@@ -497,7 +476,9 @@ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions_internal(
 	parent_relid	REGCLASS,
-	value			ANYARRAY)
+	bounds			ANYARRAY,
+	relnames		TEXT[],
+	tablespaces		TEXT[])
 RETURNS REGCLASS AS 'pg_pathman', 'create_range_partitions_internal'
 LANGUAGE C;
 
@@ -640,7 +621,8 @@ BEGIN
 
 	v_atttype := @extschema@.get_partition_key_type(parent_relid);
 
-	IF NOT @extschema@.is_operator_supported(v_atttype, '+') THEN
+	IF NOT @extschema@.is_date_type(v_atttype) AND
+	   NOT @extschema@.is_operator_supported(v_atttype, '+') THEN
 		RAISE EXCEPTION 'Type % doesn''t support ''+'' operator', v_atttype::regtype;
 	END IF;
 
@@ -749,7 +731,8 @@ BEGIN
 
 	v_atttype := @extschema@.get_partition_key_type(parent_relid);
 
-	IF NOT @extschema@.is_operator_supported(v_atttype, '-') THEN
+	IF NOT @extschema@.is_date_type(v_atttype) AND
+	   NOT @extschema@.is_operator_supported(v_atttype, '-') THEN
 		RAISE EXCEPTION 'Type % doesn''t support ''-'' operator', v_atttype::regtype;
 	END IF;
 

@@ -13,16 +13,12 @@
 #include "relation_info.h"
 #include "utils.h"
 
-#include "catalog/namespace.h"
 #include "catalog/pg_type.h"
 #include "utils/builtins.h"
 #include "utils/typcache.h"
 #include "utils/lsyscache.h"
 #include "utils/builtins.h"
 #include "utils/array.h"
-
-
-static char **deconstruct_text_array(Datum array, int *array_size);
 
 
 /* Function declarations */
@@ -89,16 +85,7 @@ create_hash_partitions_internal(PG_FUNCTION_ARGS)
 		elog(ERROR, "size of 'tablespaces' must be equal to 'partitions_count'");
 
 	/* Convert partition names into RangeVars */
-	if (partition_names)
-	{
-		rangevars = palloc(sizeof(RangeVar) * partition_names_size);
-		for (i = 0; i < partition_names_size; i++)
-		{
-			List *nl = stringToQualifiedNameList(partition_names[i]);
-
-			rangevars[i] = makeRangeVarFromNameList(nl);
-		}
-	}
+	rangevars = qualified_relnames_to_rangevars(partition_names, partitions_count);
 
 	/* Finally create HASH partitions */
 	for (i = 0; i < partitions_count; i++)
@@ -180,65 +167,4 @@ build_hash_condition(PG_FUNCTION_ARGS)
 					  part_idx);
 
 	PG_RETURN_TEXT_P(cstring_to_text(result));
-}
-
-
-/*
- * ------------------
- *  Helper functions
- * ------------------
- */
-
-/* Convert Datum into CSTRING array */
-static char **
-deconstruct_text_array(Datum array, int *array_size)
-{
-	ArrayType  *array_ptr = DatumGetArrayTypeP(array);
-	int16		elemlen;
-	bool		elembyval;
-	char		elemalign;
-
-	Datum	   *elem_values;
-	bool	   *elem_nulls;
-
-	int			arr_size = 0;
-
-	/* Check type invariant */
-	Assert(ARR_ELEMTYPE(array_ptr) == TEXTOID);
-
-	/* Check number of dimensions */
-	if (ARR_NDIM(array_ptr) > 1)
-		elog(ERROR, "'partition_names' and 'tablespaces' may contain only 1 dimension");
-
-	get_typlenbyvalalign(ARR_ELEMTYPE(array_ptr),
-						 &elemlen, &elembyval, &elemalign);
-
-	deconstruct_array(array_ptr,
-					  ARR_ELEMTYPE(array_ptr),
-					  elemlen, elembyval, elemalign,
-					  &elem_values, &elem_nulls, &arr_size);
-
-	/* If there are actual values, convert them into CSTRINGs */
-	if (arr_size > 0)
-	{
-		char  **strings = palloc(arr_size * sizeof(char *));
-		int		i;
-
-		for (i = 0; i < arr_size; i++)
-		{
-			if (elem_nulls[i])
-				elog(ERROR, "'partition_names' and 'tablespaces' may not contain NULLs");
-
-			strings[i] = TextDatumGetCString(elem_values[i]);
-		}
-
-		/* Return an array and it's size */
-		*array_size = arr_size;
-		return strings;
-	}
-	/* Else emit ERROR */
-	else elog(ERROR, "'partition_names' and 'tablespaces' may not be empty");
-
-	/* Keep compiler happy */
-	return NULL;
 }
