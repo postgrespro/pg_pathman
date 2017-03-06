@@ -1146,7 +1146,6 @@ generate_bounds(PG_FUNCTION_ARGS)
 	get_typlenbyvalalign(v_type, &elemlen, &elembyval, &elemalign);
 
 	datums = palloc(sizeof(Datum) * (count + 1));
-	// datums[0] = datumCopy(value, elembyval, elemlen);
 	datums[0] = value;
 
 	/* calculate bounds */

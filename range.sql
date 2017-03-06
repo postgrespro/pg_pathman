@@ -102,7 +102,7 @@ DECLARE
 	v_max			start_value%TYPE;
 	v_cur_value		start_value%TYPE := start_value;
 	end_value		start_value%TYPE;
-	part_count		INTEGER;
+	part_count		INTEGER := 0;
 	i				INTEGER;
 
 BEGIN
@@ -161,11 +161,13 @@ BEGIN
 	PERFORM @extschema@.create_or_replace_sequence(parent_relid)
 	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
 
-	part_count := @extschema@.create_range_partitions_internal(
-						parent_relid,
-						@extschema@.generate_bounds(start_value, p_interval, p_count),
-						NULL,
-						NULL);
+	IF p_count != 0 THEN
+		part_count := @extschema@.create_range_partitions_internal(
+							parent_relid,
+							@extschema@.generate_bounds(start_value, p_interval, p_count),
+							NULL,
+							NULL);
+	END IF;
 
 	/* Notify backend about changes */
 	PERFORM @extschema@.on_create_partitions(parent_relid);
@@ -199,7 +201,7 @@ DECLARE
 	v_max			start_value%TYPE;
 	v_cur_value		start_value%TYPE := start_value;
 	end_value		start_value%TYPE;
-	part_count		INTEGER;
+	part_count		INTEGER := 0;
 	i				INTEGER;
 
 BEGIN
@@ -258,11 +260,13 @@ BEGIN
 	PERFORM @extschema@.create_or_replace_sequence(parent_relid)
 	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
 
-	part_count := @extschema@.create_range_partitions_internal(
-					parent_relid,
-					@extschema@.generate_bounds(start_value, p_interval, p_count),
-					NULL,
-					NULL);
+	IF p_count != 0 THEN
+		part_count := @extschema@.create_range_partitions_internal(
+						parent_relid,
+						@extschema@.generate_bounds(start_value, p_interval, p_count),
+						NULL,
+						NULL);
+	END IF;
 
 	/* Notify backend about changes */
 	PERFORM @extschema@.on_create_partitions(parent_relid);
