@@ -21,6 +21,7 @@
 #include "runtime_merge_append.h"
 
 #include "postgres.h"
+#include "access/sysattr.h"
 #include "foreign/fdwapi.h"
 #include "miscadmin.h"
 #include "optimizer/clauses.h"
@@ -71,11 +72,6 @@ static Const *extract_const(WalkerContext *wcxt, Param *param);
 
 static double estimate_paramsel_using_prel(const PartRelationInfo *prel,
 										   int strategy);
-
-
-/* Copied from PostgreSQL (prepunion.c) */
-static void make_inh_translation_list(Relation oldrelation, Relation newrelation,
-									  Index newvarno, List **translated_vars);
 
 
 /* Copied from PostgreSQL (allpaths.c) */
@@ -240,12 +236,10 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 
 	/* Create RangeTblEntry for child relation */
 	child_rte = copyObject(parent_rte);
-	child_rte->relid = child_oid;
-	child_rte->relkind = child_relation->rd_rel->relkind;
-	child_rte->inh = false; /* relation has no children */
-	child_rte->requiredPerms = 0;
-
-	/* FIXME: call translate_col_privs() on this RTE's column bitmapsets */
+	child_rte->relid			= child_oid;
+	child_rte->relkind			= child_relation->rd_rel->relkind;
+	child_rte->inh				= false;	/* relation has no children */
+	child_rte->requiredPerms	= 0;		/* perform all checks on parent */
 
 	/* Add 'child_rte' to rtable and 'root->simple_rte_array' */
 	root->parse->rtable = lappend(root->parse->rtable, child_rte);
@@ -261,15 +255,27 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 
 	/* Build an AppendRelInfo for this child */
 	appinfo = makeNode(AppendRelInfo);
-	appinfo->parent_relid = parent_rti;
-	appinfo->child_relid = childRTindex;
-	appinfo->parent_reloid = parent_rte->relid;
+	appinfo->parent_relid	= parent_rti;
+	appinfo->child_relid	= childRTindex;
+	appinfo->parent_reloid	= parent_rte->relid;
 
 	make_inh_translation_list(parent_relation, child_relation, childRTindex,
 							  &appinfo->translated_vars);
 
 	/* Now append 'appinfo' to 'root->append_rel_list' */
 	root->append_rel_list = lappend(root->append_rel_list, appinfo);
+
+
+	if (parent_rte->relid != child_oid)
+	{
+		child_rte->selectedCols = translate_col_privs(parent_rte->selectedCols,
+													  appinfo->translated_vars);
+		child_rte->insertedCols = translate_col_privs(parent_rte->insertedCols,
+													  appinfo->translated_vars);
+		child_rte->updatedCols = translate_col_privs(parent_rte->updatedCols,
+													 appinfo->translated_vars);
+	}
+
 
 	/* Adjust target list for this child */
 	adjust_rel_targetlist_compat(root, child_rel, parent_rel, appinfo);
@@ -352,22 +358,21 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 	{
 		child_rowmark = makeNode(PlanRowMark);
 
-		child_rowmark->rti = childRTindex;
-		child_rowmark->prti = parent_rti;
-		child_rowmark->rowmarkId = parent_rowmark->rowmarkId;
+		child_rowmark->rti			= childRTindex;
+		child_rowmark->prti			= parent_rti;
+		child_rowmark->rowmarkId	= parent_rowmark->rowmarkId;
 		/* Reselect rowmark type, because relkind might not match parent */
-		child_rowmark->markType = select_rowmark_type(child_rte,
-													  parent_rowmark->strength);
-		child_rowmark->allMarkTypes = (1 << child_rowmark->markType);
-		child_rowmark->strength = parent_rowmark->strength;
-		child_rowmark->waitPolicy = parent_rowmark->waitPolicy;
-		child_rowmark->isParent = false;
-
-		/* Include child's rowmark type in parent's allMarkTypes */
-		parent_rowmark->allMarkTypes |= child_rowmark->allMarkTypes;
+		child_rowmark->markType		= select_rowmark_type(child_rte,
+														  parent_rowmark->strength);
+		child_rowmark->allMarkTypes	= (1 << child_rowmark->markType);
+		child_rowmark->strength		= parent_rowmark->strength;
+		child_rowmark->waitPolicy	= parent_rowmark->waitPolicy;
+		child_rowmark->isParent		= false;
 
 		root->rowMarks = lappend(root->rowMarks, child_rowmark);
 
+		/* Include child's rowmark type in parent's allMarkTypes */
+		parent_rowmark->allMarkTypes |= child_rowmark->allMarkTypes;
 		parent_rowmark->isParent = true;
 	}
 
@@ -1572,6 +1577,61 @@ generate_mergeappend_paths(PlannerInfo *root, RelOptInfo *rel,
 	}
 }
 
+
+/*
+ * translate_col_privs
+ *	  Translate a bitmapset representing per-column privileges from the
+ *	  parent rel's attribute numbering to the child's.
+ *
+ * The only surprise here is that we don't translate a parent whole-row
+ * reference into a child whole-row reference.  That would mean requiring
+ * permissions on all child columns, which is overly strict, since the
+ * query is really only going to reference the inherited columns.  Instead
+ * we set the per-column bits for all inherited columns.
+ */
+Bitmapset *
+translate_col_privs(const Bitmapset *parent_privs,
+					List *translated_vars)
+{
+	Bitmapset  *child_privs = NULL;
+	bool		whole_row;
+	int			attno;
+	ListCell   *lc;
+
+	/* System attributes have the same numbers in all tables */
+	for (attno = FirstLowInvalidHeapAttributeNumber + 1; attno < 0; attno++)
+	{
+		if (bms_is_member(attno - FirstLowInvalidHeapAttributeNumber,
+						  parent_privs))
+			child_privs = bms_add_member(child_privs,
+								 attno - FirstLowInvalidHeapAttributeNumber);
+	}
+
+	/* Check if parent has whole-row reference */
+	whole_row = bms_is_member(InvalidAttrNumber - FirstLowInvalidHeapAttributeNumber,
+							  parent_privs);
+
+	/* And now translate the regular user attributes, using the vars list */
+	attno = InvalidAttrNumber;
+	foreach(lc, translated_vars)
+	{
+		Var		   *var = (Var *) lfirst(lc);
+
+		attno++;
+		if (var == NULL)		/* ignore dropped columns */
+			continue;
+		Assert(IsA(var, Var));
+		if (whole_row ||
+			bms_is_member(attno - FirstLowInvalidHeapAttributeNumber,
+						  parent_privs))
+			child_privs = bms_add_member(child_privs,
+						 var->varattno - FirstLowInvalidHeapAttributeNumber);
+	}
+
+	return child_privs;
+}
+
+
 /*
  * make_inh_translation_list
  *	  Build the list of translations from parent Vars to child Vars for
@@ -1579,7 +1639,7 @@ generate_mergeappend_paths(PlannerInfo *root, RelOptInfo *rel,
  *
  * For paranoia's sake, we match type/collation as well as attribute name.
  */
-static void
+void
 make_inh_translation_list(Relation oldrelation, Relation newrelation,
 						  Index newvarno, List **translated_vars)
 {
@@ -1684,7 +1744,6 @@ make_inh_translation_list(Relation oldrelation, Relation newrelation,
 
 	*translated_vars = vars;
 }
-
 
 /*
  * set_append_rel_pathlist

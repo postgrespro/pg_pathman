@@ -89,12 +89,29 @@ Oid get_pathman_config_relid(bool invalid_is_ok);
 Oid get_pathman_config_params_relid(bool invalid_is_ok);
 
 
-void set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
-							 PathKey *pathkeyAsc, PathKey *pathkeyDesc);
-
+/*
+ * Create RelOptInfo & RTE for a selected partition.
+ */
 Index append_child_relation(PlannerInfo *root, Relation parent_relation,
 							Index parent_rti, int ir_index, Oid child_oid,
 							List *wrappers);
+
+
+/*
+ * Copied from PostgreSQL (prepunion.c)
+ */
+void make_inh_translation_list(Relation oldrelation, Relation newrelation,
+							   Index newvarno, List **translated_vars);
+
+Bitmapset *translate_col_privs(const Bitmapset *parent_privs,
+							   List *translated_vars);
+
+
+/*
+ * Copied from PostgreSQL (allpaths.c)
+ */
+void set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
+							 PathKey *pathkeyAsc, PathKey *pathkeyDesc);
 
 
 typedef struct
