@@ -476,19 +476,32 @@ LANGUAGE C;
 
 
 CREATE OR REPLACE FUNCTION @extschema@.generate_bounds(
-    p_start ANYELEMENT,
-    p_interval INTERVAL,
-    p_count INTEGER)
+	p_start			ANYELEMENT,
+	p_interval		INTERVAL,
+	p_count			INTEGER)
 RETURNS ANYARRAY AS 'pg_pathman', 'generate_bounds'
 LANGUAGE C;
-
 
 CREATE OR REPLACE FUNCTION @extschema@.generate_bounds(
-    p_start ANYELEMENT,
-    p_interval ANYELEMENT,
-    p_count INTEGER)
+	p_start			ANYELEMENT,
+	p_interval		ANYELEMENT,
+	p_count			INTEGER)
 RETURNS ANYARRAY AS 'pg_pathman', 'generate_bounds'
 LANGUAGE C;
+
+-- CREATE OR REPLACE FUNCTION @extschema@.generate_bounds_by_range(
+-- 	p_start			ANYELEMENT,
+-- 	p_end			ANYELEMENT,
+-- 	p_interval		INTERVAL)
+-- RETURNS ANYARRAY AS 'pg_pathman', 'generate_bounds_by_range'
+-- LANGUAGE C;
+
+-- CREATE OR REPLACE FUNCTION @extschema@.generate_bounds_by_range(
+-- 	p_start			ANYELEMENT,
+-- 	p_end			ANYELEMENT,
+-- 	p_interval		ANYELEMENT)
+-- RETURNS ANYARRAY AS 'pg_pathman', 'generate_bounds_by_range'
+-- LANGUAGE C;
 
 
 /*
@@ -870,6 +883,40 @@ BEGIN
 END
 $$
 LANGUAGE plpgsql;
+
+
+/*
+ * Add multiple partitions
+ */
+CREATE OR REPLACE FUNCTION @extschema@.add_range_partitions(
+	parent_relid	REGCLASS,
+	bounds			ANYARRAY,
+	relnames		TEXT[] DEFAULT NULL,
+	tablespaces		TEXT[] DEFAULT NULL)
+RETURNS INTEGER AS
+$$
+DECLARE
+	part_count		INTEGER;
+BEGIN
+	PERFORM @extschema@.validate_relname(parent_relid);
+
+	/* Acquire lock on parent */
+	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+
+	/* Create partitions */
+	part_count := @extschema@.create_range_partitions_internal(parent_relid,
+															   bounds,
+															   relnames,
+															   tablespaces);
+
+	/* Notify backend about changes */
+	PERFORM @extschema@.on_create_partitions(parent_relid);
+
+	RETURN part_count;
+END
+$$
+LANGUAGE plpgsql;
+
 
 /*
  * Drop range partition

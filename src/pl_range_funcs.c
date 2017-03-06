@@ -71,6 +71,7 @@ PG_FUNCTION_INFO_V1( validate_interval_value );
 
 PG_FUNCTION_INFO_V1( create_range_partitions_internal );
 PG_FUNCTION_INFO_V1( generate_bounds );
+// PG_FUNCTION_INFO_V1( generate_bounds_by_range );
 
 
 /*
@@ -1170,3 +1171,68 @@ generate_bounds(PG_FUNCTION_ARGS)
 
 	PG_RETURN_ARRAYTYPE_P(arr);
 }
+
+
+// Datum
+// generate_bounds_by_range(PG_FUNCTION_ARGS)
+// {
+// 	/* input params */
+// 	Datum		start = PG_GETARG_DATUM(0);
+// 	Datum		end = PG_GETARG_DATUM(1);
+// 	Oid			v_type = get_fn_expr_argtype(fcinfo->flinfo, 0);
+// 	Datum		interval = PG_GETARG_DATUM(2);
+// 	Oid			i_type = get_fn_expr_argtype(fcinfo->flinfo, 2);
+// 	int			i;
+
+// 	/* operators */
+// 	Oid			plus_op_func;
+// 	Datum		plus_op_result;
+// 	Oid			plus_op_result_type;
+
+// 	FmgrInfo	cmp_func;
+
+// 	/* array */
+// 	ArrayType  *arr;
+// 	int16		elemlen;
+// 	bool		elembyval;
+// 	char		elemalign;
+// 	Datum	   *datums;
+// 	List	   *datum_list = NIL;
+
+// 	/* Find suitable addition operator for given value and interval */
+// 	extract_op_func_and_ret_type("+", v_type, i_type,
+// 								 &plus_op_func,
+// 								 &plus_op_result_type);
+
+// 	/* Find comparison operator */
+// 	fill_type_cmp_fmgr_info(&cmp_func,
+// 							getBaseType(v_type),
+// 							getBaseType(v_type));
+
+// 	while (DatumGetInt32(FunctionCall2(cmp_func, start, end)) < 0)
+// 	{
+// 		/* Invoke addition operator and get a result */
+// 		plus_op_result = OidFunctionCall2(plus_op_func, start, interval);
+
+// 		if (plus_op_result_type != v_type)
+// 			plus_op_result = perform_type_cast(plus_op_result,
+// 											   plus_op_result_type,
+// 											   v_type, NULL);
+// 		start = plus_op_result;
+// 		datum_list = lappend(datum_list, start);
+// 	}
+
+// 	datums = palloc(sizeof(Datum) * list_length(datum_list));
+// 	foreach(lc, datum_list)
+// 		datums[i++] = (Datum) lfirst(lc);
+
+// 	/* build an array based on calculated datums */
+// 	get_typlenbyvalalign(v_type, &elemlen, &elembyval, &elemalign);
+// 	arr = construct_array(datums, count + 1, v_type,
+// 						  elemlen, elembyval, elemalign);
+
+// 	pfree(datums);
+// 	list_free(datum_list);
+
+// 	PG_RETURN_ARRAYTYPE_P(arr);
+// }
