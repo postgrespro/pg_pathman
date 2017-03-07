@@ -489,20 +489,6 @@ CREATE OR REPLACE FUNCTION @extschema@.generate_bounds(
 RETURNS ANYARRAY AS 'pg_pathman', 'generate_bounds'
 LANGUAGE C;
 
--- CREATE OR REPLACE FUNCTION @extschema@.generate_bounds_by_range(
--- 	p_start			ANYELEMENT,
--- 	p_end			ANYELEMENT,
--- 	p_interval		INTERVAL)
--- RETURNS ANYARRAY AS 'pg_pathman', 'generate_bounds_by_range'
--- LANGUAGE C;
-
--- CREATE OR REPLACE FUNCTION @extschema@.generate_bounds_by_range(
--- 	p_start			ANYELEMENT,
--- 	p_end			ANYELEMENT,
--- 	p_interval		ANYELEMENT)
--- RETURNS ANYARRAY AS 'pg_pathman', 'generate_bounds_by_range'
--- LANGUAGE C;
-
 
 /*
  * Split RANGE partition
