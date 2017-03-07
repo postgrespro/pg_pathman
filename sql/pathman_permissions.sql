@@ -62,7 +62,7 @@ GRANT UPDATE(a) ON permissions.user1_table TO user2; /* per-column ACL */
 /* Should be able to prepend a partition */
 SET ROLE user2;
 SELECT prepend_range_partition('permissions.user1_table');
-SELECT attname, attacl from pg_attribute
+SELECT attname, attacl FROM pg_attribute
 WHERE attrelid = (SELECT "partition" FROM pathman_partition_list
 				  WHERE parent = 'permissions.user1_table'::REGCLASS
 				  ORDER BY range_min::int ASC /* prepend */
@@ -102,6 +102,42 @@ CREATE TABLE permissions.user2_table(id serial);
 SELECT create_hash_partitions('permissions.user2_table', 'id', 3);
 INSERT INTO permissions.user2_table SELECT generate_series(1, 30);
 SELECT drop_partitions('permissions.user2_table');
+
+
+/* Switch to #1 */
+SET ROLE user1;
+CREATE TABLE permissions.dropped_column(a int, val int not null, b int, c int);
+INSERT INTO permissions.dropped_column SELECT i,i,i,i FROM generate_series(1, 30) i;
+
+GRANT SELECT(val), INSERT(val) ON permissions.dropped_column TO user2;
+
+SELECT create_range_partitions('permissions.dropped_column', 'val', 1, 10);
+
+SELECT attrelid::regclass, attname, attacl FROM pg_attribute
+WHERE attrelid = ANY (SELECT "partition" FROM pathman_partition_list
+					  WHERE parent = 'permissions.dropped_column'::REGCLASS)
+	  AND attacl IS NOT NULL
+ORDER BY attrelid::regclass::text; /* check ACL for each column */
+
+ALTER TABLE permissions.dropped_column DROP COLUMN a; /* DROP "a" */
+SELECT append_range_partition('permissions.dropped_column');
+
+SELECT attrelid::regclass, attname, attacl FROM pg_attribute
+WHERE attrelid = ANY (SELECT "partition" FROM pathman_partition_list
+					  WHERE parent = 'permissions.dropped_column'::REGCLASS)
+	  AND attacl IS NOT NULL
+ORDER BY attrelid::regclass::text; /* check ACL for each column (+1 partition) */
+
+ALTER TABLE permissions.dropped_column DROP COLUMN b; /* DROP "b" */
+SELECT append_range_partition('permissions.dropped_column');
+
+SELECT attrelid::regclass, attname, attacl FROM pg_attribute
+WHERE attrelid = ANY (SELECT "partition" FROM pathman_partition_list
+					  WHERE parent = 'permissions.dropped_column'::REGCLASS)
+	  AND attacl IS NOT NULL
+ORDER BY attrelid::regclass::text; /* check ACL for each column (+1 partition) */
+
+DROP TABLE permissions.dropped_column CASCADE;
 
 
 /* Finally reset user */
