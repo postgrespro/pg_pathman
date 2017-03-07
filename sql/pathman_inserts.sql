@@ -165,6 +165,14 @@ FROM generate_series(-2, 130, 5) i
 RETURNING e * 2, b, tableoid::regclass;
 
 
+/* test gap case (missing partition in between) */
+CREATE TABLE test_inserts.test_gap(val INT NOT NULL);
+INSERT INTO test_inserts.test_gap SELECT generate_series(1, 30);
+SELECT create_range_partitions('test_inserts.test_gap', 'val', 1, 10);
+DROP TABLE test_inserts.test_gap_2; /* make a gap */
+INSERT INTO test_inserts.test_gap VALUES(15); /* not ok */
+DROP TABLE test_inserts.test_gap CASCADE;
+
 
 DROP SCHEMA test_inserts CASCADE;
 DROP EXTENSION pg_pathman CASCADE;
