@@ -8,6 +8,7 @@
  * ------------------------------------------------------------------------
  */
 
+#include "compat/expand_rte_hook.h"
 #include "compat/pg_compat.h"
 #include "compat/relation_tags.h"
 #include "compat/rowmarks_fix.h"
@@ -215,6 +216,13 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		rte->relkind != RELKIND_RELATION ||
 		root->parse->resultRelation == rti)
 		return;
+
+/* It's better to exit, since RowMarks might be broken (hook aims to fix them) */
+#ifndef NATIVE_EXPAND_RTE_HOOK
+	if (root->parse->commandType != CMD_SELECT &&
+		root->parse->commandType != CMD_INSERT)
+		return;
+#endif
 
 	/* Skip if this table is not allowed to act as parent (e.g. FROM ONLY) */
 	if (PARENTHOOD_DISALLOWED == get_rel_parenthood_status(root->parse->queryId, rte))
