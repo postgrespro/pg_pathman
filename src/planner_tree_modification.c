@@ -8,6 +8,7 @@
  * ------------------------------------------------------------------------
  */
 
+#include "compat/expand_rte_hook.h"
 #include "compat/relation_tags.h"
 #include "compat/rowmarks_fix.h"
 
@@ -180,19 +181,31 @@ pathman_transform_query_walker(Node *node, void *context)
 static void
 disable_standard_inheritance(Query *parse)
 {
-	ListCell *lc;
+	ListCell   *lc;
+	Index		current_rti; /* current range table entry index */
 
-	/* Exit if it's not a SELECT query */
+/*
+ * We can't handle non-SELECT queries unless
+ * there's a pathman_expand_inherited_rtentry_hook()
+ */
+#ifndef NATIVE_EXPAND_RTE_HOOK
 	if (parse->commandType != CMD_SELECT)
 		return;
+#endif
 
 	/* Walk through RangeTblEntries list */
+	current_rti = 0;
 	foreach (lc, parse->rtable)
 	{
 		RangeTblEntry *rte = (RangeTblEntry *) lfirst(lc);
 
-		/* Operate only on simple (non-join etc) relations */
-		if (rte->rtekind != RTE_RELATION || rte->relkind != RELKIND_RELATION)
+		current_rti++; /* increment RTE index */
+		Assert(current_rti != 0);
+
+		/* Process only non-result base relations */
+		if (rte->rtekind != RTE_RELATION ||
+			rte->relkind != RELKIND_RELATION ||
+			parse->resultRelation == current_rti) /* is it a result relation? */
 			continue;
 
 		/* Table may be partitioned */
