@@ -167,14 +167,14 @@ is_pathman_related_table_rename(Node *parsetree,
 		return false;
 
 	/* Is parent partitioned? */
+	/* FIX this
 	if ((prel = get_pathman_relation_info(parent_relid)) != NULL)
 	{
-		/* Return 'partition_relid' and 'prel->attnum' */
 		if (partition_relid_out) *partition_relid_out = partition_relid;
 		if (partitioned_col_out) *partitioned_col_out = prel->attnum;
 
 		return true;
-	}
+	} */
 
 	return false;
 }
@@ -551,11 +551,14 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 		if (!NextCopyFrom(cstate, econtext, values, nulls, &tuple_oid))
 			break;
 
+		/* FIX this
 		if (nulls[prel->attnum - 1])
 			elog(ERROR, ERR_PART_ATTR_NULL);
+		*/
 
 		/* Search for a matching partition */
-		rri_holder = select_partition_for_insert(values[prel->attnum - 1],
+		/* FIX here, attnum */
+		rri_holder = select_partition_for_insert(values[/* here */1],
 												 prel->atttype, prel,
 												 &parts_storage, estate);
 		child_result_rel = rri_holder->result_rel_info;
@@ -698,13 +701,11 @@ PathmanRenameConstraint(Oid partition_relid,				/* cached partition Oid */
 
 	/* Generate old constraint name */
 	old_constraint_name =
-			build_check_constraint_name_relid_internal(partition_relid,
-													   partitioned_col);
+			build_check_constraint_name_relid_internal(partition_relid);
 
 	/* Generate new constraint name */
 	new_constraint_name =
-			build_check_constraint_name_relname_internal(part_rename_stmt->newname,
-														 partitioned_col);
+			build_check_constraint_name_relname_internal(part_rename_stmt->newname);
 
 	/* Build check constraint RENAME statement */
 	memset((void *) &rename_stmt, 0, sizeof(RenameStmt));

@@ -569,6 +569,8 @@ partition_filter_exec(CustomScanState *node)
 		ResultRelInfoHolder	   *rri_holder;
 		bool					isnull;
 		Datum					value;
+		ExprDoneCond			itemIsDone;
+		ExprState			   *expr_state;
 
 		/* Fetch PartRelationInfo for this partitioned relation */
 		prel = get_pathman_relation_info(state->partitioned_table);
@@ -582,15 +584,26 @@ partition_filter_exec(CustomScanState *node)
 			return slot;
 		}
 
-		/* Extract partitioned column's value (also check types) */
+		/* Extract partitioned column's value (also check types)
 		Assert(slot->tts_tupleDescriptor->
 					attrs[prel->attnum - 1]->atttypid == prel->atttype);
 		value = slot_getattr(slot, prel->attnum, &isnull);
 		if (isnull)
-			elog(ERROR, ERR_PART_ATTR_NULL);
+			elog(ERROR, ERR_PART_ATTR_NULL); */
+
+		/* Prepare state before execution */
+		expr_state = ExecPrepareExpr(prel->expr, estate);
 
 		/* Switch to per-tuple context */
 		old_cxt = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
+
+		/* Execute expression */
+		value = ExecEvalExpr(expr_state, econtext, &isnull, &itemIsDone);
+		if (isnull)
+			elog(ERROR, ERR_PART_ATTR_NULL);
+
+		if (itemIsDone != ExprSingleResult)
+			elog(ERROR, ERR_PART_ATTR_MULTIPLE_RESULTS);
 
 		/* Search for a matching partition */
 		rri_holder = select_partition_for_insert(value, prel->atttype, prel,

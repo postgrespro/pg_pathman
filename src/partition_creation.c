@@ -29,9 +29,12 @@
 #include "commands/tablecmds.h"
 #include "commands/tablespace.h"
 #include "miscadmin.h"
+#include "parser/parser.h"
 #include "parser/parse_func.h"
 #include "parser/parse_relation.h"
 #include "parser/parse_utilcmd.h"
+#include "parser/analyze.h"
+#include "tcop/tcopprot.h"
 #include "tcop/utility.h"
 #include "utils/builtins.h"
 #include "utils/datum.h"
@@ -59,7 +62,7 @@ static void create_single_partition_common(Oid partition_relid,
 static Oid create_single_partition_internal(Oid parent_relid,
 											RangeVar *partition_rv,
 											char *tablespace,
-											char **partitioned_column);
+											char **partitioning_expr);
 
 static char *choose_range_partition_name(Oid parent_relid, Oid parent_nsp);
 static char *choose_hash_partition_name(Oid parent_relid, uint32 part_idx);
@@ -97,7 +100,7 @@ create_single_range_partition_internal(Oid parent_relid,
 {
 	Oid						partition_relid;
 	Constraint			   *check_constr;
-	char				   *partitioned_column;
+	char				   *partitioning_expr;
 	init_callback_params	callback_params;
 
 	/* Generate a name if asked to */
@@ -112,15 +115,15 @@ create_single_range_partition_internal(Oid parent_relid,
 		partition_rv = makeRangeVar(parent_nsp_name, partition_name, -1);
 	}
 
-	/* Create a partition & get 'partitioned_column' */
+	/* Create a partition & get 'partitioning expression' */
 	partition_relid = create_single_partition_internal(parent_relid,
 													   partition_rv,
 													   tablespace,
-													   &partitioned_column);
+													   &partitioning_expr);
 
 	/* Build check constraint for RANGE partition */
 	check_constr = build_range_check_constraint(partition_relid,
-												partitioned_column,
+												partitioning_expr,
 												start_value,
 												end_value,
 												value_type);
@@ -151,7 +154,7 @@ create_single_hash_partition_internal(Oid parent_relid,
 {
 	Oid						partition_relid;
 	Constraint			   *check_constr;
-	char				   *partitioned_column;
+	char				   *partitioning_expr;
 	init_callback_params	callback_params;
 
 	/* Generate a name if asked to */
@@ -166,15 +169,15 @@ create_single_hash_partition_internal(Oid parent_relid,
 		partition_rv = makeRangeVar(parent_nsp_name, partition_name, -1);
 	}
 
-	/* Create a partition & get 'partitioned_column' */
+	/* Create a partition & get 'partitionining expression' */
 	partition_relid = create_single_partition_internal(parent_relid,
 													   partition_rv,
 													   tablespace,
-													   &partitioned_column);
+													   &partitioning_expr);
 
 	/* Build check constraint for HASH partition */
 	check_constr = build_hash_check_constraint(partition_relid,
-											   partitioned_column,
+											   partitioning_expr,
 											   part_idx,
 											   part_count,
 											   value_type);
@@ -639,7 +642,7 @@ static Oid
 create_single_partition_internal(Oid parent_relid,
 								 RangeVar *partition_rv,
 								 char *tablespace,
-								 char **partitioned_column) /* to be set */
+								 char **partitioning_expr) /* to be set */
 {
 	/* Value to be returned */
 	Oid					partition_relid = InvalidOid; /* safety */
@@ -682,12 +685,12 @@ create_single_partition_internal(Oid parent_relid,
 	parent_nsp_name = get_namespace_name(parent_nsp);
 
 	/* Fetch partitioned column's name */
-	if (partitioned_column)
+	if (partitioning_expr)
 	{
-		Datum partitioned_column_datum;
+		Datum expr_datum;
 
-		partitioned_column_datum = config_values[Anum_pathman_config_attname - 1];
-		*partitioned_column = TextDatumGetCString(partitioned_column_datum);
+		expr_datum = config_values[Anum_pathman_config_attname - 1];
+		*partitioning_expr = TextDatumGetCString(expr_datum);
 	}
 
 	/* Make up parent's RangeVar */
@@ -1114,7 +1117,7 @@ drop_check_constraint(Oid relid, AttrNumber attnum)
 	AlterTableCmd  *cmd;
 
 	/* Build a correct name for this constraint */
-	constr_name = build_check_constraint_name_relid_internal(relid, attnum);
+	constr_name = build_check_constraint_name_relid_internal(relid);
 
 	stmt = makeNode(AlterTableStmt);
 	stmt->relation	= makeRangeVarFromRelid(relid);
@@ -1204,12 +1207,9 @@ build_range_check_constraint(Oid child_relid,
 {
 	Constraint	   *hash_constr;
 	char		   *range_constr_name;
-	AttrNumber		attnum;
 
 	/* Build a correct name for this constraint */
-	attnum = get_attnum(child_relid, attname);
-	range_constr_name = build_check_constraint_name_relid_internal(child_relid,
-																   attnum);
+	range_constr_name = build_check_constraint_name_relid_internal(child_relid);
 
 	/* Initialize basic properties of a CHECK constraint */
 	hash_constr = make_constraint_common(range_constr_name,
@@ -1278,15 +1278,16 @@ check_range_available(Oid parent_relid,
 
 /* Build HASH check constraint expression tree */
 Node *
-build_raw_hash_check_tree(char *attname,
+build_raw_hash_check_tree(const char *base_expr,
 						  uint32 part_idx,
 						  uint32 part_count,
+						  Oid relid,
 						  Oid value_type)
 {
 	A_Expr		   *eq_oper			= makeNode(A_Expr);
 	FuncCall	   *part_idx_call	= makeNode(FuncCall),
 				   *hash_call		= makeNode(FuncCall);
-	ColumnRef	   *hashed_column	= makeNode(ColumnRef);
+	//ColumnRef	   *hashed_column	= makeNode(ColumnRef);
 	A_Const		   *part_idx_c		= makeNode(A_Const),
 				   *part_count_c	= makeNode(A_Const);
 
@@ -1294,13 +1295,14 @@ build_raw_hash_check_tree(char *attname,
 
 	Oid				hash_proc;
 	TypeCacheEntry *tce;
+	Node		   *expr = get_expression_node(relid, base_expr, false);
 
 	tce = lookup_type_cache(value_type, TYPECACHE_HASH_PROC);
 	hash_proc = tce->hash_proc;
 
 	/* Partitioned column */
-	hashed_column->fields = list_make1(makeString(attname));
-	hashed_column->location = -1;
+	//hashed_column->fields = list_make1(makeString(attname));
+	//hashed_column->location = -1;
 
 	/* Total amount of partitions */
 	part_count_c->val = make_int_value_struct(part_count);
@@ -1312,7 +1314,7 @@ build_raw_hash_check_tree(char *attname,
 
 	/* Call hash_proc() */
 	hash_call->funcname			= list_make1(makeString(get_func_name(hash_proc)));
-	hash_call->args				= list_make1(hashed_column);
+	hash_call->args				= list_make1(expr);
 	hash_call->agg_order		= NIL;
 	hash_call->agg_filter		= NULL;
 	hash_call->agg_within_group	= false;
@@ -1352,25 +1354,23 @@ build_raw_hash_check_tree(char *attname,
 /* Build complete HASH check constraint */
 Constraint *
 build_hash_check_constraint(Oid child_relid,
-							char *attname,
+							const char *expr,
 							uint32 part_idx,
 							uint32 part_count,
 							Oid value_type)
 {
 	Constraint	   *hash_constr;
 	char		   *hash_constr_name;
-	AttrNumber		attnum;
 
 	/* Build a correct name for this constraint */
-	attnum = get_attnum(child_relid, attname);
-	hash_constr_name = build_check_constraint_name_relid_internal(child_relid,
-																  attnum);
+	hash_constr_name = build_check_constraint_name_relid_internal(child_relid);
 
 	/* Initialize basic properties of a CHECK constraint */
 	hash_constr = make_constraint_common(hash_constr_name,
-										 build_raw_hash_check_tree(attname,
+										 build_raw_hash_check_tree(expr,
 																   part_idx,
 																   part_count,
+																   child_relid,
 																   value_type));
 	/* Everything seems to be fine */
 	return hash_constr;
@@ -1680,3 +1680,433 @@ text_to_regprocedure(text *proc_signature)
 
 	return DatumGetObjectId(result);
 }
+
+/* Wraps expression by SELECT query and returns parsed tree */
+static Node *
+parse_expression(Oid relid, const char *expr, char **query_string_out)
+{
+	char			*fmt = "SELECT (%s) FROM %s.%s";
+	char			*relname = get_rel_name(relid),
+					*namespace_name = get_namespace_name(get_rel_namespace(relid));
+	List			*parsetree_list;
+	char			*query_string = psprintf(fmt, expr, namespace_name, relname);
+
+	parsetree_list = raw_parser(query_string);
+	Assert(list_length(parsetree_list) == 1);
+
+	if (query_string_out)
+	{
+		*query_string_out = query_string;
+	}
+	return (Node *)(lfirst(list_head(parsetree_list)));
+}
+
+/*
+ *	exprNodeLocation -
+ *	  basicly copy of exprLocation from nodeFuncs, but with another
+ *	  purpose - get address of location variable
+ */
+static bool
+clearNodeLocation(const Node *expr)
+{
+	if (expr == NULL)
+		return false;
+
+	switch (nodeTag(expr))
+	{
+		case T_RangeVar:
+			((RangeVar *) expr)->location = -1;
+			break;
+		case T_Var:
+			((Var *) expr)->location = -1;
+			break;
+		case T_Const:
+			((Const *) expr)->location = -1;
+			break;
+		case T_Param:
+			((Param *) expr)->location = -1;
+			break;
+		case T_Aggref:
+			/* function name should always be the first thing */
+			((Aggref *) expr)->location = -1;
+			break;
+		case T_GroupingFunc:
+			((GroupingFunc *) expr)->location = -1;
+			break;
+		case T_WindowFunc:
+			/* function name should always be the first thing */
+			((WindowFunc *) expr)->location = -1;
+			break;
+		case T_ArrayRef:
+			/* just use array argument's location */
+			clearNodeLocation((Node *) ((const ArrayRef *) expr)->refexpr);
+			break;
+		case T_FuncExpr:
+			{
+				FuncExpr *fexpr = (FuncExpr *) expr;
+
+				/* consider both function name and leftmost arg */
+				fexpr->location = -1;
+				clearNodeLocation((Node *) fexpr->args);
+			}
+			break;
+		case T_NamedArgExpr:
+			{
+				NamedArgExpr *na = (NamedArgExpr *) expr;
+
+				/* consider both argument name and value */
+				na->location = -1;
+				clearNodeLocation((Node *) na->arg);
+			}
+			break;
+		case T_OpExpr:
+		case T_DistinctExpr:	/* struct-equivalent to OpExpr */
+		case T_NullIfExpr:		/* struct-equivalent to OpExpr */
+			{
+				OpExpr *opexpr = (OpExpr *) expr;
+
+				/* consider both operator name and leftmost arg */
+				opexpr->location = -1;
+				clearNodeLocation((Node *) opexpr->args);
+			}
+			break;
+		case T_ScalarArrayOpExpr:
+			{
+				ScalarArrayOpExpr *saopexpr = (ScalarArrayOpExpr *) expr;
+
+				/* consider both operator name and leftmost arg */
+
+				saopexpr->location = -1;
+				clearNodeLocation((Node *) saopexpr->args);
+			}
+			break;
+		case T_BoolExpr:
+			{
+				BoolExpr *bexpr = (BoolExpr *) expr;
+
+				/*
+				 * Same as above, to handle either NOT or AND/OR.  We can't
+				 * special-case NOT because of the way that it's used for
+				 * things like IS NOT BETWEEN.
+				 */
+				bexpr->location = -1;
+				clearNodeLocation((Node *) bexpr->args);
+			}
+			break;
+		case T_SubLink:
+			{
+				SubLink *sublink = (SubLink *) expr;
+
+				/* check the testexpr, if any, and the operator/keyword */
+				clearNodeLocation(sublink->testexpr);
+				sublink->location = -1;
+			}
+			break;
+		case T_FieldSelect:
+			/* just use argument's location */
+			return clearNodeLocation((Node *) ((FieldSelect *) expr)->arg);
+		case T_FieldStore:
+			/* just use argument's location */
+			return clearNodeLocation((Node *) ((FieldStore *) expr)->arg);
+		case T_RelabelType:
+			{
+				RelabelType *rexpr = (RelabelType *) expr;
+
+				/* Much as above */
+				rexpr->location = -1;
+				clearNodeLocation((Node *) rexpr->arg);
+			}
+			break;
+		case T_CoerceViaIO:
+			{
+				CoerceViaIO *cexpr = (CoerceViaIO *) expr;
+
+				/* Much as above */
+				cexpr->location = -1;
+				clearNodeLocation((Node *) cexpr->arg);
+			}
+			break;
+		case T_ArrayCoerceExpr:
+			{
+				ArrayCoerceExpr *cexpr = (ArrayCoerceExpr *) expr;
+
+				/* Much as above */
+				cexpr->location = -1;
+				clearNodeLocation((Node *) cexpr->arg);
+			}
+			break;
+		case T_ConvertRowtypeExpr:
+			{
+				ConvertRowtypeExpr *cexpr = (ConvertRowtypeExpr *) expr;
+
+				/* Much as above */
+				cexpr->location = -1;
+				clearNodeLocation((Node *) cexpr->arg);
+			}
+			break;
+		case T_CollateExpr:
+			/* just use argument's location */
+			clearNodeLocation((Node *) ((CollateExpr *) expr)->arg);
+			break;
+		case T_CaseExpr:
+			/* CASE keyword should always be the first thing */
+			((CaseExpr *) expr)->location = -1;
+			break;
+		case T_CaseWhen:
+			/* WHEN keyword should always be the first thing */
+			((CaseWhen *) expr)->location = -1;
+			break;
+		case T_ArrayExpr:
+			/* the location points at ARRAY or [, which must be leftmost */
+			((ArrayExpr *) expr)->location = -1;
+			break;
+		case T_RowExpr:
+			/* the location points at ROW or (, which must be leftmost */
+			((RowExpr *) expr)->location = -1;
+			break;
+		case T_RowCompareExpr:
+			/* just use leftmost argument's location */
+			return clearNodeLocation((Node *) ((RowCompareExpr *) expr)->largs);
+		case T_CoalesceExpr:
+			/* COALESCE keyword should always be the first thing */
+			((CoalesceExpr *) expr)->location = -1;
+			break;
+		case T_MinMaxExpr:
+			/* GREATEST/LEAST keyword should always be the first thing */
+			((MinMaxExpr *) expr)->location = -1;
+			break;
+		case T_XmlExpr:
+			{
+				XmlExpr *xexpr = (XmlExpr *) expr;
+
+				/* consider both function name and leftmost arg */
+				xexpr->location = -1;
+				clearNodeLocation((Node *) xexpr->args);
+			}
+			break;
+		case T_NullTest:
+			{
+				NullTest *nexpr = (NullTest *) expr;
+
+				/* Much as above */
+				nexpr->location = -1;
+				clearNodeLocation((Node *) nexpr->arg);
+			}
+			break;
+		case T_BooleanTest:
+			{
+				BooleanTest *bexpr = (BooleanTest *) expr;
+
+				/* Much as above */
+				bexpr->location = -1;
+				clearNodeLocation((Node *) bexpr->arg);
+			}
+			break;
+		case T_CoerceToDomain:
+			{
+				CoerceToDomain *cexpr = (CoerceToDomain *) expr;
+
+				/* Much as above */
+				cexpr->location = -1;
+				clearNodeLocation((Node *) cexpr->arg);
+			}
+			break;
+		case T_CoerceToDomainValue:
+			((CoerceToDomainValue *) expr)->location = -1;
+			break;
+		case T_SetToDefault:
+			((SetToDefault *) expr)->location = -1;
+			break;
+		case T_TargetEntry:
+			/* just use argument's location */
+			return clearNodeLocation((Node *) ((const TargetEntry *) expr)->expr);
+		case T_IntoClause:
+			/* use the contained RangeVar's location --- close enough */
+			return clearNodeLocation((Node *) ((const IntoClause *) expr)->rel);
+		case T_List:
+			{
+				/* report location of first list member that has a location */
+				ListCell   *lc;
+
+				//loc = -1;		/* just to suppress compiler warning */
+				foreach(lc, (const List *) expr)
+				{
+					clearNodeLocation((Node *) lfirst(lc));
+				}
+			}
+			break;
+		case T_A_Expr:
+			{
+				A_Expr *aexpr = (A_Expr *) expr;
+
+				/* use leftmost of operator or left operand (if any) */
+				/* we assume right operand can't be to left of operator */
+				aexpr->location = -1;
+				clearNodeLocation(aexpr->lexpr);
+			}
+			break;
+		case T_ColumnRef:
+			((ColumnRef *) expr)->location = -1;
+			break;
+		case T_ParamRef:
+			((ParamRef *) expr)->location = -1;
+			break;
+		case T_A_Const:
+			((A_Const *) expr)->location = -1;
+			break;
+		case T_FuncCall:
+			{
+				FuncCall *fc = (FuncCall *) expr;
+
+				/* consider both function name and leftmost arg */
+				/* (we assume any ORDER BY nodes must be to right of name) */
+				fc->location = -1;
+				clearNodeLocation((Node *) fc->args);
+			}
+			break;
+		case T_A_ArrayExpr:
+			/* the location points at ARRAY or [, which must be leftmost */
+			((A_ArrayExpr *) expr)->location = -1;
+			break;
+		case T_ResTarget:
+			/* we need not examine the contained expression (if any) */
+			((ResTarget *) expr)->location = -1;
+			break;
+		case T_MultiAssignRef:
+			return clearNodeLocation((Node *)(((MultiAssignRef *) expr)->source));
+		case T_TypeCast:
+			{
+				TypeCast *tc = (TypeCast *) expr;
+
+				/*
+				 * This could represent CAST(), ::, or TypeName 'literal', so
+				 * any of the components might be leftmost.
+				 */
+				clearNodeLocation(tc->arg);
+				tc->typeName->location = -1;
+				tc->location = -1;
+			}
+			break;
+		case T_CollateClause:
+			/* just use argument's location */
+			return clearNodeLocation(((CollateClause *) expr)->arg);
+		case T_SortBy:
+			/* just use argument's location (ignore operator, if any) */
+			return clearNodeLocation(((SortBy *) expr)->node);
+		case T_WindowDef:
+			((WindowDef *) expr)->location = -1;
+			break;
+		case T_RangeTableSample:
+			((RangeTableSample *) expr)->location = -1;
+			break;
+		case T_TypeName:
+			((TypeName *) expr)->location = -1;
+			break;
+		case T_ColumnDef:
+			((ColumnDef *) expr)->location = -1;
+			break;
+		case T_Constraint:
+			((Constraint *) expr)->location = -1;
+			break;
+		case T_FunctionParameter:
+			/* just use typename's location */
+			return clearNodeLocation((Node *) ((const FunctionParameter *) expr)->argType);
+		case T_XmlSerialize:
+			/* XMLSERIALIZE keyword should always be the first thing */
+			((XmlSerialize *) expr)->location = -1;
+			break;
+		case T_GroupingSet:
+			((GroupingSet *) expr)->location = -1;
+			break;
+		case T_WithClause:
+			((WithClause *) expr)->location = -1;
+			break;
+		case T_InferClause:
+			((InferClause *) expr)->location = -1;
+			break;
+		case T_OnConflictClause:
+			((OnConflictClause *) expr)->location = -1;
+			break;
+		case T_CommonTableExpr:
+			((CommonTableExpr *) expr)->location = -1;
+			break;
+		case T_PlaceHolderVar:
+			/* just use argument's location */
+			return clearNodeLocation((Node *) ((const PlaceHolderVar *) expr)->phexpr);
+		case T_InferenceElem:
+			/* just use nested expr's location */
+			return clearNodeLocation((Node *) ((const InferenceElem *) expr)->expr);
+		default:
+			return false;
+	}
+	return true;
+}
+
+static bool location_cleaning_walker(Node *node, void *context)
+{
+	if (node == NULL)
+		return false;
+
+	if (clearNodeLocation(node))
+		return false;
+
+	return raw_expression_tree_walker(node, location_cleaning_walker, context);
+}
+
+/* By given relation id and expression returns query node */
+Node *
+get_expression_node(Oid relid, const char *expr, bool analyze)
+{
+	List		*querytree_list;
+	List		*target_list;
+	char		*query_string;
+	Node		*parsetree = parse_expression(relid, expr, &query_string),
+				*raw_node;
+	Query		*query;
+	TargetEntry	*target_entry;
+	post_parse_analyze_hook_type orig_hook = NULL;
+
+	target_list = ((SelectStmt *)parsetree)->targetList;
+
+	if (!analyze) {
+		raw_node = (Node *)(((ResTarget *)(lfirst(list_head(target_list))))->val);
+		//raw_expression_tree_walker(raw_node, location_cleaning_walker, NULL);
+		return raw_node;
+	}
+
+	//turn off parse hooks
+	orig_hook = post_parse_analyze_hook;
+	post_parse_analyze_hook = NULL;
+
+	querytree_list = pg_analyze_and_rewrite(parsetree, query_string, NULL, 0);
+	query = (Query *)lfirst(list_head(querytree_list));
+	target_entry = (TargetEntry *)lfirst(list_head(query->targetList));
+	//plan = pg_plan_query(query, 0, NULL);
+
+	post_parse_analyze_hook = orig_hook;
+
+	return (Node *)target_entry->expr;
+}
+
+/* Determines type of expression for a relation */
+Oid
+get_partition_expr_type(Oid relid, const char *expr)
+{
+	Node			*parsetree,
+					*target_entry,
+					*expr_node;
+	Query			*query;
+	char			*query_string;
+
+	parsetree = parse_expression(relid, expr, &query_string);
+
+	/* This will fail with elog in case of wrong expression
+	 *	with more or less understable text */
+	query = parse_analyze(parsetree, query_string, NULL, 0);
+
+	/* We use analyzed query only to get type of expression */
+	target_entry = lfirst(list_head(query->targetList));
+	expr_node = (Node *)((TargetEntry *)target_entry)->expr;
+	return get_call_expr_argtype(expr_node, 0);
+}
+

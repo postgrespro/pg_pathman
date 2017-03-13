@@ -71,7 +71,7 @@ static void init_local_cache(void);
 static void fini_local_cache(void);
 static void read_pathman_config(void);
 
-static Expr *get_partition_constraint_expr(Oid partition, AttrNumber part_attno);
+static Expr *get_partition_constraint_expr(Oid partition);
 
 static int cmp_range_entries(const void *p1, const void *p2, void *arg);
 
@@ -89,7 +89,6 @@ static bool validate_range_opexpr(const Expr *expr,
 
 static bool validate_hash_constraint(const Expr *expr,
 									 const PartRelationInfo *prel,
-									 const AttrNumber part_attno,
 									 uint32 *part_hash);
 
 static bool read_opexpr_const(const OpExpr *opexpr,
@@ -363,7 +362,6 @@ fini_local_cache(void)
 void
 fill_prel_with_partitions(const Oid *partitions,
 						  const uint32 parts_count,
-						  const char *part_column_name,
 						  PartRelationInfo *prel)
 {
 	uint32			i;
@@ -378,18 +376,7 @@ fill_prel_with_partitions(const Oid *partitions,
 
 	for (i = 0; i < PrelChildrenCount(prel); i++)
 	{
-		AttrNumber part_attno;
-
-		/* NOTE: Partitions may have different TupleDescs */
-		part_attno = get_attnum(partitions[i], part_column_name);
-
-		/* Raise ERROR if there's no such column */
-		if (part_attno == InvalidAttrNumber)
-			elog(ERROR, "partition \"%s\" has no column \"%s\"",
-				 get_rel_name_or_relid(partitions[i]),
-				 part_column_name);
-
-		con_expr = get_partition_constraint_expr(partitions[i], part_attno);
+		con_expr = get_partition_constraint_expr(partitions[i]);
 
 		/* Perform a partitioning_type-dependent task */
 		switch (prel->parttype)
@@ -398,7 +385,7 @@ fill_prel_with_partitions(const Oid *partitions,
 				{
 					uint32	hash; /* hash value < parts_count */
 
-					if (validate_hash_constraint(con_expr, prel, part_attno, &hash))
+					if (validate_hash_constraint(con_expr, prel, &hash))
 						prel->children[hash] = partitions[i];
 					else
 					{
@@ -416,7 +403,7 @@ fill_prel_with_partitions(const Oid *partitions,
 					Datum	lower, upper;
 					bool	lower_null, upper_null;
 
-					if (validate_range_constraint(con_expr, prel, part_attno,
+					if (validate_range_constraint(con_expr, prel, 0,
 												  &lower, &upper,
 												  &lower_null, &upper_null))
 					{
@@ -656,15 +643,15 @@ find_inheritance_children_array(Oid parentrelId,
  * These functions does not perform sanity checks at all.
  */
 char *
-build_check_constraint_name_relid_internal(Oid relid, AttrNumber attno)
+build_check_constraint_name_relid_internal(Oid relid)
 {
-	return build_check_constraint_name_relname_internal(get_rel_name(relid), attno);
+	return build_check_constraint_name_relname_internal(get_rel_name(relid));
 }
 
 char *
-build_check_constraint_name_relname_internal(const char *relname, AttrNumber attno)
+build_check_constraint_name_relname_internal(const char *relname)
 {
-	return psprintf("pathman_%s_%u_check", relname, attno);
+	return psprintf("pathman_%s_check", relname);
 }
 
 /*
@@ -854,7 +841,10 @@ read_pathman_config(void)
 		}
 
 		/* get_pathman_relation_info() will refresh this entry */
-		invalidate_pathman_relation_info(relid, NULL);
+		refresh_pathman_relation_info(relid,
+									  values,
+									  isnull,
+									  true); /* allow lazy prel loading */
 	}
 
 	/* Clean resources */
@@ -869,7 +859,7 @@ read_pathman_config(void)
  * build_check_constraint_name_internal() is used to build conname.
  */
 static Expr *
-get_partition_constraint_expr(Oid partition, AttrNumber part_attno)
+get_partition_constraint_expr(Oid partition)
 {
 	Oid			conid;			/* constraint Oid */
 	char	   *conname;		/* constraint name */
@@ -878,7 +868,7 @@ get_partition_constraint_expr(Oid partition, AttrNumber part_attno)
 	bool		conbin_isnull;
 	Expr	   *expr;			/* expression tree for constraint */
 
-	conname = build_check_constraint_name_relid_internal(partition, part_attno);
+	conname = build_check_constraint_name_relid_internal(partition);
 	conid = get_relation_constraint_oid(partition, conname, true);
 	if (conid == InvalidOid)
 	{
@@ -1116,7 +1106,6 @@ read_opexpr_const(const OpExpr *opexpr,
 static bool
 validate_hash_constraint(const Expr *expr,
 						 const PartRelationInfo *prel,
-						 const AttrNumber part_attno,
 						 uint32 *part_hash)
 {
 	const TypeCacheEntry   *tce;
@@ -1156,22 +1145,10 @@ validate_hash_constraint(const Expr *expr,
 		type_hash_proc_expr = (FuncExpr *) first;
 
 		/* Check that function is indeed TYPE_HASH_PROC */
-		if (type_hash_proc_expr->funcid != prel->hash_proc ||
-				!(IsA(linitial(type_hash_proc_expr->args), Var) ||
-				  IsA(linitial(type_hash_proc_expr->args), RelabelType)))
+		if (type_hash_proc_expr->funcid != prel->hash_proc)
 		{
 			return false;
 		}
-
-		/* Extract argument into 'var' */
-		if (IsA(linitial(type_hash_proc_expr->args), RelabelType))
-			var = (Var *) ((RelabelType *) linitial(type_hash_proc_expr->args))->arg;
-		else
-			var = (Var *) linitial(type_hash_proc_expr->args);
-
-		/* Check that 'var' is the partitioning key attribute */
-		if (var->varoattno != part_attno)
-			return false;
 
 		/* Check that PARTITIONS_COUNT is equal to total amount of partitions */
 		if (DatumGetUInt32(((Const *) second)->constvalue) != PrelChildrenCount(prel))

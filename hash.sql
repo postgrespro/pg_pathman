@@ -35,8 +35,7 @@ BEGIN
 	PERFORM @extschema@.common_relation_checks(parent_relid, attribute);
 
 	/* Insert new entry to pathman config */
-	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype)
-	VALUES (parent_relid, attribute, 1);
+	PERFORM @extschema@.add_to_pathman_config(parent_relid, attribute);
 
 	/* Create partitions */
 	PERFORM @extschema@.create_hash_partitions_internal(parent_relid,
@@ -48,13 +47,13 @@ BEGIN
 	/* Notify backend about changes */
 	PERFORM @extschema@.on_create_partitions(parent_relid);
 
-	/* Copy data */
+	/* Copy data
 	IF partition_data = true THEN
 		PERFORM @extschema@.set_enable_parent(parent_relid, false);
 		PERFORM @extschema@.partition_data(parent_relid);
 	ELSE
 		PERFORM @extschema@.set_enable_parent(parent_relid, true);
-	END IF;
+	END IF; */
 
 	RETURN partitions_count;
 END
@@ -298,15 +297,4 @@ LANGUAGE C STRICT;
  */
 CREATE OR REPLACE FUNCTION @extschema@.get_hash_part_idx(INTEGER, INTEGER)
 RETURNS INTEGER AS 'pg_pathman', 'get_hash_part_idx'
-LANGUAGE C STRICT;
-
-/*
- * Build hash condition for a CHECK CONSTRAINT
- */
-CREATE OR REPLACE FUNCTION @extschema@.build_hash_condition(
-	attribute_type		REGTYPE,
-	attribute			TEXT,
-	partitions_count	INT4,
-	partitions_index	INT4)
-RETURNS TEXT AS 'pg_pathman', 'build_hash_condition'
 LANGUAGE C STRICT;

@@ -32,6 +32,7 @@
 #include "utils/snapmgr.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
+#include "utils/typcache.h"
 
 
 /* Function declarations */
@@ -56,6 +57,7 @@ PG_FUNCTION_INFO_V1( build_check_constraint_name_attname );
 PG_FUNCTION_INFO_V1( validate_relname );
 PG_FUNCTION_INFO_V1( is_date_type );
 PG_FUNCTION_INFO_V1( is_attribute_nullable );
+PG_FUNCTION_INFO_V1( is_expression_suitable );
 
 PG_FUNCTION_INFO_V1( add_to_pathman_config );
 PG_FUNCTION_INFO_V1( pathman_config_params_trigger_func );
@@ -370,14 +372,15 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 
 			continue;
 		}
-
-		partattr_cstr = get_attname(PrelParentRelid(prel), prel->attnum);
-		if (!partattr_cstr)
-		{
+		
+		// FIX this
+		//partattr_cstr = get_attname(PrelParentRelid(prel), prel->attnum);
+		//if (!partattr_cstr)
+		//{
 			/* Parent does not exist, go to the next 'prel' */
-			usercxt->current_prel = NULL;
-			continue;
-		}
+		//	usercxt->current_prel = NULL;
+		//	continue;
+		//}
 
 		/* Fill in common values */
 		values[Anum_pathman_pl_parent - 1]		= PrelParentRelid(prel);
@@ -487,25 +490,68 @@ is_date_type(PG_FUNCTION_ARGS)
 }
 
 Datum
+is_expression_suitable(PG_FUNCTION_ARGS)
+{
+	Oid			 relid = PG_GETARG_OID(0);
+	char		*expr = text_to_cstring(PG_GETARG_TEXT_P(1));
+	bool		 result;
+
+	TypeCacheEntry	*tce;
+	Oid				 type_oid = get_partition_expr_type(relid, expr);
+
+	tce = lookup_type_cache(type_oid, TYPECACHE_HASH_PROC);
+	result = (tce->hash_proc != InvalidOid);
+
+	PG_RETURN_BOOL(result);
+}
+
+Datum
 is_attribute_nullable(PG_FUNCTION_ARGS)
 {
+	/*
 	Oid			relid = PG_GETARG_OID(0);
-	text	   *attname = PG_GETARG_TEXT_P(1);
+	char	   *relname = get_rel_name(relid),
+			   *namespace_name = get_namespace_name(get_rel_namespace(relid));
+	char	   *expr = text_to_cstring(PG_GETARG_TEXT_P(1));
+	char	   *fmt = "SELECT (%s) FROM %s.%s";
 	bool		result = true;
 	HeapTuple	tp;
+	List	*parsetree_list,
+			*querytree_list,
+			*plantree_list;
+	EState *estate;
+	ExprContext *econtext;
+	Node	*parsetree,
+			*target_entry;
+	Query *query;
+	PlannedStmt *plan;
+	MemoryContext oldcontext;
+	SeqScanState *scanstate;
+	Oid expr_type;
 
-	tp = SearchSysCacheAttName(relid, text_to_cstring(attname));
-	if (HeapTupleIsValid(tp))
-	{
-		Form_pg_attribute att_tup = (Form_pg_attribute) GETSTRUCT(tp);
-		result = !att_tup->attnotnull;
-		ReleaseSysCache(tp);
-	}
-	else
-		elog(ERROR, "Cannot find type name for attribute \"%s\" "
-					"of relation \"%s\"",
-			 text_to_cstring(attname), get_rel_name_or_relid(relid));
+	int n = snprintf(NULL, 0, fmt, expr, namespace_name, relname);
+	char *query_string = (char *) palloc(n + 1);
+	snprintf(query_string, n + 1, fmt, expr, namespace_name, relname);
 
+	parsetree_list = raw_parser(query_string);
+
+	Assert(list_length(parsetree_list) == 1);
+	parsetree = (Node *)(lfirst(list_head(parsetree_list)));
+
+	query = parse_analyze(parsetree, query_string, NULL, 0);
+	plan = pg_plan_query(query, 0, NULL);
+
+	target_entry = lfirst(list_head(plan->planTree->targetlist));
+	expr_type = get_call_expr_argtype(((TargetEntry *)target_entry)->expr, 0);
+
+	estate = CreateExecutorState();
+
+	Assert(nodeTag(plan->planTree) == T_SeqScan);
+	scanstate = ExecInitSeqScan(plan->planTree, estate, 0);
+
+	pfree(query_string);
+	*/
+	bool result = true;
 	PG_RETURN_BOOL(result); /* keep compiler happy */
 }
 
@@ -566,7 +612,7 @@ build_check_constraint_name_attnum(PG_FUNCTION_ARGS)
 		elog(ERROR, "Cannot build check constraint name: "
 					"invalid attribute number %i", attnum);
 
-	result = build_check_constraint_name_relid_internal(relid, attnum);
+	result = build_check_constraint_name_relid_internal(relid);
 
 	PG_RETURN_TEXT_P(cstring_to_text(quote_identifier(result)));
 }
@@ -586,7 +632,7 @@ build_check_constraint_name_attname(PG_FUNCTION_ARGS)
 		elog(ERROR, "relation \"%s\" has no column \"%s\"",
 			 get_rel_name_or_relid(relid), text_to_cstring(attname));
 
-	result = build_check_constraint_name_relid_internal(relid, attnum);
+	result = build_check_constraint_name_relid_internal(relid);
 
 	PG_RETURN_TEXT_P(cstring_to_text(quote_identifier(result)));
 }
@@ -614,6 +660,9 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	HeapTuple			htup;
 	CatalogIndexState	indstate;
 
+	char			   *expr;
+	Oid					expr_type;
+
 	PathmanInitState	init_state;
 	MemoryContext		old_mcxt = CurrentMemoryContext;
 
@@ -631,10 +680,6 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	if (!check_relation_exists(relid))
 		elog(ERROR, "Invalid relation %u", relid);
 
-	if (get_attnum(relid, text_to_cstring(attname)) == InvalidAttrNumber)
-		elog(ERROR, "relation \"%s\" has no column \"%s\"",
-			 get_rel_name_or_relid(relid), text_to_cstring(attname));
-
 	/* Select partitioning type using 'range_interval' */
 	parttype = PG_ARGISNULL(2) ? PT_HASH : PT_RANGE;
 
@@ -647,11 +692,25 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	values[Anum_pathman_config_attname - 1]			= PointerGetDatum(attname);
 	isnull[Anum_pathman_config_attname - 1]			= false;
 
+	expr = TextDatumGetCString(PointerGetDatum(attname));
+	expr_type = get_partition_expr_type(relid, expr);
+
+	values[Anum_pathman_config_atttype - 1]			= ObjectIdGetDatum(expr_type);
+	isnull[Anum_pathman_config_atttype - 1]			= false;
+
 	values[Anum_pathman_config_parttype - 1]		= Int32GetDatum(parttype);
 	isnull[Anum_pathman_config_parttype - 1]		= false;
 
-	values[Anum_pathman_config_range_interval - 1]	= PG_GETARG_DATUM(2);
-	isnull[Anum_pathman_config_range_interval - 1]	= PG_ARGISNULL(2);
+	if (parttype == PT_RANGE)
+	{
+		values[Anum_pathman_config_range_interval - 1]	= PG_GETARG_DATUM(2);
+		isnull[Anum_pathman_config_range_interval - 1]	= PG_ARGISNULL(2);
+	}
+	else
+	{
+		values[Anum_pathman_config_range_interval - 1]	= (Datum) 0;
+		isnull[Anum_pathman_config_range_interval - 1]	= true;
+	}
 
 	/* Insert new row into PATHMAN_CONFIG */
 	pathman_config = heap_open(get_pathman_config_relid(false), RowExclusiveLock);
@@ -668,8 +727,9 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 		/* Some flags might change during refresh attempt */
 		save_pathman_init_state(&init_state);
 
-		refresh_pathman_relation_info(relid, parttype,
-									  text_to_cstring(attname),
+		refresh_pathman_relation_info(relid,
+									  values,
+									  isnull,
 									  false); /* initialize immediately */
 	}
 	PG_CATCH();

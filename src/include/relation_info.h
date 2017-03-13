@@ -15,6 +15,8 @@
 #include "postgres.h"
 #include "access/attnum.h"
 #include "fmgr.h"
+#include "nodes/nodes.h"
+#include "nodes/primnodes.h"
 #include "port/atomics.h"
 #include "storage/lock.h"
 #include "utils/datum.h"
@@ -126,9 +128,9 @@ typedef struct
 	RangeEntry	   *ranges;			/* per-partition range entry or NULL */
 
 	PartType		parttype;		/* partitioning type (HASH | RANGE) */
-	AttrNumber		attnum;			/* partitioned column's index */
-	Oid				atttype;		/* partitioned column's type */
-	int32			atttypmod;		/* partitioned column type modifier */
+	Expr		   *expr;
+	Oid				atttype;		/* expression type */
+	int32			atttypmod;		/* expression type modifier */
 	bool			attbyval;		/* is partitioned column stored by value? */
 	int16			attlen;			/* length of the partitioned column's type */
 	int				attalign;		/* alignment of the part column's type */
@@ -191,8 +193,8 @@ PrelLastChild(const PartRelationInfo *prel)
 
 
 const PartRelationInfo *refresh_pathman_relation_info(Oid relid,
-													  PartType partitioning_type,
-													  const char *part_column_name,
+													  Datum *values,
+													  bool *isnull,
 													  bool allow_incomplete);
 void invalidate_pathman_relation_info(Oid relid, bool *found);
 void remove_pathman_relation_info(Oid relid);

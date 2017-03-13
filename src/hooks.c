@@ -255,10 +255,11 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			int32			type_mod;
 			TypeCacheEntry *tce;
 
-			/* Make Var from partition column */
-			get_rte_attribute_type(rte, prel->attnum,
+			/* Make Var from patition column */
+			/* FIX: this */
+			get_rte_attribute_type(rte, 0,
 								   &vartypeid, &type_mod, &varcollid);
-			var = makeVar(rti, prel->attnum, vartypeid, type_mod, varcollid, 0);
+			var = makeVar(rti, 0, vartypeid, type_mod, varcollid, 0);
 			var->location = -1;
 
 			/* Determine operator type */

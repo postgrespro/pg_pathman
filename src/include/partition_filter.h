@@ -25,7 +25,9 @@
 #endif
 
 
-#define ERR_PART_ATTR_NULL		"partitioned column's value should not be NULL"
+#define ERR_PART_ATTR_NULL		"partition expression's value should not be NULL"
+#define ERR_PART_ATTR_MULTIPLE_RESULTS \
+		"partition expression's value should be single, not set"
 #define ERR_PART_ATTR_NO_PART	"no suitable partition for key '%s'"
 #define ERR_PART_ATTR_MULTIPLE	"PartitionFilter selected more than one partition"
 

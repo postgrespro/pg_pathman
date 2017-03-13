@@ -66,16 +66,23 @@ bool check_range_available(Oid parent_relid,
 
 /* HASH constraints */
 Constraint * build_hash_check_constraint(Oid child_relid,
-										 char *attname,
+										 const char *expr,
 										 uint32 part_idx,
 										 uint32 part_count,
 										 Oid value_type);
 
-Node * build_raw_hash_check_tree(char *attname,
+Node * build_raw_hash_check_tree(const char *base_expr,
 								 uint32 part_idx,
-								 uint32 part_count, Oid value_type);
+								 uint32 part_count,
+								 Oid relid,
+								 Oid value_type);
 
 void drop_check_constraint(Oid relid, AttrNumber attnum);
+
+/* expression parsing functions */
+Node *get_expression_node(Oid relid, const char *expr, bool analyze);
+Oid get_partition_expr_type(Oid relid, const char *expr);
+
 
 
 /* Partitioning callback type */

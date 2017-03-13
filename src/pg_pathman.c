@@ -910,12 +910,13 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 			(Var *) ((RelabelType *) varnode)->arg;
 
 		/* Skip if base types or attribute numbers do not match */
+		/* FIX: use exprsssion
 		if (getBaseType(var->vartype) != getBaseType(prel->atttype) ||
-			var->varoattno != prel->attnum ||	/* partitioned attribute */
-			var->varno != context->prel_varno)	/* partitioned table */
+			var->varoattno != prel->attnum ||
+			var->varno != context->prel_varno)
 		{
 			goto handle_arrexpr_return;
-		}
+		} */
 	}
 	else
 		goto handle_arrexpr_return;

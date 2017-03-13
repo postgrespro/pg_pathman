@@ -11,7 +11,9 @@ CREATE TABLE test.hash_rel (
 INSERT INTO test.hash_rel VALUES (1, 1);
 INSERT INTO test.hash_rel VALUES (2, 2);
 INSERT INTO test.hash_rel VALUES (3, 3);
-SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3);
+:gdb
+SELECT pg_sleep(10);
+SELECT pathman.create_hash_partitions('test.hash_rel', 'value + 1', 3);
 ALTER TABLE test.hash_rel ALTER COLUMN value SET NOT NULL;
 SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3, partition_data:=false);
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;

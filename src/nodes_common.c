@@ -140,10 +140,13 @@ append_part_attr_to_tlist(List *tlist, Index relno, const PartRelationInfo *prel
 		TargetEntry *te = (TargetEntry *) lfirst(lc);
 		Var			*var = (Var *) te->expr;
 
+		/* FIX this
 		if (IsA(var, Var) && var->varoattno == prel->attnum)
 			part_attr_found = true;
+		*/
 	}
 
+	/* FIX this
 	if (!part_attr_found)
 	{
 		Var	   *newvar = makeVar(relno,
@@ -158,7 +161,7 @@ append_part_attr_to_tlist(List *tlist, Index relno, const PartRelationInfo *prel
 		tlist = lappend(tlist, makeTargetEntry((Expr *) newvar,
 											   last_item,
 											   NULL, false));
-	}
+	} */
 
 	return tlist;
 }
@@ -262,11 +265,12 @@ get_partitioned_attr_clauses(List *restrictinfo_list,
 		Assert(IsA(rinfo, RestrictInfo));
 		pull_varattnos((Node *) rinfo->clause, partitioned_rel, &varattnos);
 
+		/* FIX this
 		if (bms_get_singleton_member(varattnos, &part_attno) &&
 			AdjustAttno(part_attno) == prel->attnum)
 		{
 			result = lappend(result, rinfo->clause);
-		}
+		} */
 	}
 	return result;
 }

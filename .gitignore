@@ -10,3 +10,5 @@ regression.out
 *.gcno
 *.gcov
 pg_pathman--*.sql
+tags
+cscope*

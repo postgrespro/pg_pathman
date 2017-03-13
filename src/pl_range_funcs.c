@@ -528,13 +528,14 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 	}
 
 	/* Drop old constraint and create a new one */
+	/* FIX: this
 	modify_range_constraint(parts[0],
 							get_relid_attribute_name(prel->key,
 													 prel->attnum),
 							prel->attnum,
 							prel->atttype,
 							&first->min,
-							&last->max);
+							&last->max); */
 
 	/* Make constraint visible */
 	CommandCounterIncrement();
@@ -613,13 +614,14 @@ drop_range_partition_expand_next(PG_FUNCTION_ARGS)
 					   *next = &ranges[i + 1];
 
 		/* Drop old constraint and create a new one */
+		/*
 		modify_range_constraint(next->child_oid,
 								get_relid_attribute_name(prel->key,
 														 prel->attnum),
 								prel->attnum,
 								prel->atttype,
 								&cur->min,
-								&next->max);
+								&next->max);*/
 	}
 
 	/* Finally drop this partition */

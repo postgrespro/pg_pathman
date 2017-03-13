@@ -9,6 +9,7 @@
  */
 
 #include "relation_info.h"
+#include "partition_creation.h"
 #include "init.h"
 #include "utils.h"
 #include "xact_handling.h"
@@ -18,6 +19,7 @@
 #include "catalog/catalog.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_inherits.h"
+#include "catalog/pg_type.h"
 #include "miscadmin.h"
 #include "storage/lmgr.h"
 #include "utils/builtins.h"
@@ -67,8 +69,8 @@ static Oid get_parent_of_partition_internal(Oid partition,
 /* Create or update PartRelationInfo in local cache. Might emit ERROR. */
 const PartRelationInfo *
 refresh_pathman_relation_info(Oid relid,
-							  PartType partitioning_type,
-							  const char *part_column_name,
+							  Datum *values,
+							  bool *isnull,
 							  bool allow_incomplete)
 {
 	const LOCKMODE			lockmode = AccessShareLock;
@@ -80,6 +82,9 @@ refresh_pathman_relation_info(Oid relid,
 	PartRelationInfo	   *prel;
 	Datum					param_values[Natts_pathman_config_params];
 	bool					param_isnull[Natts_pathman_config_params];
+	const char			   *expr;
+	Oid						expr_type;
+	HeapTuple				tp;
 
 	prel = (PartRelationInfo *) pathman_cache_search_relid(partitioned_rels,
 														   relid, HASH_ENTER,
@@ -129,19 +134,29 @@ refresh_pathman_relation_info(Oid relid,
 	prel->ranges	= NULL;
 
 	/* Set partitioning type */
-	prel->parttype	= partitioning_type;
+	prel->parttype	= DatumGetPartType(values[Anum_pathman_config_parttype - 1]);
 
-	/* Initialize PartRelationInfo using syscache & typcache */
-	prel->attnum	= get_attnum(relid, part_column_name);
+	/* Read config values */
+	expr = TextDatumGetCString(values[Anum_pathman_config_attname - 1]);
+	expr_type = DatumGetObjectId(values[Anum_pathman_config_atttype - 1]);
 
-	/* Attribute number sanity check */
-	if (prel->attnum == InvalidAttrNumber)
-		elog(ERROR, "Relation \"%s\" has no column \"%s\"",
-			 get_rel_name_or_relid(relid), part_column_name);
+	/*
+	 * Save parsed expression to cache and use already saved expression type
+	 * from config
+	 */
+	prel->expr = (Expr *) get_expression_node(relid, expr, true);
+	prel->atttype = expr_type;
 
-	/* Fetch atttypid, atttypmod, and attcollation in a single cache lookup */
-	get_atttypetypmodcoll(relid, prel->attnum,
-						  &prel->atttype, &prel->atttypmod, &prel->attcollid);
+	tp = SearchSysCache1(TYPEOID, values[Anum_pathman_config_atttype - 1]);
+	if (HeapTupleIsValid(tp))
+	{
+		Form_pg_type typtup = (Form_pg_type) GETSTRUCT(tp);
+		prel->atttypmod = typtup->typtypmod;
+		prel->attcollid = typtup->typcollation;
+		ReleaseSysCache(tp);
+	}
+	else
+		elog(ERROR, "Something went wrong while getting type information");
 
 	/* Fetch HASH & CMP fuctions and other stuff from type cache */
 	typcache = lookup_type_cache(prel->atttype,
@@ -199,7 +214,7 @@ refresh_pathman_relation_info(Oid relid,
 	 */
 	fill_prel_with_partitions(prel_children,
 							  prel_children_count,
-							  part_column_name, prel);
+							  prel);
 
 	/* Peform some actions for each child */
 	for (i = 0; i < prel_children_count; i++)
@@ -284,16 +299,9 @@ get_pathman_relation_info(Oid relid)
 		/* Check that PATHMAN_CONFIG table contains this relation */
 		if (pathman_config_contains_relation(relid, values, isnull, NULL))
 		{
-			PartType		part_type;
-			const char	   *attname;
-
-			/* We can't use 'part_type' & 'attname' from invalid prel */
-			part_type = DatumGetPartType(values[Anum_pathman_config_parttype - 1]);
-			attname = TextDatumGetCString(values[Anum_pathman_config_attname - 1]);
-
 			/* Refresh partitioned table cache entry (might turn NULL) */
 			/* TODO: possible refactoring, pass found 'prel' instead of searching */
-			prel = refresh_pathman_relation_info(relid, part_type, attname, false);
+			prel = refresh_pathman_relation_info(relid, values, isnull, false);
 		}
 
 		/* Else clear remaining cache entry */
@@ -667,15 +675,10 @@ try_perform_parent_refresh(Oid parent)
 
 	if (pathman_config_contains_relation(parent, values, isnull, NULL))
 	{
-		text	   *attname;
-		PartType	parttype;
-
-		parttype = DatumGetPartType(values[Anum_pathman_config_parttype - 1]);
-		attname = DatumGetTextP(values[Anum_pathman_config_attname - 1]);
-
 		/* If anything went wrong, return false (actually, it might emit ERROR) */
-		refresh_pathman_relation_info(parent, parttype,
-									  text_to_cstring(attname),
+		refresh_pathman_relation_info(parent,
+									  values,
+									  isnull,
 									  true); /* allow lazy */
 	}
 	/* Not a partitioned relation */

@@ -35,6 +35,7 @@ LANGUAGE C;
 CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
 	partrel			REGCLASS NOT NULL PRIMARY KEY,
 	attname			TEXT NOT NULL,
+	atttype			OID NOT NULL,
 	parttype		INTEGER NOT NULL,
 	range_interval	TEXT,
 
@@ -427,7 +428,7 @@ LANGUAGE plpgsql STRICT;
  */
 CREATE OR REPLACE FUNCTION @extschema@.common_relation_checks(
 	relation		REGCLASS,
-	p_attribute		TEXT)
+	expression		TEXT)
 RETURNS BOOLEAN AS
 $$
 DECLARE
@@ -450,8 +451,8 @@ BEGIN
 		RAISE EXCEPTION 'relation "%" has already been partitioned', relation;
 	END IF;
 
-	IF @extschema@.is_attribute_nullable(relation, p_attribute) THEN
-		RAISE EXCEPTION 'partitioning key "%" must be NOT NULL', p_attribute;
+	IF NOT @extschema@.is_expression_suitable(relation, expression) THEN
+		RAISE EXCEPTION 'partitioning expression "%" is not suitable', expression;
 	END IF;
 
 	/* Check if there are foreign keys that reference the relation */
@@ -467,7 +468,7 @@ BEGIN
 		RAISE EXCEPTION 'relation "%" is referenced from other relations', relation;
 	END IF;
 
-	RETURN TRUE;
+	RETURN FALSE;
 END
 $$
 LANGUAGE plpgsql;
@@ -794,6 +795,15 @@ CREATE OR REPLACE FUNCTION @extschema@.is_attribute_nullable(
 	relid	REGCLASS,
 	attname	TEXT)
 RETURNS BOOLEAN AS 'pg_pathman', 'is_attribute_nullable'
+LANGUAGE C STRICT;
+
+/*
+ * Checks if expression is suitable
+ */
+CREATE OR REPLACE FUNCTION @extschema@.is_expression_suitable(
+	relid	REGCLASS,
+	expr	TEXT)
+RETURNS BOOLEAN AS 'pg_pathman', 'is_expression_suitable'
 LANGUAGE C STRICT;
 
 /*
