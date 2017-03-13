@@ -1135,7 +1135,7 @@ validate_hash_constraint(const Expr *expr,
 
 	if (list_length(get_hash_expr->args) == 2)
 	{
-		Node   *first = linitial(get_hash_expr->args);	/* arg #1: TYPE_HASH_PROC(VALUE) */
+		Node   *first = linitial(get_hash_expr->args);	/* arg #1: TYPE_HASH_PROC(EXPRESSION) */
 		Node   *second = lsecond(get_hash_expr->args);	/* arg #2: PARTITIONS_COUNT */
 		Const  *cur_partition_hash;						/* hash value for this partition */
 
@@ -1146,9 +1146,7 @@ validate_hash_constraint(const Expr *expr,
 
 		/* Check that function is indeed TYPE_HASH_PROC */
 		if (type_hash_proc_expr->funcid != prel->hash_proc)
-		{
 			return false;
-		}
 
 		/* Check that PARTITIONS_COUNT is equal to total amount of partitions */
 		if (DatumGetUInt32(((Const *) second)->constvalue) != PrelChildrenCount(prel))

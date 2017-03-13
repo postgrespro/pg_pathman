@@ -42,6 +42,9 @@ PG_MODULE_MAGIC;
 Oid		pathman_config_relid = InvalidOid,
 		pathman_config_params_relid = InvalidOid;
 
+/* Used to temporary disable hooks */
+bool hooks_enabled = true;
+
 
 /* pg module functions */
 void _PG_init(void);
@@ -141,7 +144,7 @@ _PG_init(void)
 	/* Apply initial state */
 	restore_pathman_init_state(&temp_init_state);
 
-	/* Initialize 'next' hook pointers */
+	/* Set basic hooks */
 	set_rel_pathlist_hook_next		= set_rel_pathlist_hook;
 	set_rel_pathlist_hook			= pathman_rel_pathlist_hook;
 	set_join_pathlist_next			= set_join_pathlist_hook;

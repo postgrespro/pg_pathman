@@ -84,6 +84,9 @@
 extern Oid	pathman_config_relid;
 extern Oid	pathman_config_params_relid;
 
+/* Hooks enable state */
+extern bool hooks_enabled;
+
 /*
  * Just to clarify our intentions (return the corresponding relid).
  */

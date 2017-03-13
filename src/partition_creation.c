@@ -29,6 +29,7 @@
 #include "commands/tablecmds.h"
 #include "commands/tablespace.h"
 #include "miscadmin.h"
+#include "nodes/plannodes.h"
 #include "parser/parser.h"
 #include "parser/parse_func.h"
 #include "parser/parse_relation.h"
@@ -2053,7 +2054,7 @@ static bool location_cleaning_walker(Node *node, void *context)
 	return raw_expression_tree_walker(node, location_cleaning_walker, context);
 }
 
-/* By given relation id and expression returns query node */
+/* By given relation id and expression returns node */
 Node *
 get_expression_node(Oid relid, const char *expr, bool analyze)
 {
@@ -2064,7 +2065,7 @@ get_expression_node(Oid relid, const char *expr, bool analyze)
 				*raw_node;
 	Query		*query;
 	TargetEntry	*target_entry;
-	post_parse_analyze_hook_type orig_hook = NULL;
+	PlannedStmt *plan;
 
 	target_list = ((SelectStmt *)parsetree)->targetList;
 
@@ -2074,16 +2075,17 @@ get_expression_node(Oid relid, const char *expr, bool analyze)
 		return raw_node;
 	}
 
-	//turn off parse hooks
-	orig_hook = post_parse_analyze_hook;
-	post_parse_analyze_hook = NULL;
+	/* We don't need pathman hooks on next stages */
+	hooks_enabled = false;
 
 	querytree_list = pg_analyze_and_rewrite(parsetree, query_string, NULL, 0);
 	query = (Query *)lfirst(list_head(querytree_list));
-	target_entry = (TargetEntry *)lfirst(list_head(query->targetList));
-	//plan = pg_plan_query(query, 0, NULL);
+	plan = pg_plan_query(query, 0, NULL);
 
-	post_parse_analyze_hook = orig_hook;
+	target_entry = lfirst(list_head(plan->planTree->targetlist));
+
+	/* Hooks can work now */
+	hooks_enabled = true;
 
 	return (Node *)target_entry->expr;
 }
