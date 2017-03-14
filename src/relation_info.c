@@ -144,7 +144,7 @@ refresh_pathman_relation_info(Oid relid,
 	 * Save parsed expression to cache and use already saved expression type
 	 * from config
 	 */
-	prel->expr = (Expr *) get_expression_node(relid, expr, true);
+	prel->expr = (Expr *) get_expression_node(relid, expr, true, &prel->expr_map);
 	prel->atttype = expr_type;
 
 	tp = SearchSysCache1(TYPEOID, values[Anum_pathman_config_atttype - 1]);

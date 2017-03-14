@@ -80,7 +80,8 @@ Node * build_raw_hash_check_tree(const char *base_expr,
 void drop_check_constraint(Oid relid, AttrNumber attnum);
 
 /* expression parsing functions */
-Node *get_expression_node(Oid relid, const char *expr, bool analyze);
+Node *get_expression_node(Oid relid, const char *expr, bool analyze,
+		RTEMapItem **rte_map);
 Oid get_partition_expr_type(Oid relid, const char *expr);
 
 
@@ -151,6 +152,5 @@ typedef struct
 
 void invoke_part_callback(init_callback_params *cb_params);
 bool validate_part_callback(Oid procid, bool emit_error);
-
 
 #endif /* PARTITION_CREATION_H */

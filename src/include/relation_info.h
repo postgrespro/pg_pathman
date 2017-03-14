@@ -113,6 +113,13 @@ typedef struct
 					max;
 } RangeEntry;
 
+/* Used to convert 'varno' attributes accodirdingly to working query */
+typedef struct
+{
+	Oid relid; /* relid by which we can determine what rte we need in current query	 */
+	int res_idx; /* varno will be used for Var */
+} RTEMapItem;
+
 /*
  * PartRelationInfo
  *		Per-relation partitioning information
@@ -127,8 +134,9 @@ typedef struct
 	Oid			   *children;		/* Oids of child partitions */
 	RangeEntry	   *ranges;			/* per-partition range entry or NULL */
 
+	Expr		   *expr;				/* planned expression */
+	RTEMapItem	   *expr_map;			/* 'varno' map */
 	PartType		parttype;		/* partitioning type (HASH | RANGE) */
-	Expr		   *expr;
 	Oid				atttype;		/* expression type */
 	int32			atttypmod;		/* expression type modifier */
 	bool			attbyval;		/* is partitioned column stored by value? */
@@ -163,7 +171,6 @@ typedef enum
 	PPS_ENTRY_PART_PARENT,	/* entry is parent and is known by pg_pathman */
 	PPS_NOT_SURE			/* can't determine (not transactional state) */
 } PartParentSearch;
-
 
 /*
  * PartRelationInfo field access macros.

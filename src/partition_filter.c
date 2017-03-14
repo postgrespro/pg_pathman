@@ -528,6 +528,72 @@ partition_filter_create_scan_state(CustomScan *node)
 	return (Node *) state;
 }
 
+static void
+adapt_rte_map(List *es_rangetable, RTEMapItem *rte_map)
+{
+	int i = 0;
+	ListCell *cell;
+
+	while (true)
+	{
+		int j = 1; /* rangetable entries are counting from 1 */
+		bool found = false;
+
+		RTEMapItem *item = &rte_map[i++];
+		if (item->relid == 0) /* end of array */
+			break;
+
+		foreach(cell, es_rangetable)
+		{
+			RangeTblEntry *entry = lfirst(cell);
+			if (entry->relid == item->relid) {
+				item->res_idx = j;
+				found = true;
+				break;
+			}
+
+			j++;
+		}
+
+		if (!found)
+			elog(ERROR, "Didn't found RTE entry for relid %d in expression",
+					item->relid);
+	}
+}
+
+static bool
+adapt_walker(Node *node, void *context)
+{
+	if (node == NULL)
+		return false;
+
+	if (IsA(node, Var))
+	{
+		PartRelationInfo *prel = (PartRelationInfo *)context;
+		int i = 0;
+		Var *var = (Var *)node;
+
+		while (true)
+		{
+			RTEMapItem *item = &prel->expr_map[i];
+			if (item->relid == 0)
+				break;
+
+			if (var->varno == (i + 1))
+			{
+				var->varno = item->res_idx;
+				return false;
+			}
+
+			i++;
+		}
+
+		elog(ERROR, "Didn't found relation for Var in expression");
+	}
+
+	return expression_tree_walker(node, adapt_walker, context);
+}
+
 void
 partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 {
@@ -571,6 +637,7 @@ partition_filter_exec(CustomScanState *node)
 		Datum					value;
 		ExprDoneCond			itemIsDone;
 		ExprState			   *expr_state;
+		TupleTableSlot		   *orig_slot;
 
 		/* Fetch PartRelationInfo for this partitioned relation */
 		prel = get_pathman_relation_info(state->partitioned_table);
@@ -591,6 +658,10 @@ partition_filter_exec(CustomScanState *node)
 		if (isnull)
 			elog(ERROR, ERR_PART_ATTR_NULL); */
 
+		/* Modify expression to our needs */
+		adapt_rte_map(estate->es_range_table, prel->expr_map);
+		expression_tree_walker((Node *)prel->expr, adapt_walker, (void *) prel);
+
 		/* Prepare state before execution */
 		expr_state = ExecPrepareExpr(prel->expr, estate);
 
@@ -598,7 +669,11 @@ partition_filter_exec(CustomScanState *node)
 		old_cxt = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 
 		/* Execute expression */
+		orig_slot = econtext->ecxt_scantuple;
+		econtext->ecxt_scantuple = slot;
 		value = ExecEvalExpr(expr_state, econtext, &isnull, &itemIsDone);
+		econtext->ecxt_scantuple = orig_slot;
+
 		if (isnull)
 			elog(ERROR, ERR_PART_ATTR_NULL);
 

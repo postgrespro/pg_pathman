@@ -1296,7 +1296,7 @@ build_raw_hash_check_tree(const char *base_expr,
 
 	Oid				hash_proc;
 	TypeCacheEntry *tce;
-	Node		   *expr = get_expression_node(relid, base_expr, false);
+	Node		   *expr = get_expression_node(relid, base_expr, false, NULL);
 
 	tce = lookup_type_cache(value_type, TYPECACHE_HASH_PROC);
 	hash_proc = tce->hash_proc;
@@ -1686,7 +1686,7 @@ text_to_regprocedure(text *proc_signature)
 static Node *
 parse_expression(Oid relid, const char *expr, char **query_string_out)
 {
-	char			*fmt = "SELECT (%s) FROM %s.%s";
+	char			*fmt = "SELECT (%s) FROM ONLY %s.%s";
 	char			*relname = get_rel_name(relid),
 					*namespace_name = get_namespace_name(get_rel_namespace(relid));
 	List			*parsetree_list;
@@ -2056,7 +2056,7 @@ static bool location_cleaning_walker(Node *node, void *context)
 
 /* By given relation id and expression returns node */
 Node *
-get_expression_node(Oid relid, const char *expr, bool analyze)
+get_expression_node(Oid relid, const char *expr, bool analyze, RTEMapItem **rte_map)
 {
 	List		*querytree_list;
 	List		*target_list;
@@ -2081,6 +2081,25 @@ get_expression_node(Oid relid, const char *expr, bool analyze)
 	querytree_list = pg_analyze_and_rewrite(parsetree, query_string, NULL, 0);
 	query = (Query *)lfirst(list_head(querytree_list));
 	plan = pg_plan_query(query, 0, NULL);
+
+	if (rte_map != NULL)
+	{
+		int i = 0;
+		int len = list_length(plan->rtable);
+		ListCell *cell;
+
+		*rte_map = (RTEMapItem *)palloc0(sizeof(RTEMapItem) * (len + 1));
+		foreach(cell, plan->rtable)
+		{
+			RangeTblEntry *tbl = lfirst(cell);
+			/* only plain relation RTE */
+			Assert(tbl->relid > 0);
+			(*rte_map)[i].relid = tbl->relid;
+			(*rte_map)[i].res_idx = -1;
+
+			i++;
+		}
+	}
 
 	target_entry = lfirst(list_head(plan->planTree->targetlist));
 
