@@ -135,7 +135,6 @@ typedef struct
 	RangeEntry	   *ranges;			/* per-partition range entry or NULL */
 
 	Expr		   *expr;				/* planned expression */
-	RTEMapItem	   *expr_map;			/* 'varno' map */
 	PartType		parttype;		/* partitioning type (HASH | RANGE) */
 	Oid				atttype;		/* expression type */
 	int32			atttypmod;		/* expression type modifier */
@@ -161,14 +160,14 @@ typedef struct
 
 /*
  * CustomConst
- *		Const with Var pointer
- *		We can know that is CustomConst by checking `location`. It should be
- *		equal -2
+ *		Modified Const that also stores 'varattno' attribute from some Var
+ *		We can check that is CustomConst by checking `location` attrubute.
+ *		It should be equal -2
  */
 typedef struct
 {
-	Const	 cns;
-	Var		*orig;
+	Const		cns;
+	AttrNumber	varattno;
 } CustomConst;
 
 /*

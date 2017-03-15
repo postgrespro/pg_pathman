@@ -528,68 +528,45 @@ partition_filter_create_scan_state(CustomScan *node)
 	return (Node *) state;
 }
 
-static void
-adapt_rte_map(List *es_rangetable, RTEMapItem *rte_map)
-{
-	int i = 0;
-	ListCell *cell;
-
-	while (true)
-	{
-		int j = 1; /* rangetable entries are counting from 1 */
-		bool found = false;
-
-		RTEMapItem *item = &rte_map[i++];
-		if (item->relid == 0) /* end of array */
-			break;
-
-		foreach(cell, es_rangetable)
-		{
-			RangeTblEntry *entry = lfirst(cell);
-			if (entry->relid == item->relid) {
-				item->res_idx = j;
-				found = true;
-				break;
-			}
-
-			j++;
-		}
-
-		if (!found)
-			elog(ERROR, "Didn't found RTE entry for relid %d in expression",
-					item->relid);
-	}
-}
-
 struct expr_walker_context
 {
 	const PartRelationInfo	*prel;
 	TupleTableSlot			*slot;
+	bool					 clear;
 };
 
+/* Fills CustomConst nodes with values from slot */
 static bool
 adapt_values (Node *node, struct expr_walker_context *context)
 {
 	if (node == NULL)
 		return false;
 
+	/* location == -2 means that it's our CustomConst node */
 	if (IsA(node, Const) && ((Const *)node)->location == -2)
 	{
-		Var			*variable;
 		AttrNumber   attnum;
 		Const		*cst;
 		bool		 isNull;
 
 		cst = (Const *)node;
-		variable = ((CustomConst *)node)->orig;
 
-		attnum = variable->varattno;
+		attnum = ((CustomConst *)node)->varattno;
 		Assert(attnum != InvalidAttrNumber);
 
-		Assert(context->slot->tts_tupleDescriptor->
-					attrs[attnum - 1]->atttypid == cst->consttype);
-		cst->constvalue = slot_getattr(context->slot, attnum, &isNull);
-		cst->constisnull = isNull;
+		if (context->clear)
+		{
+			cst->constvalue = (Datum) 0;
+			cst->constisnull = true;
+		}
+		else
+		{
+			/* check that type is still same */
+			Assert(context->slot->tts_tupleDescriptor->
+						attrs[attnum - 1]->atttypid == cst->consttype);
+			cst->constvalue = slot_getattr(context->slot, attnum, &isNull);
+			cst->constisnull = isNull;
+		}
 		return false;
 	}
 
@@ -656,9 +633,9 @@ partition_filter_exec(CustomScanState *node)
 		/* Prepare walker context */
 		expr_walker_context.prel = prel; /* maybe slot will be enough */
 		expr_walker_context.slot = slot;
+		expr_walker_context.clear = true;
 
-		/* Fetch values from slot for expression */
-		adapt_rte_map(estate->es_range_table, prel->expr_map);
+		/* Clear values from slot for expression */
 		adapt_values((Node *)prel->expr, (void *) &expr_walker_context);
 
 		/* Prepare state before execution */
@@ -666,6 +643,11 @@ partition_filter_exec(CustomScanState *node)
 
 		/* Switch to per-tuple context */
 		old_cxt = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
+
+		expr_walker_context.clear = false;
+
+		/* Fetch values from slot for expression */
+		adapt_values((Node *)prel->expr, (void *) &expr_walker_context);
 
 		/* Execute expression */
 		value = ExecEvalExpr(expr_state, econtext, &isnull, &itemIsDone);

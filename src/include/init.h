@@ -51,11 +51,6 @@ extern PathmanInitState 	pg_pathman_init_state;
 #define IsPathmanEnabled()			( pg_pathman_init_state.pg_pathman_enable )
 
 /*
- * Enable or disable pg_pathman
- */
-#define EnablePathman(b)				( pg_pathman_init_state.pg_pathman_enable = (b) )
-
-/*
  * Check if pg_pathman is initialized & enabled.
  */
 #define IsPathmanReady()			( IsPathmanInitialized() && IsPathmanEnabled() )

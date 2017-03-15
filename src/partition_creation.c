@@ -43,6 +43,7 @@
 #include "utils/jsonb.h"
 #include "utils/snapmgr.h"
 #include "utils/lsyscache.h"
+#include "utils/memutils.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
 
@@ -1296,7 +1297,7 @@ build_raw_hash_check_tree(const char *base_expr,
 
 	Oid				hash_proc;
 	TypeCacheEntry *tce;
-	Node		   *expr = get_expression_node(relid, base_expr, false, NULL);
+	Node		   *expr = get_expression_node(relid, base_expr, false);
 
 	tce = lookup_type_cache(value_type, TYPECACHE_HASH_PROC);
 	hash_proc = tce->hash_proc;
@@ -1702,26 +1703,40 @@ parse_expression(Oid relid, const char *expr, char **query_string_out)
 	return (Node *)(lfirst(list_head(parsetree_list)));
 }
 
+struct expr_mutator_context
+{
+	Oid		relid;		/* partitioned table */
+	List	*rtable;	/* range table list from expression query */
+};
+
 /*
- * To prevent calculation of Vars in expression, we change them with
+ * To prevent calculation of Vars in expression, we wrap them with
  * CustomConst, and later before execution we fill it with actual value
  */
 static Node *
-expression_mutator(Node *node, void *context)
+expression_mutator(Node *node, struct expr_mutator_context *context)
 {
 	const TypeCacheEntry   *typcache;
 
 	if (IsA(node, Var))
 	{
-		Node *new_node = newNode(sizeof(CustomConst), T_Const);
-		Const *new_const = (Const *)new_node;
-		((CustomConst *)new_node)->orig = (Var *)node;
+		Var		*variable = (Var *) node;
+		Node	*new_node = newNode(sizeof(CustomConst), T_Const);
+		Const	*new_const = (Const *)new_node;
+
+		RangeTblEntry *entry = rt_fetch(variable->varno, context->rtable);
+		if (entry->relid != context->relid)
+			elog(ERROR, "Columns in the expression should "
+							"be only from partitioned relation");
+
+		/* we only need varattno from original Var, for now */
+		((CustomConst *)new_node)->varattno = ((Var *)node)->varattno;
 
 		new_const->consttype = ((Var *)node)->vartype;
 		new_const->consttypmod = ((Var *)node)->vartypmod;
 		new_const->constcollid = ((Var *)node)->varcollid;
 		new_const->constvalue = (Datum) 0;
-		new_const->constisnull = false;
+		new_const->constisnull = true;
 		new_const->location = -2;
 
 		typcache = lookup_type_cache(new_const->consttype, 0);
@@ -1730,22 +1745,25 @@ expression_mutator(Node *node, void *context)
 
 		return new_node;
 	}
-	return expression_tree_mutator(node, expression_mutator, NULL);
+	return expression_tree_mutator(node, expression_mutator, (void *) context);
 }
 
 /* By given relation id and expression returns node */
 Node *
-get_expression_node(Oid relid, const char *expr, bool analyze, RTEMapItem **rte_map)
+get_expression_node(Oid relid, const char *expr, bool analyze)
 {
-	List		*querytree_list;
-	List		*target_list;
-	char		*query_string;
-	Node		*parsetree = parse_expression(relid, expr, &query_string),
-				*result;
-	Query		*query;
-	TargetEntry	*target_entry;
-	PlannedStmt *plan;
+	List							*querytree_list;
+	List							*target_list;
+	char							*query_string;
+	Node							*parsetree,
+									*result;
+	Query							*query;
+	TargetEntry						*target_entry;
+	PlannedStmt						*plan;
+	MemoryContext					 oldcontext;
+	struct expr_mutator_context		 context;
 
+	parsetree = parse_expression(relid, expr, &query_string),
 	target_list = ((SelectStmt *)parsetree)->targetList;
 
 	if (!analyze) {
@@ -1759,33 +1777,21 @@ get_expression_node(Oid relid, const char *expr, bool analyze, RTEMapItem **rte_
 	querytree_list = pg_analyze_and_rewrite(parsetree, query_string, NULL, 0);
 	query = (Query *)lfirst(list_head(querytree_list));
 	plan = pg_plan_query(query, 0, NULL);
-
-	if (rte_map != NULL)
-	{
-		int i = 0;
-		int len = list_length(plan->rtable);
-		ListCell *cell;
-
-		*rte_map = (RTEMapItem *)palloc0(sizeof(RTEMapItem) * (len + 1));
-		foreach(cell, plan->rtable)
-		{
-			RangeTblEntry *tbl = lfirst(cell);
-			/* only plain relation RTE */
-			Assert(tbl->relid > 0);
-			(*rte_map)[i].relid = tbl->relid;
-			(*rte_map)[i].res_idx = -1;
-
-			i++;
-		}
-	}
-
 	target_entry = lfirst(list_head(plan->planTree->targetlist));
 
 	/* Hooks can work now */
 	hooks_enabled = true;
 
 	result = (Node *)target_entry->expr;
-	result = expression_mutator(result, NULL);
+	oldcontext = MemoryContextSwitchTo(TopMemoryContext);
+
+	/* We need relid and range table list for mutator */
+	context.relid = relid;
+	context.rtable = plan->rtable;
+
+	/* This will create new tree in TopMemoryContext */
+	result = expression_mutator(result, (void *) &context);
+	MemoryContextSwitchTo(oldcontext);
 	return result;
 }
 
