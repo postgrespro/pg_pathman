@@ -1703,355 +1703,34 @@ parse_expression(Oid relid, const char *expr, char **query_string_out)
 }
 
 /*
- *	exprNodeLocation -
- *	  basicly copy of exprLocation from nodeFuncs, but with another
- *	  purpose - get address of location variable
+ * To prevent calculation of Vars in expression, we change them with
+ * CustomConst, and later before execution we fill it with actual value
  */
-static bool
-clearNodeLocation(const Node *expr)
+static Node *
+expression_mutator(Node *node, void *context)
 {
-	if (expr == NULL)
-		return false;
+	const TypeCacheEntry   *typcache;
 
-	switch (nodeTag(expr))
+	if (IsA(node, Var))
 	{
-		case T_RangeVar:
-			((RangeVar *) expr)->location = -1;
-			break;
-		case T_Var:
-			((Var *) expr)->location = -1;
-			break;
-		case T_Const:
-			((Const *) expr)->location = -1;
-			break;
-		case T_Param:
-			((Param *) expr)->location = -1;
-			break;
-		case T_Aggref:
-			/* function name should always be the first thing */
-			((Aggref *) expr)->location = -1;
-			break;
-		case T_GroupingFunc:
-			((GroupingFunc *) expr)->location = -1;
-			break;
-		case T_WindowFunc:
-			/* function name should always be the first thing */
-			((WindowFunc *) expr)->location = -1;
-			break;
-		case T_ArrayRef:
-			/* just use array argument's location */
-			clearNodeLocation((Node *) ((const ArrayRef *) expr)->refexpr);
-			break;
-		case T_FuncExpr:
-			{
-				FuncExpr *fexpr = (FuncExpr *) expr;
+		Node *new_node = newNode(sizeof(CustomConst), T_Const);
+		Const *new_const = (Const *)new_node;
+		((CustomConst *)new_node)->orig = (Var *)node;
 
-				/* consider both function name and leftmost arg */
-				fexpr->location = -1;
-				clearNodeLocation((Node *) fexpr->args);
-			}
-			break;
-		case T_NamedArgExpr:
-			{
-				NamedArgExpr *na = (NamedArgExpr *) expr;
+		new_const->consttype = ((Var *)node)->vartype;
+		new_const->consttypmod = ((Var *)node)->vartypmod;
+		new_const->constcollid = ((Var *)node)->varcollid;
+		new_const->constvalue = (Datum) 0;
+		new_const->constisnull = false;
+		new_const->location = -2;
 
-				/* consider both argument name and value */
-				na->location = -1;
-				clearNodeLocation((Node *) na->arg);
-			}
-			break;
-		case T_OpExpr:
-		case T_DistinctExpr:	/* struct-equivalent to OpExpr */
-		case T_NullIfExpr:		/* struct-equivalent to OpExpr */
-			{
-				OpExpr *opexpr = (OpExpr *) expr;
+		typcache = lookup_type_cache(new_const->consttype, 0);
+		new_const->constbyval = typcache->typbyval;
+		new_const->constlen	= typcache->typlen;
 
-				/* consider both operator name and leftmost arg */
-				opexpr->location = -1;
-				clearNodeLocation((Node *) opexpr->args);
-			}
-			break;
-		case T_ScalarArrayOpExpr:
-			{
-				ScalarArrayOpExpr *saopexpr = (ScalarArrayOpExpr *) expr;
-
-				/* consider both operator name and leftmost arg */
-
-				saopexpr->location = -1;
-				clearNodeLocation((Node *) saopexpr->args);
-			}
-			break;
-		case T_BoolExpr:
-			{
-				BoolExpr *bexpr = (BoolExpr *) expr;
-
-				/*
-				 * Same as above, to handle either NOT or AND/OR.  We can't
-				 * special-case NOT because of the way that it's used for
-				 * things like IS NOT BETWEEN.
-				 */
-				bexpr->location = -1;
-				clearNodeLocation((Node *) bexpr->args);
-			}
-			break;
-		case T_SubLink:
-			{
-				SubLink *sublink = (SubLink *) expr;
-
-				/* check the testexpr, if any, and the operator/keyword */
-				clearNodeLocation(sublink->testexpr);
-				sublink->location = -1;
-			}
-			break;
-		case T_FieldSelect:
-			/* just use argument's location */
-			return clearNodeLocation((Node *) ((FieldSelect *) expr)->arg);
-		case T_FieldStore:
-			/* just use argument's location */
-			return clearNodeLocation((Node *) ((FieldStore *) expr)->arg);
-		case T_RelabelType:
-			{
-				RelabelType *rexpr = (RelabelType *) expr;
-
-				/* Much as above */
-				rexpr->location = -1;
-				clearNodeLocation((Node *) rexpr->arg);
-			}
-			break;
-		case T_CoerceViaIO:
-			{
-				CoerceViaIO *cexpr = (CoerceViaIO *) expr;
-
-				/* Much as above */
-				cexpr->location = -1;
-				clearNodeLocation((Node *) cexpr->arg);
-			}
-			break;
-		case T_ArrayCoerceExpr:
-			{
-				ArrayCoerceExpr *cexpr = (ArrayCoerceExpr *) expr;
-
-				/* Much as above */
-				cexpr->location = -1;
-				clearNodeLocation((Node *) cexpr->arg);
-			}
-			break;
-		case T_ConvertRowtypeExpr:
-			{
-				ConvertRowtypeExpr *cexpr = (ConvertRowtypeExpr *) expr;
-
-				/* Much as above */
-				cexpr->location = -1;
-				clearNodeLocation((Node *) cexpr->arg);
-			}
-			break;
-		case T_CollateExpr:
-			/* just use argument's location */
-			clearNodeLocation((Node *) ((CollateExpr *) expr)->arg);
-			break;
-		case T_CaseExpr:
-			/* CASE keyword should always be the first thing */
-			((CaseExpr *) expr)->location = -1;
-			break;
-		case T_CaseWhen:
-			/* WHEN keyword should always be the first thing */
-			((CaseWhen *) expr)->location = -1;
-			break;
-		case T_ArrayExpr:
-			/* the location points at ARRAY or [, which must be leftmost */
-			((ArrayExpr *) expr)->location = -1;
-			break;
-		case T_RowExpr:
-			/* the location points at ROW or (, which must be leftmost */
-			((RowExpr *) expr)->location = -1;
-			break;
-		case T_RowCompareExpr:
-			/* just use leftmost argument's location */
-			return clearNodeLocation((Node *) ((RowCompareExpr *) expr)->largs);
-		case T_CoalesceExpr:
-			/* COALESCE keyword should always be the first thing */
-			((CoalesceExpr *) expr)->location = -1;
-			break;
-		case T_MinMaxExpr:
-			/* GREATEST/LEAST keyword should always be the first thing */
-			((MinMaxExpr *) expr)->location = -1;
-			break;
-		case T_XmlExpr:
-			{
-				XmlExpr *xexpr = (XmlExpr *) expr;
-
-				/* consider both function name and leftmost arg */
-				xexpr->location = -1;
-				clearNodeLocation((Node *) xexpr->args);
-			}
-			break;
-		case T_NullTest:
-			{
-				NullTest *nexpr = (NullTest *) expr;
-
-				/* Much as above */
-				nexpr->location = -1;
-				clearNodeLocation((Node *) nexpr->arg);
-			}
-			break;
-		case T_BooleanTest:
-			{
-				BooleanTest *bexpr = (BooleanTest *) expr;
-
-				/* Much as above */
-				bexpr->location = -1;
-				clearNodeLocation((Node *) bexpr->arg);
-			}
-			break;
-		case T_CoerceToDomain:
-			{
-				CoerceToDomain *cexpr = (CoerceToDomain *) expr;
-
-				/* Much as above */
-				cexpr->location = -1;
-				clearNodeLocation((Node *) cexpr->arg);
-			}
-			break;
-		case T_CoerceToDomainValue:
-			((CoerceToDomainValue *) expr)->location = -1;
-			break;
-		case T_SetToDefault:
-			((SetToDefault *) expr)->location = -1;
-			break;
-		case T_TargetEntry:
-			/* just use argument's location */
-			return clearNodeLocation((Node *) ((const TargetEntry *) expr)->expr);
-		case T_IntoClause:
-			/* use the contained RangeVar's location --- close enough */
-			return clearNodeLocation((Node *) ((const IntoClause *) expr)->rel);
-		case T_List:
-			{
-				/* report location of first list member that has a location */
-				ListCell   *lc;
-
-				//loc = -1;		/* just to suppress compiler warning */
-				foreach(lc, (const List *) expr)
-				{
-					clearNodeLocation((Node *) lfirst(lc));
-				}
-			}
-			break;
-		case T_A_Expr:
-			{
-				A_Expr *aexpr = (A_Expr *) expr;
-
-				/* use leftmost of operator or left operand (if any) */
-				/* we assume right operand can't be to left of operator */
-				aexpr->location = -1;
-				clearNodeLocation(aexpr->lexpr);
-			}
-			break;
-		case T_ColumnRef:
-			((ColumnRef *) expr)->location = -1;
-			break;
-		case T_ParamRef:
-			((ParamRef *) expr)->location = -1;
-			break;
-		case T_A_Const:
-			((A_Const *) expr)->location = -1;
-			break;
-		case T_FuncCall:
-			{
-				FuncCall *fc = (FuncCall *) expr;
-
-				/* consider both function name and leftmost arg */
-				/* (we assume any ORDER BY nodes must be to right of name) */
-				fc->location = -1;
-				clearNodeLocation((Node *) fc->args);
-			}
-			break;
-		case T_A_ArrayExpr:
-			/* the location points at ARRAY or [, which must be leftmost */
-			((A_ArrayExpr *) expr)->location = -1;
-			break;
-		case T_ResTarget:
-			/* we need not examine the contained expression (if any) */
-			((ResTarget *) expr)->location = -1;
-			break;
-		case T_MultiAssignRef:
-			return clearNodeLocation((Node *)(((MultiAssignRef *) expr)->source));
-		case T_TypeCast:
-			{
-				TypeCast *tc = (TypeCast *) expr;
-
-				/*
-				 * This could represent CAST(), ::, or TypeName 'literal', so
-				 * any of the components might be leftmost.
-				 */
-				clearNodeLocation(tc->arg);
-				tc->typeName->location = -1;
-				tc->location = -1;
-			}
-			break;
-		case T_CollateClause:
-			/* just use argument's location */
-			return clearNodeLocation(((CollateClause *) expr)->arg);
-		case T_SortBy:
-			/* just use argument's location (ignore operator, if any) */
-			return clearNodeLocation(((SortBy *) expr)->node);
-		case T_WindowDef:
-			((WindowDef *) expr)->location = -1;
-			break;
-		case T_RangeTableSample:
-			((RangeTableSample *) expr)->location = -1;
-			break;
-		case T_TypeName:
-			((TypeName *) expr)->location = -1;
-			break;
-		case T_ColumnDef:
-			((ColumnDef *) expr)->location = -1;
-			break;
-		case T_Constraint:
-			((Constraint *) expr)->location = -1;
-			break;
-		case T_FunctionParameter:
-			/* just use typename's location */
-			return clearNodeLocation((Node *) ((const FunctionParameter *) expr)->argType);
-		case T_XmlSerialize:
-			/* XMLSERIALIZE keyword should always be the first thing */
-			((XmlSerialize *) expr)->location = -1;
-			break;
-		case T_GroupingSet:
-			((GroupingSet *) expr)->location = -1;
-			break;
-		case T_WithClause:
-			((WithClause *) expr)->location = -1;
-			break;
-		case T_InferClause:
-			((InferClause *) expr)->location = -1;
-			break;
-		case T_OnConflictClause:
-			((OnConflictClause *) expr)->location = -1;
-			break;
-		case T_CommonTableExpr:
-			((CommonTableExpr *) expr)->location = -1;
-			break;
-		case T_PlaceHolderVar:
-			/* just use argument's location */
-			return clearNodeLocation((Node *) ((const PlaceHolderVar *) expr)->phexpr);
-		case T_InferenceElem:
-			/* just use nested expr's location */
-			return clearNodeLocation((Node *) ((const InferenceElem *) expr)->expr);
-		default:
-			return false;
+		return new_node;
 	}
-	return true;
-}
-
-static bool location_cleaning_walker(Node *node, void *context)
-{
-	if (node == NULL)
-		return false;
-
-	if (clearNodeLocation(node))
-		return false;
-
-	return raw_expression_tree_walker(node, location_cleaning_walker, context);
+	return expression_tree_mutator(node, expression_mutator, NULL);
 }
 
 /* By given relation id and expression returns node */
@@ -2062,7 +1741,7 @@ get_expression_node(Oid relid, const char *expr, bool analyze, RTEMapItem **rte_
 	List		*target_list;
 	char		*query_string;
 	Node		*parsetree = parse_expression(relid, expr, &query_string),
-				*raw_node;
+				*result;
 	Query		*query;
 	TargetEntry	*target_entry;
 	PlannedStmt *plan;
@@ -2070,9 +1749,8 @@ get_expression_node(Oid relid, const char *expr, bool analyze, RTEMapItem **rte_
 	target_list = ((SelectStmt *)parsetree)->targetList;
 
 	if (!analyze) {
-		raw_node = (Node *)(((ResTarget *)(lfirst(list_head(target_list))))->val);
-		//raw_expression_tree_walker(raw_node, location_cleaning_walker, NULL);
-		return raw_node;
+		result = (Node *)(((ResTarget *)(lfirst(list_head(target_list))))->val);
+		return result;
 	}
 
 	/* We don't need pathman hooks on next stages */
@@ -2106,7 +1784,9 @@ get_expression_node(Oid relid, const char *expr, bool analyze, RTEMapItem **rte_
 	/* Hooks can work now */
 	hooks_enabled = true;
 
-	return (Node *)target_entry->expr;
+	result = (Node *)target_entry->expr;
+	result = expression_mutator(result, NULL);
+	return result;
 }
 
 /* Determines type of expression for a relation */

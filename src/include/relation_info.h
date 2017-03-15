@@ -160,6 +160,18 @@ typedef struct
 } PartParentInfo;
 
 /*
+ * CustomConst
+ *		Const with Var pointer
+ *		We can know that is CustomConst by checking `location`. It should be
+ *		equal -2
+ */
+typedef struct
+{
+	Const	 cns;
+	Var		*orig;
+} CustomConst;
+
+/*
  * PartParentSearch
  *		Represents status of a specific cached entry.
  *		Returned by [for]get_parent_of_partition().

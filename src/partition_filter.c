@@ -561,37 +561,39 @@ adapt_rte_map(List *es_rangetable, RTEMapItem *rte_map)
 	}
 }
 
+struct expr_walker_context
+{
+	const PartRelationInfo	*prel;
+	TupleTableSlot			*slot;
+};
+
 static bool
-adapt_walker(Node *node, void *context)
+adapt_values (Node *node, struct expr_walker_context *context)
 {
 	if (node == NULL)
 		return false;
 
-	if (IsA(node, Var))
+	if (IsA(node, Const) && ((Const *)node)->location == -2)
 	{
-		PartRelationInfo *prel = (PartRelationInfo *)context;
-		int i = 0;
-		Var *var = (Var *)node;
+		Var			*variable;
+		AttrNumber   attnum;
+		Const		*cst;
+		bool		 isNull;
 
-		while (true)
-		{
-			RTEMapItem *item = &prel->expr_map[i];
-			if (item->relid == 0)
-				break;
+		cst = (Const *)node;
+		variable = ((CustomConst *)node)->orig;
 
-			if (var->varno == (i + 1))
-			{
-				var->varno = item->res_idx;
-				return false;
-			}
+		attnum = variable->varattno;
+		Assert(attnum != InvalidAttrNumber);
 
-			i++;
-		}
-
-		elog(ERROR, "Didn't found relation for Var in expression");
+		Assert(context->slot->tts_tupleDescriptor->
+					attrs[attnum - 1]->atttypid == cst->consttype);
+		cst->constvalue = slot_getattr(context->slot, attnum, &isNull);
+		cst->constisnull = isNull;
+		return false;
 	}
 
-	return expression_tree_walker(node, adapt_walker, context);
+	return expression_tree_walker(node, adapt_values, (void *) context);
 }
 
 void
@@ -630,14 +632,14 @@ partition_filter_exec(CustomScanState *node)
 
 	if (!TupIsNull(slot))
 	{
-		MemoryContext			old_cxt;
-		const PartRelationInfo *prel;
-		ResultRelInfoHolder	   *rri_holder;
-		bool					isnull;
-		Datum					value;
-		ExprDoneCond			itemIsDone;
-		ExprState			   *expr_state;
-		TupleTableSlot		   *orig_slot;
+		MemoryContext				 old_cxt;
+		const PartRelationInfo		*prel;
+		ResultRelInfoHolder			*rri_holder;
+		bool						 isnull;
+		Datum						 value;
+		ExprDoneCond				 itemIsDone;
+		ExprState					*expr_state;
+		struct expr_walker_context	 expr_walker_context;
 
 		/* Fetch PartRelationInfo for this partitioned relation */
 		prel = get_pathman_relation_info(state->partitioned_table);
@@ -651,16 +653,13 @@ partition_filter_exec(CustomScanState *node)
 			return slot;
 		}
 
-		/* Extract partitioned column's value (also check types)
-		Assert(slot->tts_tupleDescriptor->
-					attrs[prel->attnum - 1]->atttypid == prel->atttype);
-		value = slot_getattr(slot, prel->attnum, &isnull);
-		if (isnull)
-			elog(ERROR, ERR_PART_ATTR_NULL); */
+		/* Prepare walker context */
+		expr_walker_context.prel = prel; /* maybe slot will be enough */
+		expr_walker_context.slot = slot;
 
-		/* Modify expression to our needs */
+		/* Fetch values from slot for expression */
 		adapt_rte_map(estate->es_range_table, prel->expr_map);
-		expression_tree_walker((Node *)prel->expr, adapt_walker, (void *) prel);
+		adapt_values((Node *)prel->expr, (void *) &expr_walker_context);
 
 		/* Prepare state before execution */
 		expr_state = ExecPrepareExpr(prel->expr, estate);
@@ -669,10 +668,7 @@ partition_filter_exec(CustomScanState *node)
 		old_cxt = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 
 		/* Execute expression */
-		orig_slot = econtext->ecxt_scantuple;
-		econtext->ecxt_scantuple = slot;
 		value = ExecEvalExpr(expr_state, econtext, &isnull, &itemIsDone);
-		econtext->ecxt_scantuple = orig_slot;
 
 		if (isnull)
 			elog(ERROR, ERR_PART_ATTR_NULL);
