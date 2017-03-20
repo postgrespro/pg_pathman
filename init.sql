@@ -491,36 +491,13 @@ $$
 LANGUAGE plpgsql STRICT;
 
 /*
- * Check if two relations have equal structures.
+ * Check that tuple from first relation could be converted to fit the second one
  */
-CREATE OR REPLACE FUNCTION @extschema@.validate_relations_equality(
-	relation1 OID, relation2 OID)
-RETURNS BOOLEAN AS
-$$
-DECLARE
-	rec	RECORD;
-
-BEGIN
-	FOR rec IN (
-		WITH
-			a1 AS (select * from pg_catalog.pg_attribute
-				   where attrelid = relation1 and attnum > 0),
-			a2 AS (select * from pg_catalog.pg_attribute
-				   where attrelid = relation2 and attnum > 0)
-		SELECT a1.attname name1, a2.attname name2, a1.atttypid type1, a2.atttypid type2
-		FROM a1
-		FULL JOIN a2 ON a1.attnum = a2.attnum
-	)
-	LOOP
-		IF rec.name1 IS NULL OR rec.name2 IS NULL OR rec.name1 != rec.name2 THEN
-			RETURN false;
-		END IF;
-	END LOOP;
-
-	RETURN true;
-END
-$$
-LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION @extschema@.tuple_format_is_convertable(
+	relation1	OID,
+	relation2	OID)
+RETURNS BOOL AS 'pg_pathman', 'tuple_format_is_convertable'
+LANGUAGE C;
 
 /*
  * DDL trigger that removes entry from pathman_config table.
@@ -551,15 +528,61 @@ $$
 LANGUAGE plpgsql;
 
 /*
- * Drop triggers.
+ * Function for update triggers
+ */
+CREATE OR REPLACE FUNCTION @extschema@.update_trigger_func()
+RETURNS TRIGGER AS 'pg_pathman', 'update_trigger_func'
+LANGUAGE C;
+
+/*
+ * Creates an update trigger
+ */
+CREATE OR REPLACE FUNCTION @extschema@.create_update_triggers(parent_relid REGCLASS)
+RETURNS VOID AS 'pg_pathman', 'create_update_triggers'
+LANGUAGE C STRICT;
+
+CREATE OR REPLACE FUNCTION @extschema@.create_single_update_trigger(
+	parent_relid	REGCLASS,
+	partition_relid	REGCLASS)
+RETURNS VOID AS 'pg_pathman', 'create_single_update_trigger'
+LANGUAGE C STRICT;
+
+CREATE OR REPLACE FUNCTION @extschema@.is_update_trigger_enabled(parent_relid REGCLASS)
+RETURNS BOOL AS 'pg_pathman', 'is_update_trigger_enabled'
+LANGUAGE C STRICT;
+
+/*
+ * Drop triggers
  */
 CREATE OR REPLACE FUNCTION @extschema@.drop_triggers(
 	parent_relid	REGCLASS)
 RETURNS VOID AS
 $$
+DECLARE
+	triggername	TEXT;
+	rec			RECORD;
+
 BEGIN
-	EXECUTE format('DROP FUNCTION IF EXISTS %s() CASCADE',
-				   @extschema@.build_update_trigger_func_name(parent_relid));
+	triggername := @extschema@.build_update_trigger_name(parent_relid);
+
+	/* Drop trigger for each partition if exists */
+	FOR rec IN (SELECT pg_catalog.pg_inherits.* FROM pg_catalog.pg_inherits
+				JOIN pg_catalog.pg_trigger ON inhrelid = tgrelid
+				WHERE inhparent = parent_relid AND tgname = triggername)
+	LOOP
+		EXECUTE format('DROP TRIGGER IF EXISTS %s ON %s',
+					   triggername,
+					   rec.inhrelid::REGCLASS::TEXT);
+	END LOOP;
+
+	/* Drop trigger on parent */
+	IF EXISTS (SELECT * FROM pg_catalog.pg_trigger
+			   WHERE tgname = triggername AND tgrelid = parent_relid)
+	THEN
+		EXECUTE format('DROP TRIGGER IF EXISTS %s ON %s',
+					   triggername,
+					   parent_relid::TEXT);
+	END IF;
 END
 $$ LANGUAGE plpgsql STRICT;
 

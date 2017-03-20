@@ -1004,8 +1004,8 @@ BEGIN
 	/* check range overlap */
 	PERFORM @extschema@.check_range_available(parent_relid, start_value, end_value);
 
-	IF NOT @extschema@.validate_relations_equality(parent_relid, partition_relid) THEN
-		RAISE EXCEPTION 'partition must have the exact same structure as parent';
+	IF NOT @extschema@.tuple_format_is_convertable(parent_relid, partition_relid) THEN
+		RAISE EXCEPTION 'partition must have a compatible tuple format';
 	END IF;
 
 	/* Set inheritance */
@@ -1034,6 +1034,12 @@ BEGIN
 	ON params.partrel = parent_relid
 	INTO v_init_callback;
 
+	/* If update trigger is enabled then create one for this partition */
+	if @extschema@.is_update_trigger_enabled(parent_relid) THEN
+		PERFORM @extschema@.create_single_update_trigger(parent_relid, partition_relid);
+	END IF;
+
+	/* Invoke an initialization callback */
 	PERFORM @extschema@.invoke_on_partition_created_callback(parent_relid,
 															 partition_relid,
 															 v_init_callback,
@@ -1083,6 +1089,11 @@ BEGIN
 				   partition_relid::TEXT,
 				   @extschema@.build_check_constraint_name(partition_relid, v_attname));
 
+	/* Remove update trigger */
+	EXECUTE format('DROP TRIGGER IF EXISTS %s ON %s',
+				   @extschema@.build_update_trigger_name(parent_relid),
+				   partition_relid::TEXT);
+
 	/* Invalidate cache */
 	PERFORM @extschema@.on_update_partitions(parent_relid);
 
@@ -1090,103 +1101,6 @@ BEGIN
 END
 $$
 LANGUAGE plpgsql;
-
-/*
- * Creates an update trigger
- */
-CREATE OR REPLACE FUNCTION @extschema@.create_range_update_trigger(
-	IN parent_relid	REGCLASS)
-RETURNS TEXT AS
-$$
-DECLARE
-	func			TEXT := 'CREATE OR REPLACE FUNCTION %1$s()
-							 RETURNS TRIGGER AS
-							 $body$
-							 DECLARE
-								old_oid		Oid;
-								new_oid		Oid;
-
-							 BEGIN
-								old_oid := TG_RELID;
-								new_oid := @extschema@.find_or_create_range_partition(
-												''%2$s''::regclass, NEW.%3$s);
-
-								IF old_oid = new_oid THEN
-									RETURN NEW;
-								END IF;
-
-								EXECUTE format(''DELETE FROM %%s WHERE %5$s'',
-											   old_oid::regclass::text)
-								USING %6$s;
-
-								EXECUTE format(''INSERT INTO %%s VALUES (%7$s)'',
-											   new_oid::regclass::text)
-								USING %8$s;
-
-								RETURN NULL;
-							 END $body$
-							 LANGUAGE plpgsql';
-
-	trigger			TEXT := 'CREATE TRIGGER %s ' ||
-							'BEFORE UPDATE ON %s ' ||
-							'FOR EACH ROW EXECUTE PROCEDURE %s()';
-
-	triggername		TEXT;
-	funcname		TEXT;
-	att_names		TEXT;
-	old_fields		TEXT;
-	new_fields		TEXT;
-	att_val_fmt		TEXT;
-	att_fmt			TEXT;
-	attr			TEXT;
-	rec				RECORD;
-
-BEGIN
-	attr := attname FROM @extschema@.pathman_config WHERE partrel = parent_relid;
-
-	IF attr IS NULL THEN
-		RAISE EXCEPTION 'table "%" is not partitioned', parent_relid::TEXT;
-	END IF;
-
-	SELECT string_agg(attname, ', '),
-		   string_agg('OLD.' || attname, ', '),
-		   string_agg('NEW.' || attname, ', '),
-		   string_agg('CASE WHEN NOT $' || attnum || ' IS NULL THEN ' ||
-							attname || ' = $' || attnum || ' ' ||
-					  'ELSE ' ||
-							attname || ' IS NULL END',
-					  ' AND '),
-		   string_agg('$' || attnum, ', ')
-	FROM pg_attribute
-	WHERE attrelid::REGCLASS = parent_relid AND attnum > 0
-	INTO att_names,
-		 old_fields,
-		 new_fields,
-		 att_val_fmt,
-		 att_fmt;
-
-	/* Build trigger & trigger function's names */
-	funcname := @extschema@.build_update_trigger_func_name(parent_relid);
-	triggername := @extschema@.build_update_trigger_name(parent_relid);
-
-	/* Create function for trigger */
-	EXECUTE format(func, funcname, parent_relid, attr, 0, att_val_fmt,
-				   old_fields, att_fmt, new_fields);
-
-	/* Create trigger on every partition */
-	FOR rec in (SELECT * FROM pg_catalog.pg_inherits
-				WHERE inhparent = parent_relid)
-	LOOP
-		EXECUTE format(trigger,
-					   triggername,
-					   rec.inhrelid::REGCLASS::TEXT,
-					   funcname);
-	END LOOP;
-
-	RETURN funcname;
-END
-$$ LANGUAGE plpgsql;
-
 
 /*
  * Drops partition and expands the next partition so that it cover dropped

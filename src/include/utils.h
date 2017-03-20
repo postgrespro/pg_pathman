@@ -27,6 +27,7 @@
 bool clause_contains_params(Node *clause);
 bool is_date_type_internal(Oid typid);
 bool check_security_policy_internal(Oid relid, Oid role);
+char *build_update_trigger_name_internal(Oid relid);
 
 /*
  * Misc.
@@ -43,6 +44,8 @@ Oid get_attribute_type(Oid relid, const char *attname, bool missing_ok);
 #if PG_VERSION_NUM < 90600
 char get_rel_persistence(Oid relid);
 #endif
+RangeVar *makeRangeVarFromRelid(Oid relid);
+bool check_relation_exists(Oid relid);
 
 /*
  * Operator-related stuff.

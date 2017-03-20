@@ -28,7 +28,6 @@ NOTICE:  sequence "part_test_seq" does not exist, skipping
 (1 row)
 
 SELECT drop_partitions('calamity.part_test');
-NOTICE:  function calamity.part_test_upd_trig_func() does not exist, skipping
 NOTICE:  10 rows copied from calamity.part_test_1
 NOTICE:  10 rows copied from calamity.part_test_2
 NOTICE:  10 rows copied from calamity.part_test_3
@@ -44,7 +43,6 @@ SELECT create_range_partitions('calamity.part_test', 'val', 1, 10);
 (1 row)
 
 SELECT drop_partitions('calamity.part_test');
-NOTICE:  function calamity.part_test_upd_trig_func() does not exist, skipping
 NOTICE:  10 rows copied from calamity.part_test_1
 NOTICE:  10 rows copied from calamity.part_test_2
 NOTICE:  10 rows copied from calamity.part_test_3
@@ -66,7 +64,6 @@ SELECT append_range_partition('calamity.part_test');
 (1 row)
 
 SELECT drop_partitions('calamity.part_test');
-NOTICE:  function calamity.part_test_upd_trig_func() does not exist, skipping
 NOTICE:  10 rows copied from calamity.part_test_1
 NOTICE:  10 rows copied from calamity.part_test_2
 NOTICE:  10 rows copied from calamity.part_test_3
@@ -89,7 +86,6 @@ SELECT append_range_partition('calamity.part_test');
 (1 row)
 
 SELECT drop_partitions('calamity.part_test');
-NOTICE:  function calamity.part_test_upd_trig_func() does not exist, skipping
 NOTICE:  10 rows copied from calamity.part_test_1
 NOTICE:  10 rows copied from calamity.part_test_2
 NOTICE:  10 rows copied from calamity.part_test_3
@@ -171,7 +167,6 @@ EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_test;
 (5 rows)
 
 SELECT drop_partitions('calamity.part_test', true);
-NOTICE:  function calamity.part_test_upd_trig_func() does not exist, skipping
  drop_partitions 
 -----------------
                4
@@ -199,7 +194,6 @@ ERROR:  invalid input syntax for integer: "15.6"
 SELECT set_interval('calamity.part_test', 'abc'::text);		/* not ok */
 ERROR:  invalid input syntax for integer: "abc"
 SELECT drop_partitions('calamity.part_test', true);
-NOTICE:  function calamity.part_test_upd_trig_func() does not exist, skipping
  drop_partitions 
 -----------------
                3
@@ -479,7 +473,6 @@ SELECT add_to_pathman_config('calamity.part_test', 'val');		/* OK */
 (1 row)
 
 SELECT disable_pathman_for('calamity.part_test');
-NOTICE:  function calamity.part_test_upd_trig_func() does not exist, skipping
  disable_pathman_for 
 ---------------------
  
@@ -492,7 +485,6 @@ SELECT add_to_pathman_config('calamity.part_test', 'val', '10'); /* OK */
 (1 row)
 
 SELECT disable_pathman_for('calamity.part_test');
-NOTICE:  function calamity.part_test_upd_trig_func() does not exist, skipping
  disable_pathman_for 
 ---------------------
  
@@ -599,7 +591,6 @@ SELECT set_enable_parent('calamity.to_be_disabled', true); /* add row to params 
 (1 row)
 
 SELECT disable_pathman_for('calamity.to_be_disabled'); /* should delete both rows */
-NOTICE:  function calamity.to_be_disabled_upd_trig_func() does not exist, skipping
  disable_pathman_for 
 ---------------------
  
