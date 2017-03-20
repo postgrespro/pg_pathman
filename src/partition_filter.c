@@ -10,6 +10,7 @@
 
 #include "init.h"
 #include "nodes_common.h"
+#include "pathman.h"
 #include "partition_creation.h"
 #include "partition_filter.h"
 #include "planner_tree_modification.h"
@@ -30,7 +31,7 @@
 
 
 /*
- * NOTE: 'estate->es_query_cxt' as data storage
+ * HACK: 'estate->es_query_cxt' as data storage
  *
  * We use this struct as an argument for fake
  * MemoryContextCallback pf_memcxt_callback()
@@ -248,6 +249,7 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 					   *parent_rte;
 		Index			child_rte_idx;
 		ResultRelInfo  *child_result_rel_info;
+		List		   *translated_vars;
 
 		/* Lock partition and check if it exists */
 		LockRelationOid(partid, parts_storage->head_open_lock_mode);
@@ -264,16 +266,21 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 		child_rel = heap_open(partid, NoLock);
 		CheckValidResultRel(child_rel, parts_storage->command_type);
 
+		/* Build Var translation list for 'inserted_cols' */
+		make_inh_translation_list(parent_rel, child_rel, 0, &translated_vars);
+
 		/* Create RangeTblEntry for partition */
 		child_rte = makeNode(RangeTblEntry);
-
 		child_rte->rtekind			= RTE_RELATION;
 		child_rte->relid			= partid;
 		child_rte->relkind			= child_rel->rd_rel->relkind;
 		child_rte->eref				= parent_rte->eref;
 		child_rte->requiredPerms	= parent_rte->requiredPerms;
 		child_rte->checkAsUser		= parent_rte->checkAsUser;
-		child_rte->insertedCols		= parent_rte->insertedCols;
+		child_rte->insertedCols		= translate_col_privs(parent_rte->insertedCols,
+														  translated_vars);
+		child_rte->updatedCols		= translate_col_privs(parent_rte->updatedCols,
+														  translated_vars);
 
 		/* Check permissions for partition */
 		ExecCheckRTPerms(list_make1(child_rte), true);

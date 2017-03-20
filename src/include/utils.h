@@ -41,9 +41,6 @@ List * list_reverse(List *l);
 Oid get_rel_owner(Oid relid);
 char * get_rel_name_or_relid(Oid relid);
 Oid get_attribute_type(Oid relid, const char *attname, bool missing_ok);
-#if PG_VERSION_NUM < 90600
-char get_rel_persistence(Oid relid);
-#endif
 RangeVar *makeRangeVarFromRelid(Oid relid);
 bool check_relation_exists(Oid relid);
 
@@ -56,7 +53,6 @@ void extract_op_func_and_ret_type(char *opname,
 								  Oid type1, Oid type2,
 								  Oid *op_func,
 								  Oid *op_ret_type);
-
 
 /*
  * Print values and cast types.

@@ -856,6 +856,21 @@ NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_14 HAS EXPIRED. INSERTED ROW: 
       256 | 128 | test_inserts.storage_14
 (27 rows)
 
+/* test gap case (missing partition in between) */
+CREATE TABLE test_inserts.test_gap(val INT NOT NULL);
+INSERT INTO test_inserts.test_gap SELECT generate_series(1, 30);
+SELECT create_range_partitions('test_inserts.test_gap', 'val', 1, 10);
+NOTICE:  sequence "test_gap_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                       3
+(1 row)
+
+DROP TABLE test_inserts.test_gap_2; /* make a gap */
+INSERT INTO test_inserts.test_gap VALUES(15); /* not ok */
+ERROR:  cannot spawn a partition
+DROP TABLE test_inserts.test_gap CASCADE;
+NOTICE:  drop cascades to 2 other objects
 DROP SCHEMA test_inserts CASCADE;
-NOTICE:  drop cascades to 19 other objects
+NOTICE:  drop cascades to 20 other objects
 DROP EXTENSION pg_pathman CASCADE;

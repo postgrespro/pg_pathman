@@ -172,7 +172,7 @@ init_main_pathman_toggles(void)
 							 "Enables pg_pathman's optimizations during the planner stage",
 							 NULL,
 							 &pg_pathman_init_state.pg_pathman_enable,
-							 true,
+							 DEFAULT_PATHMAN_ENABLE,
 							 PGC_SUSET,
 							 0,
 							 NULL,
@@ -196,7 +196,7 @@ init_main_pathman_toggles(void)
 							 "Override COPY statement handling",
 							 NULL,
 							 &pg_pathman_init_state.override_copy,
-							 true,
+							 DEFAULT_OVERRIDE_COPY,
 							 PGC_SUSET,
 							 0,
 							 NULL,
@@ -268,8 +268,7 @@ unload_config(void)
 Size
 estimate_pathman_shmem_size(void)
 {
-	return estimate_concurrent_part_task_slots_size() +
-		   MAXALIGN(sizeof(PathmanState));
+	return estimate_concurrent_part_task_slots_size();
 }
 
 /*
@@ -365,33 +364,6 @@ fini_local_cache(void)
 	hash_destroy(parent_cache);
 	partitioned_rels = NULL;
 	parent_cache = NULL;
-}
-
-/*
- * Initializes pg_pathman's global state (PathmanState) & locks.
- */
-void
-init_shmem_config(void)
-{
-	bool found;
-
-	/* Check if module was initialized in postmaster */
-	pmstate = ShmemInitStruct("pg_pathman's global state",
-							  sizeof(PathmanState), &found);
-	if (!found)
-	{
-		/*
-		 * Initialize locks in postmaster
-		 */
-		if (!IsUnderPostmaster)
-		{
-			/* NOTE: dsm_array is redundant, hence the commented code */
-			/* pmstate->dsm_init_lock = LWLockAssign(); */
-		}
-	}
-
-	/* Allocate some space for concurrent part slots */
-	init_concurrent_part_task_slots();
 }
 
 /*

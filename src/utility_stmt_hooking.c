@@ -11,6 +11,7 @@
  * ------------------------------------------------------------------------
  */
 
+#include "compat/debug_compat_features.h"
 #include "init.h"
 #include "utility_stmt_hooking.h"
 #include "partition_filter.h"
@@ -33,10 +34,11 @@
 #include "libpq/libpq.h"
 
 
-/*
- * Determine whether we should enable COPY or not (PostgresPro has a fix).
- */
-#if defined(WIN32) && !defined(PGPRO_PATHMAN_AWARE_COPY)
+/* Determine whether we should enable COPY or not (PostgresPro has a fix) */
+#if defined(WIN32) && \
+		(!defined(ENABLE_PGPRO_PATCHES) || \
+		 !defined(ENABLE_PATHMAN_AWARE_COPY_WIN32) || \
+		 !defined(PGPRO_PATHMAN_AWARE_COPY))
 #define DISABLE_PATHMAN_COPY
 #endif
 

@@ -77,7 +77,7 @@ SELECT prepend_range_partition('permissions.user1_table');
  permissions.user1_table_4
 (1 row)
 
-SELECT attname, attacl from pg_attribute
+SELECT attname, attacl FROM pg_attribute
 WHERE attrelid = (SELECT "partition" FROM pathman_partition_list
 				  WHERE parent = 'permissions.user1_table'::REGCLASS
 				  ORDER BY range_min::int ASC /* prepend */
@@ -164,6 +164,73 @@ NOTICE:  10 rows copied from permissions.user2_table_2
                3
 (1 row)
 
+/* Switch to #1 */
+SET ROLE user1;
+CREATE TABLE permissions.dropped_column(a int, val int not null, b int, c int);
+INSERT INTO permissions.dropped_column SELECT i,i,i,i FROM generate_series(1, 30) i;
+GRANT SELECT(val), INSERT(val) ON permissions.dropped_column TO user2;
+SELECT create_range_partitions('permissions.dropped_column', 'val', 1, 10);
+NOTICE:  sequence "dropped_column_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                       3
+(1 row)
+
+SELECT attrelid::regclass, attname, attacl FROM pg_attribute
+WHERE attrelid = ANY (SELECT "partition" FROM pathman_partition_list
+					  WHERE parent = 'permissions.dropped_column'::REGCLASS)
+	  AND attacl IS NOT NULL
+ORDER BY attrelid::regclass::text; /* check ACL for each column */
+           attrelid           | attname |      attacl      
+------------------------------+---------+------------------
+ permissions.dropped_column_1 | val     | {user2=ar/user1}
+ permissions.dropped_column_2 | val     | {user2=ar/user1}
+ permissions.dropped_column_3 | val     | {user2=ar/user1}
+(3 rows)
+
+ALTER TABLE permissions.dropped_column DROP COLUMN a; /* DROP "a" */
+SELECT append_range_partition('permissions.dropped_column');
+    append_range_partition    
+------------------------------
+ permissions.dropped_column_4
+(1 row)
+
+SELECT attrelid::regclass, attname, attacl FROM pg_attribute
+WHERE attrelid = ANY (SELECT "partition" FROM pathman_partition_list
+					  WHERE parent = 'permissions.dropped_column'::REGCLASS)
+	  AND attacl IS NOT NULL
+ORDER BY attrelid::regclass::text; /* check ACL for each column (+1 partition) */
+           attrelid           | attname |      attacl      
+------------------------------+---------+------------------
+ permissions.dropped_column_1 | val     | {user2=ar/user1}
+ permissions.dropped_column_2 | val     | {user2=ar/user1}
+ permissions.dropped_column_3 | val     | {user2=ar/user1}
+ permissions.dropped_column_4 | val     | {user2=ar/user1}
+(4 rows)
+
+ALTER TABLE permissions.dropped_column DROP COLUMN b; /* DROP "b" */
+SELECT append_range_partition('permissions.dropped_column');
+    append_range_partition    
+------------------------------
+ permissions.dropped_column_5
+(1 row)
+
+SELECT attrelid::regclass, attname, attacl FROM pg_attribute
+WHERE attrelid = ANY (SELECT "partition" FROM pathman_partition_list
+					  WHERE parent = 'permissions.dropped_column'::REGCLASS)
+	  AND attacl IS NOT NULL
+ORDER BY attrelid::regclass::text; /* check ACL for each column (+1 partition) */
+           attrelid           | attname |      attacl      
+------------------------------+---------+------------------
+ permissions.dropped_column_1 | val     | {user2=ar/user1}
+ permissions.dropped_column_2 | val     | {user2=ar/user1}
+ permissions.dropped_column_3 | val     | {user2=ar/user1}
+ permissions.dropped_column_4 | val     | {user2=ar/user1}
+ permissions.dropped_column_5 | val     | {user2=ar/user1}
+(5 rows)
+
+DROP TABLE permissions.dropped_column CASCADE;
+NOTICE:  drop cascades to 5 other objects
 /* Finally reset user */
 RESET ROLE;
 DROP OWNED BY user1;

@@ -1,7 +1,6 @@
 CREATE EXTENSION pg_pathman;
 CREATE SCHEMA rowmarks;
 
-
 CREATE TABLE rowmarks.first(id int NOT NULL);
 CREATE TABLE rowmarks.second(id int NOT NULL);
 

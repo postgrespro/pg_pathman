@@ -7,7 +7,8 @@ OBJS = src/init.o src/relation_info.o src/utils.o src/partition_filter.o \
 	src/pl_funcs.o src/pl_range_funcs.o src/pl_hash_funcs.o src/pathman_workers.o \
 	src/hooks.o src/nodes_common.o src/xact_handling.o src/utility_stmt_hooking.o \
 	src/planner_tree_modification.o src/debug_print.o src/partition_creation.o \
-	src/compat/pg_compat.o $(WIN32RES)
+	src/compat/pg_compat.o src/compat/relation_tags.o src/compat/expand_rte_hook.o \
+	src/compat/rowmarks_fix.o $(WIN32RES)
 
 PG_CPPFLAGS = -I$(CURDIR)/src/include
 
@@ -24,6 +25,7 @@ DATA = pg_pathman--1.0--1.1.sql \
 PGFILEDESC = "pg_pathman - partitioning tool"
 
 REGRESS = pathman_basic \
+		  pathman_only \
 		  pathman_cte \
 		  pathman_bgw \
 		  pathman_inserts \
@@ -35,7 +37,7 @@ REGRESS = pathman_basic \
 		  pathman_permissions \
 		  pathman_rowmarks \
 		  pathman_runtime_nodes \
-		  pathman_utility_stmt_hooking \
+		  pathman_utility_stmt \
 		  pathman_calamity
 
 EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add

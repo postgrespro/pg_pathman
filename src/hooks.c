@@ -8,11 +8,15 @@
  * ------------------------------------------------------------------------
  */
 
+#include "compat/expand_rte_hook.h"
 #include "compat/pg_compat.h"
+#include "compat/relation_tags.h"
+#include "compat/rowmarks_fix.h"
 
 #include "hooks.h"
 #include "init.h"
 #include "partition_filter.h"
+#include "pathman_workers.h"
 #include "planner_tree_modification.h"
 #include "runtimeappend.h"
 #include "runtime_merge_append.h"
@@ -194,9 +198,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 						  RangeTblEntry *rte)
 {
 	const PartRelationInfo *prel;
-	RangeTblEntry		  **new_rte_array;
-	RelOptInfo			  **new_rel_array;
-	int						len;
+	int						irange_len;
 
 	/* Invoke original hook if needed */
 	if (set_rel_pathlist_hook_next != NULL)
@@ -206,16 +208,24 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 	if (!IsPathmanReady())
 		return;
 
-	/* This works only for SELECTs or INSERTs on simple relations */
+	/*
+	 * Skip if it's a result relation (UPDATE | DELETE | INSERT),
+	 * or not a (partitioned) physical relation at all.
+	 */
 	if (rte->rtekind != RTE_RELATION ||
 		rte->relkind != RELKIND_RELATION ||
-			(root->parse->commandType != CMD_SELECT &&
-			 root->parse->commandType != CMD_INSERT)) /* INSERT INTO ... SELECT ... */
+		root->parse->resultRelation == rti)
 		return;
 
-	/* Skip if this table is not allowed to act as parent (see FROM ONLY) */
-	if (PARENTHOOD_DISALLOWED == get_rel_parenthood_status(root->parse->queryId,
-														   rte->relid))
+/* It's better to exit, since RowMarks might be broken (hook aims to fix them) */
+#ifndef NATIVE_EXPAND_RTE_HOOK
+	if (root->parse->commandType != CMD_SELECT &&
+		root->parse->commandType != CMD_INSERT)
+		return;
+#endif
+
+	/* Skip if this table is not allowed to act as parent (e.g. FROM ONLY) */
+	if (PARENTHOOD_DISALLOWED == get_rel_parenthood_status(root->parse->queryId, rte))
 		return;
 
 	/* Proceed iff relation 'rel' is partitioned */
@@ -245,7 +255,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			int32			type_mod;
 			TypeCacheEntry *tce;
 
-			/* Make Var from patition column */
+			/* Make Var from partition column */
 			get_rte_attribute_type(rte, prel->attnum,
 								   &vartypeid, &type_mod, &varcollid);
 			var = makeVar(rti, prel->attnum, vartypeid, type_mod, varcollid, 0);
@@ -255,17 +265,18 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			tce = lookup_type_cache(var->vartype, TYPECACHE_LT_OPR | TYPECACHE_GT_OPR);
 
 			/* Make pathkeys */
-			pathkeys = build_expression_pathkey(root, (Expr *)var, NULL,
+			pathkeys = build_expression_pathkey(root, (Expr *) var, NULL,
 												tce->lt_opr, NULL, false);
 			if (pathkeys)
 				pathkeyAsc = (PathKey *) linitial(pathkeys);
-			pathkeys = build_expression_pathkey(root, (Expr *)var, NULL,
+			pathkeys = build_expression_pathkey(root, (Expr *) var, NULL,
 												tce->gt_opr, NULL, false);
 			if (pathkeys)
 				pathkeyDesc = (PathKey *) linitial(pathkeys);
 		}
 
-		rte->inh = true; /* we must restore 'inh' flag! */
+		/* HACK: we must restore 'inh' flag! */
+		rte->inh = true;
 
 		children = PrelGetChildrenArray(prel);
 		ranges = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_COMPLETE));
@@ -286,35 +297,34 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		}
 
 		/* Get number of selected partitions */
-		len = irange_list_length(ranges);
+		irange_len = irange_list_length(ranges);
 		if (prel->enable_parent)
-			len++; /* add parent too */
+			irange_len++; /* also add parent */
 
 		/* Expand simple_rte_array and simple_rel_array */
-		if (len > 0)
+		if (irange_len > 0)
 		{
-			/* Expand simple_rel_array and simple_rte_array */
-			new_rel_array = (RelOptInfo **)
-				palloc0((root->simple_rel_array_size + len) * sizeof(RelOptInfo *));
+			int current_len	= root->simple_rel_array_size,
+				new_len		= current_len + irange_len;
 
-			/* simple_rte_array is an array equivalent of the rtable list */
-			new_rte_array = (RangeTblEntry **)
-				palloc0((root->simple_rel_array_size + len) * sizeof(RangeTblEntry *));
+			/* Expand simple_rel_array */
+			root->simple_rel_array = (RelOptInfo **)
+					repalloc(root->simple_rel_array,
+							 new_len * sizeof(RelOptInfo *));
 
-			/* Copy relations to the new arrays */
-			for (i = 0; i < root->simple_rel_array_size; i++)
-			{
-				new_rel_array[i] = root->simple_rel_array[i];
-				new_rte_array[i] = root->simple_rte_array[i];
-			}
+			memset((void *) &root->simple_rel_array[current_len], 0,
+				   irange_len * sizeof(RelOptInfo *));
 
-			/* Free old arrays */
-			pfree(root->simple_rel_array);
-			pfree(root->simple_rte_array);
+			/* Expand simple_rte_array */
+			root->simple_rte_array = (RangeTblEntry **)
+					repalloc(root->simple_rte_array,
+							 new_len * sizeof(RangeTblEntry *));
 
-			root->simple_rel_array_size += len;
-			root->simple_rel_array = new_rel_array;
-			root->simple_rte_array = new_rte_array;
+			memset((void *) &root->simple_rte_array[current_len], 0,
+				   irange_len * sizeof(RangeTblEntry *));
+
+			/* Don't forget to update array size! */
+			root->simple_rel_array_size = new_len;
 		}
 
 		/* Parent has already been locked by rewriter */
@@ -475,8 +485,8 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	{
 		if (pathman_ready)
 		{
-			/* Increment parenthood_statuses refcount */
-			incr_refcount_parenthood_statuses();
+			/* Increment relation tags refcount */
+			incr_refcount_relation_tags();
 
 			/* Modify query tree if needed */
 			pathman_transform_query(parse);
@@ -496,8 +506,8 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 			/* Add PartitionFilter node for INSERT queries */
 			ExecuteForPlanTree(result, add_partition_filters);
 
-			/* Decrement parenthood_statuses refcount */
-			decr_refcount_parenthood_statuses();
+			/* Decrement relation tags refcount */
+			decr_refcount_relation_tags();
 
 			/* HACK: restore queryId set by pg_stat_statements */
 			result->queryId = query_id;
@@ -509,7 +519,7 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 		if (pathman_ready)
 		{
 			/* Caught an ERROR, decrease refcount */
-			decr_refcount_parenthood_statuses();
+			decr_refcount_relation_tags();
 		}
 
 		/* Rethrow ERROR further */
@@ -552,7 +562,7 @@ pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
 	}
 
 	/* Process inlined SQL functions (we've already entered planning stage) */
-	if (IsPathmanReady() && get_refcount_parenthood_statuses() > 0)
+	if (IsPathmanReady() && get_refcount_relation_tags() > 0)
 	{
 		/* Check that pg_pathman is the last extension loaded */
 		if (post_parse_analyze_hook != pathman_post_parse_analysis_hook)
@@ -590,7 +600,7 @@ pathman_shmem_startup_hook(void)
 
 	/* Allocate shared memory objects */
 	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
-	init_shmem_config();
+	init_concurrent_part_task_slots();
 	LWLockRelease(AddinShmemInitLock);
 }
 

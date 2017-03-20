@@ -171,6 +171,9 @@ xact_object_is_visible(TransactionId obj_xmin)
 /*
  * Do we hold the specified lock?
  */
+#ifdef __GNUC__
+__attribute__((unused))
+#endif
 static inline bool
 do_we_hold_the_lock(Oid relid, LOCKMODE lockmode)
 {

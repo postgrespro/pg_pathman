@@ -341,7 +341,7 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
 		/* Get both PartRelationInfo & PATHMAN_CONFIG contents for this relation */
 		if (pathman_config_contains_relation(relid, values, isnull, NULL))
 		{
-			Oid			base_bound_type;		/* base type of prel->atttype */
+			Oid			base_bound_type;	/* base type of prel->atttype */
 			Oid			base_value_type;	/* base type of value_type */
 
 			/* Fetch PartRelationInfo by 'relid' */
@@ -883,11 +883,15 @@ create_table_using_stmt(CreateStmt *create_stmt, Oid relowner)
 static void
 postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid)
 {
-	Relation		pg_class_rel,
+	Relation		parent_rel,
+					partition_rel,
+					pg_class_rel,
 					pg_attribute_rel;
 
 	TupleDesc		pg_class_desc,
 					pg_attribute_desc;
+
+	List		   *translated_vars;
 
 	HeapTuple		htup;
 	ScanKeyData		skey[2];
@@ -898,6 +902,16 @@ postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid)
 
 	Snapshot		snapshot;
 
+	/* Both parent & partition have already been locked */
+	parent_rel = heap_open(parent_relid, NoLock);
+	partition_rel = heap_open(partition_relid, NoLock);
+
+	make_inh_translation_list(parent_rel, partition_rel, 0, &translated_vars);
+
+	heap_close(parent_rel, NoLock);
+	heap_close(partition_rel, NoLock);
+
+	/* Open catalog's relations */
 	pg_class_rel = heap_open(RelationRelationId, RowExclusiveLock);
 	pg_attribute_rel = heap_open(AttributeRelationId, RowExclusiveLock);
 
@@ -940,9 +954,9 @@ postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid)
 	if (HeapTupleIsValid(htup = systable_getnext(scan)))
 	{
 		ItemPointerData		iptr;
-		Datum				values[Natts_pg_class] = { (Datum) 0 };
-		bool				nulls[Natts_pg_class] = { false };
-		bool				replaces[Natts_pg_class] = { false };
+		Datum				values[Natts_pg_class]		= { (Datum) 0 };
+		bool				nulls[Natts_pg_class]		= { false };
+		bool				replaces[Natts_pg_class]	= { false };
 
 		/* Copy ItemPointer of this tuple */
 		iptr = htup->t_self;
@@ -976,9 +990,8 @@ postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid)
 				BTEqualStrategyNumber, F_INT2GT,
 				Int16GetDatum(InvalidAttrNumber));
 
-	scan = systable_beginscan(pg_attribute_rel,
-							  AttributeRelidNumIndexId,
-							  true, snapshot, 2, skey);
+	scan = systable_beginscan(pg_attribute_rel, AttributeRelidNumIndexId,
+							  true, snapshot, lengthof(skey), skey);
 
 	/* Go through the list of parent's columns */
 	while (HeapTupleIsValid(htup = systable_getnext(scan)))
@@ -989,6 +1002,7 @@ postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid)
 
 		AttrNumber		cur_attnum;
 		bool			cur_attnum_null;
+		Var			   *cur_var;
 
 		/* Get parent column's ACL */
 		acl_datum = heap_getattr(htup, Anum_pg_attribute_attacl,
@@ -1006,10 +1020,17 @@ postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid)
 								  acl_column->attlen);
 		}
 
-		/* Fetch number of current column */
+		/* Fetch number of current column (parent) */
 		cur_attnum = DatumGetInt16(heap_getattr(htup, Anum_pg_attribute_attnum,
 												pg_attribute_desc, &cur_attnum_null));
 		Assert(cur_attnum_null == false); /* must not be NULL! */
+
+		/* Fetch Var of partition's corresponding column */
+		cur_var = (Var *) list_nth(translated_vars, cur_attnum - 1);
+		if (!cur_var)
+			continue; /* column is dropped */
+
+		Assert(cur_var->varattno != InvalidAttrNumber);
 
 		/* Search for 'partition_relid' */
 		ScanKeyInit(&subskey[0],
@@ -1021,19 +1042,18 @@ postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid)
 		ScanKeyInit(&subskey[1],
 					Anum_pg_attribute_attnum,
 					BTEqualStrategyNumber, F_INT2EQ,
-					Int16GetDatum(cur_attnum));
+					Int16GetDatum(cur_var->varattno)); /* partition's column */
 
-		subscan = systable_beginscan(pg_attribute_rel,
-									 AttributeRelidNumIndexId,
-									 true, snapshot, 2, subskey);
+		subscan = systable_beginscan(pg_attribute_rel, AttributeRelidNumIndexId,
+									 true, snapshot, lengthof(subskey), subskey);
 
 		/* There should be exactly one tuple (our child's column) */
 		if (HeapTupleIsValid(subhtup = systable_getnext(subscan)))
 		{
 			ItemPointerData		iptr;
-			Datum				values[Natts_pg_attribute] = { (Datum) 0 };
-			bool				nulls[Natts_pg_attribute] = { false };
-			bool				replaces[Natts_pg_attribute] = { false };
+			Datum				values[Natts_pg_attribute]		= { (Datum) 0 };
+			bool				nulls[Natts_pg_attribute]		= { false };
+			bool				replaces[Natts_pg_attribute]	= { false };
 
 			/* Copy ItemPointer of this tuple */
 			iptr = subhtup->t_self;

@@ -15,6 +15,7 @@
 #include "access/sysattr.h"
 #include "optimizer/restrictinfo.h"
 #include "optimizer/var.h"
+#include "rewrite/rewriteManip.h"
 #include "utils/memutils.h"
 
 
@@ -112,31 +113,19 @@ select_required_plans(HTAB *children_table, Oid *parts, int nparts, int *nres)
 	return result;
 }
 
-/* Replace Vars' varnos with the value provided by 'parent' */
+/* Replace 'varno' of child's Vars with the 'append_rel_rti' */
 static List *
-replace_tlist_varnos(List *child_tlist, RelOptInfo *parent)
+replace_tlist_varnos(List *tlist, Index old_varno, Index new_varno)
 {
-	ListCell   *lc;
-	List	   *result = NIL;
-	int			i = 1; /* resnos begin with 1 */
+	List *temp_tlist;
 
-	foreach (lc, child_tlist)
-	{
-		Var *var = (Var *) ((TargetEntry *) lfirst(lc))->expr;
-		Var *newvar = (Var *) palloc(sizeof(Var));
+	AssertArg(old_varno != 0);
+	AssertArg(new_varno != 0);
 
-		Assert(IsA(var, Var));
+	temp_tlist = copyObject(tlist);
+	ChangeVarNodes((Node *) temp_tlist, old_varno, new_varno, 0);
 
-		*newvar = *var;
-		newvar->varno = parent->relid;
-		newvar->varnoold = parent->relid;
-
-		result = lappend(result, makeTargetEntry((Expr *) newvar,
-												 i++, /* item's index */
-												 NULL, false));
-	}
-
-	return result;
+	return temp_tlist;
 }
 
 /* Append partition attribute in case it's not present in target list */
@@ -407,21 +396,30 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 
 	cscan = makeNode(CustomScan);
 	cscan->custom_scan_tlist = NIL; /* initial value (empty list) */
-	cscan->scan.plan.targetlist = NIL;
 
 	if (custom_plans)
 	{
 		ListCell   *lc1,
 				   *lc2;
+		bool		processed_rel_tlist = false;
+
+		Assert(list_length(rpath->cpath.custom_paths) == list_length(custom_plans));
 
 		forboth (lc1, rpath->cpath.custom_paths, lc2, custom_plans)
 		{
 			Plan		   *child_plan = (Plan *) lfirst(lc2);
 			RelOptInfo 	   *child_rel = ((Path *) lfirst(lc1))->parent;
 
-			/* Replace rel's tlist with a matching one */
-			if (!cscan->scan.plan.targetlist)
-				tlist = replace_tlist_varnos(child_plan->targetlist, rel);
+			/* Replace rel's tlist with a matching one (for ExecQual()) */
+			if (!processed_rel_tlist)
+			{
+				tlist = replace_tlist_varnos(child_plan->targetlist,
+											 child_rel->relid,
+											 rel->relid);
+
+				/* Done, new target list has been built */
+				processed_rel_tlist = true;
+			}
 
 			/* Add partition attribute if necessary (for ExecQual()) */
 			child_plan->targetlist = append_part_attr_to_tlist(child_plan->targetlist,
@@ -431,7 +429,8 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 			/* Now make custom_scan_tlist match child plans' targetlists */
 			if (!cscan->custom_scan_tlist)
 				cscan->custom_scan_tlist = replace_tlist_varnos(child_plan->targetlist,
-																rel);
+																child_rel->relid,
+																rel->relid);
 		}
 	}
 

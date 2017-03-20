@@ -88,48 +88,31 @@ extern Oid	pathman_config_params_relid;
 Oid get_pathman_config_relid(bool invalid_is_ok);
 Oid get_pathman_config_params_relid(bool invalid_is_ok);
 
-/*
- * pg_pathman's global state structure.
- */
-typedef struct PathmanState
-{
-	LWLock		   *dsm_init_lock;	/* unused */
-} PathmanState;
-
 
 /*
- * Result of search_range_partition_eq().
+ * Create RelOptInfo & RTE for a selected partition.
  */
-typedef enum
-{
-	SEARCH_RANGEREL_OUT_OF_RANGE = 0,
-	SEARCH_RANGEREL_GAP,
-	SEARCH_RANGEREL_FOUND
-} search_rangerel_result;
+Index append_child_relation(PlannerInfo *root, Relation parent_relation,
+							Index parent_rti, int ir_index, Oid child_oid,
+							List *wrappers);
 
 
 /*
- * pg_pathman's global state.
+ * Copied from PostgreSQL (prepunion.c)
  */
-extern PathmanState    *pmstate;
+void make_inh_translation_list(Relation oldrelation, Relation newrelation,
+							   Index newvarno, List **translated_vars);
+
+Bitmapset *translate_col_privs(const Bitmapset *parent_privs,
+							   List *translated_vars);
 
 
-int append_child_relation(PlannerInfo *root, Relation parent_relation,
-						  Index parent_rti, int ir_index, Oid child_oid,
-						  List *wrappers);
-
-search_rangerel_result search_range_partition_eq(const Datum value,
-												 FmgrInfo *cmp_func,
-												 const PartRelationInfo *prel,
-												 RangeEntry *out_re);
-
-uint32 hash_to_part_index(uint32 value, uint32 partitions);
-
-/* copied from allpaths.h */
-void set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
-						 Index rti, RangeTblEntry *rte);
+/*
+ * Copied from PostgreSQL (allpaths.c)
+ */
 void set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 							 PathKey *pathkeyAsc, PathKey *pathkeyDesc);
+
 
 typedef struct
 {
@@ -148,9 +131,7 @@ typedef struct
 	bool					for_insert;	/* are we in PartitionFilter now? */
 } WalkerContext;
 
-/*
- * Usual initialization procedure for WalkerContext.
- */
+/* Usual initialization procedure for WalkerContext */
 #define InitWalkerContext(context, prel_vno, prel_info, ecxt, for_ins) \
 	do { \
 		(context)->prel_varno = (prel_vno); \
@@ -162,6 +143,10 @@ typedef struct
 /* Check that WalkerContext contains ExprContext (plan execution stage) */
 #define WcxtHasExprContext(wcxt) ( (wcxt)->econtext )
 
+/* Examine expression in order to select partitions */
+WrapperNode *walk_expr_tree(Expr *expr, WalkerContext *context);
+
+
 void select_range_partitions(const Datum value,
 							 FmgrInfo *cmp_func,
 							 const RangeEntry *ranges,
@@ -170,8 +155,26 @@ void select_range_partitions(const Datum value,
 							 Oid collid,
 							 WrapperNode *result);
 
-/* Examine expression in order to select partitions. */
-WrapperNode *walk_expr_tree(Expr *expr, WalkerContext *context);
+/* Result of search_range_partition_eq() */
+typedef enum
+{
+	SEARCH_RANGEREL_OUT_OF_RANGE = 0,
+	SEARCH_RANGEREL_GAP,
+	SEARCH_RANGEREL_FOUND
+} search_rangerel_result;
+
+search_rangerel_result search_range_partition_eq(const Datum value,
+												 FmgrInfo *cmp_func,
+												 const PartRelationInfo *prel,
+												 RangeEntry *out_re);
+
+
+/* Convert hash value to the partition index */
+static inline uint32
+hash_to_part_index(uint32 value, uint32 partitions)
+{
+	return value % partitions;
+}
 
 
 /*
