@@ -3,6 +3,7 @@ setup
 	CREATE EXTENSION pg_pathman;
 	CREATE TABLE range_rel(id serial primary key);
 	SELECT create_range_partitions('range_rel', 'id', 1, 100, 1);
+	SELECT set_spawn_using_bgw('range_rel', true);
 }
 
 teardown
