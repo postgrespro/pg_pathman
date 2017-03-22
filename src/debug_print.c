@@ -11,9 +11,11 @@
 #include "rangeset.h"
 
 #include "postgres.h"
+#include "fmgr.h"
 #include "nodes/bitmapset.h"
 #include "nodes/pg_list.h"
 #include "lib/stringinfo.h"
+#include "utils/lsyscache.h"
 
 
 /*
@@ -98,4 +100,33 @@ irange_print(IndexRange irange)
 					 irange_upper(irange));
 
 	return str.data;
+}
+
+/*
+ * Print Datum as cstring
+ */
+#ifdef __GNUC__
+__attribute__((unused))
+#endif
+static char *
+datum_print(Datum origval, Oid typid)
+{
+	Oid typoutput;
+	bool typisvarlena;
+	Datum val;
+
+	/* Query output function */
+    getTypeOutputInfo(typid, &typoutput, &typisvarlena);
+
+    if (typisvarlena && VARATT_IS_EXTERNAL_ONDISK(origval))
+        return NULL; //unchanged-toast-datum
+    else if (!typisvarlena)
+        val = origval;
+    else
+    {
+        /* Definitely detoasted Datum */
+        val = PointerGetDatum(PG_DETOAST_DATUM(origval));
+    }
+
+    return OidOutputFunctionCall(typoutput, val);
 }

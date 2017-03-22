@@ -532,6 +532,7 @@ struct expr_walker_context
 {
 	const PartRelationInfo	*prel;
 	TupleTableSlot			*slot;
+	HeapTuple				 tup;
 	bool					 clear;
 };
 
@@ -564,7 +565,8 @@ adapt_values (Node *node, struct expr_walker_context *context)
 			/* check that type is still same */
 			Assert(context->slot->tts_tupleDescriptor->
 						attrs[attnum - 1]->atttypid == cst->consttype);
-			cst->constvalue = slot_getattr(context->slot, attnum, &isNull);
+			cst->constvalue = heap_getattr(context->tup, attnum,
+				context->slot->tts_tupleDescriptor, &isNull);
 			cst->constisnull = isNull;
 		}
 		return false;
@@ -633,21 +635,17 @@ partition_filter_exec(CustomScanState *node)
 		/* Prepare walker context */
 		expr_walker_context.prel = prel; /* maybe slot will be enough */
 		expr_walker_context.slot = slot;
-		expr_walker_context.clear = true;
-
-		/* Clear values from slot for expression */
-		adapt_values((Node *)prel->expr, (void *) &expr_walker_context);
-
-		/* Prepare state before execution */
-		expr_state = ExecPrepareExpr(prel->expr, estate);
+		expr_walker_context.tup = ExecCopySlotTuple(slot);
+		expr_walker_context.clear = false;
 
 		/* Switch to per-tuple context */
 		old_cxt = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 
-		expr_walker_context.clear = false;
-
 		/* Fetch values from slot for expression */
 		adapt_values((Node *)prel->expr, (void *) &expr_walker_context);
+
+		/* Prepare state before execution */
+		expr_state = ExecPrepareExpr(prel->expr, estate);
 
 		/* Execute expression */
 		value = ExecEvalExpr(expr_state, econtext, &isnull, &itemIsDone);
