@@ -1203,7 +1203,8 @@ pull_var_param(const WalkerContext *ctx,
 						(Var *) ((RelabelType *) left)->arg;
 
 		/* Check if 'v' is partitioned column of 'prel' */
-		if (v->varoattno == ctx->prel->attnum &&
+		/* FIX this */
+		if (v->varoattno == 0 &&
 			v->varno == ctx->prel_varno)
 		{
 			*var_ptr = left;
@@ -1220,7 +1221,8 @@ pull_var_param(const WalkerContext *ctx,
 						(Var *) ((RelabelType *) right)->arg;
 
 		/* Check if 'v' is partitioned column of 'prel' */
-		if (v->varoattno == ctx->prel->attnum &&
+		/* FIX this */
+		if (v->varoattno == 0 &&
 			v->varno == ctx->prel_varno)
 		{
 			*var_ptr = right;
