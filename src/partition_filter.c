@@ -632,14 +632,14 @@ partition_filter_exec(CustomScanState *node)
 			return slot;
 		}
 
+		/* Switch to per-tuple context */
+		old_cxt = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
+
 		/* Prepare walker context */
-		expr_walker_context.prel = prel; /* maybe slot will be enough */
+		expr_walker_context.prel = prel;
 		expr_walker_context.slot = slot;
 		expr_walker_context.tup = ExecCopySlotTuple(slot);
 		expr_walker_context.clear = false;
-
-		/* Switch to per-tuple context */
-		old_cxt = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 
 		/* Fetch values from slot for expression */
 		adapt_values((Node *)prel->expr, (void *) &expr_walker_context);
