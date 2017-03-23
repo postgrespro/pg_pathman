@@ -1783,6 +1783,8 @@ get_expression_node(Oid relid, const char *expr, bool analyze)
 	hooks_enabled = true;
 
 	result = (Node *)target_entry->expr;
+
+	/* We keep expression in top context */
 	oldcontext = MemoryContextSwitchTo(TopMemoryContext);
 
 	/* We need relid and range table list for mutator */
