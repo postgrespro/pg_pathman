@@ -18,6 +18,9 @@
 #include "utils/tqual.h"
 #include "utils/syscache.h"
 
+#include "relation_info.h"
+#include "partition_filter.h"
+
 
 #define MAX_QUOTED_NAME_LEN				(NAMEDATALEN*2+3)
 #define MAX_QUOTED_REL_NAME_LEN			(MAX_QUOTED_NAME_LEN*2)
@@ -48,8 +51,8 @@ typedef struct ConstraintInfo
  */
 typedef struct QueryKey
 {
-	Oid			relid;		/* OID partitioned table entry */
-	uint32		partno;		/* Partition number */
+	Oid			relid;		/* OID of partitioned table */
+	Oid			partid;		/* Partition OID */
 	/* XXX At this point there is only one query type */
 	// int32		constr_queryno; /* query type ID, see RI_PLAN_XXX above */
 } QueryKey;
@@ -83,12 +86,19 @@ static bool ri_PerformCheck(const ConstraintInfo *riinfo,
 				Relation fk_rel, Relation pk_rel,
 				HeapTuple new_tuple,
 				bool detectNewRows, int expect_OK);
-static SPIPlanPtr ri_PlanCheck(const char *querystr, Oid argtype, Relation pk_rel);
+static SPIPlanPtr ri_PlanCheck(const char *querystr,
+			 Oid argtype,
+			 QueryKey *qkey,
+			 Relation pk_rel,
+			 bool cache_plan);
 static Datum RI_FKey_check(TriggerData *trigdata);
 
 static void quoteOneName(char *buffer, const char *name);
 static void quoteRelationName(char *buffer, Relation rel);
-// static RI_QueryKey *ri_FetchPreparedPlan();
+static SPIPlanPtr FetchPreparedPlan(QueryKey *key);
+static void BuildQueryKey(QueryKey *key, Oid relid, Oid partid);
+static void SavePreparedPlan(QueryKey *key, SPIPlanPtr plan);
+
 
 PG_FUNCTION_INFO_V1(pathman_fkey_check_ins);
 
@@ -124,14 +134,22 @@ pathman_fkey_check_ins(PG_FUNCTION_ARGS)
 static Datum
 RI_FKey_check(TriggerData *trigdata)
 {
+	const PartRelationInfo *prel;
 	const ConstraintInfo *riinfo;
 	Relation	fk_rel;
 	Relation	pk_rel;
+	Relation	part_rel;
 	HeapTuple	new_row;
 	Buffer		new_row_buf;
-	// RI_QueryKey qkey;
+	QueryKey	qkey;
 	SPIPlanPtr	qplan;
 	int			i;
+	bool		isnull;
+
+	Datum		value;
+	Oid			pk_type;
+	Oid			fk_type;
+	Oid			partid;
 
 	/*
 	 * Get arguments.
@@ -173,6 +191,7 @@ RI_FKey_check(TriggerData *trigdata)
 	 * SELECT FOR KEY SHARE will get on it.
 	 */
 	fk_rel = trigdata->tg_relation;
+	/* TODO: it should probably be another lock level */
 	pk_rel = heap_open(riinfo->pk_relid, RowShareLock);
 
 	// if (riinfo->confmatchtype == FKCONSTR_MATCH_PARTIAL)
@@ -182,26 +201,47 @@ RI_FKey_check(TriggerData *trigdata)
 
 	/* TODO: Null check */
 
+	prel = get_pathman_relation_info(pk_rel->rd_id);
+
+	/* If there's no prel, return TRUE (overlap is not possible) */
+	if (!prel)
+		elog(ERROR,
+			 "table %s isn't partitioned by pg_pathman",
+			 get_rel_name(pk_rel->rd_id));
+
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
+
+	pk_type = attnumTypeId(pk_rel, riinfo->pk_attnum);
+	fk_type = attnumTypeId(fk_rel, riinfo->fk_attnum);
+
+	value = heap_getattr(new_row, riinfo->fk_attnum, fk_rel->rd_att, &isnull);
+
+	/* If foreign key value is NULL then just quit */
+	if (isnull)
+		return PointerGetDatum(NULL);
+
+	partid = find_partition_for_value(value, fk_type, prel);
+	part_rel = heap_open(partid, RowShareLock);
+
+	/* It seems that we got a partition! */
+	if (partid == InvalidOid)
+		/* TODO: Write a decent error message as in ri_triggers.c */
+		elog(ERROR, "can't find suitable partition for foreign key");
 
 	/*
 	 * Fetch or prepare a saved plan for the real check
 	 */
 	// ri_BuildQueryKey(&qkey, riinfo, RI_PLAN_CHECK_LOOKUPPK);
-	// BuildQueryKey(&qkey, riinfo->pk_relid, partno);
+	BuildQueryKey(&qkey, riinfo->pk_relid, partid);
 
-	// if ((qplan = ri_FetchPreparedPlan(&qkey)) == NULL)
+	if ((qplan = FetchPreparedPlan(&qkey)) == NULL)
 	{
 		StringInfoData querybuf;
 		char		pkrelname[MAX_QUOTED_REL_NAME_LEN];
 		char		attname[MAX_QUOTED_NAME_LEN];
 		char		paramname[16];
-
-		Oid			pk_type = attnumTypeId(pk_rel, riinfo->pk_attnum);
-		Oid			fk_type = attnumTypeId(fk_rel, riinfo->fk_attnum);
-
 
 		/* TODO */
 		// Oid			queryoids[123];
@@ -215,10 +255,8 @@ RI_FKey_check(TriggerData *trigdata)
 		 * ----------
 		 */
 		initStringInfo(&querybuf);
-		quoteRelationName(pkrelname, pk_rel);
-		appendStringInfo(&querybuf, "SELECT 1 FROM %s x", pkrelname);
-
-
+		quoteRelationName(pkrelname, part_rel);
+		appendStringInfo(&querybuf, "SELECT 1 FROM ONLY %s x", pkrelname);
 
 		quoteOneName(attname, RIAttName(pk_rel, riinfo->pk_attnum));
 		// sprintf(paramname, "$%d", i + 1);
@@ -233,14 +271,14 @@ RI_FKey_check(TriggerData *trigdata)
 		appendStringInfoString(&querybuf, " FOR KEY SHARE OF x");
 
 		/* Prepare and save the plan */
-		qplan = ri_PlanCheck(querybuf.data, fk_type, pk_rel);
+		qplan = ri_PlanCheck(querybuf.data, fk_type, &qkey, part_rel, true);
 	}
 
 	/*
 	 * Now check that foreign key exists in PK table
 	 */
 	ri_PerformCheck(riinfo, qplan,
-					fk_rel, pk_rel,
+					fk_rel, part_rel,
 					new_row,
 					false,
 					SPI_OK_SELECT);
@@ -249,19 +287,71 @@ RI_FKey_check(TriggerData *trigdata)
 		elog(ERROR, "SPI_finish failed");
 
 	heap_close(pk_rel, RowShareLock);
+	heap_close(part_rel, RowShareLock);
 
 	return PointerGetDatum(NULL);
 }
 
 static void
-BuildQueryKey(QueryKey *key, Oid relid, uint32 partno)
+BuildQueryKey(QueryKey *key, Oid relid, Oid partid)
 {
 	/*
 	 * We assume struct RI_QueryKey contains no padding bytes, else we'd need
 	 * to use memset to clear them.
 	 */
 	key->relid = relid;
-	key->partno = partno;
+	key->partid = partid;
+}
+
+
+/*
+ *	Lookup for a query key in our private hash table of prepared
+ *	and saved SPI execution plans. Return the plan if found or NULL.
+ */
+static SPIPlanPtr
+FetchPreparedPlan(QueryKey *key)
+{
+	QueryHashEntry *entry;
+	SPIPlanPtr		plan;
+
+	/*
+	 * On the first call initialize the hashtable
+	 */
+	if (!ri_query_cache)
+		ri_InitHashTables();
+
+	/*
+	 * Lookup for the key
+	 */
+	entry = (QueryHashEntry *) hash_search(ri_query_cache,
+										   (void *) key,
+										   HASH_FIND, NULL);
+	if (entry == NULL)
+		return NULL;
+
+	/*
+	 * Check whether the plan is still valid.  If it isn't, we don't want to
+	 * simply rely on plancache.c to regenerate it; rather we should start
+	 * from scratch and rebuild the query text too.  This is to cover cases
+	 * such as table/column renames.  We depend on the plancache machinery to
+	 * detect possible invalidations, though.
+	 *
+	 * CAUTION: this check is only trustworthy if the caller has already
+	 * locked both FK and PK rels.
+	 */
+	plan = entry->plan;
+	if (plan && SPI_plan_is_valid(plan))
+		return plan;
+
+	/*
+	 * Otherwise we might as well flush the cached plan now, to free a little
+	 * memory space before we make a new one.
+	 */
+	entry->plan = NULL;
+	if (plan)
+		SPI_freeplan(plan);
+
+	return NULL;
 }
 
 /*
@@ -502,7 +592,11 @@ ri_add_cast_to(StringInfo buf, Oid typid)
 // 			 RI_QueryKey *qkey, Relation fk_rel, Relation pk_rel,
 // 			 bool cache_plan)
 static SPIPlanPtr
-ri_PlanCheck(const char *querystr, Oid argtype, Relation pk_rel)
+ri_PlanCheck(const char *querystr,
+			 Oid argtype,
+			 QueryKey *qkey,
+			 Relation pk_rel,
+			 bool cache_plan)
 {
 	SPIPlanPtr	qplan;
 	Relation	query_rel;
@@ -536,11 +630,11 @@ ri_PlanCheck(const char *querystr, Oid argtype, Relation pk_rel)
 	SetUserIdAndSecContext(save_userid, save_sec_context);
 
 	/* Save the plan if requested */
-	// if (cache_plan)
-	// {
-	// 	SPI_keepplan(qplan);
-	// 	ri_HashPreparedPlan(qkey, qplan);
-	// }
+	if (cache_plan)
+	{
+		SPI_keepplan(qplan);
+		SavePreparedPlan(qkey, qplan);
+	}
 
 	return qplan;
 }
@@ -730,4 +824,28 @@ quoteRelationName(char *buffer, Relation rel)
 	buffer += strlen(buffer);
 	*buffer++ = '.';
 	quoteOneName(buffer, RelationGetRelationName(rel));
+}
+
+
+static void
+SavePreparedPlan(QueryKey *key, SPIPlanPtr plan)
+{
+	QueryHashEntry *entry;
+	bool			found;
+
+	/*
+	 * On the first call initialize the hashtable
+	 */
+	if (!ri_query_cache)
+		ri_InitHashTables();
+
+	/*
+	 * Add the new plan.  We might be overwriting an entry previously found
+	 * invalid by ri_FetchPreparedPlan.
+	 */
+	entry = (QueryHashEntry *) hash_search(ri_query_cache,
+										   (void *) key,
+										   HASH_ENTER, &found);
+	Assert(!found || entry->plan == NULL);
+	entry->plan = plan;
 }
