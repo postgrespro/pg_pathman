@@ -840,9 +840,7 @@ read_pathman_config(void)
 	{
 		Datum		values[Natts_pathman_config];
 		bool		isnull[Natts_pathman_config];
-		Oid			relid;		/* partitioned table */
-		PartType	parttype;	/* partitioning type */
-		text	   *attname;	/* partitioned column name */
+		Oid			relid; /* partitioned table */
 
 		/* Extract Datums from tuple 'htup' */
 		heap_deform_tuple(htup, RelationGetDescr(rel), values, isnull);
@@ -854,8 +852,6 @@ read_pathman_config(void)
 
 		/* Extract values from Datums */
 		relid = DatumGetObjectId(values[Anum_pathman_config_partrel - 1]);
-		parttype = DatumGetPartType(values[Anum_pathman_config_parttype - 1]);
-		attname = DatumGetTextP(values[Anum_pathman_config_attname - 1]);
 
 		/* Check that relation 'relid' exists */
 		if (get_rel_type_id(relid) == InvalidOid)
@@ -867,10 +863,8 @@ read_pathman_config(void)
 					 errhint(INIT_ERROR_HINT)));
 		}
 
-		/* Create or update PartRelationInfo for this partitioned table */
-		refresh_pathman_relation_info(relid, parttype,
-									  text_to_cstring(attname),
-									  true); /* allow lazy prel loading */
+		/* get_pathman_relation_info() will refresh this entry */
+		invalidate_pathman_relation_info(relid, NULL);
 	}
 
 	/* Clean resources */

@@ -225,7 +225,7 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 				   *child_rowmark;
 	Node		   *childqual;
 	List		   *childquals;
-	ListCell	   *lc,
+	ListCell	   *lc1,
 				   *lc2;
 
 	parent_rel = root->simple_rel_array[parent_rti];
@@ -288,9 +288,9 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 	{
 		childquals = NIL;
 
-		forboth(lc, wrappers, lc2, parent_rel->baserestrictinfo)
+		forboth(lc1, wrappers, lc2, parent_rel->baserestrictinfo)
 		{
-			WrapperNode	   *wrap = (WrapperNode *) lfirst(lc);
+			WrapperNode	   *wrap = (WrapperNode *) lfirst(lc1);
 			Node		   *new_clause;
 			bool			always_true;
 
