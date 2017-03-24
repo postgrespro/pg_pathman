@@ -99,8 +99,8 @@ create_hash_partitions(relation         REGCLASS,
                        attribute        TEXT,
                        partitions_count INTEGER,
                        partition_data   BOOLEAN DEFAULT TRUE,
-					   partition_names  TEXT[] DEFAULT NULL,
-					   tablespaces      TEXT[] DEFAULT NULL)
+                       partition_names  TEXT[] DEFAULT NULL,
+                       tablespaces      TEXT[] DEFAULT NULL)
 ```
 Performs HASH partitioning for `relation` by integer key `attribute`. The `partitions_count` parameter specifies the number of partitions to create; it cannot be changed afterwards. If `partition_data` is `true` then all the data will be automatically copied from the parent table to partitions. Note that data migration may took a while to finish and the table will be locked until transaction commits. See `partition_table_concurrently()` for a lock-free way to migrate data. Partition creation callback is invoked for each partition if set beforehand (see `set_init_callback()`).
 

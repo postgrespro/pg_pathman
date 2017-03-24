@@ -703,7 +703,6 @@ create_single_partition_internal(Oid parent_relid,
 	NodeSetTag(&like_clause, T_TableLikeClause);
 	like_clause.relation		= copyObject(parent_rv);
 	like_clause.options			= CREATE_TABLE_LIKE_DEFAULTS |
-								  CREATE_TABLE_LIKE_CONSTRAINTS |
 								  CREATE_TABLE_LIKE_INDEXES |
 								  CREATE_TABLE_LIKE_STORAGE;
 
