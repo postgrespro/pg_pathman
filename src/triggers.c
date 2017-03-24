@@ -18,8 +18,8 @@
 #include "utils/tqual.h"
 #include "utils/syscache.h"
 
-#include "relation_info.h"
 #include "partition_filter.h"
+#include "relation_info.h"
 
 
 #define MAX_QUOTED_NAME_LEN				(NAMEDATALEN*2+3)
@@ -95,6 +95,7 @@ static Datum RI_FKey_check(TriggerData *trigdata);
 
 static void quoteOneName(char *buffer, const char *name);
 static void quoteRelationName(char *buffer, Relation rel);
+static void ri_ReportViolation(const ConstraintInfo *riinfo, Relation fk_rel);
 static SPIPlanPtr FetchPreparedPlan(QueryKey *key);
 static void BuildQueryKey(QueryKey *key, Oid relid, Oid partid);
 static void SavePreparedPlan(QueryKey *key, SPIPlanPtr plan);
@@ -117,12 +118,43 @@ pathman_fkey_check_ins(PG_FUNCTION_ARGS)
 	/*
 	 * Check that this is a valid trigger call on the right time and event.
 	 */
-	// ri_CheckTrigger(fcinfo, "RI_FKey_check_ins", RI_TRIGTYPE_INSERT);
+	ri_CheckTrigger(fcinfo, "pathman_fkey_check_ins", RI_TRIGTYPE_INSERT);
 
 	/*
 	 * Share code with UPDATE case.
 	 */
 	return RI_FKey_check((TriggerData *) fcinfo->context);
+}
+
+static void
+ri_CheckTrigger(FunctionCallInfo fcinfo, const char *funcname, int tgkind)
+{
+	TriggerData *trigdata = (TriggerData *) fcinfo->context;
+
+	if (!CALLED_AS_TRIGGER(fcinfo))
+		ereport(ERROR,
+				(errcode(ERRCODE_E_R_I_E_TRIGGER_PROTOCOL_VIOLATED),
+				 errmsg("function \"%s\" was not called by trigger manager", funcname)));
+
+	/*
+	 * Check proper event
+	 */
+	if (!TRIGGER_FIRED_AFTER(trigdata->tg_event) ||
+		!TRIGGER_FIRED_FOR_ROW(trigdata->tg_event))
+		ereport(ERROR,
+				(errcode(ERRCODE_E_R_I_E_TRIGGER_PROTOCOL_VIOLATED),
+			   errmsg("function \"%s\" must be fired AFTER ROW", funcname)));
+
+	/* There is only one option now, but it is about to get better :) */
+	switch (tgkind)
+	{
+		case RI_TRIGTYPE_INSERT:
+			if (!TRIGGER_FIRED_BY_INSERT(trigdata->tg_event))
+				ereport(ERROR,
+						(errcode(ERRCODE_E_R_I_E_TRIGGER_PROTOCOL_VIOLATED),
+						 errmsg("function \"%s\" must be fired for INSERT", funcname)));
+			break;
+	}
 }
 
 /* ----------
@@ -143,7 +175,6 @@ RI_FKey_check(TriggerData *trigdata)
 	Buffer		new_row_buf;
 	QueryKey	qkey;
 	SPIPlanPtr	qplan;
-	int			i;
 	bool		isnull;
 
 	Datum		value;
@@ -194,16 +225,8 @@ RI_FKey_check(TriggerData *trigdata)
 	/* TODO: it should probably be another lock level */
 	pk_rel = heap_open(riinfo->pk_relid, RowShareLock);
 
-	// if (riinfo->confmatchtype == FKCONSTR_MATCH_PARTIAL)
-	// 	ereport(ERROR,
-	// 			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-	// 			 errmsg("MATCH PARTIAL not yet implemented")));
-
-	/* TODO: Null check */
-
+	/* Get partitioning info */
 	prel = get_pathman_relation_info(pk_rel->rd_id);
-
-	/* If there's no prel, return TRUE (overlap is not possible) */
 	if (!prel)
 		elog(ERROR,
 			 "table %s isn't partitioned by pg_pathman",
@@ -233,7 +256,6 @@ RI_FKey_check(TriggerData *trigdata)
 	/*
 	 * Fetch or prepare a saved plan for the real check
 	 */
-	// ri_BuildQueryKey(&qkey, riinfo, RI_PLAN_CHECK_LOOKUPPK);
 	BuildQueryKey(&qkey, riinfo->pk_relid, partid);
 
 	if ((qplan = FetchPreparedPlan(&qkey)) == NULL)
@@ -241,10 +263,6 @@ RI_FKey_check(TriggerData *trigdata)
 		StringInfoData querybuf;
 		char		pkrelname[MAX_QUOTED_REL_NAME_LEN];
 		char		attname[MAX_QUOTED_NAME_LEN];
-		char		paramname[16];
-
-		/* TODO */
-		// Oid			queryoids[123];
 
 		/* ----------
 		 * The query string built is
@@ -259,14 +277,10 @@ RI_FKey_check(TriggerData *trigdata)
 		appendStringInfo(&querybuf, "SELECT 1 FROM ONLY %s x", pkrelname);
 
 		quoteOneName(attname, RIAttName(pk_rel, riinfo->pk_attnum));
-		// sprintf(paramname, "$%d", i + 1);
-		sprintf(paramname, "$1");
 		ri_GenerateQual(&querybuf, "WHERE",
 						attname, pk_type,
 						riinfo->pf_eq_opr,
-						paramname, fk_type);
-		// queryoids[i] = fk_type;
-
+						"$1", fk_type);
 
 		appendStringInfoString(&querybuf, " FOR KEY SHARE OF x");
 
@@ -670,48 +684,8 @@ ri_PerformCheck(const ConstraintInfo *riinfo,
 	char		nulls[1];
 	bool		isnull = false;
 
-	/*
-	 * Use the query type code to determine whether the query is run against
-	 * the PK or FK table; we'll do the check as that table's owner
-	 */
-	// if (qkey->constr_queryno <= RI_PLAN_LAST_ON_PK)
-	// 	query_rel = pk_rel;
-	// else
-	// 	query_rel = fk_rel;
 	query_rel = pk_rel;
-
-	/*
-	 * The values for the query are taken from the table on which the trigger
-	 * is called - it is normally the other one with respect to query_rel. An
-	 * exception is ri_Check_Pk_Match(), which uses the PK table for both (and
-	 * sets queryno to RI_PLAN_CHECK_LOOKUPPK_FROM_PK).  We might eventually
-	 * need some less klugy way to determine this.
-	 */
-	// if (qkey->constr_queryno == RI_PLAN_CHECK_LOOKUPPK)
-	// {
-		source_rel = fk_rel;
-		source_is_pk = false;
-	// }
-	// else
-	// {
-	// 	source_rel = pk_rel;
-	// 	source_is_pk = true;
-	// }
-
-	/* Extract the parameters to be passed into the query */
-	// if (new_tuple)
-	// {
-	// 	ri_ExtractValues(source_rel, new_tuple, riinfo, source_is_pk,
-	// 					 vals, nulls);
-	// 	if (old_tuple)
-	// 		ri_ExtractValues(source_rel, old_tuple, riinfo, source_is_pk,
-	// 						 vals + riinfo->nkeys, nulls + riinfo->nkeys);
-	// }
-	// else
-	// {
-	// 	ri_ExtractValues(source_rel, old_tuple, riinfo, source_is_pk,
-	// 					 vals, nulls);
-	// }
+	source_rel = fk_rel;
 
 	vals[0] = heap_getattr(new_tuple, riinfo->fk_attnum, source_rel->rd_att, &isnull);
 	nulls[0] = isnull ? 'n' : ' ';
@@ -777,7 +751,8 @@ ri_PerformCheck(const ConstraintInfo *riinfo,
 
 	/* XXX wouldn't it be clearer to do this part at the caller? */
 	if (SPI_processed == 0)
-		elog(ERROR, "Error 2");
+		// elog(ERROR, "Error 2");
+		ri_ReportViolation(riinfo, fk_rel);
 	// if (qkey->constr_queryno != RI_PLAN_CHECK_LOOKUPPK_FROM_PK &&
 	// 	expect_OK == SPI_OK_SELECT &&
 	// (SPI_processed == 0) == (qkey->constr_queryno == RI_PLAN_CHECK_LOOKUPPK))
@@ -826,6 +801,15 @@ quoteRelationName(char *buffer, Relation rel)
 	quoteOneName(buffer, RelationGetRelationName(rel));
 }
 
+static void
+ri_ReportViolation(const ConstraintInfo *riinfo, Relation fk_rel)
+{
+	ereport(ERROR,
+		(errcode(ERRCODE_FOREIGN_KEY_VIOLATION),
+		 errmsg("insert or update on table \"%s\" violates foreign key constraint \"%s\"",
+				RelationGetRelationName(fk_rel),
+				NameStr(riinfo->conname))));
+}
 
 static void
 SavePreparedPlan(QueryKey *key, SPIPlanPtr plan)
