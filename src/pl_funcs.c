@@ -1073,20 +1073,17 @@ update_trigger_func(PG_FUNCTION_ARGS)
 static Oid
 get_partition_for_key(const PartRelationInfo *prel, Datum key)
 {
-	Oid	   *parts;
-	int		nparts;
+	Oid		part;
 
 	/* Search for matching partitions */
-	parts = find_partitions_for_value(key, prel->atttype, prel, &nparts);
+	part = find_partition_for_value(key, prel->atttype, prel);
 
-	if (nparts > 1)
-		elog(ERROR, ERR_PART_ATTR_MULTIPLE);
-	else if (nparts == 0)
+	if (part == InvalidOid)
 		elog(ERROR,
 			 "There is not partition to fit partition key \"%s\"",
 			 datum_to_cstring(key, prel->atttype));
 	else
-		return parts[0];
+		return part;
 }
 
 

@@ -126,9 +126,8 @@ TupleConversionMap * build_part_tuple_map(Relation parent_rel, Relation child_re
 
 
 /* Find suitable partition using 'value' */
-Oid * find_partitions_for_value(Datum value, Oid value_type,
-								const PartRelationInfo *prel,
-								int *nparts);
+Oid find_partition_for_value(Datum value, Oid value_type,
+							 const PartRelationInfo *prel);
 
 ResultRelInfoHolder * select_partition_for_insert(Datum value, Oid value_type,
 												  const PartRelationInfo *prel,

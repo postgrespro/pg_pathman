@@ -356,28 +356,13 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
 			Assert(lock_result != LOCKACQUIRE_NOT_AVAIL);
 			if (lock_result == LOCKACQUIRE_OK)
 			{
-				Oid	   *parts;
-				int		nparts;
-
 				/* Search for matching partitions */
-				parts = find_partitions_for_value(value, value_type, prel, &nparts);
-
-				/* Shout if there's more than one */
-				if (nparts > 1)
-					elog(ERROR, ERR_PART_ATTR_MULTIPLE);
+				partid = find_partition_for_value(value, value_type, prel);
 
 				/* It seems that we got a partition! */
-				else if (nparts == 1)
-				{
+				if (partid != InvalidOid)
 					/* Unlock the parent (we're not going to spawn) */
 					xact_unlock_partitioned_rel(relid);
-
-					/* Simply return the suitable partition */
-					partid = parts[0];
-				}
-
-				/* Don't forget to free */
-				pfree(parts);
 			}
 
 			/* Else spawn a new one (we hold a lock on the parent) */

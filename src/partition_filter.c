@@ -376,17 +376,19 @@ build_part_tuple_map(Relation parent_rel, Relation child_rel)
 /*
  * Find matching partitions for 'value' using PartRelationInfo.
  */
-Oid *
-find_partitions_for_value(Datum value, Oid value_type,
-						  const PartRelationInfo *prel,
-						  int *nparts)
+Oid
+find_partition_for_value(Datum value, Oid value_type,
+						 const PartRelationInfo *prel)
 {
 #define CopyToTempConst(const_field, attr_field) \
 	( temp_const.const_field = prel->attr_field )
 
+	Oid				result;
 	Const			temp_const;	/* temporary const for expr walker */
 	WalkerContext	wcxt;
 	List		   *ranges = NIL;
+	Oid			   *oids;
+	int				noids;
 
 	/* Prepare dummy Const node */
 	NodeSetTag(&temp_const, T_Const);
@@ -407,7 +409,22 @@ find_partitions_for_value(Datum value, Oid value_type,
 	InitWalkerContext(&wcxt, 0, prel, NULL, true);
 	ranges = walk_expr_tree((Expr *) &temp_const, &wcxt)->rangeset;
 
-	return get_partition_oids(ranges, nparts, prel, false);
+	oids = get_partition_oids(ranges, &noids, prel, false);
+
+	if (noids > 0)
+		result = oids[0];
+
+	pfree(oids);
+
+	switch (noids)
+	{
+		case 0:
+			return InvalidOid;
+		case 1:
+			return result;
+		default:
+			elog(ERROR, ERR_PART_ATTR_MULTIPLE);
+	}
 }
 
 /*
@@ -422,15 +439,11 @@ select_partition_for_insert(Datum value, Oid value_type,
 	MemoryContext			old_cxt;
 	ResultRelInfoHolder	   *rri_holder;
 	Oid						selected_partid = InvalidOid;
-	Oid					   *parts;
-	int						nparts;
 
 	/* Search for matching partitions */
-	parts = find_partitions_for_value(value, value_type, prel, &nparts);
+	selected_partid = find_partition_for_value(value, value_type, prel);
 
-	if (nparts > 1)
-		elog(ERROR, ERR_PART_ATTR_MULTIPLE);
-	else if (nparts == 0)
+	if (selected_partid == InvalidOid)
 	{
 		 selected_partid = create_partitions_for_value(PrelParentRelid(prel),
 													   value, prel->atttype);
@@ -438,7 +451,6 @@ select_partition_for_insert(Datum value, Oid value_type,
 		 /* get_pathman_relation_info() will refresh this entry */
 		 invalidate_pathman_relation_info(PrelParentRelid(prel), NULL);
 	}
-	else selected_partid = parts[0];
 
 	/* Replace parent table with a suitable partition */
 	old_cxt = MemoryContextSwitchTo(estate->es_query_cxt);
