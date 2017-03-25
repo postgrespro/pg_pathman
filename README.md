@@ -665,7 +665,7 @@ SELECT disable_pathman_for('range_rel');
 ```
 All sections and data will remain unchanged and will be handled by the standard PostgreSQL inheritance mechanism.
 
-##Feedback
+## Feedback
 Do not hesitate to post your issues, questions and new ideas at the [issues](https://github.com/postgrespro/pg_pathman/issues) page.
 
 ## Authors
