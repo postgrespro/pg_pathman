@@ -271,6 +271,9 @@ get_tablespace_pl(PG_FUNCTION_ARGS)
  * ----------------------
  */
 
+/*
+ * List stats of all existing caches (memory contexts).
+ */
 Datum
 show_cache_stats_internal(PG_FUNCTION_ARGS)
 {
