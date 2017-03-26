@@ -221,7 +221,7 @@ Oid forget_parent_of_partition(Oid partition, PartParentSearch *status);
 Oid get_parent_of_partition(Oid partition, PartParentSearch *status);
 
 /* Constraint cache */
-Oid forget_constraint_of_partition(Oid partition);
+void forget_constraint_of_partition(Oid partition);
 Expr * get_constraint_of_partition(Oid partition, AttrNumber part_attno);
 
 /* Safe casts for PartType */

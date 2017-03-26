@@ -698,34 +698,24 @@ try_perform_parent_refresh(Oid parent)
  * forget\get constraint functions.
  */
 
-Oid
+/* Remove partition's constraint from cache */
+void
 forget_constraint_of_partition(Oid partition)
 {
-	PartConstraintInfo *pcon = pathman_cache_search_relid(constraint_cache,
-														  partition,
-														  HASH_FIND, NULL);
-	if (pcon)
-	{
-		Oid conid = pcon->conid;
-
-		/* TODO: implement pfree(constraint) logc */
-
-		pathman_cache_search_relid(constraint_cache,
-								   partition,
-								   HASH_REMOVE, NULL);
-
-		return conid;
-	}
-
-	return InvalidOid;
+	pathman_cache_search_relid(constraint_cache,
+							   partition,
+							   HASH_REMOVE,
+							   NULL);
 }
 
+/* Return partition's constraint as expression tree */
 Expr *
 get_constraint_of_partition(Oid partition, AttrNumber part_attno)
 {
 	PartConstraintInfo *pcon = pathman_cache_search_relid(constraint_cache,
 														  partition,
-														  HASH_FIND, NULL);
+														  HASH_FIND,
+														  NULL);
 	if (!pcon)
 	{
 		Oid				conid;
@@ -738,7 +728,8 @@ get_constraint_of_partition(Oid partition, AttrNumber part_attno)
 		/* Create new entry for this constraint */
 		pcon = pathman_cache_search_relid(constraint_cache,
 										  partition,
-										  HASH_ENTER, NULL);
+										  HASH_ENTER,
+										  NULL);
 
 		/* Copy constraint's data to the persistent mcxt */
 		old_mcxt = MemoryContextSwitchTo(TopMemoryContext);
@@ -751,7 +742,7 @@ get_constraint_of_partition(Oid partition, AttrNumber part_attno)
 }
 
 /*
- * Get constraint expression tree for a partition.
+ * Get constraint expression tree of a partition.
  *
  * build_check_constraint_name_internal() is used to build conname.
  */

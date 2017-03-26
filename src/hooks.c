@@ -624,6 +624,9 @@ pathman_relcache_hook(Datum arg, Oid relid)
 	if (relid == get_pathman_config_relid(false))
 		delay_pathman_shutdown();
 
+	/* Invalidate PartConstraintInfo cache if needed */
+	forget_constraint_of_partition(relid);
+
 	/* Invalidate PartParentInfo cache if needed */
 	partitioned_table = forget_parent_of_partition(relid, &search);
 

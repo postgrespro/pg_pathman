@@ -510,7 +510,7 @@ SELECT create_hash_partitions('calamity.part_ok', 'val', 4);
 CREATE TABLE calamity.wrong_partition (LIKE calamity.part_test) INHERITS (calamity.part_test); /* wrong partition w\o constraints */
 NOTICE:  merging column "val" with inherited definition
 SELECT add_to_pathman_config('calamity.part_test', 'val');
-ERROR:  constraint "pathman_wrong_partition_1_check" for partition "wrong_partition" does not exist
+ERROR:  constraint "pathman_wrong_partition_1_check" of partition "wrong_partition" does not exist
 EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_ok; /* check that pathman is enabled */
          QUERY PLAN          
 -----------------------------
@@ -522,7 +522,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_ok; /* check that pathman is ena
 (5 rows)
 
 SELECT add_to_pathman_config('calamity.part_test', 'val', '10');
-ERROR:  constraint "pathman_wrong_partition_1_check" for partition "wrong_partition" does not exist
+ERROR:  constraint "pathman_wrong_partition_1_check" of partition "wrong_partition" does not exist
 EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_ok; /* check that pathman is enabled */
          QUERY PLAN          
 -----------------------------
