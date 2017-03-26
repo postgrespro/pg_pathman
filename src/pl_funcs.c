@@ -89,7 +89,8 @@ typedef struct
 typedef struct
 {
 	MemoryContext			pathman_contexts[PATHMAN_MCXT_COUNT];
-	int						current_context;
+	HTAB				   *pathman_htables[PATHMAN_MCXT_COUNT];
+	int						current_item;
 } show_cache_stats_cxt;
 
 
@@ -299,7 +300,12 @@ show_cache_stats_internal(PG_FUNCTION_ARGS)
 		usercxt->pathman_contexts[2] = PathmanParentCacheContext;
 		usercxt->pathman_contexts[3] = PathmanCostraintCacheContext;
 
-		usercxt->current_context = 0;
+		usercxt->pathman_htables[0] = NULL; /* no HTAB for this entry */
+		usercxt->pathman_htables[1] = partitioned_rels;
+		usercxt->pathman_htables[2] = parent_cache;
+		usercxt->pathman_htables[3] = constraint_cache;
+
+		usercxt->current_item = 0;
 
 		/* Create tuple descriptor */
 		tupdesc = CreateTemplateTupleDesc(Natts_pathman_cache_stats, false);
@@ -310,6 +316,8 @@ show_cache_stats_internal(PG_FUNCTION_ARGS)
 						   "size", INT8OID, -1, 0);
 		TupleDescInitEntry(tupdesc, Anum_pathman_cs_used,
 						   "used", INT8OID, -1, 0);
+		TupleDescInitEntry(tupdesc, Anum_pathman_cs_entries,
+						   "entries", INT8OID, -1, 0);
 
 		funccxt->tuple_desc = BlessTupleDesc(tupdesc);
 		funccxt->user_fctx = (void *) usercxt;
@@ -320,8 +328,9 @@ show_cache_stats_internal(PG_FUNCTION_ARGS)
 	funccxt = SRF_PERCALL_SETUP();
 	usercxt = (show_cache_stats_cxt *) funccxt->user_fctx;
 
-	if (usercxt->current_context < lengthof(usercxt->pathman_contexts))
+	if (usercxt->current_item < lengthof(usercxt->pathman_contexts))
 	{
+		HTAB				   *current_htab;
 		MemoryContext			current_mcxt;
 		MemoryContextCounters	mcxt_stats;
 		HeapTuple				htup;
@@ -331,8 +340,9 @@ show_cache_stats_internal(PG_FUNCTION_ARGS)
 		/* Prepare context counters */
 		memset(&mcxt_stats, 0, sizeof(mcxt_stats));
 
-		/* Select current memory context */
-		current_mcxt = usercxt->pathman_contexts[usercxt->current_context];
+		/* Select current memory context and hash table (cache) */
+		current_mcxt = usercxt->pathman_contexts[usercxt->current_item];
+		current_htab = usercxt->pathman_htables[usercxt->current_item];
 
 		/* NOTE: we do not consider child contexts if it's TopPathmanContext */
 		McxtStatsInternal(current_mcxt, 0,
@@ -348,8 +358,11 @@ show_cache_stats_internal(PG_FUNCTION_ARGS)
 		values[Anum_pathman_cs_used - 1]	=
 				Int64GetDatum(mcxt_stats.totalspace - mcxt_stats.freespace);
 
-		/* Switch to next context */
-		usercxt->current_context++;
+		values[Anum_pathman_cs_entries - 1]	=
+				Int64GetDatum(current_htab ? hash_get_num_entries(current_htab) : 0);
+
+		/* Switch to next item */
+		usercxt->current_item++;
 
 		/* Form output tuple */
 		htup = heap_form_tuple(funccxt->tuple_desc, values, isnull);

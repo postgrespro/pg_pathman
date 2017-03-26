@@ -274,7 +274,8 @@ CREATE OR REPLACE FUNCTION @extschema@.show_cache_stats()
 RETURNS TABLE (
 	context			TEXT,
 	size			INT8,
-	used			INT8)
+	used			INT8,
+	entries			INT8)
 AS 'pg_pathman', 'show_cache_stats_internal'
 LANGUAGE C STRICT;
 
