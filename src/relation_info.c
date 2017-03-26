@@ -43,10 +43,10 @@ static List	   *delayed_invalidation_vague_rels = NIL;
 static bool		delayed_shutdown = false; /* pathman was dropped */
 
 
-/* Add unique Oid to list, allocate in TopMemoryContext */
+/* Add unique Oid to list, allocate in TopPathmanContext */
 #define list_add_unique(list, oid) \
 	do { \
-		MemoryContext old_mcxt = MemoryContextSwitchTo(TopMemoryContext); \
+		MemoryContext old_mcxt = MemoryContextSwitchTo(TopPathmanContext); \
 		list = list_append_unique_oid(list, ObjectIdGetDatum(oid)); \
 		MemoryContextSwitchTo(old_mcxt); \
 	} while (0)
@@ -741,7 +741,7 @@ get_constraint_of_partition(Oid partition, AttrNumber part_attno)
 										  NULL);
 
 		/* Copy constraint's data to the persistent mcxt */
-		old_mcxt = MemoryContextSwitchTo(TopMemoryContext);
+		old_mcxt = MemoryContextSwitchTo(PathmanCostraintCacheContext);
 		pcon->conid			= conid;
 		pcon->constraint	= copyObject(con_expr);
 		MemoryContextSwitchTo(old_mcxt);

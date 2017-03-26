@@ -43,14 +43,20 @@
 #define CHILD_FACTOR	500
 
 
+/* Various memory contexts for caches */
+MemoryContext		TopPathmanContext				= NULL;
+MemoryContext		PathmanRelationCacheContext		= NULL;
+MemoryContext		PathmanParentCacheContext		= NULL;
+MemoryContext		PathmanCostraintCacheContext	= NULL;
+
 /* Storage for PartRelationInfos */
-HTAB			   *partitioned_rels = NULL;
+HTAB			   *partitioned_rels	= NULL;
 
 /* Storage for PartParentInfos */
-HTAB			   *parent_cache = NULL;
+HTAB			   *parent_cache		= NULL;
 
 /* Storage for partition constraints */
-HTAB			   *constraint_cache = NULL;
+HTAB			   *constraint_cache	= NULL;
 
 /* pg_pathman's init status */
 PathmanInitState 	pg_pathman_init_state;
@@ -210,7 +216,7 @@ load_config(void)
 	/* Validate pg_pathman's Pl/PgSQL facade (might be outdated) */
 	validate_sql_facade_version(get_sql_facade_version());
 
-	init_local_cache();		/* create 'partitioned_rels' hash table */
+	init_local_cache();		/* create various hash tables (caches) */
 	read_pathman_config();	/* read PATHMAN_CONFIG table & fill cache */
 
 	/* Register pathman_relcache_hook(), currently we can't unregister it */
@@ -307,10 +313,52 @@ init_local_cache(void)
 	hash_destroy(parent_cache);
 	hash_destroy(constraint_cache);
 
+	/* Reset pg_pathman's memory contexts */
+	if (TopPathmanContext)
+	{
+		/* Check that child contexts exist */
+		Assert(MemoryContextIsValid(PathmanRelationCacheContext));
+		Assert(MemoryContextIsValid(PathmanParentCacheContext));
+		Assert(MemoryContextIsValid(PathmanCostraintCacheContext));
+
+		/* Clear children */
+		MemoryContextResetChildren(TopPathmanContext);
+	}
+	/* Initialize pg_pathman's memory contexts */
+	else
+	{
+		Assert(PathmanRelationCacheContext == NULL);
+		Assert(PathmanParentCacheContext == NULL);
+		Assert(PathmanCostraintCacheContext == NULL);
+
+		TopPathmanContext =
+				AllocSetContextCreate(TopMemoryContext,
+									  CppAsString(TopPathmanContext),
+									  ALLOCSET_DEFAULT_SIZES);
+
+		/* For PartRelationInfo */
+		PathmanRelationCacheContext =
+				AllocSetContextCreate(TopPathmanContext,
+									  CppAsString(PathmanRelationCacheContext),
+									  ALLOCSET_DEFAULT_SIZES);
+
+		/* For PartParentInfo */
+		PathmanParentCacheContext =
+				AllocSetContextCreate(TopPathmanContext,
+									  CppAsString(PathmanParentCacheContext),
+									  ALLOCSET_DEFAULT_SIZES);
+
+		/* For PartConstraintInfo */
+		PathmanCostraintCacheContext =
+				AllocSetContextCreate(TopPathmanContext,
+									  CppAsString(PathmanCostraintCacheContext),
+									  ALLOCSET_DEFAULT_SIZES);
+	}
+
 	memset(&ctl, 0, sizeof(ctl));
 	ctl.keysize = sizeof(Oid);
 	ctl.entrysize = sizeof(PartRelationInfo);
-	ctl.hcxt = TopMemoryContext; /* place data to persistent mcxt */
+	ctl.hcxt = PathmanRelationCacheContext;
 
 	partitioned_rels = hash_create("pg_pathman's partitioned relations cache",
 								   PART_RELS_SIZE, &ctl, HASH_ELEM | HASH_BLOBS);
@@ -318,7 +366,7 @@ init_local_cache(void)
 	memset(&ctl, 0, sizeof(ctl));
 	ctl.keysize = sizeof(Oid);
 	ctl.entrysize = sizeof(PartParentInfo);
-	ctl.hcxt = TopMemoryContext; /* place data to persistent mcxt */
+	ctl.hcxt = PathmanParentCacheContext;
 
 	parent_cache = hash_create("pg_pathman's partition parents cache",
 							   PART_RELS_SIZE * CHILD_FACTOR,
@@ -327,7 +375,7 @@ init_local_cache(void)
 	memset(&ctl, 0, sizeof(ctl));
 	ctl.keysize = sizeof(Oid);
 	ctl.entrysize = sizeof(PartConstraintInfo);
-	ctl.hcxt = TopMemoryContext; /* place data to persistent mcxt */
+	ctl.hcxt = PathmanCostraintCacheContext;
 
 	constraint_cache = hash_create("pg_pathman's partition constraints cache",
 								   PART_RELS_SIZE * CHILD_FACTOR,
@@ -340,24 +388,17 @@ init_local_cache(void)
 static void
 fini_local_cache(void)
 {
-	HASH_SEQ_STATUS		status;
-	PartRelationInfo   *prel;
-
-	hash_seq_init(&status, partitioned_rels);
-	while((prel = (PartRelationInfo *) hash_seq_search(&status)) != NULL)
-	{
-		if (PrelIsValid(prel))
-		{
-			FreeChildrenArray(prel);
-			FreeRangesArray(prel);
-		}
-	}
-
-	/* Now we can safely destroy hash tables */
+	/* First, destroy hash tables */
 	hash_destroy(partitioned_rels);
 	hash_destroy(parent_cache);
-	partitioned_rels = NULL;
-	parent_cache = NULL;
+	hash_destroy(constraint_cache);
+
+	partitioned_rels	= NULL;
+	parent_cache		= NULL;
+	constraint_cache	= NULL;
+
+	/* Now we can clear allocations */
+	MemoryContextResetChildren(TopPathmanContext);
 }
 
 /*
@@ -371,7 +412,7 @@ fill_prel_with_partitions(const Oid *partitions,
 {
 	uint32			i;
 	Expr		   *con_expr;
-	MemoryContext	mcxt = TopMemoryContext;
+	MemoryContext	mcxt = PathmanRelationCacheContext;
 
 	/* Allocate memory for 'prel->children' & 'prel->ranges' (if needed) */
 	prel->children = MemoryContextAllocZero(mcxt, parts_count * sizeof(Oid));
@@ -474,7 +515,7 @@ fill_prel_with_partitions(const Oid *partitions,
 			prel->children[i] = prel->ranges[i].child_oid;
 
 		/* Copy all min & max Datums to the persistent mcxt */
-		old_mcxt = MemoryContextSwitchTo(TopMemoryContext);
+		old_mcxt = MemoryContextSwitchTo(PathmanRelationCacheContext);
 		for (i = 0; i < PrelChildrenCount(prel); i++)
 		{
 			prel->ranges[i].min = CopyBound(&prel->ranges[i].min,

@@ -475,10 +475,10 @@ bgw_main_concurrent_part(Datum main_arg)
 			MemoryContext	current_mcxt;
 
 			/*
-			 * Allocate as SQL query in top memory context because current
+			 * Allocate SQL query in TopPathmanContext because current
 			 * context will be destroyed after transaction finishes
 			 */
-			current_mcxt = MemoryContextSwitchTo(TopMemoryContext);
+			current_mcxt = MemoryContextSwitchTo(TopPathmanContext);
 			sql = psprintf("SELECT %s._partition_data_concurrent($1::oid, p_limit:=$2)",
 						   get_namespace_name(get_pathman_schema()));
 			MemoryContextSwitchTo(current_mcxt);

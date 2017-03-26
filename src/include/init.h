@@ -37,6 +37,11 @@ typedef struct
 } PathmanInitState;
 
 
+extern MemoryContext		TopPathmanContext;
+extern MemoryContext		PathmanRelationCacheContext;
+extern MemoryContext		PathmanParentCacheContext;
+extern MemoryContext		PathmanCostraintCacheContext;
+
 extern HTAB				   *partitioned_rels;
 extern HTAB				   *parent_cache;
 extern HTAB				   *constraint_cache;
