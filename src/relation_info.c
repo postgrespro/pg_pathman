@@ -702,10 +702,19 @@ try_perform_parent_refresh(Oid parent)
 void
 forget_constraint_of_partition(Oid partition)
 {
-	pathman_cache_search_relid(constraint_cache,
-							   partition,
-							   HASH_REMOVE,
-							   NULL);
+	PartConstraintInfo *pcon = pathman_cache_search_relid(constraint_cache,
+														  partition,
+														  HASH_FIND,
+														  NULL);
+	if (pcon)
+	{
+		/* FIXME: implement pfree(constraint) logc */
+
+		pathman_cache_search_relid(constraint_cache,
+								   partition,
+								   HASH_REMOVE,
+								   NULL);
+	}
 }
 
 /* Return partition's constraint as expression tree */
