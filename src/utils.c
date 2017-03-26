@@ -4,6 +4,8 @@
  *		definitions of various support functions
  *
  * Copyright (c) 2016, Postgres Professional
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1994, Regents of the University of California
  *
  * ------------------------------------------------------------------------
  */
@@ -160,6 +162,42 @@ list_reverse(List *l)
 		result = lcons(lfirst(lc), result);
 	}
 	return result;
+}
+
+void
+McxtStatsInternal(MemoryContext context, int level,
+				  bool examine_children,
+				  MemoryContextCounters *totals)
+{
+	MemoryContextCounters	local_totals;
+	MemoryContext			child;
+
+	AssertArg(MemoryContextIsValid(context));
+
+	/* Examine the context itself */
+	(*context->methods->stats) (context, level, false, totals);
+
+	memset(&local_totals, 0, sizeof(local_totals));
+
+	if (!examine_children)
+		return;
+
+	/* Examine children */
+	for (child = context->firstchild;
+		 child != NULL;
+		 child = child->nextchild)
+	{
+
+		McxtStatsInternal(child, level + 1,
+						  examine_children,
+						  &local_totals);
+	}
+
+	/* Save children stats */
+	totals->nblocks += local_totals.nblocks;
+	totals->freechunks += local_totals.freechunks;
+	totals->totalspace += local_totals.totalspace;
+	totals->freespace += local_totals.freespace;
 }
 
 

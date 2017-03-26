@@ -37,6 +37,7 @@ typedef struct
 } PathmanInitState;
 
 
+#define PATHMAN_MCXT_COUNT	4
 extern MemoryContext		TopPathmanContext;
 extern MemoryContext		PathmanRelationCacheContext;
 extern MemoryContext		PathmanParentCacheContext;
@@ -48,6 +49,31 @@ extern HTAB				   *constraint_cache;
 
 /* pg_pathman's initialization state */
 extern PathmanInitState 	pg_pathman_init_state;
+
+
+/* Transform pg_pathman's memory context into simple name */
+static inline const char *
+simpify_mcxt_name(MemoryContext mcxt)
+{
+	static const char *top_mcxt		= "maintenance";
+	static const char *bound_mcxt	= "bounds cache";
+	static const char *parent_mcxt	= "parents cache";
+	static const char *constr_mcxt	= "constraints cache";
+
+	if (mcxt == TopPathmanContext)
+		return top_mcxt;
+
+	else if (mcxt == PathmanRelationCacheContext)
+		return bound_mcxt;
+
+	else if (mcxt == PathmanParentCacheContext)
+		return parent_mcxt;
+
+	else if (mcxt == PathmanCostraintCacheContext)
+		return constr_mcxt;
+
+	else elog(ERROR, "error in function " CppAsString(simpify_mcxt_name));
+}
 
 
 /*

@@ -361,7 +361,8 @@ init_local_cache(void)
 	ctl.hcxt = PathmanRelationCacheContext;
 
 	partitioned_rels = hash_create("pg_pathman's partitioned relations cache",
-								   PART_RELS_SIZE, &ctl, HASH_ELEM | HASH_BLOBS);
+								   PART_RELS_SIZE, &ctl,
+								   HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
 
 	memset(&ctl, 0, sizeof(ctl));
 	ctl.keysize = sizeof(Oid);
@@ -369,8 +370,8 @@ init_local_cache(void)
 	ctl.hcxt = PathmanParentCacheContext;
 
 	parent_cache = hash_create("pg_pathman's partition parents cache",
-							   PART_RELS_SIZE * CHILD_FACTOR,
-							   &ctl, HASH_ELEM | HASH_BLOBS);
+							   PART_RELS_SIZE * CHILD_FACTOR, &ctl,
+							   HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
 
 	memset(&ctl, 0, sizeof(ctl));
 	ctl.keysize = sizeof(Oid);
@@ -378,8 +379,8 @@ init_local_cache(void)
 	ctl.hcxt = PathmanCostraintCacheContext;
 
 	constraint_cache = hash_create("pg_pathman's partition constraints cache",
-								   PART_RELS_SIZE * CHILD_FACTOR,
-								   &ctl, HASH_ELEM | HASH_BLOBS);
+								   PART_RELS_SIZE * CHILD_FACTOR, &ctl,
+								   HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
 }
 
 /*
