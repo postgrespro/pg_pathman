@@ -17,6 +17,7 @@
 #include "access/xact.h"
 #include "catalog/catalog.h"
 #include "catalog/indexing.h"
+#include "catalog/pg_constraint.h"
 #include "catalog/pg_inherits.h"
 #include "miscadmin.h"
 #include "storage/lmgr.h"
@@ -28,6 +29,10 @@
 #include "utils/syscache.h"
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"
+
+#if PG_VERSION_NUM >= 90600
+#include "catalog/pg_constraint_fn.h"
+#endif
 
 
 /*
@@ -58,6 +63,10 @@ static Oid try_syscache_parent_search(Oid partition, PartParentSearch *status);
 static Oid get_parent_of_partition_internal(Oid partition,
 											PartParentSearch *status,
 											HASHACTION action);
+
+static Expr *get_partition_constraint_expr(Oid partition,
+										   AttrNumber part_attno,
+										   Oid *constr_oid);
 
 
 /*
@@ -684,6 +693,123 @@ try_perform_parent_refresh(Oid parent)
 	return true;
 }
 
+
+/*
+ * forget\get constraint functions.
+ */
+
+Oid
+forget_constraint_of_partition(Oid partition)
+{
+	PartConstraintInfo *pcon = pathman_cache_search_relid(constraint_cache,
+														  partition,
+														  HASH_FIND, NULL);
+	if (pcon)
+	{
+		Oid conid = pcon->conid;
+
+		/* TODO: implement pfree(constraint) logc */
+
+		pathman_cache_search_relid(constraint_cache,
+								   partition,
+								   HASH_REMOVE, NULL);
+
+		return conid;
+	}
+
+	return InvalidOid;
+}
+
+Expr *
+get_constraint_of_partition(Oid partition, AttrNumber part_attno)
+{
+	PartConstraintInfo *pcon = pathman_cache_search_relid(constraint_cache,
+														  partition,
+														  HASH_FIND, NULL);
+	if (!pcon)
+	{
+		Oid				conid;
+		Expr		   *con_expr;
+		MemoryContext	old_mcxt;
+
+		/* Try to build constraint's expression tree */
+		con_expr = get_partition_constraint_expr(partition, part_attno, &conid);
+
+		/* Create new entry for this constraint */
+		pcon = pathman_cache_search_relid(constraint_cache,
+										  partition,
+										  HASH_ENTER, NULL);
+
+		/* Copy constraint's data to the persistent mcxt */
+		old_mcxt = MemoryContextSwitchTo(TopMemoryContext);
+		pcon->conid			= conid;
+		pcon->constraint	= copyObject(con_expr);
+		MemoryContextSwitchTo(old_mcxt);
+	}
+
+	return pcon->constraint;
+}
+
+/*
+ * Get constraint expression tree for a partition.
+ *
+ * build_check_constraint_name_internal() is used to build conname.
+ */
+static Expr *
+get_partition_constraint_expr(Oid partition,
+							  AttrNumber part_attno,
+							  Oid *constr_oid) /* optional ret value #2 */
+{
+	Oid			conid;			/* constraint Oid */
+	char	   *conname;		/* constraint name */
+	HeapTuple	con_tuple;
+	Datum		conbin_datum;
+	bool		conbin_isnull;
+	Expr	   *expr;			/* expression tree for constraint */
+
+	conname = build_check_constraint_name_relid_internal(partition, part_attno);
+	conid = get_relation_constraint_oid(partition, conname, true);
+
+	/* Return constraint's Oid to caller */
+	if (constr_oid)
+		*constr_oid = conid;
+
+	if (!OidIsValid(conid))
+	{
+		DisablePathman(); /* disable pg_pathman since config is broken */
+		ereport(ERROR,
+				(errmsg("constraint \"%s\" of partition \"%s\" does not exist",
+						conname, get_rel_name_or_relid(partition)),
+				 errhint(INIT_ERROR_HINT)));
+	}
+
+	con_tuple = SearchSysCache1(CONSTROID, ObjectIdGetDatum(conid));
+	conbin_datum = SysCacheGetAttr(CONSTROID, con_tuple,
+								   Anum_pg_constraint_conbin,
+								   &conbin_isnull);
+	if (conbin_isnull)
+	{
+		DisablePathman(); /* disable pg_pathman since config is broken */
+		ereport(WARNING,
+				(errmsg("constraint \"%s\" of partition \"%s\" has NULL conbin",
+						conname, get_rel_name_or_relid(partition)),
+				 errhint(INIT_ERROR_HINT)));
+		pfree(conname);
+
+		return NULL; /* could not parse */
+	}
+	pfree(conname);
+
+	/* Finally we get a constraint expression tree */
+	expr = (Expr *) stringToNode(TextDatumGetCString(conbin_datum));
+
+	/* Don't foreget to release syscache tuple */
+	ReleaseSysCache(con_tuple);
+
+	return expr;
+}
+
+
 /*
  * Safe PartType wrapper.
  */
@@ -717,6 +843,7 @@ PartTypeToCString(PartType parttype)
 			return NULL; /* keep compiler happy */
 	}
 }
+
 
 /*
  * Common PartRelationInfo checks. Emit ERROR if anything is wrong.

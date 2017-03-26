@@ -21,6 +21,10 @@
 #include "utils/snapshot.h"
 
 
+/* Help user in case of emergency */
+#define INIT_ERROR_HINT "pg_pathman will be disabled to allow you to resolve this issue"
+
+
 /*
  * pg_pathman's initialization state structure.
  */
@@ -35,6 +39,7 @@ typedef struct
 
 extern HTAB				   *partitioned_rels;
 extern HTAB				   *parent_cache;
+extern HTAB				   *constraint_cache;
 
 /* pg_pathman's initialization state */
 extern PathmanInitState 	pg_pathman_init_state;

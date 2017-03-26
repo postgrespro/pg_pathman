@@ -18,6 +18,7 @@
 #include "port/atomics.h"
 #include "storage/lock.h"
 #include "utils/datum.h"
+#include "nodes/primnodes.h"
 
 
 /* Range bound */
@@ -37,7 +38,7 @@ typedef struct
 #define IsMinusInfinity(i)		( (i)->is_infinite == MINUS_INFINITY )
 
 
-inline static Bound
+static inline Bound
 CopyBound(const Bound *src, bool byval, int typlen)
 {
 	Bound bound = {
@@ -50,7 +51,7 @@ CopyBound(const Bound *src, bool byval, int typlen)
 	return bound;
 }
 
-inline static Bound
+static inline Bound
 MakeBound(Datum value)
 {
 	Bound bound = { value, FINITE };
@@ -58,7 +59,7 @@ MakeBound(Datum value)
 	return bound;
 }
 
-inline static Bound
+static inline Bound
 MakeBoundInf(int8 infinity_type)
 {
 	Bound bound = { (Datum) 0, infinity_type };
@@ -66,7 +67,7 @@ MakeBoundInf(int8 infinity_type)
 	return bound;
 }
 
-inline static Datum
+static inline Datum
 BoundGetValue(const Bound *bound)
 {
 	Assert(!IsInfinite(bound));
@@ -74,7 +75,7 @@ BoundGetValue(const Bound *bound)
 	return bound->value;
 }
 
-inline static int
+static inline int
 cmp_bounds(FmgrInfo *cmp_func, const Bound *b1, const Bound *b2)
 {
 	if (IsMinusInfinity(b1) || IsPlusInfinity(b2))
@@ -149,6 +150,13 @@ typedef struct
 	Oid				parent_rel;
 } PartParentInfo;
 
+typedef struct
+{
+	Oid				child_rel;		/* key */
+	Oid				conid;
+	Expr		   *constraint;
+} PartConstraintInfo;
+
 /*
  * PartParentSearch
  *		Represents status of a specific cached entry.
@@ -177,7 +185,7 @@ typedef enum
 
 #define PrelIsValid(prel)			( (prel) && (prel)->valid )
 
-inline static uint32
+static inline uint32
 PrelLastChild(const PartRelationInfo *prel)
 {
 	Assert(PrelIsValid(prel));
@@ -201,18 +209,26 @@ const PartRelationInfo *get_pathman_relation_info_after_lock(Oid relid,
 															 bool unlock_if_not_found,
 															 LockAcquireResult *lock_result);
 
+/* Global invalidation routines */
 void delay_pathman_shutdown(void);
 void delay_invalidation_parent_rel(Oid parent);
 void delay_invalidation_vague_rel(Oid vague_rel);
 void finish_delayed_invalidation(void);
 
+/* Parent cache */
 void cache_parent_of_partition(Oid partition, Oid parent);
 Oid forget_parent_of_partition(Oid partition, PartParentSearch *status);
 Oid get_parent_of_partition(Oid partition, PartParentSearch *status);
 
+/* Constraint cache */
+Oid forget_constraint_of_partition(Oid partition);
+Expr * get_constraint_of_partition(Oid partition, AttrNumber part_attno);
+
+/* Safe casts for PartType */
 PartType DatumGetPartType(Datum datum);
 char * PartTypeToCString(PartType parttype);
 
+/* PartRelationInfo checker */
 void shout_if_prel_is_invalid(Oid parent_oid,
 							  const PartRelationInfo *prel,
 							  PartType expected_part_type);

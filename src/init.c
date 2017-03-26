@@ -21,7 +21,6 @@
 #include "access/htup_details.h"
 #include "access/sysattr.h"
 #include "catalog/indexing.h"
-#include "catalog/pg_constraint.h"
 #include "catalog/pg_extension.h"
 #include "catalog/pg_inherits.h"
 #include "catalog/pg_inherits_fn.h"
@@ -38,13 +37,6 @@
 #include "utils/syscache.h"
 #include "utils/typcache.h"
 
-#if PG_VERSION_NUM >= 90600
-#include "catalog/pg_constraint_fn.h"
-#endif
-
-
-/* Help user in case of emergency */
-#define INIT_ERROR_HINT "pg_pathman will be disabled to allow you to resolve this issue"
 
 /* Initial size of 'partitioned_rels' table */
 #define PART_RELS_SIZE	10
@@ -56,6 +48,9 @@ HTAB			   *partitioned_rels = NULL;
 
 /* Storage for PartParentInfos */
 HTAB			   *parent_cache = NULL;
+
+/* Storage for partition constraints */
+HTAB			   *constraint_cache = NULL;
 
 /* pg_pathman's init status */
 PathmanInitState 	pg_pathman_init_state;
@@ -70,8 +65,6 @@ static void fini_pathman_relation_oids(void);
 static void init_local_cache(void);
 static void fini_local_cache(void);
 static void read_pathman_config(void);
-
-static Expr *get_partition_constraint_expr(Oid partition, AttrNumber part_attno);
 
 static int cmp_range_entries(const void *p1, const void *p2, void *arg);
 
@@ -312,6 +305,7 @@ init_local_cache(void)
 	/* Destroy caches, just in case */
 	hash_destroy(partitioned_rels);
 	hash_destroy(parent_cache);
+	hash_destroy(constraint_cache);
 
 	memset(&ctl, 0, sizeof(ctl));
 	ctl.keysize = sizeof(Oid);
@@ -329,6 +323,15 @@ init_local_cache(void)
 	parent_cache = hash_create("pg_pathman's partition parents cache",
 							   PART_RELS_SIZE * CHILD_FACTOR,
 							   &ctl, HASH_ELEM | HASH_BLOBS);
+
+	memset(&ctl, 0, sizeof(ctl));
+	ctl.keysize = sizeof(Oid);
+	ctl.entrysize = sizeof(PartConstraintInfo);
+	ctl.hcxt = TopMemoryContext; /* place data to persistent mcxt */
+
+	constraint_cache = hash_create("pg_pathman's partition constraints cache",
+								   PART_RELS_SIZE * CHILD_FACTOR,
+								   &ctl, HASH_ELEM | HASH_BLOBS);
 }
 
 /*
@@ -386,10 +389,10 @@ fill_prel_with_partitions(const Oid *partitions,
 		/* Raise ERROR if there's no such column */
 		if (part_attno == InvalidAttrNumber)
 			elog(ERROR, "partition \"%s\" has no column \"%s\"",
-				 get_rel_name_or_relid(partitions[i]),
-				 part_column_name);
+				 get_rel_name_or_relid(partitions[i]), part_column_name);
 
-		con_expr = get_partition_constraint_expr(partitions[i], part_attno);
+		/* Fetch constraint's expression tree */
+		con_expr = get_constraint_of_partition(partitions[i], part_attno);
 
 		/* Perform a partitioning_type-dependent task */
 		switch (prel->parttype)
@@ -861,58 +864,6 @@ read_pathman_config(void)
 	heap_endscan(scan);
 	UnregisterSnapshot(snapshot);
 	heap_close(rel, AccessShareLock);
-}
-
-/*
- * Get constraint expression tree for a partition.
- *
- * build_check_constraint_name_internal() is used to build conname.
- */
-static Expr *
-get_partition_constraint_expr(Oid partition, AttrNumber part_attno)
-{
-	Oid			conid;			/* constraint Oid */
-	char	   *conname;		/* constraint name */
-	HeapTuple	con_tuple;
-	Datum		conbin_datum;
-	bool		conbin_isnull;
-	Expr	   *expr;			/* expression tree for constraint */
-
-	conname = build_check_constraint_name_relid_internal(partition, part_attno);
-	conid = get_relation_constraint_oid(partition, conname, true);
-	if (conid == InvalidOid)
-	{
-		DisablePathman(); /* disable pg_pathman since config is broken */
-		ereport(ERROR,
-				(errmsg("constraint \"%s\" for partition \"%s\" does not exist",
-						conname, get_rel_name_or_relid(partition)),
-				 errhint(INIT_ERROR_HINT)));
-	}
-
-	con_tuple = SearchSysCache1(CONSTROID, ObjectIdGetDatum(conid));
-	conbin_datum = SysCacheGetAttr(CONSTROID, con_tuple,
-								   Anum_pg_constraint_conbin,
-								   &conbin_isnull);
-	if (conbin_isnull)
-	{
-		DisablePathman(); /* disable pg_pathman since config is broken */
-		ereport(WARNING,
-				(errmsg("constraint \"%s\" for partition \"%s\" has NULL conbin",
-						conname, get_rel_name_or_relid(partition)),
-				 errhint(INIT_ERROR_HINT)));
-		pfree(conname);
-
-		return NULL; /* could not parse */
-	}
-	pfree(conname);
-
-	/* Finally we get a constraint expression tree */
-	expr = (Expr *) stringToNode(TextDatumGetCString(conbin_datum));
-
-	/* Don't foreget to release syscache tuple */
-	ReleaseSysCache(con_tuple);
-
-	return expr;
 }
 
 /* qsort comparison function for RangeEntries */
