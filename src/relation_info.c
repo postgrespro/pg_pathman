@@ -21,6 +21,7 @@
 #include "catalog/pg_inherits.h"
 #include "catalog/pg_type.h"
 #include "miscadmin.h"
+#include "optimizer/clauses.h"
 #include "storage/lmgr.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
@@ -62,6 +63,53 @@ static Oid get_parent_of_partition_internal(Oid partition,
 											HASHACTION action);
 
 
+struct expr_mutator_context
+{
+	Oid		relid;		/* partitioned table */
+	List	*rtable;	/* range table list from expression query */
+};
+
+/*
+ * To prevent calculation of Vars in expression, we wrap them with
+ * CustomConst, and later before execution we fill it with actual value
+ */
+static Node *
+expression_mutator(Node *node, struct expr_mutator_context *context)
+{
+	const TypeCacheEntry   *typcache;
+
+	if (IsA(node, Var))
+	{
+		//Var		*variable = (Var *) node;
+		Node	*new_node = newNode(sizeof(CustomConst), T_Const);
+		Const	*new_const = (Const *)new_node;
+
+		/*
+		RangeTblEntry *entry = rt_fetch(variable->varno, context->rtable);
+		if (entry->relid != context->relid)
+			elog(ERROR, "Columns in the expression should "
+							"be only from partitioned relation");
+		*/
+
+		/* we only need varattno from original Var, for now */
+		((CustomConst *)new_node)->varattno = ((Var *)node)->varattno;
+
+		new_const->consttype = ((Var *)node)->vartype;
+		new_const->consttypmod = ((Var *)node)->vartypmod;
+		new_const->constcollid = ((Var *)node)->varcollid;
+		new_const->constvalue = (Datum) 0;
+		new_const->constisnull = true;
+		new_const->location = -2;
+
+		typcache = lookup_type_cache(new_const->consttype, 0);
+		new_const->constbyval = typcache->typbyval;
+		new_const->constlen	= typcache->typlen;
+
+		return new_node;
+	}
+	return expression_tree_mutator(node, expression_mutator, (void *) context);
+}
+
 /*
  * refresh\invalidate\get\remove PartRelationInfo functions.
  */
@@ -82,9 +130,10 @@ refresh_pathman_relation_info(Oid relid,
 	PartRelationInfo	   *prel;
 	Datum					param_values[Natts_pathman_config_params];
 	bool					param_isnull[Natts_pathman_config_params];
-	const char			   *expr;
+	char				   *expr;
 	Oid						expr_type;
 	HeapTuple				tp;
+	MemoryContext			oldcontext;
 
 	prel = (PartRelationInfo *) pathman_cache_search_relid(partitioned_rels,
 														   relid, HASH_ENTER,
@@ -137,15 +186,21 @@ refresh_pathman_relation_info(Oid relid,
 	prel->parttype	= DatumGetPartType(values[Anum_pathman_config_parttype - 1]);
 
 	/* Read config values */
-	expr = TextDatumGetCString(values[Anum_pathman_config_attname - 1]);
+	expr = TextDatumGetCString(values[Anum_pathman_config_expression - 1]);
 	expr_type = DatumGetObjectId(values[Anum_pathman_config_atttype - 1]);
 
 	/*
 	 * Save parsed expression to cache and use already saved expression type
 	 * from config
 	 */
-	prel->expr = (Expr *) get_expression_node(relid, expr, true);
+	oldcontext = MemoryContextSwitchTo(TopMemoryContext);
+	prel->expr = (Node *) stringToNode(expr);
+	fix_opfuncids(prel->expr);
+	prel->expr = expression_mutator(prel->expr, NULL);
+	MemoryContextSwitchTo(oldcontext);
+
 	prel->atttype = expr_type;
+	pfree(expr);
 
 	tp = SearchSysCache1(TYPEOID, values[Anum_pathman_config_atttype - 1]);
 	if (HeapTupleIsValid(tp))

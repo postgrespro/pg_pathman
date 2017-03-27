@@ -87,7 +87,6 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 	/* RANGE boundaries + value type */
 	Bound		start,
 				end;
-	Oid			value_type;
 
 	/* Optional: name & tablespace */
 	RangeVar   *partition_name_rv;
@@ -103,7 +102,7 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 
 	/* Fetch mandatory args */
 	parent_relid = PG_GETARG_OID(0);
-	value_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
+	//value_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
 
 	start = PG_ARGISNULL(1) ?
 				MakeBoundInf(MINUS_INFINITY) :
@@ -136,7 +135,6 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 	partition_relid = create_single_range_partition_internal(parent_relid,
 															 &start,
 															 &end,
-															 value_type,
 															 partition_name_rv,
 															 tablespace);
 
@@ -380,7 +378,8 @@ build_range_condition(PG_FUNCTION_ARGS)
 				MakeBoundInf(PLUS_INFINITY) :
 				MakeBound(PG_GETARG_DATUM(3));
 
-	con = build_range_check_constraint(relid, text_to_cstring(attname),
+	con = build_range_check_constraint(relid,
+									   NULL,
 									   &min, &max,
 									   bounds_type);
 
@@ -847,14 +846,14 @@ modify_range_constraint(Oid child_relid,
 {
 	Constraint	   *constraint;
 	Relation		partition_rel;
-	char		   *attname_nonconst = pstrdup(attname);
+	//char		   *attname_nonconst = pstrdup(attname);
 
 	/* Drop old constraint */
 	drop_check_constraint(child_relid, attnum);
 
 	/* Build a new one */
 	constraint = build_range_check_constraint(child_relid,
-											  attname_nonconst,
+											  NULL,
 											  lower,
 											  upper,
 											  atttype);
@@ -866,7 +865,7 @@ modify_range_constraint(Oid child_relid,
 							  false, true, true);
 	heap_close(partition_rel, NoLock);
 
-	pfree(attname_nonconst);
+	//pfree(attname_nonconst);
 }
 
 /*

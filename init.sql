@@ -35,18 +35,20 @@ LANGUAGE C;
 CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
 	partrel			REGCLASS NOT NULL PRIMARY KEY,
 	attname			TEXT NOT NULL,
+	raw_expression	TEXT NOT NULL,
 	atttype			OID NOT NULL,
 	parttype		INTEGER NOT NULL,
 	range_interval	TEXT,
 
 	/* check for allowed part types */
-	CHECK (parttype IN (1, 2)),
+	CHECK (parttype IN (1, 2))
 
 	/* check for correct interval */
+	/*
 	CHECK (@extschema@.validate_interval_value(partrel,
 											   attname,
 											   parttype,
-											   range_interval))
+											   range_interval)) */
 );
 
 
@@ -451,10 +453,6 @@ BEGIN
 		RAISE EXCEPTION 'relation "%" has already been partitioned', relation;
 	END IF;
 
-	IF NOT @extschema@.is_expression_suitable(relation, expression) THEN
-		RAISE EXCEPTION 'partitioning expression "%" is not suitable', expression;
-	END IF;
-
 	/* Check if there are foreign keys that reference the relation */
 	FOR v_rec IN (SELECT * FROM pg_catalog.pg_constraint
 				  WHERE confrelid = relation::REGCLASS::OID)
@@ -800,11 +798,13 @@ LANGUAGE C STRICT;
 /*
  * Checks if expression is suitable
  */
+ /*
 CREATE OR REPLACE FUNCTION @extschema@.is_expression_suitable(
 	relid	REGCLASS,
 	expr	TEXT)
 RETURNS BOOLEAN AS 'pg_pathman', 'is_expression_suitable'
 LANGUAGE C STRICT;
+*/
 
 /*
  * Check if regclass is date or timestamp.
@@ -848,9 +848,11 @@ LANGUAGE C STRICT;
  * Attach a previously partitioned table.
  */
 CREATE OR REPLACE FUNCTION @extschema@.add_to_pathman_config(
-	parent_relid	REGCLASS,
-	attname			TEXT,
-	range_interval	TEXT DEFAULT NULL)
+	parent_relid		REGCLASS,
+	attname				TEXT,
+	range_interval		TEXT DEFAULT NULL,
+	refresh_part_info	BOOL DEFAULT TRUE
+)
 RETURNS BOOLEAN AS 'pg_pathman', 'add_to_pathman_config'
 LANGUAGE C;
 

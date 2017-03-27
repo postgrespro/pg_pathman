@@ -57,7 +57,7 @@ PG_FUNCTION_INFO_V1( build_check_constraint_name_attname );
 PG_FUNCTION_INFO_V1( validate_relname );
 PG_FUNCTION_INFO_V1( is_date_type );
 PG_FUNCTION_INFO_V1( is_attribute_nullable );
-PG_FUNCTION_INFO_V1( is_expression_suitable );
+//PG_FUNCTION_INFO_V1( is_expression_suitable );
 
 PG_FUNCTION_INFO_V1( add_to_pathman_config );
 PG_FUNCTION_INFO_V1( pathman_config_params_trigger_func );
@@ -489,6 +489,7 @@ is_date_type(PG_FUNCTION_ARGS)
 	PG_RETURN_BOOL(is_date_type_internal(PG_GETARG_OID(0)));
 }
 
+/*
 Datum
 is_expression_suitable(PG_FUNCTION_ARGS)
 {
@@ -503,7 +504,7 @@ is_expression_suitable(PG_FUNCTION_ARGS)
 	result = (tce->hash_proc != InvalidOid);
 
 	PG_RETURN_BOOL(result);
-}
+}*/
 
 Datum
 is_attribute_nullable(PG_FUNCTION_ARGS)
@@ -651,20 +652,19 @@ Datum
 add_to_pathman_config(PG_FUNCTION_ARGS)
 {
 	Oid					relid;
-	text			   *attname;
+	char			   *expression;
 	PartType			parttype;
 
 	Relation			pathman_config;
 	Datum				values[Natts_pathman_config];
 	bool				isnull[Natts_pathman_config];
+	bool				refresh_part_info;
 	HeapTuple			htup;
 	CatalogIndexState	indstate;
 
-	char			   *expr;
-	Oid					expr_type;
-
-	PathmanInitState	init_state;
-	MemoryContext		old_mcxt = CurrentMemoryContext;
+	PathmanInitState	 init_state;
+	PartExpressionInfo	*expr_info;
+	MemoryContext		 old_mcxt = CurrentMemoryContext;
 
 	if (PG_ARGISNULL(0))
 		elog(ERROR, "'parent_relid' should not be NULL");
@@ -674,7 +674,6 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 
 	/* Read parameters */
 	relid = PG_GETARG_OID(0);
-	attname = PG_GETARG_TEXT_P(1);
 
 	/* Check that relation exists */
 	if (!check_relation_exists(relid))
@@ -683,20 +682,25 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	/* Select partitioning type using 'range_interval' */
 	parttype = PG_ARGISNULL(2) ? PT_HASH : PT_RANGE;
 
+	/* Parse and check expression */
+	expression = TextDatumGetCString(PG_GETARG_TEXT_P(1));
+	expr_info = get_part_expression_info(relid, expression, (parttype == PT_HASH), true);
+	Assert(expr_info->expr_datum != (Datum) 0);
+
 	/*
 	 * Initialize columns (partrel, attname, parttype, range_interval).
 	 */
 	values[Anum_pathman_config_partrel - 1]			= ObjectIdGetDatum(relid);
 	isnull[Anum_pathman_config_partrel - 1]			= false;
 
-	values[Anum_pathman_config_attname - 1]			= PointerGetDatum(attname);
-	isnull[Anum_pathman_config_attname - 1]			= false;
-
-	expr = TextDatumGetCString(PointerGetDatum(attname));
-	expr_type = get_partition_expr_type(relid, expr);
-
-	values[Anum_pathman_config_atttype - 1]			= ObjectIdGetDatum(expr_type);
+	values[Anum_pathman_config_atttype - 1]			= ObjectIdGetDatum(expr_info->expr_type);
 	isnull[Anum_pathman_config_atttype - 1]			= false;
+
+	values[Anum_pathman_config_expression - 1]		= expr_info->expr_datum;
+	isnull[Anum_pathman_config_expression - 1]		= false;
+
+	values[Anum_pathman_config_raw_expression - 1]	= CStringGetTextDatum(expression);
+	isnull[Anum_pathman_config_raw_expression - 1]	= false;
 
 	values[Anum_pathman_config_parttype - 1]		= Int32GetDatum(parttype);
 	isnull[Anum_pathman_config_parttype - 1]		= false;
@@ -721,35 +725,39 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	CatalogCloseIndexes(indstate);
 	heap_close(pathman_config, RowExclusiveLock);
 
-	/* Now try to create a PartRelationInfo */
-	PG_TRY();
+	refresh_part_info = PG_GETARG_BOOL(3);
+	if (refresh_part_info)
 	{
-		/* Some flags might change during refresh attempt */
-		save_pathman_init_state(&init_state);
+		/* Now try to create a PartRelationInfo */
+		PG_TRY();
+		{
+			/* Some flags might change during refresh attempt */
+			save_pathman_init_state(&init_state);
 
-		refresh_pathman_relation_info(relid,
-									  values,
-									  isnull,
-									  false); /* initialize immediately */
+			refresh_pathman_relation_info(relid,
+										  values,
+										  isnull,
+										  false); /* initialize immediately */
+		}
+		PG_CATCH();
+		{
+			ErrorData *edata;
+
+			/* Switch to the original context & copy edata */
+			MemoryContextSwitchTo(old_mcxt);
+			edata = CopyErrorData();
+			FlushErrorState();
+
+			/* We have to restore all changed flags */
+			restore_pathman_init_state(&init_state);
+
+			/* Show error message */
+			elog(ERROR, "%s", edata->message);
+
+			FreeErrorData(edata);
+		}
+		PG_END_TRY();
 	}
-	PG_CATCH();
-	{
-		ErrorData *edata;
-
-		/* Switch to the original context & copy edata */
-		MemoryContextSwitchTo(old_mcxt);
-		edata = CopyErrorData();
-		FlushErrorState();
-
-		/* We have to restore all changed flags */
-		restore_pathman_init_state(&init_state);
-
-		/* Show error message */
-		elog(ERROR, "%s", edata->message);
-
-		FreeErrorData(edata);
-	}
-	PG_END_TRY();
 
 	PG_RETURN_BOOL(true);
 }

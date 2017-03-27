@@ -30,6 +30,7 @@
 #include "commands/tablespace.h"
 #include "miscadmin.h"
 #include "nodes/plannodes.h"
+#include "optimizer/clauses.h"
 #include "parser/parser.h"
 #include "parser/parse_func.h"
 #include "parser/parse_relation.h"
@@ -64,7 +65,8 @@ static void create_single_partition_common(Oid partition_relid,
 static Oid create_single_partition_internal(Oid parent_relid,
 											RangeVar *partition_rv,
 											char *tablespace,
-											char **partitioning_expr);
+											Oid	*expr_type,
+											Node **expr);
 
 static char *choose_range_partition_name(Oid parent_relid, Oid parent_nsp);
 static char *choose_hash_partition_name(Oid parent_relid, uint32 part_idx);
@@ -96,13 +98,13 @@ Oid
 create_single_range_partition_internal(Oid parent_relid,
 									   const Bound *start_value,
 									   const Bound *end_value,
-									   Oid value_type,
 									   RangeVar *partition_rv,
 									   char *tablespace)
 {
-	Oid						partition_relid;
+	Oid						partition_relid,
+							value_type;
 	Constraint			   *check_constr;
-	char				   *partitioning_expr;
+	Node				   *expr;
 	init_callback_params	callback_params;
 
 	/* Generate a name if asked to */
@@ -121,11 +123,12 @@ create_single_range_partition_internal(Oid parent_relid,
 	partition_relid = create_single_partition_internal(parent_relid,
 													   partition_rv,
 													   tablespace,
-													   &partitioning_expr);
+													   &value_type,
+													   &expr);
 
 	/* Build check constraint for RANGE partition */
 	check_constr = build_range_check_constraint(partition_relid,
-												partitioning_expr,
+												expr,
 												start_value,
 												end_value,
 												value_type);
@@ -150,13 +153,13 @@ Oid
 create_single_hash_partition_internal(Oid parent_relid,
 									  uint32 part_idx,
 									  uint32 part_count,
-									  Oid value_type,
 									  RangeVar *partition_rv,
 									  char *tablespace)
 {
-	Oid						partition_relid;
+	Oid						partition_relid,
+							value_type;
 	Constraint			   *check_constr;
-	char				   *partitioning_expr;
+	Node				   *expr;
 	init_callback_params	callback_params;
 
 	/* Generate a name if asked to */
@@ -175,11 +178,12 @@ create_single_hash_partition_internal(Oid parent_relid,
 	partition_relid = create_single_partition_internal(parent_relid,
 													   partition_rv,
 													   tablespace,
-													   &partitioning_expr);
+													   &value_type,
+													   &expr);
 
 	/* Build check constraint for HASH partition */
 	check_constr = build_hash_check_constraint(partition_relid,
-											   partitioning_expr,
+											   expr,
 											   part_idx,
 											   part_count,
 											   value_type);
@@ -556,7 +560,6 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 
 		last_partition = create_single_range_partition_internal(parent_relid,
 																&bounds[0], &bounds[1],
-																range_bound_type,
 																NULL, NULL);
 
 #ifdef USE_ASSERT_CHECKING
@@ -644,7 +647,8 @@ static Oid
 create_single_partition_internal(Oid parent_relid,
 								 RangeVar *partition_rv,
 								 char *tablespace,
-								 char **partitioning_expr) /* to be set */
+								 Oid *expr_type, /* to be set */
+								 Node **expr) /* to be set */
 {
 	/* Value to be returned */
 	Oid					partition_relid = InvalidOid; /* safety */
@@ -686,13 +690,19 @@ create_single_partition_internal(Oid parent_relid,
 	parent_nsp = get_rel_namespace(parent_relid);
 	parent_nsp_name = get_namespace_name(parent_nsp);
 
-	/* Fetch partitioned column's name */
-	if (partitioning_expr)
+	/* Fetch expression for constraint */
+	if (expr && expr_type)
 	{
-		Datum expr_datum;
+		char				*expr_string;
+		PartExpressionInfo	*expr_info;
 
-		expr_datum = config_values[Anum_pathman_config_attname - 1];
-		*partitioning_expr = TextDatumGetCString(expr_datum);
+		*expr_type = DatumGetObjectId(config_values[Anum_pathman_config_atttype - 1]);
+		expr_string = TextDatumGetCString(config_values[Anum_pathman_config_raw_expression - 1]);
+		expr_info = get_part_expression_info(parent_relid, expr_string, false, false);
+
+		*expr = expr_info->raw_expr;
+		pfree(expr_string);
+		pfree(expr_info);
 	}
 
 	/* Make up parent's RangeVar */
@@ -1138,7 +1148,7 @@ drop_check_constraint(Oid relid, AttrNumber attnum)
 
 /* Build RANGE check constraint expression tree */
 Node *
-build_raw_range_check_tree(char *attname,
+build_raw_range_check_tree(Node *raw_expression,
 						   const Bound *start_value,
 						   const Bound *end_value,
 						   Oid value_type)
@@ -1151,7 +1161,7 @@ build_raw_range_check_tree(char *attname,
 	ColumnRef  *col_ref		= makeNode(ColumnRef);
 
 	/* Partitioned column */
-	col_ref->fields	= list_make1(makeString(attname));
+	//col_ref->fields	= list_make1(makeString(attname));
 	col_ref->location = -1;
 
 	and_oper->boolop	= AND_EXPR;
@@ -1202,7 +1212,7 @@ build_raw_range_check_tree(char *attname,
 /* Build complete RANGE check constraint */
 Constraint *
 build_range_check_constraint(Oid child_relid,
-							 char *attname,
+							 Node *raw_expression,
 							 const Bound *start_value,
 							 const Bound *end_value,
 							 Oid value_type)
@@ -1215,7 +1225,7 @@ build_range_check_constraint(Oid child_relid,
 
 	/* Initialize basic properties of a CHECK constraint */
 	hash_constr = make_constraint_common(range_constr_name,
-										 build_raw_range_check_tree(attname,
+										 build_raw_range_check_tree(raw_expression,
 																	start_value,
 																	end_value,
 																	value_type));
@@ -1280,7 +1290,7 @@ check_range_available(Oid parent_relid,
 
 /* Build HASH check constraint expression tree */
 Node *
-build_raw_hash_check_tree(const char *base_expr,
+build_raw_hash_check_tree(Node *raw_expression,
 						  uint32 part_idx,
 						  uint32 part_count,
 						  Oid relid,
@@ -1297,14 +1307,9 @@ build_raw_hash_check_tree(const char *base_expr,
 
 	Oid				hash_proc;
 	TypeCacheEntry *tce;
-	Node		   *expr = get_expression_node(relid, base_expr, false);
 
 	tce = lookup_type_cache(value_type, TYPECACHE_HASH_PROC);
 	hash_proc = tce->hash_proc;
-
-	/* Partitioned column */
-	//hashed_column->fields = list_make1(makeString(attname));
-	//hashed_column->location = -1;
 
 	/* Total amount of partitions */
 	part_count_c->val = make_int_value_struct(part_count);
@@ -1316,7 +1321,7 @@ build_raw_hash_check_tree(const char *base_expr,
 
 	/* Call hash_proc() */
 	hash_call->funcname			= list_make1(makeString(get_func_name(hash_proc)));
-	hash_call->args				= list_make1(expr);
+	hash_call->args				= list_make1(raw_expression);
 	hash_call->agg_order		= NIL;
 	hash_call->agg_filter		= NULL;
 	hash_call->agg_within_group	= false;
@@ -1356,7 +1361,7 @@ build_raw_hash_check_tree(const char *base_expr,
 /* Build complete HASH check constraint */
 Constraint *
 build_hash_check_constraint(Oid child_relid,
-							const char *expr,
+							Node *raw_expression,
 							uint32 part_idx,
 							uint32 part_count,
 							Oid value_type)
@@ -1369,7 +1374,7 @@ build_hash_check_constraint(Oid child_relid,
 
 	/* Initialize basic properties of a CHECK constraint */
 	hash_constr = make_constraint_common(hash_constr_name,
-										 build_raw_hash_check_tree(expr,
+										 build_raw_hash_check_tree(raw_expression,
 																   part_idx,
 																   part_count,
 																   child_relid,
@@ -1703,54 +1708,10 @@ parse_expression(Oid relid, const char *expr, char **query_string_out)
 	return (Node *)(lfirst(list_head(parsetree_list)));
 }
 
-struct expr_mutator_context
-{
-	Oid		relid;		/* partitioned table */
-	List	*rtable;	/* range table list from expression query */
-};
-
-/*
- * To prevent calculation of Vars in expression, we wrap them with
- * CustomConst, and later before execution we fill it with actual value
- */
-static Node *
-expression_mutator(Node *node, struct expr_mutator_context *context)
-{
-	const TypeCacheEntry   *typcache;
-
-	if (IsA(node, Var))
-	{
-		Var		*variable = (Var *) node;
-		Node	*new_node = newNode(sizeof(CustomConst), T_Const);
-		Const	*new_const = (Const *)new_node;
-
-		RangeTblEntry *entry = rt_fetch(variable->varno, context->rtable);
-		if (entry->relid != context->relid)
-			elog(ERROR, "Columns in the expression should "
-							"be only from partitioned relation");
-
-		/* we only need varattno from original Var, for now */
-		((CustomConst *)new_node)->varattno = ((Var *)node)->varattno;
-
-		new_const->consttype = ((Var *)node)->vartype;
-		new_const->consttypmod = ((Var *)node)->vartypmod;
-		new_const->constcollid = ((Var *)node)->varcollid;
-		new_const->constvalue = (Datum) 0;
-		new_const->constisnull = true;
-		new_const->location = -2;
-
-		typcache = lookup_type_cache(new_const->consttype, 0);
-		new_const->constbyval = typcache->typbyval;
-		new_const->constlen	= typcache->typlen;
-
-		return new_node;
-	}
-	return expression_tree_mutator(node, expression_mutator, (void *) context);
-}
-
 /* By given relation id and expression returns node */
+/*
 Node *
-get_expression_node(Oid relid, const char *expr, bool analyze)
+get_raw_expression(Oid relid, const char *expr)
 {
 	List							*querytree_list;
 	List							*target_list;
@@ -1766,12 +1727,10 @@ get_expression_node(Oid relid, const char *expr, bool analyze)
 	parsetree = parse_expression(relid, expr, &query_string),
 	target_list = ((SelectStmt *)parsetree)->targetList;
 
-	if (!analyze) {
-		result = (Node *)(((ResTarget *)(lfirst(list_head(target_list))))->val);
-		return result;
-	}
+	result = (Node *)(((ResTarget *)(lfirst(list_head(target_list))))->val);
+	return result; */
 
-	/* We don't need pathman hooks on next stages */
+	/*
 	hooks_enabled = false;
 
 	querytree_list = pg_analyze_and_rewrite(parsetree, query_string, NULL, 0);
@@ -1779,43 +1738,87 @@ get_expression_node(Oid relid, const char *expr, bool analyze)
 	plan = pg_plan_query(query, 0, NULL);
 	target_entry = lfirst(list_head(plan->planTree->targetlist));
 
-	/* Hooks can work now */
 	hooks_enabled = true;
 
 	result = (Node *)target_entry->expr;
 
-	/* We keep expression in top context */
 	oldcontext = MemoryContextSwitchTo(TopMemoryContext);
 
-	/* We need relid and range table list for mutator */
 	context.relid = relid;
 	context.rtable = plan->rtable;
 
-	/* This will create new tree in TopMemoryContext */
 	result = expression_mutator(result, (void *) &context);
 	MemoryContextSwitchTo(oldcontext);
 	return result;
-}
+}*/
 
 /* Determines type of expression for a relation */
-Oid
-get_partition_expr_type(Oid relid, const char *expr)
+PartExpressionInfo *
+get_part_expression_info(Oid relid, const char *expr_string,
+		bool check_hash_func, bool make_plan)
 {
-	Node			*parsetree,
-					*target_entry,
-					*expr_node;
-	Query			*query;
-	char			*query_string;
+	Node				*parsetree,
+						*expr_node,
+						*raw_expression;
+	Query				*query;
+	char				*query_string, *out_string;
+	PartExpressionInfo	*expr_info;
+	List				*querytree_list,
+						*raw_target_list;
+	PlannedStmt			*plan;
+	TargetEntry			*target_entry;
 
-	parsetree = parse_expression(relid, expr, &query_string);
+	expr_info = palloc(sizeof(PartExpressionInfo));
+	parsetree = parse_expression(relid, expr_string, &query_string);
+
+	/* Convert raw expression to string and return it as datum*/
+	raw_target_list = ((SelectStmt *)parsetree)->targetList;
+	raw_expression = (Node *)(((ResTarget *)(lfirst(list_head(raw_target_list))))->val);
+
+	/* Keep raw expression */
+	expr_info->raw_expr = raw_expression;
+	expr_info->expr_datum = (Datum) 0;
+
+	/* We don't need pathman activity initialization for this relation yet */
+	hooks_enabled = false;
 
 	/* This will fail with elog in case of wrong expression
 	 *	with more or less understable text */
-	query = parse_analyze(parsetree, query_string, NULL, 0);
+	querytree_list = pg_analyze_and_rewrite(parsetree, query_string, NULL, 0);
+	query = (Query *) lfirst(list_head(querytree_list));
 
-	/* We use analyzed query only to get type of expression */
+	/* expr_node is node that we need for further use */
 	target_entry = lfirst(list_head(query->targetList));
-	expr_node = (Node *)((TargetEntry *)target_entry)->expr;
-	return get_call_expr_argtype(expr_node, 0);
-}
+	expr_node = (Node *) target_entry->expr;
 
+	/* Now we have node and can determine type of that node */
+	expr_info->expr_type = exprType(expr_node);
+
+	if (check_hash_func)
+	{
+		TypeCacheEntry *tce;
+
+		tce = lookup_type_cache(expr_info->expr_type, TYPECACHE_HASH_PROC);
+		if (tce->hash_proc == InvalidOid)
+			elog(ERROR, "Expression should be hashable");
+	}
+
+	if (!make_plan)
+		return expr_info;
+
+	/* Plan this query. We reuse 'expr_node' here */
+	plan = pg_plan_query(query, 0, NULL);
+	target_entry = lfirst(list_head(plan->planTree->targetlist));
+	expr_node = (Node *) target_entry->expr;
+	expr_node = eval_const_expressions(NULL, expr_node);
+
+	/* Enable pathman */
+	hooks_enabled = true;
+
+	/* Convert expression to string and return it as datum */
+	out_string = nodeToString(expr_node);
+	expr_info->expr_datum = CStringGetTextDatum(out_string);
+	pfree(out_string);
+
+	return expr_info;
+}

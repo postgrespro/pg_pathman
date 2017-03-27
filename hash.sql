@@ -13,7 +13,7 @@
  */
 CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions(
 	parent_relid		REGCLASS,
-	attribute			TEXT,
+	expression			TEXT,
 	partitions_count	INTEGER,
 	partition_data		BOOLEAN DEFAULT TRUE,
 	partition_names		TEXT[] DEFAULT NULL,
@@ -31,15 +31,15 @@ BEGIN
 		PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 	END IF;
 
-	attribute := lower(attribute);
-	PERFORM @extschema@.common_relation_checks(parent_relid, attribute);
+	expression := lower(expression);
+	PERFORM @extschema@.common_relation_checks(parent_relid, expression);
 
 	/* Insert new entry to pathman config */
-	PERFORM @extschema@.add_to_pathman_config(parent_relid, attribute);
+	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression, NULL, false);
 
 	/* Create partitions */
 	PERFORM @extschema@.create_hash_partitions_internal(parent_relid,
-														attribute,
+														expression,
 														partitions_count,
 														partition_names,
 														tablespaces);

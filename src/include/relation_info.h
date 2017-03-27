@@ -134,7 +134,7 @@ typedef struct
 	Oid			   *children;		/* Oids of child partitions */
 	RangeEntry	   *ranges;			/* per-partition range entry or NULL */
 
-	Expr		   *expr;				/* planned expression */
+	Node		   *expr;			/* planned expression */
 	PartType		parttype;		/* partitioning type (HASH | RANGE) */
 	Oid				atttype;		/* expression type */
 	int32			atttypmod;		/* expression type modifier */

@@ -32,7 +32,6 @@ Oid create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
 Oid create_single_range_partition_internal(Oid parent_relid,
 										   const Bound *start_value,
 										   const Bound *end_value,
-										   Oid value_type,
 										   RangeVar *partition_rv,
 										   char *tablespace);
 
@@ -40,19 +39,18 @@ Oid create_single_range_partition_internal(Oid parent_relid,
 Oid create_single_hash_partition_internal(Oid parent_relid,
 										  uint32 part_idx,
 										  uint32 part_count,
-										  Oid value_type,
 										  RangeVar *partition_rv,
 										  char *tablespace);
 
 
 /* RANGE constraints */
 Constraint * build_range_check_constraint(Oid child_relid,
-										  char *attname,
+										  Node *raw_expression,
 										  const Bound *start_value,
 										  const Bound *end_value,
-										  Oid value_type);
+										  Oid expr_type);
 
-Node * build_raw_range_check_tree(char *attname,
+Node * build_raw_range_check_tree(Node *raw_expression,
 								  const Bound *start_value,
 								  const Bound *end_value,
 								  Oid value_type);
@@ -66,12 +64,12 @@ bool check_range_available(Oid parent_relid,
 
 /* HASH constraints */
 Constraint * build_hash_check_constraint(Oid child_relid,
-										 const char *expr,
+										 Node *raw_expression,
 										 uint32 part_idx,
 										 uint32 part_count,
 										 Oid value_type);
 
-Node * build_raw_hash_check_tree(const char *base_expr,
+Node * build_raw_hash_check_tree(Node *raw_expression,
 								 uint32 part_idx,
 								 uint32 part_count,
 								 Oid relid,
@@ -79,10 +77,16 @@ Node * build_raw_hash_check_tree(const char *base_expr,
 
 void drop_check_constraint(Oid relid, AttrNumber attnum);
 
-/* expression parsing functions */
-Node *get_expression_node(Oid relid, const char *expr, bool analyze);
-Oid get_partition_expr_type(Oid relid, const char *expr);
+typedef struct
+{
+	Oid		 expr_type;
+	Datum	 expr_datum;
+	Node	*raw_expr;
+} PartExpressionInfo;
 
+/* expression parsing functions */
+PartExpressionInfo *get_part_expression_info(Oid relid,
+	const char *expr_string, bool check_hash_func, bool make_plan);
 
 
 /* Partitioning callback type */

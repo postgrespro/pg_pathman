@@ -49,9 +49,7 @@ create_hash_partitions_internal(PG_FUNCTION_ARGS)
 		pfree(arr); \
 	} while (0)
 
-	Oid			parent_relid = PG_GETARG_OID(0),
-				expr_type;
-	const char *expr = TextDatumGetCString(PG_GETARG_DATUM(1));
+	Oid			parent_relid = PG_GETARG_OID(0);
 	uint32		partitions_count = PG_GETARG_INT32(2),
 				i;
 
@@ -65,8 +63,6 @@ create_hash_partitions_internal(PG_FUNCTION_ARGS)
 	/* Check that there's no partitions yet */
 	if (get_pathman_relation_info(parent_relid))
 		elog(ERROR, "cannot add new HASH partitions");
-
-	expr_type = get_partition_expr_type(parent_relid, expr);
 
 	/* Extract partition names */
 	if (!PG_ARGISNULL(3))
@@ -104,7 +100,6 @@ create_hash_partitions_internal(PG_FUNCTION_ARGS)
 
 		/* Create a partition (copy FKs, invoke callbacks etc) */
 		create_single_hash_partition_internal(parent_relid, i, partitions_count,
-											  expr_type,
 											  partition_rv, tablespace);
 	}
 

@@ -711,7 +711,8 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 
 			/* Perform checks for non-NULL columns */
 			Assert(!isnull[Anum_pathman_config_partrel - 1]);
-			Assert(!isnull[Anum_pathman_config_attname - 1]);
+			Assert(!isnull[Anum_pathman_config_expression - 1]);
+			Assert(!isnull[Anum_pathman_config_raw_expression - 1]);
 			Assert(!isnull[Anum_pathman_config_parttype - 1]);
 		}
 
@@ -825,7 +826,8 @@ read_pathman_config(void)
 		/* These attributes are marked as NOT NULL, check anyway */
 		Assert(!isnull[Anum_pathman_config_partrel - 1]);
 		Assert(!isnull[Anum_pathman_config_parttype - 1]);
-		Assert(!isnull[Anum_pathman_config_attname - 1]);
+		Assert(!isnull[Anum_pathman_config_expression - 1]);
+		Assert(!isnull[Anum_pathman_config_raw_expression - 1]);
 
 		/* Extract values from Datums */
 		relid = DatumGetObjectId(values[Anum_pathman_config_partrel - 1]);
@@ -1112,7 +1114,6 @@ validate_hash_constraint(const Expr *expr,
 	const OpExpr		   *eq_expr;
 	const FuncExpr		   *get_hash_expr,
 						   *type_hash_proc_expr;
-	const Var			   *var; /* partitioned column */
 
 	if (!expr)
 		return false;
