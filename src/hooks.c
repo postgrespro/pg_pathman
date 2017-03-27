@@ -573,6 +573,8 @@ pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
 									   save_sec_context | SECURITY_LOCAL_USERID_CHANGE);
 			}
 
+			/* TODO: add a test for this case (non-privileged user etc) */
+
 			/* Only SU can read this GUC */
 #if PG_VERSION_NUM >= 90600
 			spl_value = GetConfigOptionByName("shared_preload_libraries", NULL, false);
