@@ -1804,7 +1804,7 @@ get_part_expression_info(Oid relid, const char *expr_string,
 	}
 
 	if (!make_plan)
-		return expr_info;
+		goto end;
 
 	/* Plan this query. We reuse 'expr_node' here */
 	plan = pg_plan_query(query, 0, NULL);
@@ -1812,13 +1812,14 @@ get_part_expression_info(Oid relid, const char *expr_string,
 	expr_node = (Node *) target_entry->expr;
 	expr_node = eval_const_expressions(NULL, expr_node);
 
-	/* Enable pathman */
-	hooks_enabled = true;
-
 	/* Convert expression to string and return it as datum */
 	out_string = nodeToString(expr_node);
 	expr_info->expr_datum = CStringGetTextDatum(out_string);
 	pfree(out_string);
+
+end:
+	/* Enable pathman hooks */
+	hooks_enabled = true;
 
 	return expr_info;
 }

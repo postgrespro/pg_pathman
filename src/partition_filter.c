@@ -634,6 +634,12 @@ partition_filter_exec(CustomScanState *node)
 
 		old_cxt = MemoryContextSwitchTo(estate->es_query_cxt);
 
+		/* Prepare walker context */
+		expr_walker_context.prel = prel;
+		expr_walker_context.slot = slot;
+		expr_walker_context.tup = ExecCopySlotTuple(slot);
+		expr_walker_context.clear = false;
+
 		/* Fetch values from slot for expression */
 		adapt_values(prel->expr, (void *) &expr_walker_context);
 
@@ -644,12 +650,6 @@ partition_filter_exec(CustomScanState *node)
 
 		/* Switch to per-tuple context */
 		old_cxt = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
-
-		/* Prepare walker context */
-		expr_walker_context.prel = prel;
-		expr_walker_context.slot = slot;
-		expr_walker_context.tup = ExecCopySlotTuple(slot);
-		expr_walker_context.clear = false;
 
 		/* Execute expression */
 		value = ExecEvalExpr(expr_state, econtext, &isnull, &itemIsDone);
