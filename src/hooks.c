@@ -66,7 +66,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 							   innerrel, jointype, extra);
 
 	/* Hooks can be disabled */
-	if (!hooks_enabled)
+	if (!pathman_hooks_enabled)
 		return;
 
 	/* Check that both pg_pathman & RuntimeAppend nodes are enabled */
@@ -209,7 +209,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		set_rel_pathlist_hook_next(root, rel, rti, rte);
 
 	/* Hooks can be disabled */
-	if (!hooks_enabled)
+	if (!pathman_hooks_enabled)
 		return;
 
 	/* Make sure that pg_pathman is ready */
@@ -492,19 +492,7 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 
 	PG_TRY();
 	{
-		/* Hooks can be disabled */
-		if (!hooks_enabled)
-		{
-			/* Invoke original hook if needed */
-			if (planner_hook_next)
-				result = planner_hook_next(parse, cursorOptions, boundParams);
-			else
-				result = standard_planner(parse, cursorOptions, boundParams);
-
-			return result;
-		}
-
-		if (pathman_ready)
+		if (pathman_ready && pathman_hooks_enabled)
 		{
 			/* Increment relation tags refcount */
 			incr_refcount_relation_tags();
@@ -518,6 +506,9 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 			result = planner_hook_next(parse, cursorOptions, boundParams);
 		else
 			result = standard_planner(parse, cursorOptions, boundParams);
+
+		if (!pathman_hooks_enabled)
+			return result;
 
 		if (pathman_ready)
 		{
@@ -564,7 +555,7 @@ pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
 		post_parse_analyze_hook_next(pstate, query);
 
 	/* Hooks can be disabled */
-	if (!hooks_enabled)
+	if (!pathman_hooks_enabled)
 		return;
 
 	 /* We shouldn't do anything on BEGIN or SET ISOLATION LEVEL stmts */
@@ -642,7 +633,7 @@ pathman_relcache_hook(Datum arg, Oid relid)
 		return;
 
 	/* Hooks can be disabled */
-	if (!hooks_enabled)
+	if (!pathman_hooks_enabled)
 		return;
 
 	/* We shouldn't even consider special OIDs */

@@ -1708,51 +1708,10 @@ parse_expression(Oid relid, const char *expr, char **query_string_out)
 	return (Node *)(lfirst(list_head(parsetree_list)));
 }
 
-/* By given relation id and expression returns node */
 /*
-Node *
-get_raw_expression(Oid relid, const char *expr)
-{
-	List							*querytree_list;
-	List							*target_list;
-	char							*query_string;
-	Node							*parsetree,
-									*result;
-	Query							*query;
-	TargetEntry						*target_entry;
-	PlannedStmt						*plan;
-	MemoryContext					 oldcontext;
-	struct expr_mutator_context		 context;
-
-	parsetree = parse_expression(relid, expr, &query_string),
-	target_list = ((SelectStmt *)parsetree)->targetList;
-
-	result = (Node *)(((ResTarget *)(lfirst(list_head(target_list))))->val);
-	return result; */
-
-	/*
-	hooks_enabled = false;
-
-	querytree_list = pg_analyze_and_rewrite(parsetree, query_string, NULL, 0);
-	query = (Query *)lfirst(list_head(querytree_list));
-	plan = pg_plan_query(query, 0, NULL);
-	target_entry = lfirst(list_head(plan->planTree->targetlist));
-
-	hooks_enabled = true;
-
-	result = (Node *)target_entry->expr;
-
-	oldcontext = MemoryContextSwitchTo(TopMemoryContext);
-
-	context.relid = relid;
-	context.rtable = plan->rtable;
-
-	result = expression_mutator(result, (void *) &context);
-	MemoryContextSwitchTo(oldcontext);
-	return result;
-}*/
-
-/* Determines type of expression for a relation */
+ * Parses expression related to 'relid', and returns its type,
+ * raw expression tree, and if specified returns its plan
+ */
 PartExpressionInfo *
 get_part_expression_info(Oid relid, const char *expr_string,
 		bool check_hash_func, bool make_plan)
@@ -1780,7 +1739,7 @@ get_part_expression_info(Oid relid, const char *expr_string,
 	expr_info->expr_datum = (Datum) 0;
 
 	/* We don't need pathman activity initialization for this relation yet */
-	hooks_enabled = false;
+	pathman_hooks_enabled = false;
 
 	/* This will fail with elog in case of wrong expression
 	 *	with more or less understable text */
@@ -1819,7 +1778,7 @@ get_part_expression_info(Oid relid, const char *expr_string,
 
 end:
 	/* Enable pathman hooks */
-	hooks_enabled = true;
+	pathman_hooks_enabled = true;
 
 	return expr_info;
 }
