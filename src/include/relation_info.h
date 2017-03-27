@@ -128,6 +128,7 @@ typedef struct
 	RangeEntry	   *ranges;			/* per-partition range entry or NULL */
 
 	Node		   *expr;			/* planned expression */
+	char		   *expr_string;	/* string with original expression */
 	PartType		parttype;		/* partitioning type (HASH | RANGE) */
 	Oid				atttype;		/* expression type */
 	int32			atttypmod;		/* expression type modifier */

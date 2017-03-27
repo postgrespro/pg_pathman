@@ -15,8 +15,7 @@
  * text to Datum
  */
 CREATE OR REPLACE FUNCTION @extschema@.validate_interval_value(
-	partrel			REGCLASS,
-	attname			TEXT,
+	atttype			OID,
 	parttype		INTEGER,
 	range_interval	TEXT)
 RETURNS BOOL AS 'pg_pathman', 'validate_interval_value'
@@ -44,11 +43,10 @@ CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
 	CHECK (parttype IN (1, 2))
 
 	/* check for correct interval */
-	/*
 	CHECK (@extschema@.validate_interval_value(partrel,
-											   attname,
+											   atttype,
 											   parttype,
-											   range_interval)) */
+											   range_interval))
 );
 
 
@@ -785,26 +783,6 @@ CREATE OR REPLACE FUNCTION @extschema@.validate_relname(
 	relid	REGCLASS)
 RETURNS VOID AS 'pg_pathman', 'validate_relname'
 LANGUAGE C;
-
-/*
- * Checks if attribute is nullable
- */
-CREATE OR REPLACE FUNCTION @extschema@.is_attribute_nullable(
-	relid	REGCLASS,
-	attname	TEXT)
-RETURNS BOOLEAN AS 'pg_pathman', 'is_attribute_nullable'
-LANGUAGE C STRICT;
-
-/*
- * Checks if expression is suitable
- */
- /*
-CREATE OR REPLACE FUNCTION @extschema@.is_expression_suitable(
-	relid	REGCLASS,
-	expr	TEXT)
-RETURNS BOOLEAN AS 'pg_pathman', 'is_expression_suitable'
-LANGUAGE C STRICT;
-*/
 
 /*
  * Check if regclass is date or timestamp.

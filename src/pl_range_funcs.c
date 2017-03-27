@@ -637,37 +637,26 @@ drop_range_partition_expand_next(PG_FUNCTION_ARGS)
 Datum
 validate_interval_value(PG_FUNCTION_ARGS)
 {
-	Oid			partrel = PG_GETARG_OID(0);
-	text	   *attname = PG_GETARG_TEXT_P(1);
-	PartType	parttype = DatumGetPartType(PG_GETARG_DATUM(2));
-	Datum		interval_text = PG_GETARG_DATUM(3);
+	Oid			atttype = PG_GETARG_OID(0);
+	PartType	parttype = DatumGetPartType(PG_GETARG_DATUM(1));
+	Datum		interval_text = PG_GETARG_DATUM(2);
 	Datum		interval_value;
 	Oid			interval_type;
 
 	if (PG_ARGISNULL(0))
-		elog(ERROR, "'partrel' should not be NULL");
+		elog(ERROR, "'atttype' should not be NULL");
 
 	if (PG_ARGISNULL(1))
-		elog(ERROR, "'attname' should not be NULL");
-
-	if (PG_ARGISNULL(2))
 		elog(ERROR, "'parttype' should not be NULL");
 
 	/*
 	 * NULL interval is fine for both HASH and RANGE. But for RANGE we need
 	 * to make some additional checks
 	 */
-	if (!PG_ARGISNULL(3))
+	if (!PG_ARGISNULL(2))
 	{
-		char	   *attname_cstr;
-		Oid			atttype; /* type of partitioned attribute */
-
 		if (parttype == PT_HASH)
 			elog(ERROR, "interval must be NULL for HASH partitioned table");
-
-		/* Convert attname to CSTRING and fetch column's type */
-		attname_cstr = text_to_cstring(attname);
-		atttype = get_attribute_type(partrel, attname_cstr, false);
 
 		/* Try converting textual representation */
 		interval_value = extract_binary_interval_from_text(interval_text,

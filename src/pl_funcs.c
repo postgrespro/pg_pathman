@@ -372,20 +372,11 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 
 			continue;
 		}
-		
-		// FIX this
-		//partattr_cstr = get_attname(PrelParentRelid(prel), prel->attnum);
-		//if (!partattr_cstr)
-		//{
-			/* Parent does not exist, go to the next 'prel' */
-		//	usercxt->current_prel = NULL;
-		//	continue;
-		//}
 
 		/* Fill in common values */
 		values[Anum_pathman_pl_parent - 1]		= PrelParentRelid(prel);
 		values[Anum_pathman_pl_parttype - 1]	= prel->parttype;
-		values[Anum_pathman_pl_partattr - 1]	= CStringGetTextDatum(partattr_cstr);
+		values[Anum_pathman_pl_partattr - 1]	= prel->expr_string;
 
 		switch (prel->parttype)
 		{
@@ -488,74 +479,6 @@ is_date_type(PG_FUNCTION_ARGS)
 {
 	PG_RETURN_BOOL(is_date_type_internal(PG_GETARG_OID(0)));
 }
-
-/*
-Datum
-is_expression_suitable(PG_FUNCTION_ARGS)
-{
-	Oid			 relid = PG_GETARG_OID(0);
-	char		*expr = text_to_cstring(PG_GETARG_TEXT_P(1));
-	bool		 result;
-
-	TypeCacheEntry	*tce;
-	Oid				 type_oid = get_partition_expr_type(relid, expr);
-
-	tce = lookup_type_cache(type_oid, TYPECACHE_HASH_PROC);
-	result = (tce->hash_proc != InvalidOid);
-
-	PG_RETURN_BOOL(result);
-}*/
-
-Datum
-is_attribute_nullable(PG_FUNCTION_ARGS)
-{
-	/*
-	Oid			relid = PG_GETARG_OID(0);
-	char	   *relname = get_rel_name(relid),
-			   *namespace_name = get_namespace_name(get_rel_namespace(relid));
-	char	   *expr = text_to_cstring(PG_GETARG_TEXT_P(1));
-	char	   *fmt = "SELECT (%s) FROM %s.%s";
-	bool		result = true;
-	HeapTuple	tp;
-	List	*parsetree_list,
-			*querytree_list,
-			*plantree_list;
-	EState *estate;
-	ExprContext *econtext;
-	Node	*parsetree,
-			*target_entry;
-	Query *query;
-	PlannedStmt *plan;
-	MemoryContext oldcontext;
-	SeqScanState *scanstate;
-	Oid expr_type;
-
-	int n = snprintf(NULL, 0, fmt, expr, namespace_name, relname);
-	char *query_string = (char *) palloc(n + 1);
-	snprintf(query_string, n + 1, fmt, expr, namespace_name, relname);
-
-	parsetree_list = raw_parser(query_string);
-
-	Assert(list_length(parsetree_list) == 1);
-	parsetree = (Node *)(lfirst(list_head(parsetree_list)));
-
-	query = parse_analyze(parsetree, query_string, NULL, 0);
-	plan = pg_plan_query(query, 0, NULL);
-
-	target_entry = lfirst(list_head(plan->planTree->targetlist));
-	expr_type = get_call_expr_argtype(((TargetEntry *)target_entry)->expr, 0);
-
-	estate = CreateExecutorState();
-
-	Assert(nodeTag(plan->planTree) == T_SeqScan);
-	scanstate = ExecInitSeqScan(plan->planTree, estate, 0);
-
-	pfree(query_string);
-	*/
-	bool result = true;
-	PG_RETURN_BOOL(result); /* keep compiler happy */
-}
-
 
 /*
  * ------------------------
@@ -670,7 +593,7 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 		elog(ERROR, "'parent_relid' should not be NULL");
 
 	if (PG_ARGISNULL(1))
-		elog(ERROR, "'attname' should not be NULL");
+		elog(ERROR, "'expression' should not be NULL");
 
 	/* Read parameters */
 	relid = PG_GETARG_OID(0);

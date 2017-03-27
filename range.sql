@@ -26,7 +26,7 @@ LANGUAGE plpgsql;
  */
 CREATE OR REPLACE FUNCTION @extschema@.check_boundaries(
 	parent_relid	REGCLASS,
-	attribute		TEXT,
+	expression		TEXT,
 	start_value		ANYELEMENT,
 	end_value		ANYELEMENT)
 RETURNS VOID AS
@@ -40,32 +40,32 @@ BEGIN
 	/* Get min and max values */
 	EXECUTE format('SELECT count(*), min(%1$s), max(%1$s)
 					FROM %2$s WHERE NOT %1$s IS NULL',
-				   attribute, parent_relid::TEXT)
+				   expression, parent_relid::TEXT)
 	INTO v_count, v_min, v_max;
 
 	/* Check if column has NULL values */
 	IF v_count > 0 AND (v_min IS NULL OR v_max IS NULL) THEN
-		RAISE EXCEPTION 'column "%" contains NULL values', attribute;
+		RAISE EXCEPTION 'expression "%" returns NULL values', expression;
 	END IF;
 
 	/* Check lower boundary */
 	IF start_value > v_min THEN
-		RAISE EXCEPTION 'start value is less than min value of "%"', attribute;
+		RAISE EXCEPTION 'start value is less than min value of "%"', expression;
 	END IF;
 
 	/* Check upper boundary */
 	IF end_value <= v_max THEN
-		RAISE EXCEPTION 'not enough partitions to fit all values of "%"', attribute;
+		RAISE EXCEPTION 'not enough partitions to fit all values of "%"', expression;
 	END IF;
 END
 $$ LANGUAGE plpgsql;
 
 /*
- * Creates RANGE partitions for specified relation based on datetime attribute
+ * Creates RANGE partitions for specified relation based on datetime expression
  */
 CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions(
 	parent_relid	REGCLASS,
-	attribute		TEXT,
+	expression		TEXT,
 	start_value		ANYELEMENT,
 	p_interval		INTERVAL,
 	p_count			INTEGER DEFAULT NULL,
@@ -91,8 +91,8 @@ BEGIN
 		PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 	END IF;
 
-	attribute := lower(attribute);
-	PERFORM @extschema@.common_relation_checks(parent_relid, attribute);
+	expression := lower(expression);
+	PERFORM @extschema@.common_relation_checks(parent_relid, expression);
 
 	IF p_count < 0 THEN
 		RAISE EXCEPTION '"p_count" must not be less than 0';
@@ -100,7 +100,7 @@ BEGIN
 
 	/* Try to determine partitions count if not set */
 	IF p_count IS NULL THEN
-		EXECUTE format('SELECT count(*), max(%s) FROM %s', attribute, parent_relid)
+		EXECUTE format('SELECT count(*), max(%s) FROM %s', expression, parent_relid)
 		INTO v_rows_count, v_max;
 
 		IF v_rows_count = 0 THEN
@@ -252,6 +252,9 @@ BEGIN
 											 start_value,
 											 end_value);
 	END IF;
+
+	/* Insert new entry to pathman config */
+	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression, NULL, false);
 
 	/* Insert new entry to pathman config */
 	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype, range_interval)

@@ -194,6 +194,8 @@ refresh_pathman_relation_info(Oid relid,
 	 * from config
 	 */
 	oldcontext = MemoryContextSwitchTo(TopMemoryContext);
+	prel->expr_string = TextDatumGetCString(
+			values[Anum_pathman_config_raw_expression - 1]);
 	prel->expr = (Node *) stringToNode(expr);
 	fix_opfuncids(prel->expr);
 	prel->expr = expression_mutator(prel->expr, NULL);
