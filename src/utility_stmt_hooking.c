@@ -134,8 +134,7 @@ is_pathman_related_copy(Node *parsetree)
  */
 bool
 is_pathman_related_table_rename(Node *parsetree,
-								Oid *partition_relid_out,			/* ret value */
-								AttrNumber *partitioned_col_out)	/* ret value */
+								Oid *partition_relid_out)			/* ret value */
 {
 	RenameStmt			   *rename_stmt = (RenameStmt *) parsetree;
 	Oid						partition_relid,
@@ -147,7 +146,6 @@ is_pathman_related_table_rename(Node *parsetree,
 
 	/* Set default values */
 	if (partition_relid_out) *partition_relid_out = InvalidOid;
-	if (partitioned_col_out) *partitioned_col_out = InvalidAttrNumber;
 
 	if (!IsA(parsetree, RenameStmt))
 		return false;
@@ -167,14 +165,11 @@ is_pathman_related_table_rename(Node *parsetree,
 		return false;
 
 	/* Is parent partitioned? */
-	/* FIX this
 	if ((prel = get_pathman_relation_info(parent_relid)) != NULL)
 	{
 		if (partition_relid_out) *partition_relid_out = partition_relid;
-		if (partitioned_col_out) *partitioned_col_out = prel->attnum;
-
 		return true;
-	} */
+	}
 
 	return false;
 }
@@ -692,7 +687,6 @@ prepare_rri_for_copy(EState *estate,
  */
 void
 PathmanRenameConstraint(Oid partition_relid,				/* cached partition Oid */
-						AttrNumber partitioned_col,			/* partitioned column */
 						const RenameStmt *part_rename_stmt)	/* partition rename stmt */
 {
 	char		   *old_constraint_name,

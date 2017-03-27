@@ -21,13 +21,11 @@
 /* Various traits */
 bool is_pathman_related_copy(Node *parsetree);
 bool is_pathman_related_table_rename(Node *parsetree,
-									 Oid *partition_relid_out,
-									 AttrNumber *partitioned_col_out);
+									 Oid *partition_relid_out);
 
 /* Statement handlers */
 void PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed);
 void PathmanRenameConstraint(Oid partition_relid,
-							 AttrNumber partitioned_col,
 							 const RenameStmt *partition_rename_stmt);
 
 

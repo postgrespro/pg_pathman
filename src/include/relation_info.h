@@ -113,13 +113,6 @@ typedef struct
 					max;
 } RangeEntry;
 
-/* Used to convert 'varno' attributes accodirdingly to working query */
-typedef struct
-{
-	Oid relid; /* relid by which we can determine what rte we need in current query	 */
-	int res_idx; /* varno will be used for Var */
-} RTEMapItem;
-
 /*
  * PartRelationInfo
  *		Per-relation partitioning information

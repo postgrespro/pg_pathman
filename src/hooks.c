@@ -715,7 +715,6 @@ pathman_process_utility_hook(Node *parsetree,
 	if (IsPathmanReady())
 	{
 		Oid			partition_relid;
-		AttrNumber	partitioned_col;
 
 		/* Override standard COPY statement if needed */
 		if (is_pathman_related_copy(parsetree))
@@ -733,10 +732,8 @@ pathman_process_utility_hook(Node *parsetree,
 
 		/* Override standard RENAME statement if needed */
 		if (is_pathman_related_table_rename(parsetree,
-											&partition_relid,
-											&partitioned_col))
+											&partition_relid))
 			PathmanRenameConstraint(partition_relid,
-									partitioned_col,
 									(const RenameStmt *) parsetree);
 	}
 

@@ -533,7 +533,6 @@ struct expr_walker_context
 	const PartRelationInfo	*prel;
 	TupleTableSlot			*slot;
 	HeapTuple				 tup;
-	bool					 clear;
 };
 
 /* Fills CustomConst nodes with values from slot */
@@ -555,20 +554,12 @@ adapt_values (Node *node, struct expr_walker_context *context)
 		attnum = ((CustomConst *)node)->varattno;
 		Assert(attnum != InvalidAttrNumber);
 
-		if (context->clear)
-		{
-			cst->constvalue = (Datum) 0;
-			cst->constisnull = true;
-		}
-		else
-		{
-			/* check that type is still same */
-			Assert(context->slot->tts_tupleDescriptor->
-						attrs[attnum - 1]->atttypid == cst->consttype);
-			cst->constvalue = heap_getattr(context->tup, attnum,
-				context->slot->tts_tupleDescriptor, &isNull);
-			cst->constisnull = isNull;
-		}
+		/* check that type is still same */
+		Assert(context->slot->tts_tupleDescriptor->
+					attrs[attnum - 1]->atttypid == cst->consttype);
+		cst->constvalue = heap_getattr(context->tup, attnum,
+			context->slot->tts_tupleDescriptor, &isNull);
+		cst->constisnull = isNull;
 		return false;
 	}
 
@@ -638,7 +629,6 @@ partition_filter_exec(CustomScanState *node)
 		expr_walker_context.prel = prel;
 		expr_walker_context.slot = slot;
 		expr_walker_context.tup = ExecCopySlotTuple(slot);
-		expr_walker_context.clear = false;
 
 		/* Fetch values from slot for expression */
 		adapt_values(prel->expr, (void *) &expr_walker_context);
