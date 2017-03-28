@@ -235,7 +235,7 @@ get_partition_key_type(PG_FUNCTION_ARGS)
 	const PartRelationInfo *prel;
 
 	prel = get_pathman_relation_info(relid);
-	shout_if_prel_is_invalid(relid, prel, PT_INDIFFERENT);
+	shout_if_prel_is_invalid(relid, prel, PT_ANY);
 
 	PG_RETURN_OID(prel->atttype);
 }
@@ -298,12 +298,12 @@ show_cache_stats_internal(PG_FUNCTION_ARGS)
 		usercxt->pathman_contexts[0] = TopPathmanContext;
 		usercxt->pathman_contexts[1] = PathmanRelationCacheContext;
 		usercxt->pathman_contexts[2] = PathmanParentCacheContext;
-		usercxt->pathman_contexts[3] = PathmanCostraintCacheContext;
+		usercxt->pathman_contexts[3] = PathmanBoundCacheContext;
 
 		usercxt->pathman_htables[0] = NULL; /* no HTAB for this entry */
 		usercxt->pathman_htables[1] = partitioned_rels;
 		usercxt->pathman_htables[2] = parent_cache;
-		usercxt->pathman_htables[3] = constraint_cache;
+		usercxt->pathman_htables[3] = bound_cache;
 
 		usercxt->current_item = 0;
 

@@ -37,15 +37,26 @@ typedef struct
 } PathmanInitState;
 
 
+/* Check that this is a temporary memory context that's going to be destroyed */
+#define AssertTemporaryContext() \
+	do { \
+		Assert(CurrentMemoryContext != TopMemoryContext); \
+		Assert(CurrentMemoryContext != TopPathmanContext); \
+		Assert(CurrentMemoryContext != PathmanRelationCacheContext); \
+		Assert(CurrentMemoryContext != PathmanParentCacheContext); \
+		Assert(CurrentMemoryContext != PathmanBoundCacheContext); \
+	} while (0)
+
+
 #define PATHMAN_MCXT_COUNT	4
 extern MemoryContext		TopPathmanContext;
 extern MemoryContext		PathmanRelationCacheContext;
 extern MemoryContext		PathmanParentCacheContext;
-extern MemoryContext		PathmanCostraintCacheContext;
+extern MemoryContext		PathmanBoundCacheContext;
 
 extern HTAB				   *partitioned_rels;
 extern HTAB				   *parent_cache;
-extern HTAB				   *constraint_cache;
+extern HTAB				   *bound_cache;
 
 /* pg_pathman's initialization state */
 extern PathmanInitState 	pg_pathman_init_state;
@@ -55,10 +66,10 @@ extern PathmanInitState 	pg_pathman_init_state;
 static inline const char *
 simpify_mcxt_name(MemoryContext mcxt)
 {
-	static const char *top_mcxt		= "maintenance";
-	static const char *bound_mcxt	= "bounds cache";
-	static const char *parent_mcxt	= "parents cache";
-	static const char *constr_mcxt	= "constraints cache";
+	static const char  *top_mcxt	= "maintenance",
+					   *bound_mcxt	= "partition info cache",
+					   *parent_mcxt	= "parent mapping cache",
+					   *constr_mcxt	= "bounds cache";
 
 	if (mcxt == TopPathmanContext)
 		return top_mcxt;
@@ -69,7 +80,7 @@ simpify_mcxt_name(MemoryContext mcxt)
 	else if (mcxt == PathmanParentCacheContext)
 		return parent_mcxt;
 
-	else if (mcxt == PathmanCostraintCacheContext)
+	else if (mcxt == PathmanBoundCacheContext)
 		return constr_mcxt;
 
 	else elog(ERROR, "error in function " CppAsString(simpify_mcxt_name));
@@ -166,11 +177,6 @@ bool load_config(void);
 void unload_config(void);
 
 
-void fill_prel_with_partitions(const Oid *partitions,
-							   const uint32 parts_count,
-							   const char *part_column_name,
-							   PartRelationInfo *prel);
-
 /* Result of find_inheritance_children_array() */
 typedef enum
 {
@@ -201,6 +207,18 @@ bool pathman_config_contains_relation(Oid relid,
 bool read_pathman_params(Oid relid,
 						 Datum *values,
 						 bool *isnull);
+
+
+bool validate_range_constraint(const Expr *expr,
+							   const PartRelationInfo *prel,
+							   const AttrNumber part_attno,
+							   Datum *lower, Datum *upper,
+							   bool *lower_null, bool *upper_null);
+
+bool validate_hash_constraint(const Expr *expr,
+							  const PartRelationInfo *prel,
+							  const AttrNumber part_attno,
+							  uint32 *part_hash);
 
 
 #endif /* PATHMAN_INIT_H */

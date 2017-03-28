@@ -645,7 +645,7 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 							 /* We also lock the parent relation */
 							 get_pathman_relation_info_after_lock(relid, true, NULL),
 							 /* Partitioning type does not matter here */
-							 PT_INDIFFERENT);
+							 PT_ANY);
 
 	/* Check that partitioning operation result is visible */
 	if (pathman_config_contains_relation(relid, NULL, NULL, &rel_xmin))
