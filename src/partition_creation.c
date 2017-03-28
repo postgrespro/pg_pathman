@@ -694,15 +694,11 @@ create_single_partition_internal(Oid parent_relid,
 	if (expr && expr_type)
 	{
 		char				*expr_string;
-		PartExpressionInfo	*expr_info;
 
 		*expr_type = DatumGetObjectId(config_values[Anum_pathman_config_atttype - 1]);
-		expr_string = TextDatumGetCString(config_values[Anum_pathman_config_raw_expression - 1]);
-		expr_info = get_part_expression_info(parent_relid, expr_string, false, false);
-
-		*expr = expr_info->raw_expr;
+		expr_string = TextDatumGetCString(config_values[Anum_pathman_config_expression - 1]);
+		*expr = get_raw_expression(parent_relid, expr_string, NULL);
 		pfree(expr_string);
-		pfree(expr_info);
 	}
 
 	/* Make up parent's RangeVar */
@@ -1120,9 +1116,9 @@ copy_foreign_keys(Oid parent_relid, Oid partition_oid)
  * -----------------------------
  */
 
-/* Drop pg_pathman's check constraint by 'relid' and 'attnum' */
+/* Drop pg_pathman's check constraint by 'relid' */
 void
-drop_check_constraint(Oid relid, AttrNumber attnum)
+drop_check_constraint(Oid relid)
 {
 	char		   *constr_name;
 	AlterTableStmt *stmt;
@@ -1689,9 +1685,13 @@ text_to_regprocedure(text *proc_signature)
 }
 
 /* Wraps expression by SELECT query and returns parsed tree */
-static Node *
-parse_expression(Oid relid, const char *expr, char **query_string_out)
+Node *
+get_raw_expression(Oid relid, const char *expr, char **query_string_out)
 {
+	Node			*result;
+	SelectStmt		*select_stmt;
+	ResTarget		*target;
+
 	char			*fmt = "SELECT (%s) FROM ONLY %s.%s";
 	char			*relname = get_rel_name(relid),
 					*namespace_name = get_namespace_name(get_rel_namespace(relid));
@@ -1705,7 +1705,10 @@ parse_expression(Oid relid, const char *expr, char **query_string_out)
 	{
 		*query_string_out = query_string;
 	}
-	return (Node *)(lfirst(list_head(parsetree_list)));
+	select_stmt = (SelectStmt *) lfirst(list_head(parsetree_list));
+	target = (ResTarget *) lfirst(list_head(select_stmt->targetList));
+	result = (Node *) target->val;
+	return result;
 }
 
 /*
@@ -1716,26 +1719,18 @@ PartExpressionInfo *
 get_part_expression_info(Oid relid, const char *expr_string,
 		bool check_hash_func, bool make_plan)
 {
-	Node				*parsetree,
-						*expr_node,
-						*raw_expression;
+	Node				*expr_node;
 	Query				*query;
 	char				*query_string, *out_string;
 	PartExpressionInfo	*expr_info;
-	List				*querytree_list,
-						*raw_target_list;
+	List				*querytree_list;
 	PlannedStmt			*plan;
 	TargetEntry			*target_entry;
 
 	expr_info = palloc(sizeof(PartExpressionInfo));
-	parsetree = parse_expression(relid, expr_string, &query_string);
-
-	/* Convert raw expression to string and return it as datum*/
-	raw_target_list = ((SelectStmt *)parsetree)->targetList;
-	raw_expression = (Node *)(((ResTarget *)(lfirst(list_head(raw_target_list))))->val);
 
 	/* Keep raw expression */
-	expr_info->raw_expr = raw_expression;
+	expr_info->raw_expr = get_raw_expression(relid, expr_string, &query_string);
 	expr_info->expr_datum = (Datum) 0;
 
 	/* We don't need pathman activity initialization for this relation yet */
@@ -1743,7 +1738,8 @@ get_part_expression_info(Oid relid, const char *expr_string,
 
 	/* This will fail with elog in case of wrong expression
 	 *	with more or less understable text */
-	querytree_list = pg_analyze_and_rewrite(parsetree, query_string, NULL, 0);
+	querytree_list = pg_analyze_and_rewrite(expr_info->raw_expr,
+		query_string, NULL, 0);
 	query = (Query *) lfirst(list_head(querytree_list));
 
 	/* expr_node is node that we need for further use */

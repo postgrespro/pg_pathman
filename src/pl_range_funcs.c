@@ -44,7 +44,6 @@ static void merge_range_partitions_internal(Oid parent,
 											uint32 nparts);
 static void modify_range_constraint(Oid child_relid,
 									const char *attname,
-									AttrNumber attnum,
 									Oid atttype,
 									const Bound *lower,
 									const Bound *upper);
@@ -361,8 +360,9 @@ get_part_range_by_idx(PG_FUNCTION_ARGS)
 Datum
 build_range_condition(PG_FUNCTION_ARGS)
 {
+	Node	   *expr;
 	Oid			relid = PG_GETARG_OID(0);
-	text	   *attname = PG_GETARG_TEXT_P(1);
+	char	   *expression = TextDatumGetCString(PG_GETARG_TEXT_P(1));
 
 	Bound		min,
 				max;
@@ -378,8 +378,9 @@ build_range_condition(PG_FUNCTION_ARGS)
 				MakeBoundInf(PLUS_INFINITY) :
 				MakeBound(PG_GETARG_DATUM(3));
 
+	expr = get_raw_expression(relid, expression, NULL);
 	con = build_range_check_constraint(relid,
-									   NULL,
+									   expr,
 									   &min, &max,
 									   bounds_type);
 
@@ -527,14 +528,11 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 	}
 
 	/* Drop old constraint and create a new one */
-	/* FIX: this
 	modify_range_constraint(parts[0],
-							get_relid_attribute_name(prel->key,
-													 prel->attnum),
-							prel->attnum,
+							prel->attname,
 							prel->atttype,
 							&first->min,
-							&last->max); */
+							&last->max);
 
 	/* Make constraint visible */
 	CommandCounterIncrement();
@@ -613,14 +611,11 @@ drop_range_partition_expand_next(PG_FUNCTION_ARGS)
 					   *next = &ranges[i + 1];
 
 		/* Drop old constraint and create a new one */
-		/*
 		modify_range_constraint(next->child_oid,
-								get_relid_attribute_name(prel->key,
-														 prel->attnum),
-								prel->attnum,
+								prel->attname,
 								prel->atttype,
 								&cur->min,
-								&next->max);*/
+								&next->max);
 	}
 
 	/* Finally drop this partition */
@@ -828,21 +823,23 @@ interval_is_trivial(Oid atttype, Datum interval, Oid interval_type)
 static void
 modify_range_constraint(Oid child_relid,
 						const char *attname,
-						AttrNumber attnum,
 						Oid atttype,
 						const Bound *lower,
 						const Bound *upper)
 {
+	Node		   *expr;
 	Constraint	   *constraint;
 	Relation		partition_rel;
-	//char		   *attname_nonconst = pstrdup(attname);
 
 	/* Drop old constraint */
-	drop_check_constraint(child_relid, attnum);
+	drop_check_constraint(child_relid);
+
+	/* Parse expression */
+	expr = get_raw_expression(child_relid, attname, NULL);
 
 	/* Build a new one */
 	constraint = build_range_check_constraint(child_relid,
-											  NULL,
+											  expr,
 											  lower,
 											  upper,
 											  atttype);
@@ -853,8 +850,6 @@ modify_range_constraint(Oid child_relid,
 							  list_make1(constraint),
 							  false, true, true);
 	heap_close(partition_rel, NoLock);
-
-	//pfree(attname_nonconst);
 }
 
 /*

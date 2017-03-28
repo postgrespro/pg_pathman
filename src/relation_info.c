@@ -118,7 +118,6 @@ expression_mutator(Node *node, struct expr_mutator_context *context)
 const PartRelationInfo *
 refresh_pathman_relation_info(Oid relid,
 							  Datum *values,
-							  bool *isnull,
 							  bool allow_incomplete)
 {
 	const LOCKMODE			lockmode = AccessShareLock;
@@ -186,7 +185,7 @@ refresh_pathman_relation_info(Oid relid,
 	prel->parttype	= DatumGetPartType(values[Anum_pathman_config_parttype - 1]);
 
 	/* Read config values */
-	expr = TextDatumGetCString(values[Anum_pathman_config_expression - 1]);
+	expr = TextDatumGetCString(values[Anum_pathman_config_expression_p - 1]);
 	expr_type = DatumGetObjectId(values[Anum_pathman_config_atttype - 1]);
 
 	/*
@@ -194,8 +193,7 @@ refresh_pathman_relation_info(Oid relid,
 	 * from config
 	 */
 	oldcontext = MemoryContextSwitchTo(TopMemoryContext);
-	prel->expr_string = TextDatumGetCString(
-			values[Anum_pathman_config_raw_expression - 1]);
+	prel->attname = TextDatumGetCString(values[Anum_pathman_config_expression - 1]);
 	prel->expr = (Node *) stringToNode(expr);
 	fix_opfuncids(prel->expr);
 	prel->expr = expression_mutator(prel->expr, NULL);
@@ -358,7 +356,7 @@ get_pathman_relation_info(Oid relid)
 		{
 			/* Refresh partitioned table cache entry (might turn NULL) */
 			/* TODO: possible refactoring, pass found 'prel' instead of searching */
-			prel = refresh_pathman_relation_info(relid, values, isnull, false);
+			prel = refresh_pathman_relation_info(relid, values, false);
 		}
 
 		/* Else clear remaining cache entry */
@@ -735,7 +733,6 @@ try_perform_parent_refresh(Oid parent)
 		/* If anything went wrong, return false (actually, it might emit ERROR) */
 		refresh_pathman_relation_info(parent,
 									  values,
-									  isnull,
 									  true); /* allow lazy */
 	}
 	/* Not a partitioned relation */

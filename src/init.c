@@ -712,7 +712,7 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 			/* Perform checks for non-NULL columns */
 			Assert(!isnull[Anum_pathman_config_partrel - 1]);
 			Assert(!isnull[Anum_pathman_config_expression - 1]);
-			Assert(!isnull[Anum_pathman_config_raw_expression - 1]);
+			Assert(!isnull[Anum_pathman_config_expression_p - 1]);
 			Assert(!isnull[Anum_pathman_config_parttype - 1]);
 		}
 
@@ -827,7 +827,7 @@ read_pathman_config(void)
 		Assert(!isnull[Anum_pathman_config_partrel - 1]);
 		Assert(!isnull[Anum_pathman_config_parttype - 1]);
 		Assert(!isnull[Anum_pathman_config_expression - 1]);
-		Assert(!isnull[Anum_pathman_config_raw_expression - 1]);
+		Assert(!isnull[Anum_pathman_config_expression_p - 1]);
 
 		/* Extract values from Datums */
 		relid = DatumGetObjectId(values[Anum_pathman_config_partrel - 1]);
@@ -845,7 +845,6 @@ read_pathman_config(void)
 		/* get_pathman_relation_info() will refresh this entry */
 		refresh_pathman_relation_info(relid,
 									  values,
-									  isnull,
 									  true); /* allow lazy prel loading */
 	}
 

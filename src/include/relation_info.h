@@ -127,8 +127,8 @@ typedef struct
 	Oid			   *children;		/* Oids of child partitions */
 	RangeEntry	   *ranges;			/* per-partition range entry or NULL */
 
+	char		   *attname;		/* original expression */
 	Node		   *expr;			/* planned expression */
-	char		   *expr_string;	/* string with original expression */
 	PartType		parttype;		/* partitioning type (HASH | RANGE) */
 	Oid				atttype;		/* expression type */
 	int32			atttypmod;		/* expression type modifier */
@@ -206,7 +206,6 @@ PrelLastChild(const PartRelationInfo *prel)
 
 const PartRelationInfo *refresh_pathman_relation_info(Oid relid,
 													  Datum *values,
-													  bool *isnull,
 													  bool allow_incomplete);
 void invalidate_pathman_relation_info(Oid relid, bool *found);
 void remove_pathman_relation_info(Oid relid);

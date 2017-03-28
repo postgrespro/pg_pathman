@@ -331,7 +331,6 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 		HeapTuple				htup;
 		Datum					values[Natts_pathman_partition_list];
 		bool					isnull[Natts_pathman_partition_list] = { 0 };
-		char				   *partattr_cstr;
 
 		/* Fetch next PartRelationInfo if needed */
 		if (usercxt->current_prel == NULL)
@@ -376,7 +375,7 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 		/* Fill in common values */
 		values[Anum_pathman_pl_parent - 1]		= PrelParentRelid(prel);
 		values[Anum_pathman_pl_parttype - 1]	= prel->parttype;
-		values[Anum_pathman_pl_partattr - 1]	= prel->expr_string;
+		values[Anum_pathman_pl_partattr - 1]	= CStringGetTextDatum(prel->attname);
 
 		switch (prel->parttype)
 		{
@@ -616,17 +615,17 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	values[Anum_pathman_config_partrel - 1]			= ObjectIdGetDatum(relid);
 	isnull[Anum_pathman_config_partrel - 1]			= false;
 
-	values[Anum_pathman_config_atttype - 1]			= ObjectIdGetDatum(expr_info->expr_type);
-	isnull[Anum_pathman_config_atttype - 1]			= false;
-
-	values[Anum_pathman_config_expression - 1]		= expr_info->expr_datum;
-	isnull[Anum_pathman_config_expression - 1]		= false;
-
-	values[Anum_pathman_config_raw_expression - 1]	= CStringGetTextDatum(expression);
-	isnull[Anum_pathman_config_raw_expression - 1]	= false;
-
 	values[Anum_pathman_config_parttype - 1]		= Int32GetDatum(parttype);
 	isnull[Anum_pathman_config_parttype - 1]		= false;
+
+	values[Anum_pathman_config_expression - 1]		= CStringGetTextDatum(expression);
+	isnull[Anum_pathman_config_expression - 1]		= false;
+
+	values[Anum_pathman_config_expression_p - 1]	= expr_info->expr_datum;
+	isnull[Anum_pathman_config_expression_p - 1]	= false;
+
+	values[Anum_pathman_config_atttype - 1]			= ObjectIdGetDatum(expr_info->expr_type);
+	isnull[Anum_pathman_config_atttype - 1]			= false;
 
 	if (parttype == PT_RANGE)
 	{
@@ -659,7 +658,6 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 
 			refresh_pathman_relation_info(relid,
 										  values,
-										  isnull,
 										  false); /* initialize immediately */
 		}
 		PG_CATCH();

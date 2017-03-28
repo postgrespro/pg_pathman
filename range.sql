@@ -132,15 +132,15 @@ BEGIN
 		/* Check boundaries */
 		EXECUTE format('SELECT @extschema@.check_boundaries(''%s'', ''%s'', ''%s'', ''%s''::%s)',
 					   parent_relid,
-					   attribute,
+					   expression,
 					   start_value,
 					   end_value,
 					   v_atttype::TEXT);
 	END IF;
 
 	/* Insert new entry to pathman config */
-	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype, range_interval)
-	VALUES (parent_relid, attribute, 2, p_interval::TEXT);
+	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression,
+		p_interval::TEXT, false);
 
 	/* Create sequence for child partitions names */
 	PERFORM @extschema@.create_or_replace_sequence(parent_relid)
@@ -177,11 +177,11 @@ END
 $$ LANGUAGE plpgsql;
 
 /*
- * Creates RANGE partitions for specified relation based on numerical attribute
+ * Creates RANGE partitions for specified relation based on numerical expression
  */
 CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions(
 	parent_relid	REGCLASS,
-	attribute		TEXT,
+	expression		TEXT,
 	start_value		ANYELEMENT,
 	p_interval		ANYELEMENT,
 	p_count			INTEGER DEFAULT NULL,
@@ -206,8 +206,8 @@ BEGIN
 		PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 	END IF;
 
-	attribute := lower(attribute);
-	PERFORM @extschema@.common_relation_checks(parent_relid, attribute);
+	expression := lower(expression);
+	PERFORM @extschema@.common_relation_checks(parent_relid, expression);
 
 	IF p_count < 0 THEN
 		RAISE EXCEPTION 'partitions count must not be less than zero';
@@ -215,7 +215,7 @@ BEGIN
 
 	/* Try to determine partitions count if not set */
 	IF p_count IS NULL THEN
-		EXECUTE format('SELECT count(*), max(%s) FROM %s', attribute, parent_relid)
+		EXECUTE format('SELECT count(*), max(%s) FROM %s', expression, parent_relid)
 		INTO v_rows_count, v_max;
 
 		IF v_rows_count = 0 THEN
@@ -223,7 +223,7 @@ BEGIN
 		END IF;
 
 		IF v_max IS NULL THEN
-			RAISE EXCEPTION 'column "%" has NULL values', attribute;
+			RAISE EXCEPTION 'expression "%" can return NULL values', expression;
 		END IF;
 
 		p_count := 0;
@@ -248,17 +248,14 @@ BEGIN
 
 		/* check boundaries */
 		PERFORM @extschema@.check_boundaries(parent_relid,
-											 attribute,
+											 expression,
 											 start_value,
 											 end_value);
 	END IF;
 
 	/* Insert new entry to pathman config */
-	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression, NULL, false);
-
-	/* Insert new entry to pathman config */
-	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype, range_interval)
-	VALUES (parent_relid, attribute, 2, p_interval::TEXT);
+	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression,
+		p_interval::TEXT, false);
 
 	/* Create sequence for child partitions names */
 	PERFORM @extschema@.create_or_replace_sequence(parent_relid)
@@ -296,7 +293,7 @@ $$ LANGUAGE plpgsql;
  */
 CREATE OR REPLACE FUNCTION @extschema@.create_partitions_from_range(
 	parent_relid	REGCLASS,
-	attribute		TEXT,
+	expression		TEXT,
 	start_value		ANYELEMENT,
 	end_value		ANYELEMENT,
 	p_interval		ANYELEMENT,
@@ -317,8 +314,8 @@ BEGIN
 		PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 	END IF;
 
-	attribute := lower(attribute);
-	PERFORM @extschema@.common_relation_checks(parent_relid, attribute);
+	expression := lower(expression);
+	PERFORM @extschema@.common_relation_checks(parent_relid, expression);
 
 	IF p_interval <= 0 THEN
 		RAISE EXCEPTION 'interval must be positive';
@@ -326,13 +323,13 @@ BEGIN
 
 	/* Check boundaries */
 	PERFORM @extschema@.check_boundaries(parent_relid,
-										 attribute,
+										 expression,
 										 start_value,
 										 end_value);
 
 	/* Insert new entry to pathman config */
-	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype, range_interval)
-	VALUES (parent_relid, attribute, 2, p_interval::TEXT);
+	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression,
+		p_interval::TEXT, false);
 
 	/* Create sequence for child partitions names */
 	PERFORM @extschema@.create_or_replace_sequence(parent_relid)
@@ -366,11 +363,11 @@ END
 $$ LANGUAGE plpgsql;
 
 /*
- * Creates RANGE partitions for specified range based on datetime attribute
+ * Creates RANGE partitions for specified range based on datetime expression
  */
 CREATE OR REPLACE FUNCTION @extschema@.create_partitions_from_range(
 	parent_relid	REGCLASS,
-	attribute		TEXT,
+	expression		TEXT,
 	start_value		ANYELEMENT,
 	end_value		ANYELEMENT,
 	p_interval		INTERVAL,
@@ -391,18 +388,18 @@ BEGIN
 		PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 	END IF;
 
-	attribute := lower(attribute);
-	PERFORM @extschema@.common_relation_checks(parent_relid, attribute);
+	expression := lower(expression);
+	PERFORM @extschema@.common_relation_checks(parent_relid, expression);
 
 	/* Check boundaries */
 	PERFORM @extschema@.check_boundaries(parent_relid,
-										 attribute,
+										 expression,
 										 start_value,
 										 end_value);
 
 	/* Insert new entry to pathman config */
-	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype, range_interval)
-	VALUES (parent_relid, attribute, 2, p_interval::TEXT);
+	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression,
+		p_interval::TEXT, false);
 
 	/* Create sequence for child partitions names */
 	PERFORM @extschema@.create_or_replace_sequence(parent_relid)
@@ -1124,7 +1121,7 @@ SET client_min_messages = WARNING;
  */
 CREATE OR REPLACE FUNCTION @extschema@.build_range_condition(
 	p_relid			REGCLASS,
-	attribute		TEXT,
+	expression		TEXT,
 	start_value		ANYELEMENT,
 	end_value		ANYELEMENT)
 RETURNS TEXT AS 'pg_pathman', 'build_range_condition'

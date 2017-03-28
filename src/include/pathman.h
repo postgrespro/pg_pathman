@@ -46,11 +46,11 @@
 #define PATHMAN_CONFIG						"pathman_config"
 #define Natts_pathman_config				6
 #define Anum_pathman_config_partrel			1	/* partitioned relation (regclass) */
-#define Anum_pathman_config_expression		2	/* partitioned expression (text) */
-#define Anum_pathman_config_raw_expression	3	/* partitioned raw expression (text) */
-#define Anum_pathman_config_atttype			4	/* partitioned atttype */
-#define Anum_pathman_config_parttype		5	/* partitioning type (1|2) */
-#define Anum_pathman_config_range_interval	6	/* interval for RANGE pt. (text) */
+#define Anum_pathman_config_expression		2	/* partition expression (original) */
+#define Anum_pathman_config_parttype		3	/* partitioning type (1|2) */
+#define Anum_pathman_config_range_interval	4	/* interval for RANGE pt. (text) */
+#define Anum_pathman_config_expression_p	5	/* parsed partition expression (text) */
+#define Anum_pathman_config_atttype			6	/* partitioned atttype */
 
 /* type modifier (typmod) for 'range_interval' */
 #define PATHMAN_CONFIG_interval_typmod		-1

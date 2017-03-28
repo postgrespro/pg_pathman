@@ -33,18 +33,17 @@ LANGUAGE C;
  */
 CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
 	partrel			REGCLASS NOT NULL PRIMARY KEY,
-	attname			TEXT NOT NULL,
-	raw_expression	TEXT NOT NULL,
-	atttype			OID NOT NULL,
+	attname			TEXT NOT NULL,	/* expression */
 	parttype		INTEGER NOT NULL,
 	range_interval	TEXT,
+	expression_p	TEXT NOT NULL,	/* parsed expression (until plan) */
+	atttype			OID NOT NULL,	/* expression type */
 
 	/* check for allowed part types */
-	CHECK (parttype IN (1, 2))
+	CHECK (parttype IN (1, 2)),
 
 	/* check for correct interval */
-	CHECK (@extschema@.validate_interval_value(partrel,
-											   atttype,
+	CHECK (@extschema@.validate_interval_value(atttype,
 											   parttype,
 											   range_interval))
 );
