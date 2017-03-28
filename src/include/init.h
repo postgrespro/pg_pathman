@@ -67,9 +67,9 @@ static inline const char *
 simpify_mcxt_name(MemoryContext mcxt)
 {
 	static const char  *top_mcxt	= "maintenance",
-					   *bound_mcxt	= "partition info cache",
-					   *parent_mcxt	= "parent mapping cache",
-					   *constr_mcxt	= "bounds cache";
+					   *bound_mcxt	= "partition pruning cache",
+					   *parent_mcxt	= "partition parents cache",
+					   *constr_mcxt	= "partition bounds cache";
 
 	if (mcxt == TopPathmanContext)
 		return top_mcxt;

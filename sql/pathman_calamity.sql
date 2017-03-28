@@ -260,6 +260,24 @@ SELECT get_part_range('calamity.test_range_oid_1', NULL::INT4);		/* OK */
 
 DROP TABLE calamity.test_range_oid CASCADE;
 
+DROP SCHEMA calamity CASCADE;
+DROP EXTENSION pg_pathman;
+
+
+
+/*
+ * -------------------------------------
+ *  Special tests (pathman_cache_stats)
+ * -------------------------------------
+ */
+
+CREATE SCHEMA calamity;
+CREATE EXTENSION pg_pathman;
+
+/* check view pathman_cache_stats */
+CREATE TABLE calamity.test_pathman_cache_stats(val NUMERIC NOT NULL);
+SELECT create_range_partitions('calamity.test_pathman_cache_stats', 'val', 1, 10, 10);
+SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
 
 DROP SCHEMA calamity CASCADE;
 DROP EXTENSION pg_pathman;
