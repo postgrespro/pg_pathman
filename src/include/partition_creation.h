@@ -88,7 +88,8 @@ typedef struct
 PartExpressionInfo *get_part_expression_info(Oid relid,
 	const char *expr_string, bool check_hash_func, bool make_plan);
 
-Node *get_raw_expression(Oid relid, const char *expr, char **query_string_out);
+Node *get_raw_expression(Oid relid, const char *expr, char **query_string_out,
+		Node **parsetree);
 
 /* Partitioning callback type */
 typedef enum

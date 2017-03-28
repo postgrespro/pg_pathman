@@ -697,7 +697,7 @@ create_single_partition_internal(Oid parent_relid,
 
 		*expr_type = DatumGetObjectId(config_values[Anum_pathman_config_atttype - 1]);
 		expr_string = TextDatumGetCString(config_values[Anum_pathman_config_expression - 1]);
-		*expr = get_raw_expression(parent_relid, expr_string, NULL);
+		*expr = get_raw_expression(parent_relid, expr_string, NULL, NULL);
 		pfree(expr_string);
 	}
 
@@ -1686,7 +1686,8 @@ text_to_regprocedure(text *proc_signature)
 
 /* Wraps expression by SELECT query and returns parsed tree */
 Node *
-get_raw_expression(Oid relid, const char *expr, char **query_string_out)
+get_raw_expression(Oid relid, const char *expr, char **query_string_out,
+		Node **parsetree)
 {
 	Node			*result;
 	SelectStmt		*select_stmt;
@@ -1705,7 +1706,14 @@ get_raw_expression(Oid relid, const char *expr, char **query_string_out)
 	{
 		*query_string_out = query_string;
 	}
+
 	select_stmt = (SelectStmt *) lfirst(list_head(parsetree_list));
+
+	if (parsetree)
+	{
+		*parsetree = (Node *) select_stmt;
+	}
+
 	target = (ResTarget *) lfirst(list_head(select_stmt->targetList));
 	result = (Node *) target->val;
 	return result;
@@ -1719,7 +1727,8 @@ PartExpressionInfo *
 get_part_expression_info(Oid relid, const char *expr_string,
 		bool check_hash_func, bool make_plan)
 {
-	Node				*expr_node;
+	Node				*expr_node,
+						*parsetree;
 	Query				*query;
 	char				*query_string, *out_string;
 	PartExpressionInfo	*expr_info;
@@ -1730,7 +1739,8 @@ get_part_expression_info(Oid relid, const char *expr_string,
 	expr_info = palloc(sizeof(PartExpressionInfo));
 
 	/* Keep raw expression */
-	expr_info->raw_expr = get_raw_expression(relid, expr_string, &query_string);
+	expr_info->raw_expr = get_raw_expression(relid, expr_string,
+			&query_string, &parsetree);
 	expr_info->expr_datum = (Datum) 0;
 
 	/* We don't need pathman activity initialization for this relation yet */
@@ -1738,7 +1748,7 @@ get_part_expression_info(Oid relid, const char *expr_string,
 
 	/* This will fail with elog in case of wrong expression
 	 *	with more or less understable text */
-	querytree_list = pg_analyze_and_rewrite(expr_info->raw_expr,
+	querytree_list = pg_analyze_and_rewrite(parsetree,
 		query_string, NULL, 0);
 	query = (Query *) lfirst(list_head(querytree_list));
 

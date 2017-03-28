@@ -378,7 +378,7 @@ build_range_condition(PG_FUNCTION_ARGS)
 				MakeBoundInf(PLUS_INFINITY) :
 				MakeBound(PG_GETARG_DATUM(3));
 
-	expr = get_raw_expression(relid, expression, NULL);
+	expr = get_raw_expression(relid, expression, NULL, NULL);
 	con = build_range_check_constraint(relid,
 									   expr,
 									   &min, &max,
@@ -835,7 +835,7 @@ modify_range_constraint(Oid child_relid,
 	drop_check_constraint(child_relid);
 
 	/* Parse expression */
-	expr = get_raw_expression(child_relid, attname, NULL);
+	expr = get_raw_expression(child_relid, attname, NULL, NULL);
 
 	/* Build a new one */
 	constraint = build_range_check_constraint(child_relid,
