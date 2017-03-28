@@ -14,6 +14,7 @@
 #include "compat/debug_compat_features.h"
 
 #include "postgres.h"
+#include "nodes/memnodes.h"
 #include "nodes/relation.h"
 #include "nodes/pg_list.h"
 #include "optimizer/cost.h"

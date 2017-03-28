@@ -372,7 +372,9 @@ show_cache_stats_internal(PG_FUNCTION_ARGS)
 #endif
 
 		values[Anum_pathman_cs_entries - 1]	=
-				Int64GetDatum(current_htab ? hash_get_num_entries(current_htab) : 0);
+				Int64GetDatum(current_htab ?
+								  hash_get_num_entries(current_htab) :
+								  0);
 
 		/* Switch to next item */
 		usercxt->current_item++;
