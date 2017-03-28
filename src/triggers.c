@@ -5,9 +5,13 @@
 
 #include "access/htup_details.h"
 #include "access/xact.h"
+#include "catalog/pg_am.h"
 #include "catalog/pg_constraint.h"
+#include "catalog/pg_constraint_fn.h"
 #include "catalog/pg_type.h"
+#include "catalog/pg_opclass.h"
 #include "catalog/pg_operator.h"
+#include "catalog/pg_trigger.h"
 #include "commands/trigger.h"
 #include "executor/spi.h"
 #include "parser/parse_relation.h"
@@ -29,6 +33,11 @@
 #define RI_INIT_QUERYHASHSIZE 			(RI_INIT_CONSTRAINTHASHSIZE * 4)
 
 #define RIAttName(rel, attnum)	NameStr(*attnumAttName(rel, attnum))
+
+#define RI_TRIGTYPE_INSERT 1
+#define RI_TRIGTYPE_UPDATE 2
+#define RI_TRIGTYPE_DELETE 3
+
 
 typedef struct ConstraintInfo
 {
@@ -99,9 +108,14 @@ static void ri_ReportViolation(const ConstraintInfo *riinfo, Relation fk_rel);
 static SPIPlanPtr FetchPreparedPlan(QueryKey *key);
 static void BuildQueryKey(QueryKey *key, Oid relid, Oid partid);
 static void SavePreparedPlan(QueryKey *key, SPIPlanPtr plan);
+static Oid transformFkeyCheckAttrs(Relation pkrel, int16 attnum, Oid *opclass);
+static void create_fk_constraint_internal(Oid fk_table, AttrNumber fk_attnum, Oid pk_table, AttrNumber pk_attnum);
+static void createForeignKeyTriggers(Relation rel, Oid refRelOid,
+						 Oid constraintOid, Oid indexOid);
 
 
 PG_FUNCTION_INFO_V1(pathman_fkey_check_ins);
+PG_FUNCTION_INFO_V1(create_fk_constraint);
 
 /* ----------
  * Local data
@@ -118,10 +132,24 @@ pathman_fkey_check_ins(PG_FUNCTION_ARGS)
 	/*
 	 * Check that this is a valid trigger call on the right time and event.
 	 */
-	ri_CheckTrigger(fcinfo, "pathman_fkey_check_ins", RI_TRIGTYPE_INSERT);
+	// ri_CheckTrigger(fcinfo, "pathman_fkey_check_ins", RI_TRIGTYPE_INSERT);
 
 	/*
 	 * Share code with UPDATE case.
+	 */
+	return RI_FKey_check((TriggerData *) fcinfo->context);
+}
+
+Datum
+pathman_fkey_check_upd(PG_FUNCTION_ARGS)
+{
+	/*
+	 * Check that this is a valid trigger call on the right time and event.
+	 */
+	// ri_CheckTrigger(fcinfo, "RI_FKey_check_upd", RI_TRIGTYPE_UPDATE);
+
+	/*
+	 * Share code with INSERT case.
 	 */
 	return RI_FKey_check((TriggerData *) fcinfo->context);
 }
@@ -832,4 +860,288 @@ SavePreparedPlan(QueryKey *key, SPIPlanPtr plan)
 										   HASH_ENTER, &found);
 	Assert(!found || entry->plan == NULL);
 	entry->plan = plan;
+}
+
+
+/*
+ * ----------------------------------------------------------
+ */
+
+Datum
+create_fk_constraint(PG_FUNCTION_ARGS)
+{
+	Oid fk_table = PG_GETARG_OID(0);
+	Oid pk_table = PG_GETARG_OID(2);
+	char *fk_attr = TextDatumGetCString(PG_GETARG_TEXT_P(1));
+	char *pk_attr = TextDatumGetCString(PG_GETARG_TEXT_P(3));
+	AttrNumber fk_attnum = get_attnum(fk_table, fk_attr);
+	AttrNumber pk_attnum = get_attnum(pk_table, pk_attr);
+
+	create_fk_constraint_internal(fk_table, fk_attnum, pk_table, pk_attnum);
+
+	PG_RETURN_VOID();
+}
+
+static void
+create_fk_constraint_internal(Oid fk_table, AttrNumber fk_attnum, Oid pk_table, AttrNumber pk_attnum)
+{
+	Oid			indexOid;
+	Oid			opclass;
+	Oid			pktypoid = get_atttype(pk_table, pk_attnum);
+	Oid			fktypoid = get_atttype(fk_table, fk_attnum);
+	Oid			fktype;
+	Oid			fktyped;
+	char	   *fkname;
+	Oid			constrOid;
+
+	Relation fkrel;
+	Relation pkrel;
+
+	HeapTuple	cla_ht;
+	Form_pg_opclass cla_tup;
+	Oid			amid;
+	Oid			pfeqop;
+	Oid			ppeqop;
+	Oid			ffeqop;
+
+	Oid opfamily;
+	Oid opcintype;
+
+
+	fkrel = heap_open(fk_table, ShareRowExclusiveLock);
+	pkrel = heap_open(pk_table, ShareRowExclusiveLock);
+
+	fkname = ChooseConstraintName(RelationGetRelationName(fkrel),
+								  get_attname(fk_table, fk_attnum),
+								  "fkey",
+								  RelationGetNamespace(fkrel),
+								  NIL);
+
+	indexOid = transformFkeyCheckAttrs(pkrel, pk_attnum, &opclass);
+
+	/* TODO: check permissions */
+
+	/* We need several fields out of the pg_opclass entry */
+	cla_ht = SearchSysCache1(CLAOID, ObjectIdGetDatum(opclass));
+	if (!HeapTupleIsValid(cla_ht))
+		elog(ERROR, "cache lookup failed for opclass %u", opclass);
+	cla_tup = (Form_pg_opclass) GETSTRUCT(cla_ht);
+	amid = cla_tup->opcmethod;
+	opfamily = cla_tup->opcfamily;
+	opcintype = cla_tup->opcintype;
+	ReleaseSysCache(cla_ht);
+
+	if (amid != BTREE_AM_OID)
+		elog(ERROR, "only b-tree indexes are supported for foreign keys");
+
+	/* Operator for PK = PK comparisons */
+	ppeqop = get_opfamily_member(opfamily, opcintype, opcintype,
+								 BTEqualStrategyNumber);
+	if (!OidIsValid(ppeqop))
+		elog(ERROR, "missing operator %d(%u,%u) in opfamily %u",
+			 BTEqualStrategyNumber, opcintype, opcintype, opfamily);
+
+	/*
+	 * Are there equality operators that take exactly the FK type? Assume
+	 * we should look through any domain here.
+	 */
+	fktyped = getBaseType(fktypoid);
+
+	pfeqop = get_opfamily_member(opfamily, opcintype, fktyped,
+								 BTEqualStrategyNumber);
+	if (OidIsValid(pfeqop))
+	{
+		ffeqop = get_opfamily_member(opfamily, fktyped, fktyped,
+									 BTEqualStrategyNumber);
+	}
+	else
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("foreign key constraint \"%s\" "
+						"cannot be implemented",
+						fkname)));
+	}
+
+	/*
+	 * Record the FK constraint in pg_constraint.
+	 */
+	constrOid = CreateConstraintEntry(fkname,
+									  RelationGetNamespace(fkrel),
+									  CONSTRAINT_FOREIGN,
+									  false,
+									  false,
+									  true,	/* initially_valid */
+									  fk_table,
+									  &fk_attnum,
+									  1,
+									  1,
+									  InvalidOid,		/* not a domain
+														 * constraint */
+									  indexOid,
+									  pk_table,
+									  &pk_attnum,
+									  &pfeqop,
+									  &ppeqop,
+									  &ffeqop,
+									  1,
+									  'a',
+									  'a',
+									  FKCONSTR_MATCH_FULL,
+									  NULL,		/* no exclusion constraint */
+									  NULL,		/* no check constraint */
+									  NULL,
+									  NULL,
+									  true,		/* islocal */
+									  0,		/* inhcount */
+									  true,		/* isnoinherit */
+									  false);	/* is_internal */
+	// ObjectAddressSet(address, ConstraintRelationId, constrOid);
+
+	/* Make changes-so-far visible */
+	CommandCounterIncrement();
+
+	createForeignKeyTriggers(fkrel, pk_table, constrOid, indexOid);
+
+	heap_close(fkrel, ShareRowExclusiveLock);
+	heap_close(pkrel, ShareRowExclusiveLock);
+}
+
+static void
+createForeignKeyTriggers(Relation rel, Oid refRelOid,
+						 Oid constraintOid, Oid indexOid)
+{
+	Oid			myRelOid;
+	CreateTrigStmt *fk_trigger;
+	Oid			pathman_schema = get_pathman_schema();
+	char	   *pathman_schema_name = get_namespace_name(pathman_schema);
+
+	myRelOid = RelationGetRelid(rel);
+
+	/*
+	 * Build and execute a CREATE CONSTRAINT TRIGGER statement for the ON
+	 * INSERT action on the pk table.
+	 */
+	fk_trigger = makeNode(CreateTrigStmt);
+	fk_trigger->trigname = "RI_ConstraintTrigger_c";
+	fk_trigger->relation = NULL;
+	fk_trigger->row = true;
+	fk_trigger->timing = TRIGGER_TYPE_AFTER;
+	fk_trigger->events = TRIGGER_TYPE_INSERT;
+	fk_trigger->columns = NIL;
+	fk_trigger->whenClause = NULL;
+	fk_trigger->isconstraint = true;
+	fk_trigger->constrrel = NULL;
+	fk_trigger->deferrable = false;
+	fk_trigger->initdeferred = false;
+	fk_trigger->funcname = list_make2(makeString(pathman_schema_name),
+									  makeString("pathman_fkey_check_ins"));
+	fk_trigger->args = NIL;
+
+	(void) CreateTrigger(fk_trigger, NULL, myRelOid, refRelOid,constraintOid,
+						 indexOid, true);
+
+	/* Make changes-so-far visible */
+	CommandCounterIncrement();
+
+	/*
+	 * Build and execute a CREATE CONSTRAINT TRIGGER statement for the ON
+	 * UPDATE action on the pk table.
+	 */
+	fk_trigger = makeNode(CreateTrigStmt);
+	fk_trigger->trigname = "RI_ConstraintTrigger_c";
+	fk_trigger->relation = NULL;
+	fk_trigger->row = true;
+	fk_trigger->timing = TRIGGER_TYPE_AFTER;
+	fk_trigger->events = TRIGGER_TYPE_UPDATE;
+	fk_trigger->columns = NIL;
+	fk_trigger->whenClause = NULL;
+	fk_trigger->isconstraint = true;
+	fk_trigger->constrrel = NULL;
+	fk_trigger->deferrable = false;
+	fk_trigger->initdeferred = false;
+	fk_trigger->funcname = list_make2(makeString(pathman_schema_name),
+									  makeString("pathman_fkey_check_upd"));
+	fk_trigger->args = NIL;
+
+	(void) CreateTrigger(fk_trigger, NULL, myRelOid, refRelOid, constraintOid,
+						 indexOid, true);
+
+	/* Make changes-so-far visible */
+	CommandCounterIncrement();
+}
+
+static Oid
+transformFkeyCheckAttrs(Relation pkrel, int16 attnum,
+						Oid *opclass) /* output parameter */
+{
+	Oid			indexoid = InvalidOid;
+	bool		found = false;
+	bool		found_deferrable = false;
+	List	   *indexoidlist;
+	ListCell   *indexoidscan;
+
+	/*
+	 * Get the list of index OIDs for the table from the relcache, and look up
+	 * each one in the pg_index syscache, and match unique indexes to the list
+	 * of attnums we are given.
+	 */
+	indexoidlist = RelationGetIndexList(pkrel);
+
+	foreach(indexoidscan, indexoidlist)
+	{
+		HeapTuple	indexTuple;
+		Form_pg_index indexStruct;
+
+		indexoid = lfirst_oid(indexoidscan);
+		indexTuple = SearchSysCache1(INDEXRELID, ObjectIdGetDatum(indexoid));
+		if (!HeapTupleIsValid(indexTuple))
+			elog(ERROR, "cache lookup failed for index %u", indexoid);
+		indexStruct = (Form_pg_index) GETSTRUCT(indexTuple);
+
+		/*
+		 * Must have the right number of columns; must be unique and not a
+		 * partial index; forget it if there are any expressions, too. Invalid
+		 * indexes are out as well.
+		 */
+		if (indexStruct->indnkeyatts == 1 &&
+			indexStruct->indisunique &&
+			IndexIsValid(indexStruct) &&
+			heap_attisnull(indexTuple, Anum_pg_index_indpred) &&
+			heap_attisnull(indexTuple, Anum_pg_index_indexprs))
+		{
+			Datum		indclassDatum;
+			bool		isnull;
+			oidvector  *indclass;
+
+			/* Must get indclass the hard way */
+			indclassDatum = SysCacheGetAttr(INDEXRELID, indexTuple,
+											Anum_pg_index_indclass, &isnull);
+			Assert(!isnull);
+			indclass = (oidvector *) DatumGetPointer(indclassDatum);
+
+			*opclass = InvalidOid;
+			if (attnum == indexStruct->indkey.values[0])
+			{
+				*opclass = indclass->values[0];
+				break;
+			}
+
+		}
+		ReleaseSysCache(indexTuple);
+		if (found)
+			break;
+	}
+
+	if (!OidIsValid(opclass))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_FOREIGN_KEY),
+				 errmsg("there is no unique constraint matching given keys for referenced table \"%s\"",
+						RelationGetRelationName(pkrel))));
+	}
+
+	list_free(indexoidlist);
+
+	return indexoid;
 }

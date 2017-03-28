@@ -929,3 +929,13 @@ CREATE OR REPLACE FUNCTION @extschema@.is_operator_supported(
 RETURNS BOOLEAN AS 'pg_pathman', 'is_operator_supported'
 LANGUAGE C;
 
+/*
+ * Referential integrity triggers
+ */
+CREATE OR REPLACE FUNCTION @extschema@.pathman_fkey_check_ins()
+RETURNS TRIGGER AS 'pg_pathman', 'pathman_fkey_check_ins'
+LANGUAGE C STRICT;
+
+CREATE OR REPLACE FUNCTION @extschema@.pathman_fkey_check_upd()
+RETURNS TRIGGER AS 'pg_pathman', 'pathman_fkey_check_upd'
+LANGUAGE C STRICT;
