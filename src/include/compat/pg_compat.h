@@ -78,6 +78,12 @@ extern Result *make_result(List *tlist,
 		make_result((tlist), (resconstantqual), (subplan))
 
 
+/* McxtStatsInternal() */
+void McxtStatsInternal(MemoryContext context, int level,
+					   bool examine_children,
+					   MemoryContextCounters *totals);
+
+
 /* pull_var_clause() */
 #define pull_var_clause_compat(node, aggbehavior, phbehavior) \
 		pull_var_clause((node), (aggbehavior) | (phbehavior))
@@ -92,6 +98,9 @@ extern void set_rel_consider_parallel(PlannerInfo *root,
 
 
 #else /* PG_VERSION_NUM >= 90500 */
+
+#define ALLOCSET_DEFAULT_SIZES \
+	ALLOCSET_DEFAULT_MINSIZE, ALLOCSET_DEFAULT_INITSIZE, ALLOCSET_DEFAULT_MAXSIZE
 
 /* adjust_appendrel_attrs() */
 #define adjust_rel_targetlist_compat(root, dst_rel, src_rel, appinfo) \

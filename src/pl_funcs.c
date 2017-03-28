@@ -332,31 +332,44 @@ show_cache_stats_internal(PG_FUNCTION_ARGS)
 	{
 		HTAB				   *current_htab;
 		MemoryContext			current_mcxt;
-		MemoryContextCounters	mcxt_stats;
 		HeapTuple				htup;
 		Datum					values[Natts_pathman_cache_stats];
 		bool					isnull[Natts_pathman_cache_stats] = { 0 };
 
-		/* Prepare context counters */
-		memset(&mcxt_stats, 0, sizeof(mcxt_stats));
+#if PG_VERSION_NUM >= 90600
+		MemoryContextCounters	mcxt_stats;
+#endif
 
 		/* Select current memory context and hash table (cache) */
 		current_mcxt = usercxt->pathman_contexts[usercxt->current_item];
 		current_htab = usercxt->pathman_htables[usercxt->current_item];
+
+		values[Anum_pathman_cs_context - 1]	=
+				CStringGetTextDatum(simpify_mcxt_name(current_mcxt));
+
+/* We can't check stats of mcxt prior to 9.6 */
+#if PG_VERSION_NUM >= 90600
+
+		/* Prepare context counters */
+		memset(&mcxt_stats, 0, sizeof(mcxt_stats));
 
 		/* NOTE: we do not consider child contexts if it's TopPathmanContext */
 		McxtStatsInternal(current_mcxt, 0,
 						  (current_mcxt != TopPathmanContext),
 						  &mcxt_stats);
 
-		values[Anum_pathman_cs_context - 1]	=
-				CStringGetTextDatum(simpify_mcxt_name(current_mcxt));
-
 		values[Anum_pathman_cs_size - 1]	=
 				Int64GetDatum(mcxt_stats.totalspace);
 
 		values[Anum_pathman_cs_used - 1]	=
 				Int64GetDatum(mcxt_stats.totalspace - mcxt_stats.freespace);
+
+#else
+
+		/* Set unsupported fields to NULL */
+		isnull[Anum_pathman_cs_size - 1]	= true;
+		isnull[Anum_pathman_cs_used - 1]	= true;
+#endif
 
 		values[Anum_pathman_cs_entries - 1]	=
 				Int64GetDatum(current_htab ? hash_get_num_entries(current_htab) : 0);

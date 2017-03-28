@@ -34,9 +34,6 @@ bool check_security_policy_internal(Oid relid, Oid role);
  */
 Oid get_pathman_schema(void);
 List * list_reverse(List *l);
-void McxtStatsInternal(MemoryContext context, int level,
-					   bool examine_children,
-					   MemoryContextCounters *totals);
 
 /*
  * Useful functions for relations.
