@@ -1738,7 +1738,7 @@ get_part_expression_info(Oid relid, const char *expr_string,
 
 	expr_info = palloc(sizeof(PartExpressionInfo));
 
-	pathman_parse_context = AllocSetContextCreate(TopMemoryContext,
+	pathman_parse_context = AllocSetContextCreate(TopPathmanContext,
 											"pathman parse context",
 											ALLOCSET_DEFAULT_SIZES);
 
