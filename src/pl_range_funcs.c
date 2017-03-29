@@ -81,7 +81,8 @@ PG_FUNCTION_INFO_V1( validate_interval_value );
 Datum
 create_single_range_partition_pl(PG_FUNCTION_ARGS)
 {
-	Oid			parent_relid;
+	Oid			parent_relid,
+				value_type;
 
 	/* RANGE boundaries + value type */
 	Bound		start,
@@ -101,7 +102,7 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 
 	/* Fetch mandatory args */
 	parent_relid = PG_GETARG_OID(0);
-	//value_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
+	value_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
 
 	start = PG_ARGISNULL(1) ?
 				MakeBoundInf(MINUS_INFINITY) :
@@ -132,6 +133,7 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 
 	/* Create a new RANGE partition and return its Oid */
 	partition_relid = create_single_range_partition_internal(parent_relid,
+															 value_type,
 															 &start,
 															 &end,
 															 partition_name_rv,

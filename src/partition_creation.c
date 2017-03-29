@@ -96,13 +96,13 @@ static RangeVar *makeRangeVarFromRelid(Oid relid);
 /* Create one RANGE partition [start_value, end_value) */
 Oid
 create_single_range_partition_internal(Oid parent_relid,
+									   Oid value_type,
 									   const Bound *start_value,
 									   const Bound *end_value,
 									   RangeVar *partition_rv,
 									   char *tablespace)
 {
-	Oid						partition_relid,
-							value_type;
+	Oid						partition_relid;
 	Constraint			   *check_constr;
 	Node				   *expr;
 	init_callback_params	callback_params;
@@ -123,7 +123,7 @@ create_single_range_partition_internal(Oid parent_relid,
 	partition_relid = create_single_partition_internal(parent_relid,
 													   partition_rv,
 													   tablespace,
-													   &value_type,
+													   NULL,
 													   &expr);
 
 	/* Build check constraint for RANGE partition */
@@ -559,6 +559,7 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 		bounds[1] = MakeBound(should_append ? cur_leading_bound : cur_following_bound);
 
 		last_partition = create_single_range_partition_internal(parent_relid,
+																value_type,
 																&bounds[0], &bounds[1],
 																NULL, NULL);
 
@@ -691,11 +692,15 @@ create_single_partition_internal(Oid parent_relid,
 	parent_nsp_name = get_namespace_name(parent_nsp);
 
 	/* Fetch expression for constraint */
-	if (expr && expr_type)
+	if (expr_type)
+	{
+		*expr_type = DatumGetObjectId(config_values[Anum_pathman_config_atttype - 1]);
+	}
+
+	if (expr)
 	{
 		char				*expr_string;
 
-		*expr_type = DatumGetObjectId(config_values[Anum_pathman_config_atttype - 1]);
 		expr_string = TextDatumGetCString(config_values[Anum_pathman_config_expression - 1]);
 		*expr = get_raw_expression(parent_relid, expr_string, NULL, NULL);
 		pfree(expr_string);
@@ -1154,11 +1159,6 @@ build_raw_range_check_tree(Node *raw_expression,
 			   *right_arg	= makeNode(A_Expr);
 	A_Const	   *left_const	= makeNode(A_Const),
 			   *right_const	= makeNode(A_Const);
-	ColumnRef  *col_ref		= makeNode(ColumnRef);
-
-	/* Partitioned column */
-	//col_ref->fields	= list_make1(makeString(attname));
-	col_ref->location = -1;
 
 	and_oper->boolop	= AND_EXPR;
 	and_oper->args		= NIL;
@@ -1174,7 +1174,7 @@ build_raw_range_check_tree(Node *raw_expression,
 
 		left_arg->name		= list_make1(makeString(">="));
 		left_arg->kind		= AEXPR_OP;
-		left_arg->lexpr		= (Node *) col_ref;
+		left_arg->lexpr		= raw_expression;
 		left_arg->rexpr		= (Node *) left_const;
 		left_arg->location	= -1;
 
@@ -1191,7 +1191,7 @@ build_raw_range_check_tree(Node *raw_expression,
 
 		right_arg->name		= list_make1(makeString("<"));
 		right_arg->kind		= AEXPR_OP;
-		right_arg->lexpr	= (Node *) col_ref;
+		right_arg->lexpr	= raw_expression;
 		right_arg->rexpr	= (Node *) right_const;
 		right_arg->location	= -1;
 

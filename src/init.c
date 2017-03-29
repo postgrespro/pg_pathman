@@ -77,13 +77,11 @@ static int cmp_range_entries(const void *p1, const void *p2, void *arg);
 
 static bool validate_range_constraint(const Expr *expr,
 									  const PartRelationInfo *prel,
-									  const AttrNumber part_attno,
 									  Datum *lower, Datum *upper,
 									  bool *lower_null, bool *upper_null);
 static bool validate_range_opexpr(const Expr *expr,
 								  const PartRelationInfo *prel,
 								  const TypeCacheEntry *tce,
-								  const AttrNumber part_attno,
 								  Datum *lower, Datum *upper,
 								  bool *lower_null, bool *upper_null);
 
@@ -93,7 +91,6 @@ static bool validate_hash_constraint(const Expr *expr,
 
 static bool read_opexpr_const(const OpExpr *opexpr,
 							  const PartRelationInfo *prel,
-							  const AttrNumber part_attno,
 							  Datum *val);
 
 static int oid_cmp(const void *p1, const void *p2);
@@ -403,7 +400,7 @@ fill_prel_with_partitions(const Oid *partitions,
 					Datum	lower, upper;
 					bool	lower_null, upper_null;
 
-					if (validate_range_constraint(con_expr, prel, 0,
+					if (validate_range_constraint(con_expr, prel,
 												  &lower, &upper,
 												  &lower_null, &upper_null))
 					{
@@ -917,12 +914,11 @@ cmp_range_entries(const void *p1, const void *p2, void *arg)
 	return cmp_bounds(flinfo, &v1->min, &v2->min);
 }
 
-/* Validates a single expression of kind VAR >= CONST or VAR < CONST */
+/* Validates a single expression of kind EXPRESSION >= CONST or EXPRESSION < CONST */
 static bool
 validate_range_opexpr(const Expr *expr,
 					  const PartRelationInfo *prel,
 					  const TypeCacheEntry *tce,
-					  const AttrNumber part_attno,
 					  Datum *lower, Datum *upper,
 					  bool *lower_null, bool *upper_null)
 {
@@ -940,7 +936,7 @@ validate_range_opexpr(const Expr *expr,
 	opexpr = (const OpExpr *) expr;
 
 	/* Try reading Const value */
-	if (!read_opexpr_const(opexpr, prel, part_attno, &val))
+	if (!read_opexpr_const(opexpr, prel, &val))
 		return false;
 
 	/* Examine the strategy (expect '>=' OR '<') */
@@ -979,16 +975,15 @@ validate_range_opexpr(const Expr *expr,
 /*
  * Validates range constraint. It MUST have one of the following formats:
  *
- *		VARIABLE >= CONST AND VARIABLE < CONST
- *		VARIABLE >= CONST
- *		VARIABLE < CONST
+ *		EXPRESSION >= CONST AND EXPRESSION < CONST
+ *		EXPRESSION >= CONST
+ *		EXPRESSION < CONST
  *
  * Writes 'lower' & 'upper' and 'lower_null' & 'upper_null' values on success.
  */
 static bool
 validate_range_constraint(const Expr *expr,
 						  const PartRelationInfo *prel,
-						  const AttrNumber part_attno,
 						  Datum *lower, Datum *upper,
 						  bool *lower_null, bool *upper_null)
 {
@@ -1015,7 +1010,7 @@ validate_range_constraint(const Expr *expr,
 			const OpExpr *opexpr = (const OpExpr *) lfirst(lc);
 
 			/* Exit immediately if something is wrong */
-			if (!validate_range_opexpr((const Expr *) opexpr, prel, tce, part_attno,
+			if (!validate_range_opexpr((const Expr *) opexpr, prel, tce,
 									   lower, upper, lower_null, upper_null))
 				return false;
 		}
@@ -1025,54 +1020,28 @@ validate_range_constraint(const Expr *expr,
 	}
 
 	/* It might be just an OpExpr clause */
-	else return validate_range_opexpr(expr, prel, tce, part_attno,
+	else return validate_range_opexpr(expr, prel, tce,
 									  lower, upper, lower_null, upper_null);
 }
 
 /*
  * Reads const value from expressions of kind:
- *		1) VAR >= CONST OR VAR < CONST
+ *		1) EXPRESSION >= CONST OR EXPRESSION < CONST
  *		2) RELABELTYPE(VAR) >= CONST OR RELABELTYPE(VAR) < CONST
  */
 static bool
 read_opexpr_const(const OpExpr *opexpr,
 				  const PartRelationInfo *prel,
-				  const AttrNumber part_attno,
 				  Datum *val)
 {
-	const Node	   *left;
 	const Node	   *right;
-	const Var	   *part_attr;	/* partitioned column */
 	const Const	   *constant;
 	bool			cast_success;
 
 	if (list_length(opexpr->args) != 2)
 		return false;
 
-	left = linitial(opexpr->args);
 	right = lsecond(opexpr->args);
-
-	/* VAR is a part of RelabelType node */
-	if (IsA(left, RelabelType) && IsA(right, Const))
-	{
-		Var *var = (Var *) ((RelabelType *) left)->arg;
-
-		if (IsA(var, Var))
-			part_attr = var;
-		else
-			return false;
-	}
-	/* left arg is of type VAR */
-	else if (IsA(left, Var) && IsA(right, Const))
-	{
-		part_attr = (Var *) left;
-	}
-	/* Something is wrong, retreat! */
-	else return false;
-
-	/* VAR.attno == partitioned attribute number */
-	if (part_attr->varoattno != part_attno)
-		return false;
 
 	/* CONST is NOT NULL */
 	if (((Const *) right)->constisnull)

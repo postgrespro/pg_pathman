@@ -30,6 +30,7 @@ Oid create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
 
 /* Create one RANGE partition */
 Oid create_single_range_partition_internal(Oid parent_relid,
+										   Oid value_type,
 										   const Bound *start_value,
 										   const Bound *end_value,
 										   RangeVar *partition_rv,
