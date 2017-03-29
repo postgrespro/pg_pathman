@@ -1751,7 +1751,8 @@ get_part_expression_info(Oid relid, const char *expr_string,
 	/* We don't need pathman activity initialization for this relation yet */
 	pathman_hooks_enabled = false;
 
-	/* We use separate memory context here, just to make sure we don't leave
+	/*
+	 * We use separate memory context here, just to make sure we don't leave
 	 * anything behind after analyze and planning.
 	 * Parsed raw expression will stay in context of caller
 	 */
