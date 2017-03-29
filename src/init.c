@@ -810,7 +810,7 @@ validate_range_constraint(const Expr *expr,
 									  lower, upper, lower_null, upper_null);
 }
 
-/* Validates a single expression of kind VAR >= CONST or VAR < CONST */
+/* Validates a single expression of kind VAR >= CONST | VAR < CONST */
 static bool
 validate_range_opexpr(const Expr *expr,
 					  const PartRelationInfo *prel,
@@ -870,8 +870,10 @@ validate_range_opexpr(const Expr *expr,
 
 /*
  * Reads const value from expressions of kind:
- *		1) VAR >= CONST OR VAR < CONST
- *		2) RELABELTYPE(VAR) >= CONST OR RELABELTYPE(VAR) < CONST
+ *		1) VAR >= CONST
+ *		2) VAR <  CONST
+ *		3) RELABELTYPE(VAR) >= CONST
+ *		4) RELABELTYPE(VAR) <  CONST
  */
 static bool
 read_opexpr_const(const OpExpr *opexpr,
