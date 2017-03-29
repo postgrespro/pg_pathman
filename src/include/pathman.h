@@ -78,6 +78,16 @@
 #define Anum_pathman_pl_range_min			5	/* partition's min value */
 #define Anum_pathman_pl_range_max			6	/* partition's max value */
 
+/*
+ * Definitions for the "pathman_cache_stats" view.
+ */
+#define PATHMAN_CACHE_STATS					"pathman_cache_stats"
+#define Natts_pathman_cache_stats			4
+#define Anum_pathman_cs_context				1	/* name of memory context */
+#define Anum_pathman_cs_size				2	/* size of memory context */
+#define Anum_pathman_cs_used				3	/* used space */
+#define Anum_pathman_cs_entries				4	/* number of cache entries */
+
 
 /*
  * Cache current PATHMAN_CONFIG relid (set during load_config()).

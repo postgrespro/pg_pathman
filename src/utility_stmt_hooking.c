@@ -411,7 +411,7 @@ PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
 	}
 
 	/* This should never happen (see is_pathman_related_copy()) */
-	else elog(ERROR, "error in function \"%s\"", CppAsString(PathmanDoCopy));
+	else elog(ERROR, "error in function " CppAsString(PathmanDoCopy));
 
 	/* COPY ... FROM ... */
 	if (is_from)

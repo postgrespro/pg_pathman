@@ -20,6 +20,7 @@
 #include "port/atomics.h"
 #include "storage/lock.h"
 #include "utils/datum.h"
+#include "nodes/primnodes.h"
 
 
 /* Range bound */
@@ -38,8 +39,7 @@ typedef struct
 #define IsPlusInfinity(i)		( (i)->is_infinite == PLUS_INFINITY )
 #define IsMinusInfinity(i)		( (i)->is_infinite == MINUS_INFINITY )
 
-
-inline static Bound
+static inline Bound
 CopyBound(const Bound *src, bool byval, int typlen)
 {
 	Bound bound = {
@@ -52,7 +52,7 @@ CopyBound(const Bound *src, bool byval, int typlen)
 	return bound;
 }
 
-inline static Bound
+static inline Bound
 MakeBound(Datum value)
 {
 	Bound bound = { value, FINITE };
@@ -60,7 +60,7 @@ MakeBound(Datum value)
 	return bound;
 }
 
-inline static Bound
+static inline Bound
 MakeBoundInf(int8 infinity_type)
 {
 	Bound bound = { (Datum) 0, infinity_type };
@@ -68,7 +68,7 @@ MakeBoundInf(int8 infinity_type)
 	return bound;
 }
 
-inline static Datum
+static inline Datum
 BoundGetValue(const Bound *bound)
 {
 	Assert(!IsInfinite(bound));
@@ -76,7 +76,14 @@ BoundGetValue(const Bound *bound)
 	return bound->value;
 }
 
-inline static int
+static inline void
+FreeBound(Bound *bound, bool byval)
+{
+	if (!IsInfinite(bound) && !byval)
+		pfree(DatumGetPointer(BoundGetValue(bound)));
+}
+
+static inline int
 cmp_bounds(FmgrInfo *cmp_func, const Bound *b1, const Bound *b2)
 {
 	if (IsMinusInfinity(b1) || IsPlusInfinity(b2))
@@ -93,12 +100,13 @@ cmp_bounds(FmgrInfo *cmp_func, const Bound *b1, const Bound *b2)
 }
 
 
+
 /*
  * Partitioning type.
  */
 typedef enum
 {
-	PT_INDIFFERENT = 0, /* for part type traits (virtual type) */
+	PT_ANY = 0, /* for part type traits (virtual type) */
 	PT_HASH,
 	PT_RANGE
 } PartType;
@@ -123,13 +131,14 @@ typedef struct
 	bool			valid;			/* is this entry valid? */
 	bool			enable_parent;	/* include parent to the plan */
 
+	PartType		parttype;		/* partitioning type (HASH | RANGE) */
+
 	uint32			children_count;
 	Oid			   *children;		/* Oids of child partitions */
 	RangeEntry	   *ranges;			/* per-partition range entry or NULL */
 
-	char		   *attname;		/* original expression */
+	const char	   *attname;		/* original expression */
 	Node		   *expr;			/* planned expression */
-	PartType		parttype;		/* partitioning type (HASH | RANGE) */
 	Oid				atttype;		/* expression type */
 	int32			atttypmod;		/* expression type modifier */
 	bool			attbyval;		/* is partitioned column stored by value? */
@@ -142,7 +151,7 @@ typedef struct
 } PartRelationInfo;
 
 /*
- * RelParentInfo
+ * PartParentInfo
  *		Cached parent of the specified partition.
  *		Allows us to quickly search for PartRelationInfo.
  */
@@ -165,6 +174,25 @@ typedef struct
 } CustomConst;
 
 /*
+ * PartBoundInfo
+ *		Cached bounds of the specified partition.
+ */
+typedef struct
+{
+	Oid				child_rel;		/* key */
+
+	PartType		parttype;
+
+	/* For RANGE partitions */
+	Bound			range_min;
+	Bound			range_max;
+	bool			byval;
+
+	/* For HASH partitions */
+	uint32			hash;
+} PartBoundInfo;
+
+/*
  * PartParentSearch
  *		Represents status of a specific cached entry.
  *		Returned by [for]get_parent_of_partition().
@@ -176,6 +204,8 @@ typedef enum
 	PPS_ENTRY_PART_PARENT,	/* entry is parent and is known by pg_pathman */
 	PPS_NOT_SURE			/* can't determine (not transactional state) */
 } PartParentSearch;
+
+
 
 /*
  * PartRelationInfo field access macros.
@@ -191,7 +221,7 @@ typedef enum
 
 #define PrelIsValid(prel)			( (prel) && (prel)->valid )
 
-inline static uint32
+static inline uint32
 PrelLastChild(const PartRelationInfo *prel)
 {
 	Assert(PrelIsValid(prel));
@@ -214,33 +244,49 @@ const PartRelationInfo *get_pathman_relation_info_after_lock(Oid relid,
 															 bool unlock_if_not_found,
 															 LockAcquireResult *lock_result);
 
+/* Global invalidation routines */
 void delay_pathman_shutdown(void);
 void delay_invalidation_parent_rel(Oid parent);
 void delay_invalidation_vague_rel(Oid vague_rel);
 void finish_delayed_invalidation(void);
 
+/* Parent cache */
 void cache_parent_of_partition(Oid partition, Oid parent);
 Oid forget_parent_of_partition(Oid partition, PartParentSearch *status);
 Oid get_parent_of_partition(Oid partition, PartParentSearch *status);
 
+/* Bounds cache */
+void forget_bounds_of_partition(Oid partition);
+PartBoundInfo * get_bounds_of_partition(Oid partition,
+										const PartRelationInfo *prel);
+
+/* Safe casts for PartType */
 PartType DatumGetPartType(Datum datum);
 char * PartTypeToCString(PartType parttype);
 
-void shout_if_prel_is_invalid(Oid parent_oid,
+/* PartRelationInfo checker */
+void shout_if_prel_is_invalid(const Oid parent_oid,
 							  const PartRelationInfo *prel,
-							  PartType expected_part_type);
+							  const PartType expected_part_type);
 
 
 /*
- * Useful static functions for freeing memory.
+ * Useful functions & macros for freeing memory.
  */
+
+#define FreeIfNotNull(ptr) \
+	do { \
+		if (ptr) \
+		{ \
+			pfree((void *) ptr); \
+			ptr = NULL; \
+		} \
+	} while(0)
 
 static inline void
 FreeChildrenArray(PartRelationInfo *prel)
 {
 	uint32	i;
-
-	Assert(PrelIsValid(prel));
 
 	/* Remove relevant PartParentInfos */
 	if (prel->children)
@@ -248,6 +294,10 @@ FreeChildrenArray(PartRelationInfo *prel)
 		for (i = 0; i < PrelChildrenCount(prel); i++)
 		{
 			Oid child = prel->children[i];
+
+			/* Skip if Oid is invalid (e.g. initialization error) */
+			if (!OidIsValid(child))
+				continue;
 
 			/* If it's *always been* relid's partition, free cache */
 			if (PrelParentRelid(prel) == get_parent_of_partition(child, NULL))
@@ -264,8 +314,6 @@ FreeRangesArray(PartRelationInfo *prel)
 {
 	uint32	i;
 
-	Assert(PrelIsValid(prel));
-
 	/* Remove RangeEntries array */
 	if (prel->ranges)
 	{
@@ -274,11 +322,14 @@ FreeRangesArray(PartRelationInfo *prel)
 		{
 			for (i = 0; i < PrelChildrenCount(prel); i++)
 			{
-				if (!IsInfinite(&prel->ranges[i].min))
-					pfree(DatumGetPointer(BoundGetValue(&prel->ranges[i].min)));
+				Oid child = prel->ranges[i].child_oid;
 
-				if (!IsInfinite(&prel->ranges[i].max))
-					pfree(DatumGetPointer(BoundGetValue(&prel->ranges[i].max)));
+				/* Skip if Oid is invalid (e.g. initialization error) */
+				if (!OidIsValid(child))
+					continue;
+
+				FreeBound(&prel->ranges[i].min, prel->attbyval);
+				FreeBound(&prel->ranges[i].max, prel->attbyval);
 			}
 		}
 
@@ -288,4 +339,10 @@ FreeRangesArray(PartRelationInfo *prel)
 }
 
 
+/* For pg_pathman.enable_bounds_cache GUC */
+extern bool pg_pathman_enable_bounds_cache;
+
+void init_relation_info_static_data(void);
+
 #endif /* RELATION_INFO_H */
+

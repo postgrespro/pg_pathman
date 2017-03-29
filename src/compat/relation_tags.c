@@ -110,7 +110,7 @@ rte_attach_tag(const uint32 query_id,
 
 		per_table_relation_tags = hash_create("Custom tags for RangeTblEntry",
 											  start_elems, &hashctl,
-											  HASH_ELEM | HASH_BLOBS);
+											  HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
 	}
 
 	/* Search by 'htab_key' */

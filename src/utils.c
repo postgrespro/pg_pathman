@@ -4,6 +4,8 @@
  *		definitions of various support functions
  *
  * Copyright (c) 2016, Postgres Professional
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1994, Regents of the University of California
  *
  * ------------------------------------------------------------------------
  */
@@ -161,7 +163,6 @@ list_reverse(List *l)
 	}
 	return result;
 }
-
 
 
 /*
