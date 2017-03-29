@@ -260,6 +260,41 @@ SELECT get_part_range('calamity.test_range_oid_1', NULL::INT4);		/* OK */
 
 DROP TABLE calamity.test_range_oid CASCADE;
 
+DROP SCHEMA calamity CASCADE;
+DROP EXTENSION pg_pathman;
+
+
+
+/*
+ * -------------------------------------
+ *  Special tests (pathman_cache_stats)
+ * -------------------------------------
+ */
+
+CREATE SCHEMA calamity;
+CREATE EXTENSION pg_pathman;
+
+/* Change this setting for code coverage */
+SET pg_pathman.enable_bounds_cache = false;
+
+/* check view pathman_cache_stats */
+CREATE TABLE calamity.test_pathman_cache_stats(val NUMERIC NOT NULL);
+SELECT create_range_partitions('calamity.test_pathman_cache_stats', 'val', 1, 10, 10);
+SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT drop_partitions('calamity.test_pathman_cache_stats');
+SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+DROP TABLE calamity.test_pathman_cache_stats;
+
+/* Restore this GUC */
+SET pg_pathman.enable_bounds_cache = true;
+
+/* check view pathman_cache_stats (one more time) */
+CREATE TABLE calamity.test_pathman_cache_stats(val NUMERIC NOT NULL);
+SELECT create_range_partitions('calamity.test_pathman_cache_stats', 'val', 1, 10, 10);
+SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT drop_partitions('calamity.test_pathman_cache_stats');
+SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+DROP TABLE calamity.test_pathman_cache_stats;
 
 DROP SCHEMA calamity CASCADE;
 DROP EXTENSION pg_pathman;

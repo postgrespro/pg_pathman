@@ -46,6 +46,7 @@ PG_FUNCTION_INFO_V1( get_base_type_pl );
 PG_FUNCTION_INFO_V1( get_partition_key_type );
 PG_FUNCTION_INFO_V1( get_tablespace_pl );
 
+PG_FUNCTION_INFO_V1( show_cache_stats_internal );
 PG_FUNCTION_INFO_V1( show_partition_list_internal );
 
 PG_FUNCTION_INFO_V1( build_update_trigger_func_name );
@@ -72,9 +73,7 @@ PG_FUNCTION_INFO_V1( debug_capture );
 PG_FUNCTION_INFO_V1( get_pathman_lib_version );
 
 
-/*
- * User context for function show_partition_list_internal().
- */
+/* User context for function show_partition_list_internal() */
 typedef struct
 {
 	Relation				pathman_config;
@@ -85,6 +84,14 @@ typedef struct
 
 	uint32					child_number;	/* child we're looking at */
 } show_partition_list_cxt;
+
+/* User context for function show_pathman_cache_stats_internal() */
+typedef struct
+{
+	MemoryContext			pathman_contexts[PATHMAN_MCXT_COUNT];
+	HTAB				   *pathman_htables[PATHMAN_MCXT_COUNT];
+	int						current_item;
+} show_cache_stats_cxt;
 
 
 static void on_partitions_created_internal(Oid partitioned_table, bool add_callbacks);
@@ -228,7 +235,7 @@ get_partition_key_type(PG_FUNCTION_ARGS)
 	const PartRelationInfo *prel;
 
 	prel = get_pathman_relation_info(relid);
-	shout_if_prel_is_invalid(relid, prel, PT_INDIFFERENT);
+	shout_if_prel_is_invalid(relid, prel, PT_ANY);
 
 	PG_RETURN_OID(prel->atttype);
 }
@@ -264,6 +271,122 @@ get_tablespace_pl(PG_FUNCTION_ARGS)
  *  Common purpose VIEWs
  * ----------------------
  */
+
+/*
+ * List stats of all existing caches (memory contexts).
+ */
+Datum
+show_cache_stats_internal(PG_FUNCTION_ARGS)
+{
+	show_cache_stats_cxt	   *usercxt;
+	FuncCallContext			   *funccxt;
+
+	/*
+	 * Initialize tuple descriptor & function call context.
+	 */
+	if (SRF_IS_FIRSTCALL())
+	{
+		TupleDesc		tupdesc;
+		MemoryContext	old_mcxt;
+
+		funccxt = SRF_FIRSTCALL_INIT();
+
+		old_mcxt = MemoryContextSwitchTo(funccxt->multi_call_memory_ctx);
+
+		usercxt = (show_cache_stats_cxt *) palloc(sizeof(show_cache_stats_cxt));
+
+		usercxt->pathman_contexts[0] = TopPathmanContext;
+		usercxt->pathman_contexts[1] = PathmanRelationCacheContext;
+		usercxt->pathman_contexts[2] = PathmanParentCacheContext;
+		usercxt->pathman_contexts[3] = PathmanBoundCacheContext;
+
+		usercxt->pathman_htables[0] = NULL; /* no HTAB for this entry */
+		usercxt->pathman_htables[1] = partitioned_rels;
+		usercxt->pathman_htables[2] = parent_cache;
+		usercxt->pathman_htables[3] = bound_cache;
+
+		usercxt->current_item = 0;
+
+		/* Create tuple descriptor */
+		tupdesc = CreateTemplateTupleDesc(Natts_pathman_cache_stats, false);
+
+		TupleDescInitEntry(tupdesc, Anum_pathman_cs_context,
+						   "context", TEXTOID, -1, 0);
+		TupleDescInitEntry(tupdesc, Anum_pathman_cs_size,
+						   "size", INT8OID, -1, 0);
+		TupleDescInitEntry(tupdesc, Anum_pathman_cs_used,
+						   "used", INT8OID, -1, 0);
+		TupleDescInitEntry(tupdesc, Anum_pathman_cs_entries,
+						   "entries", INT8OID, -1, 0);
+
+		funccxt->tuple_desc = BlessTupleDesc(tupdesc);
+		funccxt->user_fctx = (void *) usercxt;
+
+		MemoryContextSwitchTo(old_mcxt);
+	}
+
+	funccxt = SRF_PERCALL_SETUP();
+	usercxt = (show_cache_stats_cxt *) funccxt->user_fctx;
+
+	if (usercxt->current_item < lengthof(usercxt->pathman_contexts))
+	{
+		HTAB				   *current_htab;
+		MemoryContext			current_mcxt;
+		HeapTuple				htup;
+		Datum					values[Natts_pathman_cache_stats];
+		bool					isnull[Natts_pathman_cache_stats] = { 0 };
+
+#if PG_VERSION_NUM >= 90600
+		MemoryContextCounters	mcxt_stats;
+#endif
+
+		/* Select current memory context and hash table (cache) */
+		current_mcxt = usercxt->pathman_contexts[usercxt->current_item];
+		current_htab = usercxt->pathman_htables[usercxt->current_item];
+
+		values[Anum_pathman_cs_context - 1]	=
+				CStringGetTextDatum(simpify_mcxt_name(current_mcxt));
+
+/* We can't check stats of mcxt prior to 9.6 */
+#if PG_VERSION_NUM >= 90600
+
+		/* Prepare context counters */
+		memset(&mcxt_stats, 0, sizeof(mcxt_stats));
+
+		/* NOTE: we do not consider child contexts if it's TopPathmanContext */
+		McxtStatsInternal(current_mcxt, 0,
+						  (current_mcxt != TopPathmanContext),
+						  &mcxt_stats);
+
+		values[Anum_pathman_cs_size - 1]	=
+				Int64GetDatum(mcxt_stats.totalspace);
+
+		values[Anum_pathman_cs_used - 1]	=
+				Int64GetDatum(mcxt_stats.totalspace - mcxt_stats.freespace);
+
+#else
+
+		/* Set unsupported fields to NULL */
+		isnull[Anum_pathman_cs_size - 1]	= true;
+		isnull[Anum_pathman_cs_used - 1]	= true;
+#endif
+
+		values[Anum_pathman_cs_entries - 1]	=
+				Int64GetDatum(current_htab ?
+								  hash_get_num_entries(current_htab) :
+								  0);
+
+		/* Switch to next item */
+		usercxt->current_item++;
+
+		/* Form output tuple */
+		htup = heap_form_tuple(funccxt->tuple_desc, values, isnull);
+
+		SRF_RETURN_NEXT(funccxt, HeapTupleGetDatum(htup));
+	}
+
+	SRF_RETURN_DONE(funccxt);
+}
 
 /*
  * List all existing partitions and their parents.
