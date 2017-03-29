@@ -85,7 +85,7 @@ static bool validate_range_opexpr(const Expr *expr,
 static bool read_opexpr_const(const OpExpr *opexpr,
 							  const PartRelationInfo *prel,
 							  const AttrNumber part_attno,
-							  Datum *val);
+							  Datum *value);
 
 static int oid_cmp(const void *p1, const void *p2);
 
@@ -877,53 +877,100 @@ static bool
 read_opexpr_const(const OpExpr *opexpr,
 				  const PartRelationInfo *prel,
 				  const AttrNumber part_attno,
-				  Datum *val)
+				  Datum *value)
 {
 	const Node	   *left;
 	const Node	   *right;
 	const Var	   *part_attr;	/* partitioned column */
-	const Const	   *constant;
+	const Const	   *boundary;
 	bool			cast_success;
 
+	/* There should be exactly 2 args */
 	if (list_length(opexpr->args) != 2)
 		return false;
 
+	/* Fetch args of expression */
 	left = linitial(opexpr->args);
 	right = lsecond(opexpr->args);
 
-	/* VAR is a part of RelabelType node */
-	if (IsA(left, RelabelType) && IsA(right, Const))
+	/* Examine LEFT argument */
+	switch (nodeTag(left))
 	{
-		Var *var = (Var *) ((RelabelType *) left)->arg;
+		case T_RelabelType:
+			{
+				Var *var = (Var *) ((RelabelType *) left)->arg;
 
-		if (IsA(var, Var))
-			part_attr = var;
-		else
+				/* This node should contain Var */
+				if (!IsA(var, Var))
+					return false;
+
+				/* Update LEFT */
+				left = (Node *) var;
+			}
+			/* FALL THROUGH (no break) */
+
+		case T_Var:
+			{
+				part_attr = (Var *) left;
+
+				/* VAR.attno == partitioned attribute number */
+				if (part_attr->varoattno != part_attno)
+					return false;
+			}
+			break;
+
+		default:
 			return false;
 	}
-	/* left arg is of type VAR */
-	else if (IsA(left, Var) && IsA(right, Const))
+
+	/* Examine RIGHT argument */
+	switch (nodeTag(right))
 	{
-		part_attr = (Var *) left;
+		case T_FuncExpr:
+			{
+				FuncExpr   *func_expr = (FuncExpr *) right;
+				Const	   *constant;
+
+				/* This node should represent a type cast */
+				if (func_expr->funcformat != COERCE_EXPLICIT_CAST &&
+					func_expr->funcformat != COERCE_IMPLICIT_CAST)
+					return false;
+
+				/* This node should have exactly 1 argument */
+				if (list_length(func_expr->args) != 1)
+					return false;
+
+				/* Extract single argument */
+				constant = linitial(func_expr->args);
+
+				/* Argument should be a Const */
+				if (!IsA(constant, Const))
+					return false;
+
+				/* Update RIGHT */
+				right = (Node *) constant;
+			}
+			/* FALL THROUGH (no break) */
+
+		case T_Const:
+			{
+				boundary = (Const *) right;
+
+				/* CONST is NOT NULL */
+				if (boundary->constisnull)
+					return false;
+			}
+			break;
+
+		default:
+			return false;
 	}
-	/* Something is wrong, retreat! */
-	else return false;
-
-	/* VAR.attno == partitioned attribute number */
-	if (part_attr->varoattno != part_attno)
-		return false;
-
-	/* CONST is NOT NULL */
-	if (((Const *) right)->constisnull)
-		return false;
-
-	constant = (Const *) right;
 
 	/* Cast Const to a proper type if needed */
-	*val = perform_type_cast(constant->constvalue,
-							 getBaseType(constant->consttype),
-							 getBaseType(prel->atttype),
-							 &cast_success);
+	*value = perform_type_cast(boundary->constvalue,
+							   getBaseType(boundary->consttype),
+							   getBaseType(prel->atttype),
+							   &cast_success);
 
 	if (!cast_success)
 	{
