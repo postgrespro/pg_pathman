@@ -1735,8 +1735,13 @@ get_part_expression_info(Oid relid, const char *expr_string,
 	List				*querytree_list;
 	PlannedStmt			*plan;
 	TargetEntry			*target_entry;
+	MemoryContext		 pathman_parse_context, oldcontext;
 
 	expr_info = palloc(sizeof(PartExpressionInfo));
+
+	pathman_parse_context = AllocSetContextCreate(TopMemoryContext,
+											"pathman parse context",
+											ALLOCSET_DEFAULT_SIZES);
 
 	/* Keep raw expression */
 	expr_info->raw_expr = get_raw_expression(relid, expr_string,
@@ -1745,6 +1750,12 @@ get_part_expression_info(Oid relid, const char *expr_string,
 
 	/* We don't need pathman activity initialization for this relation yet */
 	pathman_hooks_enabled = false;
+
+	/* We use separate memory context here, just to make sure we don't leave
+	 * anything behind after analyze and planning.
+	 * Parsed raw expression will stay in context of caller
+	 */
+	oldcontext = MemoryContextSwitchTo(pathman_parse_context);
 
 	/* This will fail with elog in case of wrong expression
 	 *	with more or less understable text */
@@ -1776,11 +1787,13 @@ get_part_expression_info(Oid relid, const char *expr_string,
 	target_entry = lfirst(list_head(plan->planTree->targetlist));
 	expr_node = (Node *) target_entry->expr;
 	expr_node = eval_const_expressions(NULL, expr_node);
+	out_string = nodeToString(expr_node);
+
+	MemoryContextSwitchTo(oldcontext);
 
 	/* Convert expression to string and return it as datum */
-	out_string = nodeToString(expr_node);
 	expr_info->expr_datum = CStringGetTextDatum(out_string);
-	pfree(out_string);
+	MemoryContextReset(pathman_parse_context);
 
 end:
 	/* Enable pathman hooks */

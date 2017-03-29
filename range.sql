@@ -164,13 +164,13 @@ BEGIN
 	/* Notify backend about changes */
 	PERFORM @extschema@.on_create_partitions(parent_relid);
 
-	/* Relocate data if asked to
+	/* Relocate data if asked to */
 	IF partition_data = true THEN
 		PERFORM @extschema@.set_enable_parent(parent_relid, false);
 		PERFORM @extschema@.partition_data(parent_relid);
 	ELSE
 		PERFORM @extschema@.set_enable_parent(parent_relid, true);
-	END IF; */
+	END IF;
 
 	RETURN p_count;
 END
