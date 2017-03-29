@@ -677,6 +677,8 @@ DROP EXTENSION pg_pathman;
  */
 CREATE SCHEMA calamity;
 CREATE EXTENSION pg_pathman;
+/* Change this setting for code coverage */
+SET pg_pathman.enable_bounds_cache = false;
 /* check view pathman_cache_stats */
 CREATE TABLE calamity.test_pathman_cache_stats(val NUMERIC NOT NULL);
 SELECT create_range_partitions('calamity.test_pathman_cache_stats', 'val', 1, 10, 10);
@@ -687,16 +689,89 @@ NOTICE:  sequence "test_pathman_cache_stats_seq" does not exist, skipping
 (1 row)
 
 SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
-         context         | entries 
--------------------------+---------
- maintenance             |       0
- partition bounds cache  |      10
- partition parents cache |      10
- partition pruning cache |       1
+         context          | entries 
+--------------------------+---------
+ maintenance              |       0
+ partition bounds cache   |       0
+ partition dispatch cache |       1
+ partition parents cache  |      10
 (4 rows)
 
+SELECT drop_partitions('calamity.test_pathman_cache_stats');
+NOTICE:  function calamity.test_pathman_cache_stats_upd_trig_func() does not exist, skipping
+NOTICE:  0 rows copied from calamity.test_pathman_cache_stats_1
+NOTICE:  0 rows copied from calamity.test_pathman_cache_stats_2
+NOTICE:  0 rows copied from calamity.test_pathman_cache_stats_3
+NOTICE:  0 rows copied from calamity.test_pathman_cache_stats_4
+NOTICE:  0 rows copied from calamity.test_pathman_cache_stats_5
+NOTICE:  0 rows copied from calamity.test_pathman_cache_stats_6
+NOTICE:  0 rows copied from calamity.test_pathman_cache_stats_7
+NOTICE:  0 rows copied from calamity.test_pathman_cache_stats_8
+NOTICE:  0 rows copied from calamity.test_pathman_cache_stats_9
+NOTICE:  0 rows copied from calamity.test_pathman_cache_stats_10
+ drop_partitions 
+-----------------
+              10
+(1 row)
+
+SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+         context          | entries 
+--------------------------+---------
+ maintenance              |       0
+ partition bounds cache   |       0
+ partition dispatch cache |       0
+ partition parents cache  |       0
+(4 rows)
+
+DROP TABLE calamity.test_pathman_cache_stats;
+/* Restore this GUC */
+SET pg_pathman.enable_bounds_cache = true;
+/* check view pathman_cache_stats (one more time) */
+CREATE TABLE calamity.test_pathman_cache_stats(val NUMERIC NOT NULL);
+SELECT create_range_partitions('calamity.test_pathman_cache_stats', 'val', 1, 10, 10);
+ create_range_partitions 
+-------------------------
+                      10
+(1 row)
+
+SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+         context          | entries 
+--------------------------+---------
+ maintenance              |       0
+ partition bounds cache   |      10
+ partition dispatch cache |       1
+ partition parents cache  |      10
+(4 rows)
+
+SELECT drop_partitions('calamity.test_pathman_cache_stats');
+NOTICE:  function calamity.test_pathman_cache_stats_upd_trig_func() does not exist, skipping
+NOTICE:  0 rows copied from calamity.test_pathman_cache_stats_1
+NOTICE:  0 rows copied from calamity.test_pathman_cache_stats_2
+NOTICE:  0 rows copied from calamity.test_pathman_cache_stats_3
+NOTICE:  0 rows copied from calamity.test_pathman_cache_stats_4
+NOTICE:  0 rows copied from calamity.test_pathman_cache_stats_5
+NOTICE:  0 rows copied from calamity.test_pathman_cache_stats_6
+NOTICE:  0 rows copied from calamity.test_pathman_cache_stats_7
+NOTICE:  0 rows copied from calamity.test_pathman_cache_stats_8
+NOTICE:  0 rows copied from calamity.test_pathman_cache_stats_9
+NOTICE:  0 rows copied from calamity.test_pathman_cache_stats_10
+ drop_partitions 
+-----------------
+              10
+(1 row)
+
+SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+         context          | entries 
+--------------------------+---------
+ maintenance              |       0
+ partition bounds cache   |       0
+ partition dispatch cache |       0
+ partition parents cache  |       0
+(4 rows)
+
+DROP TABLE calamity.test_pathman_cache_stats;
 DROP SCHEMA calamity CASCADE;
-NOTICE:  drop cascades to 12 other objects
+NOTICE:  drop cascades to sequence calamity.test_pathman_cache_stats_seq
 DROP EXTENSION pg_pathman;
 /*
  * ------------------------------------------

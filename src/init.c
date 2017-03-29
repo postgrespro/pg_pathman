@@ -11,6 +11,8 @@
  * ------------------------------------------------------------------------
  */
 
+#include "compat/pg_compat.h"
+
 #include "hooks.h"
 #include "init.h"
 #include "pathman.h"
@@ -37,12 +39,6 @@
 #include "utils/syscache.h"
 #include "utils/typcache.h"
 
-
-/* Define ALLOCSET_DEFAULT_SIZES for our precious MemoryContexts */
-#if PG_VERSION_NUM < 90600
-#define ALLOCSET_DEFAULT_SIZES \
-	ALLOCSET_DEFAULT_MINSIZE, ALLOCSET_DEFAULT_INITSIZE, ALLOCSET_DEFAULT_MAXSIZE
-#endif
 
 /* Initial size of 'partitioned_rels' table */
 #define PART_RELS_SIZE	10

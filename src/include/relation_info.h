@@ -98,6 +98,7 @@ cmp_bounds(FmgrInfo *cmp_func, const Bound *b1, const Bound *b2)
 }
 
 
+
 /*
  * Partitioning type.
  */
@@ -190,6 +191,7 @@ typedef enum
 	PPS_ENTRY_PART_PARENT,	/* entry is parent and is known by pg_pathman */
 	PPS_NOT_SURE			/* can't determine (not transactional state) */
 } PartParentSearch;
+
 
 
 /*
@@ -323,5 +325,12 @@ FreeRangesArray(PartRelationInfo *prel)
 		prel->ranges = NULL;
 	}
 }
+
+
+/* For pg_pathman.enable_bounds_cache GUC */
+extern bool pg_pathman_enable_bounds_cache;
+
+void init_relation_info_static_data(void);
+
 
 #endif /* RELATION_INFO_H */

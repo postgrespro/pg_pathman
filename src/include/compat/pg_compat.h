@@ -19,6 +19,13 @@
 #include "nodes/pg_list.h"
 #include "optimizer/cost.h"
 #include "optimizer/paths.h"
+#include "utils/memutils.h"
+
+/* Define ALLOCSET_DEFAULT_SIZES for our precious MemoryContexts */
+#if PG_VERSION_NUM < 90600
+#define ALLOCSET_DEFAULT_SIZES \
+	ALLOCSET_DEFAULT_MINSIZE, ALLOCSET_DEFAULT_INITSIZE, ALLOCSET_DEFAULT_MAXSIZE
+#endif
 
 
 /*

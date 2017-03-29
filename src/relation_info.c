@@ -8,6 +8,8 @@
  * ------------------------------------------------------------------------
  */
 
+#include "compat/pg_compat.h"
+
 #include "relation_info.h"
 #include "init.h"
 #include "utils.h"
@@ -33,6 +35,12 @@
 #if PG_VERSION_NUM >= 90600
 #include "catalog/pg_constraint_fn.h"
 #endif
+
+
+/*
+ * For pg_pathman.enable_bounds_cache GUC.
+ */
+bool			pg_pathman_enable_bounds_cache = true;
 
 
 /*
@@ -79,6 +87,21 @@ static void fill_pbin_with_bounds(PartBoundInfo *pbin,
 static int cmp_range_entries(const void *p1, const void *p2, void *arg);
 
 
+
+void
+init_relation_info_static_data(void)
+{
+	DefineCustomBoolVariable("pg_pathman.enable_bounds_cache",
+							 "Make updates of partition dispatch cache faster",
+							 NULL,
+							 &pg_pathman_enable_bounds_cache,
+							 true,
+							 PGC_USERSET,
+							 0,
+							 NULL,
+							 NULL,
+							 NULL);
+}
 
 
 /*
@@ -418,24 +441,39 @@ fill_prel_with_partitions(PartRelationInfo *prel,
 	)
 
 	uint32			i;
-	MemoryContext	mcxt = PathmanRelationCacheContext;
+	MemoryContext	cache_mcxt = PathmanRelationCacheContext,
+					temp_mcxt,	/* reference temporary mcxt */
+					old_mcxt;	/* reference current mcxt */
 
 	AssertTemporaryContext();
 
 	/* Allocate memory for 'prel->children' & 'prel->ranges' (if needed) */
-	prel->children	= AllocZeroArray(PT_ANY,   mcxt, parts_count, Oid);
-	prel->ranges	= AllocZeroArray(PT_RANGE, mcxt, parts_count, RangeEntry);
+	prel->children	= AllocZeroArray(PT_ANY,   cache_mcxt, parts_count, Oid);
+	prel->ranges	= AllocZeroArray(PT_RANGE, cache_mcxt, parts_count, RangeEntry);
 
 	/* Set number of children */
 	PrelChildrenCount(prel) = parts_count;
+
+	/* Create temporary memory context for loop */
+	temp_mcxt = AllocSetContextCreate(CurrentMemoryContext,
+									  CppAsString(fill_prel_with_partitions),
+									  ALLOCSET_DEFAULT_SIZES);
 
 	/* Initialize bounds of partitions */
 	for (i = 0; i < PrelChildrenCount(prel); i++)
 	{
 		PartBoundInfo *bound_info;
 
-		/* Fetch constraint's expression tree */
-		bound_info = get_bounds_of_partition(partitions[i], prel);
+		/* Clear all previous allocations */
+		MemoryContextReset(temp_mcxt);
+
+		/* Switch to the temporary memory context */
+		old_mcxt = MemoryContextSwitchTo(temp_mcxt);
+		{
+			/* Fetch constraint's expression tree */
+			bound_info = get_bounds_of_partition(partitions[i], prel);
+		}
+		MemoryContextSwitchTo(old_mcxt);
 
 		/* Copy bounds from bound cache */
 		switch (prel->parttype)
@@ -446,23 +484,20 @@ fill_prel_with_partitions(PartRelationInfo *prel,
 
 			case PT_RANGE:
 				{
-					MemoryContext old_mcxt;
-
 					/* Copy child's Oid */
 					prel->ranges[i].child_oid = bound_info->child_rel;
 
 					/* Copy all min & max Datums to the persistent mcxt */
-					old_mcxt = MemoryContextSwitchTo(PathmanRelationCacheContext);
+					old_mcxt = MemoryContextSwitchTo(cache_mcxt);
+					{
+						prel->ranges[i].min = CopyBound(&bound_info->range_min,
+														prel->attbyval,
+														prel->attlen);
 
-					prel->ranges[i].min = CopyBound(&bound_info->range_min,
-													prel->attbyval,
-													prel->attlen);
-
-					prel->ranges[i].max = CopyBound(&bound_info->range_max,
-													prel->attbyval,
-													prel->attlen);
-
-					/* Switch back */
+						prel->ranges[i].max = CopyBound(&bound_info->range_max,
+														prel->attbyval,
+														prel->attlen);
+					}
 					MemoryContextSwitchTo(old_mcxt);
 				}
 				break;
@@ -478,6 +513,9 @@ fill_prel_with_partitions(PartRelationInfo *prel,
 				break;
 		}
 	}
+
+	/* Drop temporary memory context */
+	MemoryContextDelete(temp_mcxt);
 
 	/* Finalize 'prel' for a RANGE-partitioned table */
 	if (prel->parttype == PT_RANGE)
@@ -843,19 +881,27 @@ try_perform_parent_refresh(Oid parent)
 void
 forget_bounds_of_partition(Oid partition)
 {
-	PartBoundInfo *pcon = pathman_cache_search_relid(bound_cache,
-													 partition,
-													 HASH_FIND,
-													 NULL);
-	if (pcon)
+	PartBoundInfo *pbin;
+
+	/* Should we search in bounds cache? */
+	pbin = pg_pathman_enable_bounds_cache ?
+				pathman_cache_search_relid(bound_cache,
+										   partition,
+										   HASH_FIND,
+										   NULL) :
+				NULL; /* don't even bother */
+
+	/* Free this entry */
+	if (pbin)
 	{
 		/* Call pfree() if it's RANGE bounds */
-		if (pcon->parttype == PT_RANGE)
+		if (pbin->parttype == PT_RANGE)
 		{
-			FreeBound(&pcon->range_min, pcon->byval);
-			FreeBound(&pcon->range_max, pcon->byval);
+			FreeBound(&pbin->range_min, pbin->byval);
+			FreeBound(&pbin->range_max, pbin->byval);
 		}
 
+		/* Finally remove this entry from cache */
 		pathman_cache_search_relid(bound_cache,
 								   partition,
 								   HASH_REMOVE,
@@ -867,10 +913,23 @@ forget_bounds_of_partition(Oid partition)
 PartBoundInfo *
 get_bounds_of_partition(Oid partition, const PartRelationInfo *prel)
 {
-	PartBoundInfo *pbin = pathman_cache_search_relid(bound_cache,
-													 partition,
-													 HASH_FIND,
-													 NULL);
+	PartBoundInfo *pbin;
+
+	/*
+	 * We might end up building the constraint
+	 * tree that we wouldn't want to keep.
+	 */
+	AssertTemporaryContext();
+
+	/* Should we search in bounds cache? */
+	pbin = pg_pathman_enable_bounds_cache ?
+				pathman_cache_search_relid(bound_cache,
+										   partition,
+										   HASH_FIND,
+										   NULL) :
+				NULL; /* don't even bother */
+
+	/* Build new entry */
 	if (!pbin)
 	{
 		PartBoundInfo	pbin_local;
@@ -896,10 +955,12 @@ get_bounds_of_partition(Oid partition, const PartRelationInfo *prel)
 		fill_pbin_with_bounds(&pbin_local, prel, con_expr, part_attno);
 
 		/* We strive to delay the creation of cache's entry */
-		pbin = pathman_cache_search_relid(bound_cache,
-										  partition,
-										  HASH_ENTER,
-										  NULL);
+		pbin = pg_pathman_enable_bounds_cache ?
+					pathman_cache_search_relid(bound_cache,
+											   partition,
+											   HASH_ENTER,
+											   NULL) :
+					palloc(sizeof(PartBoundInfo));
 
 		/* Copy data from 'pbin_local' */
 		memcpy(pbin, &pbin_local, sizeof(PartBoundInfo));

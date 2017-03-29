@@ -447,14 +447,16 @@ pg_pathman_enable_assign_hook(bool newval, void *extra)
 				   pg_pathman_init_state.override_copy &&
 				   pg_pathman_enable_runtimeappend &&
 				   pg_pathman_enable_runtime_merge_append &&
-				   pg_pathman_enable_partition_filter))
+				   pg_pathman_enable_partition_filter &&
+				   pg_pathman_enable_bounds_cache))
 		return;
 
-	pg_pathman_init_state.auto_partition = newval;
-	pg_pathman_init_state.override_copy = newval;
-	pg_pathman_enable_runtime_merge_append = newval;
-	pg_pathman_enable_runtimeappend = newval;
-	pg_pathman_enable_partition_filter = newval;
+	pg_pathman_init_state.auto_partition	= newval;
+	pg_pathman_init_state.override_copy		= newval;
+	pg_pathman_enable_runtimeappend			= newval;
+	pg_pathman_enable_runtime_merge_append	= newval;
+	pg_pathman_enable_partition_filter		= newval;
+	pg_pathman_enable_bounds_cache			= newval;
 
 	elog(NOTICE,
 		 "RuntimeAppend, RuntimeMergeAppend and PartitionFilter nodes "

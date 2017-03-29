@@ -67,21 +67,21 @@ static inline const char *
 simpify_mcxt_name(MemoryContext mcxt)
 {
 	static const char  *top_mcxt	= "maintenance",
-					   *bound_mcxt	= "partition pruning cache",
+					   *rel_mcxt	= "partition dispatch cache",
 					   *parent_mcxt	= "partition parents cache",
-					   *constr_mcxt	= "partition bounds cache";
+					   *bound_mcxt	= "partition bounds cache";
 
 	if (mcxt == TopPathmanContext)
 		return top_mcxt;
 
 	else if (mcxt == PathmanRelationCacheContext)
-		return bound_mcxt;
+		return rel_mcxt;
 
 	else if (mcxt == PathmanParentCacheContext)
 		return parent_mcxt;
 
 	else if (mcxt == PathmanBoundCacheContext)
-		return constr_mcxt;
+		return bound_mcxt;
 
 	else elog(ERROR, "error in function " CppAsString(simpify_mcxt_name));
 }
