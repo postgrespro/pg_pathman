@@ -351,7 +351,7 @@ init_local_cache(void)
 	ctl.entrysize = sizeof(PartRelationInfo);
 	ctl.hcxt = PathmanRelationCacheContext;
 
-	partitioned_rels = hash_create("pg_pathman's partitioned relations cache",
+	partitioned_rels = hash_create("pg_pathman's partition dispatch cache",
 								   PART_RELS_SIZE, &ctl,
 								   HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
 
@@ -369,7 +369,7 @@ init_local_cache(void)
 	ctl.entrysize = sizeof(PartBoundInfo);
 	ctl.hcxt = PathmanBoundCacheContext;
 
-	bound_cache = hash_create("pg_pathman's partition constraints cache",
+	bound_cache = hash_create("pg_pathman's partition bounds cache",
 							  PART_RELS_SIZE * CHILD_FACTOR, &ctl,
 							  HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
 }
