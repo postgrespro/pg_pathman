@@ -652,6 +652,7 @@ finish_delayed_invalidation(void)
 			{
 				PartParentSearch	search;
 				Oid					parent;
+				List			   *fresh_rels = delayed_invalidation_parent_rels;
 
 				parent = get_parent_of_partition(vague_rel, &search);
 
@@ -659,12 +660,20 @@ finish_delayed_invalidation(void)
 				{
 					/* It's still parent */
 					case PPS_ENTRY_PART_PARENT:
-						try_perform_parent_refresh(parent);
+						{
+							/* Skip if we've already refreshed this parent */
+							if (!list_member_oid(fresh_rels, parent))
+								try_perform_parent_refresh(parent);
+						}
 						break;
 
 					/* It *might have been* parent before (not in PATHMAN_CONFIG) */
 					case PPS_ENTRY_PARENT:
-						remove_pathman_relation_info(parent);
+						{
+							/* Skip if we've already refreshed this parent */
+							if (!list_member_oid(fresh_rels, parent))
+								try_perform_parent_refresh(parent);
+						}
 						break;
 
 					/* How come we still don't know?? */
@@ -793,7 +802,6 @@ try_syscache_parent_search(Oid partition, PartParentSearch *status)
 	else
 	{
 		Relation		relation;
-		Snapshot		snapshot;
 		ScanKeyData		key[1];
 		SysScanDesc		scan;
 		HeapTuple		inheritsTuple;
@@ -809,7 +817,6 @@ try_syscache_parent_search(Oid partition, PartParentSearch *status)
 					BTEqualStrategyNumber, F_OIDEQ,
 					ObjectIdGetDatum(partition));
 
-		snapshot = RegisterSnapshot(GetLatestSnapshot());
 		scan = systable_beginscan(relation, InheritsRelidSeqnoIndexId,
 								  true, NULL, 1, key);
 
@@ -835,7 +842,6 @@ try_syscache_parent_search(Oid partition, PartParentSearch *status)
 		}
 
 		systable_endscan(scan);
-		UnregisterSnapshot(snapshot);
 		heap_close(relation, AccessShareLock);
 
 		return parent;
