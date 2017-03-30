@@ -93,14 +93,17 @@ static void ri_InitHashTables();
 static bool ri_PerformCheck(const ConstraintInfo *riinfo,
 				SPIPlanPtr qplan,
 				Relation fk_rel, Relation pk_rel,
-				HeapTuple new_tuple,
+				bool source_is_pk,
+				HeapTuple tuple,
 				bool detectNewRows, int expect_OK);
 static SPIPlanPtr ri_PlanCheck(const char *querystr,
 			 Oid argtype,
 			 QueryKey *qkey,
 			 Relation pk_rel,
 			 bool cache_plan);
+
 static Datum RI_FKey_check(TriggerData *trigdata);
+static Datum ri_restrict_del(TriggerData *trigdata);
 
 static void quoteOneName(char *buffer, const char *name);
 static void quoteRelationName(char *buffer, Relation rel);
@@ -112,9 +115,14 @@ static Oid transformFkeyCheckAttrs(Relation pkrel, int16 attnum, Oid *opclass);
 static void create_fk_constraint_internal(Oid fk_table, AttrNumber fk_attnum, Oid pk_table, AttrNumber pk_attnum);
 static void createForeignKeyTriggers(Relation rel, Oid refRelOid,
 						 Oid constraintOid, Oid indexOid);
+static void createSingleForeignKeyTrigger(Oid relOid, Oid refRelOid, List *funcname,
+							  char *trigname, int16 events, Oid constraintOid,
+							  Oid indexOid);
 
 
 PG_FUNCTION_INFO_V1(pathman_fkey_check_ins);
+PG_FUNCTION_INFO_V1(pathman_fkey_check_upd);
+PG_FUNCTION_INFO_V1(pathman_fkey_restrict_del);
 PG_FUNCTION_INFO_V1(create_fk_constraint);
 
 /* ----------
@@ -153,6 +161,18 @@ pathman_fkey_check_upd(PG_FUNCTION_ARGS)
 	 */
 	return RI_FKey_check((TriggerData *) fcinfo->context);
 }
+
+Datum
+pathman_fkey_restrict_del(PG_FUNCTION_ARGS)
+{
+	/*
+	 * Check that this is a valid trigger call on the right time and event.
+	 */
+	// ri_CheckTrigger(fcinfo, "RI_FKey_restrict_del", RI_TRIGTYPE_DELETE);
+
+	return ri_restrict_del((TriggerData *) fcinfo->context);
+}
+
 
 static void
 ri_CheckTrigger(FunctionCallInfo fcinfo, const char *funcname, int tgkind)
@@ -294,10 +314,7 @@ RI_FKey_check(TriggerData *trigdata)
 
 		/* ----------
 		 * The query string built is
-		 *	SELECT 1 FROM ONLY <pktable> x WHERE pkatt1 = $1 [AND ...]
-		 *		   FOR KEY SHARE OF x
-		 * The type id's for the $ parameters are those of the
-		 * corresponding FK attributes.
+		 *	SELECT 1 FROM ONLY <pktable> x WHERE pkatt1 = $1 FOR KEY SHARE OF x
 		 * ----------
 		 */
 		initStringInfo(&querybuf);
@@ -313,7 +330,7 @@ RI_FKey_check(TriggerData *trigdata)
 		appendStringInfoString(&querybuf, " FOR KEY SHARE OF x");
 
 		/* Prepare and save the plan */
-		qplan = ri_PlanCheck(querybuf.data, fk_type, &qkey, part_rel, true);
+		qplan = ri_PlanCheck(querybuf.data, pk_type, &qkey, part_rel, true);
 	}
 
 	/*
@@ -321,6 +338,7 @@ RI_FKey_check(TriggerData *trigdata)
 	 */
 	ri_PerformCheck(riinfo, qplan,
 					fk_rel, part_rel,
+					false,
 					new_row,
 					false,
 					SPI_OK_SELECT);
@@ -330,6 +348,85 @@ RI_FKey_check(TriggerData *trigdata)
 
 	heap_close(pk_rel, RowShareLock);
 	heap_close(part_rel, RowShareLock);
+
+	return PointerGetDatum(NULL);
+}
+
+static Datum
+ri_restrict_del(TriggerData *trigdata)
+{
+	const ConstraintInfo *riinfo;
+	Relation	fk_rel;
+	Relation	pk_rel;
+	HeapTuple	old_row;
+	QueryKey	qkey;
+	SPIPlanPtr	qplan;
+	Oid			pk_type;
+	Oid			fk_type;
+
+	/*
+	 * Get arguments.
+	 */
+	riinfo = ri_FetchConstraintInfo(trigdata->tg_trigger,
+									trigdata->tg_relation, true);
+
+	fk_rel = heap_open(riinfo->fk_relid, RowShareLock);
+	pk_rel = trigdata->tg_relation;
+	// new_row = trigdata->tg_newtuple;
+	old_row = trigdata->tg_trigtuple;
+
+	pk_type = attnumTypeId(pk_rel, riinfo->pk_attnum);
+	fk_type = attnumTypeId(fk_rel, riinfo->fk_attnum);
+
+	if (SPI_connect() != SPI_OK_CONNECT)
+		elog(ERROR, "SPI_connect failed");
+
+	/*
+	 * Fetch or prepare a saved plan for the real check
+	 */
+	BuildQueryKey(&qkey, riinfo->fk_relid, InvalidOid);
+
+	if ((qplan = FetchPreparedPlan(&qkey)) == NULL)
+	{
+		StringInfoData querybuf;
+		char		fkrelname[MAX_QUOTED_REL_NAME_LEN];
+		char		attname[MAX_QUOTED_NAME_LEN];
+
+		/* ----------
+		 * The query string built is
+		 *	SELECT 1 FROM ONLY <pktable> x WHERE pkatt1 = $1 FOR KEY SHARE OF x
+		 * ----------
+		 */
+		initStringInfo(&querybuf);
+		quoteRelationName(fkrelname, fk_rel);
+		appendStringInfo(&querybuf, "SELECT 1 FROM ONLY %s x", fkrelname);
+
+		quoteOneName(attname, RIAttName(fk_rel, riinfo->fk_attnum));
+		ri_GenerateQual(&querybuf, "WHERE",
+						attname, pk_type,
+						riinfo->pf_eq_opr,
+						"$1", fk_type);
+
+		appendStringInfoString(&querybuf, " FOR KEY SHARE OF x");
+
+		/* Prepare and save the plan */
+		qplan = ri_PlanCheck(querybuf.data, fk_type, &qkey, fk_rel, true);
+	}
+
+	/*
+	 * Now check that foreign key exists in PK table
+	 */
+	ri_PerformCheck(riinfo, qplan,
+					fk_rel, pk_rel,
+					true,
+					old_row,
+					false,
+					SPI_OK_SELECT);
+
+	if (SPI_finish() != SPI_OK_FINISH)
+		elog(ERROR, "SPI_finish failed");
+
+	heap_close(fk_rel, RowShareLock);
 
 	return PointerGetDatum(NULL);
 }
@@ -506,8 +603,12 @@ ri_FetchConstraintInfo(Trigger *trigger, Relation trig_rel, bool rel_is_pk)
 	/* Do some easy cross-checks against the trigger call data */
 	if (rel_is_pk)
 	{
-		if (riinfo->fk_relid != trigger->tgconstrrelid ||
-			riinfo->pk_relid != RelationGetRelid(trig_rel))
+		// if (riinfo->fk_relid != trigger->tgconstrrelid ||
+		// 	riinfo->pk_relid != RelationGetRelid(trig_rel))
+		// 	elog(ERROR, "wrong pg_constraint entry for trigger \"%s\" on table \"%s\"",
+		// 		 trigger->tgname, RelationGetRelationName(trig_rel));
+		/* XXX Probably we should check that trig_rel is a partition */
+		if (riinfo->fk_relid != trigger->tgconstrrelid)
 			elog(ERROR, "wrong pg_constraint entry for trigger \"%s\" on table \"%s\"",
 				 trigger->tgname, RelationGetRelationName(trig_rel));
 	}
@@ -637,11 +738,11 @@ static SPIPlanPtr
 ri_PlanCheck(const char *querystr,
 			 Oid argtype,
 			 QueryKey *qkey,
-			 Relation pk_rel,
+			 Relation query_rel,
 			 bool cache_plan)
 {
 	SPIPlanPtr	qplan;
-	Relation	query_rel;
+	// Relation	query_rel;
 	Oid			save_userid;
 	int			save_sec_context;
 	Oid			argtypes[1] = {argtype};
@@ -654,7 +755,7 @@ ri_PlanCheck(const char *querystr,
 	// 	query_rel = pk_rel;
 	// else
 	// 	query_rel = fk_rel;
-	query_rel = pk_rel;
+	// query_rel = pk_rel;
 
 	/* Switch to proper UID to perform check as */
 	GetUserIdAndSecContext(&save_userid, &save_sec_context);
@@ -694,12 +795,12 @@ static bool
 ri_PerformCheck(const ConstraintInfo *riinfo,
 				SPIPlanPtr qplan,
 				Relation fk_rel, Relation pk_rel,
-				HeapTuple new_tuple,
+				bool source_is_pk,
+				HeapTuple tuple,
 				bool detectNewRows, int expect_OK)
 {
 	Relation	query_rel,
 				source_rel;
-	bool		source_is_pk;
 	Snapshot	test_snapshot;
 	Snapshot	crosscheck_snapshot;
 	int			limit;
@@ -711,11 +812,23 @@ ri_PerformCheck(const ConstraintInfo *riinfo,
 	Datum		vals[1];
 	char		nulls[1];
 	bool		isnull = false;
+	AttrNumber	attnum;
 
-	query_rel = pk_rel;
-	source_rel = fk_rel;
 
-	vals[0] = heap_getattr(new_tuple, riinfo->fk_attnum, source_rel->rd_att, &isnull);
+	if (source_is_pk)
+	{
+		query_rel = pk_rel;
+		source_rel = fk_rel;
+		attnum = riinfo->pk_attnum;
+	}
+	else
+	{
+		query_rel = pk_rel;
+		source_rel = fk_rel;
+		attnum = riinfo->fk_attnum;
+	}
+
+	vals[0] = heap_getattr(tuple, attnum, source_rel->rd_att, &isnull);
 	nulls[0] = isnull ? 'n' : ' ';
 
 	/*
@@ -770,26 +883,13 @@ ri_PerformCheck(const ConstraintInfo *riinfo,
 		elog(ERROR, "SPI_execute_snapshot returned %d", spi_result);
 
 	if (expect_OK >= 0 && spi_result != expect_OK)
-		// ri_ReportViolation(riinfo,
-		// 				   pk_rel, fk_rel,
-		// 				   new_tuple ? new_tuple : old_tuple,
-		// 				   NULL,
-		// 				   qkey->constr_queryno, true);
+		/* TODO */
 		elog(ERROR, "Error 1");
 
 	/* XXX wouldn't it be clearer to do this part at the caller? */
-	if (SPI_processed == 0)
-		// elog(ERROR, "Error 2");
+	if ((SPI_processed == 0) != source_is_pk)
+		/* TODO: write a correct table name on DELETE from PK table */
 		ri_ReportViolation(riinfo, fk_rel);
-	// if (qkey->constr_queryno != RI_PLAN_CHECK_LOOKUPPK_FROM_PK &&
-	// 	expect_OK == SPI_OK_SELECT &&
-	// (SPI_processed == 0) == (qkey->constr_queryno == RI_PLAN_CHECK_LOOKUPPK))
-	// 	elog(ERROR, "Error 2");
-		// ri_ReportViolation(riinfo,
-		// 				   pk_rel, fk_rel,
-		// 				   new_tuple ? new_tuple : old_tuple,
-		// 				   NULL,
-		// 				   qkey->constr_queryno, false);
 
 	return SPI_processed != 0;
 }
@@ -1011,60 +1111,89 @@ static void
 createForeignKeyTriggers(Relation rel, Oid refRelOid,
 						 Oid constraintOid, Oid indexOid)
 {
+#define pathman_funcname(funcname)					\
+	list_make2(makeString(pathman_schema_name),		\
+			   makeString(funcname))
+
+	const PartRelationInfo *prel;
 	Oid			myRelOid;
-	CreateTrigStmt *fk_trigger;
 	Oid			pathman_schema = get_pathman_schema();
 	char	   *pathman_schema_name = get_namespace_name(pathman_schema);
+	List	   *funcname;
+	Oid		   *children;
+	uint32		nchildren;
+	int			i;
 
 	myRelOid = RelationGetRelid(rel);
 
+	prel = get_pathman_relation_info(refRelOid);
+	if (!prel)
+		elog(ERROR,
+			 "table %s isn't partitioned by pg_pathman",
+			 get_rel_name(refRelOid));
+
 	/*
 	 * Build and execute a CREATE CONSTRAINT TRIGGER statement for the ON
-	 * INSERT action on the pk table.
+	 * INSERT action on the FK table.
 	 */
+	createSingleForeignKeyTrigger(myRelOid, refRelOid,
+								  pathman_funcname("pathman_fkey_check_ins"),
+								  "RI_ConstraintTrigger_c",
+								  TRIGGER_TYPE_INSERT,
+								  constraintOid,
+								  indexOid);
+
+	/*
+	 * Build and execute a CREATE CONSTRAINT TRIGGER statement for the ON
+	 * INSERT action on the FK table.
+	 */
+	createSingleForeignKeyTrigger(myRelOid, refRelOid,
+								  pathman_funcname("pathman_fkey_check_upd"),
+								  "RI_ConstraintTrigger_c",
+								  TRIGGER_TYPE_UPDATE,
+								  constraintOid,
+								  indexOid);
+
+	nchildren = PrelChildrenCount(prel);
+	children = PrelGetChildrenArray(prel);
+
+	/*
+	 * Create ON DELETE triggers on each partition
+	 */
+	funcname = pathman_funcname("pathman_fkey_restrict_del");
+	for (i = 0; i < nchildren; i++)
+	{
+		createSingleForeignKeyTrigger(children[i], myRelOid, funcname,
+									  "RI_ConstraintTrigger_a",
+									  TRIGGER_TYPE_DELETE,
+									  constraintOid,
+									  indexOid);
+	}
+}
+
+static void
+createSingleForeignKeyTrigger(Oid relOid, Oid refRelOid, List *funcname,
+							  char *trigname, int16 events, Oid constraintOid,
+							  Oid indexOid)
+{
+	CreateTrigStmt *fk_trigger;
+
 	fk_trigger = makeNode(CreateTrigStmt);
 	fk_trigger->trigname = "RI_ConstraintTrigger_c";
 	fk_trigger->relation = NULL;
 	fk_trigger->row = true;
 	fk_trigger->timing = TRIGGER_TYPE_AFTER;
-	fk_trigger->events = TRIGGER_TYPE_INSERT;
+	fk_trigger->events = events;
 	fk_trigger->columns = NIL;
 	fk_trigger->whenClause = NULL;
 	fk_trigger->isconstraint = true;
 	fk_trigger->constrrel = NULL;
 	fk_trigger->deferrable = false;
 	fk_trigger->initdeferred = false;
-	fk_trigger->funcname = list_make2(makeString(pathman_schema_name),
-									  makeString("pathman_fkey_check_ins"));
+	fk_trigger->funcname = funcname;
 	fk_trigger->args = NIL;
 
-	(void) CreateTrigger(fk_trigger, NULL, myRelOid, refRelOid,constraintOid,
-						 indexOid, true);
-
-	/* Make changes-so-far visible */
-	CommandCounterIncrement();
-
-	/*
-	 * Build and execute a CREATE CONSTRAINT TRIGGER statement for the ON
-	 * UPDATE action on the pk table.
-	 */
-	fk_trigger = makeNode(CreateTrigStmt);
-	fk_trigger->trigname = "RI_ConstraintTrigger_c";
-	fk_trigger->relation = NULL;
-	fk_trigger->row = true;
-	fk_trigger->timing = TRIGGER_TYPE_AFTER;
-	fk_trigger->events = TRIGGER_TYPE_UPDATE;
-	fk_trigger->columns = NIL;
-	fk_trigger->whenClause = NULL;
-	fk_trigger->isconstraint = true;
-	fk_trigger->constrrel = NULL;
-	fk_trigger->deferrable = false;
-	fk_trigger->initdeferred = false;
-	fk_trigger->funcname = list_make2(makeString(pathman_schema_name),
-									  makeString("pathman_fkey_check_upd"));
-	fk_trigger->args = NIL;
-
-	(void) CreateTrigger(fk_trigger, NULL, myRelOid, refRelOid, constraintOid,
+	(void) CreateTrigger(fk_trigger, NULL, relOid, refRelOid, constraintOid,
 						 indexOid, true);
 
 	/* Make changes-so-far visible */
@@ -1077,7 +1206,6 @@ transformFkeyCheckAttrs(Relation pkrel, int16 attnum,
 {
 	Oid			indexoid = InvalidOid;
 	bool		found = false;
-	bool		found_deferrable = false;
 	List	   *indexoidlist;
 	ListCell   *indexoidscan;
 

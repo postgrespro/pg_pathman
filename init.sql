@@ -939,3 +939,7 @@ LANGUAGE C STRICT;
 CREATE OR REPLACE FUNCTION @extschema@.pathman_fkey_check_upd()
 RETURNS TRIGGER AS 'pg_pathman', 'pathman_fkey_check_upd'
 LANGUAGE C STRICT;
+
+CREATE OR REPLACE FUNCTION @extschema@.pathman_fkey_restrict_del()
+RETURNS TRIGGER AS 'pg_pathman', 'pathman_fkey_restrict_del'
+LANGUAGE C STRICT;
