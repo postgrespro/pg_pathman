@@ -1,0 +1,56 @@
+\set VERBOSITY terse
+SET search_path = 'public';
+CREATE EXTENSION pg_pathman;
+CREATE SCHEMA test_column_type;
+/* create new table (val int) */
+CREATE TABLE test_column_type.test(val INT4 NOT NULL);
+SELECT create_range_partitions('test_column_type.test', 'val', 1, 10, 10);
+NOTICE:  sequence "test_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                      10
+(1 row)
+
+/* make sure that bounds and dispatch info has been cached */
+SELECT * FROM test_column_type.test;
+ val 
+-----
+(0 rows)
+
+SELECT context, entries FROM pathman_cache_stats ORDER BY context;
+         context          | entries 
+--------------------------+---------
+ maintenance              |       0
+ partition bounds cache   |      10
+ partition dispatch cache |       1
+ partition parents cache  |      10
+(4 rows)
+
+/* change column's type (should flush caches) */
+ALTER TABLE test_column_type.test ALTER val TYPE NUMERIC;
+/* make sure that everything works properly */
+SELECT * FROM test_column_type.test;
+ val 
+-----
+(0 rows)
+
+SELECT context, entries FROM pathman_cache_stats ORDER BY context;
+         context          | entries 
+--------------------------+---------
+ maintenance              |       0
+ partition bounds cache   |      10
+ partition dispatch cache |       1
+ partition parents cache  |      10
+(4 rows)
+
+/* check insert dispatching */
+INSERT INTO test_column_type.test VALUES (1);
+SELECT tableoid::regclass, * FROM test_column_type.test;
+        tableoid         | val 
+-------------------------+-----
+ test_column_type.test_1 |   1
+(1 row)
+
+DROP SCHEMA test_column_type CASCADE;
+NOTICE:  drop cascades to 12 other objects
+DROP EXTENSION pg_pathman;

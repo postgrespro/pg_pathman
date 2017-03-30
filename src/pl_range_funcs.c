@@ -985,10 +985,10 @@ check_range_adjacence(Oid cmp_proc, Oid collid, List *ranges)
 static char *
 get_qualified_rel_name(Oid relid)
 {
-	Oid namespace = get_rel_namespace(relid);
+	Oid nspid = get_rel_namespace(relid);
 
 	return psprintf("%s.%s",
-					quote_identifier(get_namespace_name(namespace)),
+					quote_identifier(get_namespace_name(nspid)),
 					quote_identifier(get_rel_name(relid)));
 }
 

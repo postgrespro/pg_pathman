@@ -250,12 +250,12 @@ LANGUAGE plpgsql;
  */
 CREATE OR REPLACE FUNCTION @extschema@.show_partition_list()
 RETURNS TABLE (
-	 parent			REGCLASS,
-	 partition		REGCLASS,
-	 parttype		INT4,
-	 partattr		TEXT,
-	 range_min		TEXT,
-	 range_max		TEXT)
+	parent			REGCLASS,
+	partition		REGCLASS,
+	parttype		INT4,
+	partattr		TEXT,
+	range_min		TEXT,
+	range_max		TEXT)
 AS 'pg_pathman', 'show_partition_list_internal'
 LANGUAGE C STRICT;
 
@@ -266,6 +266,24 @@ CREATE OR REPLACE VIEW @extschema@.pathman_partition_list
 AS SELECT * FROM @extschema@.show_partition_list();
 
 GRANT SELECT ON @extschema@.pathman_partition_list TO PUBLIC;
+
+/*
+ * Show memory usage of pg_pathman's caches.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.show_cache_stats()
+RETURNS TABLE (
+	context			TEXT,
+	size			INT8,
+	used			INT8,
+	entries			INT8)
+AS 'pg_pathman', 'show_cache_stats_internal'
+LANGUAGE C STRICT;
+
+/*
+ * View for show_cache_stats().
+ */
+CREATE OR REPLACE VIEW @extschema@.pathman_cache_stats
+AS SELECT * FROM @extschema@.show_cache_stats();
 
 /*
  * Show all existing concurrent partitioning tasks.

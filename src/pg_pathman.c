@@ -160,6 +160,7 @@ _PG_init(void)
 
 	/* Initialize static data for all subsystems */
 	init_main_pathman_toggles();
+	init_relation_info_static_data();
 	init_runtimeappend_static_data();
 	init_runtime_merge_append_static_data();
 	init_partition_filter_static_data();
