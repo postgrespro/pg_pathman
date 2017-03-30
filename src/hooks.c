@@ -61,6 +61,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	ListCell			   *lc;
 	WalkerContext			context;
 	double					paramsel;
+	Node				   *expr;
 
 	/* Call hooks set by other extensions */
 	if (set_join_pathlist_next)
@@ -105,14 +106,17 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		otherclauses = NIL;
 	}
 
+	/* Make copy of partitioning expression and fix Var's  varno attributes */
+	expr = copyObject(inner_prel->expr);
+	if (innerrel->relid != 1)
+		ChangeVarNodes(expr, 1, innerrel->relid, 0);
+
 	paramsel = 1.0;
 	foreach (lc, joinclauses)
 	{
 		WrapperNode *wrap;
 
-		InitWalkerContext(&context, innerrel->relid,
-						  inner_prel, NULL, false);
-
+		InitWalkerContext(&context, expr, inner_prel, NULL, false);
 		wrap = walk_expr_tree((Expr *) lfirst(lc), &context);
 		paramsel *= wrap->paramsel;
 	}
@@ -252,6 +256,12 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		WalkerContext	context;
 		ListCell	   *lc;
 		int				i;
+		Node		   *expr;
+
+		/* Make copy of partitioning expression and fix Var's  varno attributes */
+		expr = copyObject(prel->expr);
+		if (rti != 1)
+			ChangeVarNodes(expr, 1, rti, 0);
 
 		if (prel->parttype == PT_RANGE)
 		{
@@ -260,11 +270,6 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			 */
 			List		   *pathkeys;
 			TypeCacheEntry *tce;
-			Node		   *expr;
-
-			expr = copyObject(prel->expr);
-			if (rti != 1)
-				ChangeVarNodes(expr, 1, rti, 0);
 
 			/* Determine operator type */
 			tce = lookup_type_cache(prel->atttype, TYPECACHE_LT_OPR | TYPECACHE_GT_OPR);
@@ -287,7 +292,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		ranges = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_COMPLETE));
 
 		/* Make wrappers over restrictions and collect final rangeset */
-		InitWalkerContext(&context, rti, prel, NULL, false);
+		InitWalkerContext(&context, expr, prel, NULL, false);
 		wrappers = NIL;
 		foreach(lc, rel->baserestrictinfo)
 		{

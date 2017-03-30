@@ -130,12 +130,13 @@ BEGIN
 		END LOOP;
 
 		/* Check boundaries */
-		EXECUTE format('SELECT @extschema@.check_boundaries(''%s'', ''%s'', ''%s'', ''%s''::%s)',
-					   parent_relid,
-					   expression,
-					   start_value,
-					   end_value,
-					   v_atttype::TEXT);
+		EXECUTE format('SELECT @extschema@.check_boundaries(''%s'', $1, ''%s'', ''%s''::%s)',
+			   parent_relid,
+			   start_value,
+			   end_value,
+			   v_atttype::TEXT)
+		USING
+				expression;
 	END IF;
 
 	/* Insert new entry to pathman config */

@@ -99,7 +99,7 @@ static Path *get_cheapest_parameterized_child_path(PlannerInfo *root,
 												   RelOptInfo *rel,
 												   Relids required_outer);
 
-
+static bool match_expr_to_operand(Node *operand, Node *expr);
 /* We can transform Param into Const provided that 'econtext' is available */
 #define IsConstValue(wcxt, node) \
 	( IsA((node), Const) || (WcxtHasExprContext(wcxt) ? IsA((node), Param) : false) )
@@ -895,8 +895,7 @@ static WrapperNode *
 handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 {
 	WrapperNode *result = (WrapperNode *) palloc(sizeof(WrapperNode));
-	Node		*varnode = (Node *) linitial(expr->args);
-	Var			*var;
+	Node		*exprnode = (Node *) linitial(expr->args);
 	Node		*arraynode = (Node *) lsecond(expr->args);
 	const PartRelationInfo *prel = context->prel;
 
@@ -904,26 +903,13 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 	result->args = NIL;
 	result->paramsel = 0.0;
 
-	Assert(varnode != NULL);
+	Assert(exprnode != NULL);
 
-	/* If variable is not the partition key then skip it */
-	if (IsA(varnode, Var) || IsA(varnode, RelabelType))
-	{
-		var = !IsA(varnode, RelabelType) ?
-			(Var *) varnode :
-			(Var *) ((RelabelType *) varnode)->arg;
-
-		/* Skip if base types or attribute numbers do not match */
-		/* FIX: use exprsssion
-		if (getBaseType(var->vartype) != getBaseType(prel->atttype) ||
-			var->varoattno != prel->attnum ||
-			var->varno != context->prel_varno)
-		{
-			goto handle_arrexpr_return;
-		} */
-	}
-	else
+	if (!match_expr_to_operand(context->prel_expr, exprnode))
 		goto handle_arrexpr_return;
+
+	if (exprnode && IsA(exprnode, RelabelType))
+		exprnode = (Node *) ((RelabelType *) exprnode)->arg;
 
 	if (arraynode && IsA(arraynode, Const) &&
 		!((Const *) arraynode)->constisnull)
@@ -1084,15 +1070,8 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 {
 	int						strategy;
 	TypeCacheEntry		   *tce;
-	Oid						vartype;
 	const OpExpr		   *expr = (const OpExpr *) result->orig;
 	const PartRelationInfo *prel = context->prel;
-
-	Assert(IsA(varnode, Var) || IsA(varnode, RelabelType));
-
-	vartype = !IsA(varnode, RelabelType) ?
-			((Var *) varnode)->vartype :
-			((RelabelType *) varnode)->resulttype;
 
 	/* Exit if Constant is NULL */
 	if (c->constisnull)
@@ -1102,7 +1081,7 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 		return;
 	}
 
-	tce = lookup_type_cache(vartype, TYPECACHE_BTREE_OPFAMILY);
+	tce = lookup_type_cache(prel->atttype, TYPECACHE_BTREE_OPFAMILY);
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
 
 	/* There's no strategy for this operator, go to end */
@@ -1164,25 +1143,36 @@ handle_binary_opexpr_param(const PartRelationInfo *prel,
 	const OpExpr	   *expr = (const OpExpr *) result->orig;
 	TypeCacheEntry	   *tce;
 	int					strategy;
-	Oid					vartype;
-
-	Assert(IsA(varnode, Var) || IsA(varnode, RelabelType));
-
-	vartype = !IsA(varnode, RelabelType) ?
-			((Var *) varnode)->vartype :
-			((RelabelType *) varnode)->resulttype;
 
 	/* Determine operator type */
-	tce = lookup_type_cache(vartype, TYPECACHE_BTREE_OPFAMILY);
+	tce = lookup_type_cache(prel->atttype, TYPECACHE_BTREE_OPFAMILY);
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
 
 	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_LOSSY));
 	result->paramsel = estimate_paramsel_using_prel(prel, strategy);
 }
 
+
+/*
+ * Compare clause operand with our expression
+ */
+static bool
+match_expr_to_operand(Node *operand, Node *expr)
+{
+	/* strip relabeling for both operand and expr */
+	if (operand && IsA(operand, RelabelType))
+		operand = (Node *) ((RelabelType *) operand)->arg;
+
+	if (expr && IsA(expr, RelabelType))
+		expr = (Node *) ((RelabelType *) expr)->arg;
+
+	/* compare expressions and return result right away */
+	return equal(expr, operand);
+}
+
 /*
  * Checks if expression is a KEY OP PARAM or PARAM OP KEY, where KEY is
- * partition key (it could be Var or RelableType) and PARAM is whatever.
+ * partition expression and PARAM is whatever.
  *
  * NOTE: returns false if partition key is not in expression.
  */
@@ -1194,45 +1184,21 @@ pull_var_param(const WalkerContext *ctx,
 {
 	Node   *left = linitial(expr->args),
 		   *right = lsecond(expr->args);
-	Var	   *v = NULL;
 
-	/* Check the case when variable is on the left side */
-	if (IsA(left, Var) || IsA(left, RelabelType))
+	if (match_expr_to_operand(left, ctx->prel_expr))
 	{
-		v = !IsA(left, RelabelType) ?
-						(Var *) left :
-						(Var *) ((RelabelType *) left)->arg;
-
-		/* Check if 'v' is partitioned column of 'prel' */
-		/* FIX this */
-		if (v->varoattno == 0 &&
-			v->varno == ctx->prel_varno)
-		{
-			*var_ptr = left;
-			*param_ptr = right;
-			return true;
-		}
+		*var_ptr = left;
+		*param_ptr = right;
+		return true;
 	}
 
-	/* ... variable is on the right side */
-	if (IsA(right, Var) || IsA(right, RelabelType))
+	if (match_expr_to_operand(right, ctx->prel_expr))
 	{
-		v = !IsA(right, RelabelType) ?
-						(Var *) right :
-						(Var *) ((RelabelType *) right)->arg;
-
-		/* Check if 'v' is partitioned column of 'prel' */
-		/* FIX this */
-		if (v->varoattno == 0 &&
-			v->varno == ctx->prel_varno)
-		{
-			*var_ptr = right;
-			*param_ptr = left;
-			return true;
-		}
+		*var_ptr = right;
+		*param_ptr = left;
+		return true;
 	}
 
-	/* Variable isn't a partitionig key */
 	return false;
 }
 
