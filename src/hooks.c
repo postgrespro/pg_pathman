@@ -29,6 +29,7 @@
 #include "miscadmin.h"
 #include "optimizer/cost.h"
 #include "optimizer/restrictinfo.h"
+#include "rewrite/rewriteManip.h"
 #include "utils/typcache.h"
 #include "utils/lsyscache.h"
 
@@ -258,28 +259,22 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			 * Get pathkeys for ascending and descending sort by partitioned column.
 			 */
 			List		   *pathkeys;
-			Var			   *var;
-			Oid				vartypeid,
-							varcollid;
-			int32			type_mod;
 			TypeCacheEntry *tce;
+			Node		   *expr;
 
-			/* Make Var from patition column */
-			/* FIX: this */
-			get_rte_attribute_type(rte, 0,
-								   &vartypeid, &type_mod, &varcollid);
-			var = makeVar(rti, 0, vartypeid, type_mod, varcollid, 0);
-			var->location = -1;
+			expr = copyObject(prel->expr);
+			if (rti != 1)
+				ChangeVarNodes(expr, 1, rti, 0);
 
 			/* Determine operator type */
-			tce = lookup_type_cache(var->vartype, TYPECACHE_LT_OPR | TYPECACHE_GT_OPR);
+			tce = lookup_type_cache(prel->atttype, TYPECACHE_LT_OPR | TYPECACHE_GT_OPR);
 
 			/* Make pathkeys */
-			pathkeys = build_expression_pathkey(root, (Expr *) var, NULL,
+			pathkeys = build_expression_pathkey(root, (Expr *) expr, NULL,
 												tce->lt_opr, NULL, false);
 			if (pathkeys)
 				pathkeyAsc = (PathKey *) linitial(pathkeys);
-			pathkeys = build_expression_pathkey(root, (Expr *) var, NULL,
+			pathkeys = build_expression_pathkey(root, (Expr *) expr, NULL,
 												tce->gt_opr, NULL, false);
 			if (pathkeys)
 				pathkeyDesc = (PathKey *) linitial(pathkeys);

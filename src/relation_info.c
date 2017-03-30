@@ -68,12 +68,6 @@ static bool		delayed_shutdown = false; /* pathman was dropped */
 		list = NIL; \
 	} while (0)
 
-struct expr_mutator_context
-{
-	Oid		relid;		/* partitioned table */
-	List	*rtable;	/* range table list from expression query */
-};
-
 static bool try_perform_parent_refresh(Oid parent);
 static Oid try_syscache_parent_search(Oid partition, PartParentSearch *status);
 static Oid get_parent_of_partition_internal(Oid partition,
@@ -91,8 +85,6 @@ static void fill_pbin_with_bounds(PartBoundInfo *pbin,
 								  const Expr *constraint_expr);
 
 static int cmp_range_entries(const void *p1, const void *p2, void *arg);
-
-static Node *expression_mutator(Node *node, struct expr_mutator_context *context);
 
 
 void
@@ -133,7 +125,6 @@ refresh_pathman_relation_info(Oid relid,
 	char				   *expr;
 	HeapTuple				tp;
 	MemoryContext			oldcontext;
-	Node				   *tmp_node;
 
 	AssertTemporaryContext();
 
@@ -191,16 +182,12 @@ refresh_pathman_relation_info(Oid relid,
 	prel->atttype = DatumGetObjectId(values[Anum_pathman_config_atttype - 1]);
 	expr = TextDatumGetCString(values[Anum_pathman_config_expression_p - 1]);
 
-	/* Restore planned expression */
-	tmp_node = (Node *) stringToNode(expr);
-	fix_opfuncids(tmp_node);
-	pfree(expr);
-
-	/* expression and attname should be saved in cache context */
+	/* Expression and attname should be saved in cache context */
 	oldcontext = MemoryContextSwitchTo(PathmanRelationCacheContext);
 
-	prel->expr = expression_mutator(tmp_node, NULL);
 	prel->attname = TextDatumGetCString(values[Anum_pathman_config_expression - 1]);
+	prel->expr = (Node *) stringToNode(expr);
+	fix_opfuncids(prel->expr);
 
 	MemoryContextSwitchTo(oldcontext);
 
@@ -1194,48 +1181,4 @@ shout_if_prel_is_invalid(const Oid parent_oid,
 			 get_rel_name_or_relid(parent_oid),
 			 expected_str);
 	}
-}
-
-
-/*
- * To prevent calculation of Vars in expression, we wrap them with
- * CustomConst, and later before execution we fill it with actual value
- */
-static Node *
-expression_mutator(Node *node, struct expr_mutator_context *context)
-{
-	const TypeCacheEntry   *typcache;
-
-	/* TODO: add RelabelType */
-	/* TODO: check Vars, they should only be related with base relation */
-	if (IsA(node, Var))
-	{
-		//Var		*variable = (Var *) node;
-		Node	*new_node = newNode(sizeof(CustomConst), T_Const);
-		Const	*new_const = (Const *)new_node;
-
-		/*
-		RangeTblEntry *entry = rt_fetch(variable->varno, context->rtable);
-		if (entry->relid != context->relid)
-			elog(ERROR, "Columns in the expression should "
-							"be only from partitioned relation");
-		*/
-
-		/* we only need varattno from original Var, for now */
-		((CustomConst *)new_node)->varattno = ((Var *)node)->varattno;
-
-		new_const->consttype = ((Var *)node)->vartype;
-		new_const->consttypmod = ((Var *)node)->vartypmod;
-		new_const->constcollid = ((Var *)node)->varcollid;
-		new_const->constvalue = (Datum) 0;
-		new_const->constisnull = true;
-		new_const->location = -2;
-
-		typcache = lookup_type_cache(new_const->consttype, 0);
-		new_const->constbyval = typcache->typbyval;
-		new_const->constlen	= typcache->typlen;
-
-		return new_node;
-	}
-	return expression_tree_mutator(node, expression_mutator, (void *) context);
 }

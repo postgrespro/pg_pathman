@@ -21,6 +21,7 @@
 #include "foreign/fdwapi.h"
 #include "foreign/foreign.h"
 #include "nodes/nodeFuncs.h"
+#include "rewrite/rewriteManip.h"
 #include "utils/guc.h"
 #include "utils/memutils.h"
 #include "utils/lsyscache.h"
@@ -609,7 +610,10 @@ partition_filter_exec(CustomScanState *node)
 		Datum						 value;
 		ExprDoneCond				 itemIsDone;
 		ExprState					*expr_state;
-		struct expr_walker_context	 expr_walker_context;
+		ListCell					*lc;
+		Index						 varno = 1;
+		TupleTableSlot				*tmp_slot;
+		Node						*expr;
 
 		/* Fetch PartRelationInfo for this partitioned relation */
 		prel = get_pathman_relation_info(state->partitioned_table);
@@ -623,26 +627,34 @@ partition_filter_exec(CustomScanState *node)
 			return slot;
 		}
 
+		/* Find proper varno for Vars in expression */
+		foreach(lc, estate->es_range_table)
+		{
+			RangeTblEntry *entry = (RangeTblEntry *) lfirst(lc);
+			if (entry->relid == prel->key)
+				break;
+
+			varno++;
+		}
+
+		/* Change varno according to range table */
+		expr = copyObject(prel->expr);
+		if (varno != 1)
+			ChangeVarNodes(expr, 1, varno, 0);
+
+		/* Prepare state for expression execution */
 		old_cxt = MemoryContextSwitchTo(estate->es_query_cxt);
-
-		/* Prepare walker context */
-		expr_walker_context.prel = prel;
-		expr_walker_context.slot = slot;
-		expr_walker_context.tup = ExecCopySlotTuple(slot);
-
-		/* Fetch values from slot for expression */
-		adapt_values(prel->expr, (void *) &expr_walker_context);
-
-		/* Prepare state for execution */
-		expr_state = ExecInitExpr((Expr *)prel->expr, NULL);
-
+		expr_state = ExecInitExpr((Expr *) expr, NULL);
 		MemoryContextSwitchTo(old_cxt);
 
 		/* Switch to per-tuple context */
 		old_cxt = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 
 		/* Execute expression */
+		tmp_slot = econtext->ecxt_scantuple;
+		econtext->ecxt_scantuple = slot;
 		value = ExecEvalExpr(expr_state, econtext, &isnull, &itemIsDone);
+		econtext->ecxt_scantuple = tmp_slot;
 
 		if (isnull)
 			elog(ERROR, ERR_PART_ATTR_NULL);
