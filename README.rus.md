@@ -488,6 +488,6 @@ SELECT disable_pathman_for('range_rel');
 Если у вас есть вопросы или предложения, а также если вы обнаружили ошибки, напишите нам в разделе [issues](https://github.com/postgrespro/pg_pathman/issues).
 
 ## Авторы
-Ильдар Мусин <i.musin@postgrespro.ru> Postgres Professional, Россия		
-Александр Коротков <a.korotkov@postgrespro.ru> Postgres Professional, Россия		
-Дмитрий Иванов <d.ivanov@postgrespro.ru> Postgres Professional, Россия		
+Ильдар Мусин <i.musin@postgrespro.ru> Postgres Professional, Россия  
+Александр Коротков <a.korotkov@postgrespro.ru> Postgres Professional, Россия  
+Дмитрий Иванов <d.ivanov@postgrespro.ru> Postgres Professional, Россия  

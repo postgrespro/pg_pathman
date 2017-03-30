@@ -25,6 +25,7 @@
 #include "xact_handling.h"
 
 #include "access/transam.h"
+#include "catalog/pg_authid.h"
 #include "miscadmin.h"
 #include "optimizer/cost.h"
 #include "optimizer/restrictinfo.h"
@@ -567,13 +568,34 @@ pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
 		/* Check that pg_pathman is the last extension loaded */
 		if (post_parse_analyze_hook != pathman_post_parse_analysis_hook)
 		{
-			char *spl_value; /* value of "shared_preload_libraries" GUC */
+			Oid		save_userid;
+			int		save_sec_context;
+			bool	need_priv_escalation = !superuser(); /* we might be a SU */
+			char   *spl_value; /* value of "shared_preload_libraries" GUC */
 
+			/* Do we have to escalate privileges? */
+			if (need_priv_escalation)
+			{
+				/* Get current user's Oid and security context */
+				GetUserIdAndSecContext(&save_userid, &save_sec_context);
+
+				/* Become superuser in order to bypass sequence ACL checks */
+				SetUserIdAndSecContext(BOOTSTRAP_SUPERUSERID,
+									   save_sec_context | SECURITY_LOCAL_USERID_CHANGE);
+			}
+
+			/* TODO: add a test for this case (non-privileged user etc) */
+
+			/* Only SU can read this GUC */
 #if PG_VERSION_NUM >= 90600
 			spl_value = GetConfigOptionByName("shared_preload_libraries", NULL, false);
 #else
 			spl_value = GetConfigOptionByName("shared_preload_libraries", NULL);
 #endif
+
+			/* Restore user's privileges */
+			if (need_priv_escalation)
+				SetUserIdAndSecContext(save_userid, save_sec_context);
 
 			ereport(ERROR,
 					(errmsg("extension conflict has been detected"),
