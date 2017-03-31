@@ -1276,22 +1276,22 @@ make_arg_list(StringInfoData *buf, HeapTuple tup, TupleDesc tupdesc,
 			  int *nargs, Oid **argtypes, Datum **args, char **nulls)
 {
 	int		i;
-	bool isnull;
+	bool	isnull;
 
 	*nargs = tupdesc->natts;
-	*args = palloc(sizeof(Datum) * tupdesc->natts);
-	*argtypes = palloc(sizeof(Oid) * tupdesc->natts);
-	*nulls = palloc(sizeof(char) * tupdesc->natts);
+	*args = (Datum *) palloc(sizeof(Datum) * tupdesc->natts);
+	*argtypes = (Oid *) palloc(sizeof(Oid) * tupdesc->natts);
+	*nulls = (char *) palloc(sizeof(char) * tupdesc->natts);
 
-	for (i = 0; i < tupdesc->natts; i++)
+	for (i = 0; i < *nargs; i++)
 	{
 		/* Skip dropped columns */
 		if (tupdesc->attrs[i]->attisdropped)
 			continue;
 
-		*args[i] = heap_getattr(tup, i + 1, tupdesc, &isnull);
-		*nulls[i] = isnull ? 'n' : ' ';
-		*argtypes[i] = tupdesc->attrs[i]->atttypid;
+		(*args)[i] = heap_getattr(tup, i + 1, tupdesc, &isnull);
+		(*nulls)[i] = isnull ? 'n' : ' ';
+		(*argtypes)[i] = tupdesc->attrs[i]->atttypid;
 
 		/* Add comma separator (except the first time) */
 		if (i != 0)
