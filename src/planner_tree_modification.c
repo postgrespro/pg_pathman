@@ -15,6 +15,7 @@
 #include "nodes_common.h"
 #include "partition_filter.h"
 #include "planner_tree_modification.h"
+#include "rewrite/rewriteManip.h"
 
 #include "miscadmin.h"
 #include "optimizer/clauses.h"
@@ -244,6 +245,7 @@ handle_modification_query(Query *parse)
 	Expr				   *expr;
 	WalkerContext			context;
 	Index					result_rel;
+	Node				   *prel_expr;
 
 	/* Fetch index of result relation */
 	result_rel = parse->resultRelation;
@@ -274,8 +276,13 @@ handle_modification_query(Query *parse)
 	/* Exit if there's no expr (no use) */
 	if (!expr) return;
 
+	/* Prepare partitioning expression */
+	prel_expr = copyObject(prel->expr);
+	if (result_rel != 1)
+		ChangeVarNodes(prel_expr, 1, result_rel, 0);
+
 	/* Parse syntax tree and extract partition ranges */
-	InitWalkerContext(&context, result_rel, prel, NULL, false);
+	InitWalkerContext(&context, prel_expr, prel, NULL, false);
 	wrap = walk_expr_tree(expr, &context);
 
 	ranges = irange_list_intersection(ranges, wrap->rangeset);

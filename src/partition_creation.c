@@ -1683,6 +1683,27 @@ text_to_regprocedure(text *proc_signature)
 	return DatumGetObjectId(result);
 }
 
+/*
+ * Checks that columns are from partitioning relation
+ * Maybe there will be more checks later.
+ */
+static bool
+validate_part_expression(Node *node, void *context)
+{
+	if (node == NULL)
+		return false;
+
+	if (IsA(node, Var))
+	{
+		Var *var = (Var *) node;
+		if (var->varno != 1)
+			elog(ERROR, "Columns used in expression should only be related"
+					" with partitioning relation");
+		return false;
+	}
+	return expression_tree_walker(node, validate_part_expression, context);
+}
+
 /* Wraps expression by SELECT query and returns parsed tree */
 Node *
 get_raw_expression(Oid relid, const char *expr, char **query_string_out,
@@ -1787,11 +1808,12 @@ get_part_expression_info(Oid relid, const char *expr_string,
 	target_entry = lfirst(list_head(plan->planTree->targetlist));
 	expr_node = (Node *) target_entry->expr;
 	expr_node = eval_const_expressions(NULL, expr_node);
+	validate_part_expression(expr_node, NULL);
 	out_string = nodeToString(expr_node);
 
 	MemoryContextSwitchTo(oldcontext);
 
-	/* Convert expression to string and return it as datum */
+	/* Save expression string as datum and free memory from planning stage */
 	expr_info->expr_datum = CStringGetTextDatum(out_string);
 	MemoryContextReset(pathman_parse_context);
 

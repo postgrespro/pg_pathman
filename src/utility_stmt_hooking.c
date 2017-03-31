@@ -478,6 +478,9 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	TupleTableSlot	   *myslot;
 	MemoryContext		oldcontext = CurrentMemoryContext;
 
+	Node			   *expr = NULL;
+	ExprState		   *expr_state = NULL;
+
 	uint64				processed = 0;
 
 
@@ -525,9 +528,13 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 
 	for (;;)
 	{
-		TupleTableSlot		   *slot;
-		bool					skip_tuple;
+		TupleTableSlot		   *slot,
+							   *tmp_slot;
+		ExprDoneCond			itemIsDone;
+		bool					skip_tuple,
+								isnull;
 		Oid						tuple_oid = InvalidOid;
+		Datum					value;
 
 		const PartRelationInfo *prel;
 		ResultRelInfoHolder	   *rri_holder;
@@ -540,27 +547,44 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 		/* Fetch PartRelationInfo for parent relation */
 		prel = get_pathman_relation_info(RelationGetRelid(parent_rel));
 
-		/* Switch into per tuple memory context */
-		MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
+		/* Initialize expression and expression state */
+		if (expr == NULL)
+		{
+			expr = copyObject(prel->expr);
+			expr_state = ExecInitExpr((Expr *) expr, NULL);
+		}
 
 		if (!NextCopyFrom(cstate, econtext, values, nulls, &tuple_oid))
 			break;
 
-		/* FIX this
-		if (nulls[prel->attnum - 1])
+		/* And now we can form the input tuple. */
+		tuple = heap_form_tuple(tupDesc, values, nulls);
+
+		/* Place tuple in tuple slot --- but slot shouldn't free it */
+		slot = myslot;
+		ExecStoreTuple(tuple, slot, InvalidBuffer, false);
+
+		/* Switch into per tuple memory context */
+		MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
+
+		/* Execute expression */
+		tmp_slot = econtext->ecxt_scantuple;
+		econtext->ecxt_scantuple = slot;
+		value = ExecEvalExpr(expr_state, econtext, &isnull, &itemIsDone);
+		econtext->ecxt_scantuple = tmp_slot;
+
+		if (isnull)
 			elog(ERROR, ERR_PART_ATTR_NULL);
-		*/
+
+		if (itemIsDone != ExprSingleResult)
+			elog(ERROR, ERR_PART_ATTR_MULTIPLE_RESULTS);
 
 		/* Search for a matching partition */
-		/* FIX here, attnum */
-		rri_holder = select_partition_for_insert(values[/* here */1],
+		rri_holder = select_partition_for_insert(value,
 												 prel->atttype, prel,
 												 &parts_storage, estate);
 		child_result_rel = rri_holder->result_rel_info;
 		estate->es_result_relation_info = child_result_rel;
-
-		/* And now we can form the input tuple. */
-		tuple = heap_form_tuple(tupDesc, values, nulls);
 
 		/* If there's a transform map, rebuild the tuple */
 		if (rri_holder->tuple_map)
@@ -584,10 +608,6 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 
 		/* Triggers and stuff need to be invoked in query context. */
 		MemoryContextSwitchTo(oldcontext);
-
-		/* Place tuple in tuple slot --- but slot shouldn't free it */
-		slot = myslot;
-		ExecStoreTuple(tuple, slot, InvalidBuffer, false);
 
 		skip_tuple = false;
 
