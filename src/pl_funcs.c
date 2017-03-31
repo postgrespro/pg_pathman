@@ -22,11 +22,13 @@
 #include "access/nbtree.h"
 #include "access/htup_details.h"
 #include "access/xact.h"
+#include "access/sysattr.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_trigger.h"
 #include "catalog/pg_type.h"
 #include "commands/tablespace.h"
 #include "commands/trigger.h"
+#include "executor/spi.h"
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "utils/builtins.h"
@@ -111,7 +113,10 @@ typedef struct
 static void on_partitions_created_internal(Oid partitioned_table, bool add_callbacks);
 static void on_partitions_updated_internal(Oid partitioned_table, bool add_callbacks);
 static void on_partitions_removed_internal(Oid partitioned_table, bool add_callbacks);
-
+static void delete_tuple(Relation rel, Datum ctid);
+static void insert_tuple(Relation rel, HeapTuple tup);
+static void make_arg_list(StringInfoData *buf, HeapTuple tup, TupleDesc tupdesc,
+			  int *nargs, Oid **argtypes, Datum **args, char **nulls);
 
 /*
  * ----------------------------
@@ -1116,16 +1121,19 @@ update_trigger_func(PG_FUNCTION_ARGS)
 	Datum			key;
 	bool			isnull;
 	TupleConversionMap *conversion_map;
+	Datum			ctid;
 
+	Relation		source_rel;
 	TupleDesc		source_tupdesc;
-	HeapTuple		source_tuple;
+	HeapTuple		old_tuple;
+	HeapTuple		new_tuple;
 	Oid				source_relid;
 	AttrNumber		source_key;
 
 	Relation		target_rel;
 	TupleDesc		target_tupdesc;
-	HeapTuple		target_tuple;
 	Oid				target_relid;
+	HeapTuple		target_tuple;
 
 	/* This function can only be invoked as a trigger */
 	if (!CALLED_AS_TRIGGER(fcinfo))
@@ -1135,8 +1143,10 @@ update_trigger_func(PG_FUNCTION_ARGS)
 	if (!TRIGGER_FIRED_BY_UPDATE(trigdata->tg_event))
 		elog(ERROR, "This function must only be used as UPDATE trigger");
 
+	source_rel = trigdata->tg_relation;
 	source_relid = trigdata->tg_relation->rd_id;
-	source_tuple = trigdata->tg_newtuple;
+	old_tuple = trigdata->tg_trigtuple;
+	new_tuple = trigdata->tg_newtuple;
 	source_tupdesc = trigdata->tg_relation->rd_att;
 
 	/* Find parent relation and partitioning info */
@@ -1154,17 +1164,25 @@ update_trigger_func(PG_FUNCTION_ARGS)
 	 */
 	key_name = get_attname(parent, prel->attnum);
 	source_key = get_attnum(source_relid, key_name);
-	key = heap_getattr(source_tuple, source_key, source_tupdesc, &isnull);
+	// target_key = get_attnum(target_relid, key_name);
+	key = heap_getattr(new_tuple, source_key, source_tupdesc, &isnull);
 
 	/* Find partition it should go into */
 	target_relid = get_partition_for_key(prel, key);
 
 	/* If target partition is the same then do nothing */
 	if (target_relid == source_relid)
-		return PointerGetDatum(source_tuple);
+		PG_RETURN_POINTER(new_tuple);
 
+	/* TODO: probably should be another lock level */
 	target_rel = heap_open(target_relid, RowExclusiveLock);
 	target_tupdesc = target_rel->rd_att;
+
+	/* Read tuple id */
+	ctid = heap_getsysattr(old_tuple,
+						   SelfItemPointerAttributeNumber,
+						   source_tupdesc,
+						   &isnull);
 
 	/*
 	 * Else if it's a different partition then build a TupleConversionMap
@@ -1173,7 +1191,11 @@ update_trigger_func(PG_FUNCTION_ARGS)
 	conversion_map = convert_tuples_by_name(source_tupdesc,
 					   						target_tupdesc,
 											"Failed to convert tuple");
-	target_tuple = do_convert_tuple(source_tuple, conversion_map);
+	target_tuple = do_convert_tuple(new_tuple, conversion_map);
+
+
+	if (SPI_connect() != SPI_OK_CONNECT)
+		elog(ERROR, "SPI_connect failed");
 
 	/*
 	 * To make an UPDATE on a tuple in case when the tuple should be moved from
@@ -1181,13 +1203,104 @@ update_trigger_func(PG_FUNCTION_ARGS)
 	 * old tuple from original partition and then insert updated version
 	 * of tuple to the target partition
 	 */
-	simple_heap_delete(trigdata->tg_relation, &trigdata->tg_trigtuple->t_self);
-	simple_heap_insert(target_rel, target_tuple);
+	delete_tuple(source_rel, ctid);
+	insert_tuple(target_rel, target_tuple);
+
+	if (SPI_finish() != SPI_OK_FINISH)
+		elog(ERROR, "SPI_finish failed");
 
 	heap_close(target_rel, RowExclusiveLock);
+
 	PG_RETURN_VOID();
 }
 
+/*
+ * Delete record from rel. Caller is responsible for SPI environment setup
+ */
+static void
+delete_tuple(Relation rel, Datum ctid)
+{
+	char	   *query;
+	Datum		args[1] = {ctid};
+	Oid			argtypes[1] = {TIDOID};
+	char		nulls[1] = {' '};
+	int			spi_result;
+
+	query = psprintf("DELETE FROM %s.%s WHERE ctid = $1",
+					 quote_identifier(get_namespace_name(RelationGetNamespace(rel))),
+					 quote_identifier(RelationGetRelationName(rel)));
+	spi_result = SPI_execute_with_args(query, 1, argtypes, args, nulls, false, 1);
+
+	/* Check result */
+	if (spi_result != SPI_OK_DELETE)
+		elog(ERROR, "SPI_execute_with_args returned %d", spi_result);
+}
+
+/*
+ * Insert a new tuple to the rel. Caller is responsible for SPI environment
+ * setup
+ */
+static void
+insert_tuple(Relation rel, HeapTuple tup)
+{
+	TupleDesc	tupdesc = rel->rd_att;
+	StringInfoData querybuf;
+	Datum	   *args;
+	Oid		   *argtypes;
+	char	   *nulls;
+	int			nargs;
+	const char *namespace;
+	const char *relname;
+	int			spi_result;
+
+	namespace = quote_identifier(get_namespace_name(RelationGetNamespace(rel)));
+	relname = quote_identifier(RelationGetRelationName(rel));
+
+	initStringInfo(&querybuf);
+	appendStringInfo(&querybuf, "INSERT INTO ");
+	appendStringInfo(&querybuf, "%s.%s", namespace, relname);
+	appendStringInfo(&querybuf, " VALUES (");
+	make_arg_list(&querybuf, tup, tupdesc, &nargs, &argtypes, &args, &nulls);
+	appendStringInfo(&querybuf, ")");
+
+	spi_result = SPI_execute_with_args(querybuf.data, nargs, argtypes,
+									   args, nulls, false, 0);
+
+	/* Check result */
+	if (spi_result != SPI_OK_INSERT)
+		elog(ERROR, "SPI_execute_with_args returned %d", spi_result);
+}
+
+static void
+make_arg_list(StringInfoData *buf, HeapTuple tup, TupleDesc tupdesc,
+			  int *nargs, Oid **argtypes, Datum **args, char **nulls)
+{
+	int		i;
+	bool isnull;
+
+	*nargs = tupdesc->natts;
+	*args = palloc(sizeof(Datum) * tupdesc->natts);
+	*argtypes = palloc(sizeof(Oid) * tupdesc->natts);
+	*nulls = palloc(sizeof(char) * tupdesc->natts);
+
+	for (i = 0; i < tupdesc->natts; i++)
+	{
+		/* Skip dropped columns */
+		if (tupdesc->attrs[i]->attisdropped)
+			continue;
+
+		*args[i] = heap_getattr(tup, i + 1, tupdesc, &isnull);
+		*nulls[i] = isnull ? 'n' : ' ';
+		*argtypes[i] = tupdesc->attrs[i]->atttypid;
+
+		/* Add comma separator (except the first time) */
+		if (i != 0)
+			appendStringInfo(buf, ",");
+
+		/* Add parameter */
+		appendStringInfo(buf, "$%i", i+1);
+	}
+}
 
 /*
  * Returns Oid of partition corresponding to partitioning key value. Throws
