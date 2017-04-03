@@ -139,6 +139,7 @@ typedef struct
 
 	const char	   *attname;		/* original expression */
 	Node		   *expr;			/* planned expression */
+	List		   *expr_vars;		/* vars from expression, lazy */
 	Oid				atttype;		/* expression type */
 	int32			atttypmod;		/* expression type modifier */
 	bool			attbyval;		/* is partitioned column stored by value? */

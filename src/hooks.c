@@ -248,8 +248,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		Relation		parent_rel;				/* parent's relation (heap) */
 		Oid			   *children;				/* selected children oids */
 		List		   *ranges,					/* a list of IndexRanges */
-					   *wrappers,				/* a list of WrapperNodes */
-					   *rel_part_clauses = NIL;	/* clauses with part. column */
+					   *wrappers;				/* a list of WrapperNodes */
 		PathKey		   *pathkeyAsc = NULL,
 					   *pathkeyDesc = NULL;
 		double			paramsel = 1.0;			/* default part selectivity */
@@ -257,6 +256,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		ListCell	   *lc;
 		int				i;
 		Node		   *expr;
+		bool			modify_append_nodes;
 
 		/* Make copy of partitioning expression and fix Var's  varno attributes */
 		expr = copyObject(prel->expr);
@@ -305,6 +305,12 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			wrappers = lappend(wrappers, wrap);
 			ranges = irange_list_intersection(ranges, wrap->rangeset);
 		}
+
+		/*
+		 * Walker should been have filled these parameter while checking.
+		 * Runtime[Merge]Append is pointless if there are no params in clauses.
+		 */
+		modify_append_nodes = context.found_params;
 
 		/* Get number of selected partitions */
 		irange_len = irange_list_length(ranges);
@@ -382,12 +388,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			  pg_pathman_enable_runtime_merge_append))
 			return;
 
-		/* Check that rel's RestrictInfo contains partitioned column */
-		rel_part_clauses = get_partitioned_attr_clauses(rel->baserestrictinfo,
-														prel, rel->relid);
-
-		/* Runtime[Merge]Append is pointless if there are no params in clauses */
-		if (!clause_contains_params((Node *) rel_part_clauses))
+		if (!modify_append_nodes)
 			return;
 
 		/* Generate Runtime[Merge]Append paths if needed */
@@ -416,7 +417,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			 * Skip if neither rel->baserestrictinfo nor
 			 * ppi->ppi_clauses reference partition attribute
 			 */
-			if (!(rel_part_clauses || ppi_part_clauses))
+			if (!(modify_append_nodes || ppi_part_clauses))
 				continue;
 
 			if (IsA(cur_path, AppendPath) && pg_pathman_enable_runtimeappend)

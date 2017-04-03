@@ -8,6 +8,7 @@
  * ------------------------------------------------------------------------
  */
 
+#include "init.h"
 #include "nodes_common.h"
 #include "runtimeappend.h"
 #include "utils.h"
@@ -128,41 +129,83 @@ replace_tlist_varnos(List *tlist, Index old_varno, Index new_varno)
 	return temp_tlist;
 }
 
+/* Check that one of arguments of OpExpr is expression */
+static bool
+extract_vars(Node *node, PartRelationInfo *prel)
+{
+	if (node == NULL)
+		return false;
+
+	if (IsA(node, Var))
+	{
+		prel->expr_vars = lappend(prel->expr_vars, node);
+		return false;
+	}
+
+	return expression_tree_walker(node, extract_vars, (void *) prel);
+}
+
+
+/*
+ * This function fills 'expr_vars' attribute in PartRelationInfo.
+ * For now it's static because there are no other places where we need it.
+ */
+static inline List *
+extract_vars_from_expression(PartRelationInfo *prel)
+{
+	if (prel->expr_vars == NIL)
+	{
+		MemoryContext	ctx;
+
+		prel->expr_vars = NIL;
+		ctx = MemoryContextSwitchTo(PathmanRelationCacheContext);
+		extract_vars(prel->expr, prel);
+		MemoryContextSwitchTo(ctx);
+	}
+
+	return prel->expr_vars;
+}
+
 /* Append partition attribute in case it's not present in target list */
 static List *
 append_part_attr_to_tlist(List *tlist, Index relno, const PartRelationInfo *prel)
 {
-	ListCell   *lc;
-	bool		part_attr_found = false;
+	ListCell   *lc,
+			   *lc_var;
+	List	   *vars = extract_vars_from_expression((PartRelationInfo *) prel);
+	List	   *vars_not_found = NIL;
 
-	foreach (lc, tlist)
+	foreach (lc_var, vars)
 	{
-		TargetEntry *te = (TargetEntry *) lfirst(lc);
-		Var			*var = (Var *) te->expr;
+		bool	part_attr_found		= false;
+		Var		*expr_var			= (Var *) lfirst(lc_var);
 
-		/* FIX this
-		if (IsA(var, Var) && var->varoattno == prel->attnum)
-			part_attr_found = true;
-		*/
+		foreach (lc, tlist)
+		{
+			TargetEntry	    *te = (TargetEntry *) lfirst(lc);
+			Var				*var = (Var *) te->expr;
+
+			if (IsA(var, Var) && var->varoattno == expr_var->varattno)
+			{
+				part_attr_found = true;
+				break;
+			}
+		}
+
+		if (!part_attr_found)
+			vars_not_found = lappend(vars_not_found, expr_var);
 	}
 
-	/* FIX this
-	if (!part_attr_found)
+	foreach(lc, vars_not_found)
 	{
-		Var	   *newvar = makeVar(relno,
-								 prel->attnum,
-								 prel->atttype,
-								 prel->atttypmod,
-								 prel->attcollid,
-								 0);
-
+		Var		*var = (Var *) lfirst(lc);
 		Index	last_item = list_length(tlist) + 1;
-
-		tlist = lappend(tlist, makeTargetEntry((Expr *) newvar,
+		tlist = lappend(tlist, makeTargetEntry((Expr *) var,
 											   last_item,
 											   NULL, false));
-	} */
+	}
 
+	list_free(vars_not_found);
 	return tlist;
 }
 
@@ -242,6 +285,37 @@ unpack_runtimeappend_private(RuntimeAppendState *scan_state, CustomScan *cscan)
 	scan_state->enable_parent = (bool) linitial_int(lthird(runtimeappend_private));
 }
 
+struct check_clause_context
+{
+	Node	*prel_expr;
+	int count;
+};
+
+/* Check that one of arguments of OpExpr is expression */
+static bool
+check_clause_for_expression(Node *node, struct check_clause_context *ctx)
+{
+	if (node == NULL)
+		return false;
+
+	if (IsA(node, OpExpr))
+	{
+		OpExpr *expr	= (OpExpr *) node;
+		Node   *left	= linitial(expr->args),
+			   *right	= lsecond(expr->args);
+
+		if (match_expr_to_operand(left, ctx->prel_expr))
+			ctx->count += 1;
+
+		if (match_expr_to_operand(right, ctx->prel_expr))
+			ctx->count += 1;
+
+		return false;
+	}
+
+	return expression_tree_walker(node, check_clause_for_expression, (void *) ctx);
+}
+
 /*
  * Filter all available clauses and extract relevant ones.
  */
@@ -250,27 +324,22 @@ get_partitioned_attr_clauses(List *restrictinfo_list,
 							 const PartRelationInfo *prel,
 							 Index partitioned_rel)
 {
-#define AdjustAttno(attno) \
-	( (AttrNumber) (attno + FirstLowInvalidHeapAttributeNumber) )
-
 	List	   *result = NIL;
 	ListCell   *l;
 
 	foreach(l, restrictinfo_list)
 	{
-		RestrictInfo   *rinfo = (RestrictInfo *) lfirst(l);
-		Bitmapset	   *varattnos = NULL;
-		int				part_attno;
+		RestrictInfo				   *rinfo = (RestrictInfo *) lfirst(l);
+		struct check_clause_context		ctx;
 
 		Assert(IsA(rinfo, RestrictInfo));
-		pull_varattnos((Node *) rinfo->clause, partitioned_rel, &varattnos);
 
-		/* FIX this
-		if (bms_get_singleton_member(varattnos, &part_attno) &&
-			AdjustAttno(part_attno) == prel->attnum)
-		{
+		ctx.count = 0;
+		ctx.prel_expr = prel->expr;
+		check_clause_for_expression((Node *) rinfo->clause, &ctx);
+
+		if (ctx.count == 1)
 			result = lappend(result, rinfo->clause);
-		} */
 	}
 	return result;
 }
@@ -554,14 +623,23 @@ rescan_append_common(CustomScanState *node)
 	WalkerContext			wcxt;
 	Oid					   *parts;
 	int						nparts;
+	Node				   *prel_expr;
 
 	prel = get_pathman_relation_info(scan_state->relid);
 	Assert(prel);
 
+	/* Prepare expression */
+	prel_expr = prel->expr;
+	if (INDEX_VAR != 1)
+	{
+		prel_expr = copyObject(prel_expr);
+		ChangeVarNodes(prel_expr, 1, INDEX_VAR, 0);
+	}
+
 	/* First we select all available partitions... */
 	ranges = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_COMPLETE));
 
-	InitWalkerContext(&wcxt, INDEX_VAR, prel, econtext, false);
+	InitWalkerContext(&wcxt, prel_expr, prel, econtext, false);
 	foreach (lc, scan_state->custom_exprs)
 	{
 		WrapperNode *wn;

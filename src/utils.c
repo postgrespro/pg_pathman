@@ -467,3 +467,22 @@ extract_binary_interval_from_text(Datum interval_text,	/* interval as TEXT */
 
 	return interval_binary;
 }
+
+
+/*
+ * Compare clause operand with expression
+ */
+bool
+match_expr_to_operand(Node *operand, Node *expr)
+{
+	/* strip relabeling for both operand and expr */
+	if (operand && IsA(operand, RelabelType))
+		operand = (Node *) ((RelabelType *) operand)->arg;
+
+	if (expr && IsA(expr, RelabelType))
+		expr = (Node *) ((RelabelType *) expr)->arg;
+
+	/* compare expressions and return result right away */
+	return equal(expr, operand);
+}
+

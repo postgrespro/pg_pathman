@@ -187,6 +187,7 @@ refresh_pathman_relation_info(Oid relid,
 
 	prel->attname = TextDatumGetCString(values[Anum_pathman_config_expression - 1]);
 	prel->expr = (Node *) stringToNode(expr);
+	prel->expr_vars = NIL;
 	fix_opfuncids(prel->expr);
 
 	MemoryContextSwitchTo(oldcontext);

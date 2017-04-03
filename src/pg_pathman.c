@@ -99,7 +99,6 @@ static Path *get_cheapest_parameterized_child_path(PlannerInfo *root,
 												   RelOptInfo *rel,
 												   Relids required_outer);
 
-static bool match_expr_to_operand(Node *operand, Node *expr);
 /* We can transform Param into Const provided that 'econtext' is available */
 #define IsConstValue(wcxt, node) \
 	( IsA((node), Const) || (WcxtHasExprContext(wcxt) ? IsA((node), Param) : false) )
@@ -1052,6 +1051,9 @@ handle_opexpr(const OpExpr *expr, WalkerContext *context)
 			}
 			else if (IsA(param, Param) || IsA(param, Var))
 			{
+				if (IsA(param, Param))
+					context->found_params = true;
+
 				handle_binary_opexpr_param(prel, result, var);
 				return result;
 			}
@@ -1152,23 +1154,6 @@ handle_binary_opexpr_param(const PartRelationInfo *prel,
 	result->paramsel = estimate_paramsel_using_prel(prel, strategy);
 }
 
-
-/*
- * Compare clause operand with our expression
- */
-static bool
-match_expr_to_operand(Node *operand, Node *expr)
-{
-	/* strip relabeling for both operand and expr */
-	if (operand && IsA(operand, RelabelType))
-		operand = (Node *) ((RelabelType *) operand)->arg;
-
-	if (expr && IsA(expr, RelabelType))
-		expr = (Node *) ((RelabelType *) expr)->arg;
-
-	/* compare expressions and return result right away */
-	return equal(expr, operand);
-}
 
 /*
  * Checks if expression is a KEY OP PARAM or PARAM OP KEY, where KEY is
