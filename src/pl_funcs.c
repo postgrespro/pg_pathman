@@ -1164,7 +1164,6 @@ update_trigger_func(PG_FUNCTION_ARGS)
 	 */
 	key_name = get_attname(parent, prel->attnum);
 	source_key = get_attnum(source_relid, key_name);
-	// target_key = get_attnum(target_relid, key_name);
 	key = heap_getattr(new_tuple, source_key, source_tupdesc, &isnull);
 
 	/* Find partition it should go into */
@@ -1174,18 +1173,18 @@ update_trigger_func(PG_FUNCTION_ARGS)
 	if (target_relid == source_relid)
 		PG_RETURN_POINTER(new_tuple);
 
-	/* TODO: probably should be another lock level */
-	target_rel = heap_open(target_relid, RowExclusiveLock);
-	target_tupdesc = target_rel->rd_att;
-
 	/* Read tuple id */
 	ctid = heap_getsysattr(old_tuple,
 						   SelfItemPointerAttributeNumber,
 						   source_tupdesc,
 						   &isnull);
 
+	/* Open partition table */
+	target_rel = heap_open(target_relid, RowExclusiveLock);
+	target_tupdesc = target_rel->rd_att;
+
 	/*
-	 * Else if it's a different partition then build a TupleConversionMap
+	 * As it is different partition we need to build a TupleConversionMap
 	 * between original partition and new one. And then do a convertation
 	 */
 	conversion_map = convert_tuples_by_name(source_tupdesc,
