@@ -1990,6 +1990,6 @@ ORDER BY partition;
 DROP TABLE test.provided_part_names CASCADE;
 NOTICE:  drop cascades to 2 other objects
 DROP SCHEMA test CASCADE;
-NOTICE:  drop cascades to 48 other objects
+NOTICE:  drop cascades to 47 other objects
 DROP EXTENSION pg_pathman CASCADE;
 DROP SCHEMA pathman CASCADE;

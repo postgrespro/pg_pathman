@@ -9,6 +9,7 @@
  */
 
 #include "init.h"
+#include "ref_integrity.h"
 #include "partition_creation.h"
 #include "partition_filter.h"
 #include "pathman.h"
@@ -211,6 +212,10 @@ create_single_partition_common(Oid parent_relid,
 							   const char *attname)
 {
 	Relation	child_relation;
+	Oid			pathman_schema = get_pathman_schema();
+	char	   *pathman_schema_name = get_namespace_name(pathman_schema);
+	List	   *fk_constr,
+			   *fk_indexes;
 
 	/* Open the relation and add new check constraint & fkeys */
 	child_relation = heap_open(partition_relid, AccessExclusiveLock);
@@ -222,7 +227,7 @@ create_single_partition_common(Oid parent_relid,
 	/* Make constraint visible */
 	CommandCounterIncrement();
 
-	/* Create trigger */
+	/* Create update trigger */
 	if (is_update_trigger_enabled_internal(parent_relid))
 	{
 		char	   *trigname;
@@ -231,6 +236,43 @@ create_single_partition_common(Oid parent_relid,
 		create_single_update_trigger_internal(partition_relid,
 											  trigname,
 											  attname);
+	}
+
+	/*
+	 * Create referential integrity triggers
+	 *
+	 * XXX Passing the list of fkeys should be caller's responsibility
+	 */
+	pathman_get_fkeys(parent_relid, &fk_constr, &fk_indexes);
+	if (fk_constr)
+	{
+		ListCell *lc1, *lc2;
+
+		forboth(lc1, fk_constr, lc2, fk_indexes)
+		{
+			Oid		constrId = lfirst_oid(lc1);
+			Oid		indexId = lfirst_oid(lc2);
+			List   *funcname;
+
+			funcname = list_make2(makeString(pathman_schema_name),
+								  makeString("pathman_fkey_restrict_upd"));
+			createSingleForeignKeyTrigger(partition_relid, parent_relid,
+										  funcname,
+										  "RI_ConstraintTrigger_a",
+										  TRIGGER_TYPE_UPDATE,
+										  constrId,
+										  indexId);
+
+
+			funcname = list_make2(makeString(pathman_schema_name),
+								  makeString("pathman_fkey_restrict_del"));
+			createSingleForeignKeyTrigger(partition_relid, parent_relid,
+										  funcname,
+										  "RI_ConstraintTrigger_a",
+										  TRIGGER_TYPE_DELETE,
+										  constrId,
+										  indexId);
+		}
 	}
 	
 	/* Make trigger visible */

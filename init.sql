@@ -932,6 +932,14 @@ LANGUAGE C;
 /*
  * Referential integrity triggers
  */
+CREATE OR REPLACE FUNCTION @extschema@.create_fk(
+	fk_table	REGCLASS,
+	fk_attr		TEXT,
+	pk_table	REGCLASS,
+	pk_attr		TEXT)
+RETURNS VOID AS 'pg_pathman', 'create_fk_constraint'
+LANGUAGE C STRICT;
+
 CREATE OR REPLACE FUNCTION @extschema@.pathman_fkey_check_ins()
 RETURNS TRIGGER AS 'pg_pathman', 'pathman_fkey_check_ins'
 LANGUAGE C STRICT;

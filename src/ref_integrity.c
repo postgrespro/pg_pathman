@@ -1,9 +1,20 @@
-#include "c.h"
+/* ------------------------------------------------------------------------
+ *
+ * ref_integrity.c
+ *		Referential integrity for partitioned tables
+ *
+ * Copyright (c) 2016, Postgres Professional
+ *
+ * ------------------------------------------------------------------------
+ */
+
+ #include "c.h"
 
 #include "postgres.h"
 #include "miscadmin.h"
 
 #include "access/htup_details.h"
+#include "access/sysattr.h"
 #include "access/xact.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_constraint.h"
@@ -19,13 +30,15 @@
 #include "storage/bufmgr.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
+#include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
 #include "utils/tqual.h"
 #include "utils/syscache.h"
 #include "utils/memutils.h"
 
-#include "partition_filter.h"
+#include "ref_integrity.h"
 #include "relation_info.h"
+#include "partition_filter.h"
 
 
 #define MAX_QUOTED_NAME_LEN				(NAMEDATALEN*2+3)
@@ -40,6 +53,10 @@
 #define RI_TRIGTYPE_UPDATE 2
 #define RI_TRIGTYPE_DELETE 3
 
+/* TODO list:
+ * - check for unique indexes existence on partitions
+ * - check existing rows on FK table
+ */
 
 typedef struct ConstraintInfo
 {
@@ -145,9 +162,6 @@ static Oid transformFkeyCheckAttrs(Relation pkrel, int16 attnum, Oid *opclass);
 static void create_fk_constraint_internal(Oid fk_table, AttrNumber fk_attnum, Oid pk_table, AttrNumber pk_attnum);
 static void createForeignKeyTriggers(Relation rel, Oid refRelOid,
 						 Oid constraintOid, Oid indexOid);
-static void createSingleForeignKeyTrigger(Oid relOid, Oid refRelOid, List *funcname,
-							  char *trigname, int16 events, Oid constraintOid,
-							  Oid indexOid);
 
 
 PG_FUNCTION_INFO_V1(pathman_fkey_check_ins);
@@ -215,6 +229,51 @@ pathman_fkey_restrict_upd(PG_FUNCTION_ARGS)
 	return ri_restrict_upd_del((TriggerData *) fcinfo->context, true);
 }
 
+/*
+ * Find all foreign keys where table is an FK side
+ */
+void
+pathman_get_fkeys(Oid parent_relid, List **constraints, List **indexes)
+{
+	Relation		pg_constraint_rel;
+	HeapTuple		tuple;
+	ScanKeyData		skey[2];
+	SysScanDesc		scan;
+	bool			isnull;
+
+	*constraints = NIL;
+	*indexes = NIL;
+
+	pg_constraint_rel = heap_open(ConstraintRelationId, RowExclusiveLock);
+
+	/* Search by confrelid and contype = 'f' */
+	ScanKeyInit(&skey[0],
+				Anum_pg_constraint_confrelid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(parent_relid));
+
+	ScanKeyInit(&skey[1],
+				Anum_pg_constraint_contype,
+				BTEqualStrategyNumber, F_CHAREQ,
+				CharGetDatum('f'));
+
+	scan = systable_beginscan(pg_constraint_rel, InvalidOid, false,
+							  NULL, 2, skey);
+
+	while ((tuple = systable_getnext(scan)) != NULL)
+	{
+		Form_pg_constraint con = (Form_pg_constraint) GETSTRUCT(tuple);
+		Datum	oid = heap_getsysattr(tuple, ObjectIdAttributeNumber,
+									  RelationGetDescr(pg_constraint_rel),
+									  &isnull);
+
+		*constraints = lappend_oid(*constraints, DatumGetObjectId(oid));
+		*indexes = lappend_oid(*indexes, con->conindid);
+	}
+
+	systable_endscan(scan);
+	heap_close(pg_constraint_rel, RowExclusiveLock);
+}
 
 static void
 ri_CheckTrigger(FunctionCallInfo fcinfo, const char *funcname, int tgkind)
@@ -1383,7 +1442,7 @@ createForeignKeyTriggers(Relation rel, Oid refRelOid,
 	}
 }
 
-static void
+void
 createSingleForeignKeyTrigger(Oid relOid, Oid refRelOid, List *funcname,
 							  char *trigname, int16 events, Oid constraintOid,
 							  Oid indexOid)
