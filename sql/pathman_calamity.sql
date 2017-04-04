@@ -90,14 +90,6 @@ SELECT drop_partitions('calamity.part_test', true);
 DELETE FROM calamity.part_test;
 
 
-/* check function build_hash_condition() */
-SELECT build_hash_condition('int4', 'val', 10, 1);
-SELECT build_hash_condition('text', 'val', 10, 1);
-SELECT build_hash_condition('int4', 'val', 1, 1);
-SELECT build_hash_condition('int4', 'val', 10, 20);
-SELECT build_hash_condition('text', 'val', 10, NULL) IS NULL;
-SELECT build_hash_condition('calamity.part_test', 'val', 10, 1);
-
 /* check function build_range_condition() */
 SELECT build_range_condition('calamity.part_test', 'val', 10, 20);
 SELECT build_range_condition('calamity.part_test', 'val', 10, NULL);
@@ -204,18 +196,18 @@ SELECT add_to_pathman_config('calamity.part_test', 'val', '10');
 EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_ok; /* check that pathman is enabled */
 
 ALTER TABLE calamity.wrong_partition
-ADD CONSTRAINT pathman_wrong_partition_1_check
+ADD CONSTRAINT pathman_wrong_partition_check
 CHECK (val = 1 OR val = 2); /* wrong constraint */
 SELECT add_to_pathman_config('calamity.part_test', 'val', '10');
 EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_ok; /* check that pathman is enabled */
-ALTER TABLE calamity.wrong_partition DROP CONSTRAINT pathman_wrong_partition_1_check;
+ALTER TABLE calamity.wrong_partition DROP CONSTRAINT pathman_wrong_partition_check;
 
 ALTER TABLE calamity.wrong_partition
-ADD CONSTRAINT pathman_wrong_partition_1_check
+ADD CONSTRAINT pathman_wrong_partition_check
 CHECK (val >= 10 AND val = 2); /* wrong constraint */
 SELECT add_to_pathman_config('calamity.part_test', 'val', '10');
 EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_ok; /* check that pathman is enabled */
-ALTER TABLE calamity.wrong_partition DROP CONSTRAINT pathman_wrong_partition_1_check;
+ALTER TABLE calamity.wrong_partition DROP CONSTRAINT pathman_wrong_partition_check;
 
 /* check GUC variable */
 SHOW pg_pathman.enable;
