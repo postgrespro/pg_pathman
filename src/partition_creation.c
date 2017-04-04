@@ -1766,6 +1766,34 @@ get_part_expression_info(Oid relid, const char *expr_string,
 	/* Keep raw expression */
 	expr_info->raw_expr = get_raw_expression(relid, expr_string,
 			&query_string, &parsetree);
+
+	/* If expression is just column we check that is not null */
+	if (IsA(expr_info->raw_expr, ColumnRef))
+	{
+		ColumnRef *col = (ColumnRef *) expr_info->raw_expr;
+		if (list_length(col->fields) == 1)
+		{
+			HeapTuple	 tp;
+			bool		 result;
+			char		*attname	= strVal(linitial(col->fields));
+
+			/* check if attribute is nullable */
+			tp = SearchSysCacheAttName(relid, attname);
+			if (HeapTupleIsValid(tp))
+			{
+				Form_pg_attribute att_tup = (Form_pg_attribute) GETSTRUCT(tp);
+				result = !att_tup->attnotnull;
+				ReleaseSysCache(tp);
+			}
+			else
+				elog(ERROR, "Cannot find type name for attribute \"%s\" "
+							"of relation \"%s\"",
+					 attname, get_rel_name_or_relid(relid));
+
+			if (result)
+				elog(ERROR, "partitioning key \"%s\" must be NOT NULL", attname);
+		}
+	}
 	expr_info->expr_datum = (Datum) 0;
 
 	/* We don't need pathman activity initialization for this relation yet */

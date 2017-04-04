@@ -57,8 +57,6 @@ PG_FUNCTION_INFO_V1( build_check_constraint_name_attname );
 
 PG_FUNCTION_INFO_V1( validate_relname );
 PG_FUNCTION_INFO_V1( is_date_type );
-PG_FUNCTION_INFO_V1( is_attribute_nullable );
-//PG_FUNCTION_INFO_V1( is_expression_suitable );
 
 PG_FUNCTION_INFO_V1( add_to_pathman_config );
 PG_FUNCTION_INFO_V1( pathman_config_params_trigger_func );
@@ -601,6 +599,7 @@ is_date_type(PG_FUNCTION_ARGS)
 {
 	PG_RETURN_BOOL(is_date_type_internal(PG_GETARG_OID(0)));
 }
+
 
 /*
  * ------------------------
