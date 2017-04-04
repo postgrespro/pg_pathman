@@ -14,7 +14,7 @@
 CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions(
 	parent_relid		REGCLASS,
 	attribute			TEXT,
-	partitions_count	INTEGER,
+	partitions_count	INT4,
 	partition_data		BOOLEAN DEFAULT TRUE,
 	partition_names		TEXT[] DEFAULT NULL,
 	tablespaces			TEXT[] DEFAULT NULL)
@@ -170,7 +170,7 @@ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions_internal(
 	parent_relid		REGCLASS,
 	attribute			TEXT,
-	partitions_count	INTEGER,
+	partitions_count	INT4,
 	partition_names		TEXT[] DEFAULT NULL,
 	tablespaces			TEXT[] DEFAULT NULL)
 RETURNS VOID AS 'pg_pathman', 'create_hash_partitions_internal'
@@ -186,7 +186,7 @@ LANGUAGE C STRICT;
 /*
  * Calculates hash for integer value
  */
-CREATE OR REPLACE FUNCTION @extschema@.get_hash_part_idx(INTEGER, INTEGER)
+CREATE OR REPLACE FUNCTION @extschema@.get_hash_part_idx(INT4, INT4)
 RETURNS INTEGER AS 'pg_pathman', 'get_hash_part_idx'
 LANGUAGE C STRICT;
 
@@ -197,6 +197,6 @@ CREATE OR REPLACE FUNCTION @extschema@.build_hash_condition(
 	attribute_type		REGTYPE,
 	attribute			TEXT,
 	partitions_count	INT4,
-	partitions_index	INT4)
+	partition_index		INT4)
 RETURNS TEXT AS 'pg_pathman', 'build_hash_condition'
 LANGUAGE C STRICT;

@@ -712,8 +712,9 @@ pathman_process_utility_hook(Node *parsetree,
 {
 	if (IsPathmanReady())
 	{
-		Oid			partition_relid;
-		AttrNumber	partitioned_col;
+		Oid			relation_oid;
+		PartType	part_type;
+		AttrNumber	attr_number;
 
 		/* Override standard COPY statement if needed */
 		if (is_pathman_related_copy(parsetree))
@@ -730,12 +731,25 @@ pathman_process_utility_hook(Node *parsetree,
 		}
 
 		/* Override standard RENAME statement if needed */
-		if (is_pathman_related_table_rename(parsetree,
-											&partition_relid,
-											&partitioned_col))
-			PathmanRenameConstraint(partition_relid,
-									partitioned_col,
+		else if (is_pathman_related_table_rename(parsetree,
+												 &relation_oid,
+												 &attr_number))
+			PathmanRenameConstraint(relation_oid,
+									attr_number,
 									(const RenameStmt *) parsetree);
+
+		/* Override standard ALTER COLUMN TYPE statement if needed */
+		else if (is_pathman_related_alter_column_type(parsetree,
+													  &relation_oid,
+													  &attr_number,
+													  &part_type) &&
+				 part_type == PT_HASH)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("cannot change type of column \"%s\""
+							" of table \"%s\" partitioned by HASH",
+							get_attname(relation_oid, attr_number),
+							get_rel_name(relation_oid))));
 	}
 
 	/* Call hooks set by other extensions if needed */

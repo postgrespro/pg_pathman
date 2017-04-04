@@ -1,6 +1,7 @@
 [![Build Status](https://travis-ci.org/postgrespro/pg_pathman.svg?branch=master)](https://travis-ci.org/postgrespro/pg_pathman)
 [![PGXN version](https://badge.fury.io/pg/pg_pathman.svg)](https://badge.fury.io/pg/pg_pathman)
 [![codecov](https://codecov.io/gh/postgrespro/pg_pathman/branch/master/graph/badge.svg)](https://codecov.io/gh/postgrespro/pg_pathman)
+[![GitHub license](https://img.shields.io/badge/license-PostgreSQL-blue.svg)](https://raw.githubusercontent.com/postgrespro/pg_pathman/master/LICENSE)
 
 # pg_pathman
 
@@ -266,21 +267,21 @@ Set partition creation callback to be invoked for each attached or created parti
 ```json
 /* RANGE-partitioned table abc (child abc_4) */
 {
-    "parent":    "abc",
-    "parent_schema": "public",
-    "parttype":  "2",
-    "partition": "abc_4",
+    "parent":           "abc",
+    "parent_schema":    "public",
+    "parttype":         "2",
+    "partition":        "abc_4",
     "partition_schema": "public",
-    "range_max": "401",
-    "range_min": "301"
+    "range_max":        "401",
+    "range_min":        "301"
 }
 
 /* HASH-partitioned table abc (child abc_0) */
 {
-    "parent":    "abc",
-    "parent_schema": "public",
-    "parttype":  "1",
-    "partition": "abc_0"
+    "parent":           "abc",
+    "parent_schema":    "public",
+    "parttype":         "1",
+    "partition":        "abc_0",
     "partition_schema": "public"
 }
 ```
@@ -309,7 +310,7 @@ CREATE TABLE IF NOT EXISTS pathman_config_params (
     enable_parent   BOOLEAN NOT NULL DEFAULT TRUE,
     auto            BOOLEAN NOT NULL DEFAULT TRUE,
     init_callback   REGPROCEDURE NOT NULL DEFAULT 0,
-	spawn_using_bgw BOOLEAN NOT NULL DEFAULT FALSE);
+    spawn_using_bgw BOOLEAN NOT NULL DEFAULT FALSE);
 ```
 This table stores optional parameters which override standard behavior.
 
@@ -656,6 +657,7 @@ There are several user-accessible [GUC](https://www.postgresql.org/docs/9.5/stat
  - `pg_pathman.enable_runtimemergeappend` --- toggle `RuntimeMergeAppend` custom node on\off
  - `pg_pathman.enable_partitionfilter` --- toggle `PartitionFilter` custom node on\off
  - `pg_pathman.enable_auto_partition` --- toggle automatic partition creation on\off (per session)
+ - `pg_pathman.enable_bounds_cache` --- toggle bounds cache on\off (faster updates of partitioning scheme)
  - `pg_pathman.insert_into_fdw` --- allow INSERTs into various FDWs `(disabled | postgres | any_fdw)`
  - `pg_pathman.override_copy` --- toggle COPY statement hooking on\off
 

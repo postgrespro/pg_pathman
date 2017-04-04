@@ -218,7 +218,7 @@ bool validate_range_constraint(const Expr *expr,
 bool validate_hash_constraint(const Expr *expr,
 							  const PartRelationInfo *prel,
 							  const AttrNumber part_attno,
-							  uint32 *part_hash);
+							  uint32 *part_idx);
 
 
 #endif /* PATHMAN_INIT_H */

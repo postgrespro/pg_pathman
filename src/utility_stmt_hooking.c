@@ -15,7 +15,6 @@
 #include "init.h"
 #include "utility_stmt_hooking.h"
 #include "partition_filter.h"
-#include "relation_info.h"
 
 #include "access/htup_details.h"
 #include "access/sysattr.h"
@@ -176,6 +175,70 @@ is_pathman_related_table_rename(Node *parsetree,
 		return true;
 	}
 
+	return false;
+}
+
+/*
+ * Is pg_pathman supposed to handle this ALTER COLUMN TYPE stmt?
+ */
+bool
+is_pathman_related_alter_column_type(Node *parsetree,
+									 Oid *parent_relid_out,
+									 AttrNumber *attr_number_out,
+									 PartType *part_type_out)
+{
+	AlterTableStmt		   *alter_table_stmt = (AlterTableStmt *) parsetree;
+	ListCell			   *lc;
+	Oid						parent_relid;
+	const PartRelationInfo *prel;
+
+	Assert(IsPathmanReady());
+
+	if (!IsA(alter_table_stmt, AlterTableStmt))
+		return false;
+
+	/* Are we going to modify some table? */
+	if (alter_table_stmt->relkind != OBJECT_TABLE)
+		return false;
+
+	/* Assume it's a parent, fetch its Oid */
+	parent_relid = RangeVarGetRelid(alter_table_stmt->relation,
+									AccessShareLock,
+									false);
+
+	/* Is parent partitioned? */
+	if ((prel = get_pathman_relation_info(parent_relid)) != NULL)
+	{
+		/* Return 'parent_relid' and 'prel->parttype' */
+		if (parent_relid_out) *parent_relid_out = parent_relid;
+		if (part_type_out) *part_type_out = prel->parttype;
+	}
+	else return false;
+
+	/* Examine command list */
+	foreach (lc, alter_table_stmt->cmds)
+	{
+		AlterTableCmd *alter_table_cmd = (AlterTableCmd *) lfirst(lc);
+
+		if (!IsA(alter_table_cmd, AlterTableCmd))
+			continue;
+
+		/* Is it an ALTER COLUMN TYPE statement? */
+		if (alter_table_cmd->subtype != AT_AlterColumnType)
+			continue;
+
+		/* Is it a partitioned column? */
+		if (get_attnum(parent_relid, alter_table_cmd->name) != prel->attnum)
+			continue;
+
+		/* Return 'prel->attnum' */
+		if (attr_number_out) *attr_number_out = prel->attnum;
+
+		/* Success! */
+		return true;
+	}
+
+	/* Default failure */
 	return false;
 }
 
