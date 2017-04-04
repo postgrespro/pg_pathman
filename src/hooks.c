@@ -511,10 +511,7 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 		else
 			result = standard_planner(parse, cursorOptions, boundParams);
 
-		if (!pathman_hooks_enabled)
-			return result;
-
-		if (pathman_ready)
+		if (pathman_ready && pathman_hooks_enabled)
 		{
 			/* Give rowmark-related attributes correct names */
 			ExecuteForPlanTree(result, postprocess_lock_rows);
