@@ -15,12 +15,14 @@
 #include "commands/trigger.h"
 #include "executor/spi.h"
 #include "parser/parse_relation.h"
+#include "parser/parse_coerce.h"
 #include "storage/bufmgr.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/tqual.h"
 #include "utils/syscache.h"
+#include "utils/memutils.h"
 
 #include "partition_filter.h"
 #include "relation_info.h"
@@ -49,7 +51,8 @@ typedef struct ConstraintInfo
 	Oid			fk_relid;		/* referencing relation */
 	int16		pk_attnum;		/* attnum of referenced col */
 	int16		fk_attnum;		/* attnum of referencing col */
-	Oid			pf_eq_opr;		/* equality operators (PK = FK) */
+	Oid			pf_eq_opr;		/* equality operator (PK = FK) */
+	Oid			ff_eq_opr;		/* equality operator (FK = FK) */
 } ConstraintInfo;
 
 /* ----------
@@ -62,8 +65,6 @@ typedef struct QueryKey
 {
 	Oid			relid;		/* OID of partitioned table */
 	Oid			partid;		/* Partition OID */
-	/* XXX At this point there is only one query type */
-	// int32		constr_queryno; /* query type ID, see RI_PLAN_XXX above */
 } QueryKey;
 
 /* ----------
@@ -75,6 +76,30 @@ typedef struct QueryHashEntry
 	QueryKey	key;
 	SPIPlanPtr	plan;
 } QueryHashEntry;
+
+/* ----------
+ * RI_CompareKey
+ *
+ *	The key identifying an entry showing how to compare two values
+ * ----------
+ */
+typedef struct CompareKey
+{
+	Oid			eq_opr;			/* the equality operator to apply */
+	Oid			typeid;			/* the data type to apply it to */
+} CompareKey;
+
+/* ----------
+ * CompareHashEntry
+ * ----------
+ */
+typedef struct CompareHashEntry
+{
+	CompareKey	key;
+	bool		valid;			/* successfully initialized? */
+	FmgrInfo	eq_opr_finfo;	/* call info for equality fn */
+	FmgrInfo	cast_func_finfo;	/* in case we must coerce input */
+} CompareHashEntry;
 
 
 /* ----------
@@ -103,7 +128,12 @@ static SPIPlanPtr ri_PlanCheck(const char *querystr,
 			 bool cache_plan);
 
 static Datum RI_FKey_check(TriggerData *trigdata);
-static Datum ri_restrict_del(TriggerData *trigdata);
+static Datum ri_restrict_upd_del(TriggerData *trigdata, bool is_upd);
+static bool ri_KeysEqual(Relation rel, HeapTuple oldtup, HeapTuple newtup,
+						 const ConstraintInfo *riinfo);
+static bool ri_AttributesEqual(Oid eq_opr, Oid typeid,
+				   			   Datum oldvalue, Datum newvalue);
+static CompareHashEntry *ri_HashCompareOp(Oid eq_opr, Oid typeid);
 
 static void quoteOneName(char *buffer, const char *name);
 static void quoteRelationName(char *buffer, Relation rel);
@@ -123,6 +153,7 @@ static void createSingleForeignKeyTrigger(Oid relOid, Oid refRelOid, List *funcn
 PG_FUNCTION_INFO_V1(pathman_fkey_check_ins);
 PG_FUNCTION_INFO_V1(pathman_fkey_check_upd);
 PG_FUNCTION_INFO_V1(pathman_fkey_restrict_del);
+PG_FUNCTION_INFO_V1(pathman_fkey_restrict_upd);
 PG_FUNCTION_INFO_V1(create_fk_constraint);
 
 /* ----------
@@ -131,7 +162,7 @@ PG_FUNCTION_INFO_V1(create_fk_constraint);
  */
 static HTAB *ri_constraint_cache = NULL;
 static HTAB *ri_query_cache = NULL;
-
+static HTAB *ri_compare_cache = NULL;
 
 
 Datum
@@ -170,7 +201,18 @@ pathman_fkey_restrict_del(PG_FUNCTION_ARGS)
 	 */
 	// ri_CheckTrigger(fcinfo, "RI_FKey_restrict_del", RI_TRIGTYPE_DELETE);
 
-	return ri_restrict_del((TriggerData *) fcinfo->context);
+	return ri_restrict_upd_del((TriggerData *) fcinfo->context, false);
+}
+
+Datum
+pathman_fkey_restrict_upd(PG_FUNCTION_ARGS)
+{
+	/*
+	 * Check that this is a valid trigger call on the right time and event.
+	 */
+	// ri_CheckTrigger(fcinfo, "RI_FKey_restrict_del", RI_TRIGTYPE_DELETE);
+
+	return ri_restrict_upd_del((TriggerData *) fcinfo->context, true);
 }
 
 
@@ -353,7 +395,7 @@ RI_FKey_check(TriggerData *trigdata)
 }
 
 static Datum
-ri_restrict_del(TriggerData *trigdata)
+ri_restrict_upd_del(TriggerData *trigdata, bool is_upd)
 {
 	const ConstraintInfo *riinfo;
 	Relation	fk_rel;
@@ -372,11 +414,24 @@ ri_restrict_del(TriggerData *trigdata)
 
 	fk_rel = heap_open(riinfo->fk_relid, RowShareLock);
 	pk_rel = trigdata->tg_relation;
-	// new_row = trigdata->tg_newtuple;
 	old_row = trigdata->tg_trigtuple;
 
 	pk_type = attnumTypeId(pk_rel, riinfo->pk_attnum);
 	fk_type = attnumTypeId(fk_rel, riinfo->fk_attnum);
+
+	/*
+	 * No need to check anything if old and new keys are equal
+	 */
+	if (is_upd)
+	{
+		HeapTuple	new_row = trigdata->tg_newtuple;
+
+		if (ri_KeysEqual(pk_rel, old_row, new_row, riinfo))
+		{
+			heap_close(fk_rel, RowShareLock);
+			return PointerGetDatum(NULL);
+		}
+	}
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
@@ -429,6 +484,148 @@ ri_restrict_del(TriggerData *trigdata)
 	heap_close(fk_rel, RowShareLock);
 
 	return PointerGetDatum(NULL);
+}
+
+static bool
+ri_KeysEqual(Relation rel, HeapTuple oldtup, HeapTuple newtup,
+			 const ConstraintInfo *riinfo)
+{
+	TupleDesc	tupdesc = RelationGetDescr(rel);
+	Datum		oldvalue;
+	Datum		newvalue;
+	AttrNumber	attnum = riinfo->fk_attnum;
+	Oid			eq_opr = riinfo->ff_eq_opr;
+	bool		isnull;
+
+	/*
+	 * Get one attribute's oldvalue. If it is NULL - they're not equal.
+	 */
+	oldvalue = heap_getattr(oldtup, attnum, tupdesc, &isnull);
+	if (isnull)
+		return false;
+
+	/*
+	 * Get one attribute's newvalue. If it is NULL - they're not equal.
+	 */
+	newvalue = heap_getattr(newtup, attnum, tupdesc, &isnull);
+	if (isnull)
+		return false;
+
+	/*
+	 * Compare them with the appropriate equality operator.
+	 */
+	if (!ri_AttributesEqual(eq_opr, attnumTypeId(rel, attnum),
+							oldvalue, newvalue))
+		return false;
+
+	return true;
+}
+
+/* ----------
+ * ri_AttributesEqual -
+ *
+ *	Call the appropriate equality comparison operator for two values.
+ *
+ *	NB: we have already checked that neither value is null.
+ * ----------
+ */
+static bool
+ri_AttributesEqual(Oid eq_opr, Oid typeid,
+				   Datum oldvalue, Datum newvalue)
+{
+	CompareHashEntry *entry = ri_HashCompareOp(eq_opr, typeid);
+
+	/* Do we need to cast the values? */
+	if (OidIsValid(entry->cast_func_finfo.fn_oid))
+	{
+		oldvalue = FunctionCall3(&entry->cast_func_finfo,
+								 oldvalue,
+								 Int32GetDatum(-1),		/* typmod */
+								 BoolGetDatum(false));	/* implicit coercion */
+		newvalue = FunctionCall3(&entry->cast_func_finfo,
+								 newvalue,
+								 Int32GetDatum(-1),		/* typmod */
+								 BoolGetDatum(false));	/* implicit coercion */
+	}
+
+	/*
+	 * Apply the comparison operator.  We assume it doesn't care about
+	 * collations.
+	 */
+	return DatumGetBool(FunctionCall2(&entry->eq_opr_finfo,
+									  oldvalue, newvalue));
+}
+
+/*
+ * See ri_HashCompareOp(...) in ri_triggers.c
+ */
+static CompareHashEntry *
+ri_HashCompareOp(Oid eq_opr, Oid typeid)
+{
+	CompareKey	key;
+	CompareHashEntry *entry;
+	bool		found;
+
+	/*
+	 * On the first call initialize the hashtable
+	 */
+	if (!ri_compare_cache)
+		ri_InitHashTables();
+
+	/*
+	 * Find or create a hash entry.  Note we're assuming RI_CompareKey
+	 * contains no struct padding.
+	 */
+	key.eq_opr = eq_opr;
+	key.typeid = typeid;
+	entry = (CompareHashEntry *) hash_search(ri_compare_cache,
+												(void *) &key,
+												HASH_ENTER, &found);
+	if (!found)
+		entry->valid = false;
+
+	if (!entry->valid)
+	{
+		Oid			lefttype,
+					righttype,
+					castfunc;
+		CoercionPathType pathtype;
+
+		/* We always need to know how to call the equality operator */
+		fmgr_info_cxt(get_opcode(eq_opr), &entry->eq_opr_finfo,
+					  TopMemoryContext);
+
+		/*
+		 * If we chose to use a cast from FK to PK type, we may have to apply
+		 * the cast function to get to the operator's input type.
+		 */
+		op_input_types(eq_opr, &lefttype, &righttype);
+		Assert(lefttype == righttype);
+		if (typeid == lefttype)
+			castfunc = InvalidOid;		/* simplest case */
+		else
+		{
+			pathtype = find_coercion_pathway(lefttype, typeid,
+											 COERCION_IMPLICIT,
+											 &castfunc);
+			if (pathtype != COERCION_PATH_FUNC &&
+				pathtype != COERCION_PATH_RELABELTYPE)
+			{
+				if (!IsBinaryCoercible(typeid, lefttype))
+					elog(ERROR, "no conversion function from %s to %s",
+						 format_type_be(typeid),
+						 format_type_be(lefttype));
+			}
+		}
+		if (OidIsValid(castfunc))
+			fmgr_info_cxt(castfunc, &entry->cast_func_finfo,
+						  TopMemoryContext);
+		else
+			entry->cast_func_finfo.fn_oid = InvalidOid;
+		entry->valid = true;
+	}
+
+	return entry;
 }
 
 static void
@@ -567,6 +764,7 @@ ri_LoadConstraintInfo(Oid constraintOid)
 	read_constr_attribute(fk_attnum, conkey, INT2OID);
 	read_constr_attribute(pk_attnum, confkey, INT2OID);
 	read_constr_attribute(pf_eq_opr, conpfeqop, OIDOID);
+	read_constr_attribute(ff_eq_opr, conffeqop, OIDOID);
 
 	ReleaseSysCache(tup);
 
@@ -636,7 +834,7 @@ ri_InitHashTables()
 									  RI_INIT_CONSTRAINTHASHSIZE,
 									  &ctl, HASH_ELEM | HASH_BLOBS);
 
-	/* Arrange to flush cache on pg_constraint changes */
+	/* TODO: Arrange to flush cache on pg_constraint changes */
 	// CacheRegisterSyscacheCallback(CONSTROID,
 	// 							  InvalidateConstraintCacheCallBack,
 	// 							  (Datum) 0);
@@ -644,9 +842,16 @@ ri_InitHashTables()
 	memset(&ctl, 0, sizeof(ctl));
 	ctl.keysize = sizeof(QueryKey);
 	ctl.entrysize = sizeof(QueryHashEntry);
-	ri_query_cache = hash_create("pathman_ri query cache",
+	ri_query_cache = hash_create("pathman ri query cache",
 								 RI_INIT_QUERYHASHSIZE,
 								 &ctl, HASH_ELEM | HASH_BLOBS);
+
+	memset(&ctl, 0, sizeof(ctl));
+	ctl.keysize = sizeof(CompareKey);
+	ctl.entrysize = sizeof(CompareHashEntry);
+	ri_compare_cache = hash_create("pathman ri compare cache",
+								   RI_INIT_QUERYHASHSIZE,
+								   &ctl, HASH_ELEM | HASH_BLOBS);
 
 }
 
@@ -888,7 +1093,7 @@ ri_PerformCheck(const ConstraintInfo *riinfo,
 
 	/* XXX wouldn't it be clearer to do this part at the caller? */
 	if ((SPI_processed == 0) != source_is_pk)
-		/* TODO: write a correct table name on DELETE from PK table */
+		/* TODO: write a correct table name on DELETE and UPDATE from PK table */
 		ri_ReportViolation(riinfo, fk_rel);
 
 	return SPI_processed != 0;
@@ -987,9 +1192,7 @@ create_fk_constraint_internal(Oid fk_table, AttrNumber fk_attnum, Oid pk_table, 
 {
 	Oid			indexOid;
 	Oid			opclass;
-	Oid			pktypoid = get_atttype(pk_table, pk_attnum);
 	Oid			fktypoid = get_atttype(fk_table, fk_attnum);
-	Oid			fktype;
 	Oid			fktyped;
 	char	   *fkname;
 	Oid			constrOid;
@@ -1019,6 +1222,7 @@ create_fk_constraint_internal(Oid fk_table, AttrNumber fk_attnum, Oid pk_table, 
 
 	indexOid = transformFkeyCheckAttrs(pkrel, pk_attnum, &opclass);
 
+	/* TODO: if index isn't exist then we should raise an exception! */
 	/* TODO: check permissions */
 
 	/* We need several fields out of the pg_opclass entry */
@@ -1119,7 +1323,8 @@ createForeignKeyTriggers(Relation rel, Oid refRelOid,
 	Oid			myRelOid;
 	Oid			pathman_schema = get_pathman_schema();
 	char	   *pathman_schema_name = get_namespace_name(pathman_schema);
-	List	   *funcname;
+	List	   *funcname_del,
+			   *funcname_upd;
 	Oid		   *children;
 	uint32		nchildren;
 	int			i;
@@ -1160,12 +1365,19 @@ createForeignKeyTriggers(Relation rel, Oid refRelOid,
 	/*
 	 * Create ON DELETE triggers on each partition
 	 */
-	funcname = pathman_funcname("pathman_fkey_restrict_del");
+	funcname_del = pathman_funcname("pathman_fkey_restrict_del");
+	funcname_upd = pathman_funcname("pathman_fkey_restrict_upd");
 	for (i = 0; i < nchildren; i++)
 	{
-		createSingleForeignKeyTrigger(children[i], myRelOid, funcname,
+		createSingleForeignKeyTrigger(children[i], myRelOid, funcname_del,
 									  "RI_ConstraintTrigger_a",
 									  TRIGGER_TYPE_DELETE,
+									  constraintOid,
+									  indexOid);
+
+		createSingleForeignKeyTrigger(children[i], myRelOid, funcname_upd,
+									  "RI_ConstraintTrigger_a",
+									  TRIGGER_TYPE_UPDATE,
 									  constraintOid,
 									  indexOid);
 	}
