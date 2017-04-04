@@ -723,6 +723,13 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	if (!check_relation_exists(relid))
 		elog(ERROR, "Invalid relation %u", relid);
 
+	if (!check_security_policy_internal(relid, GetUserId()))
+	{
+		elog(ERROR, "only the owner or superuser can change "
+					  "partitioning configuration of table \"%s\"",
+			 get_rel_name_or_relid(relid));
+	}
+
 	/* Select partitioning type using 'range_interval' */
 	parttype = PG_ARGISNULL(2) ? PT_HASH : PT_RANGE;
 
