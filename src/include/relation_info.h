@@ -176,7 +176,7 @@ typedef struct
 	bool			byval;
 
 	/* For HASH partitions */
-	uint32			hash;
+	uint32			part_idx;
 } PartBoundInfo;
 
 /*

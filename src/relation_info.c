@@ -479,7 +479,7 @@ fill_prel_with_partitions(PartRelationInfo *prel,
 		switch (prel->parttype)
 		{
 			case PT_HASH:
-				prel->children[bound_info->hash] = bound_info->child_rel;
+				prel->children[bound_info->part_idx] = bound_info->child_rel;
 				break;
 
 			case PT_RANGE:
@@ -1047,7 +1047,7 @@ fill_pbin_with_bounds(PartBoundInfo *pbin,
 			{
 				if (!validate_hash_constraint(constraint_expr,
 											  prel, part_attno,
-											  &pbin->hash))
+											  &pbin->part_idx))
 				{
 					DisablePathman(); /* disable pg_pathman since config is broken */
 					ereport(ERROR,
