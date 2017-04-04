@@ -559,7 +559,7 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 		bounds[1] = MakeBound(should_append ? cur_leading_bound : cur_following_bound);
 
 		last_partition = create_single_range_partition_internal(parent_relid,
-																value_type,
+																range_bound_type,
 																&bounds[0], &bounds[1],
 																NULL, NULL);
 
@@ -1713,7 +1713,7 @@ get_raw_expression(Oid relid, const char *expr, char **query_string_out,
 	SelectStmt		*select_stmt;
 	ResTarget		*target;
 
-	char			*fmt = "SELECT (%s) FROM ONLY %s.%s";
+	char			*fmt = "SELECT (%s) FROM ONLY %s.\"%s\"";
 	char			*relname = get_rel_name(relid),
 					*namespace_name = get_namespace_name(get_rel_namespace(relid));
 	List			*parsetree_list;
@@ -1727,14 +1727,14 @@ get_raw_expression(Oid relid, const char *expr, char **query_string_out,
 		*query_string_out = query_string;
 	}
 
-	select_stmt = (SelectStmt *) lfirst(list_head(parsetree_list));
+	select_stmt = (SelectStmt *) linitial(parsetree_list);
 
 	if (parsetree)
 	{
 		*parsetree = (Node *) select_stmt;
 	}
 
-	target = (ResTarget *) lfirst(list_head(select_stmt->targetList));
+	target = (ResTarget *) linitial(select_stmt->targetList);
 	result = (Node *) target->val;
 	return result;
 }
@@ -1810,10 +1810,10 @@ get_part_expression_info(Oid relid, const char *expr_string,
 	 *	with more or less understable text */
 	querytree_list = pg_analyze_and_rewrite(parsetree,
 		query_string, NULL, 0);
-	query = (Query *) lfirst(list_head(querytree_list));
+	query = (Query *) linitial(querytree_list);
 
 	/* expr_node is node that we need for further use */
-	target_entry = lfirst(list_head(query->targetList));
+	target_entry = linitial(query->targetList);
 	expr_node = (Node *) target_entry->expr;
 
 	/* Now we have node and can determine type of that node */
@@ -1833,7 +1833,11 @@ get_part_expression_info(Oid relid, const char *expr_string,
 
 	/* Plan this query. We reuse 'expr_node' here */
 	plan = pg_plan_query(query, 0, NULL);
-	target_entry = lfirst(list_head(plan->planTree->targetlist));
+	if (IsA(plan->planTree, IndexOnlyScan))
+		target_entry = linitial(((IndexOnlyScan *) plan->planTree)->indextlist);
+	else
+		target_entry = linitial(plan->planTree->targetlist);
+
 	expr_node = (Node *) target_entry->expr;
 	expr_node = eval_const_expressions(NULL, expr_node);
 	validate_part_expression(expr_node, NULL);
