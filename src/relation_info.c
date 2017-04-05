@@ -35,8 +35,13 @@
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"
 
+#if PG_VERSION_NUM < 90600
+#include "optimizer/planmain.h"
+#endif
+
 #if PG_VERSION_NUM >= 90600
 #include "catalog/pg_constraint_fn.h"
+#include "nodes/nodeFuncs.h"
 #endif
 
 

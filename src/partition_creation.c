@@ -14,6 +14,7 @@
 #include "pathman.h"
 #include "pathman_workers.h"
 #include "xact_handling.h"
+#include "compat/pg_compat.h"
 
 #include "access/htup_details.h"
 #include "access/reloptions.h"
