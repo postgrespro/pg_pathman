@@ -1133,16 +1133,17 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 				Oid			collid;
 
 				/*
-				 * If operator collation is different from default attribute
-				 * collation then we cannot guarantee that we return correct
-				 * partitions. So in this case we just return all of them
+				 * We cannot guarantee that we'll return correct partitions set
+				 * if operator collation is different from default attribute collation.
+				 * In this case we just return all of them.
 				 */
-				if (expr->opcollid != prel->attcollid && strategy != BTEqualStrategyNumber)
+				if (expr->opcollid != prel->attcollid &&
+					strategy != BTEqualStrategyNumber)
 					goto binary_opexpr_return;
 
 				collid = OidIsValid(expr->opcollid) ?
-							expr->opcollid :
-							prel->attcollid;
+											expr->opcollid :
+											prel->attcollid;
 
 				fill_type_cmp_fmgr_info(&cmp_func,
 										getBaseType(c->consttype),
