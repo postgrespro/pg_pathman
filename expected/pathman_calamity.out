@@ -396,6 +396,43 @@ SELECT drop_range_partition_expand_next(NULL) IS NULL;
  t
 (1 row)
 
+/* check function generate_range_bounds() */
+SELECT generate_range_bounds(NULL, 100, 10) IS NULL;
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT generate_range_bounds(0, NULL::INT4, 10) IS NULL;
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT generate_range_bounds(0, 100, NULL) IS NULL;
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT generate_range_bounds('a'::TEXT, 'test'::TEXT, 10);			/* not ok */
+ERROR:  cannot find operator +(text, text)
+SELECT generate_range_bounds('a'::TEXT, '1 mon'::INTERVAL, 10);		/* not ok */
+ERROR:  cannot find operator +(text, interval)
+SELECT generate_range_bounds(0::NUMERIC, 1::NUMERIC, 10);			/* OK */
+  generate_range_bounds   
+--------------------------
+ {0,1,2,3,4,5,6,7,8,9,10}
+(1 row)
+
+SELECT generate_range_bounds('1-jan-2017'::DATE,
+							 '1 day'::INTERVAL,
+							 4);									/* OK */
+                  generate_range_bounds                   
+----------------------------------------------------------
+ {01-01-2017,01-02-2017,01-03-2017,01-04-2017,01-05-2017}
+(1 row)
+
 /* check invoke_on_partition_created_callback() */
 CREATE FUNCTION calamity.dummy_cb(arg jsonb) RETURNS void AS $$
 	begin

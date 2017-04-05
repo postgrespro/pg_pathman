@@ -1168,11 +1168,11 @@ CREATE OR REPLACE FUNCTION @extschema@.generate_range_bounds(
 	p_interval		INTERVAL,
 	p_count			INTEGER)
 RETURNS ANYARRAY AS 'pg_pathman', 'generate_range_bounds_pl'
-LANGUAGE C;
+LANGUAGE C STRICT;
 
 CREATE OR REPLACE FUNCTION @extschema@.generate_range_bounds(
 	p_start			ANYELEMENT,
 	p_interval		ANYELEMENT,
 	p_count			INTEGER)
 RETURNS ANYARRAY AS 'pg_pathman', 'generate_range_bounds_pl'
-LANGUAGE C;
+LANGUAGE C STRICT;

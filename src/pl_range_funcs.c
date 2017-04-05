@@ -246,10 +246,16 @@ create_range_partitions_internal(PG_FUNCTION_ARGS)
 Datum
 check_range_available_pl(PG_FUNCTION_ARGS)
 {
-	Oid			parent_relid = PG_GETARG_OID(0);
+	Oid			parent_relid;
 	Bound		start,
 				end;
 	Oid			value_type	= get_fn_expr_argtype(fcinfo->flinfo, 1);
+
+	if (PG_ARGISNULL(0))
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("'parent_relid' should not be NULL")));
+
+	parent_relid = PG_GETARG_OID(0);
 
 	start = PG_ARGISNULL(1) ?
 				MakeBoundInf(MINUS_INFINITY) :
@@ -293,8 +299,13 @@ generate_range_bounds_pl(PG_FUNCTION_ARGS)
 	char		elemalign;
 	Datum	   *datums;
 
+	Assert(!PG_ARGISNULL(0));
+	Assert(!PG_ARGISNULL(1));
+	Assert(!PG_ARGISNULL(2));
+
 	if (count < 1)
-		elog(ERROR, "'p_count' must be greater than zero");
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("'p_count' must be greater than zero")));
 
 	/* We must provide count+1 bounds */
 	count += 1;

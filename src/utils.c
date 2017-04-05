@@ -257,7 +257,10 @@ get_binary_operator(char *oprname, Oid arg1, Oid arg2)
 						 arg1, arg2, true, -1);
 
 	if (!op)
-		elog(ERROR, "Cannot find operator \"%s\"(%u, %u)", oprname, arg1, arg2);
+		elog(ERROR, "cannot find operator %s(%s, %s)",
+			 oprname,
+			 format_type_be(arg1),
+			 format_type_be(arg2));
 
 	return op;
 }
@@ -319,9 +322,7 @@ extract_op_func_and_ret_type(char *opname,
 
 	/* Get "move bound operator" descriptor */
 	op = get_binary_operator(opname, type1, type2);
-	if (!op)
-		elog(ERROR, "missing %s operator for types %s and %s",
-			 opname, format_type_be(type1), format_type_be(type2));
+	Assert(op);
 
 	*op_func = oprfuncid(op);
 	*op_ret_type = ((Form_pg_operator) GETSTRUCT(op))->oprresult;
