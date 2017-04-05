@@ -98,6 +98,35 @@ ORDER BY comment;
 SELECT count(*) FROM test_update_trigger.test_range;
 
 
+/* Test tuple conversion (attached partition) */
+CREATE TABLE test_update_trigger.test_range_inv(comment TEXT, val NUMERIC NOT NULL);
+SELECT attach_range_partition('test_update_trigger.test_range',
+							  'test_update_trigger.test_range_inv',
+							  101::NUMERIC, 111::NUMERIC);
+UPDATE test_update_trigger.test_range SET val = 105 WHERE val = 60;
+
+/* Check values #8 */
+SELECT tableoid::REGCLASS, *
+FROM test_update_trigger.test_range
+WHERE val = 105
+ORDER BY comment;
+
+SELECT count(*) FROM test_update_trigger.test_range;
+
+
+/* Test tuple conversion (dropped column) */
+ALTER TABLE test_update_trigger.test_range DROP COLUMN comment CASCADE;
+SELECT append_range_partition('test_update_trigger.test_range');
+UPDATE test_update_trigger.test_range SET val = 115 WHERE val = 55;
+
+/* Check values #9 */
+SELECT tableoid::REGCLASS, *
+FROM test_update_trigger.test_range
+WHERE val = 115;
+
+SELECT count(*) FROM test_update_trigger.test_range;
+
+
 
 /* Partition table by HASH (INT4) */
 CREATE TABLE test_update_trigger.test_hash(val INT4 NOT NULL, comment TEXT);

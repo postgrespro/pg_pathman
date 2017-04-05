@@ -175,6 +175,57 @@ SELECT count(*) FROM test_update_trigger.test_range;
     90
 (1 row)
 
+/* Test tuple conversion (attached partition) */
+CREATE TABLE test_update_trigger.test_range_inv(comment TEXT, val NUMERIC NOT NULL);
+SELECT attach_range_partition('test_update_trigger.test_range',
+							  'test_update_trigger.test_range_inv',
+							  101::NUMERIC, 111::NUMERIC);
+       attach_range_partition       
+------------------------------------
+ test_update_trigger.test_range_inv
+(1 row)
+
+UPDATE test_update_trigger.test_range SET val = 105 WHERE val = 60;
+/* Check values #8 */
+SELECT tableoid::REGCLASS, *
+FROM test_update_trigger.test_range
+WHERE val = 105
+ORDER BY comment;
+              tableoid              | val | comment 
+------------------------------------+-----+---------
+ test_update_trigger.test_range_inv | 105 | 60
+(1 row)
+
+SELECT count(*) FROM test_update_trigger.test_range;
+ count 
+-------
+    90
+(1 row)
+
+/* Test tuple conversion (dropped column) */
+ALTER TABLE test_update_trigger.test_range DROP COLUMN comment CASCADE;
+SELECT append_range_partition('test_update_trigger.test_range');
+      append_range_partition       
+-----------------------------------
+ test_update_trigger.test_range_12
+(1 row)
+
+UPDATE test_update_trigger.test_range SET val = 115 WHERE val = 55;
+/* Check values #9 */
+SELECT tableoid::REGCLASS, *
+FROM test_update_trigger.test_range
+WHERE val = 115;
+             tableoid              | val 
+-----------------------------------+-----
+ test_update_trigger.test_range_12 | 115
+(1 row)
+
+SELECT count(*) FROM test_update_trigger.test_range;
+ count 
+-------
+    90
+(1 row)
+
 /* Partition table by HASH (INT4) */
 CREATE TABLE test_update_trigger.test_hash(val INT4 NOT NULL, comment TEXT);
 INSERT INTO test_update_trigger.test_hash SELECT i, i FROM generate_series(1, 10) i;
@@ -235,5 +286,5 @@ SELECT count(*) FROM test_update_trigger.test_hash;
 (1 row)
 
 DROP SCHEMA test_update_trigger CASCADE;
-NOTICE:  drop cascades to 16 other objects
+NOTICE:  drop cascades to 18 other objects
 DROP EXTENSION pg_pathman;
