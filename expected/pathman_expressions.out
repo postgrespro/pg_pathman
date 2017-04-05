@@ -1,0 +1,100 @@
+\set VERBOSITY terse
+SET search_path = 'public';
+CREATE SCHEMA pathman;
+CREATE EXTENSION pg_pathman SCHEMA pathman;
+CREATE SCHEMA test;
+/* hash */
+CREATE TABLE test.hash_rel (
+	id		SERIAL PRIMARY KEY,
+	value	INTEGER,
+	value2  INTEGER
+);
+INSERT INTO test.hash_rel (value, value2)
+	SELECT val, val * 2 FROM generate_series(1, 5) val;
+SELECT COUNT(*) FROM test.hash_rel;
+ count 
+-------
+     5
+(1 row)
+
+SELECT pathman.create_hash_partitions('test.hash_rel', 'value * value2', 4);
+ create_hash_partitions 
+------------------------
+                      4
+(1 row)
+
+SELECT COUNT(*) FROM ONLY test.hash_rel;
+ count 
+-------
+     0
+(1 row)
+
+SELECT COUNT(*) FROM test.hash_rel;
+ count 
+-------
+     5
+(1 row)
+
+INSERT INTO test.hash_rel (value, value2)
+	SELECT val, val * 2 FROM generate_series(6, 10) val;
+SELECT COUNT(*) FROM ONLY test.hash_rel;
+ count 
+-------
+     0
+(1 row)
+
+SELECT COUNT(*) FROM test.hash_rel;
+ count 
+-------
+    10
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 5;
+          QUERY PLAN          
+------------------------------
+ Append
+   ->  Seq Scan on hash_rel_0
+         Filter: (value = 5)
+   ->  Seq Scan on hash_rel_1
+         Filter: (value = 5)
+   ->  Seq Scan on hash_rel_2
+         Filter: (value = 5)
+   ->  Seq Scan on hash_rel_3
+         Filter: (value = 5)
+(9 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE (value * value2) = 5;
+               QUERY PLAN               
+----------------------------------------
+ Append
+   ->  Seq Scan on hash_rel_0
+         Filter: ((value * value2) = 5)
+(3 rows)
+
+/* range */
+CREATE TABLE test.range_rel (
+	id	SERIAL PRIMARY KEY,
+	dt	TIMESTAMP,
+	txt	TEXT);
+INSERT INTO test.range_rel (dt, txt)
+SELECT g, md5(g::TEXT) FROM generate_series('2015-01-01', '2020-04-30', '1 month'::interval) as g;
+SELECT pathman.create_range_partitions('test.range_rel', 'AGE(dt, ''2000-01-01''::DATE)',
+		'15 years'::INTERVAL, '1 year'::INTERVAL, 10);
+NOTICE:  sequence "range_rel_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                      10
+(1 row)
+
+INSERT INTO test.range_rel_1 (dt, txt) VALUES ('2020-01-01'::DATE, md5('asdf'));
+ERROR:  new row for relation "range_rel_1" violates check constraint "pathman_range_rel_1_check"
+SELECT * FROM test.range_rel_6;
+ id |            dt            |               txt                
+----+--------------------------+----------------------------------
+ 61 | Wed Jan 01 00:00:00 2020 | 339e0b1f73322ffca5ec77523ff1adfa
+ 62 | Sat Feb 01 00:00:00 2020 | 3c09dde93bf2730744668c266845a828
+ 63 | Sun Mar 01 00:00:00 2020 | e6c8aaac1e4a1eb6594309a2fd24a5e5
+ 64 | Wed Apr 01 00:00:00 2020 | 8cea991c596b35cc412ad489af424341
+(4 rows)
+
+INSERT INTO test.range_rel_6 (dt, txt) VALUES ('2020-01-01'::DATE, md5('asdf'));
