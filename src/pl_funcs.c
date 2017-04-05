@@ -1212,10 +1212,17 @@ pathman_update_trigger_func_move_tuple(Relation source_rel,
 									   HeapTuple old_tuple,
 									   HeapTuple new_tuple)
 {
-	TupleDesc				source_tupdesc = RelationGetDescr(source_rel),
-							target_tupdesc = RelationGetDescr(target_rel);
+	TupleDesc				source_tupdesc,
+							target_tupdesc;
 	HeapTuple				target_tuple;
 	TupleConversionMap	   *conversion_map;
+
+	/* HACK: use fake 'tdtypeid' in order to fool convert_tuples_by_name() */
+	source_tupdesc = CreateTupleDescCopy(RelationGetDescr(source_rel));
+	source_tupdesc->tdtypeid = InvalidOid;
+
+	target_tupdesc = CreateTupleDescCopy(RelationGetDescr(target_rel));
+	target_tupdesc->tdtypeid = InvalidOid;
 
 	/* Build tuple conversion map */
 	conversion_map = convert_tuples_by_name(source_tupdesc,
@@ -1286,6 +1293,10 @@ pathman_update_trigger_func_move_tuple(Relation source_rel,
 	}
 	/* Else emit error */
 	else elog(ERROR, "could not connect using SPI");
+
+	/* At last, free these temporary tuple descs */
+	FreeTupleDesc(source_tupdesc);
+	FreeTupleDesc(target_tupdesc);
 }
 
 /* Create UPDATE triggers for all partitions */

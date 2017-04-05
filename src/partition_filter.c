@@ -344,7 +344,7 @@ build_part_tuple_map(Relation parent_rel, Relation child_rel)
 	TupleDesc			child_tupdesc,
 						parent_tupdesc;
 
-	/* Use fake 'tdtypeid' in order to fool convert_tuples_by_name() */
+	/* HACK: use fake 'tdtypeid' in order to fool convert_tuples_by_name() */
 	child_tupdesc = CreateTupleDescCopy(RelationGetDescr(child_rel));
 	child_tupdesc->tdtypeid = InvalidOid;
 
