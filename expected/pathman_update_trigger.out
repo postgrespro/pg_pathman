@@ -1,0 +1,239 @@
+\set VERBOSITY terse
+SET search_path = 'public';
+CREATE EXTENSION pg_pathman;
+CREATE SCHEMA test_update_trigger;
+/* Partition table by RANGE (NUMERIC) */
+CREATE TABLE test_update_trigger.test_range(val NUMERIC NOT NULL, comment TEXT);
+INSERT INTO test_update_trigger.test_range SELECT i, i FROM generate_series(1, 100) i;
+SELECT create_range_partitions('test_update_trigger.test_range', 'val', 1, 10);
+NOTICE:  sequence "test_range_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                      10
+(1 row)
+
+SELECT create_update_triggers('test_update_trigger.test_range');
+ create_update_triggers 
+------------------------
+ 
+(1 row)
+
+/* Update values in 1st partition (rows remain there) */
+UPDATE test_update_trigger.test_range SET val = 5 WHERE val <= 10;
+/* Check values #1 */
+SELECT tableoid::REGCLASS, *
+FROM test_update_trigger.test_range
+WHERE val < 10
+ORDER BY comment;
+             tableoid             | val | comment 
+----------------------------------+-----+---------
+ test_update_trigger.test_range_1 |   5 | 1
+ test_update_trigger.test_range_1 |   5 | 10
+ test_update_trigger.test_range_1 |   5 | 2
+ test_update_trigger.test_range_1 |   5 | 3
+ test_update_trigger.test_range_1 |   5 | 4
+ test_update_trigger.test_range_1 |   5 | 5
+ test_update_trigger.test_range_1 |   5 | 6
+ test_update_trigger.test_range_1 |   5 | 7
+ test_update_trigger.test_range_1 |   5 | 8
+ test_update_trigger.test_range_1 |   5 | 9
+(10 rows)
+
+SELECT count(*) FROM test_update_trigger.test_range;
+ count 
+-------
+   100
+(1 row)
+
+/* Update values in 2nd partition (rows move to 3rd partition) */
+UPDATE test_update_trigger.test_range SET val = val + 10 WHERE val > 10 AND val <= 20;
+/* Check values #2 */
+SELECT tableoid::REGCLASS, *
+FROM test_update_trigger.test_range
+WHERE val > 20 AND val <= 30
+ORDER BY comment;
+             tableoid             | val | comment 
+----------------------------------+-----+---------
+ test_update_trigger.test_range_3 |  21 | 11
+ test_update_trigger.test_range_3 |  22 | 12
+ test_update_trigger.test_range_3 |  23 | 13
+ test_update_trigger.test_range_3 |  24 | 14
+ test_update_trigger.test_range_3 |  25 | 15
+ test_update_trigger.test_range_3 |  26 | 16
+ test_update_trigger.test_range_3 |  27 | 17
+ test_update_trigger.test_range_3 |  28 | 18
+ test_update_trigger.test_range_3 |  29 | 19
+ test_update_trigger.test_range_3 |  30 | 20
+ test_update_trigger.test_range_3 |  21 | 21
+ test_update_trigger.test_range_3 |  22 | 22
+ test_update_trigger.test_range_3 |  23 | 23
+ test_update_trigger.test_range_3 |  24 | 24
+ test_update_trigger.test_range_3 |  25 | 25
+ test_update_trigger.test_range_3 |  26 | 26
+ test_update_trigger.test_range_3 |  27 | 27
+ test_update_trigger.test_range_3 |  28 | 28
+ test_update_trigger.test_range_3 |  29 | 29
+ test_update_trigger.test_range_3 |  30 | 30
+(20 rows)
+
+SELECT count(*) FROM test_update_trigger.test_range;
+ count 
+-------
+   100
+(1 row)
+
+/* Move single row */
+UPDATE test_update_trigger.test_range SET val = 90 WHERE val = 80;
+/* Check values #3 */
+SELECT tableoid::REGCLASS, *
+FROM test_update_trigger.test_range
+WHERE val = 90
+ORDER BY comment;
+             tableoid             | val | comment 
+----------------------------------+-----+---------
+ test_update_trigger.test_range_9 |  90 | 80
+ test_update_trigger.test_range_9 |  90 | 90
+(2 rows)
+
+SELECT count(*) FROM test_update_trigger.test_range;
+ count 
+-------
+   100
+(1 row)
+
+/* Move single row (create new partition) */
+UPDATE test_update_trigger.test_range SET val = -1 WHERE val = 50;
+/* Check values #4 */
+SELECT tableoid::REGCLASS, *
+FROM test_update_trigger.test_range
+WHERE val = -1
+ORDER BY comment;
+             tableoid              | val | comment 
+-----------------------------------+-----+---------
+ test_update_trigger.test_range_11 |  -1 | 50
+(1 row)
+
+SELECT count(*) FROM test_update_trigger.test_range;
+ count 
+-------
+   100
+(1 row)
+
+/* Update non-key column */
+UPDATE test_update_trigger.test_range SET comment = 'test!' WHERE val = 100;
+/* Check values #5 */
+SELECT tableoid::REGCLASS, *
+FROM test_update_trigger.test_range
+WHERE val = 100
+ORDER BY comment;
+             tableoid              | val | comment 
+-----------------------------------+-----+---------
+ test_update_trigger.test_range_10 | 100 | test!
+(1 row)
+
+SELECT count(*) FROM test_update_trigger.test_range;
+ count 
+-------
+   100
+(1 row)
+
+/* Try moving row into a gap (ERROR) */
+DROP TABLE test_update_trigger.test_range_4;
+UPDATE test_update_trigger.test_range SET val = 35 WHERE val = 70;
+ERROR:  cannot spawn a partition
+/* Check values #6 */
+SELECT tableoid::REGCLASS, *
+FROM test_update_trigger.test_range
+WHERE val = 70
+ORDER BY comment;
+             tableoid             | val | comment 
+----------------------------------+-----+---------
+ test_update_trigger.test_range_7 |  70 | 70
+(1 row)
+
+SELECT count(*) FROM test_update_trigger.test_range;
+ count 
+-------
+    90
+(1 row)
+
+/* Test trivial move (same key) */
+UPDATE test_update_trigger.test_range SET val = 65 WHERE val = 65;
+/* Check values #7 */
+SELECT tableoid::REGCLASS, *
+FROM test_update_trigger.test_range
+WHERE val = 65
+ORDER BY comment;
+             tableoid             | val | comment 
+----------------------------------+-----+---------
+ test_update_trigger.test_range_7 |  65 | 65
+(1 row)
+
+SELECT count(*) FROM test_update_trigger.test_range;
+ count 
+-------
+    90
+(1 row)
+
+/* Partition table by HASH (INT4) */
+CREATE TABLE test_update_trigger.test_hash(val INT4 NOT NULL, comment TEXT);
+INSERT INTO test_update_trigger.test_hash SELECT i, i FROM generate_series(1, 10) i;
+SELECT create_hash_partitions('test_update_trigger.test_hash', 'val', 3);
+ create_hash_partitions 
+------------------------
+                      3
+(1 row)
+
+SELECT create_update_triggers('test_update_trigger.test_hash');
+ create_update_triggers 
+------------------------
+ 
+(1 row)
+
+/* Move all rows into single partition */
+UPDATE test_update_trigger.test_hash SET val = 1;
+/* Check values #1 */
+SELECT tableoid::REGCLASS, *
+FROM test_update_trigger.test_hash
+WHERE val = 1
+ORDER BY comment;
+            tableoid             | val | comment 
+---------------------------------+-----+---------
+ test_update_trigger.test_hash_2 |   1 | 1
+ test_update_trigger.test_hash_2 |   1 | 10
+ test_update_trigger.test_hash_2 |   1 | 2
+ test_update_trigger.test_hash_2 |   1 | 3
+ test_update_trigger.test_hash_2 |   1 | 4
+ test_update_trigger.test_hash_2 |   1 | 5
+ test_update_trigger.test_hash_2 |   1 | 6
+ test_update_trigger.test_hash_2 |   1 | 7
+ test_update_trigger.test_hash_2 |   1 | 8
+ test_update_trigger.test_hash_2 |   1 | 9
+(10 rows)
+
+SELECT count(*) FROM test_update_trigger.test_hash;
+ count 
+-------
+    10
+(1 row)
+
+/* Don't move any rows */
+UPDATE test_update_trigger.test_hash SET val = 3 WHERE val = 2;
+/* Check values #2 */
+SELECT tableoid::REGCLASS, *
+FROM test_update_trigger.test_hash
+WHERE val = 3
+ORDER BY comment;
+ tableoid | val | comment 
+----------+-----+---------
+(0 rows)
+
+SELECT count(*) FROM test_update_trigger.test_hash;
+ count 
+-------
+    10
+(1 row)
+
+DROP SCHEMA test_update_trigger CASCADE;
+NOTICE:  drop cascades to 16 other objects
+DROP EXTENSION pg_pathman;
