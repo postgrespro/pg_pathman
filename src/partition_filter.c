@@ -529,44 +529,6 @@ partition_filter_create_scan_state(CustomScan *node)
 	return (Node *) state;
 }
 
-struct expr_walker_context
-{
-	const PartRelationInfo	*prel;
-	TupleTableSlot			*slot;
-	HeapTuple				 tup;
-};
-
-/* Fills CustomConst nodes with values from slot */
-static bool
-adapt_values (Node *node, struct expr_walker_context *context)
-{
-	if (node == NULL)
-		return false;
-
-	/* location == -2 means that it's our CustomConst node */
-	if (IsA(node, Const) && ((Const *)node)->location == -2)
-	{
-		AttrNumber   attnum;
-		Const		*cst;
-		bool		 isNull;
-
-		cst = (Const *)node;
-
-		attnum = ((CustomConst *)node)->varattno;
-		Assert(attnum != InvalidAttrNumber);
-
-		/* check that type is still same */
-		Assert(context->slot->tts_tupleDescriptor->
-					attrs[attnum - 1]->atttypid == cst->consttype);
-		cst->constvalue = heap_getattr(context->tup, attnum,
-			context->slot->tts_tupleDescriptor, &isNull);
-		cst->constisnull = isNull;
-		return false;
-	}
-
-	return expression_tree_walker(node, adapt_values, (void *) context);
-}
-
 void
 partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 {

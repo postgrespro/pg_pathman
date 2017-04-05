@@ -907,9 +907,6 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 	if (!match_expr_to_operand(context->prel_expr, exprnode))
 		goto handle_arrexpr_return;
 
-	if (exprnode && IsA(exprnode, RelabelType))
-		exprnode = (Node *) ((RelabelType *) exprnode)->arg;
-
 	if (arraynode && IsA(arraynode, Const) &&
 		!((Const *) arraynode)->constisnull)
 	{
