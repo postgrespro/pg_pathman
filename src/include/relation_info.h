@@ -82,7 +82,7 @@ FreeBound(Bound *bound, bool byval)
 }
 
 inline static int
-cmp_bounds(FmgrInfo *cmp_func, Oid collid, const Bound *b1, const Bound *b2)
+cmp_bounds(FmgrInfo *cmp_func, const Oid collid, const Bound *b1, const Bound *b2)
 {
 	if (IsMinusInfinity(b1) || IsPlusInfinity(b2))
 		return -1;

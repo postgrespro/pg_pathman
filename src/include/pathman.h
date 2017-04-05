@@ -162,7 +162,7 @@ void select_range_partitions(const Datum value,
 							 const RangeEntry *ranges,
 							 const int nranges,
 							 const int strategy,
-							 Oid collid,
+							 const Oid collid,
 							 WrapperNode *result);
 
 
