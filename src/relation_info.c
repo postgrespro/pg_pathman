@@ -37,10 +37,7 @@
 #endif
 
 
-/*
- * Comparison function info. This structure is only needed to pass FmgrInfo and
- * collation to qsort
- */
+/* Comparison function info */
 typedef struct cmp_func_info
 {
 	FmgrInfo	flinfo;
