@@ -466,7 +466,9 @@ bgw_main_concurrent_part(Datum main_arg)
 		/* We'll need this to recover from errors */
 		old_mcxt = CurrentMemoryContext;
 
-		SPI_connect();
+		if (SPI_connect() != SPI_OK_CONNECT)
+			elog(ERROR, "could not connect using SPI");
+
 		PushActiveSnapshot(GetTransactionSnapshot());
 
 		/* Prepare the query if needed */

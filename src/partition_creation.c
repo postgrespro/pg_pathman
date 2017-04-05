@@ -59,7 +59,7 @@ static void create_single_partition_common(Oid parent_relid,
 										   Oid partition_relid,
 										   Constraint *check_constraint,
 										   init_callback_params *callback_params,
-										   const char *attname);
+										   const char *partitioned_column);
 
 static Oid create_single_partition_internal(Oid parent_relid,
 											RangeVar *partition_rv,
@@ -81,8 +81,6 @@ static Constraint *make_constraint_common(char *name, Node *raw_expr);
 
 static Value make_string_value_struct(char *str);
 static Value make_int_value_struct(int int_val);
-
-static bool update_trigger_exists(Oid relid, char *trigname);
 
 
 /*
@@ -208,7 +206,7 @@ create_single_partition_common(Oid parent_relid,
 							   Oid partition_relid,
 							   Constraint *check_constraint,
 							   init_callback_params *callback_params,
-							   const char *attname)
+							   const char *partitioned_column)
 {
 	Relation	child_relation;
 
@@ -222,17 +220,17 @@ create_single_partition_common(Oid parent_relid,
 	/* Make constraint visible */
 	CommandCounterIncrement();
 
-	/* Create trigger */
-	if (is_update_trigger_enabled_internal(parent_relid))
+	/* Create trigger if needed */
+	if (has_update_trigger_internal(parent_relid))
 	{
-		char	   *trigname;
+		const char *trigname;
 
 		trigname = build_update_trigger_name_internal(parent_relid);
 		create_single_update_trigger_internal(partition_relid,
 											  trigname,
-											  attname);
+											  partitioned_column);
 	}
-	
+
 	/* Make trigger visible */
 	CommandCounterIncrement();
 
@@ -1698,11 +1696,16 @@ text_to_regprocedure(text *proc_signature)
 	return DatumGetObjectId(result);
 }
 
+
 /*
- * Create trigger for partition
+ * -------------------------
+ *  Update trigger creation
+ * -------------------------
  */
+
+/* Create trigger for partition */
 void
-create_single_update_trigger_internal(Oid relid,
+create_single_update_trigger_internal(Oid partition_relid,
 									  const char *trigname,
 									  const char *attname)
 {
@@ -1710,68 +1713,63 @@ create_single_update_trigger_internal(Oid relid,
 	List			   *func;
 
 	func = list_make2(makeString(get_namespace_name(get_pathman_schema())),
-					  makeString("update_trigger_func"));
+					  makeString(CppAsString(pathman_update_trigger_func)));
 
 	stmt = makeNode(CreateTrigStmt);
-	stmt->trigname = (char *) trigname;
-	stmt->relation = makeRangeVarFromRelid(relid);
-	stmt->funcname = func;
-	stmt->args = NIL;
-	stmt->row = true;
-	stmt->timing = TRIGGER_TYPE_BEFORE;
-	stmt->events = TRIGGER_TYPE_UPDATE;
-	stmt->columns = list_make1(makeString((char *) attname));
-	stmt->whenClause = NULL;
-	stmt->isconstraint = false;
-	stmt->deferrable = false;
-	stmt->initdeferred = false;
-	stmt->constrrel = NULL;
+	stmt->trigname		= (char *) trigname;
+	stmt->relation		= makeRangeVarFromRelid(partition_relid);
+	stmt->funcname		= func;
+	stmt->args			= NIL;
+	stmt->row			= true;
+	stmt->timing		= TRIGGER_TYPE_BEFORE;
+	stmt->events		= TRIGGER_TYPE_UPDATE;
+	stmt->columns		= list_make1(makeString((char *) attname));
+	stmt->whenClause	= NULL;
+	stmt->isconstraint	= false;
+	stmt->deferrable	= false;
+	stmt->initdeferred	= false;
+	stmt->constrrel		= NULL;
 
 	(void) CreateTrigger(stmt, NULL, InvalidOid, InvalidOid,
 						 InvalidOid, InvalidOid, false);
 }
 
-/*
- * Check if update trigger is enabled. Basicly it returns true if update
- * trigger exists for parent table
- */
+/* Check if relation has pg_pathman's update trigger */
 bool
-is_update_trigger_enabled_internal(Oid parent)
+has_update_trigger_internal(Oid parent_relid)
 {
-	char	   *trigname;
+	bool			res = false;
+	Relation		tgrel;
+	SysScanDesc		scan;
+	ScanKeyData		key[1];
+	HeapTuple		tuple;
+	const char	   *trigname;
 
-	trigname = build_update_trigger_name_internal(parent);
-	return update_trigger_exists(parent, trigname);
-}
-
-static bool
-update_trigger_exists(Oid relid, char *trigname)
-{
-	bool		res = false;
-	Relation	tgrel;
-	SysScanDesc tgscan;
-	ScanKeyData key;
-	HeapTuple	tuple;
+	/* Build update trigger's name */
+	trigname = build_update_trigger_name_internal(parent_relid);
 
 	tgrel = heap_open(TriggerRelationId, RowExclusiveLock);
 
-	ScanKeyInit(&key,
+	ScanKeyInit(&key[0],
 				Anum_pg_trigger_tgrelid,
 				BTEqualStrategyNumber, F_OIDEQ,
-				ObjectIdGetDatum(relid));
-	tgscan = systable_beginscan(tgrel, TriggerRelidNameIndexId, true,
-								NULL, 1, &key);
-	while (HeapTupleIsValid(tuple = systable_getnext(tgscan)))
-	{
-		Form_pg_trigger pg_trigger = (Form_pg_trigger) GETSTRUCT(tuple);
+				ObjectIdGetDatum(parent_relid));
 
-		if (namestrcmp(&(pg_trigger->tgname), trigname) == 0)
+	scan = systable_beginscan(tgrel, TriggerRelidNameIndexId,
+							  true, NULL, lengthof(key), key);
+
+	while (HeapTupleIsValid(tuple = systable_getnext(scan)))
+	{
+		Form_pg_trigger trigger = (Form_pg_trigger) GETSTRUCT(tuple);
+
+		if (namestrcmp(&(trigger->tgname), trigname) == 0)
 		{
 			res = true;
 			break;
 		}
 	}
-	systable_endscan(tgscan);
+
+	systable_endscan(scan);
 	heap_close(tgrel, RowExclusiveLock);
 
 	return res;

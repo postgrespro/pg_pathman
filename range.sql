@@ -164,7 +164,7 @@ BEGIN
 	IF p_count != 0 THEN
 		part_count := @extschema@.create_range_partitions_internal(
 							parent_relid,
-							@extschema@.generate_bounds(start_value, p_interval, p_count),
+							@extschema@.generate_range_bounds(start_value, p_interval, p_count),
 							NULL,
 							NULL);
 	END IF;
@@ -263,7 +263,7 @@ BEGIN
 	IF p_count != 0 THEN
 		part_count := @extschema@.create_range_partitions_internal(
 						parent_relid,
-						@extschema@.generate_bounds(start_value, p_interval, p_count),
+						@extschema@.generate_range_bounds(start_value, p_interval, p_count),
 						NULL,
 						NULL);
 	END IF;
@@ -465,31 +465,6 @@ END
 $$
 LANGUAGE plpgsql;
 
-
-CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions_internal(
-	parent_relid	REGCLASS,
-	bounds			ANYARRAY,
-	relnames		TEXT[],
-	tablespaces		TEXT[])
-RETURNS REGCLASS AS 'pg_pathman', 'create_range_partitions_internal'
-LANGUAGE C;
-
-
-CREATE OR REPLACE FUNCTION @extschema@.generate_bounds(
-	p_start			ANYELEMENT,
-	p_interval		INTERVAL,
-	p_count			INTEGER)
-RETURNS ANYARRAY AS 'pg_pathman', 'generate_bounds'
-LANGUAGE C;
-
-CREATE OR REPLACE FUNCTION @extschema@.generate_bounds(
-	p_start			ANYELEMENT,
-	p_interval		ANYELEMENT,
-	p_count			INTEGER)
-RETURNS ANYARRAY AS 'pg_pathman', 'generate_bounds'
-LANGUAGE C;
-
-
 /*
  * Split RANGE partition
  */
@@ -585,15 +560,6 @@ $$
 LANGUAGE plpgsql;
 
 /*
- * Merge multiple partitions. All data will be copied to the first one.
- * The rest of partitions will be dropped.
- */
-CREATE OR REPLACE FUNCTION @extschema@.merge_range_partitions(
-	partitions		REGCLASS[])
-RETURNS VOID AS 'pg_pathman', 'merge_range_partitions'
-LANGUAGE C STRICT;
-
-/*
  * The special case of merging two partitions
  */
 CREATE OR REPLACE FUNCTION @extschema@.merge_range_partitions(
@@ -630,7 +596,7 @@ BEGIN
 
 	IF NOT @extschema@.is_date_type(v_atttype) AND
 	   NOT @extschema@.is_operator_supported(v_atttype, '+') THEN
-		RAISE EXCEPTION 'Type % doesn''t support ''+'' operator', v_atttype::regtype;
+		RAISE EXCEPTION 'type % does not support ''+'' operator', v_atttype::REGTYPE;
 	END IF;
 
 	SELECT range_interval
@@ -740,7 +706,7 @@ BEGIN
 
 	IF NOT @extschema@.is_date_type(v_atttype) AND
 	   NOT @extschema@.is_operator_supported(v_atttype, '-') THEN
-		RAISE EXCEPTION 'Type % doesn''t support ''-'' operator', v_atttype::regtype;
+		RAISE EXCEPTION 'type % does not support ''-'' operator', v_atttype::REGTYPE;
 	END IF;
 
 	SELECT range_interval
@@ -1004,7 +970,7 @@ BEGIN
 	/* check range overlap */
 	PERFORM @extschema@.check_range_available(parent_relid, start_value, end_value);
 
-	IF NOT @extschema@.tuple_format_is_convertable(parent_relid, partition_relid) THEN
+	IF NOT @extschema@.is_tuple_convertible(parent_relid, partition_relid) THEN
 		RAISE EXCEPTION 'partition must have a compatible tuple format';
 	END IF;
 
@@ -1035,7 +1001,7 @@ BEGIN
 	INTO v_init_callback;
 
 	/* If update trigger is enabled then create one for this partition */
-	if @extschema@.is_update_trigger_enabled(parent_relid) THEN
+	if @extschema@.has_update_trigger(parent_relid) THEN
 		PERFORM @extschema@.create_single_update_trigger(parent_relid, partition_relid);
 	END IF;
 
@@ -1102,9 +1068,18 @@ END
 $$
 LANGUAGE plpgsql;
 
+
 /*
- * Drops partition and expands the next partition so that it cover dropped
- * one
+ * Merge multiple partitions. All data will be copied to the first one.
+ * The rest of partitions will be dropped.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.merge_range_partitions(
+	partitions		REGCLASS[])
+RETURNS VOID AS 'pg_pathman', 'merge_range_partitions'
+LANGUAGE C STRICT;
+
+/*
+ * Drops partition and expands the next partition so that it cover dropped one
  *
  * This function was written in order to support Oracle-like ALTER TABLE ...
  * DROP PARTITION. In Oracle partitions only have upper bound and when
@@ -1114,6 +1089,15 @@ CREATE OR REPLACE FUNCTION @extschema@.drop_range_partition_expand_next(
 	partition_relid		REGCLASS)
 RETURNS VOID AS 'pg_pathman', 'drop_range_partition_expand_next'
 LANGUAGE C STRICT;
+
+
+CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions_internal(
+	parent_relid	REGCLASS,
+	bounds			ANYARRAY,
+	relnames		TEXT[],
+	tablespaces		TEXT[])
+RETURNS REGCLASS AS 'pg_pathman', 'create_range_partitions_internal'
+LANGUAGE C;
 
 /*
  * Creates new RANGE partition. Returns partition name.
@@ -1144,6 +1128,7 @@ CREATE OR REPLACE FUNCTION @extschema@.build_sequence_name(
 	parent_relid	REGCLASS)
 RETURNS TEXT AS 'pg_pathman', 'build_sequence_name'
 LANGUAGE C;
+
 
 /*
  * Returns N-th range (as an array of two elements).
@@ -1176,10 +1161,18 @@ RETURNS VOID AS 'pg_pathman', 'check_range_available_pl'
 LANGUAGE C;
 
 /*
- * Needed for an UPDATE trigger.
+ * Generate range bounds starting with 'p_start' using 'p_interval'.
  */
-CREATE OR REPLACE FUNCTION @extschema@.find_or_create_range_partition(
-	parent_relid	REGCLASS,
-	value			ANYELEMENT)
-RETURNS REGCLASS AS 'pg_pathman', 'find_or_create_range_partition'
+CREATE OR REPLACE FUNCTION @extschema@.generate_range_bounds(
+	p_start			ANYELEMENT,
+	p_interval		INTERVAL,
+	p_count			INTEGER)
+RETURNS ANYARRAY AS 'pg_pathman', 'generate_range_bounds_pl'
+LANGUAGE C;
+
+CREATE OR REPLACE FUNCTION @extschema@.generate_range_bounds(
+	p_start			ANYELEMENT,
+	p_interval		ANYELEMENT,
+	p_count			INTEGER)
+RETURNS ANYARRAY AS 'pg_pathman', 'generate_range_bounds_pl'
 LANGUAGE C;

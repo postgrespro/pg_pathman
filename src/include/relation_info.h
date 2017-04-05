@@ -92,11 +92,10 @@ cmp_bounds(FmgrInfo *cmp_func, Oid collid, const Bound *b1, const Bound *b2)
 
 	Assert(cmp_func);
 
-	return DatumGetInt32(
-				FunctionCall2Coll(cmp_func,
-								  collid,
-								  BoundGetValue(b1),
-								  BoundGetValue(b2)));
+	return DatumGetInt32(FunctionCall2Coll(cmp_func,
+										   collid,
+										   BoundGetValue(b1),
+										   BoundGetValue(b2)));
 }
 
 

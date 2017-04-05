@@ -11,7 +11,6 @@
 #include "compat/pg_compat.h"
 
 #include "init.h"
-#include "utils.h"
 #include "pathman.h"
 #include "partition_creation.h"
 #include "partition_filter.h"
@@ -21,8 +20,6 @@
 #include "access/tupconvert.h"
 #include "access/nbtree.h"
 #include "access/htup_details.h"
-#include "access/xact.h"
-#include "access/sysattr.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_trigger.h"
 #include "catalog/pg_type.h"
@@ -34,13 +31,8 @@
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
 #include "utils/inval.h"
-#include "utils/jsonb.h"
-#include "utils/snapmgr.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
-
-
-static Oid get_partition_for_key(const PartRelationInfo *prel, Datum key);
 
 
 /* Function declarations */
@@ -58,15 +50,15 @@ PG_FUNCTION_INFO_V1( get_tablespace_pl );
 PG_FUNCTION_INFO_V1( show_cache_stats_internal );
 PG_FUNCTION_INFO_V1( show_partition_list_internal );
 
-PG_FUNCTION_INFO_V1( build_update_trigger_func_name );
 PG_FUNCTION_INFO_V1( build_update_trigger_name );
+PG_FUNCTION_INFO_V1( build_update_trigger_func_name );
 PG_FUNCTION_INFO_V1( build_check_constraint_name_attnum );
 PG_FUNCTION_INFO_V1( build_check_constraint_name_attname );
 
 PG_FUNCTION_INFO_V1( validate_relname );
 PG_FUNCTION_INFO_V1( is_date_type );
 PG_FUNCTION_INFO_V1( is_attribute_nullable );
-PG_FUNCTION_INFO_V1( tuple_format_is_convertable );
+PG_FUNCTION_INFO_V1( is_tuple_convertible );
 
 PG_FUNCTION_INFO_V1( add_to_pathman_config );
 PG_FUNCTION_INFO_V1( pathman_config_params_trigger_func );
@@ -79,14 +71,14 @@ PG_FUNCTION_INFO_V1( invoke_on_partition_created_callback );
 
 PG_FUNCTION_INFO_V1( check_security_policy );
 
-PG_FUNCTION_INFO_V1( debug_capture );
-PG_FUNCTION_INFO_V1( get_pathman_lib_version );
-
 PG_FUNCTION_INFO_V1( is_operator_supported );
 PG_FUNCTION_INFO_V1( create_update_triggers );
-PG_FUNCTION_INFO_V1( update_trigger_func );
+PG_FUNCTION_INFO_V1( pathman_update_trigger_func );
 PG_FUNCTION_INFO_V1( create_single_update_trigger );
-PG_FUNCTION_INFO_V1( is_update_trigger_enabled );
+PG_FUNCTION_INFO_V1( has_update_trigger );
+
+PG_FUNCTION_INFO_V1( debug_capture );
+PG_FUNCTION_INFO_V1( get_pathman_lib_version );
 
 
 /* User context for function show_partition_list_internal() */
@@ -113,10 +105,19 @@ typedef struct
 static void on_partitions_created_internal(Oid partitioned_table, bool add_callbacks);
 static void on_partitions_updated_internal(Oid partitioned_table, bool add_callbacks);
 static void on_partitions_removed_internal(Oid partitioned_table, bool add_callbacks);
-static void delete_tuple(Relation rel, Datum ctid);
-static void insert_tuple(Relation rel, HeapTuple tup);
-static void make_arg_list(StringInfoData *buf, HeapTuple tup, TupleDesc tupdesc,
-			  int *nargs, Oid **argtypes, Datum **args, char **nulls);
+
+static void pathman_update_trigger_func_move_tuple(Relation source_rel,
+												   Relation target_rel,
+												   HeapTuple old_tuple,
+												   HeapTuple new_tuple);
+
+/* Extracted common check */
+static bool
+check_relation_exists(Oid relid)
+{
+	return get_rel_type_id(relid) != InvalidOid;
+}
+
 
 /*
  * ----------------------------
@@ -589,7 +590,10 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
  * --------
  */
 
-/* Check that relation exists. Usually we pass regclass as text, hence the name */
+/*
+ * Check that relation exists.
+ * NOTE: we pass REGCLASS as text, hence the function's name.
+ */
 Datum
 validate_relname(PG_FUNCTION_ARGS)
 {
@@ -642,24 +646,25 @@ is_attribute_nullable(PG_FUNCTION_ARGS)
 }
 
 Datum
-tuple_format_is_convertable(PG_FUNCTION_ARGS)
+is_tuple_convertible(PG_FUNCTION_ARGS)
 {
-	Oid			relid1 = PG_GETARG_OID(0),
-				relid2 = PG_GETARG_OID(1);
 	Relation	rel1,
 				rel2;
 	bool		res = true;
 
-	/* Relations should be already locked */
-	rel1 = heap_open(relid1, NoLock);
-	rel2 = heap_open(relid2, NoLock);
+	rel1 = heap_open(PG_GETARG_OID(0), AccessShareLock);
+	rel2 = heap_open(PG_GETARG_OID(1), AccessShareLock);
 
 	PG_TRY();
 	{
+		void *map; /* we don't actually need it */
+
 		/* Try to build a conversion map */
-		(void) convert_tuples_by_name_map(rel1->rd_att,
-						   				  rel2->rd_att,
-							   			  "doesn't matter");
+		map = convert_tuples_by_name_map(RelationGetDescr(rel1),
+										 RelationGetDescr(rel2),
+										 ERR_PART_DESC_CONVERT);
+		/* Now free map */
+		pfree(map);
 	}
 	PG_CATCH();
 	{
@@ -667,8 +672,8 @@ tuple_format_is_convertable(PG_FUNCTION_ARGS)
 	}
 	PG_END_TRY();
 
-	heap_close(rel1, NoLock);
-	heap_close(rel2, NoLock);
+	heap_close(rel1, AccessShareLock);
+	heap_close(rel2, AccessShareLock);
 
 	PG_RETURN_BOOL(res);
 }
@@ -681,32 +686,31 @@ tuple_format_is_convertable(PG_FUNCTION_ARGS)
  */
 
 Datum
-build_update_trigger_func_name(PG_FUNCTION_ARGS)
+build_update_trigger_name(PG_FUNCTION_ARGS)
 {
-	Oid			relid = PG_GETARG_OID(0),
-				nspid;
+	Oid			relid = PG_GETARG_OID(0);
 	const char *result;
 
 	/* Check that relation exists */
 	if (!check_relation_exists(relid))
 		elog(ERROR, "Invalid relation %u", relid);
 
-	nspid = get_rel_namespace(relid);
-	result = psprintf("%s.%s",
-					  quote_identifier(get_namespace_name(nspid)),
-					  quote_identifier(psprintf("%s_upd_trig_func",
-												get_rel_name(relid))));
+	result = quote_identifier(build_update_trigger_name_internal(relid));
 
 	PG_RETURN_TEXT_P(cstring_to_text(result));
 }
 
 Datum
-build_update_trigger_name(PG_FUNCTION_ARGS)
+build_update_trigger_func_name(PG_FUNCTION_ARGS)
 {
 	Oid			relid = PG_GETARG_OID(0);
-	const char *result; /* trigger's name can't be qualified */
+	const char *result;
 
-	result = quote_identifier(build_update_trigger_name_internal(relid));
+	/* Check that relation exists */
+	if (!check_relation_exists(relid))
+		elog(ERROR, "Invalid relation %u", relid);
+
+	result = build_update_trigger_func_name_internal(relid);
 
 	PG_RETURN_TEXT_P(cstring_to_text(result));
 }
@@ -1062,18 +1066,287 @@ check_security_policy(PG_FUNCTION_ARGS)
 	PG_RETURN_BOOL(true);
 }
 
+/*
+ * Check if type supports the specified operator ( + | - | etc ).
+ */
 Datum
 is_operator_supported(PG_FUNCTION_ARGS)
 {
-	Oid		tp = PG_GETARG_OID(0);
-	char   *opname = TextDatumGetCString(PG_GETARG_TEXT_P(1));
-	Oid		opid;
+	Oid		opid,
+			typid	= PG_GETARG_OID(0);
+	char   *opname	= TextDatumGetCString(PG_GETARG_TEXT_P(1));
 
-	opid = compatible_oper_opid(list_make1(makeString(opname)), tp, tp, true);
-	if (!OidIsValid(opid))
-		PG_RETURN_BOOL(false);
+	opid = compatible_oper_opid(list_make1(makeString(opname)),
+								typid, typid, true);
 
-	PG_RETURN_BOOL(true);
+	PG_RETURN_BOOL(OidIsValid(opid));
+}
+
+
+/*
+ * --------------------------
+ *  Update trigger machinery
+ * --------------------------
+ */
+
+/* Behold: the update trigger itself */
+Datum
+pathman_update_trigger_func(PG_FUNCTION_ARGS)
+{
+	TriggerData			   *trigdata = (TriggerData *) fcinfo->context;
+
+	Relation				source_rel;
+
+	Oid						parent_relid,
+							source_relid,
+							target_relid;
+
+	HeapTuple				old_tuple,
+							new_tuple;
+
+	AttrNumber				value_attnum;
+	Datum					value;
+	Oid						value_type;
+	bool					isnull;
+
+	Oid					   *parts;
+	int						nparts;
+
+	PartParentSearch		parent_search;
+	const PartRelationInfo *prel;
+
+	/* Handle user calls */
+	if (!CALLED_AS_TRIGGER(fcinfo))
+		elog(ERROR, "this function should not be called directly");
+
+	/* Handle wrong fire mode */
+	if (!TRIGGER_FIRED_FOR_ROW(trigdata->tg_event))
+		elog(ERROR, "%s: must be fired for row",
+			 trigdata->tg_trigger->tgname);
+
+	/* Make sure that trigger was fired during UPDATE command */
+	if (!TRIGGER_FIRED_BY_UPDATE(trigdata->tg_event))
+		elog(ERROR, "this function should only be used as UPDATE trigger");
+
+	/* Get source relation and its Oid */
+	source_rel		= trigdata->tg_relation;
+	source_relid	= RelationGetRelid(trigdata->tg_relation);
+
+	/* Fetch old & new tuples */
+	old_tuple = trigdata->tg_trigtuple;
+	new_tuple = trigdata->tg_newtuple;
+
+	/* Find parent relation and partitioning info */
+	parent_relid = get_parent_of_partition(source_relid, &parent_search);
+	if (parent_search != PPS_ENTRY_PART_PARENT)
+		elog(ERROR, "relation \"%s\" is not a partition",
+			 RelationGetRelationName(source_rel));
+
+	/* Fetch partition dispatch info */
+	prel = get_pathman_relation_info(parent_relid);
+	shout_if_prel_is_invalid(parent_relid, prel, PT_ANY);
+
+	/* Get attribute number of partitioning key (may differ from 'prel->attnum') */
+	value_attnum = get_attnum(source_relid, get_attname(parent_relid, prel->attnum));
+
+	/* Extract partitioning key from NEW tuple */
+	value = heap_getattr(new_tuple,
+						 value_attnum,
+						 RelationGetDescr(source_rel),
+						 &isnull);
+
+	/* Extract value's type */
+	value_type = RelationGetDescr(source_rel)->attrs[value_attnum - 1]->atttypid;
+
+	/* Search for matching partitions */
+	parts = find_partitions_for_value(value, value_type, prel, &nparts);
+
+	if (nparts > 1)
+		elog(ERROR, ERR_PART_ATTR_MULTIPLE);
+	else if (nparts == 0)
+	{
+		 target_relid = create_partitions_for_value(PrelParentRelid(prel),
+													value, prel->atttype);
+
+		 /* get_pathman_relation_info() will refresh this entry */
+		 invalidate_pathman_relation_info(PrelParentRelid(prel), NULL);
+	}
+	else target_relid = parts[0];
+
+	pfree(parts);
+
+	/* Convert tuple if target partition has changed */
+	if (target_relid != source_relid)
+	{
+		Relation	target_rel;
+		LOCKMODE	lockmode = RowExclusiveLock; /* UPDATE */
+
+		/* Lock partition and check if it exists */
+		LockRelationOid(target_relid, lockmode);
+		if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(target_relid)))
+			elog(ERROR, ERR_PART_ATTR_NO_PART, datum_to_cstring(value, value_type));
+
+		/* Open partition */
+		target_rel = heap_open(target_relid, lockmode);
+
+		/* Move tuple from source relation to the selected partition */
+		pathman_update_trigger_func_move_tuple(source_rel, target_rel,
+											   old_tuple, new_tuple);
+
+		/* Close partition */
+		heap_close(target_rel, lockmode);
+
+		/* We've made some changes */
+		PG_RETURN_VOID();
+	}
+
+	/* Just return NEW tuple */
+	PG_RETURN_POINTER(new_tuple);
+}
+
+/* Move tuple to new partition (delete 'old_tuple' + insert 'new_tuple') */
+static void
+pathman_update_trigger_func_move_tuple(Relation source_rel,
+									   Relation target_rel,
+									   HeapTuple old_tuple,
+									   HeapTuple new_tuple)
+{
+	TupleDesc				source_tupdesc = RelationGetDescr(source_rel),
+							target_tupdesc = RelationGetDescr(target_rel);
+	HeapTuple				target_tuple;
+	TupleConversionMap	   *conversion_map;
+
+	/* Build tuple conversion map */
+	conversion_map = convert_tuples_by_name(source_tupdesc,
+											target_tupdesc,
+											ERR_PART_DESC_CONVERT);
+
+	if (conversion_map)
+	{
+		/* Convert tuple */
+		target_tuple = do_convert_tuple(new_tuple, conversion_map);
+
+		/* Free tuple conversion map */
+		free_conversion_map(conversion_map);
+	}
+	else target_tuple = new_tuple;
+
+	/* Connect using SPI and execute a few queries */
+	if (SPI_connect() == SPI_OK_CONNECT)
+	{
+		int			nvalues = RelationGetDescr(target_rel)->natts;
+		Oid		   *types	= palloc(nvalues * sizeof(Oid));
+		Datum	   *values	= palloc(nvalues * sizeof(Datum));
+		char	   *nulls	= palloc(nvalues * sizeof(char));
+		StringInfo	query	= makeStringInfo();
+		int			i;
+
+		/* Prepare query string */
+		appendStringInfo(query, "DELETE FROM %s.%s WHERE ctid = $1",
+						 quote_identifier(get_namespace_name(
+												RelationGetNamespace(source_rel))),
+						 quote_identifier(RelationGetRelationName(source_rel)));
+
+		/* Build singe argument */
+		types[0]	= TIDOID;
+		values[0]	= PointerGetDatum(&old_tuple->t_self);
+		nulls[0]	= ' ';
+
+		/* DELETE FROM source_rel WHERE ctid = $1 */
+		SPI_execute_with_args(query->data, 1, types, values, nulls, false, 0);
+
+		resetStringInfo(query);
+
+		/* Prepare query string */
+		appendStringInfo(query, "INSERT INTO %s.%s VALUES (",
+						 quote_identifier(get_namespace_name(
+												RelationGetNamespace(target_rel))),
+						 quote_identifier(RelationGetRelationName(target_rel)));
+		for (i = 0; i < target_tupdesc->natts; i++)
+		{
+			AttrNumber	attnum = i + 1;
+			bool		isnull;
+
+			/* Build singe argument */
+			types[i]	= target_tupdesc->attrs[i]->atttypid;
+			values[i]	= heap_getattr(target_tuple, attnum, target_tupdesc, &isnull);
+			nulls[i]	= isnull ? 'n' : ' ';
+
+			/* Append "$N [,]" */
+			appendStringInfo(query, (i != 0 ? ", $%i" : "$%i"), attnum);
+		}
+		appendStringInfoChar(query, ')');
+
+		/* INSERT INTO target_rel VALUES($1, $2, $3 ...) */
+		SPI_execute_with_args(query->data, nvalues, types, values, nulls, false, 0);
+
+		/* Finally close SPI connection */
+		SPI_finish();
+	}
+	/* Else emit error */
+	else elog(ERROR, "could not connect using SPI");
+}
+
+/* Create UPDATE triggers for all partitions */
+Datum
+create_update_triggers(PG_FUNCTION_ARGS)
+{
+	Oid						parent = PG_GETARG_OID(0);
+	Oid					   *children;
+	const char			   *attname,
+						   *trigname;
+	const PartRelationInfo *prel;
+	uint32					i;
+
+	/* Check that table is partitioned */
+	prel = get_pathman_relation_info(parent);
+	shout_if_prel_is_invalid(parent, prel, PT_ANY);
+
+	/* Acquire trigger and attribute names */
+	trigname = build_update_trigger_name_internal(parent);
+	attname = get_attname(parent, prel->attnum);
+
+	/* Create trigger for parent */
+	create_single_update_trigger_internal(parent, trigname, attname);
+
+	/* Fetch children array */
+	children = PrelGetChildrenArray(prel);
+
+	/* Create triggers for each partition */
+	for (i = 0; i < PrelChildrenCount(prel); i++)
+		create_single_update_trigger_internal(children[i], trigname, attname);
+
+	PG_RETURN_VOID();
+}
+
+/* Create an UPDATE trigger for partition */
+Datum
+create_single_update_trigger(PG_FUNCTION_ARGS)
+{
+	Oid						parent = PG_GETARG_OID(0);
+	Oid						child = PG_GETARG_OID(1);
+	const char			   *trigname,
+						   *attname;
+	const PartRelationInfo *prel;
+
+	/* Check that table is partitioned */
+	prel = get_pathman_relation_info(parent);
+	shout_if_prel_is_invalid(parent, prel, PT_ANY);
+
+	/* Acquire trigger and attribute names */
+	trigname = build_update_trigger_name_internal(parent);
+	attname = get_attname(prel->key, prel->attnum);
+
+	create_single_update_trigger_internal(child, trigname, attname);
+
+	PG_RETURN_VOID();
+}
+
+/* Check if relation has pg_pathman's update trigger */
+Datum
+has_update_trigger(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_BOOL(has_update_trigger_internal(PG_GETARG_OID(0)));
 }
 
 
@@ -1083,9 +1356,7 @@ is_operator_supported(PG_FUNCTION_ARGS)
  * -------
  */
 
-/*
- * NOTE: used for DEBUG, set breakpoint here.
- */
+/* NOTE: used for DEBUG, set breakpoint here */
 Datum
 debug_capture(PG_FUNCTION_ARGS)
 {
@@ -1098,295 +1369,9 @@ debug_capture(PG_FUNCTION_ARGS)
 	PG_RETURN_VOID();
 }
 
-/*
- * NOTE: just in case.
- */
+/* NOTE: just in case */
 Datum
 get_pathman_lib_version(PG_FUNCTION_ARGS)
 {
 	PG_RETURN_CSTRING(psprintf("%x", CURRENT_LIB_VERSION));
-}
-
-/*
- * Update trigger
- */
-Datum
-update_trigger_func(PG_FUNCTION_ARGS)
-{
-	const PartRelationInfo *prel;
-	PartParentSearch parent_search;
-	Oid				parent;
-	TriggerData	   *trigdata = (TriggerData *) fcinfo->context;
-	char		   *key_name;
-	Datum			key;
-	bool			isnull;
-	TupleConversionMap *conversion_map;
-	Datum			ctid;
-
-	Relation		source_rel;
-	TupleDesc		source_tupdesc;
-	HeapTuple		old_tuple;
-	HeapTuple		new_tuple;
-	Oid				source_relid;
-	AttrNumber		source_key;
-
-	Relation		target_rel;
-	TupleDesc		target_tupdesc;
-	Oid				target_relid;
-	HeapTuple		target_tuple;
-
-	/* This function can only be invoked as a trigger */
-	if (!CALLED_AS_TRIGGER(fcinfo))
-		elog(ERROR, "Function invoked not in a trigger context");
-
-	/* Make sure that trigger was fired during UPDATE command */
-	if (!TRIGGER_FIRED_BY_UPDATE(trigdata->tg_event))
-		elog(ERROR, "This function must only be used as UPDATE trigger");
-
-	source_rel = trigdata->tg_relation;
-	source_relid = trigdata->tg_relation->rd_id;
-	old_tuple = trigdata->tg_trigtuple;
-	new_tuple = trigdata->tg_newtuple;
-	source_tupdesc = trigdata->tg_relation->rd_att;
-
-	/* Find parent relation and partitioning info */
-	parent = get_parent_of_partition(source_relid, &parent_search);
-	if (parent_search != PPS_ENTRY_PART_PARENT)
-		parent = source_relid;
-
-	prel = get_pathman_relation_info(parent);
-	shout_if_prel_is_invalid(parent, prel, PT_ANY);
-
-	/*
-	 * Find partitioning key attribute of source partition. Keep in mind that
-	 * there could be dropped columns in parent relation or partition and so
-	 * key attribute may have different number
-	 */
-	key_name = get_attname(parent, prel->attnum);
-	source_key = get_attnum(source_relid, key_name);
-	key = heap_getattr(new_tuple, source_key, source_tupdesc, &isnull);
-
-	/* Find partition it should go into */
-	target_relid = get_partition_for_key(prel, key);
-
-	/* If target partition is the same then do nothing */
-	if (target_relid == source_relid)
-		PG_RETURN_POINTER(new_tuple);
-
-	/* Read tuple id */
-	ctid = heap_getsysattr(old_tuple,
-						   SelfItemPointerAttributeNumber,
-						   source_tupdesc,
-						   &isnull);
-
-	/* Open partition table */
-	target_rel = heap_open(target_relid, RowExclusiveLock);
-	target_tupdesc = target_rel->rd_att;
-
-	/*
-	 * As it is different partition we need to build a TupleConversionMap
-	 * between original partition and new one. And then do a convertation
-	 */
-	conversion_map = convert_tuples_by_name(source_tupdesc,
-					   						target_tupdesc,
-											"Failed to convert tuple");
-	target_tuple = do_convert_tuple(new_tuple, conversion_map);
-
-
-	if (SPI_connect() != SPI_OK_CONNECT)
-		elog(ERROR, "SPI_connect failed");
-
-	/*
-	 * To make an UPDATE on a tuple in case when the tuple should be moved from
-	 * one partition to another we need to perform two actions. First, remove
-	 * old tuple from original partition and then insert updated version
-	 * of tuple to the target partition
-	 */
-	delete_tuple(source_rel, ctid);
-	insert_tuple(target_rel, target_tuple);
-
-	if (SPI_finish() != SPI_OK_FINISH)
-		elog(ERROR, "SPI_finish failed");
-
-	heap_close(target_rel, RowExclusiveLock);
-
-	PG_RETURN_VOID();
-}
-
-/*
- * Delete record from rel. Caller is responsible for SPI environment setup
- */
-static void
-delete_tuple(Relation rel, Datum ctid)
-{
-	char	   *query;
-	Datum		args[1] = {ctid};
-	Oid			argtypes[1] = {TIDOID};
-	char		nulls[1] = {' '};
-	int			spi_result;
-
-	query = psprintf("DELETE FROM %s.%s WHERE ctid = $1",
-					 quote_identifier(get_namespace_name(RelationGetNamespace(rel))),
-					 quote_identifier(RelationGetRelationName(rel)));
-	spi_result = SPI_execute_with_args(query, 1, argtypes, args, nulls, false, 1);
-
-	/* Check result */
-	if (spi_result != SPI_OK_DELETE)
-		elog(ERROR, "SPI_execute_with_args returned %d", spi_result);
-}
-
-/*
- * Insert a new tuple to the rel. Caller is responsible for SPI environment
- * setup
- */
-static void
-insert_tuple(Relation rel, HeapTuple tup)
-{
-	TupleDesc	tupdesc = rel->rd_att;
-	StringInfoData querybuf;
-	Datum	   *args;
-	Oid		   *argtypes;
-	char	   *nulls;
-	int			nargs;
-	const char *namespace;
-	const char *relname;
-	int			spi_result;
-
-	namespace = quote_identifier(get_namespace_name(RelationGetNamespace(rel)));
-	relname = quote_identifier(RelationGetRelationName(rel));
-
-	initStringInfo(&querybuf);
-	appendStringInfo(&querybuf, "INSERT INTO ");
-	appendStringInfo(&querybuf, "%s.%s", namespace, relname);
-	appendStringInfo(&querybuf, " VALUES (");
-	make_arg_list(&querybuf, tup, tupdesc, &nargs, &argtypes, &args, &nulls);
-	appendStringInfo(&querybuf, ")");
-
-	spi_result = SPI_execute_with_args(querybuf.data, nargs, argtypes,
-									   args, nulls, false, 0);
-
-	/* Check result */
-	if (spi_result != SPI_OK_INSERT)
-		elog(ERROR, "SPI_execute_with_args returned %d", spi_result);
-}
-
-static void
-make_arg_list(StringInfoData *buf, HeapTuple tup, TupleDesc tupdesc,
-			  int *nargs, Oid **argtypes, Datum **args, char **nulls)
-{
-	int		i;
-	bool	isnull;
-
-	*nargs = tupdesc->natts;
-	*args = (Datum *) palloc(sizeof(Datum) * tupdesc->natts);
-	*argtypes = (Oid *) palloc(sizeof(Oid) * tupdesc->natts);
-	*nulls = (char *) palloc(sizeof(char) * tupdesc->natts);
-
-	for (i = 0; i < *nargs; i++)
-	{
-		/* Skip dropped columns */
-		if (tupdesc->attrs[i]->attisdropped)
-			continue;
-
-		(*args)[i] = heap_getattr(tup, i + 1, tupdesc, &isnull);
-		(*nulls)[i] = isnull ? 'n' : ' ';
-		(*argtypes)[i] = tupdesc->attrs[i]->atttypid;
-
-		/* Add comma separator (except the first time) */
-		if (i != 0)
-			appendStringInfo(buf, ",");
-
-		/* Add parameter */
-		appendStringInfo(buf, "$%i", i+1);
-	}
-}
-
-/*
- * Returns Oid of partition corresponding to partitioning key value. Throws
- * an error if no partition found
- */
-static Oid
-get_partition_for_key(const PartRelationInfo *prel, Datum key)
-{
-	Oid	   *parts;
-	int		nparts;
-
-	/* Search for matching partitions */
-	parts = find_partitions_for_value(key, prel->atttype, prel, &nparts);
-
-	if (nparts > 1)
-		elog(ERROR, ERR_PART_ATTR_MULTIPLE);
-	else if (nparts == 0)
-		elog(ERROR,
-			 "There is not partition to fit partition key \"%s\"",
-			 datum_to_cstring(key, prel->atttype));
-	else
-		return parts[0];
-}
-
-
-/*
- * ------------------------
- *  Trigger functions
- * ------------------------
- */
-
-/*
- * Create UPDATE triggers for all partitions
- */
-Datum
-create_update_triggers(PG_FUNCTION_ARGS)
-{
-	const PartRelationInfo *prel;
-	Oid			parent = PG_GETARG_OID(0);
-	Oid		   *children;
-	char	   *attname,
-			   *trigname;
-	int			i;
-
-	prel = get_pathman_relation_info(parent);
-	shout_if_prel_is_invalid(parent, prel, PT_ANY);
-
-	attname = get_attname(prel->key, prel->attnum);
-	children = PrelGetChildrenArray(prel);
-	trigname = build_update_trigger_name_internal(parent);
-
-	/* Create triggers for parent */
-	create_single_update_trigger_internal(parent, trigname, attname);
-
-	/* Create triggers for each partition */
-	for (i = 0; i < PrelChildrenCount(prel); i++)
-		create_single_update_trigger_internal(children[i], trigname, attname);
-
-	PG_RETURN_VOID();
-}
-
-/*
- * Create an UPDATE trigger for partition
- */
-Datum
-create_single_update_trigger(PG_FUNCTION_ARGS)
-{
-	const PartRelationInfo *prel;
-	Oid					parent = PG_GETARG_OID(0);
-	Oid					partition = PG_GETARG_OID(1);
-	char			   *trigname,
-					   *attname;
-
-	/* Determine partitioning key name */
-	prel = get_pathman_relation_info(parent);
-	shout_if_prel_is_invalid(parent, prel, PT_ANY);
-
-	trigname = build_update_trigger_name_internal(parent);
-	attname = get_attname(prel->key, prel->attnum);
-
-	create_single_update_trigger_internal(partition, trigname, attname);
-
-	PG_RETURN_VOID();
-}
-
-Datum
-is_update_trigger_enabled(PG_FUNCTION_ARGS)
-{
-	PG_RETURN_BOOL(is_update_trigger_enabled_internal(PG_GETARG_OID(0)));
 }

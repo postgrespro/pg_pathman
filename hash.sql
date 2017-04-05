@@ -110,7 +110,7 @@ BEGIN
 	END IF;
 
 	/* Check that new partition has an equal structure as parent does */
-	IF NOT @extschema@.tuple_format_is_convertable(parent_relid, new_partition) THEN
+	IF NOT @extschema@.is_tuple_convertible(parent_relid, new_partition) THEN
 		RAISE EXCEPTION 'partition must have a compatible tuple format';
 	END IF;
 

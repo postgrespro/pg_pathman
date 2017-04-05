@@ -105,18 +105,7 @@ check_security_policy_internal(Oid relid, Oid role)
 	return true;
 }
 
-/*
- * Create an update trigger name
- */
-char *
-build_update_trigger_name_internal(Oid relid)
-{
-	/* Check that relation exists */
-	if (!check_relation_exists(relid))
-		elog(ERROR, "Invalid relation %u", relid);
 
-	return (char *) psprintf("%s_upd_trig", get_rel_name(relid));
-}
 
 /*
  * Return pg_pathman schema's Oid or InvalidOid if that's not possible.
@@ -175,6 +164,7 @@ list_reverse(List *l)
 	}
 	return result;
 }
+
 
 
 /*
@@ -246,19 +236,12 @@ RangeVar *
 makeRangeVarFromRelid(Oid relid)
 {
 	char *relname = get_rel_name(relid);
-	char *namespace = get_namespace_name(get_rel_namespace(relid));
+	char *nspname = get_namespace_name(get_rel_namespace(relid));
 
-	return makeRangeVar(namespace, relname, -1);
+	return makeRangeVar(nspname, relname, -1);
 }
 
-/*
- * Extracted common check.
- */
-bool
-check_relation_exists(Oid relid)
-{
-	return get_rel_type_id(relid) != InvalidOid;
-}
+
 
 /*
  * Try to find binary operator.
@@ -516,7 +499,8 @@ deconstruct_text_array(Datum array, int *array_size)
 
 	/* Check number of dimensions */
 	if (ARR_NDIM(array_ptr) > 1)
-		elog(ERROR, "'partition_names' and 'tablespaces' may contain only 1 dimension");
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("array should contain only 1 dimension")));
 
 	get_typlenbyvalalign(ARR_ELEMTYPE(array_ptr),
 						 &elemlen, &elembyval, &elemalign);
@@ -535,7 +519,8 @@ deconstruct_text_array(Datum array, int *array_size)
 		for (i = 0; i < arr_size; i++)
 		{
 			if (elem_nulls[i])
-				elog(ERROR, "'partition_names' and 'tablespaces' may not contain NULLs");
+				ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+								errmsg("array should not contain NULLs")));
 
 			strings[i] = TextDatumGetCString(elem_values[i]);
 		}
@@ -545,7 +530,8 @@ deconstruct_text_array(Datum array, int *array_size)
 		return strings;
 	}
 	/* Else emit ERROR */
-	else elog(ERROR, "'partition_names' and 'tablespaces' may not be empty");
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("array should not be empty")));
 
 	/* Keep compiler happy */
 	return NULL;
