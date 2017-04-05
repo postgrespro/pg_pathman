@@ -55,7 +55,7 @@
 
 /* TODO list:
  * - check for unique indexes existence on partitions
- * - check existing rows on FK table
+ * - perform key check for all rows in FK table
  */
 
 typedef struct ConstraintInfo
@@ -162,6 +162,7 @@ static Oid transformFkeyCheckAttrs(Relation pkrel, int16 attnum, Oid *opclass);
 static void create_fk_constraint_internal(Oid fk_table, AttrNumber fk_attnum, Oid pk_table, AttrNumber pk_attnum);
 static void createForeignKeyTriggers(Relation rel, Oid refRelOid,
 						 Oid constraintOid, Oid indexOid);
+static HeapTuple get_index_for_key(Relation rel, AttrNumber attnum);
 
 
 PG_FUNCTION_INFO_V1(pathman_fkey_check_ins);
@@ -1476,16 +1477,51 @@ transformFkeyCheckAttrs(Relation pkrel, int16 attnum,
 						Oid *opclass) /* output parameter */
 {
 	Oid			indexoid = InvalidOid;
-	bool		found = false;
+	HeapTuple	indexTuple;
+	Datum		indclassDatum;
+	oidvector  *indclass;
+	bool		isnull;
+
+	*opclass = InvalidOid;
+	indexTuple = get_index_for_key(pkrel, attnum);
+
+	if (!HeapTupleIsValid(indexTuple))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_FOREIGN_KEY),
+				 errmsg("there is no unique constraint matching given keys for referenced table \"%s\"",
+						RelationGetRelationName(pkrel))));
+
+	indclassDatum = SysCacheGetAttr(INDEXRELID, indexTuple,
+									Anum_pg_index_indclass, &isnull);
+	Assert(!isnull);
+	indclass = (oidvector *) DatumGetPointer(indclassDatum);
+	*opclass = indclass->values[0];
+	ReleaseSysCache(indexTuple);
+
+	Assert(OidIsValid(*opclass));
+
+	/* TODO: Get index oid from tuple!!! */
+	return indexoid;
+}
+
+/*
+ * Return UNIQUE INDEX tuple from pg_index corresponding to the relation
+ *
+ * Caller is responsible for releasing tuple
+ */
+static HeapTuple
+get_index_for_key(Relation rel, AttrNumber attnum)
+{
 	List	   *indexoidlist;
 	ListCell   *indexoidscan;
+	Oid			indexoid;
 
 	/*
 	 * Get the list of index OIDs for the table from the relcache, and look up
 	 * each one in the pg_index syscache, and match unique indexes to the list
 	 * of attnums we are given.
 	 */
-	indexoidlist = RelationGetIndexList(pkrel);
+	indexoidlist = RelationGetIndexList(rel);
 
 	foreach(indexoidscan, indexoidlist)
 	{
@@ -1509,38 +1545,16 @@ transformFkeyCheckAttrs(Relation pkrel, int16 attnum,
 			heap_attisnull(indexTuple, Anum_pg_index_indpred) &&
 			heap_attisnull(indexTuple, Anum_pg_index_indexprs))
 		{
-			Datum		indclassDatum;
-			bool		isnull;
-			oidvector  *indclass;
-
-			/* Must get indclass the hard way */
-			indclassDatum = SysCacheGetAttr(INDEXRELID, indexTuple,
-											Anum_pg_index_indclass, &isnull);
-			Assert(!isnull);
-			indclass = (oidvector *) DatumGetPointer(indclassDatum);
-
-			*opclass = InvalidOid;
 			if (attnum == indexStruct->indkey.values[0])
 			{
-				*opclass = indclass->values[0];
-				break;
+				list_free(indexoidlist);
+				return indexTuple;
 			}
 
 		}
 		ReleaseSysCache(indexTuple);
-		if (found)
-			break;
 	}
-
-	if (!OidIsValid(opclass))
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_FOREIGN_KEY),
-				 errmsg("there is no unique constraint matching given keys for referenced table \"%s\"",
-						RelationGetRelationName(pkrel))));
-	}
-
 	list_free(indexoidlist);
 
-	return indexoid;
+	return NULL;
 }
