@@ -572,54 +572,6 @@ select_range_partitions(const Datum value,
 	}
 }
 
-/* Fetch RangeEntry of RANGE partition which suits 'value' */
-search_rangerel_result
-search_range_partition_eq(const Datum value,
-						  FmgrInfo *cmp_func,
-						  const PartRelationInfo *prel,
-						  RangeEntry *out_re) /* returned RangeEntry */
-{
-	RangeEntry *ranges;
-	int			nranges;
-	WrapperNode	result;
-
-	ranges = PrelGetRangesArray(prel);
-	nranges = PrelChildrenCount(prel);
-
-	select_range_partitions(value,
-							cmp_func,
-							ranges,
-							nranges,
-							BTEqualStrategyNumber,
-							prel->attcollid,
-							&result); /* output */
-
-	if (result.found_gap)
-	{
-		return SEARCH_RANGEREL_GAP;
-	}
-	else if (result.rangeset == NIL)
-	{
-		return SEARCH_RANGEREL_OUT_OF_RANGE;
-	}
-	else
-	{
-		IndexRange irange = linitial_irange(result.rangeset);
-
-		Assert(list_length(result.rangeset) == 1);
-		Assert(irange_lower(irange) == irange_upper(irange));
-		Assert(is_irange_valid(irange));
-
-		/* Write result to the 'out_rentry' if necessary */
-		if (out_re)
-			memcpy((void *) out_re,
-				   (const void *) &ranges[irange_lower(irange)],
-				   sizeof(RangeEntry));
-
-		return SEARCH_RANGEREL_FOUND;
-	}
-}
-
 
 
 /*

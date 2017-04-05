@@ -165,19 +165,6 @@ void select_range_partitions(const Datum value,
 							 Oid collid,
 							 WrapperNode *result);
 
-/* Result of search_range_partition_eq() */
-typedef enum
-{
-	SEARCH_RANGEREL_OUT_OF_RANGE = 0,
-	SEARCH_RANGEREL_GAP,
-	SEARCH_RANGEREL_FOUND
-} search_rangerel_result;
-
-search_rangerel_result search_range_partition_eq(const Datum value,
-												 FmgrInfo *cmp_func,
-												 const PartRelationInfo *prel,
-												 RangeEntry *out_re);
-
 
 /* Convert hash value to the partition index */
 static inline uint32
