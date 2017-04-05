@@ -34,7 +34,9 @@ Oid create_single_range_partition_internal(Oid parent_relid,
 										   const Bound *end_value,
 										   Oid value_type,
 										   RangeVar *partition_rv,
-										   char *tablespace);
+										   char *tablespace,
+										   List *ri_constraints,
+										   List *ri_indexes);
 
 /* Create one HASH partition */
 Oid create_single_hash_partition_internal(Oid parent_relid,

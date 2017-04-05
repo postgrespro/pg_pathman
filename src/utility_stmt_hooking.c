@@ -13,9 +13,9 @@
 
 #include "compat/debug_compat_features.h"
 #include "init.h"
-#include "utility_stmt_hooking.h"
 #include "partition_filter.h"
 #include "relation_info.h"
+#include "utility_stmt_hooking.h"
 
 #include "access/htup_details.h"
 #include "access/sysattr.h"

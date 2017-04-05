@@ -14,6 +14,7 @@
 #include "relation_info.h"
 #include "utils.h"
 #include "xact_handling.h"
+#include "ref_integrity.h"
 
 #include "access/xact.h"
 #include "catalog/namespace.h"
@@ -96,6 +97,10 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 	RangeVar   *partition_name_rv;
 	char	   *tablespace;
 
+	/* FK constraints and corresponding unique indexes */
+	List	   *fk_constr;
+	List	   *fk_indexes;
+
 	/* Result (REGCLASS) */
 	Oid			partition_relid;
 
@@ -135,13 +140,17 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 	}
 	else tablespace = NULL; /* default */
 
+	pathman_get_fkeys(parent_relid, &fk_constr, &fk_indexes);
+
 	/* Create a new RANGE partition and return its Oid */
 	partition_relid = create_single_range_partition_internal(parent_relid,
 															 &start,
 															 &end,
 															 value_type,
 															 partition_name_rv,
-															 tablespace);
+															 tablespace,
+															 fk_constr,
+															 fk_indexes);
 
 	PG_RETURN_OID(partition_relid);
 }
@@ -1036,6 +1045,10 @@ create_range_partitions_internal(PG_FUNCTION_ARGS)
 	int				ndatums;
 	int				i;
 
+	/* FK constraints and corresponding unique indexes */
+	List		   *fk_constr;
+	List		   *fk_indexes;
+
 	/* Extract partition names */
 	if (!PG_ARGISNULL(2))
 	{
@@ -1088,6 +1101,9 @@ create_range_partitions_internal(PG_FUNCTION_ARGS)
 				 "Bounds array must be ascending");
 	}
 
+	/* Get FK constraints and corresponding indexes */
+	pathman_get_fkeys(relid, &fk_constr, &fk_indexes);
+
 	/* Create partitions */
 	for (i = 0; i < ndatums-1; i++)
 	{
@@ -1101,11 +1117,10 @@ create_range_partitions_internal(PG_FUNCTION_ARGS)
 		char   *tablespace = ntablespaces > 0 ? tablespaces[i] : NULL;
 
 		(void) create_single_range_partition_internal(relid,
-													  &start,
-													  &end,
+													  &start, &end,
 													  elemtype,
-													  rv,
-													  tablespace);
+													  rv, tablespace,
+													  fk_constr, fk_indexes);
 	}
 
 	PG_RETURN_INT32(ndatums-1);

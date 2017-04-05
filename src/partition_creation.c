@@ -60,7 +60,9 @@ static void create_single_partition_common(Oid parent_relid,
 										   Oid partition_relid,
 										   Constraint *check_constraint,
 										   init_callback_params *callback_params,
-										   const char *attname);
+										   const char *attname,
+										   List *ri_constraints,
+										   List *ri_indexes);
 
 static Oid create_single_partition_internal(Oid parent_relid,
 											RangeVar *partition_rv,
@@ -92,14 +94,18 @@ static bool update_trigger_exists(Oid relid, char *trigname);
  * ---------------------------------------
  */
 
-/* Create one RANGE partition [start_value, end_value) */
+/*
+ * Create one RANGE partition [start_value, end_value)
+ */
 Oid
 create_single_range_partition_internal(Oid parent_relid,
 									   const Bound *start_value,
 									   const Bound *end_value,
 									   Oid value_type,
 									   RangeVar *partition_rv,
-									   char *tablespace)
+									   char *tablespace,
+									   List *ri_constraints,
+									   List *ri_indexes)
 {
 	Oid						partition_relid;
 	Constraint			   *check_constr;
@@ -142,7 +148,9 @@ create_single_range_partition_internal(Oid parent_relid,
 								   partition_relid,
 								   check_constr,
 								   &callback_params,
-								   partitioned_column);
+								   partitioned_column,
+								   ri_constraints,
+								   ri_indexes);
 
 	/* Return the Oid */
 	return partition_relid;
@@ -197,7 +205,8 @@ create_single_hash_partition_internal(Oid parent_relid,
 								   partition_relid,
 								   check_constr,
 								   &callback_params,
-								   partitioned_column);
+								   partitioned_column,
+								   NIL, NIL);
 
 	/* Return the Oid */
 	return partition_relid;
@@ -209,13 +218,13 @@ create_single_partition_common(Oid parent_relid,
 							   Oid partition_relid,
 							   Constraint *check_constraint,
 							   init_callback_params *callback_params,
-							   const char *attname)
+							   const char *attname,
+							   List *fk_constr,
+							   List *fk_indexes)
 {
 	Relation	child_relation;
 	Oid			pathman_schema = get_pathman_schema();
 	char	   *pathman_schema_name = get_namespace_name(pathman_schema);
-	List	   *fk_constr,
-			   *fk_indexes;
 
 	/* Open the relation and add new check constraint & fkeys */
 	child_relation = heap_open(partition_relid, AccessExclusiveLock);
@@ -240,13 +249,12 @@ create_single_partition_common(Oid parent_relid,
 
 	/*
 	 * Create referential integrity triggers
-	 *
-	 * XXX Passing the list of fkeys should be caller's responsibility
 	 */
-	pathman_get_fkeys(parent_relid, &fk_constr, &fk_indexes);
-	if (fk_constr)
+	if (fk_constr && fk_indexes)
 	{
 		ListCell *lc1, *lc2;
+
+		Assert(list_length(fk_constr) == list_length(fk_indexes));
 
 		forboth(lc1, fk_constr, lc2, fk_indexes)
 		{
@@ -518,6 +526,9 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 
 	Oid			last_partition = InvalidOid;
 
+	List	   *fk_constr,					/* Foreign key constraints and */
+			   *fk_indexes;					/* corresponding unique indexes */
+
 
 	fill_type_cmp_fmgr_info(&cmp_value_bound_finfo, value_type, range_bound_type);
 
@@ -585,6 +596,9 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 	/* Get operator's underlying function */
 	fmgr_info(move_bound_op_func, &move_bound_finfo);
 
+	/* Find FK constraints and indexes */
+	pathman_get_fkeys(parent_relid, &fk_constr, &fk_indexes);
+
 	/* Execute comparison function cmp(value, cur_leading_bound) */
 	while (should_append ?
 				check_ge(&cmp_value_bound_finfo, value, cur_leading_bound) :
@@ -606,7 +620,8 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 		last_partition = create_single_range_partition_internal(parent_relid,
 																&bounds[0], &bounds[1],
 																range_bound_type,
-																NULL, NULL);
+																NULL, NULL,
+																fk_constr, fk_indexes);
 
 #ifdef USE_ASSERT_CHECKING
 		elog(DEBUG2, "%s partition with following='%s' & leading='%s' [%u]",

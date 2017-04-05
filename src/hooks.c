@@ -18,6 +18,7 @@
 #include "partition_filter.h"
 #include "pathman_workers.h"
 #include "planner_tree_modification.h"
+#include "ref_integrity.h"
 #include "runtimeappend.h"
 #include "runtime_merge_append.h"
 #include "utility_stmt_hooking.h"
@@ -25,6 +26,10 @@
 #include "xact_handling.h"
 
 #include "access/transam.h"
+#include "catalog/dependency.h"
+#include "catalog/namespace.h"
+#include "catalog/objectaddress.h"
+#include "catalog/pg_constraint.h"
 #include "miscadmin.h"
 #include "optimizer/cost.h"
 #include "optimizer/restrictinfo.h"
@@ -38,6 +43,8 @@ planner_hook_type				planner_hook_next = NULL;
 post_parse_analyze_hook_type	post_parse_analyze_hook_next = NULL;
 shmem_startup_hook_type			shmem_startup_hook_next = NULL;
 ProcessUtility_hook_type		process_utility_hook_next = NULL;
+
+static void pathman_drop_fkeys(Node *parsetree);
 
 
 /* Take care of joins */
@@ -688,27 +695,43 @@ pathman_process_utility_hook(Node *parsetree,
 		Oid			partition_relid;
 		AttrNumber	partitioned_col;
 
-		/* Override standard COPY statement if needed */
-		if (is_pathman_related_copy(parsetree))
+		switch(nodeTag(parsetree))
 		{
-			uint64	processed;
+			case T_CopyStmt:
+				/* Override standard COPY statement if needed */
+				if (is_pathman_related_copy(parsetree))
+				{
+					uint64	processed;
 
-			/* Handle our COPY case (and show a special cmd name) */
-			PathmanDoCopy((CopyStmt *) parsetree, queryString, &processed);
-			if (completionTag)
-				snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
-						 "PATHMAN COPY " UINT64_FORMAT, processed);
+					/* Handle our COPY case (and show a special cmd name) */
+					PathmanDoCopy((CopyStmt *) parsetree, queryString, &processed);
+					if (completionTag)
+						snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
+								 "PATHMAN COPY " UINT64_FORMAT, processed);
 
-			return; /* don't call standard_ProcessUtility() or hooks */
+					return; /* don't call standard_ProcessUtility() or hooks */
+				}
+				break;
+
+			case T_RenameStmt:
+				/* Override standard RENAME statement if needed */
+				if (is_pathman_related_table_rename(parsetree,
+													&partition_relid,
+													&partitioned_col))
+					PathmanRenameConstraint(partition_relid,
+											partitioned_col,
+											(const RenameStmt *) parsetree);
+				break;
+			case T_DropStmt:
+				/*
+				 * Check if there are pg_pathman's tables involved and drop
+				 * foreign key constraints if exist
+				 */
+				pathman_drop_fkeys(parsetree);
+				break;
+			default:
+				; /* skip */
 		}
-
-		/* Override standard RENAME statement if needed */
-		if (is_pathman_related_table_rename(parsetree,
-											&partition_relid,
-											&partitioned_col))
-			PathmanRenameConstraint(partition_relid,
-									partitioned_col,
-									(const RenameStmt *) parsetree);
 	}
 
 	/* Call hooks set by other extensions if needed */
@@ -721,4 +744,68 @@ pathman_process_utility_hook(Node *parsetree,
 		standard_ProcessUtility(parsetree, queryString,
 								context, params,
 								dest, completionTag);
+}
+
+/*
+ * Drop foreign key constraints referencing pg_pathman's tables being dropped
+ */
+static void
+pathman_drop_fkeys(Node *parsetree)
+{
+	DropStmt	   *drop_stmt = (DropStmt *) parsetree;
+	ListCell	   *cell;
+	LOCKMODE		lockmode;
+
+	Assert(IsA(parsetree, DropStmt));
+
+	/* If objects aren't tables then just quit */
+	if (drop_stmt->removeType != OBJECT_TABLE)
+		return;
+
+	/* See RemoveRelations() about locking */
+	lockmode = drop_stmt->concurrent ?
+		ShareUpdateExclusiveLock : AccessExclusiveLock;
+
+	/* Walk through each table */
+	foreach(cell, drop_stmt->objects)
+	{
+		RangeVar   *rel = makeRangeVarFromNameList((List *) lfirst(cell));
+		Oid			relid = RangeVarGetRelid(rel, lockmode, true);
+
+		if (!OidIsValid(relid))
+		{
+			if (drop_stmt->missing_ok)
+				continue;
+			else
+				ereport(ERROR,
+						(errcode(ERRCODE_UNDEFINED_TABLE),
+						 errmsg("table \"%s\" does not exist",
+								rel->relname)));
+		}
+
+		/* Is it pg_pathman's table? */
+		if (get_pathman_relation_info(relid) != NULL)
+		{
+			List	   *fk_constr = NIL,
+					   *fk_indexes = NIL;
+			ListCell   *lc;
+
+			pathman_get_fkeys(relid, &fk_constr, &fk_indexes);
+
+			/* Drop constraint */
+			foreach(lc, fk_constr)
+			{
+				Oid		conoid = lfirst_oid(lc);
+				ObjectAddress conobj;
+
+				conobj.classId = ConstraintRelationId;
+				conobj.objectId = conoid;
+				conobj.objectSubId = 0;
+
+				performDeletion(&conobj, DROP_RESTRICT, 0);
+
+			}
+
+		}
+	}
 }
