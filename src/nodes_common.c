@@ -612,6 +612,27 @@ end_append_common(CustomScanState *node)
 	hash_destroy(scan_state->children_table);
 }
 
+/*
+ * This function is similar to ChangeVarNodes, but changes only
+ * varno attributes, but doesn't change varnoold attribute
+ */
+static bool
+change_only_varnos(Node *node, const int *idx)
+{
+	if (node == NULL)
+		return false;
+
+	if (IsA(node, Var))
+	{
+		Var *var = (Var *) node;
+		Assert(var->varno == 1);
+		var->varno = *idx;
+		return false;
+	}
+
+	return expression_tree_walker(node, change_only_varnos, (void *) idx);
+}
+
 void
 rescan_append_common(CustomScanState *node)
 {
@@ -625,16 +646,14 @@ rescan_append_common(CustomScanState *node)
 	int						nparts;
 	Node				   *prel_expr;
 
+	const int				index_var = INDEX_VAR;
+
 	prel = get_pathman_relation_info(scan_state->relid);
 	Assert(prel);
 
 	/* Prepare expression */
-	prel_expr = prel->expr;
-	if (INDEX_VAR != 1)
-	{
-		prel_expr = copyObject(prel_expr);
-		ChangeVarNodes(prel_expr, 1, INDEX_VAR, 0);
-	}
+	prel_expr = copyObject(prel->expr);
+	change_only_varnos(prel_expr, &index_var);
 
 	/* First we select all available partitions... */
 	ranges = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_COMPLETE));
