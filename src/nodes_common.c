@@ -198,8 +198,12 @@ append_part_attr_to_tlist(List *tlist, Index relno, const PartRelationInfo *prel
 
 	foreach(lc, vars_not_found)
 	{
-		Var		*var = (Var *) lfirst(lc);
 		Index	last_item = list_length(tlist) + 1;
+		Var		*var = (Var *) copyObject((Node *) lfirst(lc));
+
+		/* other fields except 'varno' should be correct */
+		var->varno = relno;
+
 		tlist = lappend(tlist, makeTargetEntry((Expr *) var,
 											   last_item,
 											   NULL, false));
@@ -612,12 +616,35 @@ end_append_common(CustomScanState *node)
 	hash_destroy(scan_state->children_table);
 }
 
+/* Find first Var with varno == INDEX_VAR, and returns its varnoold */
+static bool
+find_varnoold(Node *node, int *varnoold)
+{
+	if (node == NULL)
+		return false;
+
+	if (IsA(node, Var))
+	{
+		Var *var = (Var *) node;
+		if (var->varno == INDEX_VAR)
+		{
+			/* we found it */
+			*varnoold = var->varnoold;
+			return true;
+		}
+		return false;
+	}
+
+	return expression_tree_walker(node, find_varnoold, (void *) varnoold);
+}
+
 /*
- * This function is similar to ChangeVarNodes, but changes only
- * varno attributes, but doesn't change varnoold attribute
+ * To check equality we need to modify partitioning expression's Vars like
+ * they appear in custom_exprs, it means that varno should be equal to
+ * INDEX_VAR and varnoold should be changed according to query
  */
 static bool
-change_only_varnos(Node *node, const int *idx)
+prepare_vars(Node *node, const int *varnoold)
 {
 	if (node == NULL)
 		return false;
@@ -626,11 +653,12 @@ change_only_varnos(Node *node, const int *idx)
 	{
 		Var *var = (Var *) node;
 		Assert(var->varno == 1);
-		var->varno = *idx;
+		var->varno = INDEX_VAR;
+		var->varnoold = *varnoold;
 		return false;
 	}
 
-	return expression_tree_walker(node, change_only_varnos, (void *) idx);
+	return expression_tree_walker(node, prepare_vars, (void *) varnoold);
 }
 
 void
@@ -646,14 +674,22 @@ rescan_append_common(CustomScanState *node)
 	int						nparts;
 	Node				   *prel_expr;
 
-	const int				index_var = INDEX_VAR;
+	int						varnoold = -100; /* not possible number */
 
 	prel = get_pathman_relation_info(scan_state->relid);
 	Assert(prel);
 
-	/* Prepare expression */
+	/* Prepare expression. Copy and modify 'varno' and 'varnoold' attributes */
 	prel_expr = copyObject(prel->expr);
-	change_only_varnos(prel_expr, &index_var);
+	foreach(lc, scan_state->custom_exprs)
+	{
+		find_varnoold((Node *) lfirst(lc), &varnoold);
+		if (varnoold != -100)
+			break;
+	}
+
+	if (varnoold != -100)
+		prepare_vars(prel_expr, &varnoold);
 
 	/* First we select all available partitions... */
 	ranges = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_COMPLETE));
