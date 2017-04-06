@@ -348,7 +348,7 @@ init_local_cache(void)
 	ctl.entrysize = sizeof(PartRelationInfo);
 	ctl.hcxt = PathmanRelationCacheContext;
 
-	partitioned_rels = hash_create("pg_pathman's partitioned relations cache",
+	partitioned_rels = hash_create("pg_pathman's partition dispatch cache",
 								   PART_RELS_SIZE, &ctl,
 								   HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
 
@@ -366,7 +366,7 @@ init_local_cache(void)
 	ctl.entrysize = sizeof(PartBoundInfo);
 	ctl.hcxt = PathmanBoundCacheContext;
 
-	bound_cache = hash_create("pg_pathman's partition constraints cache",
+	bound_cache = hash_create("pg_pathman's partition bounds cache",
 							  PART_RELS_SIZE * CHILD_FACTOR, &ctl,
 							  HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
 }
@@ -575,7 +575,7 @@ build_sequence_name_internal(Oid relid)
  */
 bool
 pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
-								 TransactionId *xmin)
+								 TransactionId *xmin, HeapTuple *tuple)
 {
 	Relation		rel;
 	HeapScanDesc	scan;
@@ -633,6 +633,9 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 			Assert(!isnull);
 			*xmin = DatumGetTransactionId(value);
 		}
+
+		if (tuple)
+			*tuple = heap_copytuple(htup);
 	}
 
 	/* Clean resources */
@@ -810,7 +813,7 @@ validate_range_constraint(const Expr *expr,
 									  lower, upper, lower_null, upper_null);
 }
 
-/* Validates a single expression of kind EXPRESSION >= CONST or EXPRESSION < CONST */
+/* Validates a single expression of kind EXPRESSION >= CONST | EXPRESSION < CONST */
 static bool
 validate_range_opexpr(const Expr *expr,
 					  const PartRelationInfo *prel,
@@ -869,8 +872,8 @@ validate_range_opexpr(const Expr *expr,
 
 /*
  * Reads const value from expressions of kind:
- *		1) EXPRESSION >= CONST OR EXPRESSION < CONST
- *		2) RELABELTYPE(VAR) >= CONST OR RELABELTYPE(VAR) < CONST
+ *		1) EXPRESSION >= CONST
+ *		2) EXPRESSION < CONST
  */
 static bool
 read_opexpr_const(const OpExpr *opexpr,
@@ -951,14 +954,14 @@ read_opexpr_const(const OpExpr *opexpr,
 /*
  * Validate hash constraint. It MUST have this exact format:
  *
- *		get_hash_part_idx(TYPE_HASH_PROC(VALUE), PARTITIONS_COUNT) = CUR_PARTITION_HASH
+ *		get_hash_part_idx(TYPE_HASH_PROC(VALUE), PARTITIONS_COUNT) = CUR_PARTITION_IDX
  *
- * Writes 'part_hash' hash value for this partition on success.
+ * Writes 'part_idx' hash value for this partition on success.
  */
 bool
 validate_hash_constraint(const Expr *expr,
 						 const PartRelationInfo *prel,
-						 uint32 *part_hash)
+						 uint32 *part_idx)
 {
 	const TypeCacheEntry   *tce;
 	const OpExpr		   *eq_expr;
@@ -970,6 +973,7 @@ validate_hash_constraint(const Expr *expr,
 
 	if (!IsA(expr, OpExpr))
 		return false;
+
 	eq_expr = (const OpExpr *) expr;
 
 	/* Check that left expression is a function call */
@@ -988,15 +992,27 @@ validate_hash_constraint(const Expr *expr,
 	{
 		Node   *first = linitial(get_hash_expr->args);	/* arg #1: TYPE_HASH_PROC(EXPRESSION) */
 		Node   *second = lsecond(get_hash_expr->args);	/* arg #2: PARTITIONS_COUNT */
-		Const  *cur_partition_hash;						/* hash value for this partition */
+		Const  *cur_partition_idx;						/* hash value for this partition */
+		Node   *hash_arg;
 
 		if (!IsA(first, FuncExpr) || !IsA(second, Const))
 			return false;
 
 		type_hash_proc_expr = (FuncExpr *) first;
 
-		/* Check that function is indeed TYPE_HASH_PROC */
+		/* Check that function is indeed TYPE_HASH_PROC() */
 		if (type_hash_proc_expr->funcid != prel->hash_proc)
+			return false;
+
+		/* There should be exactly 1 argument */
+		if (list_length(type_hash_proc_expr->args) != 1)
+			return false;
+
+		/* Extract arg of TYPE_HASH_PROC() */
+		hash_arg = (Node *) linitial(type_hash_proc_expr->args);
+
+		/* Check arg of TYPE_HASH_PROC() */
+		if (!match_expr_to_operand(prel->expr, hash_arg))
 			return false;
 
 		/* Check that PARTITIONS_COUNT is equal to total amount of partitions */
@@ -1007,14 +1023,15 @@ validate_hash_constraint(const Expr *expr,
 		if (!IsA(lsecond(eq_expr->args), Const))
 			return false;
 
-		cur_partition_hash = lsecond(eq_expr->args);
+		/* Fetch CUR_PARTITION_IDX */
+		cur_partition_idx = lsecond(eq_expr->args);
 
 		/* Check that CUR_PARTITION_HASH is NOT NULL */
-		if (cur_partition_hash->constisnull)
+		if (cur_partition_idx->constisnull)
 			return false;
 
-		*part_hash = DatumGetUInt32(cur_partition_hash->constvalue);
-		if (*part_hash >= PrelChildrenCount(prel))
+		*part_idx = DatumGetUInt32(cur_partition_idx->constvalue);
+		if (*part_idx >= PrelChildrenCount(prel))
 			return false;
 
 		return true; /* everything seems to be ok */
@@ -1022,7 +1039,6 @@ validate_hash_constraint(const Expr *expr,
 
 	return false;
 }
-
 /* needed for find_inheritance_children_array() function */
 static int
 oid_cmp(const void *p1, const void *p2)

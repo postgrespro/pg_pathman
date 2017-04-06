@@ -36,8 +36,9 @@ CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
 	attname			TEXT NOT NULL,	/* expression */
 	parttype		INTEGER NOT NULL,
 	range_interval	TEXT,
-	expression_p	TEXT NOT NULL,	/* parsed expression (until plan) */
-	atttype			OID NOT NULL,	/* expression type */
+	expression_p	TEXT NOT NULL,		/* parsed expression (until plan) */
+	atttype			OID NOT NULL,		/* expression type */
+	upd_expr		BOOL DEFAULT FALSE,	/* update expression on next refresh? */
 
 	/* check for allowed part types */
 	CHECK (parttype IN (1, 2)),

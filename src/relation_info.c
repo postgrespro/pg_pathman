@@ -90,7 +90,8 @@ static void fill_pbin_with_bounds(PartBoundInfo *pbin,
 								  const Expr *constraint_expr);
 
 static int cmp_range_entries(const void *p1, const void *p2, void *arg);
-
+static void update_parsed_expression(Oid relid, HeapTuple tuple,
+									   Datum *values, bool *nulls);
 
 void
 init_relation_info_static_data(void)
@@ -309,6 +310,41 @@ refresh_pathman_relation_info(Oid relid,
 	return prel;
 }
 
+/* Check that one of arguments of OpExpr is expression */
+static bool
+extract_vars(Node *node, PartRelationInfo *prel)
+{
+	if (node == NULL)
+		return false;
+
+	if (IsA(node, Var))
+	{
+		prel->expr_vars = lappend(prel->expr_vars, node);
+		return false;
+	}
+
+	return expression_tree_walker(node, extract_vars, (void *) prel);
+}
+
+
+/*
+ * This function fills 'expr_vars' attribute in PartRelationInfo.
+ */
+List *
+get_part_expression_vars(const PartRelationInfo *prel)
+{
+	if (prel->expr_vars == NIL)
+	{
+		MemoryContext	ctx;
+
+		ctx = MemoryContextSwitchTo(PathmanRelationCacheContext);
+		extract_vars(prel->expr, (PartRelationInfo *) prel);
+		MemoryContextSwitchTo(ctx);
+	}
+
+	return prel->expr_vars;
+}
+
 /* Invalidate PartRelationInfo cache entry. Create new entry if 'found' is NULL. */
 void
 invalidate_pathman_relation_info(Oid relid, bool *found)
@@ -347,6 +383,78 @@ invalidate_pathman_relation_info(Oid relid, bool *found)
 		 relid, MyProcPid);
 }
 
+/* Update expression in pathman_config */
+static void
+update_parsed_expression(Oid relid, HeapTuple tuple, Datum *values, bool *nulls)
+{
+	char				*expression;
+	bool				 replaces[Natts_pathman_config];
+
+	Relation			 rel;
+	HeapTuple			 newtuple;
+	PartExpressionInfo	*expr_info;
+
+	/* get and parse expression */
+	expression = TextDatumGetCString(values[Anum_pathman_config_expression - 1]);
+	expr_info = get_part_expression_info(relid, expression, false, true);
+	Assert(expr_info->expr_datum != (Datum) 0);
+	pfree(expression);
+
+	/* prepare tuple values */
+	values[Anum_pathman_config_expression_p - 1]	= expr_info->expr_datum;
+	nulls[Anum_pathman_config_expression_p - 1]		= false;
+
+	values[Anum_pathman_config_atttype - 1]			= ObjectIdGetDatum(expr_info->expr_type);
+	nulls[Anum_pathman_config_atttype - 1]			= false;
+
+	values[Anum_pathman_config_upd_expression - 1]	= BoolGetDatum(false);
+	nulls[Anum_pathman_config_upd_expression - 1]	= false;
+
+	MemSet(replaces, false, sizeof(replaces));
+	replaces[Anum_pathman_config_expression_p - 1]	= true;
+	replaces[Anum_pathman_config_atttype - 1] = true;
+	replaces[Anum_pathman_config_upd_expression - 1] = true;
+
+	/* update row */
+	rel = heap_open(get_pathman_config_relid(false), RowExclusiveLock);
+	newtuple = heap_modify_tuple(tuple, RelationGetDescr(rel), values, nulls,
+			replaces);
+	simple_heap_update(rel, &newtuple->t_self, newtuple);
+	CatalogUpdateIndexes(rel, newtuple);
+	heap_close(rel, RowExclusiveLock);
+}
+
+/* Mark expression in pathman_config as it needs update */
+void
+mark_pathman_expression_for_update(Oid relid)
+{
+	HeapTuple	tuple;
+	Datum		values[Natts_pathman_config];
+	bool		nulls[Natts_pathman_config];
+
+	/* Check that PATHMAN_CONFIG table contains this relation */
+	if (pathman_config_contains_relation(relid, values, nulls, NULL, &tuple))
+	{
+		Relation	rel;
+		HeapTuple	newtuple;
+		bool		replaces[Natts_pathman_config];
+
+		values[Anum_pathman_config_upd_expression - 1]	= BoolGetDatum(true);
+		nulls[Anum_pathman_config_upd_expression - 1]	= false;
+
+		MemSet(replaces, false, sizeof(replaces));
+		replaces[Anum_pathman_config_upd_expression - 1] = true;
+
+		/* update row */
+		rel = heap_open(get_pathman_config_relid(false), RowExclusiveLock);
+		newtuple = heap_modify_tuple(tuple, RelationGetDescr(rel), values, nulls,
+				replaces);
+		simple_heap_update(rel, &newtuple->t_self, newtuple);
+		CatalogUpdateIndexes(rel, newtuple);
+		heap_close(rel, RowExclusiveLock);
+	}
+}
+
 /* Get PartRelationInfo from local cache. */
 const PartRelationInfo *
 get_pathman_relation_info(Oid relid)
@@ -357,12 +465,17 @@ get_pathman_relation_info(Oid relid)
 	/* Refresh PartRelationInfo if needed */
 	if (prel && !PrelIsValid(prel))
 	{
-		Datum	values[Natts_pathman_config];
-		bool	isnull[Natts_pathman_config];
+		HeapTuple	 tuple;
+		Datum		 values[Natts_pathman_config];
+		bool		 isnull[Natts_pathman_config];
 
 		/* Check that PATHMAN_CONFIG table contains this relation */
-		if (pathman_config_contains_relation(relid, values, isnull, NULL))
+		if (pathman_config_contains_relation(relid, values, isnull, NULL, &tuple))
 		{
+			bool upd_expr = DatumGetBool(values[Anum_pathman_config_upd_expression - 1]);
+			if (upd_expr)
+				update_parsed_expression(relid, tuple, values, isnull);
+
 			/* Refresh partitioned table cache entry (might turn NULL) */
 			/* TODO: possible refactoring, pass found 'prel' instead of searching */
 			prel = refresh_pathman_relation_info(relid, values, false);
@@ -488,7 +601,7 @@ fill_prel_with_partitions(PartRelationInfo *prel,
 		switch (prel->parttype)
 		{
 			case PT_HASH:
-				prel->children[bound_info->hash] = bound_info->child_rel;
+				prel->children[bound_info->part_idx] = bound_info->child_rel;
 				break;
 
 			case PT_RANGE:
@@ -640,7 +753,7 @@ finish_delayed_invalidation(void)
 			if (IsToastNamespace(get_rel_namespace(parent)))
 				continue;
 
-			if (!pathman_config_contains_relation(parent, NULL, NULL, NULL))
+			if (!pathman_config_contains_relation(parent, NULL, NULL, NULL, NULL))
 				remove_pathman_relation_info(parent);
 			else
 				/* get_pathman_relation_info() will refresh this entry */
@@ -661,6 +774,7 @@ finish_delayed_invalidation(void)
 			{
 				PartParentSearch	search;
 				Oid					parent;
+				List			   *fresh_rels = delayed_invalidation_parent_rels;
 
 				parent = get_parent_of_partition(vague_rel, &search);
 
@@ -668,12 +782,20 @@ finish_delayed_invalidation(void)
 				{
 					/* It's still parent */
 					case PPS_ENTRY_PART_PARENT:
-						try_perform_parent_refresh(parent);
+						{
+							/* Skip if we've already refreshed this parent */
+							if (!list_member_oid(fresh_rels, parent))
+								try_perform_parent_refresh(parent);
+						}
 						break;
 
 					/* It *might have been* parent before (not in PATHMAN_CONFIG) */
 					case PPS_ENTRY_PARENT:
-						remove_pathman_relation_info(parent);
+						{
+							/* Skip if we've already refreshed this parent */
+							if (!list_member_oid(fresh_rels, parent))
+								try_perform_parent_refresh(parent);
+						}
 						break;
 
 					/* How come we still don't know?? */
@@ -802,7 +924,6 @@ try_syscache_parent_search(Oid partition, PartParentSearch *status)
 	else
 	{
 		Relation		relation;
-		Snapshot		snapshot;
 		ScanKeyData		key[1];
 		SysScanDesc		scan;
 		HeapTuple		inheritsTuple;
@@ -818,7 +939,6 @@ try_syscache_parent_search(Oid partition, PartParentSearch *status)
 					BTEqualStrategyNumber, F_OIDEQ,
 					ObjectIdGetDatum(partition));
 
-		snapshot = RegisterSnapshot(GetLatestSnapshot());
 		scan = systable_beginscan(relation, InheritsRelidSeqnoIndexId,
 								  true, NULL, 1, key);
 
@@ -834,7 +954,7 @@ try_syscache_parent_search(Oid partition, PartParentSearch *status)
 			if (status) *status = PPS_ENTRY_PARENT;
 
 			/* Check that PATHMAN_CONFIG contains this table */
-			if (pathman_config_contains_relation(parent, NULL, NULL, NULL))
+			if (pathman_config_contains_relation(parent, NULL, NULL, NULL, NULL))
 			{
 				/* We've found the entry, update status */
 				if (status) *status = PPS_ENTRY_PART_PARENT;
@@ -844,7 +964,6 @@ try_syscache_parent_search(Oid partition, PartParentSearch *status)
 		}
 
 		systable_endscan(scan);
-		UnregisterSnapshot(snapshot);
 		heap_close(relation, AccessShareLock);
 
 		return parent;
@@ -859,11 +978,16 @@ try_syscache_parent_search(Oid partition, PartParentSearch *status)
 static bool
 try_perform_parent_refresh(Oid parent)
 {
-	Datum	values[Natts_pathman_config];
-	bool	isnull[Natts_pathman_config];
+	HeapTuple	 tuple;
+	Datum		 values[Natts_pathman_config];
+	bool		 isnull[Natts_pathman_config];
 
-	if (pathman_config_contains_relation(parent, values, isnull, NULL))
+	if (pathman_config_contains_relation(parent, values, isnull, NULL, &tuple))
 	{
+		bool upd_expr = DatumGetBool(values[Anum_pathman_config_upd_expression - 1]);
+		if (upd_expr)
+			update_parsed_expression(parent, tuple, values, isnull);
+
 		/* If anything went wrong, return false (actually, it might emit ERROR) */
 		refresh_pathman_relation_info(parent,
 									  values,
@@ -1033,7 +1157,7 @@ fill_pbin_with_bounds(PartBoundInfo *pbin,
 		case PT_HASH:
 			{
 				if (!validate_hash_constraint(constraint_expr,
-											  prel, &pbin->hash))
+											  prel, &pbin->part_idx))
 				{
 					DisablePathman(); /* disable pg_pathman since config is broken */
 					ereport(ERROR,

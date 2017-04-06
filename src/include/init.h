@@ -200,7 +200,8 @@ char *build_sequence_name_internal(Oid relid);
 bool pathman_config_contains_relation(Oid relid,
 									  Datum *values,
 									  bool *isnull,
-									  TransactionId *xmin);
+									  TransactionId *xmin,
+									  HeapTuple *tuple);
 
 bool read_pathman_params(Oid relid,
 						 Datum *values,
@@ -214,7 +215,7 @@ bool validate_range_constraint(const Expr *expr,
 
 bool validate_hash_constraint(const Expr *expr,
 							  const PartRelationInfo *prel,
-							  uint32 *part_hash);
+							  uint32 *part_idx);
 
 
 #endif /* PATHMAN_INIT_H */

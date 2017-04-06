@@ -129,50 +129,13 @@ replace_tlist_varnos(List *tlist, Index old_varno, Index new_varno)
 	return temp_tlist;
 }
 
-/* Check that one of arguments of OpExpr is expression */
-static bool
-extract_vars(Node *node, PartRelationInfo *prel)
-{
-	if (node == NULL)
-		return false;
-
-	if (IsA(node, Var))
-	{
-		prel->expr_vars = lappend(prel->expr_vars, node);
-		return false;
-	}
-
-	return expression_tree_walker(node, extract_vars, (void *) prel);
-}
-
-
-/*
- * This function fills 'expr_vars' attribute in PartRelationInfo.
- * For now it's static because there are no other places where we need it.
- */
-static inline List *
-extract_vars_from_expression(PartRelationInfo *prel)
-{
-	if (prel->expr_vars == NIL)
-	{
-		MemoryContext	ctx;
-
-		prel->expr_vars = NIL;
-		ctx = MemoryContextSwitchTo(PathmanRelationCacheContext);
-		extract_vars(prel->expr, prel);
-		MemoryContextSwitchTo(ctx);
-	}
-
-	return prel->expr_vars;
-}
-
 /* Append partition attribute in case it's not present in target list */
 static List *
 append_part_attr_to_tlist(List *tlist, Index relno, const PartRelationInfo *prel)
 {
 	ListCell   *lc,
 			   *lc_var;
-	List	   *vars = extract_vars_from_expression((PartRelationInfo *) prel);
+	List	   *vars = get_part_expression_vars((PartRelationInfo *) prel);
 	List	   *vars_not_found = NIL;
 
 	foreach (lc_var, vars)

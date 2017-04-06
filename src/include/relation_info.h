@@ -190,7 +190,7 @@ typedef struct
 	bool			byval;
 
 	/* For HASH partitions */
-	uint32			hash;
+	uint32			part_idx;
 } PartBoundInfo;
 
 /*
@@ -244,6 +244,10 @@ const PartRelationInfo *get_pathman_relation_info(Oid relid);
 const PartRelationInfo *get_pathman_relation_info_after_lock(Oid relid,
 															 bool unlock_if_not_found,
 															 LockAcquireResult *lock_result);
+
+/* Expression related routines */
+void mark_pathman_expression_for_update(Oid relid);
+List *get_part_expression_vars(const PartRelationInfo *prel);
 
 /* Global invalidation routines */
 void delay_pathman_shutdown(void);

@@ -756,6 +756,9 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	values[Anum_pathman_config_atttype - 1]			= ObjectIdGetDatum(expr_info->expr_type);
 	isnull[Anum_pathman_config_atttype - 1]			= false;
 
+	values[Anum_pathman_config_upd_expression - 1]	= BoolGetDatum(false);
+	isnull[Anum_pathman_config_upd_expression - 1]	= false;
+
 	if (parttype == PT_RANGE)
 	{
 		values[Anum_pathman_config_range_interval - 1]	= PG_GETARG_DATUM(2);

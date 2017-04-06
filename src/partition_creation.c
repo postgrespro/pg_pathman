@@ -240,7 +240,7 @@ create_partitions_for_value(Oid relid, Datum value, Oid value_type)
 	Oid				last_partition = InvalidOid;
 
 	/* Check that table is partitioned and fetch xmin */
-	if (pathman_config_contains_relation(relid, NULL, NULL, &rel_xmin))
+	if (pathman_config_contains_relation(relid, NULL, NULL, &rel_xmin, NULL))
 	{
 		/* Take default values */
 		bool	spawn_using_bgw	= DEFAULT_SPAWN_USING_BGW,
@@ -324,7 +324,7 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
 		bool					isnull[Natts_pathman_config];
 
 		/* Get both PartRelationInfo & PATHMAN_CONFIG contents for this relation */
-		if (pathman_config_contains_relation(relid, values, isnull, NULL))
+		if (pathman_config_contains_relation(relid, values, isnull, NULL, NULL))
 		{
 			Oid			base_bound_type;	/* base type of prel->atttype */
 			Oid			base_value_type;	/* base type of value_type */
@@ -683,7 +683,7 @@ create_single_partition_internal(Oid parent_relid,
 
 	/* Check that table is registered in PATHMAN_CONFIG */
 	if (!pathman_config_contains_relation(parent_relid,
-										  config_values, config_nulls, NULL))
+										  config_values, config_nulls, NULL, NULL))
 		elog(ERROR, "table \"%s\" is not partitioned",
 			 get_rel_name_or_relid(parent_relid));
 
