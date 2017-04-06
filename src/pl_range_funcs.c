@@ -145,7 +145,7 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 Datum
 create_range_partitions_internal(PG_FUNCTION_ARGS)
 {
-	Oid				relid = PG_GETARG_OID(0);
+	Oid				parent_relid;
 	int16			typlen;
 	bool			typbyval;
 	char			typalign;
@@ -159,12 +159,29 @@ create_range_partitions_internal(PG_FUNCTION_ARGS)
 	int				ntablespaces	= 0;
 
 	/* Bounds */
-	ArrayType	   *array = PG_GETARG_ARRAYTYPE_P(1);
-	Oid				elemtype = ARR_ELEMTYPE(array);
+	ArrayType	   *bounds;
+	Oid				elemtype;
 	Datum		   *datums;
 	bool		   *nulls;
 	int				ndatums;
 	int				i;
+
+	/* Extract parent's Oid */
+	if (!PG_ARGISNULL(0))
+	{
+		parent_relid = PG_GETARG_OID(0);
+	}
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("'parent_relid' should not be NULL")));
+
+	/* Extract array of bounds */
+	if (!PG_ARGISNULL(1))
+	{
+		bounds = PG_GETARG_ARRAYTYPE_P(1);
+		elemtype = ARR_ELEMTYPE(bounds);
+	}
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("'bounds' should not be NULL")));
 
 	/* Extract partition names */
 	if (!PG_ARGISNULL(2))
@@ -179,19 +196,21 @@ create_range_partitions_internal(PG_FUNCTION_ARGS)
 
 	/* Extract bounds */
 	get_typlenbyvalalign(elemtype, &typlen, &typbyval, &typalign);
-	deconstruct_array(array, elemtype,
+	deconstruct_array(bounds, elemtype,
 					  typlen, typbyval, typalign,
 					  &datums, &nulls, &ndatums);
 
 	if (partnames && npartnames != ndatums - 1)
-		ereport(ERROR, (errmsg("wrong length of relnames array"),
-						errdetail("relnames number must be less than "
-								  "bounds array length by one")));
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("wrong length of 'relnames' array"),
+						errdetail("number of 'relnames' must be less than "
+								  "'bounds' array length by one")));
 
 	if (tablespaces && ntablespaces != ndatums - 1)
-		ereport(ERROR, (errmsg("wrong length of tablespaces array"),
-						errdetail("tablespaces number must be less than "
-								  "bounds array length by one")));
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("wrong length of 'tablespaces' array"),
+						errdetail("number of 'tablespaces' must be less than "
+								  "'bounds' array length by one")));
 
 	/* Check if bounds array is ascending */
 	fill_type_cmp_fmgr_info(&cmp_func,
@@ -199,7 +218,7 @@ create_range_partitions_internal(PG_FUNCTION_ARGS)
 							getBaseType(elemtype));
 
 	/* Validate bounds */
-	for (i = 0; i < ndatums - 1; i++)
+	for (i = 0; i < ndatums; i++)
 	{
 		/* Disregard 1st bound */
 		if (i == 0) continue;
@@ -212,7 +231,7 @@ create_range_partitions_internal(PG_FUNCTION_ARGS)
 		/* Check that bounds are ascending */
 		if (!nulls[i - 1] && !check_le(&cmp_func, datums[i - 1], datums[i]))
 			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-							errmsg("bounds array must be ascending")));
+							errmsg("'bounds' array must be ascending")));
 	}
 
 	/* Create partitions using provided bounds */
@@ -230,7 +249,7 @@ create_range_partitions_internal(PG_FUNCTION_ARGS)
 
 		char	   *tablespace = tablespaces ? tablespaces[i] : NULL;
 
-		(void) create_single_range_partition_internal(relid,
+		(void) create_single_range_partition_internal(parent_relid,
 													  &start,
 													  &end,
 													  elemtype,

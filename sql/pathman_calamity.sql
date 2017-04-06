@@ -36,6 +36,24 @@ SELECT count(*) FROM calamity.part_test;
 DELETE FROM calamity.part_test;
 
 
+/* test function create_range_partitions_internal() */
+SELECT create_range_partitions_internal(NULL, '{}'::INT[], NULL, NULL);			/* not ok */
+
+SELECT create_range_partitions_internal('calamity.part_test',
+										NULL::INT[], NULL, NULL);				/* not ok */
+
+SELECT create_range_partitions_internal('calamity.part_test', '{1}'::INT[],
+										'{part_1}'::TEXT[], NULL);				/* not ok */
+
+SELECT create_range_partitions_internal('calamity.part_test', '{1}'::INT[],
+										NULL, '{tblspc_1}'::TEXT[]);			/* not ok */
+
+SELECT create_range_partitions_internal('calamity.part_test',
+										'{1, NULL}'::INT[], NULL, NULL);		/* not ok */
+
+SELECT create_range_partitions_internal('calamity.part_test',
+										'{2, 1}'::INT[], NULL, NULL);			/* not ok */
+
 /* test function create_hash_partitions() */
 SELECT create_hash_partitions('calamity.part_test', 'val', 2,
 							  partition_names := ARRAY[]::TEXT[]); /* not ok */
@@ -157,6 +175,7 @@ SELECT drop_range_partition_expand_next(NULL) IS NULL;
 SELECT generate_range_bounds(NULL, 100, 10) IS NULL;
 SELECT generate_range_bounds(0, NULL::INT4, 10) IS NULL;
 SELECT generate_range_bounds(0, 100, NULL) IS NULL;
+SELECT generate_range_bounds(0, 100, 0);							/* not ok */
 SELECT generate_range_bounds('a'::TEXT, 'test'::TEXT, 10);			/* not ok */
 SELECT generate_range_bounds('a'::TEXT, '1 mon'::INTERVAL, 10);		/* not ok */
 SELECT generate_range_bounds(0::NUMERIC, 1::NUMERIC, 10);			/* OK */

@@ -469,7 +469,7 @@ BEGIN
 	END IF;
 
 	IF @extschema@.is_attribute_nullable(relation, p_attribute) THEN
-		RAISE EXCEPTION 'partitioning key "%" must be NOT NULL', p_attribute;
+		RAISE EXCEPTION 'partitioning key "%" must be marked NOT NULL', p_attribute;
 	END IF;
 
 	/* Check if there are foreign keys that reference the relation */
