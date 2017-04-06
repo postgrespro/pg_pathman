@@ -177,13 +177,6 @@ RETURNS VOID AS 'pg_pathman', 'create_hash_partitions_internal'
 LANGUAGE C;
 
 /*
- * Returns hash function OID for specified type
- */
-CREATE OR REPLACE FUNCTION @extschema@.get_type_hash_func(REGTYPE)
-RETURNS REGPROC AS 'pg_pathman', 'get_type_hash_func'
-LANGUAGE C STRICT;
-
-/*
  * Calculates hash for integer value
  */
 CREATE OR REPLACE FUNCTION @extschema@.get_hash_part_idx(INT4, INT4)

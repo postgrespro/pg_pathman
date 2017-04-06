@@ -25,7 +25,6 @@
 
 PG_FUNCTION_INFO_V1( create_hash_partitions_internal );
 
-PG_FUNCTION_INFO_V1( get_type_hash_func );
 PG_FUNCTION_INFO_V1( get_hash_part_idx );
 
 PG_FUNCTION_INFO_V1( build_hash_condition );
@@ -105,20 +104,6 @@ create_hash_partitions_internal(PG_FUNCTION_ARGS)
 	DeepFreeArray(rangevars, partition_names_size);
 
 	PG_RETURN_VOID();
-}
-
-/*
- * Returns hash function's OID for a specified type.
- */
-Datum
-get_type_hash_func(PG_FUNCTION_ARGS)
-{
-	TypeCacheEntry *tce;
-	Oid 			type_oid = PG_GETARG_OID(0);
-
-	tce = lookup_type_cache(type_oid, TYPECACHE_HASH_PROC);
-
-	PG_RETURN_OID(tce->hash_proc);
 }
 
 /*
