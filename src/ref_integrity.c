@@ -162,7 +162,7 @@ static Oid transformFkeyCheckAttrs(Relation pkrel, int16 attnum, Oid *opclass);
 static void create_fk_constraint_internal(Oid fk_table, AttrNumber fk_attnum, Oid pk_table, AttrNumber pk_attnum);
 static void createForeignKeyTriggers(Relation rel, Oid refRelOid,
 						 Oid constraintOid, Oid indexOid);
-static HeapTuple get_index_for_key(Relation rel, AttrNumber attnum);
+static HeapTuple get_index_for_key(Relation rel, AttrNumber attnum, Oid *index_id);
 
 
 PG_FUNCTION_INFO_V1(pathman_fkey_check_ins);
@@ -1388,6 +1388,7 @@ createForeignKeyTriggers(Relation rel, Oid refRelOid,
 	Oid		   *children;
 	uint32		nchildren;
 	int			i;
+	const char *attname;
 
 	myRelOid = RelationGetRelid(rel);
 
@@ -1396,6 +1397,7 @@ createForeignKeyTriggers(Relation rel, Oid refRelOid,
 		elog(ERROR,
 			 "table %s isn't partitioned by pg_pathman",
 			 get_rel_name(refRelOid));
+	attname = get_attname(refRelOid, prel->attnum);
 
 	/*
 	 * Build and execute a CREATE CONSTRAINT TRIGGER statement for the ON
@@ -1429,6 +1431,23 @@ createForeignKeyTriggers(Relation rel, Oid refRelOid,
 	funcname_upd = pathman_funcname("pathman_fkey_restrict_upd");
 	for (i = 0; i < nchildren; i++)
 	{
+		Relation	childRel;
+		HeapTuple	indexTuple;
+		Oid			indexOid;
+		AttrNumber	attnum = get_attnum(children[i], attname);
+
+		/* Lock partition so no one deletes rows before we're done */
+		childRel = heap_open(children[i], ShareRowExclusiveLock);
+
+		/* Is there unique index on partition */
+		indexTuple = get_index_for_key(childRel, attnum, &indexOid);
+
+		if (!HeapTupleIsValid(indexTuple))
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_FOREIGN_KEY),
+					 errmsg("there is no unique constraint for partition \"%s\"",
+							RelationGetRelationName(childRel))));
+
 		createSingleForeignKeyTrigger(children[i], myRelOid, funcname_del,
 									  "RI_ConstraintTrigger_a",
 									  TRIGGER_TYPE_DELETE,
@@ -1440,6 +1459,11 @@ createForeignKeyTriggers(Relation rel, Oid refRelOid,
 									  TRIGGER_TYPE_UPDATE,
 									  constraintOid,
 									  indexOid);
+
+		ReleaseSysCache(indexTuple);
+
+		/* TODO: Should we release lock? */
+		heap_close(childRel, ShareRowExclusiveLock);
 	}
 }
 
@@ -1483,7 +1507,7 @@ transformFkeyCheckAttrs(Relation pkrel, int16 attnum,
 	bool		isnull;
 
 	*opclass = InvalidOid;
-	indexTuple = get_index_for_key(pkrel, attnum);
+	indexTuple = get_index_for_key(pkrel, attnum, NULL);
 
 	if (!HeapTupleIsValid(indexTuple))
 		ereport(ERROR,
@@ -1510,7 +1534,7 @@ transformFkeyCheckAttrs(Relation pkrel, int16 attnum,
  * Caller is responsible for releasing tuple
  */
 static HeapTuple
-get_index_for_key(Relation rel, AttrNumber attnum)
+get_index_for_key(Relation rel, AttrNumber attnum, Oid *index_id)
 {
 	List	   *indexoidlist;
 	ListCell   *indexoidscan;
@@ -1548,6 +1572,9 @@ get_index_for_key(Relation rel, AttrNumber attnum)
 			if (attnum == indexStruct->indkey.values[0])
 			{
 				list_free(indexoidlist);
+				if (index_id != NULL)
+					*index_id = indexoid;
+
 				return indexTuple;
 			}
 
