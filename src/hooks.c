@@ -786,14 +786,14 @@ pathman_drop_fkeys(Node *parsetree)
 		/* Is it pg_pathman's table? */
 		if (get_pathman_relation_info(relid) != NULL)
 		{
-			List	   *fk_constr = NIL,
-					   *fk_indexes = NIL;
+			List	   *ri_constr = NIL,
+					   *ri_relids = NIL;
 			ListCell   *lc;
 
-			pathman_get_fkeys(relid, &fk_constr, &fk_indexes);
+			pathman_get_fkeys(relid, &ri_constr, &ri_relids);
 
 			/* Drop constraint */
-			foreach(lc, fk_constr)
+			foreach(lc, ri_constr)
 			{
 				Oid		conoid = lfirst_oid(lc);
 				ObjectAddress conobj;

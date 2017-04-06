@@ -62,7 +62,7 @@ static void create_single_partition_common(Oid parent_relid,
 										   init_callback_params *callback_params,
 										   const char *attname,
 										   List *ri_constraints,
-										   List *ri_indexes);
+										   List *ri_relids);
 
 static Oid create_single_partition_internal(Oid parent_relid,
 											RangeVar *partition_rv,
@@ -105,7 +105,7 @@ create_single_range_partition_internal(Oid parent_relid,
 									   RangeVar *partition_rv,
 									   char *tablespace,
 									   List *ri_constraints,
-									   List *ri_indexes)
+									   List *ri_relids)
 {
 	Oid						partition_relid;
 	Constraint			   *check_constr;
@@ -150,7 +150,7 @@ create_single_range_partition_internal(Oid parent_relid,
 								   &callback_params,
 								   partitioned_column,
 								   ri_constraints,
-								   ri_indexes);
+								   ri_relids);
 
 	/* Return the Oid */
 	return partition_relid;
@@ -219,12 +219,13 @@ create_single_partition_common(Oid parent_relid,
 							   Constraint *check_constraint,
 							   init_callback_params *callback_params,
 							   const char *attname,
-							   List *fk_constr,
-							   List *fk_indexes)
+							   List *ri_constr,
+							   List *ri_relids)
 {
 	Relation	child_relation;
 	Oid			pathman_schema = get_pathman_schema();
 	char	   *pathman_schema_name = get_namespace_name(pathman_schema);
+	AttrNumber	attnum = get_attnum(partition_relid, attname);
 
 	/* Open the relation and add new check constraint & fkeys */
 	child_relation = heap_open(partition_relid, AccessExclusiveLock);
@@ -250,37 +251,35 @@ create_single_partition_common(Oid parent_relid,
 	/*
 	 * Create referential integrity triggers
 	 */
-	if (fk_constr && fk_indexes)
+	if (ri_constr && ri_relids)
 	{
-		ListCell *lc1, *lc2;
+		ListCell   *lc1,
+				   *lc2;
+		List	   *upd_funcname,
+				   *del_funcname;
 
-		Assert(list_length(fk_constr) == list_length(fk_indexes));
+		upd_funcname = list_make2(makeString(pathman_schema_name),
+								  makeString("pathman_fkey_restrict_upd"));
+		del_funcname = list_make2(makeString(pathman_schema_name),
+								  makeString("pathman_fkey_restrict_del"));
 
-		forboth(lc1, fk_constr, lc2, fk_indexes)
+		Assert(list_length(ri_constr) == list_length(ri_relids));
+
+		forboth(lc1, ri_constr, lc2, ri_relids)
 		{
 			Oid		constrId = lfirst_oid(lc1);
-			Oid		indexId = lfirst_oid(lc2);
-			List   *funcname;
+			Oid		refrelid = lfirst_oid(lc2);
 
-			funcname = list_make2(makeString(pathman_schema_name),
-								  makeString("pathman_fkey_restrict_upd"));
-			createSingleForeignKeyTrigger(partition_relid, parent_relid,
-										  funcname,
-										  "RI_ConstraintTrigger_a",
-										  TRIGGER_TYPE_UPDATE,
-										  constrId,
-										  indexId);
-
-
-			funcname = list_make2(makeString(pathman_schema_name),
-								  makeString("pathman_fkey_restrict_del"));
-			createSingleForeignKeyTrigger(partition_relid, parent_relid,
-										  funcname,
-										  "RI_ConstraintTrigger_a",
-										  TRIGGER_TYPE_DELETE,
-										  constrId,
-										  indexId);
+			createPartitionForeignKeyTriggers(partition_relid,
+											  refrelid,
+											  attnum,
+											  constrId,
+											  upd_funcname,
+											  del_funcname);
 		}
+
+		pfree(del_funcname);
+		pfree(upd_funcname);
 	}
 	
 	/* Make trigger visible */
@@ -526,8 +525,8 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 
 	Oid			last_partition = InvalidOid;
 
-	List	   *fk_constr,					/* Foreign key constraints and */
-			   *fk_indexes;					/* corresponding unique indexes */
+	List	   *ri_constr,					/* Foreign key constraints and */
+			   *ri_relids;					/* corresponding relations */
 
 
 	fill_type_cmp_fmgr_info(&cmp_value_bound_finfo, value_type, range_bound_type);
@@ -596,8 +595,8 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 	/* Get operator's underlying function */
 	fmgr_info(move_bound_op_func, &move_bound_finfo);
 
-	/* Find FK constraints and indexes */
-	pathman_get_fkeys(parent_relid, &fk_constr, &fk_indexes);
+	/* Find FK constraints and its relations */
+	pathman_get_fkeys(parent_relid, &ri_constr, &ri_relids);
 
 	/* Execute comparison function cmp(value, cur_leading_bound) */
 	while (should_append ?
@@ -621,7 +620,7 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 																&bounds[0], &bounds[1],
 																range_bound_type,
 																NULL, NULL,
-																fk_constr, fk_indexes);
+																ri_constr, ri_relids);
 
 #ifdef USE_ASSERT_CHECKING
 		elog(DEBUG2, "%s partition with following='%s' & leading='%s' [%u]",

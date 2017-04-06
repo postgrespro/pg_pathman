@@ -234,7 +234,7 @@ pathman_fkey_restrict_upd(PG_FUNCTION_ARGS)
  * Find all foreign keys where table is an FK side
  */
 void
-pathman_get_fkeys(Oid parent_relid, List **constraints, List **indexes)
+pathman_get_fkeys(Oid parent_relid, List **constraints, List **refrelids)
 {
 	Relation		pg_constraint_rel;
 	HeapTuple		tuple;
@@ -243,7 +243,7 @@ pathman_get_fkeys(Oid parent_relid, List **constraints, List **indexes)
 	bool			isnull;
 
 	*constraints = NIL;
-	*indexes = NIL;
+	*refrelids = NIL;
 
 	pg_constraint_rel = heap_open(ConstraintRelationId, RowExclusiveLock);
 
@@ -269,7 +269,7 @@ pathman_get_fkeys(Oid parent_relid, List **constraints, List **indexes)
 									  &isnull);
 
 		*constraints = lappend_oid(*constraints, DatumGetObjectId(oid));
-		*indexes = lappend_oid(*indexes, con->conindid);
+		*refrelids = lappend_oid(*refrelids, con->conrelid);
 	}
 
 	systable_endscan(scan);
@@ -1431,40 +1431,72 @@ createForeignKeyTriggers(Relation rel, Oid refRelOid,
 	funcname_upd = pathman_funcname("pathman_fkey_restrict_upd");
 	for (i = 0; i < nchildren; i++)
 	{
-		Relation	childRel;
-		HeapTuple	indexTuple;
-		Oid			indexOid;
 		AttrNumber	attnum = get_attnum(children[i], attname);
 
-		/* Lock partition so no one deletes rows before we're done */
-		childRel = heap_open(children[i], ShareRowExclusiveLock);
-
-		/* Is there unique index on partition */
-		indexTuple = get_index_for_key(childRel, attnum, &indexOid);
-
-		if (!HeapTupleIsValid(indexTuple))
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_FOREIGN_KEY),
-					 errmsg("there is no unique constraint for partition \"%s\"",
-							RelationGetRelationName(childRel))));
-
-		createSingleForeignKeyTrigger(children[i], myRelOid, funcname_del,
-									  "RI_ConstraintTrigger_a",
-									  TRIGGER_TYPE_DELETE,
-									  constraintOid,
-									  indexOid);
-
-		createSingleForeignKeyTrigger(children[i], myRelOid, funcname_upd,
-									  "RI_ConstraintTrigger_a",
-									  TRIGGER_TYPE_UPDATE,
-									  constraintOid,
-									  indexOid);
-
-		ReleaseSysCache(indexTuple);
-
-		/* TODO: Should we release lock? */
-		heap_close(childRel, ShareRowExclusiveLock);
+		createPartitionForeignKeyTriggers(children[i],
+										  myRelOid,
+										  attnum,
+										  constraintOid,
+										  funcname_upd,
+										  funcname_del);
 	}
+}
+
+/*
+ * Create RI triggers for partition. Also as a bonus function adds dependency
+ * for index on FK constraint
+ */
+void
+createPartitionForeignKeyTriggers(Oid partition,
+								  Oid fkrelid,
+								  AttrNumber attnum,
+								  Oid constraintOid,
+								  List *upd_funcname,
+								  List *del_funcname)
+{
+	Relation	childRel;
+	HeapTuple	indexTuple;
+	Oid			indexOid;
+	ObjectAddress constrAddress;
+	ObjectAddress indexAddress;
+
+	/* Lock partition so no one deletes rows until we're done */
+	childRel = heap_open(partition, ShareRowExclusiveLock);
+
+	/* Is there unique index on partition */
+	indexTuple = get_index_for_key(childRel, attnum, &indexOid);
+
+	if (!HeapTupleIsValid(indexTuple))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_FOREIGN_KEY),
+				 errmsg("there is no unique constraint for partition \"%s\"",
+						RelationGetRelationName(childRel))));
+
+	createSingleForeignKeyTrigger(partition, fkrelid, del_funcname,
+								  "RI_ConstraintTrigger_a",
+								  TRIGGER_TYPE_DELETE,
+								  constraintOid,
+								  indexOid);
+
+	createSingleForeignKeyTrigger(partition, fkrelid, upd_funcname,
+								  "RI_ConstraintTrigger_a",
+								  TRIGGER_TYPE_UPDATE,
+								  constraintOid,
+								  indexOid);
+
+	ReleaseSysCache(indexTuple);
+
+	/*
+	 * Add index to pg_depend
+	 *
+	 * XXX Probably we should do it outside this function
+	 */
+	ObjectAddressSet(constrAddress, ConstraintRelationId, constraintOid);
+	ObjectAddressSet(indexAddress, RelationRelationId, indexOid);
+	recordDependencyOn(&constrAddress, &indexAddress, DEPENDENCY_NORMAL);
+
+	/* TODO: Should we release lock? */
+	heap_close(childRel, ShareRowExclusiveLock);
 }
 
 void

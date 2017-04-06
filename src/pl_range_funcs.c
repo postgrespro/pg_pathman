@@ -97,9 +97,9 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 	RangeVar   *partition_name_rv;
 	char	   *tablespace;
 
-	/* FK constraints and corresponding unique indexes */
-	List	   *fk_constr;
-	List	   *fk_indexes;
+	/* FK constraints and corresponding relations */
+	List	   *ri_constr;
+	List	   *ri_relids;
 
 	/* Result (REGCLASS) */
 	Oid			partition_relid;
@@ -140,7 +140,7 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 	}
 	else tablespace = NULL; /* default */
 
-	pathman_get_fkeys(parent_relid, &fk_constr, &fk_indexes);
+	pathman_get_fkeys(parent_relid, &ri_constr, &ri_relids);
 
 	/* Create a new RANGE partition and return its Oid */
 	partition_relid = create_single_range_partition_internal(parent_relid,
@@ -149,8 +149,8 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 															 value_type,
 															 partition_name_rv,
 															 tablespace,
-															 fk_constr,
-															 fk_indexes);
+															 ri_constr,
+															 ri_relids);
 
 	PG_RETURN_OID(partition_relid);
 }
@@ -1045,9 +1045,9 @@ create_range_partitions_internal(PG_FUNCTION_ARGS)
 	int				ndatums;
 	int				i;
 
-	/* FK constraints and corresponding unique indexes */
-	List		   *fk_constr;
-	List		   *fk_indexes;
+	/* FK constraints and corresponding relations */
+	List		   *ri_constr;
+	List		   *ri_relids;
 
 	/* Extract partition names */
 	if (!PG_ARGISNULL(2))
@@ -1101,8 +1101,8 @@ create_range_partitions_internal(PG_FUNCTION_ARGS)
 				 "Bounds array must be ascending");
 	}
 
-	/* Get FK constraints and corresponding indexes */
-	pathman_get_fkeys(relid, &fk_constr, &fk_indexes);
+	/* Get FK constraints and corresponding relations */
+	pathman_get_fkeys(relid, &ri_constr, &ri_relids);
 
 	/* Create partitions */
 	for (i = 0; i < ndatums-1; i++)
@@ -1120,7 +1120,7 @@ create_range_partitions_internal(PG_FUNCTION_ARGS)
 													  &start, &end,
 													  elemtype,
 													  rv, tablespace,
-													  fk_constr, fk_indexes);
+													  ri_constr, ri_relids);
 	}
 
 	PG_RETURN_INT32(ndatums-1);
