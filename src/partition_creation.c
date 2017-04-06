@@ -22,12 +22,14 @@
 #include "catalog/heap.h"
 #include "catalog/pg_authid.h"
 #include "catalog/pg_proc.h"
+#include "catalog/pg_trigger.h"
 #include "catalog/pg_type.h"
 #include "catalog/toasting.h"
 #include "commands/event_trigger.h"
 #include "commands/sequence.h"
 #include "commands/tablecmds.h"
 #include "commands/tablespace.h"
+#include "commands/trigger.h"
 #include "miscadmin.h"
 #include "parser/parse_func.h"
 #include "parser/parse_relation.h"
@@ -50,11 +52,14 @@ static Oid spawn_partitions_val(Oid parent_relid,
 								Datum interval_binary,
 								Oid interval_type,
 								Datum value,
-								Oid value_type);
+								Oid value_type,
+								Oid collid);
 
-static void create_single_partition_common(Oid partition_relid,
+static void create_single_partition_common(Oid parent_relid,
+										   Oid partition_relid,
 										   Constraint *check_constraint,
-										   init_callback_params *callback_params);
+										   init_callback_params *callback_params,
+										   const char *partitioned_column);
 
 static Oid create_single_partition_internal(Oid parent_relid,
 											RangeVar *partition_rv,
@@ -76,8 +81,6 @@ static Constraint *make_constraint_common(char *name, Node *raw_expr);
 
 static Value make_string_value_struct(char *str);
 static Value make_int_value_struct(int int_val);
-
-static RangeVar *makeRangeVarFromRelid(Oid relid);
 
 
 /*
@@ -132,9 +135,11 @@ create_single_range_partition_internal(Oid parent_relid,
 								*start_value, *end_value, value_type);
 
 	/* Add constraint & execute init_callback */
-	create_single_partition_common(partition_relid,
+	create_single_partition_common(parent_relid,
+								   partition_relid,
 								   check_constr,
-								   &callback_params);
+								   &callback_params,
+								   partitioned_column);
 
 	/* Return the Oid */
 	return partition_relid;
@@ -185,9 +190,11 @@ create_single_hash_partition_internal(Oid parent_relid,
 							   parent_relid, partition_relid);
 
 	/* Add constraint & execute init_callback */
-	create_single_partition_common(partition_relid,
+	create_single_partition_common(parent_relid,
+								   partition_relid,
 								   check_constr,
-								   &callback_params);
+								   &callback_params,
+								   partitioned_column);
 
 	/* Return the Oid */
 	return partition_relid;
@@ -195,11 +202,13 @@ create_single_hash_partition_internal(Oid parent_relid,
 
 /* Add constraint & execute init_callback */
 void
-create_single_partition_common(Oid partition_relid,
+create_single_partition_common(Oid parent_relid,
+							   Oid partition_relid,
 							   Constraint *check_constraint,
-							   init_callback_params *callback_params)
+							   init_callback_params *callback_params,
+							   const char *partitioned_column)
 {
-	Relation child_relation;
+	Relation	child_relation;
 
 	/* Open the relation and add new check constraint & fkeys */
 	child_relation = heap_open(partition_relid, AccessExclusiveLock);
@@ -209,6 +218,20 @@ create_single_partition_common(Oid partition_relid,
 	heap_close(child_relation, NoLock);
 
 	/* Make constraint visible */
+	CommandCounterIncrement();
+
+	/* Create trigger if needed */
+	if (has_update_trigger_internal(parent_relid))
+	{
+		const char *trigname;
+
+		trigname = build_update_trigger_name_internal(parent_relid);
+		create_single_update_trigger_internal(partition_relid,
+											  trigname,
+											  partitioned_column);
+	}
+
+	/* Make trigger visible */
 	CommandCounterIncrement();
 
 	/* Finally invoke 'init_callback' */
@@ -395,7 +418,8 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
 				partid = spawn_partitions_val(PrelParentRelid(prel),
 											  &bound_min, &bound_max, base_bound_type,
 											  interval_binary, interval_type,
-											  value, base_value_type);
+											  value, base_value_type,
+											  prel->attcollid);
 			}
 		}
 		else
@@ -447,7 +471,8 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 					 Datum interval_binary,			/* interval in binary form */
 					 Oid interval_type,				/* INTERVALOID or prel->atttype */
 					 Datum value,					/* value to be INSERTed */
-					 Oid value_type)				/* type of value */
+					 Oid value_type,				/* type of value */
+					 Oid collid)					/* collation id */
 {
 	bool		should_append;				/* append or prepend? */
 
@@ -473,7 +498,7 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 						errdetail("both bounds are infinite")));
 
 	/* value >= MAX_BOUNDARY */
-	else if (cmp_bounds(&cmp_value_bound_finfo,
+	else if (cmp_bounds(&cmp_value_bound_finfo, collid,
 						&value_bound, range_bound_max) >= 0)
 	{
 		should_append = true;
@@ -481,7 +506,7 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 	}
 
 	/* value < MIN_BOUNDARY */
-	else if (cmp_bounds(&cmp_value_bound_finfo,
+	else if (cmp_bounds(&cmp_value_bound_finfo, collid,
 						&value_bound, range_bound_min) < 0)
 	{
 		should_append = false;
@@ -1252,8 +1277,8 @@ check_range_available(Oid parent_relid,
 	{
 		int c1, c2;
 
-		c1 = cmp_bounds(&cmp_func, start, &ranges[i].max);
-		c2 = cmp_bounds(&cmp_func, end, &ranges[i].min);
+		c1 = cmp_bounds(&cmp_func, prel->attcollid, start, &ranges[i].max);
+		c2 = cmp_bounds(&cmp_func, prel->attcollid, end, &ranges[i].min);
 
 		/* There's something! */
 		if (c1 < 0 && c2 > 0)
@@ -1419,15 +1444,6 @@ make_int_value_struct(int int_val)
 	val.val.ival = int_val;
 
 	return val;
-}
-
-static RangeVar *
-makeRangeVarFromRelid(Oid relid)
-{
-	char *relname = get_rel_name(relid);
-	char *namespace = get_namespace_name(get_rel_namespace(relid));
-
-	return makeRangeVar(namespace, relname, -1);
 }
 
 
@@ -1678,4 +1694,83 @@ text_to_regprocedure(text *proc_signature)
 	result = to_regprocedure(&fcinfo);
 
 	return DatumGetObjectId(result);
+}
+
+
+/*
+ * -------------------------
+ *  Update trigger creation
+ * -------------------------
+ */
+
+/* Create trigger for partition */
+void
+create_single_update_trigger_internal(Oid partition_relid,
+									  const char *trigname,
+									  const char *attname)
+{
+	CreateTrigStmt	   *stmt;
+	List			   *func;
+
+	func = list_make2(makeString(get_namespace_name(get_pathman_schema())),
+					  makeString(CppAsString(pathman_update_trigger_func)));
+
+	stmt = makeNode(CreateTrigStmt);
+	stmt->trigname		= (char *) trigname;
+	stmt->relation		= makeRangeVarFromRelid(partition_relid);
+	stmt->funcname		= func;
+	stmt->args			= NIL;
+	stmt->row			= true;
+	stmt->timing		= TRIGGER_TYPE_BEFORE;
+	stmt->events		= TRIGGER_TYPE_UPDATE;
+	stmt->columns		= list_make1(makeString((char *) attname));
+	stmt->whenClause	= NULL;
+	stmt->isconstraint	= false;
+	stmt->deferrable	= false;
+	stmt->initdeferred	= false;
+	stmt->constrrel		= NULL;
+
+	(void) CreateTrigger(stmt, NULL, InvalidOid, InvalidOid,
+						 InvalidOid, InvalidOid, false);
+}
+
+/* Check if relation has pg_pathman's update trigger */
+bool
+has_update_trigger_internal(Oid parent_relid)
+{
+	bool			res = false;
+	Relation		tgrel;
+	SysScanDesc		scan;
+	ScanKeyData		key[1];
+	HeapTuple		tuple;
+	const char	   *trigname;
+
+	/* Build update trigger's name */
+	trigname = build_update_trigger_name_internal(parent_relid);
+
+	tgrel = heap_open(TriggerRelationId, RowExclusiveLock);
+
+	ScanKeyInit(&key[0],
+				Anum_pg_trigger_tgrelid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(parent_relid));
+
+	scan = systable_beginscan(tgrel, TriggerRelidNameIndexId,
+							  true, NULL, lengthof(key), key);
+
+	while (HeapTupleIsValid(tuple = systable_getnext(scan)))
+	{
+		Form_pg_trigger trigger = (Form_pg_trigger) GETSTRUCT(tuple);
+
+		if (namestrcmp(&(trigger->tgname), trigname) == 0)
+		{
+			res = true;
+			break;
+		}
+	}
+
+	systable_endscan(scan);
+	heap_close(tgrel, RowExclusiveLock);
+
+	return res;
 }

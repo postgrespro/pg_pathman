@@ -66,7 +66,6 @@ PathmanInitState 	pg_pathman_init_state;
 /* Shall we install new relcache callback? */
 static bool			relcache_callback_needed = true;
 
-
 /* Functions for various local caches */
 static bool init_pathman_relation_oids(void);
 static void fini_pathman_relation_oids(void);
@@ -543,33 +542,66 @@ find_inheritance_children_array(Oid parentrelId,
 	return nresult > 0 ? FCS_FOUND : FCS_NO_CHILDREN;
 }
 
+
+
 /*
  * Generate check constraint name for a partition.
- *
- * These functions does not perform sanity checks at all.
+ * NOTE: this function does not perform sanity checks at all.
  */
 char *
-build_check_constraint_name_relid_internal(Oid relid, AttrNumber attno)
+build_check_constraint_name_relid_internal(Oid relid,
+										   AttrNumber attno)
 {
 	return build_check_constraint_name_relname_internal(get_rel_name(relid), attno);
 }
 
+/*
+ * Generate check constraint name for a partition.
+ * NOTE: this function does not perform sanity checks at all.
+ */
 char *
-build_check_constraint_name_relname_internal(const char *relname, AttrNumber attno)
+build_check_constraint_name_relname_internal(const char *relname,
+											 AttrNumber attno)
 {
 	return psprintf("pathman_%s_%u_check", relname, attno);
 }
 
 /*
  * Generate part sequence name for a parent.
- *
- * This function does not perform sanity checks at all.
+ * NOTE: this function does not perform sanity checks at all.
  */
 char *
 build_sequence_name_internal(Oid relid)
 {
 	return psprintf("%s_seq", get_rel_name(relid));
 }
+
+/*
+ * Generate name for update trigger.
+ * NOTE: this function does not perform sanity checks at all.
+ */
+char *
+build_update_trigger_name_internal(Oid relid)
+{
+	return psprintf("%s_upd_trig", get_rel_name(relid));
+}
+
+/*
+ * Generate name for update trigger's function.
+ * NOTE: this function does not perform sanity checks at all.
+ */
+char *
+build_update_trigger_func_name_internal(Oid relid)
+{
+	Oid nspid = get_rel_namespace(relid);
+
+	return psprintf("%s.%s",
+					quote_identifier(get_namespace_name(nspid)),
+					quote_identifier(psprintf("%s_upd_trig_func",
+											  get_rel_name(relid))));
+}
+
+
 
 /*
  * Check that relation 'relid' is partitioned by pg_pathman.
@@ -976,7 +1008,7 @@ read_opexpr_const(const OpExpr *opexpr,
 
 	if (!cast_success)
 	{
-		elog(WARNING, "Constant type in some check constraint "
+		elog(WARNING, "constant type in some check constraint "
 					  "does not match the partitioned column's type");
 
 		return false;

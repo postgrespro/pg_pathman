@@ -17,6 +17,7 @@
 #include "access/sysattr.h"
 #include "access/xact.h"
 #include "catalog/heap.h"
+#include "catalog/namespace.h"
 #include "catalog/pg_type.h"
 #include "catalog/pg_extension.h"
 #include "catalog/pg_operator.h"
@@ -165,6 +166,7 @@ list_reverse(List *l)
 }
 
 
+
 /*
  * Get relation owner.
  */
@@ -230,6 +232,15 @@ get_attribute_type(Oid relid, const char *attname, bool missing_ok)
 	return InvalidOid;
 }
 
+RangeVar *
+makeRangeVarFromRelid(Oid relid)
+{
+	char *relname = get_rel_name(relid);
+	char *nspname = get_namespace_name(get_rel_namespace(relid));
+
+	return makeRangeVar(nspname, relname, -1);
+}
+
 
 
 /*
@@ -246,7 +257,10 @@ get_binary_operator(char *oprname, Oid arg1, Oid arg2)
 						 arg1, arg2, true, -1);
 
 	if (!op)
-		elog(ERROR, "Cannot find operator \"%s\"(%u, %u)", oprname, arg1, arg2);
+		elog(ERROR, "cannot find operator %s(%s, %s)",
+			 oprname,
+			 format_type_be(arg1),
+			 format_type_be(arg2));
 
 	return op;
 }
@@ -308,9 +322,7 @@ extract_op_func_and_ret_type(char *opname,
 
 	/* Get "move bound operator" descriptor */
 	op = get_binary_operator(opname, type1, type2);
-	if (!op)
-		elog(ERROR, "missing %s operator for types %s and %s",
-			 opname, format_type_be(type1), format_type_be(type2));
+	Assert(op);
 
 	*op_func = oprfuncid(op);
 	*op_ret_type = ((Form_pg_operator) GETSTRUCT(op))->oprresult;
@@ -466,4 +478,86 @@ extract_binary_interval_from_text(Datum interval_text,	/* interval as TEXT */
 	}
 
 	return interval_binary;
+}
+
+
+/* Convert Datum into CSTRING array */
+char **
+deconstruct_text_array(Datum array, int *array_size)
+{
+	ArrayType  *array_ptr = DatumGetArrayTypeP(array);
+	int16		elemlen;
+	bool		elembyval;
+	char		elemalign;
+
+	Datum	   *elem_values;
+	bool	   *elem_nulls;
+
+	int			arr_size = 0;
+
+	/* Check type invariant */
+	Assert(ARR_ELEMTYPE(array_ptr) == TEXTOID);
+
+	/* Check number of dimensions */
+	if (ARR_NDIM(array_ptr) > 1)
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("array should contain only 1 dimension")));
+
+	get_typlenbyvalalign(ARR_ELEMTYPE(array_ptr),
+						 &elemlen, &elembyval, &elemalign);
+
+	deconstruct_array(array_ptr,
+					  ARR_ELEMTYPE(array_ptr),
+					  elemlen, elembyval, elemalign,
+					  &elem_values, &elem_nulls, &arr_size);
+
+	/* If there are actual values, convert them into CSTRINGs */
+	if (arr_size > 0)
+	{
+		char  **strings = palloc(arr_size * sizeof(char *));
+		int		i;
+
+		for (i = 0; i < arr_size; i++)
+		{
+			if (elem_nulls[i])
+				ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+								errmsg("array should not contain NULLs")));
+
+			strings[i] = TextDatumGetCString(elem_values[i]);
+		}
+
+		/* Return an array and it's size */
+		*array_size = arr_size;
+		return strings;
+	}
+	/* Else emit ERROR */
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("array should not be empty")));
+
+	/* Keep compiler happy */
+	return NULL;
+}
+
+/*
+ * Convert schema qualified relation names array to RangeVars array
+ */
+RangeVar **
+qualified_relnames_to_rangevars(char **relnames, size_t nrelnames)
+{
+	RangeVar  **rangevars = NULL;
+	int			i;
+
+	/* Convert partition names into RangeVars */
+	if (relnames)
+	{
+		rangevars = palloc(sizeof(RangeVar) * nrelnames);
+		for (i = 0; i < nrelnames; i++)
+		{
+			List *nl = stringToQualifiedNameList(relnames[i]);
+
+			rangevars[i] = makeRangeVarFromNameList(nl);
+		}
+	}
+
+	return rangevars;
 }

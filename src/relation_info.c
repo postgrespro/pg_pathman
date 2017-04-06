@@ -37,6 +37,13 @@
 #endif
 
 
+/* Comparison function info */
+typedef struct cmp_func_info
+{
+	FmgrInfo	flinfo;
+	Oid			collid;
+} cmp_func_info;
+
 /*
  * For pg_pathman.enable_bounds_cache GUC.
  */
@@ -520,15 +527,16 @@ fill_prel_with_partitions(PartRelationInfo *prel,
 	/* Finalize 'prel' for a RANGE-partitioned table */
 	if (prel->parttype == PT_RANGE)
 	{
-		FmgrInfo flinfo;
+		cmp_func_info	cmp_info;
 
 		/* Prepare function info */
-		fmgr_info(prel->cmp_proc, &flinfo);
+		fmgr_info(prel->cmp_proc, &cmp_info.flinfo);
+		cmp_info.collid = prel->attcollid;
 
 		/* Sort partitions by RangeEntry->min asc */
 		qsort_arg((void *) prel->ranges, PrelChildrenCount(prel),
 				  sizeof(RangeEntry), cmp_range_entries,
-				  (void *) &flinfo);
+				  (void *) &cmp_info);
 
 		/* Initialize 'prel->children' array */
 		for (i = 0; i < PrelChildrenCount(prel); i++)
@@ -1117,9 +1125,9 @@ cmp_range_entries(const void *p1, const void *p2, void *arg)
 {
 	const RangeEntry   *v1 = (const RangeEntry *) p1;
 	const RangeEntry   *v2 = (const RangeEntry *) p2;
-	FmgrInfo		   *flinfo = (FmgrInfo *) arg;
+	cmp_func_info	   *info = (cmp_func_info *) arg;
 
-	return cmp_bounds(flinfo, &v1->min, &v2->min);
+	return cmp_bounds(&info->flinfo, info->collid, &v1->min, &v2->min);
 }
 
 

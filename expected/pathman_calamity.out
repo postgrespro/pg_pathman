@@ -28,7 +28,6 @@ NOTICE:  sequence "part_test_seq" does not exist, skipping
 (1 row)
 
 SELECT drop_partitions('calamity.part_test');
-NOTICE:  function calamity.part_test_upd_trig_func() does not exist, skipping
 NOTICE:  10 rows copied from calamity.part_test_1
 NOTICE:  10 rows copied from calamity.part_test_2
 NOTICE:  10 rows copied from calamity.part_test_3
@@ -44,7 +43,6 @@ SELECT create_range_partitions('calamity.part_test', 'val', 1, 10);
 (1 row)
 
 SELECT drop_partitions('calamity.part_test');
-NOTICE:  function calamity.part_test_upd_trig_func() does not exist, skipping
 NOTICE:  10 rows copied from calamity.part_test_1
 NOTICE:  10 rows copied from calamity.part_test_2
 NOTICE:  10 rows copied from calamity.part_test_3
@@ -66,7 +64,6 @@ SELECT append_range_partition('calamity.part_test');
 (1 row)
 
 SELECT drop_partitions('calamity.part_test');
-NOTICE:  function calamity.part_test_upd_trig_func() does not exist, skipping
 NOTICE:  10 rows copied from calamity.part_test_1
 NOTICE:  10 rows copied from calamity.part_test_2
 NOTICE:  10 rows copied from calamity.part_test_3
@@ -89,7 +86,6 @@ SELECT append_range_partition('calamity.part_test');
 (1 row)
 
 SELECT drop_partitions('calamity.part_test');
-NOTICE:  function calamity.part_test_upd_trig_func() does not exist, skipping
 NOTICE:  10 rows copied from calamity.part_test_1
 NOTICE:  10 rows copied from calamity.part_test_2
 NOTICE:  10 rows copied from calamity.part_test_3
@@ -106,16 +102,34 @@ SELECT count(*) FROM calamity.part_test;
 (1 row)
 
 DELETE FROM calamity.part_test;
+/* test function create_range_partitions_internal() */
+SELECT create_range_partitions_internal(NULL, '{}'::INT[], NULL, NULL);			/* not ok */
+ERROR:  'parent_relid' should not be NULL
+SELECT create_range_partitions_internal('calamity.part_test',
+										NULL::INT[], NULL, NULL);				/* not ok */
+ERROR:  'bounds' should not be NULL
+SELECT create_range_partitions_internal('calamity.part_test', '{1}'::INT[],
+										'{part_1}'::TEXT[], NULL);				/* not ok */
+ERROR:  wrong length of 'partition_names' array
+SELECT create_range_partitions_internal('calamity.part_test', '{1}'::INT[],
+										NULL, '{tblspc_1}'::TEXT[]);			/* not ok */
+ERROR:  wrong length of 'tablespaces' array
+SELECT create_range_partitions_internal('calamity.part_test',
+										'{1, NULL}'::INT[], NULL, NULL);		/* not ok */
+ERROR:  only first bound can be NULL
+SELECT create_range_partitions_internal('calamity.part_test',
+										'{2, 1}'::INT[], NULL, NULL);			/* not ok */
+ERROR:  'bounds' array must be ascending
 /* test function create_hash_partitions() */
 SELECT create_hash_partitions('calamity.part_test', 'val', 2,
 							  partition_names := ARRAY[]::TEXT[]); /* not ok */
-ERROR:  'partition_names' and 'tablespaces' may not be empty
+ERROR:  array should not be empty
 SELECT create_hash_partitions('calamity.part_test', 'val', 2,
 							  partition_names := ARRAY[ 'p1', NULL ]::TEXT[]); /* not ok */
-ERROR:  'partition_names' and 'tablespaces' may not contain NULLs
+ERROR:  array should not contain NULLs
 SELECT create_hash_partitions('calamity.part_test', 'val', 2,
 							  partition_names := ARRAY[ ['p1'], ['p2'] ]::TEXT[]); /* not ok */
-ERROR:  'partition_names' and 'tablespaces' may contain only 1 dimension
+ERROR:  array should contain only 1 dimension
 SELECT create_hash_partitions('calamity.part_test', 'val', 2,
 							  partition_names := ARRAY['calamity.p1']::TEXT[]); /* not ok */
 ERROR:  size of 'partition_names' must be equal to 'partitions_count'
@@ -171,7 +185,6 @@ EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_test;
 (5 rows)
 
 SELECT drop_partitions('calamity.part_test', true);
-NOTICE:  function calamity.part_test_upd_trig_func() does not exist, skipping
  drop_partitions 
 -----------------
                4
@@ -199,7 +212,6 @@ ERROR:  invalid input syntax for integer: "15.6"
 SELECT set_interval('calamity.part_test', 'abc'::text);		/* not ok */
 ERROR:  invalid input syntax for integer: "abc"
 SELECT drop_partitions('calamity.part_test', true);
-NOTICE:  function calamity.part_test_upd_trig_func() does not exist, skipping
  drop_partitions 
 -----------------
                3
@@ -402,6 +414,45 @@ SELECT drop_range_partition_expand_next(NULL) IS NULL;
  t
 (1 row)
 
+/* check function generate_range_bounds() */
+SELECT generate_range_bounds(NULL, 100, 10) IS NULL;
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT generate_range_bounds(0, NULL::INT4, 10) IS NULL;
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT generate_range_bounds(0, 100, NULL) IS NULL;
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT generate_range_bounds(0, 100, 0);							/* not ok */
+ERROR:  'p_count' must be greater than zero
+SELECT generate_range_bounds('a'::TEXT, 'test'::TEXT, 10);			/* not ok */
+ERROR:  cannot find operator +(text, text)
+SELECT generate_range_bounds('a'::TEXT, '1 mon'::INTERVAL, 10);		/* not ok */
+ERROR:  cannot find operator +(text, interval)
+SELECT generate_range_bounds(0::NUMERIC, 1::NUMERIC, 10);			/* OK */
+  generate_range_bounds   
+--------------------------
+ {0,1,2,3,4,5,6,7,8,9,10}
+(1 row)
+
+SELECT generate_range_bounds('1-jan-2017'::DATE,
+							 '1 day'::INTERVAL,
+							 4);									/* OK */
+                  generate_range_bounds                   
+----------------------------------------------------------
+ {01-01-2017,01-02-2017,01-03-2017,01-04-2017,01-05-2017}
+(1 row)
+
 /* check invoke_on_partition_created_callback() */
 CREATE FUNCTION calamity.dummy_cb(arg jsonb) RETURNS void AS $$
 	begin
@@ -479,7 +530,6 @@ SELECT add_to_pathman_config('calamity.part_test', 'val');		/* OK */
 (1 row)
 
 SELECT disable_pathman_for('calamity.part_test');
-NOTICE:  function calamity.part_test_upd_trig_func() does not exist, skipping
  disable_pathman_for 
 ---------------------
  
@@ -492,7 +542,6 @@ SELECT add_to_pathman_config('calamity.part_test', 'val', '10'); /* OK */
 (1 row)
 
 SELECT disable_pathman_for('calamity.part_test');
-NOTICE:  function calamity.part_test_upd_trig_func() does not exist, skipping
  disable_pathman_for 
 ---------------------
  
@@ -599,7 +648,6 @@ SELECT set_enable_parent('calamity.to_be_disabled', true); /* add row to params 
 (1 row)
 
 SELECT disable_pathman_for('calamity.to_be_disabled'); /* should delete both rows */
-NOTICE:  function calamity.to_be_disabled_upd_trig_func() does not exist, skipping
  disable_pathman_for 
 ---------------------
  
@@ -698,7 +746,6 @@ SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
 (4 rows)
 
 SELECT drop_partitions('calamity.test_pathman_cache_stats');
-NOTICE:  function calamity.test_pathman_cache_stats_upd_trig_func() does not exist, skipping
 NOTICE:  0 rows copied from calamity.test_pathman_cache_stats_1
 NOTICE:  0 rows copied from calamity.test_pathman_cache_stats_2
 NOTICE:  0 rows copied from calamity.test_pathman_cache_stats_3
@@ -744,7 +791,6 @@ SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
 (4 rows)
 
 SELECT drop_partitions('calamity.test_pathman_cache_stats');
-NOTICE:  function calamity.test_pathman_cache_stats_upd_trig_func() does not exist, skipping
 NOTICE:  0 rows copied from calamity.test_pathman_cache_stats_1
 NOTICE:  0 rows copied from calamity.test_pathman_cache_stats_2
 NOTICE:  0 rows copied from calamity.test_pathman_cache_stats_3
