@@ -202,8 +202,8 @@ create_range_partitions_internal(PG_FUNCTION_ARGS)
 
 	if (partnames && npartnames != ndatums - 1)
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						errmsg("wrong length of 'relnames' array"),
-						errdetail("number of 'relnames' must be less than "
+						errmsg("wrong length of 'partition_names' array"),
+						errdetail("number of 'partition_names' must be less than "
 								  "'bounds' array length by one")));
 
 	if (tablespaces && ntablespaces != ndatums - 1)

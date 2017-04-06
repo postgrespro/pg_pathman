@@ -98,7 +98,6 @@ $$
 DECLARE
 	v_rows_count	BIGINT;
 	v_atttype		REGTYPE;
-	v_tablespace	TEXT;
 	v_max			start_value%TYPE;
 	v_cur_value		start_value%TYPE := start_value;
 	end_value		start_value%TYPE;
@@ -163,10 +162,12 @@ BEGIN
 
 	IF p_count != 0 THEN
 		part_count := @extschema@.create_range_partitions_internal(
-							parent_relid,
-							@extschema@.generate_range_bounds(start_value, p_interval, p_count),
-							NULL,
-							NULL);
+									parent_relid,
+									@extschema@.generate_range_bounds(start_value,
+																	  p_interval,
+																	  p_count),
+									NULL,
+									NULL);
 	END IF;
 
 	/* Notify backend about changes */
@@ -282,6 +283,67 @@ BEGIN
 	RETURN p_count;
 END
 $$ LANGUAGE plpgsql;
+
+/*
+ * Creates RANGE partitions for specified relation based on bounds array
+ */
+CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions(
+	parent_relid	REGCLASS,
+	attribute		TEXT,
+	bounds			ANYARRAY,
+	partition_names	TEXT[] DEFAULT NULL,
+	tablespaces		TEXT[] DEFAULT NULL,
+	partition_data	BOOLEAN DEFAULT TRUE)
+RETURNS INTEGER AS
+$$
+DECLARE
+	part_count	INTEGER;
+BEGIN
+	IF array_ndims(bounds) > 1 THEN
+		RAISE EXCEPTION 'Bounds array must be a one dimensional array';
+	END IF;
+
+	IF array_length(bounds, 1) < 2 THEN
+		RAISE EXCEPTION 'Bounds array must have at least two values';
+	END IF;
+
+	attribute := lower(attribute);
+	PERFORM @extschema@.prepare_for_partitioning(parent_relid, attribute, partition_data);
+
+	/* Check boundaries */
+	PERFORM @extschema@.check_boundaries(parent_relid,
+										 attribute,
+										 bounds[0],
+										 bounds[array_length(bounds, 1) - 1]);
+
+	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype, range_interval)
+	VALUES (parent_relid, attribute, 2, NULL);
+
+	/* Create sequence for child partitions names */
+	PERFORM @extschema@.create_or_replace_sequence(parent_relid)
+	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
+
+	/* Create partitions */
+	part_count := @extschema@.create_range_partitions_internal(parent_relid,
+															   bounds,
+															   partition_names,
+															   tablespaces);
+
+	/* Notify backend about changes */
+	PERFORM @extschema@.on_create_partitions(parent_relid);
+
+	/* Relocate data if asked to */
+	IF partition_data = true THEN
+		PERFORM @extschema@.set_enable_parent(parent_relid, false);
+		PERFORM @extschema@.partition_data(parent_relid);
+	ELSE
+		PERFORM @extschema@.set_enable_parent(parent_relid, true);
+	END IF;
+
+	RETURN part_count;
+END
+$$
+LANGUAGE plpgsql;
 
 /*
  * Creates RANGE partitions for specified range
@@ -406,64 +468,6 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
-
-CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions2(
-	parent_relid	REGCLASS,
-	attribute		TEXT,
-	bounds			ANYARRAY,
-	relnames		TEXT[] DEFAULT NULL,
-	tablespaces		TEXT[] DEFAULT NULL,
-	partition_data	BOOLEAN DEFAULT TRUE)
-RETURNS INTEGER AS
-$$
-DECLARE
-	part_count	INTEGER;
-BEGIN
-	IF array_ndims(bounds) > 1 THEN
-		RAISE EXCEPTION 'Bounds array must be a one dimensional array';
-	END IF;
-
-	IF array_length(bounds, 1) < 2 THEN
-		RAISE EXCEPTION 'Bounds array must have at least two values';
-	END IF;
-
-	attribute := lower(attribute);
-	PERFORM @extschema@.prepare_for_partitioning(parent_relid, attribute, partition_data);
-
-	/* Check boundaries */
-	PERFORM @extschema@.check_boundaries(parent_relid,
-										 attribute,
-										 bounds[0],
-										 bounds[array_length(bounds, 1) - 1]);
-
-	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype, range_interval)
-	VALUES (parent_relid, attribute, 2, NULL);
-
-	/* Create sequence for child partitions names */
-	PERFORM @extschema@.create_or_replace_sequence(parent_relid)
-	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
-
-	/* Create partitions */
-	part_count := @extschema@.create_range_partitions_internal(parent_relid,
-															   bounds,
-															   relnames,
-															   tablespaces);
-
-	/* Notify backend about changes */
-	PERFORM @extschema@.on_create_partitions(parent_relid);
-
-	/* Relocate data if asked to */
-	IF partition_data = true THEN
-		PERFORM @extschema@.set_enable_parent(parent_relid, false);
-		PERFORM @extschema@.partition_data(parent_relid);
-	ELSE
-		PERFORM @extschema@.set_enable_parent(parent_relid, true);
-	END IF;
-
-	RETURN part_count;
-END
-$$
-LANGUAGE plpgsql;
 
 /*
  * Split RANGE partition
@@ -843,7 +847,7 @@ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION @extschema@.add_range_partitions(
 	parent_relid	REGCLASS,
 	bounds			ANYARRAY,
-	relnames		TEXT[] DEFAULT NULL,
+	partition_names	TEXT[] DEFAULT NULL,
 	tablespaces		TEXT[] DEFAULT NULL)
 RETURNS INTEGER AS
 $$
@@ -858,7 +862,7 @@ BEGIN
 	/* Create partitions */
 	part_count := @extschema@.create_range_partitions_internal(parent_relid,
 															   bounds,
-															   relnames,
+															   partition_names,
 															   tablespaces);
 
 	/* Notify backend about changes */
@@ -1094,7 +1098,7 @@ LANGUAGE C STRICT;
 CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions_internal(
 	parent_relid	REGCLASS,
 	bounds			ANYARRAY,
-	relnames		TEXT[],
+	partition_names	TEXT[],
 	tablespaces		TEXT[])
 RETURNS REGCLASS AS 'pg_pathman', 'create_range_partitions_internal'
 LANGUAGE C;

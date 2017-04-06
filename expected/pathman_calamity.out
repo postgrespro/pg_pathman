@@ -110,7 +110,7 @@ SELECT create_range_partitions_internal('calamity.part_test',
 ERROR:  'bounds' should not be NULL
 SELECT create_range_partitions_internal('calamity.part_test', '{1}'::INT[],
 										'{part_1}'::TEXT[], NULL);				/* not ok */
-ERROR:  wrong length of 'relnames' array
+ERROR:  wrong length of 'partition_names' array
 SELECT create_range_partitions_internal('calamity.part_test', '{1}'::INT[],
 										NULL, '{tblspc_1}'::TEXT[]);			/* not ok */
 ERROR:  wrong length of 'tablespaces' array
