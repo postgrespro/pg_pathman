@@ -842,39 +842,6 @@ LANGUAGE plpgsql;
 
 
 /*
- * Add multiple partitions
- */
-CREATE OR REPLACE FUNCTION @extschema@.add_range_partitions(
-	parent_relid	REGCLASS,
-	bounds			ANYARRAY,
-	partition_names	TEXT[] DEFAULT NULL,
-	tablespaces		TEXT[] DEFAULT NULL)
-RETURNS INTEGER AS
-$$
-DECLARE
-	part_count		INTEGER;
-BEGIN
-	PERFORM @extschema@.validate_relname(parent_relid);
-
-	/* Acquire lock on parent */
-	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
-
-	/* Create partitions */
-	part_count := @extschema@.create_range_partitions_internal(parent_relid,
-															   bounds,
-															   partition_names,
-															   tablespaces);
-
-	/* Notify backend about changes */
-	PERFORM @extschema@.on_create_partitions(parent_relid);
-
-	RETURN part_count;
-END
-$$
-LANGUAGE plpgsql;
-
-
-/*
  * Drop range partition
  */
 CREATE OR REPLACE FUNCTION @extschema@.drop_range_partition(
