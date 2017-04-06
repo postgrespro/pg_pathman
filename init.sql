@@ -862,7 +862,7 @@ CREATE OR REPLACE FUNCTION @extschema@.is_operator_supported(
 	type_oid	OID,
 	opname		TEXT)
 RETURNS BOOLEAN AS 'pg_pathman', 'is_operator_supported'
-LANGUAGE C;
+LANGUAGE C STRICT;
 
 
 /*
