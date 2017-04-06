@@ -261,6 +261,77 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.improved_dummy WHERE id = 101 OR id = 5 A
 
 DROP TABLE test.improved_dummy CASCADE;
 NOTICE:  drop cascades to 11 other objects
+/* since rel_1_4_beta: check create_range_partitions(bounds array) */
+CREATE TABLE test.improved_dummy (val INT NOT NULL);
+SELECT pathman.create_range_partitions('test.improved_dummy', 'val',
+									   pathman.generate_range_bounds(1, 1, 2));
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+SELECT * FROM pathman.pathman_partition_list
+WHERE parent = 'test.improved_dummy'::REGCLASS
+ORDER BY partition;
+       parent        |       partition       | parttype | partattr | range_min | range_max 
+---------------------+-----------------------+----------+----------+-----------+-----------
+ test.improved_dummy | test.improved_dummy_1 |        2 | val      | 1         | 2
+ test.improved_dummy | test.improved_dummy_2 |        2 | val      | 2         | 3
+(2 rows)
+
+SELECT pathman.drop_partitions('test.improved_dummy');
+NOTICE:  0 rows copied from test.improved_dummy_1
+NOTICE:  0 rows copied from test.improved_dummy_2
+ drop_partitions 
+-----------------
+               2
+(1 row)
+
+SELECT pathman.create_range_partitions('test.improved_dummy', 'val',
+									   pathman.generate_range_bounds(1, 1, 2),
+									   partition_names := '{p1, p2}');
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+SELECT * FROM pathman.pathman_partition_list
+WHERE parent = 'test.improved_dummy'::REGCLASS
+ORDER BY partition;
+       parent        | partition | parttype | partattr | range_min | range_max 
+---------------------+-----------+----------+----------+-----------+-----------
+ test.improved_dummy | p1        |        2 | val      | 1         | 2
+ test.improved_dummy | p2        |        2 | val      | 2         | 3
+(2 rows)
+
+SELECT pathman.drop_partitions('test.improved_dummy');
+NOTICE:  0 rows copied from p1
+NOTICE:  0 rows copied from p2
+ drop_partitions 
+-----------------
+               2
+(1 row)
+
+SELECT pathman.create_range_partitions('test.improved_dummy', 'val',
+									   pathman.generate_range_bounds(1, 1, 2),
+									   partition_names := '{p1, p2}',
+									   tablespaces := '{pg_default, pg_default}');
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+SELECT * FROM pathman.pathman_partition_list
+WHERE parent = 'test.improved_dummy'::REGCLASS
+ORDER BY partition;
+       parent        | partition | parttype | partattr | range_min | range_max 
+---------------------+-----------+----------+----------+-----------+-----------
+ test.improved_dummy | p1        |        2 | val      | 1         | 2
+ test.improved_dummy | p2        |        2 | val      | 2         | 3
+(2 rows)
+
+DROP TABLE test.improved_dummy CASCADE;
+NOTICE:  drop cascades to 2 other objects
 /* Test pathman_rel_pathlist_hook() with INSERT query */
 CREATE TABLE test.insert_into_select(val int NOT NULL);
 INSERT INTO test.insert_into_select SELECT generate_series(1, 100);

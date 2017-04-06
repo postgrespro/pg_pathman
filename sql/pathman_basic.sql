@@ -78,6 +78,40 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.improved_dummy WHERE id = 101 OR id = 5 A
 DROP TABLE test.improved_dummy CASCADE;
 
 
+/* since rel_1_4_beta: check create_range_partitions(bounds array) */
+CREATE TABLE test.improved_dummy (val INT NOT NULL);
+
+SELECT pathman.create_range_partitions('test.improved_dummy', 'val',
+									   pathman.generate_range_bounds(1, 1, 2));
+
+SELECT * FROM pathman.pathman_partition_list
+WHERE parent = 'test.improved_dummy'::REGCLASS
+ORDER BY partition;
+
+SELECT pathman.drop_partitions('test.improved_dummy');
+
+SELECT pathman.create_range_partitions('test.improved_dummy', 'val',
+									   pathman.generate_range_bounds(1, 1, 2),
+									   partition_names := '{p1, p2}');
+
+SELECT * FROM pathman.pathman_partition_list
+WHERE parent = 'test.improved_dummy'::REGCLASS
+ORDER BY partition;
+
+SELECT pathman.drop_partitions('test.improved_dummy');
+
+SELECT pathman.create_range_partitions('test.improved_dummy', 'val',
+									   pathman.generate_range_bounds(1, 1, 2),
+									   partition_names := '{p1, p2}',
+									   tablespaces := '{pg_default, pg_default}');
+
+SELECT * FROM pathman.pathman_partition_list
+WHERE parent = 'test.improved_dummy'::REGCLASS
+ORDER BY partition;
+
+DROP TABLE test.improved_dummy CASCADE;
+
+
 /* Test pathman_rel_pathlist_hook() with INSERT query */
 CREATE TABLE test.insert_into_select(val int NOT NULL);
 INSERT INTO test.insert_into_select SELECT generate_series(1, 100);
