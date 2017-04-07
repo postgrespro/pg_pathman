@@ -14,6 +14,7 @@
 #include "miscadmin.h"
 
 #include "access/htup_details.h"
+#include "access/relscan.h"
 #include "access/sysattr.h"
 #include "access/xact.h"
 #include "catalog/pg_am.h"
@@ -163,6 +164,11 @@ static void create_fk_constraint_internal(Oid fk_table, AttrNumber fk_attnum, Oi
 static void createForeignKeyTriggers(Relation rel, Oid refRelOid,
 						 Oid constraintOid, Oid indexOid);
 static HeapTuple get_index_for_key(Relation rel, AttrNumber attnum, Oid *index_id);
+static void validateForeignKeyConstraint(char *conname,
+										 Relation rel,
+										 Relation pkrel,
+										 Oid pkindOid,
+										 Oid constraintOid);
 
 
 PG_FUNCTION_INFO_V1(pathman_fkey_check_ins);
@@ -1257,8 +1263,8 @@ create_fk_constraint_internal(Oid fk_table, AttrNumber fk_attnum, Oid pk_table, 
 	char	   *fkname;
 	Oid			constrOid;
 
-	Relation fkrel;
-	Relation pkrel;
+	Relation	fkrel;
+	Relation	pkrel;
 
 	HeapTuple	cla_ht;
 	Form_pg_opclass cla_tup;
@@ -1267,8 +1273,8 @@ create_fk_constraint_internal(Oid fk_table, AttrNumber fk_attnum, Oid pk_table, 
 	Oid			ppeqop;
 	Oid			ffeqop;
 
-	Oid opfamily;
-	Oid opcintype;
+	Oid			opfamily;
+	Oid			opcintype;
 
 
 	fkrel = heap_open(fk_table, ShareRowExclusiveLock);
@@ -1365,7 +1371,11 @@ create_fk_constraint_internal(Oid fk_table, AttrNumber fk_attnum, Oid pk_table, 
 	/* Make changes-so-far visible */
 	CommandCounterIncrement();
 
+	/* Add RI triggers */
 	createForeignKeyTriggers(fkrel, pk_table, constrOid, indexOid);
+
+	/* Go through fk table and apply RI trigger on each row */
+	validateForeignKeyConstraint(fkname, fkrel, pkrel, indexOid, constrOid);
 
 	heap_close(fkrel, ShareRowExclusiveLock);
 	heap_close(pkrel, ShareRowExclusiveLock);
@@ -1616,4 +1626,74 @@ get_index_for_key(Relation rel, AttrNumber attnum, Oid *index_id)
 	list_free(indexoidlist);
 
 	return NULL;
+}
+
+/*
+ * Scan the existing rows in a table to verify they meet a proposed FK
+ * constraint.
+ */
+static void
+validateForeignKeyConstraint(char *conname,
+							 Relation rel,
+							 Relation pkrel,
+							 Oid pkindOid,
+							 Oid constraintOid)
+{
+	HeapScanDesc scan;
+	HeapTuple	tuple;
+	Trigger		trig;
+	Snapshot	snapshot;
+
+	/* Build a trigger call structure */
+	MemSet(&trig, 0, sizeof(trig));
+	trig.tgoid = InvalidOid;
+	trig.tgname = conname;
+	trig.tgenabled = TRIGGER_FIRES_ON_ORIGIN;
+	trig.tgisinternal = TRUE;
+	trig.tgconstrrelid = RelationGetRelid(pkrel);
+	trig.tgconstrindid = pkindOid;
+	trig.tgconstraint = constraintOid;
+	trig.tgdeferrable = FALSE;
+	trig.tginitdeferred = FALSE;
+	/* we needn't fill in tgargs or tgqual */
+
+	/*
+	 * Scan through each tuple, calling RI_FKey_check_ins (insert trigger) as
+	 * if that tuple had just been inserted.  If any of those fail, it should
+	 * ereport(ERROR) and that's that.
+	 */
+	snapshot = RegisterSnapshot(GetLatestSnapshot());
+	scan = heap_beginscan(rel, snapshot, 0, NULL);
+
+	while ((tuple = heap_getnext(scan, ForwardScanDirection)) != NULL)
+	{
+		FunctionCallInfoData fcinfo;
+		TriggerData trigdata;
+
+		/*
+		 * Make a call to the trigger function
+		 *
+		 * No parameters are passed, but we do set a context
+		 */
+		MemSet(&fcinfo, 0, sizeof(fcinfo));
+
+		/*
+		 * We assume RI_FKey_check_ins won't look at flinfo...
+		 */
+		trigdata.type = T_TriggerData;
+		trigdata.tg_event = TRIGGER_EVENT_INSERT | TRIGGER_EVENT_ROW;
+		trigdata.tg_relation = rel;
+		trigdata.tg_trigtuple = tuple;
+		trigdata.tg_newtuple = NULL;
+		trigdata.tg_trigger = &trig;
+		trigdata.tg_trigtuplebuf = scan->rs_cbuf;
+		trigdata.tg_newtuplebuf = InvalidBuffer;
+
+		fcinfo.context = (Node *) &trigdata;
+
+		pathman_fkey_check_ins(&fcinfo);
+	}
+
+	heap_endscan(scan);
+	UnregisterSnapshot(snapshot);
 }
