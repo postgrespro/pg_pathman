@@ -22,7 +22,7 @@ DATA = pg_pathman--1.0--1.1.sql \
 	   pg_pathman--1.1--1.2.sql \
 	   pg_pathman--1.2--1.3.sql
 
-PGFILEDESC = "pg_pathman - partitioning tool"
+PGFILEDESC = "pg_pathman - partitioning tool for PostgreSQL"
 
 REGRESS = pathman_basic \
 		  pathman_only \
@@ -39,6 +39,7 @@ REGRESS = pathman_basic \
 		  pathman_runtime_nodes \
 		  pathman_utility_stmt \
 		  pathman_column_type \
+		  pathman_update_trigger \
 		  pathman_calamity \
 		  pathman_expressions
 

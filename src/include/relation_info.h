@@ -83,8 +83,8 @@ FreeBound(Bound *bound, bool byval)
 		pfree(DatumGetPointer(BoundGetValue(bound)));
 }
 
-static inline int
-cmp_bounds(FmgrInfo *cmp_func, const Bound *b1, const Bound *b2)
+inline static int
+cmp_bounds(FmgrInfo *cmp_func, const Oid collid, const Bound *b1, const Bound *b2)
 {
 	if (IsMinusInfinity(b1) || IsPlusInfinity(b2))
 		return -1;
@@ -94,11 +94,11 @@ cmp_bounds(FmgrInfo *cmp_func, const Bound *b1, const Bound *b2)
 
 	Assert(cmp_func);
 
-	return DatumGetInt32(FunctionCall2(cmp_func,
-									   BoundGetValue(b1),
-									   BoundGetValue(b2)));
+	return DatumGetInt32(FunctionCall2Coll(cmp_func,
+										   collid,
+										   BoundGetValue(b1),
+										   BoundGetValue(b2)));
 }
-
 
 
 /*
@@ -140,6 +140,7 @@ typedef struct
 	const char	   *attname;		/* original expression */
 	Node		   *expr;			/* planned expression */
 	List		   *expr_vars;		/* vars from expression, lazy */
+	Bitmapset	   *expr_atts;		/* set with attnums from expression */
 	Oid				atttype;		/* expression type */
 	int32			atttypmod;		/* expression type modifier */
 	bool			attbyval;		/* is partitioned column stored by value? */
@@ -247,7 +248,6 @@ const PartRelationInfo *get_pathman_relation_info_after_lock(Oid relid,
 
 /* Expression related routines */
 void mark_pathman_expression_for_update(Oid relid);
-List *get_part_expression_vars(const PartRelationInfo *prel);
 
 /* Global invalidation routines */
 void delay_pathman_shutdown(void);

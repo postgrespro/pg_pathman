@@ -397,6 +397,7 @@ select_range_partitions(const Datum value,
 						const RangeEntry *ranges,
 						const int nranges,
 						const int strategy,
+						const Oid collid,
 						WrapperNode *result) /* returned partitions */
 {
 	bool	lossy = false,
@@ -434,8 +435,8 @@ select_range_partitions(const Datum value,
 		Assert(cmp_func);
 
 		/* Compare 'value' to absolute MIN and MAX bounds */
-		cmp_min = cmp_bounds(cmp_func, &value_bound, &ranges[startidx].min);
-		cmp_max = cmp_bounds(cmp_func, &value_bound, &ranges[endidx].max);
+		cmp_min = cmp_bounds(cmp_func, collid, &value_bound, &ranges[startidx].min);
+		cmp_max = cmp_bounds(cmp_func, collid, &value_bound, &ranges[endidx].max);
 
 		if ((cmp_min <= 0 && strategy == BTLessStrategyNumber) ||
 			(cmp_min < 0 && (strategy == BTLessEqualStrategyNumber ||
@@ -483,8 +484,8 @@ select_range_partitions(const Datum value,
 		Assert(i >= 0 && i < nranges);
 
 		/* Compare 'value' to current MIN and MAX bounds */
-		cmp_min = cmp_bounds(cmp_func, &value_bound, &ranges[i].min);
-		cmp_max = cmp_bounds(cmp_func, &value_bound, &ranges[i].max);
+		cmp_min = cmp_bounds(cmp_func, collid, &value_bound, &ranges[i].min);
+		cmp_max = cmp_bounds(cmp_func, collid, &value_bound, &ranges[i].max);
 
 		is_less = (cmp_min < 0 || (cmp_min == 0 && strategy == BTLessStrategyNumber));
 		is_greater = (cmp_max > 0 || (cmp_max >= 0 && strategy != BTLessStrategyNumber));
@@ -570,53 +571,6 @@ select_range_partitions(const Datum value,
 		default:
 			elog(ERROR, "Unknown btree strategy (%u)", strategy);
 			break;
-	}
-}
-
-/* Fetch RangeEntry of RANGE partition which suits 'value' */
-search_rangerel_result
-search_range_partition_eq(const Datum value,
-						  FmgrInfo *cmp_func,
-						  const PartRelationInfo *prel,
-						  RangeEntry *out_re) /* returned RangeEntry */
-{
-	RangeEntry *ranges;
-	int			nranges;
-	WrapperNode	result;
-
-	ranges = PrelGetRangesArray(prel);
-	nranges = PrelChildrenCount(prel);
-
-	select_range_partitions(value,
-							cmp_func,
-							ranges,
-							nranges,
-							BTEqualStrategyNumber,
-							&result); /* output */
-
-	if (result.found_gap)
-	{
-		return SEARCH_RANGEREL_GAP;
-	}
-	else if (result.rangeset == NIL)
-	{
-		return SEARCH_RANGEREL_OUT_OF_RANGE;
-	}
-	else
-	{
-		IndexRange irange = linitial_irange(result.rangeset);
-
-		Assert(list_length(result.rangeset) == 1);
-		Assert(irange_lower(irange) == irange_upper(irange));
-		Assert(is_irange_valid(irange));
-
-		/* Write result to the 'out_rentry' if necessary */
-		if (out_re)
-			memcpy((void *) out_re,
-				   (const void *) &ranges[irange_lower(irange)],
-				   sizeof(RangeEntry));
-
-		return SEARCH_RANGEREL_FOUND;
 	}
 }
 
@@ -742,6 +696,7 @@ wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue)
 		return copyObject(wrap->orig);
 }
 
+
 /* Const handler */
 static WrapperNode *
 handle_const(const Const *c, WalkerContext *context)
@@ -811,6 +766,7 @@ handle_const(const Const *c, WalkerContext *context)
 										PrelGetRangesArray(context->prel),
 										PrelChildrenCount(context->prel),
 										strategy,
+										prel->attcollid,
 										result); /* output */
 
 				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
@@ -1107,7 +1063,21 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 
 		case PT_RANGE:
 			{
-				FmgrInfo cmp_func;
+				FmgrInfo	cmp_func;
+				Oid			collid;
+
+				/*
+				 * We cannot guarantee that we'll return correct partitions set
+				 * if operator collation is different from default attribute collation.
+				 * In this case we just return all of them.
+				 */
+				if (expr->opcollid != prel->attcollid &&
+					strategy != BTEqualStrategyNumber)
+					goto binary_opexpr_return;
+
+				collid = OidIsValid(expr->opcollid) ?
+											expr->opcollid :
+											prel->attcollid;
 
 				fill_type_cmp_fmgr_info(&cmp_func,
 										getBaseType(c->consttype),
@@ -1118,6 +1088,7 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 										PrelGetRangesArray(context->prel),
 										PrelChildrenCount(context->prel),
 										strategy,
+										collid,
 										result); /* output */
 
 				result->paramsel = estimate_paramsel_using_prel(prel, strategy);

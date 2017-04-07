@@ -121,7 +121,6 @@ WHERE t.id = tmp.tid AND t.pdate = tmp.pdate AND tmp.test_mode > 0;
 (24 rows)
 
 SELECT drop_partitions('test_cte.cte_del_xacts'); /* now drop partitions */
-NOTICE:  function test_cte.cte_del_xacts_upd_trig_func() does not exist, skipping
 NOTICE:  50 rows copied from test_cte.cte_del_xacts_1
 NOTICE:  50 rows copied from test_cte.cte_del_xacts_2
  drop_partitions 

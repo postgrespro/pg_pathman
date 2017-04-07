@@ -133,7 +133,6 @@ WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_7",
 (1 row)
 
 SELECT drop_partitions('callbacks.abc');
-NOTICE:  function callbacks.abc_upd_trig_func() does not exist, skipping
 NOTICE:  0 rows copied from callbacks.abc_1
 NOTICE:  1 rows copied from callbacks.abc_2
 NOTICE:  1 rows copied from callbacks.abc_3

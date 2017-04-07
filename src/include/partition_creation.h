@@ -92,6 +92,13 @@ PartExpressionInfo *get_part_expression_info(Oid relid,
 Node *get_raw_expression(Oid relid, const char *expr, char **query_string_out,
 		Node **parsetree);
 
+/* Update triggers */
+void create_single_update_trigger_internal(Oid partition_relid,
+										   const char *trigname,
+										   List *columns);
+
+bool has_update_trigger_internal(Oid parent);
+
 /* Partitioning callback type */
 typedef enum
 {

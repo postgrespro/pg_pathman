@@ -69,7 +69,6 @@ SELECT tableoid::regclass, * FROM test_column_type.test;
 (1 row)
 
 SELECT drop_partitions('test_column_type.test');
-NOTICE:  function test_column_type.test_upd_trig_func() does not exist, skipping
 NOTICE:  1 rows copied from test_column_type.test_1
 NOTICE:  0 rows copied from test_column_type.test_2
 NOTICE:  0 rows copied from test_column_type.test_3
@@ -156,7 +155,6 @@ SELECT tableoid::regclass, * FROM test_column_type.test;
 (1 row)
 
 SELECT drop_partitions('test_column_type.test');
-NOTICE:  function test_column_type.test_upd_trig_func() does not exist, skipping
 NOTICE:  1 rows copied from test_column_type.test_0
 NOTICE:  0 rows copied from test_column_type.test_1
 NOTICE:  0 rows copied from test_column_type.test_2

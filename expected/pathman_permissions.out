@@ -133,7 +133,6 @@ ERROR:  no suitable partition for key '55'
 /* Finally drop partitions */
 SET ROLE user1;
 SELECT drop_partitions('permissions.user1_table');
-NOTICE:  function permissions.user1_table_upd_trig_func() does not exist, skipping
 NOTICE:  10 rows copied from permissions.user1_table_1
 NOTICE:  10 rows copied from permissions.user1_table_2
 NOTICE:  0 rows copied from permissions.user1_table_4
@@ -156,7 +155,6 @@ SELECT create_hash_partitions('permissions.user2_table', 'id', 3);
 
 INSERT INTO permissions.user2_table SELECT generate_series(1, 30);
 SELECT drop_partitions('permissions.user2_table');
-NOTICE:  function permissions.user2_table_upd_trig_func() does not exist, skipping
 NOTICE:  9 rows copied from permissions.user2_table_0
 NOTICE:  11 rows copied from permissions.user2_table_1
 NOTICE:  10 rows copied from permissions.user2_table_2

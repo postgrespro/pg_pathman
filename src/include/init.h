@@ -192,10 +192,13 @@ find_children_status find_inheritance_children_array(Oid parentrelId,
 													 Oid **children);
 
 char *build_check_constraint_name_relid_internal(Oid relid);
-
 char *build_check_constraint_name_relname_internal(const char *relname);
 
 char *build_sequence_name_internal(Oid relid);
+
+char *build_update_trigger_name_internal(Oid relid);
+char *build_update_trigger_func_name_internal(Oid relid);
+
 
 bool pathman_config_contains_relation(Oid relid,
 									  Datum *values,

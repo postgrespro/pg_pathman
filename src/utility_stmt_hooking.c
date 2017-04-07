@@ -213,10 +213,7 @@ is_pathman_related_alter_column_type(Node *parsetree,
 	/* Examine command list */
 	foreach (lc, alter_table_stmt->cmds)
 	{
-		bool		 found = false;
-		ListCell	*lc_var;
 		AttrNumber	 attnum;
-		List		*vars = get_part_expression_vars(prel);
 
 		AlterTableCmd *alter_table_cmd = (AlterTableCmd *) lfirst(lc);
 
@@ -229,18 +226,8 @@ is_pathman_related_alter_column_type(Node *parsetree,
 
 		/* Is it a column that used in expression? */
 		attnum = get_attnum(parent_relid, alter_table_cmd->name);
-		foreach(lc_var, vars)
-		{
-			Var *var = lfirst(lc_var);
-			if (var->varattno == attnum)
-			{
-				found = true;
-				break;
-			}
-		}
-
-		if (!found)
-			continue;
+		if (!bms_is_member(attnum, prel->expr_atts))
+			return;
 
 		/* Return 'prel->attnum' */
 		if (attr_number_out) *attr_number_out = attnum;

@@ -135,10 +135,9 @@ append_part_attr_to_tlist(List *tlist, Index relno, const PartRelationInfo *prel
 {
 	ListCell   *lc,
 			   *lc_var;
-	List	   *vars = get_part_expression_vars((PartRelationInfo *) prel);
 	List	   *vars_not_found = NIL;
 
-	foreach (lc_var, vars)
+	foreach (lc_var, prel->expr_vars)
 	{
 		bool	part_attr_found		= false;
 		Var		*expr_var			= (Var *) lfirst(lc_var);

@@ -345,7 +345,7 @@ build_part_tuple_map(Relation parent_rel, Relation child_rel)
 	TupleDesc			child_tupdesc,
 						parent_tupdesc;
 
-	/* Use fake 'tdtypeid' in order to fool convert_tuples_by_name() */
+	/* HACK: use fake 'tdtypeid' in order to fool convert_tuples_by_name() */
 	child_tupdesc = CreateTupleDescCopy(RelationGetDescr(child_rel));
 	child_tupdesc->tdtypeid = InvalidOid;
 
@@ -355,7 +355,7 @@ build_part_tuple_map(Relation parent_rel, Relation child_rel)
 	/* Generate tuple transformation map and some other stuff */
 	tuple_map = convert_tuples_by_name(parent_tupdesc,
 									   child_tupdesc,
-									   "could not convert row type for partition");
+									   ERR_PART_DESC_CONVERT);
 
 	/* If map is one-to-one, free unused TupleDescs */
 	if (!tuple_map)

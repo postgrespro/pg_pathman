@@ -506,38 +506,6 @@ $$
 LANGUAGE plpgsql STRICT;
 
 /*
- * Check if two relations have equal structures.
- */
-CREATE OR REPLACE FUNCTION @extschema@.validate_relations_equality(
-	relation1 OID, relation2 OID)
-RETURNS BOOLEAN AS
-$$
-DECLARE
-	rec	RECORD;
-
-BEGIN
-	FOR rec IN (
-		WITH
-			a1 AS (select * from pg_catalog.pg_attribute
-				   where attrelid = relation1 and attnum > 0),
-			a2 AS (select * from pg_catalog.pg_attribute
-				   where attrelid = relation2 and attnum > 0)
-		SELECT a1.attname name1, a2.attname name2, a1.atttypid type1, a2.atttypid type2
-		FROM a1
-		FULL JOIN a2 ON a1.attnum = a2.attnum
-	)
-	LOOP
-		IF rec.name1 IS NULL OR rec.name2 IS NULL OR rec.name1 != rec.name2 THEN
-			RETURN false;
-		END IF;
-	END LOOP;
-
-	RETURN true;
-END
-$$
-LANGUAGE plpgsql;
-
-/*
  * DDL trigger that removes entry from pathman_config table.
  */
 CREATE OR REPLACE FUNCTION @extschema@.pathman_ddl_trigger_func()
@@ -566,15 +534,37 @@ $$
 LANGUAGE plpgsql;
 
 /*
- * Drop triggers.
+ * Drop triggers
  */
 CREATE OR REPLACE FUNCTION @extschema@.drop_triggers(
 	parent_relid	REGCLASS)
 RETURNS VOID AS
 $$
+DECLARE
+	triggername	TEXT;
+	rec			RECORD;
+
 BEGIN
-	EXECUTE format('DROP FUNCTION IF EXISTS %s() CASCADE',
-				   @extschema@.build_update_trigger_func_name(parent_relid));
+	triggername := @extschema@.build_update_trigger_name(parent_relid);
+
+	/* Drop trigger for each partition if exists */
+	FOR rec IN (SELECT pg_catalog.pg_inherits.* FROM pg_catalog.pg_inherits
+				JOIN pg_catalog.pg_trigger ON inhrelid = tgrelid
+				WHERE inhparent = parent_relid AND tgname = triggername)
+	LOOP
+		EXECUTE format('DROP TRIGGER IF EXISTS %s ON %s',
+					   triggername,
+					   rec.inhrelid::REGCLASS::TEXT);
+	END LOOP;
+
+	/* Drop trigger on parent */
+	IF EXISTS (SELECT * FROM pg_catalog.pg_trigger
+			   WHERE tgname = triggername AND tgrelid = parent_relid)
+	THEN
+		EXECUTE format('DROP TRIGGER IF EXISTS %s ON %s',
+					   triggername,
+					   parent_relid::TEXT);
+	END IF;
 END
 $$ LANGUAGE plpgsql STRICT;
 
@@ -717,6 +707,49 @@ $$ LANGUAGE plpgsql;
 
 
 /*
+ * Check if tuple from first relation can be converted to fit the second one.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.is_tuple_convertible(
+	relation1	REGCLASS,
+	relation2	REGCLASS)
+RETURNS BOOL AS 'pg_pathman', 'is_tuple_convertible'
+LANGUAGE C STRICT;
+
+
+/*
+ * Function for UPDATE triggers.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.pathman_update_trigger_func()
+RETURNS TRIGGER AS 'pg_pathman', 'pathman_update_trigger_func'
+LANGUAGE C STRICT;
+
+/*
+ * Creates UPDATE triggers.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.create_update_triggers(
+	parent_relid	REGCLASS)
+RETURNS VOID AS 'pg_pathman', 'create_update_triggers'
+LANGUAGE C STRICT;
+
+/*
+ * Creates single UPDATE trigger.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.create_single_update_trigger(
+	parent_relid	REGCLASS,
+	partition_relid	REGCLASS)
+RETURNS VOID AS 'pg_pathman', 'create_single_update_trigger'
+LANGUAGE C STRICT;
+
+/*
+ * Check if relation has pg_pathman's UPDATE trigger.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.has_update_trigger(
+	parent_relid	REGCLASS)
+RETURNS BOOL AS 'pg_pathman', 'has_update_trigger'
+LANGUAGE C STRICT;
+
+
+/*
  * Partitioning key
  */
 CREATE OR REPLACE FUNCTION @extschema@.get_partition_key(
@@ -810,6 +843,15 @@ CREATE OR REPLACE FUNCTION @extschema@.is_date_type(
 RETURNS BOOLEAN AS 'pg_pathman', 'is_date_type'
 LANGUAGE C STRICT;
 
+/*
+ * Check if TYPE supports the specified operator.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.is_operator_supported(
+	type_oid	OID,
+	opname		TEXT)
+RETURNS BOOLEAN AS 'pg_pathman', 'is_operator_supported'
+LANGUAGE C STRICT;
+
 
 /*
  * Build check constraint name for a specified relation's column.
@@ -827,13 +869,16 @@ RETURNS TEXT AS 'pg_pathman', 'build_check_constraint_name_attname'
 LANGUAGE C STRICT;
 
 /*
- * Build update trigger and its underlying function's names.
+ * Build UPDATE trigger's name.
  */
 CREATE OR REPLACE FUNCTION @extschema@.build_update_trigger_name(
 	relid			REGCLASS)
 RETURNS TEXT AS 'pg_pathman', 'build_update_trigger_name'
 LANGUAGE C STRICT;
 
+/*
+ * Buld UPDATE trigger function's name.
+ */
 CREATE OR REPLACE FUNCTION @extschema@.build_update_trigger_func_name(
 	relid			REGCLASS)
 RETURNS TEXT AS 'pg_pathman', 'build_update_trigger_func_name'
@@ -872,18 +917,6 @@ LANGUAGE C STRICT;
 
 
 /*
- * DEBUG: Place this inside some plpgsql fuction and set breakpoint.
- */
-CREATE OR REPLACE FUNCTION @extschema@.debug_capture()
-RETURNS VOID AS 'pg_pathman', 'debug_capture'
-LANGUAGE C STRICT;
-
-CREATE OR REPLACE FUNCTION @extschema@.get_pathman_lib_version()
-RETURNS CSTRING AS 'pg_pathman', 'get_pathman_lib_version'
-LANGUAGE C STRICT;
-
-
-/*
  * Invoke init_callback on RANGE partition.
  */
 CREATE OR REPLACE FUNCTION @extschema@.invoke_on_partition_created_callback(
@@ -904,3 +937,15 @@ CREATE OR REPLACE FUNCTION @extschema@.invoke_on_partition_created_callback(
 	init_callback	REGPROCEDURE)
 RETURNS VOID AS 'pg_pathman', 'invoke_on_partition_created_callback'
 LANGUAGE C;
+
+
+/*
+ * DEBUG: Place this inside some plpgsql fuction and set breakpoint.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.debug_capture()
+RETURNS VOID AS 'pg_pathman', 'debug_capture'
+LANGUAGE C STRICT;
+
+CREATE OR REPLACE FUNCTION @extschema@.get_pathman_lib_version()
+RETURNS CSTRING AS 'pg_pathman', 'get_pathman_lib_version'
+LANGUAGE C STRICT;

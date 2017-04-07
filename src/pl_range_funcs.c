@@ -38,7 +38,7 @@ static ArrayType *construct_infinitable_array(Bound *elems,
 											  int elmlen,
 											  bool elmbyval,
 											  char elmalign);
-static void check_range_adjacence(Oid cmp_proc, List *ranges);
+static void check_range_adjacence(Oid cmp_proc, Oid collid, List *ranges);
 static void merge_range_partitions_internal(Oid parent,
 											Oid *parts,
 											uint32 nparts);
@@ -56,8 +56,9 @@ static bool interval_is_trivial(Oid atttype,
 /* Function declarations */
 
 PG_FUNCTION_INFO_V1( create_single_range_partition_pl );
-PG_FUNCTION_INFO_V1( find_or_create_range_partition );
+PG_FUNCTION_INFO_V1( create_range_partitions_internal );
 PG_FUNCTION_INFO_V1( check_range_available_pl );
+PG_FUNCTION_INFO_V1( generate_range_bounds_pl );
 
 PG_FUNCTION_INFO_V1( get_part_range_by_oid );
 PG_FUNCTION_INFO_V1( get_part_range_by_idx );
@@ -75,9 +76,7 @@ PG_FUNCTION_INFO_V1( validate_interval_value );
  * -----------------------------
  */
 
-/*
- * pl/PgSQL wrapper for the create_single_range_partition().
- */
+/* pl/PgSQL wrapper for the create_single_range_partition(). */
 Datum
 create_single_range_partition_pl(PG_FUNCTION_ARGS)
 {
@@ -142,64 +141,139 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 	PG_RETURN_OID(partition_relid);
 }
 
-/*
- * Returns partition oid for specified parent relid and value.
- * In case when partition doesn't exist try to create one.
- */
 Datum
-find_or_create_range_partition(PG_FUNCTION_ARGS)
+create_range_partitions_internal(PG_FUNCTION_ARGS)
 {
-	Oid						parent_relid = PG_GETARG_OID(0);
-	Datum					value = PG_GETARG_DATUM(1);
-	Oid						value_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
-	const PartRelationInfo *prel;
-	FmgrInfo				cmp_func;
-	RangeEntry				found_rentry;
-	search_rangerel_result	search_state;
+	Oid				parent_relid;
+	int16			typlen;
+	bool			typbyval;
+	char			typalign;
+	FmgrInfo		cmp_func;
 
-	prel = get_pathman_relation_info(parent_relid);
-	shout_if_prel_is_invalid(parent_relid, prel, PT_RANGE);
+	/* Partition names and tablespaces */
+	char		  **partnames		= NULL;
+	RangeVar	  **rangevars		= NULL;
+	char		  **tablespaces		= NULL;
+	int				npartnames		= 0;
+	int				ntablespaces	= 0;
 
-	fill_type_cmp_fmgr_info(&cmp_func,
-							getBaseType(value_type),
-							getBaseType(prel->atttype));
+	/* Bounds */
+	ArrayType	   *bounds;
+	Oid				elemtype;
+	Datum		   *datums;
+	bool		   *nulls;
+	int				ndatums;
+	int				i;
 
-	/* Use available PartRelationInfo to find partition */
-	search_state = search_range_partition_eq(value, &cmp_func, prel,
-											 &found_rentry);
-
-	/*
-	 * If found then just return oid, else create new partitions
-	 */
-	if (search_state == SEARCH_RANGEREL_FOUND)
-		PG_RETURN_OID(found_rentry.child_oid);
-	/*
-	 * If not found and value is between first and last partitions
-	 */
-	else if (search_state == SEARCH_RANGEREL_GAP)
-		PG_RETURN_NULL();
-	else
+	/* Extract parent's Oid */
+	if (!PG_ARGISNULL(0))
 	{
-		Oid	child_oid = create_partitions_for_value(parent_relid, value, value_type);
-
-		/* get_pathman_relation_info() will refresh this entry */
-		invalidate_pathman_relation_info(parent_relid, NULL);
-
-		PG_RETURN_OID(child_oid);
+		parent_relid = PG_GETARG_OID(0);
 	}
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("'parent_relid' should not be NULL")));
+
+	/* Extract array of bounds */
+	if (!PG_ARGISNULL(1))
+	{
+		bounds = PG_GETARG_ARRAYTYPE_P(1);
+		elemtype = ARR_ELEMTYPE(bounds);
+	}
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("'bounds' should not be NULL")));
+
+	/* Extract partition names */
+	if (!PG_ARGISNULL(2))
+	{
+		partnames = deconstruct_text_array(PG_GETARG_DATUM(2), &npartnames);
+		rangevars = qualified_relnames_to_rangevars(partnames, npartnames);
+	}
+
+	/* Extract partition tablespaces */
+	if (!PG_ARGISNULL(3))
+		tablespaces = deconstruct_text_array(PG_GETARG_DATUM(3), &ntablespaces);
+
+	/* Extract bounds */
+	get_typlenbyvalalign(elemtype, &typlen, &typbyval, &typalign);
+	deconstruct_array(bounds, elemtype,
+					  typlen, typbyval, typalign,
+					  &datums, &nulls, &ndatums);
+
+	if (partnames && npartnames != ndatums - 1)
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("wrong length of 'partition_names' array"),
+						errdetail("number of 'partition_names' must be less than "
+								  "'bounds' array length by one")));
+
+	if (tablespaces && ntablespaces != ndatums - 1)
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("wrong length of 'tablespaces' array"),
+						errdetail("number of 'tablespaces' must be less than "
+								  "'bounds' array length by one")));
+
+	/* Check if bounds array is ascending */
+	fill_type_cmp_fmgr_info(&cmp_func,
+							getBaseType(elemtype),
+							getBaseType(elemtype));
+
+	/* Validate bounds */
+	for (i = 0; i < ndatums; i++)
+	{
+		/* Disregard 1st bound */
+		if (i == 0) continue;
+
+		/* Check that bound is valid */
+		if (nulls[i])
+			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+							errmsg("only first bound can be NULL")));
+
+		/* Check that bounds are ascending */
+		if (!nulls[i - 1] && !check_le(&cmp_func, datums[i - 1], datums[i]))
+			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+							errmsg("'bounds' array must be ascending")));
+	}
+
+	/* Create partitions using provided bounds */
+	for (i = 0; i < ndatums - 1; i++)
+	{
+		Bound		start	= nulls[i] ?
+								MakeBoundInf(MINUS_INFINITY) :
+								MakeBound(datums[i]),
+
+					end		= nulls[i + 1] ?
+								MakeBoundInf(PLUS_INFINITY) :
+								MakeBound(datums[i + 1]);
+
+		RangeVar   *name	= rangevars ? rangevars[i] : NULL;
+
+		char	   *tablespace = tablespaces ? tablespaces[i] : NULL;
+
+		(void) create_single_range_partition_internal(parent_relid,
+													  &start,
+													  &end,
+													  elemtype,
+													  name,
+													  tablespace);
+	}
+
+	/* Return number of partitions */
+	PG_RETURN_INT32(ndatums - 1);
 }
 
-/*
- * Checks if range overlaps with existing partitions.
- * Returns TRUE if overlaps and FALSE otherwise.
- */
+/* Checks if range overlaps with existing partitions. */
 Datum
 check_range_available_pl(PG_FUNCTION_ARGS)
 {
-	Oid			parent_relid = PG_GETARG_OID(0);
+	Oid			parent_relid;
 	Bound		start,
 				end;
 	Oid			value_type	= get_fn_expr_argtype(fcinfo->flinfo, 1);
+
+	if (PG_ARGISNULL(0))
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("'parent_relid' should not be NULL")));
+
+	parent_relid = PG_GETARG_OID(0);
 
 	start = PG_ARGISNULL(1) ?
 				MakeBoundInf(MINUS_INFINITY) :
@@ -217,6 +291,77 @@ check_range_available_pl(PG_FUNCTION_ARGS)
 						  true);
 
 	PG_RETURN_VOID();
+}
+
+/* Generate range bounds starting with 'value' using 'interval'. */
+Datum
+generate_range_bounds_pl(PG_FUNCTION_ARGS)
+{
+	/* Input params */
+	Datum		value			= PG_GETARG_DATUM(0);
+	Oid			value_type		= get_fn_expr_argtype(fcinfo->flinfo, 0);
+	Datum		interval		= PG_GETARG_DATUM(1);
+	Oid			interval_type	= get_fn_expr_argtype(fcinfo->flinfo, 1);
+	int			count			= PG_GETARG_INT32(2);
+	int			i;
+
+	/* Operator */
+	Oid			plus_op_func;
+	Datum		plus_op_result;
+	Oid			plus_op_result_type;
+
+	/* Array */
+	ArrayType  *array;
+	int16		elemlen;
+	bool		elembyval;
+	char		elemalign;
+	Datum	   *datums;
+
+	Assert(!PG_ARGISNULL(0));
+	Assert(!PG_ARGISNULL(1));
+	Assert(!PG_ARGISNULL(2));
+
+	if (count < 1)
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("'p_count' must be greater than zero")));
+
+	/* We must provide count+1 bounds */
+	count += 1;
+
+	/* Find suitable addition operator for given value and interval */
+	extract_op_func_and_ret_type("+", value_type, interval_type,
+								 &plus_op_func,
+								 &plus_op_result_type);
+
+	/* Fetch type's information for array */
+	get_typlenbyvalalign(value_type, &elemlen, &elembyval, &elemalign);
+
+	datums = palloc(sizeof(Datum) * count);
+	datums[0] = value;
+
+	/* Calculate bounds */
+	for (i = 1; i < count; i++)
+	{
+		/* Invoke addition operator and get a result */
+		plus_op_result = OidFunctionCall2(plus_op_func, value, interval);
+
+		/* Cast result to 'value_type' if needed */
+		if (plus_op_result_type != value_type)
+			plus_op_result = perform_type_cast(plus_op_result,
+											   plus_op_result_type,
+											   value_type, NULL);
+
+		/* Update 'value' and store current bound */
+		value = datums[i] = plus_op_result;
+	}
+
+	/* build an array based on calculated datums */
+	array = construct_array(datums, count, value_type,
+							elemlen, elembyval, elemalign);
+
+	pfree(datums);
+
+	PG_RETURN_ARRAYTYPE_P(array);
 }
 
 
@@ -513,7 +658,7 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 	}
 
 	/* Check that partitions are adjacent */
-	check_range_adjacence(prel->cmp_proc, rentry_list);
+	check_range_adjacence(prel->cmp_proc, prel->attcollid, rentry_list);
 
 	/* First determine the bounds of a new constraint */
 	first = (RangeEntry *) linitial(rentry_list);
@@ -521,7 +666,7 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 
 	/* Swap ranges if 'last' < 'first' */
 	fmgr_info(prel->cmp_proc, &cmp_proc);
-	if (cmp_bounds(&cmp_proc, &last->min, &first->min) < 0)
+	if (cmp_bounds(&cmp_proc, prel->attcollid, &last->min, &first->min) < 0)
 	{
 		RangeEntry *tmp = last;
 
@@ -782,7 +927,7 @@ interval_is_trivial(Oid atttype, Datum interval, Oid interval_type)
 	/*
 	 * If operator result type isn't the same as original value then
 	 * convert it. We need this to make sure that specified interval would
-	 * change the _origianal_ value somehow. For example, if we add one second
+	 * change the _original_ value somehow. For example, if we add one second
 	 * to a date then we'll get a timestamp which is one second later than
 	 * original date (obviously). But when we convert it back to a date we will
 	 * get the same original value meaning that one second interval wouldn't
@@ -931,7 +1076,7 @@ construct_infinitable_array(Bound *elems,
  * Check that range entries are adjacent
  */
 static void
-check_range_adjacence(Oid cmp_proc, List *ranges)
+check_range_adjacence(Oid cmp_proc, Oid collid, List *ranges)
 {
 	ListCell   *lc;
 	RangeEntry *last = NULL;
@@ -951,8 +1096,8 @@ check_range_adjacence(Oid cmp_proc, List *ranges)
 		}
 
 		/* Check that last and current partitions are adjacent */
-		if ((cmp_bounds(&finfo, &last->max, &cur->min) != 0) &&
-			(cmp_bounds(&finfo, &cur->max, &last->min) != 0))
+		if ((cmp_bounds(&finfo, collid, &last->max, &cur->min) != 0) &&
+			(cmp_bounds(&finfo, collid, &cur->max, &last->min) != 0))
 		{
 			elog(ERROR, "partitions \"%s\" and \"%s\" are not adjacent",
 						get_rel_name(last->child_oid),

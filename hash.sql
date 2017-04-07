@@ -109,8 +109,8 @@ BEGIN
 	END IF;
 
 	/* Check that new partition has an equal structure as parent does */
-	IF NOT @extschema@.validate_relations_equality(parent_relid, new_partition) THEN
-		RAISE EXCEPTION 'partition must have the exact same structure as parent';
+	IF NOT @extschema@.is_tuple_convertible(parent_relid, new_partition) THEN
+		RAISE EXCEPTION 'partition must have a compatible tuple format';
 	END IF;
 
 	/* Get partitioning key */
@@ -164,116 +164,6 @@ $$
 LANGUAGE plpgsql;
 
 /*
- * Creates an update trigger
- */
-CREATE OR REPLACE FUNCTION @extschema@.create_hash_update_trigger(
-	parent_relid	REGCLASS)
-RETURNS TEXT AS
-$$
-DECLARE
-	func TEXT := 'CREATE OR REPLACE FUNCTION %1$s()
-				  RETURNS TRIGGER AS
-				  $body$
-				  DECLARE
-					old_idx		INTEGER; /* partition indices */
-					new_idx		INTEGER;
-
-				  BEGIN
-					old_idx := @extschema@.get_hash_part_idx(%9$s(OLD.%2$s), %3$s);
-					new_idx := @extschema@.get_hash_part_idx(%9$s(NEW.%2$s), %3$s);
-
-					IF old_idx = new_idx THEN
-						RETURN NEW;
-					END IF;
-
-					EXECUTE format(''DELETE FROM %8$s WHERE %4$s'', old_idx)
-					USING %5$s;
-
-					EXECUTE format(''INSERT INTO %8$s VALUES (%6$s)'', new_idx)
-					USING %7$s;
-
-					RETURN NULL;
-				  END $body$
-				  LANGUAGE plpgsql';
-
-	trigger					TEXT := 'CREATE TRIGGER %s
-									 BEFORE UPDATE ON %s
-									 FOR EACH ROW EXECUTE PROCEDURE %s()';
-
-	att_names				TEXT;
-	old_fields				TEXT;
-	new_fields				TEXT;
-	att_val_fmt				TEXT;
-	att_fmt					TEXT;
-	attr					TEXT;
-	plain_schema			TEXT;
-	plain_relname			TEXT;
-	child_relname_format	TEXT;
-	funcname				TEXT;
-	triggername				TEXT;
-	atttype					REGTYPE;
-	partitions_count		INTEGER;
-
-BEGIN
-	attr := attname FROM @extschema@.pathman_config WHERE partrel = parent_relid;
-
-	IF attr IS NULL THEN
-		RAISE EXCEPTION 'table "%" is not partitioned', parent_relid::TEXT;
-	END IF;
-
-	SELECT string_agg(attname, ', '),
-		   string_agg('OLD.' || attname, ', '),
-		   string_agg('NEW.' || attname, ', '),
-		   string_agg('CASE WHEN NOT $' || attnum || ' IS NULL THEN ' ||
-							attname || ' = $' || attnum || ' ' ||
-					  'ELSE ' ||
-							attname || ' IS NULL END',
-					  ' AND '),
-		   string_agg('$' || attnum, ', ')
-	FROM pg_catalog.pg_attribute
-	WHERE attrelid = parent_relid AND attnum > 0
-	INTO   att_names,
-		   old_fields,
-		   new_fields,
-		   att_val_fmt,
-		   att_fmt;
-
-	partitions_count := @extschema@.get_number_of_partitions(parent_relid);
-
-	/* Build trigger & trigger function's names */
-	funcname := @extschema@.build_update_trigger_func_name(parent_relid);
-	triggername := @extschema@.build_update_trigger_name(parent_relid);
-
-	/* Build partition name template */
-	SELECT * INTO plain_schema, plain_relname
-	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
-
-	child_relname_format := quote_ident(plain_schema) || '.' ||
-							quote_ident(plain_relname || '_%s');
-
-	/* Fetch base hash function for atttype */
-	atttype := @extschema@.get_partition_key_type(parent_relid);
-
-	/* Format function definition and execute it */
-	EXECUTE format(func, funcname, attr, partitions_count, att_val_fmt,
-				   old_fields, att_fmt, new_fields, child_relname_format,
-				   @extschema@.get_type_hash_func(atttype)::TEXT);
-
-	/* Create trigger on each partition */
-	FOR num IN 0..partitions_count-1
-	LOOP
-		EXECUTE format(trigger,
-					   triggername,
-					   format(child_relname_format, num),
-					   funcname);
-	END LOOP;
-
-	return funcname;
-END
-$$ LANGUAGE plpgsql;
-
-
-/*
  * Just create HASH partitions, called by create_hash_partitions().
  */
 CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions_internal(
@@ -284,13 +174,6 @@ CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions_internal(
 	tablespaces			TEXT[] DEFAULT NULL)
 RETURNS VOID AS 'pg_pathman', 'create_hash_partitions_internal'
 LANGUAGE C;
-
-/*
- * Returns hash function OID for specified type
- */
-CREATE OR REPLACE FUNCTION @extschema@.get_type_hash_func(REGTYPE)
-RETURNS REGPROC AS 'pg_pathman', 'get_type_hash_func'
-LANGUAGE C STRICT;
 
 /*
  * Calculates hash for integer value

@@ -45,6 +45,13 @@
 #endif
 
 
+/* Comparison function info */
+typedef struct cmp_func_info
+{
+	FmgrInfo	flinfo;
+	Oid			collid;
+} cmp_func_info;
+
 /*
  * For pg_pathman.enable_bounds_cache GUC.
  */
@@ -92,6 +99,7 @@ static void fill_pbin_with_bounds(PartBoundInfo *pbin,
 static int cmp_range_entries(const void *p1, const void *p2, void *arg);
 static void update_parsed_expression(Oid relid, HeapTuple tuple,
 									   Datum *values, bool *nulls);
+static void fill_part_expression_vars(const PartRelationInfo *prel);
 
 void
 init_relation_info_static_data(void)
@@ -193,8 +201,8 @@ refresh_pathman_relation_info(Oid relid,
 
 	prel->attname = TextDatumGetCString(values[Anum_pathman_config_expression - 1]);
 	prel->expr = (Node *) stringToNode(expr);
-	prel->expr_vars = NIL;
 	fix_opfuncids(prel->expr);
+	fill_part_expression_vars(prel);
 
 	MemoryContextSwitchTo(oldcontext);
 
@@ -320,6 +328,7 @@ extract_vars(Node *node, PartRelationInfo *prel)
 	if (IsA(node, Var))
 	{
 		prel->expr_vars = lappend(prel->expr_vars, node);
+		prel->expr_atts = bms_add_member(prel->expr_atts, ((Var *) node)->varattno);
 		return false;
 	}
 
@@ -328,10 +337,10 @@ extract_vars(Node *node, PartRelationInfo *prel)
 
 
 /*
- * This function fills 'expr_vars' attribute in PartRelationInfo.
+ * This function fills 'expr_vars' and 'expr_atts' attributes in PartRelationInfo.
  */
-List *
-get_part_expression_vars(const PartRelationInfo *prel)
+static void
+fill_part_expression_vars(const PartRelationInfo *prel)
 {
 	if (prel->expr_vars == NIL)
 	{
@@ -642,15 +651,16 @@ fill_prel_with_partitions(PartRelationInfo *prel,
 	/* Finalize 'prel' for a RANGE-partitioned table */
 	if (prel->parttype == PT_RANGE)
 	{
-		FmgrInfo flinfo;
+		cmp_func_info	cmp_info;
 
 		/* Prepare function info */
-		fmgr_info(prel->cmp_proc, &flinfo);
+		fmgr_info(prel->cmp_proc, &cmp_info.flinfo);
+		cmp_info.collid = prel->attcollid;
 
 		/* Sort partitions by RangeEntry->min asc */
 		qsort_arg((void *) prel->ranges, PrelChildrenCount(prel),
 				  sizeof(RangeEntry), cmp_range_entries,
-				  (void *) &flinfo);
+				  (void *) &cmp_info);
 
 		/* Initialize 'prel->children' array */
 		for (i = 0; i < PrelChildrenCount(prel); i++)
@@ -1226,9 +1236,9 @@ cmp_range_entries(const void *p1, const void *p2, void *arg)
 {
 	const RangeEntry   *v1 = (const RangeEntry *) p1;
 	const RangeEntry   *v2 = (const RangeEntry *) p2;
-	FmgrInfo		   *flinfo = (FmgrInfo *) arg;
+	cmp_func_info	   *info = (cmp_func_info *) arg;
 
-	return cmp_bounds(flinfo, &v1->min, &v2->min);
+	return cmp_bounds(&info->flinfo, info->collid, &v1->min, &v2->min);
 }
 
 
