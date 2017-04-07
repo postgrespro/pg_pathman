@@ -340,6 +340,11 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 	/* Now append 'appinfo' to 'root->append_rel_list' */
 	root->append_rel_list = lappend(root->append_rel_list, appinfo);
 
+	/* Adjust join quals for this child */
+	child_rel->joininfo = (List *) adjust_appendrel_attrs(root,
+														  (Node *) parent_rel->joininfo,
+														  appinfo);
+
 	/* Adjust target list for this child */
 	adjust_rel_targetlist_compat(root, child_rel, parent_rel, appinfo);
 
