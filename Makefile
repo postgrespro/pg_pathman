@@ -36,6 +36,7 @@ REGRESS = pathman_basic \
 		  pathman_foreign_keys \
 		  pathman_permissions \
 		  pathman_rowmarks \
+		  pathman_join_clause \
 		  pathman_runtime_nodes \
 		  pathman_utility_stmt \
 		  pathman_column_type \
