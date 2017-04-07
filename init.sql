@@ -935,8 +935,7 @@ LANGUAGE C;
 CREATE OR REPLACE FUNCTION @extschema@.create_fk(
 	fk_table	REGCLASS,
 	fk_attr		TEXT,
-	pk_table	REGCLASS,
-	pk_attr		TEXT)
+	pk_table	REGCLASS)
 RETURNS VOID AS 'pg_pathman', 'create_fk_constraint'
 LANGUAGE C STRICT;
 

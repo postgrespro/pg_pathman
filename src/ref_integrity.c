@@ -155,12 +155,18 @@ static CompareHashEntry *ri_HashCompareOp(Oid eq_opr, Oid typeid);
 
 static void quoteOneName(char *buffer, const char *name);
 static void quoteRelationName(char *buffer, Relation rel);
-static void ri_ReportViolation(const ConstraintInfo *riinfo, Relation fk_rel);
+static void ri_ReportViolation(const ConstraintInfo *riinfo,
+				   Relation rel,
+				   Datum key,
+				   Oid keytype,
+				   bool onfk);
 static SPIPlanPtr FetchPreparedPlan(QueryKey *key);
 static void BuildQueryKey(QueryKey *key, Oid relid, Oid partid);
 static void SavePreparedPlan(QueryKey *key, SPIPlanPtr plan);
 static Oid transformFkeyCheckAttrs(Relation pkrel, int16 attnum, Oid *opclass);
-static void create_fk_constraint_internal(Oid fk_table, AttrNumber fk_attnum, Oid pk_table, AttrNumber pk_attnum);
+static void create_fk_constraint_internal(Oid fk_table,
+										  AttrNumber fk_attnum,
+										  Oid pk_table);
 static void createForeignKeyTriggers(Relation rel, Oid refRelOid,
 						 Oid constraintOid, Oid indexOid);
 static HeapTuple get_index_for_key(Relation rel, AttrNumber attnum, Oid *index_id);
@@ -1013,20 +1019,9 @@ ri_PlanCheck(const char *querystr,
 			 bool cache_plan)
 {
 	SPIPlanPtr	qplan;
-	// Relation	query_rel;
 	Oid			save_userid;
 	int			save_sec_context;
 	Oid			argtypes[1] = {argtype};
-
-	/*
-	 * Use the query type code to determine whether the query is run against
-	 * the PK or FK table; we'll do the check as that table's owner
-	 */
-	// if (qkey->constr_queryno <= RI_PLAN_LAST_ON_PK)
-	// 	query_rel = pk_rel;
-	// else
-	// 	query_rel = fk_rel;
-	// query_rel = pk_rel;
 
 	/* Switch to proper UID to perform check as */
 	GetUserIdAndSecContext(&save_userid, &save_sec_context);
@@ -1056,12 +1051,6 @@ ri_PlanCheck(const char *querystr,
 /*
  * Perform a query to enforce an RI restriction
  */
-// static bool
-// ri_PerformCheck(const RI_ConstraintInfo *riinfo,
-// 				RI_QueryKey *qkey, SPIPlanPtr qplan,
-// 				Relation fk_rel, Relation pk_rel,
-// 				HeapTuple old_tuple, HeapTuple new_tuple,
-// 				bool detectNewRows, int expect_OK)
 static bool
 ri_PerformCheck(const ConstraintInfo *riinfo,
 				SPIPlanPtr qplan,
@@ -1078,13 +1067,11 @@ ri_PerformCheck(const ConstraintInfo *riinfo,
 	int			spi_result;
 	Oid			save_userid;
 	int			save_sec_context;
-	// Datum		vals[RI_MAX_NUMKEYS * 2];
-	// char		nulls[RI_MAX_NUMKEYS * 2];
-	Datum		vals[1];
+	Datum		key[1];
 	char		nulls[1];
+	Oid			keytype;
 	bool		isnull = false;
 	AttrNumber	attnum;
-
 
 	if (source_is_pk)
 	{
@@ -1099,8 +1086,11 @@ ri_PerformCheck(const ConstraintInfo *riinfo,
 		attnum = riinfo->fk_attnum;
 	}
 
-	vals[0] = heap_getattr(tuple, attnum, source_rel->rd_att, &isnull);
+	key[0] = heap_getattr(tuple, attnum, source_rel->rd_att, &isnull);
 	nulls[0] = isnull ? 'n' : ' ';
+
+	Assert(attnum <= source_rel->rd_att->natts);
+	keytype = source_rel->rd_att->attrs[attnum-1]->atttypid;
 
 	/*
 	 * In READ COMMITTED mode, we just need to use an up-to-date regular
@@ -1142,7 +1132,7 @@ ri_PerformCheck(const ConstraintInfo *riinfo,
 
 	/* Finally we can run the query. */
 	spi_result = SPI_execute_snapshot(qplan,
-									  vals, nulls,
+									  key, nulls,
 									  test_snapshot, crosscheck_snapshot,
 									  false, false, limit);
 
@@ -1160,7 +1150,7 @@ ri_PerformCheck(const ConstraintInfo *riinfo,
 	/* XXX wouldn't it be clearer to do this part at the caller? */
 	if ((SPI_processed == 0) != source_is_pk)
 		/* TODO: write a correct table name on DELETE and UPDATE from PK table */
-		ri_ReportViolation(riinfo, fk_rel);
+		ri_ReportViolation(riinfo, source_rel, key[0], keytype, !source_is_pk);
 
 	return SPI_processed != 0;
 }
@@ -1201,13 +1191,32 @@ quoteRelationName(char *buffer, Relation rel)
 }
 
 static void
-ri_ReportViolation(const ConstraintInfo *riinfo, Relation fk_rel)
+ri_ReportViolation(const ConstraintInfo *riinfo,
+				   Relation rel,
+				   Datum key,
+				   Oid keytype,
+				   bool onfk)
 {
-	ereport(ERROR,
-		(errcode(ERRCODE_FOREIGN_KEY_VIOLATION),
-		 errmsg("insert or update on table \"%s\" violates foreign key constraint \"%s\"",
-				RelationGetRelationName(fk_rel),
-				NameStr(riinfo->conname))));
+	if (onfk)
+		ereport(ERROR,
+			(errcode(ERRCODE_FOREIGN_KEY_VIOLATION),
+			 errmsg("insert or update on table \"%s\" violates foreign key constraint \"%s\"",
+					RelationGetRelationName(rel),
+					NameStr(riinfo->conname)),
+			 errdetail("Key (%s)=(%s) is not present in table \"%s\".",
+			 	get_attname(riinfo->pk_relid, riinfo->pk_attnum),
+			 	datum_to_cstring(key, keytype),
+			 	RelationGetRelationName(rel))));
+	else
+		ereport(ERROR,
+			(errcode(ERRCODE_FOREIGN_KEY_VIOLATION),
+			 errmsg("insert or update on table \"%s\" violates foreign key constraint \"%s\"",
+					RelationGetRelationName(rel),
+					NameStr(riinfo->conname)),
+			 errdetail("Key (%s)=(%s) is still referenced from table \"%s\".",
+			 	get_attname(riinfo->fk_relid, riinfo->fk_attnum),
+			 	datum_to_cstring(key, keytype),
+			 	RelationGetRelationName(rel))));
 }
 
 static void
@@ -1244,18 +1253,19 @@ create_fk_constraint(PG_FUNCTION_ARGS)
 	Oid fk_table = PG_GETARG_OID(0);
 	Oid pk_table = PG_GETARG_OID(2);
 	char *fk_attr = TextDatumGetCString(PG_GETARG_TEXT_P(1));
-	char *pk_attr = TextDatumGetCString(PG_GETARG_TEXT_P(3));
 	AttrNumber fk_attnum = get_attnum(fk_table, fk_attr);
-	AttrNumber pk_attnum = get_attnum(pk_table, pk_attr);
 
-	create_fk_constraint_internal(fk_table, fk_attnum, pk_table, pk_attnum);
+	create_fk_constraint_internal(fk_table, fk_attnum, pk_table);
 
 	PG_RETURN_VOID();
 }
 
 static void
-create_fk_constraint_internal(Oid fk_table, AttrNumber fk_attnum, Oid pk_table, AttrNumber pk_attnum)
+create_fk_constraint_internal(Oid fk_table,
+							  AttrNumber fk_attnum,
+							  Oid pk_table)
 {
+	const PartRelationInfo *prel;
 	Oid			indexOid;
 	Oid			opclass;
 	Oid			fktypoid = get_atttype(fk_table, fk_attnum);
@@ -1276,9 +1286,14 @@ create_fk_constraint_internal(Oid fk_table, AttrNumber fk_attnum, Oid pk_table, 
 	Oid			opfamily;
 	Oid			opcintype;
 
-
 	fkrel = heap_open(fk_table, ShareRowExclusiveLock);
 	pkrel = heap_open(pk_table, ShareRowExclusiveLock);
+
+	prel = get_pathman_relation_info(pk_table);
+	if (!prel)
+		elog(ERROR,
+			 "table %s isn't partitioned by pg_pathman",
+			 get_rel_name(pk_table));
 
 	fkname = ChooseConstraintName(RelationGetRelationName(fkrel),
 								  get_attname(fk_table, fk_attnum),
@@ -1286,9 +1301,8 @@ create_fk_constraint_internal(Oid fk_table, AttrNumber fk_attnum, Oid pk_table, 
 								  RelationGetNamespace(fkrel),
 								  NIL);
 
-	indexOid = transformFkeyCheckAttrs(pkrel, pk_attnum, &opclass);
+	indexOid = transformFkeyCheckAttrs(pkrel, prel->attnum, &opclass);
 
-	/* TODO: if index isn't exist then we should raise an exception! */
 	/* TODO: check permissions */
 
 	/* We need several fields out of the pg_opclass entry */
@@ -1350,7 +1364,7 @@ create_fk_constraint_internal(Oid fk_table, AttrNumber fk_attnum, Oid pk_table, 
 														 * constraint */
 									  indexOid,
 									  pk_table,
-									  &pk_attnum,
+									  &prel->attnum,
 									  &pfeqop,
 									  &ppeqop,
 									  &ffeqop,
