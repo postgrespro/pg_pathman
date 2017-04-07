@@ -118,7 +118,7 @@ RETURNS TRIGGER AS 'pg_pathman', 'pathman_config_params_trigger_func'
 LANGUAGE C;
 
 CREATE TRIGGER pathman_config_params_trigger
-BEFORE INSERT OR UPDATE OR DELETE ON @extschema@.pathman_config_params
+AFTER INSERT OR UPDATE OR DELETE ON @extschema@.pathman_config_params
 FOR EACH ROW EXECUTE PROCEDURE @extschema@.pathman_config_params_trigger_func();
 
 /*
