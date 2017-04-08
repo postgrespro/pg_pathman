@@ -31,6 +31,23 @@
 #include "utils/syscache.h"
 
 
+/* Function declarations */
+
+PG_FUNCTION_INFO_V1( create_single_range_partition_pl );
+PG_FUNCTION_INFO_V1( create_range_partitions_internal );
+PG_FUNCTION_INFO_V1( check_range_available_pl );
+PG_FUNCTION_INFO_V1( generate_range_bounds_pl );
+
+PG_FUNCTION_INFO_V1( get_part_range_by_oid );
+PG_FUNCTION_INFO_V1( get_part_range_by_idx );
+
+PG_FUNCTION_INFO_V1( build_range_condition );
+PG_FUNCTION_INFO_V1( build_sequence_name );
+PG_FUNCTION_INFO_V1( merge_range_partitions );
+PG_FUNCTION_INFO_V1( drop_range_partition_expand_next );
+PG_FUNCTION_INFO_V1( validate_interval_value );
+
+
 static char *deparse_constraint(Oid relid, Node *expr);
 static ArrayType *construct_infinitable_array(Bound *elems,
 											  int nelems,
@@ -54,21 +71,12 @@ static bool interval_is_trivial(Oid atttype,
 								Datum interval,
 								Oid interval_type);
 
-/* Function declarations */
-
-PG_FUNCTION_INFO_V1( create_single_range_partition_pl );
-PG_FUNCTION_INFO_V1( create_range_partitions_internal );
-PG_FUNCTION_INFO_V1( check_range_available_pl );
-PG_FUNCTION_INFO_V1( generate_range_bounds_pl );
-
-PG_FUNCTION_INFO_V1( get_part_range_by_oid );
-PG_FUNCTION_INFO_V1( get_part_range_by_idx );
-
-PG_FUNCTION_INFO_V1( build_range_condition );
-PG_FUNCTION_INFO_V1( build_sequence_name );
-PG_FUNCTION_INFO_V1( merge_range_partitions );
-PG_FUNCTION_INFO_V1( drop_range_partition_expand_next );
-PG_FUNCTION_INFO_V1( validate_interval_value );
+/* Extracted common check */
+static inline bool
+check_relation_exists(Oid relid)
+{
+	return get_rel_type_id(relid) != InvalidOid;
+}
 
 
 /*
@@ -98,7 +106,8 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 
 	/* Handle 'parent_relid' */
 	if (PG_ARGISNULL(0))
-		elog(ERROR, "'parent_relid' should not be NULL");
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("'parent_relid' should not be NULL")));
 
 	/* Fetch mandatory args */
 	parent_relid = PG_GETARG_OID(0);
@@ -381,31 +390,34 @@ generate_range_bounds_pl(PG_FUNCTION_ARGS)
 Datum
 get_part_range_by_oid(PG_FUNCTION_ARGS)
 {
-	Oid						partition_relid = InvalidOid,
+	Oid						partition_relid,
 							parent_relid;
 	PartParentSearch		parent_search;
-	uint32					i;
 	RangeEntry			   *ranges;
 	const PartRelationInfo *prel;
+	uint32					i;
 
-	if (PG_ARGISNULL(0))
-		elog(ERROR, "'partition_relid' should not be NULL");
-	else
+	if (!PG_ARGISNULL(0))
+	{
 		partition_relid = PG_GETARG_OID(0);
+	}
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("'partition_relid' should not be NULL")));
 
 	parent_relid = get_parent_of_partition(partition_relid, &parent_search);
 	if (parent_search != PPS_ENTRY_PART_PARENT)
-		elog(ERROR, "relation \"%s\" is not a partition",
-			 get_rel_name_or_relid(partition_relid));
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("relation \"%s\" is not a partition",
+							   get_rel_name_or_relid(partition_relid))));
 
 	prel = get_pathman_relation_info(parent_relid);
 	shout_if_prel_is_invalid(parent_relid, prel, PT_RANGE);
 
 	/* Check type of 'dummy' (for correct output) */
 	if (getBaseType(get_fn_expr_argtype(fcinfo->flinfo, 1)) != getBaseType(prel->atttype))
-		elog(ERROR, "pg_typeof(dummy) should be %s",
-			 format_type_be(getBaseType(prel->atttype)));
-
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("pg_typeof(dummy) should be %s",
+							   format_type_be(getBaseType(prel->atttype)))));
 
 	ranges = PrelGetRangesArray(prel);
 
@@ -427,9 +439,10 @@ get_part_range_by_oid(PG_FUNCTION_ARGS)
 		}
 
 	/* No partition found, report error */
-	elog(ERROR, "relation \"%s\" has no partition \"%s\"",
-		 get_rel_name_or_relid(parent_relid),
-		 get_rel_name_or_relid(partition_relid));
+	ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("relation \"%s\" has no partition \"%s\"",
+						   get_rel_name_or_relid(parent_relid),
+						   get_rel_name_or_relid(partition_relid))));
 
 	PG_RETURN_NULL(); /* keep compiler happy */
 }
@@ -444,35 +457,42 @@ get_part_range_by_oid(PG_FUNCTION_ARGS)
 Datum
 get_part_range_by_idx(PG_FUNCTION_ARGS)
 {
-	Oid						parent_relid = InvalidOid;
+	Oid						parent_relid;
 	int						partition_idx = 0;
 	Bound					elems[2];
 	RangeEntry			   *ranges;
 	const PartRelationInfo *prel;
 
-	if (PG_ARGISNULL(0))
-		elog(ERROR, "'parent_relid' should not be NULL");
-	else
+	if (!PG_ARGISNULL(0))
+	{
 		parent_relid = PG_GETARG_OID(0);
+	}
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("'parent_relid' should not be NULL")));
 
-	if (PG_ARGISNULL(1))
-		elog(ERROR, "'partition_idx' should not be NULL");
-	else
+	if (!PG_ARGISNULL(1))
+	{
 		partition_idx = PG_GETARG_INT32(1);
+	}
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("'partition_idx' should not be NULL")));
 
 	prel = get_pathman_relation_info(parent_relid);
 	shout_if_prel_is_invalid(parent_relid, prel, PT_RANGE);
 
 	/* Check type of 'dummy' (for correct output) */
 	if (getBaseType(get_fn_expr_argtype(fcinfo->flinfo, 2)) != getBaseType(prel->atttype))
-		elog(ERROR, "pg_typeof(dummy) should be %s",
-			 format_type_be(getBaseType(prel->atttype)));
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("pg_typeof(dummy) should be %s",
+							   format_type_be(getBaseType(prel->atttype)))));
 
 
 	/* Now we have to deal with 'idx' */
 	if (partition_idx < -1)
 	{
-		elog(ERROR, "negative indices other than -1 (last partition) are not allowed");
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("negative indices other than -1"
+							   " (last partition) are not allowed")));
 	}
 	else if (partition_idx == -1)
 	{
@@ -480,8 +500,9 @@ get_part_range_by_idx(PG_FUNCTION_ARGS)
 	}
 	else if (((uint32) abs(partition_idx)) >= PrelChildrenCount(prel))
 	{
-		elog(ERROR, "partition #%d does not exist (total amount is %u)",
-			 partition_idx, PrelChildrenCount(prel));
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("partition #%d does not exist (total amount is %u)",
+							   partition_idx, PrelChildrenCount(prel))));
 	}
 
 	ranges = PrelGetRangesArray(prel);
@@ -508,14 +529,28 @@ get_part_range_by_idx(PG_FUNCTION_ARGS)
 Datum
 build_range_condition(PG_FUNCTION_ARGS)
 {
-	Oid			relid = PG_GETARG_OID(0);
-	text	   *attname = PG_GETARG_TEXT_P(1);
+	Oid			partition_relid;
+	text	   *attname;
 
 	Bound		min,
 				max;
 	Oid			bounds_type = get_fn_expr_argtype(fcinfo->flinfo, 2);
 	Constraint *con;
 	char	   *result;
+
+	if (!PG_ARGISNULL(0))
+	{
+		partition_relid = PG_GETARG_OID(0);
+	}
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("'partition_relid' should not be NULL")));
+
+	if (!PG_ARGISNULL(1))
+	{
+		attname = PG_GETARG_TEXT_P(1);
+	}
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("'attribute' should not be NULL")));;
 
 	min = PG_ARGISNULL(2) ?
 				MakeBoundInf(MINUS_INFINITY) :
@@ -525,11 +560,12 @@ build_range_condition(PG_FUNCTION_ARGS)
 				MakeBoundInf(PLUS_INFINITY) :
 				MakeBound(PG_GETARG_DATUM(3));
 
-	con = build_range_check_constraint(relid, text_to_cstring(attname),
+	con = build_range_check_constraint(partition_relid,
+									   text_to_cstring(attname),
 									   &min, &max,
 									   bounds_type);
 
-	result = deparse_constraint(relid, con->raw_expr);
+	result = deparse_constraint(partition_relid, con->raw_expr);
 
 	PG_RETURN_TEXT_P(cstring_to_text(result));
 }
@@ -541,6 +577,9 @@ build_sequence_name(PG_FUNCTION_ARGS)
 	Oid		parent_relid = PG_GETARG_OID(0);
 	Oid		parent_nsp;
 	char   *result;
+
+	if (!check_relation_exists(parent_relid))
+		ereport(ERROR, (errmsg("relation \"%u\" does not exist", parent_relid)));
 
 	parent_nsp = get_rel_namespace(parent_relid);
 
@@ -781,33 +820,47 @@ drop_range_partition_expand_next(PG_FUNCTION_ARGS)
 Datum
 validate_interval_value(PG_FUNCTION_ARGS)
 {
-	Oid			partrel = PG_GETARG_OID(0);
-	text	   *attname = PG_GETARG_TEXT_P(1);
-	PartType	parttype = DatumGetPartType(PG_GETARG_DATUM(2));
-	Datum		interval_text = PG_GETARG_DATUM(3);
-	Datum		interval_value;
-	Oid			interval_type;
+	Oid			partrel;
+	text	   *attname;
+	PartType	parttype;
 
-	if (PG_ARGISNULL(0))
-		elog(ERROR, "'partrel' should not be NULL");
+	if (!PG_ARGISNULL(0))
+	{
+		partrel = PG_GETARG_OID(0);
+	}
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("'partrel' should not be NULL")));
 
-	if (PG_ARGISNULL(1))
-		elog(ERROR, "'attname' should not be NULL");
+	if (!PG_ARGISNULL(1))
+	{
+		attname = PG_GETARG_TEXT_P(1);
+	}
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("'attname' should not be NULL")));
 
-	if (PG_ARGISNULL(2))
-		elog(ERROR, "'parttype' should not be NULL");
+	if (!PG_ARGISNULL(2))
+	{
+		parttype = DatumGetPartType(PG_GETARG_DATUM(2));
+	}
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("'parttype' should not be NULL")));
 
 	/*
-	 * NULL interval is fine for both HASH and RANGE. But for RANGE we need
-	 * to make some additional checks
+	 * NULL interval is fine for both HASH and RANGE.
+	 * But for RANGE we need to make some additional checks.
 	 */
 	if (!PG_ARGISNULL(3))
 	{
+		Datum		interval_text = PG_GETARG_DATUM(3),
+					interval_value;
+		Oid			interval_type;
 		char	   *attname_cstr;
 		Oid			atttype; /* type of partitioned attribute */
 
 		if (parttype == PT_HASH)
-			elog(ERROR, "interval must be NULL for HASH partitioned table");
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("interval should be NULL for HASH partitioned table")));
 
 		/* Convert attname to CSTRING and fetch column's type */
 		attname_cstr = text_to_cstring(attname);
@@ -820,7 +873,9 @@ validate_interval_value(PG_FUNCTION_ARGS)
 
 		/* Check that interval isn't trivial */
 		if (interval_is_trivial(atttype, interval_value, interval_type))
-			elog(ERROR, "interval must not be trivial");
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("interval should not be trivial")));
 	}
 
 	PG_RETURN_BOOL(true);
@@ -878,7 +933,8 @@ interval_is_trivial(Oid atttype, Datum interval, Oid interval_type)
 				float4 f = DatumGetFloat4(interval);
 
 				if (isnan(f) || is_infinite(f))
-					elog(ERROR, "invalid floating point interval");
+					ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+									errmsg("invalid floating point interval")));
 				default_value = Float4GetDatum(0);
 			}
 			break;
@@ -888,7 +944,8 @@ interval_is_trivial(Oid atttype, Datum interval, Oid interval_type)
 				float8 f = DatumGetFloat8(interval);
 
 				if (isnan(f) || is_infinite(f))
-					elog(ERROR, "invalid floating point interval");
+					ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+									errmsg("invalid floating point interval")));
 				default_value = Float8GetDatum(0);
 			}
 			break;
@@ -900,7 +957,8 @@ interval_is_trivial(Oid atttype, Datum interval, Oid interval_type)
 
 				/* Test for NaN */
 				if (numeric_is_nan(ni))
-					elog(ERROR, "invalid numeric interval");
+					ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+									errmsg("invalid numeric interval")));
 
 				/* Building default value */
 				numeric = DatumGetNumeric(
@@ -970,7 +1028,8 @@ interval_is_trivial(Oid atttype, Datum interval, Oid interval_type)
 		return true;
 
 	else if (cmp_result > 0) /* Negative interval? */
-		elog(ERROR, "interval must not be negative");
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("interval should not be negative")));
 
 	/* Everything is OK */
 	return false;
@@ -1112,9 +1171,10 @@ check_range_adjacence(Oid cmp_proc, Oid collid, List *ranges)
 		if ((cmp_bounds(&finfo, collid, &last->max, &cur->min) != 0) &&
 			(cmp_bounds(&finfo, collid, &cur->max, &last->min) != 0))
 		{
-			elog(ERROR, "partitions \"%s\" and \"%s\" are not adjacent",
-						get_rel_name(last->child_oid),
-						get_rel_name(cur->child_oid));
+			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+							errmsg("partitions \"%s\" and \"%s\" are not adjacent",
+								   get_rel_name(last->child_oid),
+								   get_rel_name(cur->child_oid))));
 		}
 
 		last = cur;

@@ -59,6 +59,7 @@ PG_FUNCTION_INFO_V1( build_check_constraint_name_attname );
 PG_FUNCTION_INFO_V1( validate_relname );
 PG_FUNCTION_INFO_V1( is_date_type );
 PG_FUNCTION_INFO_V1( is_attribute_nullable );
+PG_FUNCTION_INFO_V1( is_operator_supported );
 PG_FUNCTION_INFO_V1( is_tuple_convertible );
 
 PG_FUNCTION_INFO_V1( add_to_pathman_config );
@@ -72,7 +73,6 @@ PG_FUNCTION_INFO_V1( invoke_on_partition_created_callback );
 
 PG_FUNCTION_INFO_V1( check_security_policy );
 
-PG_FUNCTION_INFO_V1( is_operator_supported );
 PG_FUNCTION_INFO_V1( create_update_triggers );
 PG_FUNCTION_INFO_V1( pathman_update_trigger_func );
 PG_FUNCTION_INFO_V1( create_single_update_trigger );
@@ -113,7 +113,7 @@ static void pathman_update_trigger_func_move_tuple(Relation source_rel,
 												   HeapTuple new_tuple);
 
 /* Extracted common check */
-static bool
+static inline bool
 check_relation_exists(Oid relid)
 {
 	return get_rel_type_id(relid) != InvalidOid;
@@ -220,8 +220,9 @@ get_parent_of_partition_pl(PG_FUNCTION_ARGS)
 		PG_RETURN_OID(parent);
 	else
 	{
-		elog(ERROR, "\"%s\" is not a partition",
-			 get_rel_name_or_relid(partition));
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("\"%s\" is not a partition",
+							   get_rel_name_or_relid(partition))));
 
 		PG_RETURN_NULL();
 	}
@@ -602,7 +603,8 @@ validate_relname(PG_FUNCTION_ARGS)
 
 	/* We don't accept NULL */
 	if (PG_ARGISNULL(0))
-		ereport(ERROR, (errmsg("relation should not be NULL"),
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("relation should not be NULL"),
 						errdetail("function " CppAsString(validate_relname)
 								  " received NULL argument")));
 
@@ -610,7 +612,8 @@ validate_relname(PG_FUNCTION_ARGS)
 	relid = PG_GETARG_OID(0);
 
 	if (!check_relation_exists(relid))
-		ereport(ERROR, (errmsg("relation \"%u\" does not exist", relid),
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("relation \"%u\" does not exist", relid),
 						errdetail("triggered in function "
 								  CppAsString(validate_relname))));
 
@@ -644,6 +647,19 @@ is_attribute_nullable(PG_FUNCTION_ARGS)
 			 text_to_cstring(attname), get_rel_name_or_relid(relid));
 
 	PG_RETURN_BOOL(result); /* keep compiler happy */
+}
+
+Datum
+is_operator_supported(PG_FUNCTION_ARGS)
+{
+	Oid		opid,
+			typid	= PG_GETARG_OID(0);
+	char   *opname	= TextDatumGetCString(PG_GETARG_TEXT_P(1));
+
+	opid = compatible_oper_opid(list_make1(makeString(opname)),
+								typid, typid, true);
+
+	PG_RETURN_BOOL(OidIsValid(opid));
 }
 
 Datum
@@ -694,7 +710,8 @@ build_update_trigger_name(PG_FUNCTION_ARGS)
 
 	/* Check that relation exists */
 	if (!check_relation_exists(relid))
-		elog(ERROR, "Invalid relation %u", relid);
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("relation \"%u\" does not exist", relid)));
 
 	result = quote_identifier(build_update_trigger_name_internal(relid));
 
@@ -705,13 +722,21 @@ Datum
 build_update_trigger_func_name(PG_FUNCTION_ARGS)
 {
 	Oid			relid = PG_GETARG_OID(0);
-	const char *result;
+	Oid			nspid;
+	const char *result,
+			   *func_name;
 
 	/* Check that relation exists */
 	if (!check_relation_exists(relid))
-		elog(ERROR, "Invalid relation %u", relid);
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("relation \"%u\" does not exist", relid)));
 
-	result = build_update_trigger_func_name_internal(relid);
+	nspid = get_rel_namespace(relid);
+
+	func_name = build_update_trigger_func_name_internal(relid);
+	result = psprintf("%s.%s",
+					  quote_identifier(get_namespace_name(nspid)),
+					  quote_identifier(func_name));
 
 	PG_RETURN_TEXT_P(cstring_to_text(result));
 }
@@ -724,12 +749,14 @@ build_check_constraint_name_attnum(PG_FUNCTION_ARGS)
 	const char *result;
 
 	if (!check_relation_exists(relid))
-		elog(ERROR, "Invalid relation %u", relid);
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("relation \"%u\" does not exist", relid)));
 
 	/* We explicitly do not support system attributes */
 	if (attnum == InvalidAttrNumber || attnum < 0)
-		elog(ERROR, "Cannot build check constraint name: "
-					"invalid attribute number %i", attnum);
+		ereport(ERROR, (errcode(ERRCODE_UNDEFINED_COLUMN),
+						errmsg("cannot build check constraint name"),
+						errdetail("invalid attribute number %i", attnum)));
 
 	result = build_check_constraint_name_relid_internal(relid, attnum);
 
@@ -741,15 +768,21 @@ build_check_constraint_name_attname(PG_FUNCTION_ARGS)
 {
 	Oid			relid = PG_GETARG_OID(0);
 	text	   *attname = PG_GETARG_TEXT_P(1);
-	AttrNumber	attnum = get_attnum(relid, text_to_cstring(attname));
+	AttrNumber	attnum;
 	const char *result;
 
 	if (!check_relation_exists(relid))
-		elog(ERROR, "Invalid relation %u", relid);
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("relation \"%u\" does not exist", relid)));
+
+	attnum = get_attnum(relid, text_to_cstring(attname));
 
 	if (attnum == InvalidAttrNumber)
-		elog(ERROR, "relation \"%s\" has no column \"%s\"",
-			 get_rel_name_or_relid(relid), text_to_cstring(attname));
+		ereport(ERROR, (errcode(ERRCODE_UNDEFINED_COLUMN),
+						errmsg("cannot build check constraint name"),
+						errdetail("relation \"%s\" has no column \"%s\"",
+								  get_rel_name_or_relid(relid),
+								  text_to_cstring(attname))));
 
 	result = build_check_constraint_name_relid_internal(relid, attnum);
 
@@ -782,23 +815,30 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	PathmanInitState	init_state;
 	MemoryContext		old_mcxt = CurrentMemoryContext;
 
-	if (PG_ARGISNULL(0))
-		elog(ERROR, "'parent_relid' should not be NULL");
+	if (!PG_ARGISNULL(0))
+	{
+		relid = PG_GETARG_OID(0);
+	}
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("'parent_relid' should not be NULL")));
 
-	if (PG_ARGISNULL(1))
-		elog(ERROR, "'attname' should not be NULL");
-
-	/* Read parameters */
-	relid = PG_GETARG_OID(0);
-	attname = PG_GETARG_TEXT_P(1);
+	if (!PG_ARGISNULL(1))
+	{
+		attname = PG_GETARG_TEXT_P(1);
+	}
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("'attname' should not be NULL")));
 
 	/* Check that relation exists */
 	if (!check_relation_exists(relid))
-		elog(ERROR, "Invalid relation %u", relid);
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("relation \"%u\" does not exist", relid)));
 
 	if (get_attnum(relid, text_to_cstring(attname)) == InvalidAttrNumber)
-		elog(ERROR, "relation \"%s\" has no column \"%s\"",
-			 get_rel_name_or_relid(relid), text_to_cstring(attname));
+		ereport(ERROR, (errcode(ERRCODE_UNDEFINED_COLUMN),
+						errmsg("relation \"%s\" has no column \"%s\"",
+							   get_rel_name_or_relid(relid),
+							   text_to_cstring(attname))));
 
 	/* Select partitioning type using 'range_interval' */
 	parttype = PG_ARGISNULL(2) ? PT_HASH : PT_RANGE;
@@ -979,31 +1019,44 @@ invoke_on_partition_created_callback(PG_FUNCTION_ARGS)
 #define ARG_RANGE_START		3	/* start_value */
 #define ARG_RANGE_END		4	/* end_value */
 
-	Oid						parent_oid		= PG_GETARG_OID(ARG_PARENT),
-							partition_oid	= PG_GETARG_OID(ARG_CHILD);
+	Oid						parent_relid,
+							partition_relid;
 
-	Oid						callback_oid	= PG_GETARG_OID(ARG_CALLBACK);
-
+	Oid						callback_oid = InvalidOid;
 	init_callback_params	callback_params;
 
 
+	/* NOTE: callback may be NULL */
+	if (!PG_ARGISNULL(ARG_CALLBACK))
+	{
+		callback_oid = PG_GETARG_OID(ARG_CALLBACK);
+	}
+
 	/* If there's no callback function specified, we're done */
-	if (PG_ARGISNULL(ARG_CALLBACK) || callback_oid == InvalidOid)
+	if (callback_oid == InvalidOid)
 		PG_RETURN_VOID();
 
-	if (PG_ARGISNULL(ARG_PARENT))
-		elog(ERROR, "'parent_relid' should not be NULL");
+	if (!PG_ARGISNULL(ARG_PARENT))
+	{
+		parent_relid = PG_GETARG_OID(ARG_PARENT);
+	}
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("'parent_relid' should not be NULL")));
 
-	if (PG_ARGISNULL(ARG_CHILD))
-		elog(ERROR, "'partition' should not be NULL");
+	if (!PG_ARGISNULL(ARG_CHILD))
+	{
+		partition_relid = PG_GETARG_OID(ARG_CHILD);
+	}
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("'partition_relid' should not be NULL")));
 
 	switch (PG_NARGS())
 	{
 		case 3:
 			MakeInitCallbackHashParams(&callback_params,
 									   callback_oid,
-									   parent_oid,
-									   partition_oid);
+									   parent_relid,
+									   partition_relid);
 			break;
 
 		case 5:
@@ -1025,8 +1078,8 @@ invoke_on_partition_created_callback(PG_FUNCTION_ARGS)
 
 				MakeInitCallbackRangeParams(&callback_params,
 											callback_oid,
-											parent_oid,
-											partition_oid,
+											parent_relid,
+											partition_relid,
 											start,
 											end,
 											value_type);
@@ -1065,22 +1118,6 @@ check_security_policy(PG_FUNCTION_ARGS)
 
 	/* Else return TRUE */
 	PG_RETURN_BOOL(true);
-}
-
-/*
- * Check if type supports the specified operator ( + | - | etc ).
- */
-Datum
-is_operator_supported(PG_FUNCTION_ARGS)
-{
-	Oid		opid,
-			typid	= PG_GETARG_OID(0);
-	char   *opname	= TextDatumGetCString(PG_GETARG_TEXT_P(1));
-
-	opid = compatible_oper_opid(list_make1(makeString(opname)),
-								typid, typid, true);
-
-	PG_RETURN_BOOL(OidIsValid(opid));
 }
 
 
@@ -1358,7 +1395,14 @@ create_single_update_trigger(PG_FUNCTION_ARGS)
 Datum
 has_update_trigger(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_BOOL(has_update_trigger_internal(PG_GETARG_OID(0)));
+	Oid parent_relid = PG_GETARG_OID(0);
+
+	/* Check that relation exists */
+	if (!check_relation_exists(parent_relid))
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("relation \"%u\" does not exist", parent_relid)));
+
+	PG_RETURN_BOOL(has_update_trigger_internal(parent_relid));
 }
 
 

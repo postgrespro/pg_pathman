@@ -61,7 +61,8 @@ create_hash_partitions_internal(PG_FUNCTION_ARGS)
 
 	/* Check that there's no partitions yet */
 	if (get_pathman_relation_info(parent_relid))
-		elog(ERROR, "cannot add new HASH partitions");
+		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						errmsg("cannot add new HASH partitions")));
 
 	partitioned_col_type = get_attribute_type(parent_relid,
 											  partitioned_col_name,
@@ -77,11 +78,15 @@ create_hash_partitions_internal(PG_FUNCTION_ARGS)
 
 	/* Validate size of 'partition_names' */
 	if (partition_names && partition_names_size != partitions_count)
-		elog(ERROR, "size of 'partition_names' must be equal to 'partitions_count'");
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("size of 'partition_names' must be equal to 'partitions_count'")));
 
 	/* Validate size of 'tablespaces' */
 	if (tablespaces && tablespaces_size != partitions_count)
-		elog(ERROR, "size of 'tablespaces' must be equal to 'partitions_count'");
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("size of 'tablespaces' must be equal to 'partitions_count'")));
 
 	/* Convert partition names into RangeVars */
 	rangevars = qualified_relnames_to_rangevars(partition_names, partitions_count);
@@ -135,13 +140,18 @@ build_hash_condition(PG_FUNCTION_ARGS)
 	char		   *result;
 
 	if (part_idx >= part_count)
-		elog(ERROR, "'partition_index' must be lower than 'partitions_count'");
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("'partition_index' must be lower than 'partitions_count'")));
 
 	tce = lookup_type_cache(atttype, TYPECACHE_HASH_PROC);
 
 	/* Check that HASH function exists */
 	if (!OidIsValid(tce->hash_proc))
-		elog(ERROR, "no hash function for type %s", format_type_be(atttype));
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("no hash function for type %s",
+						format_type_be(atttype))));
 
 	/* Create hash condition CSTRING */
 	result = psprintf("%s.get_hash_part_idx(%s(%s), %u) = %u",

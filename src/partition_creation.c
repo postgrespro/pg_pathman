@@ -1262,7 +1262,12 @@ check_range_available(Oid parent_relid,
 	prel = get_pathman_relation_info(parent_relid);
 
 	/* If there's no prel, return TRUE (overlap is not possible) */
-	if (!prel) return true;
+	if (!prel)
+	{
+		ereport(WARNING, (errmsg("relation \"%s\" is not partitioned",
+								 get_rel_name_or_relid(parent_relid))));
+		return true;
+	}
 
 	/* Emit an error if it is not partitioned by RANGE */
 	shout_if_prel_is_invalid(parent_relid, prel, PT_RANGE);
