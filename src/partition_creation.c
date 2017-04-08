@@ -298,7 +298,7 @@ create_partitions_for_value(Oid relid, Datum value, Oid value_type)
 		}
 	}
 	else
-		elog(ERROR, "relation \"%s\" is not partitioned by pg_pathman",
+		elog(ERROR, "relation \"%s\" is not partitioned",
 			 get_rel_name_or_relid(relid));
 
 	/* Check that 'last_partition' is valid */

@@ -238,7 +238,7 @@ get_base_type_pl(PG_FUNCTION_ARGS)
 }
 
 /*
- * Return partition key type
+ * Return partition key type.
  */
 Datum
 get_partition_key_type(PG_FUNCTION_ARGS)
@@ -253,7 +253,7 @@ get_partition_key_type(PG_FUNCTION_ARGS)
 }
 
 /*
- * Return tablespace name for specified relation
+ * Return tablespace name of a specified relation.
  */
 Datum
 get_tablespace_pl(PG_FUNCTION_ARGS)
@@ -755,8 +755,7 @@ build_check_constraint_name_attnum(PG_FUNCTION_ARGS)
 	/* We explicitly do not support system attributes */
 	if (attnum == InvalidAttrNumber || attnum < 0)
 		ereport(ERROR, (errcode(ERRCODE_UNDEFINED_COLUMN),
-						errmsg("cannot build check constraint name"),
-						errdetail("invalid attribute number %i", attnum)));
+						errmsg("invalid attribute number %i", attnum)));
 
 	result = build_check_constraint_name_relid_internal(relid, attnum);
 
@@ -779,10 +778,9 @@ build_check_constraint_name_attname(PG_FUNCTION_ARGS)
 
 	if (attnum == InvalidAttrNumber)
 		ereport(ERROR, (errcode(ERRCODE_UNDEFINED_COLUMN),
-						errmsg("cannot build check constraint name"),
-						errdetail("relation \"%s\" has no column \"%s\"",
-								  get_rel_name_or_relid(relid),
-								  text_to_cstring(attname))));
+						errmsg("relation \"%s\" has no column \"%s\"",
+							   get_rel_name_or_relid(relid),
+							   text_to_cstring(attname))));
 
 	result = build_check_constraint_name_relid_internal(relid, attnum);
 

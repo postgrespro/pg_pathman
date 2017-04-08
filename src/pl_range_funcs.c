@@ -105,12 +105,13 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 
 
 	/* Handle 'parent_relid' */
-	if (PG_ARGISNULL(0))
-		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						errmsg("'parent_relid' should not be NULL")));
+	if (!PG_ARGISNULL(0))
+	{
+		parent_relid = PG_GETARG_OID(0);
+	}
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("'parent_relid' should not be NULL")));
 
-	/* Fetch mandatory args */
-	parent_relid = PG_GETARG_OID(0);
 	value_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
 
 	start = PG_ARGISNULL(1) ?

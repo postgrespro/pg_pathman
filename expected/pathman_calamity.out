@@ -102,23 +102,26 @@ SELECT count(*) FROM calamity.part_test;
 (1 row)
 
 DELETE FROM calamity.part_test;
+/* test function create_single_range_partition() */
+SELECT create_single_range_partition(NULL, NULL::INT4, NULL); /* not ok */
+ERROR:  'parent_relid' should not be NULL
 /* test function create_range_partitions_internal() */
-SELECT create_range_partitions_internal(NULL, '{}'::INT[], NULL, NULL);			/* not ok */
+SELECT create_range_partitions_internal(NULL, '{}'::INT[], NULL, NULL);		/* not ok */
 ERROR:  'parent_relid' should not be NULL
 SELECT create_range_partitions_internal('calamity.part_test',
-										NULL::INT[], NULL, NULL);				/* not ok */
+										NULL::INT[], NULL, NULL);			/* not ok */
 ERROR:  'bounds' should not be NULL
 SELECT create_range_partitions_internal('calamity.part_test', '{1}'::INT[],
-										'{part_1}'::TEXT[], NULL);				/* not ok */
+										'{part_1}'::TEXT[], NULL);			/* not ok */
 ERROR:  wrong length of 'partition_names' array
 SELECT create_range_partitions_internal('calamity.part_test', '{1}'::INT[],
-										NULL, '{tblspc_1}'::TEXT[]);			/* not ok */
+										NULL, '{tblspc_1}'::TEXT[]);		/* not ok */
 ERROR:  wrong length of 'tablespaces' array
 SELECT create_range_partitions_internal('calamity.part_test',
-										'{1, NULL}'::INT[], NULL, NULL);		/* not ok */
+										'{1, NULL}'::INT[], NULL, NULL);	/* not ok */
 ERROR:  only first bound can be NULL
 SELECT create_range_partitions_internal('calamity.part_test',
-										'{2, 1}'::INT[], NULL, NULL);			/* not ok */
+										'{2, 1}'::INT[], NULL, NULL);		/* not ok */
 ERROR:  'bounds' array must be ascending
 /* test function create_hash_partitions() */
 SELECT create_hash_partitions('calamity.part_test', 'val', 2,
@@ -348,12 +351,16 @@ SELECT get_partition_key_type(NULL) IS NULL;
 (1 row)
 
 /* check function build_check_constraint_name_attnum() */
-SELECT build_check_constraint_name('calamity.part_test', 1::int2);
+SELECT build_check_constraint_name('calamity.part_test', 1::int2);	/* OK */
  build_check_constraint_name 
 -----------------------------
  pathman_part_test_1_check
 (1 row)
 
+SELECT build_check_constraint_name(0::REGCLASS, 1::int2);			/* not ok */
+ERROR:  relation "0" does not exist
+SELECT build_check_constraint_name('calamity.part_test', -1::int2);	/* not ok */
+ERROR:  invalid attribute number -1
 SELECT build_check_constraint_name('calamity.part_test', NULL::int2) IS NULL;
  ?column? 
 ----------
@@ -373,12 +380,16 @@ SELECT build_check_constraint_name(NULL, NULL::int2) IS NULL;
 (1 row)
 
 /* check function build_check_constraint_name_attname() */
-SELECT build_check_constraint_name('calamity.part_test', 'val');
+SELECT build_check_constraint_name('calamity.part_test', 'val');	/* OK */
  build_check_constraint_name 
 -----------------------------
  pathman_part_test_1_check
 (1 row)
 
+SELECT build_check_constraint_name(0::REGCLASS, 'val');				/* not ok */
+ERROR:  relation "0" does not exist
+SELECT build_check_constraint_name('calamity.part_test', 'nocol');	/* not ok */
+ERROR:  relation "part_test" has no column "nocol"
 SELECT build_check_constraint_name('calamity.part_test', NULL::text) IS NULL;
  ?column? 
 ----------
@@ -398,12 +409,14 @@ SELECT build_check_constraint_name(NULL, NULL::text) IS NULL;
 (1 row)
 
 /* check function build_update_trigger_name() */
-SELECT build_update_trigger_name('calamity.part_test');
+SELECT build_update_trigger_name('calamity.part_test');			/* OK */
  build_update_trigger_name 
 ---------------------------
  part_test_upd_trig
 (1 row)
 
+SELECT build_update_trigger_name(0::REGCLASS);					/* not ok */
+ERROR:  relation "0" does not exist
 SELECT build_update_trigger_name(NULL) IS NULL;
  ?column? 
 ----------
@@ -411,12 +424,14 @@ SELECT build_update_trigger_name(NULL) IS NULL;
 (1 row)
 
 /* check function build_update_trigger_func_name() */
-SELECT build_update_trigger_func_name('calamity.part_test');
+SELECT build_update_trigger_func_name('calamity.part_test');	/* OK */
   build_update_trigger_func_name  
 ----------------------------------
  calamity.part_test_upd_trig_func
 (1 row)
 
+SELECT build_update_trigger_func_name(0::REGCLASS);				/* not ok */
+ERROR:  relation "0" does not exist
 SELECT build_update_trigger_func_name(NULL) IS NULL;
  ?column? 
 ----------
@@ -424,13 +439,13 @@ SELECT build_update_trigger_func_name(NULL) IS NULL;
 (1 row)
 
 /* check function build_sequence_name() */
-SELECT build_sequence_name('calamity.part_test');	/* ok */
+SELECT build_sequence_name('calamity.part_test');				/* OK */
   build_sequence_name   
 ------------------------
  calamity.part_test_seq
 (1 row)
 
-SELECT build_sequence_name(1::REGCLASS);			/* not ok */
+SELECT build_sequence_name(1::REGCLASS);						/* not ok */
 ERROR:  relation "1" does not exist
 SELECT build_sequence_name(NULL) IS NULL;
  ?column? 
@@ -438,11 +453,20 @@ SELECT build_sequence_name(NULL) IS NULL;
  t
 (1 row)
 
+/* check function partition_table_concurrently() */
+SELECT partition_table_concurrently(1::REGCLASS);				/* not ok */
+ERROR:  relation "1" has no partitions
+SELECT partition_table_concurrently('pg_class', 0);				/* not ok */
+ERROR:  'batch_size' should not be less than 1 or greater than 10000
+SELECT partition_table_concurrently('pg_class', 1, 1E-5);		/* not ok */
+ERROR:  'sleep_time' should not be less than 0.5
+SELECT partition_table_concurrently('pg_class');				/* not ok */
+ERROR:  relation "pg_class" has no partitions
 /* check function stop_concurrent_part_task() */
-SELECT stop_concurrent_part_task(1::regclass);
+SELECT stop_concurrent_part_task(1::REGCLASS);					/* not ok */
 ERROR:  cannot find worker for relation "1"
 /* check function drop_range_partition_expand_next() */
-SELECT drop_range_partition_expand_next('pg_class');
+SELECT drop_range_partition_expand_next('pg_class');			/* not ok */
 ERROR:  relation "pg_class" is not a partition
 SELECT drop_range_partition_expand_next(NULL) IS NULL;
  ?column? 
@@ -572,6 +596,8 @@ DROP FUNCTION calamity.dummy_cb(arg jsonb);
 /* check function add_to_pathman_config() -- PHASE #1 */
 SELECT add_to_pathman_config(NULL, 'val');						/* no table */
 ERROR:  'parent_relid' should not be NULL
+SELECT add_to_pathman_config(0::REGCLASS, 'val');				/* no table (oid) */
+ERROR:  relation "0" does not exist
 SELECT add_to_pathman_config('calamity.part_test', NULL);		/* no column */
 ERROR:  'attname' should not be NULL
 SELECT add_to_pathman_config('calamity.part_test', 'V_A_L');	/* wrong column */
