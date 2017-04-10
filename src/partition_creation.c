@@ -1844,7 +1844,9 @@ get_part_expression_info(Oid relid, const char *expr_string,
 	expr_node = eval_const_expressions(NULL, expr_node);
 	validate_part_expression(expr_node, NULL);
 	if (contain_mutable_functions(expr_node))
-		elog(ERROR, "Expression should not contain mutable functions");
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+				 errmsg("functions in partitioning expression must be marked IMMUTABLE")));
 
 	out_string = nodeToString(expr_node);
 

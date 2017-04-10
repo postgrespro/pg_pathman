@@ -1081,11 +1081,7 @@ change_vars_to_consts(Node *node, struct change_vars_context *ctx)
 		if (varattno == 0)
 			elog(ERROR, "Couldn't find attribute used in expression in child relation");
 
-		/*
-		 * we get atttribute type using tuple description of child relation,
-		 * because it could be changed earlier, so Var of parent relation
-		 * will not be valid anymore.
-		 */
+		/* we suppose that type can be different from parent */
 		atttype = ctx->tuple_desc->attrs[varattno - 1]->atttypid;
 
 		tp = SearchSysCache1(TYPEOID, ObjectIdGetDatum(atttype));
@@ -1112,7 +1108,7 @@ change_vars_to_consts(Node *node, struct change_vars_context *ctx)
 											 &new_const->constisnull);
 		return (Node *) new_const;
 	}
-	return expression_tree_mutator(node, change_vars_to_consts, NULL);
+	return expression_tree_mutator(node, change_vars_to_consts, (void *) ctx);
 }
 
 static ExprState *
