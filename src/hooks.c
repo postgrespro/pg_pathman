@@ -28,6 +28,11 @@
 #include "utils/lsyscache.h"
 
 
+/* Borrowed from joinpath.c */
+#define PATH_PARAM_BY_REL(path, rel)  \
+	((path)->param_info && bms_overlap(PATH_REQ_OUTER(path), (rel)->relids))
+
+
 set_join_pathlist_hook_type		set_join_pathlist_next = NULL;
 set_rel_pathlist_hook_type		set_rel_pathlist_hook_next = NULL;
 planner_hook_type				planner_hook_next = NULL;
@@ -123,6 +128,12 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 
 		/* Select cheapest path for outerrel */
 		outer = outerrel->cheapest_total_path;
+
+		/* We cannot use an outer path that is parameterized by the inner rel */
+		if (PATH_PARAM_BY_REL(outer, innerrel))
+			continue;
+
+		/* Wrap 'outer' in unique path if needed */
 		if (saved_jointype == JOIN_UNIQUE_OUTER)
 		{
 			outer = (Path *) create_unique_path(root, outerrel,
