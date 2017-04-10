@@ -96,8 +96,9 @@ typedef struct
 	bool				warning_triggered;		/* warning message counter */
 
 	TupleTableSlot	   *tup_convert_slot;		/* slot for rebuilt tuples */
-
 	ExprContext		   *tup_convert_econtext;	/* ExprContext for projections */
+
+	ExprState		   *expr_state;				/* for partitioning expression */
 } PartitionFilterState;
 
 

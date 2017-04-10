@@ -857,15 +857,8 @@ LANGUAGE C STRICT;
  * Build check constraint name for a specified relation's column.
  */
 CREATE OR REPLACE FUNCTION @extschema@.build_check_constraint_name(
-	partition_relid	REGCLASS,
-	attribute		INT2)
-RETURNS TEXT AS 'pg_pathman', 'build_check_constraint_name_attnum'
-LANGUAGE C STRICT;
-
-CREATE OR REPLACE FUNCTION @extschema@.build_check_constraint_name(
-	partition_relid	REGCLASS,
-	attribute		TEXT)
-RETURNS TEXT AS 'pg_pathman', 'build_check_constraint_name_attname'
+	partition_relid	REGCLASS)
+RETURNS TEXT AS 'pg_pathman', 'build_check_constraint_name'
 LANGUAGE C STRICT;
 
 /*

@@ -99,7 +99,7 @@ static void fill_pbin_with_bounds(PartBoundInfo *pbin,
 static int cmp_range_entries(const void *p1, const void *p2, void *arg);
 static void update_parsed_expression(Oid relid, HeapTuple tuple,
 									   Datum *values, bool *nulls);
-static void fill_part_expression_vars(const PartRelationInfo *prel);
+static void fill_part_expression_vars(PartRelationInfo *prel);
 
 void
 init_relation_info_static_data(void)
@@ -202,7 +202,7 @@ refresh_pathman_relation_info(Oid relid,
 	prel->attname = TextDatumGetCString(values[Anum_pathman_config_expression - 1]);
 	prel->expr = (Node *) stringToNode(expr);
 	fix_opfuncids(prel->expr);
-	fill_part_expression_vars(prel);
+	fill_part_expression_vars((PartRelationInfo *) prel);
 
 	MemoryContextSwitchTo(oldcontext);
 
@@ -340,18 +340,12 @@ extract_vars(Node *node, PartRelationInfo *prel)
  * This function fills 'expr_vars' and 'expr_atts' attributes in PartRelationInfo.
  */
 static void
-fill_part_expression_vars(const PartRelationInfo *prel)
+fill_part_expression_vars(PartRelationInfo *prel)
 {
-	if (prel->expr_vars == NIL)
-	{
-		MemoryContext	ctx;
+	prel->expr_vars = NIL;
+	prel->expr_atts = NULL;
 
-		ctx = MemoryContextSwitchTo(PathmanRelationCacheContext);
-		extract_vars(prel->expr, (PartRelationInfo *) prel);
-		MemoryContextSwitchTo(ctx);
-	}
-
-	return prel->expr_vars;
+	extract_vars(prel->expr, prel);
 }
 
 /* Invalidate PartRelationInfo cache entry. Create new entry if 'found' is NULL. */

@@ -16,6 +16,7 @@
 #include "partition_filter.h"
 #include "relation_info.h"
 #include "xact_handling.h"
+#include "utils.h"
 
 #include "access/tupconvert.h"
 #include "access/nbtree.h"
@@ -25,6 +26,7 @@
 #include "catalog/pg_type.h"
 #include "commands/tablespace.h"
 #include "commands/trigger.h"
+#include "executor/executor.h"
 #include "executor/spi.h"
 #include "funcapi.h"
 #include "miscadmin.h"
@@ -54,8 +56,7 @@ PG_FUNCTION_INFO_V1( show_partition_list_internal );
 
 PG_FUNCTION_INFO_V1( build_update_trigger_name );
 PG_FUNCTION_INFO_V1( build_update_trigger_func_name );
-PG_FUNCTION_INFO_V1( build_check_constraint_name_attnum );
-PG_FUNCTION_INFO_V1( build_check_constraint_name_attname );
+PG_FUNCTION_INFO_V1( build_check_constraint_name );
 
 PG_FUNCTION_INFO_V1( validate_relname );
 PG_FUNCTION_INFO_V1( is_date_type );
@@ -684,45 +685,17 @@ build_update_trigger_func_name(PG_FUNCTION_ARGS)
 }
 
 Datum
-build_check_constraint_name_attnum(PG_FUNCTION_ARGS)
+build_check_constraint_name(PG_FUNCTION_ARGS)
 {
 	Oid			relid = PG_GETARG_OID(0);
-	AttrNumber	attnum = PG_GETARG_INT16(1);
 	const char *result;
 
 	if (!check_relation_exists(relid))
 		elog(ERROR, "Invalid relation %u", relid);
 
-	/* We explicitly do not support system attributes */
-	if (attnum == InvalidAttrNumber || attnum < 0)
-		elog(ERROR, "Cannot build check constraint name: "
-					"invalid attribute number %i", attnum);
-
 	result = build_check_constraint_name_relid_internal(relid);
-
 	PG_RETURN_TEXT_P(cstring_to_text(quote_identifier(result)));
 }
-
-Datum
-build_check_constraint_name_attname(PG_FUNCTION_ARGS)
-{
-	Oid			relid = PG_GETARG_OID(0);
-	text	   *attname = PG_GETARG_TEXT_P(1);
-	AttrNumber	attnum = get_attnum(relid, text_to_cstring(attname));
-	const char *result;
-
-	if (!check_relation_exists(relid))
-		elog(ERROR, "Invalid relation %u", relid);
-
-	if (attnum == InvalidAttrNumber)
-		elog(ERROR, "relation \"%s\" has no column \"%s\"",
-			 get_rel_name_or_relid(relid), text_to_cstring(attname));
-
-	result = build_check_constraint_name_relid_internal(relid);
-
-	PG_RETURN_TEXT_P(cstring_to_text(quote_identifier(result)));
-}
-
 
 /*
  * ------------------------
@@ -1080,6 +1053,87 @@ is_operator_supported(PG_FUNCTION_ARGS)
 	PG_RETURN_BOOL(OidIsValid(opid));
 }
 
+struct change_vars_context
+{
+	HeapTuple	 tuple;
+	TupleDesc	 tuple_desc;
+	AttrNumber	*attributes_map;
+};
+
+/*
+ * To prevent calculation of Vars in expression, we change them with
+ * Const, and fill them with values from current tuple
+ */
+static Node *
+change_vars_to_consts(Node *node, struct change_vars_context *ctx)
+{
+	const TypeCacheEntry   *typcache;
+
+	if (IsA(node, Var))
+	{
+		Var			*var = (Var *) node;
+		AttrNumber	 varattno = ctx->attributes_map[var->varattno - 1];
+		Oid			 atttype;
+		Const		*new_const = makeNode(Const);
+		HeapTuple	 tp;
+
+		Assert(var->varno == 1);
+		if (varattno == 0)
+			elog(ERROR, "Couldn't find attribute used in expression in child relation");
+
+		/*
+		 * we get atttribute type using tuple description of child relation,
+		 * because it could be changed earlier, so Var of parent relation
+		 * will not be valid anymore.
+		 */
+		atttype = ctx->tuple_desc->attrs[varattno - 1]->atttypid;
+
+		tp = SearchSysCache1(TYPEOID, ObjectIdGetDatum(atttype));
+		if (HeapTupleIsValid(tp))
+		{
+			Form_pg_type typtup = (Form_pg_type) GETSTRUCT(tp);
+			new_const->consttypmod = typtup->typtypmod;
+			new_const->constcollid = typtup->typcollation;
+			ReleaseSysCache(tp);
+		}
+		else
+			elog(ERROR, "Something went wrong while getting type information");
+
+		typcache = lookup_type_cache(atttype, 0);
+		new_const->constbyval = typcache->typbyval;
+		new_const->constlen	= typcache->typlen;
+		new_const->consttype = atttype;
+		new_const->location = -1;
+
+		/* extract value from NEW tuple */
+		new_const->constvalue = heap_getattr(ctx->tuple,
+											 varattno,
+											 ctx->tuple_desc,
+											 &new_const->constisnull);
+		return (Node *) new_const;
+	}
+	return expression_tree_mutator(node, change_vars_to_consts, NULL);
+}
+
+static ExprState *
+prepare_expr_for_execution(const PartRelationInfo *prel, Relation source_rel,
+						   HeapTuple tuple, Oid *value_type)
+{
+	struct change_vars_context	 ctx;
+	Node						*expr;
+	ExprState					*expr_state;
+
+	Assert(value_type);
+
+	ctx.tuple = tuple;
+	ctx.attributes_map = get_pathman_attributes_map(prel, source_rel);
+	ctx.tuple_desc = RelationGetDescr(source_rel);
+	expr = change_vars_to_consts(prel->expr, &ctx);
+	*value_type = exprType(expr);
+	expr_state = ExecInitExpr((Expr *) expr, NULL);
+
+	return expr_state;
+}
 
 /*
  * --------------------------
@@ -1102,17 +1156,19 @@ pathman_update_trigger_func(PG_FUNCTION_ARGS)
 	HeapTuple				old_tuple,
 							new_tuple;
 
-	AttrNumber				value_attnum;
 	Datum					value;
 	Oid						value_type;
 	bool					isnull;
+	ExprDoneCond			itemIsDone;
 
 	Oid					   *parts;
 	int						nparts;
 
+	ExprContext			   *econtext;
+	ExprState			   *expr_state;
+	MemoryContext		    old_cxt;
 	PartParentSearch		parent_search;
 	const PartRelationInfo *prel;
-	AttrNumber			   *attributes_map;
 
 	/* Handle user calls */
 	if (!CALLED_AS_TRIGGER(fcinfo))
@@ -1145,24 +1201,25 @@ pathman_update_trigger_func(PG_FUNCTION_ARGS)
 	prel = get_pathman_relation_info(parent_relid);
 	shout_if_prel_is_invalid(parent_relid, prel, PT_ANY);
 
-	attributes_map = get_pathman_attributes_map(prel, source_rel);
-	prel_expr = copyObject(prel->expr);
-	modify_expression_attnums(prel_expr, attributes_map);
+	/* Execute partitioning expression */
+	econtext = CreateStandaloneExprContext();
+	old_cxt = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
+	expr_state = prepare_expr_for_execution(prel, source_rel, new_tuple,
+			&value_type);
+	value = ExecEvalExpr(expr_state, econtext, &isnull, &itemIsDone);
+	MemoryContextSwitchTo(old_cxt);
 
-	/* Get attribute number of partitioning key (may differ from 'prel->attnum') */
-	value_attnum = get_attnum(source_relid, get_attname(parent_relid, prel->attnum));
+	if (isnull)
+		elog(ERROR, ERR_PART_ATTR_NULL);
 
-	/* Extract partitioning key from NEW tuple */
-	value = heap_getattr(new_tuple,
-						 value_attnum,
-						 RelationGetDescr(source_rel),
-						 &isnull);
-
-	/* Extract value's type */
-	value_type = RelationGetDescr(source_rel)->attrs[value_attnum - 1]->atttypid;
+	if (itemIsDone != ExprSingleResult)
+		elog(ERROR, ERR_PART_ATTR_MULTIPLE_RESULTS);
 
 	/* Search for matching partitions */
 	parts = find_partitions_for_value(value, value_type, prel, &nparts);
+
+	/* We can free expression context now */
+	FreeExprContext(econtext, false);
 
 	if (nparts > 1)
 		elog(ERROR, ERR_PART_ATTR_MULTIPLE);
@@ -1310,9 +1367,7 @@ create_update_triggers(PG_FUNCTION_ARGS)
 	const char			   *trigname;
 	const PartRelationInfo *prel;
 	uint32					i;
-	List				   *vars;
-	List				   *columns = NIL;
-	ListCell			   *lc;
+	List				   *columns;
 
 	/* Check that table is partitioned */
 	prel = get_pathman_relation_info(parent);
@@ -1321,17 +1376,8 @@ create_update_triggers(PG_FUNCTION_ARGS)
 	/* Acquire trigger and attribute names */
 	trigname = build_update_trigger_name_internal(parent);
 
-	/* Generate list of columns used in expression */
-	vars = get_part_expression_vars(prel);
-
-	foreach(lc, vars)
-	{
-		Var *var = (Var *) lfirst(lc);
-		char *attname = get_attname(parent, var->varattno);
-		columns = lappend(columns, attname);
-	}
-
 	/* Create trigger for parent */
+	columns = get_part_expression_columns(prel);
 	create_single_update_trigger_internal(parent, trigname, columns);
 
 	/* Fetch children array */
@@ -1350,12 +1396,9 @@ create_single_update_trigger(PG_FUNCTION_ARGS)
 {
 	Oid						parent = PG_GETARG_OID(0);
 	Oid						child = PG_GETARG_OID(1);
-	const char			   *trigname,
-						   *attname;
+	const char			   *trigname;
 	const PartRelationInfo *prel;
-	List				   *vars;
-	List				   *columns = NIL;
-	ListCell			   *lc;
+	List				   *columns;
 
 	/* Check that table is partitioned */
 	prel = get_pathman_relation_info(parent);
@@ -1365,16 +1408,8 @@ create_single_update_trigger(PG_FUNCTION_ARGS)
 	trigname = build_update_trigger_name_internal(parent);
 
 	/* Generate list of columns used in expression */
-	vars = get_part_expression_vars(prel);
-
-	foreach(lc, vars)
-	{
-		Var *var = (Var *) lfirst(lc);
-		char *attname = get_attname(parent, var->varattno);
-		columns = lappend(columns, attname);
-	}
-
-	create_single_update_trigger_internal(child, trigname, attname);
+	columns = get_part_expression_columns(prel);
+	create_single_update_trigger_internal(child, trigname, columns);
 
 	PG_RETURN_VOID();
 }

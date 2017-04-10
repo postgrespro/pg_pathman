@@ -523,6 +523,8 @@ partition_filter_create_scan_state(CustomScan *node)
 	Assert(state->on_conflict_action >= ONCONFLICT_NONE ||
 		   state->on_conflict_action <= ONCONFLICT_UPDATE);
 
+	state->expr_state = NULL;
+
 	/* There should be exactly one subplan */
 	Assert(list_length(node->custom_plans) == 1);
 
@@ -532,10 +534,41 @@ partition_filter_create_scan_state(CustomScan *node)
 void
 partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 {
-	PartitionFilterState   *state = (PartitionFilterState *) node;
+	Index					varno = 1;
+	Node					*expr;
+	MemoryContext			 old_cxt;
+	PartitionFilterState	*state = (PartitionFilterState *) node;
+	const PartRelationInfo	*prel;
+	ListCell				*lc;
 
 	/* It's convenient to store PlanState in 'custom_ps' */
 	node->custom_ps = list_make1(ExecInitNode(state->subplan, estate, eflags));
+
+	if (state->expr_state == NULL)
+	{
+		/* Fetch PartRelationInfo for this partitioned relation */
+		prel = get_pathman_relation_info(state->partitioned_table);
+		Assert(prel != NULL);
+
+		/* Change varno in Vars according to range table */
+		expr = copyObject(prel->expr);
+		foreach(lc, estate->es_range_table)
+		{
+			RangeTblEntry *entry = lfirst(lc);
+			if (entry->relid == state->partitioned_table)
+			{
+				if (varno > 1)
+					ChangeVarNodes(expr, 1, varno, 0);
+				break;
+			}
+			varno += 1;
+		}
+
+		/* Prepare state for expression execution */
+		old_cxt = MemoryContextSwitchTo(estate->es_query_cxt);
+		state->expr_state = ExecInitExpr((Expr *) expr, NULL);
+		MemoryContextSwitchTo(old_cxt);
+	}
 
 	/* Init ResultRelInfo cache */
 	init_result_parts_storage(&state->result_parts, estate,
@@ -571,11 +604,7 @@ partition_filter_exec(CustomScanState *node)
 		bool						 isnull;
 		Datum						 value;
 		ExprDoneCond				 itemIsDone;
-		ExprState					*expr_state;
-		ListCell					*lc;
-		Index						 varno = 1;
 		TupleTableSlot				*tmp_slot;
-		Node						*expr;
 
 		/* Fetch PartRelationInfo for this partitioned relation */
 		prel = get_pathman_relation_info(state->partitioned_table);
@@ -589,33 +618,13 @@ partition_filter_exec(CustomScanState *node)
 			return slot;
 		}
 
-		/* Find proper varno for Vars in expression */
-		foreach(lc, estate->es_range_table)
-		{
-			RangeTblEntry *entry = (RangeTblEntry *) lfirst(lc);
-			if (entry->relid == prel->key)
-				break;
-
-			varno++;
-		}
-
-		/* Change varno according to range table */
-		expr = copyObject(prel->expr);
-		if (varno != 1)
-			ChangeVarNodes(expr, 1, varno, 0);
-
-		/* Prepare state for expression execution */
-		old_cxt = MemoryContextSwitchTo(estate->es_query_cxt);
-		expr_state = ExecInitExpr((Expr *) expr, NULL);
-		MemoryContextSwitchTo(old_cxt);
-
 		/* Switch to per-tuple context */
 		old_cxt = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 
 		/* Execute expression */
 		tmp_slot = econtext->ecxt_scantuple;
 		econtext->ecxt_scantuple = slot;
-		value = ExecEvalExpr(expr_state, econtext, &isnull, &itemIsDone);
+		value = ExecEvalExpr(state->expr_state, econtext, &isnull, &itemIsDone);
 		econtext->ecxt_scantuple = tmp_slot;
 
 		if (isnull)

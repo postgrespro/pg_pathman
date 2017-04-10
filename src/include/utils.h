@@ -65,5 +65,9 @@ Datum extract_binary_interval_from_text(Datum interval_text,
 char ** deconstruct_text_array(Datum array, int *array_size);
 RangeVar ** qualified_relnames_to_rangevars(char **relnames, size_t nrelnames);
 
+AttrNumber *get_pathman_attributes_map(const PartRelationInfo *prel,
+										Relation child);
+
+List *get_part_expression_columns(const PartRelationInfo *prel);
 
 #endif /* PATHMAN_UTILS_H */

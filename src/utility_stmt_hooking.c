@@ -227,7 +227,7 @@ is_pathman_related_alter_column_type(Node *parsetree,
 		/* Is it a column that used in expression? */
 		attnum = get_attnum(parent_relid, alter_table_cmd->name);
 		if (!bms_is_member(attnum, prel->expr_atts))
-			return;
+			continue;
 
 		/* Return 'prel->attnum' */
 		if (attr_number_out) *attr_number_out = attnum;

@@ -63,7 +63,7 @@ $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION @extschema@.prepare_for_partitioning(
 	parent_relid	REGCLASS,
-	expresssion		TEXT,
+	expression		TEXT,
 	partition_data	BOOLEAN)
 RETURNS VOID AS
 $$

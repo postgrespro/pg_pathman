@@ -584,7 +584,7 @@ qualified_relnames_to_rangevars(char **relnames, size_t nrelnames)
  * And it should be faster if expression uses not all fields from relation.
  */
 AttrNumber *
-get_pathman_attributes_map(PartRelationInfo *prel, Relation child)
+get_pathman_attributes_map(const PartRelationInfo *prel, Relation child)
 {
 	AttrNumber	i = -1;
 	Oid			parent_relid = prel->key;
@@ -595,13 +595,12 @@ get_pathman_attributes_map(PartRelationInfo *prel, Relation child)
 	while ((i = bms_next_member(prel->expr_atts, i)) >= 0)
 	{
 		int j;
-		char *attname = get_attname(parent_relid, n);
+		char *attname = get_attname(parent_relid, i);
 
-		for (j = 0; j < natts; i++)
+		for (j = 0; j < natts; j++)
 		{
-			Form_pg_attribute att = outdesc->attrs[i];
+			Form_pg_attribute att = childDesc->attrs[j];
 			char	   *child_attname;
-			int			j;
 
 			if (att->attisdropped)
 				continue;			/* attrMap[i] is already 0 */
@@ -621,20 +620,17 @@ get_pathman_attributes_map(PartRelationInfo *prel, Relation child)
 	return attrMap;
 }
 
-bool
-modify_expression_attnums(Node *node, AttrNumber *map)
+List *
+get_part_expression_columns(const PartRelationInfo *prel)
 {
-	if (node == NULL)
-		return false;
+	List	*columns = NIL;
+	int		 j = -1;
 
-	if (IsA(node, Var))
+	while ((j = bms_next_member(prel->expr_atts, j)) >= 0)
 	{
-		Var			*var;
-		AttrNumber	 orig = var->varattno;
-		AttrNumber	 dest = map[orig - 1];
-		Assert(dest != 0);
-		var->varattno = dest;
+		char *attname = get_attname(prel->key, j);
+		columns = lappend(columns, makeString(attname));
 	}
 
-	return expression_tree_walker(node, modify_attnums_walker, (void *) map);
+	return columns;
 }

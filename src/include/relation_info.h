@@ -15,6 +15,7 @@
 #include "postgres.h"
 #include "access/attnum.h"
 #include "fmgr.h"
+#include "nodes/bitmapset.h"
 #include "nodes/nodes.h"
 #include "nodes/primnodes.h"
 #include "port/atomics.h"

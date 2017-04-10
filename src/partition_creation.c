@@ -66,7 +66,7 @@ static void create_single_partition_common(Oid parent_relid,
 										   Oid partition_relid,
 										   Constraint *check_constraint,
 										   init_callback_params *callback_params,
-										   const char *partitioned_column);
+										   List *trigger_columns);
 
 static Oid create_single_partition_internal(Oid parent_relid,
 											RangeVar *partition_rv,
@@ -167,6 +167,7 @@ create_single_hash_partition_internal(Oid parent_relid,
 	Constraint			   *check_constr;
 	Node				   *expr;
 	init_callback_params	callback_params;
+	List				   *trigger_columns;
 
 	/* Generate a name if asked to */
 	if (!partition_rv)
@@ -1697,6 +1698,10 @@ validate_part_expression(Node *node, void *context)
 					" with partitioning relation");
 		return false;
 	}
+
+	if (IsA(node, Param))
+		elog(ERROR, "Partitioning expression should not contain parameters");
+
 	return expression_tree_walker(node, validate_part_expression, context);
 }
 
@@ -1835,8 +1840,12 @@ get_part_expression_info(Oid relid, const char *expr_string,
 		target_entry = linitial(plan->planTree->targetlist);
 
 	expr_node = (Node *) target_entry->expr;
+
 	expr_node = eval_const_expressions(NULL, expr_node);
 	validate_part_expression(expr_node, NULL);
+	if (contain_mutable_functions(expr_node))
+		elog(ERROR, "Expression should not contain mutable functions");
+
 	out_string = nodeToString(expr_node);
 
 	MemoryContextSwitchTo(oldcontext);
@@ -1852,32 +1861,27 @@ end:
 	return expr_info;
 }
 
-struct extract_columns_names_context
+struct extract_column_names_context
 {
 	List *columns;
 };
 
 /* Extract column names from raw expression */
 static bool
-extract_column_names(Node *node, struct extract_raw_columns_context *ctx)
+extract_column_names(Node *node, struct extract_column_names_context *ctx)
 {
 	if (node == NULL)
-		return false
+		return false;
 
 	if (IsA(node, ColumnRef))
 	{
 		ListCell *lc;
-		ColumnRef *col = (ColumnRef *) node;
-		foreach(lc, col->fields)
-		{
-			if (IsA(lfirst(lc)), Value)
-			{
-				ctx->columns = lappend(strVal(lfirst(lc)));
-			}
-		}
+		foreach(lc, ((ColumnRef *) node)->fields)
+			if (IsA(lfirst(lc), String))
+				ctx->columns = lappend(ctx->columns, strVal(lfirst(lc)));
 	}
 
-	return raw_expression_tree_walker(node, extract_raw_columns, ctx);
+	return raw_expression_tree_walker(node, extract_column_names, ctx);
 }
 
 /*
@@ -1899,7 +1903,10 @@ get_constraint_expression(Oid parent_relid, Oid *expr_type, List **columns)
 		elog(ERROR, "table \"%s\" is not partitioned",
 			 get_rel_name_or_relid(parent_relid));
 
-	/* Fetch expression for constraint */
+	/*
+	 * We need expression type for hash functions. Range functions don't need
+	 * this feature.
+	 */
 	if (expr_type)
 		*expr_type = DatumGetObjectId(config_values[Anum_pathman_config_atttype - 1]);
 

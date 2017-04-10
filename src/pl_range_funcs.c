@@ -249,9 +249,9 @@ create_range_partitions_internal(PG_FUNCTION_ARGS)
 		char	   *tablespace = tablespaces ? tablespaces[i] : NULL;
 
 		(void) create_single_range_partition_internal(parent_relid,
+													  elemtype,
 													  &start,
 													  &end,
-													  elemtype,
 													  name,
 													  tablespace);
 	}
