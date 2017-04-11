@@ -733,6 +733,16 @@ read_pathman_config(void)
 	HeapScanDesc	scan;
 	Snapshot		snapshot;
 	HeapTuple		htup;
+	Oid			   *relids = NULL;
+	Size			relids_index = 0,
+					relids_count = 100,
+					j;
+
+	/*
+	 * Initialize relids array, we keep here relations that require
+	 * update their expression.
+	 */
+	relids = (Oid *) palloc(sizeof(Oid) * relids_count);
 
 	/* Open PATHMAN_CONFIG with latest snapshot available */
 	rel = heap_open(get_pathman_config_relid(false), AccessShareLock);
@@ -752,7 +762,8 @@ read_pathman_config(void)
 	while((htup = heap_getnext(scan, ForwardScanDirection)) != NULL)
 	{
 		Datum		values[Natts_pathman_config];
-		bool		isnull[Natts_pathman_config];
+		bool		upd_expr,
+					isnull[Natts_pathman_config];
 		Oid			relid; /* partitioned table */
 
 		/* Extract Datums from tuple 'htup' */
@@ -763,6 +774,20 @@ read_pathman_config(void)
 		Assert(!isnull[Anum_pathman_config_parttype - 1]);
 		Assert(!isnull[Anum_pathman_config_expression - 1]);
 		Assert(!isnull[Anum_pathman_config_expression_p - 1]);
+		Assert(!isnull[Anum_pathman_config_upd_expression - 1]);
+
+		upd_expr = DatumGetBool(values[Anum_pathman_config_upd_expression - 1]);
+		if (upd_expr)
+		{
+			if (relids_index >= relids_count)
+			{
+				relids_count += 100;
+				relids = (Oid *) repalloc(relids, sizeof(Oid) * relids_count);
+			}
+
+			relids[relids_index] = relid;
+			relids_index += 1;
+		}
 
 		/* Extract values from Datums */
 		relid = DatumGetObjectId(values[Anum_pathman_config_partrel - 1]);
@@ -778,7 +803,8 @@ read_pathman_config(void)
 		}
 
 		/* get_pathman_relation_info() will refresh this entry */
-		refresh_pathman_relation_info(relid,
+		if (!upd_expr)
+			refresh_pathman_relation_info(relid,
 									  values,
 									  true); /* allow lazy prel loading */
 	}
@@ -787,6 +813,12 @@ read_pathman_config(void)
 	heap_endscan(scan);
 	UnregisterSnapshot(snapshot);
 	heap_close(rel, AccessShareLock);
+
+	/* Update expressions */
+	for (j = 0; j < relids_index; j++)
+		get_pathman_relation_info(relids[j]);
+
+	pfree(relids);
 }
 
 

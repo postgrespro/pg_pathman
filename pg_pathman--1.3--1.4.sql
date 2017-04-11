@@ -8,7 +8,7 @@
  * ------------------------------------------------------------------------
  */
 
-DROP FUNCTION @extschema@.validate_interval_value(REGCLASS, TEXT, INTEGER, TEXT);
+DROP FUNCTION @extschema@.validate_interval_value(REGCLASS, TEXT, INTEGER, TEXT) CASCADE;
 CREATE OR REPLACE FUNCTION @extschema@.validate_interval_value(
 	atttype			OID,
 	parttype		INTEGER,
@@ -18,12 +18,11 @@ LANGUAGE C;
 
 DROP FUNCTION @extschema@.is_attribute_nullable(REGCLASS, TEXT);
 
-ALTER TABLE @extschema@.pathman_config ADD COLUMN expression_p TEXT NOT NULL;
-ALTER TABLE @extschema@.pathman_config ADD COLUMN atttype OID NOT NULL;
+ALTER TABLE @extschema@.pathman_config ADD COLUMN expression_p TEXT DEFAULT '--not set--';
+ALTER TABLE @extschema@.pathman_config ADD COLUMN atttype OID DEFAULT 1;
 ALTER TABLE @extschema@.pathman_config ADD COLUMN upd_expr BOOL DEFAULT FALSE;
 
 /* update constraint */
-ALTER TABLE @extschema@.pathman_config DROP CONSTRAINT pathman_config_check;
 ALTER TABLE @extschema@.pathman_config
 	ADD CONSTRAINT pathman_config_interval_check CHECK (@extschema@.validate_interval_value(atttype,
 										 parttype,
@@ -32,6 +31,7 @@ ALTER TABLE @extschema@.pathman_config
 /* mark 'expression_p' and 'atttype' to update on next start */
 UPDATE @extschema@.pathman_config SET upd_expr = TRUE;
 
+DROP FUNCTION @extschema@.common_relation_checks(REGCLASS, TEXT);
 CREATE OR REPLACE FUNCTION @extschema@.common_relation_checks(
 	relation		REGCLASS,
 	expression		TEXT)
@@ -95,6 +95,9 @@ CREATE OR REPLACE FUNCTION @extschema@.add_to_pathman_config(
 RETURNS BOOLEAN AS 'pg_pathman', 'add_to_pathman_config'
 LANGUAGE C;
 
+DROP FUNCTION @extschema@.create_hash_partitions(REGCLASS, TEXT, INT4, BOOLEAN,
+	TEXT[], TEXT[]);
+
 CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions(
 	parent_relid		REGCLASS,
 	expression			TEXT,
@@ -146,6 +149,7 @@ SET client_min_messages = WARNING;
 
 DROP FUNCTION @extschema@.build_hash_condition(REGTYPE, TEXT, INT4, INT4);
 
+DROP FUNCTION @extschema@.check_boundaries(REGCLASS, TEXT, ANYELEMENT, ANYELEMENT);
 CREATE OR REPLACE FUNCTION @extschema@.check_boundaries(
 	parent_relid	REGCLASS,
 	expression		TEXT,
@@ -183,6 +187,7 @@ END
 $$ LANGUAGE plpgsql;
 
 
+DROP FUNCTION @extschema@.prepare_for_partitioning(REGCLASS, TEXT, BOOLEAN);
 CREATE OR REPLACE FUNCTION @extschema@.prepare_for_partitioning(
 	parent_relid	REGCLASS,
 	expression		TEXT,
@@ -208,6 +213,9 @@ $$ LANGUAGE plpgsql;
 /*
  * Creates RANGE partitions for specified relation based on datetime attribute
  */
+DROP FUNCTION @extschema@.create_range_partitions(REGCLASS, TEXT, ANYELEMENT,
+	INTERVAL, INTEGER, BOOLEAN);
+
 CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions(
 	parent_relid	REGCLASS,
 	expression		TEXT,
@@ -311,6 +319,9 @@ $$ LANGUAGE plpgsql;
 /*
  * Creates RANGE partitions for specified relation based on numerical expression
  */
+DROP FUNCTION @extschema@.create_range_partitions(REGCLASS, TEXT, ANYELEMENT,
+	ANYELEMENT, INTEGER, BOOLEAN);
+
 CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions(
 	parent_relid	REGCLASS,
 	expression		TEXT,
@@ -410,6 +421,9 @@ $$ LANGUAGE plpgsql;
 /*
  * Creates RANGE partitions for specified relation based on bounds array
  */
+DROP FUNCTION @extschema@.create_range_partitions(REGCLASS, TEXT, ANYARRAY,
+	TEXT[], TEXT[], BOOLEAN);
+
 CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions(
 	parent_relid	REGCLASS,
 	expression		TEXT,
@@ -471,6 +485,9 @@ LANGUAGE plpgsql;
 /*
  * Creates RANGE partitions for specified range
  */
+DROP FUNCTION @extschema@.create_partitions_from_range(REGCLASS, TEXT, ANYELEMENT,
+	ANYELEMENT, ANYELEMENT, BOOLEAN);
+
 CREATE OR REPLACE FUNCTION @extschema@.create_partitions_from_range(
 	parent_relid	REGCLASS,
 	expression		TEXT,
@@ -531,6 +548,9 @@ $$ LANGUAGE plpgsql;
 /*
  * Creates RANGE partitions for specified range based on datetime expression
  */
+DROP FUNCTION @extschema@.create_partitions_from_range(REGCLASS, TEXT,
+	ANYELEMENT, ANYELEMENT, INTERVAL, BOOLEAN);
+
 CREATE OR REPLACE FUNCTION @extschema@.create_partitions_from_range(
 	parent_relid	REGCLASS,
 	expression		TEXT,
@@ -591,6 +611,9 @@ BEGIN
 	RETURN part_count; /* number of created partitions */
 END
 $$ LANGUAGE plpgsql;
+
+DROP FUNCTION @extschema@.build_range_condition(REGCLASS, TEXT,
+	ANYELEMENT, ANYELEMENT);
 
 CREATE OR REPLACE FUNCTION @extschema@.build_range_condition(
 	partition_relid	REGCLASS,
