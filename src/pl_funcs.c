@@ -770,7 +770,6 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 		parttype = PG_ARGISNULL(2) ? PT_HASH : PT_RANGE;
 
 	/* Parse and check expression */
-	expression = TextDatumGetCString(PG_GETARG_TEXT_P(1));
 	expr_info = get_part_expression_info(relid, expression, (parttype == PT_HASH), true);
 	Assert(expr_info->expr_datum != (Datum) 0);
 
