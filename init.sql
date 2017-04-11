@@ -879,13 +879,15 @@ LANGUAGE C STRICT;
 
 
 /*
- * Attach a previously partitioned table.
+ * Add record to pathman_config. If parttype if not specified then determine
+ * partitioning type.
  */
 CREATE OR REPLACE FUNCTION @extschema@.add_to_pathman_config(
 	parent_relid		REGCLASS,
 	attname				TEXT,
 	range_interval		TEXT DEFAULT NULL,
-	refresh_part_info	BOOL DEFAULT TRUE
+	refresh_part_info	BOOL DEFAULT TRUE,
+	parttype			INT4 DEFAULT 0
 )
 RETURNS BOOLEAN AS 'pg_pathman', 'add_to_pathman_config'
 LANGUAGE C;

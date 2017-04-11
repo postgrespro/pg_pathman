@@ -137,17 +137,9 @@ SELECT get_partition_key_type('calamity.part_test');
 SELECT get_partition_key_type(0::regclass);
 SELECT get_partition_key_type(NULL) IS NULL;
 
-/* check function build_check_constraint_name_attnum() */
-SELECT build_check_constraint_name('calamity.part_test', 1::int2);
-SELECT build_check_constraint_name('calamity.part_test', NULL::int2) IS NULL;
-SELECT build_check_constraint_name(NULL, 1::int2) IS NULL;
-SELECT build_check_constraint_name(NULL, NULL::int2) IS NULL;
-
-/* check function build_check_constraint_name_attname() */
-SELECT build_check_constraint_name('calamity.part_test', 'val');
-SELECT build_check_constraint_name('calamity.part_test', NULL::text) IS NULL;
-SELECT build_check_constraint_name(NULL, 'val') IS NULL;
-SELECT build_check_constraint_name(NULL, NULL::text) IS NULL;
+/* check function build_check_constraint_name() */
+SELECT build_check_constraint_name('calamity.part_test');
+SELECT build_check_constraint_name(NULL) IS NULL;
 
 /* check function build_update_trigger_name() */
 SELECT build_update_trigger_name('calamity.part_test');

@@ -290,7 +290,7 @@ $$ LANGUAGE plpgsql;
  */
 CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions(
 	parent_relid	REGCLASS,
-	attribute		TEXT,
+	expression		TEXT,
 	bounds			ANYARRAY,
 	partition_names	TEXT[] DEFAULT NULL,
 	tablespaces		TEXT[] DEFAULT NULL,
@@ -308,17 +308,17 @@ BEGIN
 		RAISE EXCEPTION 'Bounds array must have at least two values';
 	END IF;
 
-	attribute := lower(attribute);
-	PERFORM @extschema@.prepare_for_partitioning(parent_relid, attribute, partition_data);
+	expression := lower(expression);
+	PERFORM @extschema@.prepare_for_partitioning(parent_relid, expression, partition_data);
 
 	/* Check boundaries */
 	PERFORM @extschema@.check_boundaries(parent_relid,
-										 attribute,
+										 expression,
 										 bounds[0],
 										 bounds[array_length(bounds, 1) - 1]);
 
-	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype, range_interval)
-	VALUES (parent_relid, attribute, 2, NULL);
+	/* Insert new entry to pathman config */
+	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression, NULL, false, 2);
 
 	/* Create sequence for child partitions names */
 	PERFORM @extschema@.create_or_replace_sequence(parent_relid)
@@ -548,7 +548,7 @@ BEGIN
 	/* Alter original partition */
 	v_cond := @extschema@.build_range_condition(partition_relid::regclass,
 												v_attname, p_range[1], split_value);
-	v_check_name := @extschema@.build_check_constraint_name(partition_relid, v_attname);
+	v_check_name := @extschema@.build_check_constraint_name(partition_relid);
 
 	EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %s',
 				   partition_relid::TEXT,
@@ -959,7 +959,7 @@ BEGIN
 	/* Set check constraint */
 	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)',
 				   partition_relid::TEXT,
-				   @extschema@.build_check_constraint_name(partition_relid, v_attname),
+				   @extschema@.build_check_constraint_name(partition_relid),
 				   @extschema@.build_range_condition(partition_relid,
 													 v_attname,
 													 start_value,
@@ -1026,7 +1026,7 @@ BEGIN
 	/* Remove check constraint */
 	EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %s',
 				   partition_relid::TEXT,
-				   @extschema@.build_check_constraint_name(partition_relid, v_attname));
+				   @extschema@.build_check_constraint_name(partition_relid));
 
 	/* Remove update trigger */
 	EXECUTE format('DROP TRIGGER IF EXISTS %s ON %s',

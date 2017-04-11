@@ -1880,7 +1880,7 @@ extract_column_names(Node *node, struct extract_column_names_context *ctx)
 		ListCell *lc;
 		foreach(lc, ((ColumnRef *) node)->fields)
 			if (IsA(lfirst(lc), String))
-				ctx->columns = lappend(ctx->columns, strVal(lfirst(lc)));
+				ctx->columns = lappend(ctx->columns, lfirst(lc));
 	}
 
 	return raw_expression_tree_walker(node, extract_column_names, ctx);

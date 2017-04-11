@@ -113,15 +113,14 @@ BEGIN
 		RAISE EXCEPTION 'partition must have a compatible tuple format';
 	END IF;
 
-	/* Get partitioning key */
+	/* Get partitioning expression */
 	part_attname := attname FROM @extschema@.pathman_config WHERE partrel = parent_relid;
 	IF part_attname IS NULL THEN
 		RAISE EXCEPTION 'table "%" is not partitioned', parent_relid::TEXT;
 	END IF;
 
 	/* Fetch name of old_partition's HASH constraint */
-	old_constr_name = @extschema@.build_check_constraint_name(old_partition::REGCLASS,
-															  part_attname);
+	old_constr_name = @extschema@.build_check_constraint_name(old_partition::REGCLASS);
 
 	/* Fetch definition of old_partition's HASH constraint */
 	SELECT pg_catalog.pg_get_constraintdef(oid) FROM pg_catalog.pg_constraint
@@ -138,8 +137,7 @@ BEGIN
 	EXECUTE format('ALTER TABLE %s INHERIT %s', new_partition, parent_relid);
 	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s %s',
 				   new_partition,
-				   @extschema@.build_check_constraint_name(new_partition::REGCLASS,
-														   part_attname),
+				   @extschema@.build_check_constraint_name(new_partition::REGCLASS),
 				   old_constr_def);
 
 	/* Fetch init_callback from 'params' table */

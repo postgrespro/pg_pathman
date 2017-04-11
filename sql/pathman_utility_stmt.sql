@@ -154,10 +154,10 @@ ALTER TABLE rename.test_0 RENAME TO test_one;
 \d+ rename.test_one
 
 /* Generates check constraint for relation */
-CREATE OR REPLACE FUNCTION add_constraint(rel regclass, att text)
+CREATE OR REPLACE FUNCTION add_constraint(rel regclass)
 RETURNS VOID AS $$
 declare
-	constraint_name text := build_check_constraint_name(rel, 'a');
+	constraint_name text := build_check_constraint_name(rel);
 BEGIN
 	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (a < 100);',
 				   rel, constraint_name);
@@ -172,14 +172,14 @@ LANGUAGE plpgsql;
 CREATE TABLE rename.test_inh (LIKE rename.test INCLUDING ALL);
 CREATE TABLE rename.test_inh_1 (LIKE rename.test INCLUDING ALL);
 ALTER TABLE rename.test_inh_1 INHERIT rename.test_inh;
-SELECT add_constraint('rename.test_inh_1', 'a');
+SELECT add_constraint('rename.test_inh_1');
 ALTER TABLE rename.test_inh_1 RENAME TO test_inh_one;
 \d+ rename.test_inh_one
 
 /* Check that plain tables are not affected too */
 CREATE TABLE rename.plain_test(a serial, b int);
 ALTER TABLE rename.plain_test RENAME TO plain_test_renamed;
-SELECT add_constraint('rename.plain_test_renamed', 'a');
+SELECT add_constraint('rename.plain_test_renamed');
 \d+ rename.plain_test_renamed
 ALTER TABLE rename.plain_test_renamed RENAME TO plain_test;
 \d+ rename.plain_test

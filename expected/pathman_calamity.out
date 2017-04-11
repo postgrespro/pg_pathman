@@ -301,51 +301,14 @@ SELECT get_partition_key_type(NULL) IS NULL;
  t
 (1 row)
 
-/* check function build_check_constraint_name_attnum() */
-SELECT build_check_constraint_name('calamity.part_test', 1::int2);
+/* check function build_check_constraint_name() */
+SELECT build_check_constraint_name('calamity.part_test');
  build_check_constraint_name 
 -----------------------------
  pathman_part_test_check
 (1 row)
 
-SELECT build_check_constraint_name('calamity.part_test', NULL::int2) IS NULL;
- ?column? 
-----------
- t
-(1 row)
-
-SELECT build_check_constraint_name(NULL, 1::int2) IS NULL;
- ?column? 
-----------
- t
-(1 row)
-
-SELECT build_check_constraint_name(NULL, NULL::int2) IS NULL;
- ?column? 
-----------
- t
-(1 row)
-
-/* check function build_check_constraint_name_attname() */
-SELECT build_check_constraint_name('calamity.part_test', 'val');
- build_check_constraint_name 
------------------------------
- pathman_part_test_check
-(1 row)
-
-SELECT build_check_constraint_name('calamity.part_test', NULL::text) IS NULL;
- ?column? 
-----------
- t
-(1 row)
-
-SELECT build_check_constraint_name(NULL, 'val') IS NULL;
- ?column? 
-----------
- t
-(1 row)
-
-SELECT build_check_constraint_name(NULL, NULL::text) IS NULL;
+SELECT build_check_constraint_name(NULL) IS NULL;
  ?column? 
 ----------
  t

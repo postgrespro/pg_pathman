@@ -744,8 +744,10 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 			 get_rel_name_or_relid(relid));
 	}
 
-	/* Select partitioning type using 'range_interval' */
-	parttype = PG_ARGISNULL(2) ? PT_HASH : PT_RANGE;
+	/* Select partitioning type */
+	parttype = PG_GETARG_INT32(4);
+	if ((parttype != PT_HASH) && (parttype != PT_RANGE))
+		parttype = PG_ARGISNULL(2) ? PT_HASH : PT_RANGE;
 
 	/* Parse and check expression */
 	expression = TextDatumGetCString(PG_GETARG_TEXT_P(1));
