@@ -28,16 +28,26 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 5;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE (value * value2) = 5;
 
 /* range */
-CREATE TABLE test.range_rel (
-	id	SERIAL PRIMARY KEY,
-	dt	TIMESTAMP,
-	txt	TEXT);
+CREATE TABLE test.range_rel (id SERIAL PRIMARY KEY, dt TIMESTAMP, txt TEXT);
 
 INSERT INTO test.range_rel (dt, txt)
 SELECT g, md5(g::TEXT) FROM generate_series('2015-01-01', '2020-04-30', '1 month'::interval) as g;
+SELECT pathman.create_range_partitions('test.range_rel', 'RANDOM()', '15 years'::INTERVAL, '1 year'::INTERVAL, 10);
 SELECT pathman.create_range_partitions('test.range_rel', 'AGE(dt, ''2000-01-01''::DATE)',
 		'15 years'::INTERVAL, '1 year'::INTERVAL, 10);
 INSERT INTO test.range_rel_1 (dt, txt) VALUES ('2020-01-01'::DATE, md5('asdf'));
-SELECT * FROM test.range_rel_6;
+SELECT COUNT(*) FROM test.range_rel_6;
 INSERT INTO test.range_rel_6 (dt, txt) VALUES ('2020-01-01'::DATE, md5('asdf'));
+SELECT COUNT(*) FROM test.range_rel_6;
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE (AGE(dt, '2000-01-01'::DATE)) = '18 years'::interval;
 
+SELECT pathman.create_update_triggers('test.range_rel');
+SELECT COUNT(*) FROM test.range_rel;
+SELECT COUNT(*) FROM test.range_rel_1;
+SELECT COUNT(*) FROM test.range_rel_2;
+UPDATE test.range_rel SET dt = '2016-12-01' WHERE dt >= '2015-10-10' AND dt <= '2017-10-10';
+
+/* counts in partitions should be changed */
+SELECT COUNT(*) FROM test.range_rel;
+SELECT COUNT(*) FROM test.range_rel_1;
+SELECT COUNT(*) FROM test.range_rel_2;
