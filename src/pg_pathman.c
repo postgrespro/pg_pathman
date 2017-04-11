@@ -266,7 +266,7 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 	/* Now append 'appinfo' to 'root->append_rel_list' */
 	root->append_rel_list = lappend(root->append_rel_list, appinfo);
 
-
+	/* Translate column privileges for this child */
 	if (parent_rte->relid != child_oid)
 	{
 		child_rte->selectedCols = translate_col_privs(parent_rte->selectedCols,
@@ -277,6 +277,10 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 													 appinfo->translated_vars);
 	}
 
+	/* Adjust join quals for this child */
+	child_rel->joininfo = (List *) adjust_appendrel_attrs(root,
+														  (Node *) parent_rel->joininfo,
+														  appinfo);
 
 	/* Adjust target list for this child */
 	adjust_rel_targetlist_compat(root, child_rel, parent_rel, appinfo);

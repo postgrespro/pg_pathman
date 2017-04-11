@@ -118,7 +118,7 @@ RETURNS TRIGGER AS 'pg_pathman', 'pathman_config_params_trigger_func'
 LANGUAGE C;
 
 CREATE TRIGGER pathman_config_params_trigger
-BEFORE INSERT OR UPDATE OR DELETE ON @extschema@.pathman_config_params
+AFTER INSERT OR UPDATE OR DELETE ON @extschema@.pathman_config_params
 FOR EACH ROW EXECUTE PROCEDURE @extschema@.pathman_config_params_trigger_func();
 
 /*
@@ -710,16 +710,6 @@ $$ LANGUAGE plpgsql;
 
 
 /*
- * Check if tuple from first relation can be converted to fit the second one.
- */
-CREATE OR REPLACE FUNCTION @extschema@.is_tuple_convertible(
-	relation1	REGCLASS,
-	relation2	REGCLASS)
-RETURNS BOOL AS 'pg_pathman', 'is_tuple_convertible'
-LANGUAGE C STRICT;
-
-
-/*
  * Function for UPDATE triggers.
  */
 CREATE OR REPLACE FUNCTION @extschema@.pathman_update_trigger_func()
@@ -859,9 +849,18 @@ LANGUAGE C STRICT;
  * Check if TYPE supports the specified operator.
  */
 CREATE OR REPLACE FUNCTION @extschema@.is_operator_supported(
-	type_oid	OID,
+	type_oid	REGTYPE,
 	opname		TEXT)
 RETURNS BOOLEAN AS 'pg_pathman', 'is_operator_supported'
+LANGUAGE C STRICT;
+
+/*
+ * Check if tuple from first relation can be converted to fit the second one.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.is_tuple_convertible(
+	relation1	REGCLASS,
+	relation2	REGCLASS)
+RETURNS BOOL AS 'pg_pathman', 'is_tuple_convertible'
 LANGUAGE C STRICT;
 
 
