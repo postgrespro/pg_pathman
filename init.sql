@@ -41,12 +41,12 @@ CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
 	upd_expr		BOOL DEFAULT FALSE,	/* update expression on next refresh? */
 
 	/* check for allowed part types */
-	CHECK (parttype IN (1, 2)),
+	CONSTRAINT pathman_config_parttype_check CHECK (parttype IN (1, 2)),
 
 	/* check for correct interval */
-	CHECK (@extschema@.validate_interval_value(atttype,
-											   parttype,
-											   range_interval))
+	CONSTRAINT pathman_config_interval_check CHECK (@extschema@.validate_interval_value(atttype,
+													parttype,
+													range_interval))
 );
 
 
