@@ -548,6 +548,7 @@ find_inheritance_children_array(Oid parentrelId,
 char *
 build_check_constraint_name_relid_internal(Oid relid)
 {
+	AssertArg(OidIsValid(relid));
 	return build_check_constraint_name_relname_internal(get_rel_name(relid));
 }
 
@@ -568,6 +569,7 @@ build_check_constraint_name_relname_internal(const char *relname)
 char *
 build_sequence_name_internal(Oid relid)
 {
+	AssertArg(OidIsValid(relid));
 	return psprintf("%s_seq", get_rel_name(relid));
 }
 
@@ -578,6 +580,7 @@ build_sequence_name_internal(Oid relid)
 char *
 build_update_trigger_name_internal(Oid relid)
 {
+	AssertArg(OidIsValid(relid));
 	return psprintf("%s_upd_trig", get_rel_name(relid));
 }
 
@@ -588,12 +591,8 @@ build_update_trigger_name_internal(Oid relid)
 char *
 build_update_trigger_func_name_internal(Oid relid)
 {
-	Oid nspid = get_rel_namespace(relid);
-
-	return psprintf("%s.%s",
-					quote_identifier(get_namespace_name(nspid)),
-					quote_identifier(psprintf("%s_upd_trig_func",
-											  get_rel_name(relid))));
+	AssertArg(OidIsValid(relid));
+	return psprintf("%s_upd_trig_func", get_rel_name(relid));
 }
 
 
@@ -681,7 +680,7 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 
 /*
  * Loads additional pathman parameters like 'enable_parent' or 'auto'
- * from PATHMAN_CONFIG_PARAMS
+ * from PATHMAN_CONFIG_PARAMS.
  */
 bool
 read_pathman_params(Oid relid, Datum *values, bool *isnull)
@@ -1069,6 +1068,7 @@ validate_hash_constraint(const Expr *expr,
 
 	return false;
 }
+
 /* needed for find_inheritance_children_array() function */
 static int
 oid_cmp(const void *p1, const void *p2)

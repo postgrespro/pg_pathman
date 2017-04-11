@@ -635,12 +635,14 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 
 	/* Check batch_size */
 	if (batch_size < 1 || batch_size > 10000)
-		elog(ERROR, "\"batch_size\" should not be less than 1 "
-					"or greater than 10000");
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("'batch_size' should not be less than 1"
+							   " or greater than 10000")));
 
 	/* Check sleep_time */
 	if (sleep_time < 0.5)
-		elog(ERROR, "\"sleep_time\" should not be less than 0.5");
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("'sleep_time' should not be less than 0.5")));
 
 	/* Check if relation is a partitioned table */
 	shout_if_prel_is_invalid(relid,
@@ -656,7 +658,9 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 			ereport(ERROR, (errmsg("cannot start %s", concurrent_part_bgw),
 							errdetail("table is being partitioned now")));
 	}
-	else elog(ERROR, "cannot find relation %d", relid);
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("relation \"%s\" is not partitioned",
+								get_rel_name_or_relid(relid))));
 
 	/*
 	 * Look for an empty slot and also check that a concurrent

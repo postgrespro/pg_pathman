@@ -423,11 +423,11 @@ perform_type_cast(Datum value, Oid in_type, Oid out_type, bool *success)
 }
 
 /*
- * Convert interval from TEXT to binary form using partitioned column's type.
+ * Convert interval from TEXT to binary form using partitioninig expresssion type.
  */
 Datum
 extract_binary_interval_from_text(Datum interval_text,	/* interval as TEXT */
-								  Oid part_atttype,		/* partitioned column's type */
+								  Oid part_atttype,		/* expression type */
 								  Oid *interval_type)	/* returned value */
 {
 	Datum		interval_binary;

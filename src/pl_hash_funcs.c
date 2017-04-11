@@ -57,7 +57,8 @@ create_hash_partitions_internal(PG_FUNCTION_ARGS)
 
 	/* Check that there's no partitions yet */
 	if (get_pathman_relation_info(parent_relid))
-		elog(ERROR, "cannot add new HASH partitions");
+		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						errmsg("cannot add new HASH partitions")));
 
 	/* Extract partition names */
 	if (!PG_ARGISNULL(3))
@@ -69,11 +70,15 @@ create_hash_partitions_internal(PG_FUNCTION_ARGS)
 
 	/* Validate size of 'partition_names' */
 	if (partition_names && partition_names_size != partitions_count)
-		elog(ERROR, "size of 'partition_names' must be equal to 'partitions_count'");
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("size of 'partition_names' must be equal to 'partitions_count'")));
 
 	/* Validate size of 'tablespaces' */
 	if (tablespaces && tablespaces_size != partitions_count)
-		elog(ERROR, "size of 'tablespaces' must be equal to 'partitions_count'");
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("size of 'tablespaces' must be equal to 'partitions_count'")));
 
 	/* Convert partition names into RangeVars */
 	rangevars = qualified_relnames_to_rangevars(partition_names, partitions_count);
