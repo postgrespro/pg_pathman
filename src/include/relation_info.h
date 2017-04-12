@@ -237,6 +237,7 @@ PrelLastChild(const PartRelationInfo *prel)
 }
 
 
+PartRelationInfo *create_pathman_relation_info(Oid relid);
 const PartRelationInfo *refresh_pathman_relation_info(Oid relid,
 													  Datum *values,
 													  bool allow_incomplete);

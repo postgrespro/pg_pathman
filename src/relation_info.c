@@ -116,35 +116,18 @@ init_relation_info_static_data(void)
 							 NULL);
 }
 
-
-/*
- * refresh\invalidate\get\remove PartRelationInfo functions.
- */
-
 /* Create or update PartRelationInfo in local cache. Might emit ERROR. */
-const PartRelationInfo *
-refresh_pathman_relation_info(Oid relid,
-							  Datum *values,
-							  bool allow_incomplete)
+PartRelationInfo *
+create_pathman_relation_info(Oid relid)
 {
-	const LOCKMODE			lockmode = AccessShareLock;
-	const TypeCacheEntry   *typcache;
-	Oid					   *prel_children;
-	uint32					prel_children_count = 0,
-							i;
-	bool					found_entry;
 	PartRelationInfo	   *prel;
-	Datum					param_values[Natts_pathman_config_params];
-	bool					param_isnull[Natts_pathman_config_params];
-	char				   *expr;
-	HeapTuple				tp;
-	MemoryContext			oldcontext;
+	bool					found_entry;
 
 	AssertTemporaryContext();
-
 	prel = (PartRelationInfo *) pathman_cache_search_relid(partitioned_rels,
 														   relid, HASH_ENTER,
 														   &found_entry);
+
 	elog(DEBUG2,
 		 found_entry ?
 			 "Refreshing record for relation %u in pg_pathman's cache [%u]" :
@@ -166,7 +149,33 @@ refresh_pathman_relation_info(Oid relid,
 	}
 
 	/* First we assume that this entry is invalid */
-	prel->valid		= false;
+	prel->valid = false;
+	return prel;
+}
+
+/*
+ * refresh\invalidate\get\remove PartRelationInfo functions.
+ */
+
+const PartRelationInfo *
+refresh_pathman_relation_info(Oid relid,
+							  Datum *values,
+							  bool allow_incomplete)
+{
+	const LOCKMODE			lockmode = AccessShareLock;
+	const TypeCacheEntry   *typcache;
+	Oid					   *prel_children;
+	uint32					prel_children_count = 0,
+							i;
+	PartRelationInfo	   *prel;
+	Datum					param_values[Natts_pathman_config_params];
+	bool					param_isnull[Natts_pathman_config_params];
+	char				   *expr;
+	HeapTuple				tp;
+	MemoryContext			oldcontext;
+
+	AssertTemporaryContext();
+	prel = create_pathman_relation_info(relid);
 
 	/* Try locking parent, exit fast if 'allow_incomplete' */
 	if (allow_incomplete)

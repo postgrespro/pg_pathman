@@ -31,6 +31,31 @@ ALTER TABLE @extschema@.pathman_config
 /* mark 'expression_p' and 'atttype' to update on next start */
 UPDATE @extschema@.pathman_config SET upd_expr = TRUE;
 
+/* we've changed the format of constraint names, and we need rename them */
+CREATE OR REPLACE FUNCTION @extschema@.update_constraints()
+RETURNS BOOLEAN AS
+$$
+DECLARE
+	v_rec RECORD;
+BEGIN
+	FOR v_rec IN (SELECT conrelid::regclass AS t, conname, regexp_replace(conname, '\d+_check', 'check') as new_conname
+				  FROM pg_constraint
+				  WHERE conname ~ 'pathman_.*_\d+_\d+_check')
+	LOOP
+		EXECUTE format('ALTER TABLE %s RENAME CONSTRAINT %s TO %s',
+			v_rec.t, v_rec.conname, v_rec.new_conname);
+	END LOOP;
+
+	RETURN TRUE;
+END
+$$
+LANGUAGE plpgsql;
+
+SELECT @extschema@.update_constraints();
+
+/* we don't need this function anymore */
+DROP FUNCTION @extschema@.update_constraints();
+
 DROP FUNCTION @extschema@.common_relation_checks(REGCLASS, TEXT);
 CREATE OR REPLACE FUNCTION @extschema@.common_relation_checks(
 	relation		REGCLASS,

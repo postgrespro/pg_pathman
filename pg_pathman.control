@@ -1,4 +1,4 @@
 # pg_pathman extension
 comment = 'Partitioning tool for PostgreSQL'
-default_version = '1.4'
+default_version = '1.3'
 module_pathname = '$libdir/pg_pathman'
