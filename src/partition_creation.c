@@ -1840,6 +1840,7 @@ get_part_expression_info(Oid relid, const char *expr_string,
 	/* Plan this query. We reuse 'expr_node' here */
 	plan = pg_plan_query(query, 0, NULL);
 	if (IsA(plan->planTree, IndexOnlyScan))
+		/* we get IndexOnlyScan in targetlist if expression is primary key */
 		target_entry = linitial(((IndexOnlyScan *) plan->planTree)->indextlist);
 	else
 		target_entry = linitial(plan->planTree->targetlist);
