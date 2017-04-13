@@ -16,8 +16,9 @@
 #include "access/xact.h"
 #include "catalog/heap.h"
 #include "catalog/namespace.h"
-#include "catalog/pg_type.h"
+#include "catalog/pg_depend.h"
 #include "catalog/pg_extension.h"
+#include "catalog/pg_type.h"
 #include "catalog/pg_operator.h"
 #include "commands/extension.h"
 #include "miscadmin.h"
@@ -572,4 +573,87 @@ qualified_relnames_to_rangevars(char **relnames, size_t nrelnames)
 	}
 
 	return rangevars;
+}
+
+/*
+ * Delete dependency of objId on refObjId
+ */
+long
+deleteDependencyRecords(Oid classId, Oid objId,
+						Oid refClassId, Oid refObjId)
+{
+	long		count = 0;
+	Relation	depRel;
+	ScanKeyData key[2];
+	SysScanDesc scan;
+	HeapTuple	tup;
+
+	depRel = heap_open(DependRelationId, RowExclusiveLock);
+
+	ScanKeyInit(&key[0],
+				Anum_pg_depend_classid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(classId));
+	ScanKeyInit(&key[1],
+				Anum_pg_depend_objid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(objId));
+
+	scan = systable_beginscan(depRel, DependDependerIndexId, true,
+							  NULL, 2, key);
+
+	while (HeapTupleIsValid(tup = systable_getnext(scan)))
+	{
+		Form_pg_depend depform = (Form_pg_depend) GETSTRUCT(tup);
+
+		if (depform->refclassid == refClassId && depform->refobjid == refObjId)
+		{
+			simple_heap_delete(depRel, &tup->t_self);
+			count++;
+		}
+	}
+
+	systable_endscan(scan);
+	heap_close(depRel, RowExclusiveLock);
+
+	return count;
+}
+
+/*
+ * Delete all dependencies on objectId
+ */
+long
+deleteDependencyRecordsRef(Oid classId, Oid objectId)
+{
+	long		count = 0;
+	Relation	depRel;
+	ScanKeyData key[2];
+	SysScanDesc scan;
+	HeapTuple	tup;
+
+	depRel = heap_open(DependRelationId, RowExclusiveLock);
+
+	ScanKeyInit(&key[0],
+				Anum_pg_depend_refclassid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(classId));
+	ScanKeyInit(&key[1],
+				Anum_pg_depend_refobjid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(objectId));
+
+	scan = systable_beginscan(depRel, DependReferenceIndexId, true,
+							  NULL, 2, key);
+
+	while (HeapTupleIsValid(tup = systable_getnext(scan)))
+	{
+		simple_heap_delete(depRel, &tup->t_self);
+		count++;
+	}
+
+	systable_endscan(scan);
+
+	heap_close(depRel, RowExclusiveLock);
+
+	return count;
 }

@@ -17,6 +17,7 @@
 #include "access/relscan.h"
 #include "access/sysattr.h"
 #include "access/xact.h"
+#include "catalog/indexing.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_constraint.h"
 #include "catalog/pg_constraint_fn.h"
@@ -32,6 +33,7 @@
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
+#include "utils/inval.h"
 #include "utils/lsyscache.h"
 #include "utils/tqual.h"
 #include "utils/syscache.h"
@@ -124,6 +126,7 @@ typedef struct CompareHashEntry
  * Local functions
  * ----------
  */
+static void ri_CheckTrigger(FunctionCallInfo fcinfo, const char *funcname, int tgkind);
 static const ConstraintInfo *ri_LoadConstraintInfo(Oid constraintOid);
 static void ri_GenerateQual(StringInfo buf,
 				const char *sep,
@@ -132,7 +135,8 @@ static void ri_GenerateQual(StringInfo buf,
 				const char *rightop, Oid rightoptype);
 static void ri_add_cast_to(StringInfo buf, Oid typid);
 static const ConstraintInfo *ri_FetchConstraintInfo(Trigger *trigger, Relation trig_rel, bool rel_is_pk);
-static void ri_InitHashTables();
+static void ri_InitHashTables(void);
+static void InvalidateConstraintCacheCallBack(Datum arg, int cacheid, uint32 hashvalue);
 static bool ri_PerformCheck(const ConstraintInfo *riinfo,
 				SPIPlanPtr qplan,
 				Relation fk_rel, Relation pk_rel,
@@ -145,8 +149,8 @@ static SPIPlanPtr ri_PlanCheck(const char *querystr,
 			 Relation pk_rel,
 			 bool cache_plan);
 
-static Datum RI_FKey_check(TriggerData *trigdata);
-static Datum ri_restrict_upd_del(TriggerData *trigdata, bool is_upd);
+static Datum ri_fkey_check(TriggerData *trigdata);
+static Datum ri_restrict(TriggerData *trigdata, bool is_upd);
 static bool ri_KeysEqual(Relation rel, HeapTuple oldtup, HeapTuple newtup,
 						 const ConstraintInfo *riinfo);
 static bool ri_AttributesEqual(Oid eq_opr, Oid typeid,
@@ -157,6 +161,7 @@ static void quoteOneName(char *buffer, const char *name);
 static void quoteRelationName(char *buffer, Relation rel);
 static void ri_ReportViolation(const ConstraintInfo *riinfo,
 				   Relation rel,
+				   Relation refRel,
 				   Datum key,
 				   Oid keytype,
 				   bool onfk);
@@ -169,7 +174,6 @@ static void create_fk_constraint_internal(Oid fk_table,
 										  Oid pk_table);
 static void createForeignKeyTriggers(Relation rel, Oid refRelOid,
 						 Oid constraintOid, Oid indexOid);
-static HeapTuple get_index_for_key(Relation rel, AttrNumber attnum, Oid *index_id);
 static void validateForeignKeyConstraint(char *conname,
 										 Relation rel,
 										 Relation pkrel,
@@ -198,12 +202,12 @@ pathman_fkey_check_ins(PG_FUNCTION_ARGS)
 	/*
 	 * Check that this is a valid trigger call on the right time and event.
 	 */
-	// ri_CheckTrigger(fcinfo, "pathman_fkey_check_ins", RI_TRIGTYPE_INSERT);
+	ri_CheckTrigger(fcinfo, "pathman_fkey_check_ins", RI_TRIGTYPE_INSERT);
 
 	/*
 	 * Share code with UPDATE case.
 	 */
-	return RI_FKey_check((TriggerData *) fcinfo->context);
+	return ri_fkey_check((TriggerData *) fcinfo->context);
 }
 
 Datum
@@ -212,12 +216,12 @@ pathman_fkey_check_upd(PG_FUNCTION_ARGS)
 	/*
 	 * Check that this is a valid trigger call on the right time and event.
 	 */
-	// ri_CheckTrigger(fcinfo, "RI_FKey_check_upd", RI_TRIGTYPE_UPDATE);
+	ri_CheckTrigger(fcinfo, "pathman_fkey_check_upd", RI_TRIGTYPE_UPDATE);
 
 	/*
 	 * Share code with INSERT case.
 	 */
-	return RI_FKey_check((TriggerData *) fcinfo->context);
+	return ri_fkey_check((TriggerData *) fcinfo->context);
 }
 
 Datum
@@ -226,9 +230,9 @@ pathman_fkey_restrict_del(PG_FUNCTION_ARGS)
 	/*
 	 * Check that this is a valid trigger call on the right time and event.
 	 */
-	// ri_CheckTrigger(fcinfo, "RI_FKey_restrict_del", RI_TRIGTYPE_DELETE);
+	ri_CheckTrigger(fcinfo, "pathman_fkey_restrict_del", RI_TRIGTYPE_DELETE);
 
-	return ri_restrict_upd_del((TriggerData *) fcinfo->context, false);
+	return ri_restrict((TriggerData *) fcinfo->context, false);
 }
 
 Datum
@@ -237,9 +241,9 @@ pathman_fkey_restrict_upd(PG_FUNCTION_ARGS)
 	/*
 	 * Check that this is a valid trigger call on the right time and event.
 	 */
-	// ri_CheckTrigger(fcinfo, "RI_FKey_restrict_del", RI_TRIGTYPE_DELETE);
+	ri_CheckTrigger(fcinfo, "pathman_fkey_restrict_upd", RI_TRIGTYPE_UPDATE);
 
-	return ri_restrict_upd_del((TriggerData *) fcinfo->context, true);
+	return ri_restrict((TriggerData *) fcinfo->context, true);
 }
 
 /*
@@ -307,7 +311,6 @@ ri_CheckTrigger(FunctionCallInfo fcinfo, const char *funcname, int tgkind)
 				(errcode(ERRCODE_E_R_I_E_TRIGGER_PROTOCOL_VIOLATED),
 			   errmsg("function \"%s\" must be fired AFTER ROW", funcname)));
 
-	/* There is only one option now, but it is about to get better :) */
 	switch (tgkind)
 	{
 		case RI_TRIGTYPE_INSERT:
@@ -315,6 +318,18 @@ ri_CheckTrigger(FunctionCallInfo fcinfo, const char *funcname, int tgkind)
 				ereport(ERROR,
 						(errcode(ERRCODE_E_R_I_E_TRIGGER_PROTOCOL_VIOLATED),
 						 errmsg("function \"%s\" must be fired for INSERT", funcname)));
+			break;
+		case RI_TRIGTYPE_UPDATE:
+			if (!TRIGGER_FIRED_BY_UPDATE(trigdata->tg_event))
+				ereport(ERROR,
+						(errcode(ERRCODE_E_R_I_E_TRIGGER_PROTOCOL_VIOLATED),
+						 errmsg("function \"%s\" must be fired for UPDATE", funcname)));
+			break;
+		case RI_TRIGTYPE_DELETE:
+			if (!TRIGGER_FIRED_BY_DELETE(trigdata->tg_event))
+				ereport(ERROR,
+						(errcode(ERRCODE_E_R_I_E_TRIGGER_PROTOCOL_VIOLATED),
+						 errmsg("function \"%s\" must be fired for DELETE", funcname)));
 			break;
 	}
 }
@@ -326,7 +341,7 @@ ri_CheckTrigger(FunctionCallInfo fcinfo, const char *funcname, int tgkind)
  * ----------
  */
 static Datum
-RI_FKey_check(TriggerData *trigdata)
+ri_fkey_check(TriggerData *trigdata)
 {
 	const PartRelationInfo *prel;
 	const ConstraintInfo *riinfo;
@@ -384,19 +399,11 @@ RI_FKey_check(TriggerData *trigdata)
 	 * SELECT FOR KEY SHARE will get on it.
 	 */
 	fk_rel = trigdata->tg_relation;
-	/* TODO: it should probably be another lock level */
 	pk_rel = heap_open(riinfo->pk_relid, RowShareLock);
 
 	/* Get partitioning info */
 	prel = get_pathman_relation_info(pk_rel->rd_id);
-	if (!prel)
-		elog(ERROR,
-			 "table %s isn't partitioned by pg_pathman",
-			 get_rel_name(pk_rel->rd_id));
-
-
-	if (SPI_connect() != SPI_OK_CONNECT)
-		elog(ERROR, "SPI_connect failed");
+	shout_if_prel_is_invalid(pk_rel->rd_id, prel, PT_INDIFFERENT);
 
 	pk_type = attnumTypeId(pk_rel, riinfo->pk_attnum);
 	fk_type = attnumTypeId(fk_rel, riinfo->fk_attnum);
@@ -405,15 +412,21 @@ RI_FKey_check(TriggerData *trigdata)
 
 	/* If foreign key value is NULL then just quit */
 	if (isnull)
+	{
+		heap_close(pk_rel, RowShareLock);
 		return PointerGetDatum(NULL);
+	}
 
+	/* Is there partition for the key? */
 	partid = find_partition_for_value(value, fk_type, prel);
-	part_rel = heap_open(partid, RowShareLock);
-
-	/* It seems that we got a partition! */
 	if (partid == InvalidOid)
 		/* TODO: Write a decent error message as in ri_triggers.c */
 		elog(ERROR, "can't find suitable partition for foreign key");
+
+	part_rel = heap_open(partid, RowShareLock);
+
+	if (SPI_connect() != SPI_OK_CONNECT)
+		elog(ERROR, "SPI_connect failed");
 
 	/*
 	 * Fetch or prepare a saved plan for the real check
@@ -460,14 +473,14 @@ RI_FKey_check(TriggerData *trigdata)
 	if (SPI_finish() != SPI_OK_FINISH)
 		elog(ERROR, "SPI_finish failed");
 
-	heap_close(pk_rel, RowShareLock);
 	heap_close(part_rel, RowShareLock);
+	heap_close(pk_rel, RowShareLock);
 
 	return PointerGetDatum(NULL);
 }
 
 static Datum
-ri_restrict_upd_del(TriggerData *trigdata, bool is_upd)
+ri_restrict(TriggerData *trigdata, bool is_upd)
 {
 	const ConstraintInfo *riinfo;
 	Relation	fk_rel;
@@ -791,7 +804,6 @@ ri_LoadConstraintInfo(Oid constraintOid)
 	Datum		adatum;
 	bool		isNull;
 	ArrayType  *arr;
-	// int			numkeys;
 
 	/*
 	 * On the first call initialize the hashtable
@@ -829,9 +841,6 @@ ri_LoadConstraintInfo(Oid constraintOid)
 	memcpy(&riinfo->conname, &conForm->conname, sizeof(NameData));
 	riinfo->pk_relid = conForm->confrelid;
 	riinfo->fk_relid = conForm->conrelid;
-	// riinfo->confupdtype = conForm->confupdtype;
-	// riinfo->confdeltype = conForm->confdeltype;
-	// riinfo->confmatchtype = conForm->confmatchtype;
 
 	read_constr_attribute(fk_attnum, conkey, INT2OID);
 	read_constr_attribute(pk_attnum, confkey, INT2OID);
@@ -895,7 +904,7 @@ ri_FetchConstraintInfo(Trigger *trigger, Relation trig_rel, bool rel_is_pk)
 
 
 static void
-ri_InitHashTables()
+ri_InitHashTables(void)
 {
 	HASHCTL		ctl;
 
@@ -906,10 +915,10 @@ ri_InitHashTables()
 									  RI_INIT_CONSTRAINTHASHSIZE,
 									  &ctl, HASH_ELEM | HASH_BLOBS);
 
-	/* TODO: Arrange to flush cache on pg_constraint changes */
-	// CacheRegisterSyscacheCallback(CONSTROID,
-	// 							  InvalidateConstraintCacheCallBack,
-	// 							  (Datum) 0);
+	/* Arrange to flush cache on pg_constraint changes */
+	CacheRegisterSyscacheCallback(CONSTROID,
+								  InvalidateConstraintCacheCallBack,
+								  (Datum) 0);
 
 	memset(&ctl, 0, sizeof(ctl));
 	ctl.keysize = sizeof(QueryKey);
@@ -925,6 +934,23 @@ ri_InitHashTables()
 								   RI_INIT_QUERYHASHSIZE,
 								   &ctl, HASH_ELEM | HASH_BLOBS);
 
+}
+
+static void
+InvalidateConstraintCacheCallBack(Datum arg, int cacheid, uint32 hashvalue)
+{
+	HASH_SEQ_STATUS		hash_seq;
+	ConstraintInfo	   *riinfo;
+
+	hash_seq_init(&hash_seq, ri_constraint_cache);
+	while ((riinfo = hash_seq_search(&hash_seq)) != NULL)
+	{
+		/*
+		 * If all constraints or the current one are invalidated
+		 */
+		if (hashvalue == 0 || riinfo->oidHashValue == hashvalue)
+			riinfo->valid = false;
+	}
 }
 
 /*
@@ -1075,8 +1101,8 @@ ri_PerformCheck(const ConstraintInfo *riinfo,
 
 	if (source_is_pk)
 	{
-		query_rel = pk_rel;
-		source_rel = fk_rel;
+		query_rel = fk_rel;
+		source_rel = pk_rel;
 		attnum = riinfo->pk_attnum;
 	}
 	else
@@ -1149,8 +1175,8 @@ ri_PerformCheck(const ConstraintInfo *riinfo,
 
 	/* XXX wouldn't it be clearer to do this part at the caller? */
 	if ((SPI_processed == 0) != source_is_pk)
-		/* TODO: write a correct table name on DELETE and UPDATE from PK table */
-		ri_ReportViolation(riinfo, source_rel, key[0], keytype, !source_is_pk);
+		ri_ReportViolation(riinfo, source_rel, query_rel,
+						   key[0], keytype, !source_is_pk);
 
 	return SPI_processed != 0;
 }
@@ -1193,6 +1219,7 @@ quoteRelationName(char *buffer, Relation rel)
 static void
 ri_ReportViolation(const ConstraintInfo *riinfo,
 				   Relation rel,
+				   Relation refRel,
 				   Datum key,
 				   Oid keytype,
 				   bool onfk)
@@ -1206,17 +1233,18 @@ ri_ReportViolation(const ConstraintInfo *riinfo,
 			 errdetail("Key (%s)=(%s) is not present in table \"%s\".",
 			 	get_attname(riinfo->pk_relid, riinfo->pk_attnum),
 			 	datum_to_cstring(key, keytype),
-			 	RelationGetRelationName(rel))));
+			 	RelationGetRelationName(refRel))));
 	else
 		ereport(ERROR,
 			(errcode(ERRCODE_FOREIGN_KEY_VIOLATION),
-			 errmsg("insert or update on table \"%s\" violates foreign key constraint \"%s\"",
+			 errmsg("update or delete on table \"%s\" violates foreign key constraint \"%s\" on table \"%s\"",
 					RelationGetRelationName(rel),
-					NameStr(riinfo->conname)),
+					NameStr(riinfo->conname),
+					RelationGetRelationName(refRel)),
 			 errdetail("Key (%s)=(%s) is still referenced from table \"%s\".",
 			 	get_attname(riinfo->fk_relid, riinfo->fk_attnum),
 			 	datum_to_cstring(key, keytype),
-			 	RelationGetRelationName(rel))));
+			 	RelationGetRelationName(refRel))));
 }
 
 static void
@@ -1432,7 +1460,8 @@ createForeignKeyTriggers(Relation rel, Oid refRelOid,
 								  "RI_ConstraintTrigger_c",
 								  TRIGGER_TYPE_INSERT,
 								  constraintOid,
-								  indexOid);
+								  indexOid,
+								  true);
 
 	/*
 	 * Build and execute a CREATE CONSTRAINT TRIGGER statement for the ON
@@ -1443,7 +1472,8 @@ createForeignKeyTriggers(Relation rel, Oid refRelOid,
 								  "RI_ConstraintTrigger_c",
 								  TRIGGER_TYPE_UPDATE,
 								  constraintOid,
-								  indexOid);
+								  indexOid,
+								  true);
 
 	nchildren = PrelChildrenCount(prel);
 	children = PrelGetChildrenArray(prel);
@@ -1500,13 +1530,15 @@ createPartitionForeignKeyTriggers(Oid partition,
 								  "RI_ConstraintTrigger_a",
 								  TRIGGER_TYPE_DELETE,
 								  constraintOid,
-								  indexOid);
+								  indexOid,
+								  true);
 
 	createSingleForeignKeyTrigger(partition, fkrelid, upd_funcname,
 								  "RI_ConstraintTrigger_a",
 								  TRIGGER_TYPE_UPDATE,
 								  constraintOid,
-								  indexOid);
+								  indexOid,
+								  true);
 
 	ReleaseSysCache(indexTuple);
 
@@ -1526,9 +1558,11 @@ createPartitionForeignKeyTriggers(Oid partition,
 void
 createSingleForeignKeyTrigger(Oid relOid, Oid refRelOid, List *funcname,
 							  char *trigname, int16 events, Oid constraintOid,
-							  Oid indexOid)
+							  Oid indexOid, bool is_internal)
 {
 	CreateTrigStmt *fk_trigger;
+	ObjectAddress	trig_address,
+					rel_address;
 
 	fk_trigger = makeNode(CreateTrigStmt);
 	fk_trigger->trigname = "RI_ConstraintTrigger_c";
@@ -1545,8 +1579,14 @@ createSingleForeignKeyTrigger(Oid relOid, Oid refRelOid, List *funcname,
 	fk_trigger->funcname = funcname;
 	fk_trigger->args = NIL;
 
-	(void) CreateTrigger(fk_trigger, NULL, relOid, refRelOid, constraintOid,
-						 indexOid, true);
+	trig_address = CreateTrigger(fk_trigger, NULL, relOid, refRelOid,
+								 constraintOid, indexOid, is_internal);
+
+	/* We make trigger be auto-dropped if its relation is dropped */
+	rel_address.classId = RelationRelationId;
+	rel_address.objectId = relOid;
+	rel_address.objectSubId = 0;
+	recordDependencyOn(&trig_address, &rel_address, DEPENDENCY_AUTO);
 
 	/* Make changes-so-far visible */
 	CommandCounterIncrement();
@@ -1589,7 +1629,7 @@ transformFkeyCheckAttrs(Relation pkrel, int16 attnum,
  *
  * Caller is responsible for releasing tuple
  */
-static HeapTuple
+HeapTuple
 get_index_for_key(Relation rel, AttrNumber attnum, Oid *index_id)
 {
 	List	   *indexoidlist;
@@ -1710,4 +1750,112 @@ validateForeignKeyConstraint(char *conname,
 
 	heap_endscan(scan);
 	UnregisterSnapshot(snapshot);
+}
+
+/*
+ * Returns oids list of RI triggers for specified partition and FK constraint
+ */
+List *
+get_ri_triggers_list(Oid relid, Oid constr)
+{
+	Relation	tgrel;
+	SysScanDesc tgscan;
+	ScanKeyData key;
+	HeapTuple	tuple;
+	bool		isnull;
+	List	   *triggers = NIL;
+
+	tgrel = heap_open(TriggerRelationId, RowExclusiveLock);
+
+	ScanKeyInit(&key,
+				Anum_pg_trigger_tgconstraint,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(constr));
+	tgscan = systable_beginscan(tgrel, TriggerConstraintIndexId, true,
+								NULL, 1, &key);
+	while (HeapTupleIsValid(tuple = systable_getnext(tgscan)))
+	{
+		Form_pg_trigger trigform = (Form_pg_trigger) GETSTRUCT(tuple);
+
+		if (trigform->tgrelid == relid)
+		{
+			Datum trigoid = heap_getsysattr(tuple, ObjectIdAttributeNumber,
+											RelationGetDescr(tgrel),
+											&isnull);
+			if (!isnull)
+				triggers = lappend_oid(triggers, DatumGetObjectId(trigoid));
+		}
+	}
+	systable_endscan(tgscan);
+	heap_close(tgrel, RowExclusiveLock);
+
+	return triggers;
+}
+
+/*
+ * Removes dependencies that prevent partition from DROP
+ */
+void
+ri_removePartitionDependencies(Oid parent, Relation partition)
+{
+	List	   *ri_constr;
+	List	   *ri_refrelids;
+	ListCell   *lc1,
+			   *lc2;
+	const PartRelationInfo *prel;
+
+	const char *attname;
+	AttrNumber	attnum;
+	HeapTuple	indexTuple;
+	Oid			index;
+
+	pathman_get_fkeys(parent, &ri_constr, &ri_refrelids);
+
+	foreach(lc1, ri_constr)
+	{
+		Oid		constr = lfirst_oid(lc1);
+		List   *triggers;
+
+		prel = get_pathman_relation_info(parent);
+		shout_if_prel_is_invalid(parent, prel, PT_INDIFFERENT);
+
+		/*
+		 * Remove index dependency on FK constraint
+		 */
+		attname = get_attname(parent, prel->attnum);
+		attnum = get_attnum(partition->rd_id, attname);
+		indexTuple = get_index_for_key(partition, attnum, &index);
+		if (HeapTupleIsValid(indexTuple))
+		{
+			deleteDependencyRecords(ConstraintRelationId, constr,
+									RelationRelationId, index);
+			// deleteDependencyRecordsRef(RelationRelationId, indexOid);
+			ReleaseSysCache(indexTuple);
+		}
+		else
+			elog(WARNING, "Partition %s doesn't have unique index",
+				 RelationGetRelationName(partition));
+
+		/*
+		 * RI triggers implicitly depend on FK constraint, and the former one
+		 * wouldn't let you drop those triggers unless you drop the constraint
+		 * itself. To overcome this hurdle we need to remove dependency of
+		 * triggers on FK constraint
+		 */
+		triggers = get_ri_triggers_list(partition->rd_id, constr);
+		foreach(lc2, triggers)
+		{
+			Oid trig = lfirst_oid(lc2);
+
+			deleteDependencyRecords(TriggerRelationId, trig,
+									ConstraintRelationId, constr);
+		}
+		pfree(triggers);
+	}
+
+	if (ri_constr)
+	{
+		pfree(ri_constr);
+		pfree(ri_refrelids);
+	}
 }

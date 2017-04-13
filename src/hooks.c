@@ -26,6 +26,7 @@
 #include "xact_handling.h"
 
 #include "access/transam.h"
+#include "access/xact.h"
 #include "catalog/dependency.h"
 #include "catalog/namespace.h"
 #include "catalog/objectaddress.h"
@@ -35,6 +36,10 @@
 #include "optimizer/restrictinfo.h"
 #include "utils/typcache.h"
 #include "utils/lsyscache.h"
+#include "utils/fmgroids.h"
+
+#include "access/sysattr.h"
+#include "catalog/pg_trigger.h"
 
 
 set_join_pathlist_hook_type		set_join_pathlist_next = NULL;
@@ -769,8 +774,9 @@ pathman_drop_fkeys(Node *parsetree)
 	/* Walk through each table */
 	foreach(cell, drop_stmt->objects)
 	{
-		RangeVar   *rel = makeRangeVarFromNameList((List *) lfirst(cell));
-		Oid			relid = RangeVarGetRelid(rel, lockmode, true);
+		RangeVar   *rv = makeRangeVarFromNameList((List *) lfirst(cell));
+		Oid			relid = RangeVarGetRelid(rv, lockmode, true);
+		Relation	rel = heap_open(relid, lockmode);
 
 		if (!OidIsValid(relid))
 		{
@@ -780,7 +786,7 @@ pathman_drop_fkeys(Node *parsetree)
 				ereport(ERROR,
 						(errcode(ERRCODE_UNDEFINED_TABLE),
 						 errmsg("table \"%s\" does not exist",
-								rel->relname)));
+								rv->relname)));
 		}
 
 		/* Is it pg_pathman's table? */
@@ -805,7 +811,53 @@ pathman_drop_fkeys(Node *parsetree)
 				performDeletion(&conobj, DROP_RESTRICT, 0);
 
 			}
-
 		}
+		/* Is it pg_pathman's partition? */
+		else
+		{
+			PartParentSearch	parent_search;
+			Oid					parent_relid;
+			// Relation relation = heap_open(relid, NoLock);
+
+			/* Try fetching parent of this table */
+			parent_relid = get_parent_of_partition(relid, &parent_search);
+			if (parent_search == PPS_ENTRY_PART_PARENT)
+			{
+				ri_removePartitionDependencies(parent_relid, rel);
+				// ri_removeTriggersDependency(parent_relid, relid);
+				CommandCounterIncrement();
+
+				// {
+				// 	const PartRelationInfo *prel;
+				// 	const char * attname;
+				// 	AttrNumber attnum;
+				// 	Oid indexOid;
+				// 	HeapTuple indexTuple;
+
+				// 	if ((prel = get_pathman_relation_info(parent_relid)) == NULL)
+				// 	{
+				// 		heap_close(relation, NoLock);
+				// 		continue;
+				// 	}
+
+				// 	attname = get_attname(parent_relid, prel->attnum);
+				// 	attnum = get_attnum(relid, attname);
+				// 	indexTuple = get_index_for_key(relation, attnum, &indexOid);
+
+				// 	/* If there is an index remove dependency */
+				// 	if (HeapTupleIsValid(indexTuple))
+				// 	{
+				// 		deleteDependencyRecordsRef(RelationRelationId, indexOid);
+				// 		ReleaseSysCache(indexTuple);
+
+				// 		/* Make changes visible */
+				// 		CommandCounterIncrement();
+				// 	}
+				// }
+			}
+
+			// heap_close(relation, NoLock);
+		}
+		heap_close(rel, lockmode);
 	}
 }
