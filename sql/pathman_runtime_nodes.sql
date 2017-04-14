@@ -266,6 +266,31 @@ select test.pathman_test_4(); /* RuntimeMergeAppend (lateral) */
 select test.pathman_test_5(); /* projection tests for RuntimeXXX nodes */
 
 
+/* RuntimeAppend (join, enabled parent) */
+select pathman.set_enable_parent('test.runtime_test_1', true);
+
+explain (costs off)
+select from test.runtime_test_1 as t1
+join (select * from test.run_values limit 4) as t2 on t1.id = t2.val;
+
+select from test.runtime_test_1 as t1
+join (select * from test.run_values limit 4) as t2 on t1.id = t2.val;
+
+/* RuntimeAppend (join, disabled parent) */
+select pathman.set_enable_parent('test.runtime_test_1', false);
+
+explain (costs off)
+select from test.runtime_test_1 as t1
+join (select * from test.run_values limit 4) as t2 on t1.id = t2.val;
+
+select from test.runtime_test_1 as t1
+join (select * from test.run_values limit 4) as t2 on t1.id = t2.val;
+
+/* RuntimeAppend (join, additional projections) */
+select generate_series(1, 2) from test.runtime_test_1 as t1
+join (select * from test.run_values limit 4) as t2 on t1.id = t2.val;
+
+
 DROP SCHEMA test CASCADE;
 DROP EXTENSION pg_pathman CASCADE;
 DROP SCHEMA pathman CASCADE;

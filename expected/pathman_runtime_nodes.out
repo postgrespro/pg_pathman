@@ -285,6 +285,93 @@ select test.pathman_test_5(); /* projection tests for RuntimeXXX nodes */
  ok
 (1 row)
 
+/* RuntimeAppend (join, enabled parent) */
+select pathman.set_enable_parent('test.runtime_test_1', true);
+ set_enable_parent 
+-------------------
+ 
+(1 row)
+
+explain (costs off)
+select from test.runtime_test_1 as t1
+join (select * from test.run_values limit 4) as t2 on t1.id = t2.val;
+                                   QUERY PLAN                                   
+--------------------------------------------------------------------------------
+ Nested Loop
+   ->  Limit
+         ->  Seq Scan on run_values
+   ->  Custom Scan (RuntimeAppend)
+         ->  Index Only Scan using runtime_test_1_pkey on runtime_test_1 t1
+               Filter: (run_values.val = id)
+         ->  Index Only Scan using runtime_test_1_0_pkey on runtime_test_1_0 t1
+               Index Cond: (id = run_values.val)
+         ->  Index Only Scan using runtime_test_1_1_pkey on runtime_test_1_1 t1
+               Index Cond: (id = run_values.val)
+         ->  Index Only Scan using runtime_test_1_2_pkey on runtime_test_1_2 t1
+               Index Cond: (id = run_values.val)
+         ->  Index Only Scan using runtime_test_1_3_pkey on runtime_test_1_3 t1
+               Index Cond: (id = run_values.val)
+         ->  Index Only Scan using runtime_test_1_4_pkey on runtime_test_1_4 t1
+               Index Cond: (id = run_values.val)
+         ->  Index Only Scan using runtime_test_1_5_pkey on runtime_test_1_5 t1
+               Index Cond: (id = run_values.val)
+(18 rows)
+
+select from test.runtime_test_1 as t1
+join (select * from test.run_values limit 4) as t2 on t1.id = t2.val;
+--
+(4 rows)
+
+/* RuntimeAppend (join, disabled parent) */
+select pathman.set_enable_parent('test.runtime_test_1', false);
+ set_enable_parent 
+-------------------
+ 
+(1 row)
+
+explain (costs off)
+select from test.runtime_test_1 as t1
+join (select * from test.run_values limit 4) as t2 on t1.id = t2.val;
+                                   QUERY PLAN                                   
+--------------------------------------------------------------------------------
+ Nested Loop
+   ->  Limit
+         ->  Seq Scan on run_values
+   ->  Custom Scan (RuntimeAppend)
+         ->  Index Only Scan using runtime_test_1_0_pkey on runtime_test_1_0 t1
+               Index Cond: (id = run_values.val)
+         ->  Index Only Scan using runtime_test_1_1_pkey on runtime_test_1_1 t1
+               Index Cond: (id = run_values.val)
+         ->  Index Only Scan using runtime_test_1_2_pkey on runtime_test_1_2 t1
+               Index Cond: (id = run_values.val)
+         ->  Index Only Scan using runtime_test_1_3_pkey on runtime_test_1_3 t1
+               Index Cond: (id = run_values.val)
+         ->  Index Only Scan using runtime_test_1_4_pkey on runtime_test_1_4 t1
+               Index Cond: (id = run_values.val)
+         ->  Index Only Scan using runtime_test_1_5_pkey on runtime_test_1_5 t1
+               Index Cond: (id = run_values.val)
+(16 rows)
+
+select from test.runtime_test_1 as t1
+join (select * from test.run_values limit 4) as t2 on t1.id = t2.val;
+--
+(4 rows)
+
+/* RuntimeAppend (join, additional projections) */
+select generate_series(1, 2) from test.runtime_test_1 as t1
+join (select * from test.run_values limit 4) as t2 on t1.id = t2.val;
+ generate_series 
+-----------------
+               1
+               2
+               1
+               2
+               1
+               2
+               1
+               2
+(8 rows)
+
 DROP SCHEMA test CASCADE;
 NOTICE:  drop cascades to 30 other objects
 DROP EXTENSION pg_pathman CASCADE;
