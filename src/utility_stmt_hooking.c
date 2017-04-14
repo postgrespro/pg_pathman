@@ -632,12 +632,6 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 		if (tuple_oid != InvalidOid)
 			HeapTupleSetOid(tuple, tuple_oid);
 
-		/*
-		 * Constraints might reference the tableoid column, so initialize
-		 * t_tableOid before evaluating them.
-		 */
-		tuple->t_tableOid = RelationGetRelid(child_result_rel->ri_RelationDesc);
-
 		/* Place tuple in tuple slot --- but slot shouldn't free it */
 		slot = myslot;
 		ExecStoreTuple(tuple, slot, InvalidBuffer, false);
@@ -660,6 +654,12 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 												 &parts_storage, estate);
 		child_result_rel = rri_holder->result_rel_info;
 		estate->es_result_relation_info = child_result_rel;
+
+		/*
+		 * Constraints might reference the tableoid column, so initialize
+		 * t_tableOid before evaluating them.
+		 */
+		tuple->t_tableOid = RelationGetRelid(child_result_rel->ri_RelationDesc);
 
 		/* If there's a transform map, rebuild the tuple */
 		if (rri_holder->tuple_map)
