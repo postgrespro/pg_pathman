@@ -339,7 +339,7 @@ handle_modification_query(Query *parse)
 
 /*
  * -------------------------------
- *  PartitionFilter-related stuff
+ *  PartitionFilter and PartitionUpdate-related stuff
  * -------------------------------
  */
 
@@ -349,6 +349,14 @@ add_partition_filters(List *rtable, Plan *plan)
 {
 	if (pg_pathman_enable_partition_filter)
 		plan_tree_walker(plan, partition_filter_visitor, rtable);
+}
+
+/* Add PartitionUpdate nodes to the plan tree */
+void
+add_partition_update_nodes(List *rtable, Plan *plan)
+{
+	if (pg_pathman_enable_partition_updaters)
+		plan_tree_walker(plan, partition_update_visitor, rtable);
 }
 
 /*
@@ -391,6 +399,54 @@ partition_filter_visitor(Plan *plan, void *context)
 			}
 
 			lfirst(lc1) = make_partition_filter((Plan *) lfirst(lc1),
+												relid,
+												modify_table->onConflictAction,
+												returning_list);
+		}
+	}
+}
+
+
+/*
+ * Add partition updaters to ModifyTable node's children.
+ *
+ * 'context' should point to the PlannedStmt->rtable.
+ */
+static void
+partition_update_visitor(Plan *plan, void *context)
+{
+	List		   *rtable = (List *) context;
+	ModifyTable	   *modify_table = (ModifyTable *) plan;
+	ListCell	   *lc1,
+				   *lc2,
+				   *lc3;
+
+	/* Skip if not ModifyTable with 'INSERT' command */
+	if (!IsA(modify_table, ModifyTable) || modify_table->operation != CMD_UPDATE)
+		return;
+
+	Assert(rtable && IsA(rtable, List));
+
+	lc3 = list_head(modify_table->returningLists);
+	forboth (lc1, modify_table->plans, lc2, modify_table->resultRelations)
+	{
+		Index					rindex = lfirst_int(lc2);
+		Oid						relid = getrelid(rindex, rtable);
+		const PartRelationInfo *prel = get_pathman_relation_info(relid);
+
+		/* Check that table is partitioned */
+		if (prel)
+		{
+			List *returning_list = NIL;
+
+			/* Extract returning list if possible */
+			if (lc3)
+			{
+				returning_list = lfirst(lc3);
+				lc3 = lnext(lc3);
+			}
+
+			lfirst(lc1) = make_partition_update((Plan *) lfirst(lc1),
 												relid,
 												modify_table->onConflictAction,
 												returning_list);

@@ -718,7 +718,6 @@ pfilter_build_tlist(Relation parent_rel, List *tlist)
 	return result_tlist;
 }
 
-
 /*
  * ----------------------------------------------
  *  Additional init steps for ResultPartsStorage

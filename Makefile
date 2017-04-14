@@ -8,7 +8,7 @@ OBJS = src/init.o src/relation_info.o src/utils.o src/partition_filter.o \
 	src/hooks.o src/nodes_common.o src/xact_handling.o src/utility_stmt_hooking.o \
 	src/planner_tree_modification.o src/debug_print.o src/partition_creation.o \
 	src/compat/pg_compat.o src/compat/relation_tags.o src/compat/expand_rte_hook.o \
-	src/compat/rowmarks_fix.o $(WIN32RES)
+	src/compat/rowmarks_fix.o src/partition_update.o $(WIN32RES)
 
 PG_CPPFLAGS = -I$(CURDIR)/src/include
 
