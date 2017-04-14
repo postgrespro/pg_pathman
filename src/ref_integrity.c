@@ -158,10 +158,10 @@ static bool ri_AttributesEqual(Oid eq_opr, Oid typeid,
 static CompareHashEntry *ri_HashCompareOp(Oid eq_opr, Oid typeid);
 
 static void quoteOneName(char *buffer, const char *name);
-static void quoteRelationName(char *buffer, Relation rel);
+static void quoteRelationName(char *buffer, Oid relid);
 static void ri_ReportViolation(const ConstraintInfo *riinfo,
-				   Relation rel,
-				   Relation refRel,
+				   Oid rel,
+				   Oid refRel,
 				   Datum key,
 				   Oid keytype,
 				   bool onfk);
@@ -420,8 +420,8 @@ ri_fkey_check(TriggerData *trigdata)
 	/* Is there partition for the key? */
 	partid = find_partition_for_value(value, fk_type, prel);
 	if (partid == InvalidOid)
-		/* TODO: Write a decent error message as in ri_triggers.c */
-		elog(ERROR, "can't find suitable partition for foreign key");
+		ri_ReportViolation(riinfo, fk_rel->rd_id, pk_rel->rd_id,
+						   value, fk_type, true);
 
 	part_rel = heap_open(partid, RowShareLock);
 
@@ -445,7 +445,7 @@ ri_fkey_check(TriggerData *trigdata)
 		 * ----------
 		 */
 		initStringInfo(&querybuf);
-		quoteRelationName(pkrelname, part_rel);
+		quoteRelationName(pkrelname, part_rel->rd_id);
 		appendStringInfo(&querybuf, "SELECT 1 FROM ONLY %s x", pkrelname);
 
 		quoteOneName(attname, RIAttName(pk_rel, riinfo->pk_attnum));
@@ -538,7 +538,7 @@ ri_restrict(TriggerData *trigdata, bool is_upd)
 		 * ----------
 		 */
 		initStringInfo(&querybuf);
-		quoteRelationName(fkrelname, fk_rel);
+		quoteRelationName(fkrelname, fk_rel->rd_id);
 		appendStringInfo(&querybuf, "SELECT 1 FROM ONLY %s x", fkrelname);
 
 		quoteOneName(attname, RIAttName(fk_rel, riinfo->fk_attnum));
@@ -882,10 +882,6 @@ ri_FetchConstraintInfo(Trigger *trigger, Relation trig_rel, bool rel_is_pk)
 	/* Do some easy cross-checks against the trigger call data */
 	if (rel_is_pk)
 	{
-		// if (riinfo->fk_relid != trigger->tgconstrrelid ||
-		// 	riinfo->pk_relid != RelationGetRelid(trig_rel))
-		// 	elog(ERROR, "wrong pg_constraint entry for trigger \"%s\" on table \"%s\"",
-		// 		 trigger->tgname, RelationGetRelationName(trig_rel));
 		/* XXX Probably we should check that trig_rel is a partition */
 		if (riinfo->fk_relid != trigger->tgconstrrelid)
 			elog(ERROR, "wrong pg_constraint entry for trigger \"%s\" on table \"%s\"",
@@ -1175,7 +1171,7 @@ ri_PerformCheck(const ConstraintInfo *riinfo,
 
 	/* XXX wouldn't it be clearer to do this part at the caller? */
 	if ((SPI_processed == 0) != source_is_pk)
-		ri_ReportViolation(riinfo, source_rel, query_rel,
+		ri_ReportViolation(riinfo, source_rel->rd_id, query_rel->rd_id,
 						   key[0], keytype, !source_is_pk);
 
 	return SPI_processed != 0;
@@ -1208,18 +1204,18 @@ quoteOneName(char *buffer, const char *name)
  * buffer must be MAX_QUOTED_REL_NAME_LEN long (includes room for \0)
  */
 static void
-quoteRelationName(char *buffer, Relation rel)
+quoteRelationName(char *buffer, Oid relid)
 {
-	quoteOneName(buffer, get_namespace_name(RelationGetNamespace(rel)));
+	quoteOneName(buffer, get_namespace_name(get_rel_namespace(relid)));
 	buffer += strlen(buffer);
 	*buffer++ = '.';
-	quoteOneName(buffer, RelationGetRelationName(rel));
+	quoteOneName(buffer, get_rel_name(relid));
 }
 
 static void
 ri_ReportViolation(const ConstraintInfo *riinfo,
-				   Relation rel,
-				   Relation refRel,
+				   Oid rel,
+				   Oid refRel,
 				   Datum key,
 				   Oid keytype,
 				   bool onfk)
@@ -1228,23 +1224,23 @@ ri_ReportViolation(const ConstraintInfo *riinfo,
 		ereport(ERROR,
 			(errcode(ERRCODE_FOREIGN_KEY_VIOLATION),
 			 errmsg("insert or update on table \"%s\" violates foreign key constraint \"%s\"",
-					RelationGetRelationName(rel),
+					get_rel_name(rel),
 					NameStr(riinfo->conname)),
 			 errdetail("Key (%s)=(%s) is not present in table \"%s\".",
 			 	get_attname(riinfo->pk_relid, riinfo->pk_attnum),
 			 	datum_to_cstring(key, keytype),
-			 	RelationGetRelationName(refRel))));
+			 	get_rel_name(refRel))));
 	else
 		ereport(ERROR,
 			(errcode(ERRCODE_FOREIGN_KEY_VIOLATION),
 			 errmsg("update or delete on table \"%s\" violates foreign key constraint \"%s\" on table \"%s\"",
-					RelationGetRelationName(rel),
+					get_rel_name(rel),
 					NameStr(riinfo->conname),
-					RelationGetRelationName(refRel)),
+					get_rel_name(refRel)),
 			 errdetail("Key (%s)=(%s) is still referenced from table \"%s\".",
 			 	get_attname(riinfo->fk_relid, riinfo->fk_attnum),
 			 	datum_to_cstring(key, keytype),
-			 	RelationGetRelationName(refRel))));
+			 	get_rel_name(refRel))));
 }
 
 static void
@@ -1753,6 +1749,112 @@ validateForeignKeyConstraint(char *conname,
 }
 
 /*
+ * On DROP partition we must ensure that no FK row references this partition
+ */
+void
+ri_checkReferences(Relation partition, Oid constraintOid)
+{
+	const ConstraintInfo *riinfo;
+	StringInfoData querybuf;
+	AttrNumber	pkattnum;
+	char	   *attname;
+	char		pkrelname[MAX_QUOTED_REL_NAME_LEN];
+	char		fkrelname[MAX_QUOTED_REL_NAME_LEN];
+	char		pkattname[MAX_QUOTED_NAME_LEN + 3];
+	char		fkattname[MAX_QUOTED_NAME_LEN + 3];
+	Oid			pkattype,
+				fkattype;
+	int			spi_result;
+	SPIPlanPtr	qplan;
+
+	Assert(OidIsValid(constraintOid));
+	riinfo = ri_LoadConstraintInfo(constraintOid);
+
+	/* Get partition attribute number */
+	pkattnum = get_attnum(partition->rd_id,
+						  get_attname(riinfo->pk_relid, riinfo->pk_attnum));
+
+	quoteRelationName(pkrelname, partition->rd_id);
+	quoteRelationName(fkrelname, riinfo->fk_relid);
+	pkattype = get_atttype(partition->rd_id, pkattnum);
+	fkattype = get_atttype(riinfo->fk_relid, riinfo->fk_attnum);
+
+	strcpy(pkattname, "pk.");
+	strcpy(fkattname, "fk.");
+	quoteOneName(pkattname + 3,
+				 get_attname(partition->rd_id, pkattnum));
+	quoteOneName(fkattname + 3,
+				 get_attname(riinfo->fk_relid, riinfo->fk_attnum));
+
+	/*----------
+	 * The query string built is:
+	 *	SELECT pk.keycol FROM ONLY partition pk
+	 *	 INNER JOIN ONLY fkrelname fk
+	 *	 ON pk.keycol = fk.keycol;
+	 *----------
+	 */
+	initStringInfo(&querybuf);
+	appendStringInfo(&querybuf, "SELECT %s", pkattname);
+	appendStringInfo(&querybuf,
+					 " FROM ONLY %s pk INNER JOIN ONLY %s fk ON ",
+					 pkrelname, fkrelname);
+	ri_GenerateQual(&querybuf, "",
+					pkattname, pkattype,
+					riinfo->pf_eq_opr,
+					fkattname, fkattype);
+
+	if (SPI_connect() != SPI_OK_CONNECT)
+		elog(ERROR, "SPI_connect failed");
+
+	/*
+	 * Generate the plan.  We don't need to cache it, and there are no
+	 * arguments to the plan.
+	 */
+	qplan = SPI_prepare(querybuf.data, 0, NULL);
+
+	if (qplan == NULL)
+		elog(ERROR, "SPI_prepare returned %d for %s",
+			 SPI_result, querybuf.data);
+
+	/*
+	 * Run the plan.  For safety we force a current snapshot to be used. (In
+	 * transaction-snapshot mode, this arguably violates transaction isolation
+	 * rules, but we really haven't got much choice.) We don't need to
+	 * register the snapshot, because SPI_execute_snapshot will see to it. We
+	 * need at most one tuple returned, so pass limit = 1.
+	 */
+	spi_result = SPI_execute_snapshot(qplan,
+									  NULL, NULL,
+									  GetLatestSnapshot(),
+									  InvalidSnapshot,
+									  true, false, 1);
+
+	/* Check result */
+	if (spi_result != SPI_OK_SELECT)
+		elog(ERROR, "SPI_execute_snapshot returned %d", spi_result);
+
+	/* Did we find a tuple violating the constraint? */
+	if (SPI_processed > 0)
+	{
+		Datum		value;
+		HeapTuple	tuple = SPI_tuptable->vals[0];
+		TupleDesc	tupdesc = SPI_tuptable->tupdesc;
+		bool		isnull;
+
+		value = heap_getattr(tuple, 1, tupdesc, &isnull);
+		Assert(!isnull);
+
+		ri_ReportViolation(riinfo, partition->rd_id, riinfo->fk_relid,
+						   value, pkattype, false);
+	}
+
+	if (SPI_finish() != SPI_OK_FINISH)
+		elog(ERROR, "SPI_finish failed");
+
+	elog(ERROR, "test");
+}
+
+/*
  * Returns oids list of RI triggers for specified partition and FK constraint
  */
 List *
@@ -1827,6 +1929,9 @@ ri_removePartitionDependencies(Oid parent, Relation partition)
 		indexTuple = get_index_for_key(partition, attnum, &index);
 		if (HeapTupleIsValid(indexTuple))
 		{
+			/* Check if there are references in FK table */
+			ri_checkReferences(partition, constr);
+
 			deleteDependencyRecords(ConstraintRelationId, constr,
 									RelationRelationId, index);
 			// deleteDependencyRecordsRef(RelationRelationId, indexOid);

@@ -13,3 +13,4 @@ void createPartitionForeignKeyTriggers(Oid partition,
 HeapTuple get_index_for_key(Relation rel, AttrNumber attnum, Oid *index_id);
 List *get_ri_triggers_list(Oid relid, Oid constr);
 void ri_removePartitionDependencies(Oid parent, Relation partition);
+void ri_checkReferences(Relation partition, Oid constraintOid);
