@@ -620,18 +620,27 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 			expr_state = ExecInitExpr((Expr *) expr, NULL);
 		}
 
+		/* Switch into per tuple memory context */
+		MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
+
 		if (!NextCopyFrom(cstate, econtext, values, nulls, &tuple_oid))
 			break;
 
-		/* And now we can form the input tuple. */
+		/* We can form the input tuple. */
 		tuple = heap_form_tuple(tupDesc, values, nulls);
+
+		if (tuple_oid != InvalidOid)
+			HeapTupleSetOid(tuple, tuple_oid);
+
+		/*
+		 * Constraints might reference the tableoid column, so initialize
+		 * t_tableOid before evaluating them.
+		 */
+		tuple->t_tableOid = RelationGetRelid(child_result_rel->ri_RelationDesc);
 
 		/* Place tuple in tuple slot --- but slot shouldn't free it */
 		slot = myslot;
 		ExecStoreTuple(tuple, slot, InvalidBuffer, false);
-
-		/* Switch into per tuple memory context */
-		MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 
 		/* Execute expression */
 		tmp_slot = econtext->ecxt_scantuple;
@@ -662,15 +671,6 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 			tuple = do_convert_tuple(tuple, rri_holder->tuple_map);
 			heap_freetuple(tuple_old);
 		}
-
-		if (tuple_oid != InvalidOid)
-			HeapTupleSetOid(tuple, tuple_oid);
-
-		/*
-		 * Constraints might reference the tableoid column, so initialize
-		 * t_tableOid before evaluating them.
-		 */
-		tuple->t_tableOid = RelationGetRelid(child_result_rel->ri_RelationDesc);
 
 		/* Triggers and stuff need to be invoked in query context. */
 		MemoryContextSwitchTo(oldcontext);
