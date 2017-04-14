@@ -120,7 +120,8 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		NestPath	   *nest_path;		/* NestLoop we're creating */
 		ParamPathInfo  *ppi;			/* parameterization info */
 		Relids			inner_required;	/* required paremeterization relids */
-		List		   *filtered_joinclauses = NIL;
+		List		   *filtered_joinclauses = NIL,
+					   *saved_ppi_list;
 		ListCell	   *rinfo_lc;
 
 		if (!IsA(cur_inner_path, AppendPath))
@@ -128,6 +129,8 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 
 		/* Select cheapest path for outerrel */
 		outer = outerrel->cheapest_total_path;
+
+		/* Wrap outer path with Unique if needed */
 		if (saved_jointype == JOIN_UNIQUE_OUTER)
 		{
 			outer = (Path *) create_unique_path(root, outerrel,
@@ -135,12 +138,21 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 			Assert(outer);
 		}
 
+		 /* No way to do this in a parameterized inner path */
+		if (saved_jointype == JOIN_UNIQUE_INNER)
+			return;
+
 		/* Make innerrel path depend on outerrel's column */
 		inner_required = bms_union(PATH_REQ_OUTER((Path *) cur_inner_path),
 								   bms_make_singleton(outerrel->relid));
 
+		/* Preserve existing ppis built by get_appendrel_parampathinfo() */
+		saved_ppi_list = innerrel->ppilist;
+
 		/* Get the ParamPathInfo for a parameterized path */
+		innerrel->ppilist = NIL;
 		ppi = get_baserel_parampathinfo(root, innerrel, inner_required);
+		innerrel->ppilist = saved_ppi_list;
 
 		/* Skip ppi->ppi_clauses don't reference partition attribute */
 		if (!(ppi && get_partitioned_attr_clauses(ppi->ppi_clauses,
@@ -149,8 +161,8 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 			continue;
 
 		inner = create_runtimeappend_path(root, cur_inner_path, ppi, paramsel);
-		if (saved_jointype == JOIN_UNIQUE_INNER)
-			return; /* No way to do this with a parameterized inner path */
+		if (!inner)
+			return; /* could not build it, retreat! */
 
 		initial_cost_nestloop(root, &workspace, jointype,
 							  outer, inner, /* built paths */
@@ -388,13 +400,6 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			Relids			inner_required = PATH_REQ_OUTER((Path *) cur_path);
 			Path		   *inner_path = NULL;
 			ParamPathInfo  *ppi;
-			List		   *ppi_part_clauses = NIL;
-
-			/* Fetch ParamPathInfo & try to extract part-related clauses */
-			ppi = get_baserel_parampathinfo(root, rel, inner_required);
-			if (ppi && ppi->ppi_clauses)
-				ppi_part_clauses = get_partitioned_attr_clauses(ppi->ppi_clauses,
-																prel, rel->relid);
 
 			/* Skip if rel contains some join-related stuff or path type mismatched */
 			if (!(IsA(cur_path, AppendPath) || IsA(cur_path, MergeAppendPath)) ||
@@ -403,12 +408,12 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 				continue;
 			}
 
-			/*
-			 * Skip if neither rel->baserestrictinfo nor
-			 * ppi->ppi_clauses reference partition attribute
-			 */
-			if (!(rel_part_clauses || ppi_part_clauses))
+			/* Skip if rel->baserestrictinfo doesn't reference partition attribute */
+			if (!rel_part_clauses)
 				continue;
+
+			/* Get existing parameterization */
+			ppi = get_appendrel_parampathinfo(rel, inner_required);
 
 			if (IsA(cur_path, AppendPath) && pg_pathman_enable_runtimeappend)
 				inner_path = create_runtimeappend_path(root, cur_path,

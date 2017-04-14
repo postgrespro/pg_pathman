@@ -350,13 +350,44 @@ create_append_path_common(PlannerInfo *root,
 
 	result->nchildren = list_length(inner_append->subpaths);
 	result->children = (ChildScanCommon *)
-			palloc(result->nchildren * sizeof(ChildScanCommon));
+							palloc(result->nchildren * sizeof(ChildScanCommon));
+
 	i = 0;
 	foreach (lc, inner_append->subpaths)
 	{
-		Path			   *path = lfirst(lc);
-		Index				relindex = path->parent->relid;
+		Path			   *path = (Path *) lfirst(lc);
+		RelOptInfo		   *childrel = path->parent;
 		ChildScanCommon		child;
+
+		/* Do we have parameterization? */
+		if (param_info)
+		{
+			Relids required_outer = param_info->ppi_req_outer;
+
+			/* Rebuild path using new 'required_outer' */
+			path = get_cheapest_parameterized_child_path(root, childrel,
+														 required_outer);
+		}
+
+		/*
+		 * We were unable to re-parameterize child path,
+		 * which means that we can't use Runtime[Merge]Append,
+		 * since its children can't evaluate join quals.
+		 */
+		if (!path)
+		{
+			int j;
+
+			for (j = 0; j < i; j++)
+				pfree(result->children[j]);
+			pfree(result->children);
+
+			list_free_deep(result->cpath.custom_paths);
+
+			pfree(result);
+
+			return NULL; /* notify caller */
+		}
 
 		child = (ChildScanCommon) palloc(sizeof(ChildScanCommonData));
 
@@ -365,7 +396,7 @@ create_append_path_common(PlannerInfo *root,
 
 		child->content_type = CHILD_PATH;
 		child->content.path = path;
-		child->relid = root->simple_rte_array[relindex]->relid;
+		child->relid = root->simple_rte_array[childrel->relid]->relid;
 		Assert(child->relid != InvalidOid);
 
 		result->cpath.custom_paths = lappend(result->cpath.custom_paths,
@@ -476,12 +507,6 @@ create_append_scan_state_common(CustomScan *node,
 void
 begin_append_common(CustomScanState *node, EState *estate, int eflags)
 {
-	RuntimeAppendState *scan_state = (RuntimeAppendState *) node;
-
-	scan_state->custom_expr_states =
-		(List *) ExecInitExpr((Expr *) scan_state->custom_exprs,
-							  (PlanState *) scan_state);
-
 	node->ss.ps.ps_TupFromTlist = false;
 }
 

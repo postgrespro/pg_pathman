@@ -389,8 +389,6 @@ fetch_next_tuple(CustomScanState *node)
 
 		for (;;)
 		{
-			bool quals;
-
 			scan_state->ms_slots[i] = ExecProcNode(ps);
 
 			if (TupIsNull(scan_state->ms_slots[i]))
@@ -399,17 +397,8 @@ fetch_next_tuple(CustomScanState *node)
 				break;
 			}
 
-			node->ss.ps.ps_ExprContext->ecxt_scantuple = scan_state->ms_slots[i];
-			quals = ExecQual(rstate->custom_expr_states,
-							 node->ss.ps.ps_ExprContext, false);
-
-			ResetExprContext(node->ss.ps.ps_ExprContext);
-
-			if (quals)
-			{
-				binaryheap_replace_first(scan_state->ms_heap, Int32GetDatum(i));
-				break;
-			}
+			binaryheap_replace_first(scan_state->ms_heap, Int32GetDatum(i));
+			break;
 		}
 	}
 
@@ -417,13 +406,11 @@ fetch_next_tuple(CustomScanState *node)
 	{
 		/* All the subplans are exhausted, and so is the heap */
 		rstate->slot = NULL;
-		return;
 	}
 	else
 	{
 		i = DatumGetInt32(binaryheap_first(scan_state->ms_heap));
 		rstate->slot = scan_state->ms_slots[i];
-		return;
 	}
 }
 

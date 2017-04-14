@@ -123,6 +123,9 @@ Bitmapset *translate_col_privs(const Bitmapset *parent_privs,
 void set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 							 PathKey *pathkeyAsc, PathKey *pathkeyDesc);
 
+Path *get_cheapest_parameterized_child_path(PlannerInfo *root, RelOptInfo *rel,
+											Relids required_outer);
+
 
 typedef struct
 {
