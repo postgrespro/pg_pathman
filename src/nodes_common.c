@@ -49,8 +49,11 @@ transform_plans_into_states(RuntimeAppendState *scan_state,
 
 	for (i = 0; i < n; i++)
 	{
-		ChildScanCommon		child = selected_plans[i];
+		ChildScanCommon		child;
 		PlanState		   *ps;
+
+		AssertArg(selected_plans);
+		child = selected_plans[i];
 
 		/* Create new node since this plan hasn't been used yet */
 		if (child->content_type != CHILD_PLAN_STATE)
@@ -107,6 +110,13 @@ select_required_plans(HTAB *children_table, Oid *parts, int nparts, int *nres)
 		}
 
 		result[used++] = child;
+	}
+
+	/* Get rid of useless array */
+	if (used == 0)
+	{
+		pfree(result);
+		result = NULL;
 	}
 
 	*nres = used;
