@@ -14,6 +14,7 @@
 
 #include "access/sysattr.h"
 #include "optimizer/restrictinfo.h"
+#include "optimizer/tlist.h"
 #include "optimizer/var.h"
 #include "rewrite/rewriteManip.h"
 #include "utils/memutils.h"
@@ -123,40 +124,91 @@ select_required_plans(HTAB *children_table, Oid *parts, int nparts, int *nres)
 	return result;
 }
 
-/* Replace 'varno' of child's Vars with the 'append_rel_rti' */
+/* Adapt child's tlist for parent relation (change varnos and varattnos) */
 static List *
-replace_tlist_varnos(List *tlist, Index old_varno, Index new_varno)
+build_parent_tlist(List *tlist, AppendRelInfo *appinfo)
 {
-	List *temp_tlist;
-
-	AssertArg(old_varno != 0);
-	AssertArg(new_varno != 0);
+	List	   *temp_tlist,
+			   *pulled_vars;
+	ListCell   *lc1,
+			   *lc2;
 
 	temp_tlist = copyObject(tlist);
-	ChangeVarNodes((Node *) temp_tlist, old_varno, new_varno, 0);
+	pulled_vars = pull_vars_of_level((Node *) temp_tlist, 0);
+
+	foreach (lc1, pulled_vars)
+	{
+		Var *tlist_var = (Var *) lfirst(lc1);
+
+		AttrNumber attnum = 0;
+		foreach (lc2, appinfo->translated_vars)
+		{
+			Var *translated_var = (Var *) lfirst(lc2);
+
+			attnum++;
+
+			if (translated_var->varattno == tlist_var->varattno)
+				tlist_var->varattno = attnum;
+		}
+	}
+
+	ChangeVarNodes((Node *) temp_tlist,
+				   appinfo->child_relid,
+				   appinfo->parent_relid,
+				   0);
 
 	return temp_tlist;
 }
 
+/* Is tlist 'a' subset of tlist 'b'? (in terms of Vars) */
+static bool
+tlist_is_var_subset(List *a, List *b)
+{
+	ListCell *lc;
+
+	foreach (lc, b)
+	{
+		TargetEntry *te = (TargetEntry *) lfirst(lc);
+
+		if (!IsA(te->expr, Var) && !IsA(te->expr, RelabelType))
+			continue;
+
+		if (!tlist_member_ignore_relabel((Node *) te->expr, a))
+			return true;
+	}
+
+	return false;
+}
+
 /* Append partition attribute in case it's not present in target list */
 static List *
-append_part_attr_to_tlist(List *tlist, Index relno, const PartRelationInfo *prel)
+append_part_attr_to_tlist(List *tlist,
+						  AppendRelInfo *appinfo,
+						  const PartRelationInfo *prel)
 {
 	ListCell   *lc;
+	AttrNumber	part_attr;
+	Var		   *part_attr_tvar;
 	bool		part_attr_found = false;
+
+	/* Get attribute number of partitioned column (may differ) */
+	part_attr_tvar = (Var *) list_nth(appinfo->translated_vars,
+									  AttrNumberGetAttrOffset(prel->attnum));
+	Assert(part_attr_tvar);
+	part_attr = (part_attr_tvar)->varoattno;
 
 	foreach (lc, tlist)
 	{
 		TargetEntry *te = (TargetEntry *) lfirst(lc);
 		Var			*var = (Var *) te->expr;
 
-		if (IsA(var, Var) && var->varoattno == prel->attnum)
+		if (IsA(var, Var) && var->varoattno == part_attr)
 			part_attr_found = true;
 	}
 
 	if (!part_attr_found)
 	{
-		Var	   *newvar = makeVar(relno,
+		Var	   *newvar = makeVar(appinfo->child_relid,
 								 prel->attnum,
 								 prel->atttype,
 								 prel->atttypmod,
@@ -450,13 +502,27 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 		{
 			Plan		   *child_plan = (Plan *) lfirst(lc2);
 			RelOptInfo 	   *child_rel = ((Path *) lfirst(lc1))->parent;
+			AppendRelInfo  *appinfo = find_childrel_appendrelinfo(root, child_rel);
 
 			/* Replace rel's tlist with a matching one (for ExecQual()) */
 			if (!processed_rel_tlist)
 			{
-				tlist = replace_tlist_varnos(child_plan->targetlist,
-											 child_rel->relid,
-											 rel->relid);
+				List *temp_tlist = build_parent_tlist(child_plan->targetlist,
+													  appinfo);
+
+				/*
+				 * HACK: PostgreSQL may return a physical tlist,
+				 * which is bad (we may have child IndexOnlyScans).
+				 * If we find out that CustomScan's tlist is a
+				 * Var-superset of child's tlist, we replace it
+				 * with the latter, else we'll have a broken tlist
+				 * labeling (Assert).
+				 *
+				 * NOTE: physical tlist may only be used if we're not
+				 * asked to produce tuples of exact format (CP_EXACT_TLIST).
+				 */
+				if (tlist_is_var_subset(temp_tlist, tlist))
+					tlist = temp_tlist;
 
 				/* Done, new target list has been built */
 				processed_rel_tlist = true;
@@ -464,14 +530,12 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 
 			/* Add partition attribute if necessary (for ExecQual()) */
 			child_plan->targetlist = append_part_attr_to_tlist(child_plan->targetlist,
-															   child_rel->relid,
-															   prel);
+															   appinfo, prel);
 
 			/* Now make custom_scan_tlist match child plans' targetlists */
 			if (!cscan->custom_scan_tlist)
-				cscan->custom_scan_tlist = replace_tlist_varnos(child_plan->targetlist,
-																child_rel->relid,
-																rel->relid);
+				cscan->custom_scan_tlist = build_parent_tlist(child_plan->targetlist,
+															  appinfo);
 		}
 	}
 
