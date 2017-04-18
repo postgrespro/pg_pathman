@@ -70,9 +70,6 @@ static bool pull_var_param(const WalkerContext *ctx,
 
 static Const *extract_const(WalkerContext *wcxt, Param *param);
 
-static double estimate_paramsel_using_prel(const PartRelationInfo *prel,
-										   int strategy);
-
 
 /* Copied from PostgreSQL (allpaths.c) */
 static void set_plain_rel_size(PlannerInfo *root,
@@ -104,6 +101,21 @@ static void generate_mergeappend_paths(PlannerInfo *root,
 				((Const *) (node)) \
 	)
 
+/* Selectivity estimator for common 'paramsel' */
+static inline double
+estimate_paramsel_using_prel(const PartRelationInfo *prel, int strategy)
+{
+	/* If it's "=", divide by partitions number */
+	if (strategy == BTEqualStrategyNumber)
+		return 1.0 / (double) PrelChildrenCount(prel);
+
+	/* Default selectivity estimate for inequalities */
+	else if (prel->parttype == PT_RANGE && strategy > 0)
+		return DEFAULT_INEQ_SEL;
+
+	/* Else there's not much to do */
+	else return 1.0;
+}
 
 
 /*
@@ -1212,22 +1224,6 @@ extract_const(WalkerContext *wcxt, Param *param)
 	return makeConst(param->paramtype, param->paramtypmod,
 					 param->paramcollid, get_typlen(param->paramtype),
 					 value, isnull, get_typbyval(param->paramtype));
-}
-
-/* Selectivity estimator for common 'paramsel' */
-static double
-estimate_paramsel_using_prel(const PartRelationInfo *prel, int strategy)
-{
-	/* If it's "=", divide by partitions number */
-	if (strategy == BTEqualStrategyNumber)
-		return 1.0 / (double) PrelChildrenCount(prel);
-
-	/* Default selectivity estimate for inequalities */
-	else if (prel->parttype == PT_RANGE && strategy > 0)
-		return DEFAULT_INEQ_SEL;
-
-	/* Else there's not much to do */
-	else return 1.0;
 }
 
 

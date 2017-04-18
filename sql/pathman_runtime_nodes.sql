@@ -261,6 +261,10 @@ select pathman.create_hash_partitions('test.runtime_test_3', 'id', 4);
 create index on test.runtime_test_3 (id);
 create index on test.runtime_test_3_0 (id);
 
+create table test.runtime_test_4(val text, id int not null);
+insert into test.runtime_test_4(id, val) select * from generate_series(1, 10000) k, md5(k::text);
+select pathman.create_range_partitions('test.runtime_test_4', 'id', 1, 2000);
+
 
 VACUUM ANALYZE;
 
@@ -274,12 +278,6 @@ select test.pathman_test_3(); /* RuntimeAppend (a join b on a.id = b.val) */
 select test.pathman_test_4(); /* RuntimeMergeAppend (lateral) */
 select test.pathman_test_5(); /* projection tests for RuntimeXXX nodes */
 
-/* RuntimeAppend (select ... where id = ANY (subquery), missing partitions) */
-select count(*) = 0 from pathman.pathman_partition_list
-where parent = 'test.runtime_test_1'::regclass and range_max::int < 0;
-
-select from test.runtime_test_1
-where id = any (select generate_series(-10, -1)); /* should be empty */
 
 /* RuntimeAppend (join, enabled parent) */
 select pathman.set_enable_parent('test.runtime_test_1', true);
@@ -304,6 +302,19 @@ join (select * from test.run_values limit 4) as t2 on t1.id = t2.val;
 /* RuntimeAppend (join, additional projections) */
 select generate_series(1, 2) from test.runtime_test_1 as t1
 join (select * from test.run_values limit 4) as t2 on t1.id = t2.val;
+
+/* RuntimeAppend (select ... where id = ANY (subquery), missing partitions) */
+select count(*) = 0 from pathman.pathman_partition_list
+where parent = 'test.runtime_test_4'::regclass and coalesce(range_min::int, 1) < 0;
+
+set enable_hashjoin = off;
+set enable_mergejoin = off;
+
+select from test.runtime_test_4
+where id = any (select generate_series(-10, -1)); /* should be empty */
+
+set enable_hashjoin = on;
+set enable_mergejoin = on;
 
 
 DROP SCHEMA test CASCADE;
