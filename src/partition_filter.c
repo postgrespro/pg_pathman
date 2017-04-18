@@ -677,35 +677,12 @@ pfilter_build_tlist(Relation parent_rel, List *tlist)
 		Expr			   *col_expr;
 		Form_pg_attribute	attr;
 
-		/* Make sure that this attribute exists */
-		if (i > RelationGetDescr(parent_rel)->natts)
-			elog(ERROR, "error in function " CppAsString(pfilter_build_tlist));
-
-		/* Fetch pg_attribute entry for this column */
-		attr = RelationGetDescr(parent_rel)->attrs[i - 1];
-
-		/* If this column is dropped, create a placeholder Const */
-		if (attr->attisdropped)
-		{
-			/* Insert NULL for dropped column */
-			col_expr = (Expr *) makeConst(INT4OID,
-										  -1,
-										  InvalidOid,
-										  sizeof(int32),
-										  (Datum) 0,
-										  true,
-										  true);
-		}
-		/* Otherwise we should create a Var referencing subplan's output */
-		else
-		{
-			col_expr = (Expr *) makeVar(INDEX_VAR,	/* point to subplan's elements */
-										i,			/* direct attribute mapping */
-										exprType((Node *) tle->expr),
-										exprTypmod((Node *) tle->expr),
-										exprCollation((Node *) tle->expr),
-										0);
-		}
+		col_expr = (Expr *) makeVar(INDEX_VAR,	/* point to subplan's elements */
+									i,			/* direct attribute mapping */
+									exprType((Node *) tle->expr),
+									exprTypmod((Node *) tle->expr),
+									exprCollation((Node *) tle->expr),
+									0);
 
 		result_tlist = lappend(result_tlist,
 							   makeTargetEntry(col_expr,

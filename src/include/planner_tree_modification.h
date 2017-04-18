@@ -34,6 +34,7 @@ void pathman_transform_query(Query *parse);
 
 /* These functions scribble on Plan tree */
 void add_partition_filters(List *rtable, Plan *plan);
+void add_partition_update_nodes(List *rtable, Plan *plan);
 
 
 /* used by assign_rel_parenthood_status() etc */

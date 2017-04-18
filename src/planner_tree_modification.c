@@ -14,6 +14,7 @@
 
 #include "nodes_common.h"
 #include "partition_filter.h"
+#include "partition_update.h"
 #include "planner_tree_modification.h"
 
 #include "miscadmin.h"
@@ -32,6 +33,7 @@ static void disable_standard_inheritance(Query *parse);
 static void handle_modification_query(Query *parse);
 
 static void partition_filter_visitor(Plan *plan, void *context);
+static void partition_update_visitor(Plan *plan, void *context);
 
 static rel_parenthood_status tag_extract_parenthood_status(List *relation_tag);
 
@@ -249,9 +251,7 @@ handle_modification_query(Query *parse)
 	result_rel = parse->resultRelation;
 
 	/* Exit if it's not a DELETE or UPDATE query */
-	if (result_rel == 0 ||
-			(parse->commandType != CMD_UPDATE &&
-			 parse->commandType != CMD_DELETE))
+	if (result_rel == 0 || parse->commandType != CMD_DELETE)
 		return;
 
 	rte = rt_fetch(result_rel, parse->rtable);
@@ -355,7 +355,7 @@ add_partition_filters(List *rtable, Plan *plan)
 void
 add_partition_update_nodes(List *rtable, Plan *plan)
 {
-	if (pg_pathman_enable_partition_updaters)
+	if (pg_pathman_enable_partition_update)
 		plan_tree_walker(plan, partition_update_visitor, rtable);
 }
 
@@ -408,7 +408,7 @@ partition_filter_visitor(Plan *plan, void *context)
 
 
 /*
- * Add partition updaters to ModifyTable node's children.
+ * Add partition update to ModifyTable node's children.
  *
  * 'context' should point to the PlannedStmt->rtable.
  */
@@ -421,7 +421,7 @@ partition_update_visitor(Plan *plan, void *context)
 				   *lc2,
 				   *lc3;
 
-	/* Skip if not ModifyTable with 'INSERT' command */
+	/* Skip if not ModifyTable with 'UPDATE' command */
 	if (!IsA(modify_table, ModifyTable) || modify_table->operation != CMD_UPDATE)
 		return;
 
@@ -448,7 +448,6 @@ partition_update_visitor(Plan *plan, void *context)
 
 			lfirst(lc1) = make_partition_update((Plan *) lfirst(lc1),
 												relid,
-												modify_table->onConflictAction,
 												returning_list);
 		}
 	}
