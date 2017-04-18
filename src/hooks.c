@@ -70,8 +70,8 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	if (!IsPathmanReady() || !pg_pathman_enable_runtimeappend)
 		return;
 
-	if (jointype == JOIN_FULL)
-		return; /* handling full joins is meaningless */
+	if (jointype == JOIN_FULL || jointype == JOIN_RIGHT)
+		return; /* we can't handle full or right outer joins */
 
 	/* Check that innerrel is a BASEREL with inheritors & PartRelationInfo */
 	if (innerrel->reloptkind != RELOPT_BASEREL || !inner_rte->inh ||
