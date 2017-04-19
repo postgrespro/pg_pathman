@@ -16,6 +16,7 @@
 #include "hooks.h"
 #include "pathman.h"
 #include "partition_filter.h"
+#include "partition_update.h"
 #include "planner_tree_modification.h"
 #include "runtimeappend.h"
 #include "runtime_merge_append.h"
@@ -164,6 +165,7 @@ _PG_init(void)
 	init_runtimeappend_static_data();
 	init_runtime_merge_append_static_data();
 	init_partition_filter_static_data();
+	init_partition_update_static_data();
 }
 
 /* Get cached PATHMAN_CONFIG relation Oid */

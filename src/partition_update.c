@@ -67,6 +67,7 @@ make_partition_update(Plan *subplan,
 	pfilter = make_partition_filter(subplan, parent_relid, ONCONFLICT_NONE,
 									returning_list);
 	cscan->custom_plans = list_make1(pfilter);
+	cscan->scan.plan.targetlist = pfilter->targetlist;
 
 	/* No physical relation will be scanned */
 	cscan->scan.scanrelid = 0;

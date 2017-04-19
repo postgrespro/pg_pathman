@@ -669,27 +669,25 @@ pfilter_build_tlist(Relation parent_rel, List *tlist)
 {
 	List	   *result_tlist = NIL;
 	ListCell   *lc;
-	int			i = 1;
 
 	foreach (lc, tlist)
 	{
 		TargetEntry		   *tle = (TargetEntry *) lfirst(lc);
-		Expr			   *col_expr;
+		TargetEntry		   *newtle;
 		Form_pg_attribute	attr;
 
-		col_expr = (Expr *) makeVar(INDEX_VAR,	/* point to subplan's elements */
-									i,			/* direct attribute mapping */
-									exprType((Node *) tle->expr),
-									exprTypmod((Node *) tle->expr),
-									exprCollation((Node *) tle->expr),
-									0);
+		if (tle->expr != NULL && IsA(tle->expr, Var))
+		{
+			Var *var = (Var *) palloc(sizeof(Var));
+			*var = *((Var *)(tle->expr));
+			var->varno = INDEX_VAR;
+			newtle = makeTargetEntry((Expr *) var, tle->resno, tle->resname,
+										tle->resjunk);
+		}
+		else
+			newtle = copyObject(tle);
 
-		result_tlist = lappend(result_tlist,
-							   makeTargetEntry(col_expr,
-											   i,
-											   NULL,
-											   tle->resjunk));
-		i++; /* next resno */
+		result_tlist = lappend(result_tlist, newtle);
 	}
 
 	return result_tlist;
