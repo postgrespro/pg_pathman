@@ -73,9 +73,6 @@ static bool pull_var_param(const WalkerContext *ctx,
 
 static Const *extract_const(WalkerContext *wcxt, Param *param);
 
-static double estimate_paramsel_using_prel(const PartRelationInfo *prel,
-										   int strategy);
-
 
 /* Copied from PostgreSQL (allpaths.c) */
 static void set_plain_rel_size(PlannerInfo *root,
@@ -95,9 +92,6 @@ static void generate_mergeappend_paths(PlannerInfo *root,
 									   PathKey *pathkeyAsc,
 									   PathKey *pathkeyDesc);
 
-static Path *get_cheapest_parameterized_child_path(PlannerInfo *root,
-												   RelOptInfo *rel,
-												   Relids required_outer);
 
 /* We can transform Param into Const provided that 'econtext' is available */
 #define IsConstValue(wcxt, node) \
@@ -110,6 +104,21 @@ static Path *get_cheapest_parameterized_child_path(PlannerInfo *root,
 				((Const *) (node)) \
 	)
 
+/* Selectivity estimator for common 'paramsel' */
+static inline double
+estimate_paramsel_using_prel(const PartRelationInfo *prel, int strategy)
+{
+	/* If it's "=", divide by partitions number */
+	if (strategy == BTEqualStrategyNumber)
+		return 1.0 / (double) PrelChildrenCount(prel);
+
+	/* Default selectivity estimate for inequalities */
+	else if (prel->parttype == PT_RANGE && strategy > 0)
+		return DEFAULT_INEQ_SEL;
+
+	/* Else there's not much to do */
+	else return 1.0;
+}
 
 
 /*
@@ -295,7 +304,7 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 	{
 		childquals = NIL;
 
-		forboth(lc1, wrappers, lc2, parent_rel->baserestrictinfo)
+		forboth (lc1, wrappers, lc2, parent_rel->baserestrictinfo)
 		{
 			WrapperNode	   *wrap = (WrapperNode *) lfirst(lc1);
 			Node		   *new_clause;
@@ -616,8 +625,7 @@ walk_expr_tree(Expr *expr, WalkerContext *context)
 			result->args = NIL;
 			result->paramsel = 1.0;
 
-			result->rangeset = list_make1_irange(
-						make_irange(0, PrelLastChild(context->prel), IR_LOSSY));
+			result->rangeset = list_make1_irange_full(context->prel, IR_LOSSY);
 
 			return result;
 	}
@@ -798,9 +806,7 @@ handle_boolexpr(const BoolExpr *expr, WalkerContext *context)
 	result->paramsel = 1.0;
 
 	if (expr->boolop == AND_EXPR)
-		result->rangeset = list_make1_irange(make_irange(0,
-														 PrelLastChild(prel),
-														 IR_COMPLETE));
+		result->rangeset = list_make1_irange_full(prel, IR_COMPLETE);
 	else
 		result->rangeset = NIL;
 
@@ -825,9 +831,7 @@ handle_boolexpr(const BoolExpr *expr, WalkerContext *context)
 				break;
 
 			default:
-				result->rangeset = list_make1_irange(make_irange(0,
-																 PrelLastChild(prel),
-																 IR_LOSSY));
+				result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
 				break;
 		}
 	}
@@ -981,7 +985,7 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 		result->paramsel = DEFAULT_INEQ_SEL;
 
 handle_arrexpr_return:
-	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_LOSSY));
+	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
 	result->paramsel = 1.0;
 	return result;
 }
@@ -1017,7 +1021,7 @@ handle_opexpr(const OpExpr *expr, WalkerContext *context)
 		}
 	}
 
-	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_LOSSY));
+	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
 	result->paramsel = 1.0;
 	return result;
 }
@@ -1105,7 +1109,7 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 	}
 
 binary_opexpr_return:
-	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_LOSSY));
+	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
 	result->paramsel = 1.0;
 }
 
@@ -1122,7 +1126,7 @@ handle_binary_opexpr_param(const PartRelationInfo *prel,
 	tce = lookup_type_cache(prel->atttype, TYPECACHE_BTREE_OPFAMILY);
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
 
-	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_LOSSY));
+	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
 	result->paramsel = estimate_paramsel_using_prel(prel, strategy);
 }
 
@@ -1170,22 +1174,6 @@ extract_const(WalkerContext *wcxt, Param *param)
 	return makeConst(param->paramtype, param->paramtypmod,
 					 param->paramcollid, get_typlen(param->paramtype),
 					 value, isnull, get_typbyval(param->paramtype));
-}
-
-/* Selectivity estimator for common 'paramsel' */
-static double
-estimate_paramsel_using_prel(const PartRelationInfo *prel, int strategy)
-{
-	/* If it's "=", divide by partitions number */
-	if (strategy == BTEqualStrategyNumber)
-		return 1.0 / (double) PrelChildrenCount(prel);
-
-	/* Default selectivity estimate for inequalities */
-	else if (prel->parttype == PT_RANGE && strategy > 0)
-		return DEFAULT_INEQ_SEL;
-
-	/* Else there's not much to do */
-	else return 1.0;
 }
 
 
@@ -1287,78 +1275,6 @@ accumulate_append_subpath(List *subpaths, Path *path)
 	return lappend(subpaths, path);
 }
 
-/*
- * get_cheapest_parameterized_child_path
- *		Get cheapest path for this relation that has exactly the requested
- *		parameterization.
- *
- * Returns NULL if unable to create such a path.
- */
-static Path *
-get_cheapest_parameterized_child_path(PlannerInfo *root, RelOptInfo *rel,
-									  Relids required_outer)
-{
-	Path	   *cheapest;
-	ListCell   *lc;
-
-	/*
-	 * Look up the cheapest existing path with no more than the needed
-	 * parameterization.  If it has exactly the needed parameterization, we're
-	 * done.
-	 */
-	cheapest = get_cheapest_path_for_pathkeys(rel->pathlist,
-											  NIL,
-											  required_outer,
-											  TOTAL_COST);
-	Assert(cheapest != NULL);
-	if (bms_equal(PATH_REQ_OUTER(cheapest), required_outer))
-		return cheapest;
-
-	/*
-	 * Otherwise, we can "reparameterize" an existing path to match the given
-	 * parameterization, which effectively means pushing down additional
-	 * joinquals to be checked within the path's scan.  However, some existing
-	 * paths might check the available joinquals already while others don't;
-	 * therefore, it's not clear which existing path will be cheapest after
-	 * reparameterization.  We have to go through them all and find out.
-	 */
-	cheapest = NULL;
-	foreach(lc, rel->pathlist)
-	{
-		Path	   *path = (Path *) lfirst(lc);
-
-		/* Can't use it if it needs more than requested parameterization */
-		if (!bms_is_subset(PATH_REQ_OUTER(path), required_outer))
-			continue;
-
-		/*
-		 * Reparameterization can only increase the path's cost, so if it's
-		 * already more expensive than the current cheapest, forget it.
-		 */
-		if (cheapest != NULL &&
-			compare_path_costs(cheapest, path, TOTAL_COST) <= 0)
-			continue;
-
-		/* Reparameterize if needed, then recheck cost */
-		if (!bms_equal(PATH_REQ_OUTER(path), required_outer))
-		{
-			path = reparameterize_path(root, path, required_outer, 1.0);
-			if (path == NULL)
-				continue;		/* failed to reparameterize this one */
-			Assert(bms_equal(PATH_REQ_OUTER(path), required_outer));
-
-			if (cheapest != NULL &&
-				compare_path_costs(cheapest, path, TOTAL_COST) <= 0)
-				continue;
-		}
-
-		/* We have a new best path */
-		cheapest = path;
-	}
-
-	/* Return the best path, or NULL if we found no suitable candidate */
-	return cheapest;
-}
 
 /*
  * generate_mergeappend_paths
@@ -1899,7 +1815,6 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 
 		if (parallel_workers > 0)
 		{
-
 			/* Generate a partial append path. */
 			appendpath = create_append_path_compat(rel, partial_subpaths, NULL,
 					parallel_workers);
@@ -1959,4 +1874,77 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 			add_path(rel, (Path *)
 					 create_append_path_compat(rel, subpaths, required_outer, 0));
 	}
+}
+
+/*
+ * get_cheapest_parameterized_child_path
+ *		Get cheapest path for this relation that has exactly the requested
+ *		parameterization.
+ *
+ * Returns NULL if unable to create such a path.
+ */
+Path *
+get_cheapest_parameterized_child_path(PlannerInfo *root, RelOptInfo *rel,
+									  Relids required_outer)
+{
+	Path	   *cheapest;
+	ListCell   *lc;
+
+	/*
+	 * Look up the cheapest existing path with no more than the needed
+	 * parameterization.  If it has exactly the needed parameterization, we're
+	 * done.
+	 */
+	cheapest = get_cheapest_path_for_pathkeys(rel->pathlist,
+											  NIL,
+											  required_outer,
+											  TOTAL_COST);
+	Assert(cheapest != NULL);
+	if (bms_equal(PATH_REQ_OUTER(cheapest), required_outer))
+		return cheapest;
+
+	/*
+	 * Otherwise, we can "reparameterize" an existing path to match the given
+	 * parameterization, which effectively means pushing down additional
+	 * joinquals to be checked within the path's scan.  However, some existing
+	 * paths might check the available joinquals already while others don't;
+	 * therefore, it's not clear which existing path will be cheapest after
+	 * reparameterization.  We have to go through them all and find out.
+	 */
+	cheapest = NULL;
+	foreach(lc, rel->pathlist)
+	{
+		Path	   *path = (Path *) lfirst(lc);
+
+		/* Can't use it if it needs more than requested parameterization */
+		if (!bms_is_subset(PATH_REQ_OUTER(path), required_outer))
+			continue;
+
+		/*
+		 * Reparameterization can only increase the path's cost, so if it's
+		 * already more expensive than the current cheapest, forget it.
+		 */
+		if (cheapest != NULL &&
+			compare_path_costs(cheapest, path, TOTAL_COST) <= 0)
+			continue;
+
+		/* Reparameterize if needed, then recheck cost */
+		if (!bms_equal(PATH_REQ_OUTER(path), required_outer))
+		{
+			path = reparameterize_path(root, path, required_outer, 1.0);
+			if (path == NULL)
+				continue;		/* failed to reparameterize this one */
+			Assert(bms_equal(PATH_REQ_OUTER(path), required_outer));
+
+			if (cheapest != NULL &&
+				compare_path_costs(cheapest, path, TOTAL_COST) <= 0)
+				continue;
+		}
+
+		/* We have a new best path */
+		cheapest = path;
+	}
+
+	/* Return the best path, or NULL if we found no suitable candidate */
+	return cheapest;
 }

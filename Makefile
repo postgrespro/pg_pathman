@@ -35,6 +35,7 @@ REGRESS = pathman_basic \
 		  pathman_inserts \
 		  pathman_interval \
 		  pathman_join_clause \
+		  pathman_lateral \
 		  pathman_only \
 		  pathman_permissions \
 		  pathman_rowmarks \

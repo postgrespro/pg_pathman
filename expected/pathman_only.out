@@ -178,17 +178,28 @@ SELECT * FROM test_only.from_only_test JOIN q1 USING(val);
      ->  Seq Scan on from_only_test from_only_test_1
    ->  CTE Scan on q1
    ->  Custom Scan (RuntimeAppend)
+         Prune by: (q1.val = from_only_test.val)
          ->  Seq Scan on from_only_test_1 from_only_test
+               Filter: (q1.val = val)
          ->  Seq Scan on from_only_test_2 from_only_test
+               Filter: (q1.val = val)
          ->  Seq Scan on from_only_test_3 from_only_test
+               Filter: (q1.val = val)
          ->  Seq Scan on from_only_test_4 from_only_test
+               Filter: (q1.val = val)
          ->  Seq Scan on from_only_test_5 from_only_test
+               Filter: (q1.val = val)
          ->  Seq Scan on from_only_test_6 from_only_test
+               Filter: (q1.val = val)
          ->  Seq Scan on from_only_test_7 from_only_test
+               Filter: (q1.val = val)
          ->  Seq Scan on from_only_test_8 from_only_test
+               Filter: (q1.val = val)
          ->  Seq Scan on from_only_test_9 from_only_test
+               Filter: (q1.val = val)
          ->  Seq Scan on from_only_test_10 from_only_test
-(15 rows)
+               Filter: (q1.val = val)
+(26 rows)
 
 /* should be OK */
 EXPLAIN (COSTS OFF)
@@ -199,6 +210,7 @@ WHERE val = (SELECT val FROM ONLY test_only.from_only_test
                            QUERY PLAN                            
 -----------------------------------------------------------------
  Custom Scan (RuntimeAppend)
+   Prune by: (from_only_test.val = $0)
    InitPlan 1 (returns $0)
      ->  Limit
            ->  Sort
@@ -224,7 +236,7 @@ WHERE val = (SELECT val FROM ONLY test_only.from_only_test
          Filter: (val = $0)
    ->  Seq Scan on from_only_test_10 from_only_test
          Filter: (val = $0)
-(26 rows)
+(27 rows)
 
 DROP SCHEMA test_only CASCADE;
 NOTICE:  drop cascades to 12 other objects

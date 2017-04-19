@@ -37,7 +37,6 @@ typedef struct
 
 	/* Restrictions to be checked during ReScan and Exec */
 	List			   *custom_exprs;
-	List			   *custom_expr_states;
 
 	/* All available plans \ plan states */
 	HTAB			   *children_table;

@@ -14,10 +14,13 @@
 #include "utils.h"
 
 #include "access/sysattr.h"
+#include "optimizer/clauses.h"
 #include "optimizer/restrictinfo.h"
+#include "optimizer/tlist.h"
 #include "optimizer/var.h"
 #include "rewrite/rewriteManip.h"
 #include "utils/memutils.h"
+#include "utils/ruleutils.h"
 
 
 /* Allocation settings */
@@ -50,8 +53,11 @@ transform_plans_into_states(RuntimeAppendState *scan_state,
 
 	for (i = 0; i < n; i++)
 	{
-		ChildScanCommon		child = selected_plans[i];
+		ChildScanCommon		child;
 		PlanState		   *ps;
+
+		AssertArg(selected_plans);
+		child = selected_plans[i];
 
 		/* Create new node since this plan hasn't been used yet */
 		if (child->content_type != CHILD_PLAN_STATE)
@@ -110,28 +116,78 @@ select_required_plans(HTAB *children_table, Oid *parts, int nparts, int *nres)
 		result[used++] = child;
 	}
 
+	/* Get rid of useless array */
+	if (used == 0)
+	{
+		pfree(result);
+		result = NULL;
+	}
+
 	*nres = used;
 	return result;
 }
 
-/* Replace 'varno' of child's Vars with the 'append_rel_rti' */
+/* Adapt child's tlist for parent relation (change varnos and varattnos) */
 static List *
-replace_tlist_varnos(List *tlist, Index old_varno, Index new_varno)
+build_parent_tlist(List *tlist, AppendRelInfo *appinfo)
 {
-	List *temp_tlist;
-
-	AssertArg(old_varno != 0);
-	AssertArg(new_varno != 0);
+	List	   *temp_tlist,
+			   *pulled_vars;
+	ListCell   *lc1,
+			   *lc2;
 
 	temp_tlist = copyObject(tlist);
-	ChangeVarNodes((Node *) temp_tlist, old_varno, new_varno, 0);
+	pulled_vars = pull_vars_of_level((Node *) temp_tlist, 0);
+
+	foreach (lc1, pulled_vars)
+	{
+		Var *tlist_var = (Var *) lfirst(lc1);
+
+		AttrNumber attnum = 0;
+		foreach (lc2, appinfo->translated_vars)
+		{
+			Var *translated_var = (Var *) lfirst(lc2);
+
+			attnum++;
+
+			if (translated_var->varattno == tlist_var->varattno)
+				tlist_var->varattno = attnum;
+		}
+	}
+
+	ChangeVarNodes((Node *) temp_tlist,
+				   appinfo->child_relid,
+				   appinfo->parent_relid,
+				   0);
 
 	return temp_tlist;
 }
 
+/* Is tlist 'a' subset of tlist 'b'? (in terms of Vars) */
+static bool
+tlist_is_var_subset(List *a, List *b)
+{
+	ListCell *lc;
+
+	foreach (lc, b)
+	{
+		TargetEntry *te = (TargetEntry *) lfirst(lc);
+
+		if (!IsA(te->expr, Var) && !IsA(te->expr, RelabelType))
+			continue;
+
+		if (!tlist_member_ignore_relabel((Node *) te->expr, a))
+			return true;
+	}
+
+	return false;
+}
+
 /* Append partition attribute in case it's not present in target list */
 static List *
-append_part_attr_to_tlist(List *tlist, Index relno, const PartRelationInfo *prel)
+append_part_attr_to_tlist(List *tlist,
+						  AppendRelInfo *appinfo,
+						  const PartRelationInfo *prel)
 {
 	ListCell   *lc,
 			   *lc_var;
@@ -140,14 +196,20 @@ append_part_attr_to_tlist(List *tlist, Index relno, const PartRelationInfo *prel
 	foreach (lc_var, prel->expr_vars)
 	{
 		bool	part_attr_found		= false;
-		Var		*expr_var			= (Var *) lfirst(lc_var);
+		Var		*expr_var			= (Var *) lfirst(lc_var),
+				*child_var;
+
+		/* Get attribute number of partitioned column (may differ) */
+		child_var = (Var *) list_nth(appinfo->translated_vars,
+								AttrNumberGetAttrOffset(expr_var->varattno));
+		Assert(child_var);
 
 		foreach (lc, tlist)
 		{
 			TargetEntry	    *te = (TargetEntry *) lfirst(lc);
 			Var				*var = (Var *) te->expr;
 
-			if (IsA(var, Var) && var->varoattno == expr_var->varattno)
+			if (IsA(var, Var) && var->varoattno == child_var->varattno)
 			{
 				part_attr_found = true;
 				break;
@@ -155,18 +217,21 @@ append_part_attr_to_tlist(List *tlist, Index relno, const PartRelationInfo *prel
 		}
 
 		if (!part_attr_found)
-			vars_not_found = lappend(vars_not_found, expr_var);
+			vars_not_found = lappend(vars_not_found, child_var);
 	}
 
 	foreach(lc, vars_not_found)
 	{
 		Index	last_item = list_length(tlist) + 1;
-		Var		*var = (Var *) copyObject((Node *) lfirst(lc));
+		Var		*newvar = (Var *) palloc(sizeof(Var));
+
+		/* copy Var */
+		*newvar = *((Var *) lfirst(lc));
 
 		/* other fields except 'varno' should be correct */
-		var->varno = relno;
+		newvar->varno = appinfo->child_relid;
 
-		tlist = lappend(tlist, makeTargetEntry((Expr *) var,
+		tlist = lappend(tlist, makeTargetEntry((Expr *) newvar,
 											   last_item,
 											   NULL, false));
 	}
@@ -389,13 +454,44 @@ create_append_path_common(PlannerInfo *root,
 
 	result->nchildren = list_length(inner_append->subpaths);
 	result->children = (ChildScanCommon *)
-			palloc(result->nchildren * sizeof(ChildScanCommon));
+							palloc(result->nchildren * sizeof(ChildScanCommon));
+
 	i = 0;
 	foreach (lc, inner_append->subpaths)
 	{
-		Path			   *path = lfirst(lc);
-		Index				relindex = path->parent->relid;
+		Path			   *path = (Path *) lfirst(lc);
+		RelOptInfo		   *childrel = path->parent;
 		ChildScanCommon		child;
+
+		/* Do we have parameterization? */
+		if (param_info)
+		{
+			Relids required_outer = param_info->ppi_req_outer;
+
+			/* Rebuild path using new 'required_outer' */
+			path = get_cheapest_parameterized_child_path(root, childrel,
+														 required_outer);
+		}
+
+		/*
+		 * We were unable to re-parameterize child path,
+		 * which means that we can't use Runtime[Merge]Append,
+		 * since its children can't evaluate join quals.
+		 */
+		if (!path)
+		{
+			int j;
+
+			for (j = 0; j < i; j++)
+				pfree(result->children[j]);
+			pfree(result->children);
+
+			list_free_deep(result->cpath.custom_paths);
+
+			pfree(result);
+
+			return NULL; /* notify caller */
+		}
 
 		child = (ChildScanCommon) palloc(sizeof(ChildScanCommonData));
 
@@ -404,7 +500,7 @@ create_append_path_common(PlannerInfo *root,
 
 		child->content_type = CHILD_PATH;
 		child->content.path = path;
-		child->relid = root->simple_rte_array[relindex]->relid;
+		child->relid = root->simple_rte_array[childrel->relid]->relid;
 		Assert(child->relid != InvalidOid);
 
 		result->cpath.custom_paths = lappend(result->cpath.custom_paths,
@@ -448,13 +544,27 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 		{
 			Plan		   *child_plan = (Plan *) lfirst(lc2);
 			RelOptInfo 	   *child_rel = ((Path *) lfirst(lc1))->parent;
+			AppendRelInfo  *appinfo = find_childrel_appendrelinfo(root, child_rel);
 
 			/* Replace rel's tlist with a matching one (for ExecQual()) */
 			if (!processed_rel_tlist)
 			{
-				tlist = replace_tlist_varnos(child_plan->targetlist,
-											 child_rel->relid,
-											 rel->relid);
+				List *temp_tlist = build_parent_tlist(child_plan->targetlist,
+													  appinfo);
+
+				/*
+				 * HACK: PostgreSQL may return a physical tlist,
+				 * which is bad (we may have child IndexOnlyScans).
+				 * If we find out that CustomScan's tlist is a
+				 * Var-superset of child's tlist, we replace it
+				 * with the latter, else we'll have a broken tlist
+				 * labeling (Assert).
+				 *
+				 * NOTE: physical tlist may only be used if we're not
+				 * asked to produce tuples of exact format (CP_EXACT_TLIST).
+				 */
+				if (tlist_is_var_subset(temp_tlist, tlist))
+					tlist = temp_tlist;
 
 				/* Done, new target list has been built */
 				processed_rel_tlist = true;
@@ -462,14 +572,12 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 
 			/* Add partition attribute if necessary (for ExecQual()) */
 			child_plan->targetlist = append_part_attr_to_tlist(child_plan->targetlist,
-															   child_rel->relid,
-															   prel);
+															   appinfo, prel);
 
 			/* Now make custom_scan_tlist match child plans' targetlists */
 			if (!cscan->custom_scan_tlist)
-				cscan->custom_scan_tlist = replace_tlist_varnos(child_plan->targetlist,
-																child_rel->relid,
-																rel->relid);
+				cscan->custom_scan_tlist = build_parent_tlist(child_plan->targetlist,
+															  appinfo);
 		}
 	}
 
@@ -515,12 +623,6 @@ create_append_scan_state_common(CustomScan *node,
 void
 begin_append_common(CustomScanState *node, EState *estate, int eflags)
 {
-	RuntimeAppendState *scan_state = (RuntimeAppendState *) node;
-
-	scan_state->custom_expr_states =
-		(List *) ExecInitExpr((Expr *) scan_state->custom_exprs,
-							  (PlanState *) scan_state);
-
 	node->ss.ps.ps_TupFromTlist = false;
 }
 
@@ -654,7 +756,7 @@ rescan_append_common(CustomScanState *node)
 		prepare_vars(prel_expr, &varnoold);
 
 	/* First we select all available partitions... */
-	ranges = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_COMPLETE));
+	ranges = list_make1_irange_full(prel, IR_COMPLETE);
 
 	InitWalkerContext(&wcxt, prel_expr, prel, econtext, false);
 	foreach (lc, scan_state->custom_exprs)
@@ -688,8 +790,27 @@ rescan_append_common(CustomScanState *node)
 }
 
 void
-explain_append_common(CustomScanState *node, HTAB *children_table, ExplainState *es)
+explain_append_common(CustomScanState *node,
+					  List *ancestors,
+					  ExplainState *es,
+					  HTAB *children_table,
+					  List *custom_exprs)
 {
+	List *deparse_context;
+	char *exprstr;
+
+	/* Set up deparsing context */
+	deparse_context = set_deparse_context_planstate(es->deparse_cxt,
+													(Node *) node,
+													ancestors);
+
+	/* Deparse the expression */
+	exprstr = deparse_expression((Node *) make_ands_explicit(custom_exprs),
+								 deparse_context, true, false);
+
+	/* And add to es->str */
+	ExplainPropertyText("Prune by", exprstr, es);
+
 	/* Construct excess PlanStates */
 	if (!es->analyze)
 	{
