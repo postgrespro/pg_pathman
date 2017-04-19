@@ -8,8 +8,7 @@
  * ------------------------------------------------------------------------
  */
 
- #include "c.h"
-
+#include "c.h"
 #include "postgres.h"
 #include "miscadmin.h"
 
@@ -56,10 +55,6 @@
 #define RI_TRIGTYPE_UPDATE 2
 #define RI_TRIGTYPE_DELETE 3
 
-/* TODO list:
- * - check for unique indexes existence on partitions
- * - perform key check for all rows in FK table
- */
 
 typedef struct ConstraintInfo
 {
@@ -123,40 +118,44 @@ typedef struct CompareHashEntry
 
 
 /* ----------
- * Local functions
+ * Static functions
  * ----------
  */
 static void ri_CheckTrigger(FunctionCallInfo fcinfo, const char *funcname, int tgkind);
-static const ConstraintInfo *ri_LoadConstraintInfo(Oid constraintOid);
+static Datum ri_fkey_check(TriggerData *trigdata);
+static Datum ri_restrict(TriggerData *trigdata, bool is_upd);
+static bool ri_KeysEqual(Relation rel, HeapTuple oldtup, HeapTuple newtup,
+			 const ConstraintInfo *riinfo);
+static bool ri_AttributesEqual(Oid eq_opr, Oid typeid,
+				   Datum oldvalue, Datum newvalue);
+static CompareHashEntry *ri_HashCompareOp(Oid eq_opr, Oid typeid);
+static void BuildQueryKey(QueryKey *key, Oid relid, Oid partid);
+static SPIPlanPtr FetchPreparedPlan(QueryKey *key);
+static const ConstraintInfo *
+ri_LoadConstraintInfo(Oid constraintOid);
+static const ConstraintInfo *
+ri_FetchConstraintInfo(Trigger *trigger, Relation trig_rel, bool rel_is_pk);
+
+static void ri_InitHashTables(void);
+static void InvalidateConstraintCacheCallBack(Datum arg, int cacheid, uint32 hashvalue);
+
 static void ri_GenerateQual(StringInfo buf,
 				const char *sep,
 				const char *leftop, Oid leftoptype,
 				Oid opoid,
 				const char *rightop, Oid rightoptype);
 static void ri_add_cast_to(StringInfo buf, Oid typid);
-static const ConstraintInfo *ri_FetchConstraintInfo(Trigger *trigger, Relation trig_rel, bool rel_is_pk);
-static void ri_InitHashTables(void);
-static void InvalidateConstraintCacheCallBack(Datum arg, int cacheid, uint32 hashvalue);
+static SPIPlanPtr ri_PlanCheck(const char *querystr,
+			 Oid argtype,
+			 QueryKey *qkey,
+			 Relation query_rel,
+			 bool cache_plan);
 static bool ri_PerformCheck(const ConstraintInfo *riinfo,
 				SPIPlanPtr qplan,
 				Relation fk_rel, Relation pk_rel,
 				bool source_is_pk,
 				HeapTuple tuple,
 				bool detectNewRows, int expect_OK);
-static SPIPlanPtr ri_PlanCheck(const char *querystr,
-			 Oid argtype,
-			 QueryKey *qkey,
-			 Relation pk_rel,
-			 bool cache_plan);
-
-static Datum ri_fkey_check(TriggerData *trigdata);
-static Datum ri_restrict(TriggerData *trigdata, bool is_upd);
-static bool ri_KeysEqual(Relation rel, HeapTuple oldtup, HeapTuple newtup,
-						 const ConstraintInfo *riinfo);
-static bool ri_AttributesEqual(Oid eq_opr, Oid typeid,
-				   			   Datum oldvalue, Datum newvalue);
-static CompareHashEntry *ri_HashCompareOp(Oid eq_opr, Oid typeid);
-
 static void quoteOneName(char *buffer, const char *name);
 static void quoteRelationName(char *buffer, Oid relid);
 static void ri_ReportViolation(const ConstraintInfo *riinfo,
@@ -165,27 +164,29 @@ static void ri_ReportViolation(const ConstraintInfo *riinfo,
 				   Datum key,
 				   Oid keytype,
 				   bool onfk);
-static SPIPlanPtr FetchPreparedPlan(QueryKey *key);
-static void BuildQueryKey(QueryKey *key, Oid relid, Oid partid);
 static void SavePreparedPlan(QueryKey *key, SPIPlanPtr plan);
-static Oid transformFkeyCheckAttrs(Relation pkrel, int16 attnum, Oid *opclass);
-static void create_fk_constraint_internal(Oid fk_table,
-										  AttrNumber fk_attnum,
-										  Oid pk_table);
+static void create_foreign_key_internal(Oid fk_table,
+							  AttrNumber fk_attnum,
+							  Oid pk_table);
 static void createForeignKeyTriggers(Relation rel, Oid refRelOid,
 						 Oid constraintOid, Oid indexOid);
+static Oid transformFkeyCheckAttrs(Relation pkrel, int16 attnum,
+						Oid *opclass);
 static void validateForeignKeyConstraint(char *conname,
-										 Relation rel,
-										 Relation pkrel,
-										 Oid pkindOid,
-										 Oid constraintOid);
+							 Relation rel,
+							 Relation pkrel,
+							 Oid pkindOid,
+							 Oid constraintOid);
 
-
+/* ----------
+ * PL functions
+ * ----------
+ */
 PG_FUNCTION_INFO_V1(pathman_fkey_check_ins);
 PG_FUNCTION_INFO_V1(pathman_fkey_check_upd);
 PG_FUNCTION_INFO_V1(pathman_fkey_restrict_del);
 PG_FUNCTION_INFO_V1(pathman_fkey_restrict_upd);
-PG_FUNCTION_INFO_V1(create_fk_constraint);
+PG_FUNCTION_INFO_V1(create_foreign_key);
 
 /* ----------
  * Local data
@@ -245,52 +246,6 @@ pathman_fkey_restrict_upd(PG_FUNCTION_ARGS)
 	ri_CheckTrigger(fcinfo, "pathman_fkey_restrict_upd", RI_TRIGTYPE_UPDATE);
 
 	return ri_restrict((TriggerData *) fcinfo->context, true);
-}
-
-/*
- * Find all foreign keys where table is an FK side
- */
-void
-pathman_get_fkeys(Oid parent_relid, List **constraints, List **refrelids)
-{
-	Relation		pg_constraint_rel;
-	HeapTuple		tuple;
-	ScanKeyData		skey[2];
-	SysScanDesc		scan;
-	bool			isnull;
-
-	*constraints = NIL;
-	*refrelids = NIL;
-
-	pg_constraint_rel = heap_open(ConstraintRelationId, RowExclusiveLock);
-
-	/* Search by confrelid and contype = 'f' */
-	ScanKeyInit(&skey[0],
-				Anum_pg_constraint_confrelid,
-				BTEqualStrategyNumber, F_OIDEQ,
-				ObjectIdGetDatum(parent_relid));
-
-	ScanKeyInit(&skey[1],
-				Anum_pg_constraint_contype,
-				BTEqualStrategyNumber, F_CHAREQ,
-				CharGetDatum('f'));
-
-	scan = systable_beginscan(pg_constraint_rel, InvalidOid, false,
-							  NULL, 2, skey);
-
-	while ((tuple = systable_getnext(scan)) != NULL)
-	{
-		Form_pg_constraint con = (Form_pg_constraint) GETSTRUCT(tuple);
-		Datum	oid = heap_getsysattr(tuple, ObjectIdAttributeNumber,
-									  RelationGetDescr(pg_constraint_rel),
-									  &isnull);
-
-		*constraints = lappend_oid(*constraints, DatumGetObjectId(oid));
-		*refrelids = lappend_oid(*refrelids, con->conrelid);
-	}
-
-	systable_endscan(scan);
-	heap_close(pg_constraint_rel, RowExclusiveLock);
 }
 
 static void
@@ -1168,9 +1123,13 @@ ri_PerformCheck(const ConstraintInfo *riinfo,
 	if (spi_result < 0)
 		elog(ERROR, "SPI_execute_snapshot returned %d", spi_result);
 
+	/* Result isn't the one we expected */
 	if (expect_OK >= 0 && spi_result != expect_OK)
-		/* TODO */
-		elog(ERROR, "Error 1");
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("referential integrity query on \"%s\" gave unexpected result",
+						RelationGetRelationName(query_rel)),
+				 errhint("This is most likely due to a rule having rewritten the query.")));
 
 	/* XXX wouldn't it be clearer to do this part at the caller? */
 	if ((SPI_processed == 0) != source_is_pk)
@@ -1180,7 +1139,6 @@ ri_PerformCheck(const ConstraintInfo *riinfo,
 	return SPI_processed != 0;
 }
 
-/* TODO: Aren't there already such functions somewhere? */
 /*
  * quoteOneName --- safely quote a single SQL name
  *
@@ -1269,26 +1227,24 @@ SavePreparedPlan(QueryKey *key, SPIPlanPtr plan)
 	entry->plan = plan;
 }
 
-
 /*
- * ----------------------------------------------------------
+ * PL-function for foreign key creation
  */
-
 Datum
-create_fk_constraint(PG_FUNCTION_ARGS)
+create_foreign_key(PG_FUNCTION_ARGS)
 {
 	Oid fk_table = PG_GETARG_OID(0);
 	Oid pk_table = PG_GETARG_OID(2);
 	char *fk_attr = TextDatumGetCString(PG_GETARG_TEXT_P(1));
 	AttrNumber fk_attnum = get_attnum(fk_table, fk_attr);
 
-	create_fk_constraint_internal(fk_table, fk_attnum, pk_table);
+	create_foreign_key_internal(fk_table, fk_attnum, pk_table);
 
 	PG_RETURN_VOID();
 }
 
 static void
-create_fk_constraint_internal(Oid fk_table,
+create_foreign_key_internal(Oid fk_table,
 							  AttrNumber fk_attnum,
 							  Oid pk_table)
 {
@@ -1329,8 +1285,6 @@ create_fk_constraint_internal(Oid fk_table,
 								  NIL);
 
 	indexOid = transformFkeyCheckAttrs(pkrel, prel->attnum, &opclass);
-
-	/* TODO: check permissions */
 
 	/* We need several fields out of the pg_opclass entry */
 	cla_ht = SearchSysCache1(CLAOID, ObjectIdGetDatum(opclass));
@@ -1494,6 +1448,157 @@ createForeignKeyTriggers(Relation rel, Oid refRelOid,
 	}
 }
 
+static Oid
+transformFkeyCheckAttrs(Relation pkrel, int16 attnum,
+						Oid *opclass) /* output parameter */
+{
+	Oid			indexoid = InvalidOid;
+	HeapTuple	indexTuple;
+	Datum		indclassDatum;
+	oidvector  *indclass;
+	bool		isnull;
+
+	*opclass = InvalidOid;
+	indexTuple = get_index_for_key(pkrel, attnum, NULL);
+
+	if (!HeapTupleIsValid(indexTuple))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_FOREIGN_KEY),
+				 errmsg("there is no unique constraint matching given keys for referenced table \"%s\"",
+						RelationGetRelationName(pkrel))));
+
+	indclassDatum = SysCacheGetAttr(INDEXRELID, indexTuple,
+									Anum_pg_index_indclass, &isnull);
+	Assert(!isnull);
+
+	indexoid = SysCacheGetAttr(INDEXRELID, indexTuple,
+							   Anum_pg_index_indexrelid, &isnull);
+	Assert(!isnull);
+	indclass = (oidvector *) DatumGetPointer(indclassDatum);
+	*opclass = indclass->values[0];
+	ReleaseSysCache(indexTuple);
+
+	Assert(OidIsValid(*opclass));
+
+	return indexoid;
+}
+
+/*
+ * Scan the existing rows in a table to verify they meet a proposed FK
+ * constraint.
+ */
+static void
+validateForeignKeyConstraint(char *conname,
+							 Relation rel,
+							 Relation pkrel,
+							 Oid pkindOid,
+							 Oid constraintOid)
+{
+	HeapScanDesc scan;
+	HeapTuple	tuple;
+	Trigger		trig;
+	Snapshot	snapshot;
+
+	/* Build a trigger call structure */
+	MemSet(&trig, 0, sizeof(trig));
+	trig.tgoid = InvalidOid;
+	trig.tgname = conname;
+	trig.tgenabled = TRIGGER_FIRES_ON_ORIGIN;
+	trig.tgisinternal = TRUE;
+	trig.tgconstrrelid = RelationGetRelid(pkrel);
+	trig.tgconstrindid = pkindOid;
+	trig.tgconstraint = constraintOid;
+	trig.tgdeferrable = FALSE;
+	trig.tginitdeferred = FALSE;
+	/* we needn't fill in tgargs or tgqual */
+
+	/*
+	 * Scan through each tuple, calling RI_FKey_check_ins (insert trigger) as
+	 * if that tuple had just been inserted.  If any of those fail, it should
+	 * ereport(ERROR) and that's that.
+	 */
+	snapshot = RegisterSnapshot(GetLatestSnapshot());
+	scan = heap_beginscan(rel, snapshot, 0, NULL);
+
+	while ((tuple = heap_getnext(scan, ForwardScanDirection)) != NULL)
+	{
+		FunctionCallInfoData fcinfo;
+		TriggerData trigdata;
+
+		/*
+		 * Make a call to the trigger function
+		 *
+		 * No parameters are passed, but we do set a context
+		 */
+		MemSet(&fcinfo, 0, sizeof(fcinfo));
+
+		/*
+		 * We assume RI_FKey_check_ins won't look at flinfo...
+		 */
+		trigdata.type = T_TriggerData;
+		trigdata.tg_event = TRIGGER_EVENT_INSERT | TRIGGER_EVENT_ROW;
+		trigdata.tg_relation = rel;
+		trigdata.tg_trigtuple = tuple;
+		trigdata.tg_newtuple = NULL;
+		trigdata.tg_trigger = &trig;
+		trigdata.tg_trigtuplebuf = scan->rs_cbuf;
+		trigdata.tg_newtuplebuf = InvalidBuffer;
+
+		fcinfo.context = (Node *) &trigdata;
+
+		pathman_fkey_check_ins(&fcinfo);
+	}
+
+	heap_endscan(scan);
+	UnregisterSnapshot(snapshot);
+}
+
+/*
+ * Find all foreign keys where table is an FK side
+ */
+void
+pathman_get_fkeys(Oid parent_relid, List **constraints, List **refrelids)
+{
+	Relation		pg_constraint_rel;
+	HeapTuple		tuple;
+	ScanKeyData		skey[2];
+	SysScanDesc		scan;
+	bool			isnull;
+
+	*constraints = NIL;
+	*refrelids = NIL;
+
+	pg_constraint_rel = heap_open(ConstraintRelationId, RowExclusiveLock);
+
+	/* Search by confrelid and contype = 'f' */
+	ScanKeyInit(&skey[0],
+				Anum_pg_constraint_confrelid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(parent_relid));
+
+	ScanKeyInit(&skey[1],
+				Anum_pg_constraint_contype,
+				BTEqualStrategyNumber, F_CHAREQ,
+				CharGetDatum('f'));
+
+	scan = systable_beginscan(pg_constraint_rel, InvalidOid, false,
+							  NULL, 2, skey);
+
+	while ((tuple = systable_getnext(scan)) != NULL)
+	{
+		Form_pg_constraint con = (Form_pg_constraint) GETSTRUCT(tuple);
+		Datum	oid = heap_getsysattr(tuple, ObjectIdAttributeNumber,
+									  RelationGetDescr(pg_constraint_rel),
+									  &isnull);
+
+		*constraints = lappend_oid(*constraints, DatumGetObjectId(oid));
+		*refrelids = lappend_oid(*refrelids, con->conrelid);
+	}
+
+	systable_endscan(scan);
+	heap_close(pg_constraint_rel, RowExclusiveLock);
+}
+
 /*
  * Create RI triggers for partition. Also as a bonus function adds dependency
  * for index on FK constraint
@@ -1590,38 +1695,6 @@ createSingleForeignKeyTrigger(Oid relOid, Oid refRelOid, List *funcname,
 	CommandCounterIncrement();
 }
 
-static Oid
-transformFkeyCheckAttrs(Relation pkrel, int16 attnum,
-						Oid *opclass) /* output parameter */
-{
-	Oid			indexoid = InvalidOid;
-	HeapTuple	indexTuple;
-	Datum		indclassDatum;
-	oidvector  *indclass;
-	bool		isnull;
-
-	*opclass = InvalidOid;
-	indexTuple = get_index_for_key(pkrel, attnum, NULL);
-
-	if (!HeapTupleIsValid(indexTuple))
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_FOREIGN_KEY),
-				 errmsg("there is no unique constraint matching given keys for referenced table \"%s\"",
-						RelationGetRelationName(pkrel))));
-
-	indclassDatum = SysCacheGetAttr(INDEXRELID, indexTuple,
-									Anum_pg_index_indclass, &isnull);
-	Assert(!isnull);
-	indclass = (oidvector *) DatumGetPointer(indclassDatum);
-	*opclass = indclass->values[0];
-	ReleaseSysCache(indexTuple);
-
-	Assert(OidIsValid(*opclass));
-
-	/* TODO: Get index oid from tuple!!! */
-	return indexoid;
-}
-
 /*
  * Return UNIQUE INDEX tuple from pg_index corresponding to the relation
  *
@@ -1678,76 +1751,6 @@ get_index_for_key(Relation rel, AttrNumber attnum, Oid *index_id)
 	list_free(indexoidlist);
 
 	return NULL;
-}
-
-/*
- * Scan the existing rows in a table to verify they meet a proposed FK
- * constraint.
- */
-static void
-validateForeignKeyConstraint(char *conname,
-							 Relation rel,
-							 Relation pkrel,
-							 Oid pkindOid,
-							 Oid constraintOid)
-{
-	HeapScanDesc scan;
-	HeapTuple	tuple;
-	Trigger		trig;
-	Snapshot	snapshot;
-
-	/* Build a trigger call structure */
-	MemSet(&trig, 0, sizeof(trig));
-	trig.tgoid = InvalidOid;
-	trig.tgname = conname;
-	trig.tgenabled = TRIGGER_FIRES_ON_ORIGIN;
-	trig.tgisinternal = TRUE;
-	trig.tgconstrrelid = RelationGetRelid(pkrel);
-	trig.tgconstrindid = pkindOid;
-	trig.tgconstraint = constraintOid;
-	trig.tgdeferrable = FALSE;
-	trig.tginitdeferred = FALSE;
-	/* we needn't fill in tgargs or tgqual */
-
-	/*
-	 * Scan through each tuple, calling RI_FKey_check_ins (insert trigger) as
-	 * if that tuple had just been inserted.  If any of those fail, it should
-	 * ereport(ERROR) and that's that.
-	 */
-	snapshot = RegisterSnapshot(GetLatestSnapshot());
-	scan = heap_beginscan(rel, snapshot, 0, NULL);
-
-	while ((tuple = heap_getnext(scan, ForwardScanDirection)) != NULL)
-	{
-		FunctionCallInfoData fcinfo;
-		TriggerData trigdata;
-
-		/*
-		 * Make a call to the trigger function
-		 *
-		 * No parameters are passed, but we do set a context
-		 */
-		MemSet(&fcinfo, 0, sizeof(fcinfo));
-
-		/*
-		 * We assume RI_FKey_check_ins won't look at flinfo...
-		 */
-		trigdata.type = T_TriggerData;
-		trigdata.tg_event = TRIGGER_EVENT_INSERT | TRIGGER_EVENT_ROW;
-		trigdata.tg_relation = rel;
-		trigdata.tg_trigtuple = tuple;
-		trigdata.tg_newtuple = NULL;
-		trigdata.tg_trigger = &trig;
-		trigdata.tg_trigtuplebuf = scan->rs_cbuf;
-		trigdata.tg_newtuplebuf = InvalidBuffer;
-
-		fcinfo.context = (Node *) &trigdata;
-
-		pathman_fkey_check_ins(&fcinfo);
-	}
-
-	heap_endscan(scan);
-	UnregisterSnapshot(snapshot);
 }
 
 /*

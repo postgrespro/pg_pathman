@@ -41,9 +41,6 @@ REGRESS = pathman_basic \
 		  pathman_calamity \
 		  pathman_ri
 
-# REGRESS = pathman_ri
-# REGRESS = pathman_basic
-
 EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add
 
 EXTRA_CLEAN = pg_pathman--$(EXTVERSION).sql ./isolation_output

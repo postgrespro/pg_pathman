@@ -932,11 +932,11 @@ LANGUAGE C;
 /*
  * Referential integrity funcs and triggers
  */
-CREATE OR REPLACE FUNCTION @extschema@.create_fk(
+CREATE OR REPLACE FUNCTION @extschema@.create_foreign_key(
 	fk_table	REGCLASS,
 	fk_attr		TEXT,
 	pk_table	REGCLASS)
-RETURNS VOID AS 'pg_pathman', 'create_fk_constraint'
+RETURNS VOID AS 'pg_pathman', 'create_foreign_key'
 LANGUAGE C STRICT;
 
 CREATE OR REPLACE FUNCTION @extschema@.prepare_partition_drop(
