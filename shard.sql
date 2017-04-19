@@ -8,8 +8,6 @@
  * ------------------------------------------------------------------------
  */
 
-create extension if not exists postgres_fdw;
-
 /*
  * Create partitions and foreign data table for the given parent table.
  * It is necessary to create postgres_fdw foreign data servers for all shard nodes with some unique type.
