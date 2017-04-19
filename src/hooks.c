@@ -4,6 +4,8 @@
  *		definitions of rel_pathlist and join_pathlist hooks
  *
  * Copyright (c) 2016, Postgres Professional
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1994, Regents of the University of California
  *
  * ------------------------------------------------------------------------
  */
@@ -38,6 +40,23 @@
 	((path)->param_info && bms_overlap(PATH_REQ_OUTER(path), (rel)->relids))
 
 
+static inline bool
+allow_star_schema_join(PlannerInfo *root,
+					   Path *outer_path,
+					   Path *inner_path)
+{
+	Relids		innerparams = PATH_REQ_OUTER(inner_path);
+	Relids		outerrelids = outer_path->parent->relids;
+
+	/*
+	 * It's a star-schema case if the outer rel provides some but not all of
+	 * the inner rel's parameterization.
+	 */
+	return (bms_overlap(innerparams, outerrelids) &&
+			bms_nonempty_difference(innerparams, outerrelids));
+}
+
+
 set_join_pathlist_hook_type		set_join_pathlist_next = NULL;
 set_rel_pathlist_hook_type		set_rel_pathlist_hook_next = NULL;
 planner_hook_type				planner_hook_next = NULL;
@@ -59,8 +78,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	JoinType				saved_jointype = jointype;
 	RangeTblEntry		   *inner_rte = root->simple_rte_array[innerrel->relid];
 	const PartRelationInfo *inner_prel;
-	List				   *pathkeys = NIL,
-						   *joinclauses,
+	List				   *joinclauses,
 						   *otherclauses;
 	ListCell			   *lc;
 	WalkerContext			context;
@@ -124,7 +142,8 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 					   *inner;
 		NestPath	   *nest_path;		/* NestLoop we're creating */
 		ParamPathInfo  *ppi;			/* parameterization info */
-		Relids			inner_required;	/* required paremeterization relids */
+		Relids			required_nestloop,
+						required_inner;
 		List		   *filtered_joinclauses = NIL,
 					   *saved_ppi_list;
 		ListCell	   *rinfo_lc;
@@ -151,16 +170,17 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		if (saved_jointype == JOIN_UNIQUE_INNER)
 			return;
 
-		/* Make innerrel path depend on outerrel's column */
-		inner_required = bms_union(PATH_REQ_OUTER((Path *) cur_inner_path),
-								   bms_make_singleton(outerrel->relid));
+
+		/* Make inner path depend on outerrel's columns */
+		required_inner = bms_union(PATH_REQ_OUTER((Path *) cur_inner_path),
+								   outerrel->relids);
 
 		/* Preserve existing ppis built by get_appendrel_parampathinfo() */
 		saved_ppi_list = innerrel->ppilist;
 
 		/* Get the ParamPathInfo for a parameterized path */
 		innerrel->ppilist = NIL;
-		ppi = get_baserel_parampathinfo(root, innerrel, inner_required);
+		ppi = get_baserel_parampathinfo(root, innerrel, required_inner);
 		innerrel->ppilist = saved_ppi_list;
 
 		/* Skip ppi->ppi_clauses don't reference partition attribute */
@@ -173,17 +193,34 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		if (!inner)
 			return; /* could not build it, retreat! */
 
+
+		required_nestloop = calc_nestloop_required_outer(outer, inner);
+
+		/*
+		 * Check to see if proposed path is still parameterized, and reject if the
+		 * parameterization wouldn't be sensible --- unless allow_star_schema_join
+		 * says to allow it anyway.  Also, we must reject if have_dangerous_phv
+		 * doesn't like the look of it, which could only happen if the nestloop is
+		 * still parameterized.
+		 */
+		if (required_nestloop &&
+			((!bms_overlap(required_nestloop, extra->param_source_rels) &&
+			  !allow_star_schema_join(root, outer, inner)) ||
+			 have_dangerous_phv(root, outer->parent->relids, required_inner)))
+			return;
+
+
 		initial_cost_nestloop(root, &workspace, jointype,
 							  outer, inner, /* built paths */
 							  extra->sjinfo, &extra->semifactors);
 
-		pathkeys = build_join_pathkeys(root, joinrel, jointype, outer->pathkeys);
-
 		nest_path = create_nestloop_path(root, joinrel, jointype, &workspace,
 										 extra->sjinfo, &extra->semifactors,
 										 outer, inner, extra->restrictlist,
-										 pathkeys,
-										 calc_nestloop_required_outer(outer, inner));
+										 build_join_pathkeys(root, joinrel,
+															 jointype,
+															 outer->pathkeys),
+										 required_nestloop);
 
 		/* Discard all clauses that are to be evaluated by 'inner' */
 		foreach (rinfo_lc, extra->restrictlist)
@@ -196,16 +233,15 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		}
 
 		/*
-		 * Override 'rows' value produced by standard estimator.
+		 * NOTE: Override 'rows' value produced by standard estimator.
 		 * Currently we use get_parameterized_joinrel_size() since
 		 * it works just fine, but this might change some day.
 		 */
-		nest_path->path.rows = get_parameterized_joinrel_size_compat(root,
-																	 joinrel,
-																	 outer,
-																	 inner,
-																	 extra->sjinfo,
-																	 filtered_joinclauses);
+		nest_path->path.rows =
+				get_parameterized_joinrel_size_compat(root, joinrel,
+													  outer, inner,
+													  extra->sjinfo,
+													  filtered_joinclauses);
 
 		/* Finally we can add the new NestLoop path */
 		add_path(joinrel, (Path *) nest_path);
