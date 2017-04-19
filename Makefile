@@ -52,7 +52,7 @@ include $(top_builddir)/src/Makefile.global
 include $(top_srcdir)/contrib/contrib-global.mk
 endif
 
-$(EXTENSION)--$(EXTVERSION).sql: init.sql hash.sql range.sql
+$(EXTENSION)--$(EXTVERSION).sql: init.sql hash.sql range.sql shard.sql
 	cat $^ > $@
 
 ISOLATIONCHECKS=insert_nodes for_update rollback_on_create_partitions
