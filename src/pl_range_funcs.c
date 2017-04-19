@@ -1282,7 +1282,7 @@ create_range_partitions_internal(PG_FUNCTION_ARGS)
 						MakeBoundInf(PLUS_INFINITY) :
 						MakeBound(datums[i+1]);
 		RangeVar *rv = npartnames > 0 ? rangevars[i] : NULL;
-		char   *tablespace = ntablespaces > 0 ? tablespaces[i] : NULL;
+		char   *tablespace = tablespaces != NULL ? tablespaces[i] : NULL;
 
 		(void) create_single_range_partition_internal(relid,
 													  &start, &end,
