@@ -140,5 +140,7 @@ runtimeappend_explain(CustomScanState *node, List *ancestors, ExplainState *es)
 {
 	RuntimeAppendState *scan_state = (RuntimeAppendState *) node;
 
-	explain_append_common(node, scan_state->children_table, es);
+	explain_append_common(node, ancestors, es,
+						  scan_state->children_table,
+						  scan_state->custom_exprs);
 }

@@ -482,7 +482,9 @@ runtimemergeappend_explain(CustomScanState *node, List *ancestors, ExplainState 
 {
 	RuntimeMergeAppendState *scan_state = (RuntimeMergeAppendState *) node;
 
-	explain_append_common(node, scan_state->rstate.children_table, es);
+	explain_append_common(node, ancestors, es,
+						  scan_state->rstate.children_table,
+						  scan_state->rstate.custom_exprs);
 
 	/* We should print sort keys as well */
 	show_sort_group_keys((PlanState *) &node->ss.ps, "Sort Key",

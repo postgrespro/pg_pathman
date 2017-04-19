@@ -13,11 +13,13 @@
 #include "utils.h"
 
 #include "access/sysattr.h"
+#include "optimizer/clauses.h"
 #include "optimizer/restrictinfo.h"
 #include "optimizer/tlist.h"
 #include "optimizer/var.h"
 #include "rewrite/rewriteManip.h"
 #include "utils/memutils.h"
+#include "utils/ruleutils.h"
 
 
 /* Allocation settings */
@@ -688,8 +690,27 @@ rescan_append_common(CustomScanState *node)
 }
 
 void
-explain_append_common(CustomScanState *node, HTAB *children_table, ExplainState *es)
+explain_append_common(CustomScanState *node,
+					  List *ancestors,
+					  ExplainState *es,
+					  HTAB *children_table,
+					  List *custom_exprs)
 {
+	List *deparse_context;
+	char *exprstr;
+
+	/* Set up deparsing context */
+	deparse_context = set_deparse_context_planstate(es->deparse_cxt,
+													(Node *) node,
+													ancestors);
+
+	/* Deparse the expression */
+	exprstr = deparse_expression((Node *) make_ands_explicit(custom_exprs),
+								 deparse_context, true, false);
+
+	/* And add to es->str */
+	ExplainPropertyText("Prune by", exprstr, es);
+
 	/* Construct excess PlanStates */
 	if (!es->analyze)
 	{

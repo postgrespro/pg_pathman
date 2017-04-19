@@ -318,6 +318,7 @@ join (select * from test.run_values limit 4) as t2 on t1.id = t2.val;
    ->  Limit
          ->  Seq Scan on run_values
    ->  Custom Scan (RuntimeAppend)
+         Prune by: (run_values.val = t1.id)
          ->  Seq Scan on runtime_test_1 t1
                Filter: (run_values.val = id)
          ->  Index Only Scan using runtime_test_1_0_pkey on runtime_test_1_0 t1
@@ -332,7 +333,7 @@ join (select * from test.run_values limit 4) as t2 on t1.id = t2.val;
                Index Cond: (id = run_values.val)
          ->  Index Only Scan using runtime_test_1_5_pkey on runtime_test_1_5 t1
                Index Cond: (id = run_values.val)
-(18 rows)
+(19 rows)
 
 select from test.runtime_test_1 as t1
 join (select * from test.run_values limit 4) as t2 on t1.id = t2.val;
@@ -355,6 +356,7 @@ join (select * from test.run_values limit 4) as t2 on t1.id = t2.val;
    ->  Limit
          ->  Seq Scan on run_values
    ->  Custom Scan (RuntimeAppend)
+         Prune by: (run_values.val = t1.id)
          ->  Index Only Scan using runtime_test_1_0_pkey on runtime_test_1_0 t1
                Index Cond: (id = run_values.val)
          ->  Index Only Scan using runtime_test_1_1_pkey on runtime_test_1_1 t1
@@ -367,7 +369,7 @@ join (select * from test.run_values limit 4) as t2 on t1.id = t2.val;
                Index Cond: (id = run_values.val)
          ->  Index Only Scan using runtime_test_1_5_pkey on runtime_test_1_5 t1
                Index Cond: (id = run_values.val)
-(16 rows)
+(17 rows)
 
 select from test.runtime_test_1 as t1
 join (select * from test.run_values limit 4) as t2 on t1.id = t2.val;
