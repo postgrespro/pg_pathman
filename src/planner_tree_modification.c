@@ -16,6 +16,7 @@
 #include "partition_filter.h"
 #include "partition_update.h"
 #include "planner_tree_modification.h"
+#include "relation_info.h"
 
 #include "miscadmin.h"
 #include "optimizer/clauses.h"
@@ -251,7 +252,8 @@ handle_modification_query(Query *parse)
 	result_rel = parse->resultRelation;
 
 	/* Exit if it's not a DELETE or UPDATE query */
-	if (result_rel == 0 || parse->commandType != CMD_DELETE)
+	if (result_rel == 0 || (parse->commandType != CMD_UPDATE &&
+							parse->commandType != CMD_DELETE))
 		return;
 
 	rte = rt_fetch(result_rel, parse->rtable);
@@ -430,9 +432,23 @@ partition_update_visitor(Plan *plan, void *context)
 	lc3 = list_head(modify_table->returningLists);
 	forboth (lc1, modify_table->plans, lc2, modify_table->resultRelations)
 	{
+		Oid						parent_relid;
 		Index					rindex = lfirst_int(lc2);
 		Oid						relid = getrelid(rindex, rtable);
 		const PartRelationInfo *prel = get_pathman_relation_info(relid);
+
+		/* query can be changed earlier to point on child partition,
+		 * so we're possibly now looking at query that updates child partition
+		 */
+		if (prel == NULL)
+		{
+			parent_relid = get_parent_of_partition(relid, NULL);
+			if (parent_relid)
+			{
+				prel = get_pathman_relation_info(parent_relid);
+				relid = parent_relid;
+			}
+		}
 
 		/* Check that table is partitioned */
 		if (prel)

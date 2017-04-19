@@ -509,7 +509,7 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 			/* Add PartitionFilter node for INSERT queries */
 			ExecuteForPlanTree(result, add_partition_filters);
 
-			/* Add PartitionFilter node for UPDATE queries */
+			/* Add PartitionUpdate node for UPDATE queries */
 			ExecuteForPlanTree(result, add_partition_update_nodes);
 
 			/* Decrement relation tags refcount */
