@@ -40,6 +40,9 @@ static ArrayType *construct_infinitable_array(Bound *elems,
 											  bool elmbyval,
 											  char elmalign);
 static void check_range_adjacence(Oid cmp_proc, Oid collid, List *ranges);
+static char *build_range_condition_internal(Oid relid, const char *attname,
+											const Bound *min, const Bound *max,
+											Oid bounds_type);
 static void merge_range_partitions_internal(Oid parent,
 											Oid *parts,
 											uint32 nparts);
@@ -67,6 +70,7 @@ PG_FUNCTION_INFO_V1( get_part_range_by_idx );
 PG_FUNCTION_INFO_V1( build_range_condition );
 PG_FUNCTION_INFO_V1( build_sequence_name );
 PG_FUNCTION_INFO_V1( merge_range_partitions );
+PG_FUNCTION_INFO_V1( split_range_partitions );
 PG_FUNCTION_INFO_V1( drop_range_partition_expand_next );
 PG_FUNCTION_INFO_V1( validate_interval_value );
 
@@ -376,12 +380,11 @@ Datum
 build_range_condition(PG_FUNCTION_ARGS)
 {
 	Oid			relid = PG_GETARG_OID(0);
-	text	   *attname = PG_GETARG_TEXT_P(1);
+	const char *attname = TextDatumGetCString(PG_GETARG_TEXT_P(1));
 
 	Bound		min,
 				max;
 	Oid			bounds_type = get_fn_expr_argtype(fcinfo->flinfo, 2);
-	Constraint *con;
 	char	   *result;
 
 	min = PG_ARGISNULL(2) ?
@@ -392,13 +395,29 @@ build_range_condition(PG_FUNCTION_ARGS)
 				MakeBoundInf(PLUS_INFINITY) :
 				MakeBound(PG_GETARG_DATUM(3));
 
-	con = build_range_check_constraint(relid, text_to_cstring(attname),
-									   &min, &max,
-									   bounds_type);
+	// con = build_range_check_constraint(relid, text_to_cstring(attname),
+	// 								   &min, &max,
+	// 								   bounds_type);
 
-	result = deparse_constraint(relid, con->raw_expr);
+	// result = deparse_constraint(relid, con->raw_expr);
+	result = build_range_condition_internal(relid, attname,
+											&min, &max, bounds_type);
 
 	PG_RETURN_TEXT_P(cstring_to_text(result));
+}
+
+static char *
+build_range_condition_internal(Oid relid, const char *attname,
+							   const Bound *min, const Bound *max,
+							   Oid bounds_type)
+{
+	Constraint *con;
+
+	con = build_range_check_constraint(relid, attname,
+									   min, max,
+									   bounds_type);
+
+	return deparse_constraint(relid, con->raw_expr);
 }
 
 /* Build name for sequence for auto partition naming */
@@ -494,6 +513,7 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 						   *first,
 						   *last;
 	FmgrInfo				cmp_proc;
+	Relation				relations[nparts];
 	int						i;
 
 	prel = get_pathman_relation_info(parent);
@@ -554,27 +574,194 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "could not connect using SPI");
 
+	/* Prevent RI triggers from complaining during data migration */
+	disable_ri_triggers();
+
 	/* Migrate the data from all partition to the first one */
 	for (i = 1; i < nparts; i++)
 	{
-		char *query = psprintf("WITH part_data AS ( "
-									"DELETE FROM %s RETURNING "
-							   "*) "
-							   "INSERT INTO %s SELECT * FROM part_data",
-							   get_qualified_rel_name(parts[i]),
-							   get_qualified_rel_name(parts[0]));
+		char *query;
+
+		relations[i-1] = heap_open(parts[i], AccessExclusiveLock);
+		query = psprintf("WITH part_data AS ( "
+						 "	DELETE FROM %s RETURNING *) "
+						 "INSERT INTO %s SELECT * FROM part_data",
+						 get_qualified_rel_name(parts[i]),
+						 get_qualified_rel_name(parts[0]));
 
 		SPI_exec(query, 0);
 		pfree(query);
 	}
 
+	enable_ri_triggers();
 	SPI_finish();
 
 	/* Drop obsolete partitions */
 	for (i = 1; i < nparts; i++)
+	{
+		ri_preparePartitionDrop(parent, relations[i-1], false);
+		CommandCounterIncrement();
+		heap_close(relations[i-1], AccessExclusiveLock);
 		drop_table_by_oid(parts[i]);
+	}
 }
 
+
+Datum
+split_range_partitions(PG_FUNCTION_ARGS)
+{
+	Oid			partition = PG_GETARG_OID(0);
+	Datum		value = PG_GETARG_DATUM(1);
+	Oid			value_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
+	// char	   *new_name = TextDatumGetCString(PG_GETARG_TEXT_P(2));
+	Oid			new_partition;
+	// char	   *new_partition_name = NULL;
+
+		/* Optional: name & tablespace */
+	RangeVar   *new_partition_rv = NULL;
+	char	   *new_partition_ts = NULL;
+
+	const PartRelationInfo *prel;
+	Oid			parent;
+	char *attname;
+	RangeEntry *rentry = NULL;
+	FmgrInfo	cmp_finfo;
+	Bound		fake_value_bound;
+	RangeEntry *ranges;
+	Bound min, max;
+
+	List *ri_constr, *ri_relids;
+	char	   *bound;
+	int i;
+	PartParentSearch		parent_search;
+
+	Relation partition_rel;
+	Constraint *check;
+	AttrNumber attnum;
+	char *query;
+
+	if (!PG_ARGISNULL(2))
+	{
+		List   *qualified_name;
+		text   *partition_name;
+
+		partition_name = PG_GETARG_TEXT_P(2);
+		qualified_name = textToQualifiedNameList(partition_name);
+		new_partition_rv = makeRangeVarFromNameList(qualified_name);
+
+		// new_partition_rv = TextDatumGetCString(PG_GETARG_TEXT_P(2));
+	}
+
+	if (!PG_ARGISNULL(3))
+		new_partition_ts = TextDatumGetCString(PG_GETARG_TEXT_P(3));
+
+	/* Get parent's relid */
+	parent = get_parent_of_partition(partition, &parent_search);
+	if (parent_search != PPS_ENTRY_PART_PARENT)
+		elog(ERROR, "relation \"%s\" is not a partition",
+			 get_rel_name_or_relid(partition));
+
+	/* Lock parent and partition */
+	prevent_relation_modification_internal(partition);
+	xact_lock_partitioned_rel(parent, false);
+
+	/* Fetch PartRelationInfo and perform some checks */
+	prel = get_pathman_relation_info(parent);
+	shout_if_prel_is_invalid(parent, prel, PT_RANGE);
+	/* Fetch ranges array */
+	ranges = PrelGetRangesArray(prel);
+
+	/* Look for the specified partition's range */
+	for (i = 0; i < PrelChildrenCount(prel); i++)
+		if (ranges[i].child_oid == partition)
+		{
+			rentry = &ranges[i];
+			break;
+		}
+	if (!rentry)
+		elog(ERROR, "Couldn't find specified partition in cache");
+
+	min = CopyBound(&rentry->min, prel->attbyval, prel->attlen);
+	max = CopyBound(&rentry->max, prel->attbyval, prel->attlen);
+
+	/* Ensure that value belongs to the range */
+	fill_type_cmp_fmgr_info(&cmp_finfo, prel->atttype, prel->atttype);
+	fake_value_bound = MakeBound(perform_type_cast(value, value_type, prel->atttype, NULL));
+	if (cmp_bounds(&cmp_finfo, prel->attcollid, &fake_value_bound, &min) < 0
+		|| cmp_bounds(&cmp_finfo, prel->attcollid, &fake_value_bound, &max) >= 0)
+	{
+		elog(ERROR,
+			 "specified value does not fit into the range [%s, %s)",
+			 BoundAsString(&min, prel->atttype),
+			 BoundAsString(&max, prel->atttype));
+	}
+
+	/* Get FK constraints and corresponding relations */
+	pathman_get_fkeys(parent, &ri_constr, &ri_relids);
+
+	/* Create new partition */
+	/* TODO: partition name and tablespace instead of NULL */
+	new_partition = create_single_range_partition_internal(parent,
+												  &fake_value_bound,
+												  &max,
+												  prel->atttype,
+												  new_partition_rv,
+												  new_partition_ts,
+												  ri_constr, ri_relids);
+
+	attname = get_attname(prel->key, prel->attnum);
+	attnum = get_attnum(partition, attname);
+
+	/* Copy data */
+	bound = build_range_condition_internal(partition,
+								   attname,
+								   &fake_value_bound,
+								   &max,
+								   prel->atttype);
+
+	if (SPI_connect() != SPI_OK_CONNECT)
+		elog(ERROR, "could not connect using SPI");
+
+	/* Prevent RI triggers from complaining during data migration */
+	disable_ri_triggers();
+
+	query = psprintf("WITH part_data AS ( "
+					 "	DELETE FROM %s WHERE %s RETURNING *) "
+					 "INSERT INTO %s SELECT * FROM part_data",
+					 get_qualified_rel_name(partition),
+					 bound,
+					 get_qualified_rel_name(new_partition));
+	SPI_exec(query, 0);
+
+	enable_ri_triggers();
+	SPI_finish();
+
+	/* Alter constraint */
+	modify_range_constraint(partition,
+							attname, attnum, prel->atttype,
+							&min, &fake_value_bound);
+
+	// drop_check_constraint(partition, attnum);
+	// check = build_range_check_constraint(partition,
+	// 							 attname,
+	// 							 &min,
+	// 							 &fake_value_bound,
+	// 							 prel->atttype);
+
+	// /* TODO: think about locking */
+	// partition_rel = heap_open(partition, ExclusiveLock);
+
+	// AddRelationNewConstraints(partition_rel, NIL,
+	// 						  list_make1(check),
+	// 						  false, true, true);
+	// heap_close(partition_rel, AccessExclusiveLock);
+
+	/* get_pathman_relation_info() will refresh this entry */
+	invalidate_pathman_relation_info(parent, NULL);
+
+	// PG_RETURN_VOID();
+	PG_RETURN_OID(new_partition);
+}
 
 /*
  * Drops partition and expands the next partition
@@ -592,7 +779,10 @@ drop_range_partition_expand_next(PG_FUNCTION_ARGS)
 	Oid						relid = PG_GETARG_OID(0),
 							parent;
 	RangeEntry			   *ranges;
+	Relation				rel;
 	int						i;
+
+	rel = heap_open(relid, AccessExclusiveLock);
 
 	/* Get parent's relid */
 	parent = get_parent_of_partition(relid, &parent_search);
@@ -634,7 +824,12 @@ drop_range_partition_expand_next(PG_FUNCTION_ARGS)
 								&next->max);
 	}
 
-	/* Finally drop this partition */
+	/* Perform checks and preparations regarding to reference integrity */
+	ri_preparePartitionDrop(parent, rel, false);
+	CommandCounterIncrement();
+
+	/* Close relation, but do not remove lock */
+	heap_close(rel, NoLock);
 	drop_table_by_oid(relid);
 
 	PG_RETURN_VOID();
@@ -874,7 +1069,7 @@ modify_range_constraint(Oid child_relid,
 	AddRelationNewConstraints(partition_rel, NIL,
 							  list_make1(constraint),
 							  false, true, true);
-	heap_close(partition_rel, NoLock);
+	heap_close(partition_rel, AccessExclusiveLock);
 
 	pfree(attname_nonconst);
 }

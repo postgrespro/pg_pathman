@@ -36,6 +36,9 @@ typedef struct
 #define IsPlusInfinity(i)		( (i)->is_infinite == PLUS_INFINITY )
 #define IsMinusInfinity(i)		( (i)->is_infinite == MINUS_INFINITY )
 
+#define BoundAsString(i, type) \
+	( !IsInfinite(i) ? datum_to_cstring(BoundGetValue(i), (type)) : "NULL" )
+
 
 inline static Bound
 CopyBound(const Bound *src, bool byval, int typlen)

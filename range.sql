@@ -497,6 +497,15 @@ CREATE OR REPLACE FUNCTION @extschema@.split_range_partition(
 	partition_relid	REGCLASS,
 	split_value		ANYELEMENT,
 	partition_name	TEXT DEFAULT NULL,
+	tablespace		TEXT DEFAULT NULL)
+RETURNS REGCLASS AS 'pg_pathman', 'split_range_partitions'
+LANGUAGE C;
+
+
+CREATE OR REPLACE FUNCTION @extschema@._split_range_partition(
+	partition_relid	REGCLASS,
+	split_value		ANYELEMENT,
+	partition_name	TEXT DEFAULT NULL,
 	tablespace		TEXT DEFAULT NULL,
 	OUT p_range		ANYARRAY)
 RETURNS ANYARRAY AS

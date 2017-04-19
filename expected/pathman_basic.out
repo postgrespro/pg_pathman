@@ -943,7 +943,7 @@ NOTICE:  drop cascades to 4 other objects
 SELECT pathman.split_range_partition('test.num_range_rel_1', 500);
  split_range_partition 
 -----------------------
- {0,1000}
+ test.num_range_rel_5
 (1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id BETWEEN 100 AND 700;
@@ -957,9 +957,9 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id BETWEEN 100 AND 70
 (5 rows)
 
 SELECT pathman.split_range_partition('test.range_rel_1', '2015-01-15'::DATE);
-  split_range_partition  
--------------------------
- {01-01-2015,02-01-2015}
+ split_range_partition 
+-----------------------
+ test.range_rel_5
 (1 row)
 
 /* Merge two partitions into one */
@@ -1242,7 +1242,7 @@ SELECT pathman.prepend_range_partition('test.zero', 'test.zero_prepended');
 SELECT pathman.split_range_partition('test.zero_50', 60, 'test.zero_60');
  split_range_partition 
 -----------------------
- {50,70}
+ test.zero_60
 (1 row)
 
 DROP TABLE test.zero CASCADE;
@@ -1567,9 +1567,9 @@ SELECT pathman.merge_range_partitions('test."RangeRel_1"', 'test."RangeRel_' || 
 (1 row)
 
 SELECT pathman.split_range_partition('test."RangeRel_1"', '2015-01-01'::DATE);
-  split_range_partition  
--------------------------
- {12-31-2014,01-02-2015}
+ split_range_partition 
+-----------------------
+ test."RangeRel_6"
 (1 row)
 
 SELECT pathman.drop_partitions('test."RangeRel"');
@@ -1669,9 +1669,9 @@ SELECT merge_range_partitions('test.range_rel_1', 'test.range_rel_2');
 (1 row)
 
 SELECT split_range_partition('test.range_rel_1', '2010-02-15'::date);
-  split_range_partition  
--------------------------
- {01-01-2010,03-01-2010}
+ split_range_partition 
+-----------------------
+ test.range_rel_13
 (1 row)
 
 SELECT append_range_partition('test.range_rel');

@@ -54,6 +54,17 @@ DROP INDEX abc_1_id_idx;
 SELECT append_range_partition('abc');
 INSERT INTO abc VALUES (350);
 INSERT INTO xxx (abc_id) VALUES (350);
+
+/* Partition cannot be dropped unless there are references from FK table */
 DROP TABLE abc_4;
+
+/* Successful partition drop */
+DELETE FROM xxx WHERE abc_id = 350;
+DROP TABLE abc_4;
+
+/* Quick check for essential pg_pathman's functions */
+SELECT merge_range_partitions('abc_2', 'abc_3');
+SELECT split_range_partition('abc_2', 200);
+SELECT add_range_partition('abc', 301, 401, 'abc_x');
 
 DROP EXTENSION pg_pathman CASCADE;

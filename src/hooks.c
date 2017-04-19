@@ -49,7 +49,7 @@ post_parse_analyze_hook_type	post_parse_analyze_hook_next = NULL;
 shmem_startup_hook_type			shmem_startup_hook_next = NULL;
 ProcessUtility_hook_type		process_utility_hook_next = NULL;
 
-static void pathman_drop_fkeys(Node *parsetree);
+static void pathman_prepare_drop(Node *parsetree);
 
 
 /* Take care of joins */
@@ -729,10 +729,11 @@ pathman_process_utility_hook(Node *parsetree,
 				break;
 			case T_DropStmt:
 				/*
-				 * Check if there are pg_pathman's tables involved and drop
-				 * foreign key constraints if exist
+				 * Check if there are pg_pathman's tables involved:
+				 *	if partitioned table involved then drop FK constraints
+				 *	if partition then drop dependencies and check for references
 				 */
-				pathman_drop_fkeys(parsetree);
+				pathman_prepare_drop(parsetree);
 				break;
 			default:
 				; /* skip */
@@ -752,10 +753,10 @@ pathman_process_utility_hook(Node *parsetree,
 }
 
 /*
- * Drop foreign key constraints referencing pg_pathman's tables being dropped
+ * Prepare partitioned table or partition to be dropped
  */
 static void
-pathman_drop_fkeys(Node *parsetree)
+pathman_prepare_drop(Node *parsetree)
 {
 	DropStmt	   *drop_stmt = (DropStmt *) parsetree;
 	ListCell	   *cell;
@@ -789,7 +790,7 @@ pathman_drop_fkeys(Node *parsetree)
 								rv->relname)));
 		}
 
-		/* Is it pg_pathman's table? */
+		/* Is it pg_pathman's partitioned table? */
 		if (get_pathman_relation_info(relid) != NULL)
 		{
 			List	   *ri_constr = NIL,
@@ -817,46 +818,14 @@ pathman_drop_fkeys(Node *parsetree)
 		{
 			PartParentSearch	parent_search;
 			Oid					parent_relid;
-			// Relation relation = heap_open(relid, NoLock);
 
 			/* Try fetching parent of this table */
 			parent_relid = get_parent_of_partition(relid, &parent_search);
 			if (parent_search == PPS_ENTRY_PART_PARENT)
 			{
-				ri_removePartitionDependencies(parent_relid, rel);
-				// ri_removeTriggersDependency(parent_relid, relid);
+				ri_preparePartitionDrop(parent_relid, rel, true);
 				CommandCounterIncrement();
-
-				// {
-				// 	const PartRelationInfo *prel;
-				// 	const char * attname;
-				// 	AttrNumber attnum;
-				// 	Oid indexOid;
-				// 	HeapTuple indexTuple;
-
-				// 	if ((prel = get_pathman_relation_info(parent_relid)) == NULL)
-				// 	{
-				// 		heap_close(relation, NoLock);
-				// 		continue;
-				// 	}
-
-				// 	attname = get_attname(parent_relid, prel->attnum);
-				// 	attnum = get_attnum(relid, attname);
-				// 	indexTuple = get_index_for_key(relation, attnum, &indexOid);
-
-				// 	/* If there is an index remove dependency */
-				// 	if (HeapTupleIsValid(indexTuple))
-				// 	{
-				// 		deleteDependencyRecordsRef(RelationRelationId, indexOid);
-				// 		ReleaseSysCache(indexTuple);
-
-				// 		/* Make changes visible */
-				// 		CommandCounterIncrement();
-				// 	}
-				// }
 			}
-
-			// heap_close(relation, NoLock);
 		}
 		heap_close(rel, lockmode);
 	}

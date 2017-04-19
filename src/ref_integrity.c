@@ -194,6 +194,7 @@ PG_FUNCTION_INFO_V1(create_fk_constraint);
 static HTAB *ri_constraint_cache = NULL;
 static HTAB *ri_query_cache = NULL;
 static HTAB *ri_compare_cache = NULL;
+static bool ri_triggers_enabled = true;
 
 
 Datum
@@ -359,6 +360,9 @@ ri_fkey_check(TriggerData *trigdata)
 	Oid			fk_type;
 	Oid			partid;
 
+	if (!ri_triggers_enabled)
+		return PointerGetDatum(NULL);
+
 	/*
 	 * Get arguments.
 	 */
@@ -490,6 +494,9 @@ ri_restrict(TriggerData *trigdata, bool is_upd)
 	SPIPlanPtr	qplan;
 	Oid			pk_type;
 	Oid			fk_type;
+
+	if (!ri_triggers_enabled)
+		return PointerGetDatum(NULL);
 
 	/*
 	 * Get arguments.
@@ -1029,10 +1036,6 @@ ri_add_cast_to(StringInfo buf, Oid typid)
  * If cache_plan is true, the plan is saved into our plan hashtable
  * so that we don't need to plan it again.
  */
-// static SPIPlanPtr
-// ri_PlanCheck(const char *querystr, Oid argtype,
-// 			 RI_QueryKey *qkey, Relation fk_rel, Relation pk_rel,
-// 			 bool cache_plan)
 static SPIPlanPtr
 ri_PlanCheck(const char *querystr,
 			 Oid argtype,
@@ -1404,7 +1407,6 @@ create_fk_constraint_internal(Oid fk_table,
 									  0,		/* inhcount */
 									  true,		/* isnoinherit */
 									  false);	/* is_internal */
-	// ObjectAddressSet(address, ConstraintRelationId, constrOid);
 
 	/* Make changes-so-far visible */
 	CommandCounterIncrement();
@@ -1757,7 +1759,6 @@ ri_checkReferences(Relation partition, Oid constraintOid)
 	const ConstraintInfo *riinfo;
 	StringInfoData querybuf;
 	AttrNumber	pkattnum;
-	char	   *attname;
 	char		pkrelname[MAX_QUOTED_REL_NAME_LEN];
 	char		fkrelname[MAX_QUOTED_REL_NAME_LEN];
 	char		pkattname[MAX_QUOTED_NAME_LEN + 3];
@@ -1774,6 +1775,13 @@ ri_checkReferences(Relation partition, Oid constraintOid)
 	pkattnum = get_attnum(partition->rd_id,
 						  get_attname(riinfo->pk_relid, riinfo->pk_attnum));
 
+	/*----------
+	 * The query string built is:
+	 *	SELECT pk.keycol FROM ONLY partition pk
+	 *	 INNER JOIN ONLY fkrelname fk
+	 *	 ON pk.keycol = fk.keycol;
+	 *----------
+	 */
 	quoteRelationName(pkrelname, partition->rd_id);
 	quoteRelationName(fkrelname, riinfo->fk_relid);
 	pkattype = get_atttype(partition->rd_id, pkattnum);
@@ -1786,13 +1794,6 @@ ri_checkReferences(Relation partition, Oid constraintOid)
 	quoteOneName(fkattname + 3,
 				 get_attname(riinfo->fk_relid, riinfo->fk_attnum));
 
-	/*----------
-	 * The query string built is:
-	 *	SELECT pk.keycol FROM ONLY partition pk
-	 *	 INNER JOIN ONLY fkrelname fk
-	 *	 ON pk.keycol = fk.keycol;
-	 *----------
-	 */
 	initStringInfo(&querybuf);
 	appendStringInfo(&querybuf, "SELECT %s", pkattname);
 	appendStringInfo(&querybuf,
@@ -1850,8 +1851,6 @@ ri_checkReferences(Relation partition, Oid constraintOid)
 
 	if (SPI_finish() != SPI_OK_FINISH)
 		elog(ERROR, "SPI_finish failed");
-
-	elog(ERROR, "test");
 }
 
 /*
@@ -1895,10 +1894,13 @@ get_ri_triggers_list(Oid relid, Oid constr)
 }
 
 /*
- * Removes dependencies that prevent partition from DROP
+ * Check for referencies from FK tables and remove dependencies that prevent
+ * partition from DROP
  */
 void
-ri_removePartitionDependencies(Oid parent, Relation partition)
+ri_preparePartitionDrop(Oid parent,
+						Relation partition,
+						bool check_referencies)
 {
 	List	   *ri_constr;
 	List	   *ri_refrelids;
@@ -1921,6 +1923,10 @@ ri_removePartitionDependencies(Oid parent, Relation partition)
 		prel = get_pathman_relation_info(parent);
 		shout_if_prel_is_invalid(parent, prel, PT_INDIFFERENT);
 
+		/* Check if there are references in FK table */
+		if (check_referencies)
+			ri_checkReferences(partition, constr);
+
 		/*
 		 * Remove index dependency on FK constraint
 		 */
@@ -1929,12 +1935,8 @@ ri_removePartitionDependencies(Oid parent, Relation partition)
 		indexTuple = get_index_for_key(partition, attnum, &index);
 		if (HeapTupleIsValid(indexTuple))
 		{
-			/* Check if there are references in FK table */
-			ri_checkReferences(partition, constr);
-
 			deleteDependencyRecords(ConstraintRelationId, constr,
 									RelationRelationId, index);
-			// deleteDependencyRecordsRef(RelationRelationId, indexOid);
 			ReleaseSysCache(indexTuple);
 		}
 		else
@@ -1963,4 +1965,20 @@ ri_removePartitionDependencies(Oid parent, Relation partition)
 		pfree(ri_constr);
 		pfree(ri_refrelids);
 	}
+}
+
+void
+enable_ri_triggers(void)
+{
+	/* Check if they have been disabled */
+	Assert(ri_triggers_enabled == false);
+	ri_triggers_enabled = true;
+}
+
+void
+disable_ri_triggers(void)
+{
+	/* Check if they have been enabled */
+	Assert(ri_triggers_enabled == true);
+	ri_triggers_enabled = false;
 }

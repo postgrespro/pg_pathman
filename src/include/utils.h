@@ -70,7 +70,5 @@ RangeVar ** qualified_relnames_to_rangevars(char **relnames, size_t nrelnames);
  */
 long deleteDependencyRecords(Oid classId, Oid objId,
 							 Oid refClassId, Oid refObjId);
-long deleteDependencyRecordsRef(Oid classId, Oid objectId);
-
 
 #endif /* PATHMAN_UTILS_H */
