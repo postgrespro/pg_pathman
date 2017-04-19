@@ -930,13 +930,19 @@ RETURNS BOOLEAN AS 'pg_pathman', 'is_operator_supported'
 LANGUAGE C;
 
 /*
- * Referential integrity triggers
+ * Referential integrity funcs and triggers
  */
 CREATE OR REPLACE FUNCTION @extschema@.create_fk(
 	fk_table	REGCLASS,
 	fk_attr		TEXT,
 	pk_table	REGCLASS)
 RETURNS VOID AS 'pg_pathman', 'create_fk_constraint'
+LANGUAGE C STRICT;
+
+CREATE OR REPLACE FUNCTION @extschema@.prepare_partition_drop(
+	parent		REGCLASS,
+	partition	REGCLASS)
+RETURNS VOID AS 'pg_pathman', 'prepare_partition_drop'
 LANGUAGE C STRICT;
 
 CREATE OR REPLACE FUNCTION @extschema@.pathman_fkey_check_ins()

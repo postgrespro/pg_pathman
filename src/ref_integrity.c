@@ -1900,7 +1900,7 @@ get_ri_triggers_list(Oid relid, Oid constr)
 void
 ri_preparePartitionDrop(Oid parent,
 						Relation partition,
-						bool check_referencies)
+						bool check_references)
 {
 	List	   *ri_constr;
 	List	   *ri_refrelids;
@@ -1924,7 +1924,7 @@ ri_preparePartitionDrop(Oid parent,
 		shout_if_prel_is_invalid(parent, prel, PT_INDIFFERENT);
 
 		/* Check if there are references in FK table */
-		if (check_referencies)
+		if (check_references)
 			ri_checkReferences(partition, constr);
 
 		/*

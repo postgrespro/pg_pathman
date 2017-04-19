@@ -14,7 +14,7 @@ HeapTuple get_index_for_key(Relation rel, AttrNumber attnum, Oid *index_id);
 List *get_ri_triggers_list(Oid relid, Oid constr);
 void ri_preparePartitionDrop(Oid parent,
 							 Relation partition,
-							 bool check_referencies);
+							 bool check_references);
 void ri_checkReferences(Relation partition, Oid constraintOid);
 void enable_ri_triggers(void);
 void disable_ri_triggers(void);

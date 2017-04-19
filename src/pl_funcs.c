@@ -15,6 +15,7 @@
 #include "pathman.h"
 #include "partition_creation.h"
 #include "partition_filter.h"
+#include "ref_integrity.h"
 #include "relation_info.h"
 #include "xact_handling.h"
 
@@ -84,6 +85,7 @@ PG_FUNCTION_INFO_V1( create_update_triggers );
 PG_FUNCTION_INFO_V1( update_trigger_func );
 PG_FUNCTION_INFO_V1( create_single_update_trigger );
 PG_FUNCTION_INFO_V1( is_update_trigger_enabled );
+PG_FUNCTION_INFO_V1( prepare_partition_drop );
 
 
 /*
@@ -1151,4 +1153,18 @@ Datum
 is_update_trigger_enabled(PG_FUNCTION_ARGS)
 {
 	PG_RETURN_BOOL(is_update_trigger_enabled_internal(PG_GETARG_OID(0)));
+}
+
+Datum
+prepare_partition_drop(PG_FUNCTION_ARGS)
+{
+	Oid			parent = PG_GETARG_OID(0);
+	Oid			partition = PG_GETARG_OID(1);
+	Relation	partition_rel;
+
+	partition_rel = heap_open(partition, AccessExclusiveLock);
+	ri_preparePartitionDrop(parent, partition_rel, true);
+	heap_close(partition_rel, AccessExclusiveLock);
+
+	PG_RETURN_VOID();
 }

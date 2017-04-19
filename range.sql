@@ -489,7 +489,6 @@ CREATE OR REPLACE FUNCTION @extschema@.generate_bounds(
 RETURNS ANYARRAY AS 'pg_pathman', 'generate_bounds'
 LANGUAGE C;
 
-
 /*
  * Split RANGE partition
  */
@@ -500,98 +499,6 @@ CREATE OR REPLACE FUNCTION @extschema@.split_range_partition(
 	tablespace		TEXT DEFAULT NULL)
 RETURNS REGCLASS AS 'pg_pathman', 'split_range_partitions'
 LANGUAGE C;
-
-
-CREATE OR REPLACE FUNCTION @extschema@._split_range_partition(
-	partition_relid	REGCLASS,
-	split_value		ANYELEMENT,
-	partition_name	TEXT DEFAULT NULL,
-	tablespace		TEXT DEFAULT NULL,
-	OUT p_range		ANYARRAY)
-RETURNS ANYARRAY AS
-$$
-DECLARE
-	v_parent		REGCLASS;
-	v_attname		TEXT;
-	v_atttype		REGTYPE;
-	v_cond			TEXT;
-	v_new_partition	TEXT;
-	v_part_type		INTEGER;
-	v_check_name	TEXT;
-
-BEGIN
-	v_parent = @extschema@.get_parent_of_partition(partition_relid);
-
-	/* Acquire lock on parent */
-	PERFORM @extschema@.lock_partitioned_relation(v_parent);
-
-	/* Acquire data modification lock (prevent further modifications) */
-	PERFORM @extschema@.prevent_relation_modification(partition_relid);
-
-	v_atttype = @extschema@.get_partition_key_type(v_parent);
-
-	SELECT attname, parttype
-	FROM @extschema@.pathman_config
-	WHERE partrel = v_parent
-	INTO v_attname, v_part_type;
-
-	/* Check if this is a RANGE partition */
-	IF v_part_type != 2 THEN
-		RAISE EXCEPTION '"%" is not a RANGE partition', partition_relid::TEXT;
-	END IF;
-
-	/* Get partition values range */
-	EXECUTE format('SELECT @extschema@.get_part_range($1, NULL::%s)',
-				   @extschema@.get_base_type(v_atttype)::TEXT)
-	USING partition_relid
-	INTO p_range;
-
-	IF p_range IS NULL THEN
-		RAISE EXCEPTION 'could not find specified partition';
-	END IF;
-
-	/* Check if value fit into the range */
-	IF p_range[1] > split_value OR p_range[2] <= split_value
-	THEN
-		RAISE EXCEPTION 'specified value does not fit into the range [%, %)',
-			p_range[1], p_range[2];
-	END IF;
-
-	/* Create new partition */
-	v_new_partition := @extschema@.create_single_range_partition(v_parent,
-																 split_value,
-																 p_range[2],
-																 partition_name,
-																 tablespace);
-
-	/* Copy data */
-	v_cond := @extschema@.build_range_condition(v_new_partition::regclass,
-												v_attname, split_value, p_range[2]);
-	EXECUTE format('WITH part_data AS (DELETE FROM %s WHERE %s RETURNING *)
-					INSERT INTO %s SELECT * FROM part_data',
-				   partition_relid::TEXT,
-				   v_cond,
-				   v_new_partition);
-
-	/* Alter original partition */
-	v_cond := @extschema@.build_range_condition(partition_relid::regclass,
-												v_attname, p_range[1], split_value);
-	v_check_name := @extschema@.build_check_constraint_name(partition_relid, v_attname);
-
-	EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %s',
-				   partition_relid::TEXT,
-				   v_check_name);
-
-	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)',
-				   partition_relid::TEXT,
-				   v_check_name,
-				   v_cond);
-
-	/* Tell backend to reload configuration */
-	PERFORM @extschema@.on_update_partitions(v_parent);
-END
-$$
-LANGUAGE plpgsql;
 
 /*
  * Merge multiple partitions. All data will be copied to the first one.
@@ -1087,6 +994,8 @@ BEGIN
 	IF v_attname IS NULL THEN
 		RAISE EXCEPTION 'table "%" is not partitioned', parent_relid::TEXT;
 	END IF;
+
+	PERFORM @extschema@.prepare_partition_drop(parent_relid, partition_relid);
 
 	/* Remove inheritance */
 	EXECUTE format('ALTER TABLE %s NO INHERIT %s',

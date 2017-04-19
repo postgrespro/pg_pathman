@@ -11,10 +11,10 @@
 #include "init.h"
 #include "pathman.h"
 #include "partition_creation.h"
+#include "ref_integrity.h"
 #include "relation_info.h"
 #include "utils.h"
 #include "xact_handling.h"
-#include "ref_integrity.h"
 
 #include "access/xact.h"
 #include "catalog/namespace.h"
@@ -40,7 +40,7 @@ static ArrayType *construct_infinitable_array(Bound *elems,
 											  bool elmbyval,
 											  char elmalign);
 static void check_range_adjacence(Oid cmp_proc, Oid collid, List *ranges);
-static char *build_range_condition_internal(Oid relid, const char *attname,
+static char *build_range_condition_internal(Oid relid, char *attname,
 											const Bound *min, const Bound *max,
 											Oid bounds_type);
 static void merge_range_partitions_internal(Oid parent,
@@ -380,7 +380,7 @@ Datum
 build_range_condition(PG_FUNCTION_ARGS)
 {
 	Oid			relid = PG_GETARG_OID(0);
-	const char *attname = TextDatumGetCString(PG_GETARG_TEXT_P(1));
+	char	   *attname = TextDatumGetCString(PG_GETARG_TEXT_P(1));
 
 	Bound		min,
 				max;
@@ -395,19 +395,13 @@ build_range_condition(PG_FUNCTION_ARGS)
 				MakeBoundInf(PLUS_INFINITY) :
 				MakeBound(PG_GETARG_DATUM(3));
 
-	// con = build_range_check_constraint(relid, text_to_cstring(attname),
-	// 								   &min, &max,
-	// 								   bounds_type);
-
-	// result = deparse_constraint(relid, con->raw_expr);
 	result = build_range_condition_internal(relid, attname,
 											&min, &max, bounds_type);
-
 	PG_RETURN_TEXT_P(cstring_to_text(result));
 }
 
 static char *
-build_range_condition_internal(Oid relid, const char *attname,
+build_range_condition_internal(Oid relid, char *attname,
 							   const Bound *min, const Bound *max,
 							   Oid bounds_type)
 {
@@ -610,33 +604,30 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 Datum
 split_range_partitions(PG_FUNCTION_ARGS)
 {
-	Oid			partition = PG_GETARG_OID(0);
-	Datum		value = PG_GETARG_DATUM(1);
-	Oid			value_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
-	// char	   *new_name = TextDatumGetCString(PG_GETARG_TEXT_P(2));
-	Oid			new_partition;
-	// char	   *new_partition_name = NULL;
+	Oid				partition = PG_GETARG_OID(0);
+	Datum			value = PG_GETARG_DATUM(1);
+	Oid				value_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
+	Oid				new_partition;
 
-		/* Optional: name & tablespace */
-	RangeVar   *new_partition_rv = NULL;
-	char	   *new_partition_ts = NULL;
+	/* Optional: name & tablespace */
+	RangeVar	   *new_partition_rv = NULL;
+	char		   *new_partition_ts = NULL;
 
 	const PartRelationInfo *prel;
-	Oid			parent;
-	char *attname;
-	RangeEntry *rentry = NULL;
-	FmgrInfo	cmp_finfo;
-	Bound		fake_value_bound;
-	RangeEntry *ranges;
-	Bound min, max;
+	Oid				parent;
+	char		   *attname;
+	RangeEntry	   *rentry = NULL;
+	FmgrInfo		cmp_finfo;
+	Bound			fake_value_bound;
+	RangeEntry	   *ranges;
+	Bound			min, max;
 
-	List *ri_constr, *ri_relids;
-	char	   *bound;
-	int i;
-	PartParentSearch		parent_search;
+	List		   *ri_constr,
+				   *ri_relids;
+	char		   *bound;
+	int				i;
+	PartParentSearch parent_search;
 
-	Relation partition_rel;
-	Constraint *check;
 	AttrNumber attnum;
 	char *query;
 
@@ -648,8 +639,6 @@ split_range_partitions(PG_FUNCTION_ARGS)
 		partition_name = PG_GETARG_TEXT_P(2);
 		qualified_name = textToQualifiedNameList(partition_name);
 		new_partition_rv = makeRangeVarFromNameList(qualified_name);
-
-		// new_partition_rv = TextDatumGetCString(PG_GETARG_TEXT_P(2));
 	}
 
 	if (!PG_ARGISNULL(3))
@@ -700,7 +689,6 @@ split_range_partitions(PG_FUNCTION_ARGS)
 	pathman_get_fkeys(parent, &ri_constr, &ri_relids);
 
 	/* Create new partition */
-	/* TODO: partition name and tablespace instead of NULL */
 	new_partition = create_single_range_partition_internal(parent,
 												  &fake_value_bound,
 												  &max,
@@ -714,10 +702,10 @@ split_range_partitions(PG_FUNCTION_ARGS)
 
 	/* Copy data */
 	bound = build_range_condition_internal(partition,
-								   attname,
-								   &fake_value_bound,
-								   &max,
-								   prel->atttype);
+										   attname,
+										   &fake_value_bound,
+										   &max,
+										   prel->atttype);
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "could not connect using SPI");
@@ -740,21 +728,6 @@ split_range_partitions(PG_FUNCTION_ARGS)
 	modify_range_constraint(partition,
 							attname, attnum, prel->atttype,
 							&min, &fake_value_bound);
-
-	// drop_check_constraint(partition, attnum);
-	// check = build_range_check_constraint(partition,
-	// 							 attname,
-	// 							 &min,
-	// 							 &fake_value_bound,
-	// 							 prel->atttype);
-
-	// /* TODO: think about locking */
-	// partition_rel = heap_open(partition, ExclusiveLock);
-
-	// AddRelationNewConstraints(partition_rel, NIL,
-	// 						  list_make1(check),
-	// 						  false, true, true);
-	// heap_close(partition_rel, AccessExclusiveLock);
 
 	/* get_pathman_relation_info() will refresh this entry */
 	invalidate_pathman_relation_info(parent, NULL);
@@ -824,7 +797,7 @@ drop_range_partition_expand_next(PG_FUNCTION_ARGS)
 								&next->max);
 	}
 
-	/* Perform checks and preparations regarding to reference integrity */
+	/* Perform preparations regarding reference integrity */
 	ri_preparePartitionDrop(parent, rel, false);
 	CommandCounterIncrement();
 
