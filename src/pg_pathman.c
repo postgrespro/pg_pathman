@@ -622,8 +622,7 @@ walk_expr_tree(Expr *expr, WalkerContext *context)
 			result->args = NIL;
 			result->paramsel = 1.0;
 
-			result->rangeset = list_make1_irange(
-						make_irange(0, PrelLastChild(context->prel), IR_LOSSY));
+			result->rangeset = list_make1_irange_full(context->prel, IR_LOSSY);
 
 			return result;
 	}
@@ -804,9 +803,7 @@ handle_boolexpr(const BoolExpr *expr, WalkerContext *context)
 	result->paramsel = 1.0;
 
 	if (expr->boolop == AND_EXPR)
-		result->rangeset = list_make1_irange(make_irange(0,
-														 PrelLastChild(prel),
-														 IR_COMPLETE));
+		result->rangeset = list_make1_irange_full(prel, IR_COMPLETE);
 	else
 		result->rangeset = NIL;
 
@@ -831,9 +828,7 @@ handle_boolexpr(const BoolExpr *expr, WalkerContext *context)
 				break;
 
 			default:
-				result->rangeset = list_make1_irange(make_irange(0,
-																 PrelLastChild(prel),
-																 IR_LOSSY));
+				result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
 				break;
 		}
 	}
@@ -1003,7 +998,7 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 		result->paramsel = DEFAULT_INEQ_SEL;
 
 handle_arrexpr_return:
-	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_LOSSY));
+	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
 	result->paramsel = 1.0;
 	return result;
 }
@@ -1036,7 +1031,7 @@ handle_opexpr(const OpExpr *expr, WalkerContext *context)
 		}
 	}
 
-	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_LOSSY));
+	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
 	result->paramsel = 1.0;
 	return result;
 }
@@ -1131,7 +1126,7 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 	}
 
 binary_opexpr_return:
-	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_LOSSY));
+	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
 	result->paramsel = 1.0;
 }
 
@@ -1155,7 +1150,7 @@ handle_binary_opexpr_param(const PartRelationInfo *prel,
 	tce = lookup_type_cache(vartype, TYPECACHE_BTREE_OPFAMILY);
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
 
-	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_LOSSY));
+	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
 	result->paramsel = estimate_paramsel_using_prel(prel, strategy);
 }
 
