@@ -157,8 +157,7 @@ BEGIN
 	VALUES (parent_relid, attribute, 2, p_interval::TEXT);
 
 	/* Create sequence for child partitions names */
-	PERFORM @extschema@.create_or_replace_sequence(parent_relid)
-	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
+	PERFORM @extschema@.create_or_replace_sequence(parent_relid);
 
 	IF p_count != 0 THEN
 		part_count := @extschema@.create_range_partitions_internal(
@@ -258,8 +257,7 @@ BEGIN
 	VALUES (parent_relid, attribute, 2, p_interval::TEXT);
 
 	/* Create sequence for child partitions names */
-	PERFORM @extschema@.create_or_replace_sequence(parent_relid)
-	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
+	PERFORM @extschema@.create_or_replace_sequence(parent_relid);
 
 	IF p_count != 0 THEN
 		part_count := @extschema@.create_range_partitions_internal(
@@ -320,8 +318,7 @@ BEGIN
 	VALUES (parent_relid, attribute, 2, NULL);
 
 	/* Create sequence for child partitions names */
-	PERFORM @extschema@.create_or_replace_sequence(parent_relid)
-	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
+	PERFORM @extschema@.create_or_replace_sequence(parent_relid);
 
 	/* Create partitions */
 	part_count := @extschema@.create_range_partitions_internal(parent_relid,
@@ -375,8 +372,7 @@ BEGIN
 	VALUES (parent_relid, attribute, 2, p_interval::TEXT);
 
 	/* Create sequence for child partitions names */
-	PERFORM @extschema@.create_or_replace_sequence(parent_relid)
-	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
+	PERFORM @extschema@.create_or_replace_sequence(parent_relid);
 
 	WHILE start_value <= end_value
 	LOOP
@@ -435,8 +431,7 @@ BEGIN
 	VALUES (parent_relid, attribute, 2, p_interval::TEXT);
 
 	/* Create sequence for child partitions names */
-	PERFORM @extschema@.create_or_replace_sequence(parent_relid)
-	FROM @extschema@.get_plain_schema_and_relname(parent_relid);
+	PERFORM @extschema@.create_or_replace_sequence(parent_relid);
 
 	WHILE start_value <= end_value
 	LOOP

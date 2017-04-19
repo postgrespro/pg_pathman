@@ -458,7 +458,7 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 	usercxt = (show_partition_list_cxt *) funccxt->user_fctx;
 
 	/* Iterate through pathman cache */
-	for(;;)
+	for (;;)
 	{
 		const PartRelationInfo *prel;
 		HeapTuple				htup;

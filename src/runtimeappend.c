@@ -94,39 +94,27 @@ static void
 fetch_next_tuple(CustomScanState *node)
 {
 	RuntimeAppendState	   *scan_state = (RuntimeAppendState *) node;
-	TupleTableSlot		   *slot = NULL;
 
 	while (scan_state->running_idx < scan_state->ncur_plans)
 	{
 		ChildScanCommon		child = scan_state->cur_plans[scan_state->running_idx];
 		PlanState		   *state = child->content.plan_state;
-		bool				quals;
 
 		for (;;)
 		{
-			slot = ExecProcNode(state);
+			TupleTableSlot *slot = ExecProcNode(state);
 
 			if (TupIsNull(slot))
 				break;
 
-			node->ss.ps.ps_ExprContext->ecxt_scantuple = slot;
-			quals = ExecQual(scan_state->custom_expr_states,
-							 node->ss.ps.ps_ExprContext, false);
-
-			ResetExprContext(node->ss.ps.ps_ExprContext);
-
-			if (quals)
-			{
-				scan_state->slot = slot;
-				return;
-			}
+			scan_state->slot = slot;
+			return;
 		}
 
 		scan_state->running_idx++;
 	}
 
-	scan_state->slot = slot;
-	return;
+	scan_state->slot = NULL;
 }
 
 TupleTableSlot *
@@ -152,5 +140,7 @@ runtimeappend_explain(CustomScanState *node, List *ancestors, ExplainState *es)
 {
 	RuntimeAppendState *scan_state = (RuntimeAppendState *) node;
 
-	explain_append_common(node, scan_state->children_table, es);
+	explain_append_common(node, ancestors, es,
+						  scan_state->children_table,
+						  scan_state->custom_exprs);
 }

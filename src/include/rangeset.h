@@ -50,6 +50,11 @@ typedef struct {
 #define linitial_irange(list)			( lfirst_irange(list_head(list)) )
 
 
+/* convenience macro (requires relation_info.h) */
+#define list_make1_irange_full(prel, lossy) \
+	( list_make1_irange(make_irange(0, PrelLastChild(prel), (lossy))) )
+
+
 inline static IndexRange
 make_irange(uint32 lower, uint32 upper, bool lossy)
 {
@@ -140,6 +145,5 @@ List *irange_list_intersection(List *a, List *b);
 /* Utility functions */
 int irange_list_length(List *rangeset);
 bool irange_list_find(List *rangeset, int index, bool *lossy);
-
 
 #endif /* PATHMAN_RANGESET_H */

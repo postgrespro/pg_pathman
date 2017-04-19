@@ -268,7 +268,7 @@ handle_modification_query(Query *parse)
 	if (prel->enable_parent) return;
 
 	/* Parse syntax tree and extract partition ranges */
-	ranges = list_make1_irange(make_irange(0, PrelLastChild(prel), false));
+	ranges = list_make1_irange_full(prel, IR_COMPLETE);
 	expr = (Expr *) eval_const_expressions(NULL, parse->jointree->quals);
 
 	/* Exit if there's no expr (no use) */

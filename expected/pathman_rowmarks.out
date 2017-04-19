@@ -100,6 +100,7 @@ FOR SHARE;
                              ->  Seq Scan on first_3
                              ->  Seq Scan on first_4
    ->  Custom Scan (RuntimeAppend)
+         Prune by: (first.id = $1)
          ->  Seq Scan on first_0 first
                Filter: (id = $1)
          ->  Seq Scan on first_1 first
@@ -110,7 +111,7 @@ FOR SHARE;
                Filter: (id = $1)
          ->  Seq Scan on first_4 first
                Filter: (id = $1)
-(23 rows)
+(24 rows)
 
 /* A little harder (execution) */
 SELECT * FROM rowmarks.first
@@ -142,6 +143,7 @@ FOR SHARE;
                        Sort Key: second.id
                        ->  Seq Scan on second
    ->  Custom Scan (RuntimeAppend)
+         Prune by: (first.id = $1)
          ->  Seq Scan on first_0 first
                Filter: (id = $1)
          ->  Seq Scan on first_1 first
@@ -152,7 +154,7 @@ FOR SHARE;
                Filter: (id = $1)
          ->  Seq Scan on first_4 first
                Filter: (id = $1)
-(18 rows)
+(19 rows)
 
 /* Two tables (execution) */
 SELECT * FROM rowmarks.first
