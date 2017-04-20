@@ -130,9 +130,12 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	}
 
 	/* Make copy of partitioning expression and fix Var's  varno attributes */
-	expr = copyObject(inner_prel->expr);
+	expr = inner_prel->expr;
 	if (innerrel->relid != 1)
+	{
+		expr = copyObject(expr);
 		ChangeVarNodes(expr, 1, innerrel->relid, 0);
+	}
 
 	paramsel = 1.0;
 	foreach (lc, joinclauses)
@@ -206,8 +209,6 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		required_nestloop = calc_nestloop_required_outer(outer, inner);
 
 		/*
-		 * Check to see if proposed path is still parameterized, and reject if the
-		 * parameterization wouldn't be sensible --- unless allow_star_schema_join
 		 * says to allow it anyway.  Also, we must reject if have_dangerous_phv
 		 * doesn't like the look of it, which could only happen if the nestloop is
 		 * still parameterized.
