@@ -432,9 +432,6 @@ BEGIN
 
 	/* Drop triggers on update */
 	PERFORM @extschema@.drop_triggers(parent_relid);
-
-	/* Notify backend about changes */
-	PERFORM @extschema@.on_remove_partitions(parent_relid);
 END
 $$
 LANGUAGE plpgsql STRICT;
@@ -637,9 +634,6 @@ BEGIN
 		v_part_count := v_part_count + 1;
 	END LOOP;
 
-	/* Notify backend about changes */
-	PERFORM @extschema@.on_remove_partitions(parent_relid);
-
 	RETURN v_part_count;
 END
 $$ LANGUAGE plpgsql
@@ -760,23 +754,6 @@ LANGUAGE sql STRICT;
 CREATE EVENT TRIGGER pathman_ddl_trigger
 ON sql_drop
 EXECUTE PROCEDURE @extschema@.pathman_ddl_trigger_func();
-
-
-
-CREATE OR REPLACE FUNCTION @extschema@.on_create_partitions(
-	relid	REGCLASS)
-RETURNS VOID AS 'pg_pathman', 'on_partitions_created'
-LANGUAGE C STRICT;
-
-CREATE OR REPLACE FUNCTION @extschema@.on_update_partitions(
-	relid	REGCLASS)
-RETURNS VOID AS 'pg_pathman', 'on_partitions_updated'
-LANGUAGE C STRICT;
-
-CREATE OR REPLACE FUNCTION @extschema@.on_remove_partitions(
-	relid	REGCLASS)
-RETURNS VOID AS 'pg_pathman', 'on_partitions_removed'
-LANGUAGE C STRICT;
 
 
 /*
