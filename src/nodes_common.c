@@ -367,6 +367,11 @@ get_partitioned_attr_clauses(List *restrictinfo_list,
 
 		ctx.count = 0;
 		ctx.prel_expr = prel->expr;
+		if (partitioned_rel != 1)
+		{
+			ctx.prel_expr = copyObject(prel->expr);
+			ChangeVarNodes(ctx.prel_expr, 1, partitioned_rel, 0);
+		}
 		check_clause_for_expression((Node *) rinfo->clause, &ctx);
 
 		if (ctx.count == 1)
