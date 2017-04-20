@@ -777,7 +777,7 @@ pathman_prepare_drop(Node *parsetree)
 	{
 		RangeVar   *rv = makeRangeVarFromNameList((List *) lfirst(cell));
 		Oid			relid = RangeVarGetRelid(rv, lockmode, true);
-		Relation	rel = heap_open(relid, lockmode);
+		Relation	rel;
 
 		if (!OidIsValid(relid))
 		{
@@ -789,6 +789,8 @@ pathman_prepare_drop(Node *parsetree)
 						 errmsg("table \"%s\" does not exist",
 								rv->relname)));
 		}
+
+		rel = heap_open(relid, lockmode);
 
 		/* Is it pg_pathman's partitioned table? */
 		if (get_pathman_relation_info(relid) != NULL)
