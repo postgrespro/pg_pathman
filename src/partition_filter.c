@@ -383,7 +383,7 @@ find_partition_for_value(Datum value, Oid value_type,
 #define CopyToTempConst(const_field, attr_field) \
 	( temp_const.const_field = prel->attr_field )
 
-	Oid				result;
+	Oid				result = InvalidOid;
 	Const			temp_const;	/* temporary const for expr walker */
 	WalkerContext	wcxt;
 	List		   *ranges = NIL;

@@ -1340,7 +1340,6 @@ create_foreign_key_internal(Oid fk_table,
 									  fk_table,
 									  &fk_attnum,
 									  1,
-									  1,
 									  InvalidOid,		/* not a domain
 														 * constraint */
 									  indexOid,
@@ -1729,8 +1728,12 @@ get_index_for_key(Relation rel, AttrNumber attnum, Oid *index_id)
 		 * Must have the right number of columns; must be unique and not a
 		 * partial index; forget it if there are any expressions, too. Invalid
 		 * indexes are out as well.
+		 *
+		 * TODO: in postgres 10 there is indnkeyatts attribute we must check
+		 * instead of indnatts. We should keep this in mind when we adapt
+		 * to the newer version.
 		 */
-		if (indexStruct->indnkeyatts == 1 &&
+		if (indexStruct->indnatts == 1 &&
 			indexStruct->indisunique &&
 			IndexIsValid(indexStruct) &&
 			heap_attisnull(indexTuple, Anum_pg_index_indpred) &&

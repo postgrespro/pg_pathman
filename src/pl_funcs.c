@@ -531,9 +531,9 @@ tuple_format_is_convertable(PG_FUNCTION_ARGS)
 	PG_TRY();
 	{
 		/* Try to build a conversion map */
-		(void) convert_tuples_by_name_map(rel1->rd_att,
-						   				  rel2->rd_att,
-							   			  "doesn't matter");
+		(void) convert_tuples_by_name(rel1->rd_att,
+						   			  rel2->rd_att,
+							   		  "doesn't matter");
 	}
 	PG_CATCH();
 	{
