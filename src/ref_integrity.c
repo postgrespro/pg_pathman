@@ -19,7 +19,10 @@
 #include "catalog/indexing.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_constraint.h"
+#if PG_VERSION_NUM >= 90600
+/* Constraint function were moved to pg_constraint_fn.h in version 9.6 */
 #include "catalog/pg_constraint_fn.h"
+#endif
 #include "catalog/pg_type.h"
 #include "catalog/pg_opclass.h"
 #include "catalog/pg_operator.h"
@@ -35,6 +38,7 @@
 #include "utils/inval.h"
 #include "utils/lsyscache.h"
 #include "utils/tqual.h"
+#include "utils/snapmgr.h"
 #include "utils/syscache.h"
 #include "utils/memutils.h"
 
