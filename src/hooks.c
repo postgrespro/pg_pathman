@@ -209,6 +209,8 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		required_nestloop = calc_nestloop_required_outer(outer, inner);
 
 		/*
+		 * Check to see if proposed path is still parameterized, and reject if the
+		 * parameterization wouldn't be sensible --- unless allow_star_schema_join
 		 * says to allow it anyway.  Also, we must reject if have_dangerous_phv
 		 * doesn't like the look of it, which could only happen if the nestloop is
 		 * still parameterized.
