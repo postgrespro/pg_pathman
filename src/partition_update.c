@@ -22,10 +22,10 @@ CustomExecMethods	partition_update_exec_methods;
 void
 init_partition_update_static_data(void)
 {
-	partition_update_plan_methods.CustomName 			= "PartitionUpdate";
+	partition_update_plan_methods.CustomName 			= "PrepareInsert";
 	partition_update_plan_methods.CreateCustomScanState	= partition_update_create_scan_state;
 
-	partition_update_exec_methods.CustomName			= "PartitionUpdate";
+	partition_update_exec_methods.CustomName			= "PrepareInsert";
 	partition_update_exec_methods.BeginCustomScan		= partition_update_begin;
 	partition_update_exec_methods.ExecCustomScan		= partition_update_exec;
 	partition_update_exec_methods.EndCustomScan			= partition_update_end;

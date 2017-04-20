@@ -455,6 +455,8 @@ partition_update_visitor(Plan *plan, void *context)
 		{
 			List *returning_list = NIL;
 
+			modify_table->operation = CMD_INSERT;
+
 			/* Extract returning list if possible */
 			if (lc3)
 			{

@@ -674,7 +674,6 @@ pfilter_build_tlist(Relation parent_rel, List *tlist)
 	{
 		TargetEntry		   *tle = (TargetEntry *) lfirst(lc);
 		TargetEntry		   *newtle;
-		Form_pg_attribute	attr;
 
 		if (tle->expr != NULL && IsA(tle->expr, Var))
 		{
@@ -685,7 +684,17 @@ pfilter_build_tlist(Relation parent_rel, List *tlist)
 										tle->resjunk);
 		}
 		else
-			newtle = copyObject(tle);
+		{
+			Var *var = makeVar(INDEX_VAR,	/* point to subplan's elements */
+							   tle->resno,
+							   exprType((Node *) tle->expr),
+							   exprTypmod((Node *) tle->expr),
+							   exprCollation((Node *) tle->expr),
+							   0);
+
+			newtle = makeTargetEntry((Expr *) var, tle->resno, tle->resname,
+										tle->resjunk);
+		}
 
 		result_tlist = lappend(result_tlist, newtle);
 	}
