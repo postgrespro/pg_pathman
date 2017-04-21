@@ -634,6 +634,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 
 		/* Place tuple in tuple slot --- but slot shouldn't free it */
 		slot = myslot;
+		ExecSetSlotDescriptor(slot, tupDesc);
 		ExecStoreTuple(tuple, slot, InvalidBuffer, false);
 
 		/* Execute expression */
@@ -671,6 +672,10 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 			tuple = do_convert_tuple(tuple, rri_holder->tuple_map);
 			heap_freetuple(tuple_old);
 		}
+
+		/* now we can set proper tuple descriptor according to child relation */
+		ExecSetSlotDescriptor(slot, RelationGetDescr(child_result_rel->ri_RelationDesc));
+		ExecStoreTuple(tuple, slot, InvalidBuffer, false);
 
 		/* Triggers and stuff need to be invoked in query context. */
 		MemoryContextSwitchTo(oldcontext);

@@ -170,9 +170,6 @@ BEGIN
 									NULL);
 	END IF;
 
-	/* Notify backend about changes */
-	PERFORM @extschema@.on_create_partitions(parent_relid);
-
 	/* Relocate data if asked to */
 	IF partition_data = true THEN
 		PERFORM @extschema@.set_enable_parent(parent_relid, false);
@@ -268,9 +265,6 @@ BEGIN
 						NULL);
 	END IF;
 
-	/* Notify backend about changes */
-	PERFORM @extschema@.on_create_partitions(parent_relid);
-
 	/* Relocate data if asked to */
 	IF partition_data = true THEN
 		PERFORM @extschema@.set_enable_parent(parent_relid, false);
@@ -326,9 +320,6 @@ BEGIN
 															   bounds,
 															   partition_names,
 															   tablespaces);
-
-	/* Notify backend about changes */
-	PERFORM @extschema@.on_create_partitions(parent_relid);
 
 	/* Relocate data if asked to */
 	IF partition_data = true THEN
@@ -386,9 +377,6 @@ BEGIN
 		start_value := start_value + p_interval;
 		part_count := part_count + 1;
 	END LOOP;
-
-	/* Notify backend about changes */
-	PERFORM @extschema@.on_create_partitions(parent_relid);
 
 	/* Relocate data if asked to */
 	IF partition_data = true THEN
@@ -449,9 +437,6 @@ BEGIN
 		start_value := start_value + p_interval;
 		part_count := part_count + 1;
 	END LOOP;
-
-	/* Notify backend about changes */
-	PERFORM @extschema@.on_create_partitions(parent_relid);
 
 	/* Relocate data if asked to */
 	IF partition_data = true THEN
@@ -553,9 +538,6 @@ BEGIN
 				   partition_relid::TEXT,
 				   v_check_name,
 				   v_cond);
-
-	/* Tell backend to reload configuration */
-	PERFORM @extschema@.on_update_partitions(v_parent);
 END
 $$
 LANGUAGE plpgsql;
@@ -617,8 +599,6 @@ BEGIN
 	INTO
 		v_part_name;
 
-	/* Invalidate cache */
-	PERFORM @extschema@.on_update_partitions(parent_relid);
 	RETURN v_part_name;
 END
 $$
@@ -727,8 +707,6 @@ BEGIN
 	INTO
 		v_part_name;
 
-	/* Invalidate cache */
-	PERFORM @extschema@.on_update_partitions(parent_relid);
 	RETURN v_part_name;
 END
 $$
@@ -830,7 +808,6 @@ BEGIN
 															 end_value,
 															 partition_name,
 															 tablespace);
-	PERFORM @extschema@.on_update_partitions(parent_relid);
 
 	RETURN v_part_name;
 END
@@ -894,9 +871,6 @@ BEGIN
 	ELSE
 		EXECUTE format('DROP TABLE %s', partition_relid::TEXT);
 	END IF;
-
-	/* Invalidate cache */
-	PERFORM @extschema@.on_update_partitions(parent_relid);
 
 	RETURN part_name;
 END
@@ -980,9 +954,6 @@ BEGIN
 															 start_value,
 															 end_value);
 
-	/* Invalidate cache */
-	PERFORM @extschema@.on_update_partitions(parent_relid);
-
 	RETURN partition_relid;
 END
 $$
@@ -1027,9 +998,6 @@ BEGIN
 	EXECUTE format('DROP TRIGGER IF EXISTS %s ON %s',
 				   @extschema@.build_update_trigger_name(parent_relid),
 				   partition_relid::TEXT);
-
-	/* Invalidate cache */
-	PERFORM @extschema@.on_update_partitions(parent_relid);
 
 	RETURN partition_relid;
 END

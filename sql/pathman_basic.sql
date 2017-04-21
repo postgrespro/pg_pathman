@@ -165,6 +165,7 @@ SET enable_bitmapscan = OFF;
 SET enable_seqscan = ON;
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = NULL;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2 OR value = 1;
 
@@ -188,6 +189,7 @@ SET enable_bitmapscan = OFF;
 SET enable_seqscan = OFF;
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = NULL;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2 OR value = 1;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (2);

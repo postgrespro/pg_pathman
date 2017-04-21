@@ -41,10 +41,6 @@
 
 /* Function declarations */
 
-PG_FUNCTION_INFO_V1( on_partitions_created );
-PG_FUNCTION_INFO_V1( on_partitions_updated );
-PG_FUNCTION_INFO_V1( on_partitions_removed );
-
 PG_FUNCTION_INFO_V1( get_number_of_partitions_pl );
 PG_FUNCTION_INFO_V1( get_parent_of_partition_pl );
 PG_FUNCTION_INFO_V1( get_base_type_pl );
@@ -104,10 +100,6 @@ typedef struct
 } show_cache_stats_cxt;
 
 
-static void on_partitions_created_internal(Oid partitioned_table, bool add_callbacks);
-static void on_partitions_updated_internal(Oid partitioned_table, bool add_callbacks);
-static void on_partitions_removed_internal(Oid partitioned_table, bool add_callbacks);
-
 static void pathman_update_trigger_func_move_tuple(Relation source_rel,
 												   Relation target_rel,
 												   HeapTuple old_tuple,
@@ -118,63 +110,6 @@ static inline bool
 check_relation_exists(Oid relid)
 {
 	return get_rel_type_id(relid) != InvalidOid;
-}
-
-
-/*
- * ----------------------------
- *  Partition events callbacks
- * ----------------------------
- */
-
-static void
-on_partitions_created_internal(Oid partitioned_table, bool add_callbacks)
-{
-	elog(DEBUG2, "on_partitions_created() [add_callbacks = %s] "
-				 "triggered for relation %u",
-		 (add_callbacks ? "true" : "false"), partitioned_table);
-}
-
-static void
-on_partitions_updated_internal(Oid partitioned_table, bool add_callbacks)
-{
-	bool entry_found;
-
-	elog(DEBUG2, "on_partitions_updated() [add_callbacks = %s] "
-				 "triggered for relation %u",
-		 (add_callbacks ? "true" : "false"), partitioned_table);
-
-	invalidate_pathman_relation_info(partitioned_table, &entry_found);
-}
-
-static void
-on_partitions_removed_internal(Oid partitioned_table, bool add_callbacks)
-{
-	elog(DEBUG2, "on_partitions_removed() [add_callbacks = %s] "
-				 "triggered for relation %u",
-		 (add_callbacks ? "true" : "false"), partitioned_table);
-}
-
-
-Datum
-on_partitions_created(PG_FUNCTION_ARGS)
-{
-	on_partitions_created_internal(PG_GETARG_OID(0), true);
-	PG_RETURN_NULL();
-}
-
-Datum
-on_partitions_updated(PG_FUNCTION_ARGS)
-{
-	on_partitions_updated_internal(PG_GETARG_OID(0), true);
-	PG_RETURN_NULL();
-}
-
-Datum
-on_partitions_removed(PG_FUNCTION_ARGS)
-{
-	on_partitions_removed_internal(PG_GETARG_OID(0), true);
-	PG_RETURN_NULL();
 }
 
 

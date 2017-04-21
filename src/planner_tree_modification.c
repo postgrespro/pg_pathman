@@ -17,9 +17,11 @@
 #include "planner_tree_modification.h"
 #include "rewrite/rewriteManip.h"
 
+#include "access/htup_details.h"
 #include "miscadmin.h"
 #include "optimizer/clauses.h"
 #include "storage/lmgr.h"
+#include "utils/lsyscache.h"
 #include "utils/syscache.h"
 
 
@@ -309,9 +311,23 @@ handle_modification_query(Query *parse)
 
 			LOCKMODE	lockmode = RowExclusiveLock; /* UPDATE | DELETE */
 
-			/* Make sure that 'child' exists */
+			HeapTuple	syscache_htup;
+			char		child_relkind;
+
+			/* Lock 'child' table */
 			LockRelationOid(child, lockmode);
-			if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(child)))
+
+			/* Make sure that 'child' exists */
+			syscache_htup = SearchSysCache1(RELOID, ObjectIdGetDatum(child));
+			if (HeapTupleIsValid(syscache_htup))
+			{
+				Form_pg_class reltup = (Form_pg_class) GETSTRUCT(syscache_htup);
+
+				/* Fetch child's relkind and free cache entry */
+				child_relkind = reltup->relkind;
+				ReleaseSysCache(syscache_htup);
+			}
+			else
 			{
 				UnlockRelationOid(child, lockmode);
 				return; /* nothing to do here */
@@ -334,8 +350,9 @@ handle_modification_query(Query *parse)
 			if (tuple_map) /* just checking the pointer! */
 				return;
 
-			/* Update RTE's relid */
+			/* Update RTE's relid and relkind (for FDW) */
 			rte->relid = child;
+			rte->relkind = child_relkind;
 
 			/* HACK: unset the 'inh' flag (no children) */
 			rte->inh = false;
