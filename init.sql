@@ -432,9 +432,6 @@ BEGIN
 
 	/* Drop triggers on update */
 	PERFORM @extschema@.drop_triggers(parent_relid);
-
-	/* Notify backend about changes */
-	PERFORM @extschema@.on_remove_partitions(parent_relid);
 END
 $$
 LANGUAGE plpgsql STRICT;
@@ -584,23 +581,22 @@ DECLARE
 	v_rec			RECORD;
 	v_rows			BIGINT;
 	v_part_count	INTEGER := 0;
-	conf_num_del	INTEGER;
+	conf_num		INTEGER;
 	v_relkind		CHAR;
 
 BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
 
-	/* Drop trigger first */
+	/* Acquire data modification lock */
+	PERFORM @extschema@.prevent_relation_modification(parent_relid);
+
+	/* First, drop all triggers */
 	PERFORM @extschema@.drop_triggers(parent_relid);
 
-	WITH config_num_deleted AS (DELETE FROM @extschema@.pathman_config
-								WHERE partrel = parent_relid
-								RETURNING *)
-	SELECT count(*) from config_num_deleted INTO conf_num_del;
+	SELECT count(*) FROM @extschema@.pathman_config
+	WHERE partrel = parent_relid INTO conf_num;
 
-	DELETE FROM @extschema@.pathman_config_params WHERE partrel = parent_relid;
-
-	IF conf_num_del = 0 THEN
+	IF conf_num = 0 THEN
 		RAISE EXCEPTION 'relation "%" has no partitions', parent_relid::TEXT;
 	END IF;
 
@@ -624,8 +620,8 @@ BEGIN
 		INTO v_relkind;
 
 		/*
-		 * Determine the kind of child relation. It can be either regular
-		 * table (r) or foreign table (f). Depending on relkind we use
+		 * Determine the kind of child relation. It can be either a regular
+		 * table (r) or a foreign table (f). Depending on relkind we use
 		 * DROP TABLE or DROP FOREIGN TABLE.
 		 */
 		IF v_relkind = 'f' THEN
@@ -637,8 +633,9 @@ BEGIN
 		v_part_count := v_part_count + 1;
 	END LOOP;
 
-	/* Notify backend about changes */
-	PERFORM @extschema@.on_remove_partitions(parent_relid);
+	/* Finally delete both config entries */
+	DELETE FROM @extschema@.pathman_config WHERE partrel = parent_relid;
+	DELETE FROM @extschema@.pathman_config_params WHERE partrel = parent_relid;
 
 	RETURN v_part_count;
 END
@@ -760,23 +757,6 @@ LANGUAGE sql STRICT;
 CREATE EVENT TRIGGER pathman_ddl_trigger
 ON sql_drop
 EXECUTE PROCEDURE @extschema@.pathman_ddl_trigger_func();
-
-
-
-CREATE OR REPLACE FUNCTION @extschema@.on_create_partitions(
-	relid	REGCLASS)
-RETURNS VOID AS 'pg_pathman', 'on_partitions_created'
-LANGUAGE C STRICT;
-
-CREATE OR REPLACE FUNCTION @extschema@.on_update_partitions(
-	relid	REGCLASS)
-RETURNS VOID AS 'pg_pathman', 'on_partitions_updated'
-LANGUAGE C STRICT;
-
-CREATE OR REPLACE FUNCTION @extschema@.on_remove_partitions(
-	relid	REGCLASS)
-RETURNS VOID AS 'pg_pathman', 'on_partitions_removed'
-LANGUAGE C STRICT;
 
 
 /*

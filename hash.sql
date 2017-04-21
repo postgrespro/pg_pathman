@@ -45,9 +45,6 @@ BEGIN
 														partition_names,
 														tablespaces);
 
-	/* Notify backend about changes */
-	PERFORM @extschema@.on_create_partitions(parent_relid);
-
 	/* Copy data */
 	IF partition_data = true THEN
 		PERFORM @extschema@.set_enable_parent(parent_relid, false);
@@ -155,9 +152,6 @@ BEGIN
 	PERFORM @extschema@.invoke_on_partition_created_callback(parent_relid,
 															 new_partition,
 															 p_init_callback);
-
-	/* Invalidate cache */
-	PERFORM @extschema@.on_update_partitions(parent_relid);
 
 	RETURN new_partition;
 END
