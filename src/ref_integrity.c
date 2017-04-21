@@ -19,8 +19,8 @@
 #include "catalog/indexing.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_constraint.h"
-#if PG_VERSION_NUM >= 90600
 /* Constraint function were moved to pg_constraint_fn.h in version 9.6 */
+#if PG_VERSION_NUM >= 90600
 #include "catalog/pg_constraint_fn.h"
 #endif
 #include "catalog/pg_type.h"

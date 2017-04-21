@@ -130,6 +130,7 @@ BEGIN
 	INTO old_constr_def;
 
 	/* Detach old partition */
+	PERFORM @extschema@.prepare_partition_drop(parent_relid, old_partition);
 	EXECUTE format('ALTER TABLE %s NO INHERIT %s', old_partition, parent_relid);
 	EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %s',
 				   old_partition,

@@ -613,8 +613,6 @@ BEGIN
 								RETURNING *)
 	SELECT count(*) from config_num_deleted INTO conf_num_del;
 
-	DELETE FROM @extschema@.pathman_config_params WHERE partrel = parent_relid;
-
 	IF conf_num_del = 0 THEN
 		RAISE EXCEPTION 'relation "%" has no partitions', parent_relid::TEXT;
 	END IF;
@@ -638,6 +636,8 @@ BEGIN
 		WHERE oid = v_rec.tbl
 		INTO v_relkind;
 
+		PERFORM @extschema@.prepare_partition_drop(parent_relid, v_rec.tbl);
+
 		/*
 		 * Determine the kind of child relation. It can be either regular
 		 * table (r) or foreign table (f). Depending on relkind we use
@@ -651,6 +651,8 @@ BEGIN
 
 		v_part_count := v_part_count + 1;
 	END LOOP;
+
+	DELETE FROM @extschema@.pathman_config_params WHERE partrel = parent_relid;
 
 	/* Notify backend about changes */
 	PERFORM @extschema@.on_remove_partitions(parent_relid);

@@ -290,6 +290,14 @@ set_set_spawn_using_bgw(relation REGCLASS, value BOOLEAN)
 ```
 When INSERTing new data beyond the partitioning range, use SpawnPartitionsWorker to create new partitions in a separate transaction.
 
+```plpgsql
+create_foreign_key(fk_table    REGCLASS,
+                   fk_attr     TEXT,
+                   pk_table    REGCLASS)
+```
+Create a foreign key constraint on `fk_table` for `fk_attr` column which references partitioning key on partitioned `pk_table`. `pk_table` must have UNIQUE indexes on parent and all partitions for key column. This constraint implements RESTRICT behaviour ON DELETE and ON UPDATE actions. You can remove FK constraint regular way by performing `ALTER TABLE ... DROP CONSTRAINT ...`
+
+
 ## Views and tables
 
 #### `pathman_config` --- main config storage

@@ -77,8 +77,10 @@ SELECT append_range_partition('abc');
 
 INSERT INTO abc VALUES (350);
 INSERT INTO xxx (abc_id) VALUES (350);
-/* Partition cannot be dropped unless there are references from FK table */
+/* Partition cannot be dropped or detached unless there are references from FK table */
 DROP TABLE abc_4;
+ERROR:  update or delete on table "abc_4" violates foreign key constraint "xxx_abc_id_fkey" on table "xxx"
+SELECT detach_range_partition('abc_4');
 ERROR:  update or delete on table "abc_4" violates foreign key constraint "xxx_abc_id_fkey" on table "xxx"
 /* Successful partition drop */
 DELETE FROM xxx WHERE abc_id = 350;
@@ -102,5 +104,31 @@ SELECT add_range_partition('abc', 301, 401, 'abc_x');
  abc_x
 (1 row)
 
+/* Check replace_hash_partition() func */
+ALTER TABLE xxx DROP CONSTRAINT xxx_abc_id_fkey;
+DELETE FROM xxx;
+SELECT drop_partitions('abc', true);
+ drop_partitions 
+-----------------
+               4
+(1 row)
+
+SELECT create_hash_partitions('abc', 'id', 3);
+ create_hash_partitions 
+------------------------
+                      3
+(1 row)
+
+SELECT create_foreign_key('xxx', 'abc_id', 'abc');
+ create_foreign_key 
+--------------------
+ 
+(1 row)
+
+INSERT INTO abc SELECT generate_series(1, 10);
+INSERT INTO xxx (abc_id) SELECT generate_series(1, 10);
+CREATE TABLE abc_x (LIKE abc INCLUDING ALL);
+SELECT replace_hash_partition('abc_1', 'abc_x');
+ERROR:  update or delete on table "abc_1" violates foreign key constraint "xxx_abc_id_fkey" on table "xxx"
 DROP EXTENSION pg_pathman CASCADE;
-NOTICE:  drop cascades to constraint xxx_abc_id_fkey on table xxx
+NOTICE:  drop cascades to 4 other objects
