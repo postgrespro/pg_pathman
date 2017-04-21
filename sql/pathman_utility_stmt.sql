@@ -139,6 +139,23 @@ COPY copy_stmt_hooking.test FROM stdin;
 SELECT count(*) FROM ONLY copy_stmt_hooking.test;
 SELECT * FROM copy_stmt_hooking.test ORDER BY val;
 
+/* Check dropped colums before partitioning */
+CREATE TABLE copy_stmt_hooking.test2 (
+	a varchar(50),
+	b varchar(50),
+	t timestamp without time zone not null
+);
+ALTER TABLE copy_stmt_hooking.test2 DROP COLUMN a;
+SELECT create_range_partitions('copy_stmt_hooking.test2',
+	't',
+	'2017-01-01 00:00:00'::timestamp,
+	interval '1 hour', 5, false
+);
+COPY copy_stmt_hooking.test2(t) FROM stdin;
+2017-02-02 20:00:00
+\.
+SELECT COUNT(*) FROM copy_stmt_hooking.test2;
+
 DROP SCHEMA copy_stmt_hooking CASCADE;
 
 
