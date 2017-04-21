@@ -652,6 +652,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 
 		/* Place tuple in tuple slot --- but slot shouldn't free it */
 		slot = myslot;
+		ExecSetSlotDescriptor(slot, RelationGetDescr(child_result_rel->ri_RelationDesc));
 		ExecStoreTuple(tuple, slot, InvalidBuffer, false);
 
 		skip_tuple = false;
