@@ -210,6 +210,19 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 			return;
 
 
+#if PG_VERSION_NUM >= 100000
+		initial_cost_nestloop(root, &workspace, jointype,
+							  outer, inner, /* built paths */
+							  extra);
+
+		nest_path = create_nestloop_path(root, joinrel, jointype, &workspace,
+										 extra, outer, inner,
+										 extra->restrictlist,
+										 build_join_pathkeys(root, joinrel,
+															 jointype,
+															 outer->pathkeys),
+										 required_nestloop);
+#else
 		initial_cost_nestloop(root, &workspace, jointype,
 							  outer, inner, /* built paths */
 							  extra->sjinfo, &extra->semifactors);
@@ -221,6 +234,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 															 jointype,
 															 outer->pathkeys),
 										 required_nestloop);
+#endif
 
 		/* Discard all clauses that are to be evaluated by 'inner' */
 		foreach (rinfo_lc, extra->restrictlist)
@@ -752,6 +766,71 @@ pathman_relcache_hook(Datum arg, Oid relid)
 /*
  * Utility function invoker hook.
  */
+#if PG_VERSION_NUM >= 100000
+void
+pathman_process_utility_hook(PlannedStmt *pstmt,
+							 const char *queryString,
+							 ProcessUtilityContext context,
+							 ParamListInfo params,
+							 QueryEnvironment *queryEnv,
+							 DestReceiver *dest, char *completionTag)
+{
+	Node   *parsetree = pstmt->utilityStmt;
+
+	if (IsPathmanReady())
+	{
+		Oid			relation_oid;
+		PartType	part_type;
+		AttrNumber	attr_number;
+
+		/* Override standard COPY statement if needed */
+		if (is_pathman_related_copy(parsetree))
+		{
+			uint64	processed;
+
+			/* Handle our COPY case (and show a special cmd name) */
+			PathmanDoCopy((CopyStmt *) parsetree, queryString, &processed);
+			if (completionTag)
+				snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
+						 "PATHMAN COPY " UINT64_FORMAT, processed);
+
+			return; /* don't call standard_ProcessUtility() or hooks */
+		}
+
+		/* Override standard RENAME statement if needed */
+		else if (is_pathman_related_table_rename(parsetree,
+												 &relation_oid,
+												 &attr_number))
+			PathmanRenameConstraint(relation_oid,
+									attr_number,
+									(const RenameStmt *) parsetree);
+
+		/* Override standard ALTER COLUMN TYPE statement if needed */
+		else if (is_pathman_related_alter_column_type(parsetree,
+													  &relation_oid,
+													  &attr_number,
+													  &part_type) &&
+				 part_type == PT_HASH)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("cannot change type of column \"%s\""
+							" of table \"%s\" partitioned by HASH",
+							get_attname(relation_oid, attr_number),
+							get_rel_name(relation_oid))));
+	}
+
+	/* Call hooks set by other extensions if needed */
+	if (process_utility_hook_next)
+		process_utility_hook_next(pstmt, queryString,
+								  context, params, queryEnv,
+								  dest, completionTag);
+	/* Else call internal implementation */
+	else
+		standard_ProcessUtility(pstmt, queryString,
+								context, params, queryEnv,
+								dest, completionTag);
+}
+#else
 void
 pathman_process_utility_hook(Node *parsetree,
 							 const char *queryString,
@@ -813,3 +892,4 @@ pathman_process_utility_hook(Node *parsetree,
 								context, params,
 								dest, completionTag);
 }
+#endif

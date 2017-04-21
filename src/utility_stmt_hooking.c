@@ -495,8 +495,13 @@ PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
 			PreventCommandIfReadOnly("PATHMAN COPY FROM");
 		PreventCommandIfParallelMode("PATHMAN COPY FROM");
 
+#if PG_VERSION_NUM >= 100000
+		cstate = BeginCopyFrom(NULL, rel, stmt->filename, stmt->is_program,
+							   NULL, stmt->attlist, stmt->options);
+#else
 		cstate = BeginCopyFrom(rel, stmt->filename, stmt->is_program,
 							   stmt->attlist, stmt->options);
+#endif
 		*processed = PathmanCopyFrom(cstate, rel, range_table, is_old_protocol);
 		EndCopyFrom(cstate);
 	}
@@ -514,7 +519,11 @@ PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
 		modified_copy_stmt.query = query;
 
 		/* Call standard DoCopy using a new CopyStmt */
+#if PG_VERSION_NUM >= 100000
+		DoCopy(NULL, &modified_copy_stmt, 0, 0, processed);
+#else
 		DoCopy(&modified_copy_stmt, queryString, processed);
+#endif
 	}
 
 	/*
@@ -552,10 +561,18 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	tupDesc = RelationGetDescr(parent_rel);
 
 	parent_result_rel = makeNode(ResultRelInfo);
+#if PG_VERSION_NUM >= 100000
+	InitResultRelInfo(parent_result_rel,
+					  parent_rel,
+					  1,		/* dummy rangetable index */
+					  NULL,
+					  0);
+#else
 	InitResultRelInfo(parent_result_rel,
 					  parent_rel,
 					  1,		/* dummy rangetable index */
 					  0);
+#endif
 	ExecOpenIndices(parent_result_rel, false);
 
 	estate->es_result_relations = parent_result_rel;

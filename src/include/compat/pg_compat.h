@@ -34,6 +34,32 @@
  * ----------
  */
 
+
+/* create_append_path() */
+#if PG_VERSION_NUM >= 100000
+
+#define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
+		create_append_path((rel), (subpaths), (required_outer), (parallel_workers), NULL)
+
+#elif PG_VERSION_NUM >= 90600
+
+#ifndef PGPRO_VERSION
+#define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
+		create_append_path((rel), (subpaths), (required_outer), (parallel_workers))
+#else
+#define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
+		create_append_path((rel), (subpaths), (required_outer), \
+						   false, NIL, (parallel_workers))
+#endif
+
+#else /* for v9.5 */
+
+#define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
+		create_append_path((rel), (subpaths), (required_outer))
+
+#endif
+
+
 #if PG_VERSION_NUM >= 90600
 
 /* adjust_appendrel_attrs() */
@@ -44,17 +70,6 @@
 									   (Node *) (src_rel)->reltarget->exprs, \
 									   (appinfo)); \
 	} while (0)
-
-
-/* create_append_path() */
-#ifndef PGPRO_VERSION
-#define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
-		create_append_path((rel), (subpaths), (required_outer), (parallel_workers))
-#else
-#define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
-		create_append_path((rel), (subpaths), (required_outer), \
-						   false, NIL, (parallel_workers))
-#endif
 
 
 /* check_index_predicates() */
@@ -118,11 +133,6 @@ extern void set_rel_consider_parallel(PlannerInfo *root,
 									   (Node *) (src_rel)->reltargetlist, \
 									   (appinfo)); \
 	} while (0)
-
-
-/* create_append_path() */
-#define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
-		create_append_path((rel), (subpaths), (required_outer))
 
 
 /* check_partial_indexes() */

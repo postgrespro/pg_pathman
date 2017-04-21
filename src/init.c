@@ -86,7 +86,9 @@ static bool read_opexpr_const(const OpExpr *opexpr,
 							  const AttrNumber part_attno,
 							  Datum *value);
 
+#if PG_VERSION_NUM < 100000
 static int oid_cmp(const void *p1, const void *p2);
+#endif
 
 
 /* Validate SQL facade */
@@ -1128,6 +1130,7 @@ validate_hash_constraint(const Expr *expr,
 	return false;
 }
 
+#if PG_VERSION_NUM < 100000
 /* needed for find_inheritance_children_array() function */
 static int
 oid_cmp(const void *p1, const void *p2)
@@ -1141,6 +1144,7 @@ oid_cmp(const void *p1, const void *p2)
 		return 1;
 	return 0;
 }
+#endif
 
 
 /* Parse cstring and build uint32 representing the version */

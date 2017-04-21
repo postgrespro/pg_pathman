@@ -32,6 +32,9 @@
 #include "utils/syscache.h"
 #include "utils/typcache.h"
 
+#if PG_VERSION_NUM >= 100000
+#include "utils/regproc.h"
+#endif
 
 static bool clause_contains_params_walker(Node *node, void *context);
 

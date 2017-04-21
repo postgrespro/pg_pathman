@@ -107,8 +107,12 @@ set_rel_consider_parallel(PlannerInfo *root, RelOptInfo *rel,
 
 				if (proparallel != PROPARALLEL_SAFE)
 					return;
+#if PG_VERSION_NUM >= 100000
+				if (!is_parallel_safe(root, (Node *) rte->tablesample->args))
+#else
 				if (has_parallel_hazard((Node *) rte->tablesample->args,
 										false))
+#endif
 					return;
 			}
 
@@ -161,13 +165,21 @@ set_rel_consider_parallel(PlannerInfo *root, RelOptInfo *rel,
 
 		case RTE_FUNCTION:
 			/* Check for parallel-restricted functions. */
+#if PG_VERSION_NUM >= 100000
+			if (!is_parallel_safe(root, (Node *) rte->functions))
+#else
 			if (has_parallel_hazard((Node *) rte->functions, false))
+#endif
 				return;
 			break;
 
 		case RTE_VALUES:
 			/* Check for parallel-restricted functions. */
+#if PG_VERSION_NUM >= 100000
+			if (!is_parallel_safe(root, (Node *) rte->values_lists))
+#else
 			if (has_parallel_hazard((Node *) rte->values_lists, false))
+#endif
 				return;
 			break;
 
@@ -181,6 +193,9 @@ set_rel_consider_parallel(PlannerInfo *root, RelOptInfo *rel,
 			 * executed only once.
 			 */
 			return;
+
+		default:
+			;
 	}
 
 	/*
@@ -192,14 +207,22 @@ set_rel_consider_parallel(PlannerInfo *root, RelOptInfo *rel,
 	 * outer join clauses work correctly.  It would likely break equivalence
 	 * classes, too.
 	 */
+#if PG_VERSION_NUM >= 100000
+	if (!is_parallel_safe(root, (Node *) rel->baserestrictinfo))
+#else
 	if (has_parallel_hazard((Node *) rel->baserestrictinfo, false))
+#endif
 		return;
 
 	/*
 	 * Likewise, if the relation's outputs are not parallel-safe, give up.
 	 * (Usually, they're just Vars, but sometimes they're not.)
 	 */
+#if PG_VERSION_NUM >= 100000
+	if (!is_parallel_safe(root, (Node *) rel->reltarget->exprs))
+#else
 	if (has_parallel_hazard((Node *) rel->reltarget->exprs, false))
+#endif
 		return;
 
 	/* We have a winner. */
@@ -211,6 +234,22 @@ set_rel_consider_parallel(PlannerInfo *root, RelOptInfo *rel,
  * create_plain_partial_paths
  *	  Build partial access paths for parallel scan of a plain relation
  */
+#if PG_VERSION_NUM >= 100000
+void
+create_plain_partial_paths(PlannerInfo *root, RelOptInfo *rel)
+{
+	int			parallel_workers;
+
+	parallel_workers = compute_parallel_worker(rel, rel->pages, -1);
+
+	/* If any limit was set to zero, the user doesn't want a parallel scan. */
+	if (parallel_workers <= 0)
+		return;
+
+	/* Add an unordered partial path based on a parallel sequential scan. */
+	add_partial_path(rel, create_seqscan_path(root, rel, NULL, parallel_workers));
+}
+#else
 void
 create_plain_partial_paths(PlannerInfo *root, RelOptInfo *rel)
 {
@@ -267,6 +306,7 @@ create_plain_partial_paths(PlannerInfo *root, RelOptInfo *rel)
 	/* Add an unordered partial path based on a parallel sequential scan. */
 	add_partial_path(rel, create_seqscan_path(root, rel, NULL, parallel_workers));
 }
+#endif
 
 /*
  * Examine contents of MemoryContext.

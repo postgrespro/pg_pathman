@@ -192,7 +192,9 @@ start_bg_worker(const char bgworker_name[BGW_MAXLEN],
 									BGWORKER_BACKEND_DATABASE_CONNECTION;
 	worker.bgw_start_time		= BgWorkerStart_RecoveryFinished;
 	worker.bgw_restart_time		= BGW_NEVER_RESTART;
+#if PG_VERSION_NUM < 100000
 	worker.bgw_main				= NULL;
+#endif
 	worker.bgw_main_arg			= bgw_arg;
 	worker.bgw_notify_pid		= MyProcPid;
 
