@@ -8,6 +8,7 @@
  * ------------------------------------------------------------------------
  */
 
+#include "compat/pg_compat.h"
 #include "init.h"
 #include "nodes_common.h"
 #include "pathman.h"
@@ -295,18 +296,10 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 		if (!parts_storage->saved_rel_info)
 			elog(ERROR, "ResultPartsStorage contains no saved_rel_info");
 
-#if PG_VERSION_NUM >= 100000
-		InitResultRelInfo(child_result_rel_info,
-						  child_rel,
-						  child_rte_idx,
-						  parent_rel,
-						  parts_storage->estate->es_instrument);
-#else
-		InitResultRelInfo(child_result_rel_info,
-						  child_rel,
-						  child_rte_idx,
-						  parts_storage->estate->es_instrument);
-#endif
+		InitResultRelInfoCompat(child_result_rel_info,
+								child_rel,
+								child_rte_idx,
+								parts_storage->estate->es_instrument);
 
 		if (parts_storage->command_type != CMD_DELETE)
 			ExecOpenIndices(child_result_rel_info, parts_storage->speculative_inserts);

@@ -71,7 +71,7 @@
 /*
  * DefineRelation()
  *
- * for v10 set NULL on 'queryString' parameter as it uses only under vanilla
+ * for v10 set NULL into 'queryString' argument as it's used only under vanilla
  * partition creating
  */
 #if PG_VERSION_NUM >= 100000
@@ -169,6 +169,25 @@ extern void create_plain_partial_paths(PlannerInfo *root,
 									   (outer_path)->rows, \
 									   (inner_path)->rows, \
 									   (sjinfo), (restrict_clauses))
+#endif
+
+
+/*
+ * InitResultRelInfo
+ *
+ * for v10 set NULL into 'partition_root' argument to specify that result
+ * relation is not vanilla partition
+ */
+#if PG_VERSION_NUM >= 100000
+#define InitResultRelInfoCompat(resultRelInfo, resultRelationDesc, \
+								resultRelationIndex, instrument_options) \
+		InitResultRelInfo((resultRelInfo), (resultRelationDesc), \
+						  (resultRelationIndex), NULL, (instrument_options))
+#elif PG_VERSION_NUM >= 90500
+#define InitResultRelInfoCompat(resultRelInfo, resultRelationDesc, \
+								resultRelationIndex, instrument_options) \
+		InitResultRelInfo((resultRelInfo), (resultRelationDesc), \
+						  (resultRelationIndex), (instrument_options))
 #endif
 
 

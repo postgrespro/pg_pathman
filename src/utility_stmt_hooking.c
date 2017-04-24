@@ -12,6 +12,7 @@
  */
 
 #include "compat/debug_compat_features.h"
+#include "compat/pg_compat.h"
 #include "init.h"
 #include "utility_stmt_hooking.h"
 #include "partition_filter.h"
@@ -561,18 +562,10 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	tupDesc = RelationGetDescr(parent_rel);
 
 	parent_result_rel = makeNode(ResultRelInfo);
-#if PG_VERSION_NUM >= 100000
-	InitResultRelInfo(parent_result_rel,
-					  parent_rel,
-					  1,		/* dummy rangetable index */
-					  NULL,
-					  0);
-#else
-	InitResultRelInfo(parent_result_rel,
-					  parent_rel,
-					  1,		/* dummy rangetable index */
-					  0);
-#endif
+	InitResultRelInfoCompat(parent_result_rel,
+							parent_rel,
+							1,		/* dummy rangetable index */
+							0);
 	ExecOpenIndices(parent_result_rel, false);
 
 	estate->es_result_relations = parent_result_rel;
