@@ -118,7 +118,6 @@ partition_update_exec(CustomScanState *node)
 
 	if (!TupIsNull(slot))
 	{
-		char			 relkind;
 		Datum			 datum;
 		bool			 isNull;
 		ResultRelInfo	*resultRelInfo;
@@ -131,7 +130,6 @@ partition_update_exec(CustomScanState *node)
 		PartitionFilterState    *child_state = (PartitionFilterState *) child_ps;
 		EState					*estate = node->ss.ps.state;
 
-
 		resultRelInfo = estate->es_result_relation_info;
 		junkfilter = resultRelInfo->ri_junkFilter;
 		Assert(junkfilter != NULL);
@@ -141,8 +139,7 @@ partition_update_exec(CustomScanState *node)
 		/*
 		 * extract the 'ctid' junk attribute.
 		 */
-		relkind = resultRelInfo->ri_RelationDesc->rd_rel->relkind;
-		Assert(relkind == RELKIND_RELATION);
+		Assert(resultRelInfo->ri_RelationDesc->rd_rel->relkind == RELKIND_RELATION);
 		ctid_attno = ExecFindJunkAttribute(junkfilter, "ctid");
 		datum = ExecGetJunkAttribute(slot, ctid_attno, &isNull);
 		/* shouldn't ever get a null result... */
