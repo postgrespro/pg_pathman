@@ -21,12 +21,6 @@
 #include "optimizer/paths.h"
 #include "utils/memutils.h"
 
-/* Define ALLOCSET_DEFAULT_SIZES for our precious MemoryContexts */
-#if PG_VERSION_NUM < 90600
-#define ALLOCSET_DEFAULT_SIZES \
-	ALLOCSET_DEFAULT_MINSIZE, ALLOCSET_DEFAULT_INITSIZE, ALLOCSET_DEFAULT_MAXSIZE
-#endif
-
 
 /*
  * ----------
@@ -35,34 +29,10 @@
  */
 
 
-/* create_append_path() */
-#if PG_VERSION_NUM >= 100000
-
-#define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
-		create_append_path((rel), (subpaths), (required_outer), (parallel_workers), NULL)
-
-#elif PG_VERSION_NUM >= 90600
-
-#ifndef PGPRO_VERSION
-#define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
-		create_append_path((rel), (subpaths), (required_outer), (parallel_workers))
-#else
-#define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
-		create_append_path((rel), (subpaths), (required_outer), \
-						   false, NIL, (parallel_workers))
-#endif
-
-#else /* for v9.5 */
-
-#define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
-		create_append_path((rel), (subpaths), (required_outer))
-
-#endif
-
-
+/*
+ * adjust_appendrel_attrs()
+ */
 #if PG_VERSION_NUM >= 90600
-
-/* adjust_appendrel_attrs() */
 #define adjust_rel_targetlist_compat(root, dst_rel, src_rel, appinfo) \
 	do { \
 		(dst_rel)->reltarget->exprs = (List *) \
@@ -70,62 +40,7 @@
 									   (Node *) (src_rel)->reltarget->exprs, \
 									   (appinfo)); \
 	} while (0)
-
-
-/* check_index_predicates() */
-#define check_index_predicates_compat(rool, rel) \
-		check_index_predicates((root), (rel))
-
-
-/* create_plain_partial_paths() */
-extern void create_plain_partial_paths(PlannerInfo *root,
-									   RelOptInfo *rel);
-#define create_plain_partial_paths_compat(root, rel) \
-		create_plain_partial_paths((root), (rel))
-
-
-/* get_parameterized_joinrel_size() */
-#define get_parameterized_joinrel_size_compat(root, rel, outer_path, \
-											  inner_path, sjinfo, \
-											  restrict_clauses) \
-		get_parameterized_joinrel_size((root), (rel), (outer_path), \
-									   (inner_path), (sjinfo), \
-									   (restrict_clauses))
-
-
-/* make_result() */
-extern Result *make_result(List *tlist,
-						   Node *resconstantqual,
-						   Plan *subplan);
-#define make_result_compat(root, tlist, resconstantqual, subplan) \
-		make_result((tlist), (resconstantqual), (subplan))
-
-
-/* McxtStatsInternal() */
-void McxtStatsInternal(MemoryContext context, int level,
-					   bool examine_children,
-					   MemoryContextCounters *totals);
-
-
-/* pull_var_clause() */
-#define pull_var_clause_compat(node, aggbehavior, phbehavior) \
-		pull_var_clause((node), (aggbehavior) | (phbehavior))
-
-
-/* set_rel_consider_parallel() */
-extern void set_rel_consider_parallel(PlannerInfo *root,
-									  RelOptInfo *rel,
-									  RangeTblEntry *rte);
-#define set_rel_consider_parallel_compat(root, rel, rte) \
-		set_rel_consider_parallel((root), (rel), (rte))
-
-
-#else /* PG_VERSION_NUM >= 90500 */
-
-#define ALLOCSET_DEFAULT_SIZES \
-	ALLOCSET_DEFAULT_MINSIZE, ALLOCSET_DEFAULT_INITSIZE, ALLOCSET_DEFAULT_MAXSIZE
-
-/* adjust_appendrel_attrs() */
+#elif PG_VERSION_NUM >= 90500
 #define adjust_rel_targetlist_compat(root, dst_rel, src_rel, appinfo) \
 	do { \
 		(dst_rel)->reltargetlist = (List *) \
@@ -133,18 +48,75 @@ extern void set_rel_consider_parallel(PlannerInfo *root,
 									   (Node *) (src_rel)->reltargetlist, \
 									   (appinfo)); \
 	} while (0)
+#endif
 
 
-/* check_partial_indexes() */
+/*
+ * Define ALLOCSET_DEFAULT_SIZES for our precious MemoryContexts
+ */
+#if PG_VERSION_NUM >= 90500 && PG_VERSION_NUM < 90600
+#define ALLOCSET_DEFAULT_SIZES \
+	ALLOCSET_DEFAULT_MINSIZE, ALLOCSET_DEFAULT_INITSIZE, ALLOCSET_DEFAULT_MAXSIZE
+#endif
+
+
+/*
+ * check_index_predicates()
+ */
+#if PG_VERSION_NUM >= 90600
+#define check_index_predicates_compat(rool, rel) \
+		check_index_predicates((root), (rel))
+#elif PG_VERSION_NUM >= 90500
 #define check_index_predicates_compat(rool, rel) \
 		check_partial_indexes((root), (rel))
+#endif
 
 
-/* create_plain_partial_paths() */
-#define create_plain_partial_paths_compat(root, rel) ((void) true)
+/*
+ * create_append_path()
+ */
+#if PG_VERSION_NUM >= 100000
+#define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
+		create_append_path((rel), (subpaths), (required_outer), (parallel_workers), NULL)
+#elif PG_VERSION_NUM >= 90600
+
+#ifndef PGPRO_VERSION
+#define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
+		create_append_path((rel), (subpaths), (required_outer), (parallel_workers))
+#else /* ifdef PGPRO_VERSION */
+#define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
+		create_append_path((rel), (subpaths), (required_outer), \
+						   false, NIL, (parallel_workers))
+#endif /* PGPRO_VERSION */
+
+#elif PG_VERSION_NUM >= 90500
+#define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
+		create_append_path((rel), (subpaths), (required_outer))
+#endif /* PG_VERSION_NUM */
 
 
-/* get_parameterized_joinrel_size() */
+/*
+ * create_plain_partial_paths()
+ */
+#if PG_VERSION_NUM >= 90600
+extern void create_plain_partial_paths(PlannerInfo *root,
+									   RelOptInfo *rel);
+#define create_plain_partial_paths_compat(root, rel) \
+		create_plain_partial_paths((root), (rel))
+#endif
+
+
+/*
+ * get_parameterized_joinrel_size()
+ */
+#if PG_VERSION_NUM >= 90600
+#define get_parameterized_joinrel_size_compat(root, rel, outer_path, \
+											  inner_path, sjinfo, \
+											  restrict_clauses) \
+		get_parameterized_joinrel_size((root), (rel), (outer_path), \
+									   (inner_path), (sjinfo), \
+									   (restrict_clauses))
+#elif PG_VERSION_NUM >= 90500
 #define get_parameterized_joinrel_size_compat(root, rel, \
 											  outer_path, \
 											  inner_path, \
@@ -153,30 +125,72 @@ extern void set_rel_consider_parallel(PlannerInfo *root,
 									   (outer_path)->rows, \
 									   (inner_path)->rows, \
 									   (sjinfo), (restrict_clauses))
+#endif
 
 
-/* make_result() */
+/*
+ * make_result()
+ */
+#if PG_VERSION_NUM >= 90600
+extern Result *make_result(List *tlist,
+						   Node *resconstantqual,
+						   Plan *subplan);
+#define make_result_compat(root, tlist, resconstantqual, subplan) \
+		make_result((tlist), (resconstantqual), (subplan))
+#elif PG_VERSION_NUM >= 90500
 #define make_result_compat(root, tlist, resconstantqual, subplan) \
 		make_result((root), (tlist), (resconstantqual), (subplan))
+#endif
 
 
-/* pull_var_clause() */
+/*
+ * McxtStatsInternal()
+ */
+#if PG_VERSION_NUM >= 90600
+void McxtStatsInternal(MemoryContext context, int level,
+					   bool examine_children,
+					   MemoryContextCounters *totals);
+#endif
+
+
+/*
+ * pull_var_clause()
+ */
+#if PG_VERSION_NUM >= 90600
+#define pull_var_clause_compat(node, aggbehavior, phbehavior) \
+		pull_var_clause((node), (aggbehavior) | (phbehavior))
+#elif PG_VERSION_NUM >= 90500
 #define pull_var_clause_compat(node, aggbehavior, phbehavior) \
 		pull_var_clause((node), (aggbehavior), (phbehavior))
+#endif
 
 
-/* set_rel_consider_parallel() */
-#define set_rel_consider_parallel_compat(root, rel, rte) ((void) true)
-
-
-/* set_dummy_rel_pathlist() */
+/*
+ * set_dummy_rel_pathlist()
+ */
+#if PG_VERSION_NUM >= 90500 && PG_VERSION_NUM < 90600
 void set_dummy_rel_pathlist(RelOptInfo *rel);
+#endif
 
 
-/* get_rel_persistence() */
+/*
+ * set_rel_consider_parallel()
+ */
+#if PG_VERSION_NUM >= 90600
+extern void set_rel_consider_parallel(PlannerInfo *root,
+									  RelOptInfo *rel,
+									  RangeTblEntry *rte);
+#define set_rel_consider_parallel_compat(root, rel, rte) \
+		set_rel_consider_parallel((root), (rel), (rte))
+#endif
+
+
+/*
+ * get_rel_persistence()
+ */
+#if PG_VERSION_NUM >= 90500 && PG_VERSION_NUM < 90600
 char get_rel_persistence(Oid relid);
-
-#endif /* PG_VERSION_NUM */
+#endif
 
 
 /*
