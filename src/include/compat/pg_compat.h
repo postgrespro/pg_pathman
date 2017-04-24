@@ -69,13 +69,23 @@
 
 
 /*
- * CatalogIndexInsert
- * CatalogUpdateIndexes
+ * CatalogIndexInsert()
  */
 #if PG_VERSION_NUM >= 100000
 #include "catalog/indexing.h"
 void CatalogIndexInsert(CatalogIndexState indstate, HeapTuple heapTuple);
-void CatalogUpdateIndexes(Relation heapRel, HeapTuple heapTuple);
+#endif
+
+
+/*
+ * CatalogTupleUpdate()
+ */
+#if PG_VERSION_NUM >= 90500 && PG_VERSION_NUM < 100000
+#define CatalogTupleUpdate(heapRel, updTid, heapTuple) \
+	do { \
+		simple_heap_update((heapRel), (updTid), (heapTuple)); \
+		CatalogUpdateIndexes((heapRel), (heapTuple)); \
+	} while (0)
 #endif
 
 

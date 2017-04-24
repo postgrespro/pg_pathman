@@ -37,8 +37,6 @@
 /*
  * CatalogIndexInsert is the copy of static prototype having the same name from
  * 		src/backend/catalog/indexing.c
- *
- * 	CatalogUpdateIndexes
  */
 #if PG_VERSION_NUM >= 100000
 #include "catalog/index.h"
@@ -118,10 +116,6 @@ CatalogIndexInsert(CatalogIndexState indstate, HeapTuple heapTuple)
 	}
 
 	ExecDropSingleTupleTableSlot(slot);
-}
-void
-CatalogUpdateIndexes(Relation heapRel, HeapTuple heapTuple)
-{
 }
 #endif
 

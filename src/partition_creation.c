@@ -981,11 +981,8 @@ postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid)
 		/* Build new tuple with parent's ACL */
 		htup = heap_modify_tuple(htup, pg_class_desc, values, nulls, replaces);
 
-		/* Update child's tuple */
-		simple_heap_update(pg_class_rel, &iptr, htup);
-
-		/* Don't forget to update indexes */
-		CatalogUpdateIndexes(pg_class_rel, htup);
+		/* Update child's tuple with related indexes */
+		CatalogTupleUpdate(pg_class_rel, &iptr, htup);
 	}
 
 	systable_endscan(scan);
@@ -1085,11 +1082,8 @@ postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid)
 			subhtup = heap_modify_tuple(subhtup, pg_attribute_desc,
 										values, nulls, replaces);
 
-			/* Update child's tuple */
-			simple_heap_update(pg_attribute_rel, &iptr, subhtup);
-
-			/* Don't forget to update indexes */
-			CatalogUpdateIndexes(pg_attribute_rel, subhtup);
+			/* Update child's tuple and related indexes */
+			CatalogTupleUpdate(pg_attribute_rel, &iptr, subhtup);
 		}
 
 		systable_endscan(subscan);
