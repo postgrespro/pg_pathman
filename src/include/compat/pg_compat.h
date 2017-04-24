@@ -69,6 +69,21 @@
 
 
 /*
+ * DefineRelation()
+ *
+ * for v10 set NULL on 'queryString' parameter as it uses only under vanilla
+ * partition creating
+ */
+#if PG_VERSION_NUM >= 100000
+#define DefineRelationCompat(createstmt, relkind, ownerId, typaddress) \
+	DefineRelation((createstmt), (relkind), (ownerId), (typaddress), NULL)
+#elif PG_VERSION_NUM >= 90500
+#define DefineRelationCompat(createstmt, relkind, ownerId, typaddress) \
+	DefineRelation((createstmt), (relkind), (ownerId), (typaddress))
+#endif
+
+
+/*
  * CatalogIndexInsert()
  */
 #if PG_VERSION_NUM >= 100000

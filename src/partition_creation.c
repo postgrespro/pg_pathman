@@ -858,11 +858,8 @@ create_table_using_stmt(CreateStmt *create_stmt, Oid relowner)
 							 GUC_ACTION_SAVE, true, 0, false);
 
 	/* Create new partition owned by parent's posessor */
-#if PG_VERSION_NUM >= 100000
-	table_addr = DefineRelation(create_stmt, RELKIND_RELATION, relowner, NULL, NULL);
-#else
-	table_addr = DefineRelation(create_stmt, RELKIND_RELATION, relowner, NULL);
-#endif
+	table_addr = DefineRelationCompat(create_stmt, RELKIND_RELATION, relowner,
+									  NULL);
 
 	/* Save data about a simple DDL command that was just executed */
 	EventTriggerCollectSimpleCommand(table_addr,
