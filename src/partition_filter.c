@@ -86,7 +86,7 @@ static Node *fix_returning_list_mutator(Node *node, void *state);
 static Index append_rte_to_estate(EState *estate, RangeTblEntry *rte);
 static int append_rri_to_estate(EState *estate, ResultRelInfo *rri);
 
-static List * pfilter_build_tlist(Relation parent_rel, List *tlist);
+static List * pfilter_build_tlist(Relation parent_rel, Plan *subplan);
 
 static void pf_memcxt_callback(void *arg);
 static estate_mod_data * fetch_estate_mod_data(EState *estate);
@@ -486,7 +486,7 @@ make_partition_filter(Plan *subplan, Oid parent_relid,
 
 	/* Build an appropriate target list using a cached Relation entry */
 	parent_rel = RelationIdGetRelation(parent_relid);
-	cscan->scan.plan.targetlist = pfilter_build_tlist(parent_rel, subplan->targetlist);
+	cscan->scan.plan.targetlist = pfilter_build_tlist(parent_rel, subplan);
 	RelationClose(parent_rel);
 
 	/* No physical relation will be scanned */
@@ -665,35 +665,44 @@ partition_filter_explain(CustomScanState *node, List *ancestors, ExplainState *e
  * Build partition filter's target list pointing to subplan tuple's elements.
  */
 static List *
-pfilter_build_tlist(Relation parent_rel, List *tlist)
+pfilter_build_tlist(Relation parent_rel, Plan *subplan)
 {
 	List	   *result_tlist = NIL;
 	ListCell   *lc;
 
-	foreach (lc, tlist)
+	foreach (lc, subplan->targetlist)
 	{
-		TargetEntry		   *tle = (TargetEntry *) lfirst(lc);
-		TargetEntry		   *newtle;
+		TargetEntry		   *tle = (TargetEntry *) lfirst(lc),
+						   *newtle = NULL;
 
-		if (tle->expr != NULL && IsA(tle->expr, Var))
-		{
-			Var *var = (Var *) palloc(sizeof(Var));
-			*var = *((Var *)(tle->expr));
-			var->varno = INDEX_VAR;
-			newtle = makeTargetEntry((Expr *) var, tle->resno, tle->resname,
-										tle->resjunk);
-		}
+		if (IsA(tle->expr, Const))
+			newtle = makeTargetEntry(copyObject(tle->expr), tle->resno, tle->resname,
+											tle->resjunk);
+
 		else
 		{
-			Var *var = makeVar(INDEX_VAR,	/* point to subplan's elements */
-							   tle->resno,
-							   exprType((Node *) tle->expr),
-							   exprTypmod((Node *) tle->expr),
-							   exprCollation((Node *) tle->expr),
-							   0);
+			if (tle->expr != NULL && IsA(tle->expr, Var))
+			{
+				Var *var = (Var *) palloc(sizeof(Var));
+				*var = *((Var *)(tle->expr));
+				var->varno = INDEX_VAR;
+				var->varattno = tle->resno;
 
-			newtle = makeTargetEntry((Expr *) var, tle->resno, tle->resname,
-										tle->resjunk);
+				newtle = makeTargetEntry((Expr *) var, tle->resno, tle->resname,
+											tle->resjunk);
+			}
+			else
+			{
+				Var *var = makeVar(INDEX_VAR,	/* point to subplan's elements */
+								   tle->resno,
+								   exprType((Node *) tle->expr),
+								   exprTypmod((Node *) tle->expr),
+								   exprCollation((Node *) tle->expr),
+								   0);
+
+				newtle = makeTargetEntry((Expr *) var, tle->resno, tle->resname,
+											tle->resjunk);
+			}
 		}
 
 		result_tlist = lappend(result_tlist, newtle);
