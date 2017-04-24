@@ -22,8 +22,7 @@ bool				pg_pathman_enable_partition_update = true;
 CustomScanMethods	partition_update_plan_methods;
 CustomExecMethods	partition_update_exec_methods;
 
-static TupleTableSlot *ExecDeleteInternal(ItemPointer tupleid, HeapTuple oldtuple,
-	EPQState *epqstate, EState *estate);
+static TupleTableSlot *ExecDeleteInternal(ItemPointer tupleid, EPQState *epqstate, EState *estate);
 
 void
 init_partition_update_static_data(void)
@@ -44,7 +43,7 @@ init_partition_update_static_data(void)
 							 "Enables the planner's use of PartitionUpdate custom node.",
 							 NULL,
 							 &pg_pathman_enable_partition_update,
-							 true,
+							 false,
 							 PGC_USERSET,
 							 0,
 							 NULL,
@@ -111,13 +110,8 @@ partition_update_begin(CustomScanState *node, EState *estate, int eflags)
 TupleTableSlot *
 partition_update_exec(CustomScanState *node)
 {
-	PlanState				*child_ps = (PlanState *) linitial(node->custom_ps);
-	EState					*estate = node->ss.ps.state;
-	TupleTableSlot			*slot;
-	ResultRelInfo			*saved_rel_info;
-
-	/* save original ResultRelInfo */
-	saved_rel_info = estate->es_result_relation_info;
+	PlanState		*child_ps = (PlanState *) linitial(node->custom_ps);
+	TupleTableSlot	*slot;
 
 	/* execute PartitionFilter child node */
 	slot = ExecProcNode(child_ps);
@@ -128,19 +122,21 @@ partition_update_exec(CustomScanState *node)
 		Datum			 datum;
 		bool			 isNull;
 		ResultRelInfo	*resultRelInfo;
-		HeapTuple		 oldtuple;
 		ItemPointer		 tupleid;
 		ItemPointerData	 tuple_ctid;
 		JunkFilter		*junkfilter;
 		EPQState		 epqstate;
 		AttrNumber		 ctid_attno;
 
+		PartitionFilterState    *child_state = (PartitionFilterState *) child_ps;
+		EState					*estate = node->ss.ps.state;
+
+
 		resultRelInfo = estate->es_result_relation_info;
 		junkfilter = resultRelInfo->ri_junkFilter;
 		Assert(junkfilter != NULL);
 
 		EvalPlanQualSetSlot(&epqstate, slot);
-		oldtuple = NULL;
 
 		/*
 		 * extract the 'ctid' junk attribute.
@@ -159,11 +155,11 @@ partition_update_exec(CustomScanState *node)
 		tupleid = &tuple_ctid;
 
 		/* delete old tuple */
-		estate->es_result_relation_info = saved_rel_info;
-		ExecDeleteInternal(tupleid, oldtuple, &epqstate, estate);
+		estate->es_result_relation_info = child_state->result_parts.saved_rel_info;
+		ExecDeleteInternal(tupleid, &epqstate, estate);
 		estate->es_result_relation_info = resultRelInfo;
 
-		/* we got the slot that can be inserted to child partition */
+		/* we've got the slot that can be inserted to child partition */
 		return slot;
 	}
 
@@ -198,7 +194,6 @@ partition_update_explain(CustomScanState *node, List *ancestors, ExplainState *e
  */
 static TupleTableSlot *
 ExecDeleteInternal(ItemPointer tupleid,
-		   HeapTuple oldtuple,
 		   EPQState *epqstate,
 		   EState *estate)
 {
