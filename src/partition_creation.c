@@ -13,6 +13,7 @@
 #include "partition_filter.h"
 #include "pathman.h"
 #include "pathman_workers.h"
+#include "compat/pg_compat.h"
 #include "xact_handling.h"
 
 #include "access/htup_details.h"
@@ -890,96 +891,6 @@ create_table_using_stmt(CreateStmt *create_stmt, Oid relowner)
 	/* Return the address */
 	return table_addr;
 }
-
-#if PG_VERSION_NUM >= 100000
-#include "catalog/index.h"
-static void
-CatalogIndexInsert(CatalogIndexState indstate, HeapTuple heapTuple)
-{
-	int			i;
-	int			numIndexes;
-	RelationPtr relationDescs;
-	Relation	heapRelation;
-	TupleTableSlot *slot;
-	IndexInfo **indexInfoArray;
-	Datum		values[INDEX_MAX_KEYS];
-	bool		isnull[INDEX_MAX_KEYS];
-
-	/* HOT update does not require index inserts */
-	if (HeapTupleIsHeapOnly(heapTuple))
-		return;
-
-	/*
-	 * Get information from the state structure.  Fall out if nothing to do.
-	 */
-	numIndexes = indstate->ri_NumIndices;
-	if (numIndexes == 0)
-		return;
-	relationDescs = indstate->ri_IndexRelationDescs;
-	indexInfoArray = indstate->ri_IndexRelationInfo;
-	heapRelation = indstate->ri_RelationDesc;
-
-	/* Need a slot to hold the tuple being examined */
-	slot = MakeSingleTupleTableSlot(RelationGetDescr(heapRelation));
-	ExecStoreTuple(heapTuple, slot, InvalidBuffer, false);
-
-	/*
-	 * for each index, form and insert the index tuple
-	 */
-	for (i = 0; i < numIndexes; i++)
-	{
-		IndexInfo  *indexInfo;
-
-		indexInfo = indexInfoArray[i];
-
-		/* If the index is marked as read-only, ignore it */
-		if (!indexInfo->ii_ReadyForInserts)
-			continue;
-
-		/*
-		 * Expressional and partial indexes on system catalogs are not
-		 * supported, nor exclusion constraints, nor deferred uniqueness
-		 */
-		Assert(indexInfo->ii_Expressions == NIL);
-		Assert(indexInfo->ii_Predicate == NIL);
-		Assert(indexInfo->ii_ExclusionOps == NULL);
-		Assert(relationDescs[i]->rd_index->indimmediate);
-
-		/*
-		 * FormIndexDatum fills in its values and isnull parameters with the
-		 * appropriate values for the column(s) of the index.
-		 */
-		FormIndexDatum(indexInfo,
-					   slot,
-					   NULL,	/* no expression eval to do */
-					   values,
-					   isnull);
-
-		/*
-		 * The index AM does the rest.
-		 */
-		index_insert(relationDescs[i],	/* index relation */
-					 values,	/* array of index Datums */
-					 isnull,	/* is-null flags */
-					 &(heapTuple->t_self),		/* tid of heap tuple */
-					 heapRelation,
-					 relationDescs[i]->rd_index->indisunique ?
-					 UNIQUE_CHECK_YES : UNIQUE_CHECK_NO,
-					 indexInfo);
-	}
-
-	ExecDropSingleTupleTableSlot(slot);
-}
-static void
-CatalogUpdateIndexes(Relation heapRel, HeapTuple heapTuple)
-{
-	CatalogIndexState indstate;
-
-	indstate = CatalogOpenIndexes(heapRel);
-	CatalogIndexInsert(indstate, heapTuple);
-	CatalogCloseIndexes(indstate);
-}
-#endif
 
 /* Copy ACL privileges of parent table and set "attislocal" = true */
 static void

@@ -23,13 +23,6 @@
 #include "parser/parsetree.h"
 
 
-/* Check PostgreSQL version (9.5.4 contains an important fix for BGW) */
-#if PG_VERSION_NUM < 90503
-	#error "Cannot build pg_pathman with PostgreSQL version lower than 9.5.3"
-#elif PG_VERSION_NUM < 90504
-	#warning "It is STRONGLY recommended to use pg_pathman with PostgreSQL 9.5.4 since it contains important fixes"
-#endif
-
 /* Get CString representation of Datum (simple wrapper) */
 #ifdef USE_ASSERT_CHECKING
 	#include "utils.h"

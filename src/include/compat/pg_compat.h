@@ -11,6 +11,14 @@
 #ifndef PG_COMPAT_H
 #define PG_COMPAT_H
 
+/* Check PostgreSQL version (9.5.4 contains an important fix for BGW) */
+#include "pg_config.h"
+#if PG_VERSION_NUM < 90503
+	#error "Cannot build pg_pathman with PostgreSQL version lower than 9.5.3"
+#elif PG_VERSION_NUM < 90504
+	#warning "It is STRONGLY recommended to use pg_pathman with PostgreSQL 9.5.4 since it contains important fixes"
+#endif
+
 #include "compat/debug_compat_features.h"
 
 #include "postgres.h"
@@ -57,6 +65,17 @@
 #if PG_VERSION_NUM >= 90500 && PG_VERSION_NUM < 90600
 #define ALLOCSET_DEFAULT_SIZES \
 	ALLOCSET_DEFAULT_MINSIZE, ALLOCSET_DEFAULT_INITSIZE, ALLOCSET_DEFAULT_MAXSIZE
+#endif
+
+
+/*
+ * CatalogIndexInsert
+ * CatalogUpdateIndexes
+ */
+#if PG_VERSION_NUM >= 100000
+#include "catalog/indexing.h"
+void CatalogIndexInsert(CatalogIndexState indstate, HeapTuple heapTuple);
+void CatalogUpdateIndexes(Relation heapRel, HeapTuple heapTuple);
 #endif
 
 
