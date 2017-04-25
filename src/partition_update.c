@@ -14,7 +14,10 @@
 #include "partition_update.h"
 
 #include "access/xact.h"
+#include "access/htup_details.h"
+#include "commands/trigger.h"
 #include "executor/nodeModifyTable.h"
+#include "foreign/fdwapi.h"
 #include "utils/guc.h"
 
 bool				pg_pathman_enable_partition_update = true;
@@ -22,7 +25,11 @@ bool				pg_pathman_enable_partition_update = true;
 CustomScanMethods	partition_update_plan_methods;
 CustomExecMethods	partition_update_exec_methods;
 
-static TupleTableSlot *ExecDeleteInternal(ItemPointer tupleid, EPQState *epqstate, EState *estate);
+static TupleTableSlot *ExecDeleteInternal(ItemPointer tupleid,
+										  HeapTuple oldtuple,
+										  TupleTableSlot *planSlot,
+										  EPQState *epqstate,
+										  EState *estate);
 
 void
 init_partition_update_static_data(void)
@@ -120,12 +127,15 @@ partition_update_exec(CustomScanState *node)
 	{
 		Datum			 datum;
 		bool			 isNull;
+		char			 relkind;
 		ResultRelInfo	*resultRelInfo;
-		ItemPointer		 tupleid;
+		ItemPointer		 tupleid = NULL;
 		ItemPointerData	 tuple_ctid;
 		JunkFilter		*junkfilter;
 		EPQState		 epqstate;
 		AttrNumber		 ctid_attno;
+		HeapTupleData	 oldtupdata;
+		HeapTuple		 oldtuple;
 
 		PartitionFilterState    *child_state = (PartitionFilterState *) child_ps;
 		EState					*estate = node->ss.ps.state;
@@ -136,24 +146,59 @@ partition_update_exec(CustomScanState *node)
 
 		EvalPlanQualSetSlot(&epqstate, slot);
 
-		/*
-		 * extract the 'ctid' junk attribute.
-		 */
-		Assert(resultRelInfo->ri_RelationDesc->rd_rel->relkind == RELKIND_RELATION);
-		ctid_attno = ExecFindJunkAttribute(junkfilter, "ctid");
-		datum = ExecGetJunkAttribute(slot, ctid_attno, &isNull);
-		/* shouldn't ever get a null result... */
-		if (isNull)
-			elog(ERROR, "ctid is NULL");
+		oldtuple = NULL;
+		relkind = resultRelInfo->ri_RelationDesc->rd_rel->relkind;
+		if (relkind == RELKIND_RELATION)
+		{
+			/*
+			 * extract the 'ctid' junk attribute.
+			 */
+			Assert(resultRelInfo->ri_RelationDesc->rd_rel->relkind == RELKIND_RELATION);
+			ctid_attno = ExecFindJunkAttribute(junkfilter, "ctid");
+			datum = ExecGetJunkAttribute(slot, ctid_attno, &isNull);
+			/* shouldn't ever get a null result... */
+			if (isNull)
+				elog(ERROR, "ctid is NULL");
 
-		tupleid = (ItemPointer) DatumGetPointer(datum);
-		tuple_ctid = *tupleid;		/* be sure we don't free
-									 * ctid!! */
-		tupleid = &tuple_ctid;
+			tupleid = (ItemPointer) DatumGetPointer(datum);
+			tuple_ctid = *tupleid;		/* be sure we don't free
+										 * ctid!! */
+			tupleid = &tuple_ctid;
+		}
+		else if (relkind == RELKIND_FOREIGN_TABLE)
+		{
+			if (AttributeNumberIsValid(junkfilter->jf_junkAttNo))
+			{
+				datum = ExecGetJunkAttribute(slot,
+											 junkfilter->jf_junkAttNo,
+											 &isNull);
+				/* shouldn't ever get a null result... */
+				if (isNull)
+					elog(ERROR, "wholerow is NULL");
+
+				oldtupdata.t_data = DatumGetHeapTupleHeader(datum);
+				oldtupdata.t_len =
+					HeapTupleHeaderGetDatumLength(oldtupdata.t_data);
+				ItemPointerSetInvalid(&(oldtupdata.t_self));
+
+				/* Historically, view triggers see invalid t_tableOid. */
+				oldtupdata.t_tableOid =RelationGetRelid(resultRelInfo->ri_RelationDesc);
+
+				oldtuple = &oldtupdata;
+			}
+		}
+		else
+			elog(ERROR, "PartitionUpdate supports only relations and foreign tables");
 
 		/* delete old tuple */
 		estate->es_result_relation_info = child_state->result_parts.saved_rel_info;
-		ExecDeleteInternal(tupleid, &epqstate, estate);
+
+		/*
+		 * We have two cases here:
+		 * normal relations - tupleid points to actual tuple
+		 * foreign tables - tupleid is invalid, slot is required
+		 */
+		ExecDeleteInternal(tupleid, oldtuple, slot, &epqstate, estate);
 		estate->es_result_relation_info = resultRelInfo;
 
 		/* we've got the slot that can be inserted to child partition */
@@ -191,8 +236,10 @@ partition_update_explain(CustomScanState *node, List *ancestors, ExplainState *e
  */
 static TupleTableSlot *
 ExecDeleteInternal(ItemPointer tupleid,
-		   EPQState *epqstate,
-		   EState *estate)
+				   HeapTuple oldtuple,
+				   TupleTableSlot *planSlot,
+				   EPQState *epqstate,
+				   EState *estate)
 {
 	ResultRelInfo *resultRelInfo;
 	Relation	resultRelationDesc;
@@ -205,56 +252,92 @@ ExecDeleteInternal(ItemPointer tupleid,
 	resultRelInfo = estate->es_result_relation_info;
 	resultRelationDesc = resultRelInfo->ri_RelationDesc;
 
-ldelete:;
-	result = heap_delete(resultRelationDesc, tupleid,
-						 estate->es_output_cid,
-						 estate->es_crosscheck_snapshot,
-						 true /* wait for commit */ ,
-						 &hufd);
-	switch (result)
+	/* BEFORE ROW DELETE Triggers */
+	if (resultRelInfo->ri_TrigDesc &&
+		resultRelInfo->ri_TrigDesc->trig_delete_before_row)
 	{
-		case HeapTupleSelfUpdated:
-			if (hufd.cmax != estate->es_output_cid)
-				ereport(ERROR,
-						(errcode(ERRCODE_TRIGGERED_DATA_CHANGE_VIOLATION),
-						 errmsg("tuple to be updated was already modified by an operation triggered by the current command"),
-						 errhint("Consider using an AFTER trigger instead of a BEFORE trigger to propagate changes to other rows.")));
+		bool		dodelete;
 
-			/* Else, already deleted by self; nothing to do */
-			return NULL;
+		dodelete = ExecBRDeleteTriggers(estate, epqstate, resultRelInfo,
+										tupleid, oldtuple);
 
-		case HeapTupleMayBeUpdated:
-			break;
-
-		case HeapTupleUpdated:
-			if (IsolationUsesXactSnapshot())
-				ereport(ERROR,
-						(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
-						 errmsg("could not serialize access due to concurrent update")));
-			if (!ItemPointerEquals(tupleid, &hufd.ctid))
-			{
-				TupleTableSlot *epqslot;
-
-				epqslot = EvalPlanQual(estate,
-									   epqstate,
-									   resultRelationDesc,
-									   resultRelInfo->ri_RangeTableIndex,
-									   LockTupleExclusive,
-									   &hufd.ctid,
-									   hufd.xmax);
-				if (!TupIsNull(epqslot))
-				{
-					*tupleid = hufd.ctid;
-					goto ldelete;
-				}
-			}
-			/* tuple already deleted; nothing to do */
-			return NULL;
-
-		default:
-			elog(ERROR, "unrecognized heap_delete status: %u", result);
-			return NULL;
+		if (!dodelete)
+			elog(ERROR, "In partitioned tables the old row always should be deleted");
 	}
+
+	if (resultRelInfo->ri_FdwRoutine)
+	{
+		TupleTableSlot	*slot = MakeSingleTupleTableSlot(RelationGetDescr(resultRelationDesc));
+
+		/*
+		 * delete from foreign table: let the FDW do it
+		 */
+		ExecSetSlotDescriptor(slot, RelationGetDescr(resultRelationDesc));
+		resultRelInfo->ri_FdwRoutine->ExecForeignDelete(estate,
+															   resultRelInfo,
+															   slot,
+															   planSlot);
+
+		/* we don't need slot anymore */
+		ExecDropSingleTupleTableSlot(slot);
+	}
+	else
+	{
+		/* delete the tuple */
+ldelete:;
+		result = heap_delete(resultRelationDesc, tupleid,
+							 estate->es_output_cid,
+							 estate->es_crosscheck_snapshot,
+							 true /* wait for commit */ ,
+							 &hufd);
+		switch (result)
+		{
+			case HeapTupleSelfUpdated:
+				if (hufd.cmax != estate->es_output_cid)
+					ereport(ERROR,
+							(errcode(ERRCODE_TRIGGERED_DATA_CHANGE_VIOLATION),
+							 errmsg("tuple to be updated was already modified by an operation triggered by the current command"),
+							 errhint("Consider using an AFTER trigger instead of a BEFORE trigger to propagate changes to other rows.")));
+
+				/* Else, already deleted by self; nothing to do */
+				return NULL;
+
+			case HeapTupleMayBeUpdated:
+				break;
+
+			case HeapTupleUpdated:
+				if (IsolationUsesXactSnapshot())
+					ereport(ERROR,
+							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+							 errmsg("could not serialize access due to concurrent update")));
+				if (!ItemPointerEquals(tupleid, &hufd.ctid))
+				{
+					TupleTableSlot *epqslot;
+
+					epqslot = EvalPlanQual(estate,
+										   epqstate,
+										   resultRelationDesc,
+										   resultRelInfo->ri_RangeTableIndex,
+										   LockTupleExclusive,
+										   &hufd.ctid,
+										   hufd.xmax);
+					if (!TupIsNull(epqslot))
+					{
+						*tupleid = hufd.ctid;
+						goto ldelete;
+					}
+				}
+				/* tuple already deleted; nothing to do */
+				return NULL;
+
+			default:
+				elog(ERROR, "unrecognized heap_delete status: %u", result);
+				return NULL;
+		}
+	}
+
+	/* AFTER ROW DELETE Triggers */
+	ExecARDeleteTriggers(estate, resultRelInfo, tupleid, oldtuple);
 
 	return NULL;
 }
