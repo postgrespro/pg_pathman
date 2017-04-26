@@ -95,7 +95,7 @@ virtualenv /tmp/envs/pg_pathman
 source /tmp/envs/pg_pathman/bin/activate
 
 # install pip packages
-pip install $pip_packages
+pip3 install $pip_packages
 
 # run python tests
 make USE_PGXS=1 PG_CONFIG=$config_path partitioning_tests || status=$?

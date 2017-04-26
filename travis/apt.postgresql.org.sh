@@ -126,7 +126,6 @@ EOF
 
 echo "Running apt-get update ..."
 apt-get update
-apt-get install python3
 
 cat <<EOF
 
