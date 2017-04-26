@@ -116,43 +116,6 @@ init_relation_info_static_data(void)
 							 NULL);
 }
 
-/* Create or update PartRelationInfo in local cache. Might emit ERROR. */
-PartRelationInfo *
-create_pathman_relation_info(Oid relid)
-{
-	PartRelationInfo	   *prel;
-	bool					found_entry;
-
-	AssertTemporaryContext();
-	prel = (PartRelationInfo *) pathman_cache_search_relid(partitioned_rels,
-														   relid, HASH_ENTER,
-														   &found_entry);
-
-	elog(DEBUG2,
-		 found_entry ?
-			 "Refreshing record for relation %u in pg_pathman's cache [%u]" :
-			 "Creating new record for relation %u in pg_pathman's cache [%u]",
-		 relid, MyProcPid);
-
-	/*
-	 * NOTE: Trick clang analyzer (first access without NULL pointer check).
-	 * Access to field 'valid' results in a dereference of a null pointer.
-	 */
-	prel->cmp_proc	= InvalidOid;
-
-	/* Clear outdated resources */
-	if (found_entry && PrelIsValid(prel))
-	{
-		FreeChildrenArray(prel);
-		FreeRangesArray(prel);
-		FreeIfNotNull(prel->attname);
-	}
-
-	/* First we assume that this entry is invalid */
-	prel->valid = false;
-	return prel;
-}
-
 /*
  * refresh\invalidate\get\remove PartRelationInfo functions.
  */
@@ -175,7 +138,7 @@ refresh_pathman_relation_info(Oid relid,
 	MemoryContext			oldcontext;
 
 	AssertTemporaryContext();
-	prel = create_pathman_relation_info(relid);
+	prel = invalidate_pathman_relation_info(relid, NULL);
 
 	/* Try locking parent, exit fast if 'allow_incomplete' */
 	if (allow_incomplete)
@@ -358,7 +321,7 @@ fill_part_expression_vars(PartRelationInfo *prel)
 }
 
 /* Invalidate PartRelationInfo cache entry. Create new entry if 'found' is NULL. */
-void
+PartRelationInfo *
 invalidate_pathman_relation_info(Oid relid, bool *found)
 {
 	bool				prel_found;
@@ -393,6 +356,8 @@ invalidate_pathman_relation_info(Oid relid, bool *found)
 	elog(DEBUG2,
 		 "Invalidating record for relation %u in pg_pathman's cache [%u]",
 		 relid, MyProcPid);
+
+	return prel;
 }
 
 /* Update expression in pathman_config */
@@ -408,6 +373,7 @@ update_parsed_expression(Oid relid, HeapTuple tuple, Datum *values, bool *nulls)
 
 	/* get and parse expression */
 	expression = TextDatumGetCString(values[Anum_pathman_config_expression - 1]);
+	Assert(nulls[Anum_pathman_config_expression_p - 1]);
 	expr_info = get_part_expression_info(relid, expression, false, true);
 	Assert(expr_info->expr_datum != (Datum) 0);
 	pfree(expression);
@@ -419,13 +385,9 @@ update_parsed_expression(Oid relid, HeapTuple tuple, Datum *values, bool *nulls)
 	values[Anum_pathman_config_atttype - 1]			= ObjectIdGetDatum(expr_info->expr_type);
 	nulls[Anum_pathman_config_atttype - 1]			= false;
 
-	values[Anum_pathman_config_upd_expression - 1]	= BoolGetDatum(false);
-	nulls[Anum_pathman_config_upd_expression - 1]	= false;
-
 	MemSet(replaces, false, sizeof(replaces));
 	replaces[Anum_pathman_config_expression_p - 1]	= true;
 	replaces[Anum_pathman_config_atttype - 1] = true;
-	replaces[Anum_pathman_config_upd_expression - 1] = true;
 
 	/* update row */
 	rel = heap_open(get_pathman_config_relid(false), RowExclusiveLock);
@@ -451,11 +413,15 @@ mark_pathman_expression_for_update(Oid relid)
 		HeapTuple	newtuple;
 		bool		replaces[Natts_pathman_config];
 
-		values[Anum_pathman_config_upd_expression - 1]	= BoolGetDatum(true);
-		nulls[Anum_pathman_config_upd_expression - 1]	= false;
+		values[Anum_pathman_config_expression_p - 1] = (Datum) 0;
+		nulls[Anum_pathman_config_expression_p - 1] = true;
+
+		values[Anum_pathman_config_atttype - 1]	= (Datum) 0;
+		nulls[Anum_pathman_config_atttype - 1]	= true;
 
 		MemSet(replaces, false, sizeof(replaces));
-		replaces[Anum_pathman_config_upd_expression - 1] = true;
+		replaces[Anum_pathman_config_expression_p - 1] = true;
+		replaces[Anum_pathman_config_atttype - 1] = true;
 
 		/* update row */
 		rel = heap_open(get_pathman_config_relid(false), RowExclusiveLock);
@@ -484,7 +450,7 @@ get_pathman_relation_info(Oid relid)
 		/* Check that PATHMAN_CONFIG table contains this relation */
 		if (pathman_config_contains_relation(relid, values, isnull, NULL, &tuple))
 		{
-			bool upd_expr = DatumGetBool(values[Anum_pathman_config_upd_expression - 1]);
+			bool upd_expr = isnull[Anum_pathman_config_expression_p - 1];
 			if (upd_expr)
 				update_parsed_expression(relid, tuple, values, isnull);
 
@@ -997,7 +963,7 @@ try_perform_parent_refresh(Oid parent)
 
 	if (pathman_config_contains_relation(parent, values, isnull, NULL, &tuple))
 	{
-		bool upd_expr = DatumGetBool(values[Anum_pathman_config_upd_expression - 1]);
+		bool upd_expr = isnull[Anum_pathman_config_expression_p - 1];
 		if (upd_expr)
 			update_parsed_expression(parent, tuple, values, isnull);
 

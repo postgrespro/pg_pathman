@@ -110,6 +110,13 @@ SELECT set_interval('calamity.part_test', 'abc'::text);		/* not ok */
 SELECT drop_partitions('calamity.part_test', true);
 DELETE FROM calamity.part_test;
 
+/* check function build_hash_condition() */
+SELECT build_hash_condition('int4', 'val', 10, 1);
+SELECT build_hash_condition('text', 'val', 10, 1);
+SELECT build_hash_condition('int4', 'val', 1, 1);
+SELECT build_hash_condition('int4', 'val', 10, 20);
+SELECT build_hash_condition('text', 'val', 10, NULL) IS NULL;
+SELECT build_hash_condition('calamity.part_test', 'val', 10, 1);
 
 /* check function build_range_condition() */
 SELECT build_range_condition(NULL, 'val', 10, 20);						/* not ok */
@@ -119,11 +126,11 @@ SELECT build_range_condition('calamity.part_test', 'val', 10, NULL);	/* OK */
 SELECT build_range_condition('calamity.part_test', 'val', NULL, 10);	/* OK */
 
 /* check function validate_interval_value() */
-SELECT validate_interval_value(NULL, 2, '1 mon');		/* not ok */
-SELECT validate_interval_value(1186, NULL, '1 mon');	/* not ok */
-SELECT validate_interval_value(23, 2, '1 mon');			/* not ok */
-SELECT validate_interval_value(1186, 1, '1 mon');		/* not ok */
-SELECT validate_interval_value(1186, 2, NULL);			/* OK */
+SELECT validate_interval_value(NULL, 2, '1 mon');					/* not ok */
+SELECT validate_interval_value('interval'::regtype, NULL, '1 mon');	/* not ok */
+SELECT validate_interval_value('int4'::regtype, 2, '1 mon');		/* not ok */
+SELECT validate_interval_value('interval'::regtype, 1, '1 mon');	/* not ok */
+SELECT validate_interval_value('interval'::regtype, 2, NULL);		/* OK */
 
 /* check function validate_relname() */
 SELECT validate_relname('calamity.part_test');

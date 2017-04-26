@@ -173,3 +173,14 @@ LANGUAGE C;
 CREATE OR REPLACE FUNCTION @extschema@.get_hash_part_idx(INT4, INT4)
 RETURNS INTEGER AS 'pg_pathman', 'get_hash_part_idx'
 LANGUAGE C STRICT;
+
+/*
+ * Build hash condition for a CHECK CONSTRAINT
+ */
+CREATE OR REPLACE FUNCTION @extschema@.build_hash_condition(
+	attribute_type		REGTYPE,
+	attribute			TEXT,
+	partitions_count	INT4,
+	partition_index		INT4)
+RETURNS TEXT AS 'pg_pathman', 'build_hash_condition'
+LANGUAGE C STRICT;

@@ -237,11 +237,10 @@ PrelLastChild(const PartRelationInfo *prel)
 }
 
 
-PartRelationInfo *create_pathman_relation_info(Oid relid);
 const PartRelationInfo *refresh_pathman_relation_info(Oid relid,
 													  Datum *values,
 													  bool allow_incomplete);
-void invalidate_pathman_relation_info(Oid relid, bool *found);
+PartRelationInfo * invalidate_pathman_relation_info(Oid relid, bool *found);
 void remove_pathman_relation_info(Oid relid);
 const PartRelationInfo *get_pathman_relation_info(Oid relid);
 const PartRelationInfo *get_pathman_relation_info_after_lock(Oid relid,
