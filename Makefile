@@ -74,3 +74,5 @@ isolationcheck: | submake-isolation
 		--temp-config=$(top_srcdir)/$(subdir)/conf.add \
 		--outputdir=./isolation_output \
 		$(ISOLATIONCHECKS)
+partitioning_tests:
+	$(MAKE) -C tests/python partitioning_tests
