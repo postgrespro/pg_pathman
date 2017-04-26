@@ -403,7 +403,8 @@ partition_filter_visitor(Plan *plan, void *context)
 			lfirst(lc1) = make_partition_filter((Plan *) lfirst(lc1),
 												relid,
 												modify_table->onConflictAction,
-												returning_list);
+												returning_list,
+												false);
 		}
 	}
 }

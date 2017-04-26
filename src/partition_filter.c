@@ -463,7 +463,8 @@ select_partition_for_insert(Datum value, Oid value_type,
 Plan *
 make_partition_filter(Plan *subplan, Oid parent_relid,
 					  OnConflictAction conflict_action,
-					  List *returning_list)
+					  List *returning_list,
+					  bool keep_ctid)
 {
 	CustomScan *cscan = makeNode(CustomScan);
 	Relation	parent_rel;
@@ -494,9 +495,10 @@ make_partition_filter(Plan *subplan, Oid parent_relid,
 	cscan->custom_scan_tlist = subplan->targetlist;
 
 	/* Pack partitioned table's Oid and conflict_action */
-	cscan->custom_private = list_make3(makeInteger(parent_relid),
+	cscan->custom_private = list_make4(makeInteger(parent_relid),
 									   makeInteger(conflict_action),
-									   returning_list);
+									   returning_list,
+									   makeInteger((int) keep_ctid));
 
 	return &cscan->scan.plan;
 }
@@ -517,6 +519,7 @@ partition_filter_create_scan_state(CustomScan *node)
 	state->partitioned_table = intVal(linitial(node->custom_private));
 	state->on_conflict_action = intVal(lsecond(node->custom_private));
 	state->returning_list = lthird(node->custom_private);
+	state->keep_ctid = (bool) intVal(lfourth(node->custom_private));
 
 	/* Check boundaries */
 	Assert(state->on_conflict_action >= ONCONFLICT_NONE ||
@@ -556,6 +559,9 @@ partition_filter_exec(CustomScanState *node)
 	PlanState			   *child_ps = (PlanState *) linitial(node->custom_ps);
 	TupleTableSlot		   *slot;
 
+	/* clean ctid for old slot */
+	state->ctid = NULL;
+
 	slot = ExecProcNode(child_ps);
 
 	/* Save original ResultRelInfo */
@@ -569,6 +575,7 @@ partition_filter_exec(CustomScanState *node)
 		ResultRelInfoHolder	   *rri_holder;
 		bool					isnull;
 		Datum					value;
+		ResultRelInfo		   *resultRelInfo;
 
 		/* Fetch PartRelationInfo for this partitioned relation */
 		prel = get_pathman_relation_info(state->partitioned_table);
@@ -601,14 +608,45 @@ partition_filter_exec(CustomScanState *node)
 		ResetExprContext(econtext);
 
 		/* Magic: replace parent's ResultRelInfo with ours */
-		estate->es_result_relation_info = rri_holder->result_rel_info;
+		resultRelInfo = rri_holder->result_rel_info;
+		estate->es_result_relation_info = resultRelInfo;
+
+		if (state->keep_ctid)
+		{
+			JunkFilter		*junkfilter;
+			Datum			 datum;
+			char			 relkind;
+
+			/*
+			 * extract `ctid` junk attribute and save it in state,
+			 * we need this step because if there will be conversion
+			 * junk attributes will be removed from slot
+			 */
+			junkfilter = resultRelInfo->ri_junkFilter;
+			Assert(junkfilter != NULL);
+
+			relkind = resultRelInfo->ri_RelationDesc->rd_rel->relkind;
+			if (relkind == RELKIND_RELATION)
+			{
+				AttrNumber		ctid_attno;
+				bool			isNull;
+
+				ctid_attno = ExecFindJunkAttribute(junkfilter, "ctid");
+				datum = ExecGetJunkAttribute(slot, ctid_attno, &isNull);
+				/* shouldn't ever get a null result... */
+				if (isNull)
+					elog(ERROR, "ctid is NULL");
+
+				state->ctid = (ItemPointer) DatumGetPointer(datum);
+			}
+		}
 
 		/* If there's a transform map, rebuild the tuple */
 		if (rri_holder->tuple_map)
 		{
 			HeapTuple	htup_old,
 						htup_new;
-			Relation	child_rel = rri_holder->result_rel_info->ri_RelationDesc;
+			Relation	child_rel = resultRelInfo->ri_RelationDesc;
 
 			htup_old = ExecMaterializeSlot(slot);
 			htup_new = do_convert_tuple(htup_old, rri_holder->tuple_map);

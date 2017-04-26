@@ -94,6 +94,9 @@ typedef struct
 	bool				warning_triggered;		/* warning message counter */
 
 	TupleTableSlot	   *tup_convert_slot;		/* slot for rebuilt tuples */
+	ItemPointer			ctid;					/* ctid of rubuilt tuple
+												   if there any, or NULL */
+	bool				keep_ctid;				/* if false ctid will not filled */
 
 	ExprContext		   *tup_convert_econtext;	/* ExprContext for projections */
 } PartitionFilterState;
@@ -140,7 +143,8 @@ ResultRelInfoHolder * select_partition_for_insert(Datum value, Oid value_type,
 Plan * make_partition_filter(Plan *subplan,
 							 Oid parent_relid,
 							 OnConflictAction conflict_action,
-							 List *returning_list);
+							 List *returning_list,
+							 bool keep_ctid);
 
 
 Node * partition_filter_create_scan_state(CustomScan *node);

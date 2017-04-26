@@ -77,7 +77,7 @@ make_partition_update(Plan *subplan,
 	/* Setup methods and child plan */
 	cscan->methods = &partition_update_plan_methods;
 	pfilter = make_partition_filter(subplan, parent_relid, ONCONFLICT_NONE,
-									returning_list);
+									returning_list, true);
 	cscan->custom_plans = list_make1(pfilter);
 	cscan->scan.plan.targetlist = pfilter->targetlist;
 
@@ -133,12 +133,13 @@ partition_update_exec(CustomScanState *node)
 		ItemPointerData	 tuple_ctid;
 		JunkFilter		*junkfilter;
 		EPQState		 epqstate;
-		AttrNumber		 ctid_attno;
 		HeapTupleData	 oldtupdata;
 		HeapTuple		 oldtuple;
 
 		PartitionFilterState    *child_state = (PartitionFilterState *) child_ps;
 		EState					*estate = node->ss.ps.state;
+
+		Assert(child_state->keep_ctid);
 
 		resultRelInfo = estate->es_result_relation_info;
 		junkfilter = resultRelInfo->ri_junkFilter;
@@ -148,19 +149,9 @@ partition_update_exec(CustomScanState *node)
 
 		oldtuple = NULL;
 		relkind = resultRelInfo->ri_RelationDesc->rd_rel->relkind;
-		if (relkind == RELKIND_RELATION)
+		if (relkind == RELKIND_RELATION && child_state->ctid != NULL)
 		{
-			/*
-			 * extract the 'ctid' junk attribute.
-			 */
-			Assert(resultRelInfo->ri_RelationDesc->rd_rel->relkind == RELKIND_RELATION);
-			ctid_attno = ExecFindJunkAttribute(junkfilter, "ctid");
-			datum = ExecGetJunkAttribute(slot, ctid_attno, &isNull);
-			/* shouldn't ever get a null result... */
-			if (isNull)
-				elog(ERROR, "ctid is NULL");
-
-			tupleid = (ItemPointer) DatumGetPointer(datum);
+			tupleid = child_state->ctid;
 			tuple_ctid = *tupleid;		/* be sure we don't free
 										 * ctid!! */
 			tupleid = &tuple_ctid;

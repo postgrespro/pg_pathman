@@ -40,6 +40,7 @@ REGRESS = pathman_basic \
 		  pathman_rowmarks \
 		  pathman_runtime_nodes \
 		  pathman_update_trigger \
+		  pathman_update_node \
 		  pathman_updates \
 		  pathman_utility_stmt
 
