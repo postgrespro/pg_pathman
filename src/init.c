@@ -766,7 +766,7 @@ read_pathman_config(void)
 		relid = DatumGetObjectId(values[Anum_pathman_config_partrel - 1]);
 
 		/* Check that relation 'relid' exists */
-		if (get_rel_type_id(relid) == InvalidOid)
+		if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
 		{
 			DisablePathman(); /* disable pg_pathman since config is broken */
 			ereport(ERROR,

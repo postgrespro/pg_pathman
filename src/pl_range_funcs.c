@@ -70,13 +70,6 @@ static bool interval_is_trivial(Oid atttype,
 								Datum interval,
 								Oid interval_type);
 
-/* Extracted common check */
-static inline bool
-check_relation_exists(Oid relid)
-{
-	return get_rel_type_id(relid) != InvalidOid;
-}
-
 
 /*
  * -----------------------------
@@ -580,7 +573,7 @@ build_sequence_name(PG_FUNCTION_ARGS)
 	Oid		parent_nsp;
 	char   *result;
 
-	if (!check_relation_exists(parent_relid))
+	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(parent_relid)))
 		ereport(ERROR, (errmsg("relation \"%u\" does not exist", parent_relid)));
 
 	parent_nsp = get_rel_namespace(parent_relid);

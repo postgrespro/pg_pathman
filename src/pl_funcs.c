@@ -105,13 +105,6 @@ static void pathman_update_trigger_func_move_tuple(Relation source_rel,
 												   HeapTuple old_tuple,
 												   HeapTuple new_tuple);
 
-/* Extracted common check */
-static inline bool
-check_relation_exists(Oid relid)
-{
-	return get_rel_type_id(relid) != InvalidOid;
-}
-
 
 /*
  * ------------------------
@@ -538,7 +531,7 @@ validate_relname(PG_FUNCTION_ARGS)
 	/* Fetch relation's Oid */
 	relid = PG_GETARG_OID(0);
 
-	if (!check_relation_exists(relid))
+	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("relation \"%u\" does not exist", relid),
 						errdetail("triggered in function "
@@ -600,7 +593,7 @@ build_update_trigger_name(PG_FUNCTION_ARGS)
 	const char *result;
 
 	/* Check that relation exists */
-	if (!check_relation_exists(relid))
+	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("relation \"%u\" does not exist", relid)));
 
@@ -618,7 +611,7 @@ build_update_trigger_func_name(PG_FUNCTION_ARGS)
 			   *func_name;
 
 	/* Check that relation exists */
-	if (!check_relation_exists(relid))
+	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("relation \"%u\" does not exist", relid)));
 
@@ -638,7 +631,7 @@ build_check_constraint_name(PG_FUNCTION_ARGS)
 	Oid			relid = PG_GETARG_OID(0);
 	const char *result;
 
-	if (!check_relation_exists(relid))
+	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("relation \"%u\" does not exist", relid)));
 
@@ -681,7 +674,7 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 						 errmsg("'parent_relid' should not be NULL")));
 
 	/* Check that relation exists */
-	if (!check_relation_exists(relid))
+	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("relation \"%u\" does not exist", relid)));
 
@@ -827,7 +820,7 @@ pathman_config_params_trigger_func(PG_FUNCTION_ARGS)
 	partrel = DatumGetObjectId(partrel_datum);
 
 	/* Finally trigger pg_pathman's cache invalidation event */
-	if (check_relation_exists(partrel))
+	if (SearchSysCacheExists1(RELOID, ObjectIdGetDatum(partrel)))
 		CacheInvalidateRelcacheByRelid(partrel);
 
 pathman_config_params_trigger_func_return:
@@ -1383,7 +1376,7 @@ has_update_trigger(PG_FUNCTION_ARGS)
 	Oid parent_relid = PG_GETARG_OID(0);
 
 	/* Check that relation exists */
-	if (!check_relation_exists(parent_relid))
+	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(parent_relid)))
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("relation \"%u\" does not exist", parent_relid)));
 
