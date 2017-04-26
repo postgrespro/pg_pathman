@@ -9,13 +9,13 @@ First of all you need to install `testgres` python module which contains useful
 functions to start postgres clusters and make queries:
 
 ```
-pip install testgres
+pip3 install testgres
 ```
 
 To run tests execute:
 
 ```
-python -m unittest partitioning_test
+python3 -m unittest partitioning_test
 ```
 
 from current directory. If you want to run a specific postgres build then
