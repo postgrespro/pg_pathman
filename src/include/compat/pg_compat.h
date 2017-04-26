@@ -263,6 +263,9 @@ char get_rel_persistence(Oid relid);
  */
 
 void set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel, Index rti);
+List *init_createstmts_for_partition(RangeVar *parent_rv,
+									 RangeVar *partition_rv,
+									 char	  *tablespace);
 
 
 #endif /* PG_COMPAT_H */

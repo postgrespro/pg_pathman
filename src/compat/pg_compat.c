@@ -19,6 +19,7 @@
 #include "optimizer/clauses.h"
 #include "optimizer/pathnode.h"
 #include "optimizer/prep.h"
+#include "parser/parse_utilcmd.h"
 #include "port.h"
 #include "utils.h"
 #include "utils/lsyscache.h"
@@ -680,4 +681,49 @@ set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel, Index rti)
 #endif
 
 	rel->tuples = parent_rows;
+}
+
+/*
+ * Construct the sequence of utility statements to create a new partition
+ */
+List *
+init_createstmts_for_partition(RangeVar *parent_rv,
+							   RangeVar *partition_rv,
+							   char		*tablespace)
+{
+	TableLikeClause		like_clause;
+	CreateStmt			create_stmt;
+	List			   *result;
+
+	/* Initialize TableLikeClause structure */
+	NodeSetTag(&like_clause, T_TableLikeClause);
+	like_clause.relation		= copyObject(parent_rv);
+	like_clause.options			= CREATE_TABLE_LIKE_DEFAULTS |
+								  CREATE_TABLE_LIKE_INDEXES |
+								  CREATE_TABLE_LIKE_STORAGE;
+
+	/* Initialize CreateStmt structure */
+	NodeSetTag(&create_stmt, T_CreateStmt);
+	create_stmt.relation		= copyObject(partition_rv);
+	create_stmt.tableElts		= list_make1(copyObject(&like_clause));
+	create_stmt.inhRelations	= list_make1(copyObject(parent_rv));
+	create_stmt.ofTypename		= NULL;
+	create_stmt.constraints		= NIL;
+	create_stmt.options			= NIL;
+	create_stmt.oncommit		= ONCOMMIT_NOOP;
+	create_stmt.tablespacename	= tablespace;
+	create_stmt.if_not_exists	= false;
+
+#if defined(PGPRO_EE) && PG_VERSION_NUM >= 90600
+	create_stmt.partition_info	= NULL;
+#endif
+
+#if PG_VERSION_NUM >= 100000
+	create_stmt.partbound = NULL;
+	create_stmt.partspec = NULL;
+#endif
+
+	result = transformCreateStmt(&create_stmt, NULL);
+
+	return result;
 }

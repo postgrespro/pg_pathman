@@ -34,7 +34,6 @@
 #include "miscadmin.h"
 #include "parser/parse_func.h"
 #include "parser/parse_relation.h"
-#include "parser/parse_utilcmd.h"
 #include "tcop/utility.h"
 #include "utils/builtins.h"
 #include "utils/datum.h"
@@ -681,8 +680,6 @@ create_single_partition_internal(Oid parent_relid,
 
 	/* Elements of the "CREATE TABLE" query tree */
 	RangeVar		   *parent_rv;
-	TableLikeClause		like_clause;
-	CreateStmt			create_stmt;
 	List			   *create_stmts;
 	ListCell		   *lc;
 
@@ -701,6 +698,27 @@ create_single_partition_internal(Oid parent_relid,
 										  config_values, config_nulls, NULL))
 		elog(ERROR, "table \"%s\" is not partitioned",
 			 get_rel_name_or_relid(parent_relid));
+
+	/* Do we have to escalate privileges? */
+	if (need_priv_escalation)
+	{
+		/* Get current user's Oid and security context */
+		GetUserIdAndSecContext(&save_userid, &save_sec_context);
+
+		/* Check that user's allowed to spawn partitions */
+		if (ACLCHECK_OK != pg_class_aclcheck(parent_relid, save_userid,
+											 ACL_SPAWN_PARTITIONS))
+			ereport(ERROR,
+					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+					 errmsg("permission denied for parent relation \"%s\"",
+							get_rel_name_or_relid(parent_relid)),
+					 errdetail("user is not allowed to create new partitions"),
+					 errhint("consider granting INSERT privilege")));
+
+		/* Become superuser in order to bypass various ACL checks */
+		SetUserIdAndSecContext(BOOTSTRAP_SUPERUSERID,
+							   save_sec_context | SECURITY_LOCAL_USERID_CHANGE);
+	}
 
 	/* Cache parent's namespace and name */
 	parent_name = get_rel_name(parent_relid);
@@ -725,52 +743,9 @@ create_single_partition_internal(Oid parent_relid,
 	if (!tablespace)
 		tablespace = get_tablespace_name(get_rel_tablespace(parent_relid));
 
-	/* Initialize TableLikeClause structure */
-	NodeSetTag(&like_clause, T_TableLikeClause);
-	like_clause.relation		= copyObject(parent_rv);
-	like_clause.options			= CREATE_TABLE_LIKE_DEFAULTS |
-								  CREATE_TABLE_LIKE_INDEXES |
-								  CREATE_TABLE_LIKE_STORAGE;
-
-	/* Initialize CreateStmt structure */
-	NodeSetTag(&create_stmt, T_CreateStmt);
-	create_stmt.relation		= copyObject(partition_rv);
-	create_stmt.tableElts		= list_make1(copyObject(&like_clause));
-	create_stmt.inhRelations	= list_make1(copyObject(parent_rv));
-	create_stmt.ofTypename		= NULL;
-	create_stmt.constraints		= NIL;
-	create_stmt.options			= NIL;
-	create_stmt.oncommit		= ONCOMMIT_NOOP;
-	create_stmt.tablespacename	= tablespace;
-	create_stmt.if_not_exists	= false;
-
-#if defined(PGPRO_EE) && PG_VERSION_NUM >= 90600
-	create_stmt.partition_info	= NULL;
-#endif
-
-	/* Do we have to escalate privileges? */
-	if (need_priv_escalation)
-	{
-		/* Get current user's Oid and security context */
-		GetUserIdAndSecContext(&save_userid, &save_sec_context);
-
-		/* Check that user's allowed to spawn partitions */
-		if (ACLCHECK_OK != pg_class_aclcheck(parent_relid, save_userid,
-											 ACL_SPAWN_PARTITIONS))
-			ereport(ERROR,
-					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-					 errmsg("permission denied for parent relation \"%s\"",
-							get_rel_name_or_relid(parent_relid)),
-					 errdetail("user is not allowed to create new partitions"),
-					 errhint("consider granting INSERT privilege")));
-
-		/* Become superuser in order to bypass various ACL checks */
-		SetUserIdAndSecContext(BOOTSTRAP_SUPERUSERID,
-							   save_sec_context | SECURITY_LOCAL_USERID_CHANGE);
-	}
-
-	/* Generate columns using the parent table */
-	create_stmts = transformCreateStmt(&create_stmt, NULL);
+	/* Obtain the sequence of Stmts to create partition and link it to parent */
+	create_stmts = init_createstmts_for_partition(parent_rv, partition_rv,
+												  tablespace);
 
 	/* Create the partition and all required relations */
 	foreach (lc, create_stmts)
