@@ -142,6 +142,7 @@ typedef struct
 	Node		   *expr;			/* planned expression */
 	List		   *expr_vars;		/* vars from expression, lazy */
 	Bitmapset	   *expr_atts;		/* set with attnums from expression */
+
 	Oid				atttype;		/* expression type */
 	int32			atttypmod;		/* expression type modifier */
 	bool			attbyval;		/* is partitioned column stored by value? */

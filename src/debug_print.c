@@ -11,11 +11,9 @@
 #include "rangeset.h"
 
 #include "postgres.h"
-#include "fmgr.h"
 #include "nodes/bitmapset.h"
 #include "nodes/pg_list.h"
 #include "lib/stringinfo.h"
-#include "utils/lsyscache.h"
 
 
 /*
