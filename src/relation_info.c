@@ -508,19 +508,14 @@ get_pathman_relation_info_after_lock(Oid relid,
 void
 remove_pathman_relation_info(Oid relid)
 {
-	PartRelationInfo *prel = pathman_cache_search_relid(partitioned_rels,
-														relid, HASH_FIND,
-														NULL);
-	if (PrelIsValid(prel))
-	{
-		FreeChildrenArray(prel);
-		FreeRangesArray(prel);
-		FreeIfNotNull(prel->attname);
-	}
+	bool found;
+
+	/* Free resources */
+	invalidate_pathman_relation_info(relid, &found);
 
 	/* Now let's remove the entry completely */
-	pathman_cache_search_relid(partitioned_rels, relid,
-							   HASH_REMOVE, NULL);
+	if (found)
+		pathman_cache_search_relid(partitioned_rels, relid, HASH_REMOVE, NULL);
 
 	elog(DEBUG2,
 		 "Removing record for relation %u in pg_pathman's cache [%u]",
