@@ -217,6 +217,32 @@ void McxtStatsInternal(MemoryContext context, int level,
 
 
 /*
+ * ProcessUtility
+ *
+ * for v10 set NULL into 'queryEnv' argument
+ */
+#if PG_VERSION_NUM >= 100000
+#define ProcessUtilityCompat(parsetree, queryString, context, params, dest, \
+							 completionTag) \
+		do { \
+			PlannedStmt *stmt = makeNode(PlannedStmt); \
+			stmt->commandType = CMD_UTILITY; \
+			stmt->canSetTag = true; \
+			stmt->utilityStmt = (parsetree); \
+			stmt->stmt_location = -1; \
+			stmt->stmt_len = 0; \
+			ProcessUtility(stmt, (queryString), (context), (params), NULL, \
+						   (dest), (completionTag)); \
+		} while (0)
+#elif PG_VERSION_NUM >= 90500
+#define ProcessUtilityCompat(parsetree, queryString, context, params, dest, \
+							 completionTag) \
+		ProcessUtility((parsetree), (queryString), (context), (params), \
+					   (dest), (completionTag))
+#endif
+
+
+/*
  * pull_var_clause()
  */
 #if PG_VERSION_NUM >= 90600

@@ -786,22 +786,12 @@ create_single_partition_internal(Oid parent_relid,
 			 * call will stash the objects so created into our
 			 * event trigger context.
 			 */
-#if PG_VERSION_NUM >= 100000
-			ProcessUtility(NULL,
-						   "we have to provide a query string",
-						   PROCESS_UTILITY_SUBCOMMAND,
-						   NULL,
-						   NULL,
-						   None_Receiver,
-						   NULL);
-#else
-			ProcessUtility(cur_stmt,
-						   "we have to provide a query string",
-						   PROCESS_UTILITY_SUBCOMMAND,
-						   NULL,
-						   None_Receiver,
-						   NULL);
-#endif
+			ProcessUtilityCompat(cur_stmt,
+								 "we have to provide a query string",
+								 PROCESS_UTILITY_SUBCOMMAND,
+								 NULL,
+								 None_Receiver,
+								 NULL);
 		}
 
 		/* Update config one more time */
