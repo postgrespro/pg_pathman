@@ -221,6 +221,31 @@ SELECT drop_partitions('calamity.part_test', true);
 (1 row)
 
 DELETE FROM calamity.part_test;
+/* check function build_hash_condition() */
+SELECT build_hash_condition('int4', 'val', 10, 1);
+              build_hash_condition               
+-------------------------------------------------
+ public.get_hash_part_idx(hashint4(val), 10) = 1
+(1 row)
+
+SELECT build_hash_condition('text', 'val', 10, 1);
+              build_hash_condition               
+-------------------------------------------------
+ public.get_hash_part_idx(hashtext(val), 10) = 1
+(1 row)
+
+SELECT build_hash_condition('int4', 'val', 1, 1);
+ERROR:  'partition_index' must be lower than 'partitions_count'
+SELECT build_hash_condition('int4', 'val', 10, 20);
+ERROR:  'partition_index' must be lower than 'partitions_count'
+SELECT build_hash_condition('text', 'val', 10, NULL) IS NULL;
+ ?column? 
+----------
+ t
+(1 row)
+
+SELECT build_hash_condition('calamity.part_test', 'val', 10, 1);
+ERROR:  no hash function for type calamity.part_test
 /* check function build_range_condition() */
 SELECT build_range_condition(NULL, 'val', 10, 20);						/* not ok */
 ERROR:  'partition_relid' should not be NULL
@@ -245,15 +270,15 @@ SELECT build_range_condition('calamity.part_test', 'val', NULL, 10);	/* OK */
 (1 row)
 
 /* check function validate_interval_value() */
-SELECT validate_interval_value(NULL, 2, '1 mon');		/* not ok */
+SELECT validate_interval_value(NULL, 2, '1 mon');					/* not ok */
 ERROR:  'atttype' should not be NULL
-SELECT validate_interval_value(1186, NULL, '1 mon');	/* not ok */
+SELECT validate_interval_value('interval'::regtype, NULL, '1 mon');	/* not ok */
 ERROR:  'parttype' should not be NULL
-SELECT validate_interval_value(23, 2, '1 mon');			/* not ok */
+SELECT validate_interval_value('int4'::regtype, 2, '1 mon');		/* not ok */
 ERROR:  invalid input syntax for integer: "1 mon"
-SELECT validate_interval_value(1186, 1, '1 mon');		/* not ok */
+SELECT validate_interval_value('interval'::regtype, 1, '1 mon');	/* not ok */
 ERROR:  interval should be NULL for HASH partitioned table
-SELECT validate_interval_value(1186, 2, NULL);			/* OK */
+SELECT validate_interval_value('interval'::regtype, 2, NULL);		/* OK */
  validate_interval_value 
 -------------------------
  t

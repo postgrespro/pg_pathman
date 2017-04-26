@@ -20,13 +20,13 @@ SELECT context, entries FROM pathman_cache_stats ORDER BY context;
 /* change column's type (should flush caches) */
 ALTER TABLE test_column_type.test ALTER val TYPE NUMERIC;
 
-/* check that upd_expr is true */
+/* check that parsed expression was cleared */
 SELECT * FROM pathman_config;
 
 /* make sure that everything works properly */
 SELECT * FROM test_column_type.test;
 
-/* check that expression, atttype is changed and upd_expr is false */
+/* check that expression, atttype is changed */
 SELECT * FROM pathman_config;
 
 SELECT context, entries FROM pathman_cache_stats ORDER BY context;

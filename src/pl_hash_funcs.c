@@ -26,6 +26,7 @@
 PG_FUNCTION_INFO_V1( create_hash_partitions_internal );
 
 PG_FUNCTION_INFO_V1( get_hash_part_idx );
+PG_FUNCTION_INFO_V1( build_hash_condition );
 
 
 /*
@@ -112,4 +113,45 @@ get_hash_part_idx(PG_FUNCTION_ARGS)
 			part_count = PG_GETARG_UINT32(1);
 
 	PG_RETURN_UINT32(hash_to_part_index(value, part_count));
+}
+
+/*
+ * Build hash condition for a CHECK CONSTRAINT
+ */
+Datum
+build_hash_condition(PG_FUNCTION_ARGS)
+{
+	Oid				atttype = PG_GETARG_OID(0);
+	text		   *attname = PG_GETARG_TEXT_P(1);
+	uint32			part_count = PG_GETARG_UINT32(2),
+					part_idx = PG_GETARG_UINT32(3);
+
+	TypeCacheEntry *tce;
+	char		   *attname_cstring = text_to_cstring(attname);
+
+	char		   *result;
+
+	if (part_idx >= part_count)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("'partition_index' must be lower than 'partitions_count'")));
+
+	tce = lookup_type_cache(atttype, TYPECACHE_HASH_PROC);
+
+	/* Check that HASH function exists */
+	if (!OidIsValid(tce->hash_proc))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("no hash function for type %s",
+						format_type_be(atttype))));
+
+	/* Create hash condition CSTRING */
+	result = psprintf("%s.get_hash_part_idx(%s(%s), %u) = %u",
+					  get_namespace_name(get_pathman_schema()),
+					  get_func_name(tce->hash_proc),
+					  attname_cstring,
+					  part_count,
+					  part_idx);
+
+	PG_RETURN_TEXT_P(cstring_to_text(result));
 }

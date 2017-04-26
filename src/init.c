@@ -644,7 +644,6 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 			/* Perform checks for non-NULL columns */
 			Assert(!isnull[Anum_pathman_config_partrel - 1]);
 			Assert(!isnull[Anum_pathman_config_expression - 1]);
-			Assert(!isnull[Anum_pathman_config_expression_p - 1]);
 			Assert(!isnull[Anum_pathman_config_parttype - 1]);
 		}
 
@@ -763,12 +762,10 @@ read_pathman_config(void)
 		Assert(!isnull[Anum_pathman_config_partrel - 1]);
 		Assert(!isnull[Anum_pathman_config_parttype - 1]);
 		Assert(!isnull[Anum_pathman_config_expression - 1]);
-		Assert(!isnull[Anum_pathman_config_expression_p - 1]);
-		Assert(!isnull[Anum_pathman_config_upd_expression - 1]);
 
 		/* Extract values from Datums */
 		relid = DatumGetObjectId(values[Anum_pathman_config_partrel - 1]);
-		upd_expr = DatumGetBool(values[Anum_pathman_config_upd_expression - 1]);
+		upd_expr = isnull[Anum_pathman_config_expression_p - 1];
 
 		/* Check that relation 'relid' exists */
 		if (get_rel_type_id(relid) == InvalidOid)
@@ -781,7 +778,7 @@ read_pathman_config(void)
 		}
 
 		if (upd_expr)
-			create_pathman_relation_info(relid);
+			invalidate_pathman_relation_info(relid, NULL);
 		else
 			refresh_pathman_relation_info(relid,
 									  values,
