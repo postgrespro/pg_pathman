@@ -751,8 +751,7 @@ read_pathman_config(void)
 	while((htup = heap_getnext(scan, ForwardScanDirection)) != NULL)
 	{
 		Datum		values[Natts_pathman_config];
-		bool		upd_expr,
-					isnull[Natts_pathman_config];
+		bool		isnull[Natts_pathman_config];
 		Oid			relid; /* partitioned table */
 
 		/* Extract Datums from tuple 'htup' */
@@ -765,7 +764,6 @@ read_pathman_config(void)
 
 		/* Extract values from Datums */
 		relid = DatumGetObjectId(values[Anum_pathman_config_partrel - 1]);
-		upd_expr = isnull[Anum_pathman_config_expression_p - 1];
 
 		/* Check that relation 'relid' exists */
 		if (get_rel_type_id(relid) == InvalidOid)
@@ -777,12 +775,8 @@ read_pathman_config(void)
 					 errhint(INIT_ERROR_HINT)));
 		}
 
-		if (upd_expr)
-			invalidate_pathman_relation_info(relid, NULL);
-		else
-			refresh_pathman_relation_info(relid,
-									  values,
-									  true); /* allow lazy prel loading */
+		/* get_pathman_relation_info() will refresh this entry */
+		invalidate_pathman_relation_info(relid, NULL);
 	}
 
 	/* Clean resources */

@@ -139,6 +139,7 @@ refresh_pathman_relation_info(Oid relid,
 
 	AssertTemporaryContext();
 	prel = invalidate_pathman_relation_info(relid, NULL);
+	Assert(prel);
 
 	/* Try locking parent, exit fast if 'allow_incomplete' */
 	if (allow_incomplete)
