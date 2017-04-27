@@ -404,7 +404,7 @@ partition_filter_visitor(Plan *plan, void *context)
 												relid,
 												modify_table->onConflictAction,
 												returning_list,
-												false);
+												CMD_INSERT);
 		}
 	}
 }

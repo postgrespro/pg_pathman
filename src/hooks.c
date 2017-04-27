@@ -16,6 +16,7 @@
 #include "hooks.h"
 #include "init.h"
 #include "partition_filter.h"
+#include "partition_update.h"
 #include "pathman_workers.h"
 #include "planner_tree_modification.h"
 #include "runtimeappend.h"
@@ -765,4 +766,36 @@ pathman_process_utility_hook(Node *parsetree,
 		standard_ProcessUtility(parsetree, queryString,
 								context, params,
 								dest, completionTag);
+}
+
+
+void
+pathman_executor_hook(QueryDesc *queryDesc, ScanDirection direction,
+		uint64 count)
+{
+	PlanState *state = (PlanState *) queryDesc->planstate;
+
+	if (IsA(state, ModifyTableState))
+	{
+		int					 i;
+		ModifyTableState	*mt_state = (ModifyTableState *) state;
+
+		for (i = 0; i < mt_state->mt_nplans; i++)
+		{
+			CustomScanState *subplanstate = (CustomScanState *) mt_state->mt_plans[i];
+
+			if (IsA(subplanstate, CustomScanState))
+			{
+				if (strcmp(subplanstate->methods->CustomName, "PrepareInsert") == 0)
+				{
+					PartitionUpdateState *cstate = (PartitionUpdateState *) subplanstate;
+					cstate->parent_state = mt_state;
+					cstate->saved_junkFilter = mt_state->resultRelInfo->ri_junkFilter;
+					mt_state->resultRelInfo->ri_junkFilter = NULL;
+				}
+			}
+		}
+	}
+
+	standard_ExecutorRun(queryDesc, direction, count);
 }

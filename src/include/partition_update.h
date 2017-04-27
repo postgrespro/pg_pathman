@@ -29,6 +29,7 @@ typedef struct PartitionUpdateState
 	Oid					 partitioned_table;
 	List				*returning_list;
 	ModifyTableState	*parent_state;
+	JunkFilter			*saved_junkFilter;
 	Plan				*subplan;				/* proxy variable to store subplan */
 } PartitionUpdateState;
 

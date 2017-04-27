@@ -145,7 +145,8 @@ init_result_parts_storage(ResultPartsStorage *parts_storage,
 						  bool speculative_inserts,
 						  Size table_entry_size,
 						  on_new_rri_holder on_new_rri_holder_cb,
-						  void *on_new_rri_holder_cb_arg)
+						  void *on_new_rri_holder_cb_arg,
+						  CmdType cmd_type)
 {
 	HASHCTL *result_rels_table_config = &parts_storage->result_rels_table_config;
 
@@ -168,7 +169,7 @@ init_result_parts_storage(ResultPartsStorage *parts_storage,
 	parts_storage->callback_arg = on_new_rri_holder_cb_arg;
 
 	/* Currenly ResultPartsStorage is used only for INSERTs */
-	parts_storage->command_type = CMD_INSERT;
+	parts_storage->command_type = cmd_type;
 	parts_storage->speculative_inserts = speculative_inserts;
 
 	/* Partitions must remain locked till transaction's end */
@@ -311,12 +312,42 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 		CopyToResultRelInfo(ri_onConflictSetProj);
 		CopyToResultRelInfo(ri_onConflictSetWhere);
 
+		if (parts_storage->command_type == CMD_UPDATE)
+		{
+			/* For UPDATE/DELETE, find the appropriate junk attr now */
+			char		 relkind;
+			JunkFilter	*junkfilter = child_result_rel_info->ri_junkFilter;
+
+			relkind = child_result_rel_info->ri_RelationDesc->rd_rel->relkind;
+			if (relkind == RELKIND_RELATION)
+			{
+				junkfilter->jf_junkAttNo = ExecFindJunkAttribute(junkfilter, "ctid");
+				if (!AttributeNumberIsValid(junkfilter->jf_junkAttNo))
+					elog(ERROR, "could not find junk ctid column");
+			}
+			else if (relkind == RELKIND_FOREIGN_TABLE)
+			{
+				/*
+				 * When there is an AFTER trigger, there should be a
+				 * wholerow attribute.
+				 */
+				junkfilter->jf_junkAttNo = ExecFindJunkAttribute(junkfilter, "wholerow");
+			}
+			else
+				elog(ERROR, "wrong type of relation");
+
+		}
+
 		/* ri_ConstraintExprs will be initialized by ExecRelCheck() */
 		child_result_rel_info->ri_ConstraintExprs = NULL;
 
 		/* Fill the ResultRelInfo holder */
 		rri_holder->partid = partid;
 		rri_holder->result_rel_info = child_result_rel_info;
+		rri_holder->orig_junkFilter = child_result_rel_info->ri_junkFilter;
+
+		if (parts_storage->command_type == CMD_UPDATE)
+			child_result_rel_info->ri_junkFilter = NULL;
 
 		/* Generate tuple transformation map and some other stuff */
 		rri_holder->tuple_map = build_part_tuple_map(parent_rel, child_rel);
@@ -464,7 +495,7 @@ Plan *
 make_partition_filter(Plan *subplan, Oid parent_relid,
 					  OnConflictAction conflict_action,
 					  List *returning_list,
-					  bool keep_ctid)
+					  CmdType command_type)
 {
 	CustomScan *cscan = makeNode(CustomScan);
 	Relation	parent_rel;
@@ -498,7 +529,7 @@ make_partition_filter(Plan *subplan, Oid parent_relid,
 	cscan->custom_private = list_make4(makeInteger(parent_relid),
 									   makeInteger(conflict_action),
 									   returning_list,
-									   makeInteger((int) keep_ctid));
+									   makeInteger(command_type));
 
 	return &cscan->scan.plan;
 }
@@ -519,7 +550,7 @@ partition_filter_create_scan_state(CustomScan *node)
 	state->partitioned_table = intVal(linitial(node->custom_private));
 	state->on_conflict_action = intVal(lsecond(node->custom_private));
 	state->returning_list = lthird(node->custom_private);
-	state->keep_ctid = (bool) intVal(lfourth(node->custom_private));
+	state->command_type = (CmdType) intVal(lfourth(node->custom_private));
 
 	/* Check boundaries */
 	Assert(state->on_conflict_action >= ONCONFLICT_NONE ||
@@ -544,7 +575,8 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 							  state->on_conflict_action != ONCONFLICT_NONE,
 							  ResultPartsStorageStandard,
 							  prepare_rri_for_insert,
-							  (void *) state);
+							  (void *) state,
+							  state->command_type);
 
 	state->warning_triggered = false;
 }
@@ -607,11 +639,12 @@ partition_filter_exec(CustomScanState *node)
 		MemoryContextSwitchTo(old_cxt);
 		ResetExprContext(econtext);
 
-		/* Magic: replace parent's ResultRelInfo with ours */
 		resultRelInfo = rri_holder->result_rel_info;
+
+		/* Magic: replace parent's ResultRelInfo with ours */
 		estate->es_result_relation_info = resultRelInfo;
 
-		if (state->keep_ctid)
+		if (state->command_type == CMD_UPDATE)
 		{
 			JunkFilter		*junkfilter;
 			Datum			 datum;
@@ -622,17 +655,15 @@ partition_filter_exec(CustomScanState *node)
 			 * we need this step because if there will be conversion
 			 * junk attributes will be removed from slot
 			 */
-			junkfilter = resultRelInfo->ri_junkFilter;
+			junkfilter = rri_holder->orig_junkFilter;
 			Assert(junkfilter != NULL);
 
 			relkind = resultRelInfo->ri_RelationDesc->rd_rel->relkind;
 			if (relkind == RELKIND_RELATION)
 			{
-				AttrNumber		ctid_attno;
 				bool			isNull;
 
-				ctid_attno = ExecFindJunkAttribute(junkfilter, "ctid");
-				datum = ExecGetJunkAttribute(slot, ctid_attno, &isNull);
+				datum = ExecGetJunkAttribute(slot, junkfilter->jf_junkAttNo, &isNull);
 				/* shouldn't ever get a null result... */
 				if (isNull)
 					elog(ERROR, "ctid is NULL");
@@ -661,6 +692,8 @@ partition_filter_exec(CustomScanState *node)
 			/* Now replace the original slot */
 			slot = state->tup_convert_slot;
 		}
+		else if (rri_holder->orig_junkFilter)
+			slot = ExecFilterJunk(rri_holder->orig_junkFilter, slot);
 
 		return slot;
 	}

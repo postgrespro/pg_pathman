@@ -566,7 +566,8 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	/* Initialize ResultPartsStorage */
 	init_result_parts_storage(&parts_storage, estate, false,
 							  ResultPartsStorageStandard,
-							  prepare_rri_for_copy, NULL);
+							  prepare_rri_for_copy, NULL,
+							  CMD_INSERT);
 	parts_storage.saved_rel_info = parent_result_rel;
 
 	/* Set up a tuple slot too */

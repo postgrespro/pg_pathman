@@ -39,6 +39,8 @@ typedef struct
 	Oid					partid;				/* partition's relid */
 	ResultRelInfo	   *result_rel_info;	/* cached ResultRelInfo */
 	TupleConversionMap *tuple_map;			/* tuple conversion map (parent => child) */
+	JunkFilter		   *orig_junkFilter;	/* we keep original JunkFilter from
+											   ResultRelInfo here */
 } ResultRelInfoHolder;
 
 
@@ -94,9 +96,10 @@ typedef struct
 	bool				warning_triggered;		/* warning message counter */
 
 	TupleTableSlot	   *tup_convert_slot;		/* slot for rebuilt tuples */
-	ItemPointer			ctid;					/* ctid of rubuilt tuple
-												   if there any, or NULL */
-	bool				keep_ctid;				/* if false ctid will not filled */
+	ItemPointer			ctid;					/* ctid of scanned tuple
+												   if there any, or NULL,
+												   filled when command_type == CMD_UPDATE*/
+	CmdType				command_type;
 
 	ExprContext		   *tup_convert_econtext;	/* ExprContext for projections */
 } PartitionFilterState;
@@ -118,7 +121,8 @@ void init_result_parts_storage(ResultPartsStorage *parts_storage,
 							   bool speculative_inserts,
 							   Size table_entry_size,
 							   on_new_rri_holder on_new_rri_holder_cb,
-							   void *on_new_rri_holder_cb_arg);
+							   void *on_new_rri_holder_cb_arg,
+							   CmdType cmd_type);
 
 void fini_result_parts_storage(ResultPartsStorage *parts_storage,
 							   bool close_rels);
@@ -144,7 +148,7 @@ Plan * make_partition_filter(Plan *subplan,
 							 Oid parent_relid,
 							 OnConflictAction conflict_action,
 							 List *returning_list,
-							 bool keep_ctid);
+							 CmdType command_type);
 
 
 Node * partition_filter_create_scan_state(CustomScan *node);

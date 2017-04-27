@@ -155,6 +155,7 @@ _PG_init(void)
 	planner_hook					= pathman_planner_hook;
 	process_utility_hook_next		= ProcessUtility_hook;
 	ProcessUtility_hook				= pathman_process_utility_hook;
+	ExecutorRun_hook				= pathman_executor_hook;
 
 	/* Initialize PgPro-specific subsystems */
 	init_expand_rte_hook();

@@ -77,7 +77,7 @@ make_partition_update(Plan *subplan,
 	/* Setup methods and child plan */
 	cscan->methods = &partition_update_plan_methods;
 	pfilter = make_partition_filter(subplan, parent_relid, ONCONFLICT_NONE,
-									returning_list, true);
+									returning_list, CMD_UPDATE);
 	cscan->custom_plans = list_make1(pfilter);
 	cscan->scan.plan.targetlist = pfilter->targetlist;
 
@@ -117,8 +117,13 @@ partition_update_begin(CustomScanState *node, EState *estate, int eflags)
 TupleTableSlot *
 partition_update_exec(CustomScanState *node)
 {
-	PlanState		*child_ps = (PlanState *) linitial(node->custom_ps);
-	TupleTableSlot	*slot;
+	EState					*estate = node->ss.ps.state;
+	PlanState				*child_ps = (PlanState *) linitial(node->custom_ps);
+	TupleTableSlot			*slot;
+	PartitionUpdateState	*state = (PartitionUpdateState *) node;
+
+	/* restore junkfilter in parent node */
+	state->parent_state->resultRelInfo->ri_junkFilter = state->saved_junkFilter;
 
 	/* execute PartitionFilter child node */
 	slot = ExecProcNode(child_ps);
@@ -137,26 +142,25 @@ partition_update_exec(CustomScanState *node)
 		HeapTuple		 oldtuple;
 
 		PartitionFilterState    *child_state = (PartitionFilterState *) child_ps;
-		EState					*estate = node->ss.ps.state;
-
-		Assert(child_state->keep_ctid);
-
-		resultRelInfo = estate->es_result_relation_info;
-		junkfilter = resultRelInfo->ri_junkFilter;
-		Assert(junkfilter != NULL);
+		Assert(child_state->command_type == CMD_UPDATE);
 
 		EvalPlanQualSetSlot(&epqstate, slot);
 
+		resultRelInfo = estate->es_result_relation_info;
 		oldtuple = NULL;
+		junkfilter = resultRelInfo->ri_junkFilter;
 		relkind = resultRelInfo->ri_RelationDesc->rd_rel->relkind;
-		if (relkind == RELKIND_RELATION && child_state->ctid != NULL)
+
+		if (relkind == RELKIND_RELATION)
 		{
+			Assert(child_state->ctid != NULL);
+
 			tupleid = child_state->ctid;
 			tuple_ctid = *tupleid;		/* be sure we don't free
 										 * ctid!! */
 			tupleid = &tuple_ctid;
 		}
-		else if (relkind == RELKIND_FOREIGN_TABLE)
+		else if (junkfilter != NULL && relkind == RELKIND_FOREIGN_TABLE)
 		{
 			if (AttributeNumberIsValid(junkfilter->jf_junkAttNo))
 			{
@@ -173,8 +177,7 @@ partition_update_exec(CustomScanState *node)
 				ItemPointerSetInvalid(&(oldtupdata.t_self));
 
 				/* Historically, view triggers see invalid t_tableOid. */
-				oldtupdata.t_tableOid =RelationGetRelid(resultRelInfo->ri_RelationDesc);
-
+				oldtupdata.t_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
 				oldtuple = &oldtupdata;
 			}
 		}

@@ -13,6 +13,7 @@
 
 
 #include "postgres.h"
+#include "executor/executor.h"
 #include "optimizer/planner.h"
 #include "optimizer/paths.h"
 #include "parser/analyze.h"
@@ -60,5 +61,7 @@ void pathman_process_utility_hook(Node *parsetree,
 								  DestReceiver *dest,
 								  char *completionTag);
 
+void pathman_executor_hook(QueryDesc *queryDesc, ScanDirection direction,
+						   uint64 count);
 
 #endif /* PATHMAN_HOOKS_H */
