@@ -18,10 +18,11 @@
 #include "nodes/bitmapset.h"
 #include "nodes/nodes.h"
 #include "nodes/primnodes.h"
+#include "nodes/value.h"
 #include "port/atomics.h"
 #include "storage/lock.h"
 #include "utils/datum.h"
-#include "nodes/primnodes.h"
+#include "utils/lsyscache.h"
 
 
 /* Range bound */
@@ -235,6 +236,21 @@ PrelLastChild(const PartRelationInfo *prel)
 			 PrelParentRelid(prel));
 
 	return PrelChildrenCount(prel) - 1; /* last partition */
+}
+
+static inline List *
+PrelExpressionColumnNames(const PartRelationInfo *prel)
+{
+	List   *columns = NIL;
+	int		j = -1;
+
+	while ((j = bms_next_member(prel->expr_atts, j)) >= 0)
+	{
+		char *attname = get_attname(prel->key, j);
+		columns = lappend(columns, makeString(attname));
+	}
+
+	return columns;
 }
 
 

@@ -1332,7 +1332,7 @@ create_update_triggers(PG_FUNCTION_ARGS)
 	trigname = build_update_trigger_name_internal(parent);
 
 	/* Create trigger for parent */
-	columns = get_part_expression_columns(prel);
+	columns = PrelExpressionColumnNames(prel);
 	create_single_update_trigger_internal(parent, trigname, columns);
 
 	/* Fetch children array */
@@ -1363,7 +1363,7 @@ create_single_update_trigger(PG_FUNCTION_ARGS)
 	trigname = build_update_trigger_name_internal(parent);
 
 	/* Generate list of columns used in expression */
-	columns = get_part_expression_columns(prel);
+	columns = PrelExpressionColumnNames(prel);
 	create_single_update_trigger_internal(child, trigname, columns);
 
 	PG_RETURN_VOID();

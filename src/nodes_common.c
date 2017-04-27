@@ -335,10 +335,10 @@ check_clause_for_expression(Node *node, struct check_clause_context *ctx)
 		Node   *left	= linitial(expr->args),
 			   *right	= lsecond(expr->args);
 
-		if (match_expr_to_operand(left, ctx->prel_expr))
+		if (expr_matches_operand(left, ctx->prel_expr))
 			ctx->count += 1;
 
-		if (match_expr_to_operand(right, ctx->prel_expr))
+		if (expr_matches_operand(right, ctx->prel_expr))
 			ctx->count += 1;
 
 		return false;

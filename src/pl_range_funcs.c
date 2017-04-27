@@ -60,8 +60,8 @@ static void merge_range_partitions_internal(Oid parent,
 											Oid *parts,
 											uint32 nparts);
 static void modify_range_constraint(Oid child_relid,
-									const char *attname,
-									Oid atttype,
+									const char *expression,
+									Oid expression_type,
 									const Bound *lower,
 									const Bound *upper);
 static char *get_qualified_rel_name(Oid relid);
@@ -554,7 +554,7 @@ build_range_condition(PG_FUNCTION_ARGS)
 				MakeBoundInf(PLUS_INFINITY) :
 				MakeBound(PG_GETARG_DATUM(3));
 
-	expr = get_raw_expression(partition_relid, expression, NULL, NULL);
+	expr = parse_partitioning_expression(partition_relid, expression, NULL, NULL);
 	con = build_range_check_constraint(partition_relid,
 									   expr,
 									   &min, &max,
@@ -1016,8 +1016,8 @@ interval_is_trivial(Oid atttype, Datum interval, Oid interval_type)
  */
 static void
 modify_range_constraint(Oid child_relid,
-						const char *attname,
-						Oid atttype,
+						const char *expression,
+						Oid expression_type,
 						const Bound *lower,
 						const Bound *upper)
 {
@@ -1029,14 +1029,14 @@ modify_range_constraint(Oid child_relid,
 	drop_check_constraint(child_relid);
 
 	/* Parse expression */
-	expr = get_raw_expression(child_relid, attname, NULL, NULL);
+	expr = parse_partitioning_expression(child_relid, expression, NULL, NULL);
 
 	/* Build a new one */
 	constraint = build_range_check_constraint(child_relid,
 											  expr,
 											  lower,
 											  upper,
-											  atttype);
+											  expression_type);
 
 	/* Open the relation and add new check constraint */
 	partition_rel = heap_open(child_relid, AccessExclusiveLock);

@@ -868,7 +868,7 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 
 	Assert(exprnode != NULL);
 
-	if (!match_expr_to_operand(context->prel_expr, exprnode))
+	if (!expr_matches_operand(context->prel_expr, exprnode))
 		goto handle_arrexpr_return;
 
 	if (arraynode && IsA(arraynode, Const) &&
@@ -1146,14 +1146,14 @@ pull_var_param(const WalkerContext *ctx,
 	Node   *left = linitial(expr->args),
 		   *right = lsecond(expr->args);
 
-	if (match_expr_to_operand(left, ctx->prel_expr))
+	if (expr_matches_operand(left, ctx->prel_expr))
 	{
 		*var_ptr = left;
 		*param_ptr = right;
 		return true;
 	}
 
-	if (match_expr_to_operand(right, ctx->prel_expr))
+	if (expr_matches_operand(right, ctx->prel_expr))
 	{
 		*var_ptr = right;
 		*param_ptr = left;

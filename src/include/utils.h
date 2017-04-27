@@ -28,7 +28,7 @@
 bool clause_contains_params(Node *clause);
 bool is_date_type_internal(Oid typid);
 bool check_security_policy_internal(Oid relid, Oid role);
-bool match_expr_to_operand(Node *operand, Node *expr);
+bool expr_matches_operand(Node *operand, Node *expr);
 
 /*
  * Misc.
@@ -67,7 +67,5 @@ RangeVar ** qualified_relnames_to_rangevars(char **relnames, size_t nrelnames);
 
 AttrNumber *get_pathman_attributes_map(const PartRelationInfo *prel,
 										Relation child);
-
-List *get_part_expression_columns(const PartRelationInfo *prel);
 
 #endif /* PATHMAN_UTILS_H */

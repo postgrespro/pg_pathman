@@ -84,10 +84,12 @@ static void postprocess_child_table_and_atts(Oid parent_relid, Oid partition_rel
 static Oid text_to_regprocedure(text *proname_args);
 
 static Constraint *make_constraint_common(char *name, Node *raw_expr);
-static Node *get_constraint_expression(Oid parent_relid,
-									   Oid *expr_type, List **columns);
 static Value make_string_value_struct(char *str);
 static Value make_int_value_struct(int int_val);
+
+static Node *get_partitioning_expression(Oid parent_relid,
+										 Oid *expr_type,
+										 List **columns);
 
 /*
  * ---------------------------------------
@@ -123,7 +125,7 @@ create_single_range_partition_internal(Oid parent_relid,
 	}
 
 	/* check pathman config and fill variables */
-	expr = get_constraint_expression(parent_relid, NULL, &trigger_columns);
+	expr = get_partitioning_expression(parent_relid, NULL, &trigger_columns);
 
 	/* Create a partition & get 'partitioning expression' */
 	partition_relid = create_single_partition_internal(parent_relid,
@@ -163,7 +165,7 @@ create_single_hash_partition_internal(Oid parent_relid,
 									  char *tablespace)
 {
 	Oid						partition_relid,
-							value_type;
+							expr_type;
 	Constraint			   *check_constr;
 	Node				   *expr;
 	init_callback_params	callback_params;
@@ -187,14 +189,14 @@ create_single_hash_partition_internal(Oid parent_relid,
 													   tablespace);
 
 	/* check pathman config and fill variables */
-	expr = get_constraint_expression(parent_relid, &value_type, &trigger_columns);
+	expr = get_partitioning_expression(parent_relid, &expr_type, &trigger_columns);
 
 	/* Build check constraint for HASH partition */
 	check_constr = build_hash_check_constraint(partition_relid,
 											   expr,
 											   part_idx,
 											   part_count,
-											   value_type);
+											   expr_type);
 
 	/* Cook args for init_callback */
 	MakeInitCallbackHashParams(&callback_params,
@@ -1710,39 +1712,33 @@ validate_part_expression(Node *node, void *context)
 	return expression_tree_walker(node, validate_part_expression, context);
 }
 
-/* Wraps expression by SELECT query and returns parsed tree */
+/* Wraps expression by SELECT query and returns parse tree */
 Node *
-get_raw_expression(Oid relid, const char *expr, char **query_string_out,
-		Node **parsetree)
+parse_partitioning_expression(Oid relid,
+							  const char *expression,
+							  char **query_string_out,
+							  Node **parsetree_out)
 {
-	Node			*result;
-	SelectStmt		*select_stmt;
-	ResTarget		*target;
+	SelectStmt *select_stmt;
+	List	   *parsetree_list;
 
-	char			*fmt = "SELECT (%s) FROM ONLY %s.\"%s\"";
-	char			*relname = get_rel_name(relid),
-					*namespace_name = get_namespace_name(get_rel_namespace(relid));
-	List			*parsetree_list;
-	char			*query_string = psprintf(fmt, expr, namespace_name, relname);
+	char	   *sql = "SELECT (%s) FROM ONLY %s.\"%s\"";
+	char	   *relname = get_rel_name(relid),
+			   *nspname = get_namespace_name(get_rel_namespace(relid));
+	char	   *query_string = psprintf(sql, expression, nspname, relname);
 
 	parsetree_list = raw_parser(query_string);
 	Assert(list_length(parsetree_list) == 1);
 
-	if (query_string_out)
-	{
-		*query_string_out = query_string;
-	}
-
 	select_stmt = (SelectStmt *) linitial(parsetree_list);
 
-	if (parsetree)
-	{
-		*parsetree = (Node *) select_stmt;
-	}
+	if (query_string_out)
+		*query_string_out = query_string;
 
-	target = (ResTarget *) linitial(select_stmt->targetList);
-	result = (Node *) target->val;
-	return result;
+	if (parsetree_out)
+		*parsetree_out = (Node *) select_stmt;
+
+	return ((ResTarget *) linitial(select_stmt->targetList))->val;
 }
 
 /*
@@ -1751,7 +1747,7 @@ get_raw_expression(Oid relid, const char *expr, char **query_string_out,
  */
 PartExpressionInfo *
 get_part_expression_info(Oid relid, const char *expr_string,
-		bool check_hash_func, bool make_plan)
+						 bool check_hash_func, bool make_plan)
 {
 	Node				*expr_node,
 						*parsetree;
@@ -1766,12 +1762,12 @@ get_part_expression_info(Oid relid, const char *expr_string,
 	expr_info = palloc(sizeof(PartExpressionInfo));
 
 	pathman_parse_context = AllocSetContextCreate(TopPathmanContext,
-											"pathman parse context",
-											ALLOCSET_DEFAULT_SIZES);
+												  "pathman parse context",
+												  ALLOCSET_DEFAULT_SIZES);
 
 	/* Keep raw expression */
-	expr_info->raw_expr = get_raw_expression(relid, expr_string,
-			&query_string, &parsetree);
+	expr_info->raw_expr = parse_partitioning_expression(relid, expr_string,
+											 &query_string, &parsetree);
 
 	/* If expression is just column we check that is not null */
 	if (IsA(expr_info->raw_expr, ColumnRef))
@@ -1892,12 +1888,11 @@ extract_column_names(Node *node, struct extract_column_names_context *ctx)
 	return raw_expression_tree_walker(node, extract_column_names, ctx);
 }
 
-/*
- * Returns raw partitioning expression, and if specified returns
- * columns from expression and its type
- */
+/* Returns raw partitioning expression + expr_type + columns */
 static Node *
-get_constraint_expression(Oid parent_relid, Oid *expr_type, List **columns)
+get_partitioning_expression(Oid parent_relid,
+							Oid *expr_type,		/* ret val #1 */
+							List **columns)		/* ret val #2 */
 {
 	/* Values extracted from PATHMAN_CONFIG */
 	Datum		 config_values[Natts_pathman_config];
@@ -1906,28 +1901,24 @@ get_constraint_expression(Oid parent_relid, Oid *expr_type, List **columns)
 	char		*expr_string;
 
 	/* Check that table is registered in PATHMAN_CONFIG */
-	if (!pathman_config_contains_relation(parent_relid,
-										  config_values, config_nulls, NULL, NULL))
+	if (!pathman_config_contains_relation(parent_relid, config_values,
+										  config_nulls, NULL, NULL))
 		elog(ERROR, "table \"%s\" is not partitioned",
 			 get_rel_name_or_relid(parent_relid));
 
-	/*
-	 * We need expression type for hash functions. Range functions don't need
-	 * this feature.
-	 */
+	/* We need expression type for hash functions */
 	if (expr_type)
 		*expr_type = DatumGetObjectId(config_values[Anum_pathman_config_atttype - 1]);
 
 	expr_string = TextDatumGetCString(config_values[Anum_pathman_config_expression - 1]);
-	expr = get_raw_expression(parent_relid, expr_string, NULL, NULL);
+	expr = parse_partitioning_expression(parent_relid, expr_string, NULL, NULL);
 	pfree(expr_string);
 
 	if (columns)
 	{
-		struct extract_column_names_context ctx;
-		ctx.columns = NIL;
-		extract_column_names(expr, &ctx);
-		*columns = ctx.columns;
+		struct extract_column_names_context context = { NIL };
+		extract_column_names(expr, &context);
+		*columns = context.columns;
 	}
 
 	return expr;
