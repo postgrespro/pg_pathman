@@ -314,7 +314,6 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 
 		if (parts_storage->command_type == CMD_UPDATE)
 		{
-			/* For UPDATE/DELETE, find the appropriate junk attr now */
 			char		 relkind;
 			JunkFilter	*junkfilter = child_result_rel_info->ri_junkFilter;
 
@@ -692,7 +691,7 @@ partition_filter_exec(CustomScanState *node)
 			/* Now replace the original slot */
 			slot = state->tup_convert_slot;
 		}
-		else if (rri_holder->orig_junkFilter)
+		else if (state->command_type == CMD_UPDATE)
 			slot = ExecFilterJunk(rri_holder->orig_junkFilter, slot);
 
 		return slot;

@@ -122,7 +122,13 @@ partition_update_exec(CustomScanState *node)
 	TupleTableSlot			*slot;
 	PartitionUpdateState	*state = (PartitionUpdateState *) node;
 
-	/* restore junkfilter in parent node */
+	/*
+	 * Restore junkfilter in base resultRelInfo,
+	 * we do it because child's RelResultInfo expects its existence
+	 * for proper initialization.
+	 * Alsowe change junk attribute number in JunkFilter, because
+	 * it wasn't set in ModifyTable node initialization
+	 */
 	state->parent_state->resultRelInfo->ri_junkFilter = state->saved_junkFilter;
 
 	/* execute PartitionFilter child node */
@@ -136,7 +142,6 @@ partition_update_exec(CustomScanState *node)
 		ResultRelInfo	*resultRelInfo;
 		ItemPointer		 tupleid = NULL;
 		ItemPointerData	 tuple_ctid;
-		JunkFilter		*junkfilter;
 		EPQState		 epqstate;
 		HeapTupleData	 oldtupdata;
 		HeapTuple		 oldtuple;
@@ -148,7 +153,6 @@ partition_update_exec(CustomScanState *node)
 
 		resultRelInfo = estate->es_result_relation_info;
 		oldtuple = NULL;
-		junkfilter = resultRelInfo->ri_junkFilter;
 		relkind = resultRelInfo->ri_RelationDesc->rd_rel->relkind;
 
 		if (relkind == RELKIND_RELATION)
@@ -160,9 +164,11 @@ partition_update_exec(CustomScanState *node)
 										 * ctid!! */
 			tupleid = &tuple_ctid;
 		}
-		else if (junkfilter != NULL && relkind == RELKIND_FOREIGN_TABLE)
+		else if (relkind == RELKIND_FOREIGN_TABLE)
 		{
-			if (AttributeNumberIsValid(junkfilter->jf_junkAttNo))
+			JunkFilter		*junkfilter = resultRelInfo->ri_junkFilter;
+
+			if (junkfilter != NULL && AttributeNumberIsValid(junkfilter->jf_junkAttNo))
 			{
 				datum = ExecGetJunkAttribute(slot,
 											 junkfilter->jf_junkAttNo,
