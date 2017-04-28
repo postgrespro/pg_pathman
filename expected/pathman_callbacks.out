@@ -198,6 +198,89 @@ INSERT INTO callbacks.abc VALUES (301, 0); /* +1 new partition */
 WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_5", "range_max": "401", "range_min": "301", "parent_schema": "callbacks", "partition_schema": "callbacks"}
 DROP TABLE callbacks.abc CASCADE;
 NOTICE:  drop cascades to 4 other objects
+/* more complex test using rotation of tables */
+CREATE TABLE callbacks.abc(a INT4 NOT NULL);
+INSERT INTO callbacks.abc
+	SELECT a FROM generate_series(1, 100) a;
+SELECT create_range_partitions('callbacks.abc', 'a', 1, 10, 10);
+ create_range_partitions 
+-------------------------
+                      10
+(1 row)
+
+CREATE OR REPLACE FUNCTION callbacks.rotation_callback(params jsonb)
+RETURNS VOID AS
+$$
+DECLARE
+    relation	regclass;
+	parent_rel	regclass;
+BEGIN
+	parent_rel := concat(params->>'partition_schema', '.', params->>'parent')::regclass;
+
+    -- drop "old" partitions
+    FOR relation IN (SELECT partition FROM pathman_partition_list
+                     WHERE parent = parent_rel
+					 ORDER BY range_min::INT4 DESC
+                     OFFSET 4)  -- remain 4 last partitions
+    LOOP
+        RAISE NOTICE 'dropping partition %', relation;
+        PERFORM drop_range_partition(relation);
+    END LOOP;
+END
+$$ LANGUAGE plpgsql;
+SELECT * FROM pathman_partition_list
+WHERE parent = 'callbacks.abc'::REGCLASS
+ORDER BY range_min::INT4;
+    parent     |    partition     | parttype | partattr | range_min | range_max 
+---------------+------------------+----------+----------+-----------+-----------
+ callbacks.abc | callbacks.abc_1  |        2 | a        | 1         | 11
+ callbacks.abc | callbacks.abc_2  |        2 | a        | 11        | 21
+ callbacks.abc | callbacks.abc_3  |        2 | a        | 21        | 31
+ callbacks.abc | callbacks.abc_4  |        2 | a        | 31        | 41
+ callbacks.abc | callbacks.abc_5  |        2 | a        | 41        | 51
+ callbacks.abc | callbacks.abc_6  |        2 | a        | 51        | 61
+ callbacks.abc | callbacks.abc_7  |        2 | a        | 61        | 71
+ callbacks.abc | callbacks.abc_8  |        2 | a        | 71        | 81
+ callbacks.abc | callbacks.abc_9  |        2 | a        | 81        | 91
+ callbacks.abc | callbacks.abc_10 |        2 | a        | 91        | 101
+(10 rows)
+
+SELECT set_init_callback('callbacks.abc',
+						 'callbacks.rotation_callback(jsonb)');
+ set_init_callback 
+-------------------
+ 
+(1 row)
+
+INSERT INTO callbacks.abc VALUES (110);
+NOTICE:  dropping partition callbacks.abc_7
+NOTICE:  dropping partition callbacks.abc_6
+NOTICE:  dropping partition callbacks.abc_5
+NOTICE:  dropping partition callbacks.abc_4
+NOTICE:  dropping partition callbacks.abc_3
+NOTICE:  dropping partition callbacks.abc_2
+NOTICE:  dropping partition callbacks.abc_1
+INSERT INTO callbacks.abc VALUES (120);
+INSERT INTO callbacks.abc VALUES (130);
+NOTICE:  dropping partition callbacks.abc_8
+INSERT INTO callbacks.abc VALUES (140);
+NOTICE:  dropping partition callbacks.abc_9
+INSERT INTO callbacks.abc VALUES (150);
+NOTICE:  dropping partition callbacks.abc_10
+SELECT * FROM pathman_partition_list
+WHERE parent = 'callbacks.abc'::REGCLASS
+ORDER BY range_min::INT4;
+    parent     |    partition     | parttype | partattr | range_min | range_max 
+---------------+------------------+----------+----------+-----------+-----------
+ callbacks.abc | callbacks.abc_11 |        2 | a        | 101       | 111
+ callbacks.abc | callbacks.abc_12 |        2 | a        | 111       | 121
+ callbacks.abc | callbacks.abc_13 |        2 | a        | 121       | 131
+ callbacks.abc | callbacks.abc_14 |        2 | a        | 131       | 141
+ callbacks.abc | callbacks.abc_15 |        2 | a        | 141       | 151
+(5 rows)
+
+DROP TABLE callbacks.abc CASCADE;
+NOTICE:  drop cascades to 5 other objects
 DROP SCHEMA callbacks CASCADE;
-NOTICE:  drop cascades to 2 other objects
+NOTICE:  drop cascades to 3 other objects
 DROP EXTENSION pg_pathman CASCADE;

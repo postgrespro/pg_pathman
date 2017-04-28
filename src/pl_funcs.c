@@ -87,7 +87,8 @@ typedef struct
 
 	const PartRelationInfo *current_prel;	/* selected PartRelationInfo */
 
-	uint32					child_number;	/* child we're looking at */
+	Size					child_number;	/* child we're looking at */
+	SPITupleTable		   *tuptable;		/* buffer for tuples */
 } show_partition_list_cxt;
 
 /* User context for function show_pathman_cache_stats_internal() */
@@ -341,16 +342,18 @@ show_cache_stats_internal(PG_FUNCTION_ARGS)
 Datum
 show_partition_list_internal(PG_FUNCTION_ARGS)
 {
-	show_partition_list_cxt	   *usercxt;
-	FuncCallContext			   *funccxt;
+	show_partition_list_cxt		*usercxt;
+	FuncCallContext				*funccxt;
+	MemoryContext				 old_mcxt;
+	SPITupleTable				*tuptable;
 
 	/*
 	 * Initialize tuple descriptor & function call context.
 	 */
 	if (SRF_IS_FIRSTCALL())
 	{
-		TupleDesc		tupdesc;
-		MemoryContext	old_mcxt;
+		TupleDesc		 tupdesc;
+		MemoryContext	 tuptabcxt;
 
 		funccxt = SRF_FIRSTCALL_INIT();
 
@@ -386,136 +389,177 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 		funccxt->tuple_desc = BlessTupleDesc(tupdesc);
 		funccxt->user_fctx = (void *) usercxt;
 
+		/* initialize tuple table context */
+		tuptabcxt = AllocSetContextCreate(CurrentMemoryContext,
+										  "pg_pathman TupTable",
+										  ALLOCSET_DEFAULT_SIZES);
+		MemoryContextSwitchTo(tuptabcxt);
+
+		/* initialize tuple table for partitions list, we use it as buffer */
+		tuptable = (SPITupleTable *) palloc0(sizeof(SPITupleTable));
+		usercxt->tuptable = tuptable;
+
+		tuptable->tuptabcxt = tuptabcxt;
+
+		/* set up initial allocations */
+		tuptable->alloced = tuptable->free = 128;
+		tuptable->vals = (HeapTuple *) palloc(tuptable->alloced * sizeof(HeapTuple));
+
 		MemoryContextSwitchTo(old_mcxt);
+
+		/* Iterate through pathman cache */
+		for (;;)
+		{
+			const PartRelationInfo *prel;
+			HeapTuple				htup;
+			Datum					values[Natts_pathman_partition_list];
+			bool					isnull[Natts_pathman_partition_list] = { 0 };
+			char				   *partattr_cstr;
+
+			/* Fetch next PartRelationInfo if needed */
+			if (usercxt->current_prel == NULL)
+			{
+				HeapTuple	pathman_config_htup;
+				Datum		parent_table;
+				bool		parent_table_isnull;
+				Oid			parent_table_oid;
+
+				pathman_config_htup = heap_getnext(usercxt->pathman_config_scan,
+												   ForwardScanDirection);
+				if (!HeapTupleIsValid(pathman_config_htup))
+					break;
+
+				parent_table = heap_getattr(pathman_config_htup,
+											Anum_pathman_config_partrel,
+											RelationGetDescr(usercxt->pathman_config),
+											&parent_table_isnull);
+
+				Assert(parent_table_isnull == false);
+				parent_table_oid = DatumGetObjectId(parent_table);
+
+				usercxt->current_prel = get_pathman_relation_info(parent_table_oid);
+				if (usercxt->current_prel == NULL)
+					continue;
+
+				usercxt->child_number = 0;
+			}
+
+			/* Alias to 'usercxt->current_prel' */
+			prel = usercxt->current_prel;
+
+			/* If we've run out of partitions, switch to the next 'prel' */
+			if (usercxt->child_number >= PrelChildrenCount(prel))
+			{
+				usercxt->current_prel = NULL;
+				usercxt->child_number = 0;
+
+				continue;
+			}
+
+			partattr_cstr = get_attname(PrelParentRelid(prel), prel->attnum);
+			if (!partattr_cstr)
+			{
+				/* Parent does not exist, go to the next 'prel' */
+				usercxt->current_prel = NULL;
+				continue;
+			}
+
+			/* Fill in common values */
+			values[Anum_pathman_pl_parent - 1]		= PrelParentRelid(prel);
+			values[Anum_pathman_pl_parttype - 1]	= prel->parttype;
+			values[Anum_pathman_pl_partattr - 1]	= CStringGetTextDatum(partattr_cstr);
+
+			switch (prel->parttype)
+			{
+				case PT_HASH:
+					{
+						Oid	 *children = PrelGetChildrenArray(prel),
+							  child_oid = children[usercxt->child_number];
+
+						values[Anum_pathman_pl_partition - 1] = child_oid;
+						isnull[Anum_pathman_pl_range_min - 1] = true;
+						isnull[Anum_pathman_pl_range_max - 1] = true;
+					}
+					break;
+
+				case PT_RANGE:
+					{
+						RangeEntry *re;
+
+						re = &PrelGetRangesArray(prel)[usercxt->child_number];
+
+						values[Anum_pathman_pl_partition - 1] = re->child_oid;
+
+						/* Lower bound text */
+						if (!IsInfinite(&re->min))
+						{
+							Datum rmin = CStringGetTextDatum(
+											datum_to_cstring(BoundGetValue(&re->min),
+															 prel->atttype));
+
+							values[Anum_pathman_pl_range_min - 1] = rmin;
+						}
+						else isnull[Anum_pathman_pl_range_min - 1] = true;
+
+						/* Upper bound text */
+						if (!IsInfinite(&re->max))
+						{
+							Datum rmax = CStringGetTextDatum(
+											datum_to_cstring(BoundGetValue(&re->max),
+															 prel->atttype));
+
+							values[Anum_pathman_pl_range_max - 1] = rmax;
+						}
+						else isnull[Anum_pathman_pl_range_max - 1] = true;
+					}
+					break;
+
+				default:
+					elog(ERROR, "Unknown partitioning type %u", prel->parttype);
+			}
+
+			/* Fill tuptable */
+			old_mcxt = MemoryContextSwitchTo(tuptable->tuptabcxt);
+
+			/* Form output tuple */
+			htup = heap_form_tuple(funccxt->tuple_desc, values, isnull);
+
+			if (tuptable->free == 0)
+			{
+				/* Double the size of the pointer array */
+				tuptable->free = tuptable->alloced;
+				tuptable->alloced += tuptable->free;
+				tuptable->vals = (HeapTuple *) repalloc_huge(tuptable->vals,
+											  tuptable->alloced * sizeof(HeapTuple));
+			}
+
+			tuptable->vals[tuptable->alloced - tuptable->free] = htup;
+			(tuptable->free)--;
+
+			MemoryContextSwitchTo(old_mcxt);
+
+			/* Switch to the next child */
+			usercxt->child_number++;
+		}
+
+		/* Clean resources */
+		heap_endscan(usercxt->pathman_config_scan);
+		UnregisterSnapshot(usercxt->snapshot);
+		heap_close(usercxt->pathman_config, AccessShareLock);
+
+		usercxt->child_number = 0;
 	}
 
 	funccxt = SRF_PERCALL_SETUP();
 	usercxt = (show_partition_list_cxt *) funccxt->user_fctx;
+	tuptable = usercxt->tuptable;
 
-	/* Iterate through pathman cache */
-	for (;;)
+	if (usercxt->child_number < (tuptable->alloced - tuptable->free))
 	{
-		const PartRelationInfo *prel;
-		HeapTuple				htup;
-		Datum					values[Natts_pathman_partition_list];
-		bool					isnull[Natts_pathman_partition_list] = { 0 };
-		char				   *partattr_cstr;
-
-		/* Fetch next PartRelationInfo if needed */
-		if (usercxt->current_prel == NULL)
-		{
-			HeapTuple	pathman_config_htup;
-			Datum		parent_table;
-			bool		parent_table_isnull;
-			Oid			parent_table_oid;
-
-			pathman_config_htup = heap_getnext(usercxt->pathman_config_scan,
-											   ForwardScanDirection);
-			if (!HeapTupleIsValid(pathman_config_htup))
-				break;
-
-			parent_table = heap_getattr(pathman_config_htup,
-										Anum_pathman_config_partrel,
-										RelationGetDescr(usercxt->pathman_config),
-										&parent_table_isnull);
-
-			Assert(parent_table_isnull == false);
-			parent_table_oid = DatumGetObjectId(parent_table);
-
-			usercxt->current_prel = get_pathman_relation_info(parent_table_oid);
-			if (usercxt->current_prel == NULL)
-				continue;
-
-			usercxt->child_number = 0;
-		}
-
-		/* Alias to 'usercxt->current_prel' */
-		prel = usercxt->current_prel;
-
-		/* If we've run out of partitions, switch to the next 'prel' */
-		if (usercxt->child_number >= PrelChildrenCount(prel))
-		{
-			usercxt->current_prel = NULL;
-			usercxt->child_number = 0;
-
-			continue;
-		}
-
-		partattr_cstr = get_attname(PrelParentRelid(prel), prel->attnum);
-		if (!partattr_cstr)
-		{
-			/* Parent does not exist, go to the next 'prel' */
-			usercxt->current_prel = NULL;
-			continue;
-		}
-
-		/* Fill in common values */
-		values[Anum_pathman_pl_parent - 1]		= PrelParentRelid(prel);
-		values[Anum_pathman_pl_parttype - 1]	= prel->parttype;
-		values[Anum_pathman_pl_partattr - 1]	= CStringGetTextDatum(partattr_cstr);
-
-		switch (prel->parttype)
-		{
-			case PT_HASH:
-				{
-					Oid	 *children = PrelGetChildrenArray(prel),
-						  child_oid = children[usercxt->child_number];
-
-					values[Anum_pathman_pl_partition - 1] = child_oid;
-					isnull[Anum_pathman_pl_range_min - 1] = true;
-					isnull[Anum_pathman_pl_range_max - 1] = true;
-				}
-				break;
-
-			case PT_RANGE:
-				{
-					RangeEntry *re;
-
-					re = &PrelGetRangesArray(prel)[usercxt->child_number];
-
-					values[Anum_pathman_pl_partition - 1] = re->child_oid;
-
-					/* Lower bound text */
-					if (!IsInfinite(&re->min))
-					{
-						Datum rmin = CStringGetTextDatum(
-										datum_to_cstring(BoundGetValue(&re->min),
-														 prel->atttype));
-
-						values[Anum_pathman_pl_range_min - 1] = rmin;
-					}
-					else isnull[Anum_pathman_pl_range_min - 1] = true;
-
-					/* Upper bound text */
-					if (!IsInfinite(&re->max))
-					{
-						Datum rmax = CStringGetTextDatum(
-										datum_to_cstring(BoundGetValue(&re->max),
-														 prel->atttype));
-
-						values[Anum_pathman_pl_range_max - 1] = rmax;
-					}
-					else isnull[Anum_pathman_pl_range_max - 1] = true;
-				}
-				break;
-
-			default:
-				elog(ERROR, "Unknown partitioning type %u", prel->parttype);
-		}
-
-		/* Switch to the next child */
+		HeapTuple	htup = usercxt->tuptable->vals[usercxt->child_number];
 		usercxt->child_number++;
-
-		/* Form output tuple */
-		htup = heap_form_tuple(funccxt->tuple_desc, values, isnull);
-
 		SRF_RETURN_NEXT(funccxt, HeapTupleGetDatum(htup));
 	}
-
-	/* Clean resources */
-	heap_endscan(usercxt->pathman_config_scan);
-	UnregisterSnapshot(usercxt->snapshot);
-	heap_close(usercxt->pathman_config, AccessShareLock);
 
 	SRF_RETURN_DONE(funccxt);
 }
