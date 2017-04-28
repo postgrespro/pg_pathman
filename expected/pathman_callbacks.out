@@ -218,10 +218,12 @@ BEGIN
 	parent_rel := concat(params->>'partition_schema', '.', params->>'parent')::regclass;
 
     -- drop "old" partitions
-    FOR relation IN (SELECT partition FROM pathman_partition_list
-                     WHERE parent = parent_rel
-					 ORDER BY range_min::INT4 DESC
-                     OFFSET 4)  -- remain 4 last partitions
+    FOR relation IN (SELECT partition FROM
+						(SELECT partition, range_min::INT4 FROM pathman_partition_list
+						 WHERE parent = parent_rel
+						 ORDER BY range_min::INT4 DESC
+						 OFFSET 4) t  -- remain 4 last partitions
+					 ORDER BY range_min)
     LOOP
         RAISE NOTICE 'dropping partition %', relation;
         PERFORM drop_range_partition(relation);
@@ -252,35 +254,167 @@ SELECT set_init_callback('callbacks.abc',
  
 (1 row)
 
-INSERT INTO callbacks.abc VALUES (110);
-NOTICE:  dropping partition callbacks.abc_7
-NOTICE:  dropping partition callbacks.abc_6
-NOTICE:  dropping partition callbacks.abc_5
-NOTICE:  dropping partition callbacks.abc_4
-NOTICE:  dropping partition callbacks.abc_3
-NOTICE:  dropping partition callbacks.abc_2
+INSERT INTO callbacks.abc VALUES (1000);
 NOTICE:  dropping partition callbacks.abc_1
-INSERT INTO callbacks.abc VALUES (120);
-INSERT INTO callbacks.abc VALUES (130);
+NOTICE:  dropping partition callbacks.abc_2
+NOTICE:  dropping partition callbacks.abc_3
+NOTICE:  dropping partition callbacks.abc_4
+NOTICE:  dropping partition callbacks.abc_5
+NOTICE:  dropping partition callbacks.abc_6
+NOTICE:  dropping partition callbacks.abc_7
 NOTICE:  dropping partition callbacks.abc_8
-INSERT INTO callbacks.abc VALUES (140);
 NOTICE:  dropping partition callbacks.abc_9
-INSERT INTO callbacks.abc VALUES (150);
 NOTICE:  dropping partition callbacks.abc_10
+NOTICE:  dropping partition callbacks.abc_11
+NOTICE:  dropping partition callbacks.abc_12
+NOTICE:  dropping partition callbacks.abc_13
+NOTICE:  dropping partition callbacks.abc_14
+NOTICE:  dropping partition callbacks.abc_15
+NOTICE:  dropping partition callbacks.abc_16
+NOTICE:  dropping partition callbacks.abc_17
+NOTICE:  dropping partition callbacks.abc_18
+NOTICE:  dropping partition callbacks.abc_19
+NOTICE:  dropping partition callbacks.abc_20
+NOTICE:  dropping partition callbacks.abc_21
+NOTICE:  dropping partition callbacks.abc_22
+NOTICE:  dropping partition callbacks.abc_23
+NOTICE:  dropping partition callbacks.abc_24
+NOTICE:  dropping partition callbacks.abc_25
+NOTICE:  dropping partition callbacks.abc_26
+NOTICE:  dropping partition callbacks.abc_27
+NOTICE:  dropping partition callbacks.abc_28
+NOTICE:  dropping partition callbacks.abc_29
+NOTICE:  dropping partition callbacks.abc_30
+NOTICE:  dropping partition callbacks.abc_31
+NOTICE:  dropping partition callbacks.abc_32
+NOTICE:  dropping partition callbacks.abc_33
+NOTICE:  dropping partition callbacks.abc_34
+NOTICE:  dropping partition callbacks.abc_35
+NOTICE:  dropping partition callbacks.abc_36
+NOTICE:  dropping partition callbacks.abc_37
+NOTICE:  dropping partition callbacks.abc_38
+NOTICE:  dropping partition callbacks.abc_39
+NOTICE:  dropping partition callbacks.abc_40
+NOTICE:  dropping partition callbacks.abc_41
+NOTICE:  dropping partition callbacks.abc_42
+NOTICE:  dropping partition callbacks.abc_43
+NOTICE:  dropping partition callbacks.abc_44
+NOTICE:  dropping partition callbacks.abc_45
+NOTICE:  dropping partition callbacks.abc_46
+NOTICE:  dropping partition callbacks.abc_47
+NOTICE:  dropping partition callbacks.abc_48
+NOTICE:  dropping partition callbacks.abc_49
+NOTICE:  dropping partition callbacks.abc_50
+NOTICE:  dropping partition callbacks.abc_51
+NOTICE:  dropping partition callbacks.abc_52
+NOTICE:  dropping partition callbacks.abc_53
+NOTICE:  dropping partition callbacks.abc_54
+NOTICE:  dropping partition callbacks.abc_55
+NOTICE:  dropping partition callbacks.abc_56
+NOTICE:  dropping partition callbacks.abc_57
+NOTICE:  dropping partition callbacks.abc_58
+NOTICE:  dropping partition callbacks.abc_59
+NOTICE:  dropping partition callbacks.abc_60
+NOTICE:  dropping partition callbacks.abc_61
+NOTICE:  dropping partition callbacks.abc_62
+NOTICE:  dropping partition callbacks.abc_63
+NOTICE:  dropping partition callbacks.abc_64
+NOTICE:  dropping partition callbacks.abc_65
+NOTICE:  dropping partition callbacks.abc_66
+NOTICE:  dropping partition callbacks.abc_67
+NOTICE:  dropping partition callbacks.abc_68
+NOTICE:  dropping partition callbacks.abc_69
+NOTICE:  dropping partition callbacks.abc_70
+NOTICE:  dropping partition callbacks.abc_71
+NOTICE:  dropping partition callbacks.abc_72
+NOTICE:  dropping partition callbacks.abc_73
+NOTICE:  dropping partition callbacks.abc_74
+NOTICE:  dropping partition callbacks.abc_75
+NOTICE:  dropping partition callbacks.abc_76
+NOTICE:  dropping partition callbacks.abc_77
+NOTICE:  dropping partition callbacks.abc_78
+NOTICE:  dropping partition callbacks.abc_79
+NOTICE:  dropping partition callbacks.abc_80
+NOTICE:  dropping partition callbacks.abc_81
+NOTICE:  dropping partition callbacks.abc_82
+NOTICE:  dropping partition callbacks.abc_83
+NOTICE:  dropping partition callbacks.abc_84
+NOTICE:  dropping partition callbacks.abc_85
+NOTICE:  dropping partition callbacks.abc_86
+NOTICE:  dropping partition callbacks.abc_87
+NOTICE:  dropping partition callbacks.abc_88
+NOTICE:  dropping partition callbacks.abc_89
+NOTICE:  dropping partition callbacks.abc_90
+NOTICE:  dropping partition callbacks.abc_91
+NOTICE:  dropping partition callbacks.abc_92
+NOTICE:  dropping partition callbacks.abc_93
+NOTICE:  dropping partition callbacks.abc_94
+NOTICE:  dropping partition callbacks.abc_95
+NOTICE:  dropping partition callbacks.abc_96
+INSERT INTO callbacks.abc VALUES (1500);
+NOTICE:  dropping partition callbacks.abc_97
+NOTICE:  dropping partition callbacks.abc_98
+NOTICE:  dropping partition callbacks.abc_99
+NOTICE:  dropping partition callbacks.abc_100
+NOTICE:  dropping partition callbacks.abc_101
+NOTICE:  dropping partition callbacks.abc_102
+NOTICE:  dropping partition callbacks.abc_103
+NOTICE:  dropping partition callbacks.abc_104
+NOTICE:  dropping partition callbacks.abc_105
+NOTICE:  dropping partition callbacks.abc_106
+NOTICE:  dropping partition callbacks.abc_107
+NOTICE:  dropping partition callbacks.abc_108
+NOTICE:  dropping partition callbacks.abc_109
+NOTICE:  dropping partition callbacks.abc_110
+NOTICE:  dropping partition callbacks.abc_111
+NOTICE:  dropping partition callbacks.abc_112
+NOTICE:  dropping partition callbacks.abc_113
+NOTICE:  dropping partition callbacks.abc_114
+NOTICE:  dropping partition callbacks.abc_115
+NOTICE:  dropping partition callbacks.abc_116
+NOTICE:  dropping partition callbacks.abc_117
+NOTICE:  dropping partition callbacks.abc_118
+NOTICE:  dropping partition callbacks.abc_119
+NOTICE:  dropping partition callbacks.abc_120
+NOTICE:  dropping partition callbacks.abc_121
+NOTICE:  dropping partition callbacks.abc_122
+NOTICE:  dropping partition callbacks.abc_123
+NOTICE:  dropping partition callbacks.abc_124
+NOTICE:  dropping partition callbacks.abc_125
+NOTICE:  dropping partition callbacks.abc_126
+NOTICE:  dropping partition callbacks.abc_127
+NOTICE:  dropping partition callbacks.abc_128
+NOTICE:  dropping partition callbacks.abc_129
+NOTICE:  dropping partition callbacks.abc_130
+NOTICE:  dropping partition callbacks.abc_131
+NOTICE:  dropping partition callbacks.abc_132
+NOTICE:  dropping partition callbacks.abc_133
+NOTICE:  dropping partition callbacks.abc_134
+NOTICE:  dropping partition callbacks.abc_135
+NOTICE:  dropping partition callbacks.abc_136
+NOTICE:  dropping partition callbacks.abc_137
+NOTICE:  dropping partition callbacks.abc_138
+NOTICE:  dropping partition callbacks.abc_139
+NOTICE:  dropping partition callbacks.abc_140
+NOTICE:  dropping partition callbacks.abc_141
+NOTICE:  dropping partition callbacks.abc_142
+NOTICE:  dropping partition callbacks.abc_143
+NOTICE:  dropping partition callbacks.abc_144
+NOTICE:  dropping partition callbacks.abc_145
+NOTICE:  dropping partition callbacks.abc_146
 SELECT * FROM pathman_partition_list
 WHERE parent = 'callbacks.abc'::REGCLASS
 ORDER BY range_min::INT4;
-    parent     |    partition     | parttype | partattr | range_min | range_max 
----------------+------------------+----------+----------+-----------+-----------
- callbacks.abc | callbacks.abc_11 |        2 | a        | 101       | 111
- callbacks.abc | callbacks.abc_12 |        2 | a        | 111       | 121
- callbacks.abc | callbacks.abc_13 |        2 | a        | 121       | 131
- callbacks.abc | callbacks.abc_14 |        2 | a        | 131       | 141
- callbacks.abc | callbacks.abc_15 |        2 | a        | 141       | 151
-(5 rows)
+    parent     |     partition     | parttype | partattr | range_min | range_max 
+---------------+-------------------+----------+----------+-----------+-----------
+ callbacks.abc | callbacks.abc_147 |        2 | a        | 1461      | 1471
+ callbacks.abc | callbacks.abc_148 |        2 | a        | 1471      | 1481
+ callbacks.abc | callbacks.abc_149 |        2 | a        | 1481      | 1491
+ callbacks.abc | callbacks.abc_150 |        2 | a        | 1491      | 1501
+(4 rows)
 
 DROP TABLE callbacks.abc CASCADE;
-NOTICE:  drop cascades to 5 other objects
+NOTICE:  drop cascades to 4 other objects
 DROP SCHEMA callbacks CASCADE;
 NOTICE:  drop cascades to 3 other objects
 DROP EXTENSION pg_pathman CASCADE;

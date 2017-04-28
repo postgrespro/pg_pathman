@@ -113,10 +113,12 @@ BEGIN
 	parent_rel := concat(params->>'partition_schema', '.', params->>'parent')::regclass;
 
     -- drop "old" partitions
-    FOR relation IN (SELECT partition FROM pathman_partition_list
-                     WHERE parent = parent_rel
-					 ORDER BY range_min::INT4 DESC
-                     OFFSET 4)  -- remain 4 last partitions
+    FOR relation IN (SELECT partition FROM
+						(SELECT partition, range_min::INT4 FROM pathman_partition_list
+						 WHERE parent = parent_rel
+						 ORDER BY range_min::INT4 DESC
+						 OFFSET 4) t  -- remain 4 last partitions
+					 ORDER BY range_min)
     LOOP
         RAISE NOTICE 'dropping partition %', relation;
         PERFORM drop_range_partition(relation);
@@ -131,11 +133,8 @@ ORDER BY range_min::INT4;
 SELECT set_init_callback('callbacks.abc',
 						 'callbacks.rotation_callback(jsonb)');
 
-INSERT INTO callbacks.abc VALUES (110);
-INSERT INTO callbacks.abc VALUES (120);
-INSERT INTO callbacks.abc VALUES (130);
-INSERT INTO callbacks.abc VALUES (140);
-INSERT INTO callbacks.abc VALUES (150);
+INSERT INTO callbacks.abc VALUES (1000);
+INSERT INTO callbacks.abc VALUES (1500);
 
 SELECT * FROM pathman_partition_list
 WHERE parent = 'callbacks.abc'::REGCLASS
