@@ -100,6 +100,14 @@ typedef struct
 } show_cache_stats_cxt;
 
 
+static AttrNumber *pathman_update_trigger_build_attr_map(const PartRelationInfo *prel,
+														 Relation child_rel);
+
+static ExprState *pathman_update_trigger_build_expr_state(const PartRelationInfo *prel,
+														  Relation source_rel,
+														  HeapTuple new_tuple,
+														  Oid *expr_type);
+
 static void pathman_update_trigger_func_move_tuple(Relation source_rel,
 												   Relation target_rel,
 												   HeapTuple old_tuple,
@@ -435,9 +443,9 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 		}
 
 		/* Fill in common values */
-		values[Anum_pathman_pl_parent - 1]		= PrelParentRelid(prel);
-		values[Anum_pathman_pl_parttype - 1]	= prel->parttype;
-		values[Anum_pathman_pl_partattr - 1]	= CStringGetTextDatum(prel->attname);
+		values[Anum_pathman_pl_parent - 1]   = PrelParentRelid(prel);
+		values[Anum_pathman_pl_parttype - 1] = prel->parttype;
+		values[Anum_pathman_pl_partattr - 1] = CStringGetTextDatum(prel->expr_cstr);
 
 		switch (prel->parttype)
 		{
@@ -660,11 +668,12 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	bool				isnull[Natts_pathman_config];
 	bool				refresh_part_info;
 	HeapTuple			htup;
-	CatalogIndexState	indstate;
 
-	PathmanInitState	 init_state;
-	PartExpressionInfo	*expr_info;
-	MemoryContext		 old_mcxt = CurrentMemoryContext;
+	Oid					expr_type;
+	Datum				expr_datum;
+
+	PathmanInitState	init_state;
+	MemoryContext		old_mcxt = CurrentMemoryContext;
 
 	if (!PG_ARGISNULL(0))
 	{
@@ -698,8 +707,7 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 		parttype = PG_ARGISNULL(2) ? PT_HASH : PT_RANGE;
 
 	/* Parse and check expression */
-	expr_info = get_part_expression_info(relid, expression, (parttype == PT_HASH), true);
-	Assert(expr_info->expr_datum != (Datum) 0);
+	expr_datum = plan_partitioning_expression(relid, expression, &expr_type);
 
 	/*
 	 * Initialize columns (partrel, attname, parttype, range_interval).
@@ -713,10 +721,10 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	values[Anum_pathman_config_expression - 1]		= CStringGetTextDatum(expression);
 	isnull[Anum_pathman_config_expression - 1]		= false;
 
-	values[Anum_pathman_config_expression_p - 1]	= expr_info->expr_datum;
+	values[Anum_pathman_config_expression_p - 1]	= expr_datum;
 	isnull[Anum_pathman_config_expression_p - 1]	= false;
 
-	values[Anum_pathman_config_atttype - 1]			= ObjectIdGetDatum(expr_info->expr_type);
+	values[Anum_pathman_config_atttype - 1]			= ObjectIdGetDatum(expr_type);
 	isnull[Anum_pathman_config_atttype - 1]			= false;
 
 	if (parttype == PT_RANGE)
@@ -732,14 +740,16 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 
 	/* Insert new row into PATHMAN_CONFIG */
 	pathman_config = heap_open(get_pathman_config_relid(false), RowExclusiveLock);
+
 	htup = heap_form_tuple(RelationGetDescr(pathman_config), values, isnull);
 	simple_heap_insert(pathman_config, htup);
-	indstate = CatalogOpenIndexes(pathman_config);
-	CatalogIndexInsert(indstate, htup);
-	CatalogCloseIndexes(indstate);
+	CatalogUpdateIndexes(pathman_config, htup);
+
 	heap_close(pathman_config, RowExclusiveLock);
 
+	/* FIXME: check pg_inherits instead of this argument */
 	refresh_part_info = PG_GETARG_BOOL(3);
+
 	if (refresh_part_info)
 	{
 		/* Now try to create a PartRelationInfo */
@@ -1012,83 +1022,6 @@ is_operator_supported(PG_FUNCTION_ARGS)
 	PG_RETURN_BOOL(OidIsValid(opid));
 }
 
-struct change_vars_context
-{
-	HeapTuple	 tuple;
-	TupleDesc	 tuple_desc;
-	AttrNumber	*attributes_map;
-};
-
-/*
- * To prevent calculation of Vars in expression, we change them with
- * Const, and fill them with values from current tuple
- */
-static Node *
-change_vars_to_consts(Node *node, struct change_vars_context *ctx)
-{
-	const TypeCacheEntry   *typcache;
-
-	if (IsA(node, Var))
-	{
-		Var			*var = (Var *) node;
-		AttrNumber	 varattno = ctx->attributes_map[var->varattno - 1];
-		Oid			 atttype;
-		Const		*new_const = makeNode(Const);
-		HeapTuple	 tp;
-
-		Assert(var->varno == 1);
-		if (varattno == 0)
-			elog(ERROR, "Couldn't find attribute used in expression in child relation");
-
-		/* we suppose that type can be different from parent */
-		atttype = ctx->tuple_desc->attrs[varattno - 1]->atttypid;
-
-		tp = SearchSysCache1(TYPEOID, ObjectIdGetDatum(atttype));
-		if (HeapTupleIsValid(tp))
-		{
-			Form_pg_type typtup = (Form_pg_type) GETSTRUCT(tp);
-			new_const->consttypmod = typtup->typtypmod;
-			new_const->constcollid = typtup->typcollation;
-			ReleaseSysCache(tp);
-		}
-		else
-			elog(ERROR, "Something went wrong while getting type information");
-
-		typcache = lookup_type_cache(atttype, 0);
-		new_const->constbyval = typcache->typbyval;
-		new_const->constlen	= typcache->typlen;
-		new_const->consttype = atttype;
-		new_const->location = -1;
-
-		/* extract value from NEW tuple */
-		new_const->constvalue = heap_getattr(ctx->tuple,
-											 varattno,
-											 ctx->tuple_desc,
-											 &new_const->constisnull);
-		return (Node *) new_const;
-	}
-	return expression_tree_mutator(node, change_vars_to_consts, (void *) ctx);
-}
-
-static ExprState *
-prepare_expr_for_execution(const PartRelationInfo *prel, Relation source_rel,
-						   HeapTuple tuple, Oid *value_type)
-{
-	struct change_vars_context	 ctx;
-	Node						*expr;
-	ExprState					*expr_state;
-
-	Assert(value_type);
-
-	ctx.tuple = tuple;
-	ctx.attributes_map = get_pathman_attributes_map(prel, source_rel);
-	ctx.tuple_desc = RelationGetDescr(source_rel);
-	expr = change_vars_to_consts(prel->expr, &ctx);
-	*value_type = exprType(expr);
-	expr_state = ExecInitExpr((Expr *) expr, NULL);
-
-	return expr_state;
-}
 
 /*
  * --------------------------
@@ -1121,7 +1054,7 @@ pathman_update_trigger_func(PG_FUNCTION_ARGS)
 
 	ExprContext			   *econtext;
 	ExprState			   *expr_state;
-	MemoryContext		    old_cxt;
+	MemoryContext		    old_mcxt;
 	PartParentSearch		parent_search;
 	const PartRelationInfo *prel;
 
@@ -1158,11 +1091,13 @@ pathman_update_trigger_func(PG_FUNCTION_ARGS)
 
 	/* Execute partitioning expression */
 	econtext = CreateStandaloneExprContext();
-	old_cxt = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
-	expr_state = prepare_expr_for_execution(prel, source_rel, new_tuple,
-			&value_type);
+	old_mcxt = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
+	expr_state = pathman_update_trigger_build_expr_state(prel,
+														 source_rel,
+														 new_tuple,
+														 &value_type);
 	value = ExecEvalExpr(expr_state, econtext, &isnull, &itemIsDone);
-	MemoryContextSwitchTo(old_cxt);
+	MemoryContextSwitchTo(old_mcxt);
 
 	if (isnull)
 		elog(ERROR, ERR_PART_ATTR_NULL);
@@ -1181,7 +1116,7 @@ pathman_update_trigger_func(PG_FUNCTION_ARGS)
 	else if (nparts == 0)
 	{
 		 target_relid = create_partitions_for_value(PrelParentRelid(prel),
-													value, prel->atttype);
+													value, value_type);
 
 		 /* get_pathman_relation_info() will refresh this entry */
 		 invalidate_pathman_relation_info(PrelParentRelid(prel), NULL);
@@ -1218,6 +1153,127 @@ pathman_update_trigger_func(PG_FUNCTION_ARGS)
 	/* Just return NEW tuple */
 	PG_RETURN_POINTER(new_tuple);
 }
+
+struct replace_vars_cxt
+{
+	HeapTuple		new_tuple;
+	TupleDesc		tuple_desc;
+	AttrNumber	   *attributes_map;
+};
+
+/* Replace Vars with values from 'new_tuple' (Consts) */
+static Node *
+replace_vars_with_consts(Node *node, struct replace_vars_cxt *ctx)
+{
+	const TypeCacheEntry *typcache;
+
+	if (IsA(node, Var))
+	{
+		Var			*var = (Var *) node;
+		AttrNumber	 varattno = ctx->attributes_map[var->varattno - 1];
+		Oid			 vartype;
+		Const		*new_const = makeNode(Const);
+		HeapTuple	 htup;
+
+		Assert(var->varno == PART_EXPR_VARNO);
+		if (varattno == 0)
+			elog(ERROR, ERR_PART_DESC_CONVERT);
+
+		/* we suppose that type can be different from parent */
+		vartype = ctx->tuple_desc->attrs[varattno - 1]->atttypid;
+
+		htup = SearchSysCache1(TYPEOID, ObjectIdGetDatum(vartype));
+		if (HeapTupleIsValid(htup))
+		{
+			Form_pg_type typtup = (Form_pg_type) GETSTRUCT(htup);
+			new_const->consttypmod = typtup->typtypmod;
+			new_const->constcollid = typtup->typcollation;
+			ReleaseSysCache(htup);
+		}
+		else elog(ERROR, "cache lookup failed for type %u", vartype);
+
+		typcache = lookup_type_cache(vartype, 0);
+		new_const->constbyval	= typcache->typbyval;
+		new_const->constlen		= typcache->typlen;
+		new_const->consttype	= vartype;
+		new_const->location		= -1;
+
+		/* extract value from NEW tuple */
+		new_const->constvalue = heap_getattr(ctx->new_tuple,
+											 varattno,
+											 ctx->tuple_desc,
+											 &new_const->constisnull);
+		return (Node *) new_const;
+	}
+
+	return expression_tree_mutator(node, replace_vars_with_consts, (void *) ctx);
+}
+
+/*
+ * Get attributes map between parent and child relation.
+ * This is simplified version of functions that return TupleConversionMap.
+ * And it should be faster if expression uses not all fields from relation.
+ */
+static AttrNumber *
+pathman_update_trigger_build_attr_map(const PartRelationInfo *prel,
+									  Relation child_rel)
+{
+	AttrNumber	i = -1;
+	Oid			parent_relid = PrelParentRelid(prel);
+	TupleDesc	child_descr = RelationGetDescr(child_rel);
+	int			natts = child_descr->natts;
+	AttrNumber *result = (AttrNumber *) palloc0(natts * sizeof(AttrNumber));
+
+	while ((i = bms_next_member(prel->expr_atts, i)) >= 0)
+	{
+		int			j;
+		AttrNumber	attnum = i + FirstLowInvalidHeapAttributeNumber;
+		char	   *attname = get_attname(parent_relid, attnum);
+
+		for (j = 0; j < natts; j++)
+		{
+			Form_pg_attribute att = child_descr->attrs[j];
+
+			if (att->attisdropped)
+				continue; /* attrMap[attnum - 1] is already 0 */
+
+			if (strcmp(NameStr(att->attname), attname) == 0)
+			{
+				result[attnum - 1] = (AttrNumber) (j + 1);
+				break;
+			}
+		}
+
+		if (result[attnum - 1] == 0)
+			elog(ERROR, "Couldn't find '%s' column in child relation", attname);
+	}
+
+	return result;
+}
+
+static ExprState *
+pathman_update_trigger_build_expr_state(const PartRelationInfo *prel,
+										Relation source_rel,
+										HeapTuple new_tuple,
+										Oid *expr_type)		/* ret value #1 */
+{
+	struct replace_vars_cxt		ctx;
+	Node					   *expr;
+	ExprState				   *expr_state;
+
+	ctx.new_tuple =			new_tuple;
+	ctx.attributes_map =	pathman_update_trigger_build_attr_map(prel, source_rel);
+	ctx.tuple_desc =		RelationGetDescr(source_rel);
+
+	expr = replace_vars_with_consts(prel->expr, &ctx);
+	expr_state = ExecInitExpr((Expr *) expr, NULL);
+
+	AssertArg(expr_type);
+	*expr_type = exprType(expr);
+
+	return expr_state;
+}
+
 
 /* Move tuple to new partition (delete 'old_tuple' + insert 'new_tuple') */
 static void

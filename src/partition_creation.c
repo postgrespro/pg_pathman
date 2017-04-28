@@ -39,7 +39,6 @@
 #include "parser/parse_relation.h"
 #include "parser/parse_utilcmd.h"
 #include "parser/analyze.h"
-#include "tcop/tcopprot.h"
 #include "tcop/utility.h"
 #include "utils/builtins.h"
 #include "utils/datum.h"
@@ -87,9 +86,9 @@ static Constraint *make_constraint_common(char *name, Node *raw_expr);
 static Value make_string_value_struct(char *str);
 static Value make_int_value_struct(int int_val);
 
-static Node *get_partitioning_expression(Oid parent_relid,
-										 Oid *expr_type,
-										 List **columns);
+static Node *build_partitioning_expression(Oid parent_relid,
+										   Oid *expr_type,
+										   List **columns);
 
 /*
  * ---------------------------------------
@@ -108,7 +107,7 @@ create_single_range_partition_internal(Oid parent_relid,
 {
 	Oid						partition_relid;
 	Constraint			   *check_constr;
-	Node				   *expr;
+	Node				   *part_expr;
 	init_callback_params	callback_params;
 	List				   *trigger_columns;
 
@@ -124,8 +123,8 @@ create_single_range_partition_internal(Oid parent_relid,
 		partition_rv = makeRangeVar(parent_nsp_name, partition_name, -1);
 	}
 
-	/* check pathman config and fill variables */
-	expr = get_partitioning_expression(parent_relid, NULL, &trigger_columns);
+	/* Check pathman config anld fill variables */
+	part_expr = build_partitioning_expression(parent_relid, NULL, &trigger_columns);
 
 	/* Create a partition & get 'partitioning expression' */
 	partition_relid = create_single_partition_internal(parent_relid,
@@ -134,7 +133,7 @@ create_single_range_partition_internal(Oid parent_relid,
 
 	/* Build check constraint for RANGE partition */
 	check_constr = build_range_check_constraint(partition_relid,
-												expr,
+												part_expr,
 												start_value,
 												end_value,
 												value_type);
@@ -189,7 +188,7 @@ create_single_hash_partition_internal(Oid parent_relid,
 													   tablespace);
 
 	/* check pathman config and fill variables */
-	expr = get_partitioning_expression(parent_relid, &expr_type, &trigger_columns);
+	expr = build_partitioning_expression(parent_relid, &expr_type, &trigger_columns);
 
 	/* Build check constraint for HASH partition */
 	check_constr = build_hash_check_constraint(partition_relid,
@@ -237,11 +236,11 @@ create_single_partition_common(Oid parent_relid,
 	/* Create trigger if needed */
 	if (has_update_trigger_internal(parent_relid))
 	{
-		const char *trigname;
+		const char *trigger_name;
 
-		trigname = build_update_trigger_name_internal(parent_relid);
+		trigger_name = build_update_trigger_name_internal(parent_relid);
 		create_single_update_trigger_internal(partition_relid,
-											  trigname,
+											  trigger_name,
 											  trigger_columns);
 	}
 
@@ -1687,192 +1686,14 @@ text_to_regprocedure(text *proc_signature)
 	return DatumGetObjectId(result);
 }
 
-/*
- * Checks that columns are from partitioning relation
- * Maybe there will be more checks later.
- */
-static bool
-validate_part_expression(Node *node, void *context)
-{
-	if (node == NULL)
-		return false;
-
-	if (IsA(node, Var))
-	{
-		Var *var = (Var *) node;
-		if (var->varno != 1)
-			elog(ERROR, "Columns used in expression should only be related"
-					" with partitioning relation");
-		return false;
-	}
-
-	if (IsA(node, Param))
-		elog(ERROR, "Partitioning expression should not contain parameters");
-
-	return expression_tree_walker(node, validate_part_expression, context);
-}
-
-/* Wraps expression by SELECT query and returns parse tree */
-Node *
-parse_partitioning_expression(Oid relid,
-							  const char *expression,
-							  char **query_string_out,
-							  Node **parsetree_out)
-{
-	SelectStmt *select_stmt;
-	List	   *parsetree_list;
-
-	char	   *sql = "SELECT (%s) FROM ONLY %s.\"%s\"";
-	char	   *relname = get_rel_name(relid),
-			   *nspname = get_namespace_name(get_rel_namespace(relid));
-	char	   *query_string = psprintf(sql, expression, nspname, relname);
-
-	parsetree_list = raw_parser(query_string);
-	Assert(list_length(parsetree_list) == 1);
-
-	select_stmt = (SelectStmt *) linitial(parsetree_list);
-
-	if (query_string_out)
-		*query_string_out = query_string;
-
-	if (parsetree_out)
-		*parsetree_out = (Node *) select_stmt;
-
-	return ((ResTarget *) linitial(select_stmt->targetList))->val;
-}
-
-/*
- * Parses expression related to 'relid', and returns its type,
- * raw expression tree, and if specified returns its plan
- */
-PartExpressionInfo *
-get_part_expression_info(Oid relid, const char *expr_string,
-						 bool check_hash_func, bool make_plan)
-{
-	Node				*expr_node,
-						*parsetree;
-	Query				*query;
-	char				*query_string, *out_string;
-	PartExpressionInfo	*expr_info;
-	List				*querytree_list;
-	PlannedStmt			*plan;
-	TargetEntry			*target_entry;
-	MemoryContext		 pathman_parse_context, oldcontext;
-
-	expr_info = palloc(sizeof(PartExpressionInfo));
-
-	pathman_parse_context = AllocSetContextCreate(TopPathmanContext,
-												  "pathman parse context",
-												  ALLOCSET_DEFAULT_SIZES);
-
-	/* Keep raw expression */
-	expr_info->raw_expr = parse_partitioning_expression(relid, expr_string,
-											 &query_string, &parsetree);
-
-	/* If expression is just column we check that is not null */
-	if (IsA(expr_info->raw_expr, ColumnRef))
-	{
-		ColumnRef *col = (ColumnRef *) expr_info->raw_expr;
-		if (list_length(col->fields) == 1)
-		{
-			HeapTuple	 tp;
-			bool		 result;
-			char		*attname	= strVal(linitial(col->fields));
-
-			/* check if attribute is nullable */
-			tp = SearchSysCacheAttName(relid, attname);
-			if (HeapTupleIsValid(tp))
-			{
-				Form_pg_attribute att_tup = (Form_pg_attribute) GETSTRUCT(tp);
-				result = !att_tup->attnotnull;
-				ReleaseSysCache(tp);
-			}
-			else
-				elog(ERROR, "Cannot find type name for attribute \"%s\" "
-							"of relation \"%s\"",
-					 attname, get_rel_name_or_relid(relid));
-
-			if (result)
-				elog(ERROR, "partitioning key \"%s\" must be marked NOT NULL", attname);
-		}
-	}
-	expr_info->expr_datum = (Datum) 0;
-
-	/* We don't need pathman activity initialization for this relation yet */
-	pathman_hooks_enabled = false;
-
-	/*
-	 * We use separate memory context here, just to make sure we don't leave
-	 * anything behind after analyze and planning.
-	 * Parsed raw expression will stay in context of caller
-	 */
-	oldcontext = MemoryContextSwitchTo(pathman_parse_context);
-
-	/* This will fail with elog in case of wrong expression
-	 *	with more or less understable text */
-	querytree_list = pg_analyze_and_rewrite(parsetree,
-		query_string, NULL, 0);
-	query = (Query *) linitial(querytree_list);
-
-	/* expr_node is node that we need for further use */
-	target_entry = linitial(query->targetList);
-	expr_node = (Node *) target_entry->expr;
-
-	/* Now we have node and can determine type of that node */
-	expr_info->expr_type = exprType(expr_node);
-
-	if (check_hash_func)
-	{
-		TypeCacheEntry *tce;
-
-		tce = lookup_type_cache(expr_info->expr_type, TYPECACHE_HASH_PROC);
-		if (tce->hash_proc == InvalidOid)
-			elog(ERROR, "Expression should be hashable");
-	}
-
-	if (!make_plan)
-		goto end;
-
-	/* Plan this query. We reuse 'expr_node' here */
-	plan = pg_plan_query(query, 0, NULL);
-	if (IsA(plan->planTree, IndexOnlyScan))
-		/* we get IndexOnlyScan in targetlist if expression is primary key */
-		target_entry = linitial(((IndexOnlyScan *) plan->planTree)->indextlist);
-	else
-		target_entry = linitial(plan->planTree->targetlist);
-
-	expr_node = (Node *) target_entry->expr;
-
-	expr_node = eval_const_expressions(NULL, expr_node);
-	validate_part_expression(expr_node, NULL);
-	if (contain_mutable_functions(expr_node))
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-				 errmsg("functions in partitioning expression must be marked IMMUTABLE")));
-
-	out_string = nodeToString(expr_node);
-
-	MemoryContextSwitchTo(oldcontext);
-
-	/* Save expression string as datum and free memory from planning stage */
-	expr_info->expr_datum = CStringGetTextDatum(out_string);
-	MemoryContextReset(pathman_parse_context);
-
-end:
-	/* Enable pathman hooks */
-	pathman_hooks_enabled = true;
-
-	return expr_info;
-}
-
-struct extract_column_names_context
+typedef struct
 {
 	List *columns;
-};
+} extract_column_names_cxt;
 
 /* Extract column names from raw expression */
 static bool
-extract_column_names(Node *node, struct extract_column_names_context *ctx)
+extract_column_names(Node *node, extract_column_names_cxt *cxt)
 {
 	if (node == NULL)
 		return false;
@@ -1880,19 +1701,20 @@ extract_column_names(Node *node, struct extract_column_names_context *ctx)
 	if (IsA(node, ColumnRef))
 	{
 		ListCell *lc;
+
 		foreach(lc, ((ColumnRef *) node)->fields)
 			if (IsA(lfirst(lc), String))
-				ctx->columns = lappend(ctx->columns, lfirst(lc));
+				cxt->columns = lappend(cxt->columns, lfirst(lc));
 	}
 
-	return raw_expression_tree_walker(node, extract_column_names, ctx);
+	return raw_expression_tree_walker(node, extract_column_names, cxt);
 }
 
 /* Returns raw partitioning expression + expr_type + columns */
 static Node *
-get_partitioning_expression(Oid parent_relid,
-							Oid *expr_type,		/* ret val #1 */
-							List **columns)		/* ret val #2 */
+build_partitioning_expression(Oid parent_relid,
+							  Oid *expr_type,		/* ret val #1 */
+							  List **columns)		/* ret val #2 */
 {
 	/* Values extracted from PATHMAN_CONFIG */
 	Datum		 config_values[Natts_pathman_config];
@@ -1916,7 +1738,7 @@ get_partitioning_expression(Oid parent_relid,
 
 	if (columns)
 	{
-		struct extract_column_names_context context = { NIL };
+		extract_column_names_cxt context = { NIL };
 		extract_column_names(expr, &context);
 		*columns = context.columns;
 	}

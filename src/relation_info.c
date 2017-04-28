@@ -25,7 +25,10 @@
 #include "catalog/pg_type.h"
 #include "miscadmin.h"
 #include "optimizer/clauses.h"
+#include "optimizer/var.h"
+#include "parser/parser.h"
 #include "storage/lmgr.h"
+#include "tcop/tcopprot.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
 #include "utils/hsearch.h"
@@ -80,6 +83,7 @@ static bool		delayed_shutdown = false; /* pathman was dropped */
 		list = NIL; \
 	} while (0)
 
+
 static bool try_perform_parent_refresh(Oid parent);
 static Oid try_syscache_parent_search(Oid partition, PartParentSearch *status);
 static Oid get_parent_of_partition_internal(Oid partition,
@@ -97,9 +101,7 @@ static void fill_pbin_with_bounds(PartBoundInfo *pbin,
 								  const Expr *constraint_expr);
 
 static int cmp_range_entries(const void *p1, const void *p2, void *arg);
-static void update_parsed_expression(Oid relid, HeapTuple tuple,
-									   Datum *values, bool *nulls);
-static void fill_part_expression_vars(PartRelationInfo *prel);
+
 
 void
 init_relation_info_static_data(void)
@@ -134,8 +136,9 @@ refresh_pathman_relation_info(Oid relid,
 	Datum					param_values[Natts_pathman_config_params];
 	bool					param_isnull[Natts_pathman_config_params];
 	char				   *expr;
-	HeapTuple				tp;
-	MemoryContext			oldcontext;
+	Relids					expr_varnos;
+	HeapTuple				htup;
+	MemoryContext			old_mcxt;
 
 	AssertTemporaryContext();
 	prel = invalidate_pathman_relation_info(relid, NULL);
@@ -170,25 +173,34 @@ refresh_pathman_relation_info(Oid relid,
 	expr = TextDatumGetCString(values[Anum_pathman_config_expression_p - 1]);
 
 	/* Expression and attname should be saved in cache context */
-	oldcontext = MemoryContextSwitchTo(PathmanRelationCacheContext);
+	old_mcxt = MemoryContextSwitchTo(PathmanRelationCacheContext);
 
-	prel->attname = TextDatumGetCString(values[Anum_pathman_config_expression - 1]);
+	/* Build partitioning expression tree */
+	prel->expr_cstr = TextDatumGetCString(values[Anum_pathman_config_expression - 1]);
 	prel->expr = (Node *) stringToNode(expr);
 	fix_opfuncids(prel->expr);
-	fill_part_expression_vars((PartRelationInfo *) prel);
 
-	MemoryContextSwitchTo(oldcontext);
+	expr_varnos = pull_varnos(prel->expr);
+	if (bms_singleton_member(expr_varnos) != PART_EXPR_VARNO)
+		elog(ERROR, "partitioning expression may reference only one table");
 
-	tp = SearchSysCache1(TYPEOID, values[Anum_pathman_config_atttype - 1]);
-	if (HeapTupleIsValid(tp))
+	/* Extract Vars and varattnos of partitioning expression */
+	prel->expr_vars = NIL;
+	prel->expr_atts = NULL;
+	prel->expr_vars = pull_var_clause(prel->expr, 0);
+	pull_varattnos((Node *) prel->expr_vars, PART_EXPR_VARNO, &prel->expr_atts);
+
+	MemoryContextSwitchTo(old_mcxt);
+
+	htup = SearchSysCache1(TYPEOID, prel->atttype);
+	if (HeapTupleIsValid(htup))
 	{
-		Form_pg_type typtup = (Form_pg_type) GETSTRUCT(tp);
+		Form_pg_type typtup = (Form_pg_type) GETSTRUCT(htup);
 		prel->atttypmod = typtup->typtypmod;
 		prel->attcollid = typtup->typcollation;
-		ReleaseSysCache(tp);
+		ReleaseSysCache(htup);
 	}
-	else
-		elog(ERROR, "Something went wrong while getting type information");
+	else elog(ERROR, "cache lookup failed for type %u", prel->atttype);
 
 	/* Fetch HASH & CMP fuctions and other stuff from type cache */
 	typcache = lookup_type_cache(prel->atttype,
@@ -253,7 +265,7 @@ refresh_pathman_relation_info(Oid relid,
 		/* Free remaining resources */
 		FreeChildrenArray(prel);
 		FreeRangesArray(prel);
-		FreeIfNotNull(prel->attname);
+		FreeIfNotNull(prel->expr_cstr);
 		FreeIfNotNull(prel->expr);
 
 		/* Rethrow ERROR further */
@@ -291,36 +303,6 @@ refresh_pathman_relation_info(Oid relid,
 	return prel;
 }
 
-/* Check that one of arguments of OpExpr is expression */
-static bool
-extract_vars(Node *node, PartRelationInfo *prel)
-{
-	if (node == NULL)
-		return false;
-
-	if (IsA(node, Var))
-	{
-		prel->expr_vars = lappend(prel->expr_vars, node);
-		prel->expr_atts = bms_add_member(prel->expr_atts, ((Var *) node)->varattno);
-		return false;
-	}
-
-	return expression_tree_walker(node, extract_vars, (void *) prel);
-}
-
-
-/*
- * This function fills 'expr_vars' and 'expr_atts' attributes in PartRelationInfo.
- */
-static void
-fill_part_expression_vars(PartRelationInfo *prel)
-{
-	prel->expr_vars = NIL;
-	prel->expr_atts = NULL;
-
-	extract_vars(prel->expr, prel);
-}
-
 /* Invalidate PartRelationInfo cache entry. Create new entry if 'found' is NULL. */
 PartRelationInfo *
 invalidate_pathman_relation_info(Oid relid, bool *found)
@@ -338,7 +320,7 @@ invalidate_pathman_relation_info(Oid relid, bool *found)
 	{
 		FreeChildrenArray(prel);
 		FreeRangesArray(prel);
-		FreeIfNotNull(prel->attname);
+		FreeIfNotNull(prel->expr_cstr);
 
 		prel->valid = false; /* now cache entry is invalid */
 	}
@@ -361,79 +343,6 @@ invalidate_pathman_relation_info(Oid relid, bool *found)
 	return prel;
 }
 
-/* Update expression in pathman_config */
-static void
-update_parsed_expression(Oid relid, HeapTuple tuple, Datum *values, bool *nulls)
-{
-	char				*expression;
-	bool				 replaces[Natts_pathman_config];
-
-	Relation			 rel;
-	HeapTuple			 newtuple;
-	PartExpressionInfo	*expr_info;
-
-	/* get and parse expression */
-	expression = TextDatumGetCString(values[Anum_pathman_config_expression - 1]);
-	Assert(nulls[Anum_pathman_config_expression_p - 1]);
-	expr_info = get_part_expression_info(relid, expression, false, true);
-	Assert(expr_info->expr_datum != (Datum) 0);
-	pfree(expression);
-
-	/* prepare tuple values */
-	values[Anum_pathman_config_expression_p - 1]	= expr_info->expr_datum;
-	nulls[Anum_pathman_config_expression_p - 1]		= false;
-
-	values[Anum_pathman_config_atttype - 1]			= ObjectIdGetDatum(expr_info->expr_type);
-	nulls[Anum_pathman_config_atttype - 1]			= false;
-
-	MemSet(replaces, false, sizeof(replaces));
-	replaces[Anum_pathman_config_expression_p - 1]	= true;
-	replaces[Anum_pathman_config_atttype - 1] = true;
-
-	/* update row */
-	rel = heap_open(get_pathman_config_relid(false), RowExclusiveLock);
-	newtuple = heap_modify_tuple(tuple, RelationGetDescr(rel), values, nulls,
-			replaces);
-	simple_heap_update(rel, &newtuple->t_self, newtuple);
-	CatalogUpdateIndexes(rel, newtuple);
-	heap_close(rel, RowExclusiveLock);
-}
-
-/* Mark expression in pathman_config as it needs update */
-void
-mark_pathman_expression_for_update(Oid relid)
-{
-	HeapTuple	tuple;
-	Datum		values[Natts_pathman_config];
-	bool		nulls[Natts_pathman_config];
-
-	/* Check that PATHMAN_CONFIG table contains this relation */
-	if (pathman_config_contains_relation(relid, values, nulls, NULL, &tuple))
-	{
-		Relation	rel;
-		HeapTuple	newtuple;
-		bool		replaces[Natts_pathman_config];
-
-		values[Anum_pathman_config_expression_p - 1] = (Datum) 0;
-		nulls[Anum_pathman_config_expression_p - 1] = true;
-
-		values[Anum_pathman_config_atttype - 1]	= (Datum) 0;
-		nulls[Anum_pathman_config_atttype - 1]	= true;
-
-		MemSet(replaces, false, sizeof(replaces));
-		replaces[Anum_pathman_config_expression_p - 1] = true;
-		replaces[Anum_pathman_config_atttype - 1] = true;
-
-		/* update row */
-		rel = heap_open(get_pathman_config_relid(false), RowExclusiveLock);
-		newtuple = heap_modify_tuple(tuple, RelationGetDescr(rel), values, nulls,
-				replaces);
-		simple_heap_update(rel, &newtuple->t_self, newtuple);
-		CatalogUpdateIndexes(rel, newtuple);
-		heap_close(rel, RowExclusiveLock);
-	}
-}
-
 /* Get PartRelationInfo from local cache. */
 const PartRelationInfo *
 get_pathman_relation_info(Oid relid)
@@ -444,19 +353,18 @@ get_pathman_relation_info(Oid relid)
 	/* Refresh PartRelationInfo if needed */
 	if (prel && !PrelIsValid(prel))
 	{
-		HeapTuple	 tuple;
-		Datum		 values[Natts_pathman_config];
-		bool		 isnull[Natts_pathman_config];
+		ItemPointerData		iptr;
+		Datum				values[Natts_pathman_config];
+		bool				isnull[Natts_pathman_config];
 
 		/* Check that PATHMAN_CONFIG table contains this relation */
-		if (pathman_config_contains_relation(relid, values, isnull, NULL, &tuple))
+		if (pathman_config_contains_relation(relid, values, isnull, NULL, &iptr))
 		{
 			bool upd_expr = isnull[Anum_pathman_config_expression_p - 1];
 			if (upd_expr)
-				update_parsed_expression(relid, tuple, values, isnull);
+				pathman_config_refresh_parsed_expression(relid, values, isnull, &iptr);
 
 			/* Refresh partitioned table cache entry (might turn NULL) */
-			/* TODO: possible refactoring, pass found 'prel' instead of searching */
 			prel = refresh_pathman_relation_info(relid, values, false);
 		}
 
@@ -646,6 +554,159 @@ fill_prel_with_partitions(PartRelationInfo *prel,
 			}
 		}
 #endif
+}
+
+
+/*
+ * Partitioning expression routines.
+ */
+
+/* Wraps expression in SELECT query and returns parse tree */
+Node *
+parse_partitioning_expression(const Oid relid,
+							  const char *exp_cstr,
+							  char **query_string_out,	/* ret value #1 */
+							  Node **parsetree_out)		/* ret value #2 */
+{
+	SelectStmt *select_stmt;
+	List	   *parsetree_list;
+
+	const char *sql = "SELECT (%s) FROM ONLY %s.%s";
+	char	   *relname = get_rel_name(relid),
+			   *nspname = get_namespace_name(get_rel_namespace(relid));
+	char	   *query_string = psprintf(sql, exp_cstr,
+										quote_identifier(nspname),
+										quote_identifier(relname));
+
+	parsetree_list = raw_parser(query_string);
+	if (list_length(parsetree_list) != 1)
+		elog(ERROR, "expression \"%s\" produced more than one query", exp_cstr);
+
+	select_stmt = (SelectStmt *) linitial(parsetree_list);
+
+	if (query_string_out)
+		*query_string_out = query_string;
+
+	if (parsetree_out)
+		*parsetree_out = (Node *) select_stmt;
+
+	return ((ResTarget *) linitial(select_stmt->targetList))->val;
+}
+
+/*
+ * Parses expression related to 'relid', and returns its type,
+ * raw expression tree, and if specified returns its plan
+ */
+Datum
+plan_partitioning_expression(const Oid relid,
+							 const char *expr_cstr,
+							 Oid *expr_type_out)
+{
+
+	Node				   *parsetree;
+	List				   *querytree_list;
+	TargetEntry			   *target_entry;
+
+	Node				   *raw_expr;
+	Query				   *expr_query;
+	PlannedStmt			   *expr_plan;
+	Node				   *expr;
+	Datum					expr_datum;
+
+	char				   *query_string,
+						   *expr_serialized;
+
+	MemoryContext			parse_mcxt,
+							old_mcxt;
+
+	AssertTemporaryContext();
+
+	parse_mcxt = AllocSetContextCreate(CurrentMemoryContext,
+									   "pathman parse context",
+									   ALLOCSET_DEFAULT_SIZES);
+
+	/* Keep raw expression */
+	raw_expr = parse_partitioning_expression(relid, expr_cstr,
+											 &query_string, &parsetree);
+
+	/* Check if raw_expr is NULLable */
+	if (IsA(raw_expr, ColumnRef))
+	{
+		ColumnRef *column = (ColumnRef *) raw_expr;
+
+		if (list_length(column->fields) == 1)
+		{
+			HeapTuple	htup;
+			bool		attnotnull;
+			char	   *attname = strVal(linitial(column->fields));
+
+			/* check if attribute is nullable */
+			htup = SearchSysCacheAttName(relid, attname);
+			if (HeapTupleIsValid(htup))
+			{
+				Form_pg_attribute att_tup = (Form_pg_attribute) GETSTRUCT(htup);
+				attnotnull = att_tup->attnotnull;
+				ReleaseSysCache(htup);
+			}
+			else elog(ERROR, "cannot find type name for attribute \"%s\" "
+							 "of relation \"%s\"",
+					  attname, get_rel_name_or_relid(relid));
+
+			if (!attnotnull)
+				elog(ERROR, "partitioning key \"%s\" must be marked NOT NULL", attname);
+		}
+	}
+
+	/* We don't need pathman activity initialization for this relation yet */
+	pathman_hooks_enabled = false;
+
+	/*
+	 * We use separate memory context here, just to make sure we
+	 * don't leave anything behind after analyze and planning.
+	 * Parsed raw expression will stay in caller's context.
+	 */
+	old_mcxt = MemoryContextSwitchTo(parse_mcxt);
+
+	/* This will fail with elog in case of wrong expression */
+	querytree_list = pg_analyze_and_rewrite(parsetree, query_string, NULL, 0);
+	if (list_length(querytree_list) != 1)
+		elog(ERROR, "partitioning expression produced more than 1 query");
+
+	expr_query = (Query *) linitial(querytree_list);
+
+	/* Plan this query. We reuse 'expr_node' here */
+	expr_plan = pg_plan_query(expr_query, 0, NULL);
+
+	target_entry = IsA(expr_plan->planTree, IndexOnlyScan) ?
+					linitial(((IndexOnlyScan *) expr_plan->planTree)->indextlist) :
+					linitial(expr_plan->planTree->targetlist);
+
+	expr = eval_const_expressions(NULL, (Node *) target_entry->expr);
+	if (contain_mutable_functions(expr))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+				 errmsg("functions in partitioning expression must be marked IMMUTABLE")));
+
+	Assert(expr);
+
+	/* Set 'expr_type_out' if needed */
+	if (expr_type_out)
+		*expr_type_out = exprType(expr);
+
+	expr_serialized = nodeToString(expr);
+
+	/* Switch to previous mcxt */
+	MemoryContextSwitchTo(old_mcxt);
+
+	expr_datum = CStringGetTextDatum(expr_serialized);
+
+	/* Free memory */
+	MemoryContextDelete(parse_mcxt);
+
+	/* Enable pathman hooks */
+	pathman_hooks_enabled = true;
+
+	return expr_datum;
 }
 
 
@@ -953,15 +1014,16 @@ try_syscache_parent_search(Oid partition, PartParentSearch *status)
 static bool
 try_perform_parent_refresh(Oid parent)
 {
-	HeapTuple	 tuple;
-	Datum		 values[Natts_pathman_config];
-	bool		 isnull[Natts_pathman_config];
+	ItemPointerData		iptr;
+	Datum				values[Natts_pathman_config];
+	bool				isnull[Natts_pathman_config];
 
-	if (pathman_config_contains_relation(parent, values, isnull, NULL, &tuple))
+	if (pathman_config_contains_relation(parent, values, isnull, NULL, &iptr))
 	{
-		bool upd_expr = isnull[Anum_pathman_config_expression_p - 1];
-		if (upd_expr)
-			update_parsed_expression(parent, tuple, values, isnull);
+		bool should_update_expr = isnull[Anum_pathman_config_expression_p - 1];
+
+		if (should_update_expr)
+			pathman_config_refresh_parsed_expression(parent, values, isnull, &iptr);
 
 		/* If anything went wrong, return false (actually, it might emit ERROR) */
 		refresh_pathman_relation_info(parent,

@@ -78,23 +78,6 @@ Node * build_raw_hash_check_tree(Node *raw_expression,
 
 void drop_check_constraint(Oid relid);
 
-typedef struct
-{
-	Oid		 expr_type;
-	Datum	 expr_datum;
-	Node	*raw_expr;
-} PartExpressionInfo;
-
-/* Expression parsing functions */
-PartExpressionInfo *get_part_expression_info(Oid relid,
-											 const char *expr_string,
-											 bool check_hash_func,
-											 bool make_plan);
-
-Node *parse_partitioning_expression(Oid relid,
-									const char *expression,
-									char **query_string_out,
-									Node **parsetree_out);
 
 /* Update triggers */
 void create_single_update_trigger_internal(Oid partition_relid,

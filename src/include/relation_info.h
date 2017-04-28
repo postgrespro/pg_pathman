@@ -14,6 +14,7 @@
 
 #include "postgres.h"
 #include "access/attnum.h"
+#include "access/sysattr.h"
 #include "fmgr.h"
 #include "nodes/bitmapset.h"
 #include "nodes/nodes.h"
@@ -86,7 +87,10 @@ FreeBound(Bound *bound, bool byval)
 }
 
 inline static int
-cmp_bounds(FmgrInfo *cmp_func, const Oid collid, const Bound *b1, const Bound *b2)
+cmp_bounds(FmgrInfo *cmp_func,
+		   const Oid collid,
+		   const Bound *b1,
+		   const Bound *b2)
 {
 	if (IsMinusInfinity(b1) || IsPlusInfinity(b2))
 		return -1;
@@ -139,10 +143,10 @@ typedef struct
 	Oid			   *children;		/* Oids of child partitions */
 	RangeEntry	   *ranges;			/* per-partition range entry or NULL */
 
-	const char	   *attname;		/* original expression */
+	const char	   *expr_cstr;		/* original expression */
 	Node		   *expr;			/* planned expression */
 	List		   *expr_vars;		/* vars from expression, lazy */
-	Bitmapset	   *expr_atts;		/* set with attnums from expression */
+	Bitmapset	   *expr_atts;		/* attnums from expression */
 
 	Oid				atttype;		/* expression type */
 	int32			atttypmod;		/* expression type modifier */
@@ -155,6 +159,8 @@ typedef struct
 					hash_proc;		/* hash function for 'atttype' */
 } PartRelationInfo;
 
+#define PART_EXPR_VARNO				( 1 )
+
 /*
  * PartParentInfo
  *		Cached parent of the specified partition.
@@ -165,18 +171,6 @@ typedef struct
 	Oid				child_rel;		/* key */
 	Oid				parent_rel;
 } PartParentInfo;
-
-/*
- * CustomConst
- *		Modified Const that also stores 'varattno' attribute from some Var
- *		We can check that is CustomConst by checking `location` attrubute.
- *		It should be equal -2
- */
-typedef struct
-{
-	Const		cns;
-	AttrNumber	varattno;
-} CustomConst;
 
 /*
  * PartBoundInfo
@@ -242,11 +236,13 @@ static inline List *
 PrelExpressionColumnNames(const PartRelationInfo *prel)
 {
 	List   *columns = NIL;
-	int		j = -1;
+	int		i = -1;
 
-	while ((j = bms_next_member(prel->expr_atts, j)) >= 0)
+	while ((i = bms_next_member(prel->expr_atts, i)) >= 0)
 	{
-		char *attname = get_attname(prel->key, j);
+		AttrNumber	attnum = i + FirstLowInvalidHeapAttributeNumber;
+		char	   *attname = get_attname(PrelParentRelid(prel), attnum);
+
 		columns = lappend(columns, makeString(attname));
 	}
 
@@ -257,15 +253,22 @@ PrelExpressionColumnNames(const PartRelationInfo *prel)
 const PartRelationInfo *refresh_pathman_relation_info(Oid relid,
 													  Datum *values,
 													  bool allow_incomplete);
-PartRelationInfo * invalidate_pathman_relation_info(Oid relid, bool *found);
+PartRelationInfo *invalidate_pathman_relation_info(Oid relid, bool *found);
 void remove_pathman_relation_info(Oid relid);
 const PartRelationInfo *get_pathman_relation_info(Oid relid);
 const PartRelationInfo *get_pathman_relation_info_after_lock(Oid relid,
 															 bool unlock_if_not_found,
 															 LockAcquireResult *lock_result);
 
-/* Expression related routines */
-void mark_pathman_expression_for_update(Oid relid);
+/* Partitioning expression routines */
+Node *parse_partitioning_expression(const Oid relid,
+									const char *expression,
+									char **query_string_out,
+									Node **parsetree_out);
+
+Datum plan_partitioning_expression(const Oid relid,
+								   const char *expr_cstr,
+								   Oid *expr_type);
 
 /* Global invalidation routines */
 void delay_pathman_shutdown(void);
@@ -280,12 +283,12 @@ Oid get_parent_of_partition(Oid partition, PartParentSearch *status);
 
 /* Bounds cache */
 void forget_bounds_of_partition(Oid partition);
-PartBoundInfo * get_bounds_of_partition(Oid partition,
-										const PartRelationInfo *prel);
+PartBoundInfo *get_bounds_of_partition(Oid partition,
+									   const PartRelationInfo *prel);
 
 /* Safe casts for PartType */
 PartType DatumGetPartType(Datum datum);
-char * PartTypeToCString(PartType parttype);
+char *PartTypeToCString(PartType parttype);
 
 /* PartRelationInfo checker */
 void shout_if_prel_is_invalid(const Oid parent_oid,
@@ -366,6 +369,7 @@ FreeRangesArray(PartRelationInfo *prel)
 extern bool pg_pathman_enable_bounds_cache;
 
 void init_relation_info_static_data(void);
+
 
 #endif /* RELATION_INFO_H */
 

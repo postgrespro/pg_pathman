@@ -204,7 +204,15 @@ bool pathman_config_contains_relation(Oid relid,
 									  Datum *values,
 									  bool *isnull,
 									  TransactionId *xmin,
-									  HeapTuple *tuple);
+									  ItemPointerData *iptr);
+
+void pathman_config_invalidate_parsed_expression(Oid relid);
+
+void pathman_config_refresh_parsed_expression(Oid relid,
+											  Datum *values,
+											  bool *isnull,
+											  ItemPointer iptr);
+
 
 bool read_pathman_params(Oid relid,
 						 Datum *values,

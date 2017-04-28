@@ -59,7 +59,7 @@ static void check_range_adjacence(Oid cmp_proc, Oid collid, List *ranges);
 static void merge_range_partitions_internal(Oid parent,
 											Oid *parts,
 											uint32 nparts);
-static void modify_range_constraint(Oid child_relid,
+static void modify_range_constraint(Oid partition_relid,
 									const char *expression,
 									Oid expression_type,
 									const Bound *lower,
@@ -522,9 +522,9 @@ get_part_range_by_idx(PG_FUNCTION_ARGS)
 Datum
 build_range_condition(PG_FUNCTION_ARGS)
 {
-	Node	   *expr;
 	Oid			partition_relid;
 	char	   *expression;
+	Node	   *expr;
 
 	Bound		min,
 				max;
@@ -708,7 +708,7 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 
 	/* Drop old constraint and create a new one */
 	modify_range_constraint(parts[0],
-							prel->attname,
+							prel->expr_cstr,
 							prel->atttype,
 							&first->min,
 							&last->max);
@@ -791,7 +791,7 @@ drop_range_partition_expand_next(PG_FUNCTION_ARGS)
 
 		/* Drop old constraint and create a new one */
 		modify_range_constraint(next->child_oid,
-								prel->attname,
+								prel->expr_cstr,
 								prel->atttype,
 								&cur->min,
 								&next->max);
@@ -1015,7 +1015,7 @@ interval_is_trivial(Oid atttype, Datum interval, Oid interval_type)
  * a new one with specified boundaries
  */
 static void
-modify_range_constraint(Oid child_relid,
+modify_range_constraint(Oid partition_relid,
 						const char *expression,
 						Oid expression_type,
 						const Bound *lower,
@@ -1026,20 +1026,20 @@ modify_range_constraint(Oid child_relid,
 	Relation		partition_rel;
 
 	/* Drop old constraint */
-	drop_check_constraint(child_relid);
+	drop_check_constraint(partition_relid);
 
 	/* Parse expression */
-	expr = parse_partitioning_expression(child_relid, expression, NULL, NULL);
+	expr = parse_partitioning_expression(partition_relid, expression, NULL, NULL);
 
 	/* Build a new one */
-	constraint = build_range_check_constraint(child_relid,
+	constraint = build_range_check_constraint(partition_relid,
 											  expr,
 											  lower,
 											  upper,
 											  expression_type);
 
 	/* Open the relation and add new check constraint */
-	partition_rel = heap_open(child_relid, AccessExclusiveLock);
+	partition_rel = heap_open(partition_relid, AccessExclusiveLock);
 	AddRelationNewConstraints(partition_rel, NIL,
 							  list_make1(constraint),
 							  false, true, true);

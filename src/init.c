@@ -599,12 +599,11 @@ build_update_trigger_func_name_internal(Oid relid)
 
 /*
  * Check that relation 'relid' is partitioned by pg_pathman.
- *
- * Extract tuple into 'values' and 'isnull' if they're provided.
+ * Extract tuple into 'values', 'isnull', 'xmin', 'iptr' if they're provided.
  */
 bool
 pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
-								 TransactionId *xmin, HeapTuple *tuple)
+								 TransactionId *xmin, ItemPointerData* iptr)
 {
 	Relation		rel;
 	HeapScanDesc	scan;
@@ -662,8 +661,9 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 			*xmin = DatumGetTransactionId(value);
 		}
 
-		if (tuple)
-			*tuple = heap_copytuple(htup);
+		/* Set ItemPointer if necessary */
+		if (iptr)
+			*iptr = htup->t_self;
 	}
 
 	/* Clean resources */
@@ -677,9 +677,78 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 	return contains_rel;
 }
 
+/* Invalidate parsed partitioning expression in PATHMAN_CONFIG */
+void
+pathman_config_invalidate_parsed_expression(Oid relid)
+{
+	ItemPointerData		iptr; /* pointer to tuple */
+	Datum				values[Natts_pathman_config];
+	bool				nulls[Natts_pathman_config];
+
+	/* Check that PATHMAN_CONFIG table contains this relation */
+	if (pathman_config_contains_relation(relid, values, nulls, NULL, &iptr))
+	{
+		Relation	rel;
+		HeapTuple	new_htup;
+
+		/* Reset parsed expression */
+		values[Anum_pathman_config_expression_p - 1] = (Datum) 0;
+		nulls[Anum_pathman_config_expression_p - 1]  = true;
+
+		/* Reset expression type */
+		values[Anum_pathman_config_atttype - 1] = (Datum) 0;
+		nulls[Anum_pathman_config_atttype - 1]  = true;
+
+		rel = heap_open(get_pathman_config_relid(false), RowExclusiveLock);
+
+		/* Form new tuple and perform an update */
+		new_htup = heap_form_tuple(RelationGetDescr(rel), values, nulls);
+		simple_heap_update(rel, &iptr, new_htup);
+		CatalogUpdateIndexes(rel, new_htup);
+
+		heap_close(rel, RowExclusiveLock);
+	}
+}
+
+/* Refresh parsed partitioning expression in PATHMAN_CONFIG */
+void
+pathman_config_refresh_parsed_expression(Oid relid,
+										 Datum *values,
+										 bool *isnull,
+										 ItemPointer iptr)
+{
+	char				   *expr_cstr;
+	Oid						expr_type;
+	Datum					expr_datum;
+
+	Relation				rel;
+	HeapTuple				htup_new;
+
+	/* get and parse expression */
+	expr_cstr = TextDatumGetCString(values[Anum_pathman_config_expression - 1]);
+	expr_datum = plan_partitioning_expression(relid, expr_cstr, &expr_type);
+	pfree(expr_cstr);
+
+	/* prepare tuple values */
+	values[Anum_pathman_config_expression_p - 1] = expr_datum;
+	isnull[Anum_pathman_config_expression_p - 1] = false;
+
+	values[Anum_pathman_config_atttype - 1] = ObjectIdGetDatum(expr_type);
+	isnull[Anum_pathman_config_atttype - 1] = false;
+
+	rel = heap_open(get_pathman_config_relid(false), RowExclusiveLock);
+
+	htup_new = heap_form_tuple(RelationGetDescr(rel), values, isnull);
+	simple_heap_update(rel, iptr, htup_new);
+	CatalogUpdateIndexes(rel, htup_new);
+
+	heap_close(rel, RowExclusiveLock);
+}
+
+
 /*
- * Loads additional pathman parameters like 'enable_parent' or 'auto'
- * from PATHMAN_CONFIG_PARAMS.
+ * Loads additional pathman parameters like 'enable_parent'
+ * or 'auto' from PATHMAN_CONFIG_PARAMS.
  */
 bool
 read_pathman_params(Oid relid, Datum *values, bool *isnull)
@@ -721,6 +790,7 @@ read_pathman_params(Oid relid, Datum *values, bool *isnull)
 
 	return row_found;
 }
+
 
 /*
  * Go through the PATHMAN_CONFIG table and create PartRelationInfo entries.
@@ -788,10 +858,9 @@ read_pathman_config(void)
 
 /*
  * Validates range constraint. It MUST have one of the following formats:
- *
- *		EXPRESSION >= CONST AND EXPRESSION < CONST
- *		EXPRESSION >= CONST
- *		EXPRESSION < CONST
+ *		1) EXPRESSION >= CONST AND EXPRESSION < CONST
+ *		2) EXPRESSION >= CONST
+ *		3) EXPRESSION < CONST
  *
  * Writes 'lower' & 'upper' and 'lower_null' & 'upper_null' values on success.
  */
@@ -838,7 +907,11 @@ validate_range_constraint(const Expr *expr,
 									  lower, upper, lower_null, upper_null);
 }
 
-/* Validates a single expression of kind EXPRESSION >= CONST | EXPRESSION < CONST */
+/*
+ * Validates a single expression of kind:
+ *		1) EXPRESSION >= CONST
+ *		2) EXPRESSION < CONST
+ */
 static bool
 validate_range_opexpr(const Expr *expr,
 					  const PartRelationInfo *prel,

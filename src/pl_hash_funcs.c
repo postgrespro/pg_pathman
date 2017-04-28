@@ -121,13 +121,12 @@ get_hash_part_idx(PG_FUNCTION_ARGS)
 Datum
 build_hash_condition(PG_FUNCTION_ARGS)
 {
-	Oid				atttype = PG_GETARG_OID(0);
-	text		   *attname = PG_GETARG_TEXT_P(1);
-	uint32			part_count = PG_GETARG_UINT32(2),
-					part_idx = PG_GETARG_UINT32(3);
+	Oid				expr_type	= PG_GETARG_OID(0);
+	char		   *expr_cstr	= TextDatumGetCString(PG_GETARG_TEXT_P(1));
+	uint32			part_count	= PG_GETARG_UINT32(2),
+					part_idx	= PG_GETARG_UINT32(3);
 
 	TypeCacheEntry *tce;
-	char		   *attname_cstring = text_to_cstring(attname);
 
 	char		   *result;
 
@@ -136,20 +135,20 @@ build_hash_condition(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("'partition_index' must be lower than 'partitions_count'")));
 
-	tce = lookup_type_cache(atttype, TYPECACHE_HASH_PROC);
+	tce = lookup_type_cache(expr_type, TYPECACHE_HASH_PROC);
 
 	/* Check that HASH function exists */
 	if (!OidIsValid(tce->hash_proc))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("no hash function for type %s",
-						format_type_be(atttype))));
+						format_type_be(expr_type))));
 
 	/* Create hash condition CSTRING */
 	result = psprintf("%s.get_hash_part_idx(%s(%s), %u) = %u",
 					  get_namespace_name(get_pathman_schema()),
 					  get_func_name(tce->hash_proc),
-					  attname_cstring,
+					  expr_cstr,
 					  part_count,
 					  part_idx);
 
