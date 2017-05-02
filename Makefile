@@ -35,6 +35,7 @@ REGRESS = pathman_basic \
 		  pathman_inserts \
 		  pathman_interval \
 		  pathman_join_clause \
+		  pathman_lateral \
 		  pathman_only \
 		  pathman_permissions \
 		  pathman_rowmarks \
@@ -42,7 +43,8 @@ REGRESS = pathman_basic \
 		  pathman_update_trigger \
 		  pathman_update_node \
 		  pathman_updates \
-		  pathman_utility_stmt
+		  pathman_utility_stmt \
+		  pathman_expressions
 
 
 EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add
@@ -74,3 +76,5 @@ isolationcheck: | submake-isolation
 		--temp-config=$(top_srcdir)/$(subdir)/conf.add \
 		--outputdir=./isolation_output \
 		$(ISOLATIONCHECKS)
+partitioning_tests:
+	$(MAKE) -C tests/python partitioning_tests

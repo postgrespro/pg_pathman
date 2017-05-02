@@ -25,10 +25,11 @@
 #endif
 
 
-#define ERR_PART_ATTR_NULL		"partitioned column's value should not be NULL"
-#define ERR_PART_ATTR_NO_PART	"no suitable partition for key '%s'"
-#define ERR_PART_ATTR_MULTIPLE	"PartitionFilter selected more than one partition"
-#define ERR_PART_DESC_CONVERT	"could not convert row type for partition"
+#define ERR_PART_ATTR_NULL				"partitioning expression's value should not be NULL"
+#define ERR_PART_ATTR_MULTIPLE_RESULTS	"partitioning expression should return single value"
+#define ERR_PART_ATTR_NO_PART			"no suitable partition for key '%s'"
+#define ERR_PART_ATTR_MULTIPLE			"PartitionFilter selected more than one partition"
+#define ERR_PART_DESC_CONVERT			"could not convert row type for partition"
 
 
 /*
@@ -102,6 +103,7 @@ typedef struct
 	CmdType				command_type;
 
 	ExprContext		   *tup_convert_econtext;	/* ExprContext for projections */
+	ExprState		   *expr_state;				/* for partitioning expression */
 } PartitionFilterState;
 
 

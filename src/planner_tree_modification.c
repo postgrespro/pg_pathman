@@ -12,12 +12,13 @@
 #include "compat/relation_tags.h"
 #include "compat/rowmarks_fix.h"
 
-#include "nodes_common.h"
 #include "partition_filter.h"
 #include "partition_update.h"
 #include "planner_tree_modification.h"
 #include "relation_info.h"
+#include "rewrite/rewriteManip.h"
 
+#include "access/htup_details.h"
 #include "miscadmin.h"
 #include "optimizer/clauses.h"
 #include "storage/lmgr.h"
@@ -247,6 +248,7 @@ handle_modification_query(Query *parse)
 	Expr				   *expr;
 	WalkerContext			context;
 	Index					result_rel;
+	Node				   *prel_expr;
 
 	/* Fetch index of result relation */
 	result_rel = parse->resultRelation;
@@ -270,14 +272,19 @@ handle_modification_query(Query *parse)
 	if (prel->enable_parent) return;
 
 	/* Parse syntax tree and extract partition ranges */
-	ranges = list_make1_irange(make_irange(0, PrelLastChild(prel), false));
+	ranges = list_make1_irange_full(prel, IR_COMPLETE);
 	expr = (Expr *) eval_const_expressions(NULL, parse->jointree->quals);
 
 	/* Exit if there's no expr (no use) */
 	if (!expr) return;
 
+	/* Prepare partitioning expression */
+	prel_expr = copyObject(prel->expr);
+	if (result_rel != 1)
+		ChangeVarNodes(prel_expr, 1, result_rel, 0);
+
 	/* Parse syntax tree and extract partition ranges */
-	InitWalkerContext(&context, result_rel, prel, NULL, false);
+	InitWalkerContext(&context, prel_expr, prel, NULL, false);
 	wrap = walk_expr_tree(expr, &context);
 
 	ranges = irange_list_intersection(ranges, wrap->rangeset);
@@ -304,9 +311,23 @@ handle_modification_query(Query *parse)
 
 			LOCKMODE	lockmode = RowExclusiveLock; /* UPDATE | DELETE */
 
-			/* Make sure that 'child' exists */
+			HeapTuple	syscache_htup;
+			char		child_relkind;
+
+			/* Lock 'child' table */
 			LockRelationOid(child, lockmode);
-			if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(child)))
+
+			/* Make sure that 'child' exists */
+			syscache_htup = SearchSysCache1(RELOID, ObjectIdGetDatum(child));
+			if (HeapTupleIsValid(syscache_htup))
+			{
+				Form_pg_class reltup = (Form_pg_class) GETSTRUCT(syscache_htup);
+
+				/* Fetch child's relkind and free cache entry */
+				child_relkind = reltup->relkind;
+				ReleaseSysCache(syscache_htup);
+			}
+			else
 			{
 				UnlockRelationOid(child, lockmode);
 				return; /* nothing to do here */
@@ -329,8 +350,9 @@ handle_modification_query(Query *parse)
 			if (tuple_map) /* just checking the pointer! */
 				return;
 
-			/* Update RTE's relid */
+			/* Update RTE's relid and relkind (for FDW) */
 			rte->relid = child;
+			rte->relkind = child_relkind;
 
 			/* HACK: unset the 'inh' flag (no children) */
 			rte->inh = false;

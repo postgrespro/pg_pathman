@@ -191,11 +191,8 @@ find_children_status find_inheritance_children_array(Oid parentrelId,
 													 uint32 *children_size,
 													 Oid **children);
 
-
-char *build_check_constraint_name_relid_internal(Oid relid,
-												 AttrNumber attno);
-char *build_check_constraint_name_relname_internal(const char *relname,
-												   AttrNumber attno);
+char *build_check_constraint_name_relid_internal(Oid relid);
+char *build_check_constraint_name_relname_internal(const char *relname);
 
 char *build_sequence_name_internal(Oid relid);
 
@@ -206,7 +203,16 @@ char *build_update_trigger_func_name_internal(Oid relid);
 bool pathman_config_contains_relation(Oid relid,
 									  Datum *values,
 									  bool *isnull,
-									  TransactionId *xmin);
+									  TransactionId *xmin,
+									  ItemPointerData *iptr);
+
+void pathman_config_invalidate_parsed_expression(Oid relid);
+
+void pathman_config_refresh_parsed_expression(Oid relid,
+											  Datum *values,
+											  bool *isnull,
+											  ItemPointer iptr);
+
 
 bool read_pathman_params(Oid relid,
 						 Datum *values,
@@ -215,13 +221,11 @@ bool read_pathman_params(Oid relid,
 
 bool validate_range_constraint(const Expr *expr,
 							   const PartRelationInfo *prel,
-							   const AttrNumber part_attno,
 							   Datum *lower, Datum *upper,
 							   bool *lower_null, bool *upper_null);
 
 bool validate_hash_constraint(const Expr *expr,
 							  const PartRelationInfo *prel,
-							  const AttrNumber part_attno,
 							  uint32 *part_idx);
 
 

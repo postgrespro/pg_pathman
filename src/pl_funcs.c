@@ -16,31 +16,29 @@
 #include "partition_filter.h"
 #include "relation_info.h"
 #include "xact_handling.h"
+#include "utils.h"
 
 #include "access/tupconvert.h"
-#include "access/nbtree.h"
 #include "access/htup_details.h"
 #include "catalog/indexing.h"
-#include "catalog/pg_trigger.h"
+#include "catalog/pg_inherits_fn.h"
 #include "catalog/pg_type.h"
 #include "commands/tablespace.h"
 #include "commands/trigger.h"
+#include "executor/executor.h"
 #include "executor/spi.h"
 #include "funcapi.h"
 #include "miscadmin.h"
+#include "nodes/nodeFuncs.h"
 #include "utils/builtins.h"
-#include "utils/fmgroids.h"
 #include "utils/inval.h"
 #include "utils/snapmgr.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
+#include "utils/typcache.h"
 
 
 /* Function declarations */
-
-PG_FUNCTION_INFO_V1( on_partitions_created );
-PG_FUNCTION_INFO_V1( on_partitions_updated );
-PG_FUNCTION_INFO_V1( on_partitions_removed );
 
 PG_FUNCTION_INFO_V1( get_number_of_partitions_pl );
 PG_FUNCTION_INFO_V1( get_parent_of_partition_pl );
@@ -53,12 +51,10 @@ PG_FUNCTION_INFO_V1( show_partition_list_internal );
 
 PG_FUNCTION_INFO_V1( build_update_trigger_name );
 PG_FUNCTION_INFO_V1( build_update_trigger_func_name );
-PG_FUNCTION_INFO_V1( build_check_constraint_name_attnum );
-PG_FUNCTION_INFO_V1( build_check_constraint_name_attname );
+PG_FUNCTION_INFO_V1( build_check_constraint_name );
 
 PG_FUNCTION_INFO_V1( validate_relname );
 PG_FUNCTION_INFO_V1( is_date_type );
-PG_FUNCTION_INFO_V1( is_attribute_nullable );
 PG_FUNCTION_INFO_V1( is_operator_supported );
 PG_FUNCTION_INFO_V1( is_tuple_convertible );
 
@@ -91,7 +87,8 @@ typedef struct
 
 	const PartRelationInfo *current_prel;	/* selected PartRelationInfo */
 
-	uint32					child_number;	/* child we're looking at */
+	Size					child_number;	/* child we're looking at */
+	SPITupleTable		   *tuptable;		/* buffer for tuples */
 } show_partition_list_cxt;
 
 /* User context for function show_pathman_cache_stats_internal() */
@@ -103,78 +100,18 @@ typedef struct
 } show_cache_stats_cxt;
 
 
-static void on_partitions_created_internal(Oid partitioned_table, bool add_callbacks);
-static void on_partitions_updated_internal(Oid partitioned_table, bool add_callbacks);
-static void on_partitions_removed_internal(Oid partitioned_table, bool add_callbacks);
+static AttrNumber *pathman_update_trigger_build_attr_map(const PartRelationInfo *prel,
+														 Relation child_rel);
+
+static ExprState *pathman_update_trigger_build_expr_state(const PartRelationInfo *prel,
+														  Relation source_rel,
+														  HeapTuple new_tuple,
+														  Oid *expr_type);
 
 static void pathman_update_trigger_func_move_tuple(Relation source_rel,
 												   Relation target_rel,
 												   HeapTuple old_tuple,
 												   HeapTuple new_tuple);
-
-/* Extracted common check */
-static inline bool
-check_relation_exists(Oid relid)
-{
-	return get_rel_type_id(relid) != InvalidOid;
-}
-
-
-/*
- * ----------------------------
- *  Partition events callbacks
- * ----------------------------
- */
-
-static void
-on_partitions_created_internal(Oid partitioned_table, bool add_callbacks)
-{
-	elog(DEBUG2, "on_partitions_created() [add_callbacks = %s] "
-				 "triggered for relation %u",
-		 (add_callbacks ? "true" : "false"), partitioned_table);
-}
-
-static void
-on_partitions_updated_internal(Oid partitioned_table, bool add_callbacks)
-{
-	bool entry_found;
-
-	elog(DEBUG2, "on_partitions_updated() [add_callbacks = %s] "
-				 "triggered for relation %u",
-		 (add_callbacks ? "true" : "false"), partitioned_table);
-
-	invalidate_pathman_relation_info(partitioned_table, &entry_found);
-}
-
-static void
-on_partitions_removed_internal(Oid partitioned_table, bool add_callbacks)
-{
-	elog(DEBUG2, "on_partitions_removed() [add_callbacks = %s] "
-				 "triggered for relation %u",
-		 (add_callbacks ? "true" : "false"), partitioned_table);
-}
-
-
-Datum
-on_partitions_created(PG_FUNCTION_ARGS)
-{
-	on_partitions_created_internal(PG_GETARG_OID(0), true);
-	PG_RETURN_NULL();
-}
-
-Datum
-on_partitions_updated(PG_FUNCTION_ARGS)
-{
-	on_partitions_updated_internal(PG_GETARG_OID(0), true);
-	PG_RETURN_NULL();
-}
-
-Datum
-on_partitions_removed(PG_FUNCTION_ARGS)
-{
-	on_partitions_removed_internal(PG_GETARG_OID(0), true);
-	PG_RETURN_NULL();
-}
 
 
 /*
@@ -406,16 +343,18 @@ show_cache_stats_internal(PG_FUNCTION_ARGS)
 Datum
 show_partition_list_internal(PG_FUNCTION_ARGS)
 {
-	show_partition_list_cxt	   *usercxt;
-	FuncCallContext			   *funccxt;
+	show_partition_list_cxt		*usercxt;
+	FuncCallContext				*funccxt;
+	MemoryContext				 old_mcxt;
+	SPITupleTable				*tuptable;
 
 	/*
 	 * Initialize tuple descriptor & function call context.
 	 */
 	if (SRF_IS_FIRSTCALL())
 	{
-		TupleDesc		tupdesc;
-		MemoryContext	old_mcxt;
+		TupleDesc		 tupdesc;
+		MemoryContext	 tuptabcxt;
 
 		funccxt = SRF_FIRSTCALL_INIT();
 
@@ -451,136 +390,167 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 		funccxt->tuple_desc = BlessTupleDesc(tupdesc);
 		funccxt->user_fctx = (void *) usercxt;
 
+		/* initialize tuple table context */
+		tuptabcxt = AllocSetContextCreate(CurrentMemoryContext,
+										  "pg_pathman TupTable",
+										  ALLOCSET_DEFAULT_SIZES);
+		MemoryContextSwitchTo(tuptabcxt);
+
+		/* initialize tuple table for partitions list, we use it as buffer */
+		tuptable = (SPITupleTable *) palloc0(sizeof(SPITupleTable));
+		usercxt->tuptable = tuptable;
+		tuptable->tuptabcxt = tuptabcxt;
+
+		/* set up initial allocations */
+		tuptable->alloced = tuptable->free = 128;
+		tuptable->vals = (HeapTuple *) palloc(tuptable->alloced * sizeof(HeapTuple));
+
 		MemoryContextSwitchTo(old_mcxt);
+
+		/* Iterate through pathman cache */
+		for (;;)
+		{
+			const PartRelationInfo *prel;
+			HeapTuple				htup;
+			Datum					values[Natts_pathman_partition_list];
+			bool					isnull[Natts_pathman_partition_list] = { 0 };
+
+			/* Fetch next PartRelationInfo if needed */
+			if (usercxt->current_prel == NULL)
+			{
+				HeapTuple	pathman_config_htup;
+				Datum		parent_table;
+				bool		parent_table_isnull;
+				Oid			parent_table_oid;
+
+				pathman_config_htup = heap_getnext(usercxt->pathman_config_scan,
+												   ForwardScanDirection);
+				if (!HeapTupleIsValid(pathman_config_htup))
+					break;
+
+				parent_table = heap_getattr(pathman_config_htup,
+											Anum_pathman_config_partrel,
+											RelationGetDescr(usercxt->pathman_config),
+											&parent_table_isnull);
+
+				Assert(parent_table_isnull == false);
+				parent_table_oid = DatumGetObjectId(parent_table);
+
+				usercxt->current_prel = get_pathman_relation_info(parent_table_oid);
+				if (usercxt->current_prel == NULL)
+					continue;
+
+				usercxt->child_number = 0;
+			}
+
+			/* Alias to 'usercxt->current_prel' */
+			prel = usercxt->current_prel;
+
+			/* If we've run out of partitions, switch to the next 'prel' */
+			if (usercxt->child_number >= PrelChildrenCount(prel))
+			{
+				usercxt->current_prel = NULL;
+				usercxt->child_number = 0;
+
+				continue;
+			}
+
+			/* Fill in common values */
+			values[Anum_pathman_pl_parent - 1]		= PrelParentRelid(prel);
+			values[Anum_pathman_pl_parttype - 1]	= prel->parttype;
+			values[Anum_pathman_pl_partattr - 1]	= CStringGetTextDatum(prel->expr_cstr);
+
+			switch (prel->parttype)
+			{
+				case PT_HASH:
+					{
+						Oid	 *children = PrelGetChildrenArray(prel),
+							  child_oid = children[usercxt->child_number];
+
+						values[Anum_pathman_pl_partition - 1] = child_oid;
+						isnull[Anum_pathman_pl_range_min - 1] = true;
+						isnull[Anum_pathman_pl_range_max - 1] = true;
+					}
+					break;
+
+				case PT_RANGE:
+					{
+						RangeEntry *re;
+
+						re = &PrelGetRangesArray(prel)[usercxt->child_number];
+
+						values[Anum_pathman_pl_partition - 1] = re->child_oid;
+
+						/* Lower bound text */
+						if (!IsInfinite(&re->min))
+						{
+							Datum rmin = CStringGetTextDatum(
+											datum_to_cstring(BoundGetValue(&re->min),
+															 prel->atttype));
+
+							values[Anum_pathman_pl_range_min - 1] = rmin;
+						}
+						else isnull[Anum_pathman_pl_range_min - 1] = true;
+
+						/* Upper bound text */
+						if (!IsInfinite(&re->max))
+						{
+							Datum rmax = CStringGetTextDatum(
+											datum_to_cstring(BoundGetValue(&re->max),
+															 prel->atttype));
+
+							values[Anum_pathman_pl_range_max - 1] = rmax;
+						}
+						else isnull[Anum_pathman_pl_range_max - 1] = true;
+					}
+					break;
+
+				default:
+					elog(ERROR, "Unknown partitioning type %u", prel->parttype);
+			}
+
+			/* Fill tuptable */
+			old_mcxt = MemoryContextSwitchTo(tuptable->tuptabcxt);
+
+			/* Form output tuple */
+			htup = heap_form_tuple(funccxt->tuple_desc, values, isnull);
+
+			if (tuptable->free == 0)
+			{
+				/* Double the size of the pointer array */
+				tuptable->free = tuptable->alloced;
+				tuptable->alloced += tuptable->free;
+				tuptable->vals = (HeapTuple *) repalloc_huge(tuptable->vals,
+											  tuptable->alloced * sizeof(HeapTuple));
+			}
+
+			tuptable->vals[tuptable->alloced - tuptable->free] = htup;
+			(tuptable->free)--;
+
+			MemoryContextSwitchTo(old_mcxt);
+
+			/* Switch to the next child */
+			usercxt->child_number++;
+		}
+
+		/* Clean resources */
+		heap_endscan(usercxt->pathman_config_scan);
+		UnregisterSnapshot(usercxt->snapshot);
+		heap_close(usercxt->pathman_config, AccessShareLock);
+
+		usercxt->child_number = 0;
 	}
 
 	funccxt = SRF_PERCALL_SETUP();
 	usercxt = (show_partition_list_cxt *) funccxt->user_fctx;
+	tuptable = usercxt->tuptable;
 
-	/* Iterate through pathman cache */
-	for(;;)
+	if (usercxt->child_number < (tuptable->alloced - tuptable->free))
 	{
-		const PartRelationInfo *prel;
-		HeapTuple				htup;
-		Datum					values[Natts_pathman_partition_list];
-		bool					isnull[Natts_pathman_partition_list] = { 0 };
-		char				   *partattr_cstr;
-
-		/* Fetch next PartRelationInfo if needed */
-		if (usercxt->current_prel == NULL)
-		{
-			HeapTuple	pathman_config_htup;
-			Datum		parent_table;
-			bool		parent_table_isnull;
-			Oid			parent_table_oid;
-
-			pathman_config_htup = heap_getnext(usercxt->pathman_config_scan,
-											   ForwardScanDirection);
-			if (!HeapTupleIsValid(pathman_config_htup))
-				break;
-
-			parent_table = heap_getattr(pathman_config_htup,
-										Anum_pathman_config_partrel,
-										RelationGetDescr(usercxt->pathman_config),
-										&parent_table_isnull);
-
-			Assert(parent_table_isnull == false);
-			parent_table_oid = DatumGetObjectId(parent_table);
-
-			usercxt->current_prel = get_pathman_relation_info(parent_table_oid);
-			if (usercxt->current_prel == NULL)
-				continue;
-
-			usercxt->child_number = 0;
-		}
-
-		/* Alias to 'usercxt->current_prel' */
-		prel = usercxt->current_prel;
-
-		/* If we've run out of partitions, switch to the next 'prel' */
-		if (usercxt->child_number >= PrelChildrenCount(prel))
-		{
-			usercxt->current_prel = NULL;
-			usercxt->child_number = 0;
-
-			continue;
-		}
-
-		partattr_cstr = get_attname(PrelParentRelid(prel), prel->attnum);
-		if (!partattr_cstr)
-		{
-			/* Parent does not exist, go to the next 'prel' */
-			usercxt->current_prel = NULL;
-			continue;
-		}
-
-		/* Fill in common values */
-		values[Anum_pathman_pl_parent - 1]		= PrelParentRelid(prel);
-		values[Anum_pathman_pl_parttype - 1]	= prel->parttype;
-		values[Anum_pathman_pl_partattr - 1]	= CStringGetTextDatum(partattr_cstr);
-
-		switch (prel->parttype)
-		{
-			case PT_HASH:
-				{
-					Oid	 *children = PrelGetChildrenArray(prel),
-						  child_oid = children[usercxt->child_number];
-
-					values[Anum_pathman_pl_partition - 1] = child_oid;
-					isnull[Anum_pathman_pl_range_min - 1] = true;
-					isnull[Anum_pathman_pl_range_max - 1] = true;
-				}
-				break;
-
-			case PT_RANGE:
-				{
-					RangeEntry *re;
-
-					re = &PrelGetRangesArray(prel)[usercxt->child_number];
-
-					values[Anum_pathman_pl_partition - 1] = re->child_oid;
-
-					/* Lower bound text */
-					if (!IsInfinite(&re->min))
-					{
-						Datum rmin = CStringGetTextDatum(
-										datum_to_cstring(BoundGetValue(&re->min),
-														 prel->atttype));
-
-						values[Anum_pathman_pl_range_min - 1] = rmin;
-					}
-					else isnull[Anum_pathman_pl_range_min - 1] = true;
-
-					/* Upper bound text */
-					if (!IsInfinite(&re->max))
-					{
-						Datum rmax = CStringGetTextDatum(
-										datum_to_cstring(BoundGetValue(&re->max),
-														 prel->atttype));
-
-						values[Anum_pathman_pl_range_max - 1] = rmax;
-					}
-					else isnull[Anum_pathman_pl_range_max - 1] = true;
-				}
-				break;
-
-			default:
-				elog(ERROR, "Unknown partitioning type %u", prel->parttype);
-		}
-
-		/* Switch to the next child */
+		HeapTuple	htup = usercxt->tuptable->vals[usercxt->child_number];
 		usercxt->child_number++;
-
-		/* Form output tuple */
-		htup = heap_form_tuple(funccxt->tuple_desc, values, isnull);
-
 		SRF_RETURN_NEXT(funccxt, HeapTupleGetDatum(htup));
 	}
-
-	/* Clean resources */
-	heap_endscan(usercxt->pathman_config_scan);
-	UnregisterSnapshot(usercxt->snapshot);
-	heap_close(usercxt->pathman_config, AccessShareLock);
 
 	SRF_RETURN_DONE(funccxt);
 }
@@ -611,7 +581,7 @@ validate_relname(PG_FUNCTION_ARGS)
 	/* Fetch relation's Oid */
 	relid = PG_GETARG_OID(0);
 
-	if (!check_relation_exists(relid))
+	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("relation \"%u\" does not exist", relid),
 						errdetail("triggered in function "
@@ -626,41 +596,6 @@ is_date_type(PG_FUNCTION_ARGS)
 	PG_RETURN_BOOL(is_date_type_internal(PG_GETARG_OID(0)));
 }
 
-Datum
-is_attribute_nullable(PG_FUNCTION_ARGS)
-{
-	Oid			relid = PG_GETARG_OID(0);
-	text	   *attname = PG_GETARG_TEXT_P(1);
-	bool		result = true;
-	HeapTuple	tp;
-
-	tp = SearchSysCacheAttName(relid, text_to_cstring(attname));
-	if (HeapTupleIsValid(tp))
-	{
-		Form_pg_attribute att_tup = (Form_pg_attribute) GETSTRUCT(tp);
-		result = !att_tup->attnotnull;
-		ReleaseSysCache(tp);
-	}
-	else
-		elog(ERROR, "Cannot find type name for attribute \"%s\" "
-					"of relation \"%s\"",
-			 text_to_cstring(attname), get_rel_name_or_relid(relid));
-
-	PG_RETURN_BOOL(result); /* keep compiler happy */
-}
-
-Datum
-is_operator_supported(PG_FUNCTION_ARGS)
-{
-	Oid		opid,
-			typid	= PG_GETARG_OID(0);
-	char   *opname	= TextDatumGetCString(PG_GETARG_TEXT_P(1));
-
-	opid = compatible_oper_opid(list_make1(makeString(opname)),
-								typid, typid, true);
-
-	PG_RETURN_BOOL(OidIsValid(opid));
-}
 
 Datum
 is_tuple_convertible(PG_FUNCTION_ARGS)
@@ -695,7 +630,6 @@ is_tuple_convertible(PG_FUNCTION_ARGS)
 	PG_RETURN_BOOL(res);
 }
 
-
 /*
  * ------------------------
  *  Useful string builders
@@ -709,7 +643,7 @@ build_update_trigger_name(PG_FUNCTION_ARGS)
 	const char *result;
 
 	/* Check that relation exists */
-	if (!check_relation_exists(relid))
+	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("relation \"%u\" does not exist", relid)));
 
@@ -727,7 +661,7 @@ build_update_trigger_func_name(PG_FUNCTION_ARGS)
 			   *func_name;
 
 	/* Check that relation exists */
-	if (!check_relation_exists(relid))
+	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("relation \"%u\" does not exist", relid)));
 
@@ -742,51 +676,18 @@ build_update_trigger_func_name(PG_FUNCTION_ARGS)
 }
 
 Datum
-build_check_constraint_name_attnum(PG_FUNCTION_ARGS)
+build_check_constraint_name(PG_FUNCTION_ARGS)
 {
 	Oid			relid = PG_GETARG_OID(0);
-	AttrNumber	attnum = PG_GETARG_INT16(1);
 	const char *result;
 
-	if (!check_relation_exists(relid))
+	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("relation \"%u\" does not exist", relid)));
 
-	/* We explicitly do not support system attributes */
-	if (attnum == InvalidAttrNumber || attnum < 0)
-		ereport(ERROR, (errcode(ERRCODE_UNDEFINED_COLUMN),
-						errmsg("invalid attribute number %i", attnum)));
-
-	result = build_check_constraint_name_relid_internal(relid, attnum);
-
+	result = build_check_constraint_name_relid_internal(relid);
 	PG_RETURN_TEXT_P(cstring_to_text(quote_identifier(result)));
 }
-
-Datum
-build_check_constraint_name_attname(PG_FUNCTION_ARGS)
-{
-	Oid			relid = PG_GETARG_OID(0);
-	text	   *attname = PG_GETARG_TEXT_P(1);
-	AttrNumber	attnum;
-	const char *result;
-
-	if (!check_relation_exists(relid))
-		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						errmsg("relation \"%u\" does not exist", relid)));
-
-	attnum = get_attnum(relid, text_to_cstring(attname));
-
-	if (attnum == InvalidAttrNumber)
-		ereport(ERROR, (errcode(ERRCODE_UNDEFINED_COLUMN),
-						errmsg("relation \"%s\" has no column \"%s\"",
-							   get_rel_name_or_relid(relid),
-							   text_to_cstring(attname))));
-
-	result = build_check_constraint_name_relid_internal(relid, attnum);
-
-	PG_RETURN_TEXT_P(cstring_to_text(quote_identifier(result)));
-}
-
 
 /*
  * ------------------------
@@ -801,14 +702,16 @@ Datum
 add_to_pathman_config(PG_FUNCTION_ARGS)
 {
 	Oid					relid;
-	text			   *attname;
+	char			   *expression;
 	PartType			parttype;
 
 	Relation			pathman_config;
 	Datum				values[Natts_pathman_config];
 	bool				isnull[Natts_pathman_config];
 	HeapTuple			htup;
-	CatalogIndexState	indstate;
+
+	Oid					expr_type;
+	Datum				expr_datum;
 
 	PathmanInitState	init_state;
 	MemoryContext		old_mcxt = CurrentMemoryContext;
@@ -820,26 +723,42 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("'parent_relid' should not be NULL")));
 
-	if (!PG_ARGISNULL(1))
-	{
-		attname = PG_GETARG_TEXT_P(1);
-	}
-	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						 errmsg("'attname' should not be NULL")));
-
 	/* Check that relation exists */
-	if (!check_relation_exists(relid))
+	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("relation \"%u\" does not exist", relid)));
 
-	if (get_attnum(relid, text_to_cstring(attname)) == InvalidAttrNumber)
-		ereport(ERROR, (errcode(ERRCODE_UNDEFINED_COLUMN),
-						errmsg("relation \"%s\" has no column \"%s\"",
-							   get_rel_name_or_relid(relid),
-							   text_to_cstring(attname))));
+	if (!PG_ARGISNULL(1))
+	{
+		expression = TextDatumGetCString(PG_GETARG_TEXT_P(1));
+	}
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("'expression' should not be NULL")));
 
-	/* Select partitioning type using 'range_interval' */
-	parttype = PG_ARGISNULL(2) ? PT_HASH : PT_RANGE;
+	if (!check_security_policy_internal(relid, GetUserId()))
+	{
+		elog(ERROR, "only the owner or superuser can change "
+					  "partitioning configuration of table \"%s\"",
+			 get_rel_name_or_relid(relid));
+	}
+
+	/* Select partitioning type */
+	parttype = PG_GETARG_INT32(3);
+	if ((parttype != PT_HASH) && (parttype != PT_RANGE))
+		parttype = PG_ARGISNULL(2) ? PT_HASH : PT_RANGE;
+
+	/* Parse and check expression */
+	expr_datum = plan_partitioning_expression(relid, expression, &expr_type);
+
+	/* Expression for range partitions should be hashable */
+	if (parttype == PT_HASH)
+	{
+		TypeCacheEntry *tce;
+
+		tce = lookup_type_cache(expr_type, TYPECACHE_HASH_PROC);
+		if (tce->hash_proc == InvalidOid)
+			elog(ERROR, "partitioning expression should be hashable");
+	}
 
 	/*
 	 * Initialize columns (partrel, attname, parttype, range_interval).
@@ -847,52 +766,70 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	values[Anum_pathman_config_partrel - 1]			= ObjectIdGetDatum(relid);
 	isnull[Anum_pathman_config_partrel - 1]			= false;
 
-	values[Anum_pathman_config_attname - 1]			= PointerGetDatum(attname);
-	isnull[Anum_pathman_config_attname - 1]			= false;
-
 	values[Anum_pathman_config_parttype - 1]		= Int32GetDatum(parttype);
 	isnull[Anum_pathman_config_parttype - 1]		= false;
 
-	values[Anum_pathman_config_range_interval - 1]	= PG_GETARG_DATUM(2);
-	isnull[Anum_pathman_config_range_interval - 1]	= PG_ARGISNULL(2);
+	values[Anum_pathman_config_expression - 1]		= CStringGetTextDatum(expression);
+	isnull[Anum_pathman_config_expression - 1]		= false;
+
+	values[Anum_pathman_config_expression_p - 1]	= expr_datum;
+	isnull[Anum_pathman_config_expression_p - 1]	= false;
+
+	values[Anum_pathman_config_atttype - 1]			= ObjectIdGetDatum(expr_type);
+	isnull[Anum_pathman_config_atttype - 1]			= false;
+
+	if (parttype == PT_RANGE)
+	{
+		values[Anum_pathman_config_range_interval - 1]	= PG_GETARG_DATUM(2);
+		isnull[Anum_pathman_config_range_interval - 1]	= PG_ARGISNULL(2);
+	}
+	else
+	{
+		values[Anum_pathman_config_range_interval - 1]	= (Datum) 0;
+		isnull[Anum_pathman_config_range_interval - 1]	= true;
+	}
 
 	/* Insert new row into PATHMAN_CONFIG */
 	pathman_config = heap_open(get_pathman_config_relid(false), RowExclusiveLock);
+
 	htup = heap_form_tuple(RelationGetDescr(pathman_config), values, isnull);
 	simple_heap_insert(pathman_config, htup);
-	indstate = CatalogOpenIndexes(pathman_config);
-	CatalogIndexInsert(indstate, htup);
-	CatalogCloseIndexes(indstate);
+	CatalogUpdateIndexes(pathman_config, htup);
+
 	heap_close(pathman_config, RowExclusiveLock);
 
-	/* Now try to create a PartRelationInfo */
-	PG_TRY();
+	/* update caches only if this relation has children */
+	if (has_subclass(relid))
 	{
-		/* Some flags might change during refresh attempt */
-		save_pathman_init_state(&init_state);
+		/* Now try to create a PartRelationInfo */
+		PG_TRY();
+		{
+			/* Some flags might change during refresh attempt */
+			save_pathman_init_state(&init_state);
 
-		refresh_pathman_relation_info(relid, parttype,
-									  text_to_cstring(attname),
-									  false); /* initialize immediately */
+			refresh_pathman_relation_info(relid,
+										  values,
+										  false); /* initialize immediately */
+		}
+		PG_CATCH();
+		{
+			ErrorData *edata;
+
+			/* Switch to the original context & copy edata */
+			MemoryContextSwitchTo(old_mcxt);
+			edata = CopyErrorData();
+			FlushErrorState();
+
+			/* We have to restore all changed flags */
+			restore_pathman_init_state(&init_state);
+
+			/* Show error message */
+			elog(ERROR, "%s", edata->message);
+
+			FreeErrorData(edata);
+		}
+		PG_END_TRY();
 	}
-	PG_CATCH();
-	{
-		ErrorData *edata;
-
-		/* Switch to the original context & copy edata */
-		MemoryContextSwitchTo(old_mcxt);
-		edata = CopyErrorData();
-		FlushErrorState();
-
-		/* We have to restore all changed flags */
-		restore_pathman_init_state(&init_state);
-
-		/* Show error message */
-		elog(ERROR, "%s", edata->message);
-
-		FreeErrorData(edata);
-	}
-	PG_END_TRY();
 
 	PG_RETURN_BOOL(true);
 }
@@ -942,7 +879,7 @@ pathman_config_params_trigger_func(PG_FUNCTION_ARGS)
 	partrel = DatumGetObjectId(partrel_datum);
 
 	/* Finally trigger pg_pathman's cache invalidation event */
-	if (check_relation_exists(partrel))
+	if (SearchSysCacheExists1(RELOID, ObjectIdGetDatum(partrel)))
 		CacheInvalidateRelcacheByRelid(partrel);
 
 pathman_config_params_trigger_func_return:
@@ -1118,6 +1055,22 @@ check_security_policy(PG_FUNCTION_ARGS)
 	PG_RETURN_BOOL(true);
 }
 
+/*
+ * Check if type supports the specified operator ( + | - | etc ).
+ */
+Datum
+is_operator_supported(PG_FUNCTION_ARGS)
+{
+	Oid		opid,
+			typid	= PG_GETARG_OID(0);
+	char   *opname	= TextDatumGetCString(PG_GETARG_TEXT_P(1));
+
+	opid = compatible_oper_opid(list_make1(makeString(opname)),
+								typid, typid, true);
+
+	PG_RETURN_BOOL(OidIsValid(opid));
+}
+
 
 /*
  * --------------------------
@@ -1140,14 +1093,17 @@ pathman_update_trigger_func(PG_FUNCTION_ARGS)
 	HeapTuple				old_tuple,
 							new_tuple;
 
-	AttrNumber				value_attnum;
 	Datum					value;
 	Oid						value_type;
 	bool					isnull;
+	ExprDoneCond			itemIsDone;
 
 	Oid					   *parts;
 	int						nparts;
 
+	ExprContext			   *econtext;
+	ExprState			   *expr_state;
+	MemoryContext		    old_mcxt;
 	PartParentSearch		parent_search;
 	const PartRelationInfo *prel;
 
@@ -1182,27 +1138,34 @@ pathman_update_trigger_func(PG_FUNCTION_ARGS)
 	prel = get_pathman_relation_info(parent_relid);
 	shout_if_prel_is_invalid(parent_relid, prel, PT_ANY);
 
-	/* Get attribute number of partitioning key (may differ from 'prel->attnum') */
-	value_attnum = get_attnum(source_relid, get_attname(parent_relid, prel->attnum));
+	/* Execute partitioning expression */
+	econtext = CreateStandaloneExprContext();
+	old_mcxt = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
+	expr_state = pathman_update_trigger_build_expr_state(prel,
+														 source_rel,
+														 new_tuple,
+														 &value_type);
+	value = ExecEvalExpr(expr_state, econtext, &isnull, &itemIsDone);
+	MemoryContextSwitchTo(old_mcxt);
 
-	/* Extract partitioning key from NEW tuple */
-	value = heap_getattr(new_tuple,
-						 value_attnum,
-						 RelationGetDescr(source_rel),
-						 &isnull);
+	if (isnull)
+		elog(ERROR, ERR_PART_ATTR_NULL);
 
-	/* Extract value's type */
-	value_type = RelationGetDescr(source_rel)->attrs[value_attnum - 1]->atttypid;
+	if (itemIsDone != ExprSingleResult)
+		elog(ERROR, ERR_PART_ATTR_MULTIPLE_RESULTS);
 
 	/* Search for matching partitions */
 	parts = find_partitions_for_value(value, value_type, prel, &nparts);
+
+	/* We can free expression context now */
+	FreeExprContext(econtext, false);
 
 	if (nparts > 1)
 		elog(ERROR, ERR_PART_ATTR_MULTIPLE);
 	else if (nparts == 0)
 	{
 		 target_relid = create_partitions_for_value(PrelParentRelid(prel),
-													value, prel->atttype);
+													value, value_type);
 
 		 /* get_pathman_relation_info() will refresh this entry */
 		 invalidate_pathman_relation_info(PrelParentRelid(prel), NULL);
@@ -1239,6 +1202,127 @@ pathman_update_trigger_func(PG_FUNCTION_ARGS)
 	/* Just return NEW tuple */
 	PG_RETURN_POINTER(new_tuple);
 }
+
+struct replace_vars_cxt
+{
+	HeapTuple		new_tuple;
+	TupleDesc		tuple_desc;
+	AttrNumber	   *attributes_map;
+};
+
+/* Replace Vars with values from 'new_tuple' (Consts) */
+static Node *
+replace_vars_with_consts(Node *node, struct replace_vars_cxt *ctx)
+{
+	const TypeCacheEntry *typcache;
+
+	if (IsA(node, Var))
+	{
+		Var			*var = (Var *) node;
+		AttrNumber	 varattno = ctx->attributes_map[var->varattno - 1];
+		Oid			 vartype;
+		Const		*new_const = makeNode(Const);
+		HeapTuple	 htup;
+
+		Assert(var->varno == PART_EXPR_VARNO);
+		if (varattno == 0)
+			elog(ERROR, ERR_PART_DESC_CONVERT);
+
+		/* we suppose that type can be different from parent */
+		vartype = ctx->tuple_desc->attrs[varattno - 1]->atttypid;
+
+		htup = SearchSysCache1(TYPEOID, ObjectIdGetDatum(vartype));
+		if (HeapTupleIsValid(htup))
+		{
+			Form_pg_type typtup = (Form_pg_type) GETSTRUCT(htup);
+			new_const->consttypmod = typtup->typtypmod;
+			new_const->constcollid = typtup->typcollation;
+			ReleaseSysCache(htup);
+		}
+		else elog(ERROR, "cache lookup failed for type %u", vartype);
+
+		typcache = lookup_type_cache(vartype, 0);
+		new_const->constbyval	= typcache->typbyval;
+		new_const->constlen		= typcache->typlen;
+		new_const->consttype	= vartype;
+		new_const->location		= -1;
+
+		/* extract value from NEW tuple */
+		new_const->constvalue = heap_getattr(ctx->new_tuple,
+											 varattno,
+											 ctx->tuple_desc,
+											 &new_const->constisnull);
+		return (Node *) new_const;
+	}
+
+	return expression_tree_mutator(node, replace_vars_with_consts, (void *) ctx);
+}
+
+/*
+ * Get attributes map between parent and child relation.
+ * This is simplified version of functions that return TupleConversionMap.
+ * And it should be faster if expression uses not all fields from relation.
+ */
+static AttrNumber *
+pathman_update_trigger_build_attr_map(const PartRelationInfo *prel,
+									  Relation child_rel)
+{
+	AttrNumber	i = -1;
+	Oid			parent_relid = PrelParentRelid(prel);
+	TupleDesc	child_descr = RelationGetDescr(child_rel);
+	int			natts = child_descr->natts;
+	AttrNumber *result = (AttrNumber *) palloc0(natts * sizeof(AttrNumber));
+
+	while ((i = bms_next_member(prel->expr_atts, i)) >= 0)
+	{
+		int			j;
+		AttrNumber	attnum = i + FirstLowInvalidHeapAttributeNumber;
+		char	   *attname = get_attname(parent_relid, attnum);
+
+		for (j = 0; j < natts; j++)
+		{
+			Form_pg_attribute att = child_descr->attrs[j];
+
+			if (att->attisdropped)
+				continue; /* attrMap[attnum - 1] is already 0 */
+
+			if (strcmp(NameStr(att->attname), attname) == 0)
+			{
+				result[attnum - 1] = (AttrNumber) (j + 1);
+				break;
+			}
+		}
+
+		if (result[attnum - 1] == 0)
+			elog(ERROR, "Couldn't find '%s' column in child relation", attname);
+	}
+
+	return result;
+}
+
+static ExprState *
+pathman_update_trigger_build_expr_state(const PartRelationInfo *prel,
+										Relation source_rel,
+										HeapTuple new_tuple,
+										Oid *expr_type)		/* ret value #1 */
+{
+	struct replace_vars_cxt		ctx;
+	Node					   *expr;
+	ExprState				   *expr_state;
+
+	ctx.new_tuple =			new_tuple;
+	ctx.attributes_map =	pathman_update_trigger_build_attr_map(prel, source_rel);
+	ctx.tuple_desc =		RelationGetDescr(source_rel);
+
+	expr = replace_vars_with_consts(prel->expr, &ctx);
+	expr_state = ExecInitExpr((Expr *) expr, NULL);
+
+	AssertArg(expr_type);
+	*expr_type = exprType(expr);
+
+	return expr_state;
+}
+
 
 /* Move tuple to new partition (delete 'old_tuple' + insert 'new_tuple') */
 static void
@@ -1340,10 +1424,10 @@ create_update_triggers(PG_FUNCTION_ARGS)
 {
 	Oid						parent = PG_GETARG_OID(0);
 	Oid					   *children;
-	const char			   *attname,
-						   *trigname;
+	const char			   *trigname;
 	const PartRelationInfo *prel;
 	uint32					i;
+	List				   *columns;
 
 	/* Check that table is partitioned */
 	prel = get_pathman_relation_info(parent);
@@ -1351,17 +1435,17 @@ create_update_triggers(PG_FUNCTION_ARGS)
 
 	/* Acquire trigger and attribute names */
 	trigname = build_update_trigger_name_internal(parent);
-	attname = get_attname(parent, prel->attnum);
 
 	/* Create trigger for parent */
-	create_single_update_trigger_internal(parent, trigname, attname);
+	columns = PrelExpressionColumnNames(prel);
+	create_single_update_trigger_internal(parent, trigname, columns);
 
 	/* Fetch children array */
 	children = PrelGetChildrenArray(prel);
 
 	/* Create triggers for each partition */
 	for (i = 0; i < PrelChildrenCount(prel); i++)
-		create_single_update_trigger_internal(children[i], trigname, attname);
+		create_single_update_trigger_internal(children[i], trigname, columns);
 
 	PG_RETURN_VOID();
 }
@@ -1372,9 +1456,9 @@ create_single_update_trigger(PG_FUNCTION_ARGS)
 {
 	Oid						parent = PG_GETARG_OID(0);
 	Oid						child = PG_GETARG_OID(1);
-	const char			   *trigname,
-						   *attname;
+	const char			   *trigname;
 	const PartRelationInfo *prel;
+	List				   *columns;
 
 	/* Check that table is partitioned */
 	prel = get_pathman_relation_info(parent);
@@ -1382,9 +1466,10 @@ create_single_update_trigger(PG_FUNCTION_ARGS)
 
 	/* Acquire trigger and attribute names */
 	trigname = build_update_trigger_name_internal(parent);
-	attname = get_attname(prel->key, prel->attnum);
 
-	create_single_update_trigger_internal(child, trigname, attname);
+	/* Generate list of columns used in expression */
+	columns = PrelExpressionColumnNames(prel);
+	create_single_update_trigger_internal(child, trigname, columns);
 
 	PG_RETURN_VOID();
 }
@@ -1396,7 +1481,7 @@ has_update_trigger(PG_FUNCTION_ARGS)
 	Oid parent_relid = PG_GETARG_OID(0);
 
 	/* Check that relation exists */
-	if (!check_relation_exists(parent_relid))
+	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(parent_relid)))
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("relation \"%u\" does not exist", parent_relid)));
 

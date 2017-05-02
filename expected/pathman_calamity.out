@@ -250,7 +250,7 @@ ERROR:  no hash function for type calamity.part_test
 SELECT build_range_condition(NULL, 'val', 10, 20);						/* not ok */
 ERROR:  'partition_relid' should not be NULL
 SELECT build_range_condition('calamity.part_test', NULL, 10, 20);		/* not ok */
-ERROR:  'attribute' should not be NULL
+ERROR:  'expression' should not be NULL
 SELECT build_range_condition('calamity.part_test', 'val', 10, 20);		/* OK */
     build_range_condition     
 ------------------------------
@@ -270,17 +270,15 @@ SELECT build_range_condition('calamity.part_test', 'val', NULL, 10);	/* OK */
 (1 row)
 
 /* check function validate_interval_value() */
-SELECT validate_interval_value(NULL, 'val', 2, '1 mon');					/* not ok */
-ERROR:  'partrel' should not be NULL
-SELECT validate_interval_value('calamity.part_test', NULL, 2, '1 mon');		/* not ok */
-ERROR:  'attname' should not be NULL
-SELECT validate_interval_value('calamity.part_test', 'val', NULL, '1 mon');	/* not ok */
+SELECT validate_interval_value(NULL, 2, '1 mon');					/* not ok */
+ERROR:  'atttype' should not be NULL
+SELECT validate_interval_value('interval'::regtype, NULL, '1 mon');	/* not ok */
 ERROR:  'parttype' should not be NULL
-SELECT validate_interval_value('calamity.part_test', 'val', 2, '1 mon');	/* not ok */
+SELECT validate_interval_value('int4'::regtype, 2, '1 mon');		/* not ok */
 ERROR:  invalid input syntax for integer: "1 mon"
-SELECT validate_interval_value('calamity.part_test', 'val', 1, '1 mon');	/* not ok */
+SELECT validate_interval_value('interval'::regtype, 1, '1 mon');	/* not ok */
 ERROR:  interval should be NULL for HASH partitioned table
-SELECT validate_interval_value('calamity.part_test', 'val', 2, NULL);		/* OK */
+SELECT validate_interval_value('interval'::regtype, 2, NULL);		/* OK */
  validate_interval_value 
 -------------------------
  t
@@ -350,59 +348,16 @@ SELECT get_partition_key_type(NULL) IS NULL;
  t
 (1 row)
 
-/* check function build_check_constraint_name_attnum() */
-SELECT build_check_constraint_name('calamity.part_test', 1::int2);	/* OK */
+/* check function build_check_constraint_name() */
+SELECT build_check_constraint_name('calamity.part_test');		/* OK */
  build_check_constraint_name 
 -----------------------------
- pathman_part_test_1_check
+ pathman_part_test_check
 (1 row)
 
-SELECT build_check_constraint_name(0::REGCLASS, 1::int2);			/* not ok */
+SELECT build_check_constraint_name(0::REGCLASS);				/* not ok */
 ERROR:  relation "0" does not exist
-SELECT build_check_constraint_name('calamity.part_test', -1::int2);	/* not ok */
-ERROR:  invalid attribute number -1
-SELECT build_check_constraint_name('calamity.part_test', NULL::int2) IS NULL;
- ?column? 
-----------
- t
-(1 row)
-
-SELECT build_check_constraint_name(NULL, 1::int2) IS NULL;
- ?column? 
-----------
- t
-(1 row)
-
-SELECT build_check_constraint_name(NULL, NULL::int2) IS NULL;
- ?column? 
-----------
- t
-(1 row)
-
-/* check function build_check_constraint_name_attname() */
-SELECT build_check_constraint_name('calamity.part_test', 'val');	/* OK */
- build_check_constraint_name 
------------------------------
- pathman_part_test_1_check
-(1 row)
-
-SELECT build_check_constraint_name(0::REGCLASS, 'val');				/* not ok */
-ERROR:  relation "0" does not exist
-SELECT build_check_constraint_name('calamity.part_test', 'nocol');	/* not ok */
-ERROR:  relation "part_test" has no column "nocol"
-SELECT build_check_constraint_name('calamity.part_test', NULL::text) IS NULL;
- ?column? 
-----------
- t
-(1 row)
-
-SELECT build_check_constraint_name(NULL, 'val') IS NULL;
- ?column? 
-----------
- t
-(1 row)
-
-SELECT build_check_constraint_name(NULL, NULL::text) IS NULL;
+SELECT build_check_constraint_name(NULL) IS NULL;
  ?column? 
 ----------
  t
@@ -599,9 +554,9 @@ ERROR:  'parent_relid' should not be NULL
 SELECT add_to_pathman_config(0::REGCLASS, 'val');				/* no table (oid) */
 ERROR:  relation "0" does not exist
 SELECT add_to_pathman_config('calamity.part_test', NULL);		/* no column */
-ERROR:  'attname' should not be NULL
+ERROR:  'expression' should not be NULL
 SELECT add_to_pathman_config('calamity.part_test', 'V_A_L');	/* wrong column */
-ERROR:  relation "part_test" has no column "V_A_L"
+ERROR:  cannot find type name for attribute "v_a_l" of relation "part_test"
 SELECT add_to_pathman_config('calamity.part_test', 'val');		/* OK */
  add_to_pathman_config 
 -----------------------
@@ -638,7 +593,7 @@ SELECT create_hash_partitions('calamity.part_ok', 'val', 4);
 CREATE TABLE calamity.wrong_partition (LIKE calamity.part_test) INHERITS (calamity.part_test); /* wrong partition w\o constraints */
 NOTICE:  merging column "val" with inherited definition
 SELECT add_to_pathman_config('calamity.part_test', 'val');
-ERROR:  constraint "pathman_wrong_partition_1_check" of partition "wrong_partition" does not exist
+ERROR:  constraint "pathman_wrong_partition_check" of partition "wrong_partition" does not exist
 EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_ok; /* check that pathman is enabled */
          QUERY PLAN          
 -----------------------------
@@ -650,7 +605,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_ok; /* check that pathman is ena
 (5 rows)
 
 SELECT add_to_pathman_config('calamity.part_test', 'val', '10');
-ERROR:  constraint "pathman_wrong_partition_1_check" of partition "wrong_partition" does not exist
+ERROR:  constraint "pathman_wrong_partition_check" of partition "wrong_partition" does not exist
 EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_ok; /* check that pathman is enabled */
          QUERY PLAN          
 -----------------------------
@@ -662,7 +617,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_ok; /* check that pathman is ena
 (5 rows)
 
 ALTER TABLE calamity.wrong_partition
-ADD CONSTRAINT pathman_wrong_partition_1_check
+ADD CONSTRAINT pathman_wrong_partition_check
 CHECK (val = 1 OR val = 2); /* wrong constraint */
 SELECT add_to_pathman_config('calamity.part_test', 'val', '10');
 ERROR:  wrong constraint format for RANGE partition "wrong_partition"
@@ -676,9 +631,9 @@ EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_ok; /* check that pathman is ena
    ->  Seq Scan on part_ok_3
 (5 rows)
 
-ALTER TABLE calamity.wrong_partition DROP CONSTRAINT pathman_wrong_partition_1_check;
+ALTER TABLE calamity.wrong_partition DROP CONSTRAINT pathman_wrong_partition_check;
 ALTER TABLE calamity.wrong_partition
-ADD CONSTRAINT pathman_wrong_partition_1_check
+ADD CONSTRAINT pathman_wrong_partition_check
 CHECK (val >= 10 AND val = 2); /* wrong constraint */
 SELECT add_to_pathman_config('calamity.part_test', 'val', '10');
 ERROR:  wrong constraint format for RANGE partition "wrong_partition"
@@ -692,7 +647,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_ok; /* check that pathman is ena
    ->  Seq Scan on part_ok_3
 (5 rows)
 
-ALTER TABLE calamity.wrong_partition DROP CONSTRAINT pathman_wrong_partition_1_check;
+ALTER TABLE calamity.wrong_partition DROP CONSTRAINT pathman_wrong_partition_check;
 /* check GUC variable */
 SHOW pg_pathman.enable;
  pg_pathman.enable 

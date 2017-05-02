@@ -15,10 +15,12 @@
 
 #include "access/xact.h"
 #include "access/htup_details.h"
+#include "catalog/pg_class.h"
 #include "commands/trigger.h"
 #include "executor/nodeModifyTable.h"
 #include "foreign/fdwapi.h"
 #include "utils/guc.h"
+#include "utils/rel.h"
 
 bool				pg_pathman_enable_partition_update = true;
 

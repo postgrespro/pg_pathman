@@ -1,19 +1,22 @@
+#!/usr/bin/env python3
 # coding: utf-8
+
 """
  concurrent_partitioning_test.py
 		Tests concurrent partitioning worker with simultaneous update queries
 
- Copyright (c) 2015-2016, Postgres Professional
+	Copyright (c) 2015-2017, Postgres Professional
 """
 
 import unittest
 import math
-from testgres import get_new_node, stop_all
 import time
 import os
 import re
 import subprocess
 import threading
+
+from testgres import get_new_node, stop_all
 
 
 # Helper function for json equality
@@ -24,6 +27,7 @@ def ordered(obj):
 		return sorted(ordered(x) for x in obj)
 	else:
 		return obj
+
 
 def if_fdw_enabled(func):
 	"""To run tests with FDW support set environment variable TEST_FDW=1"""
@@ -110,7 +114,7 @@ class PartitioningTests(unittest.TestCase):
 			self.assertEqual(data[0][0], 300000)
 
 			node.stop()
-		except Exception, e:
+		except Exception as e:
 			self.printlog(node.logs_dir + '/postgresql.log')
 			raise e
 
@@ -175,7 +179,7 @@ class PartitioningTests(unittest.TestCase):
 				node.execute('postgres', 'select count(*) from abc')[0][0],
 				0
 			)
-		except Exception, e:
+		except Exception as e:
 			self.printlog(node.logs_dir + '/postgresql.log')
 			self.printlog(replica.logs_dir + '/postgresql.log')
 			raise e
@@ -199,7 +203,7 @@ class PartitioningTests(unittest.TestCase):
 
 		# There is one flag for each thread which shows if thread have done
 		# its work
-		flags = [Flag(False) for i in xrange(3)]
+		flags = [Flag(False) for i in range(3)]
 
 		# All threads synchronizes though this lock
 		lock = threading.Lock()
@@ -275,9 +279,9 @@ class PartitioningTests(unittest.TestCase):
 					'postgres',
 					'select count(*) from pg_inherits where inhparent=\'abc\'::regclass'
 				),
-				'6\n'
+				b'6\n'
 			)
-		except Exception, e:
+		except Exception as e:
 			self.printlog(node.logs_dir + '/postgresql.log')
 			raise e
 
@@ -422,14 +426,14 @@ class PartitioningTests(unittest.TestCase):
 		# Check that table attached to partitioned table
 		self.assertEqual(
 			master.safe_psql('postgres', 'select * from ftable'),
-			'25|foreign\n'
+			b'25|foreign\n'
 		)
 
 		# Check that we can successfully insert new data into foreign partition
 		master.safe_psql('postgres', 'insert into abc values (26, \'part\')')
 		self.assertEqual(
 			master.safe_psql('postgres', 'select * from ftable order by id'),
-			'25|foreign\n26|part\n'
+			b'25|foreign\n26|part\n'
 		)
 
 		# Testing drop partitions (including foreign partitions)
@@ -459,7 +463,7 @@ class PartitioningTests(unittest.TestCase):
 
 		self.assertEqual(
 			master.safe_psql('postgres', 'select * from hash_test'),
-			'1|\n2|\n5|\n6|\n8|\n9|\n3|\n4|\n7|\n10|\n'
+			b'1|\n2|\n5|\n6|\n8|\n9|\n3|\n4|\n7|\n10|\n'
 		)
 		master.safe_psql('postgres', 'select drop_partitions(\'hash_test\')')
 
@@ -851,63 +855,72 @@ class PartitioningTests(unittest.TestCase):
 				 "--dbname=copy"],
 			 cmp_full),     # dump in archive format
 		]
-		for preproc, postproc, pg_dump_params, pg_restore_params, cmp_dbs in test_params:
 
-			dump_restore_cmd = " | ".join((' '.join(pg_dump_params), ' '.join(pg_restore_params)))
-
-			if (preproc != None):
-				preproc(node)
-
-			# transfer and restore data
+		try:
 			FNULL = open(os.devnull, 'w')
-			p1 = subprocess.Popen(pg_dump_params, stdout=subprocess.PIPE)
-			p2 = subprocess.Popen(pg_restore_params, stdin=p1.stdout, stdout=FNULL, stderr=FNULL)
-			p1.stdout.close()  # Allow p1 to receive a SIGPIPE if p2 exits.
-			p2.communicate()
 
-			if (postproc != None):
-				postproc(node)
+			for preproc, postproc, pg_dump_params, pg_restore_params, cmp_dbs in test_params:
 
-			# check validity of data
-			with node.connect('initial') as con1, node.connect('copy') as con2:
+				dump_restore_cmd = " | ".join((' '.join(pg_dump_params), ' '.join(pg_restore_params)))
 
-				# compare plans and contents of initial and copy
-				cmp_result = cmp_dbs(con1, con2)
-				self.assertNotEqual(cmp_result, PLANS_MISMATCH,
-						"mismatch in plans of select query on partitioned tables under the command: %s" % dump_restore_cmd)
-				self.assertNotEqual(cmp_result, CONTENTS_MISMATCH,
-						"mismatch in contents of partitioned tables under the command: %s" % dump_restore_cmd)
+				if (preproc != None):
+					preproc(node)
 
-				# compare enable_parent flag and callback function
-				config_params_query = """
-					select partrel, enable_parent, init_callback from pathman_config_params
-				"""
-				config_params_initial, config_params_copy = {}, {}
-				for row in con1.execute(config_params_query):
-					config_params_initial[row[0]] = row[1:]
-				for row in con2.execute(config_params_query):
-					config_params_copy[row[0]] = row[1:]
-				self.assertEqual(config_params_initial, config_params_copy, \
-						"mismatch in pathman_config_params under the command: %s" % dump_restore_cmd)
+				# transfer and restore data
+				p1 = subprocess.Popen(pg_dump_params, stdout=subprocess.PIPE)
+				stdoutdata, _ = p1.communicate()
+				p2 = subprocess.Popen(pg_restore_params, stdin=subprocess.PIPE,
+						stdout=FNULL, stderr=FNULL)
+				p2.communicate(input=stdoutdata)
 
-				# compare constraints on each partition
-				constraints_query = """
-					select r.relname, c.conname, c.consrc from
-						pg_constraint c join pg_class r on c.conrelid=r.oid
-						where relname similar to '(range|hash)_partitioned_\d+'
-				"""
-				constraints_initial, constraints_copy = {}, {}
-				for row in con1.execute(constraints_query):
-					constraints_initial[row[0]] = row[1:]
-				for row in con2.execute(constraints_query):
-					constraints_copy[row[0]] = row[1:]
-				self.assertEqual(constraints_initial, constraints_copy, \
-						"mismatch in partitions' constraints under the command: %s" % dump_restore_cmd)
+				if (postproc != None):
+					postproc(node)
 
-			# clear copy database
-			node.psql('copy', 'drop schema public cascade')
-			node.psql('copy', 'create schema public')
-			node.psql('copy', 'drop extension pg_pathman cascade')
+				# check validity of data
+				with node.connect('initial') as con1, node.connect('copy') as con2:
+
+					# compare plans and contents of initial and copy
+					cmp_result = cmp_dbs(con1, con2)
+					self.assertNotEqual(cmp_result, PLANS_MISMATCH,
+							"mismatch in plans of select query on partitioned tables under the command: %s" % dump_restore_cmd)
+					self.assertNotEqual(cmp_result, CONTENTS_MISMATCH,
+							"mismatch in contents of partitioned tables under the command: %s" % dump_restore_cmd)
+
+					# compare enable_parent flag and callback function
+					config_params_query = """
+						select partrel, enable_parent, init_callback from pathman_config_params
+					"""
+					config_params_initial, config_params_copy = {}, {}
+					for row in con1.execute(config_params_query):
+						config_params_initial[row[0]] = row[1:]
+					for row in con2.execute(config_params_query):
+						config_params_copy[row[0]] = row[1:]
+					self.assertEqual(config_params_initial, config_params_copy, \
+							"mismatch in pathman_config_params under the command: %s" % dump_restore_cmd)
+
+					# compare constraints on each partition
+					constraints_query = """
+						select r.relname, c.conname, c.consrc from
+							pg_constraint c join pg_class r on c.conrelid=r.oid
+							where relname similar to '(range|hash)_partitioned_\d+'
+					"""
+					constraints_initial, constraints_copy = {}, {}
+					for row in con1.execute(constraints_query):
+						constraints_initial[row[0]] = row[1:]
+					for row in con2.execute(constraints_query):
+						constraints_copy[row[0]] = row[1:]
+					self.assertEqual(constraints_initial, constraints_copy, \
+							"mismatch in partitions' constraints under the command: %s" % dump_restore_cmd)
+
+				# clear copy database
+				node.psql('copy', 'drop schema public cascade')
+				node.psql('copy', 'create schema public')
+				node.psql('copy', 'drop extension pg_pathman cascade')
+
+		except:
+			raise
+		finally:
+			FNULL.close()
 
 		# Stop instance and finish work
 		node.stop()
@@ -958,24 +971,24 @@ class PartitioningTests(unittest.TestCase):
 				"-T", "%i" % (test_interval+inserts_advance)
 			])
 		time.sleep(inserts_advance)
-		detachs = node.pgbench(stdout=FNULL, stderr=subprocess.PIPE, options=[
+		detachs = node.pgbench(stdout=FNULL, stderr=FNULL, options=[
 				"-D", "timeout=%f" % detach_timeout,
 				"-f", detach_pgbench_script,
 				"-T", "%i" % test_interval
 			])
 
 		# Wait for completion of processes
-		inserts.wait()
+		_, stderrdata = inserts.communicate()
 		detachs.wait()
 
 		# Obtain error log from inserts process
-		inserts_errors = inserts.stderr.read()
-		self.assertIsNone(re.search("ERROR|FATAL|PANIC", inserts_errors),
+		self.assertIsNone(re.search("ERROR|FATAL|PANIC", str(stderrdata)),
 			msg="Race condition between detach and concurrent inserts with append partition is expired")
 
 		# Stop instance and finish work
 		node.stop()
 		node.cleanup()
+		FNULL.close()
 
 
 if __name__ == "__main__":

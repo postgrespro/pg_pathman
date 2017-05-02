@@ -130,10 +130,10 @@ CREATE INDEX ON test.range_rel (dt);
 INSERT INTO test.range_rel (dt, txt)
 SELECT g, md5(g::TEXT) FROM generate_series('2015-01-01', '2015-04-30', '1 day'::interval) as g;
 SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL, 2);
+ERROR:  not enough partitions to fit all values of "dt"
+SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL);
 ERROR:  partitioning key "dt" must be marked NOT NULL
 ALTER TABLE test.range_rel ALTER COLUMN dt SET NOT NULL;
-SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL, 2);
-ERROR:  not enough partitions to fit all values of "dt"
 SELECT pathman.create_range_partitions('test.range_rel', 'DT', '2015-01-01'::DATE, '1 month'::INTERVAL);
 NOTICE:  sequence "range_rel_seq" does not exist, skipping
  create_range_partitions 
@@ -450,6 +450,13 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
    ->  Seq Scan on hash_rel_2
 (4 rows)
 
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = NULL;
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2;
           QUERY PLAN          
 ------------------------------
@@ -601,6 +608,13 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
    ->  Seq Scan on hash_rel_1
    ->  Seq Scan on hash_rel_2
 (4 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = NULL;
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2;
           QUERY PLAN          
@@ -1314,7 +1328,7 @@ Indexes:
 Indexes:
     "hash_rel_extern_pkey" PRIMARY KEY, btree (id)
 Check constraints:
-    "pathman_hash_rel_extern_2_check" CHECK (pathman.get_hash_part_idx(hashint4(value), 3) = 0)
+    "pathman_hash_rel_extern_check" CHECK (pathman.get_hash_part_idx(hashint4(value), 3) = 0)
 Inherits: test.hash_rel
 
 INSERT INTO test.hash_rel SELECT * FROM test.hash_rel_0;
@@ -1447,16 +1461,16 @@ INSERT INTO test.range_rel (dt) VALUES ('2015-06-01');
  */
 ALTER TABLE test.range_rel DROP COLUMN data;
 SELECT * FROM pathman.pathman_config;
-    partrel     | attname | parttype | range_interval 
-----------------+---------+----------+----------------
- test.range_rel | dt      |        2 | @ 10 days
+    partrel     | attname | parttype | range_interval |                                                      expression_p                                                       | atttype 
+----------------+---------+----------+----------------+-------------------------------------------------------------------------------------------------------------------------+---------
+ test.range_rel | dt      |        2 | @ 10 days      | {VAR :varno 1 :varattno 2 :vartype 1114 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 2 :location 8} |    1114
 (1 row)
 
 DROP TABLE test.range_rel CASCADE;
 NOTICE:  drop cascades to 20 other objects
 SELECT * FROM pathman.pathman_config;
- partrel | attname | parttype | range_interval 
----------+---------+----------+----------------
+ partrel | attname | parttype | range_interval | expression_p | atttype 
+---------+---------+----------+----------------+--------------+---------
 (0 rows)
 
 /* Check overlaps */
@@ -1618,9 +1632,9 @@ SELECT pathman.create_partitions_from_range('test."RangeRel"', 'dt', '2015-01-01
 DROP TABLE test."RangeRel" CASCADE;
 NOTICE:  drop cascades to 5 other objects
 SELECT * FROM pathman.pathman_config;
-      partrel       | attname | parttype | range_interval 
---------------------+---------+----------+----------------
- test.num_range_rel | id      |        2 | 1000
+      partrel       | attname | parttype | range_interval |                                                      expression_p                                                      | atttype 
+--------------------+---------+----------+----------------+------------------------------------------------------------------------------------------------------------------------+---------
+ test.num_range_rel | id      |        2 | 1000           | {VAR :varno 1 :varattno 1 :vartype 23 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 1 :location -1} |      23
 (1 row)
 
 CREATE TABLE test."RangeRel" (

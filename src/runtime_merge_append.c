@@ -13,14 +13,12 @@
 #include "compat/pg_compat.h"
 
 #include "runtime_merge_append.h"
-#include "pathman.h"
 
 #include "postgres.h"
 #include "catalog/pg_collation.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
 #include "nodes/plannodes.h"
-#include "optimizer/clauses.h"
 #include "optimizer/cost.h"
 #include "optimizer/planmain.h"
 #include "optimizer/tlist.h"
@@ -29,7 +27,6 @@
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"
-#include "utils/memutils.h"
 #include "utils/ruleutils.h"
 
 #include "lib/binaryheap.h"
@@ -389,8 +386,6 @@ fetch_next_tuple(CustomScanState *node)
 
 		for (;;)
 		{
-			bool quals;
-
 			scan_state->ms_slots[i] = ExecProcNode(ps);
 
 			if (TupIsNull(scan_state->ms_slots[i]))
@@ -399,17 +394,8 @@ fetch_next_tuple(CustomScanState *node)
 				break;
 			}
 
-			node->ss.ps.ps_ExprContext->ecxt_scantuple = scan_state->ms_slots[i];
-			quals = ExecQual(rstate->custom_expr_states,
-							 node->ss.ps.ps_ExprContext, false);
-
-			ResetExprContext(node->ss.ps.ps_ExprContext);
-
-			if (quals)
-			{
-				binaryheap_replace_first(scan_state->ms_heap, Int32GetDatum(i));
-				break;
-			}
+			binaryheap_replace_first(scan_state->ms_heap, Int32GetDatum(i));
+			break;
 		}
 	}
 
@@ -417,13 +403,11 @@ fetch_next_tuple(CustomScanState *node)
 	{
 		/* All the subplans are exhausted, and so is the heap */
 		rstate->slot = NULL;
-		return;
 	}
 	else
 	{
 		i = DatumGetInt32(binaryheap_first(scan_state->ms_heap));
 		rstate->slot = scan_state->ms_slots[i];
-		return;
 	}
 }
 
@@ -495,7 +479,9 @@ runtimemergeappend_explain(CustomScanState *node, List *ancestors, ExplainState 
 {
 	RuntimeMergeAppendState *scan_state = (RuntimeMergeAppendState *) node;
 
-	explain_append_common(node, scan_state->rstate.children_table, es);
+	explain_append_common(node, ancestors, es,
+						  scan_state->rstate.children_table,
+						  scan_state->rstate.custom_exprs);
 
 	/* We should print sort keys as well */
 	show_sort_group_keys((PlanState *) &node->ss.ps, "Sort Key",

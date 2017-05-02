@@ -126,12 +126,11 @@ SELECT build_range_condition('calamity.part_test', 'val', 10, NULL);	/* OK */
 SELECT build_range_condition('calamity.part_test', 'val', NULL, 10);	/* OK */
 
 /* check function validate_interval_value() */
-SELECT validate_interval_value(NULL, 'val', 2, '1 mon');					/* not ok */
-SELECT validate_interval_value('calamity.part_test', NULL, 2, '1 mon');		/* not ok */
-SELECT validate_interval_value('calamity.part_test', 'val', NULL, '1 mon');	/* not ok */
-SELECT validate_interval_value('calamity.part_test', 'val', 2, '1 mon');	/* not ok */
-SELECT validate_interval_value('calamity.part_test', 'val', 1, '1 mon');	/* not ok */
-SELECT validate_interval_value('calamity.part_test', 'val', 2, NULL);		/* OK */
+SELECT validate_interval_value(NULL, 2, '1 mon');					/* not ok */
+SELECT validate_interval_value('interval'::regtype, NULL, '1 mon');	/* not ok */
+SELECT validate_interval_value('int4'::regtype, 2, '1 mon');		/* not ok */
+SELECT validate_interval_value('interval'::regtype, 1, '1 mon');	/* not ok */
+SELECT validate_interval_value('interval'::regtype, 2, NULL);		/* OK */
 
 /* check function validate_relname() */
 SELECT validate_relname('calamity.part_test');
@@ -157,21 +156,10 @@ SELECT get_partition_key_type('calamity.part_test');
 SELECT get_partition_key_type(0::regclass);
 SELECT get_partition_key_type(NULL) IS NULL;
 
-/* check function build_check_constraint_name_attnum() */
-SELECT build_check_constraint_name('calamity.part_test', 1::int2);	/* OK */
-SELECT build_check_constraint_name(0::REGCLASS, 1::int2);			/* not ok */
-SELECT build_check_constraint_name('calamity.part_test', -1::int2);	/* not ok */
-SELECT build_check_constraint_name('calamity.part_test', NULL::int2) IS NULL;
-SELECT build_check_constraint_name(NULL, 1::int2) IS NULL;
-SELECT build_check_constraint_name(NULL, NULL::int2) IS NULL;
-
-/* check function build_check_constraint_name_attname() */
-SELECT build_check_constraint_name('calamity.part_test', 'val');	/* OK */
-SELECT build_check_constraint_name(0::REGCLASS, 'val');				/* not ok */
-SELECT build_check_constraint_name('calamity.part_test', 'nocol');	/* not ok */
-SELECT build_check_constraint_name('calamity.part_test', NULL::text) IS NULL;
-SELECT build_check_constraint_name(NULL, 'val') IS NULL;
-SELECT build_check_constraint_name(NULL, NULL::text) IS NULL;
+/* check function build_check_constraint_name() */
+SELECT build_check_constraint_name('calamity.part_test');		/* OK */
+SELECT build_check_constraint_name(0::REGCLASS);				/* not ok */
+SELECT build_check_constraint_name(NULL) IS NULL;
 
 /* check function build_update_trigger_name() */
 SELECT build_update_trigger_name('calamity.part_test');			/* OK */
@@ -269,18 +257,18 @@ SELECT add_to_pathman_config('calamity.part_test', 'val', '10');
 EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_ok; /* check that pathman is enabled */
 
 ALTER TABLE calamity.wrong_partition
-ADD CONSTRAINT pathman_wrong_partition_1_check
+ADD CONSTRAINT pathman_wrong_partition_check
 CHECK (val = 1 OR val = 2); /* wrong constraint */
 SELECT add_to_pathman_config('calamity.part_test', 'val', '10');
 EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_ok; /* check that pathman is enabled */
-ALTER TABLE calamity.wrong_partition DROP CONSTRAINT pathman_wrong_partition_1_check;
+ALTER TABLE calamity.wrong_partition DROP CONSTRAINT pathman_wrong_partition_check;
 
 ALTER TABLE calamity.wrong_partition
-ADD CONSTRAINT pathman_wrong_partition_1_check
+ADD CONSTRAINT pathman_wrong_partition_check
 CHECK (val >= 10 AND val = 2); /* wrong constraint */
 SELECT add_to_pathman_config('calamity.part_test', 'val', '10');
 EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_ok; /* check that pathman is enabled */
-ALTER TABLE calamity.wrong_partition DROP CONSTRAINT pathman_wrong_partition_1_check;
+ALTER TABLE calamity.wrong_partition DROP CONSTRAINT pathman_wrong_partition_check;
 
 /* check GUC variable */
 SHOW pg_pathman.enable;

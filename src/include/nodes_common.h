@@ -98,8 +98,10 @@ void end_append_common(CustomScanState *node);
 void rescan_append_common(CustomScanState *node);
 
 void explain_append_common(CustomScanState *node,
+						   List *ancestors,
+						   ExplainState *es,
 						   HTAB *children_table,
-						   ExplainState *es);
+						   List *custom_exprs);
 
 
 #endif /* NODES_COMMON_H */
