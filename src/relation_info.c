@@ -187,7 +187,9 @@ refresh_pathman_relation_info(Oid relid,
 	/* Extract Vars and varattnos of partitioning expression */
 	prel->expr_vars = NIL;
 	prel->expr_atts = NULL;
-	prel->expr_vars = pull_var_clause(prel->expr, 0);
+	prel->expr_vars = pull_var_clause_compat(prel->expr,
+											 PVC_REJECT_AGGREGATES,
+											 PVC_REJECT_PLACEHOLDERS);
 	pull_varattnos((Node *) prel->expr_vars, PART_EXPR_VARNO, &prel->expr_atts);
 
 	MemoryContextSwitchTo(old_mcxt);
