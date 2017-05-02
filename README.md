@@ -1,6 +1,7 @@
 [![Build Status](https://travis-ci.org/postgrespro/pg_pathman.svg?branch=master)](https://travis-ci.org/postgrespro/pg_pathman)
 [![PGXN version](https://badge.fury.io/pg/pg_pathman.svg)](https://badge.fury.io/pg/pg_pathman)
 [![codecov](https://codecov.io/gh/postgrespro/pg_pathman/branch/master/graph/badge.svg)](https://codecov.io/gh/postgrespro/pg_pathman)
+[![GitHub license](https://img.shields.io/badge/license-PostgreSQL-blue.svg)](https://raw.githubusercontent.com/postgrespro/pg_pathman/master/LICENSE)
 
 # pg_pathman
 
@@ -67,7 +68,7 @@ Modify the **`shared_preload_libraries`** parameter in `postgresql.conf` as foll
 ```
 shared_preload_libraries = 'pg_pathman'
 ```
-> **Important:** `pg_pathman` may have conflicts with some other extensions which uses the same hook functions. For example, `pg_pathman` uses `ProcessUtility_hook` hook to handle COPY queries for partitioned tables. And it could sometimes interfere with `pg_stat_statements` extension which uses the same hook. In this case try to list libraries in certain order: `shared_preload_libraries = 'pg_pathman, pg_stat_statements'`
+> **Important:** `pg_pathman` may cause conflicts with some other extensions that use the same hook functions. For example, `pg_pathman` uses `ProcessUtility_hook` to handle COPY queries for partitioned tables, which means it may interfere with `pg_stat_statements` from time to time. In this case, try listing libraries in certain order: `shared_preload_libraries = 'pg_stat_statements, pg_pathman'`.
 
 It is essential to restart the PostgreSQL instance. After that, execute the following query in psql:
 ```plpgsql
@@ -99,8 +100,8 @@ create_hash_partitions(relation         REGCLASS,
                        attribute        TEXT,
                        partitions_count INTEGER,
                        partition_data   BOOLEAN DEFAULT TRUE,
-					   partition_names  TEXT[] DEFAULT NULL,
-					   tablespaces      TEXT[] DEFAULT NULL)
+                       partition_names  TEXT[] DEFAULT NULL,
+                       tablespaces      TEXT[] DEFAULT NULL)
 ```
 Performs HASH partitioning for `relation` by integer key `attribute`. The `partitions_count` parameter specifies the number of partitions to create; it cannot be changed afterwards. If `partition_data` is `true` then all the data will be automatically copied from the parent table to partitions. Note that data migration may took a while to finish and the table will be locked until transaction commits. See `partition_table_concurrently()` for a lock-free way to migrate data. Partition creation callback is invoked for each partition if set beforehand (see `set_init_callback()`).
 
@@ -661,11 +662,11 @@ SELECT disable_pathman_for('range_rel');
 ```
 All sections and data will remain unchanged and will be handled by the standard PostgreSQL inheritance mechanism.
 
-##Feedback
+## Feedback
 Do not hesitate to post your issues, questions and new ideas at the [issues](https://github.com/postgrespro/pg_pathman/issues) page.
 
 ## Authors
-Ildar Musin <i.musin@postgrespro.ru> Postgres Professional Ltd., Russia		
-Alexander Korotkov <a.korotkov@postgrespro.ru> Postgres Professional Ltd., Russia		
-Dmitry Ivanov <d.ivanov@postgrespro.ru> Postgres Professional Ltd., Russia		
+Ildar Musin <i.musin@postgrespro.ru> Postgres Professional Ltd., Russia  
+Alexander Korotkov <a.korotkov@postgrespro.ru> Postgres Professional Ltd., Russia  
+Dmitry Ivanov <d.ivanov@postgrespro.ru> Postgres Professional Ltd., Russia  
 
