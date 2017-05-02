@@ -34,32 +34,6 @@
 #include "utils/typcache.h"
 
 
-static bool clause_contains_params_walker(Node *node, void *context);
-
-
-/*
- * Check whether clause contains PARAMs or not
- */
-bool
-clause_contains_params(Node *clause)
-{
-	return expression_tree_walker(clause,
-								  clause_contains_params_walker,
-								  NULL);
-}
-
-static bool
-clause_contains_params_walker(Node *node, void *context)
-{
-	if (node == NULL)
-		return false;
-	if (IsA(node, Param))
-		return true;
-	return expression_tree_walker(node,
-								  clause_contains_params_walker,
-								  context);
-}
-
 /*
  * Check if this is a "date"-related type.
  */
