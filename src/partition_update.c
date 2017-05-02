@@ -285,7 +285,7 @@ ExecDeleteInternal(ItemPointer tupleid,
 		/* we don't need slot anymore */
 		ExecDropSingleTupleTableSlot(slot);
 	}
-	else
+	else if (tupleid != NULL)
 	{
 		/* delete the tuple */
 ldelete:;
@@ -340,6 +340,8 @@ ldelete:;
 				return NULL;
 		}
 	}
+	else
+		elog(ERROR, "tupleid should be specified for deletion");
 
 	/* AFTER ROW DELETE Triggers */
 	ExecARDeleteTriggers(estate, resultRelInfo, tupleid, oldtuple);
