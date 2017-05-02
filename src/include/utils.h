@@ -37,7 +37,6 @@ List * list_reverse(List *l);
  */
 Oid get_rel_owner(Oid relid);
 char * get_rel_name_or_relid(Oid relid);
-Oid get_attribute_type(Oid relid, const char *attname, bool missing_ok);
 RangeVar *makeRangeVarFromRelid(Oid relid);
 
 /*
