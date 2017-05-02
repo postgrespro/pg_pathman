@@ -675,4 +675,4 @@ Ildar Musin <i.musin(at)postgrespro.ru> Postgres Professional Ltd., Russia
 Alexander Korotkov <a.korotkov(at)postgrespro.ru> Postgres Professional Ltd., Russia  
 Dmitry Ivanov <d.ivanov(at)postgrespro.ru> Postgres Professional Ltd., Russia  
 Maksim Milyutin <m.milyutin(at)postgrespro.ru> Postgres Professional Ltd., Russia  
-
+Ildus Kurbangaliev <i.kurbangaliev(at)postgrespro.ru> Postgres Professional Ltd., Russia  
