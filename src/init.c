@@ -29,7 +29,6 @@
 #include "catalog/pg_type.h"
 #include "miscadmin.h"
 #include "optimizer/clauses.h"
-#include "utils/datum.h"
 #include "utils/inval.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"

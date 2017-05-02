@@ -13,14 +13,12 @@
 #include "compat/pg_compat.h"
 
 #include "runtime_merge_append.h"
-#include "pathman.h"
 
 #include "postgres.h"
 #include "catalog/pg_collation.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
 #include "nodes/plannodes.h"
-#include "optimizer/clauses.h"
 #include "optimizer/cost.h"
 #include "optimizer/planmain.h"
 #include "optimizer/tlist.h"
@@ -29,7 +27,6 @@
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"
-#include "utils/memutils.h"
 #include "utils/ruleutils.h"
 
 #include "lib/binaryheap.h"

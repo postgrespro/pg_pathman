@@ -16,10 +16,6 @@
 
 #include "postgres.h"
 #include "parser/parse_oper.h"
-#include "utils/rel.h"
-#include "nodes/relation.h"
-#include "nodes/memnodes.h"
-#include "nodes/nodeFuncs.h"
 
 
 /*

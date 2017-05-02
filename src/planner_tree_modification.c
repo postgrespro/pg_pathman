@@ -12,7 +12,6 @@
 #include "compat/relation_tags.h"
 #include "compat/rowmarks_fix.h"
 
-#include "nodes_common.h"
 #include "partition_filter.h"
 #include "planner_tree_modification.h"
 #include "rewrite/rewriteManip.h"
@@ -21,7 +20,6 @@
 #include "miscadmin.h"
 #include "optimizer/clauses.h"
 #include "storage/lmgr.h"
-#include "utils/lsyscache.h"
 #include "utils/syscache.h"
 
 
