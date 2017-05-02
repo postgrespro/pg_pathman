@@ -142,7 +142,7 @@ partition_update_exec(CustomScanState *node)
 		bool			 isNull;
 		char			 relkind;
 		ResultRelInfo	*resultRelInfo;
-		ItemPointer		 tupleid = NULL;
+		ItemPointer		 tupleid;
 		ItemPointerData	 tuple_ctid;
 		EPQState		 epqstate;
 		HeapTupleData	 oldtupdata;
@@ -188,6 +188,8 @@ partition_update_exec(CustomScanState *node)
 				oldtupdata.t_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
 				oldtuple = &oldtupdata;
 			}
+
+			tupleid = NULL;
 		}
 		else
 			elog(ERROR, "PartitionUpdate supports only relations and foreign tables");
@@ -325,6 +327,7 @@ ldelete:;
 										   hufd.xmax);
 					if (!TupIsNull(epqslot))
 					{
+						Assert(tupleid != NULL);
 						*tupleid = hufd.ctid;
 						goto ldelete;
 					}
