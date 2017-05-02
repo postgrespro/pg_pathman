@@ -167,7 +167,6 @@ init_result_parts_storage(ResultPartsStorage *parts_storage,
 	parts_storage->on_new_rri_holder_callback = on_new_rri_holder_cb;
 	parts_storage->callback_arg = on_new_rri_holder_cb_arg;
 
-	/* Currenly ResultPartsStorage is used only for INSERTs */
 	parts_storage->command_type = cmd_type;
 	parts_storage->speculative_inserts = speculative_inserts;
 
@@ -244,7 +243,7 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 	if (!found)
 	{
 		Relation		child_rel,
-						parent_rel = parts_storage->saved_rel_info->ri_RelationDesc;
+						base_rel = parts_storage->saved_rel_info->ri_RelationDesc;
 		RangeTblEntry  *child_rte,
 					   *parent_rte;
 		Index			child_rte_idx;
@@ -267,7 +266,7 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 		CheckValidResultRel(child_rel, parts_storage->command_type);
 
 		/* Build Var translation list for 'inserted_cols' */
-		make_inh_translation_list(parent_rel, child_rel, 0, &translated_vars);
+		make_inh_translation_list(base_rel, child_rel, 0, &translated_vars);
 
 		/* Create RangeTblEntry for partition */
 		child_rte = makeNode(RangeTblEntry);
@@ -348,7 +347,7 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 			child_result_rel_info->ri_junkFilter = NULL;
 
 		/* Generate tuple transformation map and some other stuff */
-		rri_holder->tuple_map = build_part_tuple_map(parent_rel, child_rel);
+		rri_holder->tuple_map = build_part_tuple_map(base_rel, child_rel);
 
 		/* Call on_new_rri_holder_callback() if needed */
 		if (parts_storage->on_new_rri_holder_callback)
@@ -367,7 +366,7 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 
 /* Build tuple conversion map (e.g. parent has a dropped column) */
 TupleConversionMap *
-build_part_tuple_map(Relation parent_rel, Relation child_rel)
+build_part_tuple_map(Relation base_rel, Relation child_rel)
 {
 	TupleConversionMap *tuple_map;
 	TupleDesc			child_tupdesc,
@@ -377,7 +376,7 @@ build_part_tuple_map(Relation parent_rel, Relation child_rel)
 	child_tupdesc = CreateTupleDescCopy(RelationGetDescr(child_rel));
 	child_tupdesc->tdtypeid = InvalidOid;
 
-	parent_tupdesc = CreateTupleDescCopy(RelationGetDescr(parent_rel));
+	parent_tupdesc = CreateTupleDescCopy(RelationGetDescr(base_rel));
 	parent_tupdesc->tdtypeid = InvalidOid;
 
 	/* Generate tuple transformation map and some other stuff */
@@ -565,15 +564,26 @@ partition_filter_create_scan_state(CustomScan *node)
 void
 partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 {
-	Index					varno = 1;
 	Node					*expr;
 	MemoryContext			 old_cxt;
 	PartitionFilterState	*state = (PartitionFilterState *) node;
 	const PartRelationInfo	*prel;
 	ListCell				*lc;
+	PlanState				*child_state;
+	Index					 expr_relid = 1;
+
+	child_state = ExecInitNode(state->subplan, estate, eflags);
 
 	/* It's convenient to store PlanState in 'custom_ps' */
-	node->custom_ps = list_make1(ExecInitNode(state->subplan, estate, eflags));
+	node->custom_ps = list_make1(child_state);
+	if (state->command_type == CMD_UPDATE)
+	{
+		Assert(IsA(child_state, SeqScanState));
+		expr_relid = ((Scan *) ((ScanState *) child_state)->ps.plan)->scanrelid;
+		Assert(expr_relid >= 1);
+	}
+	else
+		expr_relid = state->partitioned_table;
 
 	if (state->expr_state == NULL)
 	{
@@ -582,18 +592,21 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 		Assert(prel != NULL);
 
 		/* Change varno in Vars according to range table */
-		expr = copyObject(prel->expr);
-		foreach(lc, estate->es_range_table)
+		if (expr_relid > 1)
 		{
-			RangeTblEntry *entry = lfirst(lc);
-			if (entry->relid == state->partitioned_table)
+			expr = copyObject(prel->expr);
+			foreach(lc, estate->es_range_table)
 			{
-				if (varno > 1)
-					ChangeVarNodes(expr, 1, varno, 0);
-				break;
+				RangeTblEntry *entry = lfirst(lc);
+				if (entry->relid == expr_relid)
+				{
+					ChangeVarNodes(expr, 1, expr_relid, 0);
+					break;
+				}
 			}
-			varno += 1;
 		}
+		else
+			expr = prel->expr;
 
 		/* Prepare state for expression execution */
 		old_cxt = MemoryContextSwitchTo(estate->es_query_cxt);
