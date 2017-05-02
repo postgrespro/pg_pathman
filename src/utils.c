@@ -105,6 +105,20 @@ check_security_policy_internal(Oid relid, Oid role)
 	return true;
 }
 
+/* Compare clause operand with expression */
+bool
+expr_matches_operand(Node *operand, Node *expr)
+{
+	/* strip relabeling for both operand and expr */
+	if (operand && IsA(operand, RelabelType))
+		operand = (Node *) ((RelabelType *) operand)->arg;
+
+	if (expr && IsA(expr, RelabelType))
+		expr = (Node *) ((RelabelType *) expr)->arg;
+
+	/* compare expressions and return result right away */
+	return equal(expr, operand);
+}
 
 
 /*
@@ -199,8 +213,8 @@ get_rel_name_or_relid(Oid relid)
 	char *relname = get_rel_name(relid);
 
 	if (!relname)
-		return DatumGetCString(DirectFunctionCall1(oidout,
-												   ObjectIdGetDatum(relid)));
+		return DatumGetCString(DirectFunctionCall1(oidout, ObjectIdGetDatum(relid)));
+
 	return relname;
 }
 
@@ -315,8 +329,8 @@ fill_type_cmp_fmgr_info_error:
 void
 extract_op_func_and_ret_type(char *opname,
 							 Oid type1, Oid type2,
-							 Oid *op_func,		/* returned value #1 */
-							 Oid *op_ret_type)	/* returned value #2 */
+							 Oid *op_func,		/* ret value #1 */
+							 Oid *op_ret_type)	/* ret value #2 */
 {
 	Operator op;
 
@@ -423,12 +437,12 @@ perform_type_cast(Datum value, Oid in_type, Oid out_type, bool *success)
 }
 
 /*
- * Convert interval from TEXT to binary form using partitioned column's type.
+ * Convert interval from TEXT to binary form using partitioninig expresssion type.
  */
 Datum
 extract_binary_interval_from_text(Datum interval_text,	/* interval as TEXT */
-								  Oid part_atttype,		/* partitioned column's type */
-								  Oid *interval_type)	/* returned value */
+								  Oid part_atttype,		/* expression type */
+								  Oid *interval_type)	/* ret value #1 */
 {
 	Datum		interval_binary;
 	const char *interval_cstring;
@@ -479,7 +493,6 @@ extract_binary_interval_from_text(Datum interval_text,	/* interval as TEXT */
 
 	return interval_binary;
 }
-
 
 /* Convert Datum into CSTRING array */
 char **

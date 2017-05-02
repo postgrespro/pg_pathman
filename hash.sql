@@ -13,7 +13,7 @@
  */
 CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions(
 	parent_relid		REGCLASS,
-	attribute			TEXT,
+	expression			TEXT,
 	partitions_count	INT4,
 	partition_data		BOOLEAN DEFAULT TRUE,
 	partition_names		TEXT[] DEFAULT NULL,
@@ -31,16 +31,15 @@ BEGIN
 		PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 	END IF;
 
-	attribute := lower(attribute);
-	PERFORM @extschema@.common_relation_checks(parent_relid, attribute);
+	expression := lower(expression);
+	PERFORM @extschema@.common_relation_checks(parent_relid, expression);
 
 	/* Insert new entry to pathman config */
-	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype)
-	VALUES (parent_relid, attribute, 1);
+	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression, NULL, false);
 
 	/* Create partitions */
 	PERFORM @extschema@.create_hash_partitions_internal(parent_relid,
-														attribute,
+														expression,
 														partitions_count,
 														partition_names,
 														tablespaces);
@@ -111,15 +110,14 @@ BEGIN
 		RAISE EXCEPTION 'partition must have a compatible tuple format';
 	END IF;
 
-	/* Get partitioning key */
+	/* Get partitioning expression */
 	part_attname := attname FROM @extschema@.pathman_config WHERE partrel = parent_relid;
 	IF part_attname IS NULL THEN
 		RAISE EXCEPTION 'table "%" is not partitioned', parent_relid::TEXT;
 	END IF;
 
 	/* Fetch name of old_partition's HASH constraint */
-	old_constr_name = @extschema@.build_check_constraint_name(old_partition::REGCLASS,
-															  part_attname);
+	old_constr_name = @extschema@.build_check_constraint_name(old_partition::REGCLASS);
 
 	/* Fetch definition of old_partition's HASH constraint */
 	SELECT pg_catalog.pg_get_constraintdef(oid) FROM pg_catalog.pg_constraint
@@ -136,8 +134,7 @@ BEGIN
 	EXECUTE format('ALTER TABLE %s INHERIT %s', new_partition, parent_relid);
 	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s %s',
 				   new_partition,
-				   @extschema@.build_check_constraint_name(new_partition::REGCLASS,
-														   part_attname),
+				   @extschema@.build_check_constraint_name(new_partition::REGCLASS),
 				   old_constr_def);
 
 	/* Fetch init_callback from 'params' table */

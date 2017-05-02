@@ -652,7 +652,7 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 							 PT_ANY);
 
 	/* Check that partitioning operation result is visible */
-	if (pathman_config_contains_relation(relid, NULL, NULL, &rel_xmin))
+	if (pathman_config_contains_relation(relid, NULL, NULL, &rel_xmin, NULL))
 	{
 		if (!xact_object_is_visible(rel_xmin))
 			ereport(ERROR, (errmsg("cannot start %s", concurrent_part_bgw),

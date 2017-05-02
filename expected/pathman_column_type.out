@@ -31,11 +31,25 @@ SELECT context, entries FROM pathman_cache_stats ORDER BY context;
 
 /* change column's type (should flush caches) */
 ALTER TABLE test_column_type.test ALTER val TYPE NUMERIC;
+/* check that parsed expression was cleared */
+SELECT * FROM pathman_config;
+        partrel        | attname | parttype | range_interval | expression_p | atttype 
+-----------------------+---------+----------+----------------+--------------+---------
+ test_column_type.test | val     |        2 | 10             |              |        
+(1 row)
+
 /* make sure that everything works properly */
 SELECT * FROM test_column_type.test;
  val 
 -----
 (0 rows)
+
+/* check that expression, atttype is changed */
+SELECT * FROM pathman_config;
+        partrel        | attname | parttype | range_interval |                                                      expression_p                                                       | atttype 
+-----------------------+---------+----------+----------------+-------------------------------------------------------------------------------------------------------------------------+---------
+ test_column_type.test | val     |        2 | 10             | {VAR :varno 1 :varattno 1 :vartype 1700 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 1 :location 8} |    1700
+(1 row)
 
 SELECT context, entries FROM pathman_cache_stats ORDER BY context;
          context          | entries 

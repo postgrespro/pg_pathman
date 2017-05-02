@@ -1,0 +1,154 @@
+\set VERBOSITY terse
+SET search_path = 'public';
+CREATE SCHEMA pathman;
+CREATE EXTENSION pg_pathman SCHEMA pathman;
+CREATE SCHEMA test;
+/* hash */
+CREATE TABLE test.hash_rel (
+	id		SERIAL PRIMARY KEY,
+	value	INTEGER,
+	value2  INTEGER
+);
+INSERT INTO test.hash_rel (value, value2)
+	SELECT val, val * 2 FROM generate_series(1, 5) val;
+SELECT COUNT(*) FROM test.hash_rel;
+ count 
+-------
+     5
+(1 row)
+
+SELECT pathman.create_hash_partitions('test.hash_rel', 'value * value2', 4);
+ create_hash_partitions 
+------------------------
+                      4
+(1 row)
+
+SELECT COUNT(*) FROM ONLY test.hash_rel;
+ count 
+-------
+     0
+(1 row)
+
+SELECT COUNT(*) FROM test.hash_rel;
+ count 
+-------
+     5
+(1 row)
+
+INSERT INTO test.hash_rel (value, value2)
+	SELECT val, val * 2 FROM generate_series(6, 10) val;
+SELECT COUNT(*) FROM ONLY test.hash_rel;
+ count 
+-------
+     0
+(1 row)
+
+SELECT COUNT(*) FROM test.hash_rel;
+ count 
+-------
+    10
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 5;
+          QUERY PLAN          
+------------------------------
+ Append
+   ->  Seq Scan on hash_rel_0
+         Filter: (value = 5)
+   ->  Seq Scan on hash_rel_1
+         Filter: (value = 5)
+   ->  Seq Scan on hash_rel_2
+         Filter: (value = 5)
+   ->  Seq Scan on hash_rel_3
+         Filter: (value = 5)
+(9 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE (value * value2) = 5;
+               QUERY PLAN               
+----------------------------------------
+ Append
+   ->  Seq Scan on hash_rel_0
+         Filter: ((value * value2) = 5)
+(3 rows)
+
+/* range */
+CREATE TABLE test.range_rel (id SERIAL PRIMARY KEY, dt TIMESTAMP, txt TEXT);
+INSERT INTO test.range_rel (dt, txt)
+SELECT g, md5(g::TEXT) FROM generate_series('2015-01-01', '2020-04-30', '1 month'::interval) as g;
+SELECT pathman.create_range_partitions('test.range_rel', 'RANDOM()', '15 years'::INTERVAL, '1 year'::INTERVAL, 10);
+ERROR:  start value is less than min value of "random()"
+SELECT pathman.create_range_partitions('test.range_rel', 'AGE(dt, ''2000-01-01''::DATE)',
+		'15 years'::INTERVAL, '1 year'::INTERVAL, 10);
+NOTICE:  sequence "range_rel_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                      10
+(1 row)
+
+INSERT INTO test.range_rel_1 (dt, txt) VALUES ('2020-01-01'::DATE, md5('asdf'));
+ERROR:  new row for relation "range_rel_1" violates check constraint "pathman_range_rel_1_check"
+SELECT COUNT(*) FROM test.range_rel_6;
+ count 
+-------
+     4
+(1 row)
+
+INSERT INTO test.range_rel_6 (dt, txt) VALUES ('2020-01-01'::DATE, md5('asdf'));
+SELECT COUNT(*) FROM test.range_rel_6;
+ count 
+-------
+     5
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE (AGE(dt, '2000-01-01'::DATE)) = '18 years'::interval;
+                                                 QUERY PLAN                                                  
+-------------------------------------------------------------------------------------------------------------
+ Append
+   ->  Seq Scan on range_rel_4
+         Filter: (age(dt, 'Sat Jan 01 00:00:00 2000'::timestamp without time zone) = '@ 18 years'::interval)
+(3 rows)
+
+SELECT pathman.create_update_triggers('test.range_rel');
+ create_update_triggers 
+------------------------
+ 
+(1 row)
+
+SELECT COUNT(*) FROM test.range_rel;
+ count 
+-------
+    65
+(1 row)
+
+SELECT COUNT(*) FROM test.range_rel_1;
+ count 
+-------
+    12
+(1 row)
+
+SELECT COUNT(*) FROM test.range_rel_2;
+ count 
+-------
+    12
+(1 row)
+
+UPDATE test.range_rel SET dt = '2016-12-01' WHERE dt >= '2015-10-10' AND dt <= '2017-10-10';
+/* counts in partitions should be changed */
+SELECT COUNT(*) FROM test.range_rel;
+ count 
+-------
+    65
+(1 row)
+
+SELECT COUNT(*) FROM test.range_rel_1;
+ count 
+-------
+    10
+(1 row)
+
+SELECT COUNT(*) FROM test.range_rel_2;
+ count 
+-------
+    24
+(1 row)
+

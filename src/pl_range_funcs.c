@@ -59,10 +59,9 @@ static void check_range_adjacence(Oid cmp_proc, Oid collid, List *ranges);
 static void merge_range_partitions_internal(Oid parent,
 											Oid *parts,
 											uint32 nparts);
-static void modify_range_constraint(Oid child_relid,
-									const char *attname,
-									AttrNumber attnum,
-									Oid atttype,
+static void modify_range_constraint(Oid partition_relid,
+									const char *expression,
+									Oid expression_type,
 									const Bound *lower,
 									const Bound *upper);
 static char *get_qualified_rel_name(Oid relid);
@@ -70,13 +69,6 @@ static void drop_table_by_oid(Oid relid);
 static bool interval_is_trivial(Oid atttype,
 								Datum interval,
 								Oid interval_type);
-
-/* Extracted common check */
-static inline bool
-check_relation_exists(Oid relid)
-{
-	return get_rel_type_id(relid) != InvalidOid;
-}
 
 
 /*
@@ -89,12 +81,12 @@ check_relation_exists(Oid relid)
 Datum
 create_single_range_partition_pl(PG_FUNCTION_ARGS)
 {
-	Oid			parent_relid;
+	Oid			parent_relid,
+				value_type;
 
 	/* RANGE boundaries + value type */
 	Bound		start,
 				end;
-	Oid			value_type;
 
 	/* Optional: name & tablespace */
 	RangeVar   *partition_name_rv;
@@ -143,9 +135,9 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 
 	/* Create a new RANGE partition and return its Oid */
 	partition_relid = create_single_range_partition_internal(parent_relid,
+															 value_type,
 															 &start,
 															 &end,
-															 value_type,
 															 partition_name_rv,
 															 tablespace);
 
@@ -260,9 +252,9 @@ create_range_partitions_internal(PG_FUNCTION_ARGS)
 		char	   *tablespace = tablespaces ? tablespaces[i] : NULL;
 
 		(void) create_single_range_partition_internal(parent_relid,
+													  elemtype,
 													  &start,
 													  &end,
-													  elemtype,
 													  name,
 													  tablespace);
 	}
@@ -531,7 +523,8 @@ Datum
 build_range_condition(PG_FUNCTION_ARGS)
 {
 	Oid			partition_relid;
-	text	   *attname;
+	char	   *expression;
+	Node	   *expr;
 
 	Bound		min,
 				max;
@@ -548,10 +541,10 @@ build_range_condition(PG_FUNCTION_ARGS)
 
 	if (!PG_ARGISNULL(1))
 	{
-		attname = PG_GETARG_TEXT_P(1);
+		expression = TextDatumGetCString(PG_GETARG_TEXT_P(1));
 	}
 	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						 errmsg("'attribute' should not be NULL")));;
+						 errmsg("'expression' should not be NULL")));;
 
 	min = PG_ARGISNULL(2) ?
 				MakeBoundInf(MINUS_INFINITY) :
@@ -561,8 +554,9 @@ build_range_condition(PG_FUNCTION_ARGS)
 				MakeBoundInf(PLUS_INFINITY) :
 				MakeBound(PG_GETARG_DATUM(3));
 
+	expr = parse_partitioning_expression(partition_relid, expression, NULL, NULL);
 	con = build_range_check_constraint(partition_relid,
-									   text_to_cstring(attname),
+									   expr,
 									   &min, &max,
 									   bounds_type);
 
@@ -579,7 +573,7 @@ build_sequence_name(PG_FUNCTION_ARGS)
 	Oid		parent_nsp;
 	char   *result;
 
-	if (!check_relation_exists(parent_relid))
+	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(parent_relid)))
 		ereport(ERROR, (errmsg("relation \"%u\" does not exist", parent_relid)));
 
 	parent_nsp = get_rel_namespace(parent_relid);
@@ -714,9 +708,7 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 
 	/* Drop old constraint and create a new one */
 	modify_range_constraint(parts[0],
-							get_relid_attribute_name(prel->key,
-													 prel->attnum),
-							prel->attnum,
+							prel->expr_cstr,
 							prel->atttype,
 							&first->min,
 							&last->max);
@@ -799,9 +791,7 @@ drop_range_partition_expand_next(PG_FUNCTION_ARGS)
 
 		/* Drop old constraint and create a new one */
 		modify_range_constraint(next->child_oid,
-								get_relid_attribute_name(prel->key,
-														 prel->attnum),
-								prel->attnum,
+								prel->expr_cstr,
 								prel->atttype,
 								&cur->min,
 								&next->max);
@@ -821,51 +811,35 @@ drop_range_partition_expand_next(PG_FUNCTION_ARGS)
 Datum
 validate_interval_value(PG_FUNCTION_ARGS)
 {
-	Oid			partrel;
-	text	   *attname;
+	Oid			atttype;
 	PartType	parttype;
 
-	if (!PG_ARGISNULL(0))
-	{
-		partrel = PG_GETARG_OID(0);
-	}
-	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						 errmsg("'partrel' should not be NULL")));
+	if (PG_ARGISNULL(0))
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("'atttype' should not be NULL")));
 
-	if (!PG_ARGISNULL(1))
-	{
-		attname = PG_GETARG_TEXT_P(1);
-	}
-	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						 errmsg("'attname' should not be NULL")));
 
-	if (!PG_ARGISNULL(2))
-	{
-		parttype = DatumGetPartType(PG_GETARG_DATUM(2));
-	}
-	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+	if (PG_ARGISNULL(1))
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("'parttype' should not be NULL")));
+
+	atttype = PG_GETARG_OID(0);
+	parttype = DatumGetPartType(PG_GETARG_DATUM(1));
 
 	/*
 	 * NULL interval is fine for both HASH and RANGE.
 	 * But for RANGE we need to make some additional checks.
 	 */
-	if (!PG_ARGISNULL(3))
+	if (!PG_ARGISNULL(2))
 	{
-		Datum		interval_text = PG_GETARG_DATUM(3),
+		Datum		interval_text = PG_GETARG_DATUM(2),
 					interval_value;
 		Oid			interval_type;
-		char	   *attname_cstr;
-		Oid			atttype; /* type of partitioned attribute */
 
 		if (parttype == PT_HASH)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("interval should be NULL for HASH partitioned table")));
-
-		/* Convert attname to CSTRING and fetch column's type */
-		attname_cstr = text_to_cstring(attname);
-		atttype = get_attribute_type(partrel, attname_cstr, false);
 
 		/* Try converting textual representation */
 		interval_value = extract_binary_interval_from_text(interval_text,
@@ -1041,35 +1015,35 @@ interval_is_trivial(Oid atttype, Datum interval, Oid interval_type)
  * a new one with specified boundaries
  */
 static void
-modify_range_constraint(Oid child_relid,
-						const char *attname,
-						AttrNumber attnum,
-						Oid atttype,
+modify_range_constraint(Oid partition_relid,
+						const char *expression,
+						Oid expression_type,
 						const Bound *lower,
 						const Bound *upper)
 {
+	Node		   *expr;
 	Constraint	   *constraint;
 	Relation		partition_rel;
-	char		   *attname_nonconst = pstrdup(attname);
 
 	/* Drop old constraint */
-	drop_check_constraint(child_relid, attnum);
+	drop_check_constraint(partition_relid);
+
+	/* Parse expression */
+	expr = parse_partitioning_expression(partition_relid, expression, NULL, NULL);
 
 	/* Build a new one */
-	constraint = build_range_check_constraint(child_relid,
-											  attname_nonconst,
+	constraint = build_range_check_constraint(partition_relid,
+											  expr,
 											  lower,
 											  upper,
-											  atttype);
+											  expression_type);
 
 	/* Open the relation and add new check constraint */
-	partition_rel = heap_open(child_relid, AccessExclusiveLock);
+	partition_rel = heap_open(partition_relid, AccessExclusiveLock);
 	AddRelationNewConstraints(partition_rel, NIL,
 							  list_make1(constraint),
 							  false, true, true);
 	heap_close(partition_rel, NoLock);
-
-	pfree(attname_nonconst);
 }
 
 /*

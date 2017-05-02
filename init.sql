@@ -15,8 +15,7 @@
  * text to Datum
  */
 CREATE OR REPLACE FUNCTION @extschema@.validate_interval_value(
-	partrel			REGCLASS,
-	attname			TEXT,
+	atttype			OID,
 	parttype		INTEGER,
 	range_interval	TEXT)
 RETURNS BOOL AS 'pg_pathman', 'validate_interval_value'
@@ -34,18 +33,19 @@ LANGUAGE C;
  */
 CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
 	partrel			REGCLASS NOT NULL PRIMARY KEY,
-	attname			TEXT NOT NULL,
+	attname			TEXT NOT NULL,	/* expression */
 	parttype		INTEGER NOT NULL,
 	range_interval	TEXT,
+	expression_p	TEXT,				/* parsed expression (until plan) */
+	atttype			OID,				/* expression type */
 
 	/* check for allowed part types */
-	CHECK (parttype IN (1, 2)),
+	CONSTRAINT pathman_config_parttype_check CHECK (parttype IN (1, 2)),
 
 	/* check for correct interval */
-	CHECK (@extschema@.validate_interval_value(partrel,
-											   attname,
-											   parttype,
-											   range_interval))
+	CONSTRAINT pathman_config_interval_check CHECK (@extschema@.validate_interval_value(atttype,
+													parttype,
+													range_interval))
 );
 
 
@@ -442,7 +442,7 @@ LANGUAGE plpgsql STRICT;
  */
 CREATE OR REPLACE FUNCTION @extschema@.common_relation_checks(
 	relation		REGCLASS,
-	p_attribute		TEXT)
+	expression		TEXT)
 RETURNS BOOLEAN AS
 $$
 DECLARE
@@ -465,10 +465,6 @@ BEGIN
 		RAISE EXCEPTION 'relation "%" has already been partitioned', relation;
 	END IF;
 
-	IF @extschema@.is_attribute_nullable(relation, p_attribute) THEN
-		RAISE EXCEPTION 'partitioning key "%" must be marked NOT NULL', p_attribute;
-	END IF;
-
 	/* Check if there are foreign keys that reference the relation */
 	FOR v_rec IN (SELECT * FROM pg_catalog.pg_constraint
 				  WHERE confrelid = relation::REGCLASS::OID)
@@ -482,7 +478,7 @@ BEGIN
 		RAISE EXCEPTION 'relation "%" is referenced from other relations', relation;
 	END IF;
 
-	RETURN TRUE;
+	RETURN FALSE;
 END
 $$
 LANGUAGE plpgsql;
@@ -809,15 +805,6 @@ RETURNS VOID AS 'pg_pathman', 'validate_relname'
 LANGUAGE C;
 
 /*
- * Checks if attribute is nullable
- */
-CREATE OR REPLACE FUNCTION @extschema@.is_attribute_nullable(
-	relid	REGCLASS,
-	attname	TEXT)
-RETURNS BOOLEAN AS 'pg_pathman', 'is_attribute_nullable'
-LANGUAGE C STRICT;
-
-/*
  * Check if regclass is date or timestamp.
  */
 CREATE OR REPLACE FUNCTION @extschema@.is_date_type(
@@ -848,15 +835,8 @@ LANGUAGE C STRICT;
  * Build check constraint name for a specified relation's column.
  */
 CREATE OR REPLACE FUNCTION @extschema@.build_check_constraint_name(
-	partition_relid	REGCLASS,
-	attribute		INT2)
-RETURNS TEXT AS 'pg_pathman', 'build_check_constraint_name_attnum'
-LANGUAGE C STRICT;
-
-CREATE OR REPLACE FUNCTION @extschema@.build_check_constraint_name(
-	partition_relid	REGCLASS,
-	attribute		TEXT)
-RETURNS TEXT AS 'pg_pathman', 'build_check_constraint_name_attname'
+	partition_relid	REGCLASS)
+RETURNS TEXT AS 'pg_pathman', 'build_check_constraint_name'
 LANGUAGE C STRICT;
 
 /*
@@ -877,12 +857,16 @@ LANGUAGE C STRICT;
 
 
 /*
- * Attach a previously partitioned table.
+ * Add record to pathman_config. If parttype if not specified then determine
+ * partitioning type.
  */
 CREATE OR REPLACE FUNCTION @extschema@.add_to_pathman_config(
-	parent_relid	REGCLASS,
-	attname			TEXT,
-	range_interval	TEXT DEFAULT NULL)
+	parent_relid		REGCLASS,
+	attname				TEXT,
+	range_interval		TEXT DEFAULT NULL,
+	refresh_part_info	BOOL DEFAULT TRUE,
+	parttype			INT4 DEFAULT 0
+)
 RETURNS BOOLEAN AS 'pg_pathman', 'add_to_pathman_config'
 LANGUAGE C;
 

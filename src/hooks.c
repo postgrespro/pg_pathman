@@ -31,6 +31,7 @@
 #include "miscadmin.h"
 #include "optimizer/cost.h"
 #include "optimizer/restrictinfo.h"
+#include "rewrite/rewriteManip.h"
 #include "utils/typcache.h"
 #include "utils/lsyscache.h"
 
@@ -83,11 +84,16 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	ListCell			   *lc;
 	WalkerContext			context;
 	double					paramsel;
+	Node				   *expr;
 
 	/* Call hooks set by other extensions */
 	if (set_join_pathlist_next)
 		set_join_pathlist_next(root, joinrel, outerrel,
 							   innerrel, jointype, extra);
+
+	/* Hooks can be disabled */
+	if (!pathman_hooks_enabled)
+		return;
 
 	/* Check that both pg_pathman & RuntimeAppend nodes are enabled */
 	if (!IsPathmanReady() || !pg_pathman_enable_runtimeappend)
@@ -123,14 +129,20 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		otherclauses = NIL;
 	}
 
+	/* Make copy of partitioning expression and fix Var's  varno attributes */
+	expr = inner_prel->expr;
+	if (innerrel->relid != 1)
+	{
+		expr = copyObject(expr);
+		ChangeVarNodes(expr, 1, innerrel->relid, 0);
+	}
+
 	paramsel = 1.0;
 	foreach (lc, joinclauses)
 	{
 		WrapperNode *wrap;
 
-		InitWalkerContext(&context, innerrel->relid,
-						  inner_prel, NULL, false);
-
+		InitWalkerContext(&context, expr, inner_prel, NULL, false);
 		wrap = walk_expr_tree((Expr *) lfirst(lc), &context);
 		paramsel *= wrap->paramsel;
 	}
@@ -262,6 +274,10 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 	if (set_rel_pathlist_hook_next != NULL)
 		set_rel_pathlist_hook_next(root, rel, rti, rte);
 
+	/* Hooks can be disabled */
+	if (!pathman_hooks_enabled)
+		return;
+
 	/* Make sure that pg_pathman is ready */
 	if (!IsPathmanReady())
 		return;
@@ -292,14 +308,20 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		Relation		parent_rel;				/* parent's relation (heap) */
 		Oid			   *children;				/* selected children oids */
 		List		   *ranges,					/* a list of IndexRanges */
-					   *wrappers,				/* a list of WrapperNodes */
-					   *rel_part_clauses = NIL;	/* clauses with part. column */
+					   *wrappers;				/* a list of WrapperNodes */
 		PathKey		   *pathkeyAsc = NULL,
 					   *pathkeyDesc = NULL;
 		double			paramsel = 1.0;			/* default part selectivity */
 		WalkerContext	context;
 		ListCell	   *lc;
 		int				i;
+		Node		   *expr;
+		bool			modify_append_nodes;
+
+		/* Make copy of partitioning expression and fix Var's  varno attributes */
+		expr = copyObject(prel->expr);
+		if (rti != 1)
+			ChangeVarNodes(expr, 1, rti, 0);
 
 		if (prel->parttype == PT_RANGE)
 		{
@@ -307,27 +329,17 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			 * Get pathkeys for ascending and descending sort by partitioned column.
 			 */
 			List		   *pathkeys;
-			Var			   *var;
-			Oid				vartypeid,
-							varcollid;
-			int32			type_mod;
 			TypeCacheEntry *tce;
 
-			/* Make Var from partition column */
-			get_rte_attribute_type(rte, prel->attnum,
-								   &vartypeid, &type_mod, &varcollid);
-			var = makeVar(rti, prel->attnum, vartypeid, type_mod, varcollid, 0);
-			var->location = -1;
-
 			/* Determine operator type */
-			tce = lookup_type_cache(var->vartype, TYPECACHE_LT_OPR | TYPECACHE_GT_OPR);
+			tce = lookup_type_cache(prel->atttype, TYPECACHE_LT_OPR | TYPECACHE_GT_OPR);
 
 			/* Make pathkeys */
-			pathkeys = build_expression_pathkey(root, (Expr *) var, NULL,
+			pathkeys = build_expression_pathkey(root, (Expr *) expr, NULL,
 												tce->lt_opr, NULL, false);
 			if (pathkeys)
 				pathkeyAsc = (PathKey *) linitial(pathkeys);
-			pathkeys = build_expression_pathkey(root, (Expr *) var, NULL,
+			pathkeys = build_expression_pathkey(root, (Expr *) expr, NULL,
 												tce->gt_opr, NULL, false);
 			if (pathkeys)
 				pathkeyDesc = (PathKey *) linitial(pathkeys);
@@ -340,7 +352,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		ranges = list_make1_irange_full(prel, IR_COMPLETE);
 
 		/* Make wrappers over restrictions and collect final rangeset */
-		InitWalkerContext(&context, rti, prel, NULL, false);
+		InitWalkerContext(&context, expr, prel, NULL, false);
 		wrappers = NIL;
 		foreach(lc, rel->baserestrictinfo)
 		{
@@ -353,6 +365,12 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			wrappers = lappend(wrappers, wrap);
 			ranges = irange_list_intersection(ranges, wrap->rangeset);
 		}
+
+		/*
+		 * Walker should been have filled these parameter while checking.
+		 * Runtime[Merge]Append is pointless if there are no params in clauses.
+		 */
+		modify_append_nodes = context.found_params;
 
 		/* Get number of selected partitions */
 		irange_len = irange_list_length(ranges);
@@ -430,12 +448,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			  pg_pathman_enable_runtime_merge_append))
 			return;
 
-		/* Check that rel's RestrictInfo contains partitioned column */
-		rel_part_clauses = get_partitioned_attr_clauses(rel->baserestrictinfo,
-														prel, rel->relid);
-
-		/* Runtime[Merge]Append is pointless if there are no params in clauses */
-		if (!clause_contains_params((Node *) rel_part_clauses))
+		if (!modify_append_nodes)
 			return;
 
 		/* Generate Runtime[Merge]Append paths if needed */
@@ -452,10 +465,6 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			{
 				continue;
 			}
-
-			/* Skip if rel->baserestrictinfo doesn't reference partition attribute */
-			if (!rel_part_clauses)
-				continue;
 
 			/* Get existing parameterization */
 			ppi = get_appendrel_parampathinfo(rel, inner_required);
@@ -536,7 +545,7 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 
 	PG_TRY();
 	{
-		if (pathman_ready)
+		if (pathman_ready && pathman_hooks_enabled)
 		{
 			/* Increment relation tags refcount */
 			incr_refcount_relation_tags();
@@ -551,7 +560,7 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 		else
 			result = standard_planner(parse, cursorOptions, boundParams);
 
-		if (pathman_ready)
+		if (pathman_ready && pathman_hooks_enabled)
 		{
 			/* Give rowmark-related attributes correct names */
 			ExecuteForPlanTree(result, postprocess_lock_rows);
@@ -594,6 +603,10 @@ pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
 	/* Invoke original hook if needed */
 	if (post_parse_analyze_hook_next)
 		post_parse_analyze_hook_next(pstate, query);
+
+	/* Hooks can be disabled */
+	if (!pathman_hooks_enabled)
+		return;
 
 	 /* We shouldn't do anything on BEGIN or SET ISOLATION LEVEL stmts */
 	if (query->commandType == CMD_UTILITY &&
@@ -690,6 +703,10 @@ pathman_relcache_hook(Datum arg, Oid relid)
 	if (!IsPathmanReady())
 		return;
 
+	/* Hooks can be disabled */
+	if (!pathman_hooks_enabled)
+		return;
+
 	/* We shouldn't even consider special OIDs */
 	if (relid < FirstNormalObjectId)
 		return;
@@ -782,24 +799,29 @@ pathman_process_utility_hook(Node *parsetree,
 
 		/* Override standard RENAME statement if needed */
 		else if (is_pathman_related_table_rename(parsetree,
-												 &relation_oid,
-												 &attr_number))
+												 &relation_oid))
+		{
 			PathmanRenameConstraint(relation_oid,
-									attr_number,
 									(const RenameStmt *) parsetree);
+		}
 
 		/* Override standard ALTER COLUMN TYPE statement if needed */
 		else if (is_pathman_related_alter_column_type(parsetree,
 													  &relation_oid,
 													  &attr_number,
-													  &part_type) &&
-				 part_type == PT_HASH)
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("cannot change type of column \"%s\""
-							" of table \"%s\" partitioned by HASH",
-							get_attname(relation_oid, attr_number),
-							get_rel_name(relation_oid))));
+													  &part_type))
+		{
+			if (part_type == PT_HASH)
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("cannot change type of column \"%s\""
+								" of table \"%s\" partitioned by HASH",
+								get_attname(relation_oid, attr_number),
+								get_rel_name(relation_oid))));
+
+			/* Don't forget to invalidate parsed partitioning expression */
+			pathman_config_invalidate_parsed_expression(relation_oid);
+		}
 	}
 
 	/* Call hooks set by other extensions if needed */

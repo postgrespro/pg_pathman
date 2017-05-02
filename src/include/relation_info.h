@@ -14,11 +14,16 @@
 
 #include "postgres.h"
 #include "access/attnum.h"
+#include "access/sysattr.h"
 #include "fmgr.h"
+#include "nodes/bitmapset.h"
+#include "nodes/nodes.h"
+#include "nodes/primnodes.h"
+#include "nodes/value.h"
 #include "port/atomics.h"
 #include "storage/lock.h"
 #include "utils/datum.h"
-#include "nodes/primnodes.h"
+#include "utils/lsyscache.h"
 
 
 /* Range bound */
@@ -82,7 +87,10 @@ FreeBound(Bound *bound, bool byval)
 }
 
 inline static int
-cmp_bounds(FmgrInfo *cmp_func, const Oid collid, const Bound *b1, const Bound *b2)
+cmp_bounds(FmgrInfo *cmp_func,
+		   const Oid collid,
+		   const Bound *b1,
+		   const Bound *b2)
 {
 	if (IsMinusInfinity(b1) || IsPlusInfinity(b2))
 		return -1;
@@ -135,11 +143,13 @@ typedef struct
 	Oid			   *children;		/* Oids of child partitions */
 	RangeEntry	   *ranges;			/* per-partition range entry or NULL */
 
-	const char	   *attname;		/* name of the partitioned column */
+	const char	   *expr_cstr;		/* original expression */
+	Node		   *expr;			/* planned expression */
+	List		   *expr_vars;		/* vars from expression, lazy */
+	Bitmapset	   *expr_atts;		/* attnums from expression */
 
-	AttrNumber		attnum;			/* partitioned column's index */
-	Oid				atttype;		/* partitioned column's type */
-	int32			atttypmod;		/* partitioned column type modifier */
+	Oid				atttype;		/* expression type */
+	int32			atttypmod;		/* expression type modifier */
 	bool			attbyval;		/* is partitioned column stored by value? */
 	int16			attlen;			/* length of the partitioned column's type */
 	int				attalign;		/* alignment of the part column's type */
@@ -148,6 +158,8 @@ typedef struct
 	Oid				cmp_proc,		/* comparison fuction for 'atttype' */
 					hash_proc;		/* hash function for 'atttype' */
 } PartRelationInfo;
+
+#define PART_EXPR_VARNO				( 1 )
 
 /*
  * PartParentInfo
@@ -220,17 +232,43 @@ PrelLastChild(const PartRelationInfo *prel)
 	return PrelChildrenCount(prel) - 1; /* last partition */
 }
 
+static inline List *
+PrelExpressionColumnNames(const PartRelationInfo *prel)
+{
+	List   *columns = NIL;
+	int		i = -1;
+
+	while ((i = bms_next_member(prel->expr_atts, i)) >= 0)
+	{
+		AttrNumber	attnum = i + FirstLowInvalidHeapAttributeNumber;
+		char	   *attname = get_attname(PrelParentRelid(prel), attnum);
+
+		columns = lappend(columns, makeString(attname));
+	}
+
+	return columns;
+}
+
 
 const PartRelationInfo *refresh_pathman_relation_info(Oid relid,
-													  PartType partitioning_type,
-													  const char *part_column_name,
+													  Datum *values,
 													  bool allow_incomplete);
-void invalidate_pathman_relation_info(Oid relid, bool *found);
+PartRelationInfo *invalidate_pathman_relation_info(Oid relid, bool *found);
 void remove_pathman_relation_info(Oid relid);
 const PartRelationInfo *get_pathman_relation_info(Oid relid);
 const PartRelationInfo *get_pathman_relation_info_after_lock(Oid relid,
 															 bool unlock_if_not_found,
 															 LockAcquireResult *lock_result);
+
+/* Partitioning expression routines */
+Node *parse_partitioning_expression(const Oid relid,
+									const char *expression,
+									char **query_string_out,
+									Node **parsetree_out);
+
+Datum plan_partitioning_expression(const Oid relid,
+								   const char *expr_cstr,
+								   Oid *expr_type);
 
 /* Global invalidation routines */
 void delay_pathman_shutdown(void);
@@ -245,12 +283,12 @@ Oid get_parent_of_partition(Oid partition, PartParentSearch *status);
 
 /* Bounds cache */
 void forget_bounds_of_partition(Oid partition);
-PartBoundInfo * get_bounds_of_partition(Oid partition,
-										const PartRelationInfo *prel);
+PartBoundInfo *get_bounds_of_partition(Oid partition,
+									   const PartRelationInfo *prel);
 
 /* Safe casts for PartType */
 PartType DatumGetPartType(Datum datum);
-char * PartTypeToCString(PartType parttype);
+char *PartTypeToCString(PartType parttype);
 
 /* PartRelationInfo checker */
 void shout_if_prel_is_invalid(const Oid parent_oid,
@@ -334,3 +372,4 @@ void init_relation_info_static_data(void);
 
 
 #endif /* RELATION_INFO_H */
+

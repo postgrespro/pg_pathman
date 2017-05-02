@@ -42,7 +42,8 @@ REGRESS = pathman_basic \
 		  pathman_runtime_nodes \
 		  pathman_update_trigger \
 		  pathman_updates \
-		  pathman_utility_stmt
+		  pathman_utility_stmt \
+		  pathman_expressions
 
 
 EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add

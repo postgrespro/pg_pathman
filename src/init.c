@@ -73,17 +73,14 @@ static void init_local_cache(void);
 static void fini_local_cache(void);
 static void read_pathman_config(void);
 
-
 static bool validate_range_opexpr(const Expr *expr,
 								  const PartRelationInfo *prel,
 								  const TypeCacheEntry *tce,
-								  const AttrNumber part_attno,
 								  Datum *lower, Datum *upper,
 								  bool *lower_null, bool *upper_null);
 
 static bool read_opexpr_const(const OpExpr *opexpr,
 							  const PartRelationInfo *prel,
-							  const AttrNumber part_attno,
 							  Datum *value);
 
 static int oid_cmp(const void *p1, const void *p2);
@@ -549,11 +546,10 @@ find_inheritance_children_array(Oid parentrelId,
  * NOTE: this function does not perform sanity checks at all.
  */
 char *
-build_check_constraint_name_relid_internal(Oid relid,
-										   AttrNumber attno)
+build_check_constraint_name_relid_internal(Oid relid)
 {
 	AssertArg(OidIsValid(relid));
-	return build_check_constraint_name_relname_internal(get_rel_name(relid), attno);
+	return build_check_constraint_name_relname_internal(get_rel_name(relid));
 }
 
 /*
@@ -561,10 +557,9 @@ build_check_constraint_name_relid_internal(Oid relid,
  * NOTE: this function does not perform sanity checks at all.
  */
 char *
-build_check_constraint_name_relname_internal(const char *relname,
-											 AttrNumber attno)
+build_check_constraint_name_relname_internal(const char *relname)
 {
-	return psprintf("pathman_%s_%u_check", relname, attno);
+	return psprintf("pathman_%s_check", relname);
 }
 
 /*
@@ -604,12 +599,11 @@ build_update_trigger_func_name_internal(Oid relid)
 
 /*
  * Check that relation 'relid' is partitioned by pg_pathman.
- *
- * Extract tuple into 'values' and 'isnull' if they're provided.
+ * Extract tuple into 'values', 'isnull', 'xmin', 'iptr' if they're provided.
  */
 bool
 pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
-								 TransactionId *xmin)
+								 TransactionId *xmin, ItemPointerData* iptr)
 {
 	Relation		rel;
 	HeapScanDesc	scan;
@@ -648,7 +642,7 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 
 			/* Perform checks for non-NULL columns */
 			Assert(!isnull[Anum_pathman_config_partrel - 1]);
-			Assert(!isnull[Anum_pathman_config_attname - 1]);
+			Assert(!isnull[Anum_pathman_config_expression - 1]);
 			Assert(!isnull[Anum_pathman_config_parttype - 1]);
 		}
 
@@ -666,6 +660,10 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 			Assert(!isnull);
 			*xmin = DatumGetTransactionId(value);
 		}
+
+		/* Set ItemPointer if necessary */
+		if (iptr)
+			*iptr = htup->t_self;
 	}
 
 	/* Clean resources */
@@ -679,9 +677,78 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 	return contains_rel;
 }
 
+/* Invalidate parsed partitioning expression in PATHMAN_CONFIG */
+void
+pathman_config_invalidate_parsed_expression(Oid relid)
+{
+	ItemPointerData		iptr; /* pointer to tuple */
+	Datum				values[Natts_pathman_config];
+	bool				nulls[Natts_pathman_config];
+
+	/* Check that PATHMAN_CONFIG table contains this relation */
+	if (pathman_config_contains_relation(relid, values, nulls, NULL, &iptr))
+	{
+		Relation	rel;
+		HeapTuple	new_htup;
+
+		/* Reset parsed expression */
+		values[Anum_pathman_config_expression_p - 1] = (Datum) 0;
+		nulls[Anum_pathman_config_expression_p - 1]  = true;
+
+		/* Reset expression type */
+		values[Anum_pathman_config_atttype - 1] = (Datum) 0;
+		nulls[Anum_pathman_config_atttype - 1]  = true;
+
+		rel = heap_open(get_pathman_config_relid(false), RowExclusiveLock);
+
+		/* Form new tuple and perform an update */
+		new_htup = heap_form_tuple(RelationGetDescr(rel), values, nulls);
+		simple_heap_update(rel, &iptr, new_htup);
+		CatalogUpdateIndexes(rel, new_htup);
+
+		heap_close(rel, RowExclusiveLock);
+	}
+}
+
+/* Refresh parsed partitioning expression in PATHMAN_CONFIG */
+void
+pathman_config_refresh_parsed_expression(Oid relid,
+										 Datum *values,
+										 bool *isnull,
+										 ItemPointer iptr)
+{
+	char				   *expr_cstr;
+	Oid						expr_type;
+	Datum					expr_datum;
+
+	Relation				rel;
+	HeapTuple				htup_new;
+
+	/* get and parse expression */
+	expr_cstr = TextDatumGetCString(values[Anum_pathman_config_expression - 1]);
+	expr_datum = plan_partitioning_expression(relid, expr_cstr, &expr_type);
+	pfree(expr_cstr);
+
+	/* prepare tuple values */
+	values[Anum_pathman_config_expression_p - 1] = expr_datum;
+	isnull[Anum_pathman_config_expression_p - 1] = false;
+
+	values[Anum_pathman_config_atttype - 1] = ObjectIdGetDatum(expr_type);
+	isnull[Anum_pathman_config_atttype - 1] = false;
+
+	rel = heap_open(get_pathman_config_relid(false), RowExclusiveLock);
+
+	htup_new = heap_form_tuple(RelationGetDescr(rel), values, isnull);
+	simple_heap_update(rel, iptr, htup_new);
+	CatalogUpdateIndexes(rel, htup_new);
+
+	heap_close(rel, RowExclusiveLock);
+}
+
+
 /*
- * Loads additional pathman parameters like 'enable_parent' or 'auto'
- * from PATHMAN_CONFIG_PARAMS.
+ * Loads additional pathman parameters like 'enable_parent'
+ * or 'auto' from PATHMAN_CONFIG_PARAMS.
  */
 bool
 read_pathman_params(Oid relid, Datum *values, bool *isnull)
@@ -724,6 +791,7 @@ read_pathman_params(Oid relid, Datum *values, bool *isnull)
 	return row_found;
 }
 
+
 /*
  * Go through the PATHMAN_CONFIG table and create PartRelationInfo entries.
  */
@@ -762,13 +830,13 @@ read_pathman_config(void)
 		/* These attributes are marked as NOT NULL, check anyway */
 		Assert(!isnull[Anum_pathman_config_partrel - 1]);
 		Assert(!isnull[Anum_pathman_config_parttype - 1]);
-		Assert(!isnull[Anum_pathman_config_attname - 1]);
+		Assert(!isnull[Anum_pathman_config_expression - 1]);
 
 		/* Extract values from Datums */
 		relid = DatumGetObjectId(values[Anum_pathman_config_partrel - 1]);
 
 		/* Check that relation 'relid' exists */
-		if (get_rel_type_id(relid) == InvalidOid)
+		if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
 		{
 			DisablePathman(); /* disable pg_pathman since config is broken */
 			ereport(ERROR,
@@ -790,17 +858,15 @@ read_pathman_config(void)
 
 /*
  * Validates range constraint. It MUST have one of the following formats:
- *
- *		VARIABLE >= CONST AND VARIABLE < CONST
- *		VARIABLE >= CONST
- *		VARIABLE < CONST
+ *		1) EXPRESSION >= CONST AND EXPRESSION < CONST
+ *		2) EXPRESSION >= CONST
+ *		3) EXPRESSION < CONST
  *
  * Writes 'lower' & 'upper' and 'lower_null' & 'upper_null' values on success.
  */
 bool
 validate_range_constraint(const Expr *expr,
 						  const PartRelationInfo *prel,
-						  const AttrNumber part_attno,
 						  Datum *lower, Datum *upper,
 						  bool *lower_null, bool *upper_null)
 {
@@ -812,7 +878,7 @@ validate_range_constraint(const Expr *expr,
 	/* Set default values */
 	*lower_null = *upper_null = true;
 
-	/* Find type cache entry for partitioned column's type */
+	/* Find type cache entry for partitioned expression type */
 	tce = lookup_type_cache(prel->atttype, TYPECACHE_BTREE_OPFAMILY);
 
 	/* Is it an AND clause? */
@@ -827,7 +893,7 @@ validate_range_constraint(const Expr *expr,
 			const OpExpr *opexpr = (const OpExpr *) lfirst(lc);
 
 			/* Exit immediately if something is wrong */
-			if (!validate_range_opexpr((const Expr *) opexpr, prel, tce, part_attno,
+			if (!validate_range_opexpr((const Expr *) opexpr, prel, tce,
 									   lower, upper, lower_null, upper_null))
 				return false;
 		}
@@ -837,16 +903,19 @@ validate_range_constraint(const Expr *expr,
 	}
 
 	/* It might be just an OpExpr clause */
-	else return validate_range_opexpr(expr, prel, tce, part_attno,
+	else return validate_range_opexpr(expr, prel, tce,
 									  lower, upper, lower_null, upper_null);
 }
 
-/* Validates a single expression of kind VAR >= CONST | VAR < CONST */
+/*
+ * Validates a single expression of kind:
+ *		1) EXPRESSION >= CONST
+ *		2) EXPRESSION < CONST
+ */
 static bool
 validate_range_opexpr(const Expr *expr,
 					  const PartRelationInfo *prel,
 					  const TypeCacheEntry *tce,
-					  const AttrNumber part_attno,
 					  Datum *lower, Datum *upper,
 					  bool *lower_null, bool *upper_null)
 {
@@ -864,7 +933,7 @@ validate_range_opexpr(const Expr *expr,
 	opexpr = (const OpExpr *) expr;
 
 	/* Try reading Const value */
-	if (!read_opexpr_const(opexpr, prel, part_attno, &val))
+	if (!read_opexpr_const(opexpr, prel, &val))
 		return false;
 
 	/* Examine the strategy (expect '>=' OR '<') */
@@ -901,20 +970,15 @@ validate_range_opexpr(const Expr *expr,
 
 /*
  * Reads const value from expressions of kind:
- *		1) VAR >= CONST
- *		2) VAR <  CONST
- *		3) RELABELTYPE(VAR) >= CONST
- *		4) RELABELTYPE(VAR) <  CONST
+ *		1) EXPRESSION >= CONST
+ *		2) EXPRESSION < CONST
  */
 static bool
 read_opexpr_const(const OpExpr *opexpr,
 				  const PartRelationInfo *prel,
-				  const AttrNumber part_attno,
 				  Datum *value)
 {
-	const Node	   *left;
 	const Node	   *right;
-	const Var	   *part_attr;	/* partitioned column */
 	const Const	   *boundary;
 	bool			cast_success;
 
@@ -923,38 +987,7 @@ read_opexpr_const(const OpExpr *opexpr,
 		return false;
 
 	/* Fetch args of expression */
-	left = linitial(opexpr->args);
 	right = lsecond(opexpr->args);
-
-	/* Examine LEFT argument */
-	switch (nodeTag(left))
-	{
-		case T_RelabelType:
-			{
-				Var *var = (Var *) ((RelabelType *) left)->arg;
-
-				/* This node should contain Var */
-				if (!IsA(var, Var))
-					return false;
-
-				/* Update LEFT */
-				left = (Node *) var;
-			}
-			/* FALL THROUGH (no break) */
-
-		case T_Var:
-			{
-				part_attr = (Var *) left;
-
-				/* VAR.attno == partitioned attribute number */
-				if (part_attr->varoattno != part_attno)
-					return false;
-			}
-			break;
-
-		default:
-			return false;
-	}
 
 	/* Examine RIGHT argument */
 	switch (nodeTag(right))
@@ -1026,7 +1059,6 @@ read_opexpr_const(const OpExpr *opexpr,
 bool
 validate_hash_constraint(const Expr *expr,
 						 const PartRelationInfo *prel,
-						 const AttrNumber part_attno,
 						 uint32 *part_idx)
 {
 	const TypeCacheEntry   *tce;
@@ -1056,7 +1088,7 @@ validate_hash_constraint(const Expr *expr,
 
 	if (list_length(get_hash_expr->args) == 2)
 	{
-		Node   *first = linitial(get_hash_expr->args);	/* arg #1: TYPE_HASH_PROC(VALUE) */
+		Node   *first = linitial(get_hash_expr->args);	/* arg #1: TYPE_HASH_PROC(EXPRESSION) */
 		Node   *second = lsecond(get_hash_expr->args);	/* arg #2: PARTITIONS_COUNT */
 		Const  *cur_partition_idx;						/* hash value for this partition */
 		Node   *hash_arg;
@@ -1078,30 +1110,8 @@ validate_hash_constraint(const Expr *expr,
 		hash_arg = (Node *) linitial(type_hash_proc_expr->args);
 
 		/* Check arg of TYPE_HASH_PROC() */
-		switch (nodeTag(hash_arg))
-		{
-			case T_RelabelType:
-				{
-					hash_arg = (Node *) ((RelabelType *) hash_arg)->arg;
-				}
-				/* FALL THROUGH (no break) */
-
-			case T_Var:
-				{
-					Var *var = (Var *) hash_arg;
-
-					if (!IsA(var, Var))
-						return false;
-
-					/* Check that 'var' is the partitioning key attribute */
-					if (var->varoattno != part_attno)
-						return false;
-				}
-				break;
-
-			default:
-				return false;
-		}
+		if (!expr_matches_operand(prel->expr, hash_arg))
+			return false;
 
 		/* Check that PARTITIONS_COUNT is equal to total amount of partitions */
 		if (DatumGetUInt32(((Const *) second)->constvalue) != PrelChildrenCount(prel))

@@ -42,6 +42,9 @@ PG_MODULE_MAGIC;
 Oid		pathman_config_relid = InvalidOid,
 		pathman_config_params_relid = InvalidOid;
 
+/* Used to disable hooks temporarily */
+bool	pathman_hooks_enabled = true;
+
 
 /* pg module functions */
 void _PG_init(void);
@@ -149,7 +152,7 @@ _PG_init(void)
 	/* Apply initial state */
 	restore_pathman_init_state(&temp_init_state);
 
-	/* Initialize 'next' hook pointers */
+	/* Set basic hooks */
 	set_rel_pathlist_hook_next		= set_rel_pathlist_hook;
 	set_rel_pathlist_hook			= pathman_rel_pathlist_hook;
 	set_join_pathlist_next			= set_join_pathlist_hook;
@@ -855,8 +858,7 @@ static WrapperNode *
 handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 {
 	WrapperNode *result = (WrapperNode *) palloc(sizeof(WrapperNode));
-	Node		*varnode = (Node *) linitial(expr->args);
-	Var			*var;
+	Node		*exprnode = (Node *) linitial(expr->args);
 	Node		*arraynode = (Node *) lsecond(expr->args);
 	const PartRelationInfo *prel = context->prel;
 
@@ -864,24 +866,9 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 	result->args = NIL;
 	result->paramsel = 0.0;
 
-	Assert(varnode != NULL);
+	Assert(exprnode != NULL);
 
-	/* If variable is not the partition key then skip it */
-	if (IsA(varnode, Var) || IsA(varnode, RelabelType))
-	{
-		var = !IsA(varnode, RelabelType) ?
-			(Var *) varnode :
-			(Var *) ((RelabelType *) varnode)->arg;
-
-		/* Skip if base types or attribute numbers do not match */
-		if (getBaseType(var->vartype) != getBaseType(prel->atttype) ||
-			var->varoattno != prel->attnum ||	/* partitioned attribute */
-			var->varno != context->prel_varno)	/* partitioned table */
-		{
-			goto handle_arrexpr_return;
-		}
-	}
-	else
+	if (!expr_matches_operand(context->prel_expr, exprnode))
 		goto handle_arrexpr_return;
 
 	if (arraynode && IsA(arraynode, Const) &&
@@ -1025,6 +1012,9 @@ handle_opexpr(const OpExpr *expr, WalkerContext *context)
 			}
 			else if (IsA(param, Param) || IsA(param, Var))
 			{
+				if (IsA(param, Param))
+					context->found_params = true;
+
 				handle_binary_opexpr_param(prel, result, var);
 				return result;
 			}
@@ -1043,15 +1033,8 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 {
 	int						strategy;
 	TypeCacheEntry		   *tce;
-	Oid						vartype;
 	const OpExpr		   *expr = (const OpExpr *) result->orig;
 	const PartRelationInfo *prel = context->prel;
-
-	Assert(IsA(varnode, Var) || IsA(varnode, RelabelType));
-
-	vartype = !IsA(varnode, RelabelType) ?
-			((Var *) varnode)->vartype :
-			((RelabelType *) varnode)->resulttype;
 
 	/* Exit if Constant is NULL */
 	if (c->constisnull)
@@ -1061,7 +1044,7 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 		return;
 	}
 
-	tce = lookup_type_cache(vartype, TYPECACHE_BTREE_OPFAMILY);
+	tce = lookup_type_cache(prel->atttype, TYPECACHE_BTREE_OPFAMILY);
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
 
 	/* There's no strategy for this operator, go to end */
@@ -1138,25 +1121,19 @@ handle_binary_opexpr_param(const PartRelationInfo *prel,
 	const OpExpr	   *expr = (const OpExpr *) result->orig;
 	TypeCacheEntry	   *tce;
 	int					strategy;
-	Oid					vartype;
-
-	Assert(IsA(varnode, Var) || IsA(varnode, RelabelType));
-
-	vartype = !IsA(varnode, RelabelType) ?
-			((Var *) varnode)->vartype :
-			((RelabelType *) varnode)->resulttype;
 
 	/* Determine operator type */
-	tce = lookup_type_cache(vartype, TYPECACHE_BTREE_OPFAMILY);
+	tce = lookup_type_cache(prel->atttype, TYPECACHE_BTREE_OPFAMILY);
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
 
 	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
 	result->paramsel = estimate_paramsel_using_prel(prel, strategy);
 }
 
+
 /*
  * Checks if expression is a KEY OP PARAM or PARAM OP KEY, where KEY is
- * partition key (it could be Var or RelableType) and PARAM is whatever.
+ * partition expression and PARAM is whatever.
  *
  * NOTE: returns false if partition key is not in expression.
  */
@@ -1168,43 +1145,21 @@ pull_var_param(const WalkerContext *ctx,
 {
 	Node   *left = linitial(expr->args),
 		   *right = lsecond(expr->args);
-	Var	   *v = NULL;
 
-	/* Check the case when variable is on the left side */
-	if (IsA(left, Var) || IsA(left, RelabelType))
+	if (expr_matches_operand(left, ctx->prel_expr))
 	{
-		v = !IsA(left, RelabelType) ?
-						(Var *) left :
-						(Var *) ((RelabelType *) left)->arg;
-
-		/* Check if 'v' is partitioned column of 'prel' */
-		if (v->varoattno == ctx->prel->attnum &&
-			v->varno == ctx->prel_varno)
-		{
-			*var_ptr = left;
-			*param_ptr = right;
-			return true;
-		}
+		*var_ptr = left;
+		*param_ptr = right;
+		return true;
 	}
 
-	/* ... variable is on the right side */
-	if (IsA(right, Var) || IsA(right, RelabelType))
+	if (expr_matches_operand(right, ctx->prel_expr))
 	{
-		v = !IsA(right, RelabelType) ?
-						(Var *) right :
-						(Var *) ((RelabelType *) right)->arg;
-
-		/* Check if 'v' is partitioned column of 'prel' */
-		if (v->varoattno == ctx->prel->attnum &&
-			v->varno == ctx->prel_varno)
-		{
-			*var_ptr = right;
-			*param_ptr = left;
-			return true;
-		}
+		*var_ptr = right;
+		*param_ptr = left;
+		return true;
 	}
 
-	/* Variable isn't a partitionig key */
 	return false;
 }
 

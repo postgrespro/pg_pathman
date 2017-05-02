@@ -38,9 +38,9 @@ SELECT set_interval('test_interval.abc', 1000);
 
 INSERT INTO test_interval.abc VALUES (250);
 SELECT * FROM pathman_config;
-      partrel      | attname | parttype | range_interval 
--------------------+---------+----------+----------------
- test_interval.abc | id      |        2 | 1000
+      partrel      | attname | parttype | range_interval |                                                     expression_p                                                      | atttype 
+-------------------+---------+----------+----------------+-----------------------------------------------------------------------------------------------------------------------+---------
+ test_interval.abc | id      |        2 | 1000           | {VAR :varno 1 :varattno 1 :vartype 21 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 1 :location 8} |      21
 (1 row)
 
 DROP TABLE test_interval.abc CASCADE;
@@ -81,9 +81,9 @@ SELECT set_interval('test_interval.abc', 1000);
 
 INSERT INTO test_interval.abc VALUES (250);
 SELECT * FROM pathman_config;
-      partrel      | attname | parttype | range_interval 
--------------------+---------+----------+----------------
- test_interval.abc | id      |        2 | 1000
+      partrel      | attname | parttype | range_interval |                                                     expression_p                                                      | atttype 
+-------------------+---------+----------+----------------+-----------------------------------------------------------------------------------------------------------------------+---------
+ test_interval.abc | id      |        2 | 1000           | {VAR :varno 1 :varattno 1 :vartype 23 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 1 :location 8} |      23
 (1 row)
 
 DROP TABLE test_interval.abc CASCADE;
@@ -124,9 +124,9 @@ SELECT set_interval('test_interval.abc', 1000);
 
 INSERT INTO test_interval.abc VALUES (250);
 SELECT * FROM pathman_config;
-      partrel      | attname | parttype | range_interval 
--------------------+---------+----------+----------------
- test_interval.abc | id      |        2 | 1000
+      partrel      | attname | parttype | range_interval |                                                     expression_p                                                      | atttype 
+-------------------+---------+----------+----------------+-----------------------------------------------------------------------------------------------------------------------+---------
+ test_interval.abc | id      |        2 | 1000           | {VAR :varno 1 :varattno 1 :vartype 20 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 1 :location 8} |      20
 (1 row)
 
 DROP TABLE test_interval.abc CASCADE;
@@ -157,9 +157,9 @@ SELECT set_interval('test_interval.abc', '1 month'::INTERVAL);
 (1 row)
 
 SELECT * FROM pathman_config;
-      partrel      | attname | parttype | range_interval 
--------------------+---------+----------+----------------
- test_interval.abc | dt      |        2 | @ 1 mon
+      partrel      | attname | parttype | range_interval |                                                      expression_p                                                       | atttype 
+-------------------+---------+----------+----------------+-------------------------------------------------------------------------------------------------------------------------+---------
+ test_interval.abc | dt      |        2 | @ 1 mon        | {VAR :varno 1 :varattno 1 :vartype 1082 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 1 :location 8} |    1082
 (1 row)
 
 DROP TABLE test_interval.abc CASCADE;
