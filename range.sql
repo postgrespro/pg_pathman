@@ -154,8 +154,9 @@ BEGIN
 	END IF;
 
 	/* Insert new entry to pathman config */
+	EXECUTE format('ANALYZE %s', parent_relid);
 	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression,
-		p_interval::TEXT, false);
+		p_interval::TEXT);
 
 	/* Create sequence for child partitions names */
 	PERFORM @extschema@.create_or_replace_sequence(parent_relid);
@@ -251,8 +252,9 @@ BEGIN
 	END IF;
 
 	/* Insert new entry to pathman config */
+	EXECUTE format('ANALYZE %s', parent_relid);
 	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression,
-		p_interval::TEXT, false);
+		p_interval::TEXT);
 
 	/* Create sequence for child partitions names */
 	PERFORM @extschema@.create_or_replace_sequence(parent_relid);
@@ -310,7 +312,8 @@ BEGIN
 										 bounds[array_length(bounds, 1) - 1]);
 
 	/* Insert new entry to pathman config */
-	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression, NULL, false, 2);
+	EXECUTE format('ANALYZE %s', parent_relid);
+	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression, NULL, 2);
 
 	/* Create sequence for child partitions names */
 	PERFORM @extschema@.create_or_replace_sequence(parent_relid);
@@ -360,8 +363,9 @@ BEGIN
 										 end_value);
 
 	/* Insert new entry to pathman config */
+	EXECUTE format('ANALYZE %s', parent_relid);
 	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression,
-		p_interval::TEXT, false);
+		p_interval::TEXT);
 
 	/* Create sequence for child partitions names */
 	PERFORM @extschema@.create_or_replace_sequence(parent_relid);
@@ -417,8 +421,9 @@ BEGIN
 										 end_value);
 
 	/* Insert new entry to pathman config */
+	EXECUTE format('ANALYZE %s', parent_relid);
 	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression,
-		p_interval::TEXT, false);
+		p_interval::TEXT);
 
 	/* Create sequence for child partitions names */
 	PERFORM @extschema@.create_or_replace_sequence(parent_relid);

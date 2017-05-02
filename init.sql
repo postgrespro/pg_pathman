@@ -862,9 +862,8 @@ LANGUAGE C STRICT;
  */
 CREATE OR REPLACE FUNCTION @extschema@.add_to_pathman_config(
 	parent_relid		REGCLASS,
-	attname				TEXT,
+	expression			TEXT,
 	range_interval		TEXT DEFAULT NULL,
-	refresh_part_info	BOOL DEFAULT TRUE,
 	parttype			INT4 DEFAULT 0
 )
 RETURNS BOOLEAN AS 'pg_pathman', 'add_to_pathman_config'

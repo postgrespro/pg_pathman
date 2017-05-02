@@ -35,7 +35,8 @@ BEGIN
 	PERFORM @extschema@.common_relation_checks(parent_relid, expression);
 
 	/* Insert new entry to pathman config */
-	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression, NULL, false);
+	EXECUTE format('ANALYZE %s', parent_relid);
+	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression, NULL);
 
 	/* Create partitions */
 	PERFORM @extschema@.create_hash_partitions_internal(parent_relid,

@@ -22,6 +22,7 @@
 #include "access/nbtree.h"
 #include "access/htup_details.h"
 #include "catalog/indexing.h"
+#include "catalog/pg_inherits_fn.h"
 #include "catalog/pg_trigger.h"
 #include "catalog/pg_type.h"
 #include "commands/tablespace.h"
@@ -709,7 +710,6 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	Relation			pathman_config;
 	Datum				values[Natts_pathman_config];
 	bool				isnull[Natts_pathman_config];
-	bool				refresh_part_info;
 	HeapTuple			htup;
 
 	Oid					expr_type;
@@ -745,12 +745,22 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	}
 
 	/* Select partitioning type */
-	parttype = PG_GETARG_INT32(4);
+	parttype = PG_GETARG_INT32(3);
 	if ((parttype != PT_HASH) && (parttype != PT_RANGE))
 		parttype = PG_ARGISNULL(2) ? PT_HASH : PT_RANGE;
 
 	/* Parse and check expression */
 	expr_datum = plan_partitioning_expression(relid, expression, &expr_type);
+
+	/* Expression for range partitions should be hashable */
+	if (parttype == PT_HASH)
+	{
+		TypeCacheEntry *tce;
+
+		tce = lookup_type_cache(expr_type, TYPECACHE_HASH_PROC);
+		if (tce->hash_proc == InvalidOid)
+			elog(ERROR, "partitioning expression should be hashable");
+	}
 
 	/*
 	 * Initialize columns (partrel, attname, parttype, range_interval).
@@ -790,10 +800,8 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 
 	heap_close(pathman_config, RowExclusiveLock);
 
-	/* FIXME: check pg_inherits instead of this argument */
-	refresh_part_info = PG_GETARG_BOOL(3);
-
-	if (refresh_part_info)
+	/* update caches only if this relation has children */
+	if (has_subclass(relid))
 	{
 		/* Now try to create a PartRelationInfo */
 		PG_TRY();
