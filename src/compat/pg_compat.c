@@ -13,14 +13,16 @@
 
 #include "compat/pg_compat.h"
 
+#include "utils.h"
+
 #include "access/htup_details.h"
+#include "catalog/pg_class.h"
 #include "catalog/pg_proc.h"
 #include "foreign/fdwapi.h"
 #include "optimizer/clauses.h"
 #include "optimizer/pathnode.h"
 #include "optimizer/prep.h"
 #include "port.h"
-#include "utils.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 

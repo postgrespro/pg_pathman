@@ -11,7 +11,6 @@
 #include "compat/pg_compat.h"
 
 #include "relation_info.h"
-#include "partition_creation.h"
 #include "init.h"
 #include "utils.h"
 #include "xact_handling.h"
@@ -24,6 +23,7 @@
 #include "catalog/pg_inherits.h"
 #include "catalog/pg_type.h"
 #include "miscadmin.h"
+#include "nodes/nodeFuncs.h"
 #include "optimizer/clauses.h"
 #include "optimizer/var.h"
 #include "parser/parser.h"
@@ -33,7 +33,6 @@
 #include "utils/fmgroids.h"
 #include "utils/hsearch.h"
 #include "utils/memutils.h"
-#include "utils/snapmgr.h"
 #include "utils/syscache.h"
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"

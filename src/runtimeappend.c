@@ -10,8 +10,6 @@
 
 #include "runtimeappend.h"
 
-#include "postgres.h"
-#include "utils/memutils.h"
 #include "utils/guc.h"
 
 

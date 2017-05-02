@@ -13,10 +13,8 @@
 #include "pathman.h"
 #include "partition_creation.h"
 #include "partition_filter.h"
-#include "planner_tree_modification.h"
 #include "utils.h"
 
-#include "access/htup_details.h"
 #include "catalog/pg_type.h"
 #include "foreign/fdwapi.h"
 #include "foreign/foreign.h"
@@ -24,7 +22,6 @@
 #include "rewrite/rewriteManip.h"
 #include "utils/guc.h"
 #include "utils/memutils.h"
-#include "utils/lsyscache.h"
 #include "utils/syscache.h"
 
 

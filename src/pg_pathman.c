@@ -16,7 +16,6 @@
 #include "hooks.h"
 #include "pathman.h"
 #include "partition_filter.h"
-#include "planner_tree_modification.h"
 #include "runtimeappend.h"
 #include "runtime_merge_append.h"
 

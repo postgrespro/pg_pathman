@@ -13,12 +13,9 @@
 #include "relation_info.h"
 #include "utils.h"
 
-#include "catalog/pg_type.h"
 #include "utils/builtins.h"
 #include "utils/typcache.h"
 #include "utils/lsyscache.h"
-#include "utils/builtins.h"
-#include "utils/array.h"
 
 
 /* Function declarations */

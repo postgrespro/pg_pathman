@@ -13,9 +13,8 @@
 #include "runtimeappend.h"
 #include "utils.h"
 
-#include "access/sysattr.h"
+#include "nodes/nodeFuncs.h"
 #include "optimizer/clauses.h"
-#include "optimizer/restrictinfo.h"
 #include "optimizer/tlist.h"
 #include "optimizer/var.h"
 #include "rewrite/rewriteManip.h"
