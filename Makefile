@@ -14,7 +14,7 @@ PG_CPPFLAGS = -I$(CURDIR)/src/include
 
 EXTENSION = pg_pathman
 
-EXTVERSION = 1.3
+EXTVERSION = 1.4
 
 DATA_built = pg_pathman--$(EXTVERSION).sql
 

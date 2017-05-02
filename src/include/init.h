@@ -147,10 +147,10 @@ simpify_mcxt_name(MemoryContext mcxt)
 
 
 /* Lowest version of Pl/PgSQL frontend compatible with internals (0xAA_BB_CC) */
-#define LOWEST_COMPATIBLE_FRONT		0x010300
+#define LOWEST_COMPATIBLE_FRONT		0x010400
 
 /* Current version of native C library (0xAA_BB_CC) */
-#define CURRENT_LIB_VERSION			0x010300
+#define CURRENT_LIB_VERSION			0x010400
 
 
 void *pathman_cache_search_relid(HTAB *cache_table,
