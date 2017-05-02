@@ -108,9 +108,9 @@ check_security_policy_internal(Oid relid, Oid role)
 
 /* Compare clause operand with expression */
 bool
-expr_matches_operand(Node *operand, Node *expr)
+match_expr_to_operand(Node *expr, Node *operand)
 {
-	/* strip relabeling for both operand and expr */
+	/* Strip relabeling for both operand and expr */
 	if (operand && IsA(operand, RelabelType))
 		operand = (Node *) ((RelabelType *) operand)->arg;
 

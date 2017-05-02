@@ -1109,7 +1109,7 @@ validate_hash_constraint(const Expr *expr,
 		hash_arg = (Node *) linitial(type_hash_proc_expr->args);
 
 		/* Check arg of TYPE_HASH_PROC() */
-		if (!expr_matches_operand(prel->expr, hash_arg))
+		if (!match_expr_to_operand(prel->expr, hash_arg))
 			return false;
 
 		/* Check that PARTITIONS_COUNT is equal to total amount of partitions */

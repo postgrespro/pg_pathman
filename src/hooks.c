@@ -130,12 +130,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	}
 
 	/* Make copy of partitioning expression and fix Var's  varno attributes */
-	expr = inner_prel->expr;
-	if (innerrel->relid != 1)
-	{
-		expr = copyObject(expr);
-		ChangeVarNodes(expr, 1, innerrel->relid, 0);
-	}
+	expr = PrelExpressionForRelid(inner_prel, innerrel->relid);
 
 	paramsel = 1.0;
 	foreach (lc, joinclauses)
@@ -196,9 +191,9 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		innerrel->ppilist = saved_ppi_list;
 
 		/* Skip ppi->ppi_clauses don't reference partition attribute */
-		if (!(ppi && get_partitioned_attr_clauses(ppi->ppi_clauses,
-												  inner_prel,
-												  innerrel->relid)))
+		if (!(ppi && get_partitioning_clauses(ppi->ppi_clauses,
+											  inner_prel,
+											  innerrel->relid)))
 			continue;
 
 		inner = create_runtimeappend_path(root, cur_inner_path, ppi, paramsel);
@@ -319,9 +314,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		bool			modify_append_nodes;
 
 		/* Make copy of partitioning expression and fix Var's  varno attributes */
-		expr = copyObject(prel->expr);
-		if (rti != 1)
-			ChangeVarNodes(expr, 1, rti, 0);
+		expr = PrelExpressionForRelid(prel, rti);
 
 		if (prel->parttype == PT_RANGE)
 		{

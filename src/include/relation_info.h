@@ -21,6 +21,7 @@
 #include "nodes/primnodes.h"
 #include "nodes/value.h"
 #include "port/atomics.h"
+#include "rewrite/rewriteManip.h"
 #include "storage/lock.h"
 #include "utils/datum.h"
 #include "utils/lsyscache.h"
@@ -207,7 +208,7 @@ typedef enum
 
 
 /*
- * PartRelationInfo field access macros.
+ * PartRelationInfo field access macros & functions.
  */
 
 #define PrelParentRelid(prel)		( (prel)->key )
@@ -247,6 +248,21 @@ PrelExpressionColumnNames(const PartRelationInfo *prel)
 	}
 
 	return columns;
+}
+
+static inline Node *
+PrelExpressionForRelid(const PartRelationInfo *prel, Index rel_index)
+{
+	Node *expr;
+
+	if (rel_index != PART_EXPR_VARNO)
+	{
+		expr = copyObject(prel->expr);
+		ChangeVarNodes(expr, PART_EXPR_VARNO, rel_index, 0);
+	}
+	else expr = prel->expr;
+
+	return expr;
 }
 
 

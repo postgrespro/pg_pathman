@@ -315,65 +315,41 @@ unpack_runtimeappend_private(RuntimeAppendState *scan_state, CustomScan *cscan)
 	scan_state->enable_parent = (bool) linitial_int(lthird(runtimeappend_private));
 }
 
-struct check_clause_context
-{
-	Node	*prel_expr;
-	int count;
-};
 
 /* Check that one of arguments of OpExpr is expression */
 static bool
-check_clause_for_expression(Node *node, struct check_clause_context *ctx)
+clause_contains_prel_expr(Node *node, Node *prel_expr)
 {
 	if (node == NULL)
 		return false;
 
-	if (IsA(node, OpExpr))
-	{
-		OpExpr *expr	= (OpExpr *) node;
-		Node   *left	= linitial(expr->args),
-			   *right	= lsecond(expr->args);
+	if (match_expr_to_operand(node, prel_expr))
+			return true;
 
-		if (expr_matches_operand(left, ctx->prel_expr))
-			ctx->count += 1;
-
-		if (expr_matches_operand(right, ctx->prel_expr))
-			ctx->count += 1;
-
-		return false;
-	}
-
-	return expression_tree_walker(node, check_clause_for_expression, (void *) ctx);
+	return expression_tree_walker(node, clause_contains_prel_expr, prel_expr);
 }
 
 /*
  * Filter all available clauses and extract relevant ones.
  */
 List *
-get_partitioned_attr_clauses(List *restrictinfo_list,
-							 const PartRelationInfo *prel,
-							 Index partitioned_rel)
+get_partitioning_clauses(List *restrictinfo_list,
+						 const PartRelationInfo *prel,
+						 Index partitioned_rel)
 {
 	List	   *result = NIL;
 	ListCell   *l;
 
 	foreach(l, restrictinfo_list)
 	{
-		RestrictInfo				   *rinfo = (RestrictInfo *) lfirst(l);
-		struct check_clause_context		ctx;
+		RestrictInfo   *rinfo = (RestrictInfo *) lfirst(l);
+		Node		   *prel_expr;
 
 		Assert(IsA(rinfo, RestrictInfo));
 
-		ctx.count = 0;
-		ctx.prel_expr = prel->expr;
-		if (partitioned_rel != 1)
-		{
-			ctx.prel_expr = copyObject(prel->expr);
-			ChangeVarNodes(ctx.prel_expr, 1, partitioned_rel, 0);
-		}
-		check_clause_for_expression((Node *) rinfo->clause, &ctx);
+		prel_expr = PrelExpressionForRelid(prel, partitioned_rel);
 
-		if (ctx.count == 1)
+		if (clause_contains_prel_expr((Node *) rinfo->clause, prel_expr))
 			result = lappend(result, rinfo->clause);
 	}
 	return result;
@@ -591,7 +567,7 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 	/* Since we're not scanning any real table directly */
 	cscan->scan.scanrelid = 0;
 
-	cscan->custom_exprs = get_partitioned_attr_clauses(clauses, prel, rel->relid);
+	cscan->custom_exprs = get_partitioning_clauses(clauses, prel, rel->relid);
 	cscan->custom_plans = custom_plans;
 	cscan->methods = scan_methods;
 
