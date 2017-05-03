@@ -51,3 +51,6 @@ UPDATE test.range_rel SET dt = '2016-12-01' WHERE dt >= '2015-10-10' AND dt <= '
 SELECT COUNT(*) FROM test.range_rel;
 SELECT COUNT(*) FROM test.range_rel_1;
 SELECT COUNT(*) FROM test.range_rel_2;
+
+DROP SCHEMA test CASCADE;
+DROP EXTENSION pg_pathman CASCADE;

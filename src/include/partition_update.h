@@ -22,6 +22,8 @@
 #include "nodes/extensible.h"
 #endif
 
+#define UPDATE_NODE_DESCRIPTION ("PrepareInsert")
+
 typedef struct PartitionUpdateState
 {
 	CustomScanState		 css;
@@ -34,7 +36,6 @@ typedef struct PartitionUpdateState
 } PartitionUpdateState;
 
 extern bool					 pg_pathman_enable_partition_update;
-extern const char			*UPDATE_NODE_DESCRIPTION;
 
 extern CustomScanMethods	partition_update_plan_methods;
 extern CustomExecMethods	partition_update_exec_methods;

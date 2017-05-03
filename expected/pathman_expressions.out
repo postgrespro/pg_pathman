@@ -152,3 +152,6 @@ SELECT COUNT(*) FROM test.range_rel_2;
     24
 (1 row)
 
+DROP SCHEMA test CASCADE;
+NOTICE:  drop cascades to 17 other objects
+DROP EXTENSION pg_pathman CASCADE;

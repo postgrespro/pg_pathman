@@ -22,8 +22,7 @@
 #include "utils/guc.h"
 #include "utils/rel.h"
 
-const char		   *UPDATE_NODE_DESCRIPTION = "PrepareInsert";
-bool				pg_pathman_enable_partition_update = true;
+bool				 pg_pathman_enable_partition_update = true;
 
 CustomScanMethods	partition_update_plan_methods;
 CustomExecMethods	partition_update_exec_methods;
