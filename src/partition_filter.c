@@ -570,20 +570,31 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 	const PartRelationInfo	*prel;
 	ListCell				*lc;
 	PlanState				*child_state;
-	Index					 expr_relid = 1;
+	Index					 expr_varno = 1;
 
 	child_state = ExecInitNode(state->subplan, estate, eflags);
 
 	/* It's convenient to store PlanState in 'custom_ps' */
 	node->custom_ps = list_make1(child_state);
+
 	if (state->command_type == CMD_UPDATE)
-	{
-		Assert(IsA(child_state, SeqScanState));
-		expr_relid = ((Scan *) ((ScanState *) child_state)->ps.plan)->scanrelid;
-		Assert(expr_relid >= 1);
-	}
+		expr_varno = ((Scan *) child_state->plan)->scanrelid;
 	else
-		expr_relid = state->partitioned_table;
+	{
+		Index varno = 1;
+
+		foreach(lc, estate->es_range_table)
+		{
+			RangeTblEntry *entry = lfirst(lc);
+			if (entry->relid == state->partitioned_table)
+				break;
+			varno++;
+		}
+
+		expr_varno = varno;
+		Assert(expr_varno <= list_length(estate->es_range_table));
+	}
+
 
 	if (state->expr_state == NULL)
 	{
@@ -591,22 +602,34 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 		prel = get_pathman_relation_info(state->partitioned_table);
 		Assert(prel != NULL);
 
-		/* Change varno in Vars according to range table */
-		if (expr_relid > 1)
+		/* Change varno in expression Vars according to range table */
+		Assert(expr_varno >= 1);
+		if (expr_varno > 1)
 		{
 			expr = copyObject(prel->expr);
-			foreach(lc, estate->es_range_table)
-			{
-				RangeTblEntry *entry = lfirst(lc);
-				if (entry->relid == expr_relid)
-				{
-					ChangeVarNodes(expr, 1, expr_relid, 0);
-					break;
-				}
-			}
+			ChangeVarNodes(expr, 1, expr_varno, 0);
 		}
 		else
 			expr = prel->expr;
+
+		/*
+		 * Also in updates we would operate with child relation, but
+		 * expression expects varattnos like in base relation, so we map
+		 * parent varattnos to child varattnos
+		 */
+		if (state->command_type == CMD_UPDATE)
+		{
+			int			 natts;
+			bool		 found_whole_row;
+			AttrNumber	*attr_map;
+			Oid			 child_relid = getrelid(expr_varno, estate->es_range_table);
+			Relation	 child_rel = heap_open(child_relid, NoLock);
+
+			attr_map = build_attributes_map(prel, child_rel, &natts);
+			expr = map_variable_attnos(expr, expr_varno, 0, attr_map, natts,
+					&found_whole_row);
+			heap_close(child_rel, NoLock);
+		}
 
 		/* Prepare state for expression execution */
 		old_cxt = MemoryContextSwitchTo(estate->es_query_cxt);
@@ -704,7 +727,7 @@ partition_filter_exec(CustomScanState *node)
 			/*
 			 * extract `ctid` junk attribute and save it in state,
 			 * we need this step because if there will be conversion
-			 * junk attributes will be removed from slot
+			 * then junk attributes will be removed from slot
 			 */
 			junkfilter = rri_holder->orig_junkFilter;
 			Assert(junkfilter != NULL);

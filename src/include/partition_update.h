@@ -33,7 +33,8 @@ typedef struct PartitionUpdateState
 	Plan				*subplan;				/* proxy variable to store subplan */
 } PartitionUpdateState;
 
-extern bool					pg_pathman_enable_partition_update;
+extern bool					 pg_pathman_enable_partition_update;
+extern const char			*UPDATE_NODE_DESCRIPTION;
 
 extern CustomScanMethods	partition_update_plan_methods;
 extern CustomExecMethods	partition_update_exec_methods;

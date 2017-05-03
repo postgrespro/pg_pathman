@@ -22,6 +22,7 @@
 #include "utils/guc.h"
 #include "utils/rel.h"
 
+const char		   *UPDATE_NODE_DESCRIPTION = "PrepareInsert";
 bool				pg_pathman_enable_partition_update = true;
 
 CustomScanMethods	partition_update_plan_methods;
@@ -36,10 +37,10 @@ static TupleTableSlot *ExecDeleteInternal(ItemPointer tupleid,
 void
 init_partition_update_static_data(void)
 {
-	partition_update_plan_methods.CustomName 			= "PrepareInsert";
+	partition_update_plan_methods.CustomName 			= UPDATE_NODE_DESCRIPTION;
 	partition_update_plan_methods.CreateCustomScanState	= partition_update_create_scan_state;
 
-	partition_update_exec_methods.CustomName			= "PrepareInsert";
+	partition_update_exec_methods.CustomName			= UPDATE_NODE_DESCRIPTION;
 	partition_update_exec_methods.BeginCustomScan		= partition_update_begin;
 	partition_update_exec_methods.ExecCustomScan		= partition_update_exec;
 	partition_update_exec_methods.EndCustomScan			= partition_update_end;
@@ -278,9 +279,9 @@ ExecDeleteInternal(ItemPointer tupleid,
 		 */
 		ExecSetSlotDescriptor(slot, RelationGetDescr(resultRelationDesc));
 		resultRelInfo->ri_FdwRoutine->ExecForeignDelete(estate,
-															   resultRelInfo,
-															   slot,
-															   planSlot);
+														resultRelInfo,
+														slot,
+														planSlot);
 
 		/* we don't need slot anymore */
 		ExecDropSingleTupleTableSlot(slot);

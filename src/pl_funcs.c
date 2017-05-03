@@ -100,9 +100,6 @@ typedef struct
 } show_cache_stats_cxt;
 
 
-static AttrNumber *pathman_update_trigger_build_attr_map(const PartRelationInfo *prel,
-														 Relation child_rel);
-
 static ExprState *pathman_update_trigger_build_expr_state(const PartRelationInfo *prel,
 														  Relation source_rel,
 														  HeapTuple new_tuple,
@@ -1258,48 +1255,6 @@ replace_vars_with_consts(Node *node, struct replace_vars_cxt *ctx)
 	return expression_tree_mutator(node, replace_vars_with_consts, (void *) ctx);
 }
 
-/*
- * Get attributes map between parent and child relation.
- * This is simplified version of functions that return TupleConversionMap.
- * And it should be faster if expression uses not all fields from relation.
- */
-static AttrNumber *
-pathman_update_trigger_build_attr_map(const PartRelationInfo *prel,
-									  Relation child_rel)
-{
-	AttrNumber	i = -1;
-	Oid			parent_relid = PrelParentRelid(prel);
-	TupleDesc	child_descr = RelationGetDescr(child_rel);
-	int			natts = child_descr->natts;
-	AttrNumber *result = (AttrNumber *) palloc0(natts * sizeof(AttrNumber));
-
-	while ((i = bms_next_member(prel->expr_atts, i)) >= 0)
-	{
-		int			j;
-		AttrNumber	attnum = i + FirstLowInvalidHeapAttributeNumber;
-		char	   *attname = get_attname(parent_relid, attnum);
-
-		for (j = 0; j < natts; j++)
-		{
-			Form_pg_attribute att = child_descr->attrs[j];
-
-			if (att->attisdropped)
-				continue; /* attrMap[attnum - 1] is already 0 */
-
-			if (strcmp(NameStr(att->attname), attname) == 0)
-			{
-				result[attnum - 1] = (AttrNumber) (j + 1);
-				break;
-			}
-		}
-
-		if (result[attnum - 1] == 0)
-			elog(ERROR, "Couldn't find '%s' column in child relation", attname);
-	}
-
-	return result;
-}
-
 static ExprState *
 pathman_update_trigger_build_expr_state(const PartRelationInfo *prel,
 										Relation source_rel,
@@ -1311,7 +1266,7 @@ pathman_update_trigger_build_expr_state(const PartRelationInfo *prel,
 	ExprState				   *expr_state;
 
 	ctx.new_tuple =			new_tuple;
-	ctx.attributes_map =	pathman_update_trigger_build_attr_map(prel, source_rel);
+	ctx.attributes_map =	build_attributes_map(prel, source_rel, NULL);
 	ctx.tuple_desc =		RelationGetDescr(source_rel);
 
 	expr = replace_vars_with_consts(prel->expr, &ctx);

@@ -65,6 +65,7 @@ planner_hook_type				planner_hook_next = NULL;
 post_parse_analyze_hook_type	post_parse_analyze_hook_next = NULL;
 shmem_startup_hook_type			shmem_startup_hook_next = NULL;
 ProcessUtility_hook_type		process_utility_hook_next = NULL;
+ExecutorRun_hook_type			executor_run_hook_next = NULL;
 
 
 /* Take care of joins */
@@ -856,18 +857,23 @@ pathman_executor_hook(QueryDesc *queryDesc, ScanDirection direction,
 		{
 			CustomScanState *subplanstate = (CustomScanState *) mt_state->mt_plans[i];
 
-			if (IsA(subplanstate, CustomScanState))
+			if (!IsA(subplanstate, CustomScanState))
+				continue;
+
+			if (strcmp(subplanstate->methods->CustomName, UPDATE_NODE_DESCRIPTION) == 0)
 			{
-				if (strcmp(subplanstate->methods->CustomName, "PrepareInsert") == 0)
-				{
-					PartitionUpdateState *cstate = (PartitionUpdateState *) subplanstate;
-					cstate->parent_state = mt_state;
-					cstate->saved_junkFilter = mt_state->resultRelInfo->ri_junkFilter;
-					mt_state->resultRelInfo->ri_junkFilter = NULL;
-				}
+				PartitionUpdateState *cstate = (PartitionUpdateState *) subplanstate;
+				cstate->parent_state = mt_state;
+				cstate->saved_junkFilter = mt_state->resultRelInfo->ri_junkFilter;
+				mt_state->resultRelInfo->ri_junkFilter = NULL;
 			}
 		}
 	}
 
-	standard_ExecutorRun(queryDesc, direction, count);
+	/* Call hooks set by other extensions if needed */
+	if (executor_run_hook_next)
+		executor_run_hook_next(queryDesc, direction, count);
+	/* Else call internal implementation */
+	else
+		standard_ExecutorRun(queryDesc, direction, count);
 }

@@ -1348,3 +1348,48 @@ shout_if_prel_is_invalid(const Oid parent_oid,
 			 expected_str);
 	}
 }
+
+/*
+ * Get attributes map between parent and child relation.
+ * This is simplified version of functions that return TupleConversionMap.
+ * And it should be faster if expression uses not all fields from relation.
+ */
+AttrNumber *
+build_attributes_map(const PartRelationInfo *prel, Relation child_rel,
+		int *map_length)
+{
+	AttrNumber	i = -1;
+	Oid			parent_relid = PrelParentRelid(prel);
+	TupleDesc	child_descr = RelationGetDescr(child_rel);
+	int			natts = child_descr->natts;
+	AttrNumber *result = (AttrNumber *) palloc0(natts * sizeof(AttrNumber));
+
+	if (map_length != NULL)
+		*map_length = natts;
+
+	while ((i = bms_next_member(prel->expr_atts, i)) >= 0)
+	{
+		int			j;
+		AttrNumber	attnum = i + FirstLowInvalidHeapAttributeNumber;
+		char	   *attname = get_attname(parent_relid, attnum);
+
+		for (j = 0; j < natts; j++)
+		{
+			Form_pg_attribute att = child_descr->attrs[j];
+
+			if (att->attisdropped)
+				continue; /* attrMap[attnum - 1] is already 0 */
+
+			if (strcmp(NameStr(att->attname), attname) == 0)
+			{
+				result[attnum - 1] = (AttrNumber) (j + 1);
+				break;
+			}
+		}
+
+		if (result[attnum - 1] == 0)
+			elog(ERROR, "Couldn't find '%s' column in child relation", attname);
+	}
+
+	return result;
+}

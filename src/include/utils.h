@@ -61,5 +61,4 @@ Datum extract_binary_interval_from_text(Datum interval_text,
 char ** deconstruct_text_array(Datum array, int *array_size);
 RangeVar ** qualified_relnames_to_rangevars(char **relnames, size_t nrelnames);
 
-
 #endif /* PATHMAN_UTILS_H */

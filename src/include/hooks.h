@@ -27,6 +27,7 @@ extern planner_hook_type				planner_hook_next;
 extern post_parse_analyze_hook_type		post_parse_analyze_hook_next;
 extern shmem_startup_hook_type			shmem_startup_hook_next;
 extern ProcessUtility_hook_type			process_utility_hook_next;
+extern ExecutorRun_hook_type			executor_run_hook_next;
 
 
 void pathman_join_pathlist_hook(PlannerInfo *root,

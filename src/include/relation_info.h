@@ -24,6 +24,7 @@
 #include "storage/lock.h"
 #include "utils/datum.h"
 #include "utils/lsyscache.h"
+#include "utils/relcache.h"
 
 
 /* Range bound */
@@ -370,6 +371,9 @@ extern bool pg_pathman_enable_bounds_cache;
 
 void init_relation_info_static_data(void);
 
+AttrNumber * build_attributes_map(const PartRelationInfo *prel,
+								  Relation child_rel,
+								  int *map_length);
+
 
 #endif /* RELATION_INFO_H */
-

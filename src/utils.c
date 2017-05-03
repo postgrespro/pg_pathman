@@ -575,3 +575,4 @@ qualified_relnames_to_rangevars(char **relnames, size_t nrelnames)
 
 	return rangevars;
 }
+
