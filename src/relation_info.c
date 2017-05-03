@@ -43,7 +43,6 @@
 
 #if PG_VERSION_NUM >= 90600
 #include "catalog/pg_constraint_fn.h"
-#include "nodes/nodeFuncs.h"
 #endif
 
 
