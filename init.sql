@@ -857,15 +857,21 @@ LANGUAGE C STRICT;
 
 
 /*
- * Add record to pathman_config. If parttype if not specified then determine
- * partitioning type.
+ * Add record to pathman_config (RANGE) and validate partitions.
  */
 CREATE OR REPLACE FUNCTION @extschema@.add_to_pathman_config(
 	parent_relid		REGCLASS,
 	expression			TEXT,
-	range_interval		TEXT DEFAULT NULL,
-	parttype			INT4 DEFAULT 0
-)
+	range_interval		TEXT)
+RETURNS BOOLEAN AS 'pg_pathman', 'add_to_pathman_config'
+LANGUAGE C;
+
+/*
+ * Add record to pathman_config (HASH) and validate partitions.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.add_to_pathman_config(
+	parent_relid		REGCLASS,
+	expression			TEXT)
 RETURNS BOOLEAN AS 'pg_pathman', 'add_to_pathman_config'
 LANGUAGE C;
 

@@ -619,7 +619,7 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 	/* Open PATHMAN_CONFIG with latest snapshot available */
 	rel = heap_open(get_pathman_config_relid(false), AccessShareLock);
 
-	/* Check that 'partrel' column is if regclass type */
+	/* Check that 'partrel' column is of regclass type */
 	Assert(RelationGetDescr(rel)->
 		   attrs[Anum_pathman_config_partrel - 1]->
 		   atttypid == REGCLASSOID);

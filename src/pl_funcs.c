@@ -735,29 +735,57 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("'expression' should not be NULL")));
 
+	/* Check current user's privileges */
 	if (!check_security_policy_internal(relid, GetUserId()))
 	{
-		elog(ERROR, "only the owner or superuser can change "
-					  "partitioning configuration of table \"%s\"",
-			 get_rel_name_or_relid(relid));
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("only the owner or superuser can change "
+						"partitioning configuration of table \"%s\"",
+						get_rel_name_or_relid(relid))));
 	}
 
 	/* Select partitioning type */
-	parttype = PG_GETARG_INT32(3);
-	if ((parttype != PT_HASH) && (parttype != PT_RANGE))
-		parttype = PG_ARGISNULL(2) ? PT_HASH : PT_RANGE;
+	switch (PG_NARGS())
+	{
+		/* HASH */
+		case 2:
+			{
+				parttype = PT_HASH;
+
+				values[Anum_pathman_config_range_interval - 1]	= (Datum) 0;
+				isnull[Anum_pathman_config_range_interval - 1]	= true;
+			}
+			break;
+
+		/* RANGE */
+		case 3:
+			{
+				parttype = PT_RANGE;
+
+				values[Anum_pathman_config_range_interval - 1]	= PG_GETARG_DATUM(2);
+				isnull[Anum_pathman_config_range_interval - 1]	= PG_ARGISNULL(2);
+			}
+			break;
+
+		default:
+			elog(ERROR, "error in function " CppAsString(add_to_pathman_config));
+			PG_RETURN_BOOL(false); /* keep compiler happy */
+	}
 
 	/* Parse and check expression */
 	expr_datum = plan_partitioning_expression(relid, expression, &expr_type);
 
-	/* Expression for range partitions should be hashable */
+	/* Check hash function for HASH partitioning */
 	if (parttype == PT_HASH)
 	{
 		TypeCacheEntry *tce;
 
 		tce = lookup_type_cache(expr_type, TYPECACHE_HASH_PROC);
-		if (tce->hash_proc == InvalidOid)
-			elog(ERROR, "partitioning expression should be hashable");
+		if (!OidIsValid(tce->hash_proc))
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("no hash function for partitioning expression")));
 	}
 
 	/*
@@ -778,17 +806,6 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	values[Anum_pathman_config_atttype - 1]			= ObjectIdGetDatum(expr_type);
 	isnull[Anum_pathman_config_atttype - 1]			= false;
 
-	if (parttype == PT_RANGE)
-	{
-		values[Anum_pathman_config_range_interval - 1]	= PG_GETARG_DATUM(2);
-		isnull[Anum_pathman_config_range_interval - 1]	= PG_ARGISNULL(2);
-	}
-	else
-	{
-		values[Anum_pathman_config_range_interval - 1]	= (Datum) 0;
-		isnull[Anum_pathman_config_range_interval - 1]	= true;
-	}
-
 	/* Insert new row into PATHMAN_CONFIG */
 	pathman_config = heap_open(get_pathman_config_relid(false), RowExclusiveLock);
 
@@ -798,7 +815,7 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 
 	heap_close(pathman_config, RowExclusiveLock);
 
-	/* update caches only if this relation has children */
+	/* Update caches only if this relation has children */
 	if (has_subclass(relid))
 	{
 		/* Now try to create a PartRelationInfo */

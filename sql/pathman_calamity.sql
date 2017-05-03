@@ -236,8 +236,8 @@ DROP FUNCTION calamity.dummy_cb(arg jsonb);
 /* check function add_to_pathman_config() -- PHASE #1 */
 SELECT add_to_pathman_config(NULL, 'val');						/* no table */
 SELECT add_to_pathman_config(0::REGCLASS, 'val');				/* no table (oid) */
-SELECT add_to_pathman_config('calamity.part_test', NULL);		/* no column */
-SELECT add_to_pathman_config('calamity.part_test', 'V_A_L');	/* wrong column */
+SELECT add_to_pathman_config('calamity.part_test', NULL);		/* no expr */
+SELECT add_to_pathman_config('calamity.part_test', 'V_A_L');	/* wrong expr */
 SELECT add_to_pathman_config('calamity.part_test', 'val');		/* OK */
 SELECT disable_pathman_for('calamity.part_test');
 SELECT add_to_pathman_config('calamity.part_test', 'val', '10'); /* OK */

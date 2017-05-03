@@ -36,7 +36,7 @@ BEGIN
 
 	/* Insert new entry to pathman config */
 	EXECUTE format('ANALYZE %s', parent_relid);
-	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression, NULL);
+	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression);
 
 	/* Create partitions */
 	PERFORM @extschema@.create_hash_partitions_internal(parent_relid,
