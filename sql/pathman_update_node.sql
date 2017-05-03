@@ -120,8 +120,18 @@ FROM test_update_node.test_range
 WHERE val = 105
 ORDER BY comment;
 
+UPDATE test_update_node.test_range SET val = 60 WHERE val = 105;
 SELECT count(*) FROM test_update_node.test_range;
 
+/* Test RETURNING */
+UPDATE test_update_node.test_range SET val = 71 WHERE val = 41 RETURNING val, comment;
+UPDATE test_update_node.test_range SET val = 71 WHERE val = 71 RETURNING val, comment;
+UPDATE test_update_node.test_range SET val = 106 WHERE val = 61 RETURNING val, comment;
+UPDATE test_update_node.test_range SET val = 106 WHERE val = 106 RETURNING val, comment;
+UPDATE test_update_node.test_range SET val = 61 WHERE val = 106 RETURNING val, comment;
+
+/* Just in case, check we don't duplicate anything */
+SELECT count(*) FROM test_update_node.test_range;
 
 /* Test tuple conversion (dropped column) */
 ALTER TABLE test_update_node.test_range DROP COLUMN comment CASCADE;
@@ -134,6 +144,7 @@ SELECT tableoid::REGCLASS, *
 FROM test_update_node.test_range
 WHERE val = 115;
 
+UPDATE test_update_node.test_range SET val = 55 WHERE val = 115;
 SELECT count(*) FROM test_update_node.test_range;
 
 

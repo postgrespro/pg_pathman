@@ -862,10 +862,20 @@ pathman_executor_hook(QueryDesc *queryDesc, ScanDirection direction,
 
 			if (strcmp(subplanstate->methods->CustomName, UPDATE_NODE_DESCRIPTION) == 0)
 			{
-				PartitionUpdateState *cstate = (PartitionUpdateState *) subplanstate;
-				cstate->parent_state = mt_state;
-				cstate->saved_junkFilter = mt_state->resultRelInfo->ri_junkFilter;
-				mt_state->resultRelInfo->ri_junkFilter = NULL;
+				PartitionUpdateState	*cstate = (PartitionUpdateState *) subplanstate;
+
+				/* Save parent resultRelInfo in PartitionUpdate node */
+				cstate->resultRelInfo = mt_state->resultRelInfo + i;
+
+				/*
+				 * We unset junkfilter to disable junk cleaning in
+				 * ExecModifyTable. We don't need junk cleaning because
+				 * there is possible modification of tuple in `partition_filter_exec`
+				 * Same time we need this junkfilter in PartitionFilter
+				 * nodes, so we save it in node.
+				 */
+				cstate->saved_junkFilter = cstate->resultRelInfo->ri_junkFilter;
+				cstate->resultRelInfo->ri_junkFilter = NULL;
 			}
 		}
 	}

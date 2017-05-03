@@ -128,10 +128,10 @@ partition_update_exec(CustomScanState *node)
 	 * Restore junkfilter in base resultRelInfo,
 	 * we do it because child's RelResultInfo expects its existence
 	 * for proper initialization.
-	 * Alsowe change junk attribute number in JunkFilter, because
+	 * Also we set jf_junkAttNo there, because
 	 * it wasn't set in ModifyTable node initialization
 	 */
-	state->parent_state->resultRelInfo->ri_junkFilter = state->saved_junkFilter;
+	state->resultRelInfo->ri_junkFilter = state->saved_junkFilter;
 
 	/* execute PartitionFilter child node */
 	slot = ExecProcNode(child_ps);

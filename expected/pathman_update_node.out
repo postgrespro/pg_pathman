@@ -281,6 +281,46 @@ ORDER BY comment;
  test_update_node.test_range_inv | 105 | 60
 (1 row)
 
+UPDATE test_update_node.test_range SET val = 60 WHERE val = 105;
+SELECT count(*) FROM test_update_node.test_range;
+ count 
+-------
+    90
+(1 row)
+
+/* Test RETURNING */
+UPDATE test_update_node.test_range SET val = 71 WHERE val = 41 RETURNING val, comment;
+ val | comment 
+-----+---------
+  71 | 41
+(1 row)
+
+UPDATE test_update_node.test_range SET val = 71 WHERE val = 71 RETURNING val, comment;
+ val | comment 
+-----+---------
+  71 | 71
+  71 | 41
+(2 rows)
+
+UPDATE test_update_node.test_range SET val = 106 WHERE val = 61 RETURNING val, comment;
+ val | comment 
+-----+---------
+ 106 | 61
+(1 row)
+
+UPDATE test_update_node.test_range SET val = 106 WHERE val = 106 RETURNING val, comment;
+ val | comment 
+-----+---------
+ 106 | 61
+(1 row)
+
+UPDATE test_update_node.test_range SET val = 61 WHERE val = 106 RETURNING val, comment;
+ val | comment 
+-----+---------
+  61 | 61
+(1 row)
+
+/* Just in case, check we don't duplicate anything */
 SELECT count(*) FROM test_update_node.test_range;
  count 
 -------
@@ -306,6 +346,7 @@ WHERE val = 115;
  test_update_node.test_range_12 | 115
 (1 row)
 
+UPDATE test_update_node.test_range SET val = 55 WHERE val = 115;
 SELECT count(*) FROM test_update_node.test_range;
  count 
 -------
