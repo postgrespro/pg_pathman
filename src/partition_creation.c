@@ -101,9 +101,9 @@ create_single_range_partition_internal(Oid parent_relid,
 {
 	Oid						partition_relid;
 	Constraint			   *check_constr;
-	Node				   *part_expr;
 	init_callback_params	callback_params;
-	List				   *trigger_columns;
+	List				   *trigger_columns = NIL;
+	Node				   *expr;
 
 	/* Generate a name if asked to */
 	if (!partition_rv)
@@ -118,7 +118,7 @@ create_single_range_partition_internal(Oid parent_relid,
 	}
 
 	/* Check pathman config anld fill variables */
-	part_expr = build_partitioning_expression(parent_relid, NULL, &trigger_columns);
+	expr = build_partitioning_expression(parent_relid, NULL, &trigger_columns);
 
 	/* Create a partition & get 'partitioning expression' */
 	partition_relid = create_single_partition_internal(parent_relid,
@@ -127,7 +127,7 @@ create_single_range_partition_internal(Oid parent_relid,
 
 	/* Build check constraint for RANGE partition */
 	check_constr = build_range_check_constraint(partition_relid,
-												part_expr,
+												expr,
 												start_value,
 												end_value,
 												value_type);
@@ -160,9 +160,9 @@ create_single_hash_partition_internal(Oid parent_relid,
 	Oid						partition_relid,
 							expr_type;
 	Constraint			   *check_constr;
-	Node				   *expr;
 	init_callback_params	callback_params;
-	List				   *trigger_columns;
+	List				   *trigger_columns = NIL;
+	Node				   *expr;
 
 	/* Generate a name if asked to */
 	if (!partition_rv)
@@ -1213,20 +1213,20 @@ build_range_check_constraint(Oid child_relid,
 							 const Bound *end_value,
 							 Oid value_type)
 {
-	Constraint	   *hash_constr;
+	Constraint	   *range_constr;
 	char		   *range_constr_name;
 
 	/* Build a correct name for this constraint */
 	range_constr_name = build_check_constraint_name_relid_internal(child_relid);
 
 	/* Initialize basic properties of a CHECK constraint */
-	hash_constr = make_constraint_common(range_constr_name,
-										 build_raw_range_check_tree(raw_expression,
-																	start_value,
-																	end_value,
-																	value_type));
+	range_constr = make_constraint_common(range_constr_name,
+										  build_raw_range_check_tree(raw_expression,
+																	 start_value,
+																	 end_value,
+																	 value_type));
 	/* Everything seems to be fine */
-	return hash_constr;
+	return range_constr;
 }
 
 /* Check if range overlaps with any partitions */
@@ -1300,7 +1300,6 @@ build_raw_hash_check_tree(Node *raw_expression,
 	A_Expr		   *eq_oper			= makeNode(A_Expr);
 	FuncCall	   *part_idx_call	= makeNode(FuncCall),
 				   *hash_call		= makeNode(FuncCall);
-	//ColumnRef	   *hashed_column	= makeNode(ColumnRef);
 	A_Const		   *part_idx_c		= makeNode(A_Const),
 				   *part_count_c	= makeNode(A_Const);
 
@@ -1680,14 +1679,9 @@ text_to_regprocedure(text *proc_signature)
 	return DatumGetObjectId(result);
 }
 
-typedef struct
-{
-	List *columns;
-} extract_column_names_cxt;
-
 /* Extract column names from raw expression */
 static bool
-extract_column_names(Node *node, extract_column_names_cxt *cxt)
+extract_column_names(Node *node, List **columns)
 {
 	if (node == NULL)
 		return false;
@@ -1698,10 +1692,10 @@ extract_column_names(Node *node, extract_column_names_cxt *cxt)
 
 		foreach(lc, ((ColumnRef *) node)->fields)
 			if (IsA(lfirst(lc), String))
-				cxt->columns = lappend(cxt->columns, lfirst(lc));
+				*columns = lappend(*columns, lfirst(lc));
 	}
 
-	return raw_expression_tree_walker(node, extract_column_names, cxt);
+	return raw_expression_tree_walker(node, extract_column_names, columns);
 }
 
 /* Returns raw partitioning expression + expr_type + columns */
@@ -1732,9 +1726,9 @@ build_partitioning_expression(Oid parent_relid,
 
 	if (columns)
 	{
-		extract_column_names_cxt context = { NIL };
-		extract_column_names(expr, &context);
-		*columns = context.columns;
+		/* Column list should be empty */
+		Assert(*columns == NIL);
+		extract_column_names(expr, columns);
 	}
 
 	return expr;
