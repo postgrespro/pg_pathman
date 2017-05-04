@@ -612,9 +612,9 @@ is_tuple_convertible(PG_FUNCTION_ARGS)
 		void *map; /* we don't actually need it */
 
 		/* Try to build a conversion map */
-		map = convert_tuples_by_name_map(RelationGetDescr(rel1),
-										 RelationGetDescr(rel2),
-										 ERR_PART_DESC_CONVERT);
+		map = convert_tuples_by_name(RelationGetDescr(rel1),
+									 RelationGetDescr(rel2),
+									 ERR_PART_DESC_CONVERT);
 		/* Now free map */
 		pfree(map);
 	}

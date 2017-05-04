@@ -40,6 +40,8 @@ typedef struct
 	Oid					partid;				/* partition's relid */
 	ResultRelInfo	   *result_rel_info;	/* cached ResultRelInfo */
 	TupleConversionMap *tuple_map;			/* tuple conversion map (parent => child) */
+	bool				has_subpartitions;
+	ExprState		   *expr_state;			/* if has_subpartitions true */
 } ResultRelInfoHolder;
 
 
@@ -133,11 +135,15 @@ Oid * find_partitions_for_value(Datum value, Oid value_type,
 								const PartRelationInfo *prel,
 								int *nparts);
 
-ResultRelInfoHolder * select_partition_for_insert(Datum value, Oid value_type,
-												  const PartRelationInfo *prel,
-												  ResultPartsStorage *parts_storage,
-												  EState *estate);
-
+// ResultRelInfoHolder * select_partition_for_insert(Datum value, Oid value_type,
+// 												  const PartRelationInfo *prel,
+// 												  ResultPartsStorage *parts_storage,
+// 												  EState *estate);
+ResultRelInfoHolder *
+select_partition_for_insert(ExprContext *econtext, ExprState *expr_state,
+							const PartRelationInfo *prel,
+							ResultPartsStorage *parts_storage,
+							EState *estate);
 
 Plan * make_partition_filter(Plan *subplan,
 							 Oid parent_relid,

@@ -249,7 +249,9 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 	child_rte = copyObject(parent_rte);
 	child_rte->relid			= child_oid;
 	child_rte->relkind			= child_relation->rd_rel->relkind;
-	child_rte->inh				= false;	/* relation has no children */
+	// child_rte->inh				= false;	/* relation has no children */
+	child_rte->inh = (child_oid != parent_rte->relid) ?
+		child_relation->rd_rel->relhassubclass : false;
 	child_rte->requiredPerms	= 0;		/* perform all checks on parent */
 
 	/* Add 'child_rte' to rtable and 'root->simple_rte_array' */
@@ -389,6 +391,17 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 		/* Include child's rowmark type in parent's allMarkTypes */
 		parent_rowmark->allMarkTypes |= child_rowmark->allMarkTypes;
 		parent_rowmark->isParent = true;
+	}
+
+	/*
+	 * TODO: new!!!
+	 */
+	if (child_rte->inh)
+	{
+		pathman_rel_pathlist_hook(root,
+								  child_rel,
+								  childRTindex,
+								  child_rte);
 	}
 
 	return childRTindex;
@@ -1659,7 +1672,8 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 
 			set_foreign_pathlist(root, childrel, childRTE);
 		}
-		else
+		/* TODO: temporary!!! */
+		else if(!childRTE->inh || childrel->pathlist == NIL)
 		{
 			/* childrel->rows should be >= 1 */
 			set_plain_rel_size(root, childrel, childRTE);

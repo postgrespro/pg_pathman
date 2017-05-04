@@ -319,6 +319,11 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 		/* Generate tuple transformation map and some other stuff */
 		rri_holder->tuple_map = build_part_tuple_map(parent_rel, child_rel);
 
+		/* Are there subpartitions? */
+		rri_holder->has_subpartitions = 
+			(get_pathman_relation_info(partid) != NULL);
+		rri_holder->expr_state = NULL;
+
 		/* Call on_new_rri_holder_callback() if needed */
 		if (parts_storage->on_new_rri_holder_callback)
 			parts_storage->on_new_rri_holder_callback(parts_storage->estate,
@@ -412,7 +417,7 @@ find_partitions_for_value(Datum value, Oid value_type,
  * Smart wrapper for scan_result_parts_storage().
  */
 ResultRelInfoHolder *
-select_partition_for_insert(Datum value, Oid value_type,
+select_partition_for_insert(ExprContext *econtext, ExprState *expr_state,
 							const PartRelationInfo *prel,
 							ResultPartsStorage *parts_storage,
 							EState *estate)
@@ -422,9 +427,23 @@ select_partition_for_insert(Datum value, Oid value_type,
 	Oid						selected_partid = InvalidOid;
 	Oid					   *parts;
 	int						nparts;
+	TupleTableSlot		   *tmp_slot;
+	// const PartRelationInfo *subprel;
+	bool					isnull;
+	ExprDoneCond			itemIsDone;
+	Datum					value;
+
+	/* Execute expression */
+	value = ExecEvalExpr(expr_state, econtext, &isnull, &itemIsDone);
+
+	if (isnull)
+		elog(ERROR, ERR_PART_ATTR_NULL);
+
+	if (itemIsDone != ExprSingleResult)
+		elog(ERROR, ERR_PART_ATTR_MULTIPLE_RESULTS);
 
 	/* Search for matching partitions */
-	parts = find_partitions_for_value(value, value_type, prel, &nparts);
+	parts = find_partitions_for_value(value, prel->atttype, prel, &nparts);
 
 	if (nparts > 1)
 		elog(ERROR, ERR_PART_ATTR_MULTIPLE);
@@ -438,9 +457,57 @@ select_partition_for_insert(Datum value, Oid value_type,
 	}
 	else selected_partid = parts[0];
 
+	// subprel = get_pathman_relation_info(state->partitioned_table))
 	/* Replace parent table with a suitable partition */
 	old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
 	rri_holder = scan_result_parts_storage(selected_partid, parts_storage);
+
+	/* If partition has subpartitions */
+	if (rri_holder->has_subpartitions)
+	{
+		const PartRelationInfo *subprel;
+
+		/* Fetch PartRelationInfo for this partitioned relation */
+		subprel = get_pathman_relation_info(selected_partid);
+		Assert(subprel != NULL);
+
+		/* Build an expression state if not yet */
+		if (!rri_holder->expr_state)
+		{
+			MemoryContext			tmp_mcxt;
+			Node				   *expr;
+			Index					varno = 1;
+			ListCell *lc;
+
+			/* Change varno in Vars according to range table */
+			expr = copyObject(subprel->expr);
+			foreach(lc, estate->es_range_table)
+			{
+				RangeTblEntry *entry = lfirst(lc);
+				if (entry->relid == selected_partid)
+				{
+					if (varno > 1)
+						ChangeVarNodes(expr, 1, varno, 0);
+					break;
+				}
+				varno += 1;
+			}
+
+			/* Prepare state for expression execution */
+			tmp_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
+			rri_holder->expr_state = ExecInitExpr((Expr *) expr, NULL);
+			MemoryContextSwitchTo(tmp_mcxt);
+		}
+
+		Assert(rri_holder->expr_state != NULL);
+
+		/* Dive in */
+		rri_holder = select_partition_for_insert(econtext, rri_holder->expr_state,
+												 subprel,
+												 parts_storage,
+												 estate);
+	}
+
 	MemoryContextSwitchTo(old_mcxt);
 
 	/* Could not find suitable partition */
@@ -598,9 +665,9 @@ partition_filter_exec(CustomScanState *node)
 		MemoryContext				old_mcxt;
 		const PartRelationInfo	   *prel;
 		ResultRelInfoHolder		   *rri_holder;
-		bool						isnull;
-		Datum						value;
-		ExprDoneCond				itemIsDone;
+		// bool						isnull;
+		// Datum						value;
+		// ExprDoneCond				itemIsDone;
 		TupleTableSlot			   *tmp_slot;
 
 		/* Fetch PartRelationInfo for this partitioned relation */
@@ -618,21 +685,14 @@ partition_filter_exec(CustomScanState *node)
 		/* Switch to per-tuple context */
 		old_mcxt = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 
-		/* Execute expression */
 		tmp_slot = econtext->ecxt_scantuple;
 		econtext->ecxt_scantuple = slot;
-		value = ExecEvalExpr(state->expr_state, econtext, &isnull, &itemIsDone);
-		econtext->ecxt_scantuple = tmp_slot;
-
-		if (isnull)
-			elog(ERROR, ERR_PART_ATTR_NULL);
-
-		if (itemIsDone != ExprSingleResult)
-			elog(ERROR, ERR_PART_ATTR_MULTIPLE_RESULTS);
 
 		/* Search for a matching partition */
-		rri_holder = select_partition_for_insert(value, prel->atttype, prel,
+		rri_holder = select_partition_for_insert(econtext, state->expr_state, prel,
 												 &state->result_parts, estate);
+
+		econtext->ecxt_scantuple = tmp_slot;
 
 		/* Switch back and clean up per-tuple context */
 		MemoryContextSwitchTo(old_mcxt);
