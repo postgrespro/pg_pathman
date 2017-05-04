@@ -36,6 +36,8 @@ static void partition_filter_visitor(Plan *plan, void *context);
 
 static rel_parenthood_status tag_extract_parenthood_status(List *relation_tag);
 
+static Oid find_deepest_partition(Oid relid, Index idx, Expr *quals);
+
 
 /*
  * HACK: We have to mark each Query with a unique
@@ -238,14 +240,10 @@ disable_standard_inheritance(Query *parse)
 static void
 handle_modification_query(Query *parse)
 {
-	const PartRelationInfo *prel;
-	Node				   *prel_expr;
-	List				   *ranges;
 	RangeTblEntry		   *rte;
-	WrapperNode			   *wrap;
-	Expr				   *expr;
-	WalkerContext			context;
+	Expr				   *quals;
 	Index					result_rel;
+	Oid						child;
 
 	/* Fetch index of result relation */
 	result_rel = parse->resultRelation;
@@ -261,101 +259,133 @@ handle_modification_query(Query *parse)
 	/* Exit if it's DELETE FROM ONLY table */
 	if (!rte->inh) return;
 
-	prel = get_pathman_relation_info(rte->relid);
+	quals = (Expr *) eval_const_expressions(NULL, parse->jointree->quals);
 
-	/* Exit if it's not partitioned */
-	if (!prel) return;
-
-	/* Exit if we must include parent */
-	if (prel->enable_parent) return;
-
-	/* Parse syntax tree and extract partition ranges */
-	ranges = list_make1_irange_full(prel, IR_COMPLETE);
-	expr = (Expr *) eval_const_expressions(NULL, parse->jointree->quals);
-
-	/* Exit if there's no expr (no use) */
-	if (!expr) return;
-
-	/* Prepare partitioning expression */
-	prel_expr = PrelExpressionForRelid(prel, result_rel);
-
-	/* Parse syntax tree and extract partition ranges */
-	InitWalkerContext(&context, prel_expr, prel, NULL, false);
-	wrap = walk_expr_tree(expr, &context);
-
-	ranges = irange_list_intersection(ranges, wrap->rangeset);
+	/*
+	 * Parse syntax tree and extract deepest partition (if there is only one
+	 * satisfying quals)
+	 */
+	child = find_deepest_partition(rte->relid, result_rel, quals);
 
 	/*
 	 * If only one partition is affected,
 	 * substitute parent table with partition.
 	 */
+	if (OidIsValid(child))
+	{
+		Relation	child_rel,
+					parent_rel;
+
+		void	   *tuple_map; /* we don't need the map itself */
+
+		LOCKMODE	lockmode = RowExclusiveLock; /* UPDATE | DELETE */
+
+		HeapTuple	syscache_htup;
+		char		child_relkind;
+		Oid			parent = rte->relid;
+
+		/* Lock 'child' table */
+		LockRelationOid(child, lockmode);
+
+		/* Make sure that 'child' exists */
+		syscache_htup = SearchSysCache1(RELOID, ObjectIdGetDatum(child));
+		if (HeapTupleIsValid(syscache_htup))
+		{
+			Form_pg_class reltup = (Form_pg_class) GETSTRUCT(syscache_htup);
+
+			/* Fetch child's relkind and free cache entry */
+			child_relkind = reltup->relkind;
+			ReleaseSysCache(syscache_htup);
+		}
+		else
+		{
+			UnlockRelationOid(child, lockmode);
+			return; /* nothing to do here */
+		}
+
+		/* Both tables are already locked */
+		child_rel = heap_open(child, NoLock);
+		parent_rel = heap_open(parent, NoLock);
+
+		/* Build a conversion map (may be trivial, i.e. NULL) */
+		tuple_map = build_part_tuple_map(parent_rel, child_rel);
+		if (tuple_map)
+			free_conversion_map((TupleConversionMap *) tuple_map);
+
+		/* Close relations (should remain locked, though) */
+		heap_close(child_rel, NoLock);
+		heap_close(parent_rel, NoLock);
+
+		/* Exit if tuple map was NOT trivial */
+		if (tuple_map) /* just checking the pointer! */
+			return;
+
+		/* Update RTE's relid and relkind (for FDW) */
+		rte->relid = child;
+		rte->relkind = child_relkind;
+
+		/* HACK: unset the 'inh' flag (no children) */
+		rte->inh = false;
+	}
+}
+
+/*
+ * Find a single deepest subpartition. If there are more than one partitions
+ * satisfies quals or no such partition at all then return InvalidOid.
+ */
+static Oid
+find_deepest_partition(Oid relid, Index idx, Expr *quals)
+{
+	const PartRelationInfo *prel;
+	Node				   *prel_expr;
+	WalkerContext			context;
+	List				   *ranges;
+	WrapperNode			   *wrap;
+
+	/* Exit if there's no quals (no use) */
+	if (!quals) return InvalidOid;
+
+	prel = get_pathman_relation_info(relid);
+
+	/* Exit if it's not partitioned */
+	if (!prel) return InvalidOid;
+
+	/* Exit if we must include parent */
+	if (prel->enable_parent) return InvalidOid;
+
+	/* Prepare partitioning expression */
+	prel_expr = PrelExpressionForRelid(prel, idx);
+
+	ranges = list_make1_irange_full(prel, IR_COMPLETE);
+
+	/* Parse syntax tree and extract partition ranges */
+	InitWalkerContext(&context, prel_expr, prel, NULL, false);
+	wrap = walk_expr_tree(quals, &context);
+	ranges = irange_list_intersection(ranges, wrap->rangeset);
+
 	if (irange_list_length(ranges) == 1)
 	{
 		IndexRange irange = linitial_irange(ranges);
 
-		/* Exactly one partition (bounds are equal) */
 		if (irange_lower(irange) == irange_upper(irange))
 		{
 			Oid		   *children	= PrelGetChildrenArray(prel),
-						child		= children[irange_lower(irange)],
-						parent		= rte->relid;
+						partition	= children[irange_lower(irange)],
+						subpartition;
 
-			Relation	child_rel,
-						parent_rel;
+			/*
+			 * Try to go deeper and see if there is subpartition
+			 */
+			subpartition = find_deepest_partition(partition, idx, quals);
+			if (OidIsValid(subpartition))
+				return subpartition;
 
-			void	   *tuple_map; /* we don't need the map itself */
-
-			LOCKMODE	lockmode = RowExclusiveLock; /* UPDATE | DELETE */
-
-			HeapTuple	syscache_htup;
-			char		child_relkind;
-
-			/* Lock 'child' table */
-			LockRelationOid(child, lockmode);
-
-			/* Make sure that 'child' exists */
-			syscache_htup = SearchSysCache1(RELOID, ObjectIdGetDatum(child));
-			if (HeapTupleIsValid(syscache_htup))
-			{
-				Form_pg_class reltup = (Form_pg_class) GETSTRUCT(syscache_htup);
-
-				/* Fetch child's relkind and free cache entry */
-				child_relkind = reltup->relkind;
-				ReleaseSysCache(syscache_htup);
-			}
-			else
-			{
-				UnlockRelationOid(child, lockmode);
-				return; /* nothing to do here */
-			}
-
-			/* Both tables are already locked */
-			child_rel = heap_open(child, NoLock);
-			parent_rel = heap_open(parent, NoLock);
-
-			/* Build a conversion map (may be trivial, i.e. NULL) */
-			tuple_map = build_part_tuple_map(parent_rel, child_rel);
-			if (tuple_map)
-				free_conversion_map((TupleConversionMap *) tuple_map);
-
-			/* Close relations (should remain locked, though) */
-			heap_close(child_rel, NoLock);
-			heap_close(parent_rel, NoLock);
-
-			/* Exit if tuple map was NOT trivial */
-			if (tuple_map) /* just checking the pointer! */
-				return;
-
-			/* Update RTE's relid and relkind (for FDW) */
-			rte->relid = child;
-			rte->relkind = child_relkind;
-
-			/* HACK: unset the 'inh' flag (no children) */
-			rte->inh = false;
+			return partition;
 		}
 	}
-}
 
+	return InvalidOid;
+}
 
 /*
  * -------------------------------
