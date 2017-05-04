@@ -436,9 +436,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			return;
 
 		/* Get partitioning-related clauses */
-		part_clauses = get_partitioning_clauses(list_union(rel->baserestrictinfo,
-														   rel->joininfo),
-												prel, rti);
+		part_clauses = get_partitioning_clauses(rel->baserestrictinfo, prel, rti);
 
 		/* Skip if there's no PARAMs in partitioning-related clauses */
 		if (!clause_contains_params((Node *) part_clauses))
