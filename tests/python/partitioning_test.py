@@ -1037,26 +1037,26 @@ class PartitioningTests(unittest.TestCase):
 			self.assertEqual(len(plan["Target Tables"]), 11)
 
 		expected_format = '''
-				{
-                    "Plans": [
-                        {
-                            "Plans": [
-                                {
-                                    "Filter": "(comment = '15'::text)",
-                                    "Node Type": "Seq Scan",
-                                    "Relation Name": "test_range%s",
-                                    "Parent Relationship": "child"
-                                }
-                            ],
-                            "Node Type": "Custom Scan",
-                            "Parent Relationship": "child",
-                            "Custom Plan Provider": "PartitionFilter"
-                        }
-                    ],
-                    "Node Type": "Custom Scan",
-                    "Parent Relationship": "Member",
-                    "Custom Plan Provider": "PrepareInsert"
-                }
+			{
+				"Plans": [
+					{
+						"Plans": [
+							{
+								"Filter": "(comment = '15'::text)",
+								"Node Type": "Seq Scan",
+								"Relation Name": "test_range%s",
+								"Parent Relationship": "child"
+							}
+						],
+						"Node Type": "Custom Scan",
+						"Parent Relationship": "child",
+						"Custom Plan Provider": "PartitionFilter"
+					}
+				],
+				"Node Type": "Custom Scan",
+				"Parent Relationship": "Member",
+				"Custom Plan Provider": "PrepareInsert"
+			}
 		'''
 		for i, f in enumerate([''] + list(map(str, range(1, 10)))):
 			num = '_' + f if f else ''
@@ -1064,11 +1064,11 @@ class PartitioningTests(unittest.TestCase):
 			p = ordered(plan["Plans"][i], skip_keys=['Parallel Aware', 'Alias'])
 			self.assertEqual(p, ordered(expected))
 
-		node.stop()
-		node.cleanup()
-
 		node.psql('postgres', 'DROP SCHEMA test_update_node CASCADE;')
 		node.psql('postgres', 'DROP EXTENSION pg_pathman CASCADE;')
+
+		node.stop()
+		node.cleanup()
 
 
 if __name__ == "__main__":
