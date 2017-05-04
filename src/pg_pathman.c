@@ -712,9 +712,9 @@ wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue)
 static WrapperNode *
 handle_const(const Const *c, WalkerContext *context)
 {
+	WrapperNode	   *result = (WrapperNode *) palloc0(sizeof(WrapperNode));
+	int				strategy = BTEqualStrategyNumber;
 	const PartRelationInfo *prel = context->prel;
-	WrapperNode			   *result = (WrapperNode *) palloc0(sizeof(WrapperNode));
-	int						strategy = BTEqualStrategyNumber;
 
 	result->orig = (const Node *) c;
 
@@ -725,7 +725,7 @@ handle_const(const Const *c, WalkerContext *context)
 	if (!context->for_insert || c->constisnull)
 	{
 		result->rangeset = NIL;
-		result->paramsel = 1.0;
+		result->paramsel = 0.0;
 
 		return result;
 	}
@@ -796,18 +796,18 @@ handle_const(const Const *c, WalkerContext *context)
 static WrapperNode *
 handle_boolexpr(const BoolExpr *expr, WalkerContext *context)
 {
-	WrapperNode	*result = (WrapperNode *) palloc0(sizeof(WrapperNode));
-	ListCell	*lc;
+	WrapperNode	   *result = (WrapperNode *) palloc0(sizeof(WrapperNode));
+	ListCell	   *lc;
 	const PartRelationInfo *prel = context->prel;
 
-	result->orig = (const Node *)expr;
+	result->orig = (const Node *) expr;
 	result->args = NIL;
 	result->paramsel = 1.0;
 
-	if (expr->boolop == AND_EXPR)
-		result->rangeset = list_make1_irange_full(prel, IR_COMPLETE);
-	else
-		result->rangeset = NIL;
+	/* First, set default rangeset */
+	result->rangeset = (expr->boolop == AND_EXPR) ?
+							list_make1_irange_full(prel, IR_COMPLETE) :
+							NIL;
 
 	foreach (lc, expr->args)
 	{
@@ -856,9 +856,9 @@ handle_boolexpr(const BoolExpr *expr, WalkerContext *context)
 static WrapperNode *
 handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 {
-	WrapperNode *result = (WrapperNode *) palloc(sizeof(WrapperNode));
-	Node		*exprnode = (Node *) linitial(expr->args);
-	Node		*arraynode = (Node *) lsecond(expr->args);
+	WrapperNode	   *result = (WrapperNode *) palloc(sizeof(WrapperNode));
+	Node		   *exprnode = (Node *) linitial(expr->args);
+	Node		   *arraynode = (Node *) lsecond(expr->args);
 	const PartRelationInfo *prel = context->prel;
 
 	result->orig = (const Node *) expr;
@@ -993,8 +993,8 @@ handle_arrexpr_return:
 static WrapperNode *
 handle_opexpr(const OpExpr *expr, WalkerContext *context)
 {
-	WrapperNode	*result = (WrapperNode *) palloc0(sizeof(WrapperNode));
-	Node		*var, *param;
+	WrapperNode	   *result = (WrapperNode *) palloc0(sizeof(WrapperNode));
+	Node		   *var, *param;
 	const PartRelationInfo *prel = context->prel;
 
 	result->orig = (const Node *) expr;
@@ -1006,7 +1006,8 @@ handle_opexpr(const OpExpr *expr, WalkerContext *context)
 		{
 			if (IsConstValue(context, param))
 			{
-				handle_binary_opexpr(context, result, var, ExtractConst(context, param));
+				handle_binary_opexpr(context, result, var,
+									 ExtractConst(context, param));
 				return result;
 			}
 			else if (IsA(param, Param) || IsA(param, Var))
@@ -1026,6 +1027,7 @@ handle_opexpr(const OpExpr *expr, WalkerContext *context)
 }
 
 /* Binary operator handler */
+/* FIXME: varnode */
 static void
 handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 					 const Node *varnode, const Const *c)
@@ -1113,6 +1115,7 @@ binary_opexpr_return:
 }
 
 /* Estimate selectivity of parametrized quals */
+/* FIXME: varnode */
 static void
 handle_binary_opexpr_param(const PartRelationInfo *prel,
 						   WrapperNode *result, const Node *varnode)
@@ -1460,7 +1463,7 @@ translate_col_privs(const Bitmapset *parent_privs,
 	attno = InvalidAttrNumber;
 	foreach(lc, translated_vars)
 	{
-		Var		   *var = (Var *) lfirst(lc);
+		Var *var = (Var *) lfirst(lc);
 
 		attno++;
 		if (var == NULL)		/* ignore dropped columns */

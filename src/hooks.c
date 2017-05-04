@@ -308,10 +308,10 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 					   *pathkeyDesc = NULL;
 		double			paramsel = 1.0;			/* default part selectivity */
 		WalkerContext	context;
-		ListCell	   *lc;
-		int				i;
 		Node		   *expr;
 		bool			modify_append_nodes;
+		ListCell	   *lc;
+		int				i;
 
 		/* Make copy of partitioning expression and fix Var's  varno attributes */
 		expr = PrelExpressionForRelid(prel, rti);
@@ -461,6 +461,12 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 
 			/* Get existing parameterization */
 			ppi = get_appendrel_parampathinfo(rel, inner_required);
+
+			/* Skip if there are no partitioning clauses */
+			if (!get_partitioning_clauses(list_union(rel->baserestrictinfo,
+													 rel->joininfo),
+										  prel, rti))
+				return;
 
 			if (IsA(cur_path, AppendPath) && pg_pathman_enable_runtimeappend)
 				inner_path = create_runtimeappend_path(root, cur_path,

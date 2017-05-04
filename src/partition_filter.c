@@ -502,7 +502,7 @@ make_partition_filter(Plan *subplan, Oid parent_relid,
 Node *
 partition_filter_create_scan_state(CustomScan *node)
 {
-	PartitionFilterState   *state;
+	PartitionFilterState *state;
 
 	state = (PartitionFilterState *) palloc0(sizeof(PartitionFilterState));
 	NodeSetTag(state, T_CustomScanState);
@@ -531,11 +531,12 @@ partition_filter_create_scan_state(CustomScan *node)
 void
 partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 {
-	Index						varno = 1;
-	Node					   *expr;
-	MemoryContext				old_mcxt;
 	PartitionFilterState	   *state = (PartitionFilterState *) node;
+
+	MemoryContext				old_mcxt;
 	const PartRelationInfo	   *prel;
+	Node					   *expr;
+	Index						parent_varno = 1;
 	ListCell				   *lc;
 
 	/* It's convenient to store PlanState in 'custom_ps' */
@@ -548,18 +549,16 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 		Assert(prel != NULL);
 
 		/* Change varno in Vars according to range table */
-		expr = copyObject(prel->expr);
 		foreach(lc, estate->es_range_table)
 		{
 			RangeTblEntry *entry = lfirst(lc);
+
 			if (entry->relid == state->partitioned_table)
-			{
-				if (varno > 1)
-					ChangeVarNodes(expr, 1, varno, 0);
 				break;
-			}
-			varno += 1;
+
+			parent_varno += 1;
 		}
+		expr = PrelExpressionForRelid(prel, parent_varno);
 
 		/* Prepare state for expression execution */
 		old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
