@@ -27,6 +27,13 @@
 #define PARENTHOOD_TAG CppAsString(PARENTHOOD)
 
 
+typedef enum
+{
+	FP_FOUND,					/* Found partition */
+	FP_PLAIN_TABLE,				/* Table isn't partitioned by pg_pathman */
+	FP_NON_SINGULAR_RESULT		/* Multiple or no partitions */
+} FindPartitionResult;
+
 static bool pathman_transform_query_walker(Node *node, void *context);
 
 static void disable_standard_inheritance(Query *parse);
@@ -36,7 +43,7 @@ static void partition_filter_visitor(Plan *plan, void *context);
 
 static rel_parenthood_status tag_extract_parenthood_status(List *relation_tag);
 
-static Oid find_deepest_partition(Oid relid, Index idx, Expr *quals);
+static FindPartitionResult find_deepest_partition(Oid relid, Index idx, Expr *quals, Oid *partition);
 
 
 /*
@@ -244,6 +251,7 @@ handle_modification_query(Query *parse)
 	Expr				   *quals;
 	Index					result_rel;
 	Oid						child;
+	FindPartitionResult		fp_result;
 
 	/* Fetch index of result relation */
 	result_rel = parse->resultRelation;
@@ -265,13 +273,13 @@ handle_modification_query(Query *parse)
 	 * Parse syntax tree and extract deepest partition (if there is only one
 	 * satisfying quals)
 	 */
-	child = find_deepest_partition(rte->relid, result_rel, quals);
+	fp_result = find_deepest_partition(rte->relid, result_rel, quals, &child);
 
 	/*
 	 * If only one partition is affected,
 	 * substitute parent table with partition.
 	 */
-	if (OidIsValid(child))
+	if (fp_result == FP_FOUND)
 	{
 		Relation	child_rel,
 					parent_rel;
@@ -333,8 +341,8 @@ handle_modification_query(Query *parse)
  * Find a single deepest subpartition. If there are more than one partitions
  * satisfies quals or no such partition at all then return InvalidOid.
  */
-static Oid
-find_deepest_partition(Oid relid, Index idx, Expr *quals)
+static FindPartitionResult
+find_deepest_partition(Oid relid, Index idx, Expr *quals, Oid *partition)
 {
 	const PartRelationInfo *prel;
 	Node				   *prel_expr;
@@ -342,16 +350,19 @@ find_deepest_partition(Oid relid, Index idx, Expr *quals)
 	List				   *ranges;
 	WrapperNode			   *wrap;
 
-	/* Exit if there's no quals (no use) */
-	if (!quals) return InvalidOid;
-
 	prel = get_pathman_relation_info(relid);
 
 	/* Exit if it's not partitioned */
-	if (!prel) return InvalidOid;
+	if (!prel)
+		return FP_PLAIN_TABLE;
 
 	/* Exit if we must include parent */
-	if (prel->enable_parent) return InvalidOid;
+	if (prel->enable_parent)
+		return FP_NON_SINGULAR_RESULT;
+
+	/* Exit if there's no quals (no use) */
+	if (!quals)
+		return FP_NON_SINGULAR_RESULT;
 
 	/* Prepare partitioning expression */
 	prel_expr = PrelExpressionForRelid(prel, idx);
@@ -370,21 +381,32 @@ find_deepest_partition(Oid relid, Index idx, Expr *quals)
 		if (irange_lower(irange) == irange_upper(irange))
 		{
 			Oid		   *children	= PrelGetChildrenArray(prel),
-						partition	= children[irange_lower(irange)],
+						child		= children[irange_lower(irange)],
 						subpartition;
+			FindPartitionResult result;
 
 			/*
 			 * Try to go deeper and see if there is subpartition
 			 */
-			subpartition = find_deepest_partition(partition, idx, quals);
-			if (OidIsValid(subpartition))
-				return subpartition;
-
-			return partition;
+			result = find_deepest_partition(child,
+											idx,
+											quals,
+											&subpartition);
+			switch(result)
+			{
+				case FP_FOUND:
+					*partition = subpartition;
+					return FP_FOUND;
+				case FP_PLAIN_TABLE:
+					*partition = child;
+					return FP_FOUND;
+				case FP_NON_SINGULAR_RESULT:
+					return FP_NON_SINGULAR_RESULT;
+			}
 		}
 	}
 
-	return InvalidOid;
+	return FP_NON_SINGULAR_RESULT;
 }
 
 /*
