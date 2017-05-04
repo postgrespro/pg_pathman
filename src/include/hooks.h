@@ -62,7 +62,13 @@ void pathman_process_utility_hook(Node *parsetree,
 								  DestReceiver *dest,
 								  char *completionTag);
 
+#if PG_VERSION_NUM >= 90600
+typedef uint64 ExecutorRun_CountArgType;
+#else
+typedef long ExecutorRun_CountArgType;
+#endif
+
 void pathman_executor_hook(QueryDesc *queryDesc, ScanDirection direction,
-						   uint64 count);
+						   ExecutorRun_CountArgType count);
 
 #endif /* PATHMAN_HOOKS_H */

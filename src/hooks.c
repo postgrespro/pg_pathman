@@ -844,7 +844,7 @@ pathman_process_utility_hook(Node *parsetree,
 
 void
 pathman_executor_hook(QueryDesc *queryDesc, ScanDirection direction,
-		uint64 count)
+		ExecutorRun_CountArgType count)
 {
 	PlanState *state = (PlanState *) queryDesc->planstate;
 

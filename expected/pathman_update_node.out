@@ -40,68 +40,6 @@ EXPLAIN (COSTS OFF) UPDATE test_update_node.test_range SET val = 14 WHERE val = 
                            Index Cond: (val = '15'::numeric)
 (7 rows)
 
-/* Scan all partitions */
-EXPLAIN (COSTS OFF) UPDATE test_update_node.test_range SET val = 14 WHERE comment='15';
-                     QUERY PLAN                     
-----------------------------------------------------
- Insert on test_range
-   Insert on test_range
-   Insert on test_range_1
-   Insert on test_range_2
-   Insert on test_range_3
-   Insert on test_range_4
-   Insert on test_range_5
-   Insert on test_range_6
-   Insert on test_range_7
-   Insert on test_range_8
-   Insert on test_range_9
-   Insert on test_range_10
-   ->  Custom Scan (PrepareInsert)
-         ->  Custom Scan (PartitionFilter)
-               ->  Seq Scan on test_range
-                     Filter: (comment = '15'::text)
-   ->  Custom Scan (PrepareInsert)
-         ->  Custom Scan (PartitionFilter)
-               ->  Seq Scan on test_range_1
-                     Filter: (comment = '15'::text)
-   ->  Custom Scan (PrepareInsert)
-         ->  Custom Scan (PartitionFilter)
-               ->  Seq Scan on test_range_2
-                     Filter: (comment = '15'::text)
-   ->  Custom Scan (PrepareInsert)
-         ->  Custom Scan (PartitionFilter)
-               ->  Seq Scan on test_range_3
-                     Filter: (comment = '15'::text)
-   ->  Custom Scan (PrepareInsert)
-         ->  Custom Scan (PartitionFilter)
-               ->  Seq Scan on test_range_4
-                     Filter: (comment = '15'::text)
-   ->  Custom Scan (PrepareInsert)
-         ->  Custom Scan (PartitionFilter)
-               ->  Seq Scan on test_range_5
-                     Filter: (comment = '15'::text)
-   ->  Custom Scan (PrepareInsert)
-         ->  Custom Scan (PartitionFilter)
-               ->  Seq Scan on test_range_6
-                     Filter: (comment = '15'::text)
-   ->  Custom Scan (PrepareInsert)
-         ->  Custom Scan (PartitionFilter)
-               ->  Seq Scan on test_range_7
-                     Filter: (comment = '15'::text)
-   ->  Custom Scan (PrepareInsert)
-         ->  Custom Scan (PartitionFilter)
-               ->  Seq Scan on test_range_8
-                     Filter: (comment = '15'::text)
-   ->  Custom Scan (PrepareInsert)
-         ->  Custom Scan (PartitionFilter)
-               ->  Seq Scan on test_range_9
-                     Filter: (comment = '15'::text)
-   ->  Custom Scan (PrepareInsert)
-         ->  Custom Scan (PartitionFilter)
-               ->  Seq Scan on test_range_10
-                     Filter: (comment = '15'::text)
-(56 rows)
-
 /* Update values in 1st partition (rows remain there) */
 UPDATE test_update_node.test_range SET val = 5 WHERE val <= 10;
 /* Check values #1 */

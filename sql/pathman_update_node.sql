@@ -18,9 +18,6 @@ EXPLAIN (COSTS OFF) UPDATE test_update_node.test_range SET val = 5 WHERE val = 1
 /* Keep same partition */
 EXPLAIN (COSTS OFF) UPDATE test_update_node.test_range SET val = 14 WHERE val = 15;
 
-/* Scan all partitions */
-EXPLAIN (COSTS OFF) UPDATE test_update_node.test_range SET val = 14 WHERE comment='15';
-
 /* Update values in 1st partition (rows remain there) */
 UPDATE test_update_node.test_range SET val = 5 WHERE val <= 10;
 
