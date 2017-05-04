@@ -1067,6 +1067,9 @@ class PartitioningTests(unittest.TestCase):
 		node.stop()
 		node.cleanup()
 
+		node.psql('postgres', 'DROP SCHEMA test_update_node CASCADE;')
+		node.psql('postgres', 'DROP EXTENSION pg_pathman CASCADE;')
+
 
 if __name__ == "__main__":
 	unittest.main()
