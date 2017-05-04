@@ -81,10 +81,10 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	const PartRelationInfo *inner_prel;
 	List				   *joinclauses,
 						   *otherclauses;
-	ListCell			   *lc;
 	WalkerContext			context;
 	double					paramsel;
-	Node				   *expr;
+	Node				   *part_expr;
+	ListCell			   *lc;
 
 	/* Call hooks set by other extensions */
 	if (set_join_pathlist_next)
@@ -130,14 +130,14 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	}
 
 	/* Make copy of partitioning expression and fix Var's  varno attributes */
-	expr = PrelExpressionForRelid(inner_prel, innerrel->relid);
+	part_expr = PrelExpressionForRelid(inner_prel, innerrel->relid);
 
 	paramsel = 1.0;
 	foreach (lc, joinclauses)
 	{
 		WrapperNode *wrap;
 
-		InitWalkerContext(&context, expr, inner_prel, NULL, false);
+		InitWalkerContext(&context, part_expr, inner_prel, NULL, false);
 		wrap = walk_expr_tree((Expr *) lfirst(lc), &context);
 		paramsel *= wrap->paramsel;
 	}
@@ -308,13 +308,13 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 					   *pathkeyDesc = NULL;
 		double			paramsel = 1.0;			/* default part selectivity */
 		WalkerContext	context;
-		Node		   *expr;
-		bool			modify_append_nodes;
+		Node		   *part_expr;
+		List		   *part_clauses;
 		ListCell	   *lc;
 		int				i;
 
 		/* Make copy of partitioning expression and fix Var's  varno attributes */
-		expr = PrelExpressionForRelid(prel, rti);
+		part_expr = PrelExpressionForRelid(prel, rti);
 
 		if (prel->parttype == PT_RANGE)
 		{
@@ -328,11 +328,11 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			tce = lookup_type_cache(prel->atttype, TYPECACHE_LT_OPR | TYPECACHE_GT_OPR);
 
 			/* Make pathkeys */
-			pathkeys = build_expression_pathkey(root, (Expr *) expr, NULL,
+			pathkeys = build_expression_pathkey(root, (Expr *) part_expr, NULL,
 												tce->lt_opr, NULL, false);
 			if (pathkeys)
 				pathkeyAsc = (PathKey *) linitial(pathkeys);
-			pathkeys = build_expression_pathkey(root, (Expr *) expr, NULL,
+			pathkeys = build_expression_pathkey(root, (Expr *) part_expr, NULL,
 												tce->gt_opr, NULL, false);
 			if (pathkeys)
 				pathkeyDesc = (PathKey *) linitial(pathkeys);
@@ -345,7 +345,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		ranges = list_make1_irange_full(prel, IR_COMPLETE);
 
 		/* Make wrappers over restrictions and collect final rangeset */
-		InitWalkerContext(&context, expr, prel, NULL, false);
+		InitWalkerContext(&context, part_expr, prel, NULL, false);
 		wrappers = NIL;
 		foreach(lc, rel->baserestrictinfo)
 		{
@@ -358,12 +358,6 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			wrappers = lappend(wrappers, wrap);
 			ranges = irange_list_intersection(ranges, wrap->rangeset);
 		}
-
-		/*
-		 * Walker should been have filled these parameter while checking.
-		 * Runtime[Merge]Append is pointless if there are no params in clauses.
-		 */
-		modify_append_nodes = context.found_params;
 
 		/* Get number of selected partitions */
 		irange_len = irange_list_length(ranges);
@@ -441,7 +435,13 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			  pg_pathman_enable_runtime_merge_append))
 			return;
 
-		if (!modify_append_nodes)
+		/* Get partitioning-related clauses */
+		part_clauses = get_partitioning_clauses(list_union(rel->baserestrictinfo,
+														   rel->joininfo),
+												prel, rti);
+
+		/* Skip if there's no PARAMs in partitioning-related clauses */
+		if (!clause_contains_params((Node *) part_clauses))
 			return;
 
 		/* Generate Runtime[Merge]Append paths if needed */
@@ -461,12 +461,6 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 
 			/* Get existing parameterization */
 			ppi = get_appendrel_parampathinfo(rel, inner_required);
-
-			/* Skip if there are no partitioning clauses */
-			if (!get_partitioning_clauses(list_union(rel->baserestrictinfo,
-													 rel->joininfo),
-										  prel, rti))
-				return;
 
 			if (IsA(cur_path, AppendPath) && pg_pathman_enable_runtimeappend)
 				inner_path = create_runtimeappend_path(root, cur_path,

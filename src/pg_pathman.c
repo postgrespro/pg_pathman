@@ -65,7 +65,7 @@ static void handle_binary_opexpr_param(const PartRelationInfo *prel,
 									   WrapperNode *result,
 									   const Node *varnode);
 
-static bool pull_var_param(const WalkerContext *ctx,
+static bool pull_var_param(const WalkerContext *context,
 						   const OpExpr *expr,
 						   Node **var_ptr,
 						   Node **param_ptr);
@@ -1012,9 +1012,6 @@ handle_opexpr(const OpExpr *expr, WalkerContext *context)
 			}
 			else if (IsA(param, Param) || IsA(param, Var))
 			{
-				if (IsA(param, Param))
-					context->found_params = true;
-
 				handle_binary_opexpr_param(prel, result, var);
 				return result;
 			}
@@ -1140,7 +1137,7 @@ handle_binary_opexpr_param(const PartRelationInfo *prel,
  * NOTE: returns false if partition key is not in expression.
  */
 static bool
-pull_var_param(const WalkerContext *ctx,
+pull_var_param(const WalkerContext *context,
 			   const OpExpr *expr,
 			   Node **var_ptr,
 			   Node **param_ptr)
@@ -1148,14 +1145,14 @@ pull_var_param(const WalkerContext *ctx,
 	Node   *left = linitial(expr->args),
 		   *right = lsecond(expr->args);
 
-	if (match_expr_to_operand(left, ctx->prel_expr))
+	if (match_expr_to_operand(context->prel_expr, left))
 	{
 		*var_ptr = left;
 		*param_ptr = right;
 		return true;
 	}
 
-	if (match_expr_to_operand(right, ctx->prel_expr))
+	if (match_expr_to_operand(context->prel_expr, right))
 	{
 		*var_ptr = right;
 		*param_ptr = left;

@@ -323,7 +323,7 @@ clause_contains_prel_expr(Node *node, Node *prel_expr)
 	if (node == NULL)
 		return false;
 
-	if (match_expr_to_operand(node, prel_expr))
+	if (match_expr_to_operand(prel_expr, node))
 			return true;
 
 	return expression_tree_walker(node, clause_contains_prel_expr, prel_expr);

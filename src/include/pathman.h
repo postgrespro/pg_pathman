@@ -148,8 +148,6 @@ typedef struct
 	const PartRelationInfo *prel;			/* main partitioning structure */
 	ExprContext			   *econtext;		/* for ExecEvalExpr() */
 	bool					for_insert;		/* are we in PartitionFilter now? */
-	bool					found_params;	/* mark if left or right argument
-											   of clause is Param */
 } WalkerContext;
 
 /* Usual initialization procedure for WalkerContext */
@@ -159,7 +157,6 @@ typedef struct
 		(context)->prel = (prel_info); \
 		(context)->econtext = (ecxt); \
 		(context)->for_insert = (for_ins); \
-		(context)->found_params = (false); \
 	} while (0)
 
 /* Check that WalkerContext contains ExprContext (plan execution stage) */
