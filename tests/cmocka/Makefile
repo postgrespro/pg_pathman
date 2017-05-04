@@ -2,10 +2,11 @@ PG_CONFIG = pg_config
 TOP_SRC_DIR = ../../src
 
 CC = gcc
-CFLAGS = -I $(TOP_SRC_DIR) -I $(shell $(PG_CONFIG) --includedir-server)
+CFLAGS += -I $(TOP_SRC_DIR) -I $(shell $(PG_CONFIG) --includedir-server)
 CFLAGS += -I$(CURDIR)/../../src/include
 CFLAGS += $(shell $(PG_CONFIG) --cflags_sl)
 CFLAGS += $(shell $(PG_CONFIG) --cflags)
+CFLAGS += $(CFLAGS_SL)
 LDFLAGS = -lcmocka
 TEST_BIN = rangeset_tests
 

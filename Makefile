@@ -75,5 +75,9 @@ isolationcheck: | submake-isolation
 		--temp-config=$(top_srcdir)/$(subdir)/conf.add \
 		--outputdir=./isolation_output \
 		$(ISOLATIONCHECKS)
-partitioning_tests:
+
+python_tests:
 	$(MAKE) -C tests/python partitioning_tests
+
+cmocka_tests:
+	$(MAKE) -C tests/cmocka check
