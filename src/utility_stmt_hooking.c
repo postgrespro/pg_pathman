@@ -597,11 +597,8 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	{
 		TupleTableSlot		   *slot,
 							   *tmp_slot;
-		// ExprDoneCond			itemIsDone;
 		bool					skip_tuple;
-								// isnull;
 		Oid						tuple_oid = InvalidOid;
-		// Datum					value;
 
 		const PartRelationInfo *prel;
 		ResultRelInfoHolder	   *rri_holder;
@@ -641,16 +638,8 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 		/* Execute expression */
 		tmp_slot = econtext->ecxt_scantuple;
 		econtext->ecxt_scantuple = slot;
-		// value = ExecEvalExpr(expr_state, econtext, &isnull, &itemIsDone);
-
-		// if (isnull)
-		// 	elog(ERROR, ERR_PART_ATTR_NULL);
-
-		// if (itemIsDone != ExprSingleResult)
-		// 	elog(ERROR, ERR_PART_ATTR_MULTIPLE_RESULTS);
 
 		/* Search for a matching partition */
-		// rri_holder = select_partition_for_insert(value,
 		rri_holder = select_partition_for_insert(econtext, expr_state, prel,
 												 &parts_storage, estate);
 		econtext->ecxt_scantuple = tmp_slot;

@@ -427,8 +427,6 @@ select_partition_for_insert(ExprContext *econtext, ExprState *expr_state,
 	Oid						selected_partid = InvalidOid;
 	Oid					   *parts;
 	int						nparts;
-	TupleTableSlot		   *tmp_slot;
-	// const PartRelationInfo *subprel;
 	bool					isnull;
 	ExprDoneCond			itemIsDone;
 	Datum					value;
@@ -457,7 +455,6 @@ select_partition_for_insert(ExprContext *econtext, ExprState *expr_state,
 	}
 	else selected_partid = parts[0];
 
-	// subprel = get_pathman_relation_info(state->partitioned_table))
 	/* Replace parent table with a suitable partition */
 	old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
 	rri_holder = scan_result_parts_storage(selected_partid, parts_storage);
@@ -665,9 +662,6 @@ partition_filter_exec(CustomScanState *node)
 		MemoryContext				old_mcxt;
 		const PartRelationInfo	   *prel;
 		ResultRelInfoHolder		   *rri_holder;
-		// bool						isnull;
-		// Datum						value;
-		// ExprDoneCond				itemIsDone;
 		TupleTableSlot			   *tmp_slot;
 
 		/* Fetch PartRelationInfo for this partitioned relation */

@@ -1300,7 +1300,6 @@ build_raw_hash_check_tree(Node *raw_expression,
 	A_Expr		   *eq_oper			= makeNode(A_Expr);
 	FuncCall	   *part_idx_call	= makeNode(FuncCall),
 				   *hash_call		= makeNode(FuncCall);
-	//ColumnRef	   *hashed_column	= makeNode(ColumnRef);
 	A_Const		   *part_idx_c		= makeNode(A_Const),
 				   *part_count_c	= makeNode(A_Const);
 

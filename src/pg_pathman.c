@@ -249,10 +249,14 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 	child_rte = copyObject(parent_rte);
 	child_rte->relid			= child_oid;
 	child_rte->relkind			= child_relation->rd_rel->relkind;
-	// child_rte->inh				= false;	/* relation has no children */
+	child_rte->requiredPerms	= 0;		/* perform all checks on parent */
+	/*
+	 * If it is the parent relation, then set inh flag to false to prevent
+	 * further recursive unrolling. Else if relation is a child and has subclass
+	 * then we will need to check if there are subpartitions
+	 */
 	child_rte->inh = (child_oid != parent_rte->relid) ?
 		child_relation->rd_rel->relhassubclass : false;
-	child_rte->requiredPerms	= 0;		/* perform all checks on parent */
 
 	/* Add 'child_rte' to rtable and 'root->simple_rte_array' */
 	root->parse->rtable = lappend(root->parse->rtable, child_rte);
@@ -394,7 +398,7 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 	}
 
 	/*
-	 * TODO: new!!!
+	 * Recursively expand child partition if it has subpartitions
 	 */
 	if (child_rte->inh)
 	{
@@ -1660,29 +1664,36 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 			set_rel_consider_parallel_compat(root, childrel, childRTE);
 #endif
 
-		/* Compute child's access paths & sizes */
-		if (childRTE->relkind == RELKIND_FOREIGN_TABLE)
+		/*
+		 * If inh is True and pathlist is not null then it is a partitioned
+		 * table and we've already filled it, skip it. Otherwise build a
+		 * pathlist for it
+		 */
+		if(!childRTE->inh || childrel->pathlist == NIL)
 		{
-			/* childrel->rows should be >= 1 */
-			set_foreign_size(root, childrel, childRTE);
+			/* Compute child's access paths & sizes */
+			if (childRTE->relkind == RELKIND_FOREIGN_TABLE)
+			{
+				/* childrel->rows should be >= 1 */
+				set_foreign_size(root, childrel, childRTE);
 
-			/* If child IS dummy, ignore it */
-			if (IS_DUMMY_REL(childrel))
-				continue;
+				/* If child IS dummy, ignore it */
+				if (IS_DUMMY_REL(childrel))
+					continue;
 
-			set_foreign_pathlist(root, childrel, childRTE);
-		}
-		/* TODO: temporary!!! */
-		else if(!childRTE->inh || childrel->pathlist == NIL)
-		{
-			/* childrel->rows should be >= 1 */
-			set_plain_rel_size(root, childrel, childRTE);
+				set_foreign_pathlist(root, childrel, childRTE);
+			}
+			else 
+			{
+				/* childrel->rows should be >= 1 */
+				set_plain_rel_size(root, childrel, childRTE);
 
-			/* If child IS dummy, ignore it */
-			if (IS_DUMMY_REL(childrel))
-				continue;
+				/* If child IS dummy, ignore it */
+				if (IS_DUMMY_REL(childrel))
+					continue;
 
-			set_plain_rel_pathlist(root, childrel, childRTE);
+				set_plain_rel_pathlist(root, childrel, childRTE);
+			}
 		}
 
 		/* Set cheapest path for child */
