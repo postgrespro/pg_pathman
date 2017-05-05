@@ -56,21 +56,17 @@ static WrapperNode *handle_boolexpr(const BoolExpr *expr, WalkerContext *context
 static WrapperNode *handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context);
 static WrapperNode *handle_opexpr(const OpExpr *expr, WalkerContext *context);
 
-static void handle_binary_opexpr(WalkerContext *context,
-								 WrapperNode *result,
-								 const Node *varnode,
-								 const Const *c);
+static void handle_binary_opexpr(const Const *c, WalkerContext *context,
+								 WrapperNode *result);
 
 static void handle_binary_opexpr_param(const PartRelationInfo *prel,
-									   WrapperNode *result,
-									   const Node *varnode);
+									   WrapperNode *result);
 
-static bool pull_var_param(const WalkerContext *context,
-						   const OpExpr *expr,
-						   Node **var_ptr,
-						   Node **param_ptr);
+static bool is_key_op_param(const OpExpr *expr,
+							const WalkerContext *context,
+							Node **param_ptr);
 
-static Const *extract_const(WalkerContext *wcxt, Param *param);
+static Const *extract_const(Param *param, WalkerContext *wcxt);
 
 
 /* Copied from PostgreSQL (allpaths.c) */
@@ -93,13 +89,13 @@ static void generate_mergeappend_paths(PlannerInfo *root,
 
 
 /* We can transform Param into Const provided that 'econtext' is available */
-#define IsConstValue(wcxt, node) \
+#define IsConstValue(node, wcxt) \
 	( IsA((node), Const) || (WcxtHasExprContext(wcxt) ? IsA((node), Param) : false) )
 
-#define ExtractConst(wcxt, node) \
+#define ExtractConst(node, wcxt) \
 	( \
 		IsA((node), Param) ? \
-				extract_const((wcxt), (Param *) (node)) : \
+				extract_const((Param *) (node), (wcxt)) : \
 				((Const *) (node)) \
 	)
 
@@ -994,7 +990,7 @@ static WrapperNode *
 handle_opexpr(const OpExpr *expr, WalkerContext *context)
 {
 	WrapperNode	   *result = (WrapperNode *) palloc0(sizeof(WrapperNode));
-	Node		   *var, *param;
+	Node		   *param;
 	const PartRelationInfo *prel = context->prel;
 
 	result->orig = (const Node *) expr;
@@ -1002,17 +998,18 @@ handle_opexpr(const OpExpr *expr, WalkerContext *context)
 
 	if (list_length(expr->args) == 2)
 	{
-		if (pull_var_param(context, expr, &var, &param))
+		/* Is it KEY OP PARAM or PARAM OP KEY? */
+		if (is_key_op_param(expr, context, &param))
 		{
-			if (IsConstValue(context, param))
+			if (IsConstValue(param, context))
 			{
-				handle_binary_opexpr(context, result, var,
-									 ExtractConst(context, param));
+				handle_binary_opexpr(ExtractConst(param, context), context, result);
 				return result;
 			}
+			/* TODO: estimate selectivity for param if it's Var */
 			else if (IsA(param, Param) || IsA(param, Var))
 			{
-				handle_binary_opexpr_param(prel, result, var);
+				handle_binary_opexpr_param(prel, result);
 				return result;
 			}
 		}
@@ -1024,10 +1021,10 @@ handle_opexpr(const OpExpr *expr, WalkerContext *context)
 }
 
 /* Binary operator handler */
-/* FIXME: varnode */
 static void
-handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
-					 const Node *varnode, const Const *c)
+handle_binary_opexpr(const Const *c,
+					 WalkerContext *context,
+					 WrapperNode *result)
 {
 	int						strategy;
 	TypeCacheEntry		   *tce;
@@ -1112,10 +1109,9 @@ binary_opexpr_return:
 }
 
 /* Estimate selectivity of parametrized quals */
-/* FIXME: varnode */
 static void
 handle_binary_opexpr_param(const PartRelationInfo *prel,
-						   WrapperNode *result, const Node *varnode)
+						   WrapperNode *result)
 {
 	const OpExpr	   *expr = (const OpExpr *) result->orig;
 	TypeCacheEntry	   *tce;
@@ -1131,30 +1127,27 @@ handle_binary_opexpr_param(const PartRelationInfo *prel,
 
 
 /*
- * Checks if expression is a KEY OP PARAM or PARAM OP KEY, where KEY is
- * partition expression and PARAM is whatever.
+ * Checks if expression is a KEY OP PARAM or PARAM OP KEY, where
+ * KEY is partitioning expression and PARAM is whatever.
  *
  * NOTE: returns false if partition key is not in expression.
  */
 static bool
-pull_var_param(const WalkerContext *context,
-			   const OpExpr *expr,
-			   Node **var_ptr,
-			   Node **param_ptr)
+is_key_op_param(const OpExpr *expr,
+				const WalkerContext *context,
+				Node **param_ptr) /* ret value #1 */
 {
 	Node   *left = linitial(expr->args),
 		   *right = lsecond(expr->args);
 
 	if (match_expr_to_operand(context->prel_expr, left))
 	{
-		*var_ptr = left;
 		*param_ptr = right;
 		return true;
 	}
 
 	if (match_expr_to_operand(context->prel_expr, right))
 	{
-		*var_ptr = right;
 		*param_ptr = left;
 		return true;
 	}
@@ -1164,7 +1157,7 @@ pull_var_param(const WalkerContext *context,
 
 /* Extract (evaluate) Const from Param node */
 static Const *
-extract_const(WalkerContext *wcxt, Param *param)
+extract_const(Param *param, WalkerContext *wcxt)
 {
 	ExprState  *estate = ExecInitExpr((Expr *) param, NULL);
 	bool		isnull;
