@@ -167,7 +167,7 @@ refresh_pathman_relation_info(Oid relid,
 	prel->parttype	= DatumGetPartType(values[Anum_pathman_config_parttype - 1]);
 
 	/* Read config values */
-	prel->atttype = DatumGetObjectId(values[Anum_pathman_config_atttype - 1]);
+	prel->ev_type = DatumGetObjectId(values[Anum_pathman_config_atttype - 1]);
 	expr = TextDatumGetCString(values[Anum_pathman_config_expression_p - 1]);
 
 	/* Expression and attname should be saved in cache context */
@@ -190,23 +190,23 @@ refresh_pathman_relation_info(Oid relid,
 
 	MemoryContextSwitchTo(old_mcxt);
 
-	htup = SearchSysCache1(TYPEOID, prel->atttype);
+	htup = SearchSysCache1(TYPEOID, prel->ev_type);
 	if (HeapTupleIsValid(htup))
 	{
 		Form_pg_type typtup = (Form_pg_type) GETSTRUCT(htup);
-		prel->atttypmod = typtup->typtypmod;
-		prel->attcollid = typtup->typcollation;
+		prel->ev_typmod = typtup->typtypmod;
+		prel->ev_collid = typtup->typcollation;
 		ReleaseSysCache(htup);
 	}
-	else elog(ERROR, "cache lookup failed for type %u", prel->atttype);
+	else elog(ERROR, "cache lookup failed for type %u", prel->ev_type);
 
 	/* Fetch HASH & CMP fuctions and other stuff from type cache */
-	typcache = lookup_type_cache(prel->atttype,
+	typcache = lookup_type_cache(prel->ev_type,
 								 TYPECACHE_CMP_PROC | TYPECACHE_HASH_PROC);
 
-	prel->attbyval	= typcache->typbyval;
-	prel->attlen	= typcache->typlen;
-	prel->attalign	= typcache->typalign;
+	prel->ev_byval	= typcache->typbyval;
+	prel->ev_len	= typcache->typlen;
+	prel->ev_align	= typcache->typalign;
 
 	prel->cmp_proc	= typcache->cmp_proc;
 	prel->hash_proc	= typcache->hash_proc;
@@ -493,12 +493,12 @@ fill_prel_with_partitions(PartRelationInfo *prel,
 					old_mcxt = MemoryContextSwitchTo(cache_mcxt);
 					{
 						prel->ranges[i].min = CopyBound(&bound_info->range_min,
-														prel->attbyval,
-														prel->attlen);
+														prel->ev_byval,
+														prel->ev_len);
 
 						prel->ranges[i].max = CopyBound(&bound_info->range_max,
-														prel->attbyval,
-														prel->attlen);
+														prel->ev_byval,
+														prel->ev_len);
 					}
 					MemoryContextSwitchTo(old_mcxt);
 				}
@@ -526,7 +526,7 @@ fill_prel_with_partitions(PartRelationInfo *prel,
 
 		/* Prepare function info */
 		fmgr_info(prel->cmp_proc, &cmp_info.flinfo);
-		cmp_info.collid = prel->attcollid;
+		cmp_info.collid = prel->ev_collid;
 
 		/* Sort partitions by RangeEntry->min asc */
 		qsort_arg((void *) prel->ranges, PrelChildrenCount(prel),
@@ -1099,7 +1099,7 @@ get_bounds_of_partition(Oid partition, const PartRelationInfo *prel)
 
 		/* Initialize other fields */
 		pbin_local.child_rel = partition;
-		pbin_local.byval = prel->attbyval;
+		pbin_local.byval = prel->ev_byval;
 
 		/* Try to build constraint's expression tree (may emit ERROR) */
 		con_expr = get_partition_constraint_expr(partition);
@@ -1220,14 +1220,14 @@ fill_pbin_with_bounds(PartBoundInfo *pbin,
 					pbin->range_min = lower_null ?
 											MakeBoundInf(MINUS_INFINITY) :
 											MakeBound(datumCopy(lower,
-																prel->attbyval,
-																prel->attlen));
+																prel->ev_byval,
+																prel->ev_len));
 
 					pbin->range_max = upper_null ?
 											MakeBoundInf(PLUS_INFINITY) :
 											MakeBound(datumCopy(upper,
-																prel->attbyval,
-																prel->attlen));
+																prel->ev_byval,
+																prel->ev_len));
 
 					/* Switch back */
 					MemoryContextSwitchTo(old_mcxt);

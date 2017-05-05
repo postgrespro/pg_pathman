@@ -325,7 +325,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			TypeCacheEntry *tce;
 
 			/* Determine operator type */
-			tce = lookup_type_cache(prel->atttype, TYPECACHE_LT_OPR | TYPECACHE_GT_OPR);
+			tce = lookup_type_cache(prel->ev_type, TYPECACHE_LT_OPR | TYPECACHE_GT_OPR);
 
 			/* Make pathkeys */
 			pathkeys = build_expression_pathkey(root, (Expr *) part_expr, NULL,

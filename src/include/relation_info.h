@@ -119,7 +119,7 @@ typedef enum
 } PartType;
 
 /*
- * Child relation info for RANGE partitioning
+ * Child relation info for RANGE partitioning.
  */
 typedef struct
 {
@@ -130,34 +130,38 @@ typedef struct
 
 /*
  * PartRelationInfo
- *		Per-relation partitioning information
+ *		Per-relation partitioning information.
+ *		Allows us to perform partition pruning.
  */
 typedef struct
 {
 	Oid				key;			/* partitioned table's Oid */
-	bool			valid;			/* is this entry valid? */
-	bool			enable_parent;	/* include parent to the plan */
+	bool			valid,			/* is this entry valid? */
+					enable_parent;	/* should plan include parent? */
 
 	PartType		parttype;		/* partitioning type (HASH | RANGE) */
 
+	/* Partition dispatch info */
 	uint32			children_count;
 	Oid			   *children;		/* Oids of child partitions */
 	RangeEntry	   *ranges;			/* per-partition range entry or NULL */
 
+	/* Partitioning expression */
 	const char	   *expr_cstr;		/* original expression */
 	Node		   *expr;			/* planned expression */
 	List		   *expr_vars;		/* vars from expression, lazy */
 	Bitmapset	   *expr_atts;		/* attnums from expression */
 
-	Oid				atttype;		/* expression type */
-	int32			atttypmod;		/* expression type modifier */
-	bool			attbyval;		/* is partitioned column stored by value? */
-	int16			attlen;			/* length of the partitioned column's type */
-	int				attalign;		/* alignment of the part column's type */
-	Oid				attcollid;		/* collation of the partitioned column */
+	/* Partitioning expression's value */
+	Oid				ev_type;		/* expression type */
+	int32			ev_typmod;		/* expression type modifier */
+	bool			ev_byval;		/* is expression's val stored by value? */
+	int16			ev_len;			/* length of the expression val's type */
+	int				ev_align;		/* alignment of the expression val's type */
+	Oid				ev_collid;		/* collation of the expression val */
 
-	Oid				cmp_proc,		/* comparison fuction for 'atttype' */
-					hash_proc;		/* hash function for 'atttype' */
+	Oid				cmp_proc,		/* comparison fuction for 'ev_type' */
+					hash_proc;		/* hash function for 'ev_type' */
 } PartRelationInfo;
 
 #define PART_EXPR_VARNO				( 1 )
@@ -176,6 +180,7 @@ typedef struct
 /*
  * PartBoundInfo
  *		Cached bounds of the specified partition.
+ *		Allows us to deminish overhead of check constraints.
  */
 typedef struct
 {
@@ -255,6 +260,7 @@ PrelExpressionForRelid(const PartRelationInfo *prel, Index rel_index)
 {
 	Node *expr;
 
+	/* TODO: implement some kind of cache */
 	if (rel_index != PART_EXPR_VARNO)
 	{
 		expr = copyObject(prel->expr);
@@ -360,7 +366,7 @@ FreeRangesArray(PartRelationInfo *prel)
 	if (prel->ranges)
 	{
 		/* Remove persistent entries if not byVal */
-		if (!prel->attbyval)
+		if (!prel->ev_byval)
 		{
 			for (i = 0; i < PrelChildrenCount(prel); i++)
 			{
@@ -370,8 +376,8 @@ FreeRangesArray(PartRelationInfo *prel)
 				if (!OidIsValid(child))
 					continue;
 
-				FreeBound(&prel->ranges[i].min, prel->attbyval);
-				FreeBound(&prel->ranges[i].max, prel->attbyval);
+				FreeBound(&prel->ranges[i].min, prel->ev_byval);
+				FreeBound(&prel->ranges[i].max, prel->ev_byval);
 			}
 		}
 

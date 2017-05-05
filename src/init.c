@@ -878,7 +878,7 @@ validate_range_constraint(const Expr *expr,
 	*lower_null = *upper_null = true;
 
 	/* Find type cache entry for partitioned expression type */
-	tce = lookup_type_cache(prel->atttype, TYPECACHE_BTREE_OPFAMILY);
+	tce = lookup_type_cache(prel->ev_type, TYPECACHE_BTREE_OPFAMILY);
 
 	/* Is it an AND clause? */
 	if (and_clause((Node *) expr))
@@ -1034,7 +1034,7 @@ read_opexpr_const(const OpExpr *opexpr,
 	/* Cast Const to a proper type if needed */
 	*value = perform_type_cast(boundary->constvalue,
 							   getBaseType(boundary->consttype),
-							   getBaseType(prel->atttype),
+							   getBaseType(prel->ev_type),
 							   &cast_success);
 
 	if (!cast_success)

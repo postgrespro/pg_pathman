@@ -354,7 +354,7 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
 			shout_if_prel_is_invalid(relid, prel, PT_RANGE);
 
 			/* Fetch base types of prel->atttype & value_type */
-			base_bound_type = getBaseType(prel->atttype);
+			base_bound_type = getBaseType(prel->ev_type);
 			base_value_type = getBaseType(value_type);
 
 			/* Search for a suitable partition if we didn't hold it */
@@ -398,12 +398,12 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
 
 				/* Copy datums in order to protect them from cache invalidation */
 				bound_min = CopyBound(&ranges[0].min,
-									  prel->attbyval,
-									  prel->attlen);
+									  prel->ev_byval,
+									  prel->ev_len);
 
 				bound_max = CopyBound(&ranges[PrelLastChild(prel)].max,
-									  prel->attbyval,
-									  prel->attlen);
+									  prel->ev_byval,
+									  prel->ev_len);
 
 				/* Check if interval is set */
 				if (isnull[Anum_pathman_config_range_interval - 1])
@@ -426,7 +426,7 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
 											  &bound_min, &bound_max, base_bound_type,
 											  interval_binary, interval_type,
 											  value, base_value_type,
-											  prel->attcollid);
+											  prel->ev_collid);
 			}
 		}
 		else
@@ -1259,15 +1259,15 @@ check_range_available(Oid parent_relid,
 	/* Fetch comparison function */
 	fill_type_cmp_fmgr_info(&cmp_func,
 							getBaseType(value_type),
-							getBaseType(prel->atttype));
+							getBaseType(prel->ev_type));
 
 	ranges = PrelGetRangesArray(prel);
 	for (i = 0; i < PrelChildrenCount(prel); i++)
 	{
 		int c1, c2;
 
-		c1 = cmp_bounds(&cmp_func, prel->attcollid, start, &ranges[i].max);
-		c2 = cmp_bounds(&cmp_func, prel->attcollid, end, &ranges[i].min);
+		c1 = cmp_bounds(&cmp_func, prel->ev_collid, start, &ranges[i].max);
+		c2 = cmp_bounds(&cmp_func, prel->ev_collid, end, &ranges[i].min);
 
 		/* There's something! */
 		if (c1 < 0 && c2 > 0)

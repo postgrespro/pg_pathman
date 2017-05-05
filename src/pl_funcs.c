@@ -186,7 +186,7 @@ get_partition_key_type(PG_FUNCTION_ARGS)
 	prel = get_pathman_relation_info(relid);
 	shout_if_prel_is_invalid(relid, prel, PT_ANY);
 
-	PG_RETURN_OID(prel->atttype);
+	PG_RETURN_OID(prel->ev_type);
 }
 
 /*
@@ -486,7 +486,7 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 						{
 							Datum rmin = CStringGetTextDatum(
 											datum_to_cstring(BoundGetValue(&re->min),
-															 prel->atttype));
+															 prel->ev_type));
 
 							values[Anum_pathman_pl_range_min - 1] = rmin;
 						}
@@ -497,7 +497,7 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 						{
 							Datum rmax = CStringGetTextDatum(
 											datum_to_cstring(BoundGetValue(&re->max),
-															 prel->atttype));
+															 prel->ev_type));
 
 							values[Anum_pathman_pl_range_max - 1] = rmax;
 						}

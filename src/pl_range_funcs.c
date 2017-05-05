@@ -407,10 +407,10 @@ get_part_range_by_oid(PG_FUNCTION_ARGS)
 	shout_if_prel_is_invalid(parent_relid, prel, PT_RANGE);
 
 	/* Check type of 'dummy' (for correct output) */
-	if (getBaseType(get_fn_expr_argtype(fcinfo->flinfo, 1)) != getBaseType(prel->atttype))
+	if (getBaseType(get_fn_expr_argtype(fcinfo->flinfo, 1)) != getBaseType(prel->ev_type))
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("pg_typeof(dummy) should be %s",
-							   format_type_be(getBaseType(prel->atttype)))));
+							   format_type_be(getBaseType(prel->ev_type)))));
 
 	ranges = PrelGetRangesArray(prel);
 
@@ -425,8 +425,8 @@ get_part_range_by_oid(PG_FUNCTION_ARGS)
 			elems[1] = ranges[i].max;
 
 			arr = construct_infinitable_array(elems, 2,
-											  prel->atttype, prel->attlen,
-											  prel->attbyval, prel->attalign);
+											  prel->ev_type, prel->ev_len,
+											  prel->ev_byval, prel->ev_align);
 
 			PG_RETURN_ARRAYTYPE_P(arr);
 		}
@@ -474,10 +474,10 @@ get_part_range_by_idx(PG_FUNCTION_ARGS)
 	shout_if_prel_is_invalid(parent_relid, prel, PT_RANGE);
 
 	/* Check type of 'dummy' (for correct output) */
-	if (getBaseType(get_fn_expr_argtype(fcinfo->flinfo, 2)) != getBaseType(prel->atttype))
+	if (getBaseType(get_fn_expr_argtype(fcinfo->flinfo, 2)) != getBaseType(prel->ev_type))
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("pg_typeof(dummy) should be %s",
-							   format_type_be(getBaseType(prel->atttype)))));
+							   format_type_be(getBaseType(prel->ev_type)))));
 
 
 	/* Now we have to deal with 'idx' */
@@ -505,10 +505,10 @@ get_part_range_by_idx(PG_FUNCTION_ARGS)
 	elems[1] = ranges[partition_idx].max;
 
 	PG_RETURN_ARRAYTYPE_P(construct_infinitable_array(elems, 2,
-													  prel->atttype,
-													  prel->attlen,
-													  prel->attbyval,
-													  prel->attalign));
+													  prel->ev_type,
+													  prel->ev_len,
+													  prel->ev_byval,
+													  prel->ev_align));
 }
 
 
@@ -690,7 +690,7 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 	}
 
 	/* Check that partitions are adjacent */
-	check_range_adjacence(prel->cmp_proc, prel->attcollid, rentry_list);
+	check_range_adjacence(prel->cmp_proc, prel->ev_collid, rentry_list);
 
 	/* First determine the bounds of a new constraint */
 	first = (RangeEntry *) linitial(rentry_list);
@@ -698,7 +698,7 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 
 	/* Swap ranges if 'last' < 'first' */
 	fmgr_info(prel->cmp_proc, &cmp_proc);
-	if (cmp_bounds(&cmp_proc, prel->attcollid, &last->min, &first->min) < 0)
+	if (cmp_bounds(&cmp_proc, prel->ev_collid, &last->min, &first->min) < 0)
 	{
 		RangeEntry *tmp = last;
 
@@ -709,7 +709,7 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 	/* Drop old constraint and create a new one */
 	modify_range_constraint(parts[0],
 							prel->expr_cstr,
-							prel->atttype,
+							prel->ev_type,
 							&first->min,
 							&last->max);
 
@@ -792,7 +792,7 @@ drop_range_partition_expand_next(PG_FUNCTION_ARGS)
 		/* Drop old constraint and create a new one */
 		modify_range_constraint(next->child_oid,
 								prel->expr_cstr,
-								prel->atttype,
+								prel->ev_type,
 								&cur->min,
 								&next->max);
 	}

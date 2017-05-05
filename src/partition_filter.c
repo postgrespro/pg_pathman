@@ -396,10 +396,10 @@ find_partitions_for_value(Datum value, Oid value_type,
 	temp_const.constisnull	= false;
 
 	/* ... and some other important data */
-	CopyToTempConst(consttypmod, atttypmod);
-	CopyToTempConst(constcollid, attcollid);
-	CopyToTempConst(constlen,    attlen);
-	CopyToTempConst(constbyval,  attbyval);
+	CopyToTempConst(consttypmod, ev_typmod);
+	CopyToTempConst(constcollid, ev_collid);
+	CopyToTempConst(constlen,    ev_len);
+	CopyToTempConst(constbyval,  ev_byval);
 
 	/* We use 0 since varno doesn't matter for Const */
 	InitWalkerContext(&wcxt, 0, prel, NULL, true);
@@ -431,7 +431,7 @@ select_partition_for_insert(Datum value, Oid value_type,
 	else if (nparts == 0)
 	{
 		 selected_partid = create_partitions_for_value(PrelParentRelid(prel),
-													   value, prel->atttype);
+													   value, prel->ev_type);
 
 		 /* get_pathman_relation_info() will refresh this entry */
 		 invalidate_pathman_relation_info(PrelParentRelid(prel), NULL);
@@ -446,7 +446,7 @@ select_partition_for_insert(Datum value, Oid value_type,
 	/* Could not find suitable partition */
 	if (rri_holder == NULL)
 		elog(ERROR, ERR_PART_ATTR_NO_PART,
-			 datum_to_cstring(value, prel->atttype));
+			 datum_to_cstring(value, prel->ev_type));
 
 	return rri_holder;
 }
@@ -630,7 +630,7 @@ partition_filter_exec(CustomScanState *node)
 			elog(ERROR, ERR_PART_ATTR_MULTIPLE_RESULTS);
 
 		/* Search for a matching partition */
-		rri_holder = select_partition_for_insert(value, prel->atttype, prel,
+		rri_holder = select_partition_for_insert(value, prel->ev_type, prel,
 												 &state->result_parts, estate);
 
 		/* Switch back and clean up per-tuple context */

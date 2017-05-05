@@ -740,11 +740,11 @@ handle_const(const Const *c, WalkerContext *context)
 				bool	cast_success;
 
 				/* Peform type cast if types mismatch */
-				if (prel->atttype != c->consttype)
+				if (prel->ev_type != c->consttype)
 				{
 					value = perform_type_cast(c->constvalue,
 											  getBaseType(c->consttype),
-											  getBaseType(prel->atttype),
+											  getBaseType(prel->ev_type),
 											  &cast_success);
 
 					if (!cast_success)
@@ -770,14 +770,14 @@ handle_const(const Const *c, WalkerContext *context)
 
 				fill_type_cmp_fmgr_info(&cmp_finfo,
 										getBaseType(c->consttype),
-										getBaseType(prel->atttype));
+										getBaseType(prel->ev_type));
 
 				select_range_partitions(c->constvalue,
 										&cmp_finfo,
 										PrelGetRangesArray(context->prel),
 										PrelChildrenCount(context->prel),
 										strategy,
-										prel->attcollid,
+										prel->ev_collid,
 										result); /* output */
 
 				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
@@ -1042,7 +1042,7 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 		return;
 	}
 
-	tce = lookup_type_cache(prel->atttype, TYPECACHE_BTREE_OPFAMILY);
+	tce = lookup_type_cache(prel->ev_type, TYPECACHE_BTREE_OPFAMILY);
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
 
 	/* There's no strategy for this operator, go to end */
@@ -1077,17 +1077,17 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 				 * if operator collation is different from default attribute collation.
 				 * In this case we just return all of them.
 				 */
-				if (expr->opcollid != prel->attcollid &&
+				if (expr->opcollid != prel->ev_collid &&
 					strategy != BTEqualStrategyNumber)
 					goto binary_opexpr_return;
 
 				collid = OidIsValid(expr->opcollid) ?
 											expr->opcollid :
-											prel->attcollid;
+											prel->ev_collid;
 
 				fill_type_cmp_fmgr_info(&cmp_func,
 										getBaseType(c->consttype),
-										getBaseType(prel->atttype));
+										getBaseType(prel->ev_type));
 
 				select_range_partitions(c->constvalue,
 										&cmp_func,
@@ -1122,7 +1122,7 @@ handle_binary_opexpr_param(const PartRelationInfo *prel,
 	int					strategy;
 
 	/* Determine operator type */
-	tce = lookup_type_cache(prel->atttype, TYPECACHE_BTREE_OPFAMILY);
+	tce = lookup_type_cache(prel->ev_type, TYPECACHE_BTREE_OPFAMILY);
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
 
 	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
