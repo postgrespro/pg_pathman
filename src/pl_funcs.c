@@ -113,6 +113,7 @@ static void pathman_update_trigger_func_move_tuple(Relation source_rel,
 												   HeapTuple old_tuple,
 												   HeapTuple new_tuple);
 
+static void collect_update_trigger_columns(Oid relid, List **columns);
 static Oid find_target_partition(Relation source_rel, HeapTuple tuple);
 static Oid find_topmost_parent(Oid partition);
 static Oid find_deepest_partition(Oid parent, Relation source_rel, HeapTuple tuple);
@@ -1087,29 +1088,11 @@ Datum
 pathman_update_trigger_func(PG_FUNCTION_ARGS)
 {
 	TriggerData			   *trigdata = (TriggerData *) fcinfo->context;
-
 	Relation				source_rel;
-
-	// Oid						parent_relid,
 	Oid						source_relid,
 							target_relid;
-
 	HeapTuple				old_tuple,
 							new_tuple;
-
-	// Datum					value;
-	// Oid						value_type;
-	// bool					isnull;
-	// ExprDoneCond			itemIsDone;
-
-	// Oid					   *parts;
-	// int						nparts;
-
-	// ExprContext			   *econtext;
-	// ExprState			   *expr_state;
-	// MemoryContext		    old_mcxt;
-	// PartParentSearch		parent_search;
-	// const PartRelationInfo *prel;
 
 	/* Handle user calls */
 	if (!CALLED_AS_TRIGGER(fcinfo))
@@ -1132,53 +1115,10 @@ pathman_update_trigger_func(PG_FUNCTION_ARGS)
 	old_tuple = trigdata->tg_trigtuple;
 	new_tuple = trigdata->tg_newtuple;
 
-	// /* Find parent relation and partitioning info */
-	// parent_relid = get_parent_of_partition(source_relid, &parent_search);
-	// if (parent_search != PPS_ENTRY_PART_PARENT)
-	// 	elog(ERROR, "relation \"%s\" is not a partition",
-	// 		 RelationGetRelationName(source_rel));
-
-	// /* Fetch partition dispatch info */
-	// prel = get_pathman_relation_info(parent_relid);
-	// shout_if_prel_is_invalid(parent_relid, prel, PT_ANY);
-
-	// /* Execute partitioning expression */
-	// econtext = CreateStandaloneExprContext();
-	// old_mcxt = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
-	// expr_state = pathman_update_trigger_build_expr_state(prel,
-	// 													 source_rel,
-	// 													 new_tuple,
-	// 													 &value_type);
-	// value = ExecEvalExpr(expr_state, econtext, &isnull, &itemIsDone);
-	// MemoryContextSwitchTo(old_mcxt);
-
-	// if (isnull)
-	// 	elog(ERROR, ERR_PART_ATTR_NULL);
-
-	// if (itemIsDone != ExprSingleResult)
-	// 	elog(ERROR, ERR_PART_ATTR_MULTIPLE_RESULTS);
-
-	// /* Search for matching partitions */
-	// parts = find_partitions_for_value(value, value_type, prel, &nparts);
-
-
-	// /* We can free expression context now */
-	// FreeExprContext(econtext, false);
-
-	// if (nparts > 1)
-	// 	elog(ERROR, ERR_PART_ATTR_MULTIPLE);
-	// else if (nparts == 0)
-	// {
-	// 	 target_relid = create_partitions_for_value(PrelParentRelid(prel),
-	// 												value, value_type);
-
-	// 	 /* get_pathman_relation_info() will refresh this entry */
-	// 	 invalidate_pathman_relation_info(PrelParentRelid(prel), NULL);
-	// }
-	// else target_relid = parts[0];
-
-	// pfree(parts);
+	/* Find (or create) target partition */
 	target_relid = find_target_partition(source_rel, new_tuple);
+
+	/* TODO: check for InvalidOid */
 
 	/* Convert tuple if target partition has changed */
 	if (target_relid != source_relid)
@@ -1549,7 +1489,7 @@ create_update_triggers(PG_FUNCTION_ARGS)
 	const char			   *trigname;
 	const PartRelationInfo *prel;
 	uint32					i;
-	List				   *columns;
+	List				   *columns = NIL;
 
 	/* Check that table is partitioned */
 	prel = get_pathman_relation_info(parent);
@@ -1559,7 +1499,8 @@ create_update_triggers(PG_FUNCTION_ARGS)
 	trigname = build_update_trigger_name_internal(parent);
 
 	/* Create trigger for parent */
-	columns = PrelExpressionColumnNames(prel);
+	// columns = PrelExpressionColumnNames(prel);
+	collect_update_trigger_columns(parent, &columns);
 	create_single_update_trigger_internal(parent, trigname, columns);
 
 	/* Fetch children array */
@@ -1570,6 +1511,28 @@ create_update_triggers(PG_FUNCTION_ARGS)
 		create_single_update_trigger_internal(children[i], trigname, columns);
 
 	PG_RETURN_VOID();
+}
+
+static void
+collect_update_trigger_columns(Oid relid, List **columns)
+{
+	const PartRelationInfo *prel;
+	Oid						parent;
+	PartParentSearch		parent_search;
+
+	prel = get_pathman_relation_info(relid);
+	if (!prel)
+		return;
+
+	/* Collect columns from current level */
+	*columns = list_concat(*columns, PrelExpressionColumnNames(prel));
+
+	/* Collect columns from parent */
+	parent = get_parent_of_partition(relid, &parent_search);
+	if (parent_search != PPS_ENTRY_PART_PARENT)
+		return;
+
+	collect_update_trigger_columns(parent, columns);
 }
 
 /* Create an UPDATE trigger for partition */
