@@ -19,6 +19,40 @@ import json
 
 from testgres import get_new_node, stop_all
 
+# set setup base logging config, it can be turned on by `use_logging`
+# parameter on node setup
+
+import logging
+import logging.config
+
+logfile = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'tests.log')
+LOG_CONFIG = {
+	'version':1,
+	'handlers': {
+		'console': {
+			'class': 'logging.StreamHandler',
+			'formatter': 'base_format',
+			'level': logging.DEBUG,
+		},
+		'file': {
+			'class': 'logging.FileHandler',
+			'filename': logfile,
+			'formatter': 'base_format',
+			'level': logging.DEBUG,
+		},
+	},
+	'formatters': {
+		'base_format': {
+			'format': '%(node)-5s: %(message)s',
+		},
+	},
+	'root': {
+		'handlers': ('file', ),
+		'level': 'DEBUG',
+	},
+}
+
+logging.config.dictConfig(LOG_CONFIG)
 
 # Helper function for json equality
 def ordered(obj, skip_keys=None):
@@ -52,6 +86,14 @@ class PartitioningTests(unittest.TestCase):
 
 	def tearDown(self):
 		stop_all()
+
+	def set_trace(self, con, external_command):
+		''' this function starts gdb on selected connection '''
+
+		pid = con.execute('SELECT pg_backend_pid()')[0][0]
+		p = subprocess.Popen([external_command], stdin=subprocess.PIPE)
+		p.communicate(str.encode(str(pid)))
+		input("press ENTER to continue..")
 
 	def start_new_pathman_cluster(self, name='test', allows_streaming=False):
 		node = get_new_node(name)
@@ -368,12 +410,19 @@ class PartitioningTests(unittest.TestCase):
 		self.assertTrue(check_tablespace(node, 'abc_added_2', 'pg_default'))
 		self.assertTrue(check_tablespace(node, 'abc_splitted_2', 'pg_default'))
 
-	@if_fdw_enabled
-	def test_foreign_table(self):
-		"""Test foreign tables"""
+	def make_basic_fdw_setup(self):
+		''''
+		Create basic FDW setup:
+			   - create range partitioned table in master
+			   - create foreign server
+			   - create foreign table and insert some data into it
+			   - attach foreign table to partitioned one
+
+		Do not forget to cleanup after use
+		'''
 
 		# Start master server
-		master = get_new_node('test')
+		master = get_new_node('test', use_logging=True)
 		master.init()
 		master.append_conf(
 			'postgresql.conf',
@@ -382,13 +431,6 @@ class PartitioningTests(unittest.TestCase):
 		master.psql('postgres', 'create extension pg_pathman')
 		master.psql('postgres', 'create extension postgres_fdw')
 
-		# RANGE partitioning test with FDW:
-		#   - create range partitioned table in master
-		#   - create foreign server
-		#   - create foreign table and insert some data into it
-		#   - attach foreign table to partitioned one
-		#   - try inserting data into foreign partition via parent
-		#   - drop partitions
 		master.psql(
 			'postgres',
 			'''create table abc(id serial, name text);
@@ -424,6 +466,22 @@ class PartitioningTests(unittest.TestCase):
 		master.safe_psql(
 			'postgres',
 			'select attach_range_partition(\'abc\', \'ftable\', 20, 30)')
+
+		return (master, fserv)
+
+	@if_fdw_enabled
+	def test_foreign_table(self):
+		"""Test foreign tables"""
+
+		# RANGE partitioning test with FDW:
+		#   - create range partitioned table in master
+		#   - create foreign server
+		#   - create foreign table and insert some data into it
+		#   - attach foreign table to partitioned one
+		#   - try inserting data into foreign partition via parent
+		#   - drop partitions
+
+		master, fserv = self.make_basic_fdw_setup()
 
 		# Check that table attached to partitioned table
 		self.assertEqual(
@@ -468,6 +526,48 @@ class PartitioningTests(unittest.TestCase):
 			b'1|\n2|\n5|\n6|\n8|\n9|\n3|\n4|\n7|\n10|\n'
 		)
 		master.safe_psql('postgres', 'select drop_partitions(\'hash_test\')')
+
+		fserv.cleanup()
+		master.cleanup()
+
+		fserv.stop()
+		master.stop()
+
+	def test_update_node_on_fdw_tables(self):
+		''' Test update node on foreign tables '''
+
+		master, fserv = self.make_basic_fdw_setup()
+
+		# create second foreign table
+		fserv.safe_psql('postgres', 'create table ftable2(id serial, name text)')
+		fserv.safe_psql('postgres', 'insert into ftable2 values (35, \'foreign\')')
+
+		master.safe_psql(
+			'postgres',
+			'''import foreign schema public limit to (ftable2)
+			from server fserv into public'''
+		)
+		master.safe_psql(
+			'postgres',
+			'select attach_range_partition(\'abc\', \'ftable2\', 30, 40)')
+
+		master.safe_psql('postgres',
+			'set pg_pathman.enable_partitionupdate=on')
+
+		with master.connect() as con:
+			con.begin()
+			con.execute("set pg_pathman.enable_partitionupdate=on")
+			con.execute("insert into abc select i, 'local' from generate_series(1, 19) i")
+			con.commit()
+
+			self.set_trace(con, 'pg_debug')
+			import ipdb; ipdb.set_trace()
+			pass
+
+		# cases
+		#	- update from local to foreign
+		#	- update from foreign to local
+		#	- update from foreign to foreign
 
 	def test_parallel_nodes(self):
 		"""Test parallel queries under partitions"""
@@ -1069,7 +1169,6 @@ class PartitioningTests(unittest.TestCase):
 
 		node.stop()
 		node.cleanup()
-
 
 if __name__ == "__main__":
 	unittest.main()

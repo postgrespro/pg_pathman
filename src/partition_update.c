@@ -157,10 +157,8 @@ partition_update_exec(CustomScanState *node)
 		oldtuple = NULL;
 		relkind = resultRelInfo->ri_RelationDesc->rd_rel->relkind;
 
-		if (relkind == RELKIND_RELATION)
+		if (child_state->ctid != NULL)
 		{
-			Assert(child_state->ctid != NULL);
-
 			tupleid = child_state->ctid;
 			tuple_ctid = *tupleid;		/* be sure we don't free
 										 * ctid!! */
@@ -192,7 +190,7 @@ partition_update_exec(CustomScanState *node)
 			tupleid = NULL;
 		}
 		else
-			elog(ERROR, "PartitionUpdate supports only relations and foreign tables");
+			elog(ERROR, "updates supported only on basic relations and foreign tables");
 
 		/* delete old tuple */
 		estate->es_result_relation_info = child_state->result_parts.saved_rel_info;
@@ -266,7 +264,7 @@ ExecDeleteInternal(ItemPointer tupleid,
 										tupleid, oldtuple);
 
 		if (!dodelete)
-			elog(ERROR, "In partitioned tables the old row always should be deleted");
+			elog(ERROR, "the old row always should be deleted from child table");
 	}
 
 	if (resultRelInfo->ri_FdwRoutine)

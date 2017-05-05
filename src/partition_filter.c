@@ -657,6 +657,7 @@ partition_filter_exec(CustomScanState *node)
 	EState				   *estate = node->ss.ps.state;
 	PlanState			   *child_ps = (PlanState *) linitial(node->custom_ps);
 	TupleTableSlot		   *slot;
+	ResultRelInfo		   *saved_resultRelInfo;
 
 	/* clean ctid for old slot */
 	state->ctid = NULL;
@@ -664,8 +665,9 @@ partition_filter_exec(CustomScanState *node)
 	slot = ExecProcNode(child_ps);
 
 	/* Save original ResultRelInfo */
+	saved_resultRelInfo = estate->es_result_relation_info;
 	if (!state->result_parts.saved_rel_info)
-		state->result_parts.saved_rel_info = estate->es_result_relation_info;
+		state->result_parts.saved_rel_info = saved_resultRelInfo;
 
 	if (!TupIsNull(slot))
 	{
@@ -732,7 +734,7 @@ partition_filter_exec(CustomScanState *node)
 			junkfilter = rri_holder->orig_junkFilter;
 			Assert(junkfilter != NULL);
 
-			relkind = resultRelInfo->ri_RelationDesc->rd_rel->relkind;
+			relkind = saved_resultRelInfo->ri_RelationDesc->rd_rel->relkind;
 			if (relkind == RELKIND_RELATION)
 			{
 				bool			isNull;
