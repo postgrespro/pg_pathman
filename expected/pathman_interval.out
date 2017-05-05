@@ -18,7 +18,7 @@ SELECT set_interval('test_interval.abc', NULL::INT2);
 
 /* pg_pathman shouldn't be able to create a new partition */
 INSERT INTO test_interval.abc VALUES (250);
-ERROR:  cannot find appropriate partition for key '250'
+ERROR:  cannot spawn new partition for key '250'
 /* Set a trivial interval */
 SELECT set_interval('test_interval.abc', 0);
 ERROR:  interval should not be trivial
@@ -61,7 +61,7 @@ SELECT set_interval('test_interval.abc', NULL::INT4);
 
 /* pg_pathman shouldn't be able to create a new partition */
 INSERT INTO test_interval.abc VALUES (250);
-ERROR:  cannot find appropriate partition for key '250'
+ERROR:  cannot spawn new partition for key '250'
 /* Set a trivial interval */
 SELECT set_interval('test_interval.abc', 0);
 ERROR:  interval should not be trivial
@@ -104,7 +104,7 @@ SELECT set_interval('test_interval.abc', NULL::INT8);
 
 /* pg_pathman shouldn't be able to create a new partition */
 INSERT INTO test_interval.abc VALUES (250);
-ERROR:  cannot find appropriate partition for key '250'
+ERROR:  cannot spawn new partition for key '250'
 /* Set a trivial interval */
 SELECT set_interval('test_interval.abc', 0);
 ERROR:  interval should not be trivial

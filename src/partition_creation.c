@@ -408,9 +408,11 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
 				/* Check if interval is set */
 				if (isnull[Anum_pathman_config_range_interval - 1])
 				{
-					elog(ERROR,
-						 "cannot find appropriate partition for key '%s'",
-						 datum_to_cstring(value, value_type));
+					ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							 errmsg("cannot spawn new partition for key '%s'",
+									datum_to_cstring(value, value_type)),
+							 errdetail("default range interval is NULL")));
 				}
 
 				/* Retrieve interval as TEXT from tuple */
