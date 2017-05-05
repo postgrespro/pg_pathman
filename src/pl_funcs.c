@@ -113,6 +113,10 @@ static void pathman_update_trigger_func_move_tuple(Relation source_rel,
 												   HeapTuple old_tuple,
 												   HeapTuple new_tuple);
 
+static Oid find_target_partition(Relation source_rel, HeapTuple tuple);
+static Oid find_topmost_parent(Oid partition);
+static Oid find_deepest_partition(Oid parent, Relation source_rel, HeapTuple tuple);
+
 
 /*
  * ------------------------
@@ -1086,26 +1090,26 @@ pathman_update_trigger_func(PG_FUNCTION_ARGS)
 
 	Relation				source_rel;
 
-	Oid						parent_relid,
-							source_relid,
+	// Oid						parent_relid,
+	Oid						source_relid,
 							target_relid;
 
 	HeapTuple				old_tuple,
 							new_tuple;
 
-	Datum					value;
-	Oid						value_type;
-	bool					isnull;
-	ExprDoneCond			itemIsDone;
+	// Datum					value;
+	// Oid						value_type;
+	// bool					isnull;
+	// ExprDoneCond			itemIsDone;
 
-	Oid					   *parts;
-	int						nparts;
+	// Oid					   *parts;
+	// int						nparts;
 
-	ExprContext			   *econtext;
-	ExprState			   *expr_state;
-	MemoryContext		    old_mcxt;
-	PartParentSearch		parent_search;
-	const PartRelationInfo *prel;
+	// ExprContext			   *econtext;
+	// ExprState			   *expr_state;
+	// MemoryContext		    old_mcxt;
+	// PartParentSearch		parent_search;
+	// const PartRelationInfo *prel;
 
 	/* Handle user calls */
 	if (!CALLED_AS_TRIGGER(fcinfo))
@@ -1128,22 +1132,161 @@ pathman_update_trigger_func(PG_FUNCTION_ARGS)
 	old_tuple = trigdata->tg_trigtuple;
 	new_tuple = trigdata->tg_newtuple;
 
-	/* Find parent relation and partitioning info */
-	parent_relid = get_parent_of_partition(source_relid, &parent_search);
-	if (parent_search != PPS_ENTRY_PART_PARENT)
+	// /* Find parent relation and partitioning info */
+	// parent_relid = get_parent_of_partition(source_relid, &parent_search);
+	// if (parent_search != PPS_ENTRY_PART_PARENT)
+	// 	elog(ERROR, "relation \"%s\" is not a partition",
+	// 		 RelationGetRelationName(source_rel));
+
+	// /* Fetch partition dispatch info */
+	// prel = get_pathman_relation_info(parent_relid);
+	// shout_if_prel_is_invalid(parent_relid, prel, PT_ANY);
+
+	// /* Execute partitioning expression */
+	// econtext = CreateStandaloneExprContext();
+	// old_mcxt = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
+	// expr_state = pathman_update_trigger_build_expr_state(prel,
+	// 													 source_rel,
+	// 													 new_tuple,
+	// 													 &value_type);
+	// value = ExecEvalExpr(expr_state, econtext, &isnull, &itemIsDone);
+	// MemoryContextSwitchTo(old_mcxt);
+
+	// if (isnull)
+	// 	elog(ERROR, ERR_PART_ATTR_NULL);
+
+	// if (itemIsDone != ExprSingleResult)
+	// 	elog(ERROR, ERR_PART_ATTR_MULTIPLE_RESULTS);
+
+	// /* Search for matching partitions */
+	// parts = find_partitions_for_value(value, value_type, prel, &nparts);
+
+
+	// /* We can free expression context now */
+	// FreeExprContext(econtext, false);
+
+	// if (nparts > 1)
+	// 	elog(ERROR, ERR_PART_ATTR_MULTIPLE);
+	// else if (nparts == 0)
+	// {
+	// 	 target_relid = create_partitions_for_value(PrelParentRelid(prel),
+	// 												value, value_type);
+
+	// 	 /* get_pathman_relation_info() will refresh this entry */
+	// 	 invalidate_pathman_relation_info(PrelParentRelid(prel), NULL);
+	// }
+	// else target_relid = parts[0];
+
+	// pfree(parts);
+	target_relid = find_target_partition(source_rel, new_tuple);
+
+	/* Convert tuple if target partition has changed */
+	if (target_relid != source_relid)
+	{
+		Relation	target_rel;
+		LOCKMODE	lockmode = RowExclusiveLock; /* UPDATE */
+
+		/* Lock partition and check if it exists */
+		LockRelationOid(target_relid, lockmode);
+		if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(target_relid)))
+			/* TODO: !!! */
+			elog(ERROR, ERR_PART_ATTR_NO_PART, "()");
+			// elog(ERROR, ERR_PART_ATTR_NO_PART, datum_to_cstring(value, value_type));
+
+		/* Open partition */
+		target_rel = heap_open(target_relid, lockmode);
+
+		/* Move tuple from source relation to the selected partition */
+		pathman_update_trigger_func_move_tuple(source_rel, target_rel,
+											   old_tuple, new_tuple);
+
+		/* Close partition */
+		heap_close(target_rel, lockmode);
+
+		/* We've made some changes */
+		PG_RETURN_VOID();
+	}
+
+	/* Just return NEW tuple */
+	PG_RETURN_POINTER(new_tuple);
+}
+
+/*
+ * Find partition satisfying values of the tuple
+ */
+static Oid
+find_target_partition(Relation source_rel, HeapTuple tuple)
+{
+	Oid						source_relid,
+							target_relid,
+							parent_relid;
+
+	source_relid = RelationGetRelid(source_rel);
+	parent_relid = find_topmost_parent(source_relid);
+	target_relid = find_deepest_partition(parent_relid, source_rel, tuple);
+
+	return target_relid;
+}
+
+static Oid
+find_topmost_parent(Oid relid)
+{
+	Oid					last;
+	PartParentSearch	parent_search;
+
+	last = relid;
+
+	/* Iterate through parents until the topmost */
+	while (1)
+	{
+		Oid		parent = get_parent_of_partition(last, &parent_search);
+
+		if (parent_search != PPS_ENTRY_PART_PARENT)
+			break;
+		last = parent;
+	}
+
+	/* If relation doesn't have parent then just throw an error */
+	if (last == relid)
 		elog(ERROR, "relation \"%s\" is not a partition",
-			 RelationGetRelationName(source_rel));
+			 get_rel_name(relid));
+
+	return last;
+}
+
+/*
+ * Recursive search for the deepest partition satisfying the given tuple
+ */
+static Oid
+find_deepest_partition(Oid parent, Relation source_rel, HeapTuple tuple)
+{
+	const PartRelationInfo *prel;
+	Oid					   *parts;
+	int						nparts;
+
+	ExprContext			   *econtext;
+	ExprState			   *expr_state;
+	MemoryContext		    old_mcxt;
+
+	Datum					value;
+	Oid						value_type;
+	bool					isnull;
+	ExprDoneCond			itemIsDone;
+
+	Oid target_relid;
+	Oid subpartition;
 
 	/* Fetch partition dispatch info */
-	prel = get_pathman_relation_info(parent_relid);
-	shout_if_prel_is_invalid(parent_relid, prel, PT_ANY);
+	prel = get_pathman_relation_info(parent);
+	if (!prel)
+		return InvalidOid;
 
 	/* Execute partitioning expression */
 	econtext = CreateStandaloneExprContext();
 	old_mcxt = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
 	expr_state = pathman_update_trigger_build_expr_state(prel,
 														 source_rel,
-														 new_tuple,
+														 tuple,
 														 &value_type);
 	value = ExecEvalExpr(expr_state, econtext, &isnull, &itemIsDone);
 	MemoryContextSwitchTo(old_mcxt);
@@ -1170,37 +1313,16 @@ pathman_update_trigger_func(PG_FUNCTION_ARGS)
 		 /* get_pathman_relation_info() will refresh this entry */
 		 invalidate_pathman_relation_info(PrelParentRelid(prel), NULL);
 	}
-	else target_relid = parts[0];
-
+	else
+		target_relid = parts[0];
 	pfree(parts);
 
-	/* Convert tuple if target partition has changed */
-	if (target_relid != source_relid)
-	{
-		Relation	target_rel;
-		LOCKMODE	lockmode = RowExclusiveLock; /* UPDATE */
+	/* Try to go deeper recursively and see if there is subpartition */
+	subpartition = find_deepest_partition(target_relid, source_rel, tuple);
+	if (OidIsValid(subpartition))
+		return subpartition;
 
-		/* Lock partition and check if it exists */
-		LockRelationOid(target_relid, lockmode);
-		if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(target_relid)))
-			elog(ERROR, ERR_PART_ATTR_NO_PART, datum_to_cstring(value, value_type));
-
-		/* Open partition */
-		target_rel = heap_open(target_relid, lockmode);
-
-		/* Move tuple from source relation to the selected partition */
-		pathman_update_trigger_func_move_tuple(source_rel, target_rel,
-											   old_tuple, new_tuple);
-
-		/* Close partition */
-		heap_close(target_rel, lockmode);
-
-		/* We've made some changes */
-		PG_RETURN_VOID();
-	}
-
-	/* Just return NEW tuple */
-	PG_RETURN_POINTER(new_tuple);
+	return target_relid;
 }
 
 struct replace_vars_cxt

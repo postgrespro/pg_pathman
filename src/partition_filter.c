@@ -456,6 +456,7 @@ select_partition_for_insert(ExprContext *econtext, ExprState *expr_state,
 	else selected_partid = parts[0];
 
 	/* Replace parent table with a suitable partition */
+	/* TODO: write a correct comment */
 	old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
 	rri_holder = scan_result_parts_storage(selected_partid, parts_storage);
 
