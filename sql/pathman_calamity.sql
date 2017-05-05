@@ -126,11 +126,13 @@ SELECT build_range_condition('calamity.part_test', 'val', 10, NULL);	/* OK */
 SELECT build_range_condition('calamity.part_test', 'val', NULL, 10);	/* OK */
 
 /* check function validate_interval_value() */
-SELECT validate_interval_value(NULL, 2, '1 mon');					/* not ok */
-SELECT validate_interval_value('interval'::regtype, NULL, '1 mon');	/* not ok */
-SELECT validate_interval_value('int4'::regtype, 2, '1 mon');		/* not ok */
-SELECT validate_interval_value('interval'::regtype, 1, '1 mon');	/* not ok */
-SELECT validate_interval_value('interval'::regtype, 2, NULL);		/* OK */
+SELECT validate_interval_value(1::REGCLASS, 'expr', 2, '1 mon', 'cooked_expr');	/* not ok */
+SELECT validate_interval_value(NULL, 'expr', 2, '1 mon', 'cooked_expr');		/* not ok */
+SELECT validate_interval_value('pg_class', NULL, 2, '1 mon', 'cooked_expr');	/* not ok */
+SELECT validate_interval_value('pg_class', 'oid', 1, 'HASH', NULL);				/* not ok */
+SELECT validate_interval_value('pg_class', 'expr', 2, '1 mon', NULL);			/* not ok */
+SELECT validate_interval_value('pg_class', 'expr', 2, NULL, 'cooked_expr');		/* not ok */
+SELECT validate_interval_value('pg_class', 'EXPR', 1, 'HASH', NULL);			/* not ok */
 
 /* check function validate_relname() */
 SELECT validate_relname('calamity.part_test');

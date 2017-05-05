@@ -694,10 +694,6 @@ pathman_config_invalidate_parsed_expression(Oid relid)
 		values[Anum_pathman_config_expression_p - 1] = (Datum) 0;
 		nulls[Anum_pathman_config_expression_p - 1]  = true;
 
-		/* Reset expression type */
-		values[Anum_pathman_config_atttype - 1] = (Datum) 0;
-		nulls[Anum_pathman_config_atttype - 1]  = true;
-
 		rel = heap_open(get_pathman_config_relid(false), RowExclusiveLock);
 
 		/* Form new tuple and perform an update */
@@ -717,7 +713,6 @@ pathman_config_refresh_parsed_expression(Oid relid,
 										 ItemPointer iptr)
 {
 	char				   *expr_cstr;
-	Oid						expr_type;
 	Datum					expr_datum;
 
 	Relation				rel;
@@ -725,15 +720,12 @@ pathman_config_refresh_parsed_expression(Oid relid,
 
 	/* get and parse expression */
 	expr_cstr = TextDatumGetCString(values[Anum_pathman_config_expression - 1]);
-	expr_datum = plan_partitioning_expression(relid, expr_cstr, &expr_type);
+	expr_datum = cook_partitioning_expression(relid, expr_cstr, NULL);
 	pfree(expr_cstr);
 
 	/* prepare tuple values */
 	values[Anum_pathman_config_expression_p - 1] = expr_datum;
 	isnull[Anum_pathman_config_expression_p - 1] = false;
-
-	values[Anum_pathman_config_atttype - 1] = ObjectIdGetDatum(expr_type);
-	isnull[Anum_pathman_config_atttype - 1] = false;
 
 	rel = heap_open(get_pathman_config_relid(false), RowExclusiveLock);
 

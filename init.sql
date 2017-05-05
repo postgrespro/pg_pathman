@@ -15,37 +15,40 @@
  * text to Datum
  */
 CREATE OR REPLACE FUNCTION @extschema@.validate_interval_value(
-	atttype			OID,
+	partrel			REGCLASS,
+	expression		TEXT,
 	parttype		INTEGER,
-	range_interval	TEXT)
+	range_interval	TEXT,
+	expression_p	TEXT)
 RETURNS BOOL AS 'pg_pathman', 'validate_interval_value'
 LANGUAGE C;
 
 
 /*
- * Pathman config
- *		partrel - regclass (relation type, stored as Oid)
- *		attname - partitioning key
- *		parttype - partitioning type:
- *			1 - HASH
- *			2 - RANGE
- *		range_interval - base interval for RANGE partitioning as string
+ * Main config.
+ *		partrel			- regclass (relation type, stored as Oid)
+ *		attname			- partitioning expression (key)
+ *		parttype		- partitioning type: (1 - HASH, 2 - RANGE)
+ *		range_interval	- base interval for RANGE partitioning as string
+ *		expression_p	- cooked partitioning expression (parsed & rewritten)
  */
 CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
 	partrel			REGCLASS NOT NULL PRIMARY KEY,
-	attname			TEXT NOT NULL,	/* expression */
+	attname			TEXT NOT NULL,
 	parttype		INTEGER NOT NULL,
-	range_interval	TEXT,
-	expression_p	TEXT,				/* parsed expression (until plan) */
-	atttype			OID,				/* expression type */
+	range_interval	TEXT DEFAULT NULL,
+	expression_p	TEXT DEFAULT NULL,
 
 	/* check for allowed part types */
 	CONSTRAINT pathman_config_parttype_check CHECK (parttype IN (1, 2)),
 
 	/* check for correct interval */
-	CONSTRAINT pathman_config_interval_check CHECK (@extschema@.validate_interval_value(atttype,
-													parttype,
-													range_interval))
+	CONSTRAINT pathman_config_interval_check
+	CHECK (@extschema@.validate_interval_value(partrel,
+											   attname,
+											   parttype,
+											   range_interval,
+											   expression_p))
 );
 
 
@@ -64,11 +67,11 @@ LANGUAGE C STRICT;
 
 /*
  * Optional parameters for partitioned tables.
- *		partrel - regclass (relation type, stored as Oid)
- *		enable_parent - add parent table to plan
- *		auto - enable automatic partition creation
- *		init_callback - text signature of cb to be executed on partition
- * 						creation
+ *		partrel			- regclass (relation type, stored as Oid)
+ *		enable_parent	- add parent table to plan
+ *		auto			- enable automatic partition creation
+ *		init_callback	- text signature of cb to be executed on partition creation
+ *		spawn_using_bgw	- use background worker in order to auto create partitions
  */
 CREATE TABLE IF NOT EXISTS @extschema@.pathman_config_params (
 	partrel			REGCLASS NOT NULL PRIMARY KEY,

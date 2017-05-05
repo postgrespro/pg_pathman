@@ -774,14 +774,13 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	}
 
 	/* Parse and check expression */
-	expr_datum = plan_partitioning_expression(relid, expression, &expr_type);
+	expr_datum = cook_partitioning_expression(relid, expression, &expr_type);
 
 	/* Check hash function for HASH partitioning */
 	if (parttype == PT_HASH)
 	{
-		TypeCacheEntry *tce;
+		TypeCacheEntry *tce = lookup_type_cache(expr_type, TYPECACHE_HASH_PROC);
 
-		tce = lookup_type_cache(expr_type, TYPECACHE_HASH_PROC);
 		if (!OidIsValid(tce->hash_proc))
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -802,9 +801,6 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 
 	values[Anum_pathman_config_expression_p - 1]	= expr_datum;
 	isnull[Anum_pathman_config_expression_p - 1]	= false;
-
-	values[Anum_pathman_config_atttype - 1]			= ObjectIdGetDatum(expr_type);
-	isnull[Anum_pathman_config_atttype - 1]			= false;
 
 	/* Insert new row into PATHMAN_CONFIG */
 	pathman_config = heap_open(get_pathman_config_relid(false), RowExclusiveLock);

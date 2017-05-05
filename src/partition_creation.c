@@ -93,9 +93,9 @@ static Node *build_partitioning_expression(Oid parent_relid,
 /* Create one RANGE partition [start_value, end_value) */
 Oid
 create_single_range_partition_internal(Oid parent_relid,
-									   Oid value_type,
 									   const Bound *start_value,
 									   const Bound *end_value,
+									   Oid value_type,
 									   RangeVar *partition_rv,
 									   char *tablespace)
 {
@@ -584,8 +584,8 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 		bounds[1] = MakeBound(should_append ? cur_leading_bound : cur_following_bound);
 
 		last_partition = create_single_range_partition_internal(parent_relid,
-																range_bound_type,
 																&bounds[0], &bounds[1],
+																range_bound_type,
 																NULL, NULL);
 
 #ifdef USE_ASSERT_CHECKING
@@ -1707,24 +1707,33 @@ build_partitioning_expression(Oid parent_relid,
 							  List **columns)		/* ret val #2 */
 {
 	/* Values extracted from PATHMAN_CONFIG */
-	Datum		 config_values[Natts_pathman_config];
-	bool		 config_nulls[Natts_pathman_config];
+	Datum		 values[Natts_pathman_config];
+	bool		 isnull[Natts_pathman_config];
+	char		*expr_cstr;
 	Node		*expr;
-	char		*expr_string;
 
 	/* Check that table is registered in PATHMAN_CONFIG */
-	if (!pathman_config_contains_relation(parent_relid, config_values,
-										  config_nulls, NULL, NULL))
+	if (!pathman_config_contains_relation(parent_relid, values,
+										  isnull, NULL, NULL))
 		elog(ERROR, "table \"%s\" is not partitioned",
 			 get_rel_name_or_relid(parent_relid));
 
+	expr_cstr = TextDatumGetCString(values[Anum_pathman_config_expression - 1]);
+	expr = parse_partitioning_expression(parent_relid, expr_cstr, NULL, NULL);
+	pfree(expr_cstr);
+
 	/* We need expression type for hash functions */
 	if (expr_type)
-		*expr_type = DatumGetObjectId(config_values[Anum_pathman_config_atttype - 1]);
+	{
+		char *expr_p_cstr;
 
-	expr_string = TextDatumGetCString(config_values[Anum_pathman_config_expression - 1]);
-	expr = parse_partitioning_expression(parent_relid, expr_string, NULL, NULL);
-	pfree(expr_string);
+		/* We can safely assume that this field will always remain not null */
+		Assert(!isnull[Anum_pathman_config_expression_p - 1]);
+		expr_p_cstr =
+				TextDatumGetCString(values[Anum_pathman_config_expression_p - 1]);
+
+		*expr_type = exprType(stringToNode(expr_p_cstr));
+	}
 
 	if (columns)
 	{

@@ -1461,16 +1461,16 @@ INSERT INTO test.range_rel (dt) VALUES ('2015-06-01');
  */
 ALTER TABLE test.range_rel DROP COLUMN data;
 SELECT * FROM pathman.pathman_config;
-    partrel     | attname | parttype | range_interval |                                                      expression_p                                                       | atttype 
-----------------+---------+----------+----------------+-------------------------------------------------------------------------------------------------------------------------+---------
- test.range_rel | dt      |        2 | @ 10 days      | {VAR :varno 1 :varattno 2 :vartype 1114 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 2 :location 8} |    1114
+    partrel     | attname | parttype | range_interval |                                                      expression_p                                                       
+----------------+---------+----------+----------------+-------------------------------------------------------------------------------------------------------------------------
+ test.range_rel | dt      |        2 | @ 10 days      | {VAR :varno 1 :varattno 2 :vartype 1114 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 2 :location 8}
 (1 row)
 
 DROP TABLE test.range_rel CASCADE;
 NOTICE:  drop cascades to 20 other objects
 SELECT * FROM pathman.pathman_config;
- partrel | attname | parttype | range_interval | expression_p | atttype 
----------+---------+----------+----------------+--------------+---------
+ partrel | attname | parttype | range_interval | expression_p 
+---------+---------+----------+----------------+--------------
 (0 rows)
 
 /* Check overlaps */
@@ -1632,9 +1632,9 @@ SELECT pathman.create_partitions_from_range('test."RangeRel"', 'dt', '2015-01-01
 DROP TABLE test."RangeRel" CASCADE;
 NOTICE:  drop cascades to 5 other objects
 SELECT * FROM pathman.pathman_config;
-      partrel       | attname | parttype | range_interval |                                                      expression_p                                                      | atttype 
---------------------+---------+----------+----------------+------------------------------------------------------------------------------------------------------------------------+---------
- test.num_range_rel | id      |        2 | 1000           | {VAR :varno 1 :varattno 1 :vartype 23 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 1 :location -1} |      23
+      partrel       | attname | parttype | range_interval |                                                      expression_p                                                      
+--------------------+---------+----------+----------------+------------------------------------------------------------------------------------------------------------------------
+ test.num_range_rel | id      |        2 | 1000           | {VAR :varno 1 :varattno 1 :vartype 23 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 1 :location -1}
 (1 row)
 
 CREATE TABLE test."RangeRel" (

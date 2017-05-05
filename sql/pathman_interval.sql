@@ -26,7 +26,7 @@ WHERE partrel = 'test_interval.abc'::REGCLASS;
 /* Set a normal interval */
 SELECT set_interval('test_interval.abc', 1000);
 INSERT INTO test_interval.abc VALUES (250);
-SELECT * FROM pathman_config;
+SELECT partrel, range_interval FROM pathman_config;
 
 DROP TABLE test_interval.abc CASCADE;
 
@@ -52,7 +52,7 @@ WHERE partrel = 'test_interval.abc'::REGCLASS;
 /* Set a normal interval */
 SELECT set_interval('test_interval.abc', 1000);
 INSERT INTO test_interval.abc VALUES (250);
-SELECT * FROM pathman_config;
+SELECT partrel, range_interval FROM pathman_config;
 
 DROP TABLE test_interval.abc CASCADE;
 
@@ -78,7 +78,7 @@ WHERE partrel = 'test_interval.abc'::REGCLASS;
 /* Set a normal interval */
 SELECT set_interval('test_interval.abc', 1000);
 INSERT INTO test_interval.abc VALUES (250);
-SELECT * FROM pathman_config;
+SELECT partrel, range_interval FROM pathman_config;
 
 DROP TABLE test_interval.abc CASCADE;
 
@@ -95,7 +95,7 @@ SELECT set_interval('test_interval.abc', '1 second'::INTERVAL);
 /* Set a normal interval */
 SELECT set_interval('test_interval.abc', '1 month'::INTERVAL);
 
-SELECT * FROM pathman_config;
+SELECT partrel, range_interval FROM pathman_config;
 
 DROP TABLE test_interval.abc CASCADE;
 

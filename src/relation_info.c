@@ -166,8 +166,7 @@ refresh_pathman_relation_info(Oid relid,
 	/* Set partitioning type */
 	prel->parttype	= DatumGetPartType(values[Anum_pathman_config_parttype - 1]);
 
-	/* Read config values */
-	prel->ev_type = DatumGetObjectId(values[Anum_pathman_config_atttype - 1]);
+	/* Fetch cooked partitioning expression */
 	expr = TextDatumGetCString(values[Anum_pathman_config_expression_p - 1]);
 
 	/* Expression and attname should be saved in cache context */
@@ -189,6 +188,9 @@ refresh_pathman_relation_info(Oid relid,
 	pull_varattnos((Node *) prel->expr_vars, PART_EXPR_VARNO, &prel->expr_atts);
 
 	MemoryContextSwitchTo(old_mcxt);
+
+	/* First, fetch type of partitioning expression */
+	prel->ev_type	= exprType(prel->expr);
 
 	htup = SearchSysCache1(TYPEOID, prel->ev_type);
 	if (HeapTupleIsValid(htup))
@@ -591,16 +593,12 @@ parse_partitioning_expression(const Oid relid,
 	return ((ResTarget *) linitial(select_stmt->targetList))->val;
 }
 
-/*
- * Parses expression related to 'relid', and returns its type,
- * raw expression tree, and if specified returns its plan
- */
+/* Parse partitioning expression and return its type and nodeToString() */
 Datum
-plan_partitioning_expression(const Oid relid,
+cook_partitioning_expression(const Oid relid,
 							 const char *expr_cstr,
-							 Oid *expr_type_out)
+							 Oid *expr_type_out) /* ret value #1 */
 {
-
 	Node				   *parsetree;
 	List				   *querytree_list;
 	TargetEntry			   *target_entry;
@@ -686,15 +684,14 @@ plan_partitioning_expression(const Oid relid,
 				 errmsg("functions in partitioning expression must be marked IMMUTABLE")));
 
 	Assert(expr);
-
-	/* Set 'expr_type_out' if needed */
-	if (expr_type_out)
-		*expr_type_out = exprType(expr);
-
 	expr_serialized = nodeToString(expr);
 
 	/* Switch to previous mcxt */
 	MemoryContextSwitchTo(old_mcxt);
+
+	/* Set 'expr_type_out' if needed */
+	if (expr_type_out)
+		*expr_type_out = exprType(expr);
 
 	expr_datum = CStringGetTextDatum(expr_serialized);
 

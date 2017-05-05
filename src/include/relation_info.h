@@ -288,7 +288,7 @@ Node *parse_partitioning_expression(const Oid relid,
 									char **query_string_out,
 									Node **parsetree_out);
 
-Datum plan_partitioning_expression(const Oid relid,
+Datum cook_partitioning_expression(const Oid relid,
 								   const char *expr_cstr,
 								   Oid *expr_type);
 
