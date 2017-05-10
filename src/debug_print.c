@@ -15,6 +15,7 @@
 #include "fmgr.h"
 #include "executor/tuptable.h"
 #include "nodes/bitmapset.h"
+#include "nodes/parsenodes.h"
 #include "nodes/pg_list.h"
 #include "lib/stringinfo.h"
 #include "utils/lsyscache.h"
@@ -182,4 +183,71 @@ slot_print(TupleTableSlot *slot)
 		return NULL;
 
 	return debugtup(slot);
+}
+
+/*
+ * rt_print
+ *	  return contents of range table
+ */
+#ifdef __GNUC__
+__attribute__((unused))
+#endif
+static char *
+rt_print(const List *rtable)
+{
+#define APPEND_STR(si, ...) \
+{ \
+	char *line = psprintf(__VA_ARGS__); \
+	appendStringInfo(&si, "%s", line); \
+	pfree(line); \
+}
+
+	const	ListCell *l;
+	int		 i = 1;
+
+	StringInfoData str;
+
+	initStringInfo(&str);
+	APPEND_STR(str, "resno\trefname  \trelid\tinFromCl\n");
+	APPEND_STR(str, "-----\t---------\t-----\t--------\n");
+
+	foreach(l, rtable)
+	{
+		RangeTblEntry *rte = lfirst(l);
+
+		switch (rte->rtekind)
+		{
+			case RTE_RELATION:
+				APPEND_STR(str, "%d\t%s\t%u\t%c",
+					   i, rte->eref->aliasname, rte->relid, rte->relkind);
+				break;
+			case RTE_SUBQUERY:
+				APPEND_STR(str, "%d\t%s\t[subquery]",
+					   i, rte->eref->aliasname);
+				break;
+			case RTE_JOIN:
+				APPEND_STR(str, "%d\t%s\t[join]",
+					   i, rte->eref->aliasname);
+				break;
+			case RTE_FUNCTION:
+				APPEND_STR(str, "%d\t%s\t[rangefunction]", i, rte->eref->aliasname);
+				break;
+			case RTE_VALUES:
+				APPEND_STR(str, "%d\t%s\t[values list]", i, rte->eref->aliasname);
+				break;
+			case RTE_CTE:
+				APPEND_STR(str, "%d\t%s\t[cte]", i, rte->eref->aliasname);
+				break;
+			default:
+				elog(ERROR, "%d\t%s\t[unknown rtekind]",
+					   i, rte->eref->aliasname);
+		}
+
+		APPEND_STR(str, "\t%s\t%s\n", (rte->inh ? "inh" : ""),
+			   (rte->inFromCl ? "inFromCl" : ""));
+
+		i++;
+	}
+	return str.data;
+#undef APPEND_STR
 }

@@ -88,7 +88,12 @@ class PartitioningTests(unittest.TestCase):
 		stop_all()
 
 	def set_trace(self, con, external_command):
-		''' this function starts gdb on selected connection '''
+		''' this function is used to debug selected backend:
+				`self.set_trace(con, 'pg_debug')` where `pg_debug` is your
+				external script that expects pid of postgres backend
+
+			!! don't forget to remove calls of this function after debug
+		'''
 
 		pid = con.execute('SELECT pg_backend_pid()')[0][0]
 		p = subprocess.Popen([external_command], stdin=subprocess.PIPE)
@@ -422,7 +427,7 @@ class PartitioningTests(unittest.TestCase):
 		'''
 
 		# Start master server
-		master = get_new_node('test', use_logging=True)
+		master = get_new_node('test')
 		master.init()
 		master.append_conf(
 			'postgresql.conf',
@@ -556,18 +561,22 @@ class PartitioningTests(unittest.TestCase):
 
 		with master.connect() as con:
 			con.begin()
-			con.execute("set pg_pathman.enable_partitionupdate=on")
-			con.execute("insert into abc select i, 'local' from generate_series(1, 19) i")
+			con.execute('set pg_pathman.enable_partitionupdate=on')
+			con.execute('insert into abc select i from generate_series(1, 19) i')
 			con.commit()
 
-			self.set_trace(con, 'pg_debug')
-			import ipdb; ipdb.set_trace()
-			pass
+			source_relid = con.execute('select tableoid from abc where id=9')[0][0]
+			dest_relid = con.execute('select tableoid from abc where id=35')[0][0]
+			self.assertNotEqual(source_relid, dest_relid)
 
-		# cases
-		#	- update from local to foreign
-		#	- update from foreign to local
-		#	- update from foreign to foreign
+			# cases
+			#	- update from local to foreign
+			#	- update from foreign to local
+			#	- update from foreign to foreign
+
+			con.execute('update abc set id=36 where id=9')
+			result_relid = con.execute('select tableoid from abc where id=35')[0][0]
+			self.assertEqual(result_relid, dest_relid)
 
 	def test_parallel_nodes(self):
 		"""Test parallel queries under partitions"""
@@ -1092,7 +1101,7 @@ class PartitioningTests(unittest.TestCase):
 
 	def test_update_node_plan1(self):
 		''' Test scan on all partititions when using update node.
-			We can't use regression tests here because 9.5 and 9.5 give
+			We can't use regression tests here because 9.5 and 9.6 give
 			different plans
 		'''
 

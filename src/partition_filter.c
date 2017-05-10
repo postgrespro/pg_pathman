@@ -310,12 +310,23 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 		CopyToResultRelInfo(ri_onConflictSetProj);
 		CopyToResultRelInfo(ri_onConflictSetWhere);
 
+		/* ri_ConstraintExprs will be initialized by ExecRelCheck() */
+		child_result_rel_info->ri_ConstraintExprs = NULL;
+
+		/* Fill the ResultRelInfo holder */
+		rri_holder->partid = partid;
+		rri_holder->result_rel_info = child_result_rel_info;
+		rri_holder->updates_junkFilter = NULL;
+
 		if (parts_storage->command_type == CMD_UPDATE)
 		{
 			char		 relkind;
-			JunkFilter	*junkfilter = child_result_rel_info->ri_junkFilter;
+			JunkFilter	*junkfilter = parts_storage->saved_rel_info->ri_junkFilter;
 
-			relkind = child_result_rel_info->ri_RelationDesc->rd_rel->relkind;
+			/* we don't need junk work in UPDATE */
+			child_result_rel_info->ri_junkFilter = NULL;
+
+			relkind = base_rel->rd_rel->relkind;
 			if (relkind == RELKIND_RELATION)
 			{
 				junkfilter->jf_junkAttNo = ExecFindJunkAttribute(junkfilter, "ctid");
@@ -333,18 +344,8 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 			else
 				elog(ERROR, "wrong type of relation");
 
+			rri_holder->updates_junkFilter = junkfilter;
 		}
-
-		/* ri_ConstraintExprs will be initialized by ExecRelCheck() */
-		child_result_rel_info->ri_ConstraintExprs = NULL;
-
-		/* Fill the ResultRelInfo holder */
-		rri_holder->partid = partid;
-		rri_holder->result_rel_info = child_result_rel_info;
-		rri_holder->orig_junkFilter = child_result_rel_info->ri_junkFilter;
-
-		if (parts_storage->command_type == CMD_UPDATE)
-			child_result_rel_info->ri_junkFilter = NULL;
 
 		/* Generate tuple transformation map and some other stuff */
 		rri_holder->tuple_map = build_part_tuple_map(base_rel, child_rel);
@@ -731,7 +732,7 @@ partition_filter_exec(CustomScanState *node)
 			 * we need this step because if there will be conversion
 			 * then junk attributes will be removed from slot
 			 */
-			junkfilter = rri_holder->orig_junkFilter;
+			junkfilter = rri_holder->updates_junkFilter;
 			Assert(junkfilter != NULL);
 
 			relkind = saved_resultRelInfo->ri_RelationDesc->rd_rel->relkind;
@@ -769,7 +770,7 @@ partition_filter_exec(CustomScanState *node)
 			slot = state->tup_convert_slot;
 		}
 		else if (state->command_type == CMD_UPDATE)
-			slot = ExecFilterJunk(rri_holder->orig_junkFilter, slot);
+			slot = ExecFilterJunk(rri_holder->updates_junkFilter, slot);
 
 		return slot;
 	}
