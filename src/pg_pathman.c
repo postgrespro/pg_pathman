@@ -57,21 +57,17 @@ static WrapperNode *handle_boolexpr(const BoolExpr *expr, WalkerContext *context
 static WrapperNode *handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context);
 static WrapperNode *handle_opexpr(const OpExpr *expr, WalkerContext *context);
 
-static void handle_binary_opexpr(WalkerContext *context,
-								 WrapperNode *result,
-								 const Node *varnode,
-								 const Const *c);
+static void handle_binary_opexpr(const Const *c, WalkerContext *context,
+								 WrapperNode *result);
 
 static void handle_binary_opexpr_param(const PartRelationInfo *prel,
-									   WrapperNode *result,
-									   const Node *varnode);
+									   WrapperNode *result);
 
-static bool pull_var_param(const WalkerContext *ctx,
-						   const OpExpr *expr,
-						   Node **var_ptr,
-						   Node **param_ptr);
+static bool is_key_op_param(const OpExpr *expr,
+							const WalkerContext *context,
+							Node **param_ptr);
 
-static Const *extract_const(WalkerContext *wcxt, Param *param);
+static Const *extract_const(Param *param, WalkerContext *wcxt);
 
 
 /* Copied from PostgreSQL (allpaths.c) */
@@ -94,13 +90,13 @@ static void generate_mergeappend_paths(PlannerInfo *root,
 
 
 /* We can transform Param into Const provided that 'econtext' is available */
-#define IsConstValue(wcxt, node) \
+#define IsConstValue(node, wcxt) \
 	( IsA((node), Const) || (WcxtHasExprContext(wcxt) ? IsA((node), Param) : false) )
 
-#define ExtractConst(wcxt, node) \
+#define ExtractConst(node, wcxt) \
 	( \
 		IsA((node), Param) ? \
-				extract_const((wcxt), (Param *) (node)) : \
+				extract_const((Param *) (node), (wcxt)) : \
 				((Const *) (node)) \
 	)
 
@@ -716,9 +712,9 @@ wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue)
 static WrapperNode *
 handle_const(const Const *c, WalkerContext *context)
 {
+	WrapperNode	   *result = (WrapperNode *) palloc0(sizeof(WrapperNode));
+	int				strategy = BTEqualStrategyNumber;
 	const PartRelationInfo *prel = context->prel;
-	WrapperNode			   *result = (WrapperNode *) palloc0(sizeof(WrapperNode));
-	int						strategy = BTEqualStrategyNumber;
 
 	result->orig = (const Node *) c;
 
@@ -729,7 +725,7 @@ handle_const(const Const *c, WalkerContext *context)
 	if (!context->for_insert || c->constisnull)
 	{
 		result->rangeset = NIL;
-		result->paramsel = 1.0;
+		result->paramsel = 0.0;
 
 		return result;
 	}
@@ -744,11 +740,11 @@ handle_const(const Const *c, WalkerContext *context)
 				bool	cast_success;
 
 				/* Peform type cast if types mismatch */
-				if (prel->atttype != c->consttype)
+				if (prel->ev_type != c->consttype)
 				{
 					value = perform_type_cast(c->constvalue,
 											  getBaseType(c->consttype),
-											  getBaseType(prel->atttype),
+											  getBaseType(prel->ev_type),
 											  &cast_success);
 
 					if (!cast_success)
@@ -774,14 +770,14 @@ handle_const(const Const *c, WalkerContext *context)
 
 				fill_type_cmp_fmgr_info(&cmp_finfo,
 										getBaseType(c->consttype),
-										getBaseType(prel->atttype));
+										getBaseType(prel->ev_type));
 
 				select_range_partitions(c->constvalue,
 										&cmp_finfo,
 										PrelGetRangesArray(context->prel),
 										PrelChildrenCount(context->prel),
 										strategy,
-										prel->attcollid,
+										prel->ev_collid,
 										result); /* output */
 
 				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
@@ -800,18 +796,18 @@ handle_const(const Const *c, WalkerContext *context)
 static WrapperNode *
 handle_boolexpr(const BoolExpr *expr, WalkerContext *context)
 {
-	WrapperNode	*result = (WrapperNode *) palloc0(sizeof(WrapperNode));
-	ListCell	*lc;
+	WrapperNode	   *result = (WrapperNode *) palloc0(sizeof(WrapperNode));
+	ListCell	   *lc;
 	const PartRelationInfo *prel = context->prel;
 
-	result->orig = (const Node *)expr;
+	result->orig = (const Node *) expr;
 	result->args = NIL;
 	result->paramsel = 1.0;
 
-	if (expr->boolop == AND_EXPR)
-		result->rangeset = list_make1_irange_full(prel, IR_COMPLETE);
-	else
-		result->rangeset = NIL;
+	/* First, set default rangeset */
+	result->rangeset = (expr->boolop == AND_EXPR) ?
+							list_make1_irange_full(prel, IR_COMPLETE) :
+							NIL;
 
 	foreach (lc, expr->args)
 	{
@@ -860,9 +856,9 @@ handle_boolexpr(const BoolExpr *expr, WalkerContext *context)
 static WrapperNode *
 handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 {
-	WrapperNode *result = (WrapperNode *) palloc(sizeof(WrapperNode));
-	Node		*exprnode = (Node *) linitial(expr->args);
-	Node		*arraynode = (Node *) lsecond(expr->args);
+	WrapperNode	   *result = (WrapperNode *) palloc(sizeof(WrapperNode));
+	Node		   *exprnode = (Node *) linitial(expr->args);
+	Node		   *arraynode = (Node *) lsecond(expr->args);
 	const PartRelationInfo *prel = context->prel;
 
 	result->orig = (const Node *) expr;
@@ -871,7 +867,7 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 
 	Assert(exprnode != NULL);
 
-	if (!expr_matches_operand(context->prel_expr, exprnode))
+	if (!match_expr_to_operand(context->prel_expr, exprnode))
 		goto handle_arrexpr_return;
 
 	if (arraynode && IsA(arraynode, Const) &&
@@ -997,8 +993,8 @@ handle_arrexpr_return:
 static WrapperNode *
 handle_opexpr(const OpExpr *expr, WalkerContext *context)
 {
-	WrapperNode	*result = (WrapperNode *) palloc0(sizeof(WrapperNode));
-	Node		*var, *param;
+	WrapperNode	   *result = (WrapperNode *) palloc0(sizeof(WrapperNode));
+	Node		   *param;
 	const PartRelationInfo *prel = context->prel;
 
 	result->orig = (const Node *) expr;
@@ -1006,19 +1002,18 @@ handle_opexpr(const OpExpr *expr, WalkerContext *context)
 
 	if (list_length(expr->args) == 2)
 	{
-		if (pull_var_param(context, expr, &var, &param))
+		/* Is it KEY OP PARAM or PARAM OP KEY? */
+		if (is_key_op_param(expr, context, &param))
 		{
-			if (IsConstValue(context, param))
+			if (IsConstValue(param, context))
 			{
-				handle_binary_opexpr(context, result, var, ExtractConst(context, param));
+				handle_binary_opexpr(ExtractConst(param, context), context, result);
 				return result;
 			}
+			/* TODO: estimate selectivity for param if it's Var */
 			else if (IsA(param, Param) || IsA(param, Var))
 			{
-				if (IsA(param, Param))
-					context->found_params = true;
-
-				handle_binary_opexpr_param(prel, result, var);
+				handle_binary_opexpr_param(prel, result);
 				return result;
 			}
 		}
@@ -1031,8 +1026,9 @@ handle_opexpr(const OpExpr *expr, WalkerContext *context)
 
 /* Binary operator handler */
 static void
-handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
-					 const Node *varnode, const Const *c)
+handle_binary_opexpr(const Const *c,
+					 WalkerContext *context,
+					 WrapperNode *result)
 {
 	int						strategy;
 	TypeCacheEntry		   *tce;
@@ -1047,7 +1043,7 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 		return;
 	}
 
-	tce = lookup_type_cache(prel->atttype, TYPECACHE_BTREE_OPFAMILY);
+	tce = lookup_type_cache(prel->ev_type, TYPECACHE_BTREE_OPFAMILY);
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
 
 	/* There's no strategy for this operator, go to end */
@@ -1082,17 +1078,17 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 				 * if operator collation is different from default attribute collation.
 				 * In this case we just return all of them.
 				 */
-				if (expr->opcollid != prel->attcollid &&
+				if (expr->opcollid != prel->ev_collid &&
 					strategy != BTEqualStrategyNumber)
 					goto binary_opexpr_return;
 
 				collid = OidIsValid(expr->opcollid) ?
 											expr->opcollid :
-											prel->attcollid;
+											prel->ev_collid;
 
 				fill_type_cmp_fmgr_info(&cmp_func,
 										getBaseType(c->consttype),
-										getBaseType(prel->atttype));
+										getBaseType(prel->ev_type));
 
 				select_range_partitions(c->constvalue,
 										&cmp_func,
@@ -1119,14 +1115,14 @@ binary_opexpr_return:
 /* Estimate selectivity of parametrized quals */
 static void
 handle_binary_opexpr_param(const PartRelationInfo *prel,
-						   WrapperNode *result, const Node *varnode)
+						   WrapperNode *result)
 {
 	const OpExpr	   *expr = (const OpExpr *) result->orig;
 	TypeCacheEntry	   *tce;
 	int					strategy;
 
 	/* Determine operator type */
-	tce = lookup_type_cache(prel->atttype, TYPECACHE_BTREE_OPFAMILY);
+	tce = lookup_type_cache(prel->ev_type, TYPECACHE_BTREE_OPFAMILY);
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
 
 	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
@@ -1135,30 +1131,27 @@ handle_binary_opexpr_param(const PartRelationInfo *prel,
 
 
 /*
- * Checks if expression is a KEY OP PARAM or PARAM OP KEY, where KEY is
- * partition expression and PARAM is whatever.
+ * Checks if expression is a KEY OP PARAM or PARAM OP KEY, where
+ * KEY is partitioning expression and PARAM is whatever.
  *
  * NOTE: returns false if partition key is not in expression.
  */
 static bool
-pull_var_param(const WalkerContext *ctx,
-			   const OpExpr *expr,
-			   Node **var_ptr,
-			   Node **param_ptr)
+is_key_op_param(const OpExpr *expr,
+				const WalkerContext *context,
+				Node **param_ptr) /* ret value #1 */
 {
 	Node   *left = linitial(expr->args),
 		   *right = lsecond(expr->args);
 
-	if (expr_matches_operand(left, ctx->prel_expr))
+	if (match_expr_to_operand(context->prel_expr, left))
 	{
-		*var_ptr = left;
 		*param_ptr = right;
 		return true;
 	}
 
-	if (expr_matches_operand(right, ctx->prel_expr))
+	if (match_expr_to_operand(context->prel_expr, right))
 	{
-		*var_ptr = right;
 		*param_ptr = left;
 		return true;
 	}
@@ -1168,7 +1161,7 @@ pull_var_param(const WalkerContext *ctx,
 
 /* Extract (evaluate) Const from Param node */
 static Const *
-extract_const(WalkerContext *wcxt, Param *param)
+extract_const(Param *param, WalkerContext *wcxt)
 {
 	ExprState  *estate = ExecInitExpr((Expr *) param, NULL);
 	bool		isnull;
@@ -1464,7 +1457,7 @@ translate_col_privs(const Bitmapset *parent_privs,
 	attno = InvalidAttrNumber;
 	foreach(lc, translated_vars)
 	{
-		Var		   *var = (Var *) lfirst(lc);
+		Var *var = (Var *) lfirst(lc);
 
 		attno++;
 		if (var == NULL)		/* ignore dropped columns */

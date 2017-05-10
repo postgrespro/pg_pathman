@@ -242,13 +242,13 @@ static void
 handle_modification_query(Query *parse)
 {
 	const PartRelationInfo *prel;
+	Node				   *prel_expr;
 	List				   *ranges;
 	RangeTblEntry		   *rte;
 	WrapperNode			   *wrap;
 	Expr				   *expr;
 	WalkerContext			context;
 	Index					result_rel;
-	Node				   *prel_expr;
 
 	/* Fetch index of result relation */
 	result_rel = parse->resultRelation;
@@ -279,9 +279,7 @@ handle_modification_query(Query *parse)
 	if (!expr) return;
 
 	/* Prepare partitioning expression */
-	prel_expr = copyObject(prel->expr);
-	if (result_rel != 1)
-		ChangeVarNodes(prel_expr, 1, result_rel, 0);
+	prel_expr = PrelExpressionForRelid(prel, result_rel);
 
 	/* Parse syntax tree and extract partition ranges */
 	InitWalkerContext(&context, prel_expr, prel, NULL, false);

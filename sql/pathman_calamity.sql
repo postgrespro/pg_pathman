@@ -126,11 +126,13 @@ SELECT build_range_condition('calamity.part_test', 'val', 10, NULL);	/* OK */
 SELECT build_range_condition('calamity.part_test', 'val', NULL, 10);	/* OK */
 
 /* check function validate_interval_value() */
-SELECT validate_interval_value(NULL, 2, '1 mon');					/* not ok */
-SELECT validate_interval_value('interval'::regtype, NULL, '1 mon');	/* not ok */
-SELECT validate_interval_value('int4'::regtype, 2, '1 mon');		/* not ok */
-SELECT validate_interval_value('interval'::regtype, 1, '1 mon');	/* not ok */
-SELECT validate_interval_value('interval'::regtype, 2, NULL);		/* OK */
+SELECT validate_interval_value(1::REGCLASS, 'expr', 2, '1 mon', 'cooked_expr');	/* not ok */
+SELECT validate_interval_value(NULL, 'expr', 2, '1 mon', 'cooked_expr');		/* not ok */
+SELECT validate_interval_value('pg_class', NULL, 2, '1 mon', 'cooked_expr');	/* not ok */
+SELECT validate_interval_value('pg_class', 'oid', 1, 'HASH', NULL);				/* not ok */
+SELECT validate_interval_value('pg_class', 'expr', 2, '1 mon', NULL);			/* not ok */
+SELECT validate_interval_value('pg_class', 'expr', 2, NULL, 'cooked_expr');		/* not ok */
+SELECT validate_interval_value('pg_class', 'EXPR', 1, 'HASH', NULL);			/* not ok */
 
 /* check function validate_relname() */
 SELECT validate_relname('calamity.part_test');
@@ -236,8 +238,8 @@ DROP FUNCTION calamity.dummy_cb(arg jsonb);
 /* check function add_to_pathman_config() -- PHASE #1 */
 SELECT add_to_pathman_config(NULL, 'val');						/* no table */
 SELECT add_to_pathman_config(0::REGCLASS, 'val');				/* no table (oid) */
-SELECT add_to_pathman_config('calamity.part_test', NULL);		/* no column */
-SELECT add_to_pathman_config('calamity.part_test', 'V_A_L');	/* wrong column */
+SELECT add_to_pathman_config('calamity.part_test', NULL);		/* no expr */
+SELECT add_to_pathman_config('calamity.part_test', 'V_A_L');	/* wrong expr */
 SELECT add_to_pathman_config('calamity.part_test', 'val');		/* OK */
 SELECT disable_pathman_for('calamity.part_test');
 SELECT add_to_pathman_config('calamity.part_test', 'val', '10'); /* OK */

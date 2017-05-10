@@ -619,7 +619,7 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 	/* Open PATHMAN_CONFIG with latest snapshot available */
 	rel = heap_open(get_pathman_config_relid(false), AccessShareLock);
 
-	/* Check that 'partrel' column is if regclass type */
+	/* Check that 'partrel' column is of regclass type */
 	Assert(RelationGetDescr(rel)->
 		   attrs[Anum_pathman_config_partrel - 1]->
 		   atttypid == REGCLASSOID);
@@ -694,10 +694,6 @@ pathman_config_invalidate_parsed_expression(Oid relid)
 		values[Anum_pathman_config_expression_p - 1] = (Datum) 0;
 		nulls[Anum_pathman_config_expression_p - 1]  = true;
 
-		/* Reset expression type */
-		values[Anum_pathman_config_atttype - 1] = (Datum) 0;
-		nulls[Anum_pathman_config_atttype - 1]  = true;
-
 		rel = heap_open(get_pathman_config_relid(false), RowExclusiveLock);
 
 		/* Form new tuple and perform an update */
@@ -717,7 +713,6 @@ pathman_config_refresh_parsed_expression(Oid relid,
 										 ItemPointer iptr)
 {
 	char				   *expr_cstr;
-	Oid						expr_type;
 	Datum					expr_datum;
 
 	Relation				rel;
@@ -725,15 +720,12 @@ pathman_config_refresh_parsed_expression(Oid relid,
 
 	/* get and parse expression */
 	expr_cstr = TextDatumGetCString(values[Anum_pathman_config_expression - 1]);
-	expr_datum = plan_partitioning_expression(relid, expr_cstr, &expr_type);
+	expr_datum = cook_partitioning_expression(relid, expr_cstr, NULL);
 	pfree(expr_cstr);
 
 	/* prepare tuple values */
 	values[Anum_pathman_config_expression_p - 1] = expr_datum;
 	isnull[Anum_pathman_config_expression_p - 1] = false;
-
-	values[Anum_pathman_config_atttype - 1] = ObjectIdGetDatum(expr_type);
-	isnull[Anum_pathman_config_atttype - 1] = false;
 
 	rel = heap_open(get_pathman_config_relid(false), RowExclusiveLock);
 
@@ -878,7 +870,7 @@ validate_range_constraint(const Expr *expr,
 	*lower_null = *upper_null = true;
 
 	/* Find type cache entry for partitioned expression type */
-	tce = lookup_type_cache(prel->atttype, TYPECACHE_BTREE_OPFAMILY);
+	tce = lookup_type_cache(prel->ev_type, TYPECACHE_BTREE_OPFAMILY);
 
 	/* Is it an AND clause? */
 	if (and_clause((Node *) expr))
@@ -1034,7 +1026,7 @@ read_opexpr_const(const OpExpr *opexpr,
 	/* Cast Const to a proper type if needed */
 	*value = perform_type_cast(boundary->constvalue,
 							   getBaseType(boundary->consttype),
-							   getBaseType(prel->atttype),
+							   getBaseType(prel->ev_type),
 							   &cast_success);
 
 	if (!cast_success)
@@ -1109,7 +1101,7 @@ validate_hash_constraint(const Expr *expr,
 		hash_arg = (Node *) linitial(type_hash_proc_expr->args);
 
 		/* Check arg of TYPE_HASH_PROC() */
-		if (!expr_matches_operand(prel->expr, hash_arg))
+		if (!match_expr_to_operand(prel->expr, hash_arg))
 			return false;
 
 		/* Check that PARTITIONS_COUNT is equal to total amount of partitions */

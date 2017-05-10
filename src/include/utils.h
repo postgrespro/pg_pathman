@@ -24,7 +24,7 @@
 bool clause_contains_params(Node *clause);
 bool is_date_type_internal(Oid typid);
 bool check_security_policy_internal(Oid relid, Oid role);
-bool expr_matches_operand(Node *operand, Node *expr);
+bool match_expr_to_operand(Node *expr, Node *operand);
 
 /*
  * Misc.
@@ -37,7 +37,6 @@ List * list_reverse(List *l);
  */
 Oid get_rel_owner(Oid relid);
 char * get_rel_name_or_relid(Oid relid);
-Oid get_attribute_type(Oid relid, const char *attname, bool missing_ok);
 RangeVar *makeRangeVarFromRelid(Oid relid);
 
 /*

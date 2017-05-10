@@ -315,65 +315,76 @@ unpack_runtimeappend_private(RuntimeAppendState *scan_state, CustomScan *cscan)
 	scan_state->enable_parent = (bool) linitial_int(lthird(runtimeappend_private));
 }
 
-struct check_clause_context
-{
-	Node	*prel_expr;
-	int count;
-};
 
 /* Check that one of arguments of OpExpr is expression */
 static bool
-check_clause_for_expression(Node *node, struct check_clause_context *ctx)
+clause_contains_prel_expr(Node *node, Node *prel_expr)
 {
 	if (node == NULL)
 		return false;
 
-	if (IsA(node, OpExpr))
+	if (match_expr_to_operand(prel_expr, node))
+			return true;
+
+	return expression_tree_walker(node, clause_contains_prel_expr, prel_expr);
+}
+
+
+/* Prepare CustomScan's custom expression for walk_expr_tree() */
+static Node *
+canonicalize_custom_exprs_mutator(Node *node, void *cxt)
+{
+	if (node == NULL)
+		return NULL;
+
+	if (IsA(node, Var))
 	{
-		OpExpr *expr	= (OpExpr *) node;
-		Node   *left	= linitial(expr->args),
-			   *right	= lsecond(expr->args);
+		Var *var = palloc(sizeof(Var));
+		*var = *(Var *) node;
 
-		if (expr_matches_operand(left, ctx->prel_expr))
-			ctx->count += 1;
+		/* Replace original 'varnoold' */
+		var->varnoold = INDEX_VAR;
 
-		if (expr_matches_operand(right, ctx->prel_expr))
-			ctx->count += 1;
+		/* Restore original 'varattno' */
+		var->varattno = var->varoattno;
 
-		return false;
+		/* Forget 'location' */
+		var->location = -1;
+
+		return (Node *) var;
 	}
 
-	return expression_tree_walker(node, check_clause_for_expression, (void *) ctx);
+	return expression_tree_mutator(node, canonicalize_custom_exprs_mutator, NULL);
 }
+
+static List *
+canonicalize_custom_exprs(List *custom_exps)
+{
+	return (List *) canonicalize_custom_exprs_mutator((Node *) custom_exps, NULL);
+}
+
 
 /*
  * Filter all available clauses and extract relevant ones.
  */
 List *
-get_partitioned_attr_clauses(List *restrictinfo_list,
-							 const PartRelationInfo *prel,
-							 Index partitioned_rel)
+get_partitioning_clauses(List *restrictinfo_list,
+						 const PartRelationInfo *prel,
+						 Index partitioned_rel)
 {
 	List	   *result = NIL;
 	ListCell   *l;
 
 	foreach(l, restrictinfo_list)
 	{
-		RestrictInfo				   *rinfo = (RestrictInfo *) lfirst(l);
-		struct check_clause_context		ctx;
+		RestrictInfo   *rinfo = (RestrictInfo *) lfirst(l);
+		Node		   *prel_expr;
 
 		Assert(IsA(rinfo, RestrictInfo));
 
-		ctx.count = 0;
-		ctx.prel_expr = prel->expr;
-		if (partitioned_rel != 1)
-		{
-			ctx.prel_expr = copyObject(prel->expr);
-			ChangeVarNodes(ctx.prel_expr, 1, partitioned_rel, 0);
-		}
-		check_clause_for_expression((Node *) rinfo->clause, &ctx);
+		prel_expr = PrelExpressionForRelid(prel, partitioned_rel);
 
-		if (ctx.count == 1)
+		if (clause_contains_prel_expr((Node *) rinfo->clause, prel_expr))
 			result = lappend(result, rinfo->clause);
 	}
 	return result;
@@ -591,7 +602,7 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 	/* Since we're not scanning any real table directly */
 	cscan->scan.scanrelid = 0;
 
-	cscan->custom_exprs = get_partitioned_attr_clauses(clauses, prel, rel->relid);
+	cscan->custom_exprs = get_partitioning_clauses(clauses, prel, rel->relid);
 	cscan->custom_plans = custom_plans;
 	cscan->methods = scan_methods;
 
@@ -627,14 +638,20 @@ create_append_scan_state_common(CustomScan *node,
 void
 begin_append_common(CustomScanState *node, EState *estate, int eflags)
 {
+	RuntimeAppendState *scan_state = (RuntimeAppendState *) node;
+
 	node->ss.ps.ps_TupFromTlist = false;
+
+	/* Prepare custom expression according to set_set_customscan_references() */
+	scan_state->canon_custom_exprs =
+			canonicalize_custom_exprs(scan_state->custom_exprs);
 }
 
 TupleTableSlot *
 exec_append_common(CustomScanState *node,
 				   void (*fetch_next_tuple) (CustomScanState *node))
 {
-	RuntimeAppendState	   *scan_state = (RuntimeAppendState *) node;
+	RuntimeAppendState *scan_state = (RuntimeAppendState *) node;
 
 	/* ReScan if no plans are selected */
 	if (scan_state->ncur_plans == 0)
@@ -684,51 +701,6 @@ end_append_common(CustomScanState *node)
 	hash_destroy(scan_state->children_table);
 }
 
-/* Find first Var with varno == INDEX_VAR, and returns its varnoold */
-static bool
-find_varnoold(Node *node, int *varnoold)
-{
-	if (node == NULL)
-		return false;
-
-	if (IsA(node, Var))
-	{
-		Var *var = (Var *) node;
-		if (var->varno == INDEX_VAR)
-		{
-			/* we found it */
-			*varnoold = var->varnoold;
-			return true;
-		}
-		return false;
-	}
-
-	return expression_tree_walker(node, find_varnoold, (void *) varnoold);
-}
-
-/*
- * To check equality we need to modify partitioning expression's Vars like
- * they appear in custom_exprs, it means that varno should be equal to
- * INDEX_VAR and varnoold should be changed according to query
- */
-static bool
-prepare_vars(Node *node, const int *varnoold)
-{
-	if (node == NULL)
-		return false;
-
-	if (IsA(node, Var))
-	{
-		Var *var = (Var *) node;
-		Assert(var->varno == 1);
-		var->varno = INDEX_VAR;
-		var->varnoold = *varnoold;
-		return false;
-	}
-
-	return expression_tree_walker(node, prepare_vars, (void *) varnoold);
-}
-
 void
 rescan_append_common(CustomScanState *node)
 {
@@ -742,28 +714,17 @@ rescan_append_common(CustomScanState *node)
 	int						nparts;
 	Node				   *prel_expr;
 
-	int						varnoold = -100; /* not possible number */
-
 	prel = get_pathman_relation_info(scan_state->relid);
 	Assert(prel);
 
-	/* Prepare expression. Copy and modify 'varno' and 'varnoold' attributes */
-	prel_expr = copyObject(prel->expr);
-	foreach(lc, scan_state->custom_exprs)
-	{
-		find_varnoold((Node *) lfirst(lc), &varnoold);
-		if (varnoold != -100)
-			break;
-	}
-
-	if (varnoold != -100)
-		prepare_vars(prel_expr, &varnoold);
+	/* Prepare expression according to set_set_customscan_references() */
+	prel_expr = PrelExpressionForRelid(prel, INDEX_VAR);
 
 	/* First we select all available partitions... */
 	ranges = list_make1_irange_full(prel, IR_COMPLETE);
 
 	InitWalkerContext(&wcxt, prel_expr, prel, econtext, false);
-	foreach (lc, scan_state->custom_exprs)
+	foreach (lc, scan_state->canon_custom_exprs)
 	{
 		WrapperNode *wn;
 

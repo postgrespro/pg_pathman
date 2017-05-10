@@ -88,9 +88,10 @@ PGPORT=55435 PGUSER=$USER PG_CONFIG=$config_path make installcheck USE_PGXS=1 ||
 # show diff if it exists
 if test -f regression.diffs; then cat regression.diffs; fi
 
+
 set +u
 
-# create a virtual environment and activate it
+# create virtual environment and activate it
 virtualenv /tmp/envs/pg_pathman
 source /tmp/envs/pg_pathman/bin/activate
 
@@ -98,10 +99,37 @@ source /tmp/envs/pg_pathman/bin/activate
 pip3 install $pip_packages
 
 # run python tests
-make USE_PGXS=1 PG_CONFIG=$config_path partitioning_tests || status=$?
+make USE_PGXS=1 PG_CONFIG=$config_path python_tests || status=$?
+
+# deactivate virtual environment
+deactivate
 
 set -u
 
+
+# install cmake for cmocka
+sudo apt-get -y install -qq cmake
+
+# build & install cmocka
+CMOCKA_VER=1.1.1
+cd tests/cmocka
+tar xf cmocka-$CMOCKA_VER.tar.xz
+cd cmocka-$CMOCKA_VER
+mkdir build && cd build
+cmake ..
+make && sudo make install
+cd ../../../..
+
+# export path to libcmocka.so
+LD_LIBRARY_PATH=/usr/local/lib
+export LD_LIBRARY_PATH
+
+# run cmocka tests (using CFLAGS_SL for gcov)
+make USE_PGXS=1 PG_CONFIG=$config_path CFLAGS_SL="$($config_path --cflags_sl) -coverage" cmocka_tests || status=$?
+
+# remove useless gcov files
+rm -f tests/cmocka/*.gcno
+rm -f tests/cmocka/*.gcda
 
 #generate *.gcov files
 gcov src/*.c src/compat/*.c src/include/*.h src/include/compat/*.h

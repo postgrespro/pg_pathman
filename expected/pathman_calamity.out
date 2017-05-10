@@ -12,7 +12,7 @@ SELECT debug_capture();
 SELECT get_pathman_lib_version();
  get_pathman_lib_version 
 -------------------------
- 10300
+ 10400
 (1 row)
 
 set client_min_messages = NOTICE;
@@ -270,20 +270,20 @@ SELECT build_range_condition('calamity.part_test', 'val', NULL, 10);	/* OK */
 (1 row)
 
 /* check function validate_interval_value() */
-SELECT validate_interval_value(NULL, 2, '1 mon');					/* not ok */
-ERROR:  'atttype' should not be NULL
-SELECT validate_interval_value('interval'::regtype, NULL, '1 mon');	/* not ok */
-ERROR:  'parttype' should not be NULL
-SELECT validate_interval_value('int4'::regtype, 2, '1 mon');		/* not ok */
-ERROR:  invalid input syntax for integer: "1 mon"
-SELECT validate_interval_value('interval'::regtype, 1, '1 mon');	/* not ok */
+SELECT validate_interval_value(1::REGCLASS, 'expr', 2, '1 mon', 'cooked_expr');	/* not ok */
+ERROR:  relation "1" does not exist
+SELECT validate_interval_value(NULL, 'expr', 2, '1 mon', 'cooked_expr');		/* not ok */
+ERROR:  'partrel' should not be NULL
+SELECT validate_interval_value('pg_class', NULL, 2, '1 mon', 'cooked_expr');	/* not ok */
+ERROR:  'expression' should not be NULL
+SELECT validate_interval_value('pg_class', 'oid', 1, 'HASH', NULL);				/* not ok */
 ERROR:  interval should be NULL for HASH partitioned table
-SELECT validate_interval_value('interval'::regtype, 2, NULL);		/* OK */
- validate_interval_value 
--------------------------
- t
-(1 row)
-
+SELECT validate_interval_value('pg_class', 'expr', 2, '1 mon', NULL);			/* not ok */
+ERROR:  cannot find type name for attribute "expr" of relation "pg_class"
+SELECT validate_interval_value('pg_class', 'expr', 2, NULL, 'cooked_expr');		/* not ok */
+ERROR:  unrecognized token: "cooked_expr"
+SELECT validate_interval_value('pg_class', 'EXPR', 1, 'HASH', NULL);			/* not ok */
+ERROR:  cannot find type name for attribute "expr" of relation "pg_class"
 /* check function validate_relname() */
 SELECT validate_relname('calamity.part_test');
  validate_relname 
@@ -553,9 +553,9 @@ SELECT add_to_pathman_config(NULL, 'val');						/* no table */
 ERROR:  'parent_relid' should not be NULL
 SELECT add_to_pathman_config(0::REGCLASS, 'val');				/* no table (oid) */
 ERROR:  relation "0" does not exist
-SELECT add_to_pathman_config('calamity.part_test', NULL);		/* no column */
+SELECT add_to_pathman_config('calamity.part_test', NULL);		/* no expr */
 ERROR:  'expression' should not be NULL
-SELECT add_to_pathman_config('calamity.part_test', 'V_A_L');	/* wrong column */
+SELECT add_to_pathman_config('calamity.part_test', 'V_A_L');	/* wrong expr */
 ERROR:  cannot find type name for attribute "v_a_l" of relation "part_test"
 SELECT add_to_pathman_config('calamity.part_test', 'val');		/* OK */
  add_to_pathman_config 

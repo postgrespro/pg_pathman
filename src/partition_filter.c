@@ -427,10 +427,10 @@ find_partitions_for_value(Datum value, Oid value_type,
 	temp_const.constisnull	= false;
 
 	/* ... and some other important data */
-	CopyToTempConst(consttypmod, atttypmod);
-	CopyToTempConst(constcollid, attcollid);
-	CopyToTempConst(constlen,    attlen);
-	CopyToTempConst(constbyval,  attbyval);
+	CopyToTempConst(consttypmod, ev_typmod);
+	CopyToTempConst(constcollid, ev_collid);
+	CopyToTempConst(constlen,    ev_len);
+	CopyToTempConst(constbyval,  ev_byval);
 
 	/* We use 0 since varno doesn't matter for Const */
 	InitWalkerContext(&wcxt, 0, prel, NULL, true);
@@ -448,7 +448,7 @@ select_partition_for_insert(Datum value, Oid value_type,
 							ResultPartsStorage *parts_storage,
 							EState *estate)
 {
-	MemoryContext			old_cxt;
+	MemoryContext			old_mcxt;
 	ResultRelInfoHolder	   *rri_holder;
 	Oid						selected_partid = InvalidOid;
 	Oid					   *parts;
@@ -462,7 +462,7 @@ select_partition_for_insert(Datum value, Oid value_type,
 	else if (nparts == 0)
 	{
 		 selected_partid = create_partitions_for_value(PrelParentRelid(prel),
-													   value, prel->atttype);
+													   value, prel->ev_type);
 
 		 /* get_pathman_relation_info() will refresh this entry */
 		 invalidate_pathman_relation_info(PrelParentRelid(prel), NULL);
@@ -470,14 +470,14 @@ select_partition_for_insert(Datum value, Oid value_type,
 	else selected_partid = parts[0];
 
 	/* Replace parent table with a suitable partition */
-	old_cxt = MemoryContextSwitchTo(estate->es_query_cxt);
+	old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
 	rri_holder = scan_result_parts_storage(selected_partid, parts_storage);
-	MemoryContextSwitchTo(old_cxt);
+	MemoryContextSwitchTo(old_mcxt);
 
 	/* Could not find suitable partition */
 	if (rri_holder == NULL)
 		elog(ERROR, ERR_PART_ATTR_NO_PART,
-			 datum_to_cstring(value, prel->atttype));
+			 datum_to_cstring(value, prel->ev_type));
 
 	return rri_holder;
 }
@@ -535,7 +535,7 @@ make_partition_filter(Plan *subplan, Oid parent_relid,
 Node *
 partition_filter_create_scan_state(CustomScan *node)
 {
-	PartitionFilterState   *state;
+	PartitionFilterState *state;
 
 	state = (PartitionFilterState *) palloc0(sizeof(PartitionFilterState));
 	NodeSetTag(state, T_CustomScanState);
@@ -565,21 +565,21 @@ partition_filter_create_scan_state(CustomScan *node)
 void
 partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 {
-	Node					*expr;
-	MemoryContext			 old_cxt;
-	PartitionFilterState	*state = (PartitionFilterState *) node;
-	const PartRelationInfo	*prel;
-	ListCell				*lc;
-	PlanState				*child_state;
-	Index					 expr_varno = 1;
+	PartitionFilterState	   *state = (PartitionFilterState *) node;
 
-	child_state = ExecInitNode(state->subplan, estate, eflags);
+	MemoryContext				old_mcxt;
+	const PartRelationInfo	   *prel;
+	Node					   *expr;
+	Index						parent_varno = 1;
+	ListCell				   *lc;
+	PlanState				   *child_state;
 
 	/* It's convenient to store PlanState in 'custom_ps' */
+	child_state = ExecInitNode(state->subplan, estate, eflags);
 	node->custom_ps = list_make1(child_state);
 
 	if (state->command_type == CMD_UPDATE)
-		expr_varno = ((Scan *) child_state->plan)->scanrelid;
+		parent_varno = ((Scan *) child_state->plan)->scanrelid;
 	else
 	{
 		Index varno = 1;
@@ -587,13 +587,15 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 		foreach(lc, estate->es_range_table)
 		{
 			RangeTblEntry *entry = lfirst(lc);
+
 			if (entry->relid == state->partitioned_table)
 				break;
+
 			varno++;
 		}
 
-		expr_varno = varno;
-		Assert(expr_varno <= list_length(estate->es_range_table));
+		parent_varno = varno;
+		Assert(parent_varno <= list_length(estate->es_range_table));
 	}
 
 
@@ -604,14 +606,8 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 		Assert(prel != NULL);
 
 		/* Change varno in expression Vars according to range table */
-		Assert(expr_varno >= 1);
-		if (expr_varno > 1)
-		{
-			expr = copyObject(prel->expr);
-			ChangeVarNodes(expr, 1, expr_varno, 0);
-		}
-		else
-			expr = prel->expr;
+		Assert(parent_varno >= 1);
+		expr = PrelExpressionForRelid(prel, parent_varno);
 
 		/*
 		 * Also in updates we would operate with child relation, but
@@ -623,19 +619,19 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 			int			 natts;
 			bool		 found_whole_row;
 			AttrNumber	*attr_map;
-			Oid			 child_relid = getrelid(expr_varno, estate->es_range_table);
+			Oid			 child_relid = getrelid(parent_varno, estate->es_range_table);
 			Relation	 child_rel = heap_open(child_relid, NoLock);
 
 			attr_map = build_attributes_map(prel, child_rel, &natts);
-			expr = map_variable_attnos(expr, expr_varno, 0, attr_map, natts,
+			expr = map_variable_attnos(expr, parent_varno, 0, attr_map, natts,
 					&found_whole_row);
 			heap_close(child_rel, NoLock);
 		}
 
 		/* Prepare state for expression execution */
-		old_cxt = MemoryContextSwitchTo(estate->es_query_cxt);
+		old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
 		state->expr_state = ExecInitExpr((Expr *) expr, NULL);
-		MemoryContextSwitchTo(old_cxt);
+		MemoryContextSwitchTo(old_mcxt);
 	}
 
 	/* Init ResultRelInfo cache */
@@ -672,14 +668,14 @@ partition_filter_exec(CustomScanState *node)
 
 	if (!TupIsNull(slot))
 	{
-		MemoryContext				 old_cxt;
-		const PartRelationInfo		*prel;
-		ResultRelInfoHolder			*rri_holder;
-		bool						 isnull;
-		Datum						 value;
-		ExprDoneCond				 itemIsDone;
-		TupleTableSlot				*tmp_slot;
-		ResultRelInfo				*resultRelInfo;
+		MemoryContext				old_mcxt;
+		const PartRelationInfo	   *prel;
+		ResultRelInfoHolder		   *rri_holder;
+		bool						isnull;
+		Datum						value;
+		ExprDoneCond				itemIsDone;
+		TupleTableSlot			   *tmp_slot;
+		ResultRelInfo			   *resultRelInfo;
 
 		/* Fetch PartRelationInfo for this partitioned relation */
 		prel = get_pathman_relation_info(state->partitioned_table);
@@ -694,7 +690,7 @@ partition_filter_exec(CustomScanState *node)
 		}
 
 		/* Switch to per-tuple context */
-		old_cxt = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
+		old_mcxt = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 
 		/* Execute expression */
 		tmp_slot = econtext->ecxt_scantuple;
@@ -709,11 +705,11 @@ partition_filter_exec(CustomScanState *node)
 			elog(ERROR, ERR_PART_ATTR_MULTIPLE_RESULTS);
 
 		/* Search for a matching partition */
-		rri_holder = select_partition_for_insert(value, prel->atttype, prel,
+		rri_holder = select_partition_for_insert(value, prel->ev_type, prel,
 												 &state->result_parts, estate);
 
 		/* Switch back and clean up per-tuple context */
-		MemoryContextSwitchTo(old_cxt);
+		MemoryContextSwitchTo(old_mcxt);
 		ResetExprContext(econtext);
 
 		resultRelInfo = rri_holder->result_rel_info;

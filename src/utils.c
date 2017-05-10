@@ -34,11 +34,22 @@
 #include "utils/typcache.h"
 
 
-static bool clause_contains_params_walker(Node *node, void *context);
+static bool
+clause_contains_params_walker(Node *node, void *context)
+{
+	if (node == NULL)
+		return false;
 
+	if (IsA(node, Param))
+		return true;
+
+	return expression_tree_walker(node,
+								  clause_contains_params_walker,
+								  context);
+}
 
 /*
- * Check whether clause contains PARAMs or not
+ * Check whether clause contains PARAMs or not.
  */
 bool
 clause_contains_params(Node *clause)
@@ -46,18 +57,6 @@ clause_contains_params(Node *clause)
 	return expression_tree_walker(clause,
 								  clause_contains_params_walker,
 								  NULL);
-}
-
-static bool
-clause_contains_params_walker(Node *node, void *context)
-{
-	if (node == NULL)
-		return false;
-	if (IsA(node, Param))
-		return true;
-	return expression_tree_walker(node,
-								  clause_contains_params_walker,
-								  context);
 }
 
 /*
@@ -108,9 +107,9 @@ check_security_policy_internal(Oid relid, Oid role)
 
 /* Compare clause operand with expression */
 bool
-expr_matches_operand(Node *operand, Node *expr)
+match_expr_to_operand(Node *expr, Node *operand)
 {
-	/* strip relabeling for both operand and expr */
+	/* Strip relabeling for both operand and expr */
 	if (operand && IsA(operand, RelabelType))
 		operand = (Node *) ((RelabelType *) operand)->arg;
 
@@ -217,34 +216,6 @@ get_rel_name_or_relid(Oid relid)
 		return DatumGetCString(DirectFunctionCall1(oidout, ObjectIdGetDatum(relid)));
 
 	return relname;
-}
-
-/*
- * Get type of column by its name.
- */
-Oid
-get_attribute_type(Oid relid, const char *attname, bool missing_ok)
-{
-	Oid			result;
-	HeapTuple	tp;
-
-	/* NOTE: for now it's the most efficient way */
-	tp = SearchSysCacheAttName(relid, attname);
-	if (HeapTupleIsValid(tp))
-	{
-		Form_pg_attribute att_tup = (Form_pg_attribute) GETSTRUCT(tp);
-		result = att_tup->atttypid;
-		ReleaseSysCache(tp);
-
-		return result;
-	}
-
-	if (!missing_ok)
-		elog(ERROR, "cannot find type name for attribute \"%s\" "
-					"of relation \"%s\"",
-			 attname, get_rel_name_or_relid(relid));
-
-	return InvalidOid;
 }
 
 RangeVar *

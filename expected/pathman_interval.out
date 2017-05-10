@@ -18,7 +18,7 @@ SELECT set_interval('test_interval.abc', NULL::INT2);
 
 /* pg_pathman shouldn't be able to create a new partition */
 INSERT INTO test_interval.abc VALUES (250);
-ERROR:  cannot find appropriate partition for key '250'
+ERROR:  cannot spawn new partition for key '250'
 /* Set a trivial interval */
 SELECT set_interval('test_interval.abc', 0);
 ERROR:  interval should not be trivial
@@ -37,10 +37,10 @@ SELECT set_interval('test_interval.abc', 1000);
 (1 row)
 
 INSERT INTO test_interval.abc VALUES (250);
-SELECT * FROM pathman_config;
-      partrel      | attname | parttype | range_interval |                                                     expression_p                                                      | atttype 
--------------------+---------+----------+----------------+-----------------------------------------------------------------------------------------------------------------------+---------
- test_interval.abc | id      |        2 | 1000           | {VAR :varno 1 :varattno 1 :vartype 21 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 1 :location 8} |      21
+SELECT partrel, range_interval FROM pathman_config;
+      partrel      | range_interval 
+-------------------+----------------
+ test_interval.abc | 1000
 (1 row)
 
 DROP TABLE test_interval.abc CASCADE;
@@ -61,7 +61,7 @@ SELECT set_interval('test_interval.abc', NULL::INT4);
 
 /* pg_pathman shouldn't be able to create a new partition */
 INSERT INTO test_interval.abc VALUES (250);
-ERROR:  cannot find appropriate partition for key '250'
+ERROR:  cannot spawn new partition for key '250'
 /* Set a trivial interval */
 SELECT set_interval('test_interval.abc', 0);
 ERROR:  interval should not be trivial
@@ -80,10 +80,10 @@ SELECT set_interval('test_interval.abc', 1000);
 (1 row)
 
 INSERT INTO test_interval.abc VALUES (250);
-SELECT * FROM pathman_config;
-      partrel      | attname | parttype | range_interval |                                                     expression_p                                                      | atttype 
--------------------+---------+----------+----------------+-----------------------------------------------------------------------------------------------------------------------+---------
- test_interval.abc | id      |        2 | 1000           | {VAR :varno 1 :varattno 1 :vartype 23 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 1 :location 8} |      23
+SELECT partrel, range_interval FROM pathman_config;
+      partrel      | range_interval 
+-------------------+----------------
+ test_interval.abc | 1000
 (1 row)
 
 DROP TABLE test_interval.abc CASCADE;
@@ -104,7 +104,7 @@ SELECT set_interval('test_interval.abc', NULL::INT8);
 
 /* pg_pathman shouldn't be able to create a new partition */
 INSERT INTO test_interval.abc VALUES (250);
-ERROR:  cannot find appropriate partition for key '250'
+ERROR:  cannot spawn new partition for key '250'
 /* Set a trivial interval */
 SELECT set_interval('test_interval.abc', 0);
 ERROR:  interval should not be trivial
@@ -123,10 +123,10 @@ SELECT set_interval('test_interval.abc', 1000);
 (1 row)
 
 INSERT INTO test_interval.abc VALUES (250);
-SELECT * FROM pathman_config;
-      partrel      | attname | parttype | range_interval |                                                     expression_p                                                      | atttype 
--------------------+---------+----------+----------------+-----------------------------------------------------------------------------------------------------------------------+---------
- test_interval.abc | id      |        2 | 1000           | {VAR :varno 1 :varattno 1 :vartype 20 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 1 :location 8} |      20
+SELECT partrel, range_interval FROM pathman_config;
+      partrel      | range_interval 
+-------------------+----------------
+ test_interval.abc | 1000
 (1 row)
 
 DROP TABLE test_interval.abc CASCADE;
@@ -156,10 +156,10 @@ SELECT set_interval('test_interval.abc', '1 month'::INTERVAL);
  
 (1 row)
 
-SELECT * FROM pathman_config;
-      partrel      | attname | parttype | range_interval |                                                      expression_p                                                       | atttype 
--------------------+---------+----------+----------------+-------------------------------------------------------------------------------------------------------------------------+---------
- test_interval.abc | dt      |        2 | @ 1 mon        | {VAR :varno 1 :varattno 1 :vartype 1082 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 1 :location 8} |    1082
+SELECT partrel, range_interval FROM pathman_config;
+      partrel      | range_interval 
+-------------------+----------------
+ test_interval.abc | @ 1 mon
 (1 row)
 
 DROP TABLE test_interval.abc CASCADE;
