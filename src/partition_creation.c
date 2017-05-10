@@ -1707,14 +1707,13 @@ build_partitioning_expression(Oid parent_relid,
 							  List **columns)		/* ret val #2 */
 {
 	/* Values extracted from PATHMAN_CONFIG */
-	Datum		 values[Natts_pathman_config];
-	bool		 isnull[Natts_pathman_config];
-	char		*expr_cstr;
-	Node		*expr;
+	Datum		values[Natts_pathman_config];
+	bool		isnull[Natts_pathman_config];
+	char	   *expr_cstr;
+	Node	   *expr;
 
 	/* Check that table is registered in PATHMAN_CONFIG */
-	if (!pathman_config_contains_relation(parent_relid, values,
-										  isnull, NULL, NULL))
+	if (!pathman_config_contains_relation(parent_relid, values, isnull, NULL, NULL))
 		elog(ERROR, "table \"%s\" is not partitioned",
 			 get_rel_name_or_relid(parent_relid));
 
@@ -1732,13 +1731,14 @@ build_partitioning_expression(Oid parent_relid,
 		expr_p_cstr =
 				TextDatumGetCString(values[Anum_pathman_config_expression_p - 1]);
 
+		/* Finally return expression type */
 		*expr_type = exprType(stringToNode(expr_p_cstr));
 	}
 
 	if (columns)
 	{
 		/* Column list should be empty */
-		Assert(*columns == NIL);
+		AssertArg(*columns == NIL);
 		extract_column_names(expr, columns);
 	}
 

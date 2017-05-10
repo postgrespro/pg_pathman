@@ -270,19 +270,21 @@ SELECT build_range_condition('calamity.part_test', 'val', NULL, 10);	/* OK */
 (1 row)
 
 /* check function validate_interval_value() */
-SELECT validate_interval_value(1::REGCLASS, 'expr', 2, '1 mon', 'cooked_expr');	/* not ok */
+SELECT validate_interval_value(1::REGCLASS, 'expr', 2, '1 mon', 'cooked_expr');		/* not ok */
 ERROR:  relation "1" does not exist
-SELECT validate_interval_value(NULL, 'expr', 2, '1 mon', 'cooked_expr');		/* not ok */
+SELECT validate_interval_value(NULL, 'expr', 2, '1 mon', 'cooked_expr');			/* not ok */
 ERROR:  'partrel' should not be NULL
-SELECT validate_interval_value('pg_class', NULL, 2, '1 mon', 'cooked_expr');	/* not ok */
+SELECT validate_interval_value('pg_class', NULL, 2, '1 mon', 'cooked_expr');		/* not ok */
 ERROR:  'expression' should not be NULL
-SELECT validate_interval_value('pg_class', 'oid', 1, 'HASH', NULL);				/* not ok */
+SELECT validate_interval_value('pg_class', 'oid', NULL, '1 mon', 'cooked_expr');	/* not ok */
+ERROR:  'parttype' should not be NULL
+SELECT validate_interval_value('pg_class', 'oid', 1, 'HASH', NULL);					/* not ok */
 ERROR:  interval should be NULL for HASH partitioned table
-SELECT validate_interval_value('pg_class', 'expr', 2, '1 mon', NULL);			/* not ok */
+SELECT validate_interval_value('pg_class', 'expr', 2, '1 mon', NULL);				/* not ok */
 ERROR:  cannot find type name for attribute "expr" of relation "pg_class"
-SELECT validate_interval_value('pg_class', 'expr', 2, NULL, 'cooked_expr');		/* not ok */
+SELECT validate_interval_value('pg_class', 'expr', 2, NULL, 'cooked_expr');			/* not ok */
 ERROR:  unrecognized token: "cooked_expr"
-SELECT validate_interval_value('pg_class', 'EXPR', 1, 'HASH', NULL);			/* not ok */
+SELECT validate_interval_value('pg_class', 'EXPR', 1, 'HASH', NULL);				/* not ok */
 ERROR:  cannot find type name for attribute "expr" of relation "pg_class"
 /* check function validate_relname() */
 SELECT validate_relname('calamity.part_test');
@@ -749,8 +751,46 @@ SELECT get_part_range('calamity.test_range_oid_1', NULL::INT4);		/* OK */
 
 DROP TABLE calamity.test_range_oid CASCADE;
 NOTICE:  drop cascades to table calamity.test_range_oid_1
+/* check function merge_range_partitions() */
+SELECT merge_range_partitions('{pg_class}');						/* not ok */
+ERROR:  cannot merge partitions
+\errverbose
+ERROR:  XX000: cannot merge partitions
+DETAIL:  there must be at least two partitions
+LOCATION:  merge_range_partitions, pl_range_funcs.c:625
+SELECT merge_range_partitions('{pg_class, pg_inherits}');			/* not ok */
+ERROR:  cannot merge partitions
+\errverbose
+ERROR:  XX000: cannot merge partitions
+DETAIL:  relation "pg_class" is not a partition
+LOCATION:  merge_range_partitions, pl_range_funcs.c:636
+CREATE TABLE calamity.merge_test_a(val INT4 NOT NULL);
+CREATE TABLE calamity.merge_test_b(val INT4 NOT NULL);
+SELECT create_range_partitions('calamity.merge_test_a', 'val', 1, 10, 2);
+NOTICE:  sequence "merge_test_a_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+SELECT create_range_partitions('calamity.merge_test_b', 'val', 1, 10, 2);
+NOTICE:  sequence "merge_test_b_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+SELECT merge_range_partitions('{calamity.merge_test_a_1,
+								calamity.merge_test_b_1}');			/* not ok */
+ERROR:  cannot merge partitions
+\errverbose
+ERROR:  XX000: cannot merge partitions
+DETAIL:  all relations must share the same parent
+LOCATION:  merge_range_partitions, pl_range_funcs.c:645
+DROP TABLE calamity.merge_test_a,calamity.merge_test_b CASCADE;
+NOTICE:  drop cascades to 4 other objects
 DROP SCHEMA calamity CASCADE;
-NOTICE:  drop cascades to 18 other objects
+NOTICE:  drop cascades to 20 other objects
 DROP EXTENSION pg_pathman;
 /*
  * -------------------------------------
