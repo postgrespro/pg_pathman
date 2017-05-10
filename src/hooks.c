@@ -147,17 +147,31 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		if (saved_jointype == JOIN_UNIQUE_INNER)
 			return; /* No way to do this with a parameterized inner path */
 
+#if PG_VERSION_NUM >= 90603
+		initial_cost_nestloop(root, &workspace, jointype,
+							  outer, inner, /* built paths */
+							  extra);
+#else
 		initial_cost_nestloop(root, &workspace, jointype,
 							  outer, inner, /* built paths */
 							  extra->sjinfo, &extra->semifactors);
+#endif
 
 		pathkeys = build_join_pathkeys(root, joinrel, jointype, outer->pathkeys);
 
+#if PG_VERSION_NUM >= 90603
+		nest_path = create_nestloop_path(root, joinrel, jointype, &workspace,
+										 extra, outer, inner,
+										 extra->restrictlist,
+										 pathkeys,
+										 calc_nestloop_required_outer(outer, inner));
+#else
 		nest_path = create_nestloop_path(root, joinrel, jointype, &workspace,
 										 extra->sjinfo, &extra->semifactors,
 										 outer, inner, extra->restrictlist,
 										 pathkeys,
 										 calc_nestloop_required_outer(outer, inner));
+#endif
 
 		/* Discard all clauses that are to be evaluated by 'inner' */
 		foreach (rinfo_lc, extra->restrictlist)
