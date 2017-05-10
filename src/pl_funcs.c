@@ -1118,8 +1118,6 @@ pathman_update_trigger_func(PG_FUNCTION_ARGS)
 	/* Find (or create) target partition */
 	target_relid = find_target_partition(source_rel, new_tuple);
 
-	/* TODO: check for InvalidOid */
-
 	/* Convert tuple if target partition has changed */
 	if (target_relid != source_relid)
 	{
@@ -1129,9 +1127,7 @@ pathman_update_trigger_func(PG_FUNCTION_ARGS)
 		/* Lock partition and check if it exists */
 		LockRelationOid(target_relid, lockmode);
 		if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(target_relid)))
-			/* TODO: !!! */
-			elog(ERROR, ERR_PART_ATTR_NO_PART, "()");
-			// elog(ERROR, ERR_PART_ATTR_NO_PART, datum_to_cstring(value, value_type));
+			elog(ERROR, "no suitable target partition");
 
 		/* Open partition */
 		target_rel = heap_open(target_relid, lockmode);
@@ -1152,7 +1148,7 @@ pathman_update_trigger_func(PG_FUNCTION_ARGS)
 }
 
 /*
- * Find partition satisfying values of the tuple
+ * Find partition satisfying values of the tuple or return InvalidOid
  */
 static Oid
 find_target_partition(Relation source_rel, HeapTuple tuple)
@@ -1247,20 +1243,24 @@ find_deepest_partition(Oid parent, Relation source_rel, HeapTuple tuple)
 		elog(ERROR, ERR_PART_ATTR_MULTIPLE);
 	else if (nparts == 0)
 	{
-		 target_relid = create_partitions_for_value(PrelParentRelid(prel),
+		/* No partition found, create a new one */
+		target_relid = create_partitions_for_value(PrelParentRelid(prel),
 													value, value_type);
 
-		 /* get_pathman_relation_info() will refresh this entry */
-		 invalidate_pathman_relation_info(PrelParentRelid(prel), NULL);
+		/* Get_pathman_relation_info() will refresh this entry */
+		invalidate_pathman_relation_info(PrelParentRelid(prel), NULL);
 	}
 	else
+	{
+		/* Found partition */
 		target_relid = parts[0];
-	pfree(parts);
 
-	/* Try to go deeper recursively and see if there is subpartition */
-	subpartition = find_deepest_partition(target_relid, source_rel, tuple);
-	if (OidIsValid(subpartition))
-		return subpartition;
+		/* Try to go deeper recursively and see if there is subpartition */
+		subpartition = find_deepest_partition(target_relid, source_rel, tuple);
+		if (OidIsValid(subpartition))
+			return subpartition;
+	}
+	pfree(parts);
 
 	return target_relid;
 }
@@ -1499,7 +1499,6 @@ create_update_triggers(PG_FUNCTION_ARGS)
 	trigname = build_update_trigger_name_internal(parent);
 
 	/* Create trigger for parent */
-	// columns = PrelExpressionColumnNames(prel);
 	collect_update_trigger_columns(parent, &columns);
 	create_single_update_trigger_internal(parent, trigname, columns);
 
@@ -1525,7 +1524,7 @@ collect_update_trigger_columns(Oid relid, List **columns)
 		return;
 
 	/* Collect columns from current level */
-	*columns = list_concat(*columns, PrelExpressionColumnNames(prel));
+	*columns = list_union(*columns, PrelExpressionColumnNames(prel));
 
 	/* Collect columns from parent */
 	parent = get_parent_of_partition(relid, &parent_search);

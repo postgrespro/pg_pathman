@@ -66,7 +66,9 @@ int					pg_pathman_insert_into_fdw = PF_FDW_INSERT_POSTGRES;
 CustomScanMethods	partition_filter_plan_methods;
 CustomExecMethods	partition_filter_exec_methods;
 
-
+static ExprState *prepare_expr_state(Node *expr,
+									 Oid relid,
+									 EState *estate);
 static void prepare_rri_for_insert(EState *estate,
 								   ResultRelInfoHolder *rri_holder,
 								   const ResultPartsStorage *rps_storage,
@@ -455,8 +457,6 @@ select_partition_for_insert(ExprContext *econtext, ExprState *expr_state,
 	}
 	else selected_partid = parts[0];
 
-	/* Replace parent table with a suitable partition */
-	/* TODO: write a correct comment */
 	old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
 	rri_holder = scan_result_parts_storage(selected_partid, parts_storage);
 
@@ -471,35 +471,13 @@ select_partition_for_insert(ExprContext *econtext, ExprState *expr_state,
 
 		/* Build an expression state if not yet */
 		if (!rri_holder->expr_state)
-		{
-			MemoryContext			tmp_mcxt;
-			Node				   *expr;
-			Index					varno = 1;
-			ListCell *lc;
-
-			/* Change varno in Vars according to range table */
-			expr = copyObject(subprel->expr);
-			foreach(lc, estate->es_range_table)
-			{
-				RangeTblEntry *entry = lfirst(lc);
-				if (entry->relid == selected_partid)
-				{
-					if (varno > 1)
-						ChangeVarNodes(expr, 1, varno, 0);
-					break;
-				}
-				varno += 1;
-			}
-
-			/* Prepare state for expression execution */
-			tmp_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
-			rri_holder->expr_state = ExecInitExpr((Expr *) expr, NULL);
-			MemoryContextSwitchTo(tmp_mcxt);
-		}
+			rri_holder->expr_state = prepare_expr_state(subprel->expr,
+														selected_partid,
+														estate);
 
 		Assert(rri_holder->expr_state != NULL);
 
-		/* Dive in */
+		/* Recursively search for subpartitions */
 		rri_holder = select_partition_for_insert(econtext, rri_holder->expr_state,
 												 subprel,
 												 parts_storage,
@@ -516,6 +494,38 @@ select_partition_for_insert(ExprContext *econtext, ExprState *expr_state,
 	return rri_holder;
 }
 
+static ExprState *
+prepare_expr_state(Node *expr,
+				   Oid relid,
+				   EState *estate)
+{
+		ExprState				   *expr_state;
+		MemoryContext				old_mcxt;
+		Index						varno = 1;
+		Node					   *expr_copy;
+		ListCell				   *lc;
+
+		/* Change varno in Vars according to range table */
+		expr_copy = copyObject(expr);
+		foreach(lc, estate->es_range_table)
+		{
+			RangeTblEntry *entry = lfirst(lc);
+			if (entry->relid == relid)
+			{
+				if (varno > 1)
+					ChangeVarNodes(expr_copy, 1, varno, 0);
+				break;
+			}
+			varno += 1;
+		}
+
+		/* Prepare state for expression execution */
+		old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
+		expr_state = ExecInitExpr((Expr *) expr_copy, NULL);
+		MemoryContextSwitchTo(old_mcxt);
+
+		return expr_state;
+}
 
 /*
  * --------------------------------
@@ -596,40 +606,22 @@ partition_filter_create_scan_state(CustomScan *node)
 void
 partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 {
-	Index						varno = 1;
-	Node					   *expr;
-	MemoryContext				old_mcxt;
 	PartitionFilterState	   *state = (PartitionFilterState *) node;
-	const PartRelationInfo	   *prel;
-	ListCell				   *lc;
 
 	/* It's convenient to store PlanState in 'custom_ps' */
 	node->custom_ps = list_make1(ExecInitNode(state->subplan, estate, eflags));
 
 	if (state->expr_state == NULL)
 	{
+		const PartRelationInfo	   *prel;
+
 		/* Fetch PartRelationInfo for this partitioned relation */
 		prel = get_pathman_relation_info(state->partitioned_table);
 		Assert(prel != NULL);
 
-		/* Change varno in Vars according to range table */
-		expr = copyObject(prel->expr);
-		foreach(lc, estate->es_range_table)
-		{
-			RangeTblEntry *entry = lfirst(lc);
-			if (entry->relid == state->partitioned_table)
-			{
-				if (varno > 1)
-					ChangeVarNodes(expr, 1, varno, 0);
-				break;
-			}
-			varno += 1;
-		}
-
-		/* Prepare state for expression execution */
-		old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
-		state->expr_state = ExecInitExpr((Expr *) expr, NULL);
-		MemoryContextSwitchTo(old_mcxt);
+		state->expr_state = prepare_expr_state(prel->expr,
+											   state->partitioned_table,
+											   estate);
 	}
 
 	/* Init ResultRelInfo cache */
