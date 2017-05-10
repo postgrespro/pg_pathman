@@ -798,11 +798,11 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	values[Anum_pathman_config_parttype - 1]		= Int32GetDatum(parttype);
 	isnull[Anum_pathman_config_parttype - 1]		= false;
 
-	values[Anum_pathman_config_expression - 1]		= CStringGetTextDatum(expression);
-	isnull[Anum_pathman_config_expression - 1]		= false;
+	values[Anum_pathman_config_expr - 1]		= CStringGetTextDatum(expression);
+	isnull[Anum_pathman_config_expr - 1]		= false;
 
-	values[Anum_pathman_config_expression_p - 1]	= expr_datum;
-	isnull[Anum_pathman_config_expression_p - 1]	= false;
+	values[Anum_pathman_config_cooked_expr - 1]	= expr_datum;
+	isnull[Anum_pathman_config_cooked_expr - 1]	= false;
 
 	/* Insert new row into PATHMAN_CONFIG */
 	pathman_config = heap_open(get_pathman_config_relid(false), RowExclusiveLock);

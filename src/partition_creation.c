@@ -1716,7 +1716,7 @@ build_partitioning_expression(Oid parent_relid,
 		elog(ERROR, "table \"%s\" is not partitioned",
 			 get_rel_name_or_relid(parent_relid));
 
-	expr_cstr = TextDatumGetCString(values[Anum_pathman_config_expression - 1]);
+	expr_cstr = TextDatumGetCString(values[Anum_pathman_config_expr - 1]);
 	expr = parse_partitioning_expression(parent_relid, expr_cstr, NULL, NULL);
 	pfree(expr_cstr);
 
@@ -1726,9 +1726,9 @@ build_partitioning_expression(Oid parent_relid,
 		char *expr_p_cstr;
 
 		/* We can safely assume that this field will always remain not null */
-		Assert(!isnull[Anum_pathman_config_expression_p - 1]);
+		Assert(!isnull[Anum_pathman_config_cooked_expr - 1]);
 		expr_p_cstr =
-				TextDatumGetCString(values[Anum_pathman_config_expression_p - 1]);
+				TextDatumGetCString(values[Anum_pathman_config_cooked_expr - 1]);
 
 		/* Finally return expression type */
 		*expr_type = exprType(stringToNode(expr_p_cstr));
