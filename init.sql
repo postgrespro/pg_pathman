@@ -380,11 +380,10 @@ BEGIN
 	USING p_min, p_max
 	INTO ctids;
 
-	EXECUTE format('
-		WITH data AS (
-			DELETE FROM ONLY %1$s WHERE ctid = ANY($1) RETURNING *)
-		INSERT INTO %1$s SELECT * FROM data',
-		relation)
+	EXECUTE format('WITH data AS (
+					DELETE FROM ONLY %1$s WHERE ctid = ANY($1) RETURNING *)
+					INSERT INTO %1$s SELECT * FROM data',
+				   relation)
 	USING ctids;
 
 	/* Get number of inserted rows */

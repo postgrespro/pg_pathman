@@ -150,7 +150,7 @@ BEGIN
 			   end_value,
 			   v_atttype::TEXT)
 		USING
-				expression;
+			expression;
 	END IF;
 
 	/* Insert new entry to pathman config */

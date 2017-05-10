@@ -348,8 +348,6 @@ PartTypeToCString(PartType parttype)
 }
 
 
-
-
 /* PartRelationInfo checker */
 void shout_if_prel_is_invalid(const Oid parent_oid,
 							  const PartRelationInfo *prel,

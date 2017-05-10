@@ -1293,9 +1293,7 @@ shout_if_prel_is_invalid(const Oid parent_oid,
 				break;
 
 			default:
-				elog(ERROR,
-					 "expected_str selection not implemented for type %d",
-					 expected_part_type);
+				WrongPartType(expected_part_type);
 		}
 
 		elog(ERROR, "relation \"%s\" is not partitioned by %s",
