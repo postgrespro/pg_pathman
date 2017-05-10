@@ -32,9 +32,9 @@ SELECT context, entries FROM pathman_cache_stats ORDER BY context;
 /* change column's type (should flush caches) */
 ALTER TABLE test_column_type.test ALTER val TYPE NUMERIC;
 /* check that parsed expression was cleared */
-SELECT partrel, expression_p FROM pathman_config;
-        partrel        | expression_p 
------------------------+--------------
+SELECT partrel, cooked_expr FROM pathman_config;
+        partrel        | cooked_expr 
+-----------------------+-------------
  test_column_type.test | 
 (1 row)
 
@@ -45,8 +45,8 @@ SELECT * FROM test_column_type.test;
 (0 rows)
 
 /* check that expression has been built */
-SELECT partrel, expression_p FROM pathman_config;
-        partrel        |                                                      expression_p                                                       
+SELECT partrel, cooked_expr FROM pathman_config;
+        partrel        |                                                       cooked_expr                                                       
 -----------------------+-------------------------------------------------------------------------------------------------------------------------
  test_column_type.test | {VAR :varno 1 :varattno 1 :vartype 1700 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 1 :location 8}
 (1 row)

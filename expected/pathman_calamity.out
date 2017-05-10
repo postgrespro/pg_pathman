@@ -473,7 +473,7 @@ SELECT generate_range_bounds('1-jan-2017'::DATE,
 SELECT check_range_available(NULL, NULL::INT4, NULL);	/* not ok */
 ERROR:  'parent_relid' should not be NULL
 SELECT check_range_available('pg_class', 1, 10);		/* OK (not partitioned) */
-WARNING:  relation "pg_class" is not partitioned
+WARNING:  table "pg_class" is not partitioned
  check_range_available 
 -----------------------
  
@@ -931,10 +931,10 @@ SELECT add_to_pathman_config('calamity.survivor', 'val', '10');	/* OK */
 (1 row)
 
 SELECT * FROM pathman_partition_list;							/* OK */
-      parent       |      partition      | parttype | partattr | range_min | range_max 
--------------------+---------------------+----------+----------+-----------+-----------
- calamity.survivor | calamity.survivor_1 |        2 | val      | 1         | 11
- calamity.survivor | calamity.survivor_2 |        2 | val      | 11        | 21
+      parent       |      partition      | parttype | expr | range_min | range_max 
+-------------------+---------------------+----------+------+-----------+-----------
+ calamity.survivor | calamity.survivor_1 |        2 | val  | 1         | 11
+ calamity.survivor | calamity.survivor_2 |        2 | val  | 11        | 21
 (2 rows)
 
 SELECT get_part_range('calamity.survivor', 0, NULL::INT);		/* OK */

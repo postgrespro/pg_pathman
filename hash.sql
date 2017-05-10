@@ -72,7 +72,6 @@ RETURNS REGCLASS AS
 $$
 DECLARE
 	parent_relid		REGCLASS;
-	part_attname		TEXT;		/* partitioned column */
 	old_constr_name		TEXT;		/* name of old_partition's constraint */
 	old_constr_def		TEXT;		/* definition of old_partition's constraint */
 	rel_persistence		CHAR;
@@ -111,9 +110,8 @@ BEGIN
 		RAISE EXCEPTION 'partition must have a compatible tuple format';
 	END IF;
 
-	/* Get partitioning expression */
-	part_attname := attname FROM @extschema@.pathman_config WHERE partrel = parent_relid;
-	IF part_attname IS NULL THEN
+	/* Check that table is partitioned */
+	IF @extschema@.get_partition_key(parent_relid) IS NULL THEN
 		RAISE EXCEPTION 'table "%" is not partitioned', parent_relid::TEXT;
 	END IF;
 

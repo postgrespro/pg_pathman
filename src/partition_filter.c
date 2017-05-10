@@ -607,7 +607,7 @@ partition_filter_exec(CustomScanState *node)
 		if (!prel)
 		{
 			if (!state->warning_triggered)
-				elog(WARNING, "Relation \"%s\" is not partitioned, "
+				elog(WARNING, "table \"%s\" is not partitioned, "
 							  "PartitionFilter will behave as a normal INSERT",
 					 get_rel_name_or_relid(state->partitioned_table));
 

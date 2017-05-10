@@ -273,10 +273,10 @@ SELECT pathman.create_range_partitions('test.improved_dummy', 'val',
 SELECT * FROM pathman.pathman_partition_list
 WHERE parent = 'test.improved_dummy'::REGCLASS
 ORDER BY partition;
-       parent        |       partition       | parttype | partattr | range_min | range_max 
----------------------+-----------------------+----------+----------+-----------+-----------
- test.improved_dummy | test.improved_dummy_1 |        2 | val      | 1         | 2
- test.improved_dummy | test.improved_dummy_2 |        2 | val      | 2         | 3
+       parent        |       partition       | parttype | expr | range_min | range_max 
+---------------------+-----------------------+----------+------+-----------+-----------
+ test.improved_dummy | test.improved_dummy_1 |        2 | val  | 1         | 2
+ test.improved_dummy | test.improved_dummy_2 |        2 | val  | 2         | 3
 (2 rows)
 
 SELECT pathman.drop_partitions('test.improved_dummy');
@@ -298,10 +298,10 @@ SELECT pathman.create_range_partitions('test.improved_dummy', 'val',
 SELECT * FROM pathman.pathman_partition_list
 WHERE parent = 'test.improved_dummy'::REGCLASS
 ORDER BY partition;
-       parent        | partition | parttype | partattr | range_min | range_max 
----------------------+-----------+----------+----------+-----------+-----------
- test.improved_dummy | p1        |        2 | val      | 1         | 2
- test.improved_dummy | p2        |        2 | val      | 2         | 3
+       parent        | partition | parttype | expr | range_min | range_max 
+---------------------+-----------+----------+------+-----------+-----------
+ test.improved_dummy | p1        |        2 | val  | 1         | 2
+ test.improved_dummy | p2        |        2 | val  | 2         | 3
 (2 rows)
 
 SELECT pathman.drop_partitions('test.improved_dummy');
@@ -324,10 +324,10 @@ SELECT pathman.create_range_partitions('test.improved_dummy', 'val',
 SELECT * FROM pathman.pathman_partition_list
 WHERE parent = 'test.improved_dummy'::REGCLASS
 ORDER BY partition;
-       parent        | partition | parttype | partattr | range_min | range_max 
----------------------+-----------+----------+----------+-----------+-----------
- test.improved_dummy | p1        |        2 | val      | 1         | 2
- test.improved_dummy | p2        |        2 | val      | 2         | 3
+       parent        | partition | parttype | expr | range_min | range_max 
+---------------------+-----------+----------+------+-----------+-----------
+ test.improved_dummy | p1        |        2 | val  | 1         | 2
+ test.improved_dummy | p2        |        2 | val  | 2         | 3
 (2 rows)
 
 DROP TABLE test.improved_dummy CASCADE;
@@ -1065,12 +1065,12 @@ SELECT pathman.drop_range_partition_expand_next('test.num_range_rel_4');
 (1 row)
 
 SELECT * FROM pathman.pathman_partition_list WHERE parent = 'test.num_range_rel'::regclass;
-       parent       |      partition       | parttype | partattr | range_min | range_max 
---------------------+----------------------+----------+----------+-----------+-----------
- test.num_range_rel | test.num_range_rel_1 |        2 | id       | 0         | 1000
- test.num_range_rel | test.num_range_rel_2 |        2 | id       | 1000      | 2000
- test.num_range_rel | test.num_range_rel_3 |        2 | id       | 2000      | 3000
- test.num_range_rel | test.num_range_rel_6 |        2 | id       | 3000      | 5000
+       parent       |      partition       | parttype | expr | range_min | range_max 
+--------------------+----------------------+----------+------+-----------+-----------
+ test.num_range_rel | test.num_range_rel_1 |        2 | id   | 0         | 1000
+ test.num_range_rel | test.num_range_rel_2 |        2 | id   | 1000      | 2000
+ test.num_range_rel | test.num_range_rel_3 |        2 | id   | 2000      | 3000
+ test.num_range_rel | test.num_range_rel_6 |        2 | id   | 3000      | 5000
 (4 rows)
 
 SELECT pathman.drop_range_partition_expand_next('test.num_range_rel_6');
@@ -1080,11 +1080,11 @@ SELECT pathman.drop_range_partition_expand_next('test.num_range_rel_6');
 (1 row)
 
 SELECT * FROM pathman.pathman_partition_list WHERE parent = 'test.num_range_rel'::regclass;
-       parent       |      partition       | parttype | partattr | range_min | range_max 
---------------------+----------------------+----------+----------+-----------+-----------
- test.num_range_rel | test.num_range_rel_1 |        2 | id       | 0         | 1000
- test.num_range_rel | test.num_range_rel_2 |        2 | id       | 1000      | 2000
- test.num_range_rel | test.num_range_rel_3 |        2 | id       | 2000      | 3000
+       parent       |      partition       | parttype | expr | range_min | range_max 
+--------------------+----------------------+----------+------+-----------+-----------
+ test.num_range_rel | test.num_range_rel_1 |        2 | id   | 0         | 1000
+ test.num_range_rel | test.num_range_rel_2 |        2 | id   | 1000      | 2000
+ test.num_range_rel | test.num_range_rel_3 |        2 | id   | 2000      | 3000
 (3 rows)
 
 SELECT pathman.append_range_partition('test.range_rel');
@@ -1215,16 +1215,16 @@ SELECT pathman.attach_range_partition('test.range_rel', 'test.range_rel_minus_in
 (1 row)
 
 SELECT * FROM pathman.pathman_partition_list WHERE parent = 'test.range_rel'::REGCLASS;
-     parent     |           partition           | parttype | partattr |        range_min         |        range_max         
-----------------+-------------------------------+----------+----------+--------------------------+--------------------------
- test.range_rel | test.range_rel_minus_infinity |        2 | dt       |                          | Mon Dec 01 00:00:00 2014
- test.range_rel | test.range_rel_8              |        2 | dt       | Mon Dec 01 00:00:00 2014 | Thu Jan 01 00:00:00 2015
- test.range_rel | test.range_rel_1              |        2 | dt       | Thu Jan 01 00:00:00 2015 | Sun Feb 01 00:00:00 2015
- test.range_rel | test.range_rel_2              |        2 | dt       | Sun Feb 01 00:00:00 2015 | Sun Mar 01 00:00:00 2015
- test.range_rel | test.range_rel_3              |        2 | dt       | Sun Mar 01 00:00:00 2015 | Wed Apr 01 00:00:00 2015
- test.range_rel | test.range_rel_4              |        2 | dt       | Wed Apr 01 00:00:00 2015 | Fri May 01 00:00:00 2015
- test.range_rel | test.range_rel_6              |        2 | dt       | Fri May 01 00:00:00 2015 | Mon Jun 01 00:00:00 2015
- test.range_rel | test.range_rel_plus_infinity  |        2 | dt       | Mon Jun 01 00:00:00 2015 | 
+     parent     |           partition           | parttype | expr |        range_min         |        range_max         
+----------------+-------------------------------+----------+------+--------------------------+--------------------------
+ test.range_rel | test.range_rel_minus_infinity |        2 | dt   |                          | Mon Dec 01 00:00:00 2014
+ test.range_rel | test.range_rel_8              |        2 | dt   | Mon Dec 01 00:00:00 2014 | Thu Jan 01 00:00:00 2015
+ test.range_rel | test.range_rel_1              |        2 | dt   | Thu Jan 01 00:00:00 2015 | Sun Feb 01 00:00:00 2015
+ test.range_rel | test.range_rel_2              |        2 | dt   | Sun Feb 01 00:00:00 2015 | Sun Mar 01 00:00:00 2015
+ test.range_rel | test.range_rel_3              |        2 | dt   | Sun Mar 01 00:00:00 2015 | Wed Apr 01 00:00:00 2015
+ test.range_rel | test.range_rel_4              |        2 | dt   | Wed Apr 01 00:00:00 2015 | Fri May 01 00:00:00 2015
+ test.range_rel | test.range_rel_6              |        2 | dt   | Fri May 01 00:00:00 2015 | Mon Jun 01 00:00:00 2015
+ test.range_rel | test.range_rel_plus_infinity  |        2 | dt   | Mon Jun 01 00:00:00 2015 | 
 (8 rows)
 
 INSERT INTO test.range_rel (dt) VALUES ('2012-06-15');
@@ -1461,16 +1461,16 @@ INSERT INTO test.range_rel (dt) VALUES ('2015-06-01');
  */
 ALTER TABLE test.range_rel DROP COLUMN data;
 SELECT * FROM pathman.pathman_config;
-    partrel     | attname | parttype | range_interval |                                                      expression_p                                                       
-----------------+---------+----------+----------------+-------------------------------------------------------------------------------------------------------------------------
- test.range_rel | dt      |        2 | @ 10 days      | {VAR :varno 1 :varattno 2 :vartype 1114 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 2 :location 8}
+    partrel     | expr | parttype | range_interval |                                                       cooked_expr                                                       
+----------------+------+----------+----------------+-------------------------------------------------------------------------------------------------------------------------
+ test.range_rel | dt   |        2 | @ 10 days      | {VAR :varno 1 :varattno 2 :vartype 1114 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 2 :location 8}
 (1 row)
 
 DROP TABLE test.range_rel CASCADE;
 NOTICE:  drop cascades to 20 other objects
 SELECT * FROM pathman.pathman_config;
- partrel | attname | parttype | range_interval | expression_p 
----------+---------+----------+----------------+--------------
+ partrel | expr | parttype | range_interval | cooked_expr 
+---------+------+----------+----------------+-------------
 (0 rows)
 
 /* Check overlaps */
@@ -1632,9 +1632,9 @@ SELECT pathman.create_partitions_from_range('test."RangeRel"', 'dt', '2015-01-01
 DROP TABLE test."RangeRel" CASCADE;
 NOTICE:  drop cascades to 5 other objects
 SELECT * FROM pathman.pathman_config;
-      partrel       | attname | parttype | range_interval |                                                      expression_p                                                      
---------------------+---------+----------+----------------+------------------------------------------------------------------------------------------------------------------------
- test.num_range_rel | id      |        2 | 1000           | {VAR :varno 1 :varattno 1 :vartype 23 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 1 :location -1}
+      partrel       | expr | parttype | range_interval |                                                      cooked_expr                                                       
+--------------------+------+----------+----------------+------------------------------------------------------------------------------------------------------------------------
+ test.num_range_rel | id   |        2 | 1000           | {VAR :varno 1 :varattno 1 :vartype 23 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 1 :location -1}
 (1 row)
 
 CREATE TABLE test."RangeRel" (

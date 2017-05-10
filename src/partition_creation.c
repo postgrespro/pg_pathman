@@ -305,7 +305,7 @@ create_partitions_for_value(Oid relid, Datum value, Oid value_type)
 		}
 	}
 	else
-		elog(ERROR, "relation \"%s\" is not partitioned",
+		elog(ERROR, "table \"%s\" is not partitioned",
 			 get_rel_name_or_relid(relid));
 
 	/* Check that 'last_partition' is valid */
@@ -1250,7 +1250,7 @@ check_range_available(Oid parent_relid,
 	/* If there's no prel, return TRUE (overlap is not possible) */
 	if (!prel)
 	{
-		ereport(WARNING, (errmsg("relation \"%s\" is not partitioned",
+		ereport(WARNING, (errmsg("table \"%s\" is not partitioned",
 								 get_rel_name_or_relid(parent_relid))));
 		return true;
 	}

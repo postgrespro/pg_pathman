@@ -16,10 +16,10 @@
  */
 CREATE OR REPLACE FUNCTION @extschema@.validate_interval_value(
 	partrel			REGCLASS,
-	expression		TEXT,
+	expr			TEXT,
 	parttype		INTEGER,
 	range_interval	TEXT,
-	expression_p	TEXT)
+	cooked_expr		TEXT)
 RETURNS BOOL AS 'pg_pathman', 'validate_interval_value'
 LANGUAGE C;
 
@@ -27,17 +27,17 @@ LANGUAGE C;
 /*
  * Main config.
  *		partrel			- regclass (relation type, stored as Oid)
- *		attname			- partitioning expression (key)
+ *		expr			- partitioning expression (key)
  *		parttype		- partitioning type: (1 - HASH, 2 - RANGE)
  *		range_interval	- base interval for RANGE partitioning as string
- *		expression_p	- cooked partitioning expression (parsed & rewritten)
+ *		cooked_expr		- cooked partitioning expression (parsed & rewritten)
  */
 CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
 	partrel			REGCLASS NOT NULL PRIMARY KEY,
-	attname			TEXT NOT NULL,
+	expr			TEXT NOT NULL,
 	parttype		INTEGER NOT NULL,
 	range_interval	TEXT DEFAULT NULL,
-	expression_p	TEXT DEFAULT NULL,
+	cooked_expr		TEXT DEFAULT NULL,
 
 	/* check for allowed part types */
 	CONSTRAINT pathman_config_parttype_check CHECK (parttype IN (1, 2)),
@@ -45,10 +45,10 @@ CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
 	/* check for correct interval */
 	CONSTRAINT pathman_config_interval_check
 	CHECK (@extschema@.validate_interval_value(partrel,
-											   attname,
+											   expr,
 											   parttype,
 											   range_interval,
-											   expression_p))
+											   cooked_expr))
 );
 
 
@@ -256,7 +256,7 @@ RETURNS TABLE (
 	parent			REGCLASS,
 	partition		REGCLASS,
 	parttype		INT4,
-	partattr		TEXT,
+	expr			TEXT,
 	range_min		TEXT,
 	range_max		TEXT)
 AS 'pg_pathman', 'show_partition_list_internal'
@@ -341,14 +341,13 @@ CREATE OR REPLACE FUNCTION @extschema@._partition_data_concurrent(
 AS
 $$
 DECLARE
-	v_attr			TEXT;
+	part_expr		TEXT;
 	v_limit_clause	TEXT := '';
 	v_where_clause	TEXT := '';
 	ctids			TID[];
 
 BEGIN
-	SELECT attname INTO v_attr
-	FROM @extschema@.pathman_config WHERE partrel = relation;
+	part_expr := @extschema@.get_partition_key(relation);
 
 	p_total := 0;
 
@@ -359,14 +358,14 @@ BEGIN
 
 	/* Format WHERE clause if needed */
 	IF NOT p_min IS NULL THEN
-		v_where_clause := format('%1$s >= $1', v_attr);
+		v_where_clause := format('%1$s >= $1', part_expr);
 	END IF;
 
 	IF NOT p_max IS NULL THEN
 		IF NOT p_min IS NULL THEN
 			v_where_clause := v_where_clause || ' AND ';
 		END IF;
-		v_where_clause := v_where_clause || format('%1$s < $2', v_attr);
+		v_where_clause := v_where_clause || format('%1$s < $2', part_expr);
 	END IF;
 
 	IF v_where_clause != '' THEN
@@ -738,23 +737,42 @@ LANGUAGE C STRICT;
 
 
 /*
- * Partitioning key
- */
-CREATE OR REPLACE FUNCTION @extschema@.get_partition_key(
-	relid	REGCLASS)
-RETURNS TEXT AS
-$$
-	SELECT attname FROM pathman_config WHERE partrel = relid;
-$$
-LANGUAGE sql STRICT;
-
-
-/*
  * Create DDL trigger to call pathman_ddl_trigger_func().
  */
 CREATE EVENT TRIGGER pathman_ddl_trigger
 ON sql_drop
 EXECUTE PROCEDURE @extschema@.pathman_ddl_trigger_func();
+
+
+/*
+ * Partitioning key.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_partition_key(
+	relid	REGCLASS)
+RETURNS TEXT AS
+$$
+	SELECT expr FROM @extschema@.pathman_config WHERE partrel = relid;
+$$
+LANGUAGE sql STRICT;
+
+/*
+ * Partitioning key type.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_partition_key_type(
+	relid	REGCLASS)
+RETURNS REGTYPE AS 'pg_pathman', 'get_partition_key_type'
+LANGUAGE C STRICT;
+
+/*
+ * Partitioning type.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_partition_type(
+	relid	REGCLASS)
+RETURNS INT4 AS
+$$
+	SELECT parttype FROM @extschema@.pathman_config WHERE partrel = relid;
+$$
+LANGUAGE sql STRICT;
 
 
 /*
@@ -779,14 +797,6 @@ LANGUAGE C STRICT;
 CREATE OR REPLACE FUNCTION @extschema@.get_base_type(
 	typid	REGTYPE)
 RETURNS REGTYPE AS 'pg_pathman', 'get_base_type_pl'
-LANGUAGE C STRICT;
-
-/*
- * Return partition key type
- */
-CREATE OR REPLACE FUNCTION @extschema@.get_partition_key_type(
-	relid	REGCLASS)
-RETURNS REGTYPE AS 'pg_pathman', 'get_partition_key_type'
 LANGUAGE C STRICT;
 
 /*

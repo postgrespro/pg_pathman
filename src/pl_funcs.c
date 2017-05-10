@@ -343,18 +343,16 @@ show_cache_stats_internal(PG_FUNCTION_ARGS)
 Datum
 show_partition_list_internal(PG_FUNCTION_ARGS)
 {
-	show_partition_list_cxt		*usercxt;
-	FuncCallContext				*funccxt;
-	MemoryContext				 old_mcxt;
-	SPITupleTable				*tuptable;
+	show_partition_list_cxt	   *usercxt;
+	FuncCallContext			   *funccxt;
+	MemoryContext				old_mcxt;
+	SPITupleTable			   *tuptable;
 
-	/*
-	 * Initialize tuple descriptor & function call context.
-	 */
+	/* Initialize tuple descriptor & function call context */
 	if (SRF_IS_FIRSTCALL())
 	{
 		TupleDesc		 tupdesc;
-		MemoryContext	 tuptabcxt;
+		MemoryContext	 tuptab_mcxt;
 
 		funccxt = SRF_FIRSTCALL_INIT();
 
@@ -381,7 +379,7 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 		TupleDescInitEntry(tupdesc, Anum_pathman_pl_parttype,
 						   "parttype", INT4OID, -1, 0);
 		TupleDescInitEntry(tupdesc, Anum_pathman_pl_partattr,
-						   "partattr", TEXTOID, -1, 0);
+						   "expr", TEXTOID, -1, 0);
 		TupleDescInitEntry(tupdesc, Anum_pathman_pl_range_min,
 						   "range_min", TEXTOID, -1, 0);
 		TupleDescInitEntry(tupdesc, Anum_pathman_pl_range_max,
@@ -391,18 +389,18 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 		funccxt->user_fctx = (void *) usercxt;
 
 		/* initialize tuple table context */
-		tuptabcxt = AllocSetContextCreate(CurrentMemoryContext,
-										  "pg_pathman TupTable",
-										  ALLOCSET_DEFAULT_SIZES);
-		MemoryContextSwitchTo(tuptabcxt);
+		tuptab_mcxt = AllocSetContextCreate(CurrentMemoryContext,
+											"tuptable for pathman_partition_list",
+											ALLOCSET_DEFAULT_SIZES);
+		MemoryContextSwitchTo(tuptab_mcxt);
 
-		/* initialize tuple table for partitions list, we use it as buffer */
+		/* Initialize tuple table for partitions list, we use it as buffer */
 		tuptable = (SPITupleTable *) palloc0(sizeof(SPITupleTable));
 		usercxt->tuptable = tuptable;
-		tuptable->tuptabcxt = tuptabcxt;
+		tuptable->tuptabcxt = tuptab_mcxt;
 
-		/* set up initial allocations */
-		tuptable->alloced = tuptable->free = 128;
+		/* Set up initial allocations */
+		tuptable->alloced = tuptable->free = PART_RELS_SIZE * CHILD_FACTOR;
 		tuptable->vals = (HeapTuple *) palloc(tuptable->alloced * sizeof(HeapTuple));
 
 		MemoryContextSwitchTo(old_mcxt);
@@ -520,10 +518,13 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 				/* Double the size of the pointer array */
 				tuptable->free = tuptable->alloced;
 				tuptable->alloced += tuptable->free;
-				tuptable->vals = (HeapTuple *) repalloc_huge(tuptable->vals,
-											  tuptable->alloced * sizeof(HeapTuple));
+
+				tuptable->vals = (HeapTuple *)
+						repalloc_huge(tuptable->vals,
+									  tuptable->alloced * sizeof(HeapTuple));
 			}
 
+			/* Add tuple to table and decrement 'free' */
 			tuptable->vals[tuptable->alloced - tuptable->free] = htup;
 			(tuptable->free)--;
 
@@ -545,10 +546,11 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 	usercxt = (show_partition_list_cxt *) funccxt->user_fctx;
 	tuptable = usercxt->tuptable;
 
+	/* Iterate through used slots */
 	if (usercxt->child_number < (tuptable->alloced - tuptable->free))
 	{
-		HeapTuple	htup = usercxt->tuptable->vals[usercxt->child_number];
-		usercxt->child_number++;
+		HeapTuple htup = usercxt->tuptable->vals[usercxt->child_number++];
+
 		SRF_RETURN_NEXT(funccxt, HeapTupleGetDatum(htup));
 	}
 

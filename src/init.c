@@ -39,11 +39,6 @@
 #include "utils/typcache.h"
 
 
-/* Initial size of 'partitioned_rels' table */
-#define PART_RELS_SIZE	10
-#define CHILD_FACTOR	500
-
-
 /* Various memory contexts for caches */
 MemoryContext		TopPathmanContext				= NULL;
 MemoryContext		PathmanRelationCacheContext		= NULL;
