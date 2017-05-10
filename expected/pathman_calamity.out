@@ -754,16 +754,8 @@ NOTICE:  drop cascades to table calamity.test_range_oid_1
 /* check function merge_range_partitions() */
 SELECT merge_range_partitions('{pg_class}');						/* not ok */
 ERROR:  cannot merge partitions
-\errverbose
-ERROR:  XX000: cannot merge partitions
-DETAIL:  there must be at least two partitions
-LOCATION:  merge_range_partitions, pl_range_funcs.c:625
 SELECT merge_range_partitions('{pg_class, pg_inherits}');			/* not ok */
 ERROR:  cannot merge partitions
-\errverbose
-ERROR:  XX000: cannot merge partitions
-DETAIL:  relation "pg_class" is not a partition
-LOCATION:  merge_range_partitions, pl_range_funcs.c:636
 CREATE TABLE calamity.merge_test_a(val INT4 NOT NULL);
 CREATE TABLE calamity.merge_test_b(val INT4 NOT NULL);
 SELECT create_range_partitions('calamity.merge_test_a', 'val', 1, 10, 2);
@@ -783,10 +775,6 @@ NOTICE:  sequence "merge_test_b_seq" does not exist, skipping
 SELECT merge_range_partitions('{calamity.merge_test_a_1,
 								calamity.merge_test_b_1}');			/* not ok */
 ERROR:  cannot merge partitions
-\errverbose
-ERROR:  XX000: cannot merge partitions
-DETAIL:  all relations must share the same parent
-LOCATION:  merge_range_partitions, pl_range_funcs.c:645
 DROP TABLE calamity.merge_test_a,calamity.merge_test_b CASCADE;
 NOTICE:  drop cascades to 4 other objects
 DROP SCHEMA calamity CASCADE;
