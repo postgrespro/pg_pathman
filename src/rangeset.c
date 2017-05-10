@@ -162,7 +162,7 @@ irange_union_internal(IndexRange first,
 	/* IndexRanges intersect */
 	if (iranges_intersect(first, second))
 	{
-		/* Calculate the intersection of 'first' and 'second' */
+		/* Calculate the union of 'first' and 'second' */
 		IndexRange ir_union = irange_union_simple(first, second);
 
 		/* if lossiness is the same, unite them and skip */

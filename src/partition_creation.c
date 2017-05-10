@@ -1588,8 +1588,7 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 			break;
 
 		default:
-			elog(ERROR, "Unknown partitioning type %u", cb_params->parttype);
-			break;
+			WrongPartType(cb_params->parttype);
 	}
 
 	/* Fetch function call data */

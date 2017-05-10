@@ -506,7 +506,7 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 					break;
 
 				default:
-					elog(ERROR, "Unknown partitioning type %u", prel->parttype);
+					WrongPartType(prel->parttype);
 			}
 
 			/* Fill tuptable */

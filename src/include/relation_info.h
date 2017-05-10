@@ -308,9 +308,47 @@ void forget_bounds_of_partition(Oid partition);
 PartBoundInfo *get_bounds_of_partition(Oid partition,
 									   const PartRelationInfo *prel);
 
-/* Safe casts for PartType */
-PartType DatumGetPartType(Datum datum);
-char *PartTypeToCString(PartType parttype);
+/* PartType wrappers */
+
+static inline void
+WrongPartType(PartType parttype)
+{
+	elog(ERROR, "Unknown partitioning type %u", parttype);
+}
+
+static inline PartType
+DatumGetPartType(Datum datum)
+{
+	uint32 parttype = DatumGetUInt32(datum);
+
+	if (parttype < 1 || parttype > 2)
+		WrongPartType(parttype);
+
+	return (PartType) parttype;
+}
+
+static inline char *
+PartTypeToCString(PartType parttype)
+{
+	static char *hash_str	= "1",
+				*range_str	= "2";
+
+	switch (parttype)
+	{
+		case PT_HASH:
+			return hash_str;
+
+		case PT_RANGE:
+			return range_str;
+
+		default:
+			WrongPartType(parttype);
+			return NULL; /* keep compiler happy */
+	}
+}
+
+
+
 
 /* PartRelationInfo checker */
 void shout_if_prel_is_invalid(const Oid parent_oid,

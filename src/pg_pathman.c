@@ -781,8 +781,7 @@ handle_const(const Const *c, WalkerContext *context)
 			break;
 
 		default:
-			elog(ERROR, "Unknown partitioning type %u", prel->parttype);
-			break;
+			WrongPartType(prel->parttype);
 	}
 
 	return result;
@@ -966,7 +965,7 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 				break;
 
 			default:
-				elog(ERROR, "Unknown partitioning type %u", prel->parttype);
+				WrongPartType(prel->parttype);
 		}
 
 		/* Free resources */
@@ -1100,7 +1099,7 @@ handle_binary_opexpr(const Const *c,
 			}
 
 		default:
-			elog(ERROR, "Unknown partitioning type %u", prel->parttype);
+			WrongPartType(prel->parttype);
 	}
 
 binary_opexpr_return:

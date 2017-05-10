@@ -509,10 +509,7 @@ fill_prel_with_partitions(PartRelationInfo *prel,
 			default:
 				{
 					DisablePathman(); /* disable pg_pathman since config is broken */
-					ereport(ERROR,
-							(errmsg("Unknown partitioning type for relation \"%s\"",
-									get_rel_name_or_relid(PrelParentRelid(prel))),
-							 errhint(INIT_ERROR_HINT)));
+					WrongPartType(prel->parttype);
 				}
 				break;
 		}
@@ -1243,10 +1240,7 @@ fill_pbin_with_bounds(PartBoundInfo *pbin,
 		default:
 			{
 				DisablePathman(); /* disable pg_pathman since config is broken */
-				ereport(ERROR,
-						(errmsg("Unknown partitioning type for relation \"%s\"",
-								get_rel_name_or_relid(PrelParentRelid(prel))),
-						 errhint(INIT_ERROR_HINT)));
+				WrongPartType(prel->parttype);
 			}
 			break;
 	}
@@ -1261,41 +1255,6 @@ cmp_range_entries(const void *p1, const void *p2, void *arg)
 	cmp_func_info	   *info = (cmp_func_info *) arg;
 
 	return cmp_bounds(&info->flinfo, info->collid, &v1->min, &v2->min);
-}
-
-
-/*
- * Safe PartType wrapper.
- */
-PartType
-DatumGetPartType(Datum datum)
-{
-	uint32 val = DatumGetUInt32(datum);
-
-	if (val < 1 || val > 2)
-		elog(ERROR, "Unknown partitioning type %u", val);
-
-	return (PartType) val;
-}
-
-char *
-PartTypeToCString(PartType parttype)
-{
-	static char *hash_str	= "1",
-				*range_str	= "2";
-
-	switch (parttype)
-	{
-		case PT_HASH:
-			return hash_str;
-
-		case PT_RANGE:
-			return range_str;
-
-		default:
-			elog(ERROR, "Unknown partitioning type %u", parttype);
-			return NULL; /* keep compiler happy */
-	}
 }
 
 
