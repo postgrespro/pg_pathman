@@ -418,8 +418,6 @@ find_inheritance_children_array(Oid parentrelId,
 
 	uint32		i;
 
-	Assert(lockmode != NoLock);
-
 	/* Init safe return values */
 	*children_size = 0;
 	*children = NULL;

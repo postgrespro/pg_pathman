@@ -708,6 +708,9 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	char			   *expression;
 	PartType			parttype;
 
+	Oid				   *children;
+	uint32				children_count;
+
 	Relation			pathman_config;
 	Datum				values[Natts_pathman_config];
 	bool				isnull[Natts_pathman_config];
@@ -823,8 +826,12 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	heap_close(pathman_config, RowExclusiveLock);
 
 	/* Update caches only if this relation has children */
-	if (has_subclass(relid))
+	if (FCS_FOUND == find_inheritance_children_array(relid, NoLock, true,
+													 &children_count,
+													 &children))
 	{
+		pfree(children);
+
 		/* Now try to create a PartRelationInfo */
 		PG_TRY();
 		{
