@@ -84,6 +84,8 @@ static Node *build_partitioning_expression(Oid parent_relid,
 										   Oid *expr_type,
 										   List **columns);
 
+static bool has_trigger_internal(Oid relid, const char *trigname);
+
 /*
  * ---------------------------------------
  *  Public interface (partition creation)
@@ -215,7 +217,8 @@ create_single_partition_common(Oid parent_relid,
 							   init_callback_params *callback_params,
 							   List *trigger_columns)
 {
-	Relation	child_relation;
+	Relation	 child_relation;
+	const char	*trigger_name;
 
 	/* Open the relation and add new check constraint & fkeys */
 	child_relation = heap_open(partition_relid, AccessExclusiveLock);
@@ -230,8 +233,6 @@ create_single_partition_common(Oid parent_relid,
 	/* Create trigger if needed */
 	if (has_update_trigger_internal(parent_relid))
 	{
-		const char *trigger_name;
-
 		trigger_name = build_update_trigger_name_internal(parent_relid);
 		create_single_update_trigger_internal(partition_relid,
 											  trigger_name,
@@ -1782,26 +1783,22 @@ create_single_update_trigger_internal(Oid partition_relid,
 						 InvalidOid, InvalidOid, false);
 }
 
-/* Check if relation has pg_pathman's update trigger */
-bool
-has_update_trigger_internal(Oid parent_relid)
+/* Check if relation has some trigger */
+static bool
+has_trigger_internal(Oid relid, const char *trigname)
 {
 	bool			res = false;
 	Relation		tgrel;
 	SysScanDesc		scan;
 	ScanKeyData		key[1];
 	HeapTuple		tuple;
-	const char	   *trigname;
-
-	/* Build update trigger's name */
-	trigname = build_update_trigger_name_internal(parent_relid);
 
 	tgrel = heap_open(TriggerRelationId, RowExclusiveLock);
 
 	ScanKeyInit(&key[0],
 				Anum_pg_trigger_tgrelid,
 				BTEqualStrategyNumber, F_OIDEQ,
-				ObjectIdGetDatum(parent_relid));
+				ObjectIdGetDatum(relid));
 
 	scan = systable_beginscan(tgrel, TriggerRelidNameIndexId,
 							  true, NULL, lengthof(key), key);
@@ -1821,4 +1818,50 @@ has_update_trigger_internal(Oid parent_relid)
 	heap_close(tgrel, RowExclusiveLock);
 
 	return res;
+}
+
+/* Check if relation has pg_pathman's update trigger */
+bool
+has_update_trigger_internal(Oid parent_relid)
+{
+	const char	   *trigname;
+
+	/* Build update trigger's name */
+	trigname = build_update_trigger_name_internal(parent_relid);
+	return has_trigger_internal(parent_relid, trigname);
+}
+
+/* Create trigger for partition that does nothing */
+void
+create_single_nop_trigger_internal(Oid relid,
+								   const char *trigname,
+								   List *columns)
+{
+	CreateTrigStmt	   *stmt;
+	List			   *func;
+
+	/* do nothing if relation has trigger already */
+	if (has_trigger_internal(relid, trigname))
+		return;
+
+	func = list_make2(makeString(get_namespace_name(get_pathman_schema())),
+					  makeString(CppAsString(pathman_nop_trigger_func)));
+
+	stmt = makeNode(CreateTrigStmt);
+	stmt->trigname		= (char *) trigname;
+	stmt->relation		= makeRangeVarFromRelid(relid);
+	stmt->funcname		= func;
+	stmt->args			= NIL;
+	stmt->row			= true;
+	stmt->timing		= TRIGGER_TYPE_BEFORE;
+	stmt->events		= TRIGGER_TYPE_UPDATE;
+	stmt->columns		= columns;
+	stmt->whenClause	= NULL;
+	stmt->isconstraint	= false;
+	stmt->deferrable	= false;
+	stmt->initdeferred	= false;
+	stmt->constrrel		= NULL;
+
+	(void) CreateTrigger(stmt, NULL, InvalidOid, InvalidOid,
+						 InvalidOid, InvalidOid, false);
 }

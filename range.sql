@@ -948,8 +948,12 @@ BEGIN
 	INTO v_init_callback;
 
 	/* If update trigger is enabled then create one for this partition */
-	if @extschema@.has_update_trigger(parent_relid) THEN
+	IF @extschema@.has_update_trigger(parent_relid) THEN
 		PERFORM @extschema@.create_single_update_trigger(parent_relid, partition_relid);
+	END IF;
+
+	IF @extschema@.is_relation_foreign(partition_relid) THEN
+		PERFORM @extschema@.create_single_nop_trigger(parent_relid, partition_relid);
 	END IF;
 
 	/* Invoke an initialization callback */

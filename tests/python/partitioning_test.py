@@ -538,6 +538,7 @@ class PartitioningTests(unittest.TestCase):
 		fserv.stop()
 		master.stop()
 
+	@if_fdw_enabled
 	def test_update_node_on_fdw_tables(self):
 		''' Test update node on foreign tables '''
 
@@ -577,6 +578,10 @@ class PartitioningTests(unittest.TestCase):
 			con.execute('update abc set id=36 where id=9')
 			result_relid = con.execute('select tableoid from abc where id=35')[0][0]
 			self.assertEqual(result_relid, dest_relid)
+
+			self.set_trace(con, 'pg_debug')
+			import ipdb; ipdb.set_trace()
+			pass
 
 	def test_parallel_nodes(self):
 		"""Test parallel queries under partitions"""

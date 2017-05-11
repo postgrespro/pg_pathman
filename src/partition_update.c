@@ -60,6 +60,16 @@ init_partition_update_static_data(void)
 							 NULL);
 }
 
+/*
+ * By default UPDATE queries will make ForeignUpdate nodes for foreign tables.
+ * This function modifies these nodes so they will work as SELECTs
+ */
+static void
+modify_fdw_scan(ForeignScan *node)
+{
+	node->scan.plan.plan_node_id = CMD_SELECT;
+	node->operation = CMD_SELECT;
+}
 
 Plan *
 make_partition_update(Plan *subplan,
@@ -75,6 +85,9 @@ make_partition_update(Plan *subplan,
 	cscan->scan.plan.total_cost = subplan->total_cost;
 	cscan->scan.plan.plan_rows = subplan->plan_rows;
 	cscan->scan.plan.plan_width = subplan->plan_width;
+
+	if (IsA(subplan, ForeignScan))
+		modify_fdw_scan((ForeignScan *) subplan);
 
 	/* Setup methods and child plan */
 	cscan->methods = &partition_update_plan_methods;
