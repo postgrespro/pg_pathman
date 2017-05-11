@@ -64,7 +64,6 @@ static void modify_range_constraint(Oid partition_relid,
 									Oid expression_type,
 									const Bound *lower,
 									const Bound *upper);
-static char *get_qualified_rel_name(Oid relid);
 static void drop_table_by_oid(Oid relid);
 static bool interval_is_trivial(Oid atttype,
 								Datum interval,
@@ -1154,19 +1153,6 @@ check_range_adjacence(Oid cmp_proc, Oid collid, List *ranges)
 
 		last = cur;
 	}
-}
-
-/*
- * Return palloced fully qualified relation name as a cstring
- */
-static char *
-get_qualified_rel_name(Oid relid)
-{
-	Oid nspid = get_rel_namespace(relid);
-
-	return psprintf("%s.%s",
-					quote_identifier(get_namespace_name(nspid)),
-					quote_identifier(get_rel_name(relid)));
 }
 
 /*

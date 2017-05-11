@@ -1741,7 +1741,7 @@ build_partitioning_expression(Oid parent_relid,
 
 /*
  * -------------------------
- *  Update trigger creation
+ *  Update triggers management
  * -------------------------
  */
 
@@ -1774,6 +1774,8 @@ create_single_update_trigger_internal(Oid partition_relid,
 
 	(void) CreateTrigger(stmt, NULL, InvalidOid, InvalidOid,
 						 InvalidOid, InvalidOid, false);
+
+	CommandCounterIncrement();
 }
 
 /* Check if relation has pg_pathman's update trigger */
@@ -1815,4 +1817,15 @@ has_update_trigger_internal(Oid parent_relid)
 	heap_close(tgrel, RowExclusiveLock);
 
 	return res;
+}
+
+void
+drop_single_update_trigger_internal(Oid relid,
+									const char *trigname)
+{
+	Oid				trigoid;
+
+	trigoid = get_trigger_oid(relid, trigname, true);
+	if (OidIsValid(trigoid))
+		RemoveTriggerById(trigoid);
 }

@@ -70,6 +70,7 @@ PG_FUNCTION_INFO_V1( invoke_on_partition_created_callback );
 PG_FUNCTION_INFO_V1( check_security_policy );
 
 PG_FUNCTION_INFO_V1( create_update_triggers );
+PG_FUNCTION_INFO_V1( drop_update_triggers );
 PG_FUNCTION_INFO_V1( pathman_update_trigger_func );
 PG_FUNCTION_INFO_V1( create_single_update_trigger );
 PG_FUNCTION_INFO_V1( has_update_trigger );
@@ -113,6 +114,9 @@ static void pathman_update_trigger_func_move_tuple(Relation source_rel,
 												   HeapTuple old_tuple,
 												   HeapTuple new_tuple);
 
+static void create_update_triggers_internal(Oid relid);
+static void drop_update_triggers_internal(Oid relid);
+
 static void collect_update_trigger_columns(Oid relid, List **columns);
 static Oid find_target_partition(Relation source_rel, HeapTuple tuple);
 static Oid find_topmost_parent(Oid partition);
@@ -150,6 +154,7 @@ get_parent_of_partition_pl(PG_FUNCTION_ARGS)
 	Oid					partition = PG_GETARG_OID(0);
 	PartParentSearch	parent_search;
 	Oid					parent;
+	bool				emit_error = PG_GETARG_BOOL(1);
 
 	/* Fetch parent & write down search status */
 	parent = get_parent_of_partition(partition, &parent_search);
@@ -160,14 +165,13 @@ get_parent_of_partition_pl(PG_FUNCTION_ARGS)
 	/* It must be parent known by pg_pathman */
 	if (parent_search == PPS_ENTRY_PART_PARENT)
 		PG_RETURN_OID(parent);
-	else
-	{
+
+	if (emit_error)
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("\"%s\" is not a partition",
 							   get_rel_name_or_relid(partition))));
 
-		PG_RETURN_NULL();
-	}
+	PG_RETURN_NULL();
 }
 
 /*
@@ -1480,11 +1484,41 @@ pathman_update_trigger_func_move_tuple(Relation source_rel,
 	FreeTupleDesc(target_tupdesc);
 }
 
-/* Create UPDATE triggers for all partitions */
+/*
+ * Create UPDATE triggers for all partitions and subpartitions
+ */
 Datum
 create_update_triggers(PG_FUNCTION_ARGS)
 {
-	Oid						parent = PG_GETARG_OID(0);
+	Oid						relid = PG_GETARG_OID(0),
+							parent;
+	PartParentSearch		parent_search;
+
+	/*
+	 * If table has parent then we should check that parent has update trigger.
+	 * In the ideal world this error should never be thrown since we create and
+	 * drop update triggers for the whole partitions tree and not its parts
+	 */
+	parent = get_parent_of_partition(relid, &parent_search);
+	if (parent_search == PPS_ENTRY_PART_PARENT)
+		if(!has_update_trigger_internal(parent))
+			ereport(ERROR,
+					(errmsg("Parent table must have an update trigger"),
+					 errhint("Try to perform SELECT %s.create_update_triggers('%s');",
+					 		 get_namespace_name(get_pathman_schema()),
+					 		 get_qualified_rel_name(parent))));
+	
+	/* Recursively add triggers */
+	create_update_triggers_internal(relid);
+	PG_RETURN_VOID();
+}
+
+/*
+ * Create UPDATE triggers recursively
+ */
+static void
+create_update_triggers_internal(Oid relid)
+{
 	Oid					   *children;
 	const char			   *trigname;
 	const PartRelationInfo *prel;
@@ -1492,24 +1526,30 @@ create_update_triggers(PG_FUNCTION_ARGS)
 	List				   *columns = NIL;
 
 	/* Check that table is partitioned */
-	prel = get_pathman_relation_info(parent);
-	shout_if_prel_is_invalid(parent, prel, PT_ANY);
+	prel = get_pathman_relation_info(relid);
+	/* TODO: check this only for topmost relid? */
+	// shout_if_prel_is_invalid(relid, prel, PT_ANY);
+	if (!prel)
+		return;
 
-	/* Acquire trigger and attribute names */
-	trigname = build_update_trigger_name_internal(parent);
+	/* Acquire trigger name */
+	trigname = build_update_trigger_name_internal(relid);
 
 	/* Create trigger for parent */
-	collect_update_trigger_columns(parent, &columns);
-	create_single_update_trigger_internal(parent, trigname, columns);
+	collect_update_trigger_columns(relid, &columns);
+	create_single_update_trigger_internal(relid, trigname, columns);
 
 	/* Fetch children array */
 	children = PrelGetChildrenArray(prel);
 
 	/* Create triggers for each partition */
 	for (i = 0; i < PrelChildrenCount(prel); i++)
+	{
 		create_single_update_trigger_internal(children[i], trigname, columns);
 
-	PG_RETURN_VOID();
+		/* Perform the same procedure on subpartitions */
+		create_update_triggers_internal(children[i]);
+	}
 }
 
 static void
@@ -1556,6 +1596,67 @@ create_single_update_trigger(PG_FUNCTION_ARGS)
 	create_single_update_trigger_internal(child, trigname, columns);
 
 	PG_RETURN_VOID();
+}
+
+/*
+ * Drop UPDATE triggers for all partitions and subpartitions
+ */
+Datum
+drop_update_triggers(PG_FUNCTION_ARGS)
+{
+	Oid					relid = PG_GETARG_OID(0),
+						parent;
+	PartParentSearch	parent_search;
+
+	/*
+	 * We can drop triggers only if relid is the topmost parent table (or if
+	 * its parent doesn't have update triggers (which should never happen in
+	 * the ideal world)
+	 */
+	parent = get_parent_of_partition(relid, &parent_search);
+	if (parent_search == PPS_ENTRY_PART_PARENT)
+		if(has_update_trigger_internal(parent))
+			ereport(ERROR,
+					(errmsg("Parent table must not have an update trigger"),
+					 errhint("Try to perform SELECT %s.drop_triggers('%s');",
+							 get_namespace_name(get_pathman_schema()),
+							 get_qualified_rel_name(parent))));
+
+	/* Recursively drop triggers */
+	drop_update_triggers_internal(relid);
+	PG_RETURN_VOID();
+}
+
+static void
+drop_update_triggers_internal(Oid relid)
+{
+	Oid					   *children;
+	const char			   *trigname;
+	const PartRelationInfo *prel;
+	uint32					i;
+
+	prel = get_pathman_relation_info(relid);
+	if (!prel)
+		return;
+
+	/* Acquire trigger name */
+	trigname = build_update_trigger_name_internal(relid);
+
+	/* Fetch children array */
+	children = PrelGetChildrenArray(prel);
+
+	/* Drop triggers on partitions */
+	for (i = 0; i < PrelChildrenCount(prel); i++)
+	{
+		drop_single_update_trigger_internal(children[i], trigname);
+
+		/* Recursively drop triggers on subpartitions */
+		drop_update_triggers_internal(children[i]);
+
+	}
+
+	/* Drop trigger on parent */
+	drop_single_update_trigger_internal(relid, trigname);
 }
 
 /* Check if relation has pg_pathman's update trigger */

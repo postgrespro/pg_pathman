@@ -478,7 +478,8 @@ select_partition_for_insert(ExprContext *econtext, ExprState *expr_state,
 		Assert(rri_holder->expr_state != NULL);
 
 		/* Recursively search for subpartitions */
-		rri_holder = select_partition_for_insert(econtext, rri_holder->expr_state,
+		rri_holder = select_partition_for_insert(econtext,
+												 rri_holder->expr_state,
 												 subprel,
 												 parts_storage,
 												 estate);

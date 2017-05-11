@@ -534,35 +534,8 @@ LANGUAGE plpgsql;
  */
 CREATE OR REPLACE FUNCTION @extschema@.drop_triggers(
 	parent_relid	REGCLASS)
-RETURNS VOID AS
-$$
-DECLARE
-	triggername	TEXT;
-	rec			RECORD;
-
-BEGIN
-	triggername := @extschema@.build_update_trigger_name(parent_relid);
-
-	/* Drop trigger for each partition if exists */
-	FOR rec IN (SELECT pg_catalog.pg_inherits.* FROM pg_catalog.pg_inherits
-				JOIN pg_catalog.pg_trigger ON inhrelid = tgrelid
-				WHERE inhparent = parent_relid AND tgname = triggername)
-	LOOP
-		EXECUTE format('DROP TRIGGER IF EXISTS %s ON %s',
-					   triggername,
-					   rec.inhrelid::REGCLASS::TEXT);
-	END LOOP;
-
-	/* Drop trigger on parent */
-	IF EXISTS (SELECT * FROM pg_catalog.pg_trigger
-			   WHERE tgname = triggername AND tgrelid = parent_relid)
-	THEN
-		EXECUTE format('DROP TRIGGER IF EXISTS %s ON %s',
-					   triggername,
-					   parent_relid::TEXT);
-	END IF;
-END
-$$ LANGUAGE plpgsql STRICT;
+RETURNS VOID AS 'pg_pathman', 'drop_update_triggers'
+LANGUAGE C STRICT;
 
 /*
  * Drop partitions. If delete_data set to TRUE, partitions
@@ -767,7 +740,8 @@ LANGUAGE C STRICT;
  * Get parent of pg_pathman's partition.
  */
 CREATE OR REPLACE FUNCTION @extschema@.get_parent_of_partition(
-	partition_relid		REGCLASS)
+	partition_relid		REGCLASS,
+	raise_error			BOOL DEFAULT TRUE)
 RETURNS REGCLASS AS 'pg_pathman', 'get_parent_of_partition_pl'
 LANGUAGE C STRICT;
 
