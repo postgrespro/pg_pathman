@@ -1023,31 +1023,29 @@ SELECT * FROM test.range_rel j1
 JOIN test.range_rel j2 on j2.id = j1.id
 JOIN test.num_range_rel j3 on j3.id = j1.id
 WHERE j1.dt < '2015-03-01' AND j2.dt >= '2015-02-01' ORDER BY j2.dt;
-                                        QUERY PLAN                                         
--------------------------------------------------------------------------------------------
+                                   QUERY PLAN                                    
+---------------------------------------------------------------------------------
  Sort
    Sort Key: j2.dt
    ->  Merge Join
-         Merge Cond: (j3.id = j2.id)
+         Merge Cond: (j2.id = j3.id)
+         ->  Merge Join
+               Merge Cond: (j1.id = j2.id)
+               ->  Merge Append
+                     Sort Key: j1.id
+                     ->  Index Scan using range_rel_1_pkey on range_rel_1 j1
+                     ->  Index Scan using range_rel_2_pkey on range_rel_2 j1_1
+               ->  Merge Append
+                     Sort Key: j2.id
+                     ->  Index Scan using range_rel_2_pkey on range_rel_2 j2
+                     ->  Index Scan using range_rel_3_pkey on range_rel_3 j2_1
+                     ->  Index Scan using range_rel_4_pkey on range_rel_4 j2_2
          ->  Append
                ->  Index Scan using num_range_rel_1_pkey on num_range_rel_1 j3
                ->  Index Scan using num_range_rel_2_pkey on num_range_rel_2 j3_1
                ->  Index Scan using num_range_rel_3_pkey on num_range_rel_3 j3_2
                ->  Index Scan using num_range_rel_4_pkey on num_range_rel_4 j3_3
-         ->  Materialize
-               ->  Merge Join
-                     Merge Cond: (j2.id = j1.id)
-                     ->  Merge Append
-                           Sort Key: j2.id
-                           ->  Index Scan using range_rel_2_pkey on range_rel_2 j2
-                           ->  Index Scan using range_rel_3_pkey on range_rel_3 j2_1
-                           ->  Index Scan using range_rel_4_pkey on range_rel_4 j2_2
-                     ->  Materialize
-                           ->  Merge Append
-                                 Sort Key: j1.id
-                                 ->  Index Scan using range_rel_1_pkey on range_rel_1 j1
-                                 ->  Index Scan using range_rel_2_pkey on range_rel_2 j1_1
-(22 rows)
+(20 rows)
 
 SET enable_hashjoin = ON;
 SET enable_mergejoin = OFF;
