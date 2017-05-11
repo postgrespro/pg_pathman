@@ -557,12 +557,12 @@ class PartitioningTests(unittest.TestCase):
 			'postgres',
 			'select attach_range_partition(\'abc\', \'ftable2\', 30, 40)')
 
-		#master.safe_psql('postgres',
-		#		'set pg_pathman.enable_partitionupdate=on')
+		master.safe_psql('postgres',
+				'set pg_pathman.enable_partitionupdate=on')
 
 		with master.connect() as con:
 			con.begin()
-			#con.execute('set pg_pathman.enable_partitionupdate=on')
+			con.execute('set pg_pathman.enable_partitionupdate=on')
 			con.execute('insert into abc select i from generate_series(1, 19) i')
 			con.commit()
 
@@ -575,13 +575,9 @@ class PartitioningTests(unittest.TestCase):
 			#	- update from foreign to local
 			#	- update from foreign to foreign
 
-			#con.execute('update abc set id=36 where id=9')
-			#result_relid = con.execute('select tableoid from abc where id=35')[0][0]
-			#self.assertEqual(result_relid, dest_relid)
-
-			self.set_trace(con, 'pg_debug')
-			import ipdb; ipdb.set_trace()
-			pass
+			con.execute('update abc set id=36 where id=9')
+			result_relid = con.execute('select tableoid from abc where id=35')[0][0]
+			self.assertEqual(result_relid, dest_relid)
 
 	def test_parallel_nodes(self):
 		"""Test parallel queries under partitions"""

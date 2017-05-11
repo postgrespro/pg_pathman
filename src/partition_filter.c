@@ -320,30 +320,12 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 
 		if (parts_storage->command_type == CMD_UPDATE)
 		{
-			char		 relkind;
 			JunkFilter	*junkfilter = parts_storage->saved_rel_info->ri_junkFilter;
 
-			/* we don't need junk work in UPDATE */
+			/* we don't need junk cleaning in ExecModifyTable */
 			child_result_rel_info->ri_junkFilter = NULL;
 
-			relkind = base_rel->rd_rel->relkind;
-			if (relkind == RELKIND_RELATION)
-			{
-				junkfilter->jf_junkAttNo = ExecFindJunkAttribute(junkfilter, "ctid");
-				if (!AttributeNumberIsValid(junkfilter->jf_junkAttNo))
-					elog(ERROR, "could not find junk ctid column");
-			}
-			else if (relkind == RELKIND_FOREIGN_TABLE)
-			{
-				/*
-				 * When there is an AFTER trigger, there should be a
-				 * wholerow attribute.
-				 */
-				junkfilter->jf_junkAttNo = ExecFindJunkAttribute(junkfilter, "wholerow");
-			}
-			else
-				elog(ERROR, "wrong type of relation");
-
+			/* instead we do junk filtering ourselves */
 			rri_holder->updates_junkFilter = junkfilter;
 		}
 

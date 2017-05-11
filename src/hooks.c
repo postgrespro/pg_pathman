@@ -36,6 +36,7 @@
 #include "utils/typcache.h"
 #include "utils/lsyscache.h"
 
+static PlannerInfo* pathman_planner_info = NULL;
 
 /* Borrowed from joinpath.c */
 #define PATH_PARAM_BY_REL(path, rel)  \
@@ -278,6 +279,9 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 	/* Make sure that pg_pathman is ready */
 	if (!IsPathmanReady())
 		return;
+
+	/* save root, we will use in plan modify stage */
+	pathman_planner_info = root;
 
 	/*
 	 * Skip if it's a result relation (UPDATE | DELETE | INSERT),
@@ -524,17 +528,20 @@ pg_pathman_enable_assign_hook(bool newval, void *extra)
 PlannedStmt *
 pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 {
-#define ExecuteForPlanTree(planned_stmt, proc) \
+#define ExecuteForPlanTree(planned_stmt, context, proc) \
 	do { \
 		ListCell *lc; \
-		proc((planned_stmt)->rtable, (planned_stmt)->planTree); \
+		proc((context), (planned_stmt)->planTree); \
 		foreach (lc, (planned_stmt)->subplans) \
-			proc((planned_stmt)->rtable, (Plan *) lfirst(lc)); \
+			proc((context), (Plan *) lfirst(lc)); \
 	} while (0)
 
 	PlannedStmt	   *result;
 	uint32			query_id = parse->queryId;
 	bool			pathman_ready = IsPathmanReady(); /* in case it changes */
+
+	/* rel_pathlist_hook will set this variable */
+	pathman_planner_info = NULL;
 
 	PG_TRY();
 	{
@@ -555,14 +562,17 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 
 		if (pathman_ready && pathman_hooks_enabled)
 		{
+			List *update_nodes_context;
+
 			/* Give rowmark-related attributes correct names */
-			ExecuteForPlanTree(result, postprocess_lock_rows);
+			ExecuteForPlanTree(result, result->rtable, postprocess_lock_rows);
 
 			/* Add PartitionFilter node for INSERT queries */
-			ExecuteForPlanTree(result, add_partition_filters);
+			ExecuteForPlanTree(result, result->rtable, add_partition_filters);
 
 			/* Add PartitionUpdate node for UPDATE queries */
-			ExecuteForPlanTree(result, add_partition_update_nodes);
+			update_nodes_context = list_make2(result->rtable, pathman_planner_info);
+			ExecuteForPlanTree(result, update_nodes_context, add_partition_update_nodes);
 
 			/* Decrement relation tags refcount */
 			decr_refcount_relation_tags();
@@ -587,6 +597,7 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 
 	/* Finally return the Plan */
 	return result;
+#undef ExecuteForPlanTree
 }
 
 /*
@@ -867,6 +878,9 @@ pathman_executor_hook(QueryDesc *queryDesc, ScanDirection direction,
 				 */
 				cstate->saved_junkFilter = cstate->resultRelInfo->ri_junkFilter;
 				cstate->resultRelInfo->ri_junkFilter = NULL;
+
+				/* hack, change UPDATE operation to INSERT */
+				mt_state->operation = CMD_INSERT;
 			}
 		}
 	}

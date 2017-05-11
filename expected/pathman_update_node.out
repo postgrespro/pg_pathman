@@ -18,7 +18,7 @@ NOTICE:  sequence "test_range_seq" does not exist, skipping
 EXPLAIN (COSTS OFF) UPDATE test_update_node.test_range SET val = 5 WHERE val = 15;
                             QUERY PLAN                             
 -------------------------------------------------------------------
- Insert on test_range_2
+ Update on test_range_2
    ->  Custom Scan (PrepareInsert)
          ->  Custom Scan (PartitionFilter)
                ->  Bitmap Heap Scan on test_range_2
@@ -31,7 +31,7 @@ EXPLAIN (COSTS OFF) UPDATE test_update_node.test_range SET val = 5 WHERE val = 1
 EXPLAIN (COSTS OFF) UPDATE test_update_node.test_range SET val = 14 WHERE val = 15;
                             QUERY PLAN                             
 -------------------------------------------------------------------
- Insert on test_range_2
+ Update on test_range_2
    ->  Custom Scan (PrepareInsert)
          ->  Custom Scan (PartitionFilter)
                ->  Bitmap Heap Scan on test_range_2

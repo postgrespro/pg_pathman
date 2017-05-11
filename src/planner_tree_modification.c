@@ -19,6 +19,7 @@
 #include "rewrite/rewriteManip.h"
 
 #include "access/htup_details.h"
+#include "foreign/fdwapi.h"
 #include "miscadmin.h"
 #include "optimizer/clauses.h"
 #include "storage/lmgr.h"
@@ -375,10 +376,10 @@ add_partition_filters(List *rtable, Plan *plan)
 
 /* Add PartitionUpdate nodes to the plan tree */
 void
-add_partition_update_nodes(List *rtable, Plan *plan)
+add_partition_update_nodes(List *context, Plan *plan)
 {
 	if (pg_pathman_enable_partition_update)
-		plan_tree_walker(plan, partition_update_visitor, rtable);
+		plan_tree_walker(plan, partition_update_visitor, context);
 }
 
 /*
@@ -430,6 +431,45 @@ partition_filter_visitor(Plan *plan, void *context)
 }
 
 
+static List *
+recreate_fdw_private_list(PlannerInfo *root, List *rtable, ModifyTable *node)
+{
+	ListCell	*lc;
+	int			 i = 0;
+	List		*fdw_private_list = NIL;
+
+	/* we need DELETE queries for FDW */
+	node->operation = CMD_DELETE;
+
+	foreach(lc, node->resultRelations)
+	{
+		Index		rti = lfirst_int(lc);
+		FdwRoutine *fdwroutine;
+		List	   *fdw_private;
+
+		RangeTblEntry *rte = rt_fetch(rti, rtable);
+		Assert(rte->rtekind == RTE_RELATION);
+		if (rte->relkind != RELKIND_FOREIGN_TABLE)
+			continue;
+
+		fdwroutine = GetFdwRoutineByRelId(rte->relid);
+
+		if (fdwroutine != NULL &&
+			fdwroutine->PlanForeignModify != NULL)
+			fdw_private = fdwroutine->PlanForeignModify(root, node, rti, i);
+		else
+			fdw_private = NIL;
+
+		fdw_private_list = lappend(fdw_private_list, fdw_private);
+		i++;
+	}
+
+	/* restore operation */
+	node->operation = CMD_UPDATE;
+	return fdw_private_list;
+}
+
+
 /*
  * Add partition update to ModifyTable node's children.
  *
@@ -438,11 +478,12 @@ partition_filter_visitor(Plan *plan, void *context)
 static void
 partition_update_visitor(Plan *plan, void *context)
 {
-	List		   *rtable = (List *) context;
-	ModifyTable	   *modify_table = (ModifyTable *) plan;
-	ListCell	   *lc1,
-				   *lc2,
-				   *lc3;
+	List			*rtable = (List *) linitial((List *) context);
+	PlannerInfo		*root = (PlannerInfo *) lsecond((List *) context);
+	ModifyTable		*modify_table = (ModifyTable *) plan;
+	ListCell		*lc1,
+					*lc2,
+					*lc3;
 
 	/* Skip if not ModifyTable with 'UPDATE' command */
 	if (!IsA(modify_table, ModifyTable) || modify_table->operation != CMD_UPDATE)
@@ -476,8 +517,6 @@ partition_update_visitor(Plan *plan, void *context)
 		{
 			List *returning_list = NIL;
 
-			modify_table->operation = CMD_INSERT;
-
 			/* Extract returning list if possible */
 			if (lc3)
 			{
@@ -488,6 +527,10 @@ partition_update_visitor(Plan *plan, void *context)
 			lfirst(lc1) = make_partition_update((Plan *) lfirst(lc1),
 												relid,
 												returning_list);
+
+			/* change fdw queries to DELETE */
+			modify_table->fdwPrivLists =
+				recreate_fdw_private_list(root, rtable, modify_table);
 		}
 	}
 }
