@@ -333,6 +333,22 @@ SELECT merge_range_partitions('{calamity.merge_test_a_1,
 DROP TABLE calamity.merge_test_a,calamity.merge_test_b CASCADE;
 
 
+/* check function drop_triggers() */
+CREATE TABLE calamity.trig_test_tbl(val INT4 NOT NULL);
+SELECT create_hash_partitions('calamity.trig_test_tbl', 'val', 2);
+SELECT create_update_triggers('calamity.trig_test_tbl');
+
+SELECT count(*) FROM pg_trigger WHERE tgrelid = 'calamity.trig_test_tbl'::REGCLASS;
+SELECT count(*) FROM pg_trigger WHERE tgrelid = 'calamity.trig_test_tbl_1'::REGCLASS;
+
+SELECT drop_triggers('calamity.trig_test_tbl');						/* OK */
+
+SELECT count(*) FROM pg_trigger WHERE tgrelid = 'calamity.trig_test_tbl'::REGCLASS;
+SELECT count(*) FROM pg_trigger WHERE tgrelid = 'calamity.trig_test_tbl_1'::REGCLASS;
+
+DROP TABLE calamity.trig_test_tbl CASCADE;
+
+
 DROP SCHEMA calamity CASCADE;
 DROP EXTENSION pg_pathman;
 

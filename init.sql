@@ -447,7 +447,7 @@ CREATE OR REPLACE FUNCTION @extschema@.prepare_for_partitioning(
 RETURNS VOID AS
 $$
 DECLARE
-	constr_name	TEXT;
+	constr_name		TEXT;
 	is_referenced	BOOLEAN;
 	rel_persistence	CHAR;
 
@@ -516,9 +516,10 @@ CREATE OR REPLACE FUNCTION @extschema@.pathman_ddl_trigger_func()
 RETURNS event_trigger AS
 $$
 DECLARE
-	obj				record;
-	pg_class_oid	oid;
-	relids			regclass[];
+	obj				RECORD;
+	pg_class_oid	OID;
+	relids			REGCLASS[];
+
 BEGIN
 	pg_class_oid = 'pg_catalog.pg_class'::regclass;
 
@@ -545,20 +546,21 @@ CREATE OR REPLACE FUNCTION @extschema@.drop_triggers(
 RETURNS VOID AS
 $$
 DECLARE
-	triggername	TEXT;
-	rec			RECORD;
+	triggername		TEXT;
+	relation		OID;
 
 BEGIN
 	triggername := @extschema@.build_update_trigger_name(parent_relid);
 
 	/* Drop trigger for each partition if exists */
-	FOR rec IN (SELECT pg_catalog.pg_inherits.* FROM pg_catalog.pg_inherits
-				JOIN pg_catalog.pg_trigger ON inhrelid = tgrelid
-				WHERE inhparent = parent_relid AND tgname = triggername)
+	FOR relation IN (SELECT pg_catalog.pg_inherits.inhrelid
+					 FROM pg_catalog.pg_inherits
+					 JOIN pg_catalog.pg_trigger ON inhrelid = tgrelid
+					 WHERE inhparent = parent_relid AND tgname = triggername)
 	LOOP
 		EXECUTE format('DROP TRIGGER IF EXISTS %s ON %s',
 					   triggername,
-					   rec.inhrelid::REGCLASS::TEXT);
+					   relation::REGCLASS);
 	END LOOP;
 
 	/* Drop trigger on parent */
