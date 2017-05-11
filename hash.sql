@@ -27,7 +27,6 @@ BEGIN
 												 partition_data);
 
 	/* Insert new entry to pathman config */
-	EXECUTE format('ANALYZE %s', parent_relid);
 	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression);
 
 	/* Create partitions */

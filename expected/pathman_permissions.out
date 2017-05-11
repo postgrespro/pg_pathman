@@ -19,7 +19,6 @@ GRANT SELECT ON permissions.user1_table TO user2;
 /* Should fail (don't own parent) */
 SET ROLE user2;
 SELECT create_range_partitions('permissions.user1_table', 'id', 1, 10, 2);
-WARNING:  skipping "user1_table" --- only table or database owner can analyze it
 ERROR:  only the owner or superuser can change partitioning configuration of table "user1_table"
 /* Should be ok */
 SET ROLE user1;
