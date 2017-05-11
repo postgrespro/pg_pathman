@@ -656,15 +656,17 @@ partition_filter_exec(CustomScanState *node)
 	TupleTableSlot		   *slot;
 	ResultRelInfo		   *saved_resultRelInfo;
 
-	/* clean ctid for old slot */
-	state->ctid = NULL;
-
 	slot = ExecProcNode(child_ps);
+	state->subplan_slot = slot;
+	state->src_junkFilter = NULL;
 
 	/* Save original ResultRelInfo */
 	saved_resultRelInfo = estate->es_result_relation_info;
 	if (!state->result_parts.saved_rel_info)
 		state->result_parts.saved_rel_info = saved_resultRelInfo;
+
+	if (state->tup_convert_slot)
+		ExecClearTuple(state->tup_convert_slot);
 
 	if (!TupIsNull(slot))
 	{
@@ -717,33 +719,8 @@ partition_filter_exec(CustomScanState *node)
 		/* Magic: replace parent's ResultRelInfo with ours */
 		estate->es_result_relation_info = resultRelInfo;
 
-		if (state->command_type == CMD_UPDATE)
-		{
-			JunkFilter		*junkfilter;
-			Datum			 datum;
-			char			 relkind;
-
-			/*
-			 * extract `ctid` junk attribute and save it in state,
-			 * we need this step because if there will be conversion
-			 * then junk attributes will be removed from slot
-			 */
-			junkfilter = rri_holder->updates_junkFilter;
-			Assert(junkfilter != NULL);
-
-			relkind = saved_resultRelInfo->ri_RelationDesc->rd_rel->relkind;
-			if (relkind == RELKIND_RELATION)
-			{
-				bool			isNull;
-
-				datum = ExecGetJunkAttribute(slot, junkfilter->jf_junkAttNo, &isNull);
-				/* shouldn't ever get a null result... */
-				if (isNull)
-					elog(ERROR, "ctid is NULL");
-
-				state->ctid = (ItemPointer) DatumGetPointer(datum);
-			}
-		}
+		/* pass junkfilter to upper node */
+		state->src_junkFilter = rri_holder->updates_junkFilter;
 
 		/* If there's a transform map, rebuild the tuple */
 		if (rri_holder->tuple_map)
@@ -765,8 +742,6 @@ partition_filter_exec(CustomScanState *node)
 			/* Now replace the original slot */
 			slot = state->tup_convert_slot;
 		}
-		else if (state->command_type == CMD_UPDATE)
-			slot = ExecFilterJunk(rri_holder->updates_junkFilter, slot);
 
 		return slot;
 	}

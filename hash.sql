@@ -138,8 +138,8 @@ BEGIN
 				   @extschema@.build_check_constraint_name(new_partition::REGCLASS),
 				   old_constr_def);
 
-	IF @extschema@.is_relation_foreign(partition_relid) THEN
-		PERFORM @extschema@.create_single_nop_trigger(parent_relid, partition_relid);
+	IF @extschema@.is_relation_foreign(new_partition) THEN
+		PERFORM @extschema@.create_single_nop_trigger(parent_relid, new_partition);
 	END IF;
 
 	/* Fetch init_callback from 'params' table */

@@ -97,10 +97,10 @@ typedef struct
 	bool				warning_triggered;		/* warning message counter */
 
 	TupleTableSlot	   *tup_convert_slot;		/* slot for rebuilt tuples */
-	ItemPointer			ctid;					/* ctid of scanned tuple
-												   if there any, or NULL,
-												   filled when command_type == CMD_UPDATE*/
 	CmdType				command_type;
+
+	TupleTableSlot     *subplan_slot;			/* slot that was returned from subplan */
+	JunkFilter		   *src_junkFilter;			/* junkfilter for subplan_slot */
 
 	ExprContext		   *tup_convert_econtext;	/* ExprContext for projections */
 	ExprState		   *expr_state;				/* for partitioning expression */

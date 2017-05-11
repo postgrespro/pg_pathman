@@ -151,72 +151,89 @@ partition_update_exec(CustomScanState *node)
 
 	if (!TupIsNull(slot))
 	{
-		Datum			 datum;
-		bool			 isNull;
-		char			 relkind;
-		ResultRelInfo	*resultRelInfo;
-		ItemPointer		 tupleid;
-		ItemPointerData	 tuple_ctid;
-		EPQState		 epqstate;
-		HeapTupleData	 oldtupdata;
-		HeapTuple		 oldtuple;
+		Datum					 datum;
+		bool					 isNull;
+		char					 relkind;
+		ResultRelInfo			*resultRelInfo,
+								*sourceRelInfo;
+		ItemPointer				 tupleid = NULL;
+		ItemPointerData			 tuple_ctid;
+		EPQState				 epqstate;
+		HeapTupleData			 oldtupdata;
+		HeapTuple				 oldtuple = NULL;
+		PartitionFilterState	*child_state;
+		JunkFilter				*junkfilter;
 
-		PartitionFilterState    *child_state = (PartitionFilterState *) child_ps;
+		child_state = (PartitionFilterState *) child_ps;
 		Assert(child_state->command_type == CMD_UPDATE);
 
-		EvalPlanQualSetSlot(&epqstate, slot);
+		EvalPlanQualSetSlot(&epqstate, child_state->subplan_slot);
 
+		sourceRelInfo = child_state->result_parts.saved_rel_info;
 		resultRelInfo = estate->es_result_relation_info;
-		oldtuple = NULL;
-		relkind = resultRelInfo->ri_RelationDesc->rd_rel->relkind;
+		junkfilter = child_state->src_junkFilter;
 
-		if (child_state->ctid != NULL)
+		if (junkfilter != NULL)
 		{
-			tupleid = child_state->ctid;
-			tuple_ctid = *tupleid;		/* be sure we don't free
-										 * ctid!! */
-			tupleid = &tuple_ctid;
-		}
-		else if (relkind == RELKIND_FOREIGN_TABLE)
-		{
-			JunkFilter		*junkfilter = resultRelInfo->ri_junkFilter;
-
-			if (junkfilter != NULL && AttributeNumberIsValid(junkfilter->jf_junkAttNo))
+			relkind = sourceRelInfo->ri_RelationDesc->rd_rel->relkind;
+			if (relkind == RELKIND_RELATION)
 			{
-				datum = ExecGetJunkAttribute(slot,
-											 junkfilter->jf_junkAttNo,
-											 &isNull);
+				bool			isNull;
+
+				datum = ExecGetJunkAttribute(child_state->subplan_slot,
+						junkfilter->jf_junkAttNo, &isNull);
 				/* shouldn't ever get a null result... */
 				if (isNull)
-					elog(ERROR, "wholerow is NULL");
+					elog(ERROR, "ctid is NULL");
 
-				oldtupdata.t_data = DatumGetHeapTupleHeader(datum);
-				oldtupdata.t_len =
-					HeapTupleHeaderGetDatumLength(oldtupdata.t_data);
-				ItemPointerSetInvalid(&(oldtupdata.t_self));
-
-				/* Historically, view triggers see invalid t_tableOid. */
-				oldtupdata.t_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
-				oldtuple = &oldtupdata;
+				tupleid = (ItemPointer) DatumGetPointer(datum);
+				tuple_ctid = *tupleid;		/* be sure we don't free
+											 * ctid!! */
+				tupleid = &tuple_ctid;
 			}
+			else if (relkind == RELKIND_FOREIGN_TABLE)
+			{
+				if (AttributeNumberIsValid(junkfilter->jf_junkAttNo))
+				{
+					datum = ExecGetJunkAttribute(child_state->subplan_slot,
+												 junkfilter->jf_junkAttNo,
+												 &isNull);
+					/* shouldn't ever get a null result... */
+					if (isNull)
+						elog(ERROR, "wholerow is NULL");
 
-			tupleid = NULL;
+					oldtupdata.t_data = DatumGetHeapTupleHeader(datum);
+					oldtupdata.t_len =
+						HeapTupleHeaderGetDatumLength(oldtupdata.t_data);
+					ItemPointerSetInvalid(&(oldtupdata.t_self));
+
+					/* Historically, view triggers see invalid t_tableOid. */
+					oldtupdata.t_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
+					oldtuple = &oldtupdata;
+				}
+			}
+			else
+				elog(ERROR, "got unexpected type of relation");
+
+			/*
+			 * Clean from junk attributes before INSERT,
+			 * but only if slot wasn't converted in PartitionFilter
+			 */
+			if (TupIsNull(child_state->tup_convert_slot))
+				slot = ExecFilterJunk(junkfilter, slot);
 		}
-		else
-			elog(ERROR, "updates supported only on basic relations and foreign tables");
-
-		/* delete old tuple */
-		estate->es_result_relation_info = child_state->result_parts.saved_rel_info;
 
 		/*
-		 * We have two cases here:
-		 * normal relations - tupleid points to actual tuple
-		 * foreign tables - tupleid is invalid, slot is required
+		 * Delete old tuple. We have two cases here:
+		 * 1) local tables - tupleid points to actual tuple
+		 * 2) foreign tables - tupleid is invalid, slot is required
 		 */
-		ExecDeleteInternal(tupleid, oldtuple, slot, &epqstate, estate);
-		estate->es_result_relation_info = resultRelInfo;
+		estate->es_result_relation_info = sourceRelInfo;
+		ExecDeleteInternal(tupleid, oldtuple, child_state->subplan_slot,
+				&epqstate, estate);
 
 		/* we've got the slot that can be inserted to child partition */
+		estate->es_result_relation_info = resultRelInfo;
 		return slot;
 	}
 
