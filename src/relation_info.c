@@ -590,7 +590,7 @@ parse_partitioning_expression(const Oid relid,
 	return ((ResTarget *) linitial(select_stmt->targetList))->val;
 }
 
-/* Parse partitioning expression and return its type and nodeToString() */
+/* Parse partitioning expression and return its type and nodeToString() as TEXT */
 Datum
 cook_partitioning_expression(const Oid relid,
 							 const char *expr_cstr,

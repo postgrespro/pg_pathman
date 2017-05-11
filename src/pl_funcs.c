@@ -725,6 +725,9 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("'parent_relid' should not be NULL")));
 
+	/* Lock relation */
+	xact_lock_rel_exclusive(relid, true);
+
 	/* Check that relation exists */
 	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -792,11 +795,11 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	/*
 	 * Initialize columns (partrel, attname, parttype, range_interval).
 	 */
-	values[Anum_pathman_config_partrel - 1]			= ObjectIdGetDatum(relid);
-	isnull[Anum_pathman_config_partrel - 1]			= false;
+	values[Anum_pathman_config_partrel - 1]		= ObjectIdGetDatum(relid);
+	isnull[Anum_pathman_config_partrel - 1]		= false;
 
-	values[Anum_pathman_config_parttype - 1]		= Int32GetDatum(parttype);
-	isnull[Anum_pathman_config_parttype - 1]		= false;
+	values[Anum_pathman_config_parttype - 1]	= Int32GetDatum(parttype);
+	isnull[Anum_pathman_config_parttype - 1]	= false;
 
 	values[Anum_pathman_config_expr - 1]		= CStringGetTextDatum(expression);
 	isnull[Anum_pathman_config_expr - 1]		= false;
