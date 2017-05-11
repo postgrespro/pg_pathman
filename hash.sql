@@ -21,18 +21,10 @@ CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions(
 RETURNS INTEGER AS
 $$
 BEGIN
-	PERFORM @extschema@.validate_relname(parent_relid);
-
-	IF partition_data = true THEN
-		/* Acquire data modification lock */
-		PERFORM @extschema@.prevent_relation_modification(parent_relid);
-	ELSE
-		/* Acquire lock on parent */
-		PERFORM @extschema@.lock_partitioned_relation(parent_relid);
-	END IF;
-
 	expression := lower(expression);
-	PERFORM @extschema@.common_relation_checks(parent_relid, expression);
+	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data);
 
 	/* Insert new entry to pathman config */
 	EXECUTE format('ANALYZE %s', parent_relid);

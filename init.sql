@@ -438,51 +438,58 @@ $$
 LANGUAGE plpgsql STRICT;
 
 /*
- * Aggregates several common relation checks before partitioning.
- * Suitable for every partitioning type.
+ * Check a few things and take locks before partitioning.
  */
-CREATE OR REPLACE FUNCTION @extschema@.common_relation_checks(
-	relation		REGCLASS,
-	expression		TEXT)
-RETURNS BOOLEAN AS
+CREATE OR REPLACE FUNCTION @extschema@.prepare_for_partitioning(
+	parent_relid	REGCLASS,
+	expression		TEXT,
+	partition_data	BOOLEAN)
+RETURNS VOID AS
 $$
 DECLARE
-	v_rec			RECORD;
+	constr_name	TEXT;
 	is_referenced	BOOLEAN;
 	rel_persistence	CHAR;
 
 BEGIN
+	PERFORM @extschema@.validate_relname(parent_relid);
+
+	IF partition_data = true THEN
+		/* Acquire data modification lock */
+		PERFORM @extschema@.prevent_relation_modification(parent_relid);
+	ELSE
+		/* Acquire lock on parent */
+		PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+	END IF;
+
 	/* Ignore temporary tables */
 	SELECT relpersistence FROM pg_catalog.pg_class
-	WHERE oid = relation INTO rel_persistence;
+	WHERE oid = parent_relid INTO rel_persistence;
 
 	IF rel_persistence = 't'::CHAR THEN
-		RAISE EXCEPTION 'temporary table "%" cannot be partitioned',
-						relation::TEXT;
+		RAISE EXCEPTION 'temporary table "%" cannot be partitioned', parent_relid;
 	END IF;
 
 	IF EXISTS (SELECT * FROM @extschema@.pathman_config
-			   WHERE partrel = relation) THEN
-		RAISE EXCEPTION 'relation "%" has already been partitioned', relation;
+			   WHERE partrel = parent_relid) THEN
+		RAISE EXCEPTION 'table "%" has already been partitioned', parent_relid;
 	END IF;
 
 	/* Check if there are foreign keys that reference the relation */
-	FOR v_rec IN (SELECT * FROM pg_catalog.pg_constraint
-				  WHERE confrelid = relation::REGCLASS::OID)
+	FOR constr_name IN (SELECT conname FROM pg_catalog.pg_constraint
+					WHERE confrelid = parent_relid::REGCLASS::OID)
 	LOOP
 		is_referenced := TRUE;
-		RAISE WARNING 'foreign key "%" references relation "%"',
-				v_rec.conname, relation;
+		RAISE WARNING 'foreign key "%" references table "%"', constr_name, parent_relid;
 	END LOOP;
 
 	IF is_referenced THEN
-		RAISE EXCEPTION 'relation "%" is referenced from other relations', relation;
+		RAISE EXCEPTION 'table "%" is referenced from other tables', parent_relid;
 	END IF;
 
-	RETURN FALSE;
 END
-$$
-LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
+
 
 /*
  * Returns relname without quotes or something.

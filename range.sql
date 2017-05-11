@@ -60,29 +60,6 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
-
-CREATE OR REPLACE FUNCTION @extschema@.prepare_for_partitioning(
-	parent_relid	REGCLASS,
-	expression		TEXT,
-	partition_data	BOOLEAN)
-RETURNS VOID AS
-$$
-BEGIN
-	PERFORM @extschema@.validate_relname(parent_relid);
-
-	IF partition_data = true THEN
-		/* Acquire data modification lock */
-		PERFORM @extschema@.prevent_relation_modification(parent_relid);
-	ELSE
-		/* Acquire lock on parent */
-		PERFORM @extschema@.lock_partitioned_relation(parent_relid);
-	END IF;
-
-	expression := lower(expression);
-	PERFORM @extschema@.common_relation_checks(parent_relid, expression);
-END
-$$ LANGUAGE plpgsql;
-
 /*
  * Creates RANGE partitions for specified relation based on datetime attribute
  */
@@ -106,7 +83,9 @@ DECLARE
 
 BEGIN
 	expression := lower(expression);
-	PERFORM @extschema@.prepare_for_partitioning(parent_relid, expression, partition_data);
+	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data);
 
 	IF p_count < 0 THEN
 		RAISE EXCEPTION '"p_count" must not be less than 0';
@@ -206,7 +185,9 @@ DECLARE
 
 BEGIN
 	expression := lower(expression);
-	PERFORM @extschema@.prepare_for_partitioning(parent_relid, expression, partition_data);
+	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data);
 
 	IF p_count < 0 THEN
 		RAISE EXCEPTION 'partitions count must not be less than zero';
@@ -307,7 +288,9 @@ BEGIN
 	END IF;
 
 	expression := lower(expression);
-	PERFORM @extschema@.prepare_for_partitioning(parent_relid, expression, partition_data);
+	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data);
 
 	/* Check boundaries */
 	PERFORM @extschema@.check_boundaries(parent_relid,
@@ -358,7 +341,9 @@ DECLARE
 
 BEGIN
 	expression := lower(expression);
-	PERFORM @extschema@.prepare_for_partitioning(parent_relid, expression, partition_data);
+	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data);
 
 	/* Check boundaries */
 	PERFORM @extschema@.check_boundaries(parent_relid,
@@ -415,8 +400,9 @@ DECLARE
 
 BEGIN
 	expression := lower(expression);
-	PERFORM @extschema@.prepare_for_partitioning(parent_relid, expression,
-		partition_data);
+	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data);
 
 	/* Check boundaries */
 	PERFORM @extschema@.check_boundaries(parent_relid,
@@ -482,6 +468,9 @@ DECLARE
 
 BEGIN
 	parent_relid = @extschema@.get_parent_of_partition(partition_relid);
+
+	PERFORM @extschema@.validate_relname(parent_relid);
+	PERFORM @extschema@.validate_relname(partition_relid);
 
 	/* Acquire lock on parent */
 	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
@@ -839,8 +828,11 @@ DECLARE
 
 BEGIN
 	parent_relid := @extschema@.get_parent_of_partition(partition_relid);
-	part_name := partition_relid::TEXT; /* save the name to be returned */
 
+	PERFORM @extschema@.validate_relname(parent_relid);
+	PERFORM @extschema@.validate_relname(partition_relid);
+
+	part_name := partition_relid::TEXT; /* save the name to be returned */
 	part_type := @extschema@.get_partition_type(parent_relid);
 
 	/* Check if this is a RANGE partition */
@@ -972,18 +964,22 @@ RETURNS TEXT AS
 $$
 DECLARE
 	parent_relid	REGCLASS;
-	part_expr		TEXT;
+	part_type		INTEGER;
 
 BEGIN
 	parent_relid := @extschema@.get_parent_of_partition(partition_relid);
 
+	PERFORM @extschema@.validate_relname(parent_relid);
+	PERFORM @extschema@.validate_relname(partition_relid);
+
 	/* Acquire lock on parent */
 	PERFORM @extschema@.prevent_relation_modification(parent_relid);
 
-	part_expr := @extschema@.get_partition_key(parent_relid);
+	part_type := @extschema@.get_partition_type(parent_relid);
 
-	IF part_expr IS NULL THEN
-		RAISE EXCEPTION 'table "%" is not partitioned', parent_relid::TEXT;
+	/* Check if this is a RANGE partition */
+	IF part_type != 2 THEN
+		RAISE EXCEPTION '"%" is not a RANGE partition', partition_relid::TEXT;
 	END IF;
 
 	/* Remove inheritance */
