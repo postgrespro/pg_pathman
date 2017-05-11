@@ -563,7 +563,7 @@ class PartitioningTests(unittest.TestCase):
 		with master.connect() as con:
 			con.begin()
 			con.execute('set pg_pathman.enable_partitionupdate=on')
-			con.execute('insert into abc select i from generate_series(1, 19) i')
+			con.execute("insert into abc select i, 'local' from generate_series(1, 19) i")
 			con.commit()
 
 			source_relid = con.execute('select tableoid from abc where id=9')[0][0]
@@ -572,12 +572,20 @@ class PartitioningTests(unittest.TestCase):
 
 			# cases
 			#	- update from local to foreign
-			#	- update from foreign to local
 			#	- update from foreign to foreign
+			#	- update from foreign to local
 
 			con.execute('update abc set id=36 where id=9')
-			result_relid = con.execute('select tableoid from abc where id=35')[0][0]
+			result_relid = con.execute('select tableoid from abc where id=36')[0][0]
 			self.assertEqual(result_relid, dest_relid)
+
+			con.execute('update abc set id=38 where id=36')
+			result_relid = con.execute('select tableoid from abc where id=38')[0][0]
+			self.assertEqual(result_relid, dest_relid)
+
+			con.execute('update abc set id=9 where id=35')
+			result_relid = con.execute('select tableoid from abc where id=9')[0][0]
+			self.assertEqual(result_relid, source_relid)
 
 	def test_parallel_nodes(self):
 		"""Test parallel queries under partitions"""
