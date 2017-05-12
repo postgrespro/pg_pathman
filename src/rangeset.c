@@ -400,12 +400,15 @@ irange_list_find(List *rangeset, int index, bool *lossy)
 	foreach (lc, rangeset)
 	{
 		IndexRange irange = lfirst_irange(lc);
+
 		if (index >= irange_lower(irange) && index <= irange_upper(irange))
 		{
 			if (lossy)
 				*lossy = is_irange_lossy(irange);
+
 			return true;
 		}
 	}
+
 	return false;
 }

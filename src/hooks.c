@@ -137,7 +137,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	{
 		WrapperNode *wrap;
 
-		InitWalkerContext(&context, part_expr, inner_prel, NULL, false);
+		InitWalkerContext(&context, part_expr, inner_prel, NULL);
 		wrap = walk_expr_tree((Expr *) lfirst(lc), &context);
 		paramsel *= wrap->paramsel;
 	}
@@ -345,7 +345,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		ranges = list_make1_irange_full(prel, IR_COMPLETE);
 
 		/* Make wrappers over restrictions and collect final rangeset */
-		InitWalkerContext(&context, part_expr, prel, NULL, false);
+		InitWalkerContext(&context, part_expr, prel, NULL);
 		wrappers = NIL;
 		foreach(lc, rel->baserestrictinfo)
 		{
