@@ -741,7 +741,7 @@ rescan_append_common(CustomScanState *node)
 	/* First we select all available partitions... */
 	ranges = list_make1_irange_full(prel, IR_COMPLETE);
 
-	InitWalkerContext(&wcxt, prel_expr, prel, econtext, false);
+	InitWalkerContext(&wcxt, prel_expr, prel, econtext);
 	foreach (lc, scan_state->canon_custom_exprs)
 	{
 		WrapperNode *wn;

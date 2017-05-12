@@ -450,6 +450,13 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
    ->  Seq Scan on hash_rel_2
 (4 rows)
 
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE false;
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = NULL;
         QUERY PLAN        
 --------------------------
@@ -608,6 +615,13 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
    ->  Seq Scan on hash_rel_1
    ->  Seq Scan on hash_rel_2
 (4 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE false;
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = NULL;
         QUERY PLAN        

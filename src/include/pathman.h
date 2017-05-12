@@ -139,16 +139,14 @@ typedef struct
 	Node				   *prel_expr;		/* expression from PartRelationInfo */
 	const PartRelationInfo *prel;			/* main partitioning structure */
 	ExprContext			   *econtext;		/* for ExecEvalExpr() */
-	bool					for_insert;		/* are we in PartitionFilter now? */
 } WalkerContext;
 
 /* Usual initialization procedure for WalkerContext */
-#define InitWalkerContext(context, expr, prel_info, ecxt, for_ins) \
+#define InitWalkerContext(context, expr, prel_info, ecxt) \
 	do { \
 		(context)->prel_expr = (expr); \
 		(context)->prel = (prel_info); \
 		(context)->econtext = (ecxt); \
-		(context)->for_insert = (for_ins); \
 	} while (0)
 
 /* Check that WalkerContext contains ExprContext (plan execution stage) */
@@ -159,11 +157,11 @@ WrapperNode *walk_expr_tree(Expr *expr, WalkerContext *context);
 
 
 void select_range_partitions(const Datum value,
+							 const Oid collid,
 							 FmgrInfo *cmp_func,
 							 const RangeEntry *ranges,
 							 const int nranges,
 							 const int strategy,
-							 const Oid collid,
 							 WrapperNode *result);
 
 

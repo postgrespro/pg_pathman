@@ -1562,6 +1562,7 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 
 		default:
 			WrongPartType(cb_params->parttype);
+			result = NULL; /* keep compiler happy */
 	}
 
 	/* Fetch function call data */
