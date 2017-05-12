@@ -1294,6 +1294,7 @@ shout_if_prel_is_invalid(const Oid parent_oid,
 
 			default:
 				WrongPartType(expected_part_type);
+				expected_str = NULL; /* keep compiler happy */
 		}
 
 		elog(ERROR, "relation \"%s\" is not partitioned by %s",
