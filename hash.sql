@@ -143,6 +143,9 @@ BEGIN
 	EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %s',
 				   old_partition,
 				   old_constr_name);
+	EXECUTE format('DROP TRIGGER IF EXISTS %s ON %s',
+				   @extschema@.build_update_trigger_name(parent_relid),
+				   old_partition);
 
 	/* Attach the new one */
 	EXECUTE format('ALTER TABLE %s INHERIT %s', new_partition, parent_relid);
@@ -150,6 +153,9 @@ BEGIN
 				   new_partition,
 				   @extschema@.build_check_constraint_name(new_partition::REGCLASS),
 				   old_constr_def);
+	IF @extschema@.has_update_trigger(parent_relid) THEN
+		PERFORM @extschema@.create_single_update_trigger(parent_relid, new_partition);
+	END IF;
 
 	/* Fetch init_callback from 'params' table */
 	WITH stub_callback(stub) as (values (0))

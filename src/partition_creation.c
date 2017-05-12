@@ -1827,14 +1827,33 @@ drop_single_update_trigger_internal(Oid relid,
 	DropStmt	   *n = makeNode(DropStmt);
 	const char	   *relname = get_qualified_rel_name(relid);
 	List		   *namelist = stringToQualifiedNameList(relname);
+	Relation		relation = NULL;
+	ObjectAddress	address;
 
 	namelist = lappend(namelist, makeString((char *) trigname));
+
+	/*
+	 * To avoid warning message about missing trigger we check it beforehand.
+	 * and quit if it doesn't
+	 */
+	address = get_object_address(OBJECT_TRIGGER,
+								 namelist, NIL,
+								 &relation,
+								 AccessExclusiveLock,
+								 true);
+	if (!OidIsValid(address.objectId))
+		return;
+
+	/* Actually remove trigger */
 	n->removeType	= OBJECT_TRIGGER;
-	n->missing_ok	= true;
 	n->objects		= list_make1(namelist);
 	n->arguments	= NIL;
 	n->behavior		= DROP_RESTRICT;  /* default behavior */
-	n->concurrent	= false;
-
+	n->missing_ok	= true;
+	n->concurrent	= false;		
 	RemoveObjects(n);
+
+	/* Release any relcache reference count, but keep lock until commit. */
+	if (relation)
+		heap_close(relation, NoLock);
 }

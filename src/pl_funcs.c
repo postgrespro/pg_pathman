@@ -1527,8 +1527,6 @@ create_update_triggers_internal(Oid relid)
 
 	/* Check that table is partitioned */
 	prel = get_pathman_relation_info(relid);
-	/* TODO: check this only for topmost relid? */
-	// shout_if_prel_is_invalid(relid, prel, PT_ANY);
 	if (!prel)
 		return;
 
