@@ -77,7 +77,9 @@ static bool read_opexpr_const(const OpExpr *opexpr,
 							  const PartRelationInfo *prel,
 							  Datum *value);
 
+#if PG_VERSION_NUM < 100000
 static int oid_cmp(const void *p1, const void *p2);
+#endif
 
 
 /* Validate SQL facade */
@@ -691,8 +693,7 @@ pathman_config_invalidate_parsed_expression(Oid relid)
 
 		/* Form new tuple and perform an update */
 		new_htup = heap_form_tuple(RelationGetDescr(rel), values, nulls);
-		simple_heap_update(rel, &iptr, new_htup);
-		CatalogUpdateIndexes(rel, new_htup);
+		CatalogTupleUpdate(rel, &iptr, new_htup);
 
 		heap_close(rel, RowExclusiveLock);
 	}
@@ -723,8 +724,7 @@ pathman_config_refresh_parsed_expression(Oid relid,
 	rel = heap_open(get_pathman_config_relid(false), RowExclusiveLock);
 
 	htup_new = heap_form_tuple(RelationGetDescr(rel), values, isnull);
-	simple_heap_update(rel, iptr, htup_new);
-	CatalogUpdateIndexes(rel, htup_new);
+	CatalogTupleUpdate(rel, iptr, htup_new);
 
 	heap_close(rel, RowExclusiveLock);
 }
@@ -1122,6 +1122,7 @@ validate_hash_constraint(const Expr *expr,
 	return false;
 }
 
+#if PG_VERSION_NUM < 100000
 /* needed for find_inheritance_children_array() function */
 static int
 oid_cmp(const void *p1, const void *p2)
@@ -1135,6 +1136,7 @@ oid_cmp(const void *p1, const void *p2)
 		return 1;
 	return 0;
 }
+#endif
 
 
 /* Parse cstring and build uint32 representing the version */

@@ -31,6 +31,12 @@
 #include "utils/ruleutils.h"
 #include "utils/syscache.h"
 
+#if PG_VERSION_NUM >= 100000
+#include "utils/regproc.h"
+#include "utils/varlena.h"
+#include <math.h>
+#endif
+
 
 /* Function declarations */
 
@@ -1229,7 +1235,9 @@ drop_table_by_oid(Oid relid)
 	n->removeType	= OBJECT_TABLE;
 	n->missing_ok	= false;
 	n->objects		= list_make1(stringToQualifiedNameList(relname));
+#if PG_VERSION_NUM < 100000
 	n->arguments	= NIL;
+#endif
 	n->behavior		= DROP_RESTRICT;  /* default behavior */
 	n->concurrent	= false;
 

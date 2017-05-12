@@ -175,8 +175,13 @@ tlist_is_var_subset(List *a, List *b)
 		if (!IsA(te->expr, Var) && !IsA(te->expr, RelabelType))
 			continue;
 
+#if PG_VERSION_NUM >= 100000
+		if (!tlist_member_ignore_relabel(te->expr, a))
+			return true;
+#else
 		if (!tlist_member_ignore_relabel((Node *) te->expr, a))
 			return true;
+#endif
 	}
 
 	return false;
@@ -640,7 +645,9 @@ begin_append_common(CustomScanState *node, EState *estate, int eflags)
 {
 	RuntimeAppendState *scan_state = (RuntimeAppendState *) node;
 
+#if PG_VERSION_NUM < 100000
 	node->ss.ps.ps_TupFromTlist = false;
+#endif
 
 	/* Prepare custom expression according to set_set_customscan_references() */
 	scan_state->canon_custom_exprs =
@@ -660,6 +667,7 @@ exec_append_common(CustomScanState *node,
 	for (;;)
 	{
 		/* Fetch next tuple if we're done with Projections */
+#if PG_VERSION_NUM < 100000
 		if (!node->ss.ps.ps_TupFromTlist)
 		{
 			fetch_next_tuple(node); /* use specific callback */
@@ -667,6 +675,7 @@ exec_append_common(CustomScanState *node,
 			if (TupIsNull(scan_state->slot))
 				return NULL;
 		}
+#endif
 
 		if (node->ss.ps.ps_ProjInfo)
 		{
@@ -676,8 +685,13 @@ exec_append_common(CustomScanState *node,
 			ResetExprContext(node->ss.ps.ps_ExprContext);
 
 			node->ss.ps.ps_ProjInfo->pi_exprContext->ecxt_scantuple = scan_state->slot;
+#if PG_VERSION_NUM >= 100000
+			result = ExecProject(node->ss.ps.ps_ProjInfo);
+#else
 			result = ExecProject(node->ss.ps.ps_ProjInfo, &isDone);
+#endif
 
+#if PG_VERSION_NUM < 100000
 			if (isDone != ExprEndResult)
 			{
 				node->ss.ps.ps_TupFromTlist = (isDone == ExprMultipleResult);
@@ -686,6 +700,10 @@ exec_append_common(CustomScanState *node,
 			}
 			else
 				node->ss.ps.ps_TupFromTlist = false;
+#else
+			if (isDone != ExprEndResult)
+				return result;
+#endif
 		}
 		else
 			return scan_state->slot;

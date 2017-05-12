@@ -217,6 +217,19 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 			return;
 
 
+#if PG_VERSION_NUM >= 100000
+		initial_cost_nestloop(root, &workspace, jointype,
+							  outer, inner, /* built paths */
+							  extra);
+
+		nest_path = create_nestloop_path(root, joinrel, jointype, &workspace,
+										 extra, outer, inner,
+										 extra->restrictlist,
+										 build_join_pathkeys(root, joinrel,
+															 jointype,
+															 outer->pathkeys),
+										 required_nestloop);
+#else
 		initial_cost_nestloop(root, &workspace, jointype,
 							  outer, inner, /* built paths */
 							  extra->sjinfo, &extra->semifactors);
@@ -228,6 +241,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 															 jointype,
 															 outer->pathkeys),
 										 required_nestloop);
+#endif
 
 		/* Discard all clauses that are to be evaluated by 'inner' */
 		foreach (rinfo_lc, extra->restrictlist)
@@ -760,6 +774,17 @@ pathman_relcache_hook(Datum arg, Oid relid)
 /*
  * Utility function invoker hook.
  */
+#if PG_VERSION_NUM >= 100000
+void
+pathman_process_utility_hook(PlannedStmt *pstmt,
+							 const char *queryString,
+							 ProcessUtilityContext context,
+							 ParamListInfo params,
+							 QueryEnvironment *queryEnv,
+							 DestReceiver *dest, char *completionTag)
+{
+	Node   *parsetree = pstmt->utilityStmt;
+#else
 void
 pathman_process_utility_hook(Node *parsetree,
 							 const char *queryString,
@@ -768,6 +793,8 @@ pathman_process_utility_hook(Node *parsetree,
 							 DestReceiver *dest,
 							 char *completionTag)
 {
+#endif
+
 	if (IsPathmanReady())
 	{
 		Oid			relation_oid;
@@ -815,6 +842,18 @@ pathman_process_utility_hook(Node *parsetree,
 		}
 	}
 
+#if PG_VERSION_NUM >= 100000
+	/* Call hooks set by other extensions if needed */
+	if (process_utility_hook_next)
+		process_utility_hook_next(pstmt, queryString,
+								  context, params, queryEnv,
+								  dest, completionTag);
+	/* Else call internal implementation */
+	else
+		standard_ProcessUtility(pstmt, queryString,
+								context, params, queryEnv,
+								dest, completionTag);
+#else
 	/* Call hooks set by other extensions if needed */
 	if (process_utility_hook_next)
 		process_utility_hook_next(parsetree, queryString,
@@ -825,4 +864,5 @@ pathman_process_utility_hook(Node *parsetree,
 		standard_ProcessUtility(parsetree, queryString,
 								context, params,
 								dest, completionTag);
+#endif
 }

@@ -13,6 +13,7 @@
 #include "partition_filter.h"
 #include "pathman.h"
 #include "pathman_workers.h"
+#include "compat/pg_compat.h"
 #include "xact_handling.h"
 
 #include "access/htup_details.h"
@@ -34,6 +35,7 @@
 #include "nodes/nodeFuncs.h"
 #include "parser/parse_func.h"
 #include "parser/parse_utilcmd.h"
+#include "parser/parse_relation.h"
 #include "tcop/utility.h"
 #include "utils/builtins.h"
 #include "utils/datum.h"
@@ -684,8 +686,6 @@ create_single_partition_internal(Oid parent_relid,
 
 	/* Elements of the "CREATE TABLE" query tree */
 	RangeVar		   *parent_rv;
-	TableLikeClause		like_clause;
-	CreateStmt			create_stmt;
 	List			   *create_stmts;
 	ListCell		   *lc;
 
@@ -703,43 +703,6 @@ create_single_partition_internal(Oid parent_relid,
 	if (!pathman_config_contains_relation(parent_relid, NULL, NULL, NULL, NULL))
 		elog(ERROR, "table \"%s\" is not partitioned",
 			 get_rel_name_or_relid(parent_relid));
-
-	/* Cache parent's namespace and name */
-	parent_name = get_rel_name(parent_relid);
-	parent_nsp = get_rel_namespace(parent_relid);
-	parent_nsp_name = get_namespace_name(parent_nsp);
-
-	/* Make up parent's RangeVar */
-	parent_rv = makeRangeVar(parent_nsp_name, parent_name, -1);
-
-	Assert(partition_rv);
-
-	/* If no 'tablespace' is provided, get parent's tablespace */
-	if (!tablespace)
-		tablespace = get_tablespace_name(get_rel_tablespace(parent_relid));
-
-	/* Initialize TableLikeClause structure */
-	NodeSetTag(&like_clause, T_TableLikeClause);
-	like_clause.relation		= copyObject(parent_rv);
-	like_clause.options			= CREATE_TABLE_LIKE_DEFAULTS |
-								  CREATE_TABLE_LIKE_INDEXES |
-								  CREATE_TABLE_LIKE_STORAGE;
-
-	/* Initialize CreateStmt structure */
-	NodeSetTag(&create_stmt, T_CreateStmt);
-	create_stmt.relation		= copyObject(partition_rv);
-	create_stmt.tableElts		= list_make1(copyObject(&like_clause));
-	create_stmt.inhRelations	= list_make1(copyObject(parent_rv));
-	create_stmt.ofTypename		= NULL;
-	create_stmt.constraints		= NIL;
-	create_stmt.options			= NIL;
-	create_stmt.oncommit		= ONCOMMIT_NOOP;
-	create_stmt.tablespacename	= tablespace;
-	create_stmt.if_not_exists	= false;
-
-#if defined(PGPRO_EE) && PG_VERSION_NUM >= 90600
-	create_stmt.partition_info	= NULL;
-#endif
 
 	/* Do we have to escalate privileges? */
 	if (need_priv_escalation)
@@ -762,8 +725,23 @@ create_single_partition_internal(Oid parent_relid,
 							   save_sec_context | SECURITY_LOCAL_USERID_CHANGE);
 	}
 
-	/* Generate columns using the parent table */
-	create_stmts = transformCreateStmt(&create_stmt, NULL);
+	/* Cache parent's namespace and name */
+	parent_name = get_rel_name(parent_relid);
+	parent_nsp = get_rel_namespace(parent_relid);
+	parent_nsp_name = get_namespace_name(parent_nsp);
+
+	/* Make up parent's RangeVar */
+	parent_rv = makeRangeVar(parent_nsp_name, parent_name, -1);
+
+	Assert(partition_rv);
+
+	/* If no 'tablespace' is provided, get parent's tablespace */
+	if (!tablespace)
+		tablespace = get_tablespace_name(get_rel_tablespace(parent_relid));
+
+	/* Obtain the sequence of Stmts to create partition and link it to parent */
+	create_stmts = init_createstmts_for_partition(parent_rv, partition_rv,
+												  tablespace);
 
 	/* Create the partition and all required relations */
 	foreach (lc, create_stmts)
@@ -804,12 +782,12 @@ create_single_partition_internal(Oid parent_relid,
 			 * call will stash the objects so created into our
 			 * event trigger context.
 			 */
-			ProcessUtility(cur_stmt,
-						   "we have to provide a query string",
-						   PROCESS_UTILITY_SUBCOMMAND,
-						   NULL,
-						   None_Receiver,
-						   NULL);
+			ProcessUtilityCompat(cur_stmt,
+								 "we have to provide a query string",
+								 PROCESS_UTILITY_SUBCOMMAND,
+								 NULL,
+								 None_Receiver,
+								 NULL);
 		}
 
 		/* Update config one more time */
@@ -841,7 +819,8 @@ create_table_using_stmt(CreateStmt *create_stmt, Oid relowner)
 							 GUC_ACTION_SAVE, true, 0, false);
 
 	/* Create new partition owned by parent's posessor */
-	table_addr = DefineRelation(create_stmt, RELKIND_RELATION, relowner, NULL);
+	table_addr = DefineRelationCompat(create_stmt, RELKIND_RELATION, relowner,
+									  NULL);
 
 	/* Save data about a simple DDL command that was just executed */
 	EventTriggerCollectSimpleCommand(table_addr,
@@ -960,11 +939,8 @@ postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid)
 		/* Build new tuple with parent's ACL */
 		htup = heap_modify_tuple(htup, pg_class_desc, values, nulls, replaces);
 
-		/* Update child's tuple */
-		simple_heap_update(pg_class_rel, &iptr, htup);
-
-		/* Don't forget to update indexes */
-		CatalogUpdateIndexes(pg_class_rel, htup);
+		/* Update child's tuple with related indexes */
+		CatalogTupleUpdate(pg_class_rel, &iptr, htup);
 	}
 
 	systable_endscan(scan);
@@ -1064,11 +1040,8 @@ postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid)
 			subhtup = heap_modify_tuple(subhtup, pg_attribute_desc,
 										values, nulls, replaces);
 
-			/* Update child's tuple */
-			simple_heap_update(pg_attribute_rel, &iptr, subhtup);
-
-			/* Don't forget to update indexes */
-			CatalogUpdateIndexes(pg_attribute_rel, subhtup);
+			/* Update child's tuple and related indexes */
+			CatalogTupleUpdate(pg_attribute_rel, &iptr, subhtup);
 		}
 
 		systable_endscan(subscan);

@@ -8,6 +8,7 @@
  * ------------------------------------------------------------------------
  */
 
+#include "compat/pg_compat.h"
 #include "init.h"
 #include "nodes_common.h"
 #include "pathman.h"
@@ -293,10 +294,10 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 		if (!parts_storage->saved_rel_info)
 			elog(ERROR, "ResultPartsStorage contains no saved_rel_info");
 
-		InitResultRelInfo(child_result_rel_info,
-						  child_rel,
-						  child_rte_idx,
-						  parts_storage->estate->es_instrument);
+		InitResultRelInfoCompat(child_result_rel_info,
+								child_rel,
+								child_rte_idx,
+								parts_storage->estate->es_instrument);
 
 		if (parts_storage->command_type != CMD_DELETE)
 			ExecOpenIndices(child_result_rel_info, parts_storage->speculative_inserts);
@@ -620,7 +621,8 @@ partition_filter_exec(CustomScanState *node)
 		/* Execute expression */
 		tmp_slot = econtext->ecxt_scantuple;
 		econtext->ecxt_scantuple = slot;
-		value = ExecEvalExpr(state->expr_state, econtext, &isnull, &itemIsDone);
+		value = ExecEvalExprCompat(state->expr_state, econtext, &isnull,
+								   &itemIsDone);
 		econtext->ecxt_scantuple = tmp_slot;
 
 		if (isnull)
@@ -812,12 +814,22 @@ prepare_rri_returning_for_insert(EState *estate,
 												  rri_holder));
 
 	/* Build new projection info */
+#if PG_VERSION_NUM >= 100000
+	child_rri->ri_projectReturning =
+			ExecBuildProjectionInfo((List *) ExecInitExpr((Expr *) returning_list,
+														  /* HACK: no PlanState */ NULL),
+									pfstate->tup_convert_econtext,
+									parent_rri->ri_projectReturning->pi_state.resultslot,
+									(PlanState *) pfstate,
+									RelationGetDescr(child_rri->ri_RelationDesc));
+#else
 	child_rri->ri_projectReturning =
 			ExecBuildProjectionInfo((List *) ExecInitExpr((Expr *) returning_list,
 														  /* HACK: no PlanState */ NULL),
 									pfstate->tup_convert_econtext,
 									parent_rri->ri_projectReturning->pi_slot,
 									RelationGetDescr(child_rri->ri_RelationDesc));
+#endif
 }
 
 /* Prepare FDW access structs */

@@ -698,6 +698,7 @@ build_check_constraint_name(PG_FUNCTION_ARGS)
  * ------------------------
  */
 
+
 /*
  * Try to add previously partitioned table to PATHMAN_CONFIG.
  */
@@ -820,8 +821,7 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	pathman_config = heap_open(get_pathman_config_relid(false), RowExclusiveLock);
 
 	htup = heap_form_tuple(RelationGetDescr(pathman_config), values, isnull);
-	simple_heap_insert(pathman_config, htup);
-	CatalogUpdateIndexes(pathman_config, htup);
+	CatalogTupleInsert(pathman_config, htup);
 
 	heap_close(pathman_config, RowExclusiveLock);
 
@@ -1176,7 +1176,7 @@ pathman_update_trigger_func(PG_FUNCTION_ARGS)
 														 source_rel,
 														 new_tuple,
 														 &value_type);
-	value = ExecEvalExpr(expr_state, econtext, &isnull, &itemIsDone);
+	value = ExecEvalExprCompat(expr_state, econtext, &isnull, &itemIsDone);
 	MemoryContextSwitchTo(old_mcxt);
 
 	if (isnull)

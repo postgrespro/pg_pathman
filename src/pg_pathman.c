@@ -210,6 +210,68 @@ get_pathman_config_params_relid(bool invalid_is_ok)
  * ----------------------------------------
  */
 
+#if PG_VERSION_NUM >= 100000
+static List *
+get_all_actual_clauses(List *restrictinfo_list)
+{
+	List	   *result = NIL;
+	ListCell   *l;
+
+	foreach(l, restrictinfo_list)
+	{
+		RestrictInfo *rinfo = (RestrictInfo *) lfirst(l);
+
+		Assert(IsA(rinfo, RestrictInfo));
+
+		result = lappend(result, rinfo->clause);
+	}
+	return result;
+}
+
+#include "optimizer/var.h"
+
+static List *
+make_restrictinfos_from_actual_clauses(PlannerInfo *root,
+									   List *clause_list)
+{
+	List	   *result = NIL;
+	ListCell   *l;
+
+	foreach(l, clause_list)
+	{
+		Expr	   *clause = (Expr *) lfirst(l);
+		bool		pseudoconstant;
+		RestrictInfo *rinfo;
+
+		/*
+		 * It's pseudoconstant if it contains no Vars and no volatile
+		 * functions.  We probably can't see any sublinks here, so
+		 * contain_var_clause() would likely be enough, but for safety use
+		 * contain_vars_of_level() instead.
+		 */
+		pseudoconstant =
+			!contain_vars_of_level((Node *) clause, 0) &&
+			!contain_volatile_functions((Node *) clause);
+		if (pseudoconstant)
+		{
+			/* tell createplan.c to check for gating quals */
+			root->hasPseudoConstantQuals = true;
+		}
+
+		rinfo = make_restrictinfo(clause,
+								  true,
+								  false,
+								  pseudoconstant,
+								  root->qual_security_level,
+								  NULL,
+								  NULL,
+								  NULL);
+		result = lappend(result, rinfo);
+	}
+	return result;
+}
+#endif
+
 /*
  * Creates child relation and adds it to root.
  * Returns child index in simple_rel_array.
@@ -254,7 +316,11 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 	root->simple_rte_array[childRTindex] = child_rte;
 
 	/* Create RelOptInfo for this child (and make some estimates as well) */
+#if PG_VERSION_NUM >= 100000
+	child_rel = build_simple_rel(root, childRTindex, parent_rel);
+#else
 	child_rel = build_simple_rel(root, childRTindex, RELOPT_OTHER_MEMBER_REL);
+#endif
 
 	/* Increase total_table_pages using the 'child_rel' */
 	root->total_table_pages += (double) child_rel->pages;
@@ -701,10 +767,10 @@ wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue)
 			return (Node *) result;
 		}
 		else
-			return copyObject(wrap->orig);
+			return (Node *) copyObject(wrap->orig);
 	}
 	else
-		return copyObject(wrap->orig);
+		return (Node *) copyObject(wrap->orig);
 }
 
 
@@ -1164,7 +1230,11 @@ extract_const(Param *param, WalkerContext *wcxt)
 {
 	ExprState  *estate = ExecInitExpr((Expr *) param, NULL);
 	bool		isnull;
+#if PG_VERSION_NUM >= 100000
+	Datum		value = ExecEvalExpr(estate, wcxt->econtext, &isnull);
+#else
 	Datum		value = ExecEvalExpr(estate, wcxt->econtext, &isnull, NULL);
+#endif
 
 	return makeConst(param->paramtype, param->paramtypmod,
 					 param->paramcollid, get_typlen(param->paramtype),
@@ -1319,6 +1389,20 @@ generate_mergeappend_paths(PlannerInfo *root, RelOptInfo *rel,
 					   *cheapest_total;
 
 			/* Locate the right paths, if they are available. */
+#if PG_VERSION_NUM >= 100000
+			cheapest_startup =
+				get_cheapest_path_for_pathkeys(childrel->pathlist,
+											   pathkeys,
+											   NULL,
+											   STARTUP_COST,
+											   true);
+			cheapest_total =
+				get_cheapest_path_for_pathkeys(childrel->pathlist,
+											   pathkeys,
+											   NULL,
+											   TOTAL_COST,
+											   true);
+#else
 			cheapest_startup =
 				get_cheapest_path_for_pathkeys(childrel->pathlist,
 											   pathkeys,
@@ -1329,6 +1413,7 @@ generate_mergeappend_paths(PlannerInfo *root, RelOptInfo *rel,
 											   pathkeys,
 											   NULL,
 											   TOTAL_COST);
+#endif
 
 			/*
 			 * If we can't find any paths with the right order just use the
@@ -1403,6 +1488,21 @@ generate_mergeappend_paths(PlannerInfo *root, RelOptInfo *rel,
 		else
 		{
 			/* ... and build the MergeAppend paths */
+#if PG_VERSION_NUM >= 100000
+			add_path(rel, (Path *) create_merge_append_path(root,
+															rel,
+															startup_subpaths,
+															pathkeys,
+															NULL,
+															NULL));
+			if (startup_neq_total)
+				add_path(rel, (Path *) create_merge_append_path(root,
+																rel,
+																total_subpaths,
+																pathkeys,
+																NULL,
+																NULL));
+#else
 			add_path(rel, (Path *) create_merge_append_path(root,
 															rel,
 															startup_subpaths,
@@ -1414,6 +1514,7 @@ generate_mergeappend_paths(PlannerInfo *root, RelOptInfo *rel,
 																total_subpaths,
 																pathkeys,
 																NULL));
+#endif
 		}
 	}
 }
@@ -1890,10 +1991,18 @@ get_cheapest_parameterized_child_path(PlannerInfo *root, RelOptInfo *rel,
 	 * parameterization.  If it has exactly the needed parameterization, we're
 	 * done.
 	 */
+#if PG_VERSION_NUM >= 100000
+	cheapest = get_cheapest_path_for_pathkeys(rel->pathlist,
+											  NIL,
+											  required_outer,
+											  TOTAL_COST,
+											  true);
+#else
 	cheapest = get_cheapest_path_for_pathkeys(rel->pathlist,
 											  NIL,
 											  required_outer,
 											  TOTAL_COST);
+#endif
 	Assert(cheapest != NULL);
 	if (bms_equal(PATH_REQ_OUTER(cheapest), required_outer))
 		return cheapest;

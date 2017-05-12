@@ -661,7 +661,11 @@ cook_partitioning_expression(const Oid relid,
 	old_mcxt = MemoryContextSwitchTo(parse_mcxt);
 
 	/* This will fail with elog in case of wrong expression */
+#if PG_VERSION_NUM >= 100000
+	querytree_list = pg_analyze_and_rewrite(NULL/* stub value */, query_string, NULL, 0, NULL);
+#else
 	querytree_list = pg_analyze_and_rewrite(parsetree, query_string, NULL, 0);
+#endif
 	if (list_length(querytree_list) != 1)
 		elog(ERROR, "partitioning expression produced more than 1 query");
 
