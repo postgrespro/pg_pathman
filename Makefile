@@ -35,7 +35,8 @@ REGRESS = pathman_basic \
 		  pathman_runtime_nodes \
 		  pathman_utility_stmt_hooking \
 		  pathman_calamity \
-		  pathman_join_clause
+		  pathman_join_clause \
+		  pathman_mergejoin
 
 EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add
 
