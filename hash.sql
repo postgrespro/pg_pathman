@@ -20,6 +20,9 @@ CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions(
 	tablespaces			TEXT[] DEFAULT NULL)
 RETURNS INTEGER AS
 $$
+DECLARE
+	v_upper_parent		REGCLASS;
+
 BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
 
@@ -44,6 +47,16 @@ BEGIN
 														partitions_count,
 														partition_names,
 														tablespaces);
+
+	/*
+	 * If there is an upper level parent partitioned by pg_pathman and it has
+	 * update triggers then create them too
+	 */
+	v_upper_parent = @extschema@.get_parent_of_partition(parent_relid, false);
+	IF NOT v_upper_parent IS NULL AND @extschema@.has_update_trigger(v_upper_parent)
+	THEN
+		PERFORM @extschema@.create_update_triggers(parent_relid);
+	END IF;
 
 	/* Copy data */
 	IF partition_data = true THEN

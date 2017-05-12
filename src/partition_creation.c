@@ -25,6 +25,7 @@
 #include "catalog/pg_trigger.h"
 #include "catalog/pg_type.h"
 #include "catalog/toasting.h"
+#include "commands/defrem.h"
 #include "commands/event_trigger.h"
 #include "commands/sequence.h"
 #include "commands/tablecmds.h"
@@ -1823,9 +1824,17 @@ void
 drop_single_update_trigger_internal(Oid relid,
 									const char *trigname)
 {
-	Oid				trigoid;
+	DropStmt	   *n = makeNode(DropStmt);
+	const char	   *relname = get_qualified_rel_name(relid);
+	List		   *namelist = stringToQualifiedNameList(relname);
 
-	trigoid = get_trigger_oid(relid, trigname, true);
-	if (OidIsValid(trigoid))
-		RemoveTriggerById(trigoid);
+	namelist = lappend(namelist, makeString((char *) trigname));
+	n->removeType	= OBJECT_TRIGGER;
+	n->missing_ok	= true;
+	n->objects		= list_make1(namelist);
+	n->arguments	= NIL;
+	n->behavior		= DROP_RESTRICT;  /* default behavior */
+	n->concurrent	= false;
+
+	RemoveObjects(n);
 }

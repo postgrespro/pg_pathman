@@ -103,6 +103,7 @@ DECLARE
 	end_value		start_value%TYPE;
 	part_count		INTEGER := 0;
 	i				INTEGER;
+	v_upper_parent	REGCLASS;
 
 BEGIN
 	expression := lower(expression);
@@ -171,6 +172,16 @@ BEGIN
 									NULL);
 	END IF;
 
+	/*
+	 * If there is an upper level parent partitioned by pg_pathman and it has
+	 * update triggers then create them too
+	 */
+	v_upper_parent = @extschema@.get_parent_of_partition(parent_relid, false);
+	IF NOT v_upper_parent IS NULL AND @extschema@.has_update_trigger(v_upper_parent)
+	THEN
+		PERFORM @extschema@.create_update_triggers(parent_relid);
+	END IF;
+
 	/* Relocate data if asked to */
 	IF partition_data = true THEN
 		PERFORM @extschema@.set_enable_parent(parent_relid, false);
@@ -202,6 +213,7 @@ DECLARE
 	end_value		start_value%TYPE;
 	part_count		INTEGER := 0;
 	i				INTEGER;
+	v_upper_parent	REGCLASS;
 
 BEGIN
 	expression := lower(expression);
@@ -265,6 +277,16 @@ BEGIN
 						@extschema@.generate_range_bounds(start_value, p_interval, p_count),
 						NULL,
 						NULL);
+	END IF;
+
+	/*
+	 * If there is an upper level parent partitioned by pg_pathman and it has
+	 * update triggers then create them too
+	 */
+	v_upper_parent = @extschema@.get_parent_of_partition(parent_relid, false);
+	IF NOT v_upper_parent IS NULL AND @extschema@.has_update_trigger(v_upper_parent)
+	THEN
+		PERFORM @extschema@.create_update_triggers(parent_relid);
 	END IF;
 
 	/* Relocate data if asked to */

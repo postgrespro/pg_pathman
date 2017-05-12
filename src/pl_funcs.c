@@ -1607,20 +1607,24 @@ drop_update_triggers(PG_FUNCTION_ARGS)
 	Oid					relid = PG_GETARG_OID(0),
 						parent;
 	PartParentSearch	parent_search;
+	bool				force = PG_GETARG_BOOL(1);
 
-	/*
-	 * We can drop triggers only if relid is the topmost parent table (or if
-	 * its parent doesn't have update triggers (which should never happen in
-	 * the ideal world)
-	 */
-	parent = get_parent_of_partition(relid, &parent_search);
-	if (parent_search == PPS_ENTRY_PART_PARENT)
-		if(has_update_trigger_internal(parent))
-			ereport(ERROR,
-					(errmsg("Parent table must not have an update trigger"),
-					 errhint("Try to perform SELECT %s.drop_triggers('%s');",
-							 get_namespace_name(get_pathman_schema()),
-							 get_qualified_rel_name(parent))));
+	if (!force)
+	{
+		/*
+		 * We can drop triggers only if relid is the topmost parent table (or if
+		 * its parent doesn't have update triggers (which should never happen in
+		 * the ideal world)
+		 */
+		parent = get_parent_of_partition(relid, &parent_search);
+		if (parent_search == PPS_ENTRY_PART_PARENT)
+			if(has_update_trigger_internal(parent))
+				ereport(ERROR,
+						(errmsg("Parent table must not have an update trigger"),
+						 errhint("Try to perform SELECT %s.drop_triggers('%s');",
+								 get_namespace_name(get_pathman_schema()),
+								 get_qualified_rel_name(parent))));
+	}
 
 	/* Recursively drop triggers */
 	drop_update_triggers_internal(relid);

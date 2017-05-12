@@ -533,7 +533,8 @@ LANGUAGE plpgsql;
  * Drop triggers
  */
 CREATE OR REPLACE FUNCTION @extschema@.drop_triggers(
-	parent_relid	REGCLASS)
+	parent_relid	REGCLASS,
+	force			BOOL DEFAULT FALSE)
 RETURNS VOID AS 'pg_pathman', 'drop_update_triggers'
 LANGUAGE C STRICT;
 
@@ -560,7 +561,7 @@ BEGIN
 	PERFORM @extschema@.prevent_relation_modification(parent_relid);
 
 	/* First, drop all triggers */
-	PERFORM @extschema@.drop_triggers(parent_relid);
+	PERFORM @extschema@.drop_triggers(parent_relid, TRUE);
 
 	SELECT count(*) FROM @extschema@.pathman_config
 	WHERE partrel = parent_relid INTO conf_num;
