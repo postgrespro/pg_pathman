@@ -160,7 +160,7 @@ typedef struct
 #define WcxtHasExprContext(wcxt) ( (wcxt)->econtext )
 
 /* Examine expression in order to select partitions */
-WrapperNode *walk_expr_tree(Expr *expr, WalkerContext *context);
+WrapperNode *walk_expr_tree(Expr *expr, const WalkerContext *context);
 
 
 void select_range_partitions(const Datum value,
