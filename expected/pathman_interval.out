@@ -4,7 +4,6 @@ CREATE SCHEMA test_interval;
 /* Range partitions for INT2 type */
 CREATE TABLE test_interval.abc (id INT2 NOT NULL);
 SELECT create_range_partitions('test_interval.abc', 'id', 0, 100, 2);
-NOTICE:  sequence "abc_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                        2
@@ -272,5 +271,4 @@ ERROR:  table "test_interval.abc" is not partitioned by RANGE
 DROP TABLE test_interval.abc CASCADE;
 NOTICE:  drop cascades to 3 other objects
 DROP SCHEMA test_interval CASCADE;
-NOTICE:  drop cascades to sequence test_interval.abc_seq
 DROP EXTENSION pg_pathman;

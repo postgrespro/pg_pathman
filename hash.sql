@@ -18,8 +18,7 @@ CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions(
 	partition_data		BOOLEAN DEFAULT TRUE,
 	partition_names		TEXT[] DEFAULT NULL,
 	tablespaces			TEXT[] DEFAULT NULL)
-RETURNS INTEGER AS
-$$
+RETURNS INTEGER AS $$
 BEGIN
 	expression := lower(expression);
 	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
@@ -59,8 +58,7 @@ CREATE OR REPLACE FUNCTION @extschema@.replace_hash_partition(
 	old_partition		REGCLASS,
 	new_partition		REGCLASS,
 	lock_parent			BOOL DEFAULT TRUE)
-RETURNS REGCLASS AS
-$$
+RETURNS REGCLASS AS $$
 DECLARE
 	parent_relid		REGCLASS;
 	old_constr_name		TEXT;		/* name of old_partition's constraint */
@@ -142,8 +140,7 @@ BEGIN
 
 	RETURN new_partition;
 END
-$$
-LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 /*
  * Just create HASH partitions, called by create_hash_partitions().

@@ -13,7 +13,6 @@ INSERT INTO test_cte.range_rel (dt, txt)
 SELECT g, md5(g::TEXT)
 FROM generate_series('2015-01-01', '2015-04-30', '1 day'::interval) AS g;
 SELECT create_range_partitions('test_cte.range_rel', 'DT', '2015-01-01'::DATE, '1 month'::INTERVAL);
-NOTICE:  sequence "range_rel_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                        4
@@ -80,7 +79,6 @@ INSERT INTO test_cte.cte_del_xacts_specdata VALUES (1, 1, 1, current_timestamp);
 /* create 2 partitions */
 SELECT create_range_partitions('test_cte.cte_del_xacts'::regclass, 'pdate',
 							   '2016-01-01'::date, '50 days'::interval);
-NOTICE:  sequence "cte_del_xacts_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                        2
@@ -270,5 +268,5 @@ SELECT * FROM test;
 (4 rows)
 
 DROP SCHEMA test_cte CASCADE;
-NOTICE:  drop cascades to 5 other objects
+NOTICE:  drop cascades to 3 other objects
 DROP EXTENSION pg_pathman;

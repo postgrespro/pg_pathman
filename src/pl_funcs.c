@@ -20,7 +20,9 @@
 
 #include "access/tupconvert.h"
 #include "access/htup_details.h"
+#include "catalog/dependency.h"
 #include "catalog/indexing.h"
+#include "catalog/namespace.h"
 #include "catalog/pg_inherits_fn.h"
 #include "catalog/pg_type.h"
 #include "commands/tablespace.h"
@@ -860,6 +862,30 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 			FreeErrorData(edata);
 		}
 		PG_END_TRY();
+	}
+
+	/* Check if naming sequence exists */
+	if (parttype == PT_RANGE)
+	{
+		RangeVar   *naming_seq_rv;
+		Oid			naming_seq;
+
+		naming_seq_rv = makeRangeVar(get_namespace_name(get_rel_namespace(relid)),
+									 build_sequence_name_internal(relid),
+									 -1);
+
+		naming_seq = RangeVarGetRelid(naming_seq_rv, AccessShareLock, true);
+		if (OidIsValid(naming_seq))
+		{
+			ObjectAddress	parent,
+							sequence;
+
+			ObjectAddressSet(parent, RelationRelationId, relid);
+			ObjectAddressSet(sequence, RelationRelationId, naming_seq);
+
+			/* Now this naming sequence is a "part" of partitioned relation */
+			recordDependencyOn(&sequence, &parent, DEPENDENCY_AUTO);
+		}
 	}
 
 	PG_RETURN_BOOL(true);

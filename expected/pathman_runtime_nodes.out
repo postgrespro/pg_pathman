@@ -263,7 +263,6 @@ create index on test.runtime_test_3_0 (id);
 create table test.runtime_test_4(val text, id int not null);
 insert into test.runtime_test_4(id, val) select * from generate_series(1, 10000) k, md5(k::text);
 select pathman.create_range_partitions('test.runtime_test_4', 'id', 1, 2000);
-NOTICE:  sequence "runtime_test_4_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                        5
@@ -409,6 +408,6 @@ where id = any (select generate_series(-10, -1)); /* should be empty */
 set enable_hashjoin = on;
 set enable_mergejoin = on;
 DROP SCHEMA test CASCADE;
-NOTICE:  drop cascades to 37 other objects
+NOTICE:  drop cascades to 36 other objects
 DROP EXTENSION pg_pathman CASCADE;
 DROP SCHEMA pathman CASCADE;

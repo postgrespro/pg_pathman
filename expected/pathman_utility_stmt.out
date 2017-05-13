@@ -13,7 +13,6 @@ INSERT INTO copy_stmt_hooking.test SELECT generate_series(1, 20), 'comment';
 CREATE INDEX ON copy_stmt_hooking.test(val);
 /* test for RANGE partitioning */
 SELECT create_range_partitions('copy_stmt_hooking.test', 'val', 1, 5);
-NOTICE:  sequence "test_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                        4
@@ -268,7 +267,6 @@ SELECT create_range_partitions('copy_stmt_hooking.test2',
 	'2017-01-01 00:00:00'::timestamp,
 	interval '1 hour', 5, false
 );
-NOTICE:  sequence "test2_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                        5
@@ -282,7 +280,7 @@ SELECT COUNT(*) FROM copy_stmt_hooking.test2;
 (1 row)
 
 DROP SCHEMA copy_stmt_hooking CASCADE;
-NOTICE:  drop cascades to 798 other objects
+NOTICE:  drop cascades to 796 other objects
 /*
  * Test auto check constraint renaming
  */

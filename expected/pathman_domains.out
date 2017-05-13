@@ -5,7 +5,6 @@ CREATE DOMAIN domains.dom_test AS numeric CHECK (value < 1200);
 CREATE TABLE domains.dom_table(val domains.dom_test NOT NULL);
 INSERT INTO domains.dom_table SELECT generate_series(1, 999);
 SELECT create_range_partitions('domains.dom_table', 'val', 1, 100);
-NOTICE:  sequence "dom_table_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                       10
@@ -125,5 +124,5 @@ ORDER BY "partition"::TEXT;
 (5 rows)
 
 DROP SCHEMA domains CASCADE;
-NOTICE:  drop cascades to 8 other objects
+NOTICE:  drop cascades to 7 other objects
 DROP EXTENSION pg_pathman CASCADE;

@@ -8,19 +8,6 @@
  * ------------------------------------------------------------------------
  */
 
-CREATE OR REPLACE FUNCTION @extschema@.create_or_replace_sequence(
-	parent_relid	REGCLASS,
-	OUT seq_name	TEXT)
-AS $$
-BEGIN
-	seq_name := @extschema@.build_sequence_name(parent_relid);
-
-	EXECUTE format('DROP SEQUENCE IF EXISTS %s', seq_name);
-	EXECUTE format('CREATE SEQUENCE %s START 1', seq_name);
-END
-$$
-LANGUAGE plpgsql;
-
 /*
  * Check RANGE partition boundaries.
  */
@@ -29,8 +16,7 @@ CREATE OR REPLACE FUNCTION @extschema@.check_boundaries(
 	expression		TEXT,
 	start_value		ANYELEMENT,
 	end_value		ANYELEMENT)
-RETURNS VOID AS
-$$
+RETURNS VOID AS $$
 DECLARE
 	min_value		start_value%TYPE;
 	max_value		start_value%TYPE;
@@ -70,8 +56,7 @@ CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions(
 	p_interval		INTERVAL,
 	p_count			INTEGER DEFAULT NULL,
 	partition_data	BOOLEAN DEFAULT TRUE)
-RETURNS INTEGER AS
-$$
+RETURNS INTEGER AS $$
 DECLARE
 	rows_count		BIGINT;
 	value_type		REGTYPE;
@@ -133,12 +118,12 @@ BEGIN
 			expression;
 	END IF;
 
+	/* Create sequence for child partitions names */
+	PERFORM @extschema@.create_naming_sequence(parent_relid);
+
 	/* Insert new entry to pathman config */
 	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression,
 											  p_interval::TEXT);
-
-	/* Create sequence for child partitions names */
-	PERFORM @extschema@.create_or_replace_sequence(parent_relid);
 
 	IF p_count != 0 THEN
 		part_count := @extschema@.create_range_partitions_internal(
@@ -172,8 +157,7 @@ CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions(
 	p_interval		ANYELEMENT,
 	p_count			INTEGER DEFAULT NULL,
 	partition_data	BOOLEAN DEFAULT TRUE)
-RETURNS INTEGER AS
-$$
+RETURNS INTEGER AS $$
 DECLARE
 	rows_count		BIGINT;
 	max_value		start_value%TYPE;
@@ -232,12 +216,12 @@ BEGIN
 											 end_value);
 	END IF;
 
+	/* Create sequence for child partitions names */
+	PERFORM @extschema@.create_naming_sequence(parent_relid);
+
 	/* Insert new entry to pathman config */
 	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression,
 											  p_interval::TEXT);
-
-	/* Create sequence for child partitions names */
-	PERFORM @extschema@.create_or_replace_sequence(parent_relid);
 
 	IF p_count != 0 THEN
 		part_count := @extschema@.create_range_partitions_internal(
@@ -271,8 +255,7 @@ CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions(
 	partition_names	TEXT[] DEFAULT NULL,
 	tablespaces		TEXT[] DEFAULT NULL,
 	partition_data	BOOLEAN DEFAULT TRUE)
-RETURNS INTEGER AS
-$$
+RETURNS INTEGER AS $$
 DECLARE
 	part_count		INTEGER := 0;
 
@@ -296,11 +279,11 @@ BEGIN
 										 bounds[0],
 										 bounds[array_length(bounds, 1) - 1]);
 
+	/* Create sequence for child partitions names */
+	PERFORM @extschema@.create_naming_sequence(parent_relid);
+
 	/* Insert new entry to pathman config */
 	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression, NULL);
-
-	/* Create sequence for child partitions names */
-	PERFORM @extschema@.create_or_replace_sequence(parent_relid);
 
 	/* Create partitions */
 	part_count := @extschema@.create_range_partitions_internal(parent_relid,
@@ -331,8 +314,7 @@ CREATE OR REPLACE FUNCTION @extschema@.create_partitions_from_range(
 	end_value		ANYELEMENT,
 	p_interval		ANYELEMENT,
 	partition_data	BOOLEAN DEFAULT TRUE)
-RETURNS INTEGER AS
-$$
+RETURNS INTEGER AS $$
 DECLARE
 	part_count		INTEGER := 0;
 
@@ -348,12 +330,12 @@ BEGIN
 										 start_value,
 										 end_value);
 
+	/* Create sequence for child partitions names */
+	PERFORM @extschema@.create_naming_sequence(parent_relid);
+
 	/* Insert new entry to pathman config */
 	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression,
 											  p_interval::TEXT);
-
-	/* Create sequence for child partitions names */
-	PERFORM @extschema@.create_or_replace_sequence(parent_relid);
 
 	WHILE start_value <= end_value
 	LOOP
@@ -389,8 +371,7 @@ CREATE OR REPLACE FUNCTION @extschema@.create_partitions_from_range(
 	end_value		ANYELEMENT,
 	p_interval		INTERVAL,
 	partition_data	BOOLEAN DEFAULT TRUE)
-RETURNS INTEGER AS
-$$
+RETURNS INTEGER AS $$
 DECLARE
 	part_count		INTEGER := 0;
 
@@ -406,12 +387,12 @@ BEGIN
 										 start_value,
 										 end_value);
 
+	/* Create sequence for child partitions names */
+	PERFORM @extschema@.create_naming_sequence(parent_relid);
+
 	/* Insert new entry to pathman config */
 	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression,
 											  p_interval::TEXT);
-
-	/* Create sequence for child partitions names */
-	PERFORM @extschema@.create_or_replace_sequence(parent_relid);
 
 	WHILE start_value <= end_value
 	LOOP
@@ -450,8 +431,7 @@ CREATE OR REPLACE FUNCTION @extschema@.split_range_partition(
 	partition_name	TEXT DEFAULT NULL,
 	tablespace		TEXT DEFAULT NULL,
 	OUT p_range		ANYARRAY)
-RETURNS ANYARRAY AS
-$$
+RETURNS ANYARRAY AS $$
 DECLARE
 	parent_relid	REGCLASS;
 	part_type		INTEGER;
@@ -530,8 +510,7 @@ BEGIN
 				   check_name,
 				   check_cond);
 END
-$$
-LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 /*
  * The special case of merging two partitions
@@ -539,8 +518,7 @@ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION @extschema@.merge_range_partitions(
 	partition1		REGCLASS,
 	partition2		REGCLASS)
-RETURNS VOID AS
-$$
+RETURNS VOID AS $$
 BEGIN
 	PERFORM @extschema@.merge_range_partitions(array[partition1, partition2]::regclass[]);
 END
@@ -553,8 +531,7 @@ CREATE OR REPLACE FUNCTION @extschema@.append_range_partition(
 	parent_relid	REGCLASS,
 	partition_name	TEXT DEFAULT NULL,
 	tablespace		TEXT DEFAULT NULL)
-RETURNS TEXT AS
-$$
+RETURNS TEXT AS $$
 DECLARE
 	part_expr_type	REGTYPE;
 	part_name		TEXT;
@@ -592,8 +569,7 @@ BEGIN
 
 	RETURN part_name;
 END
-$$
-LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 /*
  * Spawn logic for append_partition(). We have to
@@ -608,8 +584,7 @@ CREATE OR REPLACE FUNCTION @extschema@.append_partition_internal(
 	p_range			ANYARRAY DEFAULT NULL,
 	partition_name	TEXT DEFAULT NULL,
 	tablespace		TEXT DEFAULT NULL)
-RETURNS TEXT AS
-$$
+RETURNS TEXT AS $$
 DECLARE
 	part_expr_type	REGTYPE;
 	part_name		TEXT;
@@ -651,8 +626,7 @@ BEGIN
 
 	RETURN part_name;
 END
-$$
-LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 /*
  * Prepend new partition.
@@ -661,8 +635,7 @@ CREATE OR REPLACE FUNCTION @extschema@.prepend_range_partition(
 	parent_relid	REGCLASS,
 	partition_name	TEXT DEFAULT NULL,
 	tablespace		TEXT DEFAULT NULL)
-RETURNS TEXT AS
-$$
+RETURNS TEXT AS $$
 DECLARE
 	part_expr_type	REGTYPE;
 	part_name		TEXT;
@@ -700,8 +673,7 @@ BEGIN
 
 	RETURN part_name;
 END
-$$
-LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 /*
  * Spawn logic for prepend_partition(). We have to
@@ -716,8 +688,7 @@ CREATE OR REPLACE FUNCTION @extschema@.prepend_partition_internal(
 	p_range			ANYARRAY DEFAULT NULL,
 	partition_name	TEXT DEFAULT NULL,
 	tablespace		TEXT DEFAULT NULL)
-RETURNS TEXT AS
-$$
+RETURNS TEXT AS $$
 DECLARE
 	part_expr_type	REGTYPE;
 	part_name		TEXT;
@@ -759,8 +730,7 @@ BEGIN
 
 	RETURN part_name;
 END
-$$
-LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 /*
  * Add new partition
@@ -771,8 +741,7 @@ CREATE OR REPLACE FUNCTION @extschema@.add_range_partition(
 	end_value		ANYELEMENT,
 	partition_name	TEXT DEFAULT NULL,
 	tablespace		TEXT DEFAULT NULL)
-RETURNS TEXT AS
-$$
+RETURNS TEXT AS $$
 DECLARE
 	part_name		TEXT;
 
@@ -802,8 +771,7 @@ BEGIN
 
 	RETURN part_name;
 END
-$$
-LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 
 /*
@@ -812,8 +780,7 @@ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION @extschema@.drop_range_partition(
 	partition_relid	REGCLASS,
 	delete_data		BOOLEAN DEFAULT TRUE)
-RETURNS TEXT AS
-$$
+RETURNS TEXT AS $$
 DECLARE
 	parent_relid	REGCLASS;
 	part_name		TEXT;
@@ -865,8 +832,7 @@ BEGIN
 
 	RETURN part_name;
 END
-$$
-LANGUAGE plpgsql
+$$ LANGUAGE plpgsql
 SET pg_pathman.enable_partitionfilter = off; /* ensures that PartitionFilter is OFF */
 
 /*
@@ -877,8 +843,7 @@ CREATE OR REPLACE FUNCTION @extschema@.attach_range_partition(
 	partition_relid	REGCLASS,
 	start_value		ANYELEMENT,
 	end_value		ANYELEMENT)
-RETURNS TEXT AS
-$$
+RETURNS TEXT AS $$
 DECLARE
 	part_expr			TEXT;
 	rel_persistence		CHAR;
@@ -947,16 +912,14 @@ BEGIN
 
 	RETURN partition_relid;
 END
-$$
-LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 /*
  * Detach range partition
  */
 CREATE OR REPLACE FUNCTION @extschema@.detach_range_partition(
 	partition_relid	REGCLASS)
-RETURNS TEXT AS
-$$
+RETURNS TEXT AS $$
 DECLARE
 	parent_relid	REGCLASS;
 	part_type		INTEGER;
@@ -994,8 +957,7 @@ BEGIN
 
 	RETURN partition_relid;
 END
-$$
-LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 
 /*

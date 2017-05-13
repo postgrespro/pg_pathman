@@ -21,7 +21,6 @@ CREATE TABLE calamity.part_test(val serial);
 /* test pg_pathman's cache */
 INSERT INTO calamity.part_test SELECT generate_series(1, 30);
 SELECT create_range_partitions('calamity.part_test', 'val', 1, 10);
-NOTICE:  sequence "part_test_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                        3
@@ -704,7 +703,6 @@ SELECT count(*) FROM pathman_config_params WHERE partrel = 'calamity.to_be_disab
 /* check function get_part_range_by_idx() */
 CREATE TABLE calamity.test_range_idx(val INT4 NOT NULL);
 SELECT create_range_partitions('calamity.test_range_idx', 'val', 1, 10, 1);
-NOTICE:  sequence "test_range_idx_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                        1
@@ -731,7 +729,6 @@ NOTICE:  drop cascades to table calamity.test_range_idx_1
 /* check function get_part_range_by_oid() */
 CREATE TABLE calamity.test_range_oid(val INT4 NOT NULL);
 SELECT create_range_partitions('calamity.test_range_oid', 'val', 1, 10, 1);
-NOTICE:  sequence "test_range_oid_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                        1
@@ -759,14 +756,12 @@ ERROR:  cannot merge partitions
 CREATE TABLE calamity.merge_test_a(val INT4 NOT NULL);
 CREATE TABLE calamity.merge_test_b(val INT4 NOT NULL);
 SELECT create_range_partitions('calamity.merge_test_a', 'val', 1, 10, 2);
-NOTICE:  sequence "merge_test_a_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                        2
 (1 row)
 
 SELECT create_range_partitions('calamity.merge_test_b', 'val', 1, 10, 2);
-NOTICE:  sequence "merge_test_b_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                        2
@@ -824,7 +819,7 @@ SELECT count(*) FROM pg_trigger WHERE tgrelid = 'calamity.trig_test_tbl_1'::REGC
 DROP TABLE calamity.trig_test_tbl CASCADE;
 NOTICE:  drop cascades to 2 other objects
 DROP SCHEMA calamity CASCADE;
-NOTICE:  drop cascades to 20 other objects
+NOTICE:  drop cascades to 15 other objects
 DROP EXTENSION pg_pathman;
 /*
  * -------------------------------------
@@ -838,7 +833,6 @@ SET pg_pathman.enable_bounds_cache = false;
 /* check view pathman_cache_stats */
 CREATE TABLE calamity.test_pathman_cache_stats(val NUMERIC NOT NULL);
 SELECT create_range_partitions('calamity.test_pathman_cache_stats', 'val', 1, 10, 10);
-NOTICE:  sequence "test_pathman_cache_stats_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                       10
@@ -925,7 +919,6 @@ SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
 
 DROP TABLE calamity.test_pathman_cache_stats;
 DROP SCHEMA calamity CASCADE;
-NOTICE:  drop cascades to sequence calamity.test_pathman_cache_stats_seq
 DROP EXTENSION pg_pathman;
 /*
  * ------------------------------------------
@@ -937,7 +930,6 @@ CREATE EXTENSION pg_pathman;
 /* check function pathman_cache_search_relid() */
 CREATE TABLE calamity.survivor(val INT NOT NULL);
 SELECT create_range_partitions('calamity.survivor', 'val', 1, 10, 2);
-NOTICE:  sequence "survivor_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                        2
@@ -1000,5 +992,4 @@ EXPLAIN (COSTS OFF) SELECT * FROM calamity.survivor;			/* OK */
 DROP TABLE calamity.survivor CASCADE;
 NOTICE:  drop cascades to 2 other objects
 DROP SCHEMA calamity CASCADE;
-NOTICE:  drop cascades to sequence calamity.survivor_seq
 DROP EXTENSION pg_pathman;

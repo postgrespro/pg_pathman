@@ -135,7 +135,6 @@ SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DAT
 ERROR:  partitioning key "dt" must be marked NOT NULL
 ALTER TABLE test.range_rel ALTER COLUMN dt SET NOT NULL;
 SELECT pathman.create_range_partitions('test.range_rel', 'DT', '2015-01-01'::DATE, '1 month'::INTERVAL);
-NOTICE:  sequence "range_rel_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                        4
@@ -157,7 +156,6 @@ CREATE TABLE test.num_range_rel (
 	id	SERIAL PRIMARY KEY,
 	txt	TEXT);
 SELECT pathman.create_range_partitions('test.num_range_rel', 'id', 0, 1000, 4);
-NOTICE:  sequence "num_range_rel_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                        4
@@ -193,7 +191,6 @@ SELECT COUNT(*) FROM ONLY test.num_range_rel;
 CREATE TABLE test.improved_dummy (id BIGSERIAL, name TEXT NOT NULL);
 INSERT INTO test.improved_dummy (name) SELECT md5(g::TEXT) FROM generate_series(1, 100) as g;
 SELECT pathman.create_range_partitions('test.improved_dummy', 'id', 1, 10);
-NOTICE:  sequence "improved_dummy_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                       10
@@ -336,7 +333,6 @@ NOTICE:  drop cascades to 2 other objects
 CREATE TABLE test.insert_into_select(val int NOT NULL);
 INSERT INTO test.insert_into_select SELECT generate_series(1, 100);
 SELECT pathman.create_range_partitions('test.insert_into_select', 'val', 1, 20);
-NOTICE:  sequence "insert_into_select_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                        5
@@ -394,7 +390,6 @@ NOTICE:  drop cascades to 5 other objects
 CREATE TABLE test.insert_date_test(val DATE NOT NULL);
 SELECT pathman.create_partitions_from_range('test.insert_date_test', 'val',
 											date '20161001', date '20170101', interval '1 month');
-NOTICE:  sequence "insert_date_test_seq" does not exist, skipping
  create_partitions_from_range 
 ------------------------------
                             4
@@ -1425,7 +1420,6 @@ CREATE TABLE test.zero(
 	value	INT NOT NULL);
 INSERT INTO test.zero SELECT g, g FROM generate_series(1, 100) as g;
 SELECT pathman.create_range_partitions('test.zero', 'value', 50, 10, 0);
-NOTICE:  sequence "zero_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                        0
@@ -1754,7 +1748,6 @@ CREATE TABLE test."RangeRel" (
 INSERT INTO test."RangeRel" (dt, txt)
 SELECT g, md5(g::TEXT) FROM generate_series('2015-01-01', '2015-01-03', '1 day'::interval) as g;
 SELECT pathman.create_range_partitions('test."RangeRel"', 'dt', '2015-01-01'::DATE, '1 day'::INTERVAL);
-NOTICE:  sequence "RangeRel_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                        3
@@ -2061,7 +2054,6 @@ NOTICE:  drop cascades to 3 other objects
 CREATE TABLE test.special_case_1_ind_o_s(val serial, comment text);
 INSERT INTO test.special_case_1_ind_o_s SELECT generate_series(1, 200), NULL;
 SELECT create_range_partitions('test.special_case_1_ind_o_s', 'val', 1, 50);
-NOTICE:  sequence "special_case_1_ind_o_s_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                        4
@@ -2119,7 +2111,6 @@ CREATE TABLE test.index_on_childs(c1 integer not null, c2 integer);
 CREATE INDEX ON test.index_on_childs(c2);
 INSERT INTO test.index_on_childs SELECT i, (random()*10000)::integer FROM generate_series(1, 10000) i;
 SELECT create_range_partitions('test.index_on_childs', 'c1', 1, 1000, 0, false);
-NOTICE:  sequence "index_on_childs_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                        0
@@ -2202,6 +2193,6 @@ ORDER BY partition;
 DROP TABLE test.provided_part_names CASCADE;
 NOTICE:  drop cascades to 2 other objects
 DROP SCHEMA test CASCADE;
-NOTICE:  drop cascades to 47 other objects
+NOTICE:  drop cascades to 38 other objects
 DROP EXTENSION pg_pathman CASCADE;
 DROP SCHEMA pathman CASCADE;
