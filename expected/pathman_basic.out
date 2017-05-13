@@ -564,6 +564,80 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (-1, -1, -1, NU
    One-Time Filter: false
 (2 rows)
 
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > ANY (ARRAY[1500, 2200]);
+                      QUERY PLAN                       
+-------------------------------------------------------
+ Append
+   ->  Seq Scan on num_range_rel_2
+         Filter: (id > ANY ('{1500,2200}'::integer[]))
+   ->  Seq Scan on num_range_rel_3
+   ->  Seq Scan on num_range_rel_4
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > ANY (ARRAY[100, 1500]);
+                      QUERY PLAN                      
+------------------------------------------------------
+ Append
+   ->  Seq Scan on num_range_rel_1
+         Filter: (id > ANY ('{100,1500}'::integer[]))
+   ->  Seq Scan on num_range_rel_2
+   ->  Seq Scan on num_range_rel_3
+   ->  Seq Scan on num_range_rel_4
+(6 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > ALL (ARRAY[1500, 2200]);
+                      QUERY PLAN                       
+-------------------------------------------------------
+ Append
+   ->  Seq Scan on num_range_rel_3
+         Filter: (id > ALL ('{1500,2200}'::integer[]))
+   ->  Seq Scan on num_range_rel_4
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > ALL (ARRAY[100, 1500]);
+                      QUERY PLAN                      
+------------------------------------------------------
+ Append
+   ->  Seq Scan on num_range_rel_2
+         Filter: (id > ALL ('{100,1500}'::integer[]))
+   ->  Seq Scan on num_range_rel_3
+   ->  Seq Scan on num_range_rel_4
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id = ANY (ARRAY[1500, 2200]);
+                      QUERY PLAN                       
+-------------------------------------------------------
+ Append
+   ->  Seq Scan on num_range_rel_2
+         Filter: (id = ANY ('{1500,2200}'::integer[]))
+   ->  Seq Scan on num_range_rel_3
+         Filter: (id = ANY ('{1500,2200}'::integer[]))
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id = ANY (ARRAY[100, 1500]);
+                      QUERY PLAN                      
+------------------------------------------------------
+ Append
+   ->  Seq Scan on num_range_rel_1
+         Filter: (id = ANY ('{100,1500}'::integer[]))
+   ->  Seq Scan on num_range_rel_2
+         Filter: (id = ANY ('{100,1500}'::integer[]))
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id = ALL (ARRAY[1500, 2200]);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id = ALL (ARRAY[100, 1500]);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt > '2015-02-15';
                                    QUERY PLAN                                   
 --------------------------------------------------------------------------------
@@ -695,6 +769,90 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (0, 0, 0);
 (3 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (NULL::int, NULL, NULL);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value > ANY (ARRAY[1, 2]);
+                     QUERY PLAN                     
+----------------------------------------------------
+ Append
+   ->  Seq Scan on hash_rel_0
+         Filter: (value > ANY ('{1,2}'::integer[]))
+   ->  Seq Scan on hash_rel_1
+         Filter: (value > ANY ('{1,2}'::integer[]))
+   ->  Seq Scan on hash_rel_2
+         Filter: (value > ANY ('{1,2}'::integer[]))
+(7 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value > ANY (ARRAY[1, 2, 3, 4, 5]);
+                        QUERY PLAN                        
+----------------------------------------------------------
+ Append
+   ->  Seq Scan on hash_rel_0
+         Filter: (value > ANY ('{1,2,3,4,5}'::integer[]))
+   ->  Seq Scan on hash_rel_1
+         Filter: (value > ANY ('{1,2,3,4,5}'::integer[]))
+   ->  Seq Scan on hash_rel_2
+         Filter: (value > ANY ('{1,2,3,4,5}'::integer[]))
+(7 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value > ALL (ARRAY[1, 2]);
+                     QUERY PLAN                     
+----------------------------------------------------
+ Append
+   ->  Seq Scan on hash_rel_0
+         Filter: (value > ALL ('{1,2}'::integer[]))
+   ->  Seq Scan on hash_rel_1
+         Filter: (value > ALL ('{1,2}'::integer[]))
+   ->  Seq Scan on hash_rel_2
+         Filter: (value > ALL ('{1,2}'::integer[]))
+(7 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value > ALL (ARRAY[1, 2, 3, 4, 5]);
+                        QUERY PLAN                        
+----------------------------------------------------------
+ Append
+   ->  Seq Scan on hash_rel_0
+         Filter: (value > ALL ('{1,2,3,4,5}'::integer[]))
+   ->  Seq Scan on hash_rel_1
+         Filter: (value > ALL ('{1,2,3,4,5}'::integer[]))
+   ->  Seq Scan on hash_rel_2
+         Filter: (value > ALL ('{1,2,3,4,5}'::integer[]))
+(7 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = ANY (ARRAY[1, 2]);
+                     QUERY PLAN                     
+----------------------------------------------------
+ Append
+   ->  Seq Scan on hash_rel_1
+         Filter: (value = ANY ('{1,2}'::integer[]))
+   ->  Seq Scan on hash_rel_2
+         Filter: (value = ANY ('{1,2}'::integer[]))
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = ANY (ARRAY[1, 2, 3, 4, 5]);
+                        QUERY PLAN                        
+----------------------------------------------------------
+ Append
+   ->  Seq Scan on hash_rel_0
+         Filter: (value = ANY ('{1,2,3,4,5}'::integer[]))
+   ->  Seq Scan on hash_rel_1
+         Filter: (value = ANY ('{1,2,3,4,5}'::integer[]))
+   ->  Seq Scan on hash_rel_2
+         Filter: (value = ANY ('{1,2,3,4,5}'::integer[]))
+(7 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = ALL (ARRAY[1, 2]);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = ALL (ARRAY[1, 2, 3, 4, 5]);
         QUERY PLAN        
 --------------------------
  Result

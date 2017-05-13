@@ -932,7 +932,7 @@ handle_arrexpr(const ScalarArrayOpExpr *expr,
 		bool		   *elem_isnull;
 
 		WalkerContext	nested_wcxt;
-		List		   *ranges = NIL;
+		List		   *ranges;
 		int				i;
 
 		/* Extract values from array */
@@ -950,6 +950,9 @@ handle_arrexpr(const ScalarArrayOpExpr *expr,
 		memcpy((void *) &nested_wcxt,
 			   (const void *) context,
 			   sizeof(WalkerContext));
+
+		/* Set default ranges for OR | AND */
+		ranges = expr->useOr ? NIL : list_make1_irange_full(prel, IR_COMPLETE);
 
 		/* Select partitions using values */
 		for (i = 0; i < num_elems; i++)
@@ -970,7 +973,10 @@ handle_arrexpr(const ScalarArrayOpExpr *expr,
 			c.location		= -1;
 
 			handle_const(&c, strategy, &nested_wcxt, &sub_result);
-			ranges = irange_list_union(ranges, sub_result.rangeset);
+
+			ranges = expr->useOr ?
+						irange_list_union(ranges, sub_result.rangeset) :
+						irange_list_intersection(ranges, sub_result.rangeset);
 
 			result->paramsel = Max(result->paramsel, sub_result.paramsel);
 		}
