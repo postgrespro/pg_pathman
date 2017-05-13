@@ -29,7 +29,7 @@ SELECT * FROM pathman_partition_list ORDER BY partition; /* should contain 3 par
 (3 rows)
 
 DROP TABLE test_bgw.test_1 CASCADE;
-NOTICE:  drop cascades to 3 other objects
+NOTICE:  drop cascades to 4 other objects
 /* int8, size of Datum == 8 */
 CREATE TABLE test_bgw.test_2(val INT8 NOT NULL);
 SELECT create_range_partitions('test_bgw.test_2', 'val', 1, 5, 2);
@@ -54,7 +54,7 @@ SELECT * FROM pathman_partition_list ORDER BY partition; /* should contain 3 par
 (3 rows)
 
 DROP TABLE test_bgw.test_2 CASCADE;
-NOTICE:  drop cascades to 3 other objects
+NOTICE:  drop cascades to 4 other objects
 /* numeric, size of Datum == var */
 CREATE TABLE test_bgw.test_3(val NUMERIC NOT NULL);
 SELECT create_range_partitions('test_bgw.test_3', 'val', 1, 5, 2);
@@ -79,7 +79,7 @@ SELECT * FROM pathman_partition_list ORDER BY partition; /* should contain 3 par
 (3 rows)
 
 DROP TABLE test_bgw.test_3 CASCADE;
-NOTICE:  drop cascades to 3 other objects
+NOTICE:  drop cascades to 4 other objects
 /* date, size of Datum == var */
 CREATE TABLE test_bgw.test_4(val DATE NOT NULL);
 SELECT create_range_partitions('test_bgw.test_4', 'val', '20170213'::date, '1 day'::interval, 2);
@@ -104,6 +104,6 @@ SELECT * FROM pathman_partition_list ORDER BY partition; /* should contain 3 par
 (3 rows)
 
 DROP TABLE test_bgw.test_4 CASCADE;
-NOTICE:  drop cascades to 3 other objects
+NOTICE:  drop cascades to 4 other objects
 DROP SCHEMA test_bgw CASCADE;
 DROP EXTENSION pg_pathman;

@@ -725,7 +725,7 @@ SELECT get_part_range('calamity.test_range_idx', 0, NULL::INT4);	/* OK */
 (1 row)
 
 DROP TABLE calamity.test_range_idx CASCADE;
-NOTICE:  drop cascades to table calamity.test_range_idx_1
+NOTICE:  drop cascades to 2 other objects
 /* check function get_part_range_by_oid() */
 CREATE TABLE calamity.test_range_oid(val INT4 NOT NULL);
 SELECT create_range_partitions('calamity.test_range_oid', 'val', 1, 10, 1);
@@ -747,7 +747,7 @@ SELECT get_part_range('calamity.test_range_oid_1', NULL::INT4);		/* OK */
 (1 row)
 
 DROP TABLE calamity.test_range_oid CASCADE;
-NOTICE:  drop cascades to table calamity.test_range_oid_1
+NOTICE:  drop cascades to 2 other objects
 /* check function merge_range_partitions() */
 SELECT merge_range_partitions('{pg_class}');						/* not ok */
 ERROR:  cannot merge partitions
@@ -771,7 +771,7 @@ SELECT merge_range_partitions('{calamity.merge_test_a_1,
 								calamity.merge_test_b_1}');			/* not ok */
 ERROR:  cannot merge partitions
 DROP TABLE calamity.merge_test_a,calamity.merge_test_b CASCADE;
-NOTICE:  drop cascades to 4 other objects
+NOTICE:  drop cascades to 6 other objects
 /* check function drop_triggers() */
 CREATE TABLE calamity.trig_test_tbl(val INT4 NOT NULL);
 SELECT create_hash_partitions('calamity.trig_test_tbl', 'val', 2);
@@ -990,6 +990,6 @@ EXPLAIN (COSTS OFF) SELECT * FROM calamity.survivor;			/* OK */
 (3 rows)
 
 DROP TABLE calamity.survivor CASCADE;
-NOTICE:  drop cascades to 2 other objects
+NOTICE:  drop cascades to 3 other objects
 DROP SCHEMA calamity CASCADE;
 DROP EXTENSION pg_pathman;

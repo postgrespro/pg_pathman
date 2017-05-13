@@ -33,7 +33,7 @@ SELECT * FROM ttt;
 (6 rows)
 
 DROP TABLE test_cte.range_rel CASCADE;
-NOTICE:  drop cascades to 4 other objects
+NOTICE:  drop cascades to 5 other objects
 CREATE TABLE test_cte.hash_rel (
 	id		INT4,
 	value	INTEGER NOT NULL);
@@ -225,7 +225,7 @@ SELECT * FROM test_cte.cte_del_xacts t JOIN tmp ON t.id = tmp.tid;
 
 DROP FUNCTION test_cte.cte_del_xacts_stab(TEXT);
 DROP TABLE test_cte.cte_del_xacts, test_cte.cte_del_xacts_specdata CASCADE;
-NOTICE:  drop cascades to table test_cte.cte_del_xacts_1
+NOTICE:  drop cascades to 2 other objects
 /* Test recursive CTE */
 CREATE TABLE test_cte.recursive_cte_test_tbl(id INT NOT NULL, name TEXT NOT NULL);
 SELECT create_hash_partitions('test_cte.recursive_cte_test_tbl', 'id', 2);

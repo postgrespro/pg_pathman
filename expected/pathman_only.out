@@ -238,5 +238,5 @@ WHERE val = (SELECT val FROM ONLY test_only.from_only_test
 (27 rows)
 
 DROP SCHEMA test_only CASCADE;
-NOTICE:  drop cascades to 11 other objects
+NOTICE:  drop cascades to 12 other objects
 DROP EXTENSION pg_pathman;

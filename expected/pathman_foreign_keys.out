@@ -88,7 +88,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM fkeys.messages;
 (3 rows)
 
 DROP TABLE fkeys.messages, fkeys.replies CASCADE;
-NOTICE:  drop cascades to 2 other objects
+NOTICE:  drop cascades to 3 other objects
 DROP SCHEMA fkeys CASCADE;
 NOTICE:  drop cascades to 2 other objects
 DROP EXTENSION pg_pathman CASCADE;

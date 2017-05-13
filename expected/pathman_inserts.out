@@ -866,7 +866,7 @@ DROP TABLE test_inserts.test_gap_2; /* make a gap */
 INSERT INTO test_inserts.test_gap VALUES(15); /* not ok */
 ERROR:  cannot spawn a partition
 DROP TABLE test_inserts.test_gap CASCADE;
-NOTICE:  drop cascades to 2 other objects
+NOTICE:  drop cascades to 3 other objects
 DROP SCHEMA test_inserts CASCADE;
-NOTICE:  drop cascades to 18 other objects
+NOTICE:  drop cascades to 19 other objects
 DROP EXTENSION pg_pathman CASCADE;

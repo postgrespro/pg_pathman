@@ -257,7 +257,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.improved_dummy WHERE id = 101 OR id = 5 A
 (5 rows)
 
 DROP TABLE test.improved_dummy CASCADE;
-NOTICE:  drop cascades to 11 other objects
+NOTICE:  drop cascades to 12 other objects
 /* since rel_1_4_beta: check create_range_partitions(bounds array) */
 CREATE TABLE test.improved_dummy (val INT NOT NULL);
 SELECT pathman.create_range_partitions('test.improved_dummy', 'val',
@@ -328,7 +328,7 @@ ORDER BY partition;
 (2 rows)
 
 DROP TABLE test.improved_dummy CASCADE;
-NOTICE:  drop cascades to 2 other objects
+NOTICE:  drop cascades to 3 other objects
 /* Test pathman_rel_pathlist_hook() with INSERT query */
 CREATE TABLE test.insert_into_select(val int NOT NULL);
 INSERT INTO test.insert_into_select SELECT generate_series(1, 100);
@@ -385,7 +385,7 @@ SELECT count(*) FROM test.insert_into_select_copy;
 (1 row)
 
 DROP TABLE test.insert_into_select_copy, test.insert_into_select CASCADE;
-NOTICE:  drop cascades to 5 other objects
+NOTICE:  drop cascades to 6 other objects
 /* Test INSERT hooking with DATE type */
 CREATE TABLE test.insert_date_test(val DATE NOT NULL);
 SELECT pathman.create_partitions_from_range('test.insert_date_test', 'val',
@@ -429,7 +429,7 @@ SELECT max(val) FROM test.insert_date_test; /* check last date */
 (1 row)
 
 DROP TABLE test.insert_date_test CASCADE;
-NOTICE:  drop cascades to 8 other objects
+NOTICE:  drop cascades to 9 other objects
 SET pg_pathman.enable_runtimeappend = OFF;
 SET pg_pathman.enable_runtimemergeappend = OFF;
 VACUUM;
@@ -1454,7 +1454,7 @@ SELECT pathman.split_range_partition('test.zero_50', 60, 'test.zero_60');
 (1 row)
 
 DROP TABLE test.zero CASCADE;
-NOTICE:  drop cascades to 4 other objects
+NOTICE:  drop cascades to 5 other objects
 /*
  * Check that altering table columns doesn't break trigger
  */
@@ -1562,7 +1562,7 @@ NOTICE:  1000 rows copied from test.num_range_rel_3
 
 DROP TABLE test.num_range_rel CASCADE;
 DROP TABLE test.range_rel CASCADE;
-NOTICE:  drop cascades to 9 other objects
+NOTICE:  drop cascades to 10 other objects
 /* Test automatic partition creation */
 CREATE TABLE test.range_rel (
 	id	SERIAL PRIMARY KEY,
@@ -1633,7 +1633,7 @@ SELECT * FROM pathman.pathman_config;
 (1 row)
 
 DROP TABLE test.range_rel CASCADE;
-NOTICE:  drop cascades to 20 other objects
+NOTICE:  drop cascades to 21 other objects
 SELECT * FROM pathman.pathman_config;
  partrel | expr | parttype | range_interval | cooked_expr 
 ---------+------+----------+----------------+-------------
@@ -1795,7 +1795,7 @@ SELECT pathman.create_partitions_from_range('test."RangeRel"', 'dt', '2015-01-01
 (1 row)
 
 DROP TABLE test."RangeRel" CASCADE;
-NOTICE:  drop cascades to 5 other objects
+NOTICE:  drop cascades to 6 other objects
 SELECT * FROM pathman.pathman_config;
       partrel       | expr | parttype | range_interval |                                                      cooked_expr                                                       
 --------------------+------+----------+----------------+------------------------------------------------------------------------------------------------------------------------
@@ -1828,7 +1828,7 @@ SELECT pathman.create_partitions_from_range('test."RangeRel"', 'id', 1, 300, 100
 (1 row)
 
 DROP TABLE test."RangeRel" CASCADE;
-NOTICE:  drop cascades to 3 other objects
+NOTICE:  drop cascades to 4 other objects
 DROP EXTENSION pg_pathman;
 /* Test that everything works fine without schemas */
 CREATE EXTENSION pg_pathman;
@@ -2193,6 +2193,6 @@ ORDER BY partition;
 DROP TABLE test.provided_part_names CASCADE;
 NOTICE:  drop cascades to 2 other objects
 DROP SCHEMA test CASCADE;
-NOTICE:  drop cascades to 38 other objects
+NOTICE:  drop cascades to 42 other objects
 DROP EXTENSION pg_pathman CASCADE;
 DROP SCHEMA pathman CASCADE;

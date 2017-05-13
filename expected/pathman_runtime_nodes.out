@@ -408,6 +408,6 @@ where id = any (select generate_series(-10, -1)); /* should be empty */
 set enable_hashjoin = on;
 set enable_mergejoin = on;
 DROP SCHEMA test CASCADE;
-NOTICE:  drop cascades to 36 other objects
+NOTICE:  drop cascades to 37 other objects
 DROP EXTENSION pg_pathman CASCADE;
 DROP SCHEMA pathman CASCADE;

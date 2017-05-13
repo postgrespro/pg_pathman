@@ -227,7 +227,7 @@ ORDER BY attrelid::regclass::text; /* check ACL for each column (+1 partition) *
 (5 rows)
 
 DROP TABLE permissions.dropped_column CASCADE;
-NOTICE:  drop cascades to 5 other objects
+NOTICE:  drop cascades to 6 other objects
 /* Finally reset user */
 RESET ROLE;
 DROP OWNED BY user1;

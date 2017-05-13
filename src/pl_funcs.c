@@ -884,7 +884,7 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 			ObjectAddressSet(sequence, RelationRelationId, naming_seq);
 
 			/* Now this naming sequence is a "part" of partitioned relation */
-			recordDependencyOn(&sequence, &parent, DEPENDENCY_AUTO);
+			recordDependencyOn(&sequence, &parent, DEPENDENCY_NORMAL);
 		}
 	}
 

@@ -285,5 +285,5 @@ SELECT count(*) FROM test_update_trigger.test_hash;
 (1 row)
 
 DROP SCHEMA test_update_trigger CASCADE;
-NOTICE:  drop cascades to 17 other objects
+NOTICE:  drop cascades to 18 other objects
 DROP EXTENSION pg_pathman;
