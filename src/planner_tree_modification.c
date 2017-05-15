@@ -40,6 +40,7 @@ static void partition_update_visitor(Plan *plan, void *context);
 
 static rel_parenthood_status tag_extract_parenthood_status(List *relation_tag);
 
+static bool modifytable_contains_fdw(List *rtable, ModifyTable *node);
 
 /*
  * HACK: We have to mark each Query with a unique
@@ -431,42 +432,21 @@ partition_filter_visitor(Plan *plan, void *context)
 }
 
 
-static List *
-recreate_fdw_private_list(PlannerInfo *root, List *rtable, ModifyTable *node)
+static bool
+modifytable_contains_fdw(List *rtable, ModifyTable *node)
 {
 	ListCell	*lc;
-	int			 i = 0;
-	List		*fdw_private_list = NIL;
-
-	/* we need DELETE queries for FDW */
-	node->operation = CMD_DELETE;
 
 	foreach(lc, node->resultRelations)
 	{
-		Index		rti = lfirst_int(lc);
-		FdwRoutine *fdwroutine;
-		List	   *fdw_private;
+		Index			 rti = lfirst_int(lc);
+		RangeTblEntry	*rte = rt_fetch(rti, rtable);
 
-		RangeTblEntry *rte = rt_fetch(rti, rtable);
-		Assert(rte->rtekind == RTE_RELATION);
-		if (rte->relkind != RELKIND_FOREIGN_TABLE)
-			continue;
-
-		fdwroutine = GetFdwRoutineByRelId(rte->relid);
-
-		if (fdwroutine != NULL &&
-			fdwroutine->PlanForeignModify != NULL)
-			fdw_private = fdwroutine->PlanForeignModify(root, node, rti, i);
-		else
-			fdw_private = NIL;
-
-		fdw_private_list = lappend(fdw_private_list, fdw_private);
-		i++;
+		if (rte->relkind == RELKIND_FOREIGN_TABLE)
+			return true;
 	}
 
-	/* restore operation */
-	node->operation = CMD_UPDATE;
-	return fdw_private_list;
+	return false;
 }
 
 
@@ -478,8 +458,7 @@ recreate_fdw_private_list(PlannerInfo *root, List *rtable, ModifyTable *node)
 static void
 partition_update_visitor(Plan *plan, void *context)
 {
-	List			*rtable = (List *) linitial((List *) context);
-	PlannerInfo		*root = (PlannerInfo *) lsecond((List *) context);
+	List			*rtable = (List *) context;
 	ModifyTable		*modify_table = (ModifyTable *) plan;
 	ListCell		*lc1,
 					*lc2,
@@ -490,6 +469,15 @@ partition_update_visitor(Plan *plan, void *context)
 		return;
 
 	Assert(rtable && IsA(rtable, List));
+
+	if (modifytable_contains_fdw(rtable, modify_table))
+	{
+		ereport(NOTICE,
+				(errcode(ERRCODE_STATEMENT_TOO_COMPLEX),
+				 errmsg("discovered mix of local and foreign tables,"
+					 " pg_pathman's update node will not be used")));
+		return;
+	}
 
 	lc3 = list_head(modify_table->returningLists);
 	forboth (lc1, modify_table->plans, lc2, modify_table->resultRelations)
@@ -527,10 +515,6 @@ partition_update_visitor(Plan *plan, void *context)
 			lfirst(lc1) = make_partition_update((Plan *) lfirst(lc1),
 												relid,
 												returning_list);
-
-			/* change fdw queries to DELETE */
-			modify_table->fdwPrivLists =
-				recreate_fdw_private_list(root, rtable, modify_table);
 		}
 	}
 }

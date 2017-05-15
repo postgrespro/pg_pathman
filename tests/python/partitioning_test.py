@@ -470,7 +470,7 @@ class PartitioningTests(unittest.TestCase):
 		)
 		master.safe_psql(
 			'postgres',
-			'select attach_range_partition(\'abc\', \'ftable\', 20, 30)')
+			'select attach_range_partition(\'abc\', \'ftable\', 20, 100)')
 
 		return (master, fserv)
 
@@ -538,54 +538,33 @@ class PartitioningTests(unittest.TestCase):
 		fserv.stop()
 		master.stop()
 
-	@if_fdw_enabled
-	def test_update_node_on_fdw_tables(self):
+	def test_update_triggers_on_fdw_tables(self):
 		''' Test update node on foreign tables '''
 
 		master, fserv = self.make_basic_fdw_setup()
 
-		# create second foreign table
-		fserv.safe_psql('postgres', 'create table ftable2(id serial, name text)')
-		fserv.safe_psql('postgres', 'insert into ftable2 values (35, \'foreign\')')
-
-		master.safe_psql(
-			'postgres',
-			'''import foreign schema public limit to (ftable2)
-			from server fserv into public'''
-		)
-		master.safe_psql(
-			'postgres',
-			'select attach_range_partition(\'abc\', \'ftable2\', 30, 40)')
-
-		master.safe_psql('postgres',
-				'set pg_pathman.enable_partitionupdate=on')
-
 		with master.connect() as con:
 			con.begin()
-			con.execute('set pg_pathman.enable_partitionupdate=on')
-			con.execute("insert into abc select i, 'local' from generate_series(1, 19) i")
+			con.execute("select create_update_triggers('abc')")
+			con.execute("insert into abc select i, i from generate_series(1, 30) i")
 			con.commit()
 
 			source_relid = con.execute('select tableoid from abc where id=9')[0][0]
-			dest_relid = con.execute('select tableoid from abc where id=35')[0][0]
+			dest_relid = con.execute('select tableoid from abc where id=25')[0][0]
 			self.assertNotEqual(source_relid, dest_relid)
 
-			# cases
-			#	- update from local to foreign
-			#	- update from foreign to foreign
-			#	- update from foreign to local
+			self.set_trace(con, 'pg_debug')
+			import ipdb; ipdb.set_trace()
+			count1 = con.execute("select count(*) from abc")[0][0]
+			con.execute('update abc set id=id + 10')
+			count2 = con.execute("select count(*) from abc")[0][0]
+			self.assertEqual(count1, count2)
 
-			con.execute('update abc set id=36 where id=9')
-			result_relid = con.execute('select tableoid from abc where id=36')[0][0]
-			self.assertEqual(result_relid, dest_relid)
+		fserv.cleanup()
+		master.cleanup()
 
-			con.execute('update abc set id=38 where id=36')
-			result_relid = con.execute('select tableoid from abc where id=38')[0][0]
-			self.assertEqual(result_relid, dest_relid)
-
-			con.execute('update abc set id=9 where id=35')
-			result_relid = con.execute('select tableoid from abc where id=9')[0][0]
-			self.assertEqual(result_relid, source_relid)
+		fserv.stop()
+		master.stop()
 
 	def test_parallel_nodes(self):
 		"""Test parallel queries under partitions"""

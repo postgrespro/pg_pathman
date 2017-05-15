@@ -316,7 +316,7 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 		/* Fill the ResultRelInfo holder */
 		rri_holder->partid = partid;
 		rri_holder->result_rel_info = child_result_rel_info;
-		rri_holder->updates_junkFilter = NULL;
+		rri_holder->src_junkFilter = NULL;
 
 		if (parts_storage->command_type == CMD_UPDATE)
 		{
@@ -326,7 +326,7 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 			child_result_rel_info->ri_junkFilter = NULL;
 
 			/* instead we do junk filtering ourselves */
-			rri_holder->updates_junkFilter = junkfilter;
+			rri_holder->src_junkFilter = junkfilter;
 		}
 
 		/* Generate tuple transformation map and some other stuff */
@@ -702,7 +702,7 @@ partition_filter_exec(CustomScanState *node)
 		estate->es_result_relation_info = resultRelInfo;
 
 		/* pass junkfilter to upper node */
-		state->src_junkFilter = rri_holder->updates_junkFilter;
+		state->src_junkFilter = rri_holder->src_junkFilter;
 
 		/* If there's a transform map, rebuild the tuple */
 		if (rri_holder->tuple_map)

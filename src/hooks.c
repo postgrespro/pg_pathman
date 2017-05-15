@@ -528,12 +528,12 @@ pg_pathman_enable_assign_hook(bool newval, void *extra)
 PlannedStmt *
 pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 {
-#define ExecuteForPlanTree(planned_stmt, context, proc) \
+#define ExecuteForPlanTree(planned_stmt, proc) \
 	do { \
 		ListCell *lc; \
-		proc((context), (planned_stmt)->planTree); \
+		proc((planned_stmt)->rtable, (planned_stmt)->planTree); \
 		foreach (lc, (planned_stmt)->subplans) \
-			proc((context), (Plan *) lfirst(lc)); \
+			proc((planned_stmt)->rtable, (Plan *) lfirst(lc)); \
 	} while (0)
 
 	PlannedStmt	   *result;
@@ -562,17 +562,14 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 
 		if (pathman_ready && pathman_hooks_enabled)
 		{
-			List *update_nodes_context;
-
 			/* Give rowmark-related attributes correct names */
-			ExecuteForPlanTree(result, result->rtable, postprocess_lock_rows);
+			ExecuteForPlanTree(result, postprocess_lock_rows);
 
 			/* Add PartitionFilter node for INSERT queries */
-			ExecuteForPlanTree(result, result->rtable, add_partition_filters);
+			ExecuteForPlanTree(result, add_partition_filters);
 
 			/* Add PartitionUpdate node for UPDATE queries */
-			update_nodes_context = list_make2(result->rtable, pathman_planner_info);
-			ExecuteForPlanTree(result, update_nodes_context, add_partition_update_nodes);
+			ExecuteForPlanTree(result, add_partition_update_nodes);
 
 			/* Decrement relation tags refcount */
 			decr_refcount_relation_tags();

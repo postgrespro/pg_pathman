@@ -40,7 +40,7 @@ typedef struct
 	Oid					partid;				/* partition's relid */
 	ResultRelInfo	   *result_rel_info;	/* cached ResultRelInfo */
 	TupleConversionMap *tuple_map;			/* tuple conversion map (parent => child) */
-	JunkFilter		   *updates_junkFilter;	/* we keep junkfilter from scanned
+	JunkFilter		   *src_junkFilter;		/* we keep junkfilter from scanned
 											   ResultRelInfo here */
 } ResultRelInfoHolder;
 
