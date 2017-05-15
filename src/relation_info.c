@@ -167,13 +167,13 @@ refresh_pathman_relation_info(Oid relid,
 	prel->parttype	= DatumGetPartType(values[Anum_pathman_config_parttype - 1]);
 
 	/* Fetch cooked partitioning expression */
-	expr = TextDatumGetCString(values[Anum_pathman_config_expression_p - 1]);
+	expr = TextDatumGetCString(values[Anum_pathman_config_cooked_expr - 1]);
 
 	/* Expression and attname should be saved in cache context */
 	old_mcxt = MemoryContextSwitchTo(PathmanRelationCacheContext);
 
 	/* Build partitioning expression tree */
-	prel->expr_cstr = TextDatumGetCString(values[Anum_pathman_config_expression - 1]);
+	prel->expr_cstr = TextDatumGetCString(values[Anum_pathman_config_expr - 1]);
 	prel->expr = (Node *) stringToNode(expr);
 	fix_opfuncids(prel->expr);
 
@@ -360,7 +360,7 @@ get_pathman_relation_info(Oid relid)
 		/* Check that PATHMAN_CONFIG table contains this relation */
 		if (pathman_config_contains_relation(relid, values, isnull, NULL, &iptr))
 		{
-			bool upd_expr = isnull[Anum_pathman_config_expression_p - 1];
+			bool upd_expr = isnull[Anum_pathman_config_cooked_expr - 1];
 			if (upd_expr)
 				pathman_config_refresh_parsed_expression(relid, values, isnull, &iptr);
 
@@ -509,10 +509,7 @@ fill_prel_with_partitions(PartRelationInfo *prel,
 			default:
 				{
 					DisablePathman(); /* disable pg_pathman since config is broken */
-					ereport(ERROR,
-							(errmsg("Unknown partitioning type for relation \"%s\"",
-									get_rel_name_or_relid(PrelParentRelid(prel))),
-							 errhint(INIT_ERROR_HINT)));
+					WrongPartType(prel->parttype);
 				}
 				break;
 		}
@@ -593,7 +590,7 @@ parse_partitioning_expression(const Oid relid,
 	return ((ResTarget *) linitial(select_stmt->targetList))->val;
 }
 
-/* Parse partitioning expression and return its type and nodeToString() */
+/* Parse partitioning expression and return its type and nodeToString() as TEXT */
 Datum
 cook_partitioning_expression(const Oid relid,
 							 const char *expr_cstr,
@@ -1015,7 +1012,7 @@ try_perform_parent_refresh(Oid parent)
 
 	if (pathman_config_contains_relation(parent, values, isnull, NULL, &iptr))
 	{
-		bool should_update_expr = isnull[Anum_pathman_config_expression_p - 1];
+		bool should_update_expr = isnull[Anum_pathman_config_cooked_expr - 1];
 
 		if (should_update_expr)
 			pathman_config_refresh_parsed_expression(parent, values, isnull, &iptr);
@@ -1243,10 +1240,7 @@ fill_pbin_with_bounds(PartBoundInfo *pbin,
 		default:
 			{
 				DisablePathman(); /* disable pg_pathman since config is broken */
-				ereport(ERROR,
-						(errmsg("Unknown partitioning type for relation \"%s\"",
-								get_rel_name_or_relid(PrelParentRelid(prel))),
-						 errhint(INIT_ERROR_HINT)));
+				WrongPartType(prel->parttype);
 			}
 			break;
 	}
@@ -1261,41 +1255,6 @@ cmp_range_entries(const void *p1, const void *p2, void *arg)
 	cmp_func_info	   *info = (cmp_func_info *) arg;
 
 	return cmp_bounds(&info->flinfo, info->collid, &v1->min, &v2->min);
-}
-
-
-/*
- * Safe PartType wrapper.
- */
-PartType
-DatumGetPartType(Datum datum)
-{
-	uint32 val = DatumGetUInt32(datum);
-
-	if (val < 1 || val > 2)
-		elog(ERROR, "Unknown partitioning type %u", val);
-
-	return (PartType) val;
-}
-
-char *
-PartTypeToCString(PartType parttype)
-{
-	static char *hash_str	= "1",
-				*range_str	= "2";
-
-	switch (parttype)
-	{
-		case PT_HASH:
-			return hash_str;
-
-		case PT_RANGE:
-			return range_str;
-
-		default:
-			elog(ERROR, "Unknown partitioning type %u", parttype);
-			return NULL; /* keep compiler happy */
-	}
 }
 
 
@@ -1334,9 +1293,8 @@ shout_if_prel_is_invalid(const Oid parent_oid,
 				break;
 
 			default:
-				elog(ERROR,
-					 "expected_str selection not implemented for type %d",
-					 expected_part_type);
+				WrongPartType(expected_part_type);
+				expected_str = NULL; /* keep compiler happy */
 		}
 
 		elog(ERROR, "relation \"%s\" is not partitioned by %s",

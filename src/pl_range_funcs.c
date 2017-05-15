@@ -803,9 +803,9 @@ drop_range_partition_expand_next(PG_FUNCTION_ARGS)
 }
 
 /*
- * Takes text representation of interval value and checks if it is corresponds
- * to partitioning key. The function throws an error if it fails to convert
- * text to Datum
+ * Takes text representation of interval value and checks
+ * if it corresponds to partitioning expression.
+ * NOTE: throws an ERROR if it fails to convert text to Datum.
  */
 Datum
 validate_interval_value(PG_FUNCTION_ARGS)
@@ -839,6 +839,13 @@ validate_interval_value(PG_FUNCTION_ARGS)
 	}
 	else expr_cstr = TextDatumGetCString(PG_GETARG_TEXT_P(ARG_EXPRESSION));
 
+	if (PG_ARGISNULL(ARG_PARTTYPE))
+	{
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("'parttype' should not be NULL")));
+	}
+	else parttype = DatumGetPartType(PG_GETARG_DATUM(ARG_PARTTYPE));
+
 	/*
 	 * Fetch partitioning expression's type using
 	 * either user's expression or parsed expression.
@@ -866,13 +873,6 @@ validate_interval_value(PG_FUNCTION_ARGS)
 		pfree(expr_p_cstr);
 		pfree(expr_cstr);
 	}
-
-	if (PG_ARGISNULL(ARG_PARTTYPE))
-	{
-		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						errmsg("'parttype' should not be NULL")));
-	}
-	else parttype = DatumGetPartType(PG_GETARG_DATUM(ARG_PARTTYPE));
 
 	/*
 	 * NULL interval is fine for both HASH and RANGE.

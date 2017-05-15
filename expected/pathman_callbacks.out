@@ -16,7 +16,6 @@ END
 $$ language plpgsql;
 CREATE TABLE callbacks.abc(a serial, b int);
 SELECT create_range_partitions('callbacks.abc', 'a', 1, 100, 2);
-NOTICE:  sequence "abc_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                        2
@@ -67,7 +66,7 @@ WHERE partrel = 'callbacks.abc'::REGCLASS;
 (1 row)
 
 DROP TABLE callbacks.abc CASCADE;
-NOTICE:  drop cascades to 2 other objects
+NOTICE:  drop cascades to 3 other objects
 /* set callback to be called on RANGE partitions */
 CREATE TABLE callbacks.abc(a serial, b int);
 SELECT create_range_partitions('callbacks.abc', 'a', 1, 100, 2);
@@ -197,7 +196,7 @@ $$ language plpgsql;
 INSERT INTO callbacks.abc VALUES (301, 0); /* +1 new partition */
 WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_5", "range_max": "401", "range_min": "301", "parent_schema": "callbacks", "partition_schema": "callbacks"}
 DROP TABLE callbacks.abc CASCADE;
-NOTICE:  drop cascades to 4 other objects
+NOTICE:  drop cascades to 5 other objects
 /* more complex test using rotation of tables */
 CREATE TABLE callbacks.abc(a INT4 NOT NULL);
 INSERT INTO callbacks.abc
@@ -233,18 +232,18 @@ $$ LANGUAGE plpgsql;
 SELECT * FROM pathman_partition_list
 WHERE parent = 'callbacks.abc'::REGCLASS
 ORDER BY range_min::INT4;
-    parent     |    partition     | parttype | partattr | range_min | range_max 
----------------+------------------+----------+----------+-----------+-----------
- callbacks.abc | callbacks.abc_1  |        2 | a        | 1         | 11
- callbacks.abc | callbacks.abc_2  |        2 | a        | 11        | 21
- callbacks.abc | callbacks.abc_3  |        2 | a        | 21        | 31
- callbacks.abc | callbacks.abc_4  |        2 | a        | 31        | 41
- callbacks.abc | callbacks.abc_5  |        2 | a        | 41        | 51
- callbacks.abc | callbacks.abc_6  |        2 | a        | 51        | 61
- callbacks.abc | callbacks.abc_7  |        2 | a        | 61        | 71
- callbacks.abc | callbacks.abc_8  |        2 | a        | 71        | 81
- callbacks.abc | callbacks.abc_9  |        2 | a        | 81        | 91
- callbacks.abc | callbacks.abc_10 |        2 | a        | 91        | 101
+    parent     |    partition     | parttype | expr | range_min | range_max 
+---------------+------------------+----------+------+-----------+-----------
+ callbacks.abc | callbacks.abc_1  |        2 | a    | 1         | 11
+ callbacks.abc | callbacks.abc_2  |        2 | a    | 11        | 21
+ callbacks.abc | callbacks.abc_3  |        2 | a    | 21        | 31
+ callbacks.abc | callbacks.abc_4  |        2 | a    | 31        | 41
+ callbacks.abc | callbacks.abc_5  |        2 | a    | 41        | 51
+ callbacks.abc | callbacks.abc_6  |        2 | a    | 51        | 61
+ callbacks.abc | callbacks.abc_7  |        2 | a    | 61        | 71
+ callbacks.abc | callbacks.abc_8  |        2 | a    | 71        | 81
+ callbacks.abc | callbacks.abc_9  |        2 | a    | 81        | 91
+ callbacks.abc | callbacks.abc_10 |        2 | a    | 91        | 101
 (10 rows)
 
 SELECT set_init_callback('callbacks.abc',
@@ -405,16 +404,16 @@ NOTICE:  dropping partition callbacks.abc_146
 SELECT * FROM pathman_partition_list
 WHERE parent = 'callbacks.abc'::REGCLASS
 ORDER BY range_min::INT4;
-    parent     |     partition     | parttype | partattr | range_min | range_max 
----------------+-------------------+----------+----------+-----------+-----------
- callbacks.abc | callbacks.abc_147 |        2 | a        | 1461      | 1471
- callbacks.abc | callbacks.abc_148 |        2 | a        | 1471      | 1481
- callbacks.abc | callbacks.abc_149 |        2 | a        | 1481      | 1491
- callbacks.abc | callbacks.abc_150 |        2 | a        | 1491      | 1501
+    parent     |     partition     | parttype | expr | range_min | range_max 
+---------------+-------------------+----------+------+-----------+-----------
+ callbacks.abc | callbacks.abc_147 |        2 | a    | 1461      | 1471
+ callbacks.abc | callbacks.abc_148 |        2 | a    | 1471      | 1481
+ callbacks.abc | callbacks.abc_149 |        2 | a    | 1481      | 1491
+ callbacks.abc | callbacks.abc_150 |        2 | a    | 1491      | 1501
 (4 rows)
 
 DROP TABLE callbacks.abc CASCADE;
-NOTICE:  drop cascades to 4 other objects
+NOTICE:  drop cascades to 5 other objects
 DROP SCHEMA callbacks CASCADE;
-NOTICE:  drop cascades to 3 other objects
+NOTICE:  drop cascades to 2 other objects
 DROP EXTENSION pg_pathman CASCADE;

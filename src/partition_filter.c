@@ -415,7 +415,7 @@ find_partitions_for_value(Datum value, Oid value_type,
 	CopyToTempConst(constbyval,  ev_byval);
 
 	/* We use 0 since varno doesn't matter for Const */
-	InitWalkerContext(&wcxt, 0, prel, NULL, true);
+	InitWalkerContext(&wcxt, 0, prel, NULL);
 	ranges = walk_expr_tree((Expr *) &temp_const, &wcxt)->rangeset;
 
 	return get_partition_oids(ranges, nparts, prel, false);
@@ -666,7 +666,7 @@ partition_filter_exec(CustomScanState *node)
 		if (!prel)
 		{
 			if (!state->warning_triggered)
-				elog(WARNING, "Relation \"%s\" is not partitioned, "
+				elog(WARNING, "table \"%s\" is not partitioned, "
 							  "PartitionFilter will behave as a normal INSERT",
 					 get_rel_name_or_relid(state->partitioned_table));
 

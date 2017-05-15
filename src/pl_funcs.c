@@ -20,7 +20,9 @@
 
 #include "access/tupconvert.h"
 #include "access/htup_details.h"
+#include "catalog/dependency.h"
 #include "catalog/indexing.h"
+#include "catalog/namespace.h"
 #include "catalog/pg_inherits_fn.h"
 #include "catalog/pg_type.h"
 #include "commands/tablespace.h"
@@ -32,6 +34,7 @@
 #include "nodes/nodeFuncs.h"
 #include "utils/builtins.h"
 #include "utils/inval.h"
+#include "utils/ruleutils.h"
 #include "utils/snapmgr.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
@@ -340,18 +343,16 @@ show_cache_stats_internal(PG_FUNCTION_ARGS)
 Datum
 show_partition_list_internal(PG_FUNCTION_ARGS)
 {
-	show_partition_list_cxt		*usercxt;
-	FuncCallContext				*funccxt;
-	MemoryContext				 old_mcxt;
-	SPITupleTable				*tuptable;
+	show_partition_list_cxt	   *usercxt;
+	FuncCallContext			   *funccxt;
+	MemoryContext				old_mcxt;
+	SPITupleTable			   *tuptable;
 
-	/*
-	 * Initialize tuple descriptor & function call context.
-	 */
+	/* Initialize tuple descriptor & function call context */
 	if (SRF_IS_FIRSTCALL())
 	{
 		TupleDesc		 tupdesc;
-		MemoryContext	 tuptabcxt;
+		MemoryContext	 tuptab_mcxt;
 
 		funccxt = SRF_FIRSTCALL_INIT();
 
@@ -378,7 +379,7 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 		TupleDescInitEntry(tupdesc, Anum_pathman_pl_parttype,
 						   "parttype", INT4OID, -1, 0);
 		TupleDescInitEntry(tupdesc, Anum_pathman_pl_partattr,
-						   "partattr", TEXTOID, -1, 0);
+						   "expr", TEXTOID, -1, 0);
 		TupleDescInitEntry(tupdesc, Anum_pathman_pl_range_min,
 						   "range_min", TEXTOID, -1, 0);
 		TupleDescInitEntry(tupdesc, Anum_pathman_pl_range_max,
@@ -388,18 +389,18 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 		funccxt->user_fctx = (void *) usercxt;
 
 		/* initialize tuple table context */
-		tuptabcxt = AllocSetContextCreate(CurrentMemoryContext,
-										  "pg_pathman TupTable",
-										  ALLOCSET_DEFAULT_SIZES);
-		MemoryContextSwitchTo(tuptabcxt);
+		tuptab_mcxt = AllocSetContextCreate(CurrentMemoryContext,
+											"tuptable for pathman_partition_list",
+											ALLOCSET_DEFAULT_SIZES);
+		MemoryContextSwitchTo(tuptab_mcxt);
 
-		/* initialize tuple table for partitions list, we use it as buffer */
+		/* Initialize tuple table for partitions list, we use it as buffer */
 		tuptable = (SPITupleTable *) palloc0(sizeof(SPITupleTable));
 		usercxt->tuptable = tuptable;
-		tuptable->tuptabcxt = tuptabcxt;
+		tuptable->tuptabcxt = tuptab_mcxt;
 
-		/* set up initial allocations */
-		tuptable->alloced = tuptable->free = 128;
+		/* Set up initial allocations */
+		tuptable->alloced = tuptable->free = PART_RELS_SIZE * CHILD_FACTOR;
 		tuptable->vals = (HeapTuple *) palloc(tuptable->alloced * sizeof(HeapTuple));
 
 		MemoryContextSwitchTo(old_mcxt);
@@ -503,7 +504,7 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 					break;
 
 				default:
-					elog(ERROR, "Unknown partitioning type %u", prel->parttype);
+					WrongPartType(prel->parttype);
 			}
 
 			/* Fill tuptable */
@@ -517,10 +518,13 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 				/* Double the size of the pointer array */
 				tuptable->free = tuptable->alloced;
 				tuptable->alloced += tuptable->free;
-				tuptable->vals = (HeapTuple *) repalloc_huge(tuptable->vals,
-											  tuptable->alloced * sizeof(HeapTuple));
+
+				tuptable->vals = (HeapTuple *)
+						repalloc_huge(tuptable->vals,
+									  tuptable->alloced * sizeof(HeapTuple));
 			}
 
+			/* Add tuple to table and decrement 'free' */
 			tuptable->vals[tuptable->alloced - tuptable->free] = htup;
 			(tuptable->free)--;
 
@@ -542,10 +546,11 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 	usercxt = (show_partition_list_cxt *) funccxt->user_fctx;
 	tuptable = usercxt->tuptable;
 
+	/* Iterate through used slots */
 	if (usercxt->child_number < (tuptable->alloced - tuptable->free))
 	{
-		HeapTuple	htup = usercxt->tuptable->vals[usercxt->child_number];
-		usercxt->child_number++;
+		HeapTuple htup = usercxt->tuptable->vals[usercxt->child_number++];
+
 		SRF_RETURN_NEXT(funccxt, HeapTupleGetDatum(htup));
 	}
 
@@ -702,6 +707,9 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	char			   *expression;
 	PartType			parttype;
 
+	Oid				   *children;
+	uint32				children_count;
+
 	Relation			pathman_config;
 	Datum				values[Natts_pathman_config];
 	bool				isnull[Natts_pathman_config];
@@ -719,6 +727,9 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	}
 	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("'parent_relid' should not be NULL")));
+
+	/* Lock relation */
+	xact_lock_rel_exclusive(relid, true);
 
 	/* Check that relation exists */
 	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
@@ -773,6 +784,11 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	/* Parse and check expression */
 	expr_datum = cook_partitioning_expression(relid, expression, &expr_type);
 
+	/* Canonicalize user's expression (trim whitespaces etc) */
+	expression = deparse_expression(stringToNode(TextDatumGetCString(expr_datum)),
+									deparse_context_for(get_rel_name(relid), relid),
+									false, false);
+
 	/* Check hash function for HASH partitioning */
 	if (parttype == PT_HASH)
 	{
@@ -787,17 +803,17 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	/*
 	 * Initialize columns (partrel, attname, parttype, range_interval).
 	 */
-	values[Anum_pathman_config_partrel - 1]			= ObjectIdGetDatum(relid);
-	isnull[Anum_pathman_config_partrel - 1]			= false;
+	values[Anum_pathman_config_partrel - 1]		= ObjectIdGetDatum(relid);
+	isnull[Anum_pathman_config_partrel - 1]		= false;
 
-	values[Anum_pathman_config_parttype - 1]		= Int32GetDatum(parttype);
-	isnull[Anum_pathman_config_parttype - 1]		= false;
+	values[Anum_pathman_config_parttype - 1]	= Int32GetDatum(parttype);
+	isnull[Anum_pathman_config_parttype - 1]	= false;
 
-	values[Anum_pathman_config_expression - 1]		= CStringGetTextDatum(expression);
-	isnull[Anum_pathman_config_expression - 1]		= false;
+	values[Anum_pathman_config_expr - 1]		= CStringGetTextDatum(expression);
+	isnull[Anum_pathman_config_expr - 1]		= false;
 
-	values[Anum_pathman_config_expression_p - 1]	= expr_datum;
-	isnull[Anum_pathman_config_expression_p - 1]	= false;
+	values[Anum_pathman_config_cooked_expr - 1]	= expr_datum;
+	isnull[Anum_pathman_config_cooked_expr - 1]	= false;
 
 	/* Insert new row into PATHMAN_CONFIG */
 	pathman_config = heap_open(get_pathman_config_relid(false), RowExclusiveLock);
@@ -809,8 +825,12 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	heap_close(pathman_config, RowExclusiveLock);
 
 	/* Update caches only if this relation has children */
-	if (has_subclass(relid))
+	if (FCS_FOUND == find_inheritance_children_array(relid, NoLock, true,
+													 &children_count,
+													 &children))
 	{
+		pfree(children);
+
 		/* Now try to create a PartRelationInfo */
 		PG_TRY();
 		{
@@ -839,6 +859,30 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 			FreeErrorData(edata);
 		}
 		PG_END_TRY();
+	}
+
+	/* Check if naming sequence exists */
+	if (parttype == PT_RANGE)
+	{
+		RangeVar   *naming_seq_rv;
+		Oid			naming_seq;
+
+		naming_seq_rv = makeRangeVar(get_namespace_name(get_rel_namespace(relid)),
+									 build_sequence_name_internal(relid),
+									 -1);
+
+		naming_seq = RangeVarGetRelid(naming_seq_rv, AccessShareLock, true);
+		if (OidIsValid(naming_seq))
+		{
+			ObjectAddress	parent,
+							sequence;
+
+			ObjectAddressSet(parent, RelationRelationId, relid);
+			ObjectAddressSet(sequence, RelationRelationId, naming_seq);
+
+			/* Now this naming sequence is a "part" of partitioned relation */
+			recordDependencyOn(&sequence, &parent, DEPENDENCY_NORMAL);
+		}
 	}
 
 	PG_RETURN_BOOL(true);

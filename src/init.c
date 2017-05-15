@@ -39,11 +39,6 @@
 #include "utils/typcache.h"
 
 
-/* Initial size of 'partitioned_rels' table */
-#define PART_RELS_SIZE	10
-#define CHILD_FACTOR	500
-
-
 /* Various memory contexts for caches */
 MemoryContext		TopPathmanContext				= NULL;
 MemoryContext		PathmanRelationCacheContext		= NULL;
@@ -423,8 +418,6 @@ find_inheritance_children_array(Oid parentrelId,
 
 	uint32		i;
 
-	Assert(lockmode != NoLock);
-
 	/* Init safe return values */
 	*children_size = 0;
 	*children = NULL;
@@ -641,7 +634,7 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 
 			/* Perform checks for non-NULL columns */
 			Assert(!isnull[Anum_pathman_config_partrel - 1]);
-			Assert(!isnull[Anum_pathman_config_expression - 1]);
+			Assert(!isnull[Anum_pathman_config_expr - 1]);
 			Assert(!isnull[Anum_pathman_config_parttype - 1]);
 		}
 
@@ -691,8 +684,8 @@ pathman_config_invalidate_parsed_expression(Oid relid)
 		HeapTuple	new_htup;
 
 		/* Reset parsed expression */
-		values[Anum_pathman_config_expression_p - 1] = (Datum) 0;
-		nulls[Anum_pathman_config_expression_p - 1]  = true;
+		values[Anum_pathman_config_cooked_expr - 1] = (Datum) 0;
+		nulls[Anum_pathman_config_cooked_expr - 1]  = true;
 
 		rel = heap_open(get_pathman_config_relid(false), RowExclusiveLock);
 
@@ -719,13 +712,13 @@ pathman_config_refresh_parsed_expression(Oid relid,
 	HeapTuple				htup_new;
 
 	/* get and parse expression */
-	expr_cstr = TextDatumGetCString(values[Anum_pathman_config_expression - 1]);
+	expr_cstr = TextDatumGetCString(values[Anum_pathman_config_expr - 1]);
 	expr_datum = cook_partitioning_expression(relid, expr_cstr, NULL);
 	pfree(expr_cstr);
 
 	/* prepare tuple values */
-	values[Anum_pathman_config_expression_p - 1] = expr_datum;
-	isnull[Anum_pathman_config_expression_p - 1] = false;
+	values[Anum_pathman_config_cooked_expr - 1] = expr_datum;
+	isnull[Anum_pathman_config_cooked_expr - 1] = false;
 
 	rel = heap_open(get_pathman_config_relid(false), RowExclusiveLock);
 
@@ -821,7 +814,7 @@ read_pathman_config(void)
 		/* These attributes are marked as NOT NULL, check anyway */
 		Assert(!isnull[Anum_pathman_config_partrel - 1]);
 		Assert(!isnull[Anum_pathman_config_parttype - 1]);
-		Assert(!isnull[Anum_pathman_config_expression - 1]);
+		Assert(!isnull[Anum_pathman_config_expr - 1]);
 
 		/* Extract values from Datums */
 		relid = DatumGetObjectId(values[Anum_pathman_config_partrel - 1]);

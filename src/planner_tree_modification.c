@@ -284,7 +284,7 @@ handle_modification_query(Query *parse)
 	prel_expr = PrelExpressionForRelid(prel, result_rel);
 
 	/* Parse syntax tree and extract partition ranges */
-	InitWalkerContext(&context, prel_expr, prel, NULL, false);
+	InitWalkerContext(&context, prel_expr, prel, NULL);
 	wrap = walk_expr_tree(expr, &context);
 
 	ranges = irange_list_intersection(ranges, wrap->rangeset);

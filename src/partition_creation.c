@@ -306,7 +306,7 @@ create_partitions_for_value(Oid relid, Datum value, Oid value_type)
 		}
 	}
 	else
-		elog(ERROR, "relation \"%s\" is not partitioned",
+		elog(ERROR, "table \"%s\" is not partitioned",
 			 get_rel_name_or_relid(relid));
 
 	/* Check that 'last_partition' is valid */
@@ -1251,7 +1251,7 @@ check_range_available(Oid parent_relid,
 	/* If there's no prel, return TRUE (overlap is not possible) */
 	if (!prel)
 	{
-		ereport(WARNING, (errmsg("relation \"%s\" is not partitioned",
+		ereport(WARNING, (errmsg("table \"%s\" is not partitioned",
 								 get_rel_name_or_relid(parent_relid))));
 		return true;
 	}
@@ -1589,8 +1589,8 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 			break;
 
 		default:
-			elog(ERROR, "Unknown partitioning type %u", cb_params->parttype);
-			break;
+			WrongPartType(cb_params->parttype);
+			result = NULL; /* keep compiler happy */
 	}
 
 	/* Fetch function call data */
@@ -1708,18 +1708,17 @@ build_partitioning_expression(Oid parent_relid,
 							  List **columns)		/* ret val #2 */
 {
 	/* Values extracted from PATHMAN_CONFIG */
-	Datum		 values[Natts_pathman_config];
-	bool		 isnull[Natts_pathman_config];
-	char		*expr_cstr;
-	Node		*expr;
+	Datum		values[Natts_pathman_config];
+	bool		isnull[Natts_pathman_config];
+	char	   *expr_cstr;
+	Node	   *expr;
 
 	/* Check that table is registered in PATHMAN_CONFIG */
-	if (!pathman_config_contains_relation(parent_relid, values,
-										  isnull, NULL, NULL))
+	if (!pathman_config_contains_relation(parent_relid, values, isnull, NULL, NULL))
 		elog(ERROR, "table \"%s\" is not partitioned",
 			 get_rel_name_or_relid(parent_relid));
 
-	expr_cstr = TextDatumGetCString(values[Anum_pathman_config_expression - 1]);
+	expr_cstr = TextDatumGetCString(values[Anum_pathman_config_expr - 1]);
 	expr = parse_partitioning_expression(parent_relid, expr_cstr, NULL, NULL);
 	pfree(expr_cstr);
 
@@ -1729,17 +1728,18 @@ build_partitioning_expression(Oid parent_relid,
 		char *expr_p_cstr;
 
 		/* We can safely assume that this field will always remain not null */
-		Assert(!isnull[Anum_pathman_config_expression_p - 1]);
+		Assert(!isnull[Anum_pathman_config_cooked_expr - 1]);
 		expr_p_cstr =
-				TextDatumGetCString(values[Anum_pathman_config_expression_p - 1]);
+				TextDatumGetCString(values[Anum_pathman_config_cooked_expr - 1]);
 
+		/* Finally return expression type */
 		*expr_type = exprType(stringToNode(expr_p_cstr));
 	}
 
 	if (columns)
 	{
 		/* Column list should be empty */
-		Assert(*columns == NIL);
+		AssertArg(*columns == NIL);
 		extract_column_names(expr, columns);
 	}
 

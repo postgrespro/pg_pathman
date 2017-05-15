@@ -126,13 +126,14 @@ SELECT build_range_condition('calamity.part_test', 'val', 10, NULL);	/* OK */
 SELECT build_range_condition('calamity.part_test', 'val', NULL, 10);	/* OK */
 
 /* check function validate_interval_value() */
-SELECT validate_interval_value(1::REGCLASS, 'expr', 2, '1 mon', 'cooked_expr');	/* not ok */
-SELECT validate_interval_value(NULL, 'expr', 2, '1 mon', 'cooked_expr');		/* not ok */
-SELECT validate_interval_value('pg_class', NULL, 2, '1 mon', 'cooked_expr');	/* not ok */
-SELECT validate_interval_value('pg_class', 'oid', 1, 'HASH', NULL);				/* not ok */
-SELECT validate_interval_value('pg_class', 'expr', 2, '1 mon', NULL);			/* not ok */
-SELECT validate_interval_value('pg_class', 'expr', 2, NULL, 'cooked_expr');		/* not ok */
-SELECT validate_interval_value('pg_class', 'EXPR', 1, 'HASH', NULL);			/* not ok */
+SELECT validate_interval_value(1::REGCLASS, 'expr', 2, '1 mon', 'cooked_expr');		/* not ok */
+SELECT validate_interval_value(NULL, 'expr', 2, '1 mon', 'cooked_expr');			/* not ok */
+SELECT validate_interval_value('pg_class', NULL, 2, '1 mon', 'cooked_expr');		/* not ok */
+SELECT validate_interval_value('pg_class', 'oid', NULL, '1 mon', 'cooked_expr');	/* not ok */
+SELECT validate_interval_value('pg_class', 'oid', 1, 'HASH', NULL);					/* not ok */
+SELECT validate_interval_value('pg_class', 'expr', 2, '1 mon', NULL);				/* not ok */
+SELECT validate_interval_value('pg_class', 'expr', 2, NULL, 'cooked_expr');			/* not ok */
+SELECT validate_interval_value('pg_class', 'EXPR', 1, 'HASH', NULL);				/* not ok */
 
 /* check function validate_relname() */
 SELECT validate_relname('calamity.part_test');
@@ -314,6 +315,39 @@ SELECT get_part_range('calamity.test_range_oid_1', NULL::INT2);		/* not ok */
 SELECT get_part_range('calamity.test_range_oid_1', NULL::INT4);		/* OK */
 
 DROP TABLE calamity.test_range_oid CASCADE;
+
+
+/* check function merge_range_partitions() */
+SELECT merge_range_partitions('{pg_class}');						/* not ok */
+SELECT merge_range_partitions('{pg_class, pg_inherits}');			/* not ok */
+
+CREATE TABLE calamity.merge_test_a(val INT4 NOT NULL);
+CREATE TABLE calamity.merge_test_b(val INT4 NOT NULL);
+
+SELECT create_range_partitions('calamity.merge_test_a', 'val', 1, 10, 2);
+SELECT create_range_partitions('calamity.merge_test_b', 'val', 1, 10, 2);
+
+SELECT merge_range_partitions('{calamity.merge_test_a_1,
+								calamity.merge_test_b_1}');			/* not ok */
+
+DROP TABLE calamity.merge_test_a,calamity.merge_test_b CASCADE;
+
+
+/* check function drop_triggers() */
+CREATE TABLE calamity.trig_test_tbl(val INT4 NOT NULL);
+SELECT create_hash_partitions('calamity.trig_test_tbl', 'val', 2);
+SELECT create_update_triggers('calamity.trig_test_tbl');
+
+SELECT count(*) FROM pg_trigger WHERE tgrelid = 'calamity.trig_test_tbl'::REGCLASS;
+SELECT count(*) FROM pg_trigger WHERE tgrelid = 'calamity.trig_test_tbl_1'::REGCLASS;
+
+SELECT drop_triggers('calamity.trig_test_tbl');						/* OK */
+
+SELECT count(*) FROM pg_trigger WHERE tgrelid = 'calamity.trig_test_tbl'::REGCLASS;
+SELECT count(*) FROM pg_trigger WHERE tgrelid = 'calamity.trig_test_tbl_1'::REGCLASS;
+
+DROP TABLE calamity.trig_test_tbl CASCADE;
+
 
 DROP SCHEMA calamity CASCADE;
 DROP EXTENSION pg_pathman;
