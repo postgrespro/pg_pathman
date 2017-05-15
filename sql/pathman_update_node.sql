@@ -144,7 +144,27 @@ WHERE val = 115;
 UPDATE test_update_node.test_range SET val = 55 WHERE val = 115;
 SELECT count(*) FROM test_update_node.test_range;
 
+DROP TABLE test_update_node.test_range CASCADE;
 
+/* recreate table and mass move */
+CREATE TABLE test_update_node.test_range(val NUMERIC NOT NULL, comment TEXT);
+INSERT INTO test_update_node.test_range SELECT i, i FROM generate_series(1, 100) i;
+SELECT create_range_partitions('test_update_node.test_range', 'val', 1, 10);
+
+SELECT tableoid::regclass, MIN(val) FROM test_update_node.test_range
+	GROUP BY tableoid::regclass ORDER BY tableoid::regclass;
+SELECT count(*) FROM test_update_node.test_range;
+
+/* move everything to next partition */
+UPDATE test_update_node.test_range SET val = val + 10;
+SELECT tableoid::regclass, MIN(val) FROM test_update_node.test_range
+	GROUP BY tableoid::regclass ORDER BY tableoid::regclass;
+
+/* move everything to previous partition */
+UPDATE test_update_node.test_range SET val = val - 10;
+SELECT tableoid::regclass, MIN(val) FROM test_update_node.test_range
+	GROUP BY tableoid::regclass ORDER BY tableoid::regclass;
+SELECT count(*) FROM test_update_node.test_range;
 
 /* Partition table by HASH (INT4) */
 CREATE TABLE test_update_node.test_hash(val INT4 NOT NULL, comment TEXT);

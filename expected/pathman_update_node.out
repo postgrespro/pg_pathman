@@ -291,6 +291,81 @@ SELECT count(*) FROM test_update_node.test_range;
     90
 (1 row)
 
+DROP TABLE test_update_node.test_range CASCADE;
+NOTICE:  drop cascades to 12 other objects
+/* recreate table and mass move */
+CREATE TABLE test_update_node.test_range(val NUMERIC NOT NULL, comment TEXT);
+INSERT INTO test_update_node.test_range SELECT i, i FROM generate_series(1, 100) i;
+SELECT create_range_partitions('test_update_node.test_range', 'val', 1, 10);
+ create_range_partitions 
+-------------------------
+                      10
+(1 row)
+
+SELECT tableoid::regclass, MIN(val) FROM test_update_node.test_range
+	GROUP BY tableoid::regclass ORDER BY tableoid::regclass;
+            tableoid            | min 
+--------------------------------+-----
+ test_update_node.test_range_1  |   1
+ test_update_node.test_range_2  |  11
+ test_update_node.test_range_3  |  21
+ test_update_node.test_range_4  |  31
+ test_update_node.test_range_5  |  41
+ test_update_node.test_range_6  |  51
+ test_update_node.test_range_7  |  61
+ test_update_node.test_range_8  |  71
+ test_update_node.test_range_9  |  81
+ test_update_node.test_range_10 |  91
+(10 rows)
+
+SELECT count(*) FROM test_update_node.test_range;
+ count 
+-------
+   100
+(1 row)
+
+/* move everything to next partition */
+UPDATE test_update_node.test_range SET val = val + 10;
+SELECT tableoid::regclass, MIN(val) FROM test_update_node.test_range
+	GROUP BY tableoid::regclass ORDER BY tableoid::regclass;
+            tableoid            | min 
+--------------------------------+-----
+ test_update_node.test_range_2  |  11
+ test_update_node.test_range_3  |  21
+ test_update_node.test_range_4  |  31
+ test_update_node.test_range_5  |  41
+ test_update_node.test_range_6  |  51
+ test_update_node.test_range_7  |  61
+ test_update_node.test_range_8  |  71
+ test_update_node.test_range_9  |  81
+ test_update_node.test_range_10 |  91
+ test_update_node.test_range_11 | 101
+(10 rows)
+
+/* move everything to previous partition */
+UPDATE test_update_node.test_range SET val = val - 10;
+SELECT tableoid::regclass, MIN(val) FROM test_update_node.test_range
+	GROUP BY tableoid::regclass ORDER BY tableoid::regclass;
+            tableoid            | min 
+--------------------------------+-----
+ test_update_node.test_range_1  |   1
+ test_update_node.test_range_2  |  11
+ test_update_node.test_range_3  |  21
+ test_update_node.test_range_4  |  31
+ test_update_node.test_range_5  |  41
+ test_update_node.test_range_6  |  51
+ test_update_node.test_range_7  |  61
+ test_update_node.test_range_8  |  71
+ test_update_node.test_range_9  |  81
+ test_update_node.test_range_10 |  91
+(10 rows)
+
+SELECT count(*) FROM test_update_node.test_range;
+ count 
+-------
+   100
+(1 row)
+
 /* Partition table by HASH (INT4) */
 CREATE TABLE test_update_node.test_hash(val INT4 NOT NULL, comment TEXT);
 INSERT INTO test_update_node.test_hash SELECT i, i FROM generate_series(1, 10) i;
@@ -345,5 +420,5 @@ SELECT count(*) FROM test_update_node.test_hash;
 (1 row)
 
 DROP SCHEMA test_update_node CASCADE;
-NOTICE:  drop cascades to 18 other objects
+NOTICE:  drop cascades to 17 other objects
 DROP EXTENSION pg_pathman;
