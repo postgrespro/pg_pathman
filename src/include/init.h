@@ -199,8 +199,6 @@ char *build_sequence_name_internal(Oid relid);
 char *build_update_trigger_name_internal(Oid relid);
 char *build_update_trigger_func_name_internal(Oid relid);
 
-char *build_nop_trigger_name_internal(Oid relid);
-
 bool pathman_config_contains_relation(Oid relid,
 									  Datum *values,
 									  bool *isnull,
