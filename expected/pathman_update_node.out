@@ -8,7 +8,6 @@ CREATE TABLE test_update_node.test_range(val NUMERIC NOT NULL, comment TEXT);
 CREATE INDEX val_idx ON test_update_node.test_range (val);
 INSERT INTO test_update_node.test_range SELECT i, i FROM generate_series(1, 100) i;
 SELECT create_range_partitions('test_update_node.test_range', 'val', 1, 10);
-NOTICE:  sequence "test_range_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                       10
@@ -292,7 +291,7 @@ SELECT count(*) FROM test_update_node.test_range;
 (1 row)
 
 DROP TABLE test_update_node.test_range CASCADE;
-NOTICE:  drop cascades to 12 other objects
+NOTICE:  drop cascades to 13 other objects
 /* recreate table and mass move */
 CREATE TABLE test_update_node.test_range(val NUMERIC NOT NULL, comment TEXT);
 INSERT INTO test_update_node.test_range SELECT i, i FROM generate_series(1, 100) i;
