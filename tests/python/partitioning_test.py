@@ -535,9 +535,6 @@ class PartitioningTests(unittest.TestCase):
 		fserv.cleanup()
 		master.cleanup()
 
-		fserv.stop()
-		master.stop()
-
 #	def test_update_triggers_on_fdw_tables(self):
 #		''' Test update node on foreign tables '''
 #
@@ -560,9 +557,6 @@ class PartitioningTests(unittest.TestCase):
 #
 #		fserv.cleanup()
 #		master.cleanup()
-#
-#		fserv.stop()
-#		master.stop()
 
 	def test_parallel_nodes(self):
 		"""Test parallel queries under partitions"""
