@@ -607,7 +607,9 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	{
 		TupleTableSlot		   *slot,
 							   *tmp_slot;
+#if PG_VERSION_NUM < 100000
 		ExprDoneCond			itemIsDone;
+#endif
 		bool					skip_tuple,
 								isnull;
 		Oid						tuple_oid = InvalidOid;
@@ -657,8 +659,10 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 		if (isnull)
 			elog(ERROR, ERR_PART_ATTR_NULL);
 
+#if PG_VERSION_NUM < 100000
 		if (itemIsDone != ExprSingleResult)
 			elog(ERROR, ERR_PART_ATTR_MULTIPLE_RESULTS);
+#endif
 
 		/* Search for a matching partition */
 		rri_holder = select_partition_for_insert(value,

@@ -1939,7 +1939,7 @@ get_cheapest_parameterized_child_path(PlannerInfo *root, RelOptInfo *rel,
 											  NIL,
 											  required_outer,
 											  TOTAL_COST,
-											  true);
+											  false);
 #else
 	cheapest = get_cheapest_path_for_pathkeys(rel->pathlist,
 											  NIL,
