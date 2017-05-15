@@ -5,6 +5,7 @@ CREATE SCHEMA pathman;
 CREATE EXTENSION pg_pathman SCHEMA pathman;
 CREATE SCHEMA test;
 
+
 CREATE TABLE test.range_rel (
 	id	SERIAL PRIMARY KEY,
 	dt	TIMESTAMP,
@@ -35,8 +36,16 @@ INSERT INTO test.num_range_rel
 SET enable_hashjoin = OFF;
 SET enable_nestloop = OFF;
 SET enable_mergejoin = ON;
+
 EXPLAIN (COSTS OFF)
 SELECT * FROM test.range_rel j1
 JOIN test.range_rel j2 on j2.id = j1.id
 JOIN test.num_range_rel j3 on j3.id = j1.id
 WHERE j1.dt < '2015-03-01' AND j2.dt >= '2015-02-01' ORDER BY j2.dt;
+
+SET enable_hashjoin = ON;
+SET enable_nestloop = ON;
+
+
+DROP SCHEMA test CASCADE;
+DROP EXTENSION pg_pathman;
