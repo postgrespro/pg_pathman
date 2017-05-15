@@ -538,33 +538,31 @@ class PartitioningTests(unittest.TestCase):
 		fserv.stop()
 		master.stop()
 
-	def test_update_triggers_on_fdw_tables(self):
-		''' Test update node on foreign tables '''
-
-		master, fserv = self.make_basic_fdw_setup()
-
-		with master.connect() as con:
-			con.begin()
-			con.execute("select create_update_triggers('abc')")
-			con.execute("insert into abc select i, i from generate_series(1, 30) i")
-			con.commit()
-
-			source_relid = con.execute('select tableoid from abc where id=9')[0][0]
-			dest_relid = con.execute('select tableoid from abc where id=25')[0][0]
-			self.assertNotEqual(source_relid, dest_relid)
-
-			self.set_trace(con, 'pg_debug')
-			import ipdb; ipdb.set_trace()
-			count1 = con.execute("select count(*) from abc")[0][0]
-			con.execute('update abc set id=id + 10')
-			count2 = con.execute("select count(*) from abc")[0][0]
-			self.assertEqual(count1, count2)
-
-		fserv.cleanup()
-		master.cleanup()
-
-		fserv.stop()
-		master.stop()
+#	def test_update_triggers_on_fdw_tables(self):
+#		''' Test update node on foreign tables '''
+#
+#		master, fserv = self.make_basic_fdw_setup()
+#
+#		with master.connect() as con:
+#			con.begin()
+#			con.execute("select create_update_triggers('abc')")
+#			con.execute("insert into abc select i, i from generate_series(1, 30) i")
+#			con.commit()
+#
+#			source_relid = con.execute('select tableoid from abc where id=9')[0][0]
+#			dest_relid = con.execute('select tableoid from abc where id=25')[0][0]
+#			self.assertNotEqual(source_relid, dest_relid)
+#
+#			count1 = con.execute("select count(*) from abc")[0][0]
+#			con.execute('update abc set id=id + 10')
+#			count2 = con.execute("select count(*) from abc")[0][0]
+#			self.assertEqual(count1, count2)
+#
+#		fserv.cleanup()
+#		master.cleanup()
+#
+#		fserv.stop()
+#		master.stop()
 
 	def test_parallel_nodes(self):
 		"""Test parallel queries under partitions"""
@@ -1129,7 +1127,7 @@ class PartitioningTests(unittest.TestCase):
 			plan = plan[0]["Plan"]
 
 			self.assertEqual(plan["Node Type"], "ModifyTable")
-			self.assertEqual(plan["Operation"], "Insert")
+			self.assertEqual(plan["Operation"], "Update")
 			self.assertEqual(plan["Relation Name"], "test_range")
 			self.assertEqual(len(plan["Target Tables"]), 11)
 
