@@ -334,6 +334,10 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 	appinfo->child_relid = childRTindex;
 	appinfo->parent_reloid = parent_rte->relid;
 
+	/* Store table row types for wholerow references */
+	appinfo->parent_reltype = RelationGetDescr(parent_relation)->tdtypeid;
+	appinfo->child_reltype  = RelationGetDescr(child_relation)->tdtypeid;
+
 	make_inh_translation_list(parent_relation, child_relation, childRTindex,
 							  &appinfo->translated_vars);
 
