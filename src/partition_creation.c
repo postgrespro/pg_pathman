@@ -1830,38 +1830,3 @@ has_update_trigger_internal(Oid parent_relid)
 	trigname = build_update_trigger_name_internal(parent_relid);
 	return has_trigger_internal(parent_relid, trigname);
 }
-
-/* Create trigger for partition that does nothing */
-void
-create_single_nop_trigger_internal(Oid relid,
-								   const char *trigname,
-								   List *columns)
-{
-	CreateTrigStmt	   *stmt;
-	List			   *func;
-
-	/* do nothing if relation has trigger already */
-	if (has_trigger_internal(relid, trigname))
-		return;
-
-	func = list_make2(makeString(get_namespace_name(get_pathman_schema())),
-					  makeString(CppAsString(pathman_nop_trigger_func)));
-
-	stmt = makeNode(CreateTrigStmt);
-	stmt->trigname		= (char *) trigname;
-	stmt->relation		= makeRangeVarFromRelid(relid);
-	stmt->funcname		= func;
-	stmt->args			= NIL;
-	stmt->row			= true;
-	stmt->timing		= TRIGGER_TYPE_BEFORE;
-	stmt->events		= TRIGGER_TYPE_UPDATE;
-	stmt->columns		= columns;
-	stmt->whenClause	= NULL;
-	stmt->isconstraint	= false;
-	stmt->deferrable	= false;
-	stmt->initdeferred	= false;
-	stmt->constrrel		= NULL;
-
-	(void) CreateTrigger(stmt, NULL, InvalidOid, InvalidOid,
-						 InvalidOid, InvalidOid, false);
-}

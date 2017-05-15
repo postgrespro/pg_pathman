@@ -28,7 +28,6 @@ CustomScanMethods	partition_update_plan_methods;
 CustomExecMethods	partition_update_exec_methods;
 
 static TupleTableSlot *ExecDeleteInternal(ItemPointer tupleid,
-										  HeapTuple oldtuple,
 										  TupleTableSlot *planSlot,
 										  EPQState *epqstate,
 										  EState *estate);
@@ -138,15 +137,12 @@ partition_update_exec(CustomScanState *node)
 	if (!TupIsNull(slot))
 	{
 		Datum					 datum;
-		bool					 isNull;
 		char					 relkind;
 		ResultRelInfo			*resultRelInfo,
 								*sourceRelInfo;
 		ItemPointer				 tupleid = NULL;
 		ItemPointerData			 tuple_ctid;
 		EPQState				 epqstate;
-		HeapTupleData			 oldtupdata;
-		HeapTuple				 oldtuple = NULL;
 		PartitionFilterState	*child_state;
 		JunkFilter				*junkfilter;
 
@@ -178,28 +174,9 @@ partition_update_exec(CustomScanState *node)
 				tupleid = &tuple_ctid;
 			}
 			else if (relkind == RELKIND_FOREIGN_TABLE)
-			{
-				if (AttributeNumberIsValid(junkfilter->jf_junkAttNo))
-				{
-					datum = ExecGetJunkAttribute(child_state->subplan_slot,
-												 junkfilter->jf_junkAttNo,
-												 &isNull);
-					/* shouldn't ever get a null result... */
-					if (isNull)
-						elog(ERROR, "wholerow is NULL");
-
-					oldtupdata.t_data = DatumGetHeapTupleHeader(datum);
-					oldtupdata.t_len =
-						HeapTupleHeaderGetDatumLength(oldtupdata.t_data);
-					ItemPointerSetInvalid(&(oldtupdata.t_self));
-
-					/* Historically, view triggers see invalid t_tableOid. */
-					oldtupdata.t_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
-					oldtuple = &oldtupdata;
-				}
-			}
+				elog(ERROR, "update node is not supported for foreign tables");
 			else
-				elog(ERROR, "got unexpected type of relation");
+				elog(ERROR, "got unexpected type of relation for update");
 
 			/*
 			 * Clean from junk attributes before INSERT,
@@ -209,14 +186,9 @@ partition_update_exec(CustomScanState *node)
 				slot = ExecFilterJunk(junkfilter, slot);
 		}
 
-		/*
-		 * Delete old tuple. We have two cases here:
-		 * 1) local tables - tupleid points to actual tuple
-		 * 2) foreign tables - tupleid is invalid, slot is required
-		 */
+		/* Delete old tuple */
 		estate->es_result_relation_info = sourceRelInfo;
-		ExecDeleteInternal(tupleid, oldtuple, child_state->subplan_slot,
-				&epqstate, estate);
+		ExecDeleteInternal(tupleid, child_state->subplan_slot, &epqstate, estate);
 
 		/* we've got the slot that can be inserted to child partition */
 		estate->es_result_relation_info = resultRelInfo;
@@ -254,15 +226,14 @@ partition_update_explain(CustomScanState *node, List *ancestors, ExplainState *e
  */
 static TupleTableSlot *
 ExecDeleteInternal(ItemPointer tupleid,
-				   HeapTuple oldtuple,
 				   TupleTableSlot *planSlot,
 				   EPQState *epqstate,
 				   EState *estate)
 {
-	ResultRelInfo *resultRelInfo;
-	Relation	resultRelationDesc;
-	HTSU_Result result;
-	HeapUpdateFailureData hufd;
+	ResultRelInfo			*resultRelInfo;
+	Relation				 resultRelationDesc;
+	HTSU_Result				 result;
+	HeapUpdateFailureData	 hufd;
 
 	/*
 	 * get information on the (current) result relation
@@ -277,29 +248,13 @@ ExecDeleteInternal(ItemPointer tupleid,
 		bool		dodelete;
 
 		dodelete = ExecBRDeleteTriggers(estate, epqstate, resultRelInfo,
-										tupleid, oldtuple);
+										tupleid, NULL);
 
 		if (!dodelete)
 			elog(ERROR, "the old row always should be deleted from child table");
 	}
 
-	if (resultRelInfo->ri_FdwRoutine)
-	{
-		TupleTableSlot	*slot = MakeSingleTupleTableSlot(RelationGetDescr(resultRelationDesc));
-
-		/*
-		 * delete from foreign table: let the FDW do it
-		 */
-		ExecSetSlotDescriptor(slot, RelationGetDescr(resultRelationDesc));
-		resultRelInfo->ri_FdwRoutine->ExecForeignDelete(estate,
-														resultRelInfo,
-														slot,
-														planSlot);
-
-		/* we don't need slot anymore */
-		ExecDropSingleTupleTableSlot(slot);
-	}
-	else if (tupleid != NULL)
+	if (tupleid != NULL)
 	{
 		/* delete the tuple */
 ldelete:;
@@ -358,7 +313,7 @@ ldelete:;
 		elog(ERROR, "tupleid should be specified for deletion");
 
 	/* AFTER ROW DELETE Triggers */
-	ExecARDeleteTriggers(estate, resultRelInfo, tupleid, oldtuple);
+	ExecARDeleteTriggers(estate, resultRelInfo, tupleid, NULL);
 
 	return NULL;
 }

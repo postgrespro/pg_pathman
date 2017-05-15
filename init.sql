@@ -738,23 +738,6 @@ RETURNS BOOL AS 'pg_pathman', 'has_update_trigger'
 LANGUAGE C STRICT;
 
 /*
- * Function for NOP triggers.
- * NOP trigger is a trigger that we use to turn off direct modify of FDW tables
- */
-CREATE OR REPLACE FUNCTION @extschema@.pathman_nop_trigger_func()
-RETURNS TRIGGER AS 'pg_pathman', 'pathman_nop_trigger_func'
-LANGUAGE C STRICT;
-
-/*
- * Creates single NOP trigger.
- */
-CREATE OR REPLACE FUNCTION @extschema@.create_single_nop_trigger(
-	parent_relid	REGCLASS,
-	partition_relid	REGCLASS)
-RETURNS VOID AS 'pg_pathman', 'create_single_nop_trigger'
-LANGUAGE C STRICT;
-
-/*
  * Partitioning key
  */
 CREATE OR REPLACE FUNCTION @extschema@.get_partition_key(
@@ -945,12 +928,4 @@ LANGUAGE C STRICT;
 
 CREATE OR REPLACE FUNCTION @extschema@.get_pathman_lib_version()
 RETURNS CSTRING AS 'pg_pathman', 'get_pathman_lib_version'
-LANGUAGE C STRICT;
-
-/*
- * Check if relation is foreign table
- */
-CREATE OR REPLACE FUNCTION @extschema@.is_relation_foreign(
-	relid	REGCLASS)
-RETURNS BOOL AS 'pg_pathman', 'is_relation_foreign'
 LANGUAGE C STRICT;

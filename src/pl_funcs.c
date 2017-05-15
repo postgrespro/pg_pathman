@@ -71,12 +71,8 @@ PG_FUNCTION_INFO_V1( check_security_policy );
 
 PG_FUNCTION_INFO_V1( create_update_triggers );
 PG_FUNCTION_INFO_V1( pathman_update_trigger_func );
-PG_FUNCTION_INFO_V1( pathman_nop_trigger_func );
 PG_FUNCTION_INFO_V1( create_single_update_trigger );
 PG_FUNCTION_INFO_V1( has_update_trigger );
-PG_FUNCTION_INFO_V1( is_relation_foreign );
-
-PG_FUNCTION_INFO_V1( create_single_nop_trigger );
 
 PG_FUNCTION_INFO_V1( debug_capture );
 PG_FUNCTION_INFO_V1( get_pathman_lib_version );
@@ -1217,24 +1213,6 @@ pathman_update_trigger_func(PG_FUNCTION_ARGS)
 	PG_RETURN_POINTER(new_tuple);
 }
 
-Datum
-pathman_nop_trigger_func(PG_FUNCTION_ARGS)
-{
-	TriggerData			   *trigdata = (TriggerData *) fcinfo->context;
-
-	/* Handle user calls */
-	if (!CALLED_AS_TRIGGER(fcinfo))
-		elog(ERROR, "this function should not be called directly");
-
-	/* Handle wrong fire mode */
-	if (!TRIGGER_FIRED_FOR_ROW(trigdata->tg_event))
-		elog(ERROR, "%s: must be fired for row",
-			 trigdata->tg_trigger->tgname);
-
-	/* Just return NEW tuple */
-	PG_RETURN_POINTER(trigdata->tg_newtuple);
-}
-
 struct replace_vars_cxt
 {
 	HeapTuple		new_tuple;
@@ -1477,50 +1455,6 @@ has_update_trigger(PG_FUNCTION_ARGS)
 
 	PG_RETURN_BOOL(has_update_trigger_internal(parent_relid));
 }
-
-/* Check if relation is foreign table */
-Datum
-is_relation_foreign(PG_FUNCTION_ARGS)
-{
-	Oid			relid = PG_GETARG_OID(0);
-	Relation	rel;
-	bool		res;
-
-	/* Check that relation exists */
-	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
-		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						errmsg("relation \"%u\" does not exist", relid)));
-
-	rel = heap_open(relid, NoLock);
-	res = (rel->rd_rel->relkind == RELKIND_FOREIGN_TABLE);
-	heap_close(rel, NoLock);
-	PG_RETURN_BOOL(res);
-}
-
-/* Create a trigger for partition that does nothing */
-Datum
-create_single_nop_trigger(PG_FUNCTION_ARGS)
-{
-	Oid						parent = PG_GETARG_OID(0);
-	Oid						child = PG_GETARG_OID(1);
-	const char			   *trigname;
-	const PartRelationInfo *prel;
-	List				   *columns;
-
-	/* Check that table is partitioned */
-	prel = get_pathman_relation_info(parent);
-	shout_if_prel_is_invalid(parent, prel, PT_ANY);
-
-	/* Acquire trigger and attribute names */
-	trigname = build_nop_trigger_name_internal(parent);
-
-	/* Generate list of columns used in expression */
-	columns = PrelExpressionColumnNames(prel);
-	create_single_nop_trigger_internal(child, trigname, columns);
-
-	PG_RETURN_VOID();
-}
-
 
 /*
  * -------

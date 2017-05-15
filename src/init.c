@@ -584,17 +584,6 @@ build_update_trigger_name_internal(Oid relid)
 }
 
 /*
- * Generate name for NOP trigger.
- * NOTE: this function does not perform sanity checks at all.
- */
-char *
-build_nop_trigger_name_internal(Oid relid)
-{
-	AssertArg(OidIsValid(relid));
-	return psprintf("%s_nop_trig", get_rel_name(relid));
-}
-
-/*
  * Generate name for update trigger's function.
  * NOTE: this function does not perform sanity checks at all.
  */
