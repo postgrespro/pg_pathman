@@ -147,7 +147,8 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		if (saved_jointype == JOIN_UNIQUE_INNER)
 			return; /* No way to do this with a parameterized inner path */
 
-#if defined PGPRO_VERSION && PG_VERSION_NUM >= 90603
+/* TODO: create macro initial_cost_nestloop_compat() */
+#if defined(PGPRO_VERSION) && PG_VERSION_NUM >= 90603
 		initial_cost_nestloop(root, &workspace, jointype,
 							  outer, inner, /* built paths */
 							  extra);
@@ -159,20 +160,6 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 
 		pathkeys = build_join_pathkeys(root, joinrel, jointype, outer->pathkeys);
 
-#if defined PGPRO_VERSION && PG_VERSION_NUM >= 90603
-		nest_path = create_nestloop_path(root, joinrel, jointype, &workspace,
-										 extra, outer, inner,
-										 extra->restrictlist,
-										 pathkeys,
-										 calc_nestloop_required_outer(outer, inner));
-#else
-		nest_path = create_nestloop_path(root, joinrel, jointype, &workspace,
-										 extra->sjinfo, &extra->semifactors,
-										 outer, inner, extra->restrictlist,
-										 pathkeys,
-										 calc_nestloop_required_outer(outer, inner));
-#endif
-
 		/* Discard all clauses that are to be evaluated by 'inner' */
 		foreach (rinfo_lc, extra->restrictlist)
 		{
@@ -182,6 +169,24 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 			if (!join_clause_is_movable_to(rinfo, inner->parent))
 				filtered_joinclauses = lappend(filtered_joinclauses, rinfo);
 		}
+
+/* TODO: create macro create_nestloop_path_compat() */
+#if defined(PGPRO_VERSION) && PG_VERSION_NUM >= 90603
+		nest_path = create_nestloop_path(root, joinrel, jointype, &workspace,
+										 extra,
+										 outer, inner,
+										 filtered_joinclauses,
+										 pathkeys,
+										 calc_nestloop_required_outer(outer, inner));
+#else
+		nest_path = create_nestloop_path(root, joinrel, jointype, &workspace,
+										 extra->sjinfo,
+										 &extra->semifactors,
+										 outer, inner,
+										 filtered_joinclauses,
+										 pathkeys,
+										 calc_nestloop_required_outer(outer, inner));
+#endif
 
 		/*
 		 * Override 'rows' value produced by standard estimator.
