@@ -36,8 +36,6 @@
 #include "utils/typcache.h"
 #include "utils/lsyscache.h"
 
-static PlannerInfo* pathman_planner_info = NULL;
-
 /* Borrowed from joinpath.c */
 #define PATH_PARAM_BY_REL(path, rel)  \
 	((path)->param_info && bms_overlap(PATH_REQ_OUTER(path), (rel)->relids))
@@ -279,9 +277,6 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 	/* Make sure that pg_pathman is ready */
 	if (!IsPathmanReady())
 		return;
-
-	/* save root, we will use in plan modify stage */
-	pathman_planner_info = root;
 
 	/*
 	 * Skip if it's a result relation (UPDATE | DELETE | INSERT),
@@ -539,9 +534,6 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	PlannedStmt	   *result;
 	uint32			query_id = parse->queryId;
 	bool			pathman_ready = IsPathmanReady(); /* in case it changes */
-
-	/* rel_pathlist_hook will set this variable */
-	pathman_planner_info = NULL;
 
 	PG_TRY();
 	{
