@@ -55,7 +55,7 @@ typedef struct {
 	( list_make1_irange(make_irange(0, PrelLastChild(prel), (lossy))) )
 
 
-inline static IndexRange
+static inline IndexRange
 make_irange(uint32 lower, uint32 upper, bool lossy)
 {
 	IndexRange result = { lower & IRANGE_BOUNDARY_MASK,
@@ -72,7 +72,7 @@ make_irange(uint32 lower, uint32 upper, bool lossy)
 	return result;
 }
 
-inline static IndexRange *
+static inline IndexRange *
 alloc_irange(IndexRange irange)
 {
 	IndexRange *result = (IndexRange *) palloc(sizeof(IndexRange));
@@ -84,7 +84,7 @@ alloc_irange(IndexRange irange)
 }
 
 /* Return predecessor or 0 if boundary is 0 */
-inline static uint32
+static inline uint32
 irb_pred(uint32 boundary)
 {
 	if (boundary > 0)
@@ -94,7 +94,7 @@ irb_pred(uint32 boundary)
 }
 
 /* Return successor or IRANGE_BONDARY_MASK */
-inline static uint32
+static inline uint32
 irb_succ(uint32 boundary)
 {
 	if (boundary >= IRANGE_BOUNDARY_MASK)
@@ -113,7 +113,7 @@ typedef enum
 } ir_cmp_lossiness;
 
 /* Comapre lossiness factor of two IndexRanges */
-inline static ir_cmp_lossiness
+static inline ir_cmp_lossiness
 irange_cmp_lossiness(IndexRange a, IndexRange b)
 {
 	if (is_irange_lossy(a) == is_irange_lossy(b))

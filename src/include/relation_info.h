@@ -87,7 +87,7 @@ FreeBound(Bound *bound, bool byval)
 		pfree(DatumGetPointer(BoundGetValue(bound)));
 }
 
-inline static int
+static inline int
 cmp_bounds(FmgrInfo *cmp_func,
 		   const Oid collid,
 		   const Bound *b1,

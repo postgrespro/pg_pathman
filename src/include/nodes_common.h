@@ -54,7 +54,7 @@ typedef ChildScanCommonData *ChildScanCommon;
 /*
  * Destroy exhausted plan states
  */
-inline static void
+static inline void
 clear_plan_states(CustomScanState *scan_state)
 {
 	ListCell *state_cell;
