@@ -720,7 +720,7 @@ static void
 handle_const(const Const *c,
 			 const int strategy,
 			 const WalkerContext *context,
-			 WrapperNode *result) /* ret value #1 */
+			 WrapperNode *result)		/* ret value #1 */
 {
 	const PartRelationInfo *prel = context->prel;
 
@@ -838,16 +838,103 @@ handle_const_return:
 	result->paramsel = estimate_paramsel_using_prel(prel, strategy);
 }
 
+/* Array handler */
+static void
+handle_array(ArrayType *array,
+			 const int strategy,
+			 const bool use_or,
+			 const WalkerContext *context,
+			 WrapperNode *result)		/* ret value #1 */
+{
+	const PartRelationInfo *prel = context->prel;
+
+	/* Elements of the array */
+	Datum	   *elem_values;
+	bool	   *elem_isnull;
+	int			elem_count;
+
+	/* Element's properties */
+	Oid			elem_type;
+	int16		elem_len;
+	bool		elem_byval;
+	char		elem_align;
+
+	/* Check if we can work with this strategy */
+	if (strategy == 0)
+		goto handle_array_return;
+
+	/* Get element's properties */
+	elem_type = ARR_ELEMTYPE(array);
+	get_typlenbyvalalign(elem_type, &elem_len, &elem_byval, &elem_align);
+
+	/* Extract values from the array */
+	deconstruct_array(array, elem_type, elem_len, elem_byval, elem_align,
+					  &elem_values, &elem_isnull, &elem_count);
+
+	/* Handle non-null Const arrays */
+	if (elem_count > 0)
+	{
+		List   *ranges;
+		int		i;
+
+		/* Set default ranges for OR | AND */
+		ranges = use_or ? NIL : list_make1_irange_full(prel, IR_COMPLETE);
+
+		/* Select partitions using values */
+		for (i = 0; i < elem_count; i++)
+		{
+			WrapperNode		wrap;
+			Const			c;
+
+			NodeSetTag(&c, T_Const);
+			c.consttype		= elem_type;
+			c.consttypmod	= -1;
+			c.constcollid	= InvalidOid;
+			c.constlen		= datumGetSize(elem_values[i],
+										   elem_byval,
+										   elem_len);
+			c.constvalue	= elem_values[i];
+			c.constisnull	= elem_isnull[i];
+			c.constbyval	= elem_byval;
+			c.location		= -1;
+
+			handle_const(&c, strategy, context, &wrap);
+
+			/* Should we use OR | AND? */
+			ranges = use_or ?
+						irange_list_union(ranges, wrap.rangeset) :
+						irange_list_intersection(ranges, wrap.rangeset);
+
+			result->paramsel = Max(result->paramsel, wrap.paramsel);
+		}
+
+		/* Free resources */
+		pfree(elem_values);
+		pfree(elem_isnull);
+
+		/* Save rangeset */
+		result->rangeset = ranges;
+
+		return; /* done, exit */
+	}
+
+handle_array_return:
+	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
+	result->paramsel = estimate_paramsel_using_prel(prel, strategy);
+}
+
 /* Boolean expression handler */
 static void
 handle_boolexpr(const BoolExpr *expr,
 				const WalkerContext *context,
-				WrapperNode *result)
+				WrapperNode *result)	/* ret value #1 */
 {
-	ListCell				   *lc;
-	const PartRelationInfo	   *prel = context->prel;
+	const PartRelationInfo *prel = context->prel;
+	ListCell			   *lc;
 
+	/* Save expression */
 	result->orig = (const Node *) expr;
+
 	result->args = NIL;
 	result->paramsel = 1.0;
 
@@ -858,22 +945,22 @@ handle_boolexpr(const BoolExpr *expr,
 
 	foreach (lc, expr->args)
 	{
-		WrapperNode *arg_result;
+		WrapperNode *wrap;
 
-		arg_result = walk_expr_tree((Expr *) lfirst(lc), context);
-		result->args = lappend(result->args, arg_result);
+		wrap = walk_expr_tree((Expr *) lfirst(lc), context);
+		result->args = lappend(result->args, wrap);
 
 		switch (expr->boolop)
 		{
 			case OR_EXPR:
 				result->rangeset = irange_list_union(result->rangeset,
-													 arg_result->rangeset);
+													 wrap->rangeset);
 				break;
 
 			case AND_EXPR:
 				result->rangeset = irange_list_intersection(result->rangeset,
-															arg_result->rangeset);
-				result->paramsel *= arg_result->paramsel;
+															wrap->rangeset);
+				result->paramsel *= wrap->paramsel;
 				break;
 
 			default:
@@ -901,107 +988,131 @@ handle_boolexpr(const BoolExpr *expr,
 static void
 handle_arrexpr(const ScalarArrayOpExpr *expr,
 			   const WalkerContext *context,
-			   WrapperNode *result)
+			   WrapperNode *result)		/* ret value #1 */
 {
-	Node					   *exprnode = (Node *) linitial(expr->args);
-	Node					   *arraynode = (Node *) lsecond(expr->args);
+	Node					   *part_expr = (Node *) linitial(expr->args);
+	Node					   *array = (Node *) lsecond(expr->args);
 	const PartRelationInfo	   *prel = context->prel;
 	TypeCacheEntry			   *tce;
 	int							strategy;
 
-	result->orig = (const Node *) expr;
-
 	tce = lookup_type_cache(prel->ev_type, TYPECACHE_BTREE_OPFAMILY);
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
 
-	if (!match_expr_to_operand(context->prel_expr, exprnode))
+	/* Check if expression tree is a partitioning expression */
+	if (!match_expr_to_operand(context->prel_expr, part_expr))
 		goto handle_arrexpr_return;
 
-	/* Handle non-null Const arrays */
-	if (arraynode && IsA(arraynode, Const) && !((Const *) arraynode)->constisnull)
+	/* Check if we can work with this strategy */
+	if (strategy == 0)
+		goto handle_arrexpr_return;
+
+	/* Examine the array node */
+	switch (nodeTag(array))
 	{
-		ArrayType	   *arrayval;
+		case T_Const:
+			{
+				Const	   *c = (Const *) array;
 
-		int16			elemlen;
-		bool			elembyval;
-		char			elemalign;
+				/* Array is NULL */
+				if (c->constisnull)
+					goto handle_arrexpr_return;
 
-		int				num_elems;
+				/* Examine array */
+				handle_array(DatumGetArrayTypeP(c->constvalue),
+							 strategy, expr->useOr, context, result);
 
-		Datum		   *elem_values;
-		bool		   *elem_isnull;
+				/* Save expression */
+				result->orig = (const Node *) expr;
 
-		WalkerContext	nested_wcxt;
-		List		   *ranges;
-		int				i;
+				return; /* done, exit */
+			}
 
-		/* Extract values from array */
-		arrayval = DatumGetArrayTypeP(((Const *) arraynode)->constvalue);
+		case T_ArrayExpr:
+			{
+				ArrayExpr  *arr_expr = (ArrayExpr *) array;
+				Oid			elem_type = arr_expr->element_typeid;
+				bool		array_has_params = false;
+				List	   *ranges;
+				ListCell   *lc;
 
-		get_typlenbyvalalign(ARR_ELEMTYPE(arrayval),
-							 &elemlen, &elembyval, &elemalign);
+				/* Set default ranges for OR | AND */
+				ranges = expr->useOr ? NIL : list_make1_irange_full(prel, IR_COMPLETE);
 
-		deconstruct_array(arrayval,
-						  ARR_ELEMTYPE(arrayval),
-						  elemlen, elembyval, elemalign,
-						  &elem_values, &elem_isnull, &num_elems);
+				/* Walk trough elements list */
+				foreach (lc, arr_expr->elements)
+				{
+					Node		   *elem = lfirst(lc);
+					WrapperNode		wrap;
 
-		/* Copy WalkerContext */
-		memcpy((void *) &nested_wcxt,
-			   (const void *) context,
-			   sizeof(WalkerContext));
+					/* Stop if ALL + quals evaluate to NIL */
+					if (!expr->useOr && ranges == NIL)
+						break;
 
-		/* Set default ranges for OR | AND */
-		ranges = expr->useOr ? NIL : list_make1_irange_full(prel, IR_COMPLETE);
+					/* Is this a const value? */
+					if (IsConstValue(elem, context))
+					{
+						Const *c = ExtractConst(elem, context);
 
-		/* Select partitions using values */
-		for (i = 0; i < num_elems; i++)
-		{
-			WrapperNode		sub_result;
-			Const			c;
+						/* Is this an array?.. */
+						if (c->consttype != elem_type)
+						{
+							/* Array is NULL */
+							if (c->constisnull)
+								goto handle_arrexpr_return;
 
-			NodeSetTag(&c, T_Const);
-			c.consttype	= ARR_ELEMTYPE(arrayval);
-			c.consttypmod	= -1;
-			c.constcollid	= InvalidOid;
-			c.constlen		= datumGetSize(elem_values[i],
-										   elembyval,
-										   elemlen);
-			c.constvalue	= elem_values[i];
-			c.constisnull	= elem_isnull[i];
-			c.constbyval	= elembyval;
-			c.location		= -1;
+							/* Examine array */
+							handle_array(DatumGetArrayTypeP(c->constvalue),
+										 strategy, expr->useOr, context, &wrap);
+						}
+						/* ... or a single element? */
+						else handle_const(c, strategy, context, &wrap);
 
-			handle_const(&c, strategy, &nested_wcxt, &sub_result);
+						/* Should we use OR | AND? */
+						ranges = expr->useOr ?
+									irange_list_union(ranges, wrap.rangeset) :
+									irange_list_intersection(ranges, wrap.rangeset);
+					}
+					else array_has_params = true; /* we have non-const nodes */
+				}
 
-			ranges = expr->useOr ?
-						irange_list_union(ranges, sub_result.rangeset) :
-						irange_list_intersection(ranges, sub_result.rangeset);
+				/* Check for PARAM-related optimizations */
+				if (array_has_params)
+				{
+					/* We can't say anything if PARAMs + ANY */
+					if (expr->useOr)
+						goto handle_arrexpr_return;
 
-			result->paramsel = Max(result->paramsel, sub_result.paramsel);
-		}
+					/* Recheck condition on a narrowed set of partitions */
+					ranges = irange_list_set_lossiness(ranges, IR_LOSSY);
+				}
 
-		result->rangeset = ranges;
-		if (num_elems == 0)
-			result->paramsel = 0.0;
+				/* Save rangeset */
+				result->rangeset = ranges;
 
-		/* Free resources */
-		pfree(elem_values);
-		pfree(elem_isnull);
+				/* Save expression */
+				result->orig = (const Node *) expr;
 
-		return; /* done, exit */
+				return; /* done, exit */
+			}
+
+		default:
+			break;
 	}
 
 handle_arrexpr_return:
 	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
 	result->paramsel = estimate_paramsel_using_prel(prel, strategy);
+
+	/* Save expression */
+	result->orig = (const Node *) expr;
 }
 
 /* Operator expression handler */
 static void
 handle_opexpr(const OpExpr *expr,
 			  const WalkerContext *context,
-			  WrapperNode *result)
+			  WrapperNode *result)		/* ret value #1 */
 {
 	Node					   *param;
 	const PartRelationInfo	   *prel = context->prel;

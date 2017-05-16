@@ -129,10 +129,30 @@ irange_cmp_lossiness(IndexRange a, IndexRange b)
 }
 
 
-/* Various traits */
-bool iranges_intersect(IndexRange a, IndexRange b);
-bool iranges_adjoin(IndexRange a, IndexRange b);
-bool irange_eq_bounds(IndexRange a, IndexRange b);
+/* Check if two ranges intersect */
+static inline bool
+iranges_intersect(IndexRange a, IndexRange b)
+{
+	return (irange_lower(a) <= irange_upper(b)) &&
+		   (irange_lower(b) <= irange_upper(a));
+}
+
+/* Check if two ranges adjoin */
+static inline bool
+iranges_adjoin(IndexRange a, IndexRange b)
+{
+	return (irange_upper(a) == irb_pred(irange_lower(b))) ||
+		   (irange_upper(b) == irb_pred(irange_lower(a)));
+}
+
+/* Check if two ranges cover the same area */
+static inline bool
+irange_eq_bounds(IndexRange a, IndexRange b)
+{
+	return (irange_lower(a) == irange_lower(b)) &&
+		   (irange_upper(a) == irange_upper(b));
+}
+
 
 /* Basic operations on IndexRanges */
 IndexRange irange_union_simple(IndexRange a, IndexRange b);
@@ -141,6 +161,7 @@ IndexRange irange_intersection_simple(IndexRange a, IndexRange b);
 /* Operations on Lists of IndexRanges */
 List *irange_list_union(List *a, List *b);
 List *irange_list_intersection(List *a, List *b);
+List *irange_list_set_lossiness(List *ranges, bool lossy);
 
 /* Utility functions */
 int irange_list_length(List *rangeset);
