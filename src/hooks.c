@@ -152,7 +152,8 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		Relids			required_nestloop,
 						required_inner;
 		List		   *filtered_joinclauses = NIL,
-					   *saved_ppi_list;
+					   *saved_ppi_list,
+					   *pathkeys;
 		ListCell	   *rinfo_lc;
 
 		if (!IsA(cur_inner_path, AppendPath))
@@ -217,31 +218,19 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 			return;
 
 
-#if PG_VERSION_NUM >= 100000
+/* TODO: create macro initial_cost_nestloop_compat() */
+#if (defined(PGPRO_VERSION) && PG_VERSION_NUM >= 90603) || \
+	PG_VERSION_NUM >= 100000
 		initial_cost_nestloop(root, &workspace, jointype,
 							  outer, inner, /* built paths */
 							  extra);
-
-		nest_path = create_nestloop_path(root, joinrel, jointype, &workspace,
-										 extra, outer, inner,
-										 extra->restrictlist,
-										 build_join_pathkeys(root, joinrel,
-															 jointype,
-															 outer->pathkeys),
-										 required_nestloop);
 #else
 		initial_cost_nestloop(root, &workspace, jointype,
 							  outer, inner, /* built paths */
 							  extra->sjinfo, &extra->semifactors);
-
-		nest_path = create_nestloop_path(root, joinrel, jointype, &workspace,
-										 extra->sjinfo, &extra->semifactors,
-										 outer, inner, extra->restrictlist,
-										 build_join_pathkeys(root, joinrel,
-															 jointype,
-															 outer->pathkeys),
-										 required_nestloop);
 #endif
+
+		pathkeys = build_join_pathkeys(root, joinrel, jointype, outer->pathkeys);
 
 		/* Discard all clauses that are to be evaluated by 'inner' */
 		foreach (rinfo_lc, extra->restrictlist)
@@ -252,6 +241,25 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 			if (!join_clause_is_movable_to(rinfo, inner->parent))
 				filtered_joinclauses = lappend(filtered_joinclauses, rinfo);
 		}
+
+/* TODO: create macro create_nestloop_path_compat() */
+#if (defined(PGPRO_VERSION) && PG_VERSION_NUM >= 90603) || \
+	PG_VERSION_NUM >= 100000
+		nest_path = create_nestloop_path(root, joinrel, jointype, &workspace,
+										 extra,
+										 outer, inner,
+										 filtered_joinclauses,
+										 pathkeys,
+										 calc_nestloop_required_outer(outer, inner));
+#else
+		nest_path = create_nestloop_path(root, joinrel, jointype, &workspace,
+										 extra->sjinfo,
+										 &extra->semifactors,
+										 outer, inner,
+										 filtered_joinclauses,
+										 pathkeys,
+										 calc_nestloop_required_outer(outer, inner));
+#endif
 
 		/*
 		 * NOTE: Override 'rows' value produced by standard estimator.

@@ -9,7 +9,6 @@ CREATE SCHEMA test_updates;
 CREATE TABLE test_updates.test(a FLOAT4, val INT4 NOT NULL, b FLOAT8);
 INSERT INTO test_updates.test SELECT i, i, i FROM generate_series(1, 100) AS i;
 SELECT create_range_partitions('test_updates.test', 'val', 1, 10);
-NOTICE:  sequence "test_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                       10

@@ -78,7 +78,6 @@ SELECT create_range_partitions('test_exprs.range_rel', 'RANDOM()', '15 years'::I
 ERROR:  start value is less than min value of "random()"
 SELECT create_range_partitions('test_exprs.range_rel', 'AGE(dt, ''2000-01-01''::DATE)',
 		'15 years'::INTERVAL, '1 year'::INTERVAL, 10);
-NOTICE:  sequence "range_rel_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                       10

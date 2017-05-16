@@ -16,7 +16,6 @@ END
 $$ language plpgsql;
 CREATE TABLE callbacks.abc(a serial, b int);
 SELECT create_range_partitions('callbacks.abc', 'a', 1, 100, 2);
-NOTICE:  sequence "abc_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                        2
@@ -67,7 +66,7 @@ WHERE partrel = 'callbacks.abc'::REGCLASS;
 (1 row)
 
 DROP TABLE callbacks.abc CASCADE;
-NOTICE:  drop cascades to 2 other objects
+NOTICE:  drop cascades to 3 other objects
 /* set callback to be called on RANGE partitions */
 CREATE TABLE callbacks.abc(a serial, b int);
 SELECT create_range_partitions('callbacks.abc', 'a', 1, 100, 2);
@@ -197,7 +196,7 @@ $$ language plpgsql;
 INSERT INTO callbacks.abc VALUES (301, 0); /* +1 new partition */
 WARNING:  callback arg: {"parent": "abc", "parttype": "2", "partition": "abc_5", "range_max": "401", "range_min": "301", "parent_schema": "callbacks", "partition_schema": "callbacks"}
 DROP TABLE callbacks.abc CASCADE;
-NOTICE:  drop cascades to 4 other objects
+NOTICE:  drop cascades to 5 other objects
 /* more complex test using rotation of tables */
 CREATE TABLE callbacks.abc(a INT4 NOT NULL);
 INSERT INTO callbacks.abc
@@ -414,7 +413,7 @@ ORDER BY range_min::INT4;
 (4 rows)
 
 DROP TABLE callbacks.abc CASCADE;
-NOTICE:  drop cascades to 4 other objects
+NOTICE:  drop cascades to 5 other objects
 DROP SCHEMA callbacks CASCADE;
-NOTICE:  drop cascades to 3 other objects
+NOTICE:  drop cascades to 2 other objects
 DROP EXTENSION pg_pathman CASCADE;

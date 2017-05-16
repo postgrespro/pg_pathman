@@ -37,6 +37,7 @@ REGRESS = pathman_basic \
 		  pathman_interval \
 		  pathman_join_clause \
 		  pathman_lateral \
+		  pathman_mergejoin \
 		  pathman_only \
 		  pathman_permissions \
 		  pathman_rowmarks \
@@ -44,7 +45,6 @@ REGRESS = pathman_basic \
 		  pathman_update_trigger \
 		  pathman_updates \
 		  pathman_utility_stmt
-
 
 EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add
 

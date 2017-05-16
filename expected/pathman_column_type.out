@@ -8,7 +8,6 @@ CREATE SCHEMA test_column_type;
 /* create new table (val int) */
 CREATE TABLE test_column_type.test(val INT4 NOT NULL);
 SELECT create_range_partitions('test_column_type.test', 'val', 1, 10, 10);
-NOTICE:  sequence "test_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                       10
@@ -167,5 +166,4 @@ NOTICE:  0 rows copied from test_column_type.test_4
 
 DROP TABLE test_column_type.test CASCADE;
 DROP SCHEMA test_column_type CASCADE;
-NOTICE:  drop cascades to sequence test_column_type.test_seq
 DROP EXTENSION pg_pathman;
