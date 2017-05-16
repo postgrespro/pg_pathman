@@ -589,11 +589,7 @@ parse_partitioning_expression(const Oid relid,
 		*query_string_out = query_string;
 
 	if (parsetree_out)
-#if PG_VERSION_NUM >= 100000
 		*parsetree_out = (Node *) linitial(parsetree_list);
-#else
-		*parsetree_out = (Node *) select_stmt;
-#endif
 
 	return ((ResTarget *) linitial(select_stmt->targetList))->val;
 }
@@ -669,11 +665,9 @@ cook_partitioning_expression(const Oid relid,
 	old_mcxt = MemoryContextSwitchTo(parse_mcxt);
 
 	/* This will fail with elog in case of wrong expression */
-#if PG_VERSION_NUM >= 100000
-	querytree_list = pg_analyze_and_rewrite((RawStmt *) parsetree/* stub value */, query_string, NULL, 0, NULL);
-#else
-	querytree_list = pg_analyze_and_rewrite(parsetree, query_string, NULL, 0);
-#endif
+	querytree_list = pg_analyze_and_rewrite_compat(parsetree, query_string,
+												   NULL, 0, NULL);
+
 	if (list_length(querytree_list) != 1)
 		elog(ERROR, "partitioning expression produced more than 1 query");
 

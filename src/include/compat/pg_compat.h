@@ -198,6 +198,14 @@ extern void create_plain_partial_paths(PlannerInfo *root,
 
 
 /*
+ * get_rel_persistence()
+ */
+#if PG_VERSION_NUM >= 90500 && PG_VERSION_NUM < 90600
+char get_rel_persistence(Oid relid);
+#endif
+
+
+/*
  * InitResultRelInfo
  *
  * for v10 set NULL into 'partition_root' argument to specify that result
@@ -238,6 +246,24 @@ extern Result *make_result(List *tlist,
 void McxtStatsInternal(MemoryContext context, int level,
 					   bool examine_children,
 					   MemoryContextCounters *totals);
+#endif
+
+
+/*
+ * pg_analyze_and_rewrite
+ *
+ * for v10 cast first arg to RawStmt type
+ */
+#if PG_VERSION_NUM >= 100000
+#define pg_analyze_and_rewrite_compat(parsetree, query_string, paramTypes, \
+									  numParams, queryEnv) \
+		pg_analyze_and_rewrite((RawStmt *) (parsetree), (query_string), \
+							   (paramTypes), (numParams), (queryEnv))
+#elif PG_VERSION_NUM >= 90500
+#define pg_analyze_and_rewrite_compat(parsetree, query_string, paramTypes, \
+									  numParams, queryEnv) \
+		pg_analyze_and_rewrite((Node *) (parsetree), (query_string), \
+							   (paramTypes), (numParams))
 #endif
 
 
@@ -296,14 +322,6 @@ extern void set_rel_consider_parallel(PlannerInfo *root,
 									  RangeTblEntry *rte);
 #define set_rel_consider_parallel_compat(root, rel, rte) \
 		set_rel_consider_parallel((root), (rel), (rte))
-#endif
-
-
-/*
- * get_rel_persistence()
- */
-#if PG_VERSION_NUM >= 90500 && PG_VERSION_NUM < 90600
-char get_rel_persistence(Oid relid);
 #endif
 
 
