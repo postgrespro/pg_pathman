@@ -134,8 +134,7 @@ is_pathman_related_copy(Node *parsetree)
  */
 bool
 is_pathman_related_table_rename(Node *parsetree,
-								Oid *partition_relid_out,			/* ret value */
-								AttrNumber *partitioned_col_out)	/* ret value */
+								Oid *partition_relid_out)			/* ret value */
 {
 	RenameStmt			   *rename_stmt = (RenameStmt *) parsetree;
 	Oid						partition_relid,
@@ -147,7 +146,6 @@ is_pathman_related_table_rename(Node *parsetree,
 
 	/* Set default values */
 	if (partition_relid_out) *partition_relid_out = InvalidOid;
-	if (partitioned_col_out) *partitioned_col_out = InvalidAttrNumber;
 
 	if (!IsA(parsetree, RenameStmt))
 		return false;
@@ -169,13 +167,78 @@ is_pathman_related_table_rename(Node *parsetree,
 	/* Is parent partitioned? */
 	if ((prel = get_pathman_relation_info(parent_relid)) != NULL)
 	{
-		/* Return 'partition_relid' and 'prel->attnum' */
 		if (partition_relid_out) *partition_relid_out = partition_relid;
-		if (partitioned_col_out) *partitioned_col_out = prel->attnum;
-
 		return true;
 	}
 
+	return false;
+}
+
+/*
+ * Is pg_pathman supposed to handle this ALTER COLUMN TYPE stmt?
+ */
+bool
+is_pathman_related_alter_column_type(Node *parsetree,
+									 Oid *parent_relid_out,
+									 AttrNumber *attr_number_out,
+									 PartType *part_type_out)
+{
+	AlterTableStmt		   *alter_table_stmt = (AlterTableStmt *) parsetree;
+	ListCell			   *lc;
+	Oid						parent_relid;
+	const PartRelationInfo *prel;
+
+	Assert(IsPathmanReady());
+
+	if (!IsA(alter_table_stmt, AlterTableStmt))
+		return false;
+
+	/* Are we going to modify some table? */
+	if (alter_table_stmt->relkind != OBJECT_TABLE)
+		return false;
+
+	/* Assume it's a parent, fetch its Oid */
+	parent_relid = RangeVarGetRelid(alter_table_stmt->relation,
+									AccessShareLock,
+									false);
+
+	/* Is parent partitioned? */
+	if ((prel = get_pathman_relation_info(parent_relid)) != NULL)
+	{
+		/* Return 'parent_relid' and 'prel->parttype' */
+		if (parent_relid_out) *parent_relid_out = parent_relid;
+		if (part_type_out) *part_type_out = prel->parttype;
+	}
+	else return false;
+
+	/* Examine command list */
+	foreach (lc, alter_table_stmt->cmds)
+	{
+		AlterTableCmd  *alter_table_cmd = (AlterTableCmd *) lfirst(lc);
+		AttrNumber		attnum;
+		int				adjusted_attnum;
+
+		if (!IsA(alter_table_cmd, AlterTableCmd))
+			continue;
+
+		/* Is it an ALTER COLUMN TYPE statement? */
+		if (alter_table_cmd->subtype != AT_AlterColumnType)
+			continue;
+
+		/* Is it a column that used in expression? */
+		attnum = get_attnum(parent_relid, alter_table_cmd->name);
+		adjusted_attnum = attnum - FirstLowInvalidHeapAttributeNumber;
+		if (!bms_is_member(adjusted_attnum, prel->expr_atts))
+			continue;
+
+		/* Return 'prel->attnum' */
+		if (attr_number_out) *attr_number_out = attnum;
+
+		/* Success! */
+		return true;
+	}
+
+	/* Default failure */
 	return false;
 }
 
@@ -313,12 +376,12 @@ PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
 		attnums = CopyGetAttnums(tupDesc, rel, stmt->attlist);
 		foreach(cur, attnums)
 		{
-			int attno = lfirst_int(cur) - FirstLowInvalidHeapAttributeNumber;
+			int attnum = lfirst_int(cur) - FirstLowInvalidHeapAttributeNumber;
 
 			if (is_from)
-				rte->insertedCols = bms_add_member(rte->insertedCols, attno);
+				rte->insertedCols = bms_add_member(rte->insertedCols, attnum);
 			else
-				rte->selectedCols = bms_add_member(rte->selectedCols, attno);
+				rte->selectedCols = bms_add_member(rte->selectedCols, attnum);
 		}
 		ExecCheckRTPerms(range_table, true);
 
@@ -416,7 +479,7 @@ PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
 	}
 
 	/* This should never happen (see is_pathman_related_copy()) */
-	else elog(ERROR, "error in function \"%s\"", CppAsString(PathmanDoCopy));
+	else elog(ERROR, "error in function " CppAsString(PathmanDoCopy));
 
 	/* COPY ... FROM ... */
 	if (is_from)
@@ -483,6 +546,9 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	TupleTableSlot	   *myslot;
 	MemoryContext		oldcontext = CurrentMemoryContext;
 
+	Node			   *expr = NULL;
+	ExprState		   *expr_state = NULL;
+
 	uint64				processed = 0;
 
 
@@ -530,9 +596,13 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 
 	for (;;)
 	{
-		TupleTableSlot		   *slot;
-		bool					skip_tuple;
+		TupleTableSlot		   *slot,
+							   *tmp_slot;
+		ExprDoneCond			itemIsDone;
+		bool					skip_tuple,
+								isnull;
 		Oid						tuple_oid = InvalidOid;
+		Datum					value;
 
 		const PartRelationInfo *prel;
 		ResultRelInfoHolder	   *rri_holder;
@@ -545,24 +615,54 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 		/* Fetch PartRelationInfo for parent relation */
 		prel = get_pathman_relation_info(RelationGetRelid(parent_rel));
 
+		/* Initialize expression and expression state */
+		if (expr == NULL)
+		{
+			expr = copyObject(prel->expr);
+			expr_state = ExecInitExpr((Expr *) expr, NULL);
+		}
+
 		/* Switch into per tuple memory context */
 		MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 
 		if (!NextCopyFrom(cstate, econtext, values, nulls, &tuple_oid))
 			break;
 
-		if (nulls[prel->attnum - 1])
+		/* We can form the input tuple. */
+		tuple = heap_form_tuple(tupDesc, values, nulls);
+
+		if (tuple_oid != InvalidOid)
+			HeapTupleSetOid(tuple, tuple_oid);
+
+		/* Place tuple in tuple slot --- but slot shouldn't free it */
+		slot = myslot;
+		ExecSetSlotDescriptor(slot, tupDesc);
+		ExecStoreTuple(tuple, slot, InvalidBuffer, false);
+
+		/* Execute expression */
+		tmp_slot = econtext->ecxt_scantuple;
+		econtext->ecxt_scantuple = slot;
+		value = ExecEvalExpr(expr_state, econtext, &isnull, &itemIsDone);
+		econtext->ecxt_scantuple = tmp_slot;
+
+		if (isnull)
 			elog(ERROR, ERR_PART_ATTR_NULL);
 
+		if (itemIsDone != ExprSingleResult)
+			elog(ERROR, ERR_PART_ATTR_MULTIPLE_RESULTS);
+
 		/* Search for a matching partition */
-		rri_holder = select_partition_for_insert(values[prel->attnum - 1],
+		rri_holder = select_partition_for_insert(value,
 												 prel->atttype, prel,
 												 &parts_storage, estate);
 		child_result_rel = rri_holder->result_rel_info;
 		estate->es_result_relation_info = child_result_rel;
 
-		/* And now we can form the input tuple. */
-		tuple = heap_form_tuple(tupDesc, values, nulls);
+		/*
+		 * Constraints might reference the tableoid column, so initialize
+		 * t_tableOid before evaluating them.
+		 */
+		tuple->t_tableOid = RelationGetRelid(child_result_rel->ri_RelationDesc);
 
 		/* If there's a transform map, rebuild the tuple */
 		if (rri_holder->tuple_map)
@@ -575,21 +675,12 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 			heap_freetuple(tuple_old);
 		}
 
-		if (tuple_oid != InvalidOid)
-			HeapTupleSetOid(tuple, tuple_oid);
-
-		/*
-		 * Constraints might reference the tableoid column, so initialize
-		 * t_tableOid before evaluating them.
-		 */
-		tuple->t_tableOid = RelationGetRelid(child_result_rel->ri_RelationDesc);
+		/* now we can set proper tuple descriptor according to child relation */
+		ExecSetSlotDescriptor(slot, RelationGetDescr(child_result_rel->ri_RelationDesc));
+		ExecStoreTuple(tuple, slot, InvalidBuffer, false);
 
 		/* Triggers and stuff need to be invoked in query context. */
 		MemoryContextSwitchTo(oldcontext);
-
-		/* Place tuple in tuple slot --- but slot shouldn't free it */
-		slot = myslot;
-		ExecStoreTuple(tuple, slot, InvalidBuffer, false);
 
 		skip_tuple = false;
 
@@ -689,7 +780,6 @@ prepare_rri_for_copy(EState *estate,
  */
 void
 PathmanRenameConstraint(Oid partition_relid,				/* cached partition Oid */
-						AttrNumber partitioned_col,			/* partitioned column */
 						const RenameStmt *part_rename_stmt)	/* partition rename stmt */
 {
 	char		   *old_constraint_name,
@@ -698,13 +788,11 @@ PathmanRenameConstraint(Oid partition_relid,				/* cached partition Oid */
 
 	/* Generate old constraint name */
 	old_constraint_name =
-			build_check_constraint_name_relid_internal(partition_relid,
-													   partitioned_col);
+			build_check_constraint_name_relid_internal(partition_relid);
 
 	/* Generate new constraint name */
 	new_constraint_name =
-			build_check_constraint_name_relname_internal(part_rename_stmt->newname,
-														 partitioned_col);
+			build_check_constraint_name_relname_internal(part_rename_stmt->newname);
 
 	/* Build check constraint RENAME statement */
 	memset((void *) &rename_stmt, 0, sizeof(RenameStmt));

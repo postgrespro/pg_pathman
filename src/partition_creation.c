@@ -32,8 +32,8 @@
 #include "commands/tablespace.h"
 #include "commands/trigger.h"
 #include "miscadmin.h"
+#include "nodes/nodeFuncs.h"
 #include "parser/parse_func.h"
-#include "parser/parse_relation.h"
 #include "parser/parse_utilcmd.h"
 #include "tcop/utility.h"
 #include "utils/builtins.h"
@@ -60,14 +60,13 @@ static void create_single_partition_common(Oid parent_relid,
 										   Oid partition_relid,
 										   Constraint *check_constraint,
 										   init_callback_params *callback_params,
-										   const char *attname,
+										   List *trigger_columns,
 										   List *ri_constraints,
 										   List *ri_relids);
 
 static Oid create_single_partition_internal(Oid parent_relid,
 											RangeVar *partition_rv,
-											char *tablespace,
-											char **partitioned_column);
+											char *tablespace);
 
 static char *choose_range_partition_name(Oid parent_relid, Oid parent_nsp);
 static char *choose_hash_partition_name(Oid parent_relid, uint32 part_idx);
@@ -81,12 +80,12 @@ static void postprocess_child_table_and_atts(Oid parent_relid, Oid partition_rel
 static Oid text_to_regprocedure(text *proname_args);
 
 static Constraint *make_constraint_common(char *name, Node *raw_expr);
-
 static Value make_string_value_struct(char *str);
 static Value make_int_value_struct(int int_val);
 
-static bool update_trigger_exists(Oid relid, char *trigname);
-
+static Node *build_partitioning_expression(Oid parent_relid,
+										   Oid *expr_type,
+										   List **columns);
 
 /*
  * ---------------------------------------
@@ -99,9 +98,9 @@ static bool update_trigger_exists(Oid relid, char *trigname);
  */
 Oid
 create_single_range_partition_internal(Oid parent_relid,
+									   Oid value_type,
 									   const Bound *start_value,
 									   const Bound *end_value,
-									   Oid value_type,
 									   RangeVar *partition_rv,
 									   char *tablespace,
 									   List *ri_constraints,
@@ -109,8 +108,9 @@ create_single_range_partition_internal(Oid parent_relid,
 {
 	Oid						partition_relid;
 	Constraint			   *check_constr;
-	char				   *partitioned_column;
+	Node				   *part_expr;
 	init_callback_params	callback_params;
+	List				   *trigger_columns;
 
 	/* Generate a name if asked to */
 	if (!partition_rv)
@@ -124,15 +124,17 @@ create_single_range_partition_internal(Oid parent_relid,
 		partition_rv = makeRangeVar(parent_nsp_name, partition_name, -1);
 	}
 
-	/* Create a partition & get 'partitioned_column' */
+	/* Check pathman config anld fill variables */
+	part_expr = build_partitioning_expression(parent_relid, NULL, &trigger_columns);
+
+	/* Create a partition & get 'partitioning expression' */
 	partition_relid = create_single_partition_internal(parent_relid,
 													   partition_rv,
-													   tablespace,
-													   &partitioned_column);
+													   tablespace);
 
 	/* Build check constraint for RANGE partition */
 	check_constr = build_range_check_constraint(partition_relid,
-												partitioned_column,
+												part_expr,
 												start_value,
 												end_value,
 												value_type);
@@ -148,7 +150,7 @@ create_single_range_partition_internal(Oid parent_relid,
 								   partition_relid,
 								   check_constr,
 								   &callback_params,
-								   partitioned_column,
+								   trigger_columns,
 								   ri_constraints,
 								   ri_relids);
 
@@ -161,14 +163,15 @@ Oid
 create_single_hash_partition_internal(Oid parent_relid,
 									  uint32 part_idx,
 									  uint32 part_count,
-									  Oid value_type,
 									  RangeVar *partition_rv,
 									  char *tablespace)
 {
-	Oid						partition_relid;
+	Oid						partition_relid,
+							expr_type;
 	Constraint			   *check_constr;
-	char				   *partitioned_column;
+	Node				   *expr;
 	init_callback_params	callback_params;
+	List				   *trigger_columns;
 
 	/* Generate a name if asked to */
 	if (!partition_rv)
@@ -182,18 +185,20 @@ create_single_hash_partition_internal(Oid parent_relid,
 		partition_rv = makeRangeVar(parent_nsp_name, partition_name, -1);
 	}
 
-	/* Create a partition & get 'partitioned_column' */
+	/* Create a partition & get 'partitionining expression' */
 	partition_relid = create_single_partition_internal(parent_relid,
 													   partition_rv,
-													   tablespace,
-													   &partitioned_column);
+													   tablespace);
+
+	/* check pathman config and fill variables */
+	expr = build_partitioning_expression(parent_relid, &expr_type, &trigger_columns);
 
 	/* Build check constraint for HASH partition */
 	check_constr = build_hash_check_constraint(partition_relid,
-											   partitioned_column,
+											   expr,
 											   part_idx,
 											   part_count,
-											   value_type);
+											   expr_type);
 
 	/* Cook args for init_callback */
 	MakeInitCallbackHashParams(&callback_params,
@@ -205,7 +210,7 @@ create_single_hash_partition_internal(Oid parent_relid,
 								   partition_relid,
 								   check_constr,
 								   &callback_params,
-								   partitioned_column,
+								   trigger_columns,
 								   NIL, NIL);
 
 	/* Return the Oid */
@@ -218,14 +223,13 @@ create_single_partition_common(Oid parent_relid,
 							   Oid partition_relid,
 							   Constraint *check_constraint,
 							   init_callback_params *callback_params,
-							   const char *attname,
+							   List *trigger_columns,
 							   List *ri_constr,
 							   List *ri_relids)
 {
 	Relation	child_relation;
 	Oid			pathman_schema = get_pathman_schema();
 	char	   *pathman_schema_name = get_namespace_name(pathman_schema);
-	AttrNumber	attnum = get_attnum(partition_relid, attname);
 
 	/* Open the relation and add new check constraint & fkeys */
 	child_relation = heap_open(partition_relid, AccessExclusiveLock);
@@ -237,15 +241,15 @@ create_single_partition_common(Oid parent_relid,
 	/* Make constraint visible */
 	CommandCounterIncrement();
 
-	/* Create update trigger */
-	if (is_update_trigger_enabled_internal(parent_relid))
+	/* Create trigger if needed */
+	if (has_update_trigger_internal(parent_relid))
 	{
-		char	   *trigname;
+		const char *trigger_name;
 
-		trigname = build_update_trigger_name_internal(parent_relid);
+		trigger_name = build_update_trigger_name_internal(parent_relid);
 		create_single_update_trigger_internal(partition_relid,
-											  trigname,
-											  attname);
+											  trigger_name,
+											  trigger_columns);
 	}
 
 	/*
@@ -253,10 +257,13 @@ create_single_partition_common(Oid parent_relid,
 	 */
 	if (ri_constr && ri_relids)
 	{
-		ListCell   *lc1,
-				   *lc2;
-		List	   *upd_funcname,
-				   *del_funcname;
+		const PartRelationInfo *prel;
+		ListCell			   *lc1,
+							   *lc2;
+		List				   *upd_funcname,
+							   *del_funcname;
+		AttrNumber				attnum;
+		char				   *attname;
 
 		upd_funcname = list_make2(makeString(pathman_schema_name),
 								  makeString("pathman_fkey_restrict_upd"));
@@ -265,14 +272,31 @@ create_single_partition_common(Oid parent_relid,
 
 		Assert(list_length(ri_constr) == list_length(ri_relids));
 
+		/*
+		 * We must ensure that partitioning key is a single column expression
+		 * in order to create foreign key triggers
+		 */
+		prel = get_pathman_relation_info(parent_relid);
+		shout_if_prel_is_invalid(parent_relid, prel, PT_ANY);
+
+		if ((attnum = var_get_attnum(prel->expr)) == InvalidOid)
+			elog(ERROR,
+				 "relation %s must be partitioned by a single column, "
+				 "not by an expression",
+				 get_rel_name_or_relid(parent_relid));
+		attname = get_attname(parent_relid, attnum);
+
+		/* Create triggers for each FK constraint */
 		forboth(lc1, ri_constr, lc2, ri_relids)
 		{
-			Oid		constrId = lfirst_oid(lc1);
-			Oid		refrelid = lfirst_oid(lc2);
+			Oid			constrId = lfirst_oid(lc1);
+			Oid			refrelid = lfirst_oid(lc2);
+			AttrNumber	partition_attnum;
 
+			partition_attnum = get_attnum(partition_relid, attname);
 			createPartitionForeignKeyTriggers(partition_relid,
+											  partition_attnum,
 											  refrelid,
-											  attnum,
 											  constrId,
 											  upd_funcname,
 											  del_funcname);
@@ -304,7 +328,7 @@ create_partitions_for_value(Oid relid, Datum value, Oid value_type)
 	Oid				last_partition = InvalidOid;
 
 	/* Check that table is partitioned and fetch xmin */
-	if (pathman_config_contains_relation(relid, NULL, NULL, &rel_xmin))
+	if (pathman_config_contains_relation(relid, NULL, NULL, &rel_xmin, NULL))
 	{
 		/* Take default values */
 		bool	spawn_using_bgw	= DEFAULT_SPAWN_USING_BGW,
@@ -349,7 +373,7 @@ create_partitions_for_value(Oid relid, Datum value, Oid value_type)
 		}
 	}
 	else
-		elog(ERROR, "relation \"%s\" is not partitioned by pg_pathman",
+		elog(ERROR, "relation \"%s\" is not partitioned",
 			 get_rel_name_or_relid(relid));
 
 	/* Check that 'last_partition' is valid */
@@ -388,7 +412,7 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
 		bool					isnull[Natts_pathman_config];
 
 		/* Get both PartRelationInfo & PATHMAN_CONFIG contents for this relation */
-		if (pathman_config_contains_relation(relid, values, isnull, NULL))
+		if (pathman_config_contains_relation(relid, values, isnull, NULL, NULL))
 		{
 			Oid			base_bound_type;	/* base type of prel->atttype */
 			Oid			base_value_type;	/* base type of value_type */
@@ -617,8 +641,8 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 		bounds[1] = MakeBound(should_append ? cur_leading_bound : cur_following_bound);
 
 		last_partition = create_single_range_partition_internal(parent_relid,
-																&bounds[0], &bounds[1],
 																range_bound_type,
+																&bounds[0], &bounds[1],
 																NULL, NULL,
 																ri_constr, ri_relids);
 
@@ -706,8 +730,7 @@ choose_hash_partition_name(Oid parent_relid, uint32 part_idx)
 static Oid
 create_single_partition_internal(Oid parent_relid,
 								 RangeVar *partition_rv,
-								 char *tablespace,
-								 char **partitioned_column) /* to be set */
+								 char *tablespace)
 {
 	/* Value to be returned */
 	Oid					partition_relid = InvalidOid; /* safety */
@@ -716,10 +739,6 @@ create_single_partition_internal(Oid parent_relid,
 	Oid					parent_nsp;
 	char			   *parent_name,
 					   *parent_nsp_name;
-
-	/* Values extracted from PATHMAN_CONFIG */
-	Datum				config_values[Natts_pathman_config];
-	bool				config_nulls[Natts_pathman_config];
 
 	/* Elements of the "CREATE TABLE" query tree */
 	RangeVar		   *parent_rv;
@@ -739,8 +758,7 @@ create_single_partition_internal(Oid parent_relid,
 		elog(ERROR, "relation %u does not exist", parent_relid);
 
 	/* Check that table is registered in PATHMAN_CONFIG */
-	if (!pathman_config_contains_relation(parent_relid,
-										  config_values, config_nulls, NULL))
+	if (!pathman_config_contains_relation(parent_relid, NULL, NULL, NULL, NULL))
 		elog(ERROR, "table \"%s\" is not partitioned",
 			 get_rel_name_or_relid(parent_relid));
 
@@ -748,15 +766,6 @@ create_single_partition_internal(Oid parent_relid,
 	parent_name = get_rel_name(parent_relid);
 	parent_nsp = get_rel_namespace(parent_relid);
 	parent_nsp_name = get_namespace_name(parent_nsp);
-
-	/* Fetch partitioned column's name */
-	if (partitioned_column)
-	{
-		Datum partitioned_column_datum;
-
-		partitioned_column_datum = config_values[Anum_pathman_config_attname - 1];
-		*partitioned_column = TextDatumGetCString(partitioned_column_datum);
-	}
 
 	/* Make up parent's RangeVar */
 	parent_rv = makeRangeVar(parent_nsp_name, parent_name, -1);
@@ -1172,16 +1181,16 @@ copy_foreign_keys(Oid parent_relid, Oid partition_oid)
  * -----------------------------
  */
 
-/* Drop pg_pathman's check constraint by 'relid' and 'attnum' */
+/* Drop pg_pathman's check constraint by 'relid' */
 void
-drop_check_constraint(Oid relid, AttrNumber attnum)
+drop_check_constraint(Oid relid)
 {
 	char		   *constr_name;
 	AlterTableStmt *stmt;
 	AlterTableCmd  *cmd;
 
 	/* Build a correct name for this constraint */
-	constr_name = build_check_constraint_name_relid_internal(relid, attnum);
+	constr_name = build_check_constraint_name_relid_internal(relid);
 
 	stmt = makeNode(AlterTableStmt);
 	stmt->relation	= makeRangeVarFromRelid(relid);
@@ -1200,7 +1209,7 @@ drop_check_constraint(Oid relid, AttrNumber attnum)
 
 /* Build RANGE check constraint expression tree */
 Node *
-build_raw_range_check_tree(char *attname,
+build_raw_range_check_tree(Node *raw_expression,
 						   const Bound *start_value,
 						   const Bound *end_value,
 						   Oid value_type)
@@ -1210,11 +1219,6 @@ build_raw_range_check_tree(char *attname,
 			   *right_arg	= makeNode(A_Expr);
 	A_Const	   *left_const	= makeNode(A_Const),
 			   *right_const	= makeNode(A_Const);
-	ColumnRef  *col_ref		= makeNode(ColumnRef);
-
-	/* Partitioned column */
-	col_ref->fields	= list_make1(makeString(attname));
-	col_ref->location = -1;
 
 	and_oper->boolop	= AND_EXPR;
 	and_oper->args		= NIL;
@@ -1230,7 +1234,7 @@ build_raw_range_check_tree(char *attname,
 
 		left_arg->name		= list_make1(makeString(">="));
 		left_arg->kind		= AEXPR_OP;
-		left_arg->lexpr		= (Node *) col_ref;
+		left_arg->lexpr		= raw_expression;
 		left_arg->rexpr		= (Node *) left_const;
 		left_arg->location	= -1;
 
@@ -1247,7 +1251,7 @@ build_raw_range_check_tree(char *attname,
 
 		right_arg->name		= list_make1(makeString("<"));
 		right_arg->kind		= AEXPR_OP;
-		right_arg->lexpr	= (Node *) col_ref;
+		right_arg->lexpr	= raw_expression;
 		right_arg->rexpr	= (Node *) right_const;
 		right_arg->location	= -1;
 
@@ -1264,23 +1268,20 @@ build_raw_range_check_tree(char *attname,
 /* Build complete RANGE check constraint */
 Constraint *
 build_range_check_constraint(Oid child_relid,
-							 char *attname,
+							 Node *raw_expression,
 							 const Bound *start_value,
 							 const Bound *end_value,
 							 Oid value_type)
 {
 	Constraint	   *hash_constr;
 	char		   *range_constr_name;
-	AttrNumber		attnum;
 
 	/* Build a correct name for this constraint */
-	attnum = get_attnum(child_relid, attname);
-	range_constr_name = build_check_constraint_name_relid_internal(child_relid,
-																   attnum);
+	range_constr_name = build_check_constraint_name_relid_internal(child_relid);
 
 	/* Initialize basic properties of a CHECK constraint */
 	hash_constr = make_constraint_common(range_constr_name,
-										 build_raw_range_check_tree(attname,
+										 build_raw_range_check_tree(raw_expression,
 																	start_value,
 																	end_value,
 																	value_type));
@@ -1305,7 +1306,12 @@ check_range_available(Oid parent_relid,
 	prel = get_pathman_relation_info(parent_relid);
 
 	/* If there's no prel, return TRUE (overlap is not possible) */
-	if (!prel) return true;
+	if (!prel)
+	{
+		ereport(WARNING, (errmsg("relation \"%s\" is not partitioned",
+								 get_rel_name_or_relid(parent_relid))));
+		return true;
+	}
 
 	/* Emit an error if it is not partitioned by RANGE */
 	shout_if_prel_is_invalid(parent_relid, prel, PT_RANGE);
@@ -1345,15 +1351,16 @@ check_range_available(Oid parent_relid,
 
 /* Build HASH check constraint expression tree */
 Node *
-build_raw_hash_check_tree(char *attname,
+build_raw_hash_check_tree(Node *raw_expression,
 						  uint32 part_idx,
 						  uint32 part_count,
+						  Oid relid,
 						  Oid value_type)
 {
 	A_Expr		   *eq_oper			= makeNode(A_Expr);
 	FuncCall	   *part_idx_call	= makeNode(FuncCall),
 				   *hash_call		= makeNode(FuncCall);
-	ColumnRef	   *hashed_column	= makeNode(ColumnRef);
+	//ColumnRef	   *hashed_column	= makeNode(ColumnRef);
 	A_Const		   *part_idx_c		= makeNode(A_Const),
 				   *part_count_c	= makeNode(A_Const);
 
@@ -1365,10 +1372,6 @@ build_raw_hash_check_tree(char *attname,
 	tce = lookup_type_cache(value_type, TYPECACHE_HASH_PROC);
 	hash_proc = tce->hash_proc;
 
-	/* Partitioned column */
-	hashed_column->fields = list_make1(makeString(attname));
-	hashed_column->location = -1;
-
 	/* Total amount of partitions */
 	part_count_c->val = make_int_value_struct(part_count);
 	part_count_c->location = -1;
@@ -1379,7 +1382,7 @@ build_raw_hash_check_tree(char *attname,
 
 	/* Call hash_proc() */
 	hash_call->funcname			= list_make1(makeString(get_func_name(hash_proc)));
-	hash_call->args				= list_make1(hashed_column);
+	hash_call->args				= list_make1(raw_expression);
 	hash_call->agg_order		= NIL;
 	hash_call->agg_filter		= NULL;
 	hash_call->agg_within_group	= false;
@@ -1419,25 +1422,23 @@ build_raw_hash_check_tree(char *attname,
 /* Build complete HASH check constraint */
 Constraint *
 build_hash_check_constraint(Oid child_relid,
-							char *attname,
+							Node *raw_expression,
 							uint32 part_idx,
 							uint32 part_count,
 							Oid value_type)
 {
 	Constraint	   *hash_constr;
 	char		   *hash_constr_name;
-	AttrNumber		attnum;
 
 	/* Build a correct name for this constraint */
-	attnum = get_attnum(child_relid, attname);
-	hash_constr_name = build_check_constraint_name_relid_internal(child_relid,
-																  attnum);
+	hash_constr_name = build_check_constraint_name_relid_internal(child_relid);
 
 	/* Initialize basic properties of a CHECK constraint */
 	hash_constr = make_constraint_common(hash_constr_name,
-										 build_raw_hash_check_tree(attname,
+										 build_raw_hash_check_tree(raw_expression,
 																   part_idx,
 																   part_count,
+																   child_relid,
 																   value_type));
 	/* Everything seems to be fine */
 	return hash_constr;
@@ -1739,80 +1740,139 @@ text_to_regprocedure(text *proc_signature)
 	return DatumGetObjectId(result);
 }
 
+typedef struct
+{
+	List *columns;
+} extract_column_names_cxt;
+
+/* Extract column names from raw expression */
+static bool
+extract_column_names(Node *node, extract_column_names_cxt *cxt)
+{
+	if (node == NULL)
+		return false;
+
+	if (IsA(node, ColumnRef))
+	{
+		ListCell *lc;
+
+		foreach(lc, ((ColumnRef *) node)->fields)
+			if (IsA(lfirst(lc), String))
+				cxt->columns = lappend(cxt->columns, lfirst(lc));
+	}
+
+	return raw_expression_tree_walker(node, extract_column_names, cxt);
+}
+
+/* Returns raw partitioning expression + expr_type + columns */
+static Node *
+build_partitioning_expression(Oid parent_relid,
+							  Oid *expr_type,		/* ret val #1 */
+							  List **columns)		/* ret val #2 */
+{
+	/* Values extracted from PATHMAN_CONFIG */
+	Datum		 config_values[Natts_pathman_config];
+	bool		 config_nulls[Natts_pathman_config];
+	Node		*expr;
+	char		*expr_string;
+
+	/* Check that table is registered in PATHMAN_CONFIG */
+	if (!pathman_config_contains_relation(parent_relid, config_values,
+										  config_nulls, NULL, NULL))
+		elog(ERROR, "table \"%s\" is not partitioned",
+			 get_rel_name_or_relid(parent_relid));
+
+	/* We need expression type for hash functions */
+	if (expr_type)
+		*expr_type = DatumGetObjectId(config_values[Anum_pathman_config_atttype - 1]);
+
+	expr_string = TextDatumGetCString(config_values[Anum_pathman_config_expression - 1]);
+	expr = parse_partitioning_expression(parent_relid, expr_string, NULL, NULL);
+	pfree(expr_string);
+
+	if (columns)
+	{
+		extract_column_names_cxt context = { NIL };
+		extract_column_names(expr, &context);
+		*columns = context.columns;
+	}
+
+	return expr;
+}
+
 /*
- * Create trigger for partition
+ * -------------------------
+ *  Update trigger creation
+ * -------------------------
  */
+
+/* Create trigger for partition */
 void
-create_single_update_trigger_internal(Oid relid,
+create_single_update_trigger_internal(Oid partition_relid,
 									  const char *trigname,
-									  const char *attname)
+									  List *columns)
 {
 	CreateTrigStmt	   *stmt;
 	List			   *func;
 
 	func = list_make2(makeString(get_namespace_name(get_pathman_schema())),
-					  makeString("update_trigger_func"));
+					  makeString(CppAsString(pathman_update_trigger_func)));
 
 	stmt = makeNode(CreateTrigStmt);
-	stmt->trigname = (char *) trigname;
-	stmt->relation = makeRangeVarFromRelid(relid);
-	stmt->funcname = func;
-	stmt->args = NIL;
-	stmt->row = true;
-	stmt->timing = TRIGGER_TYPE_BEFORE;
-	stmt->events = TRIGGER_TYPE_UPDATE;
-	stmt->columns = list_make1(makeString((char *) attname));
-	stmt->whenClause = NULL;
-	stmt->isconstraint = false;
-	stmt->deferrable = false;
-	stmt->initdeferred = false;
-	stmt->constrrel = NULL;
+	stmt->trigname		= (char *) trigname;
+	stmt->relation		= makeRangeVarFromRelid(partition_relid);
+	stmt->funcname		= func;
+	stmt->args			= NIL;
+	stmt->row			= true;
+	stmt->timing		= TRIGGER_TYPE_BEFORE;
+	stmt->events		= TRIGGER_TYPE_UPDATE;
+	stmt->columns		= columns;
+	stmt->whenClause	= NULL;
+	stmt->isconstraint	= false;
+	stmt->deferrable	= false;
+	stmt->initdeferred	= false;
+	stmt->constrrel		= NULL;
 
 	(void) CreateTrigger(stmt, NULL, InvalidOid, InvalidOid,
 						 InvalidOid, InvalidOid, false);
 }
 
-/*
- * Check if update trigger is enabled. Basicly it returns true if update
- * trigger exists for parent table
- */
+/* Check if relation has pg_pathman's update trigger */
 bool
-is_update_trigger_enabled_internal(Oid parent)
+has_update_trigger_internal(Oid parent_relid)
 {
-	char	   *trigname;
+	bool			res = false;
+	Relation		tgrel;
+	SysScanDesc		scan;
+	ScanKeyData		key[1];
+	HeapTuple		tuple;
+	const char	   *trigname;
 
-	trigname = build_update_trigger_name_internal(parent);
-	return update_trigger_exists(parent, trigname);
-}
-
-static bool
-update_trigger_exists(Oid relid, char *trigname)
-{
-	bool		res = false;
-	Relation	tgrel;
-	SysScanDesc tgscan;
-	ScanKeyData key;
-	HeapTuple	tuple;
+	/* Build update trigger's name */
+	trigname = build_update_trigger_name_internal(parent_relid);
 
 	tgrel = heap_open(TriggerRelationId, RowExclusiveLock);
 
-	ScanKeyInit(&key,
+	ScanKeyInit(&key[0],
 				Anum_pg_trigger_tgrelid,
 				BTEqualStrategyNumber, F_OIDEQ,
-				ObjectIdGetDatum(relid));
-	tgscan = systable_beginscan(tgrel, TriggerRelidNameIndexId, true,
-								NULL, 1, &key);
-	while (HeapTupleIsValid(tuple = systable_getnext(tgscan)))
-	{
-		Form_pg_trigger pg_trigger = (Form_pg_trigger) GETSTRUCT(tuple);
+				ObjectIdGetDatum(parent_relid));
 
-		if (namestrcmp(&(pg_trigger->tgname), trigname) == 0)
+	scan = systable_beginscan(tgrel, TriggerRelidNameIndexId,
+							  true, NULL, lengthof(key), key);
+
+	while (HeapTupleIsValid(tuple = systable_getnext(scan)))
+	{
+		Form_pg_trigger trigger = (Form_pg_trigger) GETSTRUCT(tuple);
+
+		if (namestrcmp(&(trigger->tgname), trigname) == 0)
 		{
 			res = true;
 			break;
 		}
 	}
-	systable_endscan(tgscan);
+
+	systable_endscan(scan);
 	heap_close(tgrel, RowExclusiveLock);
 
 	return res;

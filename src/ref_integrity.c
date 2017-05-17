@@ -18,11 +18,13 @@
 #include "access/xact.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_am.h"
+#include "catalog/pg_class.h"
 #include "catalog/pg_constraint.h"
 /* Constraint function were moved to pg_constraint_fn.h in version 9.6 */
 #if PG_VERSION_NUM >= 90600
 #include "catalog/pg_constraint_fn.h"
 #endif
+#include "catalog/pg_index.h"
 #include "catalog/pg_type.h"
 #include "catalog/pg_opclass.h"
 #include "catalog/pg_operator.h"
@@ -37,6 +39,7 @@
 #include "utils/fmgroids.h"
 #include "utils/inval.h"
 #include "utils/lsyscache.h"
+#include "utils/rel.h"
 #include "utils/tqual.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
@@ -58,6 +61,9 @@
 #define RI_TRIGTYPE_INSERT 1
 #define RI_TRIGTYPE_UPDATE 2
 #define RI_TRIGTYPE_DELETE 3
+
+#define ERROR_SINGLE_COLUMN_KEY "relation %s must be partitioned by a single " \
+								"column, not by an expression"
 
 
 typedef struct ConstraintInfo
@@ -171,7 +177,8 @@ static void ri_ReportViolation(const ConstraintInfo *riinfo,
 static void SavePreparedPlan(QueryKey *key, SPIPlanPtr plan);
 static void create_foreign_key_internal(Oid fk_table,
 							  AttrNumber fk_attnum,
-							  Oid pk_table);
+							  Oid pk_table,
+							  AttrNumber pk_attnum);
 static void createForeignKeyTriggers(Relation rel, Oid refRelOid,
 						 Oid constraintOid, Oid indexOid);
 static Oid transformFkeyCheckAttrs(Relation pkrel, int16 attnum,
@@ -366,7 +373,7 @@ ri_fkey_check(TriggerData *trigdata)
 
 	/* Get partitioning info */
 	prel = get_pathman_relation_info(pk_rel->rd_id);
-	shout_if_prel_is_invalid(pk_rel->rd_id, prel, PT_INDIFFERENT);
+	shout_if_prel_is_invalid(pk_rel->rd_id, prel, PT_ANY);
 
 	pk_type = attnumTypeId(pk_rel, riinfo->pk_attnum);
 	fk_type = attnumTypeId(fk_rel, riinfo->fk_attnum);
@@ -1237,12 +1244,24 @@ SavePreparedPlan(QueryKey *key, SPIPlanPtr plan)
 Datum
 create_foreign_key(PG_FUNCTION_ARGS)
 {
-	Oid fk_table = PG_GETARG_OID(0);
-	Oid pk_table = PG_GETARG_OID(2);
-	char *fk_attr = TextDatumGetCString(PG_GETARG_TEXT_P(1));
-	AttrNumber fk_attnum = get_attnum(fk_table, fk_attr);
+	const PartRelationInfo *prel;
+	Oid						fk_table = PG_GETARG_OID(0),
+							pk_table = PG_GETARG_OID(2);
+	char				   *fk_attr = TextDatumGetCString(PG_GETARG_TEXT_P(1));
+	AttrNumber				fk_attnum = get_attnum(fk_table, fk_attr),
+							pk_attnum;
 
-	create_foreign_key_internal(fk_table, fk_attnum, pk_table);
+	prel = get_pathman_relation_info(pk_table);
+	if (!prel)
+		elog(ERROR,
+			 "table %s isn't partitioned by pg_pathman",
+			 get_rel_name(pk_table));
+
+	if ((pk_attnum = var_get_attnum(prel->expr)) == InvalidOid)
+		elog(ERROR, ERROR_SINGLE_COLUMN_KEY,
+			 get_rel_name_or_relid(pk_table));
+
+	create_foreign_key_internal(fk_table, fk_attnum, pk_table, pk_attnum);
 
 	PG_RETURN_VOID();
 }
@@ -1250,9 +1269,9 @@ create_foreign_key(PG_FUNCTION_ARGS)
 static void
 create_foreign_key_internal(Oid fk_table,
 							  AttrNumber fk_attnum,
-							  Oid pk_table)
+							  Oid pk_table,
+							  AttrNumber pk_attnum)
 {
-	const PartRelationInfo *prel;
 	Oid			indexOid;
 	Oid			opclass;
 	Oid			fktypoid = get_atttype(fk_table, fk_attnum);
@@ -1276,19 +1295,13 @@ create_foreign_key_internal(Oid fk_table,
 	fkrel = heap_open(fk_table, ShareRowExclusiveLock);
 	pkrel = heap_open(pk_table, ShareRowExclusiveLock);
 
-	prel = get_pathman_relation_info(pk_table);
-	if (!prel)
-		elog(ERROR,
-			 "table %s isn't partitioned by pg_pathman",
-			 get_rel_name(pk_table));
-
 	fkname = ChooseConstraintName(RelationGetRelationName(fkrel),
 								  get_attname(fk_table, fk_attnum),
 								  "fkey",
 								  RelationGetNamespace(fkrel),
 								  NIL);
 
-	indexOid = transformFkeyCheckAttrs(pkrel, prel->attnum, &opclass);
+	indexOid = transformFkeyCheckAttrs(pkrel, pk_attnum, &opclass);
 
 	/* We need several fields out of the pg_opclass entry */
 	cla_ht = SearchSysCache1(CLAOID, ObjectIdGetDatum(opclass));
@@ -1348,7 +1361,7 @@ create_foreign_key_internal(Oid fk_table,
 														 * constraint */
 									  indexOid,
 									  pk_table,
-									  &prel->attnum,
+									  &pk_attnum,
 									  &pfeqop,
 									  &ppeqop,
 									  &ffeqop,
@@ -1387,24 +1400,34 @@ createForeignKeyTriggers(Relation rel, Oid refRelOid,
 			   makeString(funcname))
 
 	const PartRelationInfo *prel;
-	Oid			myRelOid;
-	Oid			pathman_schema = get_pathman_schema();
-	char	   *pathman_schema_name = get_namespace_name(pathman_schema);
-	List	   *funcname_del,
-			   *funcname_upd;
-	Oid		   *children;
-	uint32		nchildren;
-	int			i;
-	const char *attname;
+	Oid						myRelOid;
+	Oid						pathman_schema = get_pathman_schema();
+	char				   *pathman_schema_name = get_namespace_name(pathman_schema);
+	List				   *funcname_del,
+						   *funcname_upd;
+	Oid					   *children;
+	uint32					nchildren;
+	int						i;
+	AttrNumber				attnum;
+	const char			   *attname;
 
 	myRelOid = RelationGetRelid(rel);
 
+	/*
+	 * XXX refRelOid is a partitioned PK table for now. But it may change
+	 * in future when we implement FK on partitioned table referencing a regular
+	 * one
+	 */
 	prel = get_pathman_relation_info(refRelOid);
 	if (!prel)
 		elog(ERROR,
 			 "table %s isn't partitioned by pg_pathman",
 			 get_rel_name(refRelOid));
-	attname = get_attname(refRelOid, prel->attnum);
+
+	if ((attnum = var_get_attnum(prel->expr)) == InvalidOid)
+		elog(ERROR, ERROR_SINGLE_COLUMN_KEY,
+			 get_rel_name_or_relid(refRelOid));
+	attname = get_attname(refRelOid, attnum);
 
 	/*
 	 * Build and execute a CREATE CONSTRAINT TRIGGER statement for the ON
@@ -1440,11 +1463,11 @@ createForeignKeyTriggers(Relation rel, Oid refRelOid,
 	funcname_upd = pathman_funcname("pathman_fkey_restrict_upd");
 	for (i = 0; i < nchildren; i++)
 	{
-		AttrNumber	attnum = get_attnum(children[i], attname);
+		AttrNumber	child_attnum = get_attnum(children[i], attname);
 
 		createPartitionForeignKeyTriggers(children[i],
+										  child_attnum,
 										  myRelOid,
-										  attnum,
 										  constraintOid,
 										  funcname_upd,
 										  funcname_del);
@@ -1608,17 +1631,35 @@ pathman_get_fkeys(Oid parent_relid, List **constraints, List **refrelids)
  */
 void
 createPartitionForeignKeyTriggers(Oid partition,
-								  Oid fkrelid,
 								  AttrNumber attnum,
+								  Oid fkrelid,
 								  Oid constraintOid,
 								  List *upd_funcname,
 								  List *del_funcname)
 {
-	Relation	childRel;
-	HeapTuple	indexTuple;
-	Oid			indexOid;
-	ObjectAddress constrAddress;
-	ObjectAddress indexAddress;
+	HeapTuple			indexTuple;
+	Relation			childRel;
+	// Oid					parent,
+	Oid					indexOid;
+	// PartParentSearch	parent_search;
+	// PartRelationInfo   *prel;
+	ObjectAddress		constrAddress;
+	ObjectAddress		indexAddress;
+
+	/*
+	 * Foreign key can be created for only single attribute key. So first thing
+	 * we must check is that partitioning key is a single column
+	 */
+	// parent = get_parent_of_partition(partition, &parent_search);
+	// if (parent_search != PPS_ENTRY_PART_PARENT)
+	// 	ereport(ERROR, (errmsg("relation %s is not a partition",
+	// 						   get_rel_name_or_relid(partition))));
+	// prel = get_pathman_relation_info(parent);
+	// shout_if_prel_is_invalid(parent, prel, PT_ANY);
+
+	// if ((attnum = VarGetAttnum(prel->expr)) == InvalidOid)
+	// 	ereport(ERROR, (errmsg(ERROR_SINGLE_COLUMN_KEY,
+	// 						   get_rel_name_or_relid(parent))));
 
 	/* Lock partition so no one deletes rows until we're done */
 	childRel = heap_open(partition, ShareRowExclusiveLock);
@@ -1931,7 +1972,7 @@ ri_preparePartitionDrop(Oid parent,
 		List   *triggers;
 
 		prel = get_pathman_relation_info(parent);
-		shout_if_prel_is_invalid(parent, prel, PT_INDIFFERENT);
+		shout_if_prel_is_invalid(parent, prel, PT_ANY);
 
 		/* Check if there are references in FK table */
 		if (check_references)
@@ -1940,8 +1981,11 @@ ri_preparePartitionDrop(Oid parent,
 		/*
 		 * Remove index dependency on FK constraint
 		 */
-		attname = get_attname(parent, prel->attnum);
-		attnum = get_attnum(partition->rd_id, attname);
+		attnum = var_get_attnum(prel->expr); /* parent's attnum */
+		Assert(attnum != InvalidAttrNumber);
+		attname = get_attname(parent, attnum);
+		attnum = get_attnum(partition->rd_id, attname);	/* partition's attnum */
+
 		indexTuple = get_index_for_key(partition, attnum, &index);
 		if (HeapTupleIsValid(indexTuple))
 		{

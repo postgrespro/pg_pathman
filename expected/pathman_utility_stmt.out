@@ -159,7 +159,7 @@ SELECT * FROM copy_stmt_hooking.test WHERE val > 20;
 
 /* COPY FROM (partitioned column is not specified) */
 COPY copy_stmt_hooking.test(comment) FROM stdin;
-ERROR:  partitioned column's value should not be NULL
+ERROR:  partitioning expression's value should not be NULL
 /* COPY FROM (we don't support FREEZE) */
 COPY copy_stmt_hooking.test FROM stdin WITH (FREEZE);
 ERROR:  freeze is not supported for partitioned tables
@@ -256,8 +256,33 @@ SELECT * FROM copy_stmt_hooking.test ORDER BY val;
    6 | hash_2  |  0 |  0
 (2 rows)
 
+/* Check dropped colums before partitioning */
+CREATE TABLE copy_stmt_hooking.test2 (
+	a varchar(50),
+	b varchar(50),
+	t timestamp without time zone not null
+);
+ALTER TABLE copy_stmt_hooking.test2 DROP COLUMN a;
+SELECT create_range_partitions('copy_stmt_hooking.test2',
+	't',
+	'2017-01-01 00:00:00'::timestamp,
+	interval '1 hour', 5, false
+);
+NOTICE:  sequence "test2_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                       5
+(1 row)
+
+COPY copy_stmt_hooking.test2(t) FROM stdin;
+SELECT COUNT(*) FROM copy_stmt_hooking.test2;
+ count 
+-------
+     1
+(1 row)
+
 DROP SCHEMA copy_stmt_hooking CASCADE;
-NOTICE:  drop cascades to 7 other objects
+NOTICE:  drop cascades to 798 other objects
 /*
  * Test auto check constraint renaming
  */
@@ -278,14 +303,14 @@ ALTER TABLE rename.test_0 RENAME TO test_one;
  a      | integer | not null default nextval('rename.test_a_seq'::regclass) | plain   |              | 
  b      | integer |                                                         | plain   |              | 
 Check constraints:
-    "pathman_test_one_1_check" CHECK (get_hash_part_idx(hashint4(a), 3) = 0)
+    "pathman_test_one_check" CHECK (get_hash_part_idx(hashint4(a), 3) = 0)
 Inherits: rename.test
 
 /* Generates check constraint for relation */
-CREATE OR REPLACE FUNCTION add_constraint(rel regclass, att text)
+CREATE OR REPLACE FUNCTION add_constraint(rel regclass)
 RETURNS VOID AS $$
 declare
-	constraint_name text := build_check_constraint_name(rel, 'a');
+	constraint_name text := build_check_constraint_name(rel);
 BEGIN
 	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (a < 100);',
 				   rel, constraint_name);
@@ -299,7 +324,7 @@ LANGUAGE plpgsql;
 CREATE TABLE rename.test_inh (LIKE rename.test INCLUDING ALL);
 CREATE TABLE rename.test_inh_1 (LIKE rename.test INCLUDING ALL);
 ALTER TABLE rename.test_inh_1 INHERIT rename.test_inh;
-SELECT add_constraint('rename.test_inh_1', 'a');
+SELECT add_constraint('rename.test_inh_1');
  add_constraint 
 ----------------
  
@@ -313,13 +338,13 @@ ALTER TABLE rename.test_inh_1 RENAME TO test_inh_one;
  a      | integer | not null default nextval('rename.test_a_seq'::regclass) | plain   |              | 
  b      | integer |                                                         | plain   |              | 
 Check constraints:
-    "pathman_test_inh_1_1_check" CHECK (a < 100)
+    "pathman_test_inh_1_check" CHECK (a < 100)
 Inherits: rename.test_inh
 
 /* Check that plain tables are not affected too */
 CREATE TABLE rename.plain_test(a serial, b int);
 ALTER TABLE rename.plain_test RENAME TO plain_test_renamed;
-SELECT add_constraint('rename.plain_test_renamed', 'a');
+SELECT add_constraint('rename.plain_test_renamed');
  add_constraint 
 ----------------
  
@@ -332,7 +357,7 @@ SELECT add_constraint('rename.plain_test_renamed', 'a');
  a      | integer | not null default nextval('rename.plain_test_a_seq'::regclass) | plain   |              | 
  b      | integer |                                                               | plain   |              | 
 Check constraints:
-    "pathman_plain_test_renamed_1_check" CHECK (a < 100)
+    "pathman_plain_test_renamed_check" CHECK (a < 100)
 
 ALTER TABLE rename.plain_test_renamed RENAME TO plain_test;
 \d+ rename.plain_test
@@ -342,7 +367,7 @@ ALTER TABLE rename.plain_test_renamed RENAME TO plain_test;
  a      | integer | not null default nextval('rename.plain_test_a_seq'::regclass) | plain   |              | 
  b      | integer |                                                               | plain   |              | 
 Check constraints:
-    "pathman_plain_test_renamed_1_check" CHECK (a < 100)
+    "pathman_plain_test_renamed_check" CHECK (a < 100)
 
 DROP SCHEMA rename CASCADE;
 NOTICE:  drop cascades to 7 other objects

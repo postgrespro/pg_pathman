@@ -14,7 +14,7 @@ PG_CPPFLAGS = -I$(CURDIR)/src/include
 
 EXTENSION = pg_pathman
 
-EXTVERSION = 1.3
+EXTVERSION = 1.4
 
 DATA_built = pg_pathman--$(EXTVERSION).sql
 
@@ -22,24 +22,30 @@ DATA = pg_pathman--1.0--1.1.sql \
 	   pg_pathman--1.1--1.2.sql \
 	   pg_pathman--1.2--1.3.sql
 
-PGFILEDESC = "pg_pathman - partitioning tool"
+PGFILEDESC = "pg_pathman - partitioning tool for PostgreSQL"
 
 REGRESS = pathman_basic \
-		  pathman_only \
-		  pathman_cte \
 		  pathman_bgw \
-		  pathman_inserts \
-		  pathman_updates \
-		  pathman_domains \
-		  pathman_interval \
+		  pathman_calamity \
 		  pathman_callbacks \
+		  pathman_column_type \
+		  pathman_cte \
+		  pathman_domains \
 		  pathman_foreign_keys \
+		  pathman_inserts \
+		  pathman_interval \
+		  pathman_join_clause \
+		  pathman_lateral \
+		  pathman_only \
 		  pathman_permissions \
 		  pathman_rowmarks \
 		  pathman_runtime_nodes \
+		  pathman_update_trigger \
+		  pathman_updates \
 		  pathman_utility_stmt \
 		  pathman_calamity \
-		  pathman_ri
+		  pathman_ri \
+		  pathman_expressions
 
 EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add
 
@@ -70,3 +76,5 @@ isolationcheck: | submake-isolation
 		--temp-config=$(top_srcdir)/$(subdir)/conf.add \
 		--outputdir=./isolation_output \
 		$(ISOLATIONCHECKS)
+partitioning_tests:
+	$(MAKE) -C tests/python partitioning_tests

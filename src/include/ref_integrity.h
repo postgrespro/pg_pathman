@@ -13,8 +13,8 @@
 
 void pathman_get_fkeys(Oid parent_relid, List **constraints, List **refrelids);
 void createPartitionForeignKeyTriggers(Oid partition,
-								  Oid fkrelid,
 								  AttrNumber attnum,
+								  Oid fkrelid,
 								  Oid constraintOid,
 								  List *upd_funcname,
 								  List *del_funcname);
@@ -23,7 +23,7 @@ void createSingleForeignKeyTrigger(Oid relOid, Oid refRelOid, List *funcname,
 							  Oid indexOid, bool is_internal);
 HeapTuple get_index_for_key(Relation rel, AttrNumber attnum, Oid *index_id);
 void ri_checkReferences(Relation partition, Oid constraintOid);
-List * get_ri_triggers_list(Oid relid, Oid constr);
+List *get_ri_triggers_list(Oid relid, Oid constr);
 void ri_preparePartitionDrop(Oid parent,
 						Relation partition,
 						bool check_references);

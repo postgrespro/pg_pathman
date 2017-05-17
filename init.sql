@@ -15,8 +15,7 @@
  * text to Datum
  */
 CREATE OR REPLACE FUNCTION @extschema@.validate_interval_value(
-	partrel			REGCLASS,
-	attname			TEXT,
+	atttype			OID,
 	parttype		INTEGER,
 	range_interval	TEXT)
 RETURNS BOOL AS 'pg_pathman', 'validate_interval_value'
@@ -34,18 +33,19 @@ LANGUAGE C;
  */
 CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
 	partrel			REGCLASS NOT NULL PRIMARY KEY,
-	attname			TEXT NOT NULL,
+	attname			TEXT NOT NULL,	/* expression */
 	parttype		INTEGER NOT NULL,
 	range_interval	TEXT,
+	expression_p	TEXT,				/* parsed expression (until plan) */
+	atttype			OID,				/* expression type */
 
 	/* check for allowed part types */
-	CHECK (parttype IN (1, 2)),
+	CONSTRAINT pathman_config_parttype_check CHECK (parttype IN (1, 2)),
 
 	/* check for correct interval */
-	CHECK (@extschema@.validate_interval_value(partrel,
-											   attname,
-											   parttype,
-											   range_interval))
+	CONSTRAINT pathman_config_interval_check CHECK (@extschema@.validate_interval_value(atttype,
+													parttype,
+													range_interval))
 );
 
 
@@ -118,7 +118,7 @@ RETURNS TRIGGER AS 'pg_pathman', 'pathman_config_params_trigger_func'
 LANGUAGE C;
 
 CREATE TRIGGER pathman_config_params_trigger
-BEFORE INSERT OR UPDATE OR DELETE ON @extschema@.pathman_config_params
+AFTER INSERT OR UPDATE OR DELETE ON @extschema@.pathman_config_params
 FOR EACH ROW EXECUTE PROCEDURE @extschema@.pathman_config_params_trigger_func();
 
 /*
@@ -250,12 +250,12 @@ LANGUAGE plpgsql;
  */
 CREATE OR REPLACE FUNCTION @extschema@.show_partition_list()
 RETURNS TABLE (
-	 parent			REGCLASS,
-	 partition		REGCLASS,
-	 parttype		INT4,
-	 partattr		TEXT,
-	 range_min		TEXT,
-	 range_max		TEXT)
+	parent			REGCLASS,
+	partition		REGCLASS,
+	parttype		INT4,
+	partattr		TEXT,
+	range_min		TEXT,
+	range_max		TEXT)
 AS 'pg_pathman', 'show_partition_list_internal'
 LANGUAGE C STRICT;
 
@@ -266,6 +266,24 @@ CREATE OR REPLACE VIEW @extschema@.pathman_partition_list
 AS SELECT * FROM @extschema@.show_partition_list();
 
 GRANT SELECT ON @extschema@.pathman_partition_list TO PUBLIC;
+
+/*
+ * Show memory usage of pg_pathman's caches.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.show_cache_stats()
+RETURNS TABLE (
+	context			TEXT,
+	size			INT8,
+	used			INT8,
+	entries			INT8)
+AS 'pg_pathman', 'show_cache_stats_internal'
+LANGUAGE C STRICT;
+
+/*
+ * View for show_cache_stats().
+ */
+CREATE OR REPLACE VIEW @extschema@.pathman_cache_stats
+AS SELECT * FROM @extschema@.show_cache_stats();
 
 /*
  * Show all existing concurrent partitioning tasks.
@@ -414,9 +432,6 @@ BEGIN
 
 	/* Drop triggers on update */
 	PERFORM @extschema@.drop_triggers(parent_relid);
-
-	/* Notify backend about changes */
-	PERFORM @extschema@.on_remove_partitions(parent_relid);
 END
 $$
 LANGUAGE plpgsql STRICT;
@@ -427,7 +442,7 @@ LANGUAGE plpgsql STRICT;
  */
 CREATE OR REPLACE FUNCTION @extschema@.common_relation_checks(
 	relation		REGCLASS,
-	p_attribute		TEXT)
+	expression		TEXT)
 RETURNS BOOLEAN AS
 $$
 DECLARE
@@ -450,10 +465,6 @@ BEGIN
 		RAISE EXCEPTION 'relation "%" has already been partitioned', relation;
 	END IF;
 
-	IF @extschema@.is_attribute_nullable(relation, p_attribute) THEN
-		RAISE EXCEPTION 'partitioning key "%" must be NOT NULL', p_attribute;
-	END IF;
-
 	/* Check if there are foreign keys that reference the relation */
 	FOR v_rec IN (SELECT * FROM pg_catalog.pg_constraint
 				  WHERE confrelid = relation::REGCLASS::OID)
@@ -467,7 +478,7 @@ BEGIN
 		RAISE EXCEPTION 'relation "%" is referenced from other relations', relation;
 	END IF;
 
-	RETURN TRUE;
+	RETURN FALSE;
 END
 $$
 LANGUAGE plpgsql;
@@ -489,15 +500,6 @@ BEGIN
 END
 $$
 LANGUAGE plpgsql STRICT;
-
-/*
- * Check that tuple from first relation could be converted to fit the second one
- */
-CREATE OR REPLACE FUNCTION @extschema@.tuple_format_is_convertable(
-	relation1	OID,
-	relation2	OID)
-RETURNS BOOL AS 'pg_pathman', 'tuple_format_is_convertable'
-LANGUAGE C;
 
 /*
  * DDL trigger that removes entry from pathman_config table.
@@ -526,30 +528,6 @@ BEGIN
 END
 $$
 LANGUAGE plpgsql;
-
-/*
- * Function for update triggers
- */
-CREATE OR REPLACE FUNCTION @extschema@.update_trigger_func()
-RETURNS TRIGGER AS 'pg_pathman', 'update_trigger_func'
-LANGUAGE C;
-
-/*
- * Creates an update trigger
- */
-CREATE OR REPLACE FUNCTION @extschema@.create_update_triggers(parent_relid REGCLASS)
-RETURNS VOID AS 'pg_pathman', 'create_update_triggers'
-LANGUAGE C STRICT;
-
-CREATE OR REPLACE FUNCTION @extschema@.create_single_update_trigger(
-	parent_relid	REGCLASS,
-	partition_relid	REGCLASS)
-RETURNS VOID AS 'pg_pathman', 'create_single_update_trigger'
-LANGUAGE C STRICT;
-
-CREATE OR REPLACE FUNCTION @extschema@.is_update_trigger_enabled(parent_relid REGCLASS)
-RETURNS BOOL AS 'pg_pathman', 'is_update_trigger_enabled'
-LANGUAGE C STRICT;
 
 /*
  * Drop triggers
@@ -599,21 +577,22 @@ DECLARE
 	v_rec			RECORD;
 	v_rows			BIGINT;
 	v_part_count	INTEGER := 0;
-	conf_num_del	INTEGER;
+	conf_num		INTEGER;
 	v_relkind		CHAR;
 
 BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
 
-	/* Drop trigger first */
+	/* Acquire data modification lock */
+	PERFORM @extschema@.prevent_relation_modification(parent_relid);
+
+	/* First, drop all triggers */
 	PERFORM @extschema@.drop_triggers(parent_relid);
 
-	WITH config_num_deleted AS (DELETE FROM @extschema@.pathman_config
-								WHERE partrel = parent_relid
-								RETURNING *)
-	SELECT count(*) from config_num_deleted INTO conf_num_del;
+	SELECT count(*) FROM @extschema@.pathman_config
+	WHERE partrel = parent_relid INTO conf_num;
 
-	IF conf_num_del = 0 THEN
+	IF conf_num = 0 THEN
 		RAISE EXCEPTION 'relation "%" has no partitions', parent_relid::TEXT;
 	END IF;
 
@@ -639,8 +618,8 @@ BEGIN
 		PERFORM @extschema@.prepare_partition_drop(parent_relid, v_rec.tbl);
 
 		/*
-		 * Determine the kind of child relation. It can be either regular
-		 * table (r) or foreign table (f). Depending on relkind we use
+		 * Determine the kind of child relation. It can be either a regular
+		 * table (r) or a foreign table (f). Depending on relkind we use
 		 * DROP TABLE or DROP FOREIGN TABLE.
 		 */
 		IF v_relkind = 'f' THEN
@@ -652,10 +631,9 @@ BEGIN
 		v_part_count := v_part_count + 1;
 	END LOOP;
 
+	/* Finally delete both config entries */
+	DELETE FROM @extschema@.pathman_config WHERE partrel = parent_relid;
 	DELETE FROM @extschema@.pathman_config_params WHERE partrel = parent_relid;
-
-	/* Notify backend about changes */
-	PERFORM @extschema@.on_remove_partitions(parent_relid);
 
 	RETURN v_part_count;
 END
@@ -727,6 +705,39 @@ $$ LANGUAGE plpgsql;
 
 
 /*
+ * Function for UPDATE triggers.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.pathman_update_trigger_func()
+RETURNS TRIGGER AS 'pg_pathman', 'pathman_update_trigger_func'
+LANGUAGE C STRICT;
+
+/*
+ * Creates UPDATE triggers.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.create_update_triggers(
+	parent_relid	REGCLASS)
+RETURNS VOID AS 'pg_pathman', 'create_update_triggers'
+LANGUAGE C STRICT;
+
+/*
+ * Creates single UPDATE trigger.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.create_single_update_trigger(
+	parent_relid	REGCLASS,
+	partition_relid	REGCLASS)
+RETURNS VOID AS 'pg_pathman', 'create_single_update_trigger'
+LANGUAGE C STRICT;
+
+/*
+ * Check if relation has pg_pathman's UPDATE trigger.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.has_update_trigger(
+	parent_relid	REGCLASS)
+RETURNS BOOL AS 'pg_pathman', 'has_update_trigger'
+LANGUAGE C STRICT;
+
+
+/*
  * Partitioning key
  */
 CREATE OR REPLACE FUNCTION @extschema@.get_partition_key(
@@ -744,23 +755,6 @@ LANGUAGE sql STRICT;
 CREATE EVENT TRIGGER pathman_ddl_trigger
 ON sql_drop
 EXECUTE PROCEDURE @extschema@.pathman_ddl_trigger_func();
-
-
-
-CREATE OR REPLACE FUNCTION @extschema@.on_create_partitions(
-	relid	REGCLASS)
-RETURNS VOID AS 'pg_pathman', 'on_partitions_created'
-LANGUAGE C STRICT;
-
-CREATE OR REPLACE FUNCTION @extschema@.on_update_partitions(
-	relid	REGCLASS)
-RETURNS VOID AS 'pg_pathman', 'on_partitions_updated'
-LANGUAGE C STRICT;
-
-CREATE OR REPLACE FUNCTION @extschema@.on_remove_partitions(
-	relid	REGCLASS)
-RETURNS VOID AS 'pg_pathman', 'on_partitions_removed'
-LANGUAGE C STRICT;
 
 
 /*
@@ -813,15 +807,6 @@ RETURNS VOID AS 'pg_pathman', 'validate_relname'
 LANGUAGE C;
 
 /*
- * Checks if attribute is nullable
- */
-CREATE OR REPLACE FUNCTION @extschema@.is_attribute_nullable(
-	relid	REGCLASS,
-	attname	TEXT)
-RETURNS BOOLEAN AS 'pg_pathman', 'is_attribute_nullable'
-LANGUAGE C STRICT;
-
-/*
  * Check if regclass is date or timestamp.
  */
 CREATE OR REPLACE FUNCTION @extschema@.is_date_type(
@@ -829,30 +814,44 @@ CREATE OR REPLACE FUNCTION @extschema@.is_date_type(
 RETURNS BOOLEAN AS 'pg_pathman', 'is_date_type'
 LANGUAGE C STRICT;
 
+/*
+ * Check if TYPE supports the specified operator.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.is_operator_supported(
+	type_oid	REGTYPE,
+	opname		TEXT)
+RETURNS BOOLEAN AS 'pg_pathman', 'is_operator_supported'
+LANGUAGE C STRICT;
+
+/*
+ * Check if tuple from first relation can be converted to fit the second one.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.is_tuple_convertible(
+	relation1	REGCLASS,
+	relation2	REGCLASS)
+RETURNS BOOL AS 'pg_pathman', 'is_tuple_convertible'
+LANGUAGE C STRICT;
+
 
 /*
  * Build check constraint name for a specified relation's column.
  */
 CREATE OR REPLACE FUNCTION @extschema@.build_check_constraint_name(
-	partition_relid	REGCLASS,
-	attribute		INT2)
-RETURNS TEXT AS 'pg_pathman', 'build_check_constraint_name_attnum'
-LANGUAGE C STRICT;
-
-CREATE OR REPLACE FUNCTION @extschema@.build_check_constraint_name(
-	partition_relid	REGCLASS,
-	attribute		TEXT)
-RETURNS TEXT AS 'pg_pathman', 'build_check_constraint_name_attname'
+	partition_relid	REGCLASS)
+RETURNS TEXT AS 'pg_pathman', 'build_check_constraint_name'
 LANGUAGE C STRICT;
 
 /*
- * Build update trigger and its underlying function's names.
+ * Build UPDATE trigger's name.
  */
 CREATE OR REPLACE FUNCTION @extschema@.build_update_trigger_name(
 	relid			REGCLASS)
 RETURNS TEXT AS 'pg_pathman', 'build_update_trigger_name'
 LANGUAGE C STRICT;
 
+/*
+ * Buld UPDATE trigger function's name.
+ */
 CREATE OR REPLACE FUNCTION @extschema@.build_update_trigger_func_name(
 	relid			REGCLASS)
 RETURNS TEXT AS 'pg_pathman', 'build_update_trigger_func_name'
@@ -860,12 +859,15 @@ LANGUAGE C STRICT;
 
 
 /*
- * Attach a previously partitioned table.
+ * Add record to pathman_config. If parttype if not specified then determine
+ * partitioning type.
  */
 CREATE OR REPLACE FUNCTION @extschema@.add_to_pathman_config(
-	parent_relid	REGCLASS,
-	attname			TEXT,
-	range_interval	TEXT DEFAULT NULL)
+	parent_relid		REGCLASS,
+	expression			TEXT,
+	range_interval		TEXT DEFAULT NULL,
+	parttype			INT4 DEFAULT 0
+)
 RETURNS BOOLEAN AS 'pg_pathman', 'add_to_pathman_config'
 LANGUAGE C;
 
@@ -885,18 +887,6 @@ LANGUAGE C STRICT;
 CREATE OR REPLACE FUNCTION @extschema@.prevent_relation_modification(
 	parent_relid	REGCLASS)
 RETURNS VOID AS 'pg_pathman', 'prevent_relation_modification'
-LANGUAGE C STRICT;
-
-
-/*
- * DEBUG: Place this inside some plpgsql fuction and set breakpoint.
- */
-CREATE OR REPLACE FUNCTION @extschema@.debug_capture()
-RETURNS VOID AS 'pg_pathman', 'debug_capture'
-LANGUAGE C STRICT;
-
-CREATE OR REPLACE FUNCTION @extschema@.get_pathman_lib_version()
-RETURNS CSTRING AS 'pg_pathman', 'get_pathman_lib_version'
 LANGUAGE C STRICT;
 
 
@@ -922,14 +912,13 @@ CREATE OR REPLACE FUNCTION @extschema@.invoke_on_partition_created_callback(
 RETURNS VOID AS 'pg_pathman', 'invoke_on_partition_created_callback'
 LANGUAGE C;
 
+
 /*
- *
+ * DEBUG: Place this inside some plpgsql fuction and set breakpoint.
  */
-CREATE OR REPLACE FUNCTION @extschema@.is_operator_supported(
-	type_oid	OID,
-	opname		TEXT)
-RETURNS BOOLEAN AS 'pg_pathman', 'is_operator_supported'
-LANGUAGE C;
+CREATE OR REPLACE FUNCTION @extschema@.debug_capture()
+RETURNS VOID AS 'pg_pathman', 'debug_capture'
+LANGUAGE C STRICT;
 
 /*
  * Referential integrity funcs and triggers
@@ -961,4 +950,8 @@ LANGUAGE C STRICT;
 
 CREATE OR REPLACE FUNCTION @extschema@.pathman_fkey_restrict_upd()
 RETURNS TRIGGER AS 'pg_pathman', 'pathman_fkey_restrict_upd'
+LANGUAGE C STRICT;
+
+CREATE OR REPLACE FUNCTION @extschema@.get_pathman_lib_version()
+RETURNS CSTRING AS 'pg_pathman', 'get_pathman_lib_version'
 LANGUAGE C STRICT;

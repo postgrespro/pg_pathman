@@ -34,7 +34,6 @@
 #include "storage/proc.h"
 #include "utils/builtins.h"
 #include "utils/datum.h"
-#include "utils/memutils.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
@@ -466,7 +465,9 @@ bgw_main_concurrent_part(Datum main_arg)
 		/* We'll need this to recover from errors */
 		old_mcxt = CurrentMemoryContext;
 
-		SPI_connect();
+		if (SPI_connect() != SPI_OK_CONNECT)
+			elog(ERROR, "could not connect using SPI");
+
 		PushActiveSnapshot(GetTransactionSnapshot());
 
 		/* Prepare the query if needed */
@@ -475,10 +476,10 @@ bgw_main_concurrent_part(Datum main_arg)
 			MemoryContext	current_mcxt;
 
 			/*
-			 * Allocate as SQL query in top memory context because current
+			 * Allocate SQL query in TopPathmanContext because current
 			 * context will be destroyed after transaction finishes
 			 */
-			current_mcxt = MemoryContextSwitchTo(TopMemoryContext);
+			current_mcxt = MemoryContextSwitchTo(TopPathmanContext);
 			sql = psprintf("SELECT %s._partition_data_concurrent($1::oid, p_limit:=$2)",
 						   get_namespace_name(get_pathman_schema()));
 			MemoryContextSwitchTo(current_mcxt);
@@ -633,28 +634,32 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 
 	/* Check batch_size */
 	if (batch_size < 1 || batch_size > 10000)
-		elog(ERROR, "\"batch_size\" should not be less than 1 "
-					"or greater than 10000");
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("'batch_size' should not be less than 1"
+							   " or greater than 10000")));
 
 	/* Check sleep_time */
 	if (sleep_time < 0.5)
-		elog(ERROR, "\"sleep_time\" should not be less than 0.5");
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("'sleep_time' should not be less than 0.5")));
 
 	/* Check if relation is a partitioned table */
 	shout_if_prel_is_invalid(relid,
 							 /* We also lock the parent relation */
 							 get_pathman_relation_info_after_lock(relid, true, NULL),
 							 /* Partitioning type does not matter here */
-							 PT_INDIFFERENT);
+							 PT_ANY);
 
 	/* Check that partitioning operation result is visible */
-	if (pathman_config_contains_relation(relid, NULL, NULL, &rel_xmin))
+	if (pathman_config_contains_relation(relid, NULL, NULL, &rel_xmin, NULL))
 	{
 		if (!xact_object_is_visible(rel_xmin))
 			ereport(ERROR, (errmsg("cannot start %s", concurrent_part_bgw),
 							errdetail("table is being partitioned now")));
 	}
-	else elog(ERROR, "cannot find relation %d", relid);
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("relation \"%s\" is not partitioned",
+								get_rel_name_or_relid(relid))));
 
 	/*
 	 * Look for an empty slot and also check that a concurrent

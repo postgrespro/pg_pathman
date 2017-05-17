@@ -97,6 +97,49 @@ INSERT INTO callbacks.abc VALUES (301, 0); /* +1 new partition */
 
 DROP TABLE callbacks.abc CASCADE;
 
+/* more complex test using rotation of tables */
+CREATE TABLE callbacks.abc(a INT4 NOT NULL);
+INSERT INTO callbacks.abc
+	SELECT a FROM generate_series(1, 100) a;
+SELECT create_range_partitions('callbacks.abc', 'a', 1, 10, 10);
 
+CREATE OR REPLACE FUNCTION callbacks.rotation_callback(params jsonb)
+RETURNS VOID AS
+$$
+DECLARE
+    relation	regclass;
+	parent_rel	regclass;
+BEGIN
+	parent_rel := concat(params->>'partition_schema', '.', params->>'parent')::regclass;
+
+    -- drop "old" partitions
+    FOR relation IN (SELECT partition FROM
+						(SELECT partition, range_min::INT4 FROM pathman_partition_list
+						 WHERE parent = parent_rel
+						 ORDER BY range_min::INT4 DESC
+						 OFFSET 4) t  -- remain 4 last partitions
+					 ORDER BY range_min)
+    LOOP
+        RAISE NOTICE 'dropping partition %', relation;
+        PERFORM drop_range_partition(relation);
+    END LOOP;
+END
+$$ LANGUAGE plpgsql;
+
+SELECT * FROM pathman_partition_list
+WHERE parent = 'callbacks.abc'::REGCLASS
+ORDER BY range_min::INT4;
+
+SELECT set_init_callback('callbacks.abc',
+						 'callbacks.rotation_callback(jsonb)');
+
+INSERT INTO callbacks.abc VALUES (1000);
+INSERT INTO callbacks.abc VALUES (1500);
+
+SELECT * FROM pathman_partition_list
+WHERE parent = 'callbacks.abc'::REGCLASS
+ORDER BY range_min::INT4;
+
+DROP TABLE callbacks.abc CASCADE;
 DROP SCHEMA callbacks CASCADE;
 DROP EXTENSION pg_pathman CASCADE;

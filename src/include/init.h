@@ -21,6 +21,10 @@
 #include "utils/snapshot.h"
 
 
+/* Help user in case of emergency */
+#define INIT_ERROR_HINT "pg_pathman will be disabled to allow you to resolve this issue"
+
+
 /*
  * pg_pathman's initialization state structure.
  */
@@ -33,11 +37,54 @@ typedef struct
 } PathmanInitState;
 
 
+/* Check that this is a temporary memory context that's going to be destroyed */
+#define AssertTemporaryContext() \
+	do { \
+		Assert(CurrentMemoryContext != TopMemoryContext); \
+		Assert(CurrentMemoryContext != TopPathmanContext); \
+		Assert(CurrentMemoryContext != PathmanRelationCacheContext); \
+		Assert(CurrentMemoryContext != PathmanParentCacheContext); \
+		Assert(CurrentMemoryContext != PathmanBoundCacheContext); \
+	} while (0)
+
+
+#define PATHMAN_MCXT_COUNT	4
+extern MemoryContext		TopPathmanContext;
+extern MemoryContext		PathmanRelationCacheContext;
+extern MemoryContext		PathmanParentCacheContext;
+extern MemoryContext		PathmanBoundCacheContext;
+
 extern HTAB				   *partitioned_rels;
 extern HTAB				   *parent_cache;
+extern HTAB				   *bound_cache;
 
 /* pg_pathman's initialization state */
 extern PathmanInitState 	pg_pathman_init_state;
+
+
+/* Transform pg_pathman's memory context into simple name */
+static inline const char *
+simpify_mcxt_name(MemoryContext mcxt)
+{
+	static const char  *top_mcxt	= "maintenance",
+					   *rel_mcxt	= "partition dispatch cache",
+					   *parent_mcxt	= "partition parents cache",
+					   *bound_mcxt	= "partition bounds cache";
+
+	if (mcxt == TopPathmanContext)
+		return top_mcxt;
+
+	else if (mcxt == PathmanRelationCacheContext)
+		return rel_mcxt;
+
+	else if (mcxt == PathmanParentCacheContext)
+		return parent_mcxt;
+
+	else if (mcxt == PathmanBoundCacheContext)
+		return bound_mcxt;
+
+	else elog(ERROR, "error in function " CppAsString(simpify_mcxt_name));
+}
 
 
 /*
@@ -100,10 +147,10 @@ extern PathmanInitState 	pg_pathman_init_state;
 
 
 /* Lowest version of Pl/PgSQL frontend compatible with internals (0xAA_BB_CC) */
-#define LOWEST_COMPATIBLE_FRONT		0x010300
+#define LOWEST_COMPATIBLE_FRONT		0x010400
 
 /* Current version of native C library (0xAA_BB_CC) */
-#define CURRENT_LIB_VERSION			0x010300
+#define CURRENT_LIB_VERSION			0x010400
 
 
 void *pathman_cache_search_relid(HTAB *cache_table,
@@ -130,11 +177,6 @@ bool load_config(void);
 void unload_config(void);
 
 
-void fill_prel_with_partitions(const Oid *partitions,
-							   const uint32 parts_count,
-							   const char *part_column_name,
-							   PartRelationInfo *prel);
-
 /* Result of find_inheritance_children_array() */
 typedef enum
 {
@@ -149,22 +191,42 @@ find_children_status find_inheritance_children_array(Oid parentrelId,
 													 uint32 *children_size,
 													 Oid **children);
 
-char *build_check_constraint_name_relid_internal(Oid relid,
-												 AttrNumber attno);
-
-char *build_check_constraint_name_relname_internal(const char *relname,
-												   AttrNumber attno);
+char *build_check_constraint_name_relid_internal(Oid relid);
+char *build_check_constraint_name_relname_internal(const char *relname);
 
 char *build_sequence_name_internal(Oid relid);
+
+char *build_update_trigger_name_internal(Oid relid);
+char *build_update_trigger_func_name_internal(Oid relid);
+
 
 bool pathman_config_contains_relation(Oid relid,
 									  Datum *values,
 									  bool *isnull,
-									  TransactionId *xmin);
+									  TransactionId *xmin,
+									  ItemPointerData *iptr);
+
+void pathman_config_invalidate_parsed_expression(Oid relid);
+
+void pathman_config_refresh_parsed_expression(Oid relid,
+											  Datum *values,
+											  bool *isnull,
+											  ItemPointer iptr);
+
 
 bool read_pathman_params(Oid relid,
 						 Datum *values,
 						 bool *isnull);
+
+
+bool validate_range_constraint(const Expr *expr,
+							   const PartRelationInfo *prel,
+							   Datum *lower, Datum *upper,
+							   bool *lower_null, bool *upper_null);
+
+bool validate_hash_constraint(const Expr *expr,
+							  const PartRelationInfo *prel,
+							  uint32 *part_idx);
 
 
 #endif /* PATHMAN_INIT_H */

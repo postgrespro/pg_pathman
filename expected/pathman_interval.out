@@ -21,14 +21,14 @@ INSERT INTO test_interval.abc VALUES (250);
 ERROR:  cannot find appropriate partition for key '250'
 /* Set a trivial interval */
 SELECT set_interval('test_interval.abc', 0);
-ERROR:  interval must not be trivial
+ERROR:  interval should not be trivial
 /* Set a negative interval */
 SELECT set_interval('test_interval.abc', -100);
-ERROR:  interval must not be negative
+ERROR:  interval should not be negative
 /* We also shouldn't be able to set a trivial interval directly */
 UPDATE pathman_config SET range_interval = '0'
 WHERE partrel = 'test_interval.abc'::REGCLASS;
-ERROR:  interval must not be trivial
+ERROR:  interval should not be trivial
 /* Set a normal interval */
 SELECT set_interval('test_interval.abc', 1000);
  set_interval 
@@ -38,9 +38,9 @@ SELECT set_interval('test_interval.abc', 1000);
 
 INSERT INTO test_interval.abc VALUES (250);
 SELECT * FROM pathman_config;
-      partrel      | attname | parttype | range_interval 
--------------------+---------+----------+----------------
- test_interval.abc | id      |        2 | 1000
+      partrel      | attname | parttype | range_interval |                                                     expression_p                                                      | atttype 
+-------------------+---------+----------+----------------+-----------------------------------------------------------------------------------------------------------------------+---------
+ test_interval.abc | id      |        2 | 1000           | {VAR :varno 1 :varattno 1 :vartype 21 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 1 :location 8} |      21
 (1 row)
 
 DROP TABLE test_interval.abc CASCADE;
@@ -64,14 +64,14 @@ INSERT INTO test_interval.abc VALUES (250);
 ERROR:  cannot find appropriate partition for key '250'
 /* Set a trivial interval */
 SELECT set_interval('test_interval.abc', 0);
-ERROR:  interval must not be trivial
+ERROR:  interval should not be trivial
 /* Set a negative interval */
 SELECT set_interval('test_interval.abc', -100);
-ERROR:  interval must not be negative
+ERROR:  interval should not be negative
 /* We also shouldn't be able to set a trivial interval directly */
 UPDATE pathman_config SET range_interval = '0'
 WHERE partrel = 'test_interval.abc'::REGCLASS;
-ERROR:  interval must not be trivial
+ERROR:  interval should not be trivial
 /* Set a normal interval */
 SELECT set_interval('test_interval.abc', 1000);
  set_interval 
@@ -81,9 +81,9 @@ SELECT set_interval('test_interval.abc', 1000);
 
 INSERT INTO test_interval.abc VALUES (250);
 SELECT * FROM pathman_config;
-      partrel      | attname | parttype | range_interval 
--------------------+---------+----------+----------------
- test_interval.abc | id      |        2 | 1000
+      partrel      | attname | parttype | range_interval |                                                     expression_p                                                      | atttype 
+-------------------+---------+----------+----------------+-----------------------------------------------------------------------------------------------------------------------+---------
+ test_interval.abc | id      |        2 | 1000           | {VAR :varno 1 :varattno 1 :vartype 23 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 1 :location 8} |      23
 (1 row)
 
 DROP TABLE test_interval.abc CASCADE;
@@ -107,14 +107,14 @@ INSERT INTO test_interval.abc VALUES (250);
 ERROR:  cannot find appropriate partition for key '250'
 /* Set a trivial interval */
 SELECT set_interval('test_interval.abc', 0);
-ERROR:  interval must not be trivial
+ERROR:  interval should not be trivial
 /* Set a negative interval */
 SELECT set_interval('test_interval.abc', -100);
-ERROR:  interval must not be negative
+ERROR:  interval should not be negative
 /* We also shouldn't be able to set a trivial interval directly */
 UPDATE pathman_config SET range_interval = '0'
 WHERE partrel = 'test_interval.abc'::REGCLASS;
-ERROR:  interval must not be trivial
+ERROR:  interval should not be trivial
 /* Set a normal interval */
 SELECT set_interval('test_interval.abc', 1000);
  set_interval 
@@ -124,9 +124,9 @@ SELECT set_interval('test_interval.abc', 1000);
 
 INSERT INTO test_interval.abc VALUES (250);
 SELECT * FROM pathman_config;
-      partrel      | attname | parttype | range_interval 
--------------------+---------+----------+----------------
- test_interval.abc | id      |        2 | 1000
+      partrel      | attname | parttype | range_interval |                                                     expression_p                                                      | atttype 
+-------------------+---------+----------+----------------+-----------------------------------------------------------------------------------------------------------------------+---------
+ test_interval.abc | id      |        2 | 1000           | {VAR :varno 1 :varattno 1 :vartype 20 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 1 :location 8} |      20
 (1 row)
 
 DROP TABLE test_interval.abc CASCADE;
@@ -148,7 +148,7 @@ SELECT set_interval('test_interval.abc', NULL::INTERVAL);
 
 /* Set a trivial interval */
 SELECT set_interval('test_interval.abc', '1 second'::INTERVAL);
-ERROR:  interval must not be trivial
+ERROR:  interval should not be trivial
 /* Set a normal interval */
 SELECT set_interval('test_interval.abc', '1 month'::INTERVAL);
  set_interval 
@@ -157,9 +157,9 @@ SELECT set_interval('test_interval.abc', '1 month'::INTERVAL);
 (1 row)
 
 SELECT * FROM pathman_config;
-      partrel      | attname | parttype | range_interval 
--------------------+---------+----------+----------------
- test_interval.abc | dt      |        2 | @ 1 mon
+      partrel      | attname | parttype | range_interval |                                                      expression_p                                                       | atttype 
+-------------------+---------+----------+----------------+-------------------------------------------------------------------------------------------------------------------------+---------
+ test_interval.abc | dt      |        2 | @ 1 mon        | {VAR :varno 1 :varattno 1 :vartype 1082 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 1 :location 8} |    1082
 (1 row)
 
 DROP TABLE test_interval.abc CASCADE;
@@ -180,7 +180,7 @@ SELECT set_interval('test_interval.abc', NULL::FLOAT4);
 
 /* Set a trivial interval */
 SELECT set_interval('test_interval.abc', 0);
-ERROR:  interval must not be trivial
+ERROR:  interval should not be trivial
 /* Set NaN float as interval */
 SELECT set_interval('test_interval.abc', 'NaN'::FLOAT4);
 ERROR:  invalid floating point interval
@@ -212,7 +212,7 @@ SELECT set_interval('test_interval.abc', NULL::FLOAT8);
 
 /* Set a trivial interval */
 SELECT set_interval('test_interval.abc', 0);
-ERROR:  interval must not be trivial
+ERROR:  interval should not be trivial
 /* Set NaN float as interval */
 SELECT set_interval('test_interval.abc', 'NaN'::FLOAT8);
 ERROR:  invalid floating point interval
@@ -244,7 +244,7 @@ SELECT set_interval('test_interval.abc', NULL::NUMERIC);
 
 /* Set a trivial interval */
 SELECT set_interval('test_interval.abc', 0);
-ERROR:  interval must not be trivial
+ERROR:  interval should not be trivial
 /* Set NaN numeric as interval */
 SELECT set_interval('test_interval.abc', 'NaN'::NUMERIC);
 ERROR:  invalid numeric interval

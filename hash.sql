@@ -13,8 +13,8 @@
  */
 CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions(
 	parent_relid		REGCLASS,
-	attribute			TEXT,
-	partitions_count	INTEGER,
+	expression			TEXT,
+	partitions_count	INT4,
 	partition_data		BOOLEAN DEFAULT TRUE,
 	partition_names		TEXT[] DEFAULT NULL,
 	tablespaces			TEXT[] DEFAULT NULL)
@@ -31,22 +31,19 @@ BEGIN
 		PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 	END IF;
 
-	attribute := lower(attribute);
-	PERFORM @extschema@.common_relation_checks(parent_relid, attribute);
+	expression := lower(expression);
+	PERFORM @extschema@.common_relation_checks(parent_relid, expression);
 
 	/* Insert new entry to pathman config */
-	INSERT INTO @extschema@.pathman_config (partrel, attname, parttype)
-	VALUES (parent_relid, attribute, 1);
+	EXECUTE format('ANALYZE %s', parent_relid);
+	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression, NULL);
 
 	/* Create partitions */
 	PERFORM @extschema@.create_hash_partitions_internal(parent_relid,
-														attribute,
+														expression,
 														partitions_count,
 														partition_names,
 														tablespaces);
-
-	/* Notify backend about changes */
-	PERFORM @extschema@.on_create_partitions(parent_relid);
 
 	/* Copy data */
 	IF partition_data = true THEN
@@ -110,19 +107,18 @@ BEGIN
 	END IF;
 
 	/* Check that new partition has an equal structure as parent does */
-	IF NOT @extschema@.tuple_format_is_convertable(parent_relid, new_partition) THEN
+	IF NOT @extschema@.is_tuple_convertible(parent_relid, new_partition) THEN
 		RAISE EXCEPTION 'partition must have a compatible tuple format';
 	END IF;
 
-	/* Get partitioning key */
+	/* Get partitioning expression */
 	part_attname := attname FROM @extschema@.pathman_config WHERE partrel = parent_relid;
 	IF part_attname IS NULL THEN
 		RAISE EXCEPTION 'table "%" is not partitioned', parent_relid::TEXT;
 	END IF;
 
 	/* Fetch name of old_partition's HASH constraint */
-	old_constr_name = @extschema@.build_check_constraint_name(old_partition::REGCLASS,
-															  part_attname);
+	old_constr_name = @extschema@.build_check_constraint_name(old_partition::REGCLASS);
 
 	/* Fetch definition of old_partition's HASH constraint */
 	SELECT pg_catalog.pg_get_constraintdef(oid) FROM pg_catalog.pg_constraint
@@ -140,8 +136,7 @@ BEGIN
 	EXECUTE format('ALTER TABLE %s INHERIT %s', new_partition, parent_relid);
 	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s %s',
 				   new_partition,
-				   @extschema@.build_check_constraint_name(new_partition::REGCLASS,
-														   part_attname),
+				   @extschema@.build_check_constraint_name(new_partition::REGCLASS),
 				   old_constr_def);
 
 	/* Fetch init_callback from 'params' table */
@@ -157,9 +152,6 @@ BEGIN
 															 new_partition,
 															 p_init_callback);
 
-	/* Invalidate cache */
-	PERFORM @extschema@.on_update_partitions(parent_relid);
-
 	RETURN new_partition;
 END
 $$
@@ -171,23 +163,16 @@ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions_internal(
 	parent_relid		REGCLASS,
 	attribute			TEXT,
-	partitions_count	INTEGER,
+	partitions_count	INT4,
 	partition_names		TEXT[] DEFAULT NULL,
 	tablespaces			TEXT[] DEFAULT NULL)
 RETURNS VOID AS 'pg_pathman', 'create_hash_partitions_internal'
 LANGUAGE C;
 
 /*
- * Returns hash function OID for specified type
- */
-CREATE OR REPLACE FUNCTION @extschema@.get_type_hash_func(REGTYPE)
-RETURNS REGPROC AS 'pg_pathman', 'get_type_hash_func'
-LANGUAGE C STRICT;
-
-/*
  * Calculates hash for integer value
  */
-CREATE OR REPLACE FUNCTION @extschema@.get_hash_part_idx(INTEGER, INTEGER)
+CREATE OR REPLACE FUNCTION @extschema@.get_hash_part_idx(INT4, INT4)
 RETURNS INTEGER AS 'pg_pathman', 'get_hash_part_idx'
 LANGUAGE C STRICT;
 
@@ -198,6 +183,6 @@ CREATE OR REPLACE FUNCTION @extschema@.build_hash_condition(
 	attribute_type		REGTYPE,
 	attribute			TEXT,
 	partitions_count	INT4,
-	partitions_index	INT4)
+	partition_index		INT4)
 RETURNS TEXT AS 'pg_pathman', 'build_hash_condition'
 LANGUAGE C STRICT;

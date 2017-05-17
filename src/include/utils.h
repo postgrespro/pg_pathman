@@ -16,9 +16,6 @@
 
 #include "postgres.h"
 #include "parser/parse_oper.h"
-#include "utils/rel.h"
-#include "nodes/relation.h"
-#include "nodes/nodeFuncs.h"
 
 
 /*
@@ -27,7 +24,8 @@
 bool clause_contains_params(Node *clause);
 bool is_date_type_internal(Oid typid);
 bool check_security_policy_internal(Oid relid, Oid role);
-char *build_update_trigger_name_internal(Oid relid);
+bool match_expr_to_operand(Node *expr, Node *operand);
+AttrNumber var_get_attnum(Node *expr);
 
 /*
  * Misc.
@@ -40,9 +38,7 @@ List * list_reverse(List *l);
  */
 Oid get_rel_owner(Oid relid);
 char * get_rel_name_or_relid(Oid relid);
-Oid get_attribute_type(Oid relid, const char *attname, bool missing_ok);
 RangeVar *makeRangeVarFromRelid(Oid relid);
-bool check_relation_exists(Oid relid);
 
 /*
  * Operator-related stuff.
@@ -62,7 +58,7 @@ Datum perform_type_cast(Datum value, Oid in_type, Oid out_type, bool *success);
 Datum extract_binary_interval_from_text(Datum interval_text,
 										Oid part_atttype,
 										Oid *interval_type);
-char **deconstruct_text_array(Datum array, int *array_size);
+char ** deconstruct_text_array(Datum array, int *array_size);
 RangeVar ** qualified_relnames_to_rangevars(char **relnames, size_t nrelnames);
 
 /*

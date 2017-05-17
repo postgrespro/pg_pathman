@@ -65,9 +65,9 @@ clear_plan_states(CustomScanState *scan_state)
 	}
 }
 
-List * get_partitioned_attr_clauses(List *restrictinfo_list,
-									const PartRelationInfo *prel,
-									Index partitioned_rel);
+List * get_partitioning_clauses(List *restrictinfo_list,
+								const PartRelationInfo *prel,
+								Index partitioned_rel);
 
 Oid * get_partition_oids(List *ranges, int *n, const PartRelationInfo *prel,
 						 bool include_parent);
@@ -98,8 +98,10 @@ void end_append_common(CustomScanState *node);
 void rescan_append_common(CustomScanState *node);
 
 void explain_append_common(CustomScanState *node,
+						   List *ancestors,
+						   ExplainState *es,
 						   HTAB *children_table,
-						   ExplainState *es);
+						   List *custom_exprs);
 
 
 #endif /* NODES_COMMON_H */

@@ -40,8 +40,8 @@ CREATE INDEX ON test.range_rel (dt);
 INSERT INTO test.range_rel (dt, txt)
 SELECT g, md5(g::TEXT) FROM generate_series('2015-01-01', '2015-04-30', '1 day'::interval) as g;
 SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL, 2);
+SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL);
 ALTER TABLE test.range_rel ALTER COLUMN dt SET NOT NULL;
-SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL, 2);
 SELECT pathman.create_range_partitions('test.range_rel', 'DT', '2015-01-01'::DATE, '1 month'::INTERVAL);
 SELECT COUNT(*) FROM test.range_rel;
 SELECT COUNT(*) FROM ONLY test.range_rel;
@@ -74,6 +74,40 @@ ALTER TABLE test.improved_dummy_1 ADD CHECK (name != 'ib'); /* make test.improve
 EXPLAIN (COSTS OFF) SELECT * FROM test.improved_dummy WHERE id = 101 OR id = 5 AND name = 'ib';
 SELECT pathman.set_enable_parent('test.improved_dummy', true); /* enable parent */
 EXPLAIN (COSTS OFF) SELECT * FROM test.improved_dummy WHERE id = 101 OR id = 5 AND name = 'ib';
+
+DROP TABLE test.improved_dummy CASCADE;
+
+
+/* since rel_1_4_beta: check create_range_partitions(bounds array) */
+CREATE TABLE test.improved_dummy (val INT NOT NULL);
+
+SELECT pathman.create_range_partitions('test.improved_dummy', 'val',
+									   pathman.generate_range_bounds(1, 1, 2));
+
+SELECT * FROM pathman.pathman_partition_list
+WHERE parent = 'test.improved_dummy'::REGCLASS
+ORDER BY partition;
+
+SELECT pathman.drop_partitions('test.improved_dummy');
+
+SELECT pathman.create_range_partitions('test.improved_dummy', 'val',
+									   pathman.generate_range_bounds(1, 1, 2),
+									   partition_names := '{p1, p2}');
+
+SELECT * FROM pathman.pathman_partition_list
+WHERE parent = 'test.improved_dummy'::REGCLASS
+ORDER BY partition;
+
+SELECT pathman.drop_partitions('test.improved_dummy');
+
+SELECT pathman.create_range_partitions('test.improved_dummy', 'val',
+									   pathman.generate_range_bounds(1, 1, 2),
+									   partition_names := '{p1, p2}',
+									   tablespaces := '{pg_default, pg_default}');
+
+SELECT * FROM pathman.pathman_partition_list
+WHERE parent = 'test.improved_dummy'::REGCLASS
+ORDER BY partition;
 
 DROP TABLE test.improved_dummy CASCADE;
 
@@ -126,22 +160,12 @@ SET pg_pathman.enable_runtimemergeappend = OFF;
 
 VACUUM;
 
-/* update triggers test */
-SELECT pathman.create_update_triggers('test.hash_rel');
-UPDATE test.hash_rel SET value = 7 WHERE value = 6;
-EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 7;
-SELECT * FROM test.hash_rel WHERE value = 7;
-
-SELECT pathman.create_update_triggers('test.num_range_rel');
-UPDATE test.num_range_rel SET id = 3001 WHERE id = 1;
-EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id = 3001;
-SELECT * FROM test.num_range_rel WHERE id = 3001;
-
 SET enable_indexscan = OFF;
 SET enable_bitmapscan = OFF;
 SET enable_seqscan = ON;
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = NULL;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2 OR value = 1;
 
@@ -165,6 +189,7 @@ SET enable_bitmapscan = OFF;
 SET enable_seqscan = OFF;
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = NULL;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2 OR value = 1;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (2);

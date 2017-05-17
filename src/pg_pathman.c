@@ -16,7 +16,6 @@
 #include "hooks.h"
 #include "pathman.h"
 #include "partition_filter.h"
-#include "planner_tree_modification.h"
 #include "runtimeappend.h"
 #include "runtime_merge_append.h"
 
@@ -41,6 +40,9 @@ PG_MODULE_MAGIC;
 
 Oid		pathman_config_relid = InvalidOid,
 		pathman_config_params_relid = InvalidOid;
+
+/* Used to disable hooks temporarily */
+bool	pathman_hooks_enabled = true;
 
 
 /* pg module functions */
@@ -70,9 +72,6 @@ static bool pull_var_param(const WalkerContext *ctx,
 
 static Const *extract_const(WalkerContext *wcxt, Param *param);
 
-static double estimate_paramsel_using_prel(const PartRelationInfo *prel,
-										   int strategy);
-
 
 /* Copied from PostgreSQL (allpaths.c) */
 static void set_plain_rel_size(PlannerInfo *root,
@@ -92,10 +91,6 @@ static void generate_mergeappend_paths(PlannerInfo *root,
 									   PathKey *pathkeyAsc,
 									   PathKey *pathkeyDesc);
 
-static Path *get_cheapest_parameterized_child_path(PlannerInfo *root,
-												   RelOptInfo *rel,
-												   Relids required_outer);
-
 
 /* We can transform Param into Const provided that 'econtext' is available */
 #define IsConstValue(wcxt, node) \
@@ -108,6 +103,21 @@ static Path *get_cheapest_parameterized_child_path(PlannerInfo *root,
 				((Const *) (node)) \
 	)
 
+/* Selectivity estimator for common 'paramsel' */
+static inline double
+estimate_paramsel_using_prel(const PartRelationInfo *prel, int strategy)
+{
+	/* If it's "=", divide by partitions number */
+	if (strategy == BTEqualStrategyNumber)
+		return 1.0 / (double) PrelChildrenCount(prel);
+
+	/* Default selectivity estimate for inequalities */
+	else if (prel->parttype == PT_RANGE && strategy > 0)
+		return DEFAULT_INEQ_SEL;
+
+	/* Else there's not much to do */
+	else return 1.0;
+}
 
 
 /*
@@ -141,7 +151,7 @@ _PG_init(void)
 	/* Apply initial state */
 	restore_pathman_init_state(&temp_init_state);
 
-	/* Initialize 'next' hook pointers */
+	/* Set basic hooks */
 	set_rel_pathlist_hook_next		= set_rel_pathlist_hook;
 	set_rel_pathlist_hook			= pathman_rel_pathlist_hook;
 	set_join_pathlist_next			= set_join_pathlist_hook;
@@ -160,6 +170,7 @@ _PG_init(void)
 
 	/* Initialize static data for all subsystems */
 	init_main_pathman_toggles();
+	init_relation_info_static_data();
 	init_runtimeappend_static_data();
 	init_runtime_merge_append_static_data();
 	init_partition_filter_static_data();
@@ -225,7 +236,7 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 				   *child_rowmark;
 	Node		   *childqual;
 	List		   *childquals;
-	ListCell	   *lc,
+	ListCell	   *lc1,
 				   *lc2;
 
 	parent_rel = root->simple_rel_array[parent_rti];
@@ -259,13 +270,17 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 	appinfo->child_relid	= childRTindex;
 	appinfo->parent_reloid	= parent_rte->relid;
 
+	/* Store table row types for wholerow references */
+	appinfo->parent_reltype = RelationGetDescr(parent_relation)->tdtypeid;
+	appinfo->child_reltype  = RelationGetDescr(child_relation)->tdtypeid;
+
 	make_inh_translation_list(parent_relation, child_relation, childRTindex,
 							  &appinfo->translated_vars);
 
 	/* Now append 'appinfo' to 'root->append_rel_list' */
 	root->append_rel_list = lappend(root->append_rel_list, appinfo);
 
-
+	/* Translate column privileges for this child */
 	if (parent_rte->relid != child_oid)
 	{
 		child_rte->selectedCols = translate_col_privs(parent_rte->selectedCols,
@@ -276,6 +291,10 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 													 appinfo->translated_vars);
 	}
 
+	/* Adjust join quals for this child */
+	child_rel->joininfo = (List *) adjust_appendrel_attrs(root,
+														  (Node *) parent_rel->joininfo,
+														  appinfo);
 
 	/* Adjust target list for this child */
 	adjust_rel_targetlist_compat(root, child_rel, parent_rel, appinfo);
@@ -288,9 +307,9 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 	{
 		childquals = NIL;
 
-		forboth(lc, wrappers, lc2, parent_rel->baserestrictinfo)
+		forboth (lc1, wrappers, lc2, parent_rel->baserestrictinfo)
 		{
-			WrapperNode	   *wrap = (WrapperNode *) lfirst(lc);
+			WrapperNode	   *wrap = (WrapperNode *) lfirst(lc1);
 			Node		   *new_clause;
 			bool			always_true;
 
@@ -394,7 +413,7 @@ select_range_partitions(const Datum value,
 						const RangeEntry *ranges,
 						const int nranges,
 						const int strategy,
-						Oid collid,
+						const Oid collid,
 						WrapperNode *result) /* returned partitions */
 {
 	bool	lossy = false,
@@ -571,54 +590,6 @@ select_range_partitions(const Datum value,
 	}
 }
 
-/* Fetch RangeEntry of RANGE partition which suits 'value' */
-search_rangerel_result
-search_range_partition_eq(const Datum value,
-						  FmgrInfo *cmp_func,
-						  const PartRelationInfo *prel,
-						  RangeEntry *out_re) /* returned RangeEntry */
-{
-	RangeEntry *ranges;
-	int			nranges;
-	WrapperNode	result;
-
-	ranges = PrelGetRangesArray(prel);
-	nranges = PrelChildrenCount(prel);
-
-	select_range_partitions(value,
-							cmp_func,
-							ranges,
-							nranges,
-							BTEqualStrategyNumber,
-							prel->attcollid,
-							&result); /* output */
-
-	if (result.found_gap)
-	{
-		return SEARCH_RANGEREL_GAP;
-	}
-	else if (result.rangeset == NIL)
-	{
-		return SEARCH_RANGEREL_OUT_OF_RANGE;
-	}
-	else
-	{
-		IndexRange irange = linitial_irange(result.rangeset);
-
-		Assert(list_length(result.rangeset) == 1);
-		Assert(irange_lower(irange) == irange_upper(irange));
-		Assert(is_irange_valid(irange));
-
-		/* Write result to the 'out_rentry' if necessary */
-		if (out_re)
-			memcpy((void *) out_re,
-				   (const void *) &ranges[irange_lower(irange)],
-				   sizeof(RangeEntry));
-
-		return SEARCH_RANGEREL_FOUND;
-	}
-}
-
 
 
 /*
@@ -657,8 +628,7 @@ walk_expr_tree(Expr *expr, WalkerContext *context)
 			result->args = NIL;
 			result->paramsel = 1.0;
 
-			result->rangeset = list_make1_irange(
-						make_irange(0, PrelLastChild(context->prel), IR_LOSSY));
+			result->rangeset = list_make1_irange_full(context->prel, IR_LOSSY);
 
 			return result;
 	}
@@ -839,9 +809,7 @@ handle_boolexpr(const BoolExpr *expr, WalkerContext *context)
 	result->paramsel = 1.0;
 
 	if (expr->boolop == AND_EXPR)
-		result->rangeset = list_make1_irange(make_irange(0,
-														 PrelLastChild(prel),
-														 IR_COMPLETE));
+		result->rangeset = list_make1_irange_full(prel, IR_COMPLETE);
 	else
 		result->rangeset = NIL;
 
@@ -866,9 +834,7 @@ handle_boolexpr(const BoolExpr *expr, WalkerContext *context)
 				break;
 
 			default:
-				result->rangeset = list_make1_irange(make_irange(0,
-																 PrelLastChild(prel),
-																 IR_LOSSY));
+				result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
 				break;
 		}
 	}
@@ -895,8 +861,7 @@ static WrapperNode *
 handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 {
 	WrapperNode *result = (WrapperNode *) palloc(sizeof(WrapperNode));
-	Node		*varnode = (Node *) linitial(expr->args);
-	Var			*var;
+	Node		*exprnode = (Node *) linitial(expr->args);
 	Node		*arraynode = (Node *) lsecond(expr->args);
 	const PartRelationInfo *prel = context->prel;
 
@@ -904,24 +869,9 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 	result->args = NIL;
 	result->paramsel = 0.0;
 
-	Assert(varnode != NULL);
+	Assert(exprnode != NULL);
 
-	/* If variable is not the partition key then skip it */
-	if (IsA(varnode, Var) || IsA(varnode, RelabelType))
-	{
-		var = !IsA(varnode, RelabelType) ?
-			(Var *) varnode :
-			(Var *) ((RelabelType *) varnode)->arg;
-
-		/* Skip if base types or attribute numbers do not match */
-		if (getBaseType(var->vartype) != getBaseType(prel->atttype) ||
-			var->varoattno != prel->attnum ||	/* partitioned attribute */
-			var->varno != context->prel_varno)	/* partitioned table */
-		{
-			goto handle_arrexpr_return;
-		}
-	}
-	else
+	if (!match_expr_to_operand(context->prel_expr, exprnode))
 		goto handle_arrexpr_return;
 
 	if (arraynode && IsA(arraynode, Const) &&
@@ -1038,7 +988,7 @@ handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
 		result->paramsel = DEFAULT_INEQ_SEL;
 
 handle_arrexpr_return:
-	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_LOSSY));
+	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
 	result->paramsel = 1.0;
 	return result;
 }
@@ -1065,13 +1015,16 @@ handle_opexpr(const OpExpr *expr, WalkerContext *context)
 			}
 			else if (IsA(param, Param) || IsA(param, Var))
 			{
+				if (IsA(param, Param))
+					context->found_params = true;
+
 				handle_binary_opexpr_param(prel, result, var);
 				return result;
 			}
 		}
 	}
 
-	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_LOSSY));
+	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
 	result->paramsel = 1.0;
 	return result;
 }
@@ -1083,15 +1036,8 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 {
 	int						strategy;
 	TypeCacheEntry		   *tce;
-	Oid						vartype;
 	const OpExpr		   *expr = (const OpExpr *) result->orig;
 	const PartRelationInfo *prel = context->prel;
-
-	Assert(IsA(varnode, Var) || IsA(varnode, RelabelType));
-
-	vartype = !IsA(varnode, RelabelType) ?
-			((Var *) varnode)->vartype :
-			((RelabelType *) varnode)->resulttype;
 
 	/* Exit if Constant is NULL */
 	if (c->constisnull)
@@ -1101,7 +1047,7 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 		return;
 	}
 
-	tce = lookup_type_cache(vartype, TYPECACHE_BTREE_OPFAMILY);
+	tce = lookup_type_cache(prel->atttype, TYPECACHE_BTREE_OPFAMILY);
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
 
 	/* There's no strategy for this operator, go to end */
@@ -1132,16 +1078,17 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 				Oid			collid;
 
 				/*
-				 * If operator collation is different from default attribute
-				 * collation then we cannot guarantee that we return correct
-				 * partitions. So in this case we just return all of them
+				 * We cannot guarantee that we'll return correct partitions set
+				 * if operator collation is different from default attribute collation.
+				 * In this case we just return all of them.
 				 */
-				if (expr->opcollid != prel->attcollid && strategy != BTEqualStrategyNumber)
+				if (expr->opcollid != prel->attcollid &&
+					strategy != BTEqualStrategyNumber)
 					goto binary_opexpr_return;
 
 				collid = OidIsValid(expr->opcollid) ?
-							expr->opcollid :
-							prel->attcollid;
+											expr->opcollid :
+											prel->attcollid;
 
 				fill_type_cmp_fmgr_info(&cmp_func,
 										getBaseType(c->consttype),
@@ -1165,7 +1112,7 @@ handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
 	}
 
 binary_opexpr_return:
-	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_LOSSY));
+	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
 	result->paramsel = 1.0;
 }
 
@@ -1177,25 +1124,19 @@ handle_binary_opexpr_param(const PartRelationInfo *prel,
 	const OpExpr	   *expr = (const OpExpr *) result->orig;
 	TypeCacheEntry	   *tce;
 	int					strategy;
-	Oid					vartype;
-
-	Assert(IsA(varnode, Var) || IsA(varnode, RelabelType));
-
-	vartype = !IsA(varnode, RelabelType) ?
-			((Var *) varnode)->vartype :
-			((RelabelType *) varnode)->resulttype;
 
 	/* Determine operator type */
-	tce = lookup_type_cache(vartype, TYPECACHE_BTREE_OPFAMILY);
+	tce = lookup_type_cache(prel->atttype, TYPECACHE_BTREE_OPFAMILY);
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
 
-	result->rangeset = list_make1_irange(make_irange(0, PrelLastChild(prel), IR_LOSSY));
+	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
 	result->paramsel = estimate_paramsel_using_prel(prel, strategy);
 }
 
+
 /*
  * Checks if expression is a KEY OP PARAM or PARAM OP KEY, where KEY is
- * partition key (it could be Var or RelableType) and PARAM is whatever.
+ * partition expression and PARAM is whatever.
  *
  * NOTE: returns false if partition key is not in expression.
  */
@@ -1207,43 +1148,21 @@ pull_var_param(const WalkerContext *ctx,
 {
 	Node   *left = linitial(expr->args),
 		   *right = lsecond(expr->args);
-	Var	   *v = NULL;
 
-	/* Check the case when variable is on the left side */
-	if (IsA(left, Var) || IsA(left, RelabelType))
+	if (match_expr_to_operand(left, ctx->prel_expr))
 	{
-		v = !IsA(left, RelabelType) ?
-						(Var *) left :
-						(Var *) ((RelabelType *) left)->arg;
-
-		/* Check if 'v' is partitioned column of 'prel' */
-		if (v->varoattno == ctx->prel->attnum &&
-			v->varno == ctx->prel_varno)
-		{
-			*var_ptr = left;
-			*param_ptr = right;
-			return true;
-		}
+		*var_ptr = left;
+		*param_ptr = right;
+		return true;
 	}
 
-	/* ... variable is on the right side */
-	if (IsA(right, Var) || IsA(right, RelabelType))
+	if (match_expr_to_operand(right, ctx->prel_expr))
 	{
-		v = !IsA(right, RelabelType) ?
-						(Var *) right :
-						(Var *) ((RelabelType *) right)->arg;
-
-		/* Check if 'v' is partitioned column of 'prel' */
-		if (v->varoattno == ctx->prel->attnum &&
-			v->varno == ctx->prel_varno)
-		{
-			*var_ptr = right;
-			*param_ptr = left;
-			return true;
-		}
+		*var_ptr = right;
+		*param_ptr = left;
+		return true;
 	}
 
-	/* Variable isn't a partitionig key */
 	return false;
 }
 
@@ -1258,22 +1177,6 @@ extract_const(WalkerContext *wcxt, Param *param)
 	return makeConst(param->paramtype, param->paramtypmod,
 					 param->paramcollid, get_typlen(param->paramtype),
 					 value, isnull, get_typbyval(param->paramtype));
-}
-
-/* Selectivity estimator for common 'paramsel' */
-static double
-estimate_paramsel_using_prel(const PartRelationInfo *prel, int strategy)
-{
-	/* If it's "=", divide by partitions number */
-	if (strategy == BTEqualStrategyNumber)
-		return 1.0 / (double) PrelChildrenCount(prel);
-
-	/* Default selectivity estimate for inequalities */
-	else if (prel->parttype == PT_RANGE && strategy > 0)
-		return DEFAULT_INEQ_SEL;
-
-	/* Else there's not much to do */
-	else return 1.0;
 }
 
 
@@ -1375,78 +1278,6 @@ accumulate_append_subpath(List *subpaths, Path *path)
 	return lappend(subpaths, path);
 }
 
-/*
- * get_cheapest_parameterized_child_path
- *		Get cheapest path for this relation that has exactly the requested
- *		parameterization.
- *
- * Returns NULL if unable to create such a path.
- */
-static Path *
-get_cheapest_parameterized_child_path(PlannerInfo *root, RelOptInfo *rel,
-									  Relids required_outer)
-{
-	Path	   *cheapest;
-	ListCell   *lc;
-
-	/*
-	 * Look up the cheapest existing path with no more than the needed
-	 * parameterization.  If it has exactly the needed parameterization, we're
-	 * done.
-	 */
-	cheapest = get_cheapest_path_for_pathkeys(rel->pathlist,
-											  NIL,
-											  required_outer,
-											  TOTAL_COST);
-	Assert(cheapest != NULL);
-	if (bms_equal(PATH_REQ_OUTER(cheapest), required_outer))
-		return cheapest;
-
-	/*
-	 * Otherwise, we can "reparameterize" an existing path to match the given
-	 * parameterization, which effectively means pushing down additional
-	 * joinquals to be checked within the path's scan.  However, some existing
-	 * paths might check the available joinquals already while others don't;
-	 * therefore, it's not clear which existing path will be cheapest after
-	 * reparameterization.  We have to go through them all and find out.
-	 */
-	cheapest = NULL;
-	foreach(lc, rel->pathlist)
-	{
-		Path	   *path = (Path *) lfirst(lc);
-
-		/* Can't use it if it needs more than requested parameterization */
-		if (!bms_is_subset(PATH_REQ_OUTER(path), required_outer))
-			continue;
-
-		/*
-		 * Reparameterization can only increase the path's cost, so if it's
-		 * already more expensive than the current cheapest, forget it.
-		 */
-		if (cheapest != NULL &&
-			compare_path_costs(cheapest, path, TOTAL_COST) <= 0)
-			continue;
-
-		/* Reparameterize if needed, then recheck cost */
-		if (!bms_equal(PATH_REQ_OUTER(path), required_outer))
-		{
-			path = reparameterize_path(root, path, required_outer, 1.0);
-			if (path == NULL)
-				continue;		/* failed to reparameterize this one */
-			Assert(bms_equal(PATH_REQ_OUTER(path), required_outer));
-
-			if (cheapest != NULL &&
-				compare_path_costs(cheapest, path, TOTAL_COST) <= 0)
-				continue;
-		}
-
-		/* We have a new best path */
-		cheapest = path;
-	}
-
-	/* Return the best path, or NULL if we found no suitable candidate */
-	return cheapest;
-}
 
 /*
  * generate_mergeappend_paths
@@ -1987,7 +1818,6 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 
 		if (parallel_workers > 0)
 		{
-
 			/* Generate a partial append path. */
 			appendpath = create_append_path_compat(rel, partial_subpaths, NULL,
 					parallel_workers);
@@ -2047,4 +1877,77 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 			add_path(rel, (Path *)
 					 create_append_path_compat(rel, subpaths, required_outer, 0));
 	}
+}
+
+/*
+ * get_cheapest_parameterized_child_path
+ *		Get cheapest path for this relation that has exactly the requested
+ *		parameterization.
+ *
+ * Returns NULL if unable to create such a path.
+ */
+Path *
+get_cheapest_parameterized_child_path(PlannerInfo *root, RelOptInfo *rel,
+									  Relids required_outer)
+{
+	Path	   *cheapest;
+	ListCell   *lc;
+
+	/*
+	 * Look up the cheapest existing path with no more than the needed
+	 * parameterization.  If it has exactly the needed parameterization, we're
+	 * done.
+	 */
+	cheapest = get_cheapest_path_for_pathkeys(rel->pathlist,
+											  NIL,
+											  required_outer,
+											  TOTAL_COST);
+	Assert(cheapest != NULL);
+	if (bms_equal(PATH_REQ_OUTER(cheapest), required_outer))
+		return cheapest;
+
+	/*
+	 * Otherwise, we can "reparameterize" an existing path to match the given
+	 * parameterization, which effectively means pushing down additional
+	 * joinquals to be checked within the path's scan.  However, some existing
+	 * paths might check the available joinquals already while others don't;
+	 * therefore, it's not clear which existing path will be cheapest after
+	 * reparameterization.  We have to go through them all and find out.
+	 */
+	cheapest = NULL;
+	foreach(lc, rel->pathlist)
+	{
+		Path	   *path = (Path *) lfirst(lc);
+
+		/* Can't use it if it needs more than requested parameterization */
+		if (!bms_is_subset(PATH_REQ_OUTER(path), required_outer))
+			continue;
+
+		/*
+		 * Reparameterization can only increase the path's cost, so if it's
+		 * already more expensive than the current cheapest, forget it.
+		 */
+		if (cheapest != NULL &&
+			compare_path_costs(cheapest, path, TOTAL_COST) <= 0)
+			continue;
+
+		/* Reparameterize if needed, then recheck cost */
+		if (!bms_equal(PATH_REQ_OUTER(path), required_outer))
+		{
+			path = reparameterize_path(root, path, required_outer, 1.0);
+			if (path == NULL)
+				continue;		/* failed to reparameterize this one */
+			Assert(bms_equal(PATH_REQ_OUTER(path), required_outer));
+
+			if (cheapest != NULL &&
+				compare_path_costs(cheapest, path, TOTAL_COST) <= 0)
+				continue;
+		}
+
+		/* We have a new best path */
+		cheapest = path;
+	}
+
+	/* Return the best path, or NULL if we found no suitable candidate */
+	return cheapest;
 }
