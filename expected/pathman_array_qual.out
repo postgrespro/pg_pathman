@@ -101,6 +101,21 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE val COLLATE "POSIX" = AN
          Filter: ((val)::text = ANY ('{a,b}'::text[]))
 (5 rows)
 
+/* non-btree operator */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE val ~~ ANY (array['a', 'b']);
+                   QUERY PLAN                   
+------------------------------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (val ~~ ANY ('{a,b}'::text[]))
+   ->  Seq Scan on test_2
+         Filter: (val ~~ ANY ('{a,b}'::text[]))
+   ->  Seq Scan on test_3
+         Filter: (val ~~ ANY ('{a,b}'::text[]))
+   ->  Seq Scan on test_4
+         Filter: (val ~~ ANY ('{a,b}'::text[]))
+(9 rows)
+
 DROP TABLE array_qual.test CASCADE;
 NOTICE:  drop cascades to 5 other objects
 CREATE TABLE array_qual.test(a INT4 NOT NULL, b INT4);
@@ -328,6 +343,32 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE b IN (NULL, NULL, NULL, 
  * Test expr = ANY (...)
  */
 /* a = ANY (...) - pruning should work */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ANY (NULL);
+                 QUERY PLAN                  
+---------------------------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (a = ANY (NULL::integer[]))
+   ->  Seq Scan on test_2
+         Filter: (a = ANY (NULL::integer[]))
+   ->  Seq Scan on test_3
+         Filter: (a = ANY (NULL::integer[]))
+   ->  Seq Scan on test_4
+         Filter: (a = ANY (NULL::integer[]))
+   ->  Seq Scan on test_5
+         Filter: (a = ANY (NULL::integer[]))
+   ->  Seq Scan on test_6
+         Filter: (a = ANY (NULL::integer[]))
+   ->  Seq Scan on test_7
+         Filter: (a = ANY (NULL::integer[]))
+   ->  Seq Scan on test_8
+         Filter: (a = ANY (NULL::integer[]))
+   ->  Seq Scan on test_9
+         Filter: (a = ANY (NULL::integer[]))
+   ->  Seq Scan on test_10
+         Filter: (a = ANY (NULL::integer[]))
+(21 rows)
+
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ANY (array[100, 100]);
                      QUERY PLAN                     
 ----------------------------------------------------
@@ -394,6 +435,32 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ANY (array[array[100
  * Test expr = ALL (...)
  */
 /* a = ALL (...) - pruning should work */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ALL (NULL);
+                 QUERY PLAN                  
+---------------------------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (a = ALL (NULL::integer[]))
+   ->  Seq Scan on test_2
+         Filter: (a = ALL (NULL::integer[]))
+   ->  Seq Scan on test_3
+         Filter: (a = ALL (NULL::integer[]))
+   ->  Seq Scan on test_4
+         Filter: (a = ALL (NULL::integer[]))
+   ->  Seq Scan on test_5
+         Filter: (a = ALL (NULL::integer[]))
+   ->  Seq Scan on test_6
+         Filter: (a = ALL (NULL::integer[]))
+   ->  Seq Scan on test_7
+         Filter: (a = ALL (NULL::integer[]))
+   ->  Seq Scan on test_8
+         Filter: (a = ALL (NULL::integer[]))
+   ->  Seq Scan on test_9
+         Filter: (a = ALL (NULL::integer[]))
+   ->  Seq Scan on test_10
+         Filter: (a = ALL (NULL::integer[]))
+(21 rows)
+
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ALL (array[100, 100]);
                      QUERY PLAN                     
 ----------------------------------------------------
@@ -441,6 +508,32 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ALL (array[NULL, NUL
  * Test expr < ANY (...)
  */
 /* a < ANY (...) - pruning should work */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (NULL);
+                 QUERY PLAN                  
+---------------------------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (a < ANY (NULL::integer[]))
+   ->  Seq Scan on test_2
+         Filter: (a < ANY (NULL::integer[]))
+   ->  Seq Scan on test_3
+         Filter: (a < ANY (NULL::integer[]))
+   ->  Seq Scan on test_4
+         Filter: (a < ANY (NULL::integer[]))
+   ->  Seq Scan on test_5
+         Filter: (a < ANY (NULL::integer[]))
+   ->  Seq Scan on test_6
+         Filter: (a < ANY (NULL::integer[]))
+   ->  Seq Scan on test_7
+         Filter: (a < ANY (NULL::integer[]))
+   ->  Seq Scan on test_8
+         Filter: (a < ANY (NULL::integer[]))
+   ->  Seq Scan on test_9
+         Filter: (a < ANY (NULL::integer[]))
+   ->  Seq Scan on test_10
+         Filter: (a < ANY (NULL::integer[]))
+(21 rows)
+
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[100, 100]);
                      QUERY PLAN                     
 ----------------------------------------------------
@@ -517,6 +610,32 @@ SELECT count(*) FROM array_qual.test WHERE a < ANY (array[NULL, 700]);
  * Test expr < ALL (...)
  */
 /* a < ALL (...) - pruning should work */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (NULL);
+                 QUERY PLAN                  
+---------------------------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (a < ALL (NULL::integer[]))
+   ->  Seq Scan on test_2
+         Filter: (a < ALL (NULL::integer[]))
+   ->  Seq Scan on test_3
+         Filter: (a < ALL (NULL::integer[]))
+   ->  Seq Scan on test_4
+         Filter: (a < ALL (NULL::integer[]))
+   ->  Seq Scan on test_5
+         Filter: (a < ALL (NULL::integer[]))
+   ->  Seq Scan on test_6
+         Filter: (a < ALL (NULL::integer[]))
+   ->  Seq Scan on test_7
+         Filter: (a < ALL (NULL::integer[]))
+   ->  Seq Scan on test_8
+         Filter: (a < ALL (NULL::integer[]))
+   ->  Seq Scan on test_9
+         Filter: (a < ALL (NULL::integer[]))
+   ->  Seq Scan on test_10
+         Filter: (a < ALL (NULL::integer[]))
+(21 rows)
+
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[100, 100]);
                      QUERY PLAN                     
 ----------------------------------------------------
@@ -580,6 +699,32 @@ SELECT count(*) FROM array_qual.test WHERE a < ALL (array[NULL, 700]);
  * Test expr > ANY (...)
  */
 /* a > ANY (...) - pruning should work */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ANY (NULL);
+                 QUERY PLAN                  
+---------------------------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (a > ANY (NULL::integer[]))
+   ->  Seq Scan on test_2
+         Filter: (a > ANY (NULL::integer[]))
+   ->  Seq Scan on test_3
+         Filter: (a > ANY (NULL::integer[]))
+   ->  Seq Scan on test_4
+         Filter: (a > ANY (NULL::integer[]))
+   ->  Seq Scan on test_5
+         Filter: (a > ANY (NULL::integer[]))
+   ->  Seq Scan on test_6
+         Filter: (a > ANY (NULL::integer[]))
+   ->  Seq Scan on test_7
+         Filter: (a > ANY (NULL::integer[]))
+   ->  Seq Scan on test_8
+         Filter: (a > ANY (NULL::integer[]))
+   ->  Seq Scan on test_9
+         Filter: (a > ANY (NULL::integer[]))
+   ->  Seq Scan on test_10
+         Filter: (a > ANY (NULL::integer[]))
+(21 rows)
+
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ANY (array[100, 100]);
                      QUERY PLAN                     
 ----------------------------------------------------
@@ -675,6 +820,32 @@ SELECT count(*) FROM array_qual.test WHERE a > ANY (array[NULL, 700]);
  * Test expr > ALL (...)
  */
 /* a > ALL (...) - pruning should work */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ALL (NULL);
+                 QUERY PLAN                  
+---------------------------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (a > ALL (NULL::integer[]))
+   ->  Seq Scan on test_2
+         Filter: (a > ALL (NULL::integer[]))
+   ->  Seq Scan on test_3
+         Filter: (a > ALL (NULL::integer[]))
+   ->  Seq Scan on test_4
+         Filter: (a > ALL (NULL::integer[]))
+   ->  Seq Scan on test_5
+         Filter: (a > ALL (NULL::integer[]))
+   ->  Seq Scan on test_6
+         Filter: (a > ALL (NULL::integer[]))
+   ->  Seq Scan on test_7
+         Filter: (a > ALL (NULL::integer[]))
+   ->  Seq Scan on test_8
+         Filter: (a > ALL (NULL::integer[]))
+   ->  Seq Scan on test_9
+         Filter: (a > ALL (NULL::integer[]))
+   ->  Seq Scan on test_10
+         Filter: (a > ALL (NULL::integer[]))
+(21 rows)
+
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ALL (array[100, 100]);
                      QUERY PLAN                     
 ----------------------------------------------------

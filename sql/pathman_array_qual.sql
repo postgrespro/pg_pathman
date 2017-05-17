@@ -35,6 +35,9 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE val COLLATE "C" < ANY (a
 /* different collations (pruning should work) */
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE val COLLATE "POSIX" = ANY (array['a', 'b']);
 
+/* non-btree operator */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE val ~~ ANY (array['a', 'b']);
+
 
 
 DROP TABLE array_qual.test CASCADE;
@@ -73,6 +76,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE b IN (NULL, NULL, NULL, 
  */
 
 /* a = ANY (...) - pruning should work */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ANY (NULL);
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ANY (array[100, 100]);
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ANY (array[100, 200, 300, 400]);
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ANY (array[array[100, 200], array[300, 400]]);
@@ -85,6 +89,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ANY (array[array[100
  */
 
 /* a = ALL (...) - pruning should work */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ALL (NULL);
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ALL (array[100, 100]);
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ALL (array[100, 200, 300, 400]);
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ALL (array[array[100, 200], array[300, 400]]);
@@ -98,6 +103,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ALL (array[NULL, NUL
  */
 
 /* a < ANY (...) - pruning should work */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (NULL);
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[100, 100]);
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[99, 100, 101]);
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[500, 550]);
@@ -115,6 +121,7 @@ SELECT count(*) FROM array_qual.test WHERE a < ANY (array[NULL, 700]);
  */
 
 /* a < ALL (...) - pruning should work */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (NULL);
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[100, 100]);
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[99, 100, 101]);
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[500, 550]);
@@ -132,6 +139,7 @@ SELECT count(*) FROM array_qual.test WHERE a < ALL (array[NULL, 700]);
  */
 
 /* a > ANY (...) - pruning should work */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ANY (NULL);
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ANY (array[100, 100]);
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ANY (array[99, 100, 101]);
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ANY (array[500, 550]);
@@ -149,6 +157,7 @@ SELECT count(*) FROM array_qual.test WHERE a > ANY (array[NULL, 700]);
  */
 
 /* a > ALL (...) - pruning should work */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ALL (NULL);
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ALL (array[100, 100]);
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ALL (array[99, 100, 101]);
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ALL (array[500, 550]);
