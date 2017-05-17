@@ -1047,6 +1047,9 @@ handle_arrexpr(const ScalarArrayOpExpr *expr,
 				List	   *ranges;
 				ListCell   *lc;
 
+				if (list_length(arr_expr->elements) == 0)
+					goto handle_arrexpr_return;
+
 				/* Set default ranges for OR | AND */
 				ranges = expr->useOr ? NIL : list_make1_irange_full(prel, IR_COMPLETE);
 
