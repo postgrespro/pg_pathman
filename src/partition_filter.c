@@ -396,13 +396,13 @@ find_partitions_for_value(Datum value, Oid value_type,
 	temp_const.constisnull	= false;
 
 	/* ... and some other important data */
-	CopyToTempConst(consttypmod, atttypmod);
-	CopyToTempConst(constcollid, attcollid);
-	CopyToTempConst(constlen,    attlen);
-	CopyToTempConst(constbyval,  attbyval);
+	CopyToTempConst(consttypmod, ev_typmod);
+	CopyToTempConst(constcollid, ev_collid);
+	CopyToTempConst(constlen,    ev_len);
+	CopyToTempConst(constbyval,  ev_byval);
 
 	/* We use 0 since varno doesn't matter for Const */
-	InitWalkerContext(&wcxt, 0, prel, NULL, true);
+	InitWalkerContext(&wcxt, 0, prel, NULL);
 	ranges = walk_expr_tree((Expr *) &temp_const, &wcxt)->rangeset;
 
 	return get_partition_oids(ranges, nparts, prel, false);
@@ -431,7 +431,7 @@ select_partition_for_insert(Datum value, Oid value_type,
 	else if (nparts == 0)
 	{
 		 selected_partid = create_partitions_for_value(PrelParentRelid(prel),
-													   value, prel->atttype);
+													   value, prel->ev_type);
 
 		 /* get_pathman_relation_info() will refresh this entry */
 		 invalidate_pathman_relation_info(PrelParentRelid(prel), NULL);
@@ -446,7 +446,7 @@ select_partition_for_insert(Datum value, Oid value_type,
 	/* Could not find suitable partition */
 	if (rri_holder == NULL)
 		elog(ERROR, ERR_PART_ATTR_NO_PART,
-			 datum_to_cstring(value, prel->atttype));
+			 datum_to_cstring(value, prel->ev_type));
 
 	return rri_holder;
 }
@@ -502,7 +502,7 @@ make_partition_filter(Plan *subplan, Oid parent_relid,
 Node *
 partition_filter_create_scan_state(CustomScan *node)
 {
-	PartitionFilterState   *state;
+	PartitionFilterState *state;
 
 	state = (PartitionFilterState *) palloc0(sizeof(PartitionFilterState));
 	NodeSetTag(state, T_CustomScanState);
@@ -531,11 +531,12 @@ partition_filter_create_scan_state(CustomScan *node)
 void
 partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 {
-	Index						varno = 1;
-	Node					   *expr;
-	MemoryContext				old_mcxt;
 	PartitionFilterState	   *state = (PartitionFilterState *) node;
+
+	MemoryContext				old_mcxt;
 	const PartRelationInfo	   *prel;
+	Node					   *expr;
+	Index						parent_varno = 1;
 	ListCell				   *lc;
 
 	/* It's convenient to store PlanState in 'custom_ps' */
@@ -548,18 +549,16 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 		Assert(prel != NULL);
 
 		/* Change varno in Vars according to range table */
-		expr = copyObject(prel->expr);
 		foreach(lc, estate->es_range_table)
 		{
 			RangeTblEntry *entry = lfirst(lc);
+
 			if (entry->relid == state->partitioned_table)
-			{
-				if (varno > 1)
-					ChangeVarNodes(expr, 1, varno, 0);
 				break;
-			}
-			varno += 1;
+
+			parent_varno += 1;
 		}
+		expr = PrelExpressionForRelid(prel, parent_varno);
 
 		/* Prepare state for expression execution */
 		old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
@@ -608,7 +607,7 @@ partition_filter_exec(CustomScanState *node)
 		if (!prel)
 		{
 			if (!state->warning_triggered)
-				elog(WARNING, "Relation \"%s\" is not partitioned, "
+				elog(WARNING, "table \"%s\" is not partitioned, "
 							  "PartitionFilter will behave as a normal INSERT",
 					 get_rel_name_or_relid(state->partitioned_table));
 
@@ -631,7 +630,7 @@ partition_filter_exec(CustomScanState *node)
 			elog(ERROR, ERR_PART_ATTR_MULTIPLE_RESULTS);
 
 		/* Search for a matching partition */
-		rri_holder = select_partition_for_insert(value, prel->atttype, prel,
+		rri_holder = select_partition_for_insert(value, prel->ev_type, prel,
 												 &state->result_parts, estate);
 
 		/* Switch back and clean up per-tuple context */

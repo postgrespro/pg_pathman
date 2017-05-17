@@ -18,25 +18,15 @@ CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions(
 	partition_data		BOOLEAN DEFAULT TRUE,
 	partition_names		TEXT[] DEFAULT NULL,
 	tablespaces			TEXT[] DEFAULT NULL)
-RETURNS INTEGER AS
-$$
+RETURNS INTEGER AS $$
 BEGIN
-	PERFORM @extschema@.validate_relname(parent_relid);
-
-	IF partition_data = true THEN
-		/* Acquire data modification lock */
-		PERFORM @extschema@.prevent_relation_modification(parent_relid);
-	ELSE
-		/* Acquire lock on parent */
-		PERFORM @extschema@.lock_partitioned_relation(parent_relid);
-	END IF;
-
 	expression := lower(expression);
-	PERFORM @extschema@.common_relation_checks(parent_relid, expression);
+	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data);
 
 	/* Insert new entry to pathman config */
-	EXECUTE format('ANALYZE %s', parent_relid);
-	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression, NULL);
+	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression);
 
 	/* Create partitions */
 	PERFORM @extschema@.create_hash_partitions_internal(parent_relid,
@@ -68,11 +58,9 @@ CREATE OR REPLACE FUNCTION @extschema@.replace_hash_partition(
 	old_partition		REGCLASS,
 	new_partition		REGCLASS,
 	lock_parent			BOOL DEFAULT TRUE)
-RETURNS REGCLASS AS
-$$
+RETURNS REGCLASS AS $$
 DECLARE
 	parent_relid		REGCLASS;
-	part_attname		TEXT;		/* partitioned column */
 	old_constr_name		TEXT;		/* name of old_partition's constraint */
 	old_constr_def		TEXT;		/* definition of old_partition's constraint */
 	rel_persistence		CHAR;
@@ -111,9 +99,8 @@ BEGIN
 		RAISE EXCEPTION 'partition must have a compatible tuple format';
 	END IF;
 
-	/* Get partitioning expression */
-	part_attname := attname FROM @extschema@.pathman_config WHERE partrel = parent_relid;
-	IF part_attname IS NULL THEN
+	/* Check that table is partitioned */
+	IF @extschema@.get_partition_key(parent_relid) IS NULL THEN
 		RAISE EXCEPTION 'table "%" is not partitioned', parent_relid::TEXT;
 	END IF;
 
@@ -153,8 +140,7 @@ BEGIN
 
 	RETURN new_partition;
 END
-$$
-LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 /*
  * Just create HASH partitions, called by create_hash_partitions().

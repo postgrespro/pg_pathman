@@ -115,9 +115,7 @@ INSERT INTO test_inserts.storage VALUES(121, 'query_2')
 RETURNING (SELECT generate_series(1, 10) LIMIT 1);
 
 INSERT INTO test_inserts.storage VALUES(121, 'query_3')
-RETURNING (SELECT attname
-		   FROM pathman_config
-		   WHERE partrel = 'test_inserts.storage'::regclass);
+RETURNING (SELECT get_partition_key('test_inserts.storage'));
 
 INSERT INTO test_inserts.storage VALUES(121, 'query_4')
 RETURNING 1, 2, 3, 4;

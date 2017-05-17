@@ -81,10 +81,10 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	const PartRelationInfo *inner_prel;
 	List				   *joinclauses,
 						   *otherclauses;
-	ListCell			   *lc;
 	WalkerContext			context;
 	double					paramsel;
-	Node				   *expr;
+	Node				   *part_expr;
+	ListCell			   *lc;
 
 	/* Call hooks set by other extensions */
 	if (set_join_pathlist_next)
@@ -130,14 +130,14 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	}
 
 	/* Make copy of partitioning expression and fix Var's  varno attributes */
-	expr = PrelExpressionForRelid(inner_prel, innerrel->relid);
+	part_expr = PrelExpressionForRelid(inner_prel, innerrel->relid);
 
 	paramsel = 1.0;
 	foreach (lc, joinclauses)
 	{
 		WrapperNode *wrap;
 
-		InitWalkerContext(&context, expr, inner_prel, NULL, false);
+		InitWalkerContext(&context, part_expr, inner_prel, NULL);
 		wrap = walk_expr_tree((Expr *) lfirst(lc), &context);
 		paramsel *= wrap->paramsel;
 	}
@@ -152,7 +152,8 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		Relids			required_nestloop,
 						required_inner;
 		List		   *filtered_joinclauses = NIL,
-					   *saved_ppi_list;
+					   *saved_ppi_list,
+					   *pathkeys;
 		ListCell	   *rinfo_lc;
 
 		if (!IsA(cur_inner_path, AppendPath))
@@ -217,17 +218,18 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 			return;
 
 
+/* TODO: create macro initial_cost_nestloop_compat() */
+#if defined(PGPRO_VERSION) && PG_VERSION_NUM >= 90603
+		initial_cost_nestloop(root, &workspace, jointype,
+							  outer, inner, /* built paths */
+							  extra);
+#else
 		initial_cost_nestloop(root, &workspace, jointype,
 							  outer, inner, /* built paths */
 							  extra->sjinfo, &extra->semifactors);
+#endif
 
-		nest_path = create_nestloop_path(root, joinrel, jointype, &workspace,
-										 extra->sjinfo, &extra->semifactors,
-										 outer, inner, extra->restrictlist,
-										 build_join_pathkeys(root, joinrel,
-															 jointype,
-															 outer->pathkeys),
-										 required_nestloop);
+		pathkeys = build_join_pathkeys(root, joinrel, jointype, outer->pathkeys);
 
 		/* Discard all clauses that are to be evaluated by 'inner' */
 		foreach (rinfo_lc, extra->restrictlist)
@@ -238,6 +240,24 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 			if (!join_clause_is_movable_to(rinfo, inner->parent))
 				filtered_joinclauses = lappend(filtered_joinclauses, rinfo);
 		}
+
+/* TODO: create macro create_nestloop_path_compat() */
+#if defined(PGPRO_VERSION) && PG_VERSION_NUM >= 90603
+		nest_path = create_nestloop_path(root, joinrel, jointype, &workspace,
+										 extra,
+										 outer, inner,
+										 filtered_joinclauses,
+										 pathkeys,
+										 calc_nestloop_required_outer(outer, inner));
+#else
+		nest_path = create_nestloop_path(root, joinrel, jointype, &workspace,
+										 extra->sjinfo,
+										 &extra->semifactors,
+										 outer, inner,
+										 filtered_joinclauses,
+										 pathkeys,
+										 calc_nestloop_required_outer(outer, inner));
+#endif
 
 		/*
 		 * NOTE: Override 'rows' value produced by standard estimator.
@@ -308,13 +328,13 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 					   *pathkeyDesc = NULL;
 		double			paramsel = 1.0;			/* default part selectivity */
 		WalkerContext	context;
+		Node		   *part_expr;
+		List		   *part_clauses;
 		ListCell	   *lc;
 		int				i;
-		Node		   *expr;
-		bool			modify_append_nodes;
 
 		/* Make copy of partitioning expression and fix Var's  varno attributes */
-		expr = PrelExpressionForRelid(prel, rti);
+		part_expr = PrelExpressionForRelid(prel, rti);
 
 		if (prel->parttype == PT_RANGE)
 		{
@@ -325,14 +345,14 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			TypeCacheEntry *tce;
 
 			/* Determine operator type */
-			tce = lookup_type_cache(prel->atttype, TYPECACHE_LT_OPR | TYPECACHE_GT_OPR);
+			tce = lookup_type_cache(prel->ev_type, TYPECACHE_LT_OPR | TYPECACHE_GT_OPR);
 
 			/* Make pathkeys */
-			pathkeys = build_expression_pathkey(root, (Expr *) expr, NULL,
+			pathkeys = build_expression_pathkey(root, (Expr *) part_expr, NULL,
 												tce->lt_opr, NULL, false);
 			if (pathkeys)
 				pathkeyAsc = (PathKey *) linitial(pathkeys);
-			pathkeys = build_expression_pathkey(root, (Expr *) expr, NULL,
+			pathkeys = build_expression_pathkey(root, (Expr *) part_expr, NULL,
 												tce->gt_opr, NULL, false);
 			if (pathkeys)
 				pathkeyDesc = (PathKey *) linitial(pathkeys);
@@ -345,7 +365,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		ranges = list_make1_irange_full(prel, IR_COMPLETE);
 
 		/* Make wrappers over restrictions and collect final rangeset */
-		InitWalkerContext(&context, expr, prel, NULL, false);
+		InitWalkerContext(&context, part_expr, prel, NULL);
 		wrappers = NIL;
 		foreach(lc, rel->baserestrictinfo)
 		{
@@ -358,12 +378,6 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			wrappers = lappend(wrappers, wrap);
 			ranges = irange_list_intersection(ranges, wrap->rangeset);
 		}
-
-		/*
-		 * Walker should been have filled these parameter while checking.
-		 * Runtime[Merge]Append is pointless if there are no params in clauses.
-		 */
-		modify_append_nodes = context.found_params;
 
 		/* Get number of selected partitions */
 		irange_len = irange_list_length(ranges);
@@ -441,7 +455,11 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			  pg_pathman_enable_runtime_merge_append))
 			return;
 
-		if (!modify_append_nodes)
+		/* Get partitioning-related clauses */
+		part_clauses = get_partitioning_clauses(rel->baserestrictinfo, prel, rti);
+
+		/* Skip if there's no PARAMs in partitioning-related clauses */
+		if (!clause_contains_params((Node *) part_clauses))
 			return;
 
 		/* Generate Runtime[Merge]Append paths if needed */

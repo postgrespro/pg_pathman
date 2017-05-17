@@ -21,6 +21,7 @@
 
 #include "postgres.h"
 #include "access/sysattr.h"
+#include "catalog/pg_type.h"
 #include "foreign/fdwapi.h"
 #include "miscadmin.h"
 #include "optimizer/clauses.h"
@@ -51,26 +52,30 @@ void _PG_init(void);
 
 /* Expression tree handlers */
 static Node *wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue);
-static WrapperNode *handle_const(const Const *c, WalkerContext *context);
-static WrapperNode *handle_boolexpr(const BoolExpr *expr, WalkerContext *context);
-static WrapperNode *handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context);
-static WrapperNode *handle_opexpr(const OpExpr *expr, WalkerContext *context);
 
-static void handle_binary_opexpr(WalkerContext *context,
-								 WrapperNode *result,
-								 const Node *varnode,
-								 const Const *c);
+static void handle_const(const Const *c,
+						 const int strategy,
+						 const WalkerContext *context,
+						 WrapperNode *result);
 
-static void handle_binary_opexpr_param(const PartRelationInfo *prel,
-									   WrapperNode *result,
-									   const Node *varnode);
+static void handle_boolexpr(const BoolExpr *expr,
+							const WalkerContext *context,
+							WrapperNode *result);
 
-static bool pull_var_param(const WalkerContext *ctx,
-						   const OpExpr *expr,
-						   Node **var_ptr,
-						   Node **param_ptr);
+static void handle_arrexpr(const ScalarArrayOpExpr *expr,
+						   const WalkerContext *context,
+						   WrapperNode *result);
 
-static Const *extract_const(WalkerContext *wcxt, Param *param);
+static void handle_opexpr(const OpExpr *expr,
+						  const WalkerContext *context,
+						  WrapperNode *result);
+
+static bool is_key_op_param(const OpExpr *expr,
+							const WalkerContext *context,
+							Node **param_ptr);
+
+static Const *extract_const(Param *param,
+							const WalkerContext *context);
 
 
 /* Copied from PostgreSQL (allpaths.c) */
@@ -93,13 +98,13 @@ static void generate_mergeappend_paths(PlannerInfo *root,
 
 
 /* We can transform Param into Const provided that 'econtext' is available */
-#define IsConstValue(wcxt, node) \
+#define IsConstValue(node, wcxt) \
 	( IsA((node), Const) || (WcxtHasExprContext(wcxt) ? IsA((node), Param) : false) )
 
-#define ExtractConst(wcxt, node) \
+#define ExtractConst(node, wcxt) \
 	( \
 		IsA((node), Param) ? \
-				extract_const((wcxt), (Param *) (node)) : \
+				extract_const((Param *) (node), (wcxt)) : \
 				((Const *) (node)) \
 	)
 
@@ -409,11 +414,11 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 /* Given 'value' and 'ranges', return selected partitions list */
 void
 select_range_partitions(const Datum value,
+						const Oid collid,
 						FmgrInfo *cmp_func,
 						const RangeEntry *ranges,
 						const int nranges,
 						const int strategy,
-						const Oid collid,
 						WrapperNode *result) /* returned partitions */
 {
 	bool	lossy = false,
@@ -600,35 +605,38 @@ select_range_partitions(const Datum value,
 
 /* Examine expression in order to select partitions */
 WrapperNode *
-walk_expr_tree(Expr *expr, WalkerContext *context)
+walk_expr_tree(Expr *expr, const WalkerContext *context)
 {
-	WrapperNode *result;
+	WrapperNode *result = (WrapperNode *) palloc0(sizeof(WrapperNode));
 
 	switch (nodeTag(expr))
 	{
 		/* Useful for INSERT optimization */
 		case T_Const:
-			return handle_const((Const *) expr, context);
+			handle_const((Const *) expr, BTEqualStrategyNumber, context, result);
+			return result;
 
 		/* AND, OR, NOT expressions */
 		case T_BoolExpr:
-			return handle_boolexpr((BoolExpr *) expr, context);
+			handle_boolexpr((BoolExpr *) expr, context, result);
+			return result;
 
 		/* =, !=, <, > etc. */
 		case T_OpExpr:
-			return handle_opexpr((OpExpr *) expr, context);
+			handle_opexpr((OpExpr *) expr, context, result);
+			return result;
 
-		/* IN expression */
+		/* ANY, ALL, IN expressions */
 		case T_ScalarArrayOpExpr:
-			return handle_arrexpr((ScalarArrayOpExpr *) expr, context);
+			handle_arrexpr((ScalarArrayOpExpr *) expr, context, result);
+			return result;
 
 		default:
-			result = (WrapperNode *) palloc(sizeof(WrapperNode));
 			result->orig = (const Node *) expr;
 			result->args = NIL;
-			result->paramsel = 1.0;
 
 			result->rangeset = list_make1_irange_full(context->prel, IR_LOSSY);
+			result->paramsel = 1.0;
 
 			return result;
 	}
@@ -638,13 +646,11 @@ walk_expr_tree(Expr *expr, WalkerContext *context)
 static Node *
 wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue)
 {
-	bool	lossy, found;
+	bool lossy, found;
 
 	*alwaysTrue = false;
-	/*
-	 * TODO: use faster algorithm using knowledge
-	 * that we enumerate indexes sequntially.
-	 */
+
+	/* TODO: possible optimization (we enumerate indexes sequntially). */
 	found = irange_list_find(wrap->rangeset, index, &lossy);
 
 	/* Return NULL for always true and always false. */
@@ -698,40 +704,62 @@ wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue)
 				return (Node *) linitial(args);
 
 			result = makeNode(BoolExpr);
-			result->xpr.type = T_BoolExpr;
 			result->args = args;
 			result->boolop = expr->boolop;
 			result->location = expr->location;
 			return (Node *) result;
 		}
-		else
-			return copyObject(wrap->orig);
+		else return copyObject(wrap->orig);
 	}
-	else
-		return copyObject(wrap->orig);
+	else return copyObject(wrap->orig);
 }
 
 
 /* Const handler */
-static WrapperNode *
-handle_const(const Const *c, WalkerContext *context)
+static void
+handle_const(const Const *c,
+			 const int strategy,
+			 const WalkerContext *context,
+			 WrapperNode *result) /* ret value #1 */
 {
 	const PartRelationInfo *prel = context->prel;
-	WrapperNode			   *result = (WrapperNode *) palloc0(sizeof(WrapperNode));
-	int						strategy = BTEqualStrategyNumber;
 
-	result->orig = (const Node *) c;
+	/* Deal with missing strategy */
+	if (strategy == 0)
+		goto handle_const_return;
 
 	/*
 	 * Had to add this check for queries like:
 	 *		select * from test.hash_rel where txt = NULL;
 	 */
-	if (!context->for_insert || c->constisnull)
+	if (c->constisnull)
 	{
 		result->rangeset = NIL;
-		result->paramsel = 1.0;
+		result->paramsel = 0.0;
 
-		return result;
+		return; /* done, exit */
+	}
+
+	/*
+	 * Had to add this check for queries like:
+	 *		select * from test.hash_rel where true = false;
+	 *		select * from test.hash_rel where false;
+	 *		select * from test.hash_rel where $1;
+	 */
+	if (c->consttype == BOOLOID)
+	{
+		if (c->constvalue == BoolGetDatum(false))
+		{
+			result->rangeset = NIL;
+			result->paramsel = 0.0;
+		}
+		else
+		{
+			result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
+			result->paramsel = 1.0;
+		}
+
+		return; /* done, exit */
 	}
 
 	switch (prel->parttype)
@@ -743,12 +771,16 @@ handle_const(const Const *c, WalkerContext *context)
 				uint32	idx;	/* index of partition */
 				bool	cast_success;
 
+				/* Cannot do much about non-equal strategies */
+				if (strategy != BTEqualStrategyNumber)
+					goto handle_const_return;
+
 				/* Peform type cast if types mismatch */
-				if (prel->atttype != c->consttype)
+				if (prel->ev_type != c->consttype)
 				{
 					value = perform_type_cast(c->constvalue,
 											  getBaseType(c->consttype),
-											  getBaseType(prel->atttype),
+											  getBaseType(prel->ev_type),
 											  &cast_success);
 
 					if (!cast_success)
@@ -763,74 +795,85 @@ handle_const(const Const *c, WalkerContext *context)
 				idx = hash_to_part_index(DatumGetInt32(hash),
 										 PrelChildrenCount(prel));
 
-				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
 				result->rangeset = list_make1_irange(make_irange(idx, idx, IR_LOSSY));
+				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
+
+				return; /* done, exit */
 			}
-			break;
 
 		case PT_RANGE:
 			{
 				FmgrInfo cmp_finfo;
 
+				/* Cannot do much about non-equal strategies + diff. collations */
+				if (strategy != BTEqualStrategyNumber &&
+					c->constcollid != prel->ev_collid)
+				{
+					goto handle_const_return;
+				}
+
 				fill_type_cmp_fmgr_info(&cmp_finfo,
 										getBaseType(c->consttype),
-										getBaseType(prel->atttype));
+										getBaseType(prel->ev_type));
 
 				select_range_partitions(c->constvalue,
+										c->constcollid,
 										&cmp_finfo,
 										PrelGetRangesArray(context->prel),
 										PrelChildrenCount(context->prel),
 										strategy,
-										prel->attcollid,
 										result); /* output */
 
 				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
+
+				return; /* done, exit */
 			}
-			break;
 
 		default:
-			elog(ERROR, "Unknown partitioning type %u", prel->parttype);
-			break;
+			WrongPartType(prel->parttype);
 	}
 
-	return result;
+handle_const_return:
+	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
+	result->paramsel = estimate_paramsel_using_prel(prel, strategy);
 }
 
 /* Boolean expression handler */
-static WrapperNode *
-handle_boolexpr(const BoolExpr *expr, WalkerContext *context)
+static void
+handle_boolexpr(const BoolExpr *expr,
+				const WalkerContext *context,
+				WrapperNode *result)
 {
-	WrapperNode	*result = (WrapperNode *) palloc0(sizeof(WrapperNode));
-	ListCell	*lc;
-	const PartRelationInfo *prel = context->prel;
+	ListCell				   *lc;
+	const PartRelationInfo	   *prel = context->prel;
 
-	result->orig = (const Node *)expr;
+	result->orig = (const Node *) expr;
 	result->args = NIL;
 	result->paramsel = 1.0;
 
-	if (expr->boolop == AND_EXPR)
-		result->rangeset = list_make1_irange_full(prel, IR_COMPLETE);
-	else
-		result->rangeset = NIL;
+	/* First, set default rangeset */
+	result->rangeset = (expr->boolop == AND_EXPR) ?
+							list_make1_irange_full(prel, IR_COMPLETE) :
+							NIL;
 
 	foreach (lc, expr->args)
 	{
-		WrapperNode *arg;
+		WrapperNode *arg_result;
 
-		arg = walk_expr_tree((Expr *) lfirst(lc), context);
-		result->args = lappend(result->args, arg);
+		arg_result = walk_expr_tree((Expr *) lfirst(lc), context);
+		result->args = lappend(result->args, arg_result);
 
 		switch (expr->boolop)
 		{
 			case OR_EXPR:
 				result->rangeset = irange_list_union(result->rangeset,
-													 arg->rangeset);
+													 arg_result->rangeset);
 				break;
 
 			case AND_EXPR:
 				result->rangeset = irange_list_intersection(result->rangeset,
-															arg->rangeset);
-				result->paramsel *= arg->paramsel;
+															arg_result->rangeset);
+				result->paramsel *= arg_result->paramsel;
 				break;
 
 			default:
@@ -852,313 +895,182 @@ handle_boolexpr(const BoolExpr *expr, WalkerContext *context)
 		}
 		result->paramsel = 1.0 - result->paramsel;
 	}
-
-	return result;
 }
 
 /* Scalar array expression handler */
-static WrapperNode *
-handle_arrexpr(const ScalarArrayOpExpr *expr, WalkerContext *context)
+static void
+handle_arrexpr(const ScalarArrayOpExpr *expr,
+			   const WalkerContext *context,
+			   WrapperNode *result)
 {
-	WrapperNode *result = (WrapperNode *) palloc(sizeof(WrapperNode));
-	Node		*exprnode = (Node *) linitial(expr->args);
-	Node		*arraynode = (Node *) lsecond(expr->args);
-	const PartRelationInfo *prel = context->prel;
+	Node					   *exprnode = (Node *) linitial(expr->args);
+	Node					   *arraynode = (Node *) lsecond(expr->args);
+	const PartRelationInfo	   *prel = context->prel;
+	TypeCacheEntry			   *tce;
+	int							strategy;
 
 	result->orig = (const Node *) expr;
-	result->args = NIL;
-	result->paramsel = 0.0;
 
-	Assert(exprnode != NULL);
+	tce = lookup_type_cache(prel->ev_type, TYPECACHE_BTREE_OPFAMILY);
+	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
 
 	if (!match_expr_to_operand(context->prel_expr, exprnode))
 		goto handle_arrexpr_return;
 
-	if (arraynode && IsA(arraynode, Const) &&
-		!((Const *) arraynode)->constisnull)
+	/* Handle non-null Const arrays */
+	if (arraynode && IsA(arraynode, Const) && !((Const *) arraynode)->constisnull)
 	{
-		ArrayType  *arrayval;
-		int16		elemlen;
-		bool		elembyval;
-		char		elemalign;
-		int			num_elems;
-		Datum	   *elem_values;
-		bool	   *elem_nulls;
-		int			strategy = BTEqualStrategyNumber;
+		ArrayType	   *arrayval;
+
+		int16			elemlen;
+		bool			elembyval;
+		char			elemalign;
+
+		int				num_elems;
+
+		Datum		   *elem_values;
+		bool		   *elem_isnull;
+
+		WalkerContext	nested_wcxt;
+		List		   *ranges;
+		int				i;
 
 		/* Extract values from array */
 		arrayval = DatumGetArrayTypeP(((Const *) arraynode)->constvalue);
+
 		get_typlenbyvalalign(ARR_ELEMTYPE(arrayval),
 							 &elemlen, &elembyval, &elemalign);
+
 		deconstruct_array(arrayval,
 						  ARR_ELEMTYPE(arrayval),
 						  elemlen, elembyval, elemalign,
-						  &elem_values, &elem_nulls, &num_elems);
+						  &elem_values, &elem_isnull, &num_elems);
 
-		result->rangeset = NIL;
+		/* Copy WalkerContext */
+		memcpy((void *) &nested_wcxt,
+			   (const void *) context,
+			   sizeof(WalkerContext));
 
-		switch (prel->parttype)
+		/* Set default ranges for OR | AND */
+		ranges = expr->useOr ? NIL : list_make1_irange_full(prel, IR_COMPLETE);
+
+		/* Select partitions using values */
+		for (i = 0; i < num_elems; i++)
 		{
-			case PT_HASH:
-				{
-					List   *ranges = NIL;
-					int		i;
+			WrapperNode		sub_result;
+			Const			c;
 
-					/* Construct OIDs list */
-					for (i = 0; i < num_elems; i++)
-					{
-						Datum		value;
-						uint32		idx;
-						List	   *irange;
-						double		cur_paramsel;
+			NodeSetTag(&c, T_Const);
+			c.consttype	= ARR_ELEMTYPE(arrayval);
+			c.consttypmod	= -1;
+			c.constcollid	= InvalidOid;
+			c.constlen		= datumGetSize(elem_values[i],
+										   elembyval,
+										   elemlen);
+			c.constvalue	= elem_values[i];
+			c.constisnull	= elem_isnull[i];
+			c.constbyval	= elembyval;
+			c.location		= -1;
 
-						if (!elem_nulls[i])
-						{
-							/* Invoke base hash function for value type */
-							value = OidFunctionCall1(prel->hash_proc, elem_values[i]);
-							idx = hash_to_part_index(DatumGetUInt32(value),
-													 PrelChildrenCount(prel));
+			handle_const(&c, strategy, &nested_wcxt, &sub_result);
 
-							irange = list_make1_irange(make_irange(idx, idx, IR_LOSSY));
-						}
-						/* No children if Const is NULL */
-						else irange = NIL;
+			ranges = expr->useOr ?
+						irange_list_union(ranges, sub_result.rangeset) :
+						irange_list_intersection(ranges, sub_result.rangeset);
 
-						ranges = irange_list_union(ranges, irange);
-
-						cur_paramsel = estimate_paramsel_using_prel(prel, strategy);
-						result->paramsel = Max(result->paramsel, cur_paramsel);
-					}
-
-					result->rangeset = ranges;
-				}
-				break;
-
-			case PT_RANGE:
-				{
-					WalkerContext  *nested_wcxt;
-					List		   *ranges = NIL;
-					int				i;
-
-					nested_wcxt = palloc(sizeof(WalkerContext));
-					memcpy((void *) nested_wcxt,
-						   (const void *) context,
-						   sizeof(WalkerContext));
-
-					/* Overload variable to allow search by Const */
-					nested_wcxt->for_insert = true;
-
-					/* Construct OIDs list */
-					for (i = 0; i < num_elems; i++)
-					{
-						WrapperNode    *wrap;
-						Const		   *c = makeConst(ARR_ELEMTYPE(arrayval),
-													  -1, InvalidOid,
-													  datumGetSize(elem_values[i],
-																   elembyval,
-																   elemlen),
-													  elem_values[i],
-													  elem_nulls[i],
-													  elembyval);
-
-						wrap = walk_expr_tree((Expr *) c, nested_wcxt);
-						ranges = irange_list_union(ranges, wrap->rangeset);
-
-						pfree(c);
-
-						result->paramsel = Max(result->paramsel, wrap->paramsel);
-					}
-
-					result->rangeset = ranges;
-				}
-				break;
-
-			default:
-				elog(ERROR, "Unknown partitioning type %u", prel->parttype);
+			result->paramsel = Max(result->paramsel, sub_result.paramsel);
 		}
+
+		result->rangeset = ranges;
+		if (num_elems == 0)
+			result->paramsel = 0.0;
 
 		/* Free resources */
 		pfree(elem_values);
-		pfree(elem_nulls);
+		pfree(elem_isnull);
 
-		return result;
+		return; /* done, exit */
 	}
-
-	if (arraynode && IsA(arraynode, Param))
-		result->paramsel = DEFAULT_INEQ_SEL;
 
 handle_arrexpr_return:
-	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
-	result->paramsel = 1.0;
-	return result;
-}
-
-/* Operator expression handler */
-static WrapperNode *
-handle_opexpr(const OpExpr *expr, WalkerContext *context)
-{
-	WrapperNode	*result = (WrapperNode *) palloc0(sizeof(WrapperNode));
-	Node		*var, *param;
-	const PartRelationInfo *prel = context->prel;
-
-	result->orig = (const Node *) expr;
-	result->args = NIL;
-
-	if (list_length(expr->args) == 2)
-	{
-		if (pull_var_param(context, expr, &var, &param))
-		{
-			if (IsConstValue(context, param))
-			{
-				handle_binary_opexpr(context, result, var, ExtractConst(context, param));
-				return result;
-			}
-			else if (IsA(param, Param) || IsA(param, Var))
-			{
-				if (IsA(param, Param))
-					context->found_params = true;
-
-				handle_binary_opexpr_param(prel, result, var);
-				return result;
-			}
-		}
-	}
-
-	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
-	result->paramsel = 1.0;
-	return result;
-}
-
-/* Binary operator handler */
-static void
-handle_binary_opexpr(WalkerContext *context, WrapperNode *result,
-					 const Node *varnode, const Const *c)
-{
-	int						strategy;
-	TypeCacheEntry		   *tce;
-	const OpExpr		   *expr = (const OpExpr *) result->orig;
-	const PartRelationInfo *prel = context->prel;
-
-	/* Exit if Constant is NULL */
-	if (c->constisnull)
-	{
-		result->rangeset = NIL;
-		result->paramsel = 1.0;
-		return;
-	}
-
-	tce = lookup_type_cache(prel->atttype, TYPECACHE_BTREE_OPFAMILY);
-	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
-
-	/* There's no strategy for this operator, go to end */
-	if (strategy == 0)
-		goto binary_opexpr_return;
-
-	switch (prel->parttype)
-	{
-		case PT_HASH:
-			/* If strategy is "=", select one partiton */
-			if (strategy == BTEqualStrategyNumber)
-			{
-				Datum	value = OidFunctionCall1(prel->hash_proc, c->constvalue);
-				uint32	idx = hash_to_part_index(DatumGetInt32(value),
-												 PrelChildrenCount(prel));
-
-				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
-				result->rangeset = list_make1_irange(make_irange(idx, idx, IR_LOSSY));
-
-				return; /* exit on equal */
-			}
-			/* Else go to end */
-			else goto binary_opexpr_return;
-
-		case PT_RANGE:
-			{
-				FmgrInfo	cmp_func;
-				Oid			collid;
-
-				/*
-				 * We cannot guarantee that we'll return correct partitions set
-				 * if operator collation is different from default attribute collation.
-				 * In this case we just return all of them.
-				 */
-				if (expr->opcollid != prel->attcollid &&
-					strategy != BTEqualStrategyNumber)
-					goto binary_opexpr_return;
-
-				collid = OidIsValid(expr->opcollid) ?
-											expr->opcollid :
-											prel->attcollid;
-
-				fill_type_cmp_fmgr_info(&cmp_func,
-										getBaseType(c->consttype),
-										getBaseType(prel->atttype));
-
-				select_range_partitions(c->constvalue,
-										&cmp_func,
-										PrelGetRangesArray(context->prel),
-										PrelChildrenCount(context->prel),
-										strategy,
-										collid,
-										result); /* output */
-
-				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
-
-				return; /* done, now exit */
-			}
-
-		default:
-			elog(ERROR, "Unknown partitioning type %u", prel->parttype);
-	}
-
-binary_opexpr_return:
-	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
-	result->paramsel = 1.0;
-}
-
-/* Estimate selectivity of parametrized quals */
-static void
-handle_binary_opexpr_param(const PartRelationInfo *prel,
-						   WrapperNode *result, const Node *varnode)
-{
-	const OpExpr	   *expr = (const OpExpr *) result->orig;
-	TypeCacheEntry	   *tce;
-	int					strategy;
-
-	/* Determine operator type */
-	tce = lookup_type_cache(prel->atttype, TYPECACHE_BTREE_OPFAMILY);
-	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
-
 	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
 	result->paramsel = estimate_paramsel_using_prel(prel, strategy);
 }
 
+/* Operator expression handler */
+static void
+handle_opexpr(const OpExpr *expr,
+			  const WalkerContext *context,
+			  WrapperNode *result)
+{
+	Node					   *param;
+	const PartRelationInfo	   *prel = context->prel;
+
+	if (list_length(expr->args) == 2)
+	{
+		/* Is it KEY OP PARAM or PARAM OP KEY? */
+		if (is_key_op_param(expr, context, &param))
+		{
+			TypeCacheEntry *tce;
+			int				strategy;
+
+			tce = lookup_type_cache(prel->ev_type, TYPECACHE_BTREE_OPFAMILY);
+			strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
+
+			if (IsConstValue(param, context))
+			{
+				handle_const(ExtractConst(param, context),
+							 strategy, context, result);
+
+				/* Save expression */
+				result->orig = (const Node *) expr;
+
+				return; /* done, exit */
+			}
+			/* TODO: estimate selectivity for param if it's Var */
+			else if (IsA(param, Param) || IsA(param, Var))
+			{
+				result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
+				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
+
+				/* Save expression */
+				result->orig = (const Node *) expr;
+
+				return; /* done, exit */
+			}
+		}
+	}
+
+	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
+	result->paramsel = 1.0; /* can't give any estimates */
+
+	/* Save expression */
+	result->orig = (const Node *) expr;
+}
+
 
 /*
- * Checks if expression is a KEY OP PARAM or PARAM OP KEY, where KEY is
- * partition expression and PARAM is whatever.
+ * Checks if expression is a KEY OP PARAM or PARAM OP KEY, where
+ * KEY is partitioning expression and PARAM is whatever.
  *
  * NOTE: returns false if partition key is not in expression.
  */
 static bool
-pull_var_param(const WalkerContext *ctx,
-			   const OpExpr *expr,
-			   Node **var_ptr,
-			   Node **param_ptr)
+is_key_op_param(const OpExpr *expr,
+				const WalkerContext *context,
+				Node **param_ptr) /* ret value #1 */
 {
 	Node   *left = linitial(expr->args),
 		   *right = lsecond(expr->args);
 
-	if (match_expr_to_operand(left, ctx->prel_expr))
+	if (match_expr_to_operand(context->prel_expr, left))
 	{
-		*var_ptr = left;
 		*param_ptr = right;
 		return true;
 	}
 
-	if (match_expr_to_operand(right, ctx->prel_expr))
+	if (match_expr_to_operand(context->prel_expr, right))
 	{
-		*var_ptr = right;
 		*param_ptr = left;
 		return true;
 	}
@@ -1168,11 +1080,12 @@ pull_var_param(const WalkerContext *ctx,
 
 /* Extract (evaluate) Const from Param node */
 static Const *
-extract_const(WalkerContext *wcxt, Param *param)
+extract_const(Param *param,
+			  const WalkerContext *context)
 {
 	ExprState  *estate = ExecInitExpr((Expr *) param, NULL);
 	bool		isnull;
-	Datum		value = ExecEvalExpr(estate, wcxt->econtext, &isnull, NULL);
+	Datum		value = ExecEvalExpr(estate, context->econtext, &isnull, NULL);
 
 	return makeConst(param->paramtype, param->paramtypmod,
 					 param->paramcollid, get_typlen(param->paramtype),
@@ -1464,7 +1377,7 @@ translate_col_privs(const Bitmapset *parent_privs,
 	attno = InvalidAttrNumber;
 	foreach(lc, translated_vars)
 	{
-		Var		   *var = (Var *) lfirst(lc);
+		Var *var = (Var *) lfirst(lc);
 
 		attno++;
 		if (var == NULL)		/* ignore dropped columns */

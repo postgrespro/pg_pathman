@@ -6,7 +6,6 @@ CREATE SCHEMA test_update_trigger;
 CREATE TABLE test_update_trigger.test_range(val NUMERIC NOT NULL, comment TEXT);
 INSERT INTO test_update_trigger.test_range SELECT i, i FROM generate_series(1, 100) i;
 SELECT create_range_partitions('test_update_trigger.test_range', 'val', 1, 10);
-NOTICE:  sequence "test_range_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                       10

@@ -7,7 +7,6 @@ CREATE TABLE test_inserts.storage(a INT4, b INT4 NOT NULL, c NUMERIC, d TEXT);
 INSERT INTO test_inserts.storage SELECT i * 2, i, i, i::text FROM generate_series(1, 100) i;
 CREATE UNIQUE INDEX ON test_inserts.storage(a);
 SELECT create_range_partitions('test_inserts.storage', 'b', 1, 10);
-NOTICE:  sequence "storage_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                       10
@@ -238,13 +237,11 @@ NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_14 HAS EXPIRED. INSERTED ROW: 
 (1 row)
 
 INSERT INTO test_inserts.storage VALUES(121, 'query_3')
-RETURNING (SELECT attname
-		   FROM pathman_config
-		   WHERE partrel = 'test_inserts.storage'::regclass);
+RETURNING (SELECT get_partition_key('test_inserts.storage'));
 NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_14 HAS EXPIRED. INSERTED ROW: (121,query_3)
 NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_14 HAS EXPIRED. INSERTED ROW: (121,query_3)
- attname 
----------
+ get_partition_key 
+-------------------
  b
 (1 row)
 
@@ -860,7 +857,6 @@ NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_14 HAS EXPIRED. INSERTED ROW: 
 CREATE TABLE test_inserts.test_gap(val INT NOT NULL);
 INSERT INTO test_inserts.test_gap SELECT generate_series(1, 30);
 SELECT create_range_partitions('test_inserts.test_gap', 'val', 1, 10);
-NOTICE:  sequence "test_gap_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                        3
@@ -870,7 +866,7 @@ DROP TABLE test_inserts.test_gap_2; /* make a gap */
 INSERT INTO test_inserts.test_gap VALUES(15); /* not ok */
 ERROR:  cannot spawn a partition
 DROP TABLE test_inserts.test_gap CASCADE;
-NOTICE:  drop cascades to 2 other objects
+NOTICE:  drop cascades to 3 other objects
 DROP SCHEMA test_inserts CASCADE;
-NOTICE:  drop cascades to 20 other objects
+NOTICE:  drop cascades to 19 other objects
 DROP EXTENSION pg_pathman CASCADE;
