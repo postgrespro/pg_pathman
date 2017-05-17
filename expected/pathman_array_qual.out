@@ -2,6 +2,107 @@
 SET search_path = 'public';
 CREATE EXTENSION pg_pathman;
 CREATE SCHEMA array_qual;
+CREATE TABLE array_qual.test(val TEXT NOT NULL);
+CREATE SEQUENCE array_qual.test_seq;
+SELECT add_to_pathman_config('array_qual.test', 'val', NULL);
+ add_to_pathman_config 
+-----------------------
+ t
+(1 row)
+
+SELECT add_range_partition('array_qual.test', 'a'::TEXT, 'b');
+ add_range_partition 
+---------------------
+ array_qual.test_1
+(1 row)
+
+SELECT add_range_partition('array_qual.test', 'b'::TEXT, 'c');
+ add_range_partition 
+---------------------
+ array_qual.test_2
+(1 row)
+
+SELECT add_range_partition('array_qual.test', 'c'::TEXT, 'd');
+ add_range_partition 
+---------------------
+ array_qual.test_3
+(1 row)
+
+SELECT add_range_partition('array_qual.test', 'd'::TEXT, 'e');
+ add_range_partition 
+---------------------
+ array_qual.test_4
+(1 row)
+
+INSERT INTO array_qual.test VALUES ('aaaa');
+INSERT INTO array_qual.test VALUES ('bbbb');
+INSERT INTO array_qual.test VALUES ('cccc');
+ANALYZE;
+/*
+ * Test expr op ANY (...)
+ */
+/* matching collations */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE val < ANY (array['a', 'b']);
+        QUERY PLAN        
+--------------------------
+ Append
+   ->  Seq Scan on test_1
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE val < ANY (array['a', 'z']);
+        QUERY PLAN        
+--------------------------
+ Append
+   ->  Seq Scan on test_1
+   ->  Seq Scan on test_2
+   ->  Seq Scan on test_3
+   ->  Seq Scan on test_4
+(5 rows)
+
+/* different collations */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE val COLLATE "POSIX" < ANY (array['a', 'b']);
+                      QUERY PLAN                       
+-------------------------------------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: ((val)::text < ANY ('{a,b}'::text[]))
+   ->  Seq Scan on test_2
+         Filter: ((val)::text < ANY ('{a,b}'::text[]))
+   ->  Seq Scan on test_3
+         Filter: ((val)::text < ANY ('{a,b}'::text[]))
+   ->  Seq Scan on test_4
+         Filter: ((val)::text < ANY ('{a,b}'::text[]))
+(9 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE val < ANY (array['a', 'b' COLLATE "POSIX"]);
+                          QUERY PLAN                           
+---------------------------------------------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (val < ANY ('{a,b}'::text[] COLLATE "POSIX"))
+   ->  Seq Scan on test_2
+         Filter: (val < ANY ('{a,b}'::text[] COLLATE "POSIX"))
+   ->  Seq Scan on test_3
+         Filter: (val < ANY ('{a,b}'::text[] COLLATE "POSIX"))
+   ->  Seq Scan on test_4
+         Filter: (val < ANY ('{a,b}'::text[] COLLATE "POSIX"))
+(9 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE val COLLATE "C" < ANY (array['a', 'b' COLLATE "POSIX"]);
+ERROR:  collation mismatch between explicit collations "C" and "POSIX" at character 95
+/* different collations (pruning should work) */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE val COLLATE "POSIX" = ANY (array['a', 'b']);
+                      QUERY PLAN                       
+-------------------------------------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: ((val)::text = ANY ('{a,b}'::text[]))
+   ->  Seq Scan on test_2
+         Filter: ((val)::text = ANY ('{a,b}'::text[]))
+(5 rows)
+
+DROP TABLE array_qual.test CASCADE;
+NOTICE:  drop cascades to 5 other objects
 CREATE TABLE array_qual.test(a INT4 NOT NULL, b INT4);
 SELECT create_range_partitions('array_qual.test', 'a', 1, 100, 10);
  create_range_partitions 

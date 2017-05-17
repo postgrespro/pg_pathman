@@ -54,7 +54,15 @@ void _PG_init(void);
 static Node *wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue);
 
 static void handle_const(const Const *c,
+						 const Oid collid,
 						 const int strategy,
+						 const WalkerContext *context,
+						 WrapperNode *result);
+
+static void handle_array(ArrayType *array,
+						 const Oid collid,
+						 const int strategy,
+						 const bool use_or,
 						 const WalkerContext *context,
 						 WrapperNode *result);
 
@@ -406,9 +414,9 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 
 
 /*
- * --------------------------
- *  RANGE partition prunning
- * --------------------------
+ * -------------------------
+ *  RANGE partition pruning
+ * -------------------------
  */
 
 /* Given 'value' and 'ranges', return selected partitions list */
@@ -613,7 +621,8 @@ walk_expr_tree(Expr *expr, const WalkerContext *context)
 	{
 		/* Useful for INSERT optimization */
 		case T_Const:
-			handle_const((Const *) expr, BTEqualStrategyNumber, context, result);
+			handle_const((Const *) expr, ((Const *) expr)->constcollid,
+						 BTEqualStrategyNumber, context, result);
 			return result;
 
 		/* AND, OR, NOT expressions */
@@ -718,6 +727,7 @@ wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue)
 /* Const handler */
 static void
 handle_const(const Const *c,
+			 const Oid collid,
 			 const int strategy,
 			 const WalkerContext *context,
 			 WrapperNode *result)		/* ret value #1 */
@@ -806,8 +816,7 @@ handle_const(const Const *c,
 				FmgrInfo cmp_finfo;
 
 				/* Cannot do much about non-equal strategies + diff. collations */
-				if (strategy != BTEqualStrategyNumber &&
-					c->constcollid != prel->ev_collid)
+				if (strategy != BTEqualStrategyNumber && collid != prel->ev_collid)
 				{
 					goto handle_const_return;
 				}
@@ -817,7 +826,7 @@ handle_const(const Const *c,
 										getBaseType(prel->ev_type));
 
 				select_range_partitions(c->constvalue,
-										c->constcollid,
+										collid,
 										&cmp_finfo,
 										PrelGetRangesArray(context->prel),
 										PrelChildrenCount(context->prel),
@@ -841,6 +850,7 @@ handle_const_return:
 /* Array handler */
 static void
 handle_array(ArrayType *array,
+			 const Oid collid,
 			 const int strategy,
 			 const bool use_or,
 			 const WalkerContext *context,
@@ -898,7 +908,7 @@ handle_array(ArrayType *array,
 			c.constbyval	= elem_byval;
 			c.location		= -1;
 
-			handle_const(&c, strategy, context, &wrap);
+			handle_const(&c, collid, strategy, context, &wrap);
 
 			/* Should we use OR | AND? */
 			ranges = use_or ?
@@ -1020,7 +1030,8 @@ handle_arrexpr(const ScalarArrayOpExpr *expr,
 
 				/* Examine array */
 				handle_array(DatumGetArrayTypeP(c->constvalue),
-							 strategy, expr->useOr, context, result);
+							 expr->inputcollid, strategy,
+							 expr->useOr, context, result);
 
 				/* Save expression */
 				result->orig = (const Node *) expr;
@@ -1063,10 +1074,12 @@ handle_arrexpr(const ScalarArrayOpExpr *expr,
 
 							/* Examine array */
 							handle_array(DatumGetArrayTypeP(c->constvalue),
-										 strategy, expr->useOr, context, &wrap);
+										 expr->inputcollid, strategy,
+										 expr->useOr, context, &wrap);
 						}
 						/* ... or a single element? */
-						else handle_const(c, strategy, context, &wrap);
+						else handle_const(c, expr->inputcollid,
+										  strategy, context, &wrap);
 
 						/* Should we use OR | AND? */
 						ranges = expr->useOr ?
@@ -1131,6 +1144,7 @@ handle_opexpr(const OpExpr *expr,
 			if (IsConstValue(param, context))
 			{
 				handle_const(ExtractConst(param, context),
+							 expr->inputcollid,
 							 strategy, context, result);
 
 				/* Save expression */

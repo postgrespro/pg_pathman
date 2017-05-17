@@ -6,6 +6,41 @@ CREATE SCHEMA array_qual;
 
 
 
+CREATE TABLE array_qual.test(val TEXT NOT NULL);
+CREATE SEQUENCE array_qual.test_seq;
+SELECT add_to_pathman_config('array_qual.test', 'val', NULL);
+SELECT add_range_partition('array_qual.test', 'a'::TEXT, 'b');
+SELECT add_range_partition('array_qual.test', 'b'::TEXT, 'c');
+SELECT add_range_partition('array_qual.test', 'c'::TEXT, 'd');
+SELECT add_range_partition('array_qual.test', 'd'::TEXT, 'e');
+INSERT INTO array_qual.test VALUES ('aaaa');
+INSERT INTO array_qual.test VALUES ('bbbb');
+INSERT INTO array_qual.test VALUES ('cccc');
+
+ANALYZE;
+
+/*
+ * Test expr op ANY (...)
+ */
+
+/* matching collations */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE val < ANY (array['a', 'b']);
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE val < ANY (array['a', 'z']);
+
+/* different collations */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE val COLLATE "POSIX" < ANY (array['a', 'b']);
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE val < ANY (array['a', 'b' COLLATE "POSIX"]);
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE val COLLATE "C" < ANY (array['a', 'b' COLLATE "POSIX"]);
+
+/* different collations (pruning should work) */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE val COLLATE "POSIX" = ANY (array['a', 'b']);
+
+
+
+DROP TABLE array_qual.test CASCADE;
+
+
+
 CREATE TABLE array_qual.test(a INT4 NOT NULL, b INT4);
 SELECT create_range_partitions('array_qual.test', 'a', 1, 100, 10);
 INSERT INTO array_qual.test SELECT i, i FROM generate_series(1, 1000) g(i);
