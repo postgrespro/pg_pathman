@@ -565,8 +565,9 @@ parse_partitioning_expression(const Oid relid,
 							  char **query_string_out,	/* ret value #1 */
 							  Node **parsetree_out)		/* ret value #2 */
 {
-	SelectStmt *select_stmt;
-	List	   *parsetree_list;
+	SelectStmt		   *select_stmt;
+	List			   *parsetree_list;
+	MemoryContext		old_mcxt;
 
 	const char *sql = "SELECT (%s) FROM ONLY %s.%s";
 	char	   *relname = get_rel_name(relid),
@@ -575,7 +576,31 @@ parse_partitioning_expression(const Oid relid,
 										quote_identifier(nspname),
 										quote_identifier(relname));
 
-	parsetree_list = raw_parser(query_string);
+	old_mcxt = CurrentMemoryContext;
+
+	PG_TRY();
+	{
+		parsetree_list = raw_parser(query_string);
+	}
+	PG_CATCH();
+	{
+		ErrorData  *error;
+
+		/* Switch to the original context & copy edata */
+		MemoryContextSwitchTo(old_mcxt);
+		error = CopyErrorData();
+		FlushErrorState();
+
+		error->detail = error->message;
+		error->message = "partitioning expression parse error";
+		error->sqlerrcode = ERRCODE_INVALID_PARAMETER_VALUE;
+		error->cursorpos = 0;
+		error->internalpos = 0;
+
+		ReThrowError(error);
+	}
+	PG_END_TRY();
+
 	if (list_length(parsetree_list) != 1)
 		elog(ERROR, "expression \"%s\" produced more than one query", exp_cstr);
 
@@ -660,8 +685,32 @@ cook_partitioning_expression(const Oid relid,
 	 */
 	old_mcxt = MemoryContextSwitchTo(parse_mcxt);
 
-	/* This will fail with elog in case of wrong expression */
-	querytree_list = pg_analyze_and_rewrite(parsetree, query_string, NULL, 0);
+	PG_TRY();
+	{
+		/* This will fail with elog in case of wrong expression */
+		querytree_list = pg_analyze_and_rewrite(parsetree, query_string, NULL, 0);
+	}
+	PG_CATCH();
+	{
+		ErrorData  *error;
+
+		/* Switch to the original context & copy edata */
+		MemoryContextSwitchTo(old_mcxt);
+		error = CopyErrorData();
+		FlushErrorState();
+
+		error->detail = error->message;
+		error->message = "partitioning expression analyze error";
+		error->sqlerrcode = ERRCODE_INVALID_PARAMETER_VALUE;
+		error->cursorpos = 0;
+		error->internalpos = 0;
+
+		/* Enable pathman hooks */
+		pathman_hooks_enabled = true;
+		ReThrowError(error);
+	}
+	PG_END_TRY();
+
 	if (list_length(querytree_list) != 1)
 		elog(ERROR, "partitioning expression produced more than 1 query");
 
