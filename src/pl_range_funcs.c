@@ -72,6 +72,10 @@ static void modify_range_constraint(Oid partition_relid,
 									const Bound *upper);
 static char *get_qualified_rel_name(Oid relid);
 static void drop_table_by_oid(Oid relid);
+static Oid split_range_partitions_internal(Oid parent, Oid partition,
+											Datum value, Oid value_type,
+											RangeVar *new_partition_rv,
+											char *new_partition_ts);
 static bool interval_is_trivial(Oid atttype,
 								Datum interval,
 								Oid interval_type);
@@ -787,34 +791,36 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 Datum
 split_range_partitions(PG_FUNCTION_ARGS)
 {
-	Oid				partition = PG_GETARG_OID(0);
-	Datum			value = PG_GETARG_DATUM(1);
-	Oid				value_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
-	Oid				new_partition;
+	Oid				parent_relid,
+					partition_relid,
+					new_partition_relid;
+	Datum			value;
+	Oid				value_type;
 
 	/* Optional: name & tablespace */
 	RangeVar	   *new_partition_rv = NULL;
-	char		   *new_partition_ts = NULL;
+	char		   *new_partition_ts;
 
-	const PartRelationInfo *prel;
-	Oid				parent;
-	Oid				expr_type;
-	char		   *expr_cstr;
-	RangeEntry	   *rentry = NULL;
-	FmgrInfo		cmp_finfo;
-	Bound			fake_value_bound;
-	RangeEntry	   *ranges;
-	Bound			min, max;
-
-	List		   *ri_constr,
-				   *ri_relids;
-	char		   *bound;
-	int				i;
 	PartParentSearch parent_search;
 
-	// AttrNumber attnum;
-	char *query;
+	/* Partition's oid */
+	if (!PG_ARGISNULL(0))
+	{
+		partition_relid = PG_GETARG_OID(0);
+	}
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("'partition_relid' should not be NULL")));
 
+	/* Split value */
+	if (!PG_ARGISNULL(1))
+	{
+		value = PG_GETARG_DATUM(1);
+		value_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
+	}
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("'value' should not be NULL")));
+
+	/* New partition's name (optional) */
 	if (!PG_ARGISNULL(2))
 	{
 		List   *qualified_name;
@@ -825,14 +831,54 @@ split_range_partitions(PG_FUNCTION_ARGS)
 		new_partition_rv = makeRangeVarFromNameList(qualified_name);
 	}
 
-	if (!PG_ARGISNULL(3))
-		new_partition_ts = TextDatumGetCString(PG_GETARG_TEXT_P(3));
+	/* New partition's tablesplace (optional) */
+	new_partition_ts = !PG_ARGISNULL(3) ?
+							TextDatumGetCString(PG_GETARG_TEXT_P(3)) :
+							NULL;
 
 	/* Get parent's relid */
-	parent = get_parent_of_partition(partition, &parent_search);
+	parent_relid = get_parent_of_partition(partition_relid, &parent_search);
 	if (parent_search != PPS_ENTRY_PART_PARENT)
 		elog(ERROR, "relation \"%s\" is not a partition",
-			 get_rel_name_or_relid(partition));
+			 get_rel_name_or_relid(partition_relid));
+
+	/* Perform split */
+	new_partition_relid = split_range_partitions_internal(parent_relid,
+														  partition_relid,
+														  value,
+														  value_type,
+														  new_partition_rv,
+														  new_partition_ts);
+
+	PG_RETURN_OID(new_partition_relid);
+}
+
+static Oid
+split_range_partitions_internal(Oid parent, Oid partition,
+								Datum value, Oid value_type,
+								RangeVar *new_partition_rv,
+								char *new_partition_ts)
+{
+	const PartRelationInfo *prel;
+	Oid				expr_type;
+	char		   *expr_cstr;
+	Oid				collid;
+
+	RangeEntry	   *ranges,
+				   *rentry = NULL;
+
+	FmgrInfo		cmp_finfo;
+	Bound			min,
+					max,
+					fake_value_bound;
+
+	Oid				new_partition;
+	List		   *ri_constr,
+				   *ri_relids;
+	char		   *bound;
+	int				i;
+
+	char		   *query;
 
 	/* Lock parent and partition */
 	prevent_relation_modification_internal(partition);
@@ -846,6 +892,7 @@ split_range_partitions(PG_FUNCTION_ARGS)
 	ranges = PrelGetRangesArray(prel);
 	expr_cstr = pstrdup(prel->expr_cstr);
 	expr_type = prel->ev_type;
+	collid = prel->ev_collid;
 
 	/* Look for the specified partition's range */
 	for (i = 0; i < PrelChildrenCount(prel); i++)
@@ -860,11 +907,15 @@ split_range_partitions(PG_FUNCTION_ARGS)
 	min = CopyBound(&rentry->min, prel->ev_byval, prel->ev_len);
 	max = CopyBound(&rentry->max, prel->ev_byval, prel->ev_len);
 
-	/* Ensure that value belongs to the range */
 	fill_type_cmp_fmgr_info(&cmp_finfo, expr_type, expr_type);
-	fake_value_bound = MakeBound(perform_type_cast(value, value_type, expr_type, NULL));
-	if (cmp_bounds(&cmp_finfo, prel->ev_collid, &fake_value_bound, &min) < 0
-		|| cmp_bounds(&cmp_finfo, prel->ev_collid, &fake_value_bound, &max) >= 0)
+	fake_value_bound = MakeBound(perform_type_cast(value,
+												   value_type,
+												   expr_type,
+												   NULL));
+
+	/* Ensure that value belongs to the range */
+	if (cmp_bounds(&cmp_finfo, collid, &fake_value_bound, &min) < 0
+		|| cmp_bounds(&cmp_finfo, collid, &fake_value_bound, &max) >= 0)
 	{
 		elog(ERROR,
 			 "specified value does not fit into the range [%s, %s)",
@@ -884,16 +935,6 @@ split_range_partitions(PG_FUNCTION_ARGS)
 												  new_partition_ts,
 												  ri_constr, ri_relids);
 
-	/* get_pathman_relation_info() will refresh this entry */
-	invalidate_pathman_relation_info(parent, NULL);
-
-	prel = get_pathman_relation_info(parent);
-	shout_if_prel_is_invalid(parent, prel, PT_RANGE);
-
-	// attname = get_attname(prel->key, prel->attnum);
-	// attnum = get_attnum(partition, attname);
-
-	/* Copy data */
 	bound = build_range_condition_internal(partition,
 										   expr_cstr,
 										   &fake_value_bound,
@@ -906,6 +947,7 @@ split_range_partitions(PG_FUNCTION_ARGS)
 	/* Prevent RI triggers from complaining during data migration */
 	disable_ri_triggers();
 
+	/* Migrate data */
 	query = psprintf("WITH part_data AS ( "
 					 "	DELETE FROM %s WHERE %s RETURNING *) "
 					 "INSERT INTO %s SELECT * FROM part_data",
@@ -913,23 +955,21 @@ split_range_partitions(PG_FUNCTION_ARGS)
 					 bound,
 					 get_qualified_rel_name(new_partition));
 	SPI_exec(query, 0);
-
 	enable_ri_triggers();
+	SPI_finish();
 
-	/* Alter constraint */
+	/* Alter constraint for the original partition */
 	modify_range_constraint(partition,
 							expr_cstr,
 							expr_type,
 							&min,
 							&fake_value_bound);
 
-	SPI_finish();
 
 	/* get_pathman_relation_info() will refresh this entry */
 	invalidate_pathman_relation_info(parent, NULL);
 
-	// PG_RETURN_VOID();
-	PG_RETURN_OID(new_partition);
+	return new_partition;
 }
 
 /*

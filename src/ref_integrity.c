@@ -1639,10 +1639,7 @@ createPartitionForeignKeyTriggers(Oid partition,
 {
 	HeapTuple			indexTuple;
 	Relation			childRel;
-	// Oid					parent,
 	Oid					indexOid;
-	// PartParentSearch	parent_search;
-	// PartRelationInfo   *prel;
 	ObjectAddress		constrAddress;
 	ObjectAddress		indexAddress;
 
@@ -1650,16 +1647,6 @@ createPartitionForeignKeyTriggers(Oid partition,
 	 * Foreign key can be created for only single attribute key. So first thing
 	 * we must check is that partitioning key is a single column
 	 */
-	// parent = get_parent_of_partition(partition, &parent_search);
-	// if (parent_search != PPS_ENTRY_PART_PARENT)
-	// 	ereport(ERROR, (errmsg("relation %s is not a partition",
-	// 						   get_rel_name_or_relid(partition))));
-	// prel = get_pathman_relation_info(parent);
-	// shout_if_prel_is_invalid(parent, prel, PT_ANY);
-
-	// if ((attnum = VarGetAttnum(prel->expr)) == InvalidOid)
-	// 	ereport(ERROR, (errmsg(ERROR_SINGLE_COLUMN_KEY,
-	// 						   get_rel_name_or_relid(parent))));
 
 	/* Lock partition so no one deletes rows until we're done */
 	childRel = heap_open(partition, ShareRowExclusiveLock);
