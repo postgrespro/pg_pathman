@@ -24,7 +24,8 @@ DATA = pg_pathman--1.0--1.1.sql \
 
 PGFILEDESC = "pg_pathman - partitioning tool for PostgreSQL"
 
-REGRESS = pathman_basic \
+REGRESS = pathman_array_qual \
+		  pathman_basic \
 		  pathman_bgw \
 		  pathman_calamity \
 		  pathman_callbacks \
