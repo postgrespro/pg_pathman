@@ -941,6 +941,108 @@ DEALLOCATE q;
 /*
  * Test expr > ALL (... $1 ...)
  */
+PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ALL (array[$1, 1000000, 600]);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+DEALLOCATE q;
+PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ALL (array[$1, NULL, 600]);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+DEALLOCATE q;
 PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ALL (array[$1, 100, 600]);
 EXPLAIN (COSTS OFF) EXECUTE q(1);
                       QUERY PLAN                      
@@ -1227,6 +1329,57 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
    ->  Seq Scan on test_10 test
          Filter: (a > ALL (ARRAY[100, 600, $1]))
 (12 rows)
+
+DEALLOCATE q;
+PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ALL (array[array[100, NULL], array[1, $1]]);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
 
 DEALLOCATE q;
 PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ALL (array[array[100, 600], array[1, $1]]);

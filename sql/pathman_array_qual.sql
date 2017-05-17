@@ -155,6 +155,26 @@ DEALLOCATE q;
  * Test expr > ALL (... $1 ...)
  */
 
+PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ALL (array[$1, 1000000, 600]);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+DEALLOCATE q;
+
+PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ALL (array[$1, NULL, 600]);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+DEALLOCATE q;
+
 PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ALL (array[$1, 100, 600]);
 EXPLAIN (COSTS OFF) EXECUTE q(1);
 EXPLAIN (COSTS OFF) EXECUTE q(1);
@@ -185,6 +205,16 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 EXPLAIN (COSTS OFF) EXECUTE q(1);
 DEALLOCATE q;
 
+PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ALL (array[array[100, NULL], array[1, $1]]);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+DEALLOCATE q;
+
 PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ALL (array[array[100, 600], array[1, $1]]);
 EXPLAIN (COSTS OFF) EXECUTE q(1);
 EXPLAIN (COSTS OFF) EXECUTE q(1);
@@ -193,7 +223,6 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 EXPLAIN (COSTS OFF) EXECUTE q(1);
 EXPLAIN (COSTS OFF) EXECUTE q(1);
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-
 /* check query plan: EXECUTE q(999) */
 DO language plpgsql
 $$
@@ -213,7 +242,6 @@ $$
 		RAISE notice '%: number of partitions: %', query, num;
 	END
 $$;
-
 DEALLOCATE q;
 
 PREPARE q(int4[]) AS SELECT * FROM array_qual.test WHERE a > ALL (array[array[100, 600], $1]);
@@ -224,7 +252,6 @@ EXPLAIN (COSTS OFF) EXECUTE q('{1, 1}');
 EXPLAIN (COSTS OFF) EXECUTE q('{1, 1}');
 EXPLAIN (COSTS OFF) EXECUTE q('{1, 1}');
 EXPLAIN (COSTS OFF) EXECUTE q('{1, 1}');
-
 /* check query plan: EXECUTE q('{1, 999}') */
 DO language plpgsql
 $$
@@ -244,7 +271,6 @@ $$
 		RAISE notice '%: number of partitions: %', query, num;
 	END
 $$;
-
 DEALLOCATE q;
 
 PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ALL (array[$1, 898]);
@@ -255,7 +281,6 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 EXPLAIN (COSTS OFF) EXECUTE q(1);
 EXPLAIN (COSTS OFF) EXECUTE q(1);
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-
 /* check query plan: EXECUTE q(999) */
 DO language plpgsql
 $$
@@ -275,7 +300,6 @@ $$
 		RAISE notice '%: number of partitions: %', query, num;
 	END
 $$;
-
 DEALLOCATE q;
 
 
