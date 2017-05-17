@@ -382,8 +382,23 @@ SELECT * FROM test.hash_rel WHERE id = 123;
 /* Test replacing hash partition */
 CREATE TABLE test.hash_rel_extern (LIKE test.hash_rel INCLUDING ALL);
 SELECT pathman.replace_hash_partition('test.hash_rel_0', 'test.hash_rel_extern');
-\d+ test.hash_rel_0
-\d+ test.hash_rel_extern
+
+/* Check the consistency of test.hash_rel_0 and test.hash_rel_extern relations */
+EXPLAIN(COSTS OFF) SELECT * FROM test.hash_rel;
+SELECT parent, partition, parttype
+FROM pathman.pathman_partition_list
+WHERE parent='test.hash_rel'::regclass
+ORDER BY 2;
+SELECT c.oid::regclass::text,
+    array_agg(pg_get_indexdef(i.indexrelid)) AS indexes,
+    array_agg(pg_get_triggerdef(t.oid)) AS triggers
+FROM pg_class c
+    LEFT JOIN pg_index i ON c.oid=i.indrelid
+    LEFT JOIN pg_trigger t ON c.oid=t.tgrelid
+WHERE c.oid IN ('test.hash_rel_0'::regclass, 'test.hash_rel_extern'::regclass)
+GROUP BY 1 ORDER BY 1;
+SELECT pathman.is_tuple_convertible('test.hash_rel_0', 'test.hash_rel_extern');
+
 INSERT INTO test.hash_rel SELECT * FROM test.hash_rel_0;
 DROP TABLE test.hash_rel_0;
 /* Table with which we are replacing partition must have exact same structure */

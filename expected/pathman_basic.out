@@ -1441,28 +1441,46 @@ SELECT pathman.replace_hash_partition('test.hash_rel_0', 'test.hash_rel_extern')
  test.hash_rel_extern
 (1 row)
 
-\d+ test.hash_rel_0
-                                               Table "test.hash_rel_0"
- Column |  Type   |                         Modifiers                          | Storage | Stats target | Description 
---------+---------+------------------------------------------------------------+---------+--------------+-------------
- id     | integer | not null default nextval('test.hash_rel_id_seq'::regclass) | plain   |              | 
- value  | integer | not null                                                   | plain   |              | 
- abc    | integer |                                                            | plain   |              | 
-Indexes:
-    "hash_rel_0_pkey" PRIMARY KEY, btree (id)
+/* Check the consistency of test.hash_rel_0 and test.hash_rel_extern relations */
+EXPLAIN(COSTS OFF) SELECT * FROM test.hash_rel;
+            QUERY PLAN             
+-----------------------------------
+ Append
+   ->  Seq Scan on hash_rel_extern
+   ->  Seq Scan on hash_rel_1
+   ->  Seq Scan on hash_rel_2
+(4 rows)
 
-\d+ test.hash_rel_extern
-                                             Table "test.hash_rel_extern"
- Column |  Type   |                         Modifiers                          | Storage | Stats target | Description 
---------+---------+------------------------------------------------------------+---------+--------------+-------------
- id     | integer | not null default nextval('test.hash_rel_id_seq'::regclass) | plain   |              | 
- value  | integer | not null                                                   | plain   |              | 
- abc    | integer |                                                            | plain   |              | 
-Indexes:
-    "hash_rel_extern_pkey" PRIMARY KEY, btree (id)
-Check constraints:
-    "pathman_hash_rel_extern_check" CHECK (pathman.get_hash_part_idx(hashint4(value), 3) = 0)
-Inherits: test.hash_rel
+SELECT parent, partition, parttype
+FROM pathman.pathman_partition_list
+WHERE parent='test.hash_rel'::regclass
+ORDER BY 2;
+    parent     |      partition       | parttype 
+---------------+----------------------+----------
+ test.hash_rel | test.hash_rel_1      |        1
+ test.hash_rel | test.hash_rel_2      |        1
+ test.hash_rel | test.hash_rel_extern |        1
+(3 rows)
+
+SELECT c.oid::regclass::text,
+    array_agg(pg_get_indexdef(i.indexrelid)) AS indexes,
+    array_agg(pg_get_triggerdef(t.oid)) AS triggers
+FROM pg_class c
+    LEFT JOIN pg_index i ON c.oid=i.indrelid
+    LEFT JOIN pg_trigger t ON c.oid=t.tgrelid
+WHERE c.oid IN ('test.hash_rel_0'::regclass, 'test.hash_rel_extern'::regclass)
+GROUP BY 1 ORDER BY 1;
+         oid          |                                        indexes                                        | triggers 
+----------------------+---------------------------------------------------------------------------------------+----------
+ test.hash_rel_0      | {"CREATE UNIQUE INDEX hash_rel_0_pkey ON test.hash_rel_0 USING btree (id)"}           | {NULL}
+ test.hash_rel_extern | {"CREATE UNIQUE INDEX hash_rel_extern_pkey ON test.hash_rel_extern USING btree (id)"} | {NULL}
+(2 rows)
+
+SELECT pathman.is_tuple_convertible('test.hash_rel_0', 'test.hash_rel_extern');
+ is_tuple_convertible 
+----------------------
+ t
+(1 row)
 
 INSERT INTO test.hash_rel SELECT * FROM test.hash_rel_0;
 DROP TABLE test.hash_rel_0;
