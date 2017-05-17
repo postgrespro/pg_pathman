@@ -165,6 +165,7 @@ SET enable_bitmapscan = OFF;
 SET enable_seqscan = ON;
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE false;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = NULL;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2 OR value = 1;
@@ -173,11 +174,22 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > 2500;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 1000 AND id < 3000;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 1500 AND id < 2500;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE (id >= 500 AND id < 1500) OR (id > 2500);
+
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (2500);
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (500, 1500);
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (-500, 500, 1500);
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (-1, -1, -1);
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (-1, -1, -1, NULL);
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > ANY (ARRAY[1500, 2200]);
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > ANY (ARRAY[100, 1500]);
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > ALL (ARRAY[1500, 2200]);
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > ALL (ARRAY[100, 1500]);
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id = ANY (ARRAY[1500, 2200]);
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id = ANY (ARRAY[100, 1500]);
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id = ALL (ARRAY[1500, 2200]);
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id = ALL (ARRAY[100, 1500]);
+
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt > '2015-02-15';
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-02-01' AND dt < '2015-03-01';
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-02-15' AND dt < '2015-03-15';
@@ -189,21 +201,34 @@ SET enable_bitmapscan = OFF;
 SET enable_seqscan = OFF;
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE false;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = NULL;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2 OR value = 1;
+
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (2);
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (2, 1);
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (1, 2);
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (1, 2, -1);
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (0, 0, 0);
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (NULL::int, NULL, NULL);
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value > ANY (ARRAY[1, 2]);
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value > ANY (ARRAY[1, 2, 3, 4, 5]);
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value > ALL (ARRAY[1, 2]);
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value > ALL (ARRAY[1, 2, 3, 4, 5]);
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = ANY (ARRAY[1, 2]);
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = ANY (ARRAY[1, 2, 3, 4, 5]);
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = ALL (ARRAY[1, 2]);
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = ALL (ARRAY[1, 2, 3, 4, 5]);
+
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > 2500;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 1000 AND id < 3000;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 1500 AND id < 2500;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE (id >= 500 AND id < 1500) OR (id > 2500);
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel ORDER BY id;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id <= 2500 ORDER BY id;
+
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt > '2015-02-15';
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-02-01' AND dt < '2015-03-01';
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-02-15' AND dt < '2015-03-15';
@@ -226,15 +251,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel_1 UNION ALL SELECT * FROM test.
 /*
  * Join
  */
-SET enable_hashjoin = OFF;
 set enable_nestloop = OFF;
-SET enable_mergejoin = ON;
-
-EXPLAIN (COSTS OFF)
-SELECT * FROM test.range_rel j1
-JOIN test.range_rel j2 on j2.id = j1.id
-JOIN test.num_range_rel j3 on j3.id = j1.id
-WHERE j1.dt < '2015-03-01' AND j2.dt >= '2015-02-01' ORDER BY j2.dt;
 SET enable_hashjoin = ON;
 SET enable_mergejoin = OFF;
 EXPLAIN (COSTS OFF)

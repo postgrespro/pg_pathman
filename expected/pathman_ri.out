@@ -7,7 +7,6 @@ SELECT create_foreign_key('xxx', 'abc_id', 'abc');
 ERROR:  table abc isn't partitioned by pg_pathman
 /* Cannot create FK if there are no unique indexes */
 SELECT create_range_partitions('abc', 'id', 1, 100, 3);
-NOTICE:  sequence "abc_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                        3

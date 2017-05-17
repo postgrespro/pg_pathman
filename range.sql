@@ -8,19 +8,6 @@
  * ------------------------------------------------------------------------
  */
 
-CREATE OR REPLACE FUNCTION @extschema@.create_or_replace_sequence(
-	parent_relid	REGCLASS,
-	OUT seq_name	TEXT)
-AS $$
-BEGIN
-	seq_name := @extschema@.build_sequence_name(parent_relid);
-
-	EXECUTE format('DROP SEQUENCE IF EXISTS %s', seq_name);
-	EXECUTE format('CREATE SEQUENCE %s START 1', seq_name);
-END
-$$
-LANGUAGE plpgsql;
-
 /*
  * Check RANGE partition boundaries.
  */
@@ -29,57 +16,33 @@ CREATE OR REPLACE FUNCTION @extschema@.check_boundaries(
 	expression		TEXT,
 	start_value		ANYELEMENT,
 	end_value		ANYELEMENT)
-RETURNS VOID AS
-$$
+RETURNS VOID AS $$
 DECLARE
-	v_min		start_value%TYPE;
-	v_max		start_value%TYPE;
-	v_count		BIGINT;
+	min_value		start_value%TYPE;
+	max_value		start_value%TYPE;
+	rows_count		BIGINT;
 
 BEGIN
 	/* Get min and max values */
 	EXECUTE format('SELECT count(*), min(%1$s), max(%1$s)
 					FROM %2$s WHERE NOT %1$s IS NULL',
 				   expression, parent_relid::TEXT)
-	INTO v_count, v_min, v_max;
+	INTO rows_count, min_value, max_value;
 
 	/* Check if column has NULL values */
-	IF v_count > 0 AND (v_min IS NULL OR v_max IS NULL) THEN
+	IF rows_count > 0 AND (min_value IS NULL OR max_value IS NULL) THEN
 		RAISE EXCEPTION 'expression "%" returns NULL values', expression;
 	END IF;
 
 	/* Check lower boundary */
-	IF start_value > v_min THEN
+	IF start_value > min_value THEN
 		RAISE EXCEPTION 'start value is less than min value of "%"', expression;
 	END IF;
 
 	/* Check upper boundary */
-	IF end_value <= v_max THEN
+	IF end_value <= max_value THEN
 		RAISE EXCEPTION 'not enough partitions to fit all values of "%"', expression;
 	END IF;
-END
-$$ LANGUAGE plpgsql;
-
-
-CREATE OR REPLACE FUNCTION @extschema@.prepare_for_partitioning(
-	parent_relid	REGCLASS,
-	expression		TEXT,
-	partition_data	BOOLEAN)
-RETURNS VOID AS
-$$
-BEGIN
-	PERFORM @extschema@.validate_relname(parent_relid);
-
-	IF partition_data = true THEN
-		/* Acquire data modification lock */
-		PERFORM @extschema@.prevent_relation_modification(parent_relid);
-	ELSE
-		/* Acquire lock on parent */
-		PERFORM @extschema@.lock_partitioned_relation(parent_relid);
-	END IF;
-
-	expression := lower(expression);
-	PERFORM @extschema@.common_relation_checks(parent_relid, expression);
 END
 $$ LANGUAGE plpgsql;
 
@@ -93,20 +56,21 @@ CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions(
 	p_interval		INTERVAL,
 	p_count			INTEGER DEFAULT NULL,
 	partition_data	BOOLEAN DEFAULT TRUE)
-RETURNS INTEGER AS
-$$
+RETURNS INTEGER AS $$
 DECLARE
-	v_rows_count	BIGINT;
-	v_atttype		REGTYPE;
-	v_max			start_value%TYPE;
-	v_cur_value		start_value%TYPE := start_value;
+	rows_count		BIGINT;
+	value_type		REGTYPE;
+	max_value		start_value%TYPE;
+	cur_value		start_value%TYPE := start_value;
 	end_value		start_value%TYPE;
 	part_count		INTEGER := 0;
 	i				INTEGER;
 
 BEGIN
 	expression := lower(expression);
-	PERFORM @extschema@.prepare_for_partitioning(parent_relid, expression, partition_data);
+	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data);
 
 	IF p_count < 0 THEN
 		RAISE EXCEPTION '"p_count" must not be less than 0';
@@ -115,21 +79,21 @@ BEGIN
 	/* Try to determine partitions count if not set */
 	IF p_count IS NULL THEN
 		EXECUTE format('SELECT count(*), max(%s) FROM %s', expression, parent_relid)
-		INTO v_rows_count, v_max;
+		INTO rows_count, max_value;
 
-		IF v_rows_count = 0 THEN
+		IF rows_count = 0 THEN
 			RAISE EXCEPTION 'cannot determine partitions count for empty table';
 		END IF;
 
 		p_count := 0;
-		WHILE v_cur_value <= v_max
+		WHILE cur_value <= max_value
 		LOOP
-			v_cur_value := v_cur_value + p_interval;
+			cur_value := cur_value + p_interval;
 			p_count := p_count + 1;
 		END LOOP;
 	END IF;
 
-	v_atttype := @extschema@.get_base_type(pg_typeof(start_value));
+	value_type := @extschema@.get_base_type(pg_typeof(start_value));
 
 	/*
 	 * In case when user doesn't want to automatically create partitions
@@ -144,22 +108,22 @@ BEGIN
 		END LOOP;
 
 		/* Check boundaries */
-		EXECUTE format('SELECT @extschema@.check_boundaries(''%s'', $1, ''%s'', ''%s''::%s)',
-			   parent_relid,
-			   start_value,
-			   end_value,
-			   v_atttype::TEXT)
+		EXECUTE
+			format('SELECT @extschema@.check_boundaries(''%s'', $1, ''%s'', ''%s''::%s)',
+				   parent_relid,
+				   start_value,
+				   end_value,
+				   value_type::TEXT)
 		USING
-				expression;
+			expression;
 	END IF;
 
-	/* Insert new entry to pathman config */
-	EXECUTE format('ANALYZE %s', parent_relid);
-	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression,
-		p_interval::TEXT);
-
 	/* Create sequence for child partitions names */
-	PERFORM @extschema@.create_or_replace_sequence(parent_relid);
+	PERFORM @extschema@.create_naming_sequence(parent_relid);
+
+	/* Insert new entry to pathman config */
+	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression,
+											  p_interval::TEXT);
 
 	IF p_count != 0 THEN
 		part_count := @extschema@.create_range_partitions_internal(
@@ -193,19 +157,20 @@ CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions(
 	p_interval		ANYELEMENT,
 	p_count			INTEGER DEFAULT NULL,
 	partition_data	BOOLEAN DEFAULT TRUE)
-RETURNS INTEGER AS
-$$
+RETURNS INTEGER AS $$
 DECLARE
-	v_rows_count	BIGINT;
-	v_max			start_value%TYPE;
-	v_cur_value		start_value%TYPE := start_value;
+	rows_count		BIGINT;
+	max_value		start_value%TYPE;
+	cur_value		start_value%TYPE := start_value;
 	end_value		start_value%TYPE;
 	part_count		INTEGER := 0;
 	i				INTEGER;
 
 BEGIN
 	expression := lower(expression);
-	PERFORM @extschema@.prepare_for_partitioning(parent_relid, expression, partition_data);
+	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data);
 
 	IF p_count < 0 THEN
 		RAISE EXCEPTION 'partitions count must not be less than zero';
@@ -214,20 +179,20 @@ BEGIN
 	/* Try to determine partitions count if not set */
 	IF p_count IS NULL THEN
 		EXECUTE format('SELECT count(*), max(%s) FROM %s', expression, parent_relid)
-		INTO v_rows_count, v_max;
+		INTO rows_count, max_value;
 
-		IF v_rows_count = 0 THEN
+		IF rows_count = 0 THEN
 			RAISE EXCEPTION 'cannot determine partitions count for empty table';
 		END IF;
 
-		IF v_max IS NULL THEN
+		IF max_value IS NULL THEN
 			RAISE EXCEPTION 'expression "%" can return NULL values', expression;
 		END IF;
 
 		p_count := 0;
-		WHILE v_cur_value <= v_max
+		WHILE cur_value <= max_value
 		LOOP
-			v_cur_value := v_cur_value + p_interval;
+			cur_value := cur_value + p_interval;
 			p_count := p_count + 1;
 		END LOOP;
 	END IF;
@@ -251,18 +216,19 @@ BEGIN
 											 end_value);
 	END IF;
 
-	/* Insert new entry to pathman config */
-	EXECUTE format('ANALYZE %s', parent_relid);
-	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression,
-		p_interval::TEXT);
-
 	/* Create sequence for child partitions names */
-	PERFORM @extschema@.create_or_replace_sequence(parent_relid);
+	PERFORM @extschema@.create_naming_sequence(parent_relid);
+
+	/* Insert new entry to pathman config */
+	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression,
+											  p_interval::TEXT);
 
 	IF p_count != 0 THEN
 		part_count := @extschema@.create_range_partitions_internal(
 						parent_relid,
-						@extschema@.generate_range_bounds(start_value, p_interval, p_count),
+						@extschema@.generate_range_bounds(start_value,
+														  p_interval,
+														  p_count),
 						NULL,
 						NULL);
 	END IF;
@@ -289,10 +255,10 @@ CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions(
 	partition_names	TEXT[] DEFAULT NULL,
 	tablespaces		TEXT[] DEFAULT NULL,
 	partition_data	BOOLEAN DEFAULT TRUE)
-RETURNS INTEGER AS
-$$
+RETURNS INTEGER AS $$
 DECLARE
-	part_count	INTEGER;
+	part_count		INTEGER := 0;
+
 BEGIN
 	IF array_ndims(bounds) > 1 THEN
 		RAISE EXCEPTION 'Bounds array must be a one dimensional array';
@@ -303,7 +269,9 @@ BEGIN
 	END IF;
 
 	expression := lower(expression);
-	PERFORM @extschema@.prepare_for_partitioning(parent_relid, expression, partition_data);
+	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data);
 
 	/* Check boundaries */
 	PERFORM @extschema@.check_boundaries(parent_relid,
@@ -311,12 +279,11 @@ BEGIN
 										 bounds[0],
 										 bounds[array_length(bounds, 1) - 1]);
 
-	/* Insert new entry to pathman config */
-	EXECUTE format('ANALYZE %s', parent_relid);
-	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression, NULL, 2);
-
 	/* Create sequence for child partitions names */
-	PERFORM @extschema@.create_or_replace_sequence(parent_relid);
+	PERFORM @extschema@.create_naming_sequence(parent_relid);
+
+	/* Insert new entry to pathman config */
+	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression, NULL);
 
 	/* Create partitions */
 	part_count := @extschema@.create_range_partitions_internal(parent_relid,
@@ -347,14 +314,15 @@ CREATE OR REPLACE FUNCTION @extschema@.create_partitions_from_range(
 	end_value		ANYELEMENT,
 	p_interval		ANYELEMENT,
 	partition_data	BOOLEAN DEFAULT TRUE)
-RETURNS INTEGER AS
-$$
+RETURNS INTEGER AS $$
 DECLARE
 	part_count		INTEGER := 0;
 
 BEGIN
 	expression := lower(expression);
-	PERFORM @extschema@.prepare_for_partitioning(parent_relid, expression, partition_data);
+	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data);
 
 	/* Check boundaries */
 	PERFORM @extschema@.check_boundaries(parent_relid,
@@ -362,13 +330,12 @@ BEGIN
 										 start_value,
 										 end_value);
 
-	/* Insert new entry to pathman config */
-	EXECUTE format('ANALYZE %s', parent_relid);
-	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression,
-		p_interval::TEXT);
-
 	/* Create sequence for child partitions names */
-	PERFORM @extschema@.create_or_replace_sequence(parent_relid);
+	PERFORM @extschema@.create_naming_sequence(parent_relid);
+
+	/* Insert new entry to pathman config */
+	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression,
+											  p_interval::TEXT);
 
 	WHILE start_value <= end_value
 	LOOP
@@ -404,15 +371,15 @@ CREATE OR REPLACE FUNCTION @extschema@.create_partitions_from_range(
 	end_value		ANYELEMENT,
 	p_interval		INTERVAL,
 	partition_data	BOOLEAN DEFAULT TRUE)
-RETURNS INTEGER AS
-$$
+RETURNS INTEGER AS $$
 DECLARE
 	part_count		INTEGER := 0;
 
 BEGIN
 	expression := lower(expression);
-	PERFORM @extschema@.prepare_for_partitioning(parent_relid, expression,
-		partition_data);
+	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data);
 
 	/* Check boundaries */
 	PERFORM @extschema@.check_boundaries(parent_relid,
@@ -420,13 +387,12 @@ BEGIN
 										 start_value,
 										 end_value);
 
-	/* Insert new entry to pathman config */
-	EXECUTE format('ANALYZE %s', parent_relid);
-	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression,
-		p_interval::TEXT);
-
 	/* Create sequence for child partitions names */
-	PERFORM @extschema@.create_or_replace_sequence(parent_relid);
+	PERFORM @extschema@.create_naming_sequence(parent_relid);
+
+	/* Insert new entry to pathman config */
+	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression,
+											  p_interval::TEXT);
 
 	WHILE start_value <= end_value
 	LOOP
@@ -532,8 +498,7 @@ LANGUAGE C;
 CREATE OR REPLACE FUNCTION @extschema@.merge_range_partitions(
 	partition1		REGCLASS,
 	partition2		REGCLASS)
-RETURNS VOID AS
-$$
+RETURNS VOID AS $$
 BEGIN
 	PERFORM @extschema@.merge_range_partitions(array[partition1, partition2]::regclass[]);
 END
@@ -546,12 +511,11 @@ CREATE OR REPLACE FUNCTION @extschema@.append_range_partition(
 	parent_relid	REGCLASS,
 	partition_name	TEXT DEFAULT NULL,
 	tablespace		TEXT DEFAULT NULL)
-RETURNS TEXT AS
-$$
+RETURNS TEXT AS $$
 DECLARE
-	v_atttype		REGTYPE;
-	v_part_name		TEXT;
-	v_interval		TEXT;
+	part_expr_type	REGTYPE;
+	part_name		TEXT;
+	part_interval	TEXT;
 
 BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
@@ -559,34 +523,33 @@ BEGIN
 	/* Acquire lock on parent */
 	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 
-	v_atttype := @extschema@.get_partition_key_type(parent_relid);
+	part_expr_type := @extschema@.get_partition_key_type(parent_relid);
 
-	IF NOT @extschema@.is_date_type(v_atttype) AND
-	   NOT @extschema@.is_operator_supported(v_atttype, '+') THEN
-		RAISE EXCEPTION 'type % does not support ''+'' operator', v_atttype::REGTYPE;
+	IF NOT @extschema@.is_date_type(part_expr_type) AND
+	   NOT @extschema@.is_operator_supported(part_expr_type, '+') THEN
+		RAISE EXCEPTION 'type % does not support ''+'' operator', part_expr_type::REGTYPE;
 	END IF;
 
 	SELECT range_interval
 	FROM @extschema@.pathman_config
 	WHERE partrel = parent_relid
-	INTO v_interval;
+	INTO part_interval;
 
 	EXECUTE
 		format('SELECT @extschema@.append_partition_internal($1, $2, $3, ARRAY[]::%s[], $4, $5)',
-			   @extschema@.get_base_type(v_atttype)::TEXT)
+			   @extschema@.get_base_type(part_expr_type)::TEXT)
 	USING
 		parent_relid,
-		v_atttype,
-		v_interval,
+		part_expr_type,
+		part_interval,
 		partition_name,
 		tablespace
 	INTO
-		v_part_name;
+		part_name;
 
-	RETURN v_part_name;
+	RETURN part_name;
 END
-$$
-LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 /*
  * Spawn logic for append_partition(). We have to
@@ -601,11 +564,10 @@ CREATE OR REPLACE FUNCTION @extschema@.append_partition_internal(
 	p_range			ANYARRAY DEFAULT NULL,
 	partition_name	TEXT DEFAULT NULL,
 	tablespace		TEXT DEFAULT NULL)
-RETURNS TEXT AS
-$$
+RETURNS TEXT AS $$
 DECLARE
-	v_part_name		TEXT;
-	v_atttype		REGTYPE;
+	part_expr_type	REGTYPE;
+	part_name		TEXT;
 	v_args_format	TEXT;
 
 BEGIN
@@ -613,11 +575,11 @@ BEGIN
 		RAISE EXCEPTION 'cannot append to empty partitions set';
 	END IF;
 
-	v_atttype := @extschema@.get_base_type(p_atttype);
+	part_expr_type := @extschema@.get_base_type(p_atttype);
 
 	/* We have to pass fake NULL casted to column's type */
 	EXECUTE format('SELECT @extschema@.get_part_range($1, -1, NULL::%s)',
-				   v_atttype::TEXT)
+				   part_expr_type::TEXT)
 	USING parent_relid
 	INTO p_range;
 
@@ -626,9 +588,9 @@ BEGIN
 	END IF;
 
 	IF @extschema@.is_date_type(p_atttype) THEN
-		v_args_format := format('$1, $2, ($2 + $3::interval)::%s, $4, $5', v_atttype::TEXT);
+		v_args_format := format('$1, $2, ($2 + $3::interval)::%s, $4, $5', part_expr_type::TEXT);
 	ELSE
-		v_args_format := format('$1, $2, $2 + $3::%s, $4, $5', v_atttype::TEXT);
+		v_args_format := format('$1, $2, $2 + $3::%s, $4, $5', part_expr_type::TEXT);
 	END IF;
 
 	EXECUTE
@@ -640,12 +602,11 @@ BEGIN
 		partition_name,
 		tablespace
 	INTO
-		v_part_name;
+		part_name;
 
-	RETURN v_part_name;
+	RETURN part_name;
 END
-$$
-LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 /*
  * Prepend new partition.
@@ -654,12 +615,11 @@ CREATE OR REPLACE FUNCTION @extschema@.prepend_range_partition(
 	parent_relid	REGCLASS,
 	partition_name	TEXT DEFAULT NULL,
 	tablespace		TEXT DEFAULT NULL)
-RETURNS TEXT AS
-$$
+RETURNS TEXT AS $$
 DECLARE
-	v_atttype		REGTYPE;
-	v_part_name		TEXT;
-	v_interval		TEXT;
+	part_expr_type	REGTYPE;
+	part_name		TEXT;
+	part_interval	TEXT;
 
 BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
@@ -667,34 +627,33 @@ BEGIN
 	/* Acquire lock on parent */
 	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
 
-	v_atttype := @extschema@.get_partition_key_type(parent_relid);
+	part_expr_type := @extschema@.get_partition_key_type(parent_relid);
 
-	IF NOT @extschema@.is_date_type(v_atttype) AND
-	   NOT @extschema@.is_operator_supported(v_atttype, '-') THEN
-		RAISE EXCEPTION 'type % does not support ''-'' operator', v_atttype::REGTYPE;
+	IF NOT @extschema@.is_date_type(part_expr_type) AND
+	   NOT @extschema@.is_operator_supported(part_expr_type, '-') THEN
+		RAISE EXCEPTION 'type % does not support ''-'' operator', part_expr_type::REGTYPE;
 	END IF;
 
 	SELECT range_interval
 	FROM @extschema@.pathman_config
 	WHERE partrel = parent_relid
-	INTO v_interval;
+	INTO part_interval;
 
 	EXECUTE
 		format('SELECT @extschema@.prepend_partition_internal($1, $2, $3, ARRAY[]::%s[], $4, $5)',
-			   @extschema@.get_base_type(v_atttype)::TEXT)
+			   @extschema@.get_base_type(part_expr_type)::TEXT)
 	USING
 		parent_relid,
-		v_atttype,
-		v_interval,
+		part_expr_type,
+		part_interval,
 		partition_name,
 		tablespace
 	INTO
-		v_part_name;
+		part_name;
 
-	RETURN v_part_name;
+	RETURN part_name;
 END
-$$
-LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 /*
  * Spawn logic for prepend_partition(). We have to
@@ -709,11 +668,10 @@ CREATE OR REPLACE FUNCTION @extschema@.prepend_partition_internal(
 	p_range			ANYARRAY DEFAULT NULL,
 	partition_name	TEXT DEFAULT NULL,
 	tablespace		TEXT DEFAULT NULL)
-RETURNS TEXT AS
-$$
+RETURNS TEXT AS $$
 DECLARE
-	v_part_name		TEXT;
-	v_atttype		REGTYPE;
+	part_expr_type	REGTYPE;
+	part_name		TEXT;
 	v_args_format	TEXT;
 
 BEGIN
@@ -721,11 +679,11 @@ BEGIN
 		RAISE EXCEPTION 'cannot prepend to empty partitions set';
 	END IF;
 
-	v_atttype := @extschema@.get_base_type(p_atttype);
+	part_expr_type := @extschema@.get_base_type(p_atttype);
 
 	/* We have to pass fake NULL casted to column's type */
 	EXECUTE format('SELECT @extschema@.get_part_range($1, 0, NULL::%s)',
-				   v_atttype::TEXT)
+				   part_expr_type::TEXT)
 	USING parent_relid
 	INTO p_range;
 
@@ -734,9 +692,9 @@ BEGIN
 	END IF;
 
 	IF @extschema@.is_date_type(p_atttype) THEN
-		v_args_format := format('$1, ($2 - $3::interval)::%s, $2, $4, $5', v_atttype::TEXT);
+		v_args_format := format('$1, ($2 - $3::interval)::%s, $2, $4, $5', part_expr_type::TEXT);
 	ELSE
-		v_args_format := format('$1, $2 - $3::%s, $2, $4, $5', v_atttype::TEXT);
+		v_args_format := format('$1, $2 - $3::%s, $2, $4, $5', part_expr_type::TEXT);
 	END IF;
 
 	EXECUTE
@@ -748,12 +706,11 @@ BEGIN
 		partition_name,
 		tablespace
 	INTO
-		v_part_name;
+		part_name;
 
-	RETURN v_part_name;
+	RETURN part_name;
 END
-$$
-LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 /*
  * Add new partition
@@ -764,10 +721,9 @@ CREATE OR REPLACE FUNCTION @extschema@.add_range_partition(
 	end_value		ANYELEMENT,
 	partition_name	TEXT DEFAULT NULL,
 	tablespace		TEXT DEFAULT NULL)
-RETURNS TEXT AS
-$$
+RETURNS TEXT AS $$
 DECLARE
-	v_part_name		TEXT;
+	part_name		TEXT;
 
 BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
@@ -787,16 +743,15 @@ BEGIN
 	END IF;
 
 	/* Create new partition */
-	v_part_name := @extschema@.create_single_range_partition(parent_relid,
-															 start_value,
-															 end_value,
-															 partition_name,
-															 tablespace);
+	part_name := @extschema@.create_single_range_partition(parent_relid,
+														   start_value,
+														   end_value,
+														   partition_name,
+														   tablespace);
 
-	RETURN v_part_name;
+	RETURN part_name;
 END
-$$
-LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 
 /*
@@ -805,26 +760,25 @@ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION @extschema@.drop_range_partition(
 	partition_relid	REGCLASS,
 	delete_data		BOOLEAN DEFAULT TRUE)
-RETURNS TEXT AS
-$$
+RETURNS TEXT AS $$
 DECLARE
 	parent_relid	REGCLASS;
 	part_name		TEXT;
+	part_type		INTEGER;
 	v_relkind		CHAR;
 	v_rows			BIGINT;
-	v_part_type		INTEGER;
 
 BEGIN
 	parent_relid := @extschema@.get_parent_of_partition(partition_relid);
-	part_name := partition_relid::TEXT; /* save the name to be returned */
 
-	SELECT parttype
-	FROM @extschema@.pathman_config
-	WHERE partrel = parent_relid
-	INTO v_part_type;
+	PERFORM @extschema@.validate_relname(parent_relid);
+	PERFORM @extschema@.validate_relname(partition_relid);
+
+	part_name := partition_relid::TEXT; /* save the name to be returned */
+	part_type := @extschema@.get_partition_type(parent_relid);
 
 	/* Check if this is a RANGE partition */
-	IF v_part_type != 2 THEN
+	IF part_type != 2 THEN
 		RAISE EXCEPTION '"%" is not a RANGE partition', partition_relid::TEXT;
 	END IF;
 
@@ -858,8 +812,7 @@ BEGIN
 
 	RETURN part_name;
 END
-$$
-LANGUAGE plpgsql
+$$ LANGUAGE plpgsql
 SET pg_pathman.enable_partitionfilter = off; /* ensures that PartitionFilter is OFF */
 
 /*
@@ -870,10 +823,9 @@ CREATE OR REPLACE FUNCTION @extschema@.attach_range_partition(
 	partition_relid	REGCLASS,
 	start_value		ANYELEMENT,
 	end_value		ANYELEMENT)
-RETURNS TEXT AS
-$$
+RETURNS TEXT AS $$
 DECLARE
-	v_attname			TEXT;
+	part_expr			TEXT;
 	rel_persistence		CHAR;
 	v_init_callback		REGPROCEDURE;
 
@@ -903,9 +855,9 @@ BEGIN
 	/* Set inheritance */
 	EXECUTE format('ALTER TABLE %s INHERIT %s', partition_relid, parent_relid);
 
-	v_attname := attname FROM @extschema@.pathman_config WHERE partrel = parent_relid;
+	part_expr := @extschema@.get_partition_key(parent_relid);
 
-	IF v_attname IS NULL THEN
+	IF part_expr IS NULL THEN
 		RAISE EXCEPTION 'table "%" is not partitioned', parent_relid::TEXT;
 	END IF;
 
@@ -914,7 +866,7 @@ BEGIN
 				   partition_relid::TEXT,
 				   @extschema@.build_check_constraint_name(partition_relid),
 				   @extschema@.build_range_condition(partition_relid,
-													 v_attname,
+													 part_expr,
 													 start_value,
 													 end_value));
 
@@ -940,32 +892,32 @@ BEGIN
 
 	RETURN partition_relid;
 END
-$$
-LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 /*
  * Detach range partition
  */
 CREATE OR REPLACE FUNCTION @extschema@.detach_range_partition(
 	partition_relid	REGCLASS)
-RETURNS TEXT AS
-$$
+RETURNS TEXT AS $$
 DECLARE
-	v_attname		TEXT;
 	parent_relid	REGCLASS;
+	part_type		INTEGER;
 
 BEGIN
 	parent_relid := @extschema@.get_parent_of_partition(partition_relid);
 
+	PERFORM @extschema@.validate_relname(parent_relid);
+	PERFORM @extschema@.validate_relname(partition_relid);
+
 	/* Acquire lock on parent */
 	PERFORM @extschema@.prevent_relation_modification(parent_relid);
 
-	v_attname := attname
-	FROM @extschema@.pathman_config
-	WHERE partrel = parent_relid;
+	part_type := @extschema@.get_partition_type(parent_relid);
 
-	IF v_attname IS NULL THEN
-		RAISE EXCEPTION 'table "%" is not partitioned', parent_relid::TEXT;
+	/* Check if this is a RANGE partition */
+	IF part_type != 2 THEN
+		RAISE EXCEPTION '"%" is not a RANGE partition', partition_relid::TEXT;
 	END IF;
 
 	PERFORM @extschema@.prepare_partition_drop(parent_relid, partition_relid);
@@ -987,8 +939,7 @@ BEGIN
 
 	RETURN partition_relid;
 END
-$$
-LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 
 /*

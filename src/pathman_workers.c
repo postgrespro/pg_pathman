@@ -513,7 +513,7 @@ bgw_main_concurrent_part(Datum main_arg)
 			{
 				failures_count = PART_WORKER_MAX_ATTEMPTS;
 
-				elog(LOG, "relation %u is not partitioned (or does not exist)",
+				elog(LOG, "relation \"%u\" is not partitioned (or does not exist)",
 						  part_slot->relid);
 			}
 		}

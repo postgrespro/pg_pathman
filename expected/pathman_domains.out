@@ -5,7 +5,6 @@ CREATE DOMAIN domains.dom_test AS numeric CHECK (value < 1200);
 CREATE TABLE domains.dom_table(val domains.dom_test NOT NULL);
 INSERT INTO domains.dom_table SELECT generate_series(1, 999);
 SELECT create_range_partitions('domains.dom_table', 'val', 1, 100);
-NOTICE:  sequence "dom_table_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                       10
@@ -69,22 +68,22 @@ WHERE val < 450;
 
 SELECT * FROM pathman_partition_list
 ORDER BY range_min::INT, range_max::INT;
-      parent       |      partition       | parttype | partattr | range_min | range_max 
--------------------+----------------------+----------+----------+-----------+-----------
- domains.dom_table | domains.dom_table_13 |        2 | val      | -199      | -99
- domains.dom_table | domains.dom_table_11 |        2 | val      | -99       | 1
- domains.dom_table | domains.dom_table_1  |        2 | val      | 1         | 50
- domains.dom_table | domains.dom_table_14 |        2 | val      | 50        | 201
- domains.dom_table | domains.dom_table_3  |        2 | val      | 201       | 301
- domains.dom_table | domains.dom_table_4  |        2 | val      | 301       | 401
- domains.dom_table | domains.dom_table_5  |        2 | val      | 401       | 501
- domains.dom_table | domains.dom_table_6  |        2 | val      | 501       | 601
- domains.dom_table | domains.dom_table_7  |        2 | val      | 601       | 701
- domains.dom_table | domains.dom_table_8  |        2 | val      | 701       | 801
- domains.dom_table | domains.dom_table_9  |        2 | val      | 801       | 901
- domains.dom_table | domains.dom_table_10 |        2 | val      | 901       | 1001
- domains.dom_table | domains.dom_table_12 |        2 | val      | 1001      | 1101
- domains.dom_table | domains.dom_table_15 |        2 | val      | 1101      | 1201
+      parent       |      partition       | parttype | expr | range_min | range_max 
+-------------------+----------------------+----------+------+-----------+-----------
+ domains.dom_table | domains.dom_table_13 |        2 | val  | -199      | -99
+ domains.dom_table | domains.dom_table_11 |        2 | val  | -99       | 1
+ domains.dom_table | domains.dom_table_1  |        2 | val  | 1         | 50
+ domains.dom_table | domains.dom_table_14 |        2 | val  | 50        | 201
+ domains.dom_table | domains.dom_table_3  |        2 | val  | 201       | 301
+ domains.dom_table | domains.dom_table_4  |        2 | val  | 301       | 401
+ domains.dom_table | domains.dom_table_5  |        2 | val  | 401       | 501
+ domains.dom_table | domains.dom_table_6  |        2 | val  | 501       | 601
+ domains.dom_table | domains.dom_table_7  |        2 | val  | 601       | 701
+ domains.dom_table | domains.dom_table_8  |        2 | val  | 701       | 801
+ domains.dom_table | domains.dom_table_9  |        2 | val  | 801       | 901
+ domains.dom_table | domains.dom_table_10 |        2 | val  | 901       | 1001
+ domains.dom_table | domains.dom_table_12 |        2 | val  | 1001      | 1101
+ domains.dom_table | domains.dom_table_15 |        2 | val  | 1101      | 1201
 (14 rows)
 
 SELECT drop_partitions('domains.dom_table');
@@ -115,15 +114,15 @@ SELECT create_hash_partitions('domains.dom_table', 'val', 5);
 
 SELECT * FROM pathman_partition_list
 ORDER BY "partition"::TEXT;
-      parent       |      partition      | parttype | partattr | range_min | range_max 
--------------------+---------------------+----------+----------+-----------+-----------
- domains.dom_table | domains.dom_table_0 |        1 | val      |           | 
- domains.dom_table | domains.dom_table_1 |        1 | val      |           | 
- domains.dom_table | domains.dom_table_2 |        1 | val      |           | 
- domains.dom_table | domains.dom_table_3 |        1 | val      |           | 
- domains.dom_table | domains.dom_table_4 |        1 | val      |           | 
+      parent       |      partition      | parttype | expr | range_min | range_max 
+-------------------+---------------------+----------+------+-----------+-----------
+ domains.dom_table | domains.dom_table_0 |        1 | val  |           | 
+ domains.dom_table | domains.dom_table_1 |        1 | val  |           | 
+ domains.dom_table | domains.dom_table_2 |        1 | val  |           | 
+ domains.dom_table | domains.dom_table_3 |        1 | val  |           | 
+ domains.dom_table | domains.dom_table_4 |        1 | val  |           | 
 (5 rows)
 
 DROP SCHEMA domains CASCADE;
-NOTICE:  drop cascades to 8 other objects
+NOTICE:  drop cascades to 7 other objects
 DROP EXTENSION pg_pathman CASCADE;

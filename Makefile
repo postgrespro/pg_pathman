@@ -31,21 +31,21 @@ REGRESS = pathman_basic \
 		  pathman_column_type \
 		  pathman_cte \
 		  pathman_domains \
+		  pathman_expressions \
 		  pathman_foreign_keys \
 		  pathman_inserts \
 		  pathman_interval \
 		  pathman_join_clause \
 		  pathman_lateral \
+		  pathman_mergejoin \
 		  pathman_only \
 		  pathman_permissions \
+		  pathman_ri \
 		  pathman_rowmarks \
 		  pathman_runtime_nodes \
 		  pathman_update_trigger \
 		  pathman_updates \
-		  pathman_utility_stmt \
-		  pathman_calamity \
-		  pathman_ri \
-		  pathman_expressions
+		  pathman_utility_stmt
 
 EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add
 
@@ -76,5 +76,9 @@ isolationcheck: | submake-isolation
 		--temp-config=$(top_srcdir)/$(subdir)/conf.add \
 		--outputdir=./isolation_output \
 		$(ISOLATIONCHECKS)
-partitioning_tests:
+
+python_tests:
 	$(MAKE) -C tests/python partitioning_tests
+
+cmocka_tests:
+	$(MAKE) -C tests/cmocka check

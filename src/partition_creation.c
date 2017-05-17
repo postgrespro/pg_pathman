@@ -98,9 +98,9 @@ static Node *build_partitioning_expression(Oid parent_relid,
  */
 Oid
 create_single_range_partition_internal(Oid parent_relid,
-									   Oid value_type,
 									   const Bound *start_value,
 									   const Bound *end_value,
+									   Oid value_type,
 									   RangeVar *partition_rv,
 									   char *tablespace,
 									   List *ri_constraints,
@@ -108,9 +108,9 @@ create_single_range_partition_internal(Oid parent_relid,
 {
 	Oid						partition_relid;
 	Constraint			   *check_constr;
-	Node				   *part_expr;
 	init_callback_params	callback_params;
-	List				   *trigger_columns;
+	List				   *trigger_columns = NIL;
+	Node				   *expr;
 
 	/* Generate a name if asked to */
 	if (!partition_rv)
@@ -125,7 +125,7 @@ create_single_range_partition_internal(Oid parent_relid,
 	}
 
 	/* Check pathman config anld fill variables */
-	part_expr = build_partitioning_expression(parent_relid, NULL, &trigger_columns);
+	expr = build_partitioning_expression(parent_relid, NULL, &trigger_columns);
 
 	/* Create a partition & get 'partitioning expression' */
 	partition_relid = create_single_partition_internal(parent_relid,
@@ -134,7 +134,7 @@ create_single_range_partition_internal(Oid parent_relid,
 
 	/* Build check constraint for RANGE partition */
 	check_constr = build_range_check_constraint(partition_relid,
-												part_expr,
+												expr,
 												start_value,
 												end_value,
 												value_type);
@@ -169,9 +169,9 @@ create_single_hash_partition_internal(Oid parent_relid,
 	Oid						partition_relid,
 							expr_type;
 	Constraint			   *check_constr;
-	Node				   *expr;
 	init_callback_params	callback_params;
-	List				   *trigger_columns;
+	List				   *trigger_columns = NIL;
+	Node				   *expr;
 
 	/* Generate a name if asked to */
 	if (!partition_rv)
@@ -373,7 +373,7 @@ create_partitions_for_value(Oid relid, Datum value, Oid value_type)
 		}
 	}
 	else
-		elog(ERROR, "relation \"%s\" is not partitioned",
+		elog(ERROR, "table \"%s\" is not partitioned",
 			 get_rel_name_or_relid(relid));
 
 	/* Check that 'last_partition' is valid */
@@ -422,7 +422,7 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
 			shout_if_prel_is_invalid(relid, prel, PT_RANGE);
 
 			/* Fetch base types of prel->atttype & value_type */
-			base_bound_type = getBaseType(prel->atttype);
+			base_bound_type = getBaseType(prel->ev_type);
 			base_value_type = getBaseType(value_type);
 
 			/* Search for a suitable partition if we didn't hold it */
@@ -451,19 +451,21 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
 
 				/* Copy datums in order to protect them from cache invalidation */
 				bound_min = CopyBound(&ranges[0].min,
-									  prel->attbyval,
-									  prel->attlen);
+									  prel->ev_byval,
+									  prel->ev_len);
 
 				bound_max = CopyBound(&ranges[PrelLastChild(prel)].max,
-									  prel->attbyval,
-									  prel->attlen);
+									  prel->ev_byval,
+									  prel->ev_len);
 
 				/* Check if interval is set */
 				if (isnull[Anum_pathman_config_range_interval - 1])
 				{
-					elog(ERROR,
-						 "cannot find appropriate partition for key '%s'",
-						 datum_to_cstring(value, value_type));
+					ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							 errmsg("cannot spawn new partition for key '%s'",
+									datum_to_cstring(value, value_type)),
+							 errdetail("default range interval is NULL")));
 				}
 
 				/* Retrieve interval as TEXT from tuple */
@@ -479,7 +481,7 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
 											  &bound_min, &bound_max, base_bound_type,
 											  interval_binary, interval_type,
 											  value, base_value_type,
-											  prel->attcollid);
+											  prel->ev_collid);
 			}
 		}
 		else
@@ -641,8 +643,8 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 		bounds[1] = MakeBound(should_append ? cur_leading_bound : cur_following_bound);
 
 		last_partition = create_single_range_partition_internal(parent_relid,
-																range_bound_type,
 																&bounds[0], &bounds[1],
+																range_bound_type,
 																NULL, NULL,
 																ri_constr, ri_relids);
 
@@ -1273,20 +1275,20 @@ build_range_check_constraint(Oid child_relid,
 							 const Bound *end_value,
 							 Oid value_type)
 {
-	Constraint	   *hash_constr;
+	Constraint	   *range_constr;
 	char		   *range_constr_name;
 
 	/* Build a correct name for this constraint */
 	range_constr_name = build_check_constraint_name_relid_internal(child_relid);
 
 	/* Initialize basic properties of a CHECK constraint */
-	hash_constr = make_constraint_common(range_constr_name,
-										 build_raw_range_check_tree(raw_expression,
-																	start_value,
-																	end_value,
-																	value_type));
+	range_constr = make_constraint_common(range_constr_name,
+										  build_raw_range_check_tree(raw_expression,
+																	 start_value,
+																	 end_value,
+																	 value_type));
 	/* Everything seems to be fine */
-	return hash_constr;
+	return range_constr;
 }
 
 /* Check if range overlaps with any partitions */
@@ -1308,7 +1310,7 @@ check_range_available(Oid parent_relid,
 	/* If there's no prel, return TRUE (overlap is not possible) */
 	if (!prel)
 	{
-		ereport(WARNING, (errmsg("relation \"%s\" is not partitioned",
+		ereport(WARNING, (errmsg("table \"%s\" is not partitioned",
 								 get_rel_name_or_relid(parent_relid))));
 		return true;
 	}
@@ -1319,15 +1321,15 @@ check_range_available(Oid parent_relid,
 	/* Fetch comparison function */
 	fill_type_cmp_fmgr_info(&cmp_func,
 							getBaseType(value_type),
-							getBaseType(prel->atttype));
+							getBaseType(prel->ev_type));
 
 	ranges = PrelGetRangesArray(prel);
 	for (i = 0; i < PrelChildrenCount(prel); i++)
 	{
 		int c1, c2;
 
-		c1 = cmp_bounds(&cmp_func, prel->attcollid, start, &ranges[i].max);
-		c2 = cmp_bounds(&cmp_func, prel->attcollid, end, &ranges[i].min);
+		c1 = cmp_bounds(&cmp_func, prel->ev_collid, start, &ranges[i].max);
+		c2 = cmp_bounds(&cmp_func, prel->ev_collid, end, &ranges[i].min);
 
 		/* There's something! */
 		if (c1 < 0 && c2 > 0)
@@ -1360,7 +1362,6 @@ build_raw_hash_check_tree(Node *raw_expression,
 	A_Expr		   *eq_oper			= makeNode(A_Expr);
 	FuncCall	   *part_idx_call	= makeNode(FuncCall),
 				   *hash_call		= makeNode(FuncCall);
-	//ColumnRef	   *hashed_column	= makeNode(ColumnRef);
 	A_Const		   *part_idx_c		= makeNode(A_Const),
 				   *part_count_c	= makeNode(A_Const);
 
@@ -1647,8 +1648,8 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 			break;
 
 		default:
-			elog(ERROR, "Unknown partitioning type %u", cb_params->parttype);
-			break;
+			WrongPartType(cb_params->parttype);
+			result = NULL; /* keep compiler happy */
 	}
 
 	/* Fetch function call data */
@@ -1740,14 +1741,9 @@ text_to_regprocedure(text *proc_signature)
 	return DatumGetObjectId(result);
 }
 
-typedef struct
-{
-	List *columns;
-} extract_column_names_cxt;
-
 /* Extract column names from raw expression */
 static bool
-extract_column_names(Node *node, extract_column_names_cxt *cxt)
+extract_column_names(Node *node, List **columns)
 {
 	if (node == NULL)
 		return false;
@@ -1758,10 +1754,10 @@ extract_column_names(Node *node, extract_column_names_cxt *cxt)
 
 		foreach(lc, ((ColumnRef *) node)->fields)
 			if (IsA(lfirst(lc), String))
-				cxt->columns = lappend(cxt->columns, lfirst(lc));
+				*columns = lappend(*columns, lfirst(lc));
 	}
 
-	return raw_expression_tree_walker(node, extract_column_names, cxt);
+	return raw_expression_tree_walker(node, extract_column_names, columns);
 }
 
 /* Returns raw partitioning expression + expr_type + columns */
@@ -1771,30 +1767,39 @@ build_partitioning_expression(Oid parent_relid,
 							  List **columns)		/* ret val #2 */
 {
 	/* Values extracted from PATHMAN_CONFIG */
-	Datum		 config_values[Natts_pathman_config];
-	bool		 config_nulls[Natts_pathman_config];
-	Node		*expr;
-	char		*expr_string;
+	Datum		values[Natts_pathman_config];
+	bool		isnull[Natts_pathman_config];
+	char	   *expr_cstr;
+	Node	   *expr;
 
 	/* Check that table is registered in PATHMAN_CONFIG */
-	if (!pathman_config_contains_relation(parent_relid, config_values,
-										  config_nulls, NULL, NULL))
+	if (!pathman_config_contains_relation(parent_relid, values, isnull, NULL, NULL))
 		elog(ERROR, "table \"%s\" is not partitioned",
 			 get_rel_name_or_relid(parent_relid));
 
+	expr_cstr = TextDatumGetCString(values[Anum_pathman_config_expr - 1]);
+	expr = parse_partitioning_expression(parent_relid, expr_cstr, NULL, NULL);
+	pfree(expr_cstr);
+
 	/* We need expression type for hash functions */
 	if (expr_type)
-		*expr_type = DatumGetObjectId(config_values[Anum_pathman_config_atttype - 1]);
+	{
+		char *expr_p_cstr;
 
-	expr_string = TextDatumGetCString(config_values[Anum_pathman_config_expression - 1]);
-	expr = parse_partitioning_expression(parent_relid, expr_string, NULL, NULL);
-	pfree(expr_string);
+		/* We can safely assume that this field will always remain not null */
+		Assert(!isnull[Anum_pathman_config_cooked_expr - 1]);
+		expr_p_cstr =
+				TextDatumGetCString(values[Anum_pathman_config_cooked_expr - 1]);
+
+		/* Finally return expression type */
+		*expr_type = exprType(stringToNode(expr_p_cstr));
+	}
 
 	if (columns)
 	{
-		extract_column_names_cxt context = { NIL };
-		extract_column_names(expr, &context);
-		*columns = context.columns;
+		/* Column list should be empty */
+		AssertArg(*columns == NIL);
+		extract_column_names(expr, columns);
 	}
 
 	return expr;
