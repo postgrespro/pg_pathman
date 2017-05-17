@@ -705,6 +705,8 @@ cook_partitioning_expression(const Oid relid,
 		error->cursorpos = 0;
 		error->internalpos = 0;
 
+		/* Enable pathman hooks */
+		pathman_hooks_enabled = true;
 		ReThrowError(error);
 	}
 	PG_END_TRY();
