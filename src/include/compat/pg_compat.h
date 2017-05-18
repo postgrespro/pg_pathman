@@ -165,13 +165,20 @@ extern void create_plain_partial_paths(PlannerInfo *root,
 
 /*
  * ExecEvalExpr
+ *
+ * 'errmsg' specifies error string when result of ExecEvalExpr doesn't return
+ * 		a single value
  */
 #if PG_VERSION_NUM >= 100000
-#define ExecEvalExprCompat(expr, econtext, isNull, isDone) \
+#define ExecEvalExprCompat(expr, econtext, isNull, errmsg) \
 	ExecEvalExpr((expr), (econtext), (isNull))
-#else
-#define ExecEvalExprCompat(expr, econtext, isNull, isDone) \
-	ExecEvalExpr((expr), (econtext), (isNull), (isDone))
+#elif PG_VERSION_NUM >= 90500
+#define ExecEvalExprCompat(expr, econtext, isNull, errmsg) \
+	do { \
+		ExecEvalExpr((expr), (econtext), (isNull), (isDone)); \
+		if (isDone != ExprSingleResult) \
+			elog(ERROR, (errmsg)); \
+	} while (0)
 #endif
 
 

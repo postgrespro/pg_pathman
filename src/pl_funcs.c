@@ -1153,9 +1153,6 @@ pathman_update_trigger_func(PG_FUNCTION_ARGS)
 	Datum					value;
 	Oid						value_type;
 	bool					isnull;
-#if PG_VERSION_NUM < 100000
-	ExprDoneCond			itemIsDone;
-#endif
 
 	Oid					   *parts;
 	int						nparts;
@@ -1204,16 +1201,12 @@ pathman_update_trigger_func(PG_FUNCTION_ARGS)
 														 source_rel,
 														 new_tuple,
 														 &value_type);
-	value = ExecEvalExprCompat(expr_state, econtext, &isnull, &itemIsDone);
+	value = ExecEvalExprCompat(expr_state, econtext, &isnull,
+				ERR_PART_ATTR_MULTIPLE_RESULTS);
 	MemoryContextSwitchTo(old_mcxt);
 
 	if (isnull)
 		elog(ERROR, ERR_PART_ATTR_NULL);
-
-#if PG_VERSION_NUM < 100000
-	if (itemIsDone != ExprSingleResult)
-		elog(ERROR, ERR_PART_ATTR_MULTIPLE_RESULTS);
-#endif
 
 	/* Search for matching partitions */
 	parts = find_partitions_for_value(value, value_type, prel, &nparts);

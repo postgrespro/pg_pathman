@@ -600,9 +600,6 @@ partition_filter_exec(CustomScanState *node)
 		ResultRelInfoHolder		   *rri_holder;
 		bool						isnull;
 		Datum						value;
-#if PG_VERSION_NUM < 100000
-		ExprDoneCond				itemIsDone;
-#endif
 		TupleTableSlot			   *tmp_slot;
 
 		/* Fetch PartRelationInfo for this partitioned relation */
@@ -624,16 +621,11 @@ partition_filter_exec(CustomScanState *node)
 		tmp_slot = econtext->ecxt_scantuple;
 		econtext->ecxt_scantuple = slot;
 		value = ExecEvalExprCompat(state->expr_state, econtext, &isnull,
-								   &itemIsDone);
+					ERR_PART_ATTR_MULTIPLE_RESULTS);
 		econtext->ecxt_scantuple = tmp_slot;
 
 		if (isnull)
 			elog(ERROR, ERR_PART_ATTR_NULL);
-
-#if PG_VERSION_NUM < 100000
-		if (itemIsDone != ExprSingleResult)
-			elog(ERROR, ERR_PART_ATTR_MULTIPLE_RESULTS);
-#endif
 
 		/* Search for a matching partition */
 		rri_holder = select_partition_for_insert(value, prel->ev_type, prel,
