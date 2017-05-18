@@ -1,0 +1,299 @@
+\set VERBOSITY terse
+CREATE EXTENSION pg_pathman;
+/* Create two level partitioning structure */
+CREATE TABLE abc(a INTEGER NOT NULL, b INTEGER NOT NULL);
+INSERT INTO abc SELECT i, i FROM generate_series(1, 200, 20) as i;
+SELECT create_range_partitions('abc', 'a', 0, 100, 2);
+NOTICE:  sequence "abc_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+SELECT create_hash_partitions('abc_1', 'a', 3);
+ create_hash_partitions 
+------------------------
+                      3
+(1 row)
+
+SELECT create_hash_partitions('abc_2', 'b', 2);
+ create_hash_partitions 
+------------------------
+                      2
+(1 row)
+
+SELECT * FROM pathman_partition_list;
+ parent | partition | parttype | partattr | range_min | range_max 
+--------+-----------+----------+----------+-----------+-----------
+ abc    | abc_1     |        2 | a        | 0         | 100
+ abc    | abc_2     |        2 | a        | 100       | 200
+ abc_1  | abc_1_0   |        1 | a        |           | 
+ abc_1  | abc_1_1   |        1 | a        |           | 
+ abc_1  | abc_1_2   |        1 | a        |           | 
+ abc_2  | abc_2_0   |        1 | b        |           | 
+ abc_2  | abc_2_1   |        1 | b        |           | 
+(7 rows)
+
+SELECT tableoid::regclass, * FROM abc;
+ tableoid |  a  |  b  
+----------+-----+-----
+ abc_1_0  |  21 |  21
+ abc_1_0  |  61 |  61
+ abc_1_1  |  41 |  41
+ abc_1_2  |   1 |   1
+ abc_1_2  |  81 |  81
+ abc_2_0  | 101 | 101
+ abc_2_0  | 141 | 141
+ abc_2_1  | 121 | 121
+ abc_2_1  | 161 | 161
+ abc_2_1  | 181 | 181
+(10 rows)
+
+/* Insert should result in creating of new subpartition */
+SELECT append_range_partition('abc', 'abc_3');
+ append_range_partition 
+------------------------
+ abc_3
+(1 row)
+
+SELECT create_range_partitions('abc_3', 'b', 200, 10, 2);
+NOTICE:  sequence "abc_3_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+SELECT * FROM pathman_partition_list WHERE parent = 'abc_3'::regclass;
+ parent | partition | parttype | partattr | range_min | range_max 
+--------+-----------+----------+----------+-----------+-----------
+ abc_3  | abc_3_1   |        2 | b        | 200       | 210
+ abc_3  | abc_3_2   |        2 | b        | 210       | 220
+(2 rows)
+
+INSERT INTO abc VALUES (215, 215);
+SELECT * FROM pathman_partition_list WHERE parent = 'abc_3'::regclass;
+ parent | partition | parttype | partattr | range_min | range_max 
+--------+-----------+----------+----------+-----------+-----------
+ abc_3  | abc_3_1   |        2 | b        | 200       | 210
+ abc_3  | abc_3_2   |        2 | b        | 210       | 220
+(2 rows)
+
+SELECT tableoid::regclass, * FROM abc WHERE a = 215 AND b = 215;
+ tableoid |  a  |  b  
+----------+-----+-----
+ abc_3_2  | 215 | 215
+(1 row)
+
+/* Pruning tests */
+EXPLAIN (COSTS OFF) SELECT * FROM abc WHERE a < 150;
+           QUERY PLAN            
+---------------------------------
+ Append
+   ->  Append
+         ->  Seq Scan on abc_1_0
+         ->  Seq Scan on abc_1_1
+         ->  Seq Scan on abc_1_2
+   ->  Append
+         ->  Seq Scan on abc_2_0
+               Filter: (a < 150)
+         ->  Seq Scan on abc_2_1
+               Filter: (a < 150)
+(10 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM abc WHERE b = 215;
+           QUERY PLAN            
+---------------------------------
+ Append
+   ->  Append
+         ->  Seq Scan on abc_1_0
+               Filter: (b = 215)
+         ->  Seq Scan on abc_1_1
+               Filter: (b = 215)
+         ->  Seq Scan on abc_1_2
+               Filter: (b = 215)
+   ->  Append
+         ->  Seq Scan on abc_2_1
+               Filter: (b = 215)
+   ->  Append
+         ->  Seq Scan on abc_3_2
+               Filter: (b = 215)
+(14 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM abc WHERE a = 215 AND b = 215;
+                   QUERY PLAN                    
+-------------------------------------------------
+ Append
+   ->  Append
+         ->  Seq Scan on abc_3_2
+               Filter: ((a = 215) AND (b = 215))
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM abc WHERE a >= 210 and b >= 210;
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Append
+         ->  Seq Scan on abc_3_2
+               Filter: (a >= 210)
+(4 rows)
+
+/* Multilevel partitioning with update triggers */
+CREATE OR REPLACE FUNCTION partitions_tree(rel REGCLASS)
+RETURNS SETOF REGCLASS AS
+$$
+DECLARE
+	partition		REGCLASS;
+	subpartition	REGCLASS;
+BEGIN
+	IF rel IS NULL THEN
+		RETURN;
+	END IF;
+
+	RETURN NEXT rel;
+
+	FOR partition IN (SELECT l.partition FROM pathman_partition_list l WHERE parent = rel)
+	LOOP
+		FOR subpartition IN (SELECT partitions_tree(partition))
+		LOOP
+			RETURN NEXT subpartition;
+		END LOOP;
+	END LOOP;
+END
+$$ LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION get_triggers(rel REGCLASS)
+RETURNS SETOF TEXT AS
+$$
+DECLARE
+	def TEXT;
+BEGIN
+	FOR def IN (SELECT pg_get_triggerdef(oid) FROM pg_trigger WHERE tgrelid = rel)
+	LOOP
+		RETURN NEXT def;
+	END LOOP;
+
+	RETURN;
+END;
+$$ LANGUAGE plpgsql;
+SELECT create_update_triggers('abc_1');	/* Cannot perform on partition */
+ERROR:  Parent table must have an update trigger
+SELECT create_update_triggers('abc');	/* Only on parent */
+ create_update_triggers 
+------------------------
+ 
+(1 row)
+
+SELECT p, get_triggers(p) FROM partitions_tree('abc') as p;
+    p    |                                                        get_triggers                                                         
+---------+-----------------------------------------------------------------------------------------------------------------------------
+ abc     | CREATE TRIGGER abc_upd_trig BEFORE UPDATE OF a ON abc FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ abc_1   | CREATE TRIGGER abc_upd_trig BEFORE UPDATE OF a ON abc_1 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ abc_1   | CREATE TRIGGER abc_1_upd_trig BEFORE UPDATE OF a ON abc_1 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ abc_1_0 | CREATE TRIGGER abc_1_upd_trig BEFORE UPDATE OF a ON abc_1_0 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ abc_1_1 | CREATE TRIGGER abc_1_upd_trig BEFORE UPDATE OF a ON abc_1_1 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ abc_1_2 | CREATE TRIGGER abc_1_upd_trig BEFORE UPDATE OF a ON abc_1_2 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ abc_2   | CREATE TRIGGER abc_upd_trig BEFORE UPDATE OF a ON abc_2 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ abc_2   | CREATE TRIGGER abc_2_upd_trig BEFORE UPDATE OF b, a ON abc_2 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ abc_2_0 | CREATE TRIGGER abc_2_upd_trig BEFORE UPDATE OF b, a ON abc_2_0 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ abc_2_1 | CREATE TRIGGER abc_2_upd_trig BEFORE UPDATE OF b, a ON abc_2_1 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ abc_3   | CREATE TRIGGER abc_upd_trig BEFORE UPDATE OF a ON abc_3 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ abc_3   | CREATE TRIGGER abc_3_upd_trig BEFORE UPDATE OF b, a ON abc_3 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ abc_3_1 | CREATE TRIGGER abc_3_upd_trig BEFORE UPDATE OF b, a ON abc_3_1 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ abc_3_2 | CREATE TRIGGER abc_3_upd_trig BEFORE UPDATE OF b, a ON abc_3_2 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+(14 rows)
+
+SELECT append_range_partition('abc', 'abc_4');
+ append_range_partition 
+------------------------
+ abc_4
+(1 row)
+
+SELECT create_hash_partitions('abc_4', 'b', 2); /* Triggers should automatically
+ create_hash_partitions 
+------------------------
+                      2
+(1 row)
+
+												 * be created on subpartitions */
+SELECT p, get_triggers(p) FROM partitions_tree('abc_4') as p;
+    p    |                                                        get_triggers                                                         
+---------+-----------------------------------------------------------------------------------------------------------------------------
+ abc_4   | CREATE TRIGGER abc_upd_trig BEFORE UPDATE OF a ON abc_4 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ abc_4   | CREATE TRIGGER abc_4_upd_trig BEFORE UPDATE OF b, a ON abc_4 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ abc_4_0 | CREATE TRIGGER abc_4_upd_trig BEFORE UPDATE OF b, a ON abc_4_0 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ abc_4_1 | CREATE TRIGGER abc_4_upd_trig BEFORE UPDATE OF b, a ON abc_4_1 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+(4 rows)
+
+SELECT drop_triggers('abc_1');			/* Cannot perform on partition */
+ERROR:  Parent table must not have an update trigger
+SELECT drop_triggers('abc');			/* Only on parent */
+ drop_triggers 
+---------------
+ 
+(1 row)
+
+SELECT p, get_triggers(p) FROM partitions_tree('abc') as p;	/* No partitions */
+ p | get_triggers 
+---+--------------
+(0 rows)
+
+DROP TABLE abc CASCADE;
+NOTICE:  drop cascades to 13 other objects
+/* Test that update trigger words correclty */
+CREATE TABLE abc(a INTEGER NOT NULL, b INTEGER NOT NULL);
+SELECT create_range_partitions('abc', 'a', 0, 100, 2);
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+SELECT create_range_partitions('abc_1', 'b', 0, 50, 2);
+NOTICE:  sequence "abc_1_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+SELECT create_range_partitions('abc_2', 'b', 0, 50, 2);
+NOTICE:  sequence "abc_2_seq" does not exist, skipping
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+SELECT create_update_triggers('abc');
+ create_update_triggers 
+------------------------
+ 
+(1 row)
+
+INSERT INTO abc VALUES (25, 25);		/* Should get into abc_1_1 */
+SELECT tableoid::regclass, * FROM abc;
+ tableoid | a  | b  
+----------+----+----
+ abc_1_1  | 25 | 25
+(1 row)
+
+UPDATE abc SET a = 125 WHERE a = 25 and b = 25;
+SELECT tableoid::regclass, * FROM abc;	/* Should be in abc_2_1 */
+ tableoid |  a  | b  
+----------+-----+----
+ abc_2_1  | 125 | 25
+(1 row)
+
+UPDATE abc SET b = 75 WHERE a = 125 and b = 25;
+SELECT tableoid::regclass, * FROM abc;	/* Should be in abc_2_2 */
+ tableoid |  a  | b  
+----------+-----+----
+ abc_2_2  | 125 | 75
+(1 row)
+
+UPDATE abc SET b = 125 WHERE a = 125 and b = 75;
+SELECT tableoid::regclass, * FROM abc;	/* Should create partition abc_2_3 */
+ tableoid |  a  |  b  
+----------+-----+-----
+ abc_2_3  | 125 | 125
+(1 row)
+
+DROP TABLE abc CASCADE;
+NOTICE:  drop cascades to 7 other objects
+DROP EXTENSION pg_pathman;

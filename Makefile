@@ -31,6 +31,7 @@ REGRESS = pathman_basic \
 		  pathman_column_type \
 		  pathman_cte \
 		  pathman_domains \
+		  pathman_expressions \
 		  pathman_foreign_keys \
 		  pathman_inserts \
 		  pathman_interval \
@@ -40,10 +41,10 @@ REGRESS = pathman_basic \
 		  pathman_permissions \
 		  pathman_rowmarks \
 		  pathman_runtime_nodes \
+		  pathman_subpartitions \
 		  pathman_update_trigger \
 		  pathman_updates \
-		  pathman_utility_stmt \
-		  pathman_expressions
+		  pathman_utility_stmt
 
 
 EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add
