@@ -16,6 +16,19 @@ SELECT COUNT(*) FROM test_exprs.hash_rel;
      5
 (1 row)
 
+\set VERBOSITY default
+SELECT create_hash_partitions('test_exprs.hash_rel', 'value * value2))', 4);
+ERROR:  partitioning expression parse error
+DETAIL:  syntax error at or near ")"
+QUERY:  SELECT public.add_to_pathman_config(parent_relid, expression)
+CONTEXT:  PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 9 at PERFORM
+SELECT create_hash_partitions('test_exprs.hash_rel', 'value * value3', 4);
+ERROR:  partitioning expression analyze error
+DETAIL:  column "value3" does not exist
+HINT:  Perhaps you meant to reference the column "hash_rel.value" or the column "hash_rel.value2".
+QUERY:  SELECT public.add_to_pathman_config(parent_relid, expression)
+CONTEXT:  PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 9 at PERFORM
+\set VERBOSITY terse
 SELECT create_hash_partitions('test_exprs.hash_rel', 'value * value2', 4);
  create_hash_partitions 
 ------------------------
