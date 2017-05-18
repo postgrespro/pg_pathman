@@ -1011,11 +1011,11 @@ handle_arrexpr(const ScalarArrayOpExpr *expr,
 
 	/* Check if expression tree is a partitioning expression */
 	if (!match_expr_to_operand(context->prel_expr, part_expr))
-		goto handle_arrexpr_return;
+		goto handle_arrexpr_all;
 
 	/* Check if we can work with this strategy */
 	if (strategy == 0)
-		goto handle_arrexpr_return;
+		goto handle_arrexpr_all;
 
 	/* Examine the array node */
 	switch (nodeTag(array))
@@ -1026,7 +1026,7 @@ handle_arrexpr(const ScalarArrayOpExpr *expr,
 
 				/* Array is NULL */
 				if (c->constisnull)
-					goto handle_arrexpr_return;
+					goto handle_arrexpr_none;
 
 				/* Examine array */
 				handle_array(DatumGetArrayTypeP(c->constvalue),
@@ -1048,7 +1048,7 @@ handle_arrexpr(const ScalarArrayOpExpr *expr,
 				ListCell   *lc;
 
 				if (list_length(arr_expr->elements) == 0)
-					goto handle_arrexpr_return;
+					goto handle_arrexpr_all;
 
 				/* Set default ranges for OR | AND */
 				ranges = expr->useOr ? NIL : list_make1_irange_full(prel, IR_COMPLETE);
@@ -1068,21 +1068,19 @@ handle_arrexpr(const ScalarArrayOpExpr *expr,
 					{
 						Const *c = ExtractConst(elem, context);
 
-						/* Is this an array?.. */
-						if (c->consttype != elem_type)
+						/* Is this an array?. */
+						if (c->consttype != elem_type && !c->constisnull)
 						{
-							/* Array is NULL */
-							if (c->constisnull)
-								goto handle_arrexpr_return;
-
-							/* Examine array */
 							handle_array(DatumGetArrayTypeP(c->constvalue),
 										 expr->inputcollid, strategy,
 										 expr->useOr, context, &wrap);
 						}
 						/* ... or a single element? */
-						else handle_const(c, expr->inputcollid,
-										  strategy, context, &wrap);
+						else
+						{
+							handle_const(c, expr->inputcollid,
+										 strategy, context, &wrap);
+						}
 
 						/* Should we use OR | AND? */
 						ranges = expr->useOr ?
@@ -1097,7 +1095,7 @@ handle_arrexpr(const ScalarArrayOpExpr *expr,
 				{
 					/* We can't say anything if PARAMs + ANY */
 					if (expr->useOr)
-						goto handle_arrexpr_return;
+						goto handle_arrexpr_all;
 
 					/* Recheck condition on a narrowed set of partitions */
 					ranges = irange_list_set_lossiness(ranges, IR_LOSSY);
@@ -1116,12 +1114,23 @@ handle_arrexpr(const ScalarArrayOpExpr *expr,
 			break;
 	}
 
-handle_arrexpr_return:
+handle_arrexpr_all:
 	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
 	result->paramsel = estimate_paramsel_using_prel(prel, strategy);
 
 	/* Save expression */
 	result->orig = (const Node *) expr;
+
+	return;
+
+handle_arrexpr_none:
+	result->rangeset = NIL;
+	result->paramsel = 0.0;
+
+	/* Save expression */
+	result->orig = (const Node *) expr;
+
+	return;
 }
 
 /* Operator expression handler */
