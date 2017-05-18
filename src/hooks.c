@@ -217,18 +217,8 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 			 have_dangerous_phv(root, outer->parent->relids, required_inner)))
 			return;
 
-
-/* TODO: create macro initial_cost_nestloop_compat() */
-#if (defined(PGPRO_VERSION) && PG_VERSION_NUM >= 90603) || \
-	PG_VERSION_NUM >= 100000
-		initial_cost_nestloop(root, &workspace, jointype,
-							  outer, inner, /* built paths */
-							  extra);
-#else
-		initial_cost_nestloop(root, &workspace, jointype,
-							  outer, inner, /* built paths */
-							  extra->sjinfo, &extra->semifactors);
-#endif
+		initial_cost_nestloop_compat(root, &workspace, jointype, outer, inner,
+									 extra);
 
 		pathkeys = build_join_pathkeys(root, joinrel, jointype, outer->pathkeys);
 
@@ -242,24 +232,11 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 				filtered_joinclauses = lappend(filtered_joinclauses, rinfo);
 		}
 
-/* TODO: create macro create_nestloop_path_compat() */
-#if (defined(PGPRO_VERSION) && PG_VERSION_NUM >= 90603) || \
-	PG_VERSION_NUM >= 100000
-		nest_path = create_nestloop_path(root, joinrel, jointype, &workspace,
-										 extra,
-										 outer, inner,
-										 filtered_joinclauses,
-										 pathkeys,
-										 calc_nestloop_required_outer(outer, inner));
-#else
-		nest_path = create_nestloop_path(root, joinrel, jointype, &workspace,
-										 extra->sjinfo,
-										 &extra->semifactors,
-										 outer, inner,
-										 filtered_joinclauses,
-										 pathkeys,
-										 calc_nestloop_required_outer(outer, inner));
-#endif
+		nest_path =
+			create_nestloop_path_compat(root, joinrel, jointype,
+										&workspace, extra, outer, inner,
+										filtered_joinclauses, pathkeys,
+										calc_nestloop_required_outer(outer, inner));
 
 		/*
 		 * NOTE: Override 'rows' value produced by standard estimator.

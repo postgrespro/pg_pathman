@@ -138,6 +138,27 @@ void CatalogIndexInsert(CatalogIndexState indstate, HeapTuple heapTuple);
 
 
 /*
+ * create_nestloop_path()
+ */
+#if PG_VERSION_NUM >= 100000
+#define create_nestloop_path_compat(root, joinrel, jointype, workspace, extra, \
+									outer, inner, filtered_joinclauses, pathkeys, \
+									required_outer) \
+		create_nestloop_path((root), (joinrel), (jointype), (workspace), (extra), \
+							 (outer), (inner), (filtered_joinclauses), (pathkeys), \
+							 (required_outer))
+#elif PG_VERSION_NUM >= 90500
+#define create_nestloop_path_compat(root, joinrel, jointype, workspace, extra, \
+									outer, inner, filtered_joinclauses, pathkeys, \
+									required_outer) \
+		create_nestloop_path((root), (joinrel), (jointype), (workspace), \
+							 (extra)->sjinfo, &(extra)->semifactors, (outer), \
+							 (inner), (filtered_joinclauses), (pathkeys), \
+							 (required_outer))
+#endif
+
+
+/*
  * create_plain_partial_paths()
  */
 #if PG_VERSION_NUM >= 90600
@@ -170,15 +191,23 @@ extern void create_plain_partial_paths(PlannerInfo *root,
  * 		a single value
  */
 #if PG_VERSION_NUM >= 100000
-#define ExecEvalExprCompat(expr, econtext, isNull, errmsg) \
+#define ExecEvalExprCompat(expr, econtext, isNull, errHandler) \
 	ExecEvalExpr((expr), (econtext), (isNull))
 #elif PG_VERSION_NUM >= 90500
-#define ExecEvalExprCompat(expr, econtext, isNull, errmsg) \
-	do { \
-		ExecEvalExpr((expr), (econtext), (isNull), (isDone)); \
-		if (isDone != ExprSingleResult) \
-			elog(ERROR, (errmsg)); \
-	} while (0)
+#include "partition_filter.h"
+extern Datum exprResult;
+extern ExprDoneCond isDone;
+static inline void
+not_signle_result_handler()
+{
+	elog(ERROR, ERR_PART_ATTR_MULTIPLE_RESULTS);
+}
+#define ExecEvalExprCompat(expr, econtext, isNull, errHandler) \
+( \
+	exprResult = ExecEvalExpr((expr), (econtext), (isNull), &isDone), \
+	(isDone != ExprSingleResult) ? (errHandler)() : (0), \
+	exprResult \
+)
 #endif
 
 
@@ -209,6 +238,22 @@ extern void create_plain_partial_paths(PlannerInfo *root,
  */
 #if PG_VERSION_NUM >= 90500 && PG_VERSION_NUM < 90600
 char get_rel_persistence(Oid relid);
+#endif
+
+
+/*
+ * initial_cost_nestloop
+ */
+#if PG_VERSION_NUM >= 100000 || (defined(PGPRO_VERSION) && PG_VERSION_NUM >= 90603)
+#define initial_cost_nestloop_compat(root, workspace, jointype, outer_path, \
+									 inner_path, extra) \
+		initial_cost_nestloop((root), (workspace), (jointype), (outer_path), \
+							  (inner_path), (extra))
+#elif PG_VERSION_NUM >= 90500
+#define initial_cost_nestloop_compat(root, workspace, jointype, outer_path, \
+									 inner_path, extra) \
+		initial_cost_nestloop((root), (workspace), (jointype), (outer_path), \
+							  (inner_path), (extra)->sjinfo, &(extra)->semifactors)
 #endif
 
 

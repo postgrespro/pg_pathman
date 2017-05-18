@@ -203,6 +203,17 @@ create_plain_partial_paths(PlannerInfo *root, RelOptInfo *rel)
 
 
 /*
+ * ExecEvalExpr
+ *
+ * global variables for macro wrapper evaluation
+ */
+#if PG_VERSION_NUM >= 90500 && PG_VERSION_NUM < 100000
+Datum exprResult;
+ExprDoneCond isDone;
+#endif
+
+
+/*
  * make_result
  *	  Build a Result plan node
  */

@@ -651,7 +651,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 		tmp_slot = econtext->ecxt_scantuple;
 		econtext->ecxt_scantuple = slot;
 		value = ExecEvalExprCompat(expr_state, econtext, &isnull,
-					ERR_PART_ATTR_MULTIPLE_RESULTS);
+								   not_signle_result_handler);
 		econtext->ecxt_scantuple = tmp_slot;
 
 		if (isnull)
