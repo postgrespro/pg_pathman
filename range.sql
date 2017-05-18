@@ -67,7 +67,6 @@ DECLARE
 	i				INTEGER;
 
 BEGIN
-	expression := lower(expression);
 	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
 												 expression,
 												 partition_data);
@@ -167,7 +166,6 @@ DECLARE
 	i				INTEGER;
 
 BEGIN
-	expression := lower(expression);
 	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
 												 expression,
 												 partition_data);
@@ -268,7 +266,6 @@ BEGIN
 		RAISE EXCEPTION 'Bounds array must have at least two values';
 	END IF;
 
-	expression := lower(expression);
 	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
 												 expression,
 												 partition_data);
@@ -319,7 +316,6 @@ DECLARE
 	part_count		INTEGER := 0;
 
 BEGIN
-	expression := lower(expression);
 	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
 												 expression,
 												 partition_data);
@@ -376,7 +372,6 @@ DECLARE
 	part_count		INTEGER := 0;
 
 BEGIN
-	expression := lower(expression);
 	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
 												 expression,
 												 partition_data);

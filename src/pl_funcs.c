@@ -57,6 +57,7 @@ PG_FUNCTION_INFO_V1( build_update_trigger_func_name );
 PG_FUNCTION_INFO_V1( build_check_constraint_name );
 
 PG_FUNCTION_INFO_V1( validate_relname );
+PG_FUNCTION_INFO_V1( validate_expression );
 PG_FUNCTION_INFO_V1( is_date_type );
 PG_FUNCTION_INFO_V1( is_operator_supported );
 PG_FUNCTION_INFO_V1( is_tuple_convertible );
@@ -592,6 +593,37 @@ validate_relname(PG_FUNCTION_ARGS)
 						errdetail("triggered in function "
 								  CppAsString(validate_relname))));
 
+	PG_RETURN_VOID();
+}
+
+/*
+ * Validate a partitioning expression
+ * We need this in range functions because we do many things
+ * before actual partitioning.
+ */
+Datum
+validate_expression(PG_FUNCTION_ARGS)
+{
+	Oid			relid;
+	char	   *expression;
+
+	/* Fetch relation's Oid */
+	relid = PG_GETARG_OID(0);
+
+	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("relation \"%u\" does not exist", relid),
+						errdetail("triggered in function "
+								  CppAsString(validate_expression))));
+
+	if (!PG_ARGISNULL(1))
+	{
+		expression = TextDatumGetCString(PG_GETARG_TEXT_P(1));
+	}
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("'expression' should not be NULL")));
+
+	cook_partitioning_expression(relid, expression, NULL);
 	PG_RETURN_VOID();
 }
 

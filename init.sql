@@ -434,6 +434,7 @@ DECLARE
 
 BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
+	PERFORM @extschema@.validate_expression(parent_relid, expression);
 
 	IF partition_data = true THEN
 		/* Acquire data modification lock */
@@ -828,6 +829,15 @@ LANGUAGE C STRICT;
 CREATE OR REPLACE FUNCTION @extschema@.validate_relname(
 	relid	REGCLASS)
 RETURNS VOID AS 'pg_pathman', 'validate_relname'
+LANGUAGE C;
+
+/*
+ * Check that expression is valid
+ */
+CREATE OR REPLACE FUNCTION @extschema@.validate_expression(
+	relid	REGCLASS,
+	expression TEXT)
+RETURNS VOID AS 'pg_pathman', 'validate_expression'
 LANGUAGE C;
 
 /*
