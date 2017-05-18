@@ -37,6 +37,7 @@ REGRESS = pathman_basic \
 		  pathman_interval \
 		  pathman_join_clause \
 		  pathman_lateral \
+		  pathman_mergejoin \
 		  pathman_only \
 		  pathman_permissions \
 		  pathman_rowmarks \
@@ -76,5 +77,9 @@ isolationcheck: | submake-isolation
 		--temp-config=$(top_srcdir)/$(subdir)/conf.add \
 		--outputdir=./isolation_output \
 		$(ISOLATIONCHECKS)
-partitioning_tests:
+
+python_tests:
 	$(MAKE) -C tests/python partitioning_tests
+
+cmocka_tests:
+	$(MAKE) -C tests/cmocka check

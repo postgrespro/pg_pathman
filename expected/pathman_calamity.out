@@ -21,7 +21,6 @@ CREATE TABLE calamity.part_test(val serial);
 /* test pg_pathman's cache */
 INSERT INTO calamity.part_test SELECT generate_series(1, 30);
 SELECT create_range_partitions('calamity.part_test', 'val', 1, 10);
-NOTICE:  sequence "part_test_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                        3
@@ -270,20 +269,22 @@ SELECT build_range_condition('calamity.part_test', 'val', NULL, 10);	/* OK */
 (1 row)
 
 /* check function validate_interval_value() */
-SELECT validate_interval_value(NULL, 2, '1 mon');					/* not ok */
-ERROR:  'atttype' should not be NULL
-SELECT validate_interval_value('interval'::regtype, NULL, '1 mon');	/* not ok */
+SELECT validate_interval_value(1::REGCLASS, 'expr', 2, '1 mon', 'cooked_expr');		/* not ok */
+ERROR:  relation "1" does not exist
+SELECT validate_interval_value(NULL, 'expr', 2, '1 mon', 'cooked_expr');			/* not ok */
+ERROR:  'partrel' should not be NULL
+SELECT validate_interval_value('pg_class', NULL, 2, '1 mon', 'cooked_expr');		/* not ok */
+ERROR:  'expression' should not be NULL
+SELECT validate_interval_value('pg_class', 'oid', NULL, '1 mon', 'cooked_expr');	/* not ok */
 ERROR:  'parttype' should not be NULL
-SELECT validate_interval_value('int4'::regtype, 2, '1 mon');		/* not ok */
-ERROR:  invalid input syntax for integer: "1 mon"
-SELECT validate_interval_value('interval'::regtype, 1, '1 mon');	/* not ok */
+SELECT validate_interval_value('pg_class', 'oid', 1, 'HASH', NULL);					/* not ok */
 ERROR:  interval should be NULL for HASH partitioned table
-SELECT validate_interval_value('interval'::regtype, 2, NULL);		/* OK */
- validate_interval_value 
--------------------------
- t
-(1 row)
-
+SELECT validate_interval_value('pg_class', 'expr', 2, '1 mon', NULL);				/* not ok */
+ERROR:  cannot find type name for attribute "expr" of relation "pg_class"
+SELECT validate_interval_value('pg_class', 'expr', 2, NULL, 'cooked_expr');			/* not ok */
+ERROR:  unrecognized token: "cooked_expr"
+SELECT validate_interval_value('pg_class', 'EXPR', 1, 'HASH', NULL);				/* not ok */
+ERROR:  cannot find type name for attribute "expr" of relation "pg_class"
 /* check function validate_relname() */
 SELECT validate_relname('calamity.part_test');
  validate_relname 
@@ -471,7 +472,7 @@ SELECT generate_range_bounds('1-jan-2017'::DATE,
 SELECT check_range_available(NULL, NULL::INT4, NULL);	/* not ok */
 ERROR:  'parent_relid' should not be NULL
 SELECT check_range_available('pg_class', 1, 10);		/* OK (not partitioned) */
-WARNING:  relation "pg_class" is not partitioned
+WARNING:  table "pg_class" is not partitioned
  check_range_available 
 -----------------------
  
@@ -553,9 +554,9 @@ SELECT add_to_pathman_config(NULL, 'val');						/* no table */
 ERROR:  'parent_relid' should not be NULL
 SELECT add_to_pathman_config(0::REGCLASS, 'val');				/* no table (oid) */
 ERROR:  relation "0" does not exist
-SELECT add_to_pathman_config('calamity.part_test', NULL);		/* no column */
+SELECT add_to_pathman_config('calamity.part_test', NULL);		/* no expr */
 ERROR:  'expression' should not be NULL
-SELECT add_to_pathman_config('calamity.part_test', 'V_A_L');	/* wrong column */
+SELECT add_to_pathman_config('calamity.part_test', 'V_A_L');	/* wrong expr */
 ERROR:  cannot find type name for attribute "v_a_l" of relation "part_test"
 SELECT add_to_pathman_config('calamity.part_test', 'val');		/* OK */
  add_to_pathman_config 
@@ -702,7 +703,6 @@ SELECT count(*) FROM pathman_config_params WHERE partrel = 'calamity.to_be_disab
 /* check function get_part_range_by_idx() */
 CREATE TABLE calamity.test_range_idx(val INT4 NOT NULL);
 SELECT create_range_partitions('calamity.test_range_idx', 'val', 1, 10, 1);
-NOTICE:  sequence "test_range_idx_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                        1
@@ -725,11 +725,10 @@ SELECT get_part_range('calamity.test_range_idx', 0, NULL::INT4);	/* OK */
 (1 row)
 
 DROP TABLE calamity.test_range_idx CASCADE;
-NOTICE:  drop cascades to table calamity.test_range_idx_1
+NOTICE:  drop cascades to 2 other objects
 /* check function get_part_range_by_oid() */
 CREATE TABLE calamity.test_range_oid(val INT4 NOT NULL);
 SELECT create_range_partitions('calamity.test_range_oid', 'val', 1, 10, 1);
-NOTICE:  sequence "test_range_oid_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                        1
@@ -748,9 +747,79 @@ SELECT get_part_range('calamity.test_range_oid_1', NULL::INT4);		/* OK */
 (1 row)
 
 DROP TABLE calamity.test_range_oid CASCADE;
-NOTICE:  drop cascades to table calamity.test_range_oid_1
+NOTICE:  drop cascades to 2 other objects
+/* check function merge_range_partitions() */
+SELECT merge_range_partitions('{pg_class}');						/* not ok */
+ERROR:  cannot merge partitions
+SELECT merge_range_partitions('{pg_class, pg_inherits}');			/* not ok */
+ERROR:  cannot merge partitions
+CREATE TABLE calamity.merge_test_a(val INT4 NOT NULL);
+CREATE TABLE calamity.merge_test_b(val INT4 NOT NULL);
+SELECT create_range_partitions('calamity.merge_test_a', 'val', 1, 10, 2);
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+SELECT create_range_partitions('calamity.merge_test_b', 'val', 1, 10, 2);
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+SELECT merge_range_partitions('{calamity.merge_test_a_1,
+								calamity.merge_test_b_1}');			/* not ok */
+ERROR:  cannot merge partitions
+DROP TABLE calamity.merge_test_a,calamity.merge_test_b CASCADE;
+NOTICE:  drop cascades to 6 other objects
+/* check function drop_triggers() */
+CREATE TABLE calamity.trig_test_tbl(val INT4 NOT NULL);
+SELECT create_hash_partitions('calamity.trig_test_tbl', 'val', 2);
+ create_hash_partitions 
+------------------------
+                      2
+(1 row)
+
+SELECT create_update_triggers('calamity.trig_test_tbl');
+ create_update_triggers 
+------------------------
+ 
+(1 row)
+
+SELECT count(*) FROM pg_trigger WHERE tgrelid = 'calamity.trig_test_tbl'::REGCLASS;
+ count 
+-------
+     1
+(1 row)
+
+SELECT count(*) FROM pg_trigger WHERE tgrelid = 'calamity.trig_test_tbl_1'::REGCLASS;
+ count 
+-------
+     1
+(1 row)
+
+SELECT drop_triggers('calamity.trig_test_tbl');						/* OK */
+ drop_triggers 
+---------------
+ 
+(1 row)
+
+SELECT count(*) FROM pg_trigger WHERE tgrelid = 'calamity.trig_test_tbl'::REGCLASS;
+ count 
+-------
+     0
+(1 row)
+
+SELECT count(*) FROM pg_trigger WHERE tgrelid = 'calamity.trig_test_tbl_1'::REGCLASS;
+ count 
+-------
+     0
+(1 row)
+
+DROP TABLE calamity.trig_test_tbl CASCADE;
+NOTICE:  drop cascades to 2 other objects
 DROP SCHEMA calamity CASCADE;
-NOTICE:  drop cascades to 18 other objects
+NOTICE:  drop cascades to 15 other objects
 DROP EXTENSION pg_pathman;
 /*
  * -------------------------------------
@@ -764,7 +833,6 @@ SET pg_pathman.enable_bounds_cache = false;
 /* check view pathman_cache_stats */
 CREATE TABLE calamity.test_pathman_cache_stats(val NUMERIC NOT NULL);
 SELECT create_range_partitions('calamity.test_pathman_cache_stats', 'val', 1, 10, 10);
-NOTICE:  sequence "test_pathman_cache_stats_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                       10
@@ -851,7 +919,6 @@ SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
 
 DROP TABLE calamity.test_pathman_cache_stats;
 DROP SCHEMA calamity CASCADE;
-NOTICE:  drop cascades to sequence calamity.test_pathman_cache_stats_seq
 DROP EXTENSION pg_pathman;
 /*
  * ------------------------------------------
@@ -863,7 +930,6 @@ CREATE EXTENSION pg_pathman;
 /* check function pathman_cache_search_relid() */
 CREATE TABLE calamity.survivor(val INT NOT NULL);
 SELECT create_range_partitions('calamity.survivor', 'val', 1, 10, 2);
-NOTICE:  sequence "survivor_seq" does not exist, skipping
  create_range_partitions 
 -------------------------
                        2
@@ -903,10 +969,10 @@ SELECT add_to_pathman_config('calamity.survivor', 'val', '10');	/* OK */
 (1 row)
 
 SELECT * FROM pathman_partition_list;							/* OK */
-      parent       |      partition      | parttype | partattr | range_min | range_max 
--------------------+---------------------+----------+----------+-----------+-----------
- calamity.survivor | calamity.survivor_1 |        2 | val      | 1         | 11
- calamity.survivor | calamity.survivor_2 |        2 | val      | 11        | 21
+      parent       |      partition      | parttype | expr | range_min | range_max 
+-------------------+---------------------+----------+------+-----------+-----------
+ calamity.survivor | calamity.survivor_1 |        2 | val  | 1         | 11
+ calamity.survivor | calamity.survivor_2 |        2 | val  | 11        | 21
 (2 rows)
 
 SELECT get_part_range('calamity.survivor', 0, NULL::INT);		/* OK */
@@ -924,7 +990,6 @@ EXPLAIN (COSTS OFF) SELECT * FROM calamity.survivor;			/* OK */
 (3 rows)
 
 DROP TABLE calamity.survivor CASCADE;
-NOTICE:  drop cascades to 2 other objects
+NOTICE:  drop cascades to 3 other objects
 DROP SCHEMA calamity CASCADE;
-NOTICE:  drop cascades to sequence calamity.survivor_seq
 DROP EXTENSION pg_pathman;

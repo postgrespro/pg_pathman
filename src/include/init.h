@@ -24,6 +24,10 @@
 /* Help user in case of emergency */
 #define INIT_ERROR_HINT "pg_pathman will be disabled to allow you to resolve this issue"
 
+/* Initial size of 'partitioned_rels' table */
+#define PART_RELS_SIZE	10
+#define CHILD_FACTOR	500
+
 
 /*
  * pg_pathman's initialization state structure.

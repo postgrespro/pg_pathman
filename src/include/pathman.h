@@ -44,13 +44,12 @@
  * Definitions for the "pathman_config" table.
  */
 #define PATHMAN_CONFIG						"pathman_config"
-#define Natts_pathman_config				6
+#define Natts_pathman_config				5
 #define Anum_pathman_config_partrel			1	/* partitioned relation (regclass) */
-#define Anum_pathman_config_expression		2	/* partition expression (original) */
+#define Anum_pathman_config_expr			2	/* partition expression (original) */
 #define Anum_pathman_config_parttype		3	/* partitioning type (1|2) */
 #define Anum_pathman_config_range_interval	4	/* interval for RANGE pt. (text) */
-#define Anum_pathman_config_expression_p	5	/* parsed partitioning expression (text) */
-#define Anum_pathman_config_atttype			6	/* partitioned atttype (oid) */
+#define Anum_pathman_config_cooked_expr		5	/* parsed partitioning expression (text) */
 
 /* type modifier (typmod) for 'range_interval' */
 #define PATHMAN_CONFIG_interval_typmod		-1
@@ -147,34 +146,29 @@ typedef struct
 	Node				   *prel_expr;		/* expression from PartRelationInfo */
 	const PartRelationInfo *prel;			/* main partitioning structure */
 	ExprContext			   *econtext;		/* for ExecEvalExpr() */
-	bool					for_insert;		/* are we in PartitionFilter now? */
-	bool					found_params;	/* mark if left or right argument
-											   of clause is Param */
 } WalkerContext;
 
 /* Usual initialization procedure for WalkerContext */
-#define InitWalkerContext(context, expr, prel_info, ecxt, for_ins) \
+#define InitWalkerContext(context, expr, prel_info, ecxt) \
 	do { \
 		(context)->prel_expr = (expr); \
 		(context)->prel = (prel_info); \
 		(context)->econtext = (ecxt); \
-		(context)->for_insert = (for_ins); \
-		(context)->found_params = (false); \
 	} while (0)
 
 /* Check that WalkerContext contains ExprContext (plan execution stage) */
 #define WcxtHasExprContext(wcxt) ( (wcxt)->econtext )
 
 /* Examine expression in order to select partitions */
-WrapperNode *walk_expr_tree(Expr *expr, WalkerContext *context);
+WrapperNode *walk_expr_tree(Expr *expr, const WalkerContext *context);
 
 
 void select_range_partitions(const Datum value,
+							 const Oid collid,
 							 FmgrInfo *cmp_func,
 							 const RangeEntry *ranges,
 							 const int nranges,
 							 const int strategy,
-							 const Oid collid,
 							 WrapperNode *result);
 
 

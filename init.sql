@@ -15,37 +15,40 @@
  * text to Datum
  */
 CREATE OR REPLACE FUNCTION @extschema@.validate_interval_value(
-	atttype			OID,
+	partrel			REGCLASS,
+	expr			TEXT,
 	parttype		INTEGER,
-	range_interval	TEXT)
+	range_interval	TEXT,
+	cooked_expr		TEXT)
 RETURNS BOOL AS 'pg_pathman', 'validate_interval_value'
 LANGUAGE C;
 
 
 /*
- * Pathman config
- *		partrel - regclass (relation type, stored as Oid)
- *		attname - partitioning key
- *		parttype - partitioning type:
- *			1 - HASH
- *			2 - RANGE
- *		range_interval - base interval for RANGE partitioning as string
+ * Main config.
+ *		partrel			- regclass (relation type, stored as Oid)
+ *		expr			- partitioning expression (key)
+ *		parttype		- partitioning type: (1 - HASH, 2 - RANGE)
+ *		range_interval	- base interval for RANGE partitioning as string
+ *		cooked_expr		- cooked partitioning expression (parsed & rewritten)
  */
 CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
 	partrel			REGCLASS NOT NULL PRIMARY KEY,
-	attname			TEXT NOT NULL,	/* expression */
+	expr			TEXT NOT NULL,
 	parttype		INTEGER NOT NULL,
-	range_interval	TEXT,
-	expression_p	TEXT,				/* parsed expression (until plan) */
-	atttype			OID,				/* expression type */
+	range_interval	TEXT DEFAULT NULL,
+	cooked_expr		TEXT DEFAULT NULL,
 
 	/* check for allowed part types */
 	CONSTRAINT pathman_config_parttype_check CHECK (parttype IN (1, 2)),
 
 	/* check for correct interval */
-	CONSTRAINT pathman_config_interval_check CHECK (@extschema@.validate_interval_value(atttype,
-													parttype,
-													range_interval))
+	CONSTRAINT pathman_config_interval_check
+	CHECK (@extschema@.validate_interval_value(partrel,
+											   expr,
+											   parttype,
+											   range_interval,
+											   cooked_expr))
 );
 
 
@@ -64,11 +67,11 @@ LANGUAGE C STRICT;
 
 /*
  * Optional parameters for partitioned tables.
- *		partrel - regclass (relation type, stored as Oid)
- *		enable_parent - add parent table to plan
- *		auto - enable automatic partition creation
- *		init_callback - text signature of cb to be executed on partition
- * 						creation
+ *		partrel			- regclass (relation type, stored as Oid)
+ *		enable_parent	- add parent table to plan
+ *		auto			- enable automatic partition creation
+ *		init_callback	- text signature of cb to be executed on partition creation
+ *		spawn_using_bgw	- use background worker in order to auto create partitions
  */
 CREATE TABLE IF NOT EXISTS @extschema@.pathman_config_params (
 	partrel			REGCLASS NOT NULL PRIMARY KEY,
@@ -135,16 +138,14 @@ CREATE OR REPLACE FUNCTION @extschema@.pathman_set_param(
 	relation	REGCLASS,
 	param		TEXT,
 	value		ANYELEMENT)
-RETURNS VOID AS
-$$
+RETURNS VOID AS $$
 BEGIN
 	EXECUTE format('INSERT INTO @extschema@.pathman_config_params
 					(partrel, %1$s) VALUES ($1, $2)
 					ON CONFLICT (partrel) DO UPDATE SET %1$s = $2', param)
 	USING relation, value;
 END
-$$
-LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 /*
  * Include\exclude parent relation in query plan.
@@ -152,13 +153,11 @@ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION @extschema@.set_enable_parent(
 	relation	REGCLASS,
 	value		BOOLEAN)
-RETURNS VOID AS
-$$
+RETURNS VOID AS $$
 BEGIN
 	PERFORM @extschema@.pathman_set_param(relation, 'enable_parent', value);
 END
-$$
-LANGUAGE plpgsql STRICT;
+$$ LANGUAGE plpgsql STRICT;
 
 /*
  * Enable\disable automatic partition creation.
@@ -166,13 +165,11 @@ LANGUAGE plpgsql STRICT;
 CREATE OR REPLACE FUNCTION @extschema@.set_auto(
 	relation	REGCLASS,
 	value		BOOLEAN)
-RETURNS VOID AS
-$$
+RETURNS VOID AS $$
 BEGIN
 	PERFORM @extschema@.pathman_set_param(relation, 'auto', value);
 END
-$$
-LANGUAGE plpgsql STRICT;
+$$ LANGUAGE plpgsql STRICT;
 
 /*
  * Set partition creation callback
@@ -180,8 +177,7 @@ LANGUAGE plpgsql STRICT;
 CREATE OR REPLACE FUNCTION @extschema@.set_init_callback(
 	relation	REGCLASS,
 	callback	REGPROCEDURE DEFAULT 0)
-RETURNS VOID AS
-$$
+RETURNS VOID AS $$
 DECLARE
 	regproc_text	TEXT := NULL;
 
@@ -202,8 +198,7 @@ BEGIN
 
 	PERFORM @extschema@.pathman_set_param(relation, 'init_callback', regproc_text);
 END
-$$
-LANGUAGE plpgsql STRICT;
+$$ LANGUAGE plpgsql STRICT;
 
 /*
  * Set 'spawn using BGW' option
@@ -211,13 +206,11 @@ LANGUAGE plpgsql STRICT;
 CREATE OR REPLACE FUNCTION @extschema@.set_spawn_using_bgw(
 	relation	REGCLASS,
 	value		BOOLEAN)
-RETURNS VOID AS
-$$
+RETURNS VOID AS $$
 BEGIN
 	PERFORM @extschema@.pathman_set_param(relation, 'spawn_using_bgw', value);
 END
-$$
-LANGUAGE plpgsql STRICT;
+$$ LANGUAGE plpgsql STRICT;
 
 /*
  * Set (or reset) default interval for auto created partitions
@@ -225,8 +218,7 @@ LANGUAGE plpgsql STRICT;
 CREATE OR REPLACE FUNCTION @extschema@.set_interval(
 	relation		REGCLASS,
 	value			ANYELEMENT)
-RETURNS VOID AS
-$$
+RETURNS VOID AS $$
 DECLARE
 	affected	INTEGER;
 BEGIN
@@ -241,8 +233,7 @@ BEGIN
 		RAISE EXCEPTION 'table "%" is not partitioned by RANGE', relation;
 	END IF;
 END
-$$
-LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 
 /*
@@ -253,7 +244,7 @@ RETURNS TABLE (
 	parent			REGCLASS,
 	partition		REGCLASS,
 	parttype		INT4,
-	partattr		TEXT,
+	expr			TEXT,
 	range_min		TEXT,
 	range_max		TEXT)
 AS 'pg_pathman', 'show_partition_list_internal'
@@ -335,17 +326,15 @@ CREATE OR REPLACE FUNCTION @extschema@._partition_data_concurrent(
 	p_max			ANYELEMENT DEFAULT NULL::text,
 	p_limit			INT DEFAULT NULL,
 	OUT p_total		BIGINT)
-AS
-$$
+AS $$
 DECLARE
-	v_attr			TEXT;
+	part_expr		TEXT;
 	v_limit_clause	TEXT := '';
 	v_where_clause	TEXT := '';
 	ctids			TID[];
 
 BEGIN
-	SELECT attname INTO v_attr
-	FROM @extschema@.pathman_config WHERE partrel = relation;
+	part_expr := @extschema@.get_partition_key(relation);
 
 	p_total := 0;
 
@@ -356,14 +345,14 @@ BEGIN
 
 	/* Format WHERE clause if needed */
 	IF NOT p_min IS NULL THEN
-		v_where_clause := format('%1$s >= $1', v_attr);
+		v_where_clause := format('%1$s >= $1', part_expr);
 	END IF;
 
 	IF NOT p_max IS NULL THEN
 		IF NOT p_min IS NULL THEN
 			v_where_clause := v_where_clause || ' AND ';
 		END IF;
-		v_where_clause := v_where_clause || format('%1$s < $2', v_attr);
+		v_where_clause := v_where_clause || format('%1$s < $2', part_expr);
 	END IF;
 
 	IF v_where_clause != '' THEN
@@ -377,19 +366,17 @@ BEGIN
 	USING p_min, p_max
 	INTO ctids;
 
-	EXECUTE format('
-		WITH data AS (
-			DELETE FROM ONLY %1$s WHERE ctid = ANY($1) RETURNING *)
-		INSERT INTO %1$s SELECT * FROM data',
-		relation)
+	EXECUTE format('WITH data AS (
+					DELETE FROM ONLY %1$s WHERE ctid = ANY($1) RETURNING *)
+					INSERT INTO %1$s SELECT * FROM data',
+				   relation)
 	USING ctids;
 
 	/* Get number of inserted rows */
 	GET DIAGNOSTICS p_total = ROW_COUNT;
 	RETURN;
 END
-$$
-LANGUAGE plpgsql
+$$ LANGUAGE plpgsql
 SET pg_pathman.enable_partitionfilter = on; /* ensures that PartitionFilter is ON */
 
 /*
@@ -398,8 +385,7 @@ SET pg_pathman.enable_partitionfilter = on; /* ensures that PartitionFilter is O
 CREATE OR REPLACE FUNCTION @extschema@.partition_data(
 	parent_relid	REGCLASS,
 	OUT p_total		BIGINT)
-AS
-$$
+AS $$
 BEGIN
 	p_total := 0;
 
@@ -412,8 +398,7 @@ BEGIN
 	GET DIAGNOSTICS p_total = ROW_COUNT;
 	RETURN;
 END
-$$
-LANGUAGE plpgsql STRICT
+$$ LANGUAGE plpgsql STRICT
 SET pg_pathman.enable_partitionfilter = on; /* ensures that PartitionFilter is ON */
 
 /*
@@ -421,8 +406,7 @@ SET pg_pathman.enable_partitionfilter = on; /* ensures that PartitionFilter is O
  */
 CREATE OR REPLACE FUNCTION @extschema@.disable_pathman_for(
 	parent_relid	REGCLASS)
-RETURNS VOID AS
-$$
+RETURNS VOID AS $$
 BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
 
@@ -433,55 +417,60 @@ BEGIN
 	/* Drop triggers on update */
 	PERFORM @extschema@.drop_triggers(parent_relid);
 END
-$$
-LANGUAGE plpgsql STRICT;
+$$ LANGUAGE plpgsql STRICT;
 
 /*
- * Aggregates several common relation checks before partitioning.
- * Suitable for every partitioning type.
+ * Check a few things and take locks before partitioning.
  */
-CREATE OR REPLACE FUNCTION @extschema@.common_relation_checks(
-	relation		REGCLASS,
-	expression		TEXT)
-RETURNS BOOLEAN AS
-$$
+CREATE OR REPLACE FUNCTION @extschema@.prepare_for_partitioning(
+	parent_relid	REGCLASS,
+	expression		TEXT,
+	partition_data	BOOLEAN)
+RETURNS VOID AS $$
 DECLARE
-	v_rec			RECORD;
+	constr_name		TEXT;
 	is_referenced	BOOLEAN;
 	rel_persistence	CHAR;
 
 BEGIN
+	PERFORM @extschema@.validate_relname(parent_relid);
+
+	IF partition_data = true THEN
+		/* Acquire data modification lock */
+		PERFORM @extschema@.prevent_relation_modification(parent_relid);
+	ELSE
+		/* Acquire lock on parent */
+		PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+	END IF;
+
 	/* Ignore temporary tables */
 	SELECT relpersistence FROM pg_catalog.pg_class
-	WHERE oid = relation INTO rel_persistence;
+	WHERE oid = parent_relid INTO rel_persistence;
 
 	IF rel_persistence = 't'::CHAR THEN
-		RAISE EXCEPTION 'temporary table "%" cannot be partitioned',
-						relation::TEXT;
+		RAISE EXCEPTION 'temporary table "%" cannot be partitioned', parent_relid;
 	END IF;
 
 	IF EXISTS (SELECT * FROM @extschema@.pathman_config
-			   WHERE partrel = relation) THEN
-		RAISE EXCEPTION 'relation "%" has already been partitioned', relation;
+			   WHERE partrel = parent_relid) THEN
+		RAISE EXCEPTION 'table "%" has already been partitioned', parent_relid;
 	END IF;
 
 	/* Check if there are foreign keys that reference the relation */
-	FOR v_rec IN (SELECT * FROM pg_catalog.pg_constraint
-				  WHERE confrelid = relation::REGCLASS::OID)
+	FOR constr_name IN (SELECT conname FROM pg_catalog.pg_constraint
+					WHERE confrelid = parent_relid::REGCLASS::OID)
 	LOOP
 		is_referenced := TRUE;
-		RAISE WARNING 'foreign key "%" references relation "%"',
-				v_rec.conname, relation;
+		RAISE WARNING 'foreign key "%" references table "%"', constr_name, parent_relid;
 	END LOOP;
 
 	IF is_referenced THEN
-		RAISE EXCEPTION 'relation "%" is referenced from other relations', relation;
+		RAISE EXCEPTION 'table "%" is referenced from other tables', parent_relid;
 	END IF;
 
-	RETURN FALSE;
 END
-$$
-LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
+
 
 /*
  * Returns relname without quotes or something.
@@ -490,27 +479,25 @@ CREATE OR REPLACE FUNCTION @extschema@.get_plain_schema_and_relname(
 	cls				REGCLASS,
 	OUT schema		TEXT,
 	OUT relname		TEXT)
-AS
-$$
+AS $$
 BEGIN
 	SELECT pg_catalog.pg_class.relnamespace::regnamespace,
 		   pg_catalog.pg_class.relname
 	FROM pg_catalog.pg_class WHERE oid = cls::oid
 	INTO schema, relname;
 END
-$$
-LANGUAGE plpgsql STRICT;
+$$ LANGUAGE plpgsql STRICT;
 
 /*
  * DDL trigger that removes entry from pathman_config table.
  */
 CREATE OR REPLACE FUNCTION @extschema@.pathman_ddl_trigger_func()
-RETURNS event_trigger AS
-$$
+RETURNS event_trigger AS $$
 DECLARE
-	obj				record;
-	pg_class_oid	oid;
-	relids			regclass[];
+	obj				RECORD;
+	pg_class_oid	OID;
+	relids			REGCLASS[];
+
 BEGIN
 	pg_class_oid = 'pg_catalog.pg_class'::regclass;
 
@@ -526,8 +513,39 @@ BEGIN
 	/* Cleanup params table too */
 	DELETE FROM @extschema@.pathman_config_params WHERE partrel = ANY(relids);
 END
-$$
-LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
+
+
+CREATE OR REPLACE FUNCTION @extschema@.create_naming_sequence(
+	parent_relid	REGCLASS)
+RETURNS TEXT AS $$
+DECLARE
+	seq_name		TEXT;
+
+BEGIN
+	seq_name := @extschema@.build_sequence_name(parent_relid);
+
+	EXECUTE format('DROP SEQUENCE IF EXISTS %s', seq_name);
+	EXECUTE format('CREATE SEQUENCE %s START 1', seq_name);
+
+	RETURN seq_name;
+END
+$$ LANGUAGE plpgsql
+SET client_min_messages = WARNING; /* mute NOTICE message */
+
+CREATE OR REPLACE FUNCTION @extschema@.drop_naming_sequence(
+	parent_relid	REGCLASS)
+RETURNS VOID AS $$
+DECLARE
+	seq_name		TEXT;
+
+BEGIN
+	seq_name := @extschema@.build_sequence_name(parent_relid);
+
+	EXECUTE format('DROP SEQUENCE IF EXISTS %s', seq_name);
+END
+$$ LANGUAGE plpgsql
+SET client_min_messages = WARNING; /* mute NOTICE message */
 
 /*
  * Drop triggers
@@ -545,14 +563,12 @@ LANGUAGE C STRICT;
 CREATE OR REPLACE FUNCTION @extschema@.drop_partitions(
 	parent_relid	REGCLASS,
 	delete_data		BOOLEAN DEFAULT FALSE)
-RETURNS INTEGER AS
-$$
+RETURNS INTEGER AS $$
 DECLARE
-	v_rec			RECORD;
-	v_rows			BIGINT;
-	v_part_count	INTEGER := 0;
-	conf_num		INTEGER;
-	v_relkind		CHAR;
+	child			REGCLASS;
+	rows_count		BIGINT;
+	part_count		INTEGER := 0;
+	rel_kind		CHAR;
 
 BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
@@ -560,17 +576,18 @@ BEGIN
 	/* Acquire data modification lock */
 	PERFORM @extschema@.prevent_relation_modification(parent_relid);
 
+	IF NOT EXISTS (SELECT FROM @extschema@.pathman_config
+				   WHERE partrel = parent_relid) THEN
+		RAISE EXCEPTION 'table "%" has no partitions', parent_relid::TEXT;
+	END IF;
+
 	/* First, drop all triggers */
 	PERFORM @extschema@.drop_triggers(parent_relid, TRUE);
 
-	SELECT count(*) FROM @extschema@.pathman_config
-	WHERE partrel = parent_relid INTO conf_num;
+	/* Also drop naming sequence */
+	PERFORM @extschema@.drop_naming_sequence(parent_relid);
 
-	IF conf_num = 0 THEN
-		RAISE EXCEPTION 'relation "%" has no partitions', parent_relid::TEXT;
-	END IF;
-
-	FOR v_rec IN (SELECT inhrelid::REGCLASS AS tbl
+	FOR child IN (SELECT inhrelid::REGCLASS
 				  FROM pg_catalog.pg_inherits
 				  WHERE inhparent::regclass = parent_relid
 				  ORDER BY inhrelid ASC)
@@ -578,36 +595,36 @@ BEGIN
 		IF NOT delete_data THEN
 			EXECUTE format('INSERT INTO %s SELECT * FROM %s',
 							parent_relid::TEXT,
-							v_rec.tbl::TEXT);
-			GET DIAGNOSTICS v_rows = ROW_COUNT;
+							child::TEXT);
+			GET DIAGNOSTICS rows_count = ROW_COUNT;
 
 			/* Show number of copied rows */
-			RAISE NOTICE '% rows copied from %', v_rows, v_rec.tbl::TEXT;
+			RAISE NOTICE '% rows copied from %', rows_count, child;
 		END IF;
 
 		SELECT relkind FROM pg_catalog.pg_class
-		WHERE oid = v_rec.tbl
-		INTO v_relkind;
+		WHERE oid = child
+		INTO rel_kind;
 
 		/*
 		 * Determine the kind of child relation. It can be either a regular
 		 * table (r) or a foreign table (f). Depending on relkind we use
 		 * DROP TABLE or DROP FOREIGN TABLE.
 		 */
-		IF v_relkind = 'f' THEN
-			EXECUTE format('DROP FOREIGN TABLE %s', v_rec.tbl::TEXT);
+		IF rel_kind = 'f' THEN
+			EXECUTE format('DROP FOREIGN TABLE %s', child);
 		ELSE
-			EXECUTE format('DROP TABLE %s', v_rec.tbl::TEXT);
+			EXECUTE format('DROP TABLE %s', child);
 		END IF;
 
-		v_part_count := v_part_count + 1;
+		part_count := part_count + 1;
 	END LOOP;
 
 	/* Finally delete both config entries */
 	DELETE FROM @extschema@.pathman_config WHERE partrel = parent_relid;
 	DELETE FROM @extschema@.pathman_config_params WHERE partrel = parent_relid;
 
-	RETURN v_part_count;
+	RETURN part_count;
 END
 $$ LANGUAGE plpgsql
 SET pg_pathman.enable_partitionfilter = off; /* ensures that PartitionFilter is OFF */
@@ -619,21 +636,20 @@ SET pg_pathman.enable_partitionfilter = off; /* ensures that PartitionFilter is 
 CREATE OR REPLACE FUNCTION @extschema@.copy_foreign_keys(
 	parent_relid	REGCLASS,
 	partition_relid	REGCLASS)
-RETURNS VOID AS
-$$
+RETURNS VOID AS $$
 DECLARE
-	rec		RECORD;
+	conid			OID;
 
 BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
 	PERFORM @extschema@.validate_relname(partition_relid);
 
-	FOR rec IN (SELECT oid as conid FROM pg_catalog.pg_constraint
-				WHERE conrelid = parent_relid AND contype = 'f')
+	FOR conid IN (SELECT oid FROM pg_catalog.pg_constraint
+				  WHERE conrelid = parent_relid AND contype = 'f')
 	LOOP
 		EXECUTE format('ALTER TABLE %s ADD %s',
 					   partition_relid::TEXT,
-					   pg_catalog.pg_get_constraintdef(rec.conid));
+					   pg_catalog.pg_get_constraintdef(conid));
 	END LOOP;
 END
 $$ LANGUAGE plpgsql STRICT;
@@ -647,8 +663,7 @@ CREATE OR REPLACE FUNCTION @extschema@.alter_partition(
 	new_name		TEXT,
 	new_schema		REGNAMESPACE,
 	new_tablespace	TEXT)
-RETURNS VOID AS
-$$
+RETURNS VOID AS $$
 DECLARE
 	orig_name	TEXT;
 	orig_schema	OID;
@@ -710,23 +725,42 @@ LANGUAGE C STRICT;
 
 
 /*
- * Partitioning key
- */
-CREATE OR REPLACE FUNCTION @extschema@.get_partition_key(
-	relid	REGCLASS)
-RETURNS TEXT AS
-$$
-	SELECT attname FROM pathman_config WHERE partrel = relid;
-$$
-LANGUAGE sql STRICT;
-
-
-/*
  * Create DDL trigger to call pathman_ddl_trigger_func().
  */
 CREATE EVENT TRIGGER pathman_ddl_trigger
 ON sql_drop
 EXECUTE PROCEDURE @extschema@.pathman_ddl_trigger_func();
+
+
+/*
+ * Partitioning key.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_partition_key(
+	relid	REGCLASS)
+RETURNS TEXT AS
+$$
+	SELECT expr FROM @extschema@.pathman_config WHERE partrel = relid;
+$$
+LANGUAGE sql STRICT;
+
+/*
+ * Partitioning key type.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_partition_key_type(
+	relid	REGCLASS)
+RETURNS REGTYPE AS 'pg_pathman', 'get_partition_key_type'
+LANGUAGE C STRICT;
+
+/*
+ * Partitioning type.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_partition_type(
+	relid	REGCLASS)
+RETURNS INT4 AS
+$$
+	SELECT parttype FROM @extschema@.pathman_config WHERE partrel = relid;
+$$
+LANGUAGE sql STRICT;
 
 
 /*
@@ -752,14 +786,6 @@ LANGUAGE C STRICT;
 CREATE OR REPLACE FUNCTION @extschema@.get_base_type(
 	typid	REGTYPE)
 RETURNS REGTYPE AS 'pg_pathman', 'get_base_type_pl'
-LANGUAGE C STRICT;
-
-/*
- * Return partition key type
- */
-CREATE OR REPLACE FUNCTION @extschema@.get_partition_key_type(
-	relid	REGCLASS)
-RETURNS REGTYPE AS 'pg_pathman', 'get_partition_key_type'
 LANGUAGE C STRICT;
 
 /*
@@ -832,15 +858,21 @@ LANGUAGE C STRICT;
 
 
 /*
- * Add record to pathman_config. If parttype if not specified then determine
- * partitioning type.
+ * Add record to pathman_config (RANGE) and validate partitions.
  */
 CREATE OR REPLACE FUNCTION @extschema@.add_to_pathman_config(
 	parent_relid		REGCLASS,
 	expression			TEXT,
-	range_interval		TEXT DEFAULT NULL,
-	parttype			INT4 DEFAULT 0
-)
+	range_interval		TEXT)
+RETURNS BOOLEAN AS 'pg_pathman', 'add_to_pathman_config'
+LANGUAGE C;
+
+/*
+ * Add record to pathman_config (HASH) and validate partitions.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.add_to_pathman_config(
+	parent_relid		REGCLASS,
+	expression			TEXT)
 RETURNS BOOLEAN AS 'pg_pathman', 'add_to_pathman_config'
 LANGUAGE C;
 

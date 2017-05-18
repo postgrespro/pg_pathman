@@ -43,7 +43,6 @@
 
 #if PG_VERSION_NUM >= 90600
 #include "catalog/pg_constraint_fn.h"
-#include "nodes/nodeFuncs.h"
 #endif
 
 
@@ -167,15 +166,14 @@ refresh_pathman_relation_info(Oid relid,
 	/* Set partitioning type */
 	prel->parttype	= DatumGetPartType(values[Anum_pathman_config_parttype - 1]);
 
-	/* Read config values */
-	prel->atttype = DatumGetObjectId(values[Anum_pathman_config_atttype - 1]);
-	expr = TextDatumGetCString(values[Anum_pathman_config_expression_p - 1]);
+	/* Fetch cooked partitioning expression */
+	expr = TextDatumGetCString(values[Anum_pathman_config_cooked_expr - 1]);
 
 	/* Expression and attname should be saved in cache context */
 	old_mcxt = MemoryContextSwitchTo(PathmanRelationCacheContext);
 
 	/* Build partitioning expression tree */
-	prel->expr_cstr = TextDatumGetCString(values[Anum_pathman_config_expression - 1]);
+	prel->expr_cstr = TextDatumGetCString(values[Anum_pathman_config_expr - 1]);
 	prel->expr = (Node *) stringToNode(expr);
 	fix_opfuncids(prel->expr);
 
@@ -191,23 +189,26 @@ refresh_pathman_relation_info(Oid relid,
 
 	MemoryContextSwitchTo(old_mcxt);
 
-	htup = SearchSysCache1(TYPEOID, prel->atttype);
+	/* First, fetch type of partitioning expression */
+	prel->ev_type	= exprType(prel->expr);
+
+	htup = SearchSysCache1(TYPEOID, prel->ev_type);
 	if (HeapTupleIsValid(htup))
 	{
 		Form_pg_type typtup = (Form_pg_type) GETSTRUCT(htup);
-		prel->atttypmod = typtup->typtypmod;
-		prel->attcollid = typtup->typcollation;
+		prel->ev_typmod = typtup->typtypmod;
+		prel->ev_collid = typtup->typcollation;
 		ReleaseSysCache(htup);
 	}
-	else elog(ERROR, "cache lookup failed for type %u", prel->atttype);
+	else elog(ERROR, "cache lookup failed for type %u", prel->ev_type);
 
 	/* Fetch HASH & CMP fuctions and other stuff from type cache */
-	typcache = lookup_type_cache(prel->atttype,
+	typcache = lookup_type_cache(prel->ev_type,
 								 TYPECACHE_CMP_PROC | TYPECACHE_HASH_PROC);
 
-	prel->attbyval	= typcache->typbyval;
-	prel->attlen	= typcache->typlen;
-	prel->attalign	= typcache->typalign;
+	prel->ev_byval	= typcache->typbyval;
+	prel->ev_len	= typcache->typlen;
+	prel->ev_align	= typcache->typalign;
 
 	prel->cmp_proc	= typcache->cmp_proc;
 	prel->hash_proc	= typcache->hash_proc;
@@ -359,7 +360,7 @@ get_pathman_relation_info(Oid relid)
 		/* Check that PATHMAN_CONFIG table contains this relation */
 		if (pathman_config_contains_relation(relid, values, isnull, NULL, &iptr))
 		{
-			bool upd_expr = isnull[Anum_pathman_config_expression_p - 1];
+			bool upd_expr = isnull[Anum_pathman_config_cooked_expr - 1];
 			if (upd_expr)
 				pathman_config_refresh_parsed_expression(relid, values, isnull, &iptr);
 
@@ -494,12 +495,12 @@ fill_prel_with_partitions(PartRelationInfo *prel,
 					old_mcxt = MemoryContextSwitchTo(cache_mcxt);
 					{
 						prel->ranges[i].min = CopyBound(&bound_info->range_min,
-														prel->attbyval,
-														prel->attlen);
+														prel->ev_byval,
+														prel->ev_len);
 
 						prel->ranges[i].max = CopyBound(&bound_info->range_max,
-														prel->attbyval,
-														prel->attlen);
+														prel->ev_byval,
+														prel->ev_len);
 					}
 					MemoryContextSwitchTo(old_mcxt);
 				}
@@ -508,10 +509,7 @@ fill_prel_with_partitions(PartRelationInfo *prel,
 			default:
 				{
 					DisablePathman(); /* disable pg_pathman since config is broken */
-					ereport(ERROR,
-							(errmsg("Unknown partitioning type for relation \"%s\"",
-									get_rel_name_or_relid(PrelParentRelid(prel))),
-							 errhint(INIT_ERROR_HINT)));
+					WrongPartType(prel->parttype);
 				}
 				break;
 		}
@@ -527,7 +525,7 @@ fill_prel_with_partitions(PartRelationInfo *prel,
 
 		/* Prepare function info */
 		fmgr_info(prel->cmp_proc, &cmp_info.flinfo);
-		cmp_info.collid = prel->attcollid;
+		cmp_info.collid = prel->ev_collid;
 
 		/* Sort partitions by RangeEntry->min asc */
 		qsort_arg((void *) prel->ranges, PrelChildrenCount(prel),
@@ -567,8 +565,9 @@ parse_partitioning_expression(const Oid relid,
 							  char **query_string_out,	/* ret value #1 */
 							  Node **parsetree_out)		/* ret value #2 */
 {
-	SelectStmt *select_stmt;
-	List	   *parsetree_list;
+	SelectStmt		   *select_stmt;
+	List			   *parsetree_list;
+	MemoryContext		old_mcxt;
 
 	const char *sql = "SELECT (%s) FROM ONLY %s.%s";
 	char	   *relname = get_rel_name(relid),
@@ -577,7 +576,31 @@ parse_partitioning_expression(const Oid relid,
 										quote_identifier(nspname),
 										quote_identifier(relname));
 
-	parsetree_list = raw_parser(query_string);
+	old_mcxt = CurrentMemoryContext;
+
+	PG_TRY();
+	{
+		parsetree_list = raw_parser(query_string);
+	}
+	PG_CATCH();
+	{
+		ErrorData  *error;
+
+		/* Switch to the original context & copy edata */
+		MemoryContextSwitchTo(old_mcxt);
+		error = CopyErrorData();
+		FlushErrorState();
+
+		error->detail = error->message;
+		error->message = "partitioning expression parse error";
+		error->sqlerrcode = ERRCODE_INVALID_PARAMETER_VALUE;
+		error->cursorpos = 0;
+		error->internalpos = 0;
+
+		ReThrowError(error);
+	}
+	PG_END_TRY();
+
 	if (list_length(parsetree_list) != 1)
 		elog(ERROR, "expression \"%s\" produced more than one query", exp_cstr);
 
@@ -592,16 +615,12 @@ parse_partitioning_expression(const Oid relid,
 	return ((ResTarget *) linitial(select_stmt->targetList))->val;
 }
 
-/*
- * Parses expression related to 'relid', and returns its type,
- * raw expression tree, and if specified returns its plan
- */
+/* Parse partitioning expression and return its type and nodeToString() as TEXT */
 Datum
-plan_partitioning_expression(const Oid relid,
+cook_partitioning_expression(const Oid relid,
 							 const char *expr_cstr,
-							 Oid *expr_type_out)
+							 Oid *expr_type_out) /* ret value #1 */
 {
-
 	Node				   *parsetree;
 	List				   *querytree_list;
 	TargetEntry			   *target_entry;
@@ -666,8 +685,32 @@ plan_partitioning_expression(const Oid relid,
 	 */
 	old_mcxt = MemoryContextSwitchTo(parse_mcxt);
 
-	/* This will fail with elog in case of wrong expression */
-	querytree_list = pg_analyze_and_rewrite(parsetree, query_string, NULL, 0);
+	PG_TRY();
+	{
+		/* This will fail with elog in case of wrong expression */
+		querytree_list = pg_analyze_and_rewrite(parsetree, query_string, NULL, 0);
+	}
+	PG_CATCH();
+	{
+		ErrorData  *error;
+
+		/* Switch to the original context & copy edata */
+		MemoryContextSwitchTo(old_mcxt);
+		error = CopyErrorData();
+		FlushErrorState();
+
+		error->detail = error->message;
+		error->message = "partitioning expression analyze error";
+		error->sqlerrcode = ERRCODE_INVALID_PARAMETER_VALUE;
+		error->cursorpos = 0;
+		error->internalpos = 0;
+
+		/* Enable pathman hooks */
+		pathman_hooks_enabled = true;
+		ReThrowError(error);
+	}
+	PG_END_TRY();
+
 	if (list_length(querytree_list) != 1)
 		elog(ERROR, "partitioning expression produced more than 1 query");
 
@@ -687,15 +730,14 @@ plan_partitioning_expression(const Oid relid,
 				 errmsg("functions in partitioning expression must be marked IMMUTABLE")));
 
 	Assert(expr);
-
-	/* Set 'expr_type_out' if needed */
-	if (expr_type_out)
-		*expr_type_out = exprType(expr);
-
 	expr_serialized = nodeToString(expr);
 
 	/* Switch to previous mcxt */
 	MemoryContextSwitchTo(old_mcxt);
+
+	/* Set 'expr_type_out' if needed */
+	if (expr_type_out)
+		*expr_type_out = exprType(expr);
 
 	expr_datum = CStringGetTextDatum(expr_serialized);
 
@@ -1019,7 +1061,7 @@ try_perform_parent_refresh(Oid parent)
 
 	if (pathman_config_contains_relation(parent, values, isnull, NULL, &iptr))
 	{
-		bool should_update_expr = isnull[Anum_pathman_config_expression_p - 1];
+		bool should_update_expr = isnull[Anum_pathman_config_cooked_expr - 1];
 
 		if (should_update_expr)
 			pathman_config_refresh_parsed_expression(parent, values, isnull, &iptr);
@@ -1100,7 +1142,7 @@ get_bounds_of_partition(Oid partition, const PartRelationInfo *prel)
 
 		/* Initialize other fields */
 		pbin_local.child_rel = partition;
-		pbin_local.byval = prel->attbyval;
+		pbin_local.byval = prel->ev_byval;
 
 		/* Try to build constraint's expression tree (may emit ERROR) */
 		con_expr = get_partition_constraint_expr(partition);
@@ -1221,14 +1263,14 @@ fill_pbin_with_bounds(PartBoundInfo *pbin,
 					pbin->range_min = lower_null ?
 											MakeBoundInf(MINUS_INFINITY) :
 											MakeBound(datumCopy(lower,
-																prel->attbyval,
-																prel->attlen));
+																prel->ev_byval,
+																prel->ev_len));
 
 					pbin->range_max = upper_null ?
 											MakeBoundInf(PLUS_INFINITY) :
 											MakeBound(datumCopy(upper,
-																prel->attbyval,
-																prel->attlen));
+																prel->ev_byval,
+																prel->ev_len));
 
 					/* Switch back */
 					MemoryContextSwitchTo(old_mcxt);
@@ -1247,10 +1289,7 @@ fill_pbin_with_bounds(PartBoundInfo *pbin,
 		default:
 			{
 				DisablePathman(); /* disable pg_pathman since config is broken */
-				ereport(ERROR,
-						(errmsg("Unknown partitioning type for relation \"%s\"",
-								get_rel_name_or_relid(PrelParentRelid(prel))),
-						 errhint(INIT_ERROR_HINT)));
+				WrongPartType(prel->parttype);
 			}
 			break;
 	}
@@ -1265,41 +1304,6 @@ cmp_range_entries(const void *p1, const void *p2, void *arg)
 	cmp_func_info	   *info = (cmp_func_info *) arg;
 
 	return cmp_bounds(&info->flinfo, info->collid, &v1->min, &v2->min);
-}
-
-
-/*
- * Safe PartType wrapper.
- */
-PartType
-DatumGetPartType(Datum datum)
-{
-	uint32 val = DatumGetUInt32(datum);
-
-	if (val < 1 || val > 2)
-		elog(ERROR, "Unknown partitioning type %u", val);
-
-	return (PartType) val;
-}
-
-char *
-PartTypeToCString(PartType parttype)
-{
-	static char *hash_str	= "1",
-				*range_str	= "2";
-
-	switch (parttype)
-	{
-		case PT_HASH:
-			return hash_str;
-
-		case PT_RANGE:
-			return range_str;
-
-		default:
-			elog(ERROR, "Unknown partitioning type %u", parttype);
-			return NULL; /* keep compiler happy */
-	}
 }
 
 
@@ -1338,9 +1342,8 @@ shout_if_prel_is_invalid(const Oid parent_oid,
 				break;
 
 			default:
-				elog(ERROR,
-					 "expected_str selection not implemented for type %d",
-					 expected_part_type);
+				WrongPartType(expected_part_type);
+				expected_str = NULL; /* keep compiler happy */
 		}
 
 		elog(ERROR, "relation \"%s\" is not partitioned by %s",

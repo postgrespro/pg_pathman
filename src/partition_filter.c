@@ -66,9 +66,8 @@ int					pg_pathman_insert_into_fdw = PF_FDW_INSERT_POSTGRES;
 CustomScanMethods	partition_filter_plan_methods;
 CustomExecMethods	partition_filter_exec_methods;
 
-static ExprState *prepare_expr_state(Node *expr,
-									 Oid relid,
-									 EState *estate);
+static ExprState *prepare_expr_state(const PartRelationInfo *prel,
+								     EState *estate);
 static void prepare_rri_for_insert(EState *estate,
 								   ResultRelInfoHolder *rri_holder,
 								   const ResultPartsStorage *rps_storage,
@@ -403,13 +402,13 @@ find_partitions_for_value(Datum value, Oid value_type,
 	temp_const.constisnull	= false;
 
 	/* ... and some other important data */
-	CopyToTempConst(consttypmod, atttypmod);
-	CopyToTempConst(constcollid, attcollid);
-	CopyToTempConst(constlen,    attlen);
-	CopyToTempConst(constbyval,  attbyval);
+	CopyToTempConst(consttypmod, ev_typmod);
+	CopyToTempConst(constcollid, ev_collid);
+	CopyToTempConst(constlen,    ev_len);
+	CopyToTempConst(constbyval,  ev_byval);
 
 	/* We use 0 since varno doesn't matter for Const */
-	InitWalkerContext(&wcxt, 0, prel, NULL, true);
+	InitWalkerContext(&wcxt, 0, prel, NULL);
 	ranges = walk_expr_tree((Expr *) &temp_const, &wcxt)->rangeset;
 
 	return get_partition_oids(ranges, nparts, prel, false);
@@ -443,14 +442,14 @@ select_partition_for_insert(ExprContext *econtext, ExprState *expr_state,
 		elog(ERROR, ERR_PART_ATTR_MULTIPLE_RESULTS);
 
 	/* Search for matching partitions */
-	parts = find_partitions_for_value(value, prel->atttype, prel, &nparts);
+	parts = find_partitions_for_value(value, prel->ev_type, prel, &nparts);
 
 	if (nparts > 1)
 		elog(ERROR, ERR_PART_ATTR_MULTIPLE);
 	else if (nparts == 0)
 	{
 		 selected_partid = create_partitions_for_value(PrelParentRelid(prel),
-													   value, prel->atttype);
+													   value, prel->ev_type);
 
 		 /* get_pathman_relation_info() will refresh this entry */
 		 invalidate_pathman_relation_info(PrelParentRelid(prel), NULL);
@@ -471,9 +470,7 @@ select_partition_for_insert(ExprContext *econtext, ExprState *expr_state,
 
 		/* Build an expression state if not yet */
 		if (!rri_holder->expr_state)
-			rri_holder->expr_state = prepare_expr_state(subprel->expr,
-														selected_partid,
-														estate);
+			rri_holder->expr_state = prepare_expr_state(subprel, estate);
 
 		Assert(rri_holder->expr_state != NULL);
 
@@ -490,39 +487,36 @@ select_partition_for_insert(ExprContext *econtext, ExprState *expr_state,
 	/* Could not find suitable partition */
 	if (rri_holder == NULL)
 		elog(ERROR, ERR_PART_ATTR_NO_PART,
-			 datum_to_cstring(value, prel->atttype));
+			 datum_to_cstring(value, prel->ev_type));
 
 	return rri_holder;
 }
 
 static ExprState *
-prepare_expr_state(Node *expr,
-				   Oid relid,
+prepare_expr_state(const PartRelationInfo *prel,
 				   EState *estate)
 {
-		ExprState				   *expr_state;
-		MemoryContext				old_mcxt;
-		Index						varno = 1;
-		Node					   *expr_copy;
-		ListCell				   *lc;
+		ExprState		   *expr_state;
+		MemoryContext		old_mcxt;
+		Index				parent_varno = 1;
+		Node			   *expr;
+		ListCell		   *lc;
 
 		/* Change varno in Vars according to range table */
-		expr_copy = copyObject(expr);
 		foreach(lc, estate->es_range_table)
 		{
 			RangeTblEntry *entry = lfirst(lc);
-			if (entry->relid == relid)
-			{
-				if (varno > 1)
-					ChangeVarNodes(expr_copy, 1, varno, 0);
+
+			if (entry->relid == PrelParentRelid(prel))
 				break;
-			}
-			varno += 1;
+
+			parent_varno += 1;
 		}
+		expr = PrelExpressionForRelid(prel, parent_varno);
 
 		/* Prepare state for expression execution */
 		old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
-		expr_state = ExecInitExpr((Expr *) expr_copy, NULL);
+		expr_state = ExecInitExpr((Expr *) expr, NULL);
 		MemoryContextSwitchTo(old_mcxt);
 
 		return expr_state;
@@ -578,7 +572,7 @@ make_partition_filter(Plan *subplan, Oid parent_relid,
 Node *
 partition_filter_create_scan_state(CustomScan *node)
 {
-	PartitionFilterState   *state;
+	PartitionFilterState *state;
 
 	state = (PartitionFilterState *) palloc0(sizeof(PartitionFilterState));
 	NodeSetTag(state, T_CustomScanState);
@@ -620,9 +614,7 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 		prel = get_pathman_relation_info(state->partitioned_table);
 		Assert(prel != NULL);
 
-		state->expr_state = prepare_expr_state(prel->expr,
-											   state->partitioned_table,
-											   estate);
+		state->expr_state = prepare_expr_state(prel, estate);
 	}
 
 	/* Init ResultRelInfo cache */
@@ -663,7 +655,7 @@ partition_filter_exec(CustomScanState *node)
 		if (!prel)
 		{
 			if (!state->warning_triggered)
-				elog(WARNING, "Relation \"%s\" is not partitioned, "
+				elog(WARNING, "table \"%s\" is not partitioned, "
 							  "PartitionFilter will behave as a normal INSERT",
 					 get_rel_name_or_relid(state->partitioned_table));
 

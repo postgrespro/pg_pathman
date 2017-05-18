@@ -21,13 +21,13 @@ SELECT context, entries FROM pathman_cache_stats ORDER BY context;
 ALTER TABLE test_column_type.test ALTER val TYPE NUMERIC;
 
 /* check that parsed expression was cleared */
-SELECT * FROM pathman_config;
+SELECT partrel, cooked_expr FROM pathman_config;
 
 /* make sure that everything works properly */
 SELECT * FROM test_column_type.test;
 
-/* check that expression, atttype is changed */
-SELECT * FROM pathman_config;
+/* check that expression has been built */
+SELECT partrel, cooked_expr FROM pathman_config;
 
 SELECT context, entries FROM pathman_cache_stats ORDER BY context;
 

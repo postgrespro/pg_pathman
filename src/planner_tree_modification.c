@@ -370,7 +370,7 @@ find_deepest_partition(Oid relid, Index idx, Expr *quals, Oid *partition)
 	ranges = list_make1_irange_full(prel, IR_COMPLETE);
 
 	/* Parse syntax tree and extract partition ranges */
-	InitWalkerContext(&context, prel_expr, prel, NULL, false);
+	InitWalkerContext(&context, prel_expr, prel, NULL);
 	wrap = walk_expr_tree(quals, &context);
 	ranges = irange_list_intersection(ranges, wrap->rangeset);
 

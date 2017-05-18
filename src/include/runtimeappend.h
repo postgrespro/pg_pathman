@@ -38,6 +38,9 @@ typedef struct
 	/* Restrictions to be checked during ReScan and Exec */
 	List			   *custom_exprs;
 
+	/* Refined clauses for partition pruning */
+	List			   *canon_custom_exprs;
+
 	/* All available plans \ plan states */
 	HTAB			   *children_table;
 	HASHCTL				children_table_config;
