@@ -41,10 +41,10 @@ REGRESS = pathman_array_qual \
 		  pathman_mergejoin \
 		  pathman_only \
 		  pathman_permissions \
+		  pathman_rebuild_updates \
 		  pathman_rowmarks \
 		  pathman_runtime_nodes \
 		  pathman_update_trigger \
-		  pathman_updates \
 		  pathman_utility_stmt
 
 EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add
