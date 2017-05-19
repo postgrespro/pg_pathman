@@ -16,18 +16,28 @@ SELECT COUNT(*) FROM test_exprs.hash_rel;
      5
 (1 row)
 
+SELECT create_hash_partitions('test_exprs.hash_rel', 'random()', 4);
+ERROR:  functions in partitioning expression must be marked IMMUTABLE
 \set VERBOSITY default
 SELECT create_hash_partitions('test_exprs.hash_rel', 'value * value2))', 4);
 ERROR:  partitioning expression parse error
 DETAIL:  syntax error at or near ")"
-QUERY:  SELECT public.add_to_pathman_config(parent_relid, expression)
-CONTEXT:  PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 9 at PERFORM
+QUERY:  SELECT public.validate_expression(parent_relid, expression)
+CONTEXT:  PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line 9 at PERFORM
+SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data)"
+PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 4 at PERFORM
 SELECT create_hash_partitions('test_exprs.hash_rel', 'value * value3', 4);
 ERROR:  partitioning expression analyze error
 DETAIL:  column "value3" does not exist
 HINT:  Perhaps you meant to reference the column "hash_rel.value" or the column "hash_rel.value2".
-QUERY:  SELECT public.add_to_pathman_config(parent_relid, expression)
-CONTEXT:  PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 9 at PERFORM
+QUERY:  SELECT public.validate_expression(parent_relid, expression)
+CONTEXT:  PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line 9 at PERFORM
+SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data)"
+PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 4 at PERFORM
 \set VERBOSITY terse
 SELECT create_hash_partitions('test_exprs.hash_rel', 'value * value2', 4);
  create_hash_partitions 
@@ -88,7 +98,7 @@ CREATE TABLE test_exprs.range_rel (id SERIAL PRIMARY KEY, dt TIMESTAMP, txt TEXT
 INSERT INTO test_exprs.range_rel (dt, txt)
 SELECT g, md5(g::TEXT) FROM generate_series('2015-01-01', '2020-04-30', '1 month'::interval) as g;
 SELECT create_range_partitions('test_exprs.range_rel', 'RANDOM()', '15 years'::INTERVAL, '1 year'::INTERVAL, 10);
-ERROR:  start value is less than min value of "random()"
+ERROR:  functions in partitioning expression must be marked IMMUTABLE
 SELECT create_range_partitions('test_exprs.range_rel', 'AGE(dt, ''2000-01-01''::DATE)',
 		'15 years'::INTERVAL, '1 year'::INTERVAL, 10);
  create_range_partitions 

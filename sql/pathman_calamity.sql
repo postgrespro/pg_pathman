@@ -140,6 +140,13 @@ SELECT validate_relname('calamity.part_test');
 SELECT validate_relname(1::REGCLASS);
 SELECT validate_relname(NULL);
 
+/* check function validate_expression() */
+SELECT validate_expression('calamity.part_test');
+SELECT validate_expression('calamity.part_test', NULL);
+SELECT validate_expression('calamity.part_test', 'valval');
+SELECT validate_expression('calamity.part_test', 'random()');
+SELECT validate_expression('calamity.part_test', 'val');
+
 /* check function get_number_of_partitions() */
 SELECT get_number_of_partitions('calamity.part_test');
 SELECT get_number_of_partitions(NULL) IS NULL;

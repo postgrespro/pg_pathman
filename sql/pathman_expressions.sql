@@ -15,6 +15,7 @@ INSERT INTO test_exprs.hash_rel (value, value2)
 	SELECT val, val * 2 FROM generate_series(1, 5) val;
 
 SELECT COUNT(*) FROM test_exprs.hash_rel;
+SELECT create_hash_partitions('test_exprs.hash_rel', 'random()', 4);
 \set VERBOSITY default
 SELECT create_hash_partitions('test_exprs.hash_rel', 'value * value2))', 4);
 SELECT create_hash_partitions('test_exprs.hash_rel', 'value * value3', 4);

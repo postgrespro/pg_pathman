@@ -296,6 +296,21 @@ SELECT validate_relname(1::REGCLASS);
 ERROR:  relation "1" does not exist
 SELECT validate_relname(NULL);
 ERROR:  relation should not be NULL
+/* check function validate_expression() */
+SELECT validate_expression('calamity.part_test');
+ERROR:  function validate_expression(unknown) does not exist at character 51
+SELECT validate_expression('calamity.part_test', NULL);
+ERROR:  'expression' should not be NULL
+SELECT validate_expression('calamity.part_test', 'valval');
+ERROR:  cannot find type name for attribute "valval" of relation "part_test"
+SELECT validate_expression('calamity.part_test', 'random()');
+ERROR:  functions in partitioning expression must be marked IMMUTABLE
+SELECT validate_expression('calamity.part_test', 'val');
+ validate_expression 
+---------------------
+ 
+(1 row)
+
 /* check function get_number_of_partitions() */
 SELECT get_number_of_partitions('calamity.part_test');
  get_number_of_partitions 
