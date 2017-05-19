@@ -279,7 +279,7 @@ handle_modification_query(Query *parse, ParamListInfo params)
 	if (!expr) return;
 
 	/* Check if we can replace PARAMs with CONSTs */
-	if (clause_contains_params((Node *) expr) && params)
+	if (params && clause_contains_params((Node *) expr))
 		expr = (Expr *) eval_extern_params_mutator((Node *) expr, params);
 
 	/* Prepare partitioning expression */
@@ -293,7 +293,7 @@ handle_modification_query(Query *parse, ParamListInfo params)
 
 	/*
 	 * If only one partition is affected,
-	 * substitute parent table with partition.
+	 * substitute parent table with the partition.
 	 */
 	if (irange_list_length(ranges) == 1)
 	{
