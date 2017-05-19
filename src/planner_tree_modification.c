@@ -4,6 +4,8 @@
  *		Functions for query- and plan- tree modification
  *
  * Copyright (c) 2016, Postgres Professional
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1994, Regents of the University of California
  *
  * ------------------------------------------------------------------------
  */
@@ -496,9 +498,10 @@ eval_extern_params_mutator(Node *node, ParamListInfo params)
 	{
 		Param *param = (Param *) node;
 
+		Assert(params);
+
 		/* Look to see if we've been given a value for this Param */
 		if (param->paramkind == PARAM_EXTERN &&
-			params != NULL &&
 			param->paramid > 0 &&
 			param->paramid <= params->numParams)
 		{
