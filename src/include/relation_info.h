@@ -284,7 +284,7 @@ const PartRelationInfo *get_pathman_relation_info_after_lock(Oid relid,
 
 /* Partitioning expression routines */
 Node *parse_partitioning_expression(const Oid relid,
-									const char *expression,
+									const char *expr_cstr,
 									char **query_string_out,
 									Node **parsetree_out);
 

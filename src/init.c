@@ -55,10 +55,15 @@ HTAB			   *parent_cache		= NULL;
 HTAB			   *bound_cache			= NULL;
 
 /* pg_pathman's init status */
-PathmanInitState 	pg_pathman_init_state;
+PathmanInitState 	pathman_init_state;
+
+/* pg_pathman's hooks state */
+bool				pathman_hooks_enabled = true;
+
 
 /* Shall we install new relcache callback? */
 static bool			relcache_callback_needed = true;
+
 
 /* Functions for various local caches */
 static bool init_pathman_relation_oids(void);
@@ -123,13 +128,13 @@ pathman_cache_search_relid(HTAB *cache_table,
 void
 save_pathman_init_state(PathmanInitState *temp_init_state)
 {
-	*temp_init_state = pg_pathman_init_state;
+	*temp_init_state = pathman_init_state;
 }
 
 void
 restore_pathman_init_state(const PathmanInitState *temp_init_state)
 {
-	pg_pathman_init_state = *temp_init_state;
+	pathman_init_state = *temp_init_state;
 }
 
 /*
@@ -142,19 +147,19 @@ init_main_pathman_toggles(void)
 	DefineCustomBoolVariable("pg_pathman.enable",
 							 "Enables pg_pathman's optimizations during the planner stage",
 							 NULL,
-							 &pg_pathman_init_state.pg_pathman_enable,
+							 &pathman_init_state.pg_pathman_enable,
 							 DEFAULT_PATHMAN_ENABLE,
 							 PGC_SUSET,
 							 0,
 							 NULL,
-							 pg_pathman_enable_assign_hook,
+							 pathman_enable_assign_hook,
 							 NULL);
 
 	/* Global toggle for automatic partition creation */
 	DefineCustomBoolVariable("pg_pathman.enable_auto_partition",
 							 "Enables automatic partition creation",
 							 NULL,
-							 &pg_pathman_init_state.auto_partition,
+							 &pathman_init_state.auto_partition,
 							 DEFAULT_AUTO,
 							 PGC_SUSET,
 							 0,
@@ -166,7 +171,7 @@ init_main_pathman_toggles(void)
 	DefineCustomBoolVariable("pg_pathman.override_copy",
 							 "Override COPY statement handling",
 							 NULL,
-							 &pg_pathman_init_state.override_copy,
+							 &pathman_init_state.override_copy,
 							 DEFAULT_OVERRIDE_COPY,
 							 PGC_SUSET,
 							 0,
@@ -208,7 +213,7 @@ load_config(void)
 	}
 
 	/* Mark pg_pathman as initialized */
-	pg_pathman_init_state.initialization_needed = false;
+	pathman_init_state.initialization_needed = false;
 
 	elog(DEBUG2, "pg_pathman's config has been loaded successfully [%u]", MyProcPid);
 
@@ -228,7 +233,7 @@ unload_config(void)
 	fini_local_cache();
 
 	/* Mark pg_pathman as uninitialized */
-	pg_pathman_init_state.initialization_needed = true;
+	pathman_init_state.initialization_needed = true;
 
 	elog(DEBUG2, "pg_pathman's config has been unloaded successfully [%u]", MyProcPid);
 }

@@ -42,9 +42,6 @@ PG_MODULE_MAGIC;
 Oid		pathman_config_relid = InvalidOid,
 		pathman_config_params_relid = InvalidOid;
 
-/* Used to disable hooks temporarily */
-bool	pathman_hooks_enabled = true;
-
 
 /* pg module functions */
 void _PG_init(void);

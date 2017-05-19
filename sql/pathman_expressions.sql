@@ -5,7 +5,17 @@ CREATE EXTENSION pg_pathman;
 CREATE SCHEMA test_exprs;
 
 
-/* hash */
+/* We use this rel to check 'pathman_hooks_enabled' */
+CREATE TABLE test_exprs.canary(val INT4 NOT NULL);
+CREATE TABLE test_exprs.canary_copy (LIKE test_exprs.canary);
+SELECT create_hash_partitions('test_exprs.canary', 'val', 5);
+
+
+
+/*
+ * Test HASH
+ */
+
 CREATE TABLE test_exprs.hash_rel (
 	id		SERIAL PRIMARY KEY,
 	value	INTEGER,
@@ -16,11 +26,24 @@ INSERT INTO test_exprs.hash_rel (value, value2)
 
 SELECT COUNT(*) FROM test_exprs.hash_rel;
 SELECT create_hash_partitions('test_exprs.hash_rel', 'random()', 4);
+
+/* Check that 'pathman_hooks_enabled' is true (1 partition in plan) */
+EXPLAIN (COSTS OFF) INSERT INTO test_exprs.canary_copy
+SELECT * FROM test_exprs.canary WHERE val = 1;
+
+
 \set VERBOSITY default
+
 SELECT create_hash_partitions('test_exprs.hash_rel', 'value * value2))', 4);
 SELECT create_hash_partitions('test_exprs.hash_rel', 'value * value3', 4);
 
+/* Check that 'pathman_hooks_enabled' is true (1 partition in plan) */
+EXPLAIN (COSTS OFF) INSERT INTO test_exprs.canary_copy
+SELECT * FROM test_exprs.canary WHERE val = 1;
+
 \set VERBOSITY terse
+
+
 SELECT create_hash_partitions('test_exprs.hash_rel', 'value * value2', 4);
 SELECT COUNT(*) FROM ONLY test_exprs.hash_rel;
 SELECT COUNT(*) FROM test_exprs.hash_rel;
@@ -33,7 +56,12 @@ SELECT COUNT(*) FROM test_exprs.hash_rel;
 EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.hash_rel WHERE value = 5;
 EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.hash_rel WHERE (value * value2) = 5;
 
-/* range */
+
+
+/*
+ * Test RANGE
+ */
+
 CREATE TABLE test_exprs.range_rel (id SERIAL PRIMARY KEY, dt TIMESTAMP, txt TEXT);
 
 INSERT INTO test_exprs.range_rel (dt, txt)
