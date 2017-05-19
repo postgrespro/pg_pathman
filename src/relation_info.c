@@ -592,7 +592,7 @@ parse_partitioning_expression(const Oid relid,
 		FlushErrorState();
 
 		error->detail = error->message;
-		error->message = "partitioning expression parse error";
+		error->message = "failed to parse partitioning expression";
 		error->sqlerrcode = ERRCODE_INVALID_PARAMETER_VALUE;
 		error->cursorpos = 0;
 		error->internalpos = 0;
@@ -700,7 +700,7 @@ cook_partitioning_expression(const Oid relid,
 		FlushErrorState();
 
 		error->detail = error->message;
-		error->message = "partitioning expression analyze error";
+		error->message = "failed to analyze partitioning expression";
 		error->sqlerrcode = ERRCODE_INVALID_PARAMETER_VALUE;
 		error->cursorpos = 0;
 		error->internalpos = 0;

@@ -597,9 +597,9 @@ validate_relname(PG_FUNCTION_ARGS)
 }
 
 /*
- * Validate a partitioning expression
- * We need this in range functions because we do many things
- * before actual partitioning.
+ * Validate a partitioning expression.
+ * NOTE: We need this in range functions because
+ * we do many things before actual partitioning.
  */
 Datum
 validate_expression(PG_FUNCTION_ARGS)
@@ -609,6 +609,9 @@ validate_expression(PG_FUNCTION_ARGS)
 
 	/* Fetch relation's Oid */
 	relid = PG_GETARG_OID(0);
+
+	/* Protect relation from concurrent drop */
+	LockRelationOid(relid, AccessShareLock);
 
 	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -623,7 +626,11 @@ validate_expression(PG_FUNCTION_ARGS)
 	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("'expression' should not be NULL")));
 
+	/* Perform some checks */
 	cook_partitioning_expression(relid, expression, NULL);
+
+	UnlockRelationOid(relid, AccessShareLock);
+
 	PG_RETURN_VOID();
 }
 
@@ -763,7 +770,7 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("'parent_relid' should not be NULL")));
 
-	/* Lock relation */
+	/* Protect relation from concurrent modification */
 	xact_lock_rel_exclusive(relid, true);
 
 	/* Check that relation exists */

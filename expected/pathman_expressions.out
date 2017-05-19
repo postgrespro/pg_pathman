@@ -20,7 +20,7 @@ SELECT create_hash_partitions('test_exprs.hash_rel', 'random()', 4);
 ERROR:  functions in partitioning expression must be marked IMMUTABLE
 \set VERBOSITY default
 SELECT create_hash_partitions('test_exprs.hash_rel', 'value * value2))', 4);
-ERROR:  partitioning expression parse error
+ERROR:  failed to parse partitioning expression
 DETAIL:  syntax error at or near ")"
 QUERY:  SELECT public.validate_expression(parent_relid, expression)
 CONTEXT:  PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line 9 at PERFORM
@@ -29,7 +29,7 @@ SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
 												 partition_data)"
 PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 4 at PERFORM
 SELECT create_hash_partitions('test_exprs.hash_rel', 'value * value3', 4);
-ERROR:  partitioning expression analyze error
+ERROR:  failed to analyze partitioning expression
 DETAIL:  column "value3" does not exist
 HINT:  Perhaps you meant to reference the column "hash_rel.value" or the column "hash_rel.value2".
 QUERY:  SELECT public.validate_expression(parent_relid, expression)
