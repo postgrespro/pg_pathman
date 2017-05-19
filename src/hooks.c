@@ -562,7 +562,7 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 			incr_refcount_relation_tags();
 
 			/* Modify query tree if needed */
-			pathman_transform_query(parse);
+			pathman_transform_query(parse, boundParams);
 		}
 
 		/* Invoke original hook if needed */
@@ -682,7 +682,7 @@ pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
 		}
 
 		/* Modify query tree if needed */
-		pathman_transform_query(query);
+		pathman_transform_query(query, NULL);
 	}
 }
 
