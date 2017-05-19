@@ -608,7 +608,12 @@ validate_expression(PG_FUNCTION_ARGS)
 	char	   *expression;
 
 	/* Fetch relation's Oid */
-	relid = PG_GETARG_OID(0);
+	if (!PG_ARGISNULL(0))
+	{
+		relid = PG_GETARG_OID(0);
+	}
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("'relid' should not be NULL")));
 
 	/* Protect relation from concurrent drop */
 	LockRelationOid(relid, AccessShareLock);

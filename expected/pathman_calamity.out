@@ -297,15 +297,23 @@ ERROR:  relation "1" does not exist
 SELECT validate_relname(NULL);
 ERROR:  relation should not be NULL
 /* check function validate_expression() */
-SELECT validate_expression('calamity.part_test');
-ERROR:  function validate_expression(unknown) does not exist at character 51
-SELECT validate_expression('calamity.part_test', NULL);
+SELECT validate_expression(1::regclass, NULL);					/* not ok */
+ERROR:  relation "1" does not exist
+SELECT validate_expression(NULL::regclass, NULL);				/* not ok */
+ERROR:  'relid' should not be NULL
+SELECT validate_expression('calamity.part_test', NULL);			/* not ok */
 ERROR:  'expression' should not be NULL
-SELECT validate_expression('calamity.part_test', 'valval');
+SELECT validate_expression('calamity.part_test', 'valval');		/* not ok */
 ERROR:  cannot find type name for attribute "valval" of relation "part_test"
-SELECT validate_expression('calamity.part_test', 'random()');
+SELECT validate_expression('calamity.part_test', 'random()');	/* not ok */
 ERROR:  functions in partitioning expression must be marked IMMUTABLE
-SELECT validate_expression('calamity.part_test', 'val');
+SELECT validate_expression('calamity.part_test', 'val');		/* OK */
+ validate_expression 
+---------------------
+ 
+(1 row)
+
+SELECT validate_expression('calamity.part_test', 'VaL');		/* OK */
  validate_expression 
 ---------------------
  
