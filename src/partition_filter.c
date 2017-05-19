@@ -783,6 +783,7 @@ prepare_rri_returning_for_insert(EState *estate,
 	ResultRelInfo		   *child_rri,
 						   *parent_rri;
 	Index					parent_rt_idx;
+	TupleTableSlot		   *result_slot;
 
 	/* We don't need to do anything ff there's no map */
 	if (!rri_holder->tuple_map)
@@ -809,23 +810,18 @@ prepare_rri_returning_for_insert(EState *estate,
 									   list_make2(makeInteger(parent_rt_idx),
 												  rri_holder));
 
-	/* Build new projection info */
+	/* Specify tuple slot where will be place projection result in */
 #if PG_VERSION_NUM >= 100000
-	child_rri->ri_projectReturning =
-			ExecBuildProjectionInfo((List *) ExecInitExpr((Expr *) returning_list,
-														  /* HACK: no PlanState */ NULL),
-									pfstate->tup_convert_econtext,
-									parent_rri->ri_projectReturning->pi_state.resultslot,
-									(PlanState *) pfstate,
-									RelationGetDescr(child_rri->ri_RelationDesc));
-#else
-	child_rri->ri_projectReturning =
-			ExecBuildProjectionInfo((List *) ExecInitExpr((Expr *) returning_list,
-														  /* HACK: no PlanState */ NULL),
-									pfstate->tup_convert_econtext,
-									parent_rri->ri_projectReturning->pi_slot,
-									RelationGetDescr(child_rri->ri_RelationDesc));
+	result_slot = parent_rri->ri_projectReturning->pi_state.resultslot;
+#elif PG_VERSION_NUM >= 90500
+	result_slot = parent_rri->ri_projectReturning->pi_slot;
 #endif
+
+	/* Build new projection info */
+	child_rri->ri_projectReturning =
+		ExecBuildProjectionInfoCompat(returning_list, pfstate->tup_convert_econtext,
+									  result_slot, NULL /* HACK: no PlanState */,
+									  RelationGetDescr(child_rri->ri_RelationDesc));
 }
 
 /* Prepare FDW access structs */

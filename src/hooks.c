@@ -759,8 +759,8 @@ pathman_relcache_hook(Datum arg, Oid relid)
 /*
  * Utility function invoker hook.
  */
-#if PG_VERSION_NUM >= 100000
 void
+#if PG_VERSION_NUM >= 100000
 pathman_process_utility_hook(PlannedStmt *pstmt,
 							 const char *queryString,
 							 ProcessUtilityContext context,
@@ -770,7 +770,6 @@ pathman_process_utility_hook(PlannedStmt *pstmt,
 {
 	Node   *parsetree = pstmt->utilityStmt;
 #else
-void
 pathman_process_utility_hook(Node *parsetree,
 							 const char *queryString,
 							 ProcessUtilityContext context,

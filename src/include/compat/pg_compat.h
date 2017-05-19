@@ -185,6 +185,23 @@ extern void create_plain_partial_paths(PlannerInfo *root,
 
 
 /*
+ * ExecBuildProjectionInfo
+ */
+#if PG_VERSION_NUM >= 100000
+#define ExecBuildProjectionInfoCompat(targetList, econtext, resultSlot, \
+									  ownerPlanState, inputDesc) \
+		ExecBuildProjectionInfo((targetList), (econtext), (resultSlot), \
+								(ownerPlanState), (inputDesc))
+#elif PG_VERSION_NUM >= 90500
+#define ExecBuildProjectionInfoCompat(targetList, econtext, resultSlot, \
+									  ownerPlanState, inputDesc) \
+		ExecBuildProjectionInfo((List *) ExecInitExpr((Expr *) (targetList), \
+													  (ownerPlanState)), \
+								(econtext), (resultSlot), (inputDesc))
+#endif
+
+
+/*
  * ExecEvalExpr
  *
  * 'errmsg' specifies error string when result of ExecEvalExpr doesn't return
