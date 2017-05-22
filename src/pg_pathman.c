@@ -934,58 +934,62 @@ handle_boolexpr(const BoolExpr *expr,
 				WrapperNode *result)	/* ret value #1 */
 {
 	const PartRelationInfo *prel = context->prel;
+	List				   *ranges,
+						   *args = NIL;
+	double					paramsel = 1.0;
 	ListCell			   *lc;
 
-	/* Save expression */
-	result->orig = (const Node *) expr;
+	/* Set default rangeset */
+	ranges = (expr->boolop == AND_EXPR) ?
+					list_make1_irange_full(prel, IR_COMPLETE) :
+					NIL;
 
-	result->args = NIL;
-	result->paramsel = 1.0;
-
-	/* First, set default rangeset */
-	result->rangeset = (expr->boolop == AND_EXPR) ?
-							list_make1_irange_full(prel, IR_COMPLETE) :
-							NIL;
-
+	/* Examine expressions */
 	foreach (lc, expr->args)
 	{
 		WrapperNode *wrap;
 
 		wrap = walk_expr_tree((Expr *) lfirst(lc), context);
-		result->args = lappend(result->args, wrap);
+		args = lappend(args, wrap);
 
 		switch (expr->boolop)
 		{
 			case OR_EXPR:
-				result->rangeset = irange_list_union(result->rangeset,
-													 wrap->rangeset);
+				ranges = irange_list_union(ranges, wrap->rangeset);
 				break;
 
 			case AND_EXPR:
-				result->rangeset = irange_list_intersection(result->rangeset,
-															wrap->rangeset);
-				result->paramsel *= wrap->paramsel;
+				ranges = irange_list_intersection(ranges, wrap->rangeset);
+				paramsel *= wrap->paramsel;
 				break;
 
 			default:
-				result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
+				ranges = list_make1_irange_full(prel, IR_LOSSY);
 				break;
 		}
 	}
 
+	/* Adjust paramsel for OR */
 	if (expr->boolop == OR_EXPR)
 	{
-		int totallen = irange_list_length(result->rangeset);
+		int totallen = irange_list_length(ranges);
 
 		foreach (lc, result->args)
 		{
 			WrapperNode	   *arg = (WrapperNode *) lfirst(lc);
 			int				len = irange_list_length(arg->rangeset);
 
-			result->paramsel *= (1.0 - arg->paramsel * (double)len / (double)totallen);
+			paramsel *= (1.0 - arg->paramsel * (double)len / (double)totallen);
 		}
-		result->paramsel = 1.0 - result->paramsel;
+
+		paramsel = 1.0 - paramsel;
 	}
+
+	/* Save results */
+	result->rangeset	= ranges;
+	result->paramsel	= paramsel;
+	result->orig		= (const Node *) expr;
+	result->args		= args;
 }
 
 /* Scalar array expression handler */
