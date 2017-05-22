@@ -803,7 +803,7 @@ handle_const(const Const *c,
 										 PrelChildrenCount(prel));
 
 				result->rangeset = list_make1_irange(make_irange(idx, idx, IR_LOSSY));
-				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
+				result->paramsel = 1.0;
 
 				return; /* done, exit */
 			}
@@ -828,9 +828,8 @@ handle_const(const Const *c,
 										PrelGetRangesArray(context->prel),
 										PrelChildrenCount(context->prel),
 										strategy,
-										result); /* output */
-
-				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
+										result); /* result->rangeset = ... */
+				result->paramsel = 1.0;
 
 				return; /* done, exit */
 			}
@@ -841,7 +840,7 @@ handle_const(const Const *c,
 
 handle_const_return:
 	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
-	result->paramsel = estimate_paramsel_using_prel(prel, strategy);
+	result->paramsel = 1.0;
 }
 
 /* Array handler */
