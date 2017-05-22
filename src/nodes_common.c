@@ -659,15 +659,36 @@ exec_append_common(CustomScanState *node,
 				   void (*fetch_next_tuple) (CustomScanState *node))
 {
 	RuntimeAppendState *scan_state = (RuntimeAppendState *) node;
+	TupleTableSlot	   *result;
 
 	/* ReScan if no plans are selected */
 	if (scan_state->ncur_plans == 0)
 		ExecReScan(&node->ss.ps);
 
+#if PG_VERSION_NUM >= 100000
+	fetch_next_tuple(node); /* use specific callback */
+
+	if (TupIsNull(scan_state->slot))
+		return NULL;
+
+	if (!node->ss.ps.ps_ProjInfo)
+		return scan_state->slot;
+
+	/*
+	 * Assuming that current projection doesn't involve SRF
+	 *
+	 * Any SFR functions are evaluated in the specialized parent node ProjectSet
+	 */
+	ResetExprContext(node->ss.ps.ps_ExprContext);
+	node->ss.ps.ps_ProjInfo->pi_exprContext->ecxt_scantuple =
+		scan_state->slot;
+	result = ExecProject(node->ss.ps.ps_ProjInfo);
+
+	return result;
+#elif PG_VERSION_NUM >= 90500
 	for (;;)
 	{
 		/* Fetch next tuple if we're done with Projections */
-#if PG_VERSION_NUM < 100000
 		if (!node->ss.ps.ps_TupFromTlist)
 		{
 			fetch_next_tuple(node); /* use specific callback */
@@ -675,23 +696,17 @@ exec_append_common(CustomScanState *node,
 			if (TupIsNull(scan_state->slot))
 				return NULL;
 		}
-#endif
 
 		if (node->ss.ps.ps_ProjInfo)
 		{
 			ExprDoneCond	isDone;
-			TupleTableSlot *result;
 
 			ResetExprContext(node->ss.ps.ps_ExprContext);
 
-			node->ss.ps.ps_ProjInfo->pi_exprContext->ecxt_scantuple = scan_state->slot;
-#if PG_VERSION_NUM >= 100000
-			result = ExecProject(node->ss.ps.ps_ProjInfo);
-#else
+			node->ss.ps.ps_ProjInfo->pi_exprContext->ecxt_scantuple =
+				scan_state->slot;
 			result = ExecProject(node->ss.ps.ps_ProjInfo, &isDone);
-#endif
 
-#if PG_VERSION_NUM < 100000
 			if (isDone != ExprEndResult)
 			{
 				node->ss.ps.ps_TupFromTlist = (isDone == ExprMultipleResult);
@@ -700,14 +715,11 @@ exec_append_common(CustomScanState *node,
 			}
 			else
 				node->ss.ps.ps_TupFromTlist = false;
-#else
-			if (isDone != ExprEndResult)
-				return result;
-#endif
 		}
 		else
 			return scan_state->slot;
 	}
+#endif
 }
 
 void
