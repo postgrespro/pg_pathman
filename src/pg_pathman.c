@@ -1140,6 +1140,9 @@ handle_opexpr(const OpExpr *expr,
 	Node					   *param;
 	const PartRelationInfo	   *prel = context->prel;
 
+	/* Save expression */
+	result->orig = (const Node *) expr;
+
 	if (list_length(expr->args) == 2)
 	{
 		/* Is it KEY OP PARAM or PARAM OP KEY? */
@@ -1157,9 +1160,6 @@ handle_opexpr(const OpExpr *expr,
 							 expr->inputcollid,
 							 strategy, context, result);
 
-				/* Save expression */
-				result->orig = (const Node *) expr;
-
 				return; /* done, exit */
 			}
 			/* TODO: estimate selectivity for param if it's Var */
@@ -1168,19 +1168,13 @@ handle_opexpr(const OpExpr *expr,
 				result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
 				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
 
-				/* Save expression */
-				result->orig = (const Node *) expr;
-
 				return; /* done, exit */
 			}
 		}
 	}
 
 	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
-	result->paramsel = 1.0; /* can't give any estimates */
-
-	/* Save expression */
-	result->orig = (const Node *) expr;
+	result->paramsel = 1.0;
 }
 
 
