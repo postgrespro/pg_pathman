@@ -762,7 +762,7 @@ handle_const(const Const *c,
 		}
 		else
 		{
-			result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
+			result->rangeset = list_make1_irange_full(prel, IR_COMPLETE);
 			result->paramsel = 1.0;
 		}
 
@@ -883,7 +883,7 @@ handle_array(ArrayType *array,
 		List   *ranges;
 		int		i;
 
-		/* Set default ranges for OR | AND */
+		/* Set default rangeset */
 		ranges = use_or ? NIL : list_make1_irange_full(prel, IR_COMPLETE);
 
 		/* Select partitions using values */
@@ -910,23 +910,21 @@ handle_array(ArrayType *array,
 			ranges = use_or ?
 						irange_list_union(ranges, wrap.rangeset) :
 						irange_list_intersection(ranges, wrap.rangeset);
-
-			result->paramsel = Max(result->paramsel, wrap.paramsel);
 		}
 
 		/* Free resources */
 		pfree(elem_values);
 		pfree(elem_isnull);
 
-		/* Save rangeset */
 		result->rangeset = ranges;
+		result->paramsel = 1.0;
 
 		return; /* done, exit */
 	}
 
 handle_array_return:
 	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
-	result->paramsel = estimate_paramsel_using_prel(prel, strategy);
+	result->paramsel = 1.0;
 }
 
 /* Boolean expression handler */
