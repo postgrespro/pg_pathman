@@ -134,8 +134,9 @@ typedef struct
 	const Node			   *orig;		/* examined expression */
 	List				   *args;		/* extracted from 'orig' */
 	List				   *rangeset;	/* IndexRanges representing selected parts */
+	double					paramsel;	/* estimated selectivity of PARAMs
+										   (for RuntimeAppend costs) */
 	bool					found_gap;	/* were there any gaps? */
-	double					paramsel;	/* estimated selectivity */
 } WrapperNode;
 
 typedef struct
