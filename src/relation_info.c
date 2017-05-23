@@ -645,6 +645,9 @@ cook_partitioning_expression(const Oid relid,
 
 	AssertTemporaryContext();
 
+	/* Make clang analyzer happy (v 3.5) */
+	(void) ok_rewrite;
+
 	/*
 	 * We use separate memory context here, just to make sure we won't
 	 * leave anything behind after parsing, rewriting and planning.
