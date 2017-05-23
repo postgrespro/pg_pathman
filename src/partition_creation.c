@@ -567,8 +567,8 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 
 	/* Execute comparison function cmp(value, cur_leading_bound) */
 	while (should_append ?
-				check_ge(&cmp_value_bound_finfo, value, cur_leading_bound) :
-				check_lt(&cmp_value_bound_finfo, value, cur_leading_bound))
+				check_ge(&cmp_value_bound_finfo, collid, value, cur_leading_bound) :
+				check_lt(&cmp_value_bound_finfo, collid, value, cur_leading_bound))
 	{
 		Bound bounds[2];
 

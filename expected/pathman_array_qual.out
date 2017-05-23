@@ -419,6 +419,13 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ANY (array[array[100
          Filter: (a = ANY ('{{100,200},{300,NULL}}'::integer[]))
 (7 rows)
 
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ANY (array[NULL, NULL]::int4[]);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
 /*
  * Test expr = ALL (...)
  */
@@ -573,6 +580,13 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[NULL, 700
          Filter: (a < ANY ('{NULL,700}'::integer[]))
 (9 rows)
 
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[NULL, NULL]::int4[]);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
 SET pg_pathman.enable = f;
 NOTICE:  RuntimeAppend, RuntimeMergeAppend and PartitionFilter nodes and some other options have been disabled
 SELECT count(*) FROM array_qual.test WHERE a < ANY (array[NULL, 700]);
@@ -663,6 +677,13 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[100, 700]
 (3 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[NULL, 700]);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[NULL, NULL]::int4[]);
         QUERY PLAN        
 --------------------------
  Result
@@ -778,6 +799,13 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ANY (array[NULL, 700
    ->  Seq Scan on test_10
 (6 rows)
 
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ANY (array[NULL, NULL]::int4[]);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
 SET pg_pathman.enable = f;
 NOTICE:  RuntimeAppend, RuntimeMergeAppend and PartitionFilter nodes and some other options have been disabled
 SELECT count(*) FROM array_qual.test WHERE a > ANY (array[NULL, 700]);
@@ -888,6 +916,13 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ALL (array[100, 700]
 (6 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ALL (array[NULL, 700]);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ALL (array[NULL, NULL]::int4[]);
         QUERY PLAN        
 --------------------------
  Result
@@ -1195,6 +1230,132 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 (22 rows)
 
 DEALLOCATE q;
+PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ANY (array[NULL, $1]);
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+                     QUERY PLAN                      
+-----------------------------------------------------
+ Append
+   ->  Seq Scan on test_5
+         Filter: (a > ANY ('{NULL,500}'::integer[]))
+   ->  Seq Scan on test_6
+   ->  Seq Scan on test_7
+   ->  Seq Scan on test_8
+   ->  Seq Scan on test_9
+   ->  Seq Scan on test_10
+(8 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+                     QUERY PLAN                      
+-----------------------------------------------------
+ Append
+   ->  Seq Scan on test_5
+         Filter: (a > ANY ('{NULL,500}'::integer[]))
+   ->  Seq Scan on test_6
+   ->  Seq Scan on test_7
+   ->  Seq Scan on test_8
+   ->  Seq Scan on test_9
+   ->  Seq Scan on test_10
+(8 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+                     QUERY PLAN                      
+-----------------------------------------------------
+ Append
+   ->  Seq Scan on test_5
+         Filter: (a > ANY ('{NULL,500}'::integer[]))
+   ->  Seq Scan on test_6
+   ->  Seq Scan on test_7
+   ->  Seq Scan on test_8
+   ->  Seq Scan on test_9
+   ->  Seq Scan on test_10
+(8 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+                     QUERY PLAN                      
+-----------------------------------------------------
+ Append
+   ->  Seq Scan on test_5
+         Filter: (a > ANY ('{NULL,500}'::integer[]))
+   ->  Seq Scan on test_6
+   ->  Seq Scan on test_7
+   ->  Seq Scan on test_8
+   ->  Seq Scan on test_9
+   ->  Seq Scan on test_10
+(8 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+                     QUERY PLAN                      
+-----------------------------------------------------
+ Append
+   ->  Seq Scan on test_5
+         Filter: (a > ANY ('{NULL,500}'::integer[]))
+   ->  Seq Scan on test_6
+   ->  Seq Scan on test_7
+   ->  Seq Scan on test_8
+   ->  Seq Scan on test_9
+   ->  Seq Scan on test_10
+(8 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+                      QUERY PLAN                       
+-------------------------------------------------------
+ Custom Scan (RuntimeAppend)
+   Prune by: (test.a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_1 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_2 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_3 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_4 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_5 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_6 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_7 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_8 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_9 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_10 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+(22 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+                      QUERY PLAN                       
+-------------------------------------------------------
+ Custom Scan (RuntimeAppend)
+   Prune by: (test.a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_1 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_2 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_3 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_4 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_5 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_6 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_7 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_8 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_9 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_10 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+(22 rows)
+
+EXECUTE q(NULL);
+ a | b 
+---+---
+(0 rows)
+
+DEALLOCATE q;
 /*
  * Test expr > ALL (... $1 ...)
  */
@@ -1298,6 +1459,62 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
  Result
    One-Time Filter: false
 (2 rows)
+
+DEALLOCATE q;
+PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ALL (array[NULL, $1, NULL]);
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXECUTE q(NULL);
+ a | b 
+---+---
+(0 rows)
 
 DEALLOCATE q;
 PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ALL (array[$1, 100, 600]);

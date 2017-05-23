@@ -83,6 +83,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ANY (array[100, 200,
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ANY (array[array[100, 200], array[300, 400]]);
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ANY (array[array[100, 200], array[300, 400], array[NULL, NULL]::int4[]]);
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ANY (array[array[100, 200], array[300, NULL]]);
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ANY (array[NULL, NULL]::int4[]);
 
 
 /*
@@ -112,6 +113,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[99, 100, 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[500, 550]);
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[100, 700]);
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[NULL, 700]);
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[NULL, NULL]::int4[]);
 
 SET pg_pathman.enable = f;
 SELECT count(*) FROM array_qual.test WHERE a < ANY (array[NULL, 700]);
@@ -131,6 +133,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[99, 100, 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[500, 550]);
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[100, 700]);
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[NULL, 700]);
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[NULL, NULL]::int4[]);
 
 SET pg_pathman.enable = f;
 SELECT count(*) FROM array_qual.test WHERE a < ALL (array[NULL, 700]);
@@ -150,6 +153,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ANY (array[99, 100, 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ANY (array[500, 550]);
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ANY (array[100, 700]);
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ANY (array[NULL, 700]);
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ANY (array[NULL, NULL]::int4[]);
 
 SET pg_pathman.enable = f;
 SELECT count(*) FROM array_qual.test WHERE a > ANY (array[NULL, 700]);
@@ -169,6 +173,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ALL (array[99, 100, 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ALL (array[500, 550]);
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ALL (array[100, 700]);
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ALL (array[NULL, 700]);
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ALL (array[NULL, NULL]::int4[]);
 
 SET pg_pathman.enable = f;
 SELECT count(*) FROM array_qual.test WHERE a > ALL (array[NULL, 700]);
@@ -200,6 +205,17 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 EXPLAIN (COSTS OFF) EXECUTE q(1);
 DEALLOCATE q;
 
+PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ANY (array[NULL, $1]);
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+EXECUTE q(NULL);
+DEALLOCATE q;
+
 
 /*
  * Test expr > ALL (... $1 ...)
@@ -223,6 +239,17 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 EXPLAIN (COSTS OFF) EXECUTE q(1);
 EXPLAIN (COSTS OFF) EXECUTE q(1);
 EXPLAIN (COSTS OFF) EXECUTE q(1);
+DEALLOCATE q;
+
+PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ALL (array[NULL, $1, NULL]);
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+EXECUTE q(NULL);
 DEALLOCATE q;
 
 PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ALL (array[$1, 100, 600]);

@@ -183,20 +183,20 @@ hash_to_part_index(uint32 value, uint32 partitions)
  *
  * flinfo is a pointer to FmgrInfo, arg1 & arg2 are Datums.
  */
-#define check_lt(finfo, arg1, arg2) \
-	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) < 0 )
+#define check_lt(finfo, collid, arg1, arg2) \
+	( DatumGetInt32(FunctionCall2Coll((finfo), (collid), (arg1), (arg2))) < 0 )
 
-#define check_le(finfo, arg1, arg2) \
-	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) <= 0 )
+#define check_le(finfo, collid, arg1, arg2) \
+	( DatumGetInt32(FunctionCall2Coll((finfo), (collid), (arg1), (arg2))) <= 0 )
 
-#define check_eq(finfo, arg1, arg2) \
-	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) == 0 )
+#define check_eq(finfo, collid, arg1, arg2) \
+	( DatumGetInt32(FunctionCall2Coll((finfo), (collid), (arg1), (arg2))) == 0 )
 
-#define check_ge(finfo, arg1, arg2) \
-	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) >= 0 )
+#define check_ge(finfo, collid, arg1, arg2) \
+	( DatumGetInt32(FunctionCall2Coll((finfo), (collid), (arg1), (arg2))) >= 0 )
 
-#define check_gt(finfo, arg1, arg2) \
-	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) > 0 )
+#define check_gt(finfo, collid, arg1, arg2) \
+	( DatumGetInt32(FunctionCall2Coll((finfo), (collid), (arg1), (arg2))) > 0 )
 
 
 #endif /* PATHMAN_H */

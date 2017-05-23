@@ -82,6 +82,14 @@ static bool is_key_op_param(const OpExpr *expr,
 static Const *extract_const(Param *param,
 							const WalkerContext *context);
 
+static Datum array_find_min_max(Datum *values,
+								bool *isnull,
+								int length,
+								Oid value_type,
+								Oid collid,
+								bool take_min,
+								bool *result_null);
+
 
 /* Copied from PostgreSQL (allpaths.c) */
 static void set_plain_rel_size(PlannerInfo *root,
@@ -883,6 +891,44 @@ handle_array(ArrayType *array,
 		List   *ranges;
 		int		i;
 
+		/* This is only for paranoia's sake */
+		Assert(BTMaxStrategyNumber == 5 && BTEqualStrategyNumber == 3);
+
+		/* Optimizations for <, <=, >=, > */
+		if (strategy != BTEqualStrategyNumber)
+		{
+			bool	take_min;
+			Datum	pivot;
+			bool	pivot_null;
+
+			/*
+			 * OR:		Max for (< | <=); Min for (> | >=)
+			 * AND:		Min for (< | <=); Max for (> | >=)
+			 */
+			take_min = strategy < BTEqualStrategyNumber ? !use_or : use_or;
+
+			/* Extract Min (or Max) element */
+			pivot = array_find_min_max(elem_values, elem_isnull,
+									   elem_count, elem_type, collid,
+									   take_min, &pivot_null);
+
+			/* Write data and "shrink" the array */
+			elem_values[0]	= pivot_null ? (Datum) 0 : pivot;
+			elem_isnull[0]	= pivot_null;
+			elem_count		= 1;
+
+			/* Append NULL if array contains NULLs and 'pivot' is not NULL */
+			if (!pivot_null && array_contains_nulls(array))
+			{
+				/* Make sure that we have enough space for 2 elements */
+				Assert(ArrayGetNItems(ARR_NDIM(array), ARR_DIMS(array)) >= 2);
+
+				elem_values[1]	= (Datum) 0;
+				elem_isnull[1]	= true;
+				elem_count		= 2;
+			}
+		}
+
 		/* Set default rangeset */
 		ranges = use_or ? NIL : list_make1_irange_full(prel, IR_COMPLETE);
 
@@ -1221,6 +1267,40 @@ extract_const(Param *param,
 					 value, isnull, get_typbyval(param->paramtype));
 }
 
+/* Find Max or Min value of array */
+static Datum
+array_find_min_max(Datum *values,
+				   bool *isnull,
+				   int length,
+				   Oid value_type,
+				   Oid collid,
+				   bool take_min,
+				   bool *result_null) /* ret value #2 */
+{
+	TypeCacheEntry *tce = lookup_type_cache(value_type, TYPECACHE_CMP_PROC_FINFO);
+	Datum		   *pivot = NULL;
+	int				i;
+
+	for (i = 0; i < length; i++)
+	{
+		if (isnull[i])
+			continue;
+
+		/* Update 'pivot' */
+		if (pivot == NULL || (take_min ?
+								check_lt(&tce->cmp_proc_finfo,
+										 collid, values[i], *pivot) :
+								check_gt(&tce->cmp_proc_finfo,
+										 collid, values[i], *pivot)))
+		{
+			pivot = &values[i];
+		}
+	}
+
+	/* Return results */
+	*result_null = (pivot == NULL);
+	return (pivot == NULL) ? (Datum) 0 : *pivot;
+}
 
 
 /*

@@ -230,7 +230,8 @@ create_range_partitions_internal(PG_FUNCTION_ARGS)
 							errmsg("only first bound can be NULL")));
 
 		/* Check that bounds are ascending */
-		if (!nulls[i - 1] && !check_le(&cmp_func, datums[i - 1], datums[i]))
+		if (!nulls[i - 1] && !check_le(&cmp_func, InvalidOid,
+									   datums[i - 1], datums[i]))
 			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 							errmsg("'bounds' array must be ascending")));
 	}
