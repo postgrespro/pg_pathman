@@ -726,11 +726,11 @@ rescan_append_common(CustomScanState *node)
 	InitWalkerContext(&wcxt, prel_expr, prel, econtext);
 	foreach (lc, scan_state->canon_custom_exprs)
 	{
-		WrapperNode *wn;
+		WrapperNode *wrap;
 
 		/* ... then we cut off irrelevant ones using the provided clauses */
-		wn = walk_expr_tree((Expr *) lfirst(lc), &wcxt);
-		ranges = irange_list_intersection(ranges, wn->rangeset);
+		wrap = walk_expr_tree((Expr *) lfirst(lc), &wcxt);
+		ranges = irange_list_intersection(ranges, wrap->rangeset);
 	}
 
 	/* Get Oids of the required partitions */

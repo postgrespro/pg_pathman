@@ -61,31 +61,31 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE val < ANY (array['a', 'z
 
 /* different collations */
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE val COLLATE "POSIX" < ANY (array['a', 'b']);
-                      QUERY PLAN                       
--------------------------------------------------------
+                        QUERY PLAN                         
+-----------------------------------------------------------
  Append
    ->  Seq Scan on test_1
-         Filter: ((val)::text < ANY ('{a,b}'::text[]))
+         Filter: ((val)::text < 'b'::text COLLATE "POSIX")
    ->  Seq Scan on test_2
-         Filter: ((val)::text < ANY ('{a,b}'::text[]))
+         Filter: ((val)::text < 'b'::text COLLATE "POSIX")
    ->  Seq Scan on test_3
-         Filter: ((val)::text < ANY ('{a,b}'::text[]))
+         Filter: ((val)::text < 'b'::text COLLATE "POSIX")
    ->  Seq Scan on test_4
-         Filter: ((val)::text < ANY ('{a,b}'::text[]))
+         Filter: ((val)::text < 'b'::text COLLATE "POSIX")
 (9 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE val < ANY (array['a', 'b' COLLATE "POSIX"]);
-                          QUERY PLAN                           
----------------------------------------------------------------
+                    QUERY PLAN                     
+---------------------------------------------------
  Append
    ->  Seq Scan on test_1
-         Filter: (val < ANY ('{a,b}'::text[] COLLATE "POSIX"))
+         Filter: (val < 'b'::text COLLATE "POSIX")
    ->  Seq Scan on test_2
-         Filter: (val < ANY ('{a,b}'::text[] COLLATE "POSIX"))
+         Filter: (val < 'b'::text COLLATE "POSIX")
    ->  Seq Scan on test_3
-         Filter: (val < ANY ('{a,b}'::text[] COLLATE "POSIX"))
+         Filter: (val < 'b'::text COLLATE "POSIX")
    ->  Seq Scan on test_4
-         Filter: (val < ANY ('{a,b}'::text[] COLLATE "POSIX"))
+         Filter: (val < 'b'::text COLLATE "POSIX")
 (9 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE val COLLATE "C" < ANY (array['a', 'b' COLLATE "POSIX"]);
@@ -525,11 +525,11 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[]::int4[]
 (2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[100, 100]);
-                     QUERY PLAN                     
-----------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_1
-         Filter: (a < ANY ('{100,100}'::integer[]))
+         Filter: (a < 100)
 (3 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[99, 100, 101]);
@@ -540,8 +540,8 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[99, 100, 
 (2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[500, 550]);
-                     QUERY PLAN                     
-----------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_1
    ->  Seq Scan on test_2
@@ -549,12 +549,12 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[500, 550]
    ->  Seq Scan on test_4
    ->  Seq Scan on test_5
    ->  Seq Scan on test_6
-         Filter: (a < ANY ('{500,550}'::integer[]))
+         Filter: (a < 550)
 (8 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[100, 700]);
-                     QUERY PLAN                     
-----------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_1
    ->  Seq Scan on test_2
@@ -563,7 +563,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[100, 700]
    ->  Seq Scan on test_5
    ->  Seq Scan on test_6
    ->  Seq Scan on test_7
-         Filter: (a < ANY ('{100,700}'::integer[]))
+         Filter: (a < 700)
 (9 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[NULL, 700]);
@@ -641,39 +641,39 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[]::int4[]
 (21 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[100, 100]);
-                     QUERY PLAN                     
-----------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_1
-         Filter: (a < ALL ('{100,100}'::integer[]))
+         Filter: (a < 100)
 (3 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[99, 100, 101]);
-                      QUERY PLAN                       
--------------------------------------------------------
+        QUERY PLAN        
+--------------------------
  Append
    ->  Seq Scan on test_1
-         Filter: (a < ALL ('{99,100,101}'::integer[]))
+         Filter: (a < 99)
 (3 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[500, 550]);
-                     QUERY PLAN                     
-----------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_1
    ->  Seq Scan on test_2
    ->  Seq Scan on test_3
    ->  Seq Scan on test_4
    ->  Seq Scan on test_5
-         Filter: (a < ALL ('{500,550}'::integer[]))
+         Filter: (a < 500)
 (7 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[100, 700]);
-                     QUERY PLAN                     
-----------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_1
-         Filter: (a < ALL ('{100,700}'::integer[]))
+         Filter: (a < 100)
 (3 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[NULL, 700]);
@@ -725,11 +725,11 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ANY (array[]::int4[]
 (2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ANY (array[100, 100]);
-                     QUERY PLAN                     
-----------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_1
-         Filter: (a > ANY ('{100,100}'::integer[]))
+         Filter: (a > 100)
    ->  Seq Scan on test_2
    ->  Seq Scan on test_3
    ->  Seq Scan on test_4
@@ -742,11 +742,11 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ANY (array[100, 100]
 (12 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ANY (array[99, 100, 101]);
-                      QUERY PLAN                       
--------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_1
-         Filter: (a > ANY ('{99,100,101}'::integer[]))
+         Filter: (a > 99)
    ->  Seq Scan on test_2
    ->  Seq Scan on test_3
    ->  Seq Scan on test_4
@@ -759,11 +759,11 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ANY (array[99, 100, 
 (12 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ANY (array[500, 550]);
-                     QUERY PLAN                     
-----------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_5
-         Filter: (a > ANY ('{500,550}'::integer[]))
+         Filter: (a > 500)
    ->  Seq Scan on test_6
    ->  Seq Scan on test_7
    ->  Seq Scan on test_8
@@ -772,11 +772,11 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ANY (array[500, 550]
 (8 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ANY (array[100, 700]);
-                     QUERY PLAN                     
-----------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_1
-         Filter: (a > ANY ('{100,700}'::integer[]))
+         Filter: (a > 100)
    ->  Seq Scan on test_2
    ->  Seq Scan on test_3
    ->  Seq Scan on test_4
@@ -860,11 +860,11 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ALL (array[]::int4[]
 (21 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ALL (array[100, 100]);
-                     QUERY PLAN                     
-----------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_1
-         Filter: (a > ALL ('{100,100}'::integer[]))
+         Filter: (a > 100)
    ->  Seq Scan on test_2
    ->  Seq Scan on test_3
    ->  Seq Scan on test_4
@@ -877,11 +877,11 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ALL (array[100, 100]
 (12 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ALL (array[99, 100, 101]);
-                      QUERY PLAN                       
--------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_2
-         Filter: (a > ALL ('{99,100,101}'::integer[]))
+         Filter: (a > 101)
    ->  Seq Scan on test_3
    ->  Seq Scan on test_4
    ->  Seq Scan on test_5
@@ -893,11 +893,11 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ALL (array[99, 100, 
 (11 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ALL (array[500, 550]);
-                     QUERY PLAN                     
-----------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_6
-         Filter: (a > ALL ('{500,550}'::integer[]))
+         Filter: (a > 550)
    ->  Seq Scan on test_7
    ->  Seq Scan on test_8
    ->  Seq Scan on test_9
@@ -905,11 +905,11 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ALL (array[500, 550]
 (7 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ALL (array[100, 700]);
-                     QUERY PLAN                     
-----------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_7
-         Filter: (a > ALL ('{100,700}'::integer[]))
+         Filter: (a > 700)
    ->  Seq Scan on test_8
    ->  Seq Scan on test_9
    ->  Seq Scan on test_10
@@ -950,11 +950,11 @@ SELECT count(*) FROM array_qual.test WHERE a > ALL (array[NULL, 700]);
  */
 PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ANY (array[$1, 100, 600]);
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                      QUERY PLAN                      
-------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_1
-         Filter: (a > ANY ('{1,100,600}'::integer[]))
+         Filter: (a > 1)
    ->  Seq Scan on test_2
    ->  Seq Scan on test_3
    ->  Seq Scan on test_4
@@ -967,11 +967,11 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 (12 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                      QUERY PLAN                      
-------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_1
-         Filter: (a > ANY ('{1,100,600}'::integer[]))
+         Filter: (a > 1)
    ->  Seq Scan on test_2
    ->  Seq Scan on test_3
    ->  Seq Scan on test_4
@@ -984,11 +984,11 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 (12 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                      QUERY PLAN                      
-------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_1
-         Filter: (a > ANY ('{1,100,600}'::integer[]))
+         Filter: (a > 1)
    ->  Seq Scan on test_2
    ->  Seq Scan on test_3
    ->  Seq Scan on test_4
@@ -1001,11 +1001,11 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 (12 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                      QUERY PLAN                      
-------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_1
-         Filter: (a > ANY ('{1,100,600}'::integer[]))
+         Filter: (a > 1)
    ->  Seq Scan on test_2
    ->  Seq Scan on test_3
    ->  Seq Scan on test_4
@@ -1018,11 +1018,11 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 (12 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                      QUERY PLAN                      
-------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_1
-         Filter: (a > ANY ('{1,100,600}'::integer[]))
+         Filter: (a > 1)
    ->  Seq Scan on test_2
    ->  Seq Scan on test_3
    ->  Seq Scan on test_4
@@ -1091,11 +1091,11 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 DEALLOCATE q;
 PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ANY (array[100, 600, $1]);
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                      QUERY PLAN                      
-------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_1
-         Filter: (a > ANY ('{100,600,1}'::integer[]))
+         Filter: (a > 1)
    ->  Seq Scan on test_2
    ->  Seq Scan on test_3
    ->  Seq Scan on test_4
@@ -1108,11 +1108,11 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 (12 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                      QUERY PLAN                      
-------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_1
-         Filter: (a > ANY ('{100,600,1}'::integer[]))
+         Filter: (a > 1)
    ->  Seq Scan on test_2
    ->  Seq Scan on test_3
    ->  Seq Scan on test_4
@@ -1125,11 +1125,11 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 (12 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                      QUERY PLAN                      
-------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_1
-         Filter: (a > ANY ('{100,600,1}'::integer[]))
+         Filter: (a > 1)
    ->  Seq Scan on test_2
    ->  Seq Scan on test_3
    ->  Seq Scan on test_4
@@ -1142,11 +1142,11 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 (12 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                      QUERY PLAN                      
-------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_1
-         Filter: (a > ANY ('{100,600,1}'::integer[]))
+         Filter: (a > 1)
    ->  Seq Scan on test_2
    ->  Seq Scan on test_3
    ->  Seq Scan on test_4
@@ -1159,11 +1159,11 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 (12 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                      QUERY PLAN                      
-------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_1
-         Filter: (a > ANY ('{100,600,1}'::integer[]))
+         Filter: (a > 1)
    ->  Seq Scan on test_2
    ->  Seq Scan on test_3
    ->  Seq Scan on test_4
@@ -1519,11 +1519,11 @@ EXECUTE q(NULL);
 DEALLOCATE q;
 PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ALL (array[$1, 100, 600]);
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                      QUERY PLAN                      
-------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_6
-         Filter: (a > ALL ('{1,100,600}'::integer[]))
+         Filter: (a > 600)
    ->  Seq Scan on test_7
    ->  Seq Scan on test_8
    ->  Seq Scan on test_9
@@ -1531,11 +1531,11 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 (7 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                      QUERY PLAN                      
-------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_6
-         Filter: (a > ALL ('{1,100,600}'::integer[]))
+         Filter: (a > 600)
    ->  Seq Scan on test_7
    ->  Seq Scan on test_8
    ->  Seq Scan on test_9
@@ -1543,11 +1543,11 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 (7 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                      QUERY PLAN                      
-------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_6
-         Filter: (a > ALL ('{1,100,600}'::integer[]))
+         Filter: (a > 600)
    ->  Seq Scan on test_7
    ->  Seq Scan on test_8
    ->  Seq Scan on test_9
@@ -1555,11 +1555,11 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 (7 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                      QUERY PLAN                      
-------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_6
-         Filter: (a > ALL ('{1,100,600}'::integer[]))
+         Filter: (a > 600)
    ->  Seq Scan on test_7
    ->  Seq Scan on test_8
    ->  Seq Scan on test_9
@@ -1567,11 +1567,11 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 (7 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                      QUERY PLAN                      
-------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_6
-         Filter: (a > ALL ('{1,100,600}'::integer[]))
+         Filter: (a > 600)
    ->  Seq Scan on test_7
    ->  Seq Scan on test_8
    ->  Seq Scan on test_9
@@ -1615,11 +1615,11 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 DEALLOCATE q;
 PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ALL (array[100, $1, 600]);
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                      QUERY PLAN                      
-------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_6
-         Filter: (a > ALL ('{100,1,600}'::integer[]))
+         Filter: (a > 600)
    ->  Seq Scan on test_7
    ->  Seq Scan on test_8
    ->  Seq Scan on test_9
@@ -1627,11 +1627,11 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 (7 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                      QUERY PLAN                      
-------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_6
-         Filter: (a > ALL ('{100,1,600}'::integer[]))
+         Filter: (a > 600)
    ->  Seq Scan on test_7
    ->  Seq Scan on test_8
    ->  Seq Scan on test_9
@@ -1639,11 +1639,11 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 (7 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                      QUERY PLAN                      
-------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_6
-         Filter: (a > ALL ('{100,1,600}'::integer[]))
+         Filter: (a > 600)
    ->  Seq Scan on test_7
    ->  Seq Scan on test_8
    ->  Seq Scan on test_9
@@ -1651,11 +1651,11 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 (7 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                      QUERY PLAN                      
-------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_6
-         Filter: (a > ALL ('{100,1,600}'::integer[]))
+         Filter: (a > 600)
    ->  Seq Scan on test_7
    ->  Seq Scan on test_8
    ->  Seq Scan on test_9
@@ -1663,11 +1663,11 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 (7 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                      QUERY PLAN                      
-------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_6
-         Filter: (a > ALL ('{100,1,600}'::integer[]))
+         Filter: (a > 600)
    ->  Seq Scan on test_7
    ->  Seq Scan on test_8
    ->  Seq Scan on test_9
@@ -1711,11 +1711,11 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 DEALLOCATE q;
 PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ALL (array[100, 600, $1]);
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                      QUERY PLAN                      
-------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_6
-         Filter: (a > ALL ('{100,600,1}'::integer[]))
+         Filter: (a > 600)
    ->  Seq Scan on test_7
    ->  Seq Scan on test_8
    ->  Seq Scan on test_9
@@ -1723,11 +1723,11 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 (7 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                      QUERY PLAN                      
-------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_6
-         Filter: (a > ALL ('{100,600,1}'::integer[]))
+         Filter: (a > 600)
    ->  Seq Scan on test_7
    ->  Seq Scan on test_8
    ->  Seq Scan on test_9
@@ -1735,11 +1735,11 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 (7 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                      QUERY PLAN                      
-------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_6
-         Filter: (a > ALL ('{100,600,1}'::integer[]))
+         Filter: (a > 600)
    ->  Seq Scan on test_7
    ->  Seq Scan on test_8
    ->  Seq Scan on test_9
@@ -1747,11 +1747,11 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 (7 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                      QUERY PLAN                      
-------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_6
-         Filter: (a > ALL ('{100,600,1}'::integer[]))
+         Filter: (a > 600)
    ->  Seq Scan on test_7
    ->  Seq Scan on test_8
    ->  Seq Scan on test_9
@@ -1759,11 +1759,11 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 (7 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                      QUERY PLAN                      
-------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_6
-         Filter: (a > ALL ('{100,600,1}'::integer[]))
+         Filter: (a > 600)
    ->  Seq Scan on test_7
    ->  Seq Scan on test_8
    ->  Seq Scan on test_9
@@ -1858,11 +1858,11 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 DEALLOCATE q;
 PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ALL (array[array[100, 600], array[1, $1]]);
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                         QUERY PLAN                         
-------------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_6
-         Filter: (a > ALL ('{{100,600},{1,1}}'::integer[]))
+         Filter: (a > 600)
    ->  Seq Scan on test_7
    ->  Seq Scan on test_8
    ->  Seq Scan on test_9
@@ -1870,11 +1870,11 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 (7 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                         QUERY PLAN                         
-------------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_6
-         Filter: (a > ALL ('{{100,600},{1,1}}'::integer[]))
+         Filter: (a > 600)
    ->  Seq Scan on test_7
    ->  Seq Scan on test_8
    ->  Seq Scan on test_9
@@ -1882,11 +1882,11 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 (7 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                         QUERY PLAN                         
-------------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_6
-         Filter: (a > ALL ('{{100,600},{1,1}}'::integer[]))
+         Filter: (a > 600)
    ->  Seq Scan on test_7
    ->  Seq Scan on test_8
    ->  Seq Scan on test_9
@@ -1894,11 +1894,11 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 (7 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                         QUERY PLAN                         
-------------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_6
-         Filter: (a > ALL ('{{100,600},{1,1}}'::integer[]))
+         Filter: (a > 600)
    ->  Seq Scan on test_7
    ->  Seq Scan on test_8
    ->  Seq Scan on test_9
@@ -1906,11 +1906,11 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 (7 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                         QUERY PLAN                         
-------------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_6
-         Filter: (a > ALL ('{{100,600},{1,1}}'::integer[]))
+         Filter: (a > 600)
    ->  Seq Scan on test_7
    ->  Seq Scan on test_8
    ->  Seq Scan on test_9
@@ -1935,6 +1935,23 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 (12 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q(1);
+                                QUERY PLAN                                
+--------------------------------------------------------------------------
+ Custom Scan (RuntimeAppend)
+   Prune by: (test.a > ALL (ARRAY['{100,600}'::integer[], ARRAY[1, $1]]))
+   ->  Seq Scan on test_6 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], ARRAY[1, $1]]))
+   ->  Seq Scan on test_7 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], ARRAY[1, $1]]))
+   ->  Seq Scan on test_8 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], ARRAY[1, $1]]))
+   ->  Seq Scan on test_9 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], ARRAY[1, $1]]))
+   ->  Seq Scan on test_10 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], ARRAY[1, $1]]))
+(12 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(999);
                                 QUERY PLAN                                
 --------------------------------------------------------------------------
  Custom Scan (RuntimeAppend)
@@ -1974,11 +1991,11 @@ NOTICE:  EXECUTE q(999): number of partitions: 5
 DEALLOCATE q;
 PREPARE q(int4[]) AS SELECT * FROM array_qual.test WHERE a > ALL (array[array[100, 600], $1]);
 EXPLAIN (COSTS OFF) EXECUTE q('{1, 1}');
-                         QUERY PLAN                         
-------------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_6
-         Filter: (a > ALL ('{{100,600},{1,1}}'::integer[]))
+         Filter: (a > 600)
    ->  Seq Scan on test_7
    ->  Seq Scan on test_8
    ->  Seq Scan on test_9
@@ -1986,11 +2003,11 @@ EXPLAIN (COSTS OFF) EXECUTE q('{1, 1}');
 (7 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q('{1, 1}');
-                         QUERY PLAN                         
-------------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_6
-         Filter: (a > ALL ('{{100,600},{1,1}}'::integer[]))
+         Filter: (a > 600)
    ->  Seq Scan on test_7
    ->  Seq Scan on test_8
    ->  Seq Scan on test_9
@@ -1998,11 +2015,11 @@ EXPLAIN (COSTS OFF) EXECUTE q('{1, 1}');
 (7 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q('{1, 1}');
-                         QUERY PLAN                         
-------------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_6
-         Filter: (a > ALL ('{{100,600},{1,1}}'::integer[]))
+         Filter: (a > 600)
    ->  Seq Scan on test_7
    ->  Seq Scan on test_8
    ->  Seq Scan on test_9
@@ -2010,11 +2027,11 @@ EXPLAIN (COSTS OFF) EXECUTE q('{1, 1}');
 (7 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q('{1, 1}');
-                         QUERY PLAN                         
-------------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_6
-         Filter: (a > ALL ('{{100,600},{1,1}}'::integer[]))
+         Filter: (a > 600)
    ->  Seq Scan on test_7
    ->  Seq Scan on test_8
    ->  Seq Scan on test_9
@@ -2022,11 +2039,11 @@ EXPLAIN (COSTS OFF) EXECUTE q('{1, 1}');
 (7 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q('{1, 1}');
-                         QUERY PLAN                         
-------------------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_6
-         Filter: (a > ALL ('{{100,600},{1,1}}'::integer[]))
+         Filter: (a > 600)
    ->  Seq Scan on test_7
    ->  Seq Scan on test_8
    ->  Seq Scan on test_9
@@ -2051,6 +2068,23 @@ EXPLAIN (COSTS OFF) EXECUTE q('{1, 1}');
 (12 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q('{1, 1}');
+                           QUERY PLAN                           
+----------------------------------------------------------------
+ Custom Scan (RuntimeAppend)
+   Prune by: (test.a > ALL (ARRAY['{100,600}'::integer[], $1]))
+   ->  Seq Scan on test_6 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], $1]))
+   ->  Seq Scan on test_7 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], $1]))
+   ->  Seq Scan on test_8 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], $1]))
+   ->  Seq Scan on test_9 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], $1]))
+   ->  Seq Scan on test_10 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], $1]))
+(12 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q('{1, 999}');
                            QUERY PLAN                           
 ----------------------------------------------------------------
  Custom Scan (RuntimeAppend)
@@ -2090,47 +2124,47 @@ NOTICE:  EXECUTE q('{1, 999}'): number of partitions: 1
 DEALLOCATE q;
 PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ALL (array[$1, 898]);
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                    QUERY PLAN                    
---------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_9
-         Filter: (a > ALL ('{1,898}'::integer[]))
+         Filter: (a > 898)
    ->  Seq Scan on test_10
 (4 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                    QUERY PLAN                    
---------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_9
-         Filter: (a > ALL ('{1,898}'::integer[]))
+         Filter: (a > 898)
    ->  Seq Scan on test_10
 (4 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                    QUERY PLAN                    
---------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_9
-         Filter: (a > ALL ('{1,898}'::integer[]))
+         Filter: (a > 898)
    ->  Seq Scan on test_10
 (4 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                    QUERY PLAN                    
---------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_9
-         Filter: (a > ALL ('{1,898}'::integer[]))
+         Filter: (a > 898)
    ->  Seq Scan on test_10
 (4 rows)
 
 EXPLAIN (COSTS OFF) EXECUTE q(1);
-                    QUERY PLAN                    
---------------------------------------------------
+        QUERY PLAN         
+---------------------------
  Append
    ->  Seq Scan on test_9
-         Filter: (a > ALL ('{1,898}'::integer[]))
+         Filter: (a > 898)
    ->  Seq Scan on test_10
 (4 rows)
 
@@ -2155,6 +2189,22 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
    ->  Seq Scan on test_10 test
          Filter: (a > ALL (ARRAY[$1, 898]))
 (6 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(900); /* check quals optimization */
+                 QUERY PLAN                  
+---------------------------------------------
+ Custom Scan (RuntimeAppend)
+   Prune by: (test.a > ALL (ARRAY[$1, 898]))
+   ->  Seq Scan on test_9 test
+         Filter: (a > ALL (ARRAY[$1, 898]))
+   ->  Seq Scan on test_10 test
+         Filter: (a > ALL (ARRAY[$1, 898]))
+(6 rows)
+
+EXECUTE q(1000);
+ a | b 
+---+---
+(0 rows)
 
 /* check query plan: EXECUTE q(999) */
 DO language plpgsql

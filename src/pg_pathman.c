@@ -917,15 +917,39 @@ handle_array(ArrayType *array,
 			elem_isnull[0]	= pivot_null;
 			elem_count		= 1;
 
-			/* Append NULL if array contains NULLs and 'pivot' is not NULL */
-			if (!pivot_null && array_contains_nulls(array))
+			/* If pivot is not NULL ... */
+			if (!pivot_null)
 			{
-				/* Make sure that we have enough space for 2 elements */
-				Assert(ArrayGetNItems(ARR_NDIM(array), ARR_DIMS(array)) >= 2);
+				/* ... append single NULL if array contains NULLs */
+				if (array_contains_nulls(array))
+				{
+					/* Make sure that we have enough space for 2 elements */
+					Assert(ArrayGetNItems(ARR_NDIM(array), ARR_DIMS(array)) >= 2);
 
-				elem_values[1]	= (Datum) 0;
-				elem_isnull[1]	= true;
-				elem_count		= 2;
+					elem_values[1]	= (Datum) 0;
+					elem_isnull[1]	= true;
+					elem_count		= 2;
+				}
+				/* ... optimize clause ('orig') if array does not contain NULLs */
+				else if (result->orig)
+				{
+					/* Should've been provided by the caller */
+					ScalarArrayOpExpr *orig = (ScalarArrayOpExpr *) result->orig;
+
+					/* Rebuild clause using 'pivot' */
+					result->orig = (Node *)
+						   make_opclause(orig->opno, BOOLOID, false,
+										 (Expr *) linitial(orig->args),
+										 (Expr *) makeConst(elem_type,
+															-1,
+															collid,
+															elem_len,
+															elem_values[0],
+															elem_isnull[0],
+															elem_byval),
+										 InvalidOid,
+										 collid);
+				}
 			}
 		}
 
@@ -935,8 +959,8 @@ handle_array(ArrayType *array,
 		/* Select partitions using values */
 		for (i = 0; i < elem_count; i++)
 		{
-			WrapperNode		wrap;
 			Const			c;
+			WrapperNode		wrap = InvalidWrapperNode;
 
 			NodeSetTag(&c, T_Const);
 			c.consttype		= elem_type;
@@ -1050,6 +1074,9 @@ handle_arrexpr(const ScalarArrayOpExpr *expr,
 	TypeCacheEntry			   *tce;
 	int							strategy;
 
+	/* Small sanity check */
+	Assert(list_length(expr->args) == 2);
+
 	tce = lookup_type_cache(prel->ev_type, TYPECACHE_BTREE_OPFAMILY);
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
 
@@ -1072,13 +1099,13 @@ handle_arrexpr(const ScalarArrayOpExpr *expr,
 				if (c->constisnull)
 					goto handle_arrexpr_none;
 
+				/* Provide expression for optimizations */
+				result->orig = (const Node *) expr;
+
 				/* Examine array */
 				handle_array(DatumGetArrayTypeP(c->constvalue),
 							 expr->inputcollid, strategy,
 							 expr->useOr, context, result);
-
-				/* Save expression */
-				result->orig = (const Node *) expr;
 
 				return; /* done, exit */
 			}
@@ -1101,7 +1128,7 @@ handle_arrexpr(const ScalarArrayOpExpr *expr,
 				foreach (lc, arr_expr->elements)
 				{
 					Node		   *elem = lfirst(lc);
-					WrapperNode		wrap;
+					WrapperNode		wrap = InvalidWrapperNode;
 
 					/* Stop if ALL + quals evaluate to NIL */
 					if (!expr->useOr && ranges == NIL)

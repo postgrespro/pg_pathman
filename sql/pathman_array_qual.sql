@@ -300,6 +300,7 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 EXPLAIN (COSTS OFF) EXECUTE q(1);
 EXPLAIN (COSTS OFF) EXECUTE q(1);
 EXPLAIN (COSTS OFF) EXECUTE q(1);
+EXPLAIN (COSTS OFF) EXECUTE q(999);
 /* check query plan: EXECUTE q(999) */
 DO language plpgsql
 $$
@@ -329,6 +330,7 @@ EXPLAIN (COSTS OFF) EXECUTE q('{1, 1}');
 EXPLAIN (COSTS OFF) EXECUTE q('{1, 1}');
 EXPLAIN (COSTS OFF) EXECUTE q('{1, 1}');
 EXPLAIN (COSTS OFF) EXECUTE q('{1, 1}');
+EXPLAIN (COSTS OFF) EXECUTE q('{1, 999}');
 /* check query plan: EXECUTE q('{1, 999}') */
 DO language plpgsql
 $$
@@ -358,6 +360,8 @@ EXPLAIN (COSTS OFF) EXECUTE q(1);
 EXPLAIN (COSTS OFF) EXECUTE q(1);
 EXPLAIN (COSTS OFF) EXECUTE q(1);
 EXPLAIN (COSTS OFF) EXECUTE q(1);
+EXPLAIN (COSTS OFF) EXECUTE q(900); /* check quals optimization */
+EXECUTE q(1000);
 /* check query plan: EXECUTE q(999) */
 DO language plpgsql
 $$

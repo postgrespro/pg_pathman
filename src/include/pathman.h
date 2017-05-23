@@ -132,12 +132,14 @@ Path *get_cheapest_parameterized_child_path(PlannerInfo *root, RelOptInfo *rel,
 typedef struct
 {
 	const Node			   *orig;		/* examined expression */
-	List				   *args;		/* extracted from 'orig' */
+	List				   *args;		/* clauses/wrappers extracted from 'orig' */
 	List				   *rangeset;	/* IndexRanges representing selected parts */
 	double					paramsel;	/* estimated selectivity of PARAMs
 										   (for RuntimeAppend costs) */
 	bool					found_gap;	/* were there any gaps? */
 } WrapperNode;
+
+#define InvalidWrapperNode	{ NULL, NIL, NIL, 0.0, false }
 
 typedef struct
 {
