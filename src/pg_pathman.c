@@ -1020,7 +1020,7 @@ handle_boolexpr(const BoolExpr *expr,
 	{
 		int totallen = irange_list_length(ranges);
 
-		foreach (lc, result->args)
+		foreach (lc, args)
 		{
 			WrapperNode	   *arg = (WrapperNode *) lfirst(lc);
 			int				len = irange_list_length(arg->rangeset);
