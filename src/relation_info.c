@@ -183,8 +183,9 @@ refresh_pathman_relation_info(Oid relid,
 	fix_opfuncids(prel->expr);
 
 	expr_varnos = pull_varnos(prel->expr);
-	if (bms_singleton_member(expr_varnos) != PART_EXPR_VARNO)
-		elog(ERROR, "partitioning expression may reference only one table");
+	if (bms_num_members(expr_varnos) != 1)
+		elog(ERROR, "partitioning expression should reference table \"%s\"",
+			 get_rel_name(relid));
 
 	/* Extract Vars and varattnos of partitioning expression */
 	prel->expr_vars = NIL;
@@ -631,10 +632,6 @@ cook_partitioning_expression(const Oid relid,
 				   *raw_expr;
 	List		   *query_tree_list;
 
-	volatile bool	ok_rewrite = false; /* must be volatile, else
-										   cpu register might change
-										   in case of longjmp() */
-
 	char		   *query_string,
 				   *expr_serialized = ""; /* keep compiler happy */
 
@@ -644,9 +641,6 @@ cook_partitioning_expression(const Oid relid,
 					old_mcxt;
 
 	AssertTemporaryContext();
-
-	/* Make clang analyzer happy (v 3.5) */
-	(void) ok_rewrite;
 
 	/*
 	 * We use separate memory context here, just to make sure we won't
@@ -705,7 +699,6 @@ cook_partitioning_expression(const Oid relid,
 
 		/* This will fail with ERROR in case of wrong expression */
 		query_tree_list = pg_analyze_and_rewrite(parse_tree, query_string, NULL, 0);
-		ok_rewrite = true; /* tell PG_CATCH that we're fine */
 
 		if (list_length(query_tree_list) != 1)
 			elog(ERROR, "partitioning expression produced more than 1 query");
@@ -739,14 +732,6 @@ cook_partitioning_expression(const Oid relid,
 
 		/* Don't forget to enable pg_pathman's hooks */
 		pathman_hooks_enabled = true;
-
-		/*
-		 * Simply rethrow if rewrite of AST was successful.
-		 * NOTE: We aim to modify only ERRORs that
-		 * are relevant to analyze and rewrite steps.
-		 */
-		if (ok_rewrite)
-			PG_RE_THROW();
 
 		/* Switch to the original context & copy edata */
 		MemoryContextSwitchTo(old_mcxt);

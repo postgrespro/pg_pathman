@@ -306,7 +306,7 @@ ERROR:  'expression' should not be NULL
 SELECT validate_expression('calamity.part_test', 'valval');		/* not ok */
 ERROR:  cannot find type name for attribute "valval" of relation "part_test"
 SELECT validate_expression('calamity.part_test', 'random()');	/* not ok */
-ERROR:  functions in partitioning expression must be marked IMMUTABLE
+ERROR:  failed to analyze partitioning expression (random())
 SELECT validate_expression('calamity.part_test', 'val');		/* OK */
  validate_expression 
 ---------------------
