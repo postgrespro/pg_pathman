@@ -1080,6 +1080,9 @@ handle_arrexpr(const ScalarArrayOpExpr *expr,
 	tce = lookup_type_cache(prel->ev_type, TYPECACHE_BTREE_OPFAMILY);
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
 
+	/* Save expression */
+	result->orig = (const Node *) expr;
+
 	/* Check if expression tree is a partitioning expression */
 	if (!match_expr_to_operand(context->prel_expr, part_expr))
 		goto handle_arrexpr_all;
@@ -1097,10 +1100,12 @@ handle_arrexpr(const ScalarArrayOpExpr *expr,
 
 				/* Array is NULL */
 				if (c->constisnull)
-					goto handle_arrexpr_none;
+				{
+					result->rangeset = NIL;
+					result->paramsel = 0.0;
 
-				/* Provide expression for optimizations */
-				result->orig = (const Node *) expr;
+					return; /* done, exit */
+				}
 
 				/* Examine array */
 				handle_array(DatumGetArrayTypeP(c->constvalue),
@@ -1114,7 +1119,8 @@ handle_arrexpr(const ScalarArrayOpExpr *expr,
 			{
 				ArrayExpr  *arr_expr = (ArrayExpr *) array;
 				Oid			elem_type = arr_expr->element_typeid;
-				bool		array_has_params = false;
+				int			array_params = 0;
+				double		paramsel = 1.0;
 				List	   *ranges;
 				ListCell   *lc;
 
@@ -1158,25 +1164,40 @@ handle_arrexpr(const ScalarArrayOpExpr *expr,
 									irange_list_union(ranges, wrap.rangeset) :
 									irange_list_intersection(ranges, wrap.rangeset);
 					}
-					else array_has_params = true; /* we have non-const nodes */
+					else array_params++; /* we've just met non-const nodes */
 				}
 
 				/* Check for PARAM-related optimizations */
-				if (array_has_params)
+				if (array_params > 0)
 				{
-					/* We can't say anything if PARAMs + ANY */
-					if (expr->useOr)
-						goto handle_arrexpr_all;
+					double	sel = estimate_paramsel_using_prel(prel, strategy);
+					int		i;
 
-					/* Recheck condition on a narrowed set of partitions */
-					ranges = irange_list_set_lossiness(ranges, IR_LOSSY);
+					if (expr->useOr)
+					{
+						/* We can't say anything if PARAMs + ANY */
+						ranges = list_make1_irange_full(prel, IR_LOSSY);
+
+						/* See handle_boolexpr() */
+						for (i = 0; i < array_params; i++)
+							paramsel *= (1 - sel);
+
+						paramsel = 1 - paramsel;
+					}
+					else
+					{
+						/* Recheck condition on a narrowed set of partitions */
+						ranges = irange_list_set_lossiness(ranges, IR_LOSSY);
+
+						/* See handle_boolexpr() */
+						for (i = 0; i < array_params; i++)
+							paramsel *= sel;
+					}
 				}
 
-				/* Save rangeset */
+				/* Save result */
 				result->rangeset = ranges;
-
-				/* Save expression */
-				result->orig = (const Node *) expr;
+				result->paramsel = paramsel;
 
 				return; /* done, exit */
 			}
@@ -1187,21 +1208,7 @@ handle_arrexpr(const ScalarArrayOpExpr *expr,
 
 handle_arrexpr_all:
 	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
-	result->paramsel = estimate_paramsel_using_prel(prel, strategy);
-
-	/* Save expression */
-	result->orig = (const Node *) expr;
-
-	return;
-
-handle_arrexpr_none:
-	result->rangeset = NIL;
-	result->paramsel = 0.0;
-
-	/* Save expression */
-	result->orig = (const Node *) expr;
-
-	return;
+	result->paramsel = 1.0;
 }
 
 /* Operator expression handler */
