@@ -1511,9 +1511,9 @@ SELECT pathman.create_partitions_from_range('test."RangeRel"', 'dt', '2015-01-01
 DROP TABLE test."RangeRel" CASCADE;
 NOTICE:  drop cascades to 6 other objects
 SELECT * FROM pathman.pathman_config;
-      partrel       | expr | parttype | range_interval |                                                      cooked_expr                                                       
---------------------+------+----------+----------------+------------------------------------------------------------------------------------------------------------------------
- test.num_range_rel | id   |        2 | 1000           | {VAR :varno 1 :varattno 1 :vartype 23 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 1 :location -1}
+      partrel       | expr | parttype | range_interval |                                                      cooked_expr                                                      
+--------------------+------+----------+----------------+-----------------------------------------------------------------------------------------------------------------------
+ test.num_range_rel | id   |        2 | 1000           | {VAR :varno 1 :varattno 1 :vartype 23 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 1 :location 8}
 (1 row)
 
 CREATE TABLE test."RangeRel" (

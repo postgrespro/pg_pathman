@@ -348,9 +348,6 @@ canonicalize_custom_exprs_mutator(Node *node, void *cxt)
 		/* Restore original 'varattno' */
 		var->varattno = var->varoattno;
 
-		/* Forget 'location' */
-		var->location = -1;
-
 		return (Node *) var;
 	}
 

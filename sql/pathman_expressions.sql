@@ -27,21 +27,24 @@ INSERT INTO test_exprs.hash_rel (value, value2)
 SELECT COUNT(*) FROM test_exprs.hash_rel;
 
 
+
+\set VERBOSITY default
+
 /* Try using constant expression */
 SELECT create_hash_partitions('test_exprs.hash_rel', '1 + 1', 4);
 
-
-\set VERBOSITY default
+/* Try using multiple queries */
+SELECT create_hash_partitions('test_exprs.hash_rel',
+							  'value, (select oid from pg_class limit 1)',
+							  4);
 
 /* Try using mutable expression */
 SELECT create_hash_partitions('test_exprs.hash_rel', 'random()', 4);
 
-/* Check that 'pathman_hooks_enabled' is true (1 partition in plan) */
-EXPLAIN (COSTS OFF) INSERT INTO test_exprs.canary_copy
-SELECT * FROM test_exprs.canary WHERE val = 1;
+/* Try using broken parentheses */
+SELECT create_hash_partitions('test_exprs.hash_rel', 'value * value2))', 4);
 
 /* Try using missing columns */
-SELECT create_hash_partitions('test_exprs.hash_rel', 'value * value2))', 4);
 SELECT create_hash_partitions('test_exprs.hash_rel', 'value * value3', 4);
 
 /* Check that 'pathman_hooks_enabled' is true (1 partition in plan) */
@@ -75,12 +78,12 @@ INSERT INTO test_exprs.range_rel (dt, txt)
 SELECT g, md5(g::TEXT) FROM generate_series('2015-01-01', '2020-04-30', '1 month'::interval) as g;
 
 
+
+\set VERBOSITY default
+
 /* Try using constant expression */
 SELECT create_range_partitions('test_exprs.range_rel', '''16 years''::interval',
 							   '15 years'::INTERVAL, '1 year'::INTERVAL, 10);
-
-
-\set VERBOSITY default
 
 /* Try using mutable expression */
 SELECT create_range_partitions('test_exprs.range_rel', 'RANDOM()',

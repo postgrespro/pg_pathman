@@ -27,13 +27,32 @@ SELECT COUNT(*) FROM test_exprs.hash_rel;
      5
 (1 row)
 
+\set VERBOSITY default
 /* Try using constant expression */
 SELECT create_hash_partitions('test_exprs.hash_rel', '1 + 1', 4);
-ERROR:  partitioning expression should reference table "hash_rel"
-\set VERBOSITY default
+ERROR:  failed to analyze partitioning expression "1 + 1"
+DETAIL:  partitioning expression should reference table "hash_rel"
+CONTEXT:  SQL statement "SELECT public.validate_expression(parent_relid, expression)"
+PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line 9 at PERFORM
+SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data)"
+PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 4 at PERFORM
+/* Try using multiple queries */
+SELECT create_hash_partitions('test_exprs.hash_rel',
+							  'value, (select oid from pg_class limit 1)',
+							  4);
+ERROR:  failed to analyze partitioning expression "value, (select oid from pg_class limit 1)"
+DETAIL:  subqueries are not allowed in partitioning expression
+CONTEXT:  SQL statement "SELECT public.validate_expression(parent_relid, expression)"
+PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line 9 at PERFORM
+SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data)"
+PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 4 at PERFORM
 /* Try using mutable expression */
 SELECT create_hash_partitions('test_exprs.hash_rel', 'random()', 4);
-ERROR:  failed to analyze partitioning expression (random())
+ERROR:  failed to analyze partitioning expression "random()"
 DETAIL:  functions in partitioning expression must be marked IMMUTABLE
 CONTEXT:  SQL statement "SELECT public.validate_expression(parent_relid, expression)"
 PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line 9 at PERFORM
@@ -41,20 +60,9 @@ SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
 												 expression,
 												 partition_data)"
 PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 4 at PERFORM
-/* Check that 'pathman_hooks_enabled' is true (1 partition in plan) */
-EXPLAIN (COSTS OFF) INSERT INTO test_exprs.canary_copy
-SELECT * FROM test_exprs.canary WHERE val = 1;
-            QUERY PLAN            
-----------------------------------
- Insert on canary_copy
-   ->  Append
-         ->  Seq Scan on canary_0
-               Filter: (val = 1)
-(4 rows)
-
-/* Try using missing columns */
+/* Try using broken parentheses */
 SELECT create_hash_partitions('test_exprs.hash_rel', 'value * value2))', 4);
-ERROR:  failed to parse partitioning expression (value * value2)))
+ERROR:  failed to parse partitioning expression "value * value2))"
 DETAIL:  syntax error at or near ")"
 QUERY:  SELECT public.validate_expression(parent_relid, expression)
 CONTEXT:  PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line 9 at PERFORM
@@ -62,8 +70,9 @@ SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
 												 expression,
 												 partition_data)"
 PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 4 at PERFORM
+/* Try using missing columns */
 SELECT create_hash_partitions('test_exprs.hash_rel', 'value * value3', 4);
-ERROR:  failed to analyze partitioning expression (value * value3)
+ERROR:  failed to analyze partitioning expression "value * value3"
 DETAIL:  column "value3" does not exist
 HINT:  Perhaps you meant to reference the column "hash_rel.value" or the column "hash_rel.value2".
 QUERY:  SELECT public.validate_expression(parent_relid, expression)
@@ -144,15 +153,22 @@ EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.hash_rel WHERE (value * value2) = 5
 CREATE TABLE test_exprs.range_rel (id SERIAL PRIMARY KEY, dt TIMESTAMP, txt TEXT);
 INSERT INTO test_exprs.range_rel (dt, txt)
 SELECT g, md5(g::TEXT) FROM generate_series('2015-01-01', '2020-04-30', '1 month'::interval) as g;
+\set VERBOSITY default
 /* Try using constant expression */
 SELECT create_range_partitions('test_exprs.range_rel', '''16 years''::interval',
 							   '15 years'::INTERVAL, '1 year'::INTERVAL, 10);
-ERROR:  partitioning expression should reference table "range_rel"
-\set VERBOSITY default
+ERROR:  failed to analyze partitioning expression "'16 years'::interval"
+DETAIL:  partitioning expression should reference table "range_rel"
+CONTEXT:  SQL statement "SELECT public.validate_expression(parent_relid, expression)"
+PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line 9 at PERFORM
+SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data)"
+PL/pgSQL function create_range_partitions(regclass,text,anyelement,interval,integer,boolean) line 12 at PERFORM
 /* Try using mutable expression */
 SELECT create_range_partitions('test_exprs.range_rel', 'RANDOM()',
 							   '15 years'::INTERVAL, '1 year'::INTERVAL, 10);
-ERROR:  failed to analyze partitioning expression (RANDOM())
+ERROR:  failed to analyze partitioning expression "RANDOM()"
 DETAIL:  functions in partitioning expression must be marked IMMUTABLE
 CONTEXT:  SQL statement "SELECT public.validate_expression(parent_relid, expression)"
 PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line 9 at PERFORM
