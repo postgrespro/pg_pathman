@@ -5,6 +5,35 @@ CREATE EXTENSION pg_pathman;
 CREATE SCHEMA test_exprs;
 
 
+
+/*
+ * Test partitioning expression canonicalization process
+ */
+
+CREATE TABLE test_exprs.canon(c JSONB NOT NULL);
+SELECT create_range_partitions('test_exprs.canon', '(C->>''key'')::int8', 1, 10, 2);
+SELECT expr FROM pathman_config; /* check expression */
+INSERT INTO test_exprs.canon VALUES ('{ "key": 2, "value": 0 }');
+SELECT *, tableoid::REGCLASS FROM test_exprs.canon;
+DROP TABLE test_exprs.canon CASCADE;
+
+
+CREATE TABLE test_exprs.canon(val TEXT NOT NULL);
+CREATE SEQUENCE test_exprs.canon_seq;
+SELECT add_to_pathman_config('test_exprs.canon', 'VAL collate "C"', NULL);
+SELECT add_range_partition('test_exprs.canon', 'a'::TEXT, 'b');
+SELECT add_range_partition('test_exprs.canon', 'b'::TEXT, 'c');
+SELECT add_range_partition('test_exprs.canon', 'c'::TEXT, 'd');
+SELECT add_range_partition('test_exprs.canon', 'd'::TEXT, 'e');
+SELECT expr FROM pathman_config; /* check expression */
+INSERT INTO test_exprs.canon VALUES ('b');
+SELECT *, tableoid::REGCLASS FROM test_exprs.canon;
+EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.canon WHERE val COLLATE "C" < ALL (array['b', 'c']);
+EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.canon WHERE val COLLATE "POSIX" < ALL (array['b', 'c']);
+DROP TABLE test_exprs.canon CASCADE;
+
+
+
 /* We use this rel to check 'pathman_hooks_enabled' */
 CREATE TABLE test_exprs.canary(val INT4 NOT NULL);
 CREATE TABLE test_exprs.canary_copy (LIKE test_exprs.canary);

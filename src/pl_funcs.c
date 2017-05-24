@@ -34,7 +34,6 @@
 #include "nodes/nodeFuncs.h"
 #include "utils/builtins.h"
 #include "utils/inval.h"
-#include "utils/ruleutils.h"
 #include "utils/snapmgr.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
@@ -832,9 +831,7 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	expr_datum = cook_partitioning_expression(relid, expression, &expr_type);
 
 	/* Canonicalize user's expression (trim whitespaces etc) */
-	expression = deparse_expression(stringToNode(TextDatumGetCString(expr_datum)),
-									deparse_context_for(get_rel_name(relid), relid),
-									false, false);
+	expression = canonicalize_partitioning_expression(relid, expression);
 
 	/* Check hash function for HASH partitioning */
 	if (parttype == PT_HASH)

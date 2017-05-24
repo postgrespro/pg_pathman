@@ -26,6 +26,7 @@
 #include "nodes/nodeFuncs.h"
 #include "optimizer/clauses.h"
 #include "optimizer/var.h"
+#include "parser/analyze.h"
 #include "parser/parser.h"
 #include "storage/lmgr.h"
 #include "tcop/tcopprot.h"
@@ -33,6 +34,7 @@
 #include "utils/fmgroids.h"
 #include "utils/hsearch.h"
 #include "utils/memutils.h"
+#include "utils/ruleutils.h"
 #include "utils/syscache.h"
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"
@@ -141,7 +143,6 @@ refresh_pathman_relation_info(Oid relid,
 	Datum					param_values[Natts_pathman_config_params];
 	bool					param_isnull[Natts_pathman_config_params];
 	char				   *expr;
-	HeapTuple				htup;
 	MemoryContext			old_mcxt;
 
 	AssertTemporaryContext();
@@ -193,16 +194,8 @@ refresh_pathman_relation_info(Oid relid,
 
 	/* First, fetch type of partitioning expression */
 	prel->ev_type	= exprType(prel->expr);
-
-	htup = SearchSysCache1(TYPEOID, prel->ev_type);
-	if (HeapTupleIsValid(htup))
-	{
-		Form_pg_type typtup = (Form_pg_type) GETSTRUCT(htup);
-		prel->ev_typmod = typtup->typtypmod;
-		prel->ev_collid = typtup->typcollation;
-		ReleaseSysCache(htup);
-	}
-	else elog(ERROR, "cache lookup failed for type %u", prel->ev_type);
+	prel->ev_typmod	= exprTypmod(prel->expr);
+	prel->ev_collid = exprCollation(prel->expr);
 
 	/* Fetch HASH & CMP fuctions and other stuff from type cache */
 	typcache = lookup_type_cache(prel->ev_type,
@@ -782,6 +775,31 @@ cook_partitioning_expression(const Oid relid,
 	MemoryContextDelete(parse_mcxt);
 
 	return expr_datum;
+}
+
+/* Canonicalize user's expression (trim whitespaces etc) */
+char *
+canonicalize_partitioning_expression(const Oid relid,
+									 const char *expr_cstr)
+{
+	Node		   *parse_tree;
+	Expr		   *expr;
+	char		   *query_string;
+	Query		   *query;
+
+	AssertTemporaryContext();
+
+	/* First we have to build a raw AST */
+	(void) parse_partitioning_expression(relid, expr_cstr,
+										 &query_string, &parse_tree);
+
+	query = parse_analyze(parse_tree, query_string, NULL, 0);
+	expr = ((TargetEntry *) linitial(query->targetList))->expr;
+
+	/* We don't care about memory efficiency here */
+	return deparse_expression((Node *) expr,
+							  deparse_context_for(get_rel_name(relid), relid),
+							  false, false);
 }
 
 /* Check if query has subqueries */
