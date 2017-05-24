@@ -61,6 +61,21 @@
 
 
 /*
+ * BeginCopyFrom()
+ */
+#if PG_VERSION_NUM >= 100000
+#define BeginCopyFromCompat(pstate, rel, filename, is_program, data_source_cb, \
+							attnamelist, options) \
+		BeginCopyFrom((pstate), (rel), (filename), (is_program), \
+					  (data_source_cb), (attnamelist), (options))
+#elif PG_VERSION_NUM >= 90500
+#define BeginCopyFromCompat(pstate, rel, filename, is_program, data_source_cb, \
+							attnamelist, options) \
+		BeginCopyFrom((rel), (filename), (is_program), (attnamelist), (options))
+#endif
+
+
+/*
  * Define ALLOCSET_DEFAULT_SIZES for our precious MemoryContexts
  */
 #if PG_VERSION_NUM >= 90500 && PG_VERSION_NUM < 90600
@@ -181,6 +196,18 @@ extern void create_plain_partial_paths(PlannerInfo *root,
 #elif PG_VERSION_NUM >= 90500
 #define DefineRelationCompat(createstmt, relkind, ownerId, typaddress) \
 	DefineRelation((createstmt), (relkind), (ownerId), (typaddress))
+#endif
+
+
+/*
+ * DoCopy()
+ */
+#if PG_VERSION_NUM >= 100000
+#define DoCopyCompat(pstate, copy_stmt, stmt_location, stmt_len, processed) \
+	DoCopy((pstate), (copy_stmt), (stmt_location), (stmt_len), (processed))
+#elif PG_VERSION_NUM >= 90500
+#define DoCopyCompat(pstate, copy_stmt, stmt_location, stmt_len, processed) \
+	DoCopy((copy_stmt), (pstate)->p_sourcetext, (processed))
 #endif
 
 

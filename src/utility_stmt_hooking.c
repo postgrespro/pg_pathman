@@ -325,7 +325,8 @@ CopyGetAttnums(TupleDesc tupDesc, Relation rel, List *attnamelist)
  * NOTE: based on DoCopy() (see copy.c).
  */
 void
-PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
+PathmanDoCopy(const CopyStmt *stmt, const char *queryString, int stmt_location,
+			  int stmt_len, uint64 *processed)
 {
 	CopyState	cstate;
 	bool		is_from = stmt->is_from;
@@ -333,6 +334,7 @@ PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
 	Relation	rel;
 	Node	   *query = NULL;
 	List	   *range_table = NIL;
+	ParseState *pstate;
 
 	/* Disallow COPY TO/FROM file or program except to superusers. */
 	if (!pipe && !superuser())
@@ -481,6 +483,9 @@ PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
 	/* This should never happen (see is_pathman_related_copy()) */
 	else elog(ERROR, "error in function " CppAsString(PathmanDoCopy));
 
+	pstate = make_parsestate(NULL);
+	pstate->p_sourcetext = queryString;
+
 	/* COPY ... FROM ... */
 	if (is_from)
 	{
@@ -495,13 +500,9 @@ PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
 			PreventCommandIfReadOnly("PATHMAN COPY FROM");
 		PreventCommandIfParallelMode("PATHMAN COPY FROM");
 
-#if PG_VERSION_NUM >= 100000
-		cstate = BeginCopyFrom(NULL, rel, stmt->filename, stmt->is_program,
-							   NULL, stmt->attlist, stmt->options);
-#else
-		cstate = BeginCopyFrom(rel, stmt->filename, stmt->is_program,
-							   stmt->attlist, stmt->options);
-#endif
+		cstate = BeginCopyFromCompat(pstate, rel, stmt->filename,
+									 stmt->is_program, NULL, stmt->attlist,
+									 stmt->options);
 		*processed = PathmanCopyFrom(cstate, rel, range_table, is_old_protocol);
 		EndCopyFrom(cstate);
 	}
@@ -519,11 +520,8 @@ PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
 		modified_copy_stmt.query = query;
 
 		/* Call standard DoCopy using a new CopyStmt */
-#if PG_VERSION_NUM >= 100000
-		DoCopy(NULL, &modified_copy_stmt, 0, 0, processed);
-#else
-		DoCopy(&modified_copy_stmt, queryString, processed);
-#endif
+		DoCopyCompat(pstate, &modified_copy_stmt, stmt_location, stmt_len,
+					 processed);
 	}
 
 	/*

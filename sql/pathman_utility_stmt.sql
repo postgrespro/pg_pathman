@@ -168,7 +168,9 @@ CREATE TABLE rename.test(a serial, b int);
 SELECT create_hash_partitions('rename.test', 'a', 3);
 ALTER TABLE rename.test_0 RENAME TO test_one;
 /* We expect to find check constraint renamed as well */
-\d+ rename.test_one
+SELECT r.conname, pg_get_constraintdef(r.oid, true)
+FROM pg_constraint r
+WHERE r.conrelid = 'rename.test_one'::regclass AND r.contype = 'c';
 
 /* Generates check constraint for relation */
 CREATE OR REPLACE FUNCTION add_constraint(rel regclass)
@@ -191,15 +193,25 @@ CREATE TABLE rename.test_inh_1 (LIKE rename.test INCLUDING ALL);
 ALTER TABLE rename.test_inh_1 INHERIT rename.test_inh;
 SELECT add_constraint('rename.test_inh_1');
 ALTER TABLE rename.test_inh_1 RENAME TO test_inh_one;
-\d+ rename.test_inh_one
+/* Show check constraints of rename.test_inh_one */
+SELECT r.conname, pg_get_constraintdef(r.oid, true)
+FROM pg_constraint r
+WHERE r.conrelid = 'rename.test_inh_one'::regclass AND r.contype = 'c';
 
 /* Check that plain tables are not affected too */
 CREATE TABLE rename.plain_test(a serial, b int);
 ALTER TABLE rename.plain_test RENAME TO plain_test_renamed;
 SELECT add_constraint('rename.plain_test_renamed');
-\d+ rename.plain_test_renamed
+/* Show check constraints of rename.plain_test_renamed */
+SELECT r.conname, pg_get_constraintdef(r.oid, true)
+FROM pg_constraint r
+WHERE r.conrelid = 'rename.plain_test_renamed'::regclass AND r.contype = 'c';
+
 ALTER TABLE rename.plain_test_renamed RENAME TO plain_test;
-\d+ rename.plain_test
+/* ... and check constraints of rename.plain_test */
+SELECT r.conname, pg_get_constraintdef(r.oid, true)
+FROM pg_constraint r
+WHERE r.conrelid = 'rename.plain_test'::regclass AND r.contype = 'c';
 
 DROP SCHEMA rename CASCADE;
 

@@ -771,6 +771,8 @@ pathman_process_utility_hook(PlannedStmt *pstmt,
 							 DestReceiver *dest, char *completionTag)
 {
 	Node   *parsetree = pstmt->utilityStmt;
+	int		stmt_location = pstmt->stmt_location,
+			stmt_len = pstmt->stmt_len;
 #else
 pathman_process_utility_hook(Node *parsetree,
 							 const char *queryString,
@@ -779,6 +781,8 @@ pathman_process_utility_hook(Node *parsetree,
 							 DestReceiver *dest,
 							 char *completionTag)
 {
+	int		stmt_location = -1,
+			stmt_len = 0;
 #endif
 
 	if (IsPathmanReady())
@@ -793,7 +797,8 @@ pathman_process_utility_hook(Node *parsetree,
 			uint64	processed;
 
 			/* Handle our COPY case (and show a special cmd name) */
-			PathmanDoCopy((CopyStmt *) parsetree, queryString, &processed);
+			PathmanDoCopy((CopyStmt *) parsetree, queryString, stmt_location,
+						  stmt_len, &processed);
 			if (completionTag)
 				snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
 						 "PATHMAN COPY " UINT64_FORMAT, processed);

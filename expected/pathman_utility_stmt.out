@@ -294,15 +294,13 @@ SELECT create_hash_partitions('rename.test', 'a', 3);
 
 ALTER TABLE rename.test_0 RENAME TO test_one;
 /* We expect to find check constraint renamed as well */
-\d+ rename.test_one
-                                              Table "rename.test_one"
- Column |  Type   |                        Modifiers                        | Storage | Stats target | Description 
---------+---------+---------------------------------------------------------+---------+--------------+-------------
- a      | integer | not null default nextval('rename.test_a_seq'::regclass) | plain   |              | 
- b      | integer |                                                         | plain   |              | 
-Check constraints:
-    "pathman_test_one_check" CHECK (get_hash_part_idx(hashint4(a), 3) = 0)
-Inherits: rename.test
+SELECT r.conname, pg_get_constraintdef(r.oid, true)
+FROM pg_constraint r
+WHERE r.conrelid = 'rename.test_one'::regclass AND r.contype = 'c';
+        conname         |             pg_get_constraintdef              
+------------------------+-----------------------------------------------
+ pathman_test_one_check | CHECK (get_hash_part_idx(hashint4(a), 3) = 0)
+(1 row)
 
 /* Generates check constraint for relation */
 CREATE OR REPLACE FUNCTION add_constraint(rel regclass)
@@ -329,15 +327,14 @@ SELECT add_constraint('rename.test_inh_1');
 (1 row)
 
 ALTER TABLE rename.test_inh_1 RENAME TO test_inh_one;
-\d+ rename.test_inh_one
-                                            Table "rename.test_inh_one"
- Column |  Type   |                        Modifiers                        | Storage | Stats target | Description 
---------+---------+---------------------------------------------------------+---------+--------------+-------------
- a      | integer | not null default nextval('rename.test_a_seq'::regclass) | plain   |              | 
- b      | integer |                                                         | plain   |              | 
-Check constraints:
-    "pathman_test_inh_1_check" CHECK (a < 100)
-Inherits: rename.test_inh
+/* Show check constraints of rename.test_inh_one */
+SELECT r.conname, pg_get_constraintdef(r.oid, true)
+FROM pg_constraint r
+WHERE r.conrelid = 'rename.test_inh_one'::regclass AND r.contype = 'c';
+         conname          | pg_get_constraintdef 
+--------------------------+----------------------
+ pathman_test_inh_1_check | CHECK (a < 100)
+(1 row)
 
 /* Check that plain tables are not affected too */
 CREATE TABLE rename.plain_test(a serial, b int);
@@ -348,24 +345,24 @@ SELECT add_constraint('rename.plain_test_renamed');
  
 (1 row)
 
-\d+ rename.plain_test_renamed
-                                            Table "rename.plain_test_renamed"
- Column |  Type   |                           Modifiers                           | Storage | Stats target | Description 
---------+---------+---------------------------------------------------------------+---------+--------------+-------------
- a      | integer | not null default nextval('rename.plain_test_a_seq'::regclass) | plain   |              | 
- b      | integer |                                                               | plain   |              | 
-Check constraints:
-    "pathman_plain_test_renamed_check" CHECK (a < 100)
+/* Show check constraints of rename.plain_test_renamed */
+SELECT r.conname, pg_get_constraintdef(r.oid, true)
+FROM pg_constraint r
+WHERE r.conrelid = 'rename.plain_test_renamed'::regclass AND r.contype = 'c';
+             conname              | pg_get_constraintdef 
+----------------------------------+----------------------
+ pathman_plain_test_renamed_check | CHECK (a < 100)
+(1 row)
 
 ALTER TABLE rename.plain_test_renamed RENAME TO plain_test;
-\d+ rename.plain_test
-                                                Table "rename.plain_test"
- Column |  Type   |                           Modifiers                           | Storage | Stats target | Description 
---------+---------+---------------------------------------------------------------+---------+--------------+-------------
- a      | integer | not null default nextval('rename.plain_test_a_seq'::regclass) | plain   |              | 
- b      | integer |                                                               | plain   |              | 
-Check constraints:
-    "pathman_plain_test_renamed_check" CHECK (a < 100)
+/* ... and check constraints of rename.plain_test */
+SELECT r.conname, pg_get_constraintdef(r.oid, true)
+FROM pg_constraint r
+WHERE r.conrelid = 'rename.plain_test'::regclass AND r.contype = 'c';
+             conname              | pg_get_constraintdef 
+----------------------------------+----------------------
+ pathman_plain_test_renamed_check | CHECK (a < 100)
+(1 row)
 
 DROP SCHEMA rename CASCADE;
 NOTICE:  drop cascades to 7 other objects
