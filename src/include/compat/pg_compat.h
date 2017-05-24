@@ -348,20 +348,38 @@ void McxtStatsInternal(MemoryContext context, int level,
 
 
 /*
+ * parse_analyze()
+ *
+ * for v10 cast first arg to RawStmt type
+ */
+#if PG_VERSION_NUM >= 100000
+#define parse_analyze_compat(parse_tree, query_string, param_types, nparams, \
+							 query_env) \
+		parse_analyze((RawStmt *) (parse_tree), (query_string), (param_types), \
+					  (nparams), (query_env))
+#elif PG_VERSION_NUM >= 90500
+#define parse_analyze_compat(parse_tree, query_string, param_types, nparams, \
+							 query_env) \
+		parse_analyze((Node *) (parse_tree), (query_string), (param_types), \
+					  (nparams))
+#endif
+
+
+/*
  * pg_analyze_and_rewrite
  *
  * for v10 cast first arg to RawStmt type
  */
 #if PG_VERSION_NUM >= 100000
-#define pg_analyze_and_rewrite_compat(parsetree, query_string, paramTypes, \
-									  numParams, queryEnv) \
+#define pg_analyze_and_rewrite_compat(parsetree, query_string, param_types, \
+									  nparams, query_env) \
 		pg_analyze_and_rewrite((RawStmt *) (parsetree), (query_string), \
-							   (paramTypes), (numParams), (queryEnv))
+							   (param_types), (nparams), (query_env))
 #elif PG_VERSION_NUM >= 90500
-#define pg_analyze_and_rewrite_compat(parsetree, query_string, paramTypes, \
-									  numParams, queryEnv) \
+#define pg_analyze_and_rewrite_compat(parsetree, query_string, param_types, \
+									  nparams, query_env) \
 		pg_analyze_and_rewrite((Node *) (parsetree), (query_string), \
-							   (paramTypes), (numParams))
+							   (param_types), (nparams))
 #endif
 
 

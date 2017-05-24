@@ -798,7 +798,7 @@ canonicalize_partitioning_expression(const Oid relid,
 	(void) parse_partitioning_expression(relid, expr_cstr,
 										 &query_string, &parse_tree);
 
-	query = parse_analyze(parse_tree, query_string, NULL, 0);
+	query = parse_analyze_compat(parse_tree, query_string, NULL, 0, NULL);
 	expr = ((TargetEntry *) linitial(query->targetList))->expr;
 
 	/* We don't care about memory efficiency here */
