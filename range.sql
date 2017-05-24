@@ -36,7 +36,7 @@ BEGIN
 
 	/* Check lower boundary */
 	IF start_value > min_value THEN
-		RAISE EXCEPTION 'start value is less than min value of "%"', expression;
+		RAISE EXCEPTION 'start value is greater than min value of "%"', expression;
 	END IF;
 
 	/* Check upper boundary */
