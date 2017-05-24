@@ -42,9 +42,6 @@ PG_MODULE_MAGIC;
 Oid		pathman_config_relid = InvalidOid,
 		pathman_config_params_relid = InvalidOid;
 
-/* Used to disable hooks temporarily */
-bool	pathman_hooks_enabled = true;
-
 
 /* pg module functions */
 void _PG_init(void);
@@ -54,7 +51,15 @@ void _PG_init(void);
 static Node *wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue);
 
 static void handle_const(const Const *c,
+						 const Oid collid,
 						 const int strategy,
+						 const WalkerContext *context,
+						 WrapperNode *result);
+
+static void handle_array(ArrayType *array,
+						 const Oid collid,
+						 const int strategy,
+						 const bool use_or,
 						 const WalkerContext *context,
 						 WrapperNode *result);
 
@@ -76,6 +81,14 @@ static bool is_key_op_param(const OpExpr *expr,
 
 static Const *extract_const(Param *param,
 							const WalkerContext *context);
+
+static Datum array_find_min_max(Datum *values,
+								bool *isnull,
+								int length,
+								Oid value_type,
+								Oid collid,
+								bool take_min,
+								bool *result_null);
 
 
 /* Copied from PostgreSQL (allpaths.c) */
@@ -472,9 +485,9 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 
 
 /*
- * --------------------------
- *  RANGE partition prunning
- * --------------------------
+ * -------------------------
+ *  RANGE partition pruning
+ * -------------------------
  */
 
 /* Given 'value' and 'ranges', return selected partitions list */
@@ -679,7 +692,8 @@ walk_expr_tree(Expr *expr, const WalkerContext *context)
 	{
 		/* Useful for INSERT optimization */
 		case T_Const:
-			handle_const((Const *) expr, BTEqualStrategyNumber, context, result);
+			handle_const((Const *) expr, ((Const *) expr)->constcollid,
+						 BTEqualStrategyNumber, context, result);
 			return result;
 
 		/* AND, OR, NOT expressions */
@@ -786,9 +800,10 @@ wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue)
 /* Const handler */
 static void
 handle_const(const Const *c,
+			 const Oid collid,
 			 const int strategy,
 			 const WalkerContext *context,
-			 WrapperNode *result) /* ret value #1 */
+			 WrapperNode *result)		/* ret value #1 */
 {
 	const PartRelationInfo *prel = context->prel;
 
@@ -823,7 +838,7 @@ handle_const(const Const *c,
 		}
 		else
 		{
-			result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
+			result->rangeset = list_make1_irange_full(prel, IR_COMPLETE);
 			result->paramsel = 1.0;
 		}
 
@@ -864,7 +879,7 @@ handle_const(const Const *c,
 										 PrelChildrenCount(prel));
 
 				result->rangeset = list_make1_irange(make_irange(idx, idx, IR_LOSSY));
-				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
+				result->paramsel = 1.0;
 
 				return; /* done, exit */
 			}
@@ -874,8 +889,7 @@ handle_const(const Const *c,
 				FmgrInfo cmp_finfo;
 
 				/* Cannot do much about non-equal strategies + diff. collations */
-				if (strategy != BTEqualStrategyNumber &&
-					c->constcollid != prel->ev_collid)
+				if (strategy != BTEqualStrategyNumber && collid != prel->ev_collid)
 				{
 					goto handle_const_return;
 				}
@@ -885,14 +899,13 @@ handle_const(const Const *c,
 										getBaseType(prel->ev_type));
 
 				select_range_partitions(c->constvalue,
-										c->constcollid,
+										collid,
 										&cmp_finfo,
 										PrelGetRangesArray(context->prel),
 										PrelChildrenCount(context->prel),
 										strategy,
-										result); /* output */
-
-				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
+										result); /* result->rangeset = ... */
+				result->paramsel = 1.0;
 
 				return; /* done, exit */
 			}
@@ -903,176 +916,380 @@ handle_const(const Const *c,
 
 handle_const_return:
 	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
-	result->paramsel = estimate_paramsel_using_prel(prel, strategy);
+	result->paramsel = 1.0;
+}
+
+/* Array handler */
+static void
+handle_array(ArrayType *array,
+			 const Oid collid,
+			 const int strategy,
+			 const bool use_or,
+			 const WalkerContext *context,
+			 WrapperNode *result)		/* ret value #1 */
+{
+	const PartRelationInfo *prel = context->prel;
+
+	/* Elements of the array */
+	Datum	   *elem_values;
+	bool	   *elem_isnull;
+	int			elem_count;
+
+	/* Element's properties */
+	Oid			elem_type;
+	int16		elem_len;
+	bool		elem_byval;
+	char		elem_align;
+
+	/* Check if we can work with this strategy */
+	if (strategy == 0)
+		goto handle_array_return;
+
+	/* Get element's properties */
+	elem_type = ARR_ELEMTYPE(array);
+	get_typlenbyvalalign(elem_type, &elem_len, &elem_byval, &elem_align);
+
+	/* Extract values from the array */
+	deconstruct_array(array, elem_type, elem_len, elem_byval, elem_align,
+					  &elem_values, &elem_isnull, &elem_count);
+
+	/* Handle non-null Const arrays */
+	if (elem_count > 0)
+	{
+		List   *ranges;
+		int		i;
+
+		/* This is only for paranoia's sake */
+		Assert(BTMaxStrategyNumber == 5 && BTEqualStrategyNumber == 3);
+
+		/* Optimizations for <, <=, >=, > */
+		if (strategy != BTEqualStrategyNumber)
+		{
+			bool	take_min;
+			Datum	pivot;
+			bool	pivot_null;
+
+			/*
+			 * OR:		Max for (< | <=); Min for (> | >=)
+			 * AND:		Min for (< | <=); Max for (> | >=)
+			 */
+			take_min = strategy < BTEqualStrategyNumber ? !use_or : use_or;
+
+			/* Extract Min (or Max) element */
+			pivot = array_find_min_max(elem_values, elem_isnull,
+									   elem_count, elem_type, collid,
+									   take_min, &pivot_null);
+
+			/* Write data and "shrink" the array */
+			elem_values[0]	= pivot_null ? (Datum) 0 : pivot;
+			elem_isnull[0]	= pivot_null;
+			elem_count		= 1;
+
+			/* If pivot is not NULL ... */
+			if (!pivot_null)
+			{
+				/* ... append single NULL if array contains NULLs */
+				if (array_contains_nulls(array))
+				{
+					/* Make sure that we have enough space for 2 elements */
+					Assert(ArrayGetNItems(ARR_NDIM(array), ARR_DIMS(array)) >= 2);
+
+					elem_values[1]	= (Datum) 0;
+					elem_isnull[1]	= true;
+					elem_count		= 2;
+				}
+				/* ... optimize clause ('orig') if array does not contain NULLs */
+				else if (result->orig)
+				{
+					/* Should've been provided by the caller */
+					ScalarArrayOpExpr *orig = (ScalarArrayOpExpr *) result->orig;
+
+					/* Rebuild clause using 'pivot' */
+					result->orig = (Node *)
+						   make_opclause(orig->opno, BOOLOID, false,
+										 (Expr *) linitial(orig->args),
+										 (Expr *) makeConst(elem_type,
+															-1,
+															collid,
+															elem_len,
+															elem_values[0],
+															elem_isnull[0],
+															elem_byval),
+										 InvalidOid,
+										 collid);
+				}
+			}
+		}
+
+		/* Set default rangeset */
+		ranges = use_or ? NIL : list_make1_irange_full(prel, IR_COMPLETE);
+
+		/* Select partitions using values */
+		for (i = 0; i < elem_count; i++)
+		{
+			Const			c;
+			WrapperNode		wrap = InvalidWrapperNode;
+
+			NodeSetTag(&c, T_Const);
+			c.consttype		= elem_type;
+			c.consttypmod	= -1;
+			c.constcollid	= InvalidOid;
+			c.constlen		= datumGetSize(elem_values[i],
+										   elem_byval,
+										   elem_len);
+			c.constvalue	= elem_values[i];
+			c.constisnull	= elem_isnull[i];
+			c.constbyval	= elem_byval;
+			c.location		= -1;
+
+			handle_const(&c, collid, strategy, context, &wrap);
+
+			/* Should we use OR | AND? */
+			ranges = use_or ?
+						irange_list_union(ranges, wrap.rangeset) :
+						irange_list_intersection(ranges, wrap.rangeset);
+		}
+
+		/* Free resources */
+		pfree(elem_values);
+		pfree(elem_isnull);
+
+		result->rangeset = ranges;
+		result->paramsel = 1.0;
+
+		return; /* done, exit */
+	}
+
+handle_array_return:
+	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
+	result->paramsel = 1.0;
 }
 
 /* Boolean expression handler */
 static void
 handle_boolexpr(const BoolExpr *expr,
 				const WalkerContext *context,
-				WrapperNode *result)
+				WrapperNode *result)	/* ret value #1 */
 {
-	ListCell				   *lc;
-	const PartRelationInfo	   *prel = context->prel;
+	const PartRelationInfo *prel = context->prel;
+	List				   *ranges,
+						   *args = NIL;
+	double					paramsel = 1.0;
+	ListCell			   *lc;
 
-	result->orig = (const Node *) expr;
-	result->args = NIL;
-	result->paramsel = 1.0;
+	/* Set default rangeset */
+	ranges = (expr->boolop == AND_EXPR) ?
+					list_make1_irange_full(prel, IR_COMPLETE) :
+					NIL;
 
-	/* First, set default rangeset */
-	result->rangeset = (expr->boolop == AND_EXPR) ?
-							list_make1_irange_full(prel, IR_COMPLETE) :
-							NIL;
-
+	/* Examine expressions */
 	foreach (lc, expr->args)
 	{
-		WrapperNode *arg_result;
+		WrapperNode *wrap;
 
-		arg_result = walk_expr_tree((Expr *) lfirst(lc), context);
-		result->args = lappend(result->args, arg_result);
+		wrap = walk_expr_tree((Expr *) lfirst(lc), context);
+		args = lappend(args, wrap);
 
 		switch (expr->boolop)
 		{
 			case OR_EXPR:
-				result->rangeset = irange_list_union(result->rangeset,
-													 arg_result->rangeset);
+				ranges = irange_list_union(ranges, wrap->rangeset);
 				break;
 
 			case AND_EXPR:
-				result->rangeset = irange_list_intersection(result->rangeset,
-															arg_result->rangeset);
-				result->paramsel *= arg_result->paramsel;
+				ranges = irange_list_intersection(ranges, wrap->rangeset);
+				paramsel *= wrap->paramsel;
 				break;
 
 			default:
-				result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
+				ranges = list_make1_irange_full(prel, IR_LOSSY);
 				break;
 		}
 	}
 
+	/* Adjust paramsel for OR */
 	if (expr->boolop == OR_EXPR)
 	{
-		int totallen = irange_list_length(result->rangeset);
+		int totallen = irange_list_length(ranges);
 
-		foreach (lc, result->args)
+		foreach (lc, args)
 		{
 			WrapperNode	   *arg = (WrapperNode *) lfirst(lc);
 			int				len = irange_list_length(arg->rangeset);
 
-			result->paramsel *= (1.0 - arg->paramsel * (double)len / (double)totallen);
+			paramsel *= (1.0 - arg->paramsel * (double)len / (double)totallen);
 		}
-		result->paramsel = 1.0 - result->paramsel;
+
+		paramsel = 1.0 - paramsel;
 	}
+
+	/* Save results */
+	result->rangeset	= ranges;
+	result->paramsel	= paramsel;
+	result->orig		= (const Node *) expr;
+	result->args		= args;
 }
 
 /* Scalar array expression handler */
 static void
 handle_arrexpr(const ScalarArrayOpExpr *expr,
 			   const WalkerContext *context,
-			   WrapperNode *result)
+			   WrapperNode *result)		/* ret value #1 */
 {
-	Node					   *exprnode = (Node *) linitial(expr->args);
-	Node					   *arraynode = (Node *) lsecond(expr->args);
+	Node					   *part_expr = (Node *) linitial(expr->args);
+	Node					   *array = (Node *) lsecond(expr->args);
 	const PartRelationInfo	   *prel = context->prel;
 	TypeCacheEntry			   *tce;
 	int							strategy;
 
-	result->orig = (const Node *) expr;
+	/* Small sanity check */
+	Assert(list_length(expr->args) == 2);
 
 	tce = lookup_type_cache(prel->ev_type, TYPECACHE_BTREE_OPFAMILY);
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
 
-	if (!match_expr_to_operand(context->prel_expr, exprnode))
-		goto handle_arrexpr_return;
+	/* Save expression */
+	result->orig = (const Node *) expr;
 
-	/* Handle non-null Const arrays */
-	if (arraynode && IsA(arraynode, Const) && !((Const *) arraynode)->constisnull)
+	/* Check if expression tree is a partitioning expression */
+	if (!match_expr_to_operand(context->prel_expr, part_expr))
+		goto handle_arrexpr_all;
+
+	/* Check if we can work with this strategy */
+	if (strategy == 0)
+		goto handle_arrexpr_all;
+
+	/* Examine the array node */
+	switch (nodeTag(array))
 	{
-		ArrayType	   *arrayval;
+		case T_Const:
+			{
+				Const	   *c = (Const *) array;
 
-		int16			elemlen;
-		bool			elembyval;
-		char			elemalign;
+				/* Array is NULL */
+				if (c->constisnull)
+				{
+					result->rangeset = NIL;
+					result->paramsel = 0.0;
 
-		int				num_elems;
+					return; /* done, exit */
+				}
 
-		Datum		   *elem_values;
-		bool		   *elem_isnull;
+				/* Examine array */
+				handle_array(DatumGetArrayTypeP(c->constvalue),
+							 expr->inputcollid, strategy,
+							 expr->useOr, context, result);
 
-		WalkerContext	nested_wcxt;
-		List		   *ranges;
-		int				i;
+				return; /* done, exit */
+			}
 
-		/* Extract values from array */
-		arrayval = DatumGetArrayTypeP(((Const *) arraynode)->constvalue);
+		case T_ArrayExpr:
+			{
+				ArrayExpr  *arr_expr = (ArrayExpr *) array;
+				Oid			elem_type = arr_expr->element_typeid;
+				int			array_params = 0;
+				double		paramsel = 1.0;
+				List	   *ranges;
+				ListCell   *lc;
 
-		get_typlenbyvalalign(ARR_ELEMTYPE(arrayval),
-							 &elemlen, &elembyval, &elemalign);
+				if (list_length(arr_expr->elements) == 0)
+					goto handle_arrexpr_all;
 
-		deconstruct_array(arrayval,
-						  ARR_ELEMTYPE(arrayval),
-						  elemlen, elembyval, elemalign,
-						  &elem_values, &elem_isnull, &num_elems);
+				/* Set default ranges for OR | AND */
+				ranges = expr->useOr ? NIL : list_make1_irange_full(prel, IR_COMPLETE);
 
-		/* Copy WalkerContext */
-		memcpy((void *) &nested_wcxt,
-			   (const void *) context,
-			   sizeof(WalkerContext));
+				/* Walk trough elements list */
+				foreach (lc, arr_expr->elements)
+				{
+					Node		   *elem = lfirst(lc);
+					WrapperNode		wrap = InvalidWrapperNode;
 
-		/* Set default ranges for OR | AND */
-		ranges = expr->useOr ? NIL : list_make1_irange_full(prel, IR_COMPLETE);
+					/* Stop if ALL + quals evaluate to NIL */
+					if (!expr->useOr && ranges == NIL)
+						break;
 
-		/* Select partitions using values */
-		for (i = 0; i < num_elems; i++)
-		{
-			WrapperNode		sub_result;
-			Const			c;
+					/* Is this a const value? */
+					if (IsConstValue(elem, context))
+					{
+						Const *c = ExtractConst(elem, context);
 
-			NodeSetTag(&c, T_Const);
-			c.consttype	= ARR_ELEMTYPE(arrayval);
-			c.consttypmod	= -1;
-			c.constcollid	= InvalidOid;
-			c.constlen		= datumGetSize(elem_values[i],
-										   elembyval,
-										   elemlen);
-			c.constvalue	= elem_values[i];
-			c.constisnull	= elem_isnull[i];
-			c.constbyval	= elembyval;
-			c.location		= -1;
+						/* Is this an array?. */
+						if (c->consttype != elem_type && !c->constisnull)
+						{
+							handle_array(DatumGetArrayTypeP(c->constvalue),
+										 expr->inputcollid, strategy,
+										 expr->useOr, context, &wrap);
+						}
+						/* ... or a single element? */
+						else
+						{
+							handle_const(c, expr->inputcollid,
+										 strategy, context, &wrap);
+						}
 
-			handle_const(&c, strategy, &nested_wcxt, &sub_result);
+						/* Should we use OR | AND? */
+						ranges = expr->useOr ?
+									irange_list_union(ranges, wrap.rangeset) :
+									irange_list_intersection(ranges, wrap.rangeset);
+					}
+					else array_params++; /* we've just met non-const nodes */
+				}
 
-			ranges = expr->useOr ?
-						irange_list_union(ranges, sub_result.rangeset) :
-						irange_list_intersection(ranges, sub_result.rangeset);
+				/* Check for PARAM-related optimizations */
+				if (array_params > 0)
+				{
+					double	sel = estimate_paramsel_using_prel(prel, strategy);
+					int		i;
 
-			result->paramsel = Max(result->paramsel, sub_result.paramsel);
-		}
+					if (expr->useOr)
+					{
+						/* We can't say anything if PARAMs + ANY */
+						ranges = list_make1_irange_full(prel, IR_LOSSY);
 
-		result->rangeset = ranges;
-		if (num_elems == 0)
-			result->paramsel = 0.0;
+						/* See handle_boolexpr() */
+						for (i = 0; i < array_params; i++)
+							paramsel *= (1 - sel);
 
-		/* Free resources */
-		pfree(elem_values);
-		pfree(elem_isnull);
+						paramsel = 1 - paramsel;
+					}
+					else
+					{
+						/* Recheck condition on a narrowed set of partitions */
+						ranges = irange_list_set_lossiness(ranges, IR_LOSSY);
 
-		return; /* done, exit */
+						/* See handle_boolexpr() */
+						for (i = 0; i < array_params; i++)
+							paramsel *= sel;
+					}
+				}
+
+				/* Save result */
+				result->rangeset = ranges;
+				result->paramsel = paramsel;
+
+				return; /* done, exit */
+			}
+
+		default:
+			break;
 	}
 
-handle_arrexpr_return:
+handle_arrexpr_all:
 	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
-	result->paramsel = estimate_paramsel_using_prel(prel, strategy);
+	result->paramsel = 1.0;
 }
 
 /* Operator expression handler */
 static void
 handle_opexpr(const OpExpr *expr,
 			  const WalkerContext *context,
-			  WrapperNode *result)
+			  WrapperNode *result)		/* ret value #1 */
 {
 	Node					   *param;
 	const PartRelationInfo	   *prel = context->prel;
+
+	/* Save expression */
+	result->orig = (const Node *) expr;
 
 	if (list_length(expr->args) == 2)
 	{
@@ -1088,10 +1305,8 @@ handle_opexpr(const OpExpr *expr,
 			if (IsConstValue(param, context))
 			{
 				handle_const(ExtractConst(param, context),
+							 expr->inputcollid,
 							 strategy, context, result);
-
-				/* Save expression */
-				result->orig = (const Node *) expr;
 
 				return; /* done, exit */
 			}
@@ -1101,19 +1316,13 @@ handle_opexpr(const OpExpr *expr,
 				result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
 				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
 
-				/* Save expression */
-				result->orig = (const Node *) expr;
-
 				return; /* done, exit */
 			}
 		}
 	}
 
 	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
-	result->paramsel = 1.0; /* can't give any estimates */
-
-	/* Save expression */
-	result->orig = (const Node *) expr;
+	result->paramsel = 1.0;
 }
 
 
@@ -1161,6 +1370,40 @@ extract_const(Param *param,
 					 value, isnull, get_typbyval(param->paramtype));
 }
 
+/* Find Max or Min value of array */
+static Datum
+array_find_min_max(Datum *values,
+				   bool *isnull,
+				   int length,
+				   Oid value_type,
+				   Oid collid,
+				   bool take_min,
+				   bool *result_null) /* ret value #2 */
+{
+	TypeCacheEntry *tce = lookup_type_cache(value_type, TYPECACHE_CMP_PROC_FINFO);
+	Datum		   *pivot = NULL;
+	int				i;
+
+	for (i = 0; i < length; i++)
+	{
+		if (isnull[i])
+			continue;
+
+		/* Update 'pivot' */
+		if (pivot == NULL || (take_min ?
+								check_lt(&tce->cmp_proc_finfo,
+										 collid, values[i], *pivot) :
+								check_gt(&tce->cmp_proc_finfo,
+										 collid, values[i], *pivot)))
+		{
+			pivot = &values[i];
+		}
+	}
+
+	/* Return results */
+	*result_null = (pivot == NULL);
+	return (pivot == NULL) ? (Datum) 0 : *pivot;
+}
 
 
 /*

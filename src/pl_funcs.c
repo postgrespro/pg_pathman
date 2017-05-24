@@ -57,6 +57,7 @@ PG_FUNCTION_INFO_V1( build_update_trigger_func_name );
 PG_FUNCTION_INFO_V1( build_check_constraint_name );
 
 PG_FUNCTION_INFO_V1( validate_relname );
+PG_FUNCTION_INFO_V1( validate_expression );
 PG_FUNCTION_INFO_V1( is_date_type );
 PG_FUNCTION_INFO_V1( is_operator_supported );
 PG_FUNCTION_INFO_V1( is_tuple_convertible );
@@ -595,6 +596,49 @@ validate_relname(PG_FUNCTION_ARGS)
 	PG_RETURN_VOID();
 }
 
+/*
+ * Validate a partitioning expression.
+ * NOTE: We need this in range functions because
+ * we do many things before actual partitioning.
+ */
+Datum
+validate_expression(PG_FUNCTION_ARGS)
+{
+	Oid			relid;
+	char	   *expression;
+
+	/* Fetch relation's Oid */
+	if (!PG_ARGISNULL(0))
+	{
+		relid = PG_GETARG_OID(0);
+	}
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("'relid' should not be NULL")));
+
+	/* Protect relation from concurrent drop */
+	LockRelationOid(relid, AccessShareLock);
+
+	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("relation \"%u\" does not exist", relid),
+						errdetail("triggered in function "
+								  CppAsString(validate_expression))));
+
+	if (!PG_ARGISNULL(1))
+	{
+		expression = TextDatumGetCString(PG_GETARG_TEXT_P(1));
+	}
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("'expression' should not be NULL")));
+
+	/* Perform some checks */
+	cook_partitioning_expression(relid, expression, NULL);
+
+	UnlockRelationOid(relid, AccessShareLock);
+
+	PG_RETURN_VOID();
+}
+
 Datum
 is_date_type(PG_FUNCTION_ARGS)
 {
@@ -732,7 +776,7 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("'parent_relid' should not be NULL")));
 
-	/* Lock relation */
+	/* Protect relation from concurrent modification */
 	xact_lock_rel_exclusive(relid, true);
 
 	/* Check that relation exists */

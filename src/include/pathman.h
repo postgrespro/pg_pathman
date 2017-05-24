@@ -87,9 +87,6 @@
 extern Oid	pathman_config_relid;
 extern Oid	pathman_config_params_relid;
 
-/* Hooks enable state */
-extern bool pathman_hooks_enabled;
-
 /*
  * Just to clarify our intentions (return the corresponding relid).
  */
@@ -128,11 +125,14 @@ Path *get_cheapest_parameterized_child_path(PlannerInfo *root, RelOptInfo *rel,
 typedef struct
 {
 	const Node			   *orig;		/* examined expression */
-	List				   *args;		/* extracted from 'orig' */
+	List				   *args;		/* clauses/wrappers extracted from 'orig' */
 	List				   *rangeset;	/* IndexRanges representing selected parts */
+	double					paramsel;	/* estimated selectivity of PARAMs
+										   (for RuntimeAppend costs) */
 	bool					found_gap;	/* were there any gaps? */
-	double					paramsel;	/* estimated selectivity */
 } WrapperNode;
+
+#define InvalidWrapperNode	{ NULL, NIL, NIL, 0.0, false }
 
 typedef struct
 {
@@ -178,20 +178,20 @@ hash_to_part_index(uint32 value, uint32 partitions)
  *
  * flinfo is a pointer to FmgrInfo, arg1 & arg2 are Datums.
  */
-#define check_lt(finfo, arg1, arg2) \
-	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) < 0 )
+#define check_lt(finfo, collid, arg1, arg2) \
+	( DatumGetInt32(FunctionCall2Coll((finfo), (collid), (arg1), (arg2))) < 0 )
 
-#define check_le(finfo, arg1, arg2) \
-	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) <= 0 )
+#define check_le(finfo, collid, arg1, arg2) \
+	( DatumGetInt32(FunctionCall2Coll((finfo), (collid), (arg1), (arg2))) <= 0 )
 
-#define check_eq(finfo, arg1, arg2) \
-	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) == 0 )
+#define check_eq(finfo, collid, arg1, arg2) \
+	( DatumGetInt32(FunctionCall2Coll((finfo), (collid), (arg1), (arg2))) == 0 )
 
-#define check_ge(finfo, arg1, arg2) \
-	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) >= 0 )
+#define check_ge(finfo, collid, arg1, arg2) \
+	( DatumGetInt32(FunctionCall2Coll((finfo), (collid), (arg1), (arg2))) >= 0 )
 
-#define check_gt(finfo, arg1, arg2) \
-	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) > 0 )
+#define check_gt(finfo, collid, arg1, arg2) \
+	( DatumGetInt32(FunctionCall2Coll((finfo), (collid), (arg1), (arg2))) > 0 )
 
 
 #endif /* PATHMAN_H */

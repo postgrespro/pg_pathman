@@ -2,7 +2,18 @@
 SET search_path = 'public';
 CREATE EXTENSION pg_pathman;
 CREATE SCHEMA test_exprs;
-/* hash */
+/* We use this rel to check 'pathman_hooks_enabled' */
+CREATE TABLE test_exprs.canary(val INT4 NOT NULL);
+CREATE TABLE test_exprs.canary_copy (LIKE test_exprs.canary);
+SELECT create_hash_partitions('test_exprs.canary', 'val', 5);
+ create_hash_partitions 
+------------------------
+                      5
+(1 row)
+
+/*
+ * Test HASH
+ */
 CREATE TABLE test_exprs.hash_rel (
 	id		SERIAL PRIMARY KEY,
 	value	INTEGER,
@@ -16,6 +27,63 @@ SELECT COUNT(*) FROM test_exprs.hash_rel;
      5
 (1 row)
 
+/* Try using constant expression */
+SELECT create_hash_partitions('test_exprs.hash_rel', '1 + 1', 4);
+ERROR:  partitioning expression should reference table "hash_rel"
+\set VERBOSITY default
+/* Try using mutable expression */
+SELECT create_hash_partitions('test_exprs.hash_rel', 'random()', 4);
+ERROR:  failed to analyze partitioning expression (random())
+DETAIL:  functions in partitioning expression must be marked IMMUTABLE
+CONTEXT:  SQL statement "SELECT public.validate_expression(parent_relid, expression)"
+PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line 9 at PERFORM
+SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data)"
+PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 4 at PERFORM
+/* Check that 'pathman_hooks_enabled' is true (1 partition in plan) */
+EXPLAIN (COSTS OFF) INSERT INTO test_exprs.canary_copy
+SELECT * FROM test_exprs.canary WHERE val = 1;
+            QUERY PLAN            
+----------------------------------
+ Insert on canary_copy
+   ->  Append
+         ->  Seq Scan on canary_0
+               Filter: (val = 1)
+(4 rows)
+
+/* Try using missing columns */
+SELECT create_hash_partitions('test_exprs.hash_rel', 'value * value2))', 4);
+ERROR:  failed to parse partitioning expression (value * value2)))
+DETAIL:  syntax error at or near ")"
+QUERY:  SELECT public.validate_expression(parent_relid, expression)
+CONTEXT:  PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line 9 at PERFORM
+SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data)"
+PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 4 at PERFORM
+SELECT create_hash_partitions('test_exprs.hash_rel', 'value * value3', 4);
+ERROR:  failed to analyze partitioning expression (value * value3)
+DETAIL:  column "value3" does not exist
+HINT:  Perhaps you meant to reference the column "hash_rel.value" or the column "hash_rel.value2".
+QUERY:  SELECT public.validate_expression(parent_relid, expression)
+CONTEXT:  PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line 9 at PERFORM
+SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data)"
+PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 4 at PERFORM
+/* Check that 'pathman_hooks_enabled' is true (1 partition in plan) */
+EXPLAIN (COSTS OFF) INSERT INTO test_exprs.canary_copy
+SELECT * FROM test_exprs.canary WHERE val = 1;
+            QUERY PLAN            
+----------------------------------
+ Insert on canary_copy
+   ->  Append
+         ->  Seq Scan on canary_0
+               Filter: (val = 1)
+(4 rows)
+
+\set VERBOSITY terse
 SELECT create_hash_partitions('test_exprs.hash_rel', 'value * value2', 4);
  create_hash_partitions 
 ------------------------
@@ -70,14 +138,42 @@ EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.hash_rel WHERE (value * value2) = 5
          Filter: ((value * value2) = 5)
 (3 rows)
 
-/* range */
+/*
+ * Test RANGE
+ */
 CREATE TABLE test_exprs.range_rel (id SERIAL PRIMARY KEY, dt TIMESTAMP, txt TEXT);
 INSERT INTO test_exprs.range_rel (dt, txt)
 SELECT g, md5(g::TEXT) FROM generate_series('2015-01-01', '2020-04-30', '1 month'::interval) as g;
-SELECT create_range_partitions('test_exprs.range_rel', 'RANDOM()', '15 years'::INTERVAL, '1 year'::INTERVAL, 10);
-ERROR:  start value is less than min value of "random()"
+/* Try using constant expression */
+SELECT create_range_partitions('test_exprs.range_rel', '''16 years''::interval',
+							   '15 years'::INTERVAL, '1 year'::INTERVAL, 10);
+ERROR:  partitioning expression should reference table "range_rel"
+\set VERBOSITY default
+/* Try using mutable expression */
+SELECT create_range_partitions('test_exprs.range_rel', 'RANDOM()',
+							   '15 years'::INTERVAL, '1 year'::INTERVAL, 10);
+ERROR:  failed to analyze partitioning expression (RANDOM())
+DETAIL:  functions in partitioning expression must be marked IMMUTABLE
+CONTEXT:  SQL statement "SELECT public.validate_expression(parent_relid, expression)"
+PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line 9 at PERFORM
+SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data)"
+PL/pgSQL function create_range_partitions(regclass,text,anyelement,interval,integer,boolean) line 12 at PERFORM
+/* Check that 'pathman_hooks_enabled' is true (1 partition in plan) */
+EXPLAIN (COSTS OFF) INSERT INTO test_exprs.canary_copy
+SELECT * FROM test_exprs.canary WHERE val = 1;
+            QUERY PLAN            
+----------------------------------
+ Insert on canary_copy
+   ->  Append
+         ->  Seq Scan on canary_0
+               Filter: (val = 1)
+(4 rows)
+
+\set VERBOSITY terse
 SELECT create_range_partitions('test_exprs.range_rel', 'AGE(dt, ''2000-01-01''::DATE)',
-		'15 years'::INTERVAL, '1 year'::INTERVAL, 10);
+							   '15 years'::INTERVAL, '1 year'::INTERVAL, 10);
  create_range_partitions 
 -------------------------
                       10
@@ -151,5 +247,5 @@ SELECT COUNT(*) FROM test_exprs.range_rel_2;
 (1 row)
 
 DROP SCHEMA test_exprs CASCADE;
-NOTICE:  drop cascades to 17 other objects
+NOTICE:  drop cascades to 24 other objects
 DROP EXTENSION pg_pathman;

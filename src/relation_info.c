@@ -46,6 +46,11 @@
 #endif
 
 
+/* Error messages for partitioning expression */
+#define PARSE_PART_EXPR_ERROR	"failed to parse partitioning expression (%s)"
+#define COOK_PART_EXPR_ERROR	"failed to analyze partitioning expression (%s)"
+
+
 /* Comparison function info */
 typedef struct cmp_func_info
 {
@@ -178,8 +183,9 @@ refresh_pathman_relation_info(Oid relid,
 	fix_opfuncids(prel->expr);
 
 	expr_varnos = pull_varnos(prel->expr);
-	if (bms_singleton_member(expr_varnos) != PART_EXPR_VARNO)
-		elog(ERROR, "partitioning expression may reference only one table");
+	if (bms_num_members(expr_varnos) != 1)
+		elog(ERROR, "partitioning expression should reference table \"%s\"",
+			 get_rel_name(relid));
 
 	/* Extract Vars and varattnos of partitioning expression */
 	prel->expr_vars = NIL;
@@ -561,23 +567,49 @@ fill_prel_with_partitions(PartRelationInfo *prel,
 /* Wraps expression in SELECT query and returns parse tree */
 Node *
 parse_partitioning_expression(const Oid relid,
-							  const char *exp_cstr,
+							  const char *expr_cstr,
 							  char **query_string_out,	/* ret value #1 */
 							  Node **parsetree_out)		/* ret value #2 */
 {
-	SelectStmt *select_stmt;
-	List	   *parsetree_list;
+	SelectStmt		   *select_stmt;
+	List			   *parsetree_list;
+	MemoryContext		old_mcxt;
 
 	const char *sql = "SELECT (%s) FROM ONLY %s.%s";
 	char	   *relname = get_rel_name(relid),
 			   *nspname = get_namespace_name(get_rel_namespace(relid));
-	char	   *query_string = psprintf(sql, exp_cstr,
+	char	   *query_string = psprintf(sql, expr_cstr,
 										quote_identifier(nspname),
 										quote_identifier(relname));
 
-	parsetree_list = raw_parser(query_string);
+	old_mcxt = CurrentMemoryContext;
+
+	PG_TRY();
+	{
+		parsetree_list = raw_parser(query_string);
+	}
+	PG_CATCH();
+	{
+		ErrorData  *error;
+
+		/* Switch to the original context & copy edata */
+		MemoryContextSwitchTo(old_mcxt);
+		error = CopyErrorData();
+		FlushErrorState();
+
+		/* Adjust error message */
+		error->detail		= error->message;
+		error->message		= psprintf(PARSE_PART_EXPR_ERROR, expr_cstr);
+		error->sqlerrcode	= ERRCODE_INVALID_PARAMETER_VALUE;
+		error->cursorpos	= 0;
+		error->internalpos	= 0;
+
+		ReThrowError(error);
+	}
+	PG_END_TRY();
+
 	if (list_length(parsetree_list) != 1)
-		elog(ERROR, "expression \"%s\" produced more than one query", exp_cstr);
+		elog(ERROR, "expression \"%s\" produced more than one query", expr_cstr);
 
 #if PG_VERSION_NUM >= 100000
 	select_stmt = (SelectStmt *) ((RawStmt *) linitial(parsetree_list))->stmt;
@@ -600,31 +632,34 @@ cook_partitioning_expression(const Oid relid,
 							 const char *expr_cstr,
 							 Oid *expr_type_out) /* ret value #1 */
 {
-	Node				   *parsetree;
-	List				   *querytree_list;
-	TargetEntry			   *target_entry;
+	Node		   *parse_tree,
+				   *raw_expr;
+	List		   *query_tree_list;
 
-	Node				   *raw_expr;
-	Query				   *expr_query;
-	PlannedStmt			   *expr_plan;
-	Node				   *expr;
-	Datum					expr_datum;
+	char		   *query_string,
+				   *expr_serialized = ""; /* keep compiler happy */
 
-	char				   *query_string,
-						   *expr_serialized;
+	Datum			expr_datum;
 
-	MemoryContext			parse_mcxt,
-							old_mcxt;
+	MemoryContext	parse_mcxt,
+					old_mcxt;
 
 	AssertTemporaryContext();
 
+	/*
+	 * We use separate memory context here, just to make sure we won't
+	 * leave anything behind after parsing, rewriting and planning.
+	 */
 	parse_mcxt = AllocSetContextCreate(CurrentMemoryContext,
-									   "pathman parse context",
+									   CppAsString(cook_partitioning_expression),
 									   ALLOCSET_DEFAULT_SIZES);
 
-	/* Keep raw expression */
+	/* Switch to mcxt for cooking :) */
+	old_mcxt = MemoryContextSwitchTo(parse_mcxt);
+
+	/* First we have to build a raw AST */
 	raw_expr = parse_partitioning_expression(relid, expr_cstr,
-											 &query_string, &parsetree);
+											 &query_string, &parse_tree);
 
 	/* Check if raw_expr is NULLable */
 	if (IsA(raw_expr, ColumnRef))
@@ -645,64 +680,90 @@ cook_partitioning_expression(const Oid relid,
 				attnotnull = att_tup->attnotnull;
 				ReleaseSysCache(htup);
 			}
-			else elog(ERROR, "cannot find type name for attribute \"%s\" "
-							 "of relation \"%s\"",
+			else elog(ERROR, "cannot find type name for attribute \"%s\""
+							 " of relation \"%s\"",
 					  attname, get_rel_name_or_relid(relid));
 
 			if (!attnotnull)
-				elog(ERROR, "partitioning key \"%s\" must be marked NOT NULL", attname);
+				elog(ERROR, "partitioning key \"%s\" must be marked NOT NULL",
+					 attname);
 		}
 	}
 
-	/* We don't need pathman activity initialization for this relation yet */
+	/* We don't need pg_pathman's magic here */
 	pathman_hooks_enabled = false;
 
-	/*
-	 * We use separate memory context here, just to make sure we
-	 * don't leave anything behind after analyze and planning.
-	 * Parsed raw expression will stay in caller's context.
-	 */
-	old_mcxt = MemoryContextSwitchTo(parse_mcxt);
+	PG_TRY();
+	{
+		TargetEntry	   *target_entry;
 
-	/* This will fail with elog in case of wrong expression */
-	querytree_list = pg_analyze_and_rewrite_compat(parsetree, query_string,
-												   NULL, 0, NULL);
+		Query		   *expr_query;
+		PlannedStmt	   *expr_plan;
+		Node		   *expr;
 
-	if (list_length(querytree_list) != 1)
-		elog(ERROR, "partitioning expression produced more than 1 query");
+		/* This will fail with ERROR in case of wrong expression */
+		query_tree_list = pg_analyze_and_rewrite_compat(parse_tree, query_string,
+														NULL, 0, NULL);
 
-	expr_query = (Query *) linitial(querytree_list);
+		if (list_length(query_tree_list) != 1)
+			elog(ERROR, "partitioning expression produced more than 1 query");
 
-	/* Plan this query. We reuse 'expr_node' here */
-	expr_plan = pg_plan_query(expr_query, 0, NULL);
+		expr_query = (Query *) linitial(query_tree_list);
 
-	target_entry = IsA(expr_plan->planTree, IndexOnlyScan) ?
+		/* Plan this query. We reuse 'expr_node' here */
+		expr_plan = pg_plan_query(expr_query, 0, NULL);
+
+		target_entry = IsA(expr_plan->planTree, IndexOnlyScan) ?
 					linitial(((IndexOnlyScan *) expr_plan->planTree)->indextlist) :
 					linitial(expr_plan->planTree->targetlist);
 
-	expr = eval_const_expressions(NULL, (Node *) target_entry->expr);
-	if (contain_mutable_functions(expr))
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-				 errmsg("functions in partitioning expression must be marked IMMUTABLE")));
+		expr = eval_const_expressions(NULL, (Node *) target_entry->expr);
+		if (contain_mutable_functions(expr))
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+					 errmsg("functions in partitioning expression"
+							" must be marked IMMUTABLE")));
 
-	Assert(expr);
-	expr_serialized = nodeToString(expr);
+		Assert(expr);
+		expr_serialized = nodeToString(expr);
+
+		/* Set 'expr_type_out' if needed */
+		if (expr_type_out)
+			*expr_type_out = exprType(expr);
+	}
+	PG_CATCH();
+	{
+		ErrorData  *error;
+
+		/* Don't forget to enable pg_pathman's hooks */
+		pathman_hooks_enabled = true;
+
+		/* Switch to the original context & copy edata */
+		MemoryContextSwitchTo(old_mcxt);
+		error = CopyErrorData();
+		FlushErrorState();
+
+		/* Adjust error message */
+		error->detail		= error->message;
+		error->message		= psprintf(COOK_PART_EXPR_ERROR, expr_cstr);
+		error->sqlerrcode	= ERRCODE_INVALID_PARAMETER_VALUE;
+		error->cursorpos	= 0;
+		error->internalpos	= 0;
+
+		ReThrowError(error);
+	}
+	PG_END_TRY();
+
+	/* Don't forget to enable pg_pathman's hooks */
+	pathman_hooks_enabled = true;
 
 	/* Switch to previous mcxt */
 	MemoryContextSwitchTo(old_mcxt);
-
-	/* Set 'expr_type_out' if needed */
-	if (expr_type_out)
-		*expr_type_out = exprType(expr);
 
 	expr_datum = CStringGetTextDatum(expr_serialized);
 
 	/* Free memory */
 	MemoryContextDelete(parse_mcxt);
-
-	/* Enable pathman hooks */
-	pathman_hooks_enabled = true;
 
 	return expr_datum;
 }

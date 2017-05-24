@@ -39,9 +39,9 @@ CREATE TABLE test.range_rel (
 CREATE INDEX ON test.range_rel (dt);
 INSERT INTO test.range_rel (dt, txt)
 SELECT g, md5(g::TEXT) FROM generate_series('2015-01-01', '2015-04-30', '1 day'::interval) as g;
-SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL, 2);
 SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL);
 ALTER TABLE test.range_rel ALTER COLUMN dt SET NOT NULL;
+SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL, 2);
 SELECT pathman.create_range_partitions('test.range_rel', 'DT', '2015-01-01'::DATE, '1 month'::INTERVAL);
 SELECT COUNT(*) FROM test.range_rel;
 SELECT COUNT(*) FROM ONLY test.range_rel;
@@ -175,21 +175,6 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 1000 AND id < 3
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 1500 AND id < 2500;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE (id >= 500 AND id < 1500) OR (id > 2500);
 
-EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (2500);
-EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (500, 1500);
-EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (-500, 500, 1500);
-EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (-1, -1, -1);
-EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (-1, -1, -1, NULL);
-
-EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > ANY (ARRAY[1500, 2200]);
-EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > ANY (ARRAY[100, 1500]);
-EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > ALL (ARRAY[1500, 2200]);
-EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > ALL (ARRAY[100, 1500]);
-EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id = ANY (ARRAY[1500, 2200]);
-EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id = ANY (ARRAY[100, 1500]);
-EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id = ALL (ARRAY[1500, 2200]);
-EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id = ALL (ARRAY[100, 1500]);
-
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt > '2015-02-15';
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-02-01' AND dt < '2015-03-01';
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-02-15' AND dt < '2015-03-15';
@@ -205,22 +190,6 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE false;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = NULL;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2 OR value = 1;
-
-EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (2);
-EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (2, 1);
-EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (1, 2);
-EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (1, 2, -1);
-EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (0, 0, 0);
-EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (NULL::int, NULL, NULL);
-
-EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value > ANY (ARRAY[1, 2]);
-EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value > ANY (ARRAY[1, 2, 3, 4, 5]);
-EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value > ALL (ARRAY[1, 2]);
-EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value > ALL (ARRAY[1, 2, 3, 4, 5]);
-EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = ANY (ARRAY[1, 2]);
-EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = ANY (ARRAY[1, 2, 3, 4, 5]);
-EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = ALL (ARRAY[1, 2]);
-EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = ALL (ARRAY[1, 2, 3, 4, 5]);
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > 2500;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 1000 AND id < 3000;
