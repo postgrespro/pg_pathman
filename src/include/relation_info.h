@@ -292,6 +292,9 @@ Datum cook_partitioning_expression(const Oid relid,
 								   const char *expr_cstr,
 								   Oid *expr_type);
 
+char *canonicalize_partitioning_expression(const Oid relid,
+										   const char *expr_cstr);
+
 /* Global invalidation routines */
 void delay_pathman_shutdown(void);
 void delay_invalidation_parent_rel(Oid parent);

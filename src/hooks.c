@@ -91,10 +91,6 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		set_join_pathlist_next(root, joinrel, outerrel,
 							   innerrel, jointype, extra);
 
-	/* Hooks can be disabled */
-	if (!pathman_hooks_enabled)
-		return;
-
 	/* Check that both pg_pathman & RuntimeAppend nodes are enabled */
 	if (!IsPathmanReady() || !pg_pathman_enable_runtimeappend)
 		return;
@@ -267,10 +263,6 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 	/* Invoke original hook if needed */
 	if (set_rel_pathlist_hook_next != NULL)
 		set_rel_pathlist_hook_next(root, rel, rti, rte);
-
-	/* Hooks can be disabled */
-	if (!pathman_hooks_enabled)
-		return;
 
 	/* Make sure that pg_pathman is ready */
 	if (!IsPathmanReady())
@@ -533,7 +525,7 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	uint32			query_id = parse->queryId;
 
 	/* Save the result in case it changes */
-	bool			pathman_ready = pathman_hooks_enabled && IsPathmanReady();
+	bool			pathman_ready = IsPathmanReady();
 
 	PG_TRY();
 	{
