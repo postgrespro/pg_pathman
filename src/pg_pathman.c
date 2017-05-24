@@ -338,11 +338,7 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 	root->simple_rte_array[childRTindex] = child_rte;
 
 	/* Create RelOptInfo for this child (and make some estimates as well) */
-#if PG_VERSION_NUM >= 100000
-	child_rel = build_simple_rel(root, childRTindex, parent_rel);
-#else
-	child_rel = build_simple_rel(root, childRTindex, RELOPT_OTHER_MEMBER_REL);
-#endif
+	child_rel = build_simple_rel_compat(root, childRTindex, parent_rel);
 
 	/* Increase total_table_pages using the 'child_rel' */
 	root->total_table_pages += (double) child_rel->pages;

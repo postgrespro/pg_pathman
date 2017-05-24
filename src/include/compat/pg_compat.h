@@ -76,6 +76,19 @@
 
 
 /*
+ * build_simple_rel()
+ */
+#if PG_VERSION_NUM >= 100000
+#define build_simple_rel_compat(root, childRTindex, parent_rel) \
+		build_simple_rel((root), (childRTindex), (parent_rel))
+#elif PG_VERSION_NUM >= 90500
+#define build_simple_rel_compat(root, childRTindex, parent_rel) \
+		build_simple_rel((root), (childRTindex), \
+			(parent_rel) ? RELOPT_OTHER_MEMBER_REL : RELOPT_BASEREL)
+#endif
+
+
+/*
  * Define ALLOCSET_DEFAULT_SIZES for our precious MemoryContexts
  */
 #if PG_VERSION_NUM >= 90500 && PG_VERSION_NUM < 90600
