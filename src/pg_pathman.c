@@ -1153,11 +1153,8 @@ extract_const(Param *param,
 {
 	ExprState  *estate = ExecInitExpr((Expr *) param, NULL);
 	bool		isnull;
-#if PG_VERSION_NUM >= 100000
-	Datum		value = ExecEvalExpr(estate, context->econtext, &isnull);
-#else
-	Datum		value = ExecEvalExpr(estate, context->econtext, &isnull, NULL);
-#endif
+	Datum		value = ExecEvalExprCompat(estate, context->econtext, &isnull,
+										   dummy_handler);
 
 	return makeConst(param->paramtype, param->paramtypmod,
 					 param->paramcollid, get_typlen(param->paramtype),

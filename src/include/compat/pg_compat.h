@@ -215,6 +215,8 @@ extern void create_plain_partial_paths(PlannerInfo *root,
 extern Datum exprResult;
 extern ExprDoneCond isDone;
 static inline void
+dummy_handler() { }
+static inline void
 not_signle_result_handler()
 {
 	elog(ERROR, ERR_PART_ATTR_MULTIPLE_RESULTS);
