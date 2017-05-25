@@ -11,15 +11,21 @@ compiler:
   - gcc
 
 before_install:
-  - sudo sh ./travis/apt.postgresql.org.sh
+  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then sudo apt-get -y install -qq wget ca-certificates; fi
+  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then source ./travis/dep-ubuntu-postgres.sh; fi
+  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then source ./travis/dep-ubuntu-llvm.sh; fi
+  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then sudo apt-get update -qq; fi
 
 env:
-  - PGVERSION=10 CHECK_CODE=true
-  - PGVERSION=10 CHECK_CODE=false
-  - PGVERSION=9.6 CHECK_CODE=true
-  - PGVERSION=9.6 CHECK_CODE=false
-  - PGVERSION=9.5 CHECK_CODE=true
-  - PGVERSION=9.5 CHECK_CODE=false
+  global:
+    - LLVM_VER=4.0
+  matrix:
+    - PG_VER=10  CHECK_CODE=true
+    - PG_VER=10  CHECK_CODE=false
+    - PG_VER=9.6 CHECK_CODE=true
+    - PG_VER=9.6 CHECK_CODE=false
+    - PG_VER=9.5 CHECK_CODE=true
+    - PG_VER=9.5 CHECK_CODE=false
 
 script: bash ./travis/pg-travis-test.sh
 
