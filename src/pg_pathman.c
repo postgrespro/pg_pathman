@@ -371,6 +371,9 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 													 appinfo->translated_vars);
 	}
 
+	/* Here and below we assume that parent RelOptInfo exists */
+	AssertState(parent_rel);
+
 	/* Adjust join quals for this child */
 	child_rel->joininfo = (List *) adjust_appendrel_attrs(root,
 														  (Node *) parent_rel->joininfo,
