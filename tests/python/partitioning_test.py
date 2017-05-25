@@ -16,8 +16,9 @@ import re
 import subprocess
 import threading
 
-from testgres import get_new_node, stop_all
+from testgres import get_new_node, stop_all, get_config
 
+version = get_config().get("VERSION_NUM")
 
 # Helper function for json equality
 def ordered(obj):
@@ -68,11 +69,17 @@ class PartitioningTests(unittest.TestCase):
 
 	def catchup_replica(self, master, replica):
 		"""Wait until replica synchronizes with master"""
-		master.poll_query_until(
-			'postgres',
-			'SELECT pg_current_xlog_location() <= replay_location '
-			'FROM pg_stat_replication WHERE application_name = \'%s\''
-			% replica.name)
+		if version >= 100000:
+			wait_lsn_query = \
+				'SELECT pg_current_wal_lsn() <= replay_lsn ' \
+				'FROM pg_stat_replication WHERE application_name = \'%s\'' \
+				% replica.name
+		else:
+			wait_lsn_query = \
+				'SELECT pg_current_xlog_location() <= replay_location ' \
+				'FROM pg_stat_replication WHERE application_name = \'%s\'' \
+				% replica.name
+		master.poll_query_until('postgres', wait_lsn_query)
 
 	def printlog(self, logfile):
 		with open(logfile, 'r') as log:
@@ -482,7 +489,6 @@ class PartitioningTests(unittest.TestCase):
 
 		# Check version of postgres server
 		# If version < 9.6 skip all tests for parallel queries
-		version = int(node.psql("postgres", "show server_version_num")[1])
 		if version < 90600:
 			return
 
@@ -512,7 +518,10 @@ class PartitioningTests(unittest.TestCase):
 		# Test parallel select
 		with node.connect() as con:
 			con.execute('set max_parallel_workers_per_gather = 2')
-			con.execute('set min_parallel_relation_size = 0')
+			if version >= 100000:
+				con.execute('set min_parallel_table_scan_size = 0')
+			else:
+				con.execute('set min_parallel_relation_size = 0')
 			con.execute('set parallel_setup_cost = 0')
 			con.execute('set parallel_tuple_cost = 0')
 
