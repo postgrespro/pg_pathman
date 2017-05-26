@@ -755,24 +755,25 @@ pathman_relcache_hook(Datum arg, Oid relid)
  */
 void
 #if PG_VERSION_NUM >= 100000
-pathman_process_utility_hook(PlannedStmt *pstmt,
+pathman_process_utility_hook(PlannedStmt *first_arg,
 							 const char *queryString,
 							 ProcessUtilityContext context,
 							 ParamListInfo params,
 							 QueryEnvironment *queryEnv,
 							 DestReceiver *dest, char *completionTag)
 {
-	Node   *parsetree = pstmt->utilityStmt;
-	int		stmt_location = pstmt->stmt_location,
-			stmt_len = pstmt->stmt_len;
+	Node   *parsetree = first_arg->utilityStmt;
+	int		stmt_location = first_arg->stmt_location,
+			stmt_len = first_arg->stmt_len;
 #else
-pathman_process_utility_hook(Node *parsetree,
+pathman_process_utility_hook(Node *first_arg,
 							 const char *queryString,
 							 ProcessUtilityContext context,
 							 ParamListInfo params,
 							 DestReceiver *dest,
 							 char *completionTag)
 {
+	Node   *parsetree = first_arg;
 	int		stmt_location = -1,
 			stmt_len = 0;
 #endif
@@ -825,27 +826,9 @@ pathman_process_utility_hook(Node *parsetree,
 		}
 	}
 
-#if PG_VERSION_NUM >= 100000
-	/* Call hooks set by other extensions if needed */
-	if (process_utility_hook_next)
-		process_utility_hook_next(pstmt, queryString,
-								  context, params, queryEnv,
-								  dest, completionTag);
-	/* Else call internal implementation */
-	else
-		standard_ProcessUtility(pstmt, queryString,
-								context, params, queryEnv,
-								dest, completionTag);
-#else
-	/* Call hooks set by other extensions if needed */
-	if (process_utility_hook_next)
-		process_utility_hook_next(parsetree, queryString,
-								  context, params,
-								  dest, completionTag);
-	/* Else call internal implementation */
-	else
-		standard_ProcessUtility(parsetree, queryString,
-								context, params,
-								dest, completionTag);
-#endif
+	/* 'first_arg' is PlannedStmt in pg10 or Node parsetree in pg9.6 and lower */
+	call_process_utility_compat(
+			(process_utility_hook_next) ? process_utility_hook_next :
+										  standard_ProcessUtility,
+			first_arg, queryString, context, params, queryEnv, dest, completionTag);
 }

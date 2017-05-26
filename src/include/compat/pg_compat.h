@@ -98,6 +98,28 @@
 
 
 /*
+ * call_process_utility_compat()
+ *
+ * the parameter 'first_arg' is:
+ * 	- in pg 10 PlannedStmt object
+ * 	- in pg 9.6 and lower Node parsetree
+ */
+#if PG_VERSION_NUM >= 100000
+#define call_process_utility_compat(process_utility, first_arg, query_string, \
+									context, params, query_env, dest, \
+									completion_tag) \
+		(process_utility)((first_arg), (query_string), (context), (params), \
+						  (query_env), (dest), (completion_tag))
+#elif PG_VERSION_NUM >= 90500
+#define call_process_utility_compat(process_utility, first_arg, query_string, \
+									context, params, query_env, dest, \
+									completion_tag) \
+		(process_utility)((first_arg), (query_string), (context), (params), \
+						  (dest), (completion_tag))
+#endif
+
+
+/*
  * CatalogIndexInsert()
  */
 #if PG_VERSION_NUM >= 100000
