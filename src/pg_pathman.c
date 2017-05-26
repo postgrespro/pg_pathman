@@ -232,68 +232,6 @@ get_pathman_config_params_relid(bool invalid_is_ok)
  * ----------------------------------------
  */
 
-#if PG_VERSION_NUM >= 100000
-static List *
-get_all_actual_clauses(List *restrictinfo_list)
-{
-	List	   *result = NIL;
-	ListCell   *l;
-
-	foreach(l, restrictinfo_list)
-	{
-		RestrictInfo *rinfo = (RestrictInfo *) lfirst(l);
-
-		Assert(IsA(rinfo, RestrictInfo));
-
-		result = lappend(result, rinfo->clause);
-	}
-	return result;
-}
-
-#include "optimizer/var.h"
-
-static List *
-make_restrictinfos_from_actual_clauses(PlannerInfo *root,
-									   List *clause_list)
-{
-	List	   *result = NIL;
-	ListCell   *l;
-
-	foreach(l, clause_list)
-	{
-		Expr	   *clause = (Expr *) lfirst(l);
-		bool		pseudoconstant;
-		RestrictInfo *rinfo;
-
-		/*
-		 * It's pseudoconstant if it contains no Vars and no volatile
-		 * functions.  We probably can't see any sublinks here, so
-		 * contain_var_clause() would likely be enough, but for safety use
-		 * contain_vars_of_level() instead.
-		 */
-		pseudoconstant =
-			!contain_vars_of_level((Node *) clause, 0) &&
-			!contain_volatile_functions((Node *) clause);
-		if (pseudoconstant)
-		{
-			/* tell createplan.c to check for gating quals */
-			root->hasPseudoConstantQuals = true;
-		}
-
-		rinfo = make_restrictinfo(clause,
-								  true,
-								  false,
-								  pseudoconstant,
-								  root->qual_security_level,
-								  NULL,
-								  NULL,
-								  NULL);
-		result = lappend(result, rinfo);
-	}
-	return result;
-}
-#endif
-
 /*
  * Creates child relation and adds it to root.
  * Returns child index in simple_rel_array.

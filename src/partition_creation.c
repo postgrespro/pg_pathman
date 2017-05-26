@@ -686,6 +686,8 @@ create_single_partition_internal(Oid parent_relid,
 
 	/* Elements of the "CREATE TABLE" query tree */
 	RangeVar		   *parent_rv;
+	TableLikeClause		like_clause;
+	CreateStmt			create_stmt;
 	List			   *create_stmts;
 	ListCell		   *lc;
 
@@ -739,9 +741,34 @@ create_single_partition_internal(Oid parent_relid,
 	if (!tablespace)
 		tablespace = get_tablespace_name(get_rel_tablespace(parent_relid));
 
+	/* Initialize TableLikeClause structure */
+	NodeSetTag(&like_clause, T_TableLikeClause);
+	like_clause.relation		= copyObject(parent_rv);
+	like_clause.options			= CREATE_TABLE_LIKE_DEFAULTS |
+								  CREATE_TABLE_LIKE_INDEXES |
+								  CREATE_TABLE_LIKE_STORAGE;
+
+	/* Initialize CreateStmt structure */
+	NodeSetTag(&create_stmt, T_CreateStmt);
+	create_stmt.relation		= copyObject(partition_rv);
+	create_stmt.tableElts		= list_make1(copyObject(&like_clause));
+	create_stmt.inhRelations	= list_make1(copyObject(parent_rv));
+	create_stmt.ofTypename		= NULL;
+	create_stmt.constraints		= NIL;
+	create_stmt.options			= NIL;
+	create_stmt.oncommit		= ONCOMMIT_NOOP;
+	create_stmt.tablespacename	= tablespace;
+	create_stmt.if_not_exists	= false;
+#if defined(PGPRO_EE) && PG_VERSION_NUM >= 90600
+	create_stmt.partition_info	= NULL;
+#endif
+#if PG_VERSION_NUM >= 100000
+	create_stmt.partbound = NULL;
+	create_stmt.partspec = NULL;
+#endif
+
 	/* Obtain the sequence of Stmts to create partition and link it to parent */
-	create_stmts = init_createstmts_for_partition(parent_rv, partition_rv,
-												  tablespace);
+	create_stmts = transformCreateStmt(&create_stmt, NULL);
 
 	/* Create the partition and all required relations */
 	foreach (lc, create_stmts)

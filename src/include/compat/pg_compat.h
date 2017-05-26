@@ -271,6 +271,14 @@ not_signle_result_handler()
 
 
 /*
+ * get_all_actual_clauses()
+ */
+#if PG_VERSION_NUM >= 100000
+extern List *get_all_actual_clauses(List *restrictinfo_list);
+#endif
+
+
+/*
  * get_parameterized_joinrel_size()
  */
 #if PG_VERSION_NUM >= 90600
@@ -332,6 +340,15 @@ char get_rel_persistence(Oid relid);
 								resultRelationIndex, instrument_options) \
 		InitResultRelInfo((resultRelInfo), (resultRelationDesc), \
 						  (resultRelationIndex), (instrument_options))
+#endif
+
+
+/*
+ * make_restrictinfo()
+ */
+#if PG_VERSION_NUM >= 100000
+extern List * make_restrictinfos_from_actual_clauses(PlannerInfo *root,
+													 List *clause_list);
 #endif
 
 
