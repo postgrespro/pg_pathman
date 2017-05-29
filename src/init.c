@@ -70,7 +70,15 @@ static bool init_pathman_relation_oids(void);
 static void fini_pathman_relation_oids(void);
 static void init_local_cache(void);
 static void fini_local_cache(void);
-static void read_pathman_config(void);
+
+/* Special handlers for read_pathman_config() */
+static void add_partrel_to_array(Datum *values, bool *isnull, void *context);
+static void startup_invalidate_parent(Datum *values, bool *isnull, void *context);
+
+static void read_pathman_config(void (*per_row_cb)(Datum *values,
+												   bool *isnull,
+												   void *context),
+								void *context);
 
 static bool validate_range_opexpr(const Expr *expr,
 								  const PartRelationInfo *prel,
@@ -200,8 +208,11 @@ load_config(void)
 	/* Validate pg_pathman's Pl/PgSQL facade (might be outdated) */
 	validate_sql_facade_version(get_sql_facade_version());
 
-	init_local_cache();		/* create various hash tables (caches) */
-	read_pathman_config();	/* read PATHMAN_CONFIG table & fill cache */
+	/* Create various hash tables (caches) */
+	init_local_cache();
+
+	/* Read PATHMAN_CONFIG table & fill cache */
+	read_pathman_config(startup_invalidate_parent, NULL);
 
 	/* Register pathman_relcache_hook(), currently we can't unregister it */
 	if (relcache_callback_needed)
@@ -777,11 +788,83 @@ read_pathman_params(Oid relid, Datum *values, bool *isnull)
 }
 
 
+typedef struct
+{
+	Oid	   *array;
+	int		nelems;
+	int		capacity;
+} read_parent_oids_cxt;
+
+/*
+ * Get a sorted array of partitioned tables' Oids.
+ */
+Oid *
+read_parent_oids(int *nelems)
+{
+	read_parent_oids_cxt context = { NULL, 0, 0 };
+
+	read_pathman_config(add_partrel_to_array, &context);
+
+	/* Perform sorting */
+	qsort(context.array, context.nelems, sizeof(Oid), oid_cmp);
+
+	/* Return values */
+	*nelems = context.nelems;
+	return context.array;
+}
+
+
+/* read_pathman_config(): add parent to array of Oids */
+static void
+add_partrel_to_array(Datum *values, bool *isnull, void *context)
+{
+	Oid relid = DatumGetObjectId(values[Anum_pathman_config_partrel - 1]);
+	read_parent_oids_cxt *result = (read_parent_oids_cxt *) context;
+
+	if (result->array == NULL)
+	{
+		result->capacity = PART_RELS_SIZE;
+		result->array = palloc(result->capacity * sizeof(Oid));
+	}
+
+	if (result->nelems >= result->capacity)
+	{
+		result->capacity = result->capacity * 2 + 1;
+		result->array = repalloc(result->array, result->capacity * sizeof(Oid));
+	}
+
+	/* Append current relid */
+	result->array[result->nelems++] = relid;
+}
+
+/* read_pathman_config(): create dummy cache entry for parent */
+static void
+startup_invalidate_parent(Datum *values, bool *isnull, void *context)
+{
+	Oid relid = DatumGetObjectId(values[Anum_pathman_config_partrel - 1]);
+
+	/* Check that relation 'relid' exists */
+	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
+	{
+		DisablePathman(); /* disable pg_pathman since config is broken */
+		ereport(ERROR,
+				(errmsg("table \"%s\" contains nonexistent relation %u",
+						PATHMAN_CONFIG, relid),
+				 errhint(INIT_ERROR_HINT)));
+	}
+
+	/* get_pathman_relation_info() will refresh this entry */
+	invalidate_pathman_relation_info(relid, NULL);
+}
+
 /*
  * Go through the PATHMAN_CONFIG table and create PartRelationInfo entries.
  */
 static void
-read_pathman_config(void)
+read_pathman_config(void (*per_row_cb)(Datum *values,
+									   bool *isnull,
+									   void *context),
+					void *context)
 {
 	Relation		rel;
 	HeapScanDesc	scan;
@@ -807,7 +890,6 @@ read_pathman_config(void)
 	{
 		Datum		values[Natts_pathman_config];
 		bool		isnull[Natts_pathman_config];
-		Oid			relid; /* partitioned table */
 
 		/* Extract Datums from tuple 'htup' */
 		heap_deform_tuple(htup, RelationGetDescr(rel), values, isnull);
@@ -817,21 +899,8 @@ read_pathman_config(void)
 		Assert(!isnull[Anum_pathman_config_parttype - 1]);
 		Assert(!isnull[Anum_pathman_config_expr - 1]);
 
-		/* Extract values from Datums */
-		relid = DatumGetObjectId(values[Anum_pathman_config_partrel - 1]);
-
-		/* Check that relation 'relid' exists */
-		if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
-		{
-			DisablePathman(); /* disable pg_pathman since config is broken */
-			ereport(ERROR,
-					(errmsg("table \"%s\" contains nonexistent relation %u",
-							PATHMAN_CONFIG, relid),
-					 errhint(INIT_ERROR_HINT)));
-		}
-
-		/* get_pathman_relation_info() will refresh this entry */
-		invalidate_pathman_relation_info(relid, NULL);
+		/* Execute per row callback */
+		per_row_cb(values, isnull, context);
 	}
 
 	/* Clean resources */
@@ -1122,6 +1191,7 @@ validate_hash_constraint(const Expr *expr,
 
 	return false;
 }
+
 
 /* Parse cstring and build uint32 representing the version */
 static uint32

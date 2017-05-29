@@ -183,7 +183,6 @@ list_reverse(List *l)
 }
 
 
-
 /*
  * Get relation owner.
  */

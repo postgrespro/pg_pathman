@@ -281,8 +281,10 @@ oid_cmp(const void *p1, const void *p2)
 
 	if (v1 < v2)
 		return -1;
+
 	if (v1 > v2)
 		return 1;
+
 	return 0;
 }
 #endif
