@@ -88,8 +88,12 @@ static bool		delayed_shutdown = false; /* pathman was dropped */
 		list = NIL; \
 	} while (0)
 
+/* Handy wrappers for Oids */
+#define bsearch_oid(key, array, array_size) \
+	bsearch((const void *) &(key), (array), (array_size), sizeof(Oid), oid_cmp)
 
-static bool try_perform_parent_refresh(Oid parent);
+
+static bool try_invalidate_parent(Oid relid, Oid *parents, int parents_count);
 static Oid try_syscache_parent_search(Oid partition, PartParentSearch *status);
 static Oid get_parent_of_partition_internal(Oid partition,
 											PartParentSearch *status,
@@ -857,6 +861,9 @@ finish_delayed_invalidation(void)
 	/* Check that current state is transactional */
 	if (IsTransactionState())
 	{
+		Oid		   *parents = NULL;
+		int			parents_count;
+		bool		parents_fetched = false;
 		ListCell   *lc;
 
 		/* Handle the probable 'DROP EXTENSION' case */
@@ -896,11 +903,19 @@ finish_delayed_invalidation(void)
 			if (IsToastNamespace(get_rel_namespace(parent)))
 				continue;
 
-			if (!pathman_config_contains_relation(parent, NULL, NULL, NULL, NULL))
-				remove_pathman_relation_info(parent);
-			else
+			/* Fetch all partitioned tables */
+			if (!parents_fetched)
+			{
+				parents = read_parent_oids(&parents_count);
+				parents_fetched = true;
+			}
+
+			/* Check if parent still exists */
+			if (bsearch_oid(parent, parents, parents_count))
 				/* get_pathman_relation_info() will refresh this entry */
 				invalidate_pathman_relation_info(parent, NULL);
+			else
+				remove_pathman_relation_info(parent);
 		}
 
 		/* Process all other vague cases */
@@ -912,8 +927,15 @@ finish_delayed_invalidation(void)
 			if (IsToastNamespace(get_rel_namespace(vague_rel)))
 				continue;
 
+			/* Fetch all partitioned tables */
+			if (!parents_fetched)
+			{
+				parents = read_parent_oids(&parents_count);
+				parents_fetched = true;
+			}
+
 			/* It might be a partitioned table or a partition */
-			if (!try_perform_parent_refresh(vague_rel))
+			if (!try_invalidate_parent(vague_rel, parents, parents_count))
 			{
 				PartParentSearch	search;
 				Oid					parent;
@@ -923,21 +945,17 @@ finish_delayed_invalidation(void)
 
 				switch (search)
 				{
-					/* It's still parent */
+					/*
+					 * Two main cases:
+					 *	- It's *still* parent (in PATHMAN_CONFIG)
+					 *	- It *might have been* parent before (not in PATHMAN_CONFIG)
+					 */
 					case PPS_ENTRY_PART_PARENT:
-						{
-							/* Skip if we've already refreshed this parent */
-							if (!list_member_oid(fresh_rels, parent))
-								try_perform_parent_refresh(parent);
-						}
-						break;
-
-					/* It *might have been* parent before (not in PATHMAN_CONFIG) */
 					case PPS_ENTRY_PARENT:
 						{
 							/* Skip if we've already refreshed this parent */
 							if (!list_member_oid(fresh_rels, parent))
-								try_perform_parent_refresh(parent);
+								try_invalidate_parent(parent, parents, parents_count);
 						}
 						break;
 
@@ -954,6 +972,9 @@ finish_delayed_invalidation(void)
 
 		free_invalidation_list(delayed_invalidation_parent_rels);
 		free_invalidation_list(delayed_invalidation_vague_rels);
+
+		if (parents)
+			pfree(parents);
 	}
 }
 
@@ -1113,34 +1134,25 @@ try_syscache_parent_search(Oid partition, PartParentSearch *status)
 	}
 }
 
-/*
- * Try to refresh cache entry for relation 'parent'.
- *
- * Return true on success.
- */
+/* Try to invalidate cache entry for relation 'parent' */
 static bool
-try_perform_parent_refresh(Oid parent)
+try_invalidate_parent(Oid relid, Oid *parents, int parents_count)
 {
-	ItemPointerData		iptr;
-	Datum				values[Natts_pathman_config];
-	bool				isnull[Natts_pathman_config];
-
-	if (pathman_config_contains_relation(parent, values, isnull, NULL, &iptr))
+	/* Check if this is a partitioned table */
+	if (bsearch_oid(relid, parents, parents_count))
 	{
-		bool should_update_expr = isnull[Anum_pathman_config_cooked_expr - 1];
+		/* get_pathman_relation_info() will refresh this entry */
+		invalidate_pathman_relation_info(relid, NULL);
 
-		if (should_update_expr)
-			pathman_config_refresh_parsed_expression(parent, values, isnull, &iptr);
-
-		/* If anything went wrong, return false (actually, it might emit ERROR) */
-		refresh_pathman_relation_info(parent,
-									  values,
-									  true); /* allow lazy */
+		/* Success */
+		return true;
 	}
-	/* Not a partitioned relation */
-	else return false;
 
-	return true;
+	/* Clear remaining cache entry */
+	remove_pathman_relation_info(relid);
+
+	/* Not a partitioned relation */
+	return false;
 }
 
 

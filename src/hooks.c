@@ -746,7 +746,7 @@ pathman_relcache_hook(Datum arg, Oid relid)
 
 				/* Which means that 'relid' might be parent */
 				if (relid != InvalidOid)
-					delay_invalidation_parent_rel(relid);
+					delay_invalidation_vague_rel(relid);
 #ifdef NOT_USED
 				elog(DEBUG2, "Invalidation message for relation %u [%u]",
 					 relid, MyProcPid);

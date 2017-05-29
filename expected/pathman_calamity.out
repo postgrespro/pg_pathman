@@ -867,7 +867,7 @@ SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
  maintenance              |       0
  partition bounds cache   |       0
  partition dispatch cache |       1
- partition parents cache  |      10
+ partition parents cache  |       0
 (4 rows)
 
 SELECT drop_partitions('calamity.test_pathman_cache_stats');
@@ -910,9 +910,9 @@ SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
          context          | entries 
 --------------------------+---------
  maintenance              |       0
- partition bounds cache   |      10
+ partition bounds cache   |       0
  partition dispatch cache |       1
- partition parents cache  |      10
+ partition parents cache  |       0
 (4 rows)
 
 SELECT drop_partitions('calamity.test_pathman_cache_stats');

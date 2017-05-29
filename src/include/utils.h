@@ -31,6 +31,7 @@ bool match_expr_to_operand(Node *expr, Node *operand);
  */
 Oid get_pathman_schema(void);
 List * list_reverse(List *l);
+int oid_cmp(const void *p1, const void *p2);
 
 /*
  * Useful functions for relations.
