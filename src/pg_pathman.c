@@ -1575,33 +1575,11 @@ generate_mergeappend_paths(PlannerInfo *root, RelOptInfo *rel,
 		else
 		{
 			/* ... and build the MergeAppend paths */
-#if PG_VERSION_NUM >= 100000
-			add_path(rel, (Path *) create_merge_append_path(root,
-															rel,
-															startup_subpaths,
-															pathkeys,
-															NULL,
-															NULL));
+			add_path(rel, (Path *) create_merge_append_path_compat(
+							root, rel, startup_subpaths, pathkeys, NULL));
 			if (startup_neq_total)
-				add_path(rel, (Path *) create_merge_append_path(root,
-																rel,
-																total_subpaths,
-																pathkeys,
-																NULL,
-																NULL));
-#else
-			add_path(rel, (Path *) create_merge_append_path(root,
-															rel,
-															startup_subpaths,
-															pathkeys,
-															NULL));
-			if (startup_neq_total)
-				add_path(rel, (Path *) create_merge_append_path(root,
-																rel,
-																total_subpaths,
-																pathkeys,
-																NULL));
-#endif
+				add_path(rel, (Path *) create_merge_append_path_compat(
+								root, rel, total_subpaths, pathkeys, NULL));
 		}
 	}
 }

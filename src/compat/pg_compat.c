@@ -353,6 +353,28 @@ McxtStatsInternal(MemoryContext context, int level,
 
 
 /*
+ * oid_cmp
+ *
+ * qsort comparison function for Oids;
+ * needed for find_inheritance_children_array() function
+ */
+#if PG_VERSION_NUM >= 90500 && PG_VERSION_NUM < 100000
+int
+oid_cmp(const void *p1, const void *p2)
+{
+	Oid			v1 = *((const Oid *) p1);
+	Oid			v2 = *((const Oid *) p2);
+
+	if (v1 < v2)
+		return -1;
+	if (v1 > v2)
+		return 1;
+	return 0;
+}
+#endif
+
+
+/*
  * set_dummy_rel_pathlist
  *	  Build a dummy path for a relation that's been excluded by constraints
  *

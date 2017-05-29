@@ -82,10 +82,6 @@ static bool read_opexpr_const(const OpExpr *opexpr,
 							  const PartRelationInfo *prel,
 							  Datum *value);
 
-#if PG_VERSION_NUM < 100000
-static int oid_cmp(const void *p1, const void *p2);
-#endif
-
 
 /* Validate SQL facade */
 static uint32 build_sql_facade_version(char *version_cstr);
@@ -1126,23 +1122,6 @@ validate_hash_constraint(const Expr *expr,
 
 	return false;
 }
-
-#if PG_VERSION_NUM < 100000
-/* needed for find_inheritance_children_array() function */
-static int
-oid_cmp(const void *p1, const void *p2)
-{
-	Oid			v1 = *((const Oid *) p1);
-	Oid			v2 = *((const Oid *) p2);
-
-	if (v1 < v2)
-		return -1;
-	if (v1 > v2)
-		return 1;
-	return 0;
-}
-#endif
-
 
 /* Parse cstring and build uint32 representing the version */
 static uint32

@@ -7,6 +7,7 @@
  *
  * ------------------------------------------------------------------------
  */
+#include "compat/pg_compat.h"
 
 #include "init.h"
 #include "nodes_common.h"
@@ -175,13 +176,8 @@ tlist_is_var_subset(List *a, List *b)
 		if (!IsA(te->expr, Var) && !IsA(te->expr, RelabelType))
 			continue;
 
-#if PG_VERSION_NUM >= 100000
-		if (!tlist_member_ignore_relabel(te->expr, a))
+		if (!tlist_member_ignore_relabel_compat(te->expr, a))
 			return true;
-#else
-		if (!tlist_member_ignore_relabel((Node *) te->expr, a))
-			return true;
-#endif
 	}
 
 	return false;

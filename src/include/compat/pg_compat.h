@@ -169,7 +169,7 @@ void CatalogIndexInsert(CatalogIndexState indstate, HeapTuple heapTuple);
  */
 #if PG_VERSION_NUM >= 100000
 #define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
-		create_append_path((rel), (subpaths), (required_outer), (parallel_workers), NULL)
+		create_append_path((rel), (subpaths), (required_outer), (parallel_workers), NIL)
 #elif PG_VERSION_NUM >= 90600
 
 #ifndef PGPRO_VERSION
@@ -185,6 +185,22 @@ void CatalogIndexInsert(CatalogIndexState indstate, HeapTuple heapTuple);
 #define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
 		create_append_path((rel), (subpaths), (required_outer))
 #endif /* PG_VERSION_NUM */
+
+
+/*
+ * create_merge_append_path()
+ */
+#if PG_VERSION_NUM >= 100000
+#define create_merge_append_path_compat(root, rel, subpaths, pathkeys, \
+										required_outer) \
+		create_merge_append_path((root), (rel), (subpaths), (pathkeys), \
+								 (required_outer), NIL)
+#elif PG_VERSION_NUM >= 90500
+#define create_merge_append_path_compat(root, rel, subpaths, pathkeys, \
+										required_outer) \
+		create_merge_append_path((root), (rel), (subpaths), (pathkeys), \
+								 (required_outer))
+#endif
 
 
 /*
@@ -419,6 +435,14 @@ void McxtStatsInternal(MemoryContext context, int level,
 
 
 /*
+ * oid_cmp()
+ */
+#if PG_VERSION_NUM >=90500 && PG_VERSION_NUM < 100000
+extern int oid_cmp(const void *p1, const void *p2);
+#endif
+
+
+/*
  * parse_analyze()
  *
  * for v10 cast first arg to RawStmt type
@@ -509,6 +533,20 @@ extern void set_rel_consider_parallel(PlannerInfo *root,
 									  RangeTblEntry *rte);
 #define set_rel_consider_parallel_compat(root, rel, rte) \
 		set_rel_consider_parallel((root), (rel), (rte))
+#endif
+
+
+/*
+ * tlist_member_ignore_relabel()
+ *
+ * in compat version the type of first argument is (Expr *)
+ */
+#if PG_VERSION_NUM >= 100000
+#define tlist_member_ignore_relabel_compat(expr, targetlist) \
+		tlist_member_ignore_relabel((expr), (targetlist))
+#elif PG_VERSION_NUM >= 90500
+#define tlist_member_ignore_relabel_compat(expr, targetlist) \
+		tlist_member_ignore_relabel((Node *) (expr), (targetlist))
 #endif
 
 
