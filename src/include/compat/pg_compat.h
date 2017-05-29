@@ -120,15 +120,6 @@
 
 
 /*
- * CatalogIndexInsert()
- */
-#if PG_VERSION_NUM >= 100000
-#include "catalog/indexing.h"
-void CatalogIndexInsert(CatalogIndexState indstate, HeapTuple heapTuple);
-#endif
-
-
-/*
  * CatalogTupleInsert()
  */
 #if PG_VERSION_NUM >= 90500 && PG_VERSION_NUM < 100000
