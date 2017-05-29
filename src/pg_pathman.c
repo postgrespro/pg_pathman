@@ -1489,31 +1489,18 @@ generate_mergeappend_paths(PlannerInfo *root, RelOptInfo *rel,
 					   *cheapest_total;
 
 			/* Locate the right paths, if they are available. */
-#if PG_VERSION_NUM >= 100000
 			cheapest_startup =
-				get_cheapest_path_for_pathkeys(childrel->pathlist,
-											   pathkeys,
-											   NULL,
-											   STARTUP_COST,
-											   true);
+				get_cheapest_path_for_pathkeys_compat(childrel->pathlist,
+													  pathkeys,
+													  NULL,
+													  STARTUP_COST,
+													  false);
 			cheapest_total =
-				get_cheapest_path_for_pathkeys(childrel->pathlist,
-											   pathkeys,
-											   NULL,
-											   TOTAL_COST,
-											   true);
-#else
-			cheapest_startup =
-				get_cheapest_path_for_pathkeys(childrel->pathlist,
-											   pathkeys,
-											   NULL,
-											   STARTUP_COST);
-			cheapest_total =
-				get_cheapest_path_for_pathkeys(childrel->pathlist,
-											   pathkeys,
-											   NULL,
-											   TOTAL_COST);
-#endif
+				get_cheapest_path_for_pathkeys_compat(childrel->pathlist,
+													  pathkeys,
+													  NULL,
+													  TOTAL_COST,
+													  false);
 
 			/*
 			 * If we can't find any paths with the right order just use the
@@ -2091,18 +2078,11 @@ get_cheapest_parameterized_child_path(PlannerInfo *root, RelOptInfo *rel,
 	 * parameterization.  If it has exactly the needed parameterization, we're
 	 * done.
 	 */
-#if PG_VERSION_NUM >= 100000
-	cheapest = get_cheapest_path_for_pathkeys(rel->pathlist,
-											  NIL,
-											  required_outer,
-											  TOTAL_COST,
-											  false);
-#else
-	cheapest = get_cheapest_path_for_pathkeys(rel->pathlist,
-											  NIL,
-											  required_outer,
-											  TOTAL_COST);
-#endif
+	cheapest = get_cheapest_path_for_pathkeys_compat(rel->pathlist,
+													 NIL,
+													 required_outer,
+													 TOTAL_COST,
+													 false);
 	Assert(cheapest != NULL);
 	if (bms_equal(PATH_REQ_OUTER(cheapest), required_outer))
 		return cheapest;

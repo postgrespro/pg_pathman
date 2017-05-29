@@ -301,6 +301,25 @@ extern List *get_all_actual_clauses(List *restrictinfo_list);
 
 
 /*
+ * get_cheapest_path_for_pathkeys()
+ */
+#if PG_VERSION_NUM >= 100000
+#define get_cheapest_path_for_pathkeys_compat(paths, pathkeys, required_outer, \
+											  cost_criterion, \
+											  require_parallel_safe) \
+		get_cheapest_path_for_pathkeys((paths), (pathkeys), (required_outer), \
+									   (cost_criterion), \
+									   (require_parallel_safe))
+#elif PG_VERSION_NUM >= 90500
+#define get_cheapest_path_for_pathkeys_compat(paths, pathkeys, required_outer, \
+											  cost_criterion, \
+											  require_parallel_safe) \
+		get_cheapest_path_for_pathkeys((paths), (pathkeys), (required_outer), \
+									   (cost_criterion))
+#endif
+
+
+/*
  * get_parameterized_joinrel_size()
  */
 #if PG_VERSION_NUM >= 90600
