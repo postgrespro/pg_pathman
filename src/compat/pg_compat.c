@@ -321,6 +321,7 @@ set_dummy_rel_pathlist(RelOptInfo *rel)
 #endif
 
 
+#if PG_VERSION_NUM >= 90600
 /*
  * If this relation could possibly be scanned from within a worker, then set
  * its consider_parallel flag.
@@ -490,6 +491,7 @@ set_rel_consider_parallel(PlannerInfo *root, RelOptInfo *rel,
 	/* We have a winner. */
 	rel->consider_parallel = true;
 }
+#endif
 
 
 /*
