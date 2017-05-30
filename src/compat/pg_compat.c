@@ -325,164 +325,17 @@ set_dummy_rel_pathlist(RelOptInfo *rel)
  * If this relation could possibly be scanned from within a worker, then set
  * its consider_parallel flag.
  */
+void
+set_rel_consider_parallel(PlannerInfo *root, RelOptInfo *rel,
+						  RangeTblEntry *rte)
+{
 #if PG_VERSION_NUM >= 100000
-void
-set_rel_consider_parallel(PlannerInfo *root, RelOptInfo *rel,
-						  RangeTblEntry *rte)
-{
-	/*
-	 * The flag has previously been initialized to false, so we can just
-	 * return if it becomes clear that we can't safely set it.
-	 */
-	Assert(!rel->consider_parallel);
+#define is_parallel_safe_compat(root, exprs) is_parallel_safe((root), (exprs))
+#elif PG_VERSION_NUM >= 90500
+#define is_parallel_safe_compat(root, exprs) \
+		(!has_parallel_hazard((exprs), false))
+#endif
 
-	/* Don't call this if parallelism is disallowed for the entire query. */
-	Assert(root->glob->parallelModeOK);
-
-	/* This should only be called for baserels and appendrel children. */
-	Assert(IS_SIMPLE_REL(rel));
-
-	/* Assorted checks based on rtekind. */
-	switch (rte->rtekind)
-	{
-		case RTE_RELATION:
-
-			/*
-			 * Currently, parallel workers can't access the leader's temporary
-			 * tables.  We could possibly relax this if the wrote all of its
-			 * local buffers at the start of the query and made no changes
-			 * thereafter (maybe we could allow hint bit changes), and if we
-			 * taught the workers to read them.  Writing a large number of
-			 * temporary buffers could be expensive, though, and we don't have
-			 * the rest of the necessary infrastructure right now anyway.  So
-			 * for now, bail out if we see a temporary table.
-			 */
-			if (get_rel_persistence(rte->relid) == RELPERSISTENCE_TEMP)
-				return;
-
-			/*
-			 * Table sampling can be pushed down to workers if the sample
-			 * function and its arguments are safe.
-			 */
-			if (rte->tablesample != NULL)
-			{
-				char		proparallel = func_parallel(rte->tablesample->tsmhandler);
-
-				if (proparallel != PROPARALLEL_SAFE)
-					return;
-				if (!is_parallel_safe(root, (Node *) rte->tablesample->args))
-					return;
-			}
-
-			/*
-			 * Ask FDWs whether they can support performing a ForeignScan
-			 * within a worker.  Most often, the answer will be no.  For
-			 * example, if the nature of the FDW is such that it opens a TCP
-			 * connection with a remote server, each parallel worker would end
-			 * up with a separate connection, and these connections might not
-			 * be appropriately coordinated between workers and the leader.
-			 */
-			if (rte->relkind == RELKIND_FOREIGN_TABLE)
-			{
-				Assert(rel->fdwroutine);
-				if (!rel->fdwroutine->IsForeignScanParallelSafe)
-					return;
-				if (!rel->fdwroutine->IsForeignScanParallelSafe(root, rel, rte))
-					return;
-			}
-
-			/*
-			 * There are additional considerations for appendrels, which we'll
-			 * deal with in set_append_rel_size and set_append_rel_pathlist.
-			 * For now, just set consider_parallel based on the rel's own
-			 * quals and targetlist.
-			 */
-			break;
-
-		case RTE_SUBQUERY:
-
-			/*
-			 * There's no intrinsic problem with scanning a subquery-in-FROM
-			 * (as distinct from a SubPlan or InitPlan) in a parallel worker.
-			 * If the subquery doesn't happen to have any parallel-safe paths,
-			 * then flagging it as consider_parallel won't change anything,
-			 * but that's true for plain tables, too.  We must set
-			 * consider_parallel based on the rel's own quals and targetlist,
-			 * so that if a subquery path is parallel-safe but the quals and
-			 * projection we're sticking onto it are not, we correctly mark
-			 * the SubqueryScanPath as not parallel-safe.  (Note that
-			 * set_subquery_pathlist() might push some of these quals down
-			 * into the subquery itself, but that doesn't change anything.)
-			 */
-			break;
-
-		case RTE_JOIN:
-			/* Shouldn't happen; we're only considering baserels here. */
-			Assert(false);
-			return;
-
-		case RTE_FUNCTION:
-			/* Check for parallel-restricted functions. */
-			if (!is_parallel_safe(root, (Node *) rte->functions))
-				return;
-			break;
-
-		case RTE_TABLEFUNC:
-			/* not parallel safe */
-			return;
-
-		case RTE_VALUES:
-			/* Check for parallel-restricted functions. */
-			if (!is_parallel_safe(root, (Node *) rte->values_lists))
-				return;
-			break;
-
-		case RTE_CTE:
-
-			/*
-			 * CTE tuplestores aren't shared among parallel workers, so we
-			 * force all CTE scans to happen in the leader.  Also, populating
-			 * the CTE would require executing a subplan that's not available
-			 * in the worker, might be parallel-restricted, and must get
-			 * executed only once.
-			 */
-			return;
-
-		case RTE_NAMEDTUPLESTORE:
-			/*
-			 * tuplestore cannot be shared, at least without more
-			 * infrastructure to support that.
-			 */
-			return;
-	}
-
-	/*
-	 * If there's anything in baserestrictinfo that's parallel-restricted, we
-	 * give up on parallelizing access to this relation.  We could consider
-	 * instead postponing application of the restricted quals until we're
-	 * above all the parallelism in the plan tree, but it's not clear that
-	 * that would be a win in very many cases, and it might be tricky to make
-	 * outer join clauses work correctly.  It would likely break equivalence
-	 * classes, too.
-	 */
-	if (!is_parallel_safe(root, (Node *) rel->baserestrictinfo))
-		return;
-
-	/*
-	 * Likewise, if the relation's outputs are not parallel-safe, give up.
-	 * (Usually, they're just Vars, but sometimes they're not.)
-	 */
-	if (!is_parallel_safe(root, (Node *) rel->reltarget->exprs))
-		return;
-
-	/* We have a winner. */
-	rel->consider_parallel = true;
-}
-#elif PG_VERSION_NUM >= 90600
-void
-set_rel_consider_parallel(PlannerInfo *root, RelOptInfo *rel,
-						  RangeTblEntry *rte)
-{
 	/*
 	 * The flag has previously been initialized to false, so we can just
 	 * return if it becomes clear that we can't safely set it.
@@ -524,8 +377,8 @@ set_rel_consider_parallel(PlannerInfo *root, RelOptInfo *rel,
 
 				if (proparallel != PROPARALLEL_SAFE)
 					return;
-				if (has_parallel_hazard((Node *) rte->tablesample->args,
-										false))
+				if (!is_parallel_safe_compat(
+							root, (Node *) rte->tablesample->args))
 					return;
 			}
 
@@ -578,13 +431,19 @@ set_rel_consider_parallel(PlannerInfo *root, RelOptInfo *rel,
 
 		case RTE_FUNCTION:
 			/* Check for parallel-restricted functions. */
-			if (has_parallel_hazard((Node *) rte->functions, false))
+			if (!is_parallel_safe_compat(root, (Node *) rte->functions))
 				return;
 			break;
 
+#if PG_VERSION_NUM >= 100000
+		case RTE_TABLEFUNC:
+			/* not parallel safe */
+			return;
+#endif
+
 		case RTE_VALUES:
 			/* Check for parallel-restricted functions. */
-			if (has_parallel_hazard((Node *) rte->values_lists, false))
+			if (!is_parallel_safe_compat(root, (Node *) rte->values_lists))
 				return;
 			break;
 
@@ -598,6 +457,15 @@ set_rel_consider_parallel(PlannerInfo *root, RelOptInfo *rel,
 			 * executed only once.
 			 */
 			return;
+
+#if PG_VERSION_NUM >= 100000
+		case RTE_NAMEDTUPLESTORE:
+			/*
+			 * tuplestore cannot be shared, at least without more
+			 * infrastructure to support that.
+			 */
+			return;
+#endif
 	}
 
 	/*
@@ -609,20 +477,19 @@ set_rel_consider_parallel(PlannerInfo *root, RelOptInfo *rel,
 	 * outer join clauses work correctly.  It would likely break equivalence
 	 * classes, too.
 	 */
-	if (has_parallel_hazard((Node *) rel->baserestrictinfo, false))
+	if (!is_parallel_safe_compat(root, (Node *) rel->baserestrictinfo))
 		return;
 
 	/*
 	 * Likewise, if the relation's outputs are not parallel-safe, give up.
 	 * (Usually, they're just Vars, but sometimes they're not.)
 	 */
-	if (has_parallel_hazard((Node *) rel->reltarget->exprs, false))
+	if (!is_parallel_safe_compat(root, (Node *) rel->reltarget->exprs))
 		return;
 
 	/* We have a winner. */
 	rel->consider_parallel = true;
 }
-#endif
 
 
 /*
