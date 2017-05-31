@@ -280,11 +280,11 @@ ERROR:  'parttype' should not be NULL
 SELECT validate_interval_value('pg_class', 'oid', 1, 'HASH', NULL);					/* not ok */
 ERROR:  interval should be NULL for HASH partitioned table
 SELECT validate_interval_value('pg_class', 'expr', 2, '1 mon', NULL);				/* not ok */
-ERROR:  cannot find type name for attribute "expr" of relation "pg_class"
+ERROR:  failed to analyze partitioning expression "expr"
 SELECT validate_interval_value('pg_class', 'expr', 2, NULL, 'cooked_expr');			/* not ok */
 ERROR:  unrecognized token: "cooked_expr"
 SELECT validate_interval_value('pg_class', 'EXPR', 1, 'HASH', NULL);				/* not ok */
-ERROR:  cannot find type name for attribute "expr" of relation "pg_class"
+ERROR:  failed to analyze partitioning expression "EXPR"
 /* check function validate_relname() */
 SELECT validate_relname('calamity.part_test');
  validate_relname 
@@ -304,7 +304,7 @@ ERROR:  'relid' should not be NULL
 SELECT validate_expression('calamity.part_test', NULL);			/* not ok */
 ERROR:  'expression' should not be NULL
 SELECT validate_expression('calamity.part_test', 'valval');		/* not ok */
-ERROR:  cannot find type name for attribute "valval" of relation "part_test"
+ERROR:  failed to analyze partitioning expression "valval"
 SELECT validate_expression('calamity.part_test', 'random()');	/* not ok */
 ERROR:  failed to analyze partitioning expression "random()"
 SELECT validate_expression('calamity.part_test', 'val');		/* OK */
@@ -580,7 +580,7 @@ ERROR:  relation "0" does not exist
 SELECT add_to_pathman_config('calamity.part_test', NULL);		/* no expr */
 ERROR:  'expression' should not be NULL
 SELECT add_to_pathman_config('calamity.part_test', 'V_A_L');	/* wrong expr */
-ERROR:  cannot find type name for attribute "v_a_l" of relation "part_test"
+ERROR:  failed to analyze partitioning expression "V_A_L"
 SELECT add_to_pathman_config('calamity.part_test', 'val');		/* OK */
  add_to_pathman_config 
 -----------------------

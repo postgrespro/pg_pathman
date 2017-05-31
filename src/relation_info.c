@@ -632,8 +632,7 @@ cook_partitioning_expression(const Oid relid,
 							 const char *expr_cstr,
 							 Oid *expr_type_out) /* ret value #1 */
 {
-	Node		   *parse_tree,
-				   *raw_expr;
+	Node		   *parse_tree;
 	List		   *query_tree_list;
 
 	char		   *query_string,
@@ -658,37 +657,8 @@ cook_partitioning_expression(const Oid relid,
 	old_mcxt = MemoryContextSwitchTo(parse_mcxt);
 
 	/* First we have to build a raw AST */
-	raw_expr = parse_partitioning_expression(relid, expr_cstr,
-											 &query_string, &parse_tree);
-
-	/* Check if raw_expr is NULLable */
-	if (IsA(raw_expr, ColumnRef))
-	{
-		ColumnRef *column = (ColumnRef *) raw_expr;
-
-		if (list_length(column->fields) == 1)
-		{
-			HeapTuple	htup;
-			bool		attnotnull;
-			char	   *attname = strVal(linitial(column->fields));
-
-			/* check if attribute is nullable */
-			htup = SearchSysCacheAttName(relid, attname);
-			if (HeapTupleIsValid(htup))
-			{
-				Form_pg_attribute att_tup = (Form_pg_attribute) GETSTRUCT(htup);
-				attnotnull = att_tup->attnotnull;
-				ReleaseSysCache(htup);
-			}
-			else elog(ERROR, "cannot find type name for attribute \"%s\""
-							 " of relation \"%s\"",
-					  attname, get_rel_name_or_relid(relid));
-
-			if (!attnotnull)
-				elog(ERROR, "partitioning key \"%s\" must be marked NOT NULL",
-					 attname);
-		}
-	}
+	(void) parse_partitioning_expression(relid, expr_cstr,
+										 &query_string, &parse_tree);
 
 	/* We don't need pg_pathman's magic here */
 	pathman_hooks_enabled = false;
@@ -697,7 +667,9 @@ cook_partitioning_expression(const Oid relid,
 	{
 		Query	   *query;
 		Node	   *expr;
+		int			expr_attr;
 		Relids		expr_varnos;
+		Bitmapset  *expr_varattnos = NULL;
 
 		/* This will fail with ERROR in case of wrong expression */
 		query_tree_list = pg_analyze_and_rewrite(parse_tree, query_string, NULL, 0);
@@ -729,12 +701,41 @@ cook_partitioning_expression(const Oid relid,
 		/* Sanity check #5 */
 		expr_varnos = pull_varnos(expr);
 		if (bms_num_members(expr_varnos) != 1 ||
-			((RangeTblEntry *) linitial(query->rtable))->relid != relid)
+			relid != ((RangeTblEntry *) linitial(query->rtable))->relid)
 		{
 			elog(ERROR, "partitioning expression should reference table \"%s\"",
 				 get_rel_name(relid));
 		}
+
+		/* Sanity check #6 */
+		pull_varattnos(expr, bms_singleton_member(expr_varnos), &expr_varattnos);
+		expr_attr = -1;
+		while ((expr_attr = bms_next_member(expr_varattnos, expr_attr)) >= 0)
+		{
+			AttrNumber	attnum = expr_attr + FirstLowInvalidHeapAttributeNumber;
+			HeapTuple	htup;
+
+			htup = SearchSysCache2(ATTNUM,
+								   ObjectIdGetDatum(relid),
+								   Int16GetDatum(attnum));
+			if (HeapTupleIsValid(htup))
+			{
+				bool nullable;
+
+				/* Fetch 'nullable' and free syscache tuple */
+				nullable = !((Form_pg_attribute) GETSTRUCT(htup))->attnotnull;
+				ReleaseSysCache(htup);
+
+				if (nullable)
+					ereport(ERROR, (errcode(ERRCODE_NOT_NULL_VIOLATION),
+									errmsg("column \"%s\" should be marked NOT NULL",
+										   get_attname(relid, attnum))));
+			}
+		}
+
+		/* Free sets */
 		bms_free(expr_varnos);
+		bms_free(expr_varattnos);
 
 		Assert(expr);
 		expr_serialized = nodeToString(expr);
