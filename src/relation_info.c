@@ -465,7 +465,7 @@ fill_prel_with_partitions(PartRelationInfo *prel,
 	/* Initialize bounds of partitions */
 	for (i = 0; i < PrelChildrenCount(prel); i++)
 	{
-		PartBoundInfo *bound_info;
+		PartBoundInfo *pbin;
 
 		/* Clear all previous allocations */
 		MemoryContextReset(temp_mcxt);
@@ -474,7 +474,7 @@ fill_prel_with_partitions(PartRelationInfo *prel,
 		old_mcxt = MemoryContextSwitchTo(temp_mcxt);
 		{
 			/* Fetch constraint's expression tree */
-			bound_info = get_bounds_of_partition(partitions[i], prel);
+			pbin = get_bounds_of_partition(partitions[i], prel);
 		}
 		MemoryContextSwitchTo(old_mcxt);
 
@@ -482,22 +482,22 @@ fill_prel_with_partitions(PartRelationInfo *prel,
 		switch (prel->parttype)
 		{
 			case PT_HASH:
-				prel->children[bound_info->part_idx] = bound_info->child_rel;
+				prel->children[pbin->part_idx] = pbin->child_rel;
 				break;
 
 			case PT_RANGE:
 				{
 					/* Copy child's Oid */
-					prel->ranges[i].child_oid = bound_info->child_rel;
+					prel->ranges[i].child_oid = pbin->child_rel;
 
 					/* Copy all min & max Datums to the persistent mcxt */
 					old_mcxt = MemoryContextSwitchTo(cache_mcxt);
 					{
-						prel->ranges[i].min = CopyBound(&bound_info->range_min,
+						prel->ranges[i].min = CopyBound(&pbin->range_min,
 														prel->ev_byval,
 														prel->ev_len);
 
-						prel->ranges[i].max = CopyBound(&bound_info->range_max,
+						prel->ranges[i].max = CopyBound(&pbin->range_max,
 														prel->ev_byval,
 														prel->ev_len);
 					}
