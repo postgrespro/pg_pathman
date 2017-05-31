@@ -180,8 +180,13 @@ refresh_pathman_relation_info(Oid relid,
 	/* Fetch cooked partitioning expression */
 	expr = TextDatumGetCString(values[Anum_pathman_config_cooked_expr - 1]);
 
-	/* Expression and attname should be saved in cache context */
-	old_mcxt = MemoryContextSwitchTo(PathmanRelationCacheContext);
+	/* Create a new memory context to store expression tree etc */
+	prel->mcxt = AllocSetContextCreate(PathmanRelationCacheContext,
+									   CppAsString(refresh_pathman_relation_info),
+									   ALLOCSET_SMALL_SIZES);
+
+	/* Switch to persistent memory context */
+	old_mcxt = MemoryContextSwitchTo(prel->mcxt);
 
 	/* Build partitioning expression tree */
 	prel->expr_cstr = TextDatumGetCString(values[Anum_pathman_config_expr - 1]);
@@ -261,11 +266,15 @@ refresh_pathman_relation_info(Oid relid,
 	}
 	PG_CATCH();
 	{
-		/* Free remaining resources */
-		FreeChildrenArray(prel);
-		FreeRangesArray(prel);
-		FreeIfNotNull(prel->expr_cstr);
-		FreeIfNotNull(prel->expr);
+		/* Remove this parent from parents cache */
+		ForgetParent(prel);
+
+		/* Delete unused 'prel_mcxt' */
+		MemoryContextDelete(prel->mcxt);
+
+		prel->children	= NULL;
+		prel->ranges	= NULL;
+		prel->mcxt		= NULL;
 
 		/* Rethrow ERROR further */
 		PG_RE_THROW();
@@ -314,22 +323,25 @@ invalidate_pathman_relation_info(Oid relid, bool *found)
 									  relid, action,
 									  &prel_found);
 
+	/* Handle valid PartRelationInfo */
 	if ((action == HASH_FIND ||
 		(action == HASH_ENTER && prel_found)) && PrelIsValid(prel))
 	{
-		FreeChildrenArray(prel);
-		FreeRangesArray(prel);
-		FreeIfNotNull(prel->expr_cstr);
+		/* Remove this parent from parents cache */
+		ForgetParent(prel);
 
-		prel->valid = false; /* now cache entry is invalid */
+		/* Drop cached bounds etc */
+		MemoryContextDelete(prel->mcxt);
 	}
-	/* Handle invalid PartRelationInfo */
-	else if (prel)
-	{
-		prel->children = NULL;
-		prel->ranges = NULL;
 
-		prel->valid = false; /* now cache entry is invalid */
+	/* Set important default values */
+	if (prel)
+	{
+		prel->children	= NULL;
+		prel->ranges	= NULL;
+		prel->mcxt		= NULL;
+
+		prel->valid	= false; /* now cache entry is invalid */
 	}
 
 	/* Set 'found' if necessary */
@@ -444,15 +456,14 @@ fill_prel_with_partitions(PartRelationInfo *prel,
 	)
 
 	uint32			i;
-	MemoryContext	cache_mcxt = PathmanRelationCacheContext,
-					temp_mcxt,	/* reference temporary mcxt */
+	MemoryContext	temp_mcxt,	/* reference temporary mcxt */
 					old_mcxt;	/* reference current mcxt */
 
 	AssertTemporaryContext();
 
 	/* Allocate memory for 'prel->children' & 'prel->ranges' (if needed) */
-	prel->children	= AllocZeroArray(PT_ANY,   cache_mcxt, parts_count, Oid);
-	prel->ranges	= AllocZeroArray(PT_RANGE, cache_mcxt, parts_count, RangeEntry);
+	prel->children	= AllocZeroArray(PT_ANY,   prel->mcxt, parts_count, Oid);
+	prel->ranges	= AllocZeroArray(PT_RANGE, prel->mcxt, parts_count, RangeEntry);
 
 	/* Set number of children */
 	PrelChildrenCount(prel) = parts_count;
@@ -491,7 +502,7 @@ fill_prel_with_partitions(PartRelationInfo *prel,
 					prel->ranges[i].child_oid = pbin->child_rel;
 
 					/* Copy all min & max Datums to the persistent mcxt */
-					old_mcxt = MemoryContextSwitchTo(cache_mcxt);
+					old_mcxt = MemoryContextSwitchTo(prel->mcxt);
 					{
 						prel->ranges[i].min = CopyBound(&pbin->range_min,
 														prel->ev_byval,

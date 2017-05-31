@@ -18,6 +18,7 @@
 #include "fmgr.h"
 #include "nodes/bitmapset.h"
 #include "nodes/nodes.h"
+#include "nodes/memnodes.h"
 #include "nodes/primnodes.h"
 #include "nodes/value.h"
 #include "port/atomics.h"
@@ -162,6 +163,8 @@ typedef struct
 
 	Oid				cmp_proc,		/* comparison fuction for 'ev_type' */
 					hash_proc;		/* hash function for 'ev_type' */
+
+	MemoryContext	mcxt;			/* memory context holding this struct */
 } PartRelationInfo;
 
 #define PART_EXPR_VARNO				( 1 )
@@ -361,19 +364,13 @@ void shout_if_prel_is_invalid(const Oid parent_oid,
  * Useful functions & macros for freeing memory.
  */
 
-#define FreeIfNotNull(ptr) \
-	do { \
-		if (ptr) \
-		{ \
-			pfree((void *) ptr); \
-			ptr = NULL; \
-		} \
-	} while(0)
-
+/* Remove all references to this parent from parents cache */
 static inline void
-FreeChildrenArray(PartRelationInfo *prel)
+ForgetParent(PartRelationInfo *prel)
 {
-	uint32	i;
+	uint32 i;
+
+	AssertArg(MemoryContextIsValid(prel->mcxt));
 
 	/* Remove relevant PartParentInfos */
 	if (prel->children)
@@ -390,38 +387,6 @@ FreeChildrenArray(PartRelationInfo *prel)
 			if (PrelParentRelid(prel) == get_parent_of_partition(child, NULL))
 				forget_parent_of_partition(child, NULL);
 		}
-
-		pfree(prel->children);
-		prel->children = NULL;
-	}
-}
-
-static inline void
-FreeRangesArray(PartRelationInfo *prel)
-{
-	uint32	i;
-
-	/* Remove RangeEntries array */
-	if (prel->ranges)
-	{
-		/* Remove persistent entries if not byVal */
-		if (!prel->ev_byval)
-		{
-			for (i = 0; i < PrelChildrenCount(prel); i++)
-			{
-				Oid child = prel->ranges[i].child_oid;
-
-				/* Skip if Oid is invalid (e.g. initialization error) */
-				if (!OidIsValid(child))
-					continue;
-
-				FreeBound(&prel->ranges[i].min, prel->ev_byval);
-				FreeBound(&prel->ranges[i].max, prel->ev_byval);
-			}
-		}
-
-		pfree(prel->ranges);
-		prel->ranges = NULL;
 	}
 }
 
