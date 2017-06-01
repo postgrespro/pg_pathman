@@ -261,15 +261,11 @@ PrelExpressionColumnNames(const PartRelationInfo *prel)
 static inline Node *
 PrelExpressionForRelid(const PartRelationInfo *prel, Index rel_index)
 {
-	Node *expr;
-
 	/* TODO: implement some kind of cache */
+	Node *expr = copyObject(prel->expr);
+
 	if (rel_index != PART_EXPR_VARNO)
-	{
-		expr = copyObject(prel->expr);
 		ChangeVarNodes(expr, PART_EXPR_VARNO, rel_index, 0);
-	}
-	else expr = prel->expr;
 
 	return expr;
 }

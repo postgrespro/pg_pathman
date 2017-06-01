@@ -560,9 +560,6 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 		}
 		expr = PrelExpressionForRelid(prel, parent_varno);
 
-		/* HACK: protect expression from 'prel' invalidation */
-		expr = copyObject(expr);
-
 		/* Prepare state for expression execution */
 		old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
 		state->expr_state = ExecInitExpr((Expr *) expr, NULL);
