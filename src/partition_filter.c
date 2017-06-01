@@ -845,6 +845,7 @@ prepare_rri_fdw_for_insert(EState *estate,
 			break;
 
 		case PF_FDW_INSERT_POSTGRES:
+		case PF_FDW_INSERT_ANY_FDW:
 			{
 				ForeignDataWrapper *fdw;
 				ForeignServer	   *fserver;
@@ -852,23 +853,21 @@ prepare_rri_fdw_for_insert(EState *estate,
 				/* Check if it's PostgreSQL FDW */
 				fserver = GetForeignServer(GetForeignTable(partid)->serverid);
 				fdw = GetForeignDataWrapper(fserver->fdwid);
+
+				/* Show message if not postgres_fdw */
 				if (strcmp("postgres_fdw", fdw->fdwname) != 0)
-					elog(ERROR, "FDWs other than postgres_fdw are restricted");
+					switch (pg_pathman_insert_into_fdw)
+					{
+						case PF_FDW_INSERT_POSTGRES:
+							elog(ERROR,
+								 "FDWs other than postgres_fdw are restricted");
+
+						case PF_FDW_INSERT_ANY_FDW:
+							elog(WARNING,
+								 "unrestricted FDW mode may lead to crashes");
+					}
 			}
 			break;
-
-		case PF_FDW_INSERT_ANY_FDW:
-			{
-				ForeignDataWrapper *fdw;
-				ForeignServer	   *fserver;
-
-				fserver = GetForeignServer(GetForeignTable(partid)->serverid);
-				fdw = GetForeignDataWrapper(fserver->fdwid);
-				if (strcmp("postgres_fdw", fdw->fdwname) != 0)
-					elog(WARNING, "unrestricted FDW mode may lead to \"%s\" crashes",
-						 fdw->fdwname);
-			}
-			break; /* do nothing */
 
 		default:
 			elog(ERROR, "Mode is not implemented yet");
