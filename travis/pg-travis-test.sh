@@ -126,7 +126,7 @@ LD_LIBRARY_PATH=/usr/local/lib
 export LD_LIBRARY_PATH
 
 # run cmocka tests (using CFLAGS_SL for gcov)
-make USE_PGXS=1 PG_CONFIG=$config_path CFLAGS_SL="$($config_path --cflags_sl) -coverage" cmocka_tests || status=$?
+make USE_PGXS=1 PG_CONFIG=$config_path PG_CPPFLAGS="-coverage" cmocka_tests || status=$?
 
 # remove useless gcov files
 rm -f tests/cmocka/*.gcno
