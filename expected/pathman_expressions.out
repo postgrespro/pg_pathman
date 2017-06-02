@@ -95,6 +95,110 @@ EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.canon WHERE val COLLATE "POSIX" < A
 
 DROP TABLE test_exprs.canon CASCADE;
 NOTICE:  drop cascades to 5 other objects
+/*
+ * Test composite key.
+ */
+CREATE TABLE test_exprs.composite(a INT4 NOT NULL, b TEXT NOT NULL);
+CREATE SEQUENCE test_exprs.composite_seq;
+SELECT add_to_pathman_config('test_exprs.composite',
+							 '(a, b)::test_exprs.composite',
+							 NULL);
+ add_to_pathman_config 
+-----------------------
+ t
+(1 row)
+
+SELECT add_range_partition('test_exprs.composite',
+						   '(1,  ''a'')'::test_exprs.composite,
+						   '(10, ''a'')'::test_exprs.composite);
+  add_range_partition   
+------------------------
+ test_exprs.composite_1
+(1 row)
+
+SELECT add_range_partition('test_exprs.composite',
+						   '(10, ''a'')'::test_exprs.composite,
+						   '(20, ''a'')'::test_exprs.composite);
+  add_range_partition   
+------------------------
+ test_exprs.composite_2
+(1 row)
+
+SELECT add_range_partition('test_exprs.composite',
+						   '(20, ''a'')'::test_exprs.composite,
+						   '(30, ''a'')'::test_exprs.composite);
+  add_range_partition   
+------------------------
+ test_exprs.composite_3
+(1 row)
+
+SELECT add_range_partition('test_exprs.composite',
+						   '(30, ''a'')'::test_exprs.composite,
+						   '(40, ''a'')'::test_exprs.composite);
+  add_range_partition   
+------------------------
+ test_exprs.composite_4
+(1 row)
+
+SELECT expr FROM pathman_config; /* check expression */
+              expr               
+---------------------------------
+ ROW(a, b)::test_exprs.composite
+(1 row)
+
+INSERT INTO test_exprs.composite VALUES(2,  'a');
+INSERT INTO test_exprs.composite VALUES(11, 'a');
+INSERT INTO test_exprs.composite VALUES(2,  'b');
+INSERT INTO test_exprs.composite VALUES(50, 'b');
+ERROR:  cannot spawn new partition for key '(50,b)'
+SELECT *, tableoid::REGCLASS FROM test_exprs.composite;
+ a  | b |        tableoid        
+----+---+------------------------
+  2 | a | test_exprs.composite_1
+  2 | b | test_exprs.composite_1
+ 11 | a | test_exprs.composite_2
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.composite WHERE (a, b)::test_exprs.composite < (21, 0)::test_exprs.composite;
+                                          QUERY PLAN                                          
+----------------------------------------------------------------------------------------------
+ Append
+   ->  Seq Scan on composite_1
+   ->  Seq Scan on composite_2
+   ->  Seq Scan on composite_3
+         Filter: (ROW(a, b)::test_exprs.composite < ROW(21, '0'::text)::test_exprs.composite)
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.composite WHERE (a, b) < (21, 0)::test_exprs.composite;
+                               QUERY PLAN                               
+------------------------------------------------------------------------
+ Append
+   ->  Seq Scan on composite_1
+         Filter: (ROW(a, b) < ROW(21, '0'::text)::test_exprs.composite)
+   ->  Seq Scan on composite_2
+         Filter: (ROW(a, b) < ROW(21, '0'::text)::test_exprs.composite)
+   ->  Seq Scan on composite_3
+         Filter: (ROW(a, b) < ROW(21, '0'::text)::test_exprs.composite)
+   ->  Seq Scan on composite_4
+         Filter: (ROW(a, b) < ROW(21, '0'::text)::test_exprs.composite)
+(9 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.composite WHERE (a, b)::test_exprs.composite < (21, 0);
+                           QUERY PLAN                           
+----------------------------------------------------------------
+ Append
+   ->  Seq Scan on composite_1
+         Filter: (ROW(a, b)::test_exprs.composite < ROW(21, 0))
+   ->  Seq Scan on composite_2
+         Filter: (ROW(a, b)::test_exprs.composite < ROW(21, 0))
+   ->  Seq Scan on composite_3
+         Filter: (ROW(a, b)::test_exprs.composite < ROW(21, 0))
+   ->  Seq Scan on composite_4
+         Filter: (ROW(a, b)::test_exprs.composite < ROW(21, 0))
+(9 rows)
+
+DROP TABLE test_exprs.composite CASCADE;
+NOTICE:  drop cascades to 5 other objects
 /* We use this rel to check 'pathman_hooks_enabled' */
 CREATE TABLE test_exprs.canary(val INT4 NOT NULL);
 CREATE TABLE test_exprs.canary_copy (LIKE test_exprs.canary);

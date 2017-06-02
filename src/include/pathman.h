@@ -157,7 +157,7 @@ typedef struct
 	} while (0)
 
 /* Check that WalkerContext contains ExprContext (plan execution stage) */
-#define WcxtHasExprContext(wcxt) ( (wcxt)->econtext )
+#define WcxtHasExprContext(wcxt) ( (wcxt)->econtext != NULL )
 
 /* Examine expression in order to select partitions */
 WrapperNode *walk_expr_tree(Expr *expr, const WalkerContext *context);

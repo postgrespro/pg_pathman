@@ -1171,6 +1171,29 @@ build_raw_range_check_tree(Node *raw_expression,
 						   const Bound *end_value,
 						   Oid value_type)
 {
+#define BuildConstExpr(node, value, value_type) \
+	do { \
+		(node)->val = make_string_value_struct( \
+							datum_to_cstring((value), (value_type))); \
+		(node)->location = -1; \
+	} while (0)
+
+#define BuildCmpExpr(node, opname, expr, c) \
+	do { \
+		(node)->name		= list_make1(makeString(opname)); \
+		(node)->kind		= AEXPR_OP; \
+		(node)->lexpr		= (Node *) (expr); \
+		(node)->rexpr		= (Node *) (c); \
+		(node)->location	= -1; \
+	} while (0)
+
+#define CopyTypeCastExpr(node, src, argument) \
+	do { \
+		memcpy((node), (src), sizeof(TypeCast)); \
+		(node)->arg			= (Node *) (argument); \
+		(node)->typeName	= (TypeName *) copyObject((node)->typeName); \
+	} while (0)
+
 	BoolExpr   *and_oper	= makeNode(BoolExpr);
 	A_Expr	   *left_arg	= makeNode(A_Expr),
 			   *right_arg	= makeNode(A_Expr);
@@ -1184,16 +1207,22 @@ build_raw_range_check_tree(Node *raw_expression,
 	/* Left comparison (VAR >= start_value) */
 	if (!IsInfinite(start_value))
 	{
-		/* Left boundary */
-		left_const->val = make_string_value_struct(
-			datum_to_cstring(BoundGetValue(start_value), value_type));
-		left_const->location = -1;
+		/* Build left boundary */
+		BuildConstExpr(left_const, BoundGetValue(start_value), value_type);
 
-		left_arg->name		= list_make1(makeString(">="));
-		left_arg->kind		= AEXPR_OP;
-		left_arg->lexpr		= raw_expression;
-		left_arg->rexpr		= (Node *) left_const;
-		left_arg->location	= -1;
+		/* Build ">=" clause */
+		BuildCmpExpr(left_arg, ">=", raw_expression, left_const);
+
+		/* Cast const to expression's type (e.g. composite key, row type) */
+		if (IsA(raw_expression, TypeCast))
+		{
+			TypeCast *cast = makeNode(TypeCast);
+
+			/* Copy cast to expression's type */
+			CopyTypeCastExpr(cast, raw_expression, left_const);
+
+			left_arg->rexpr = (Node *) cast;
+		}
 
 		and_oper->args = lappend(and_oper->args, left_arg);
 	}
@@ -1201,16 +1230,22 @@ build_raw_range_check_tree(Node *raw_expression,
 	/* Right comparision (VAR < end_value) */
 	if (!IsInfinite(end_value))
 	{
-		/* Right boundary */
-		right_const->val = make_string_value_struct(
-			datum_to_cstring(BoundGetValue(end_value), value_type));
-		right_const->location = -1;
+		/* Build right boundary */
+		BuildConstExpr(right_const, BoundGetValue(end_value), value_type);
 
-		right_arg->name		= list_make1(makeString("<"));
-		right_arg->kind		= AEXPR_OP;
-		right_arg->lexpr	= raw_expression;
-		right_arg->rexpr	= (Node *) right_const;
-		right_arg->location	= -1;
+		/* Build "<" clause */
+		BuildCmpExpr(right_arg, "<", raw_expression, right_const);
+
+		/* Cast const to expression's type (e.g. composite key, row type) */
+		if (IsA(raw_expression, TypeCast))
+		{
+			TypeCast *cast = makeNode(TypeCast);
+
+			/* Copy cast to expression's type */
+			CopyTypeCastExpr(cast, raw_expression, right_const);
+
+			right_arg->rexpr = (Node *) cast;
+		}
 
 		and_oper->args = lappend(and_oper->args, right_arg);
 	}
@@ -1220,6 +1255,10 @@ build_raw_range_check_tree(Node *raw_expression,
 		elog(ERROR, "cannot create partition with range (-inf, +inf)");
 
 	return (Node *) and_oper;
+
+#undef BuildConstExpr
+#undef BuildCmpExpr
+#undef CopyTypeCastExpr
 }
 
 /* Build complete RANGE check constraint */
