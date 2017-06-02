@@ -184,15 +184,7 @@ ExtractConst(Node *node, const WalkerContext *context)
 			break;
 
 		default:
-			{
-				/* Keep compiler happy */
-				typid	= InvalidOid;
-				typmod	= - 1;
-				collid	= InvalidOid;
-
-				elog(ERROR, "error in function " CppAsString(ExtractConst));
-			}
-			break;
+			elog(ERROR, "error in function " CppAsString(ExtractConst));;
 	}
 
 	return makeConst(typid, typmod, collid, get_typlen(typid),
