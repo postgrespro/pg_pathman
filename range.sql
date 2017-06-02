@@ -443,10 +443,10 @@ BEGIN
 	PERFORM @extschema@.validate_relname(partition_relid);
 
 	/* Acquire lock on parent */
-	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+	PERFORM @extschema@.prevent_part_modification(parent_relid);
 
 	/* Acquire data modification lock (prevent further modifications) */
-	PERFORM @extschema@.prevent_relation_modification(partition_relid);
+	PERFORM @extschema@.prevent_data_modification(partition_relid);
 
 	part_expr_type = @extschema@.get_partition_key_type(parent_relid);
 	part_expr := @extschema@.get_partition_key(parent_relid);
@@ -536,7 +536,7 @@ BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
 
 	/* Acquire lock on parent */
-	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+	PERFORM @extschema@.prevent_part_modification(parent_relid);
 
 	part_expr_type := @extschema@.get_partition_key_type(parent_relid);
 
@@ -640,7 +640,7 @@ BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
 
 	/* Acquire lock on parent */
-	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+	PERFORM @extschema@.prevent_part_modification(parent_relid);
 
 	part_expr_type := @extschema@.get_partition_key_type(parent_relid);
 
@@ -744,7 +744,7 @@ BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
 
 	/* Acquire lock on parent */
-	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+	PERFORM @extschema@.prevent_part_modification(parent_relid);
 
 	IF start_value >= end_value THEN
 		RAISE EXCEPTION 'failed to create partition: start_value is greater than end_value';
@@ -798,7 +798,7 @@ BEGIN
 	END IF;
 
 	/* Acquire lock on parent */
-	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+	PERFORM @extschema@.prevent_part_modification(parent_relid);
 
 	IF NOT delete_data THEN
 		EXECUTE format('INSERT INTO %s SELECT * FROM %s',
@@ -849,7 +849,7 @@ BEGIN
 	PERFORM @extschema@.validate_relname(partition_relid);
 
 	/* Acquire lock on parent */
-	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+	PERFORM @extschema@.prevent_part_modification(parent_relid);
 
 	/* Ignore temporary tables */
 	SELECT relpersistence FROM pg_catalog.pg_class
@@ -926,7 +926,7 @@ BEGIN
 	PERFORM @extschema@.validate_relname(partition_relid);
 
 	/* Acquire lock on parent */
-	PERFORM @extschema@.prevent_relation_modification(parent_relid);
+	PERFORM @extschema@.prevent_data_modification(parent_relid);
 
 	part_type := @extschema@.get_partition_type(parent_relid);
 

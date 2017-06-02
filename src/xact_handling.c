@@ -48,39 +48,12 @@ LockAcquireOid(Oid relid, LOCKMODE lockmode, bool sessionLock, bool dontWait)
 
 
 /*
- * Lock certain partitioned relation to disable concurrent access.
+ * Acquire lock and return LockAcquireResult.
  */
 LockAcquireResult
-xact_lock_partitioned_rel(Oid relid, bool nowait)
+xact_lock_rel(Oid relid, LOCKMODE lockmode, bool nowait)
 {
-	return LockAcquireOid(relid, ShareUpdateExclusiveLock, false, nowait);
-}
-
-/*
- * Unlock partitioned relation.
- */
-void
-xact_unlock_partitioned_rel(Oid relid)
-{
-	UnlockRelationOid(relid, ShareUpdateExclusiveLock);
-}
-
-/*
- * Lock relation exclusively (SELECTs are possible).
- */
-LockAcquireResult
-xact_lock_rel_exclusive(Oid relid, bool nowait)
-{
-	return LockAcquireOid(relid, ExclusiveLock, false, nowait);
-}
-
-/*
- * Unlock relation (exclusive lock).
- */
-void
-xact_unlock_rel_exclusive(Oid relid)
-{
-	UnlockRelationOid(relid, ExclusiveLock);
+	return LockAcquireOid(relid, lockmode, false, nowait);
 }
 
 /*
@@ -220,7 +193,7 @@ SetLocktagRelationOid(LOCKTAG *tag, Oid relid)
  * Lock relation exclusively & check for current isolation level.
  */
 void
-prevent_relation_modification_internal(Oid relid)
+prevent_data_modification_internal(Oid relid)
 {
 	/*
 	 * Check that isolation level is READ COMMITTED.
@@ -232,13 +205,5 @@ prevent_relation_modification_internal(Oid relid)
 				(errmsg("Cannot perform blocking partitioning operation"),
 				 errdetail("Expected READ COMMITTED isolation level")));
 
-	/*
-	 * Check if table is being modified
-	 * concurrently in a separate transaction.
-	 */
-	if (!xact_lock_rel_exclusive(relid, true))
-		ereport(ERROR,
-				(errmsg("Cannot perform blocking partitioning operation"),
-				 errdetail("Table \"%s\" is being modified concurrently",
-						   get_rel_name_or_relid(relid))));
+	LockRelationOid(relid, AccessExclusiveLock);
 }

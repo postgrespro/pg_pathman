@@ -253,6 +253,11 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 		LockRelationOid(partid, parts_storage->head_open_lock_mode);
 		if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(partid)))
 		{
+			/* Don't forget to drop invalid hash table entry */
+			hash_search(parts_storage->result_rels_table,
+						(const void *) &partid,
+						HASH_REMOVE, NULL);
+
 			UnlockRelationOid(partid, parts_storage->head_open_lock_mode);
 			return NULL;
 		}
@@ -419,34 +424,50 @@ select_partition_for_insert(Datum value, Oid value_type,
 {
 	MemoryContext			old_mcxt;
 	ResultRelInfoHolder	   *rri_holder;
+	Oid						parent_relid = PrelParentRelid(prel);
 	Oid						selected_partid = InvalidOid;
 	Oid					   *parts;
 	int						nparts;
 
-	/* Search for matching partitions */
-	parts = find_partitions_for_value(value, value_type, prel, &nparts);
-
-	if (nparts > 1)
-		elog(ERROR, ERR_PART_ATTR_MULTIPLE);
-	else if (nparts == 0)
+	do
 	{
-		 selected_partid = create_partitions_for_value(PrelParentRelid(prel),
-													   value, prel->ev_type);
+		/* Search for matching partitions */
+		parts = find_partitions_for_value(value, value_type, prel, &nparts);
 
-		 /* get_pathman_relation_info() will refresh this entry */
-		 invalidate_pathman_relation_info(PrelParentRelid(prel), NULL);
+		if (nparts > 1)
+			elog(ERROR, ERR_PART_ATTR_MULTIPLE);
+		else if (nparts == 0)
+		{
+			 selected_partid = create_partitions_for_value(parent_relid,
+														   value, prel->ev_type);
+
+			 /* get_pathman_relation_info() will refresh this entry */
+			 invalidate_pathman_relation_info(parent_relid, NULL);
+		}
+		else selected_partid = parts[0];
+
+		/* Replace parent table with a suitable partition */
+		old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
+		rri_holder = scan_result_parts_storage(selected_partid, parts_storage);
+		MemoryContextSwitchTo(old_mcxt);
+
+		/* This partition has been dropped, repeat with a new 'prel' */
+		if (rri_holder == NULL)
+		{
+			/* get_pathman_relation_info() will refresh this entry */
+			invalidate_pathman_relation_info(parent_relid, NULL);
+
+			/* Get a fresh PartRelationInfo */
+			prel = get_pathman_relation_info(parent_relid);
+
+			/* Paranoid check (all partitions have vanished) */
+			if (!prel)
+				elog(ERROR, "table \"%s\" is not partitioned",
+					 get_rel_name_or_relid(parent_relid));
+		}
 	}
-	else selected_partid = parts[0];
-
-	/* Replace parent table with a suitable partition */
-	old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
-	rri_holder = scan_result_parts_storage(selected_partid, parts_storage);
-	MemoryContextSwitchTo(old_mcxt);
-
-	/* Could not find suitable partition */
-	if (rri_holder == NULL)
-		elog(ERROR, ERR_PART_ATTR_NO_PART,
-			 datum_to_cstring(value, prel->ev_type));
+	/* Loop until we get some result */
+	while (rri_holder == NULL);
 
 	return rri_holder;
 }
@@ -629,7 +650,10 @@ partition_filter_exec(CustomScanState *node)
 		if (itemIsDone != ExprSingleResult)
 			elog(ERROR, ERR_PART_ATTR_MULTIPLE_RESULTS);
 
-		/* Search for a matching partition */
+		/*
+		 * Search for a matching partition.
+		 * WARNING: 'prel' might change after this call!
+		 */
 		rri_holder = select_partition_for_insert(value, prel->ev_type, prel,
 												 &state->result_parts, estate);
 

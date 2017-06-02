@@ -64,8 +64,8 @@ PG_FUNCTION_INFO_V1( is_tuple_convertible );
 PG_FUNCTION_INFO_V1( add_to_pathman_config );
 PG_FUNCTION_INFO_V1( pathman_config_params_trigger_func );
 
-PG_FUNCTION_INFO_V1( lock_partitioned_relation );
-PG_FUNCTION_INFO_V1( prevent_relation_modification );
+PG_FUNCTION_INFO_V1( prevent_part_modification );
+PG_FUNCTION_INFO_V1( prevent_data_modification );
 
 PG_FUNCTION_INFO_V1( validate_part_callback_pl );
 PG_FUNCTION_INFO_V1( invoke_on_partition_created_callback );
@@ -774,8 +774,8 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("'parent_relid' should not be NULL")));
 
-	/* Protect relation from concurrent modification */
-	xact_lock_rel_exclusive(relid, true);
+	/* Protect data + definition from concurrent modification */
+	LockRelationOid(relid, AccessExclusiveLock);
 
 	/* Check that relation exists */
 	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
@@ -1000,12 +1000,12 @@ pathman_config_params_trigger_func_return:
  * Acquire appropriate lock on a partitioned relation.
  */
 Datum
-lock_partitioned_relation(PG_FUNCTION_ARGS)
+prevent_part_modification(PG_FUNCTION_ARGS)
 {
 	Oid			relid = PG_GETARG_OID(0);
 
 	/* Lock partitioned relation till transaction's end */
-	xact_lock_partitioned_rel(relid, false);
+	LockRelationOid(relid, ShareUpdateExclusiveLock);
 
 	PG_RETURN_VOID();
 }
@@ -1014,9 +1014,9 @@ lock_partitioned_relation(PG_FUNCTION_ARGS)
  * Lock relation exclusively & check for current isolation level.
  */
 Datum
-prevent_relation_modification(PG_FUNCTION_ARGS)
+prevent_data_modification(PG_FUNCTION_ARGS)
 {
-	prevent_relation_modification_internal(PG_GETARG_OID(0));
+	prevent_data_modification_internal(PG_GETARG_OID(0));
 
 	PG_RETURN_VOID();
 }

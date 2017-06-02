@@ -375,7 +375,7 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
 				else if (nparts == 1)
 				{
 					/* Unlock the parent (we're not going to spawn) */
-					xact_unlock_partitioned_rel(relid);
+					UnlockRelationOid(relid, ShareUpdateExclusiveLock);
 
 					/* Simply return the suitable partition */
 					partid = parts[0];
@@ -1125,7 +1125,7 @@ copy_foreign_keys(Oid parent_relid, Oid partition_oid)
 
 /* Drop pg_pathman's check constraint by 'relid' */
 void
-drop_check_constraint(Oid relid)
+drop_pathman_check_constraint(Oid relid)
 {
 	char		   *constr_name;
 	AlterTableStmt *stmt;
@@ -1146,8 +1146,24 @@ drop_check_constraint(Oid relid)
 
 	stmt->cmds = list_make1(cmd);
 
-	AlterTable(relid, ShareUpdateExclusiveLock, stmt);
+	/* See function AlterTableGetLockLevel() */
+	AlterTable(relid, AccessExclusiveLock, stmt);
 }
+
+/* Add pg_pathman's check constraint using 'relid' */
+void
+add_pathman_check_constraint(Oid relid, Constraint *constraint)
+{
+	Relation part_rel = heap_open(relid, AccessExclusiveLock);
+
+	AddRelationNewConstraints(part_rel, NIL,
+							  list_make1(constraint),
+							  false, true, true);
+
+	heap_close(part_rel, NoLock);
+}
+
+
 
 /* Build RANGE check constraint expression tree */
 Node *

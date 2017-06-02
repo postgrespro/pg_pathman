@@ -407,7 +407,7 @@ get_pathman_relation_info_after_lock(Oid relid,
 	LockAcquireResult		acquire_result;
 
 	/* Restrict concurrent partition creation (it's dangerous) */
-	acquire_result = xact_lock_partitioned_rel(relid, false);
+	acquire_result = xact_lock_rel(relid, ShareUpdateExclusiveLock, false);
 
 	/* Invalidate cache entry (see AcceptInvalidationMessages()) */
 	invalidate_pathman_relation_info(relid, NULL);
@@ -418,7 +418,7 @@ get_pathman_relation_info_after_lock(Oid relid,
 
 	prel = get_pathman_relation_info(relid);
 	if (!prel && unlock_if_not_found)
-		xact_unlock_partitioned_rel(relid);
+		UnlockRelationOid(relid, ShareUpdateExclusiveLock);
 
 	return prel;
 }

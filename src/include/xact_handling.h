@@ -20,11 +20,7 @@
 /*
  * Transaction locks.
  */
-LockAcquireResult xact_lock_partitioned_rel(Oid relid, bool nowait);
-void xact_unlock_partitioned_rel(Oid relid);
-
-LockAcquireResult xact_lock_rel_exclusive(Oid relid, bool nowait);
-void xact_unlock_rel_exclusive(Oid relid);
+LockAcquireResult xact_lock_rel(Oid relid, LOCKMODE lockmode, bool nowait);
 
 /*
  * Utility checks.
@@ -35,7 +31,7 @@ bool xact_is_transaction_stmt(Node *stmt);
 bool xact_is_set_transaction_stmt(Node *stmt);
 bool xact_object_is_visible(TransactionId obj_xmin);
 
-void prevent_relation_modification_internal(Oid relid);
+void prevent_data_modification_internal(Oid relid);
 
 
 #endif /* XACT_HANDLING_H */

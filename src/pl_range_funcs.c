@@ -670,15 +670,15 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 	ranges = PrelGetRangesArray(prel);
 
 	/* Lock parent till transaction's end */
-	xact_lock_partitioned_rel(parent, false);
+	LockRelationOid(parent, ShareUpdateExclusiveLock);
 
 	/* Process partitions */
 	for (i = 0; i < nparts; i++)
 	{
 		int j;
 
-		/* Lock partition in ACCESS EXCLUSIVE mode */
-		prevent_relation_modification_internal(parts[0]);
+		/* Prevent modification of partitions */
+		LockRelationOid(parts[0], AccessExclusiveLock);
 
 		/* Look for the specified partition */
 		for (j = 0; j < PrelChildrenCount(prel); j++)
@@ -1072,10 +1072,9 @@ modify_range_constraint(Oid partition_relid,
 {
 	Node		   *expr;
 	Constraint	   *constraint;
-	Relation		partition_rel;
 
 	/* Drop old constraint */
-	drop_check_constraint(partition_relid);
+	drop_pathman_check_constraint(partition_relid);
 
 	/* Parse expression */
 	expr = parse_partitioning_expression(partition_relid, expression, NULL, NULL);
@@ -1087,12 +1086,8 @@ modify_range_constraint(Oid partition_relid,
 											  upper,
 											  expression_type);
 
-	/* Open the relation and add new check constraint */
-	partition_rel = heap_open(partition_relid, AccessExclusiveLock);
-	AddRelationNewConstraints(partition_rel, NIL,
-							  list_make1(constraint),
-							  false, true, true);
-	heap_close(partition_rel, NoLock);
+	/* Add new constraint */
+	add_pathman_check_constraint(partition_relid, constraint);
 }
 
 /*
