@@ -432,12 +432,12 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
 			}
 		}
 		else
-			elog(ERROR, "pg_pathman's config does not contain relation \"%s\"",
+			elog(ERROR, "table \"%s\" is not partitioned",
 				 get_rel_name_or_relid(relid));
 	}
 	PG_CATCH();
 	{
-		ErrorData *edata;
+		ErrorData *error;
 
 		/* Simply rethrow ERROR if we're in backend */
 		if (!is_background_worker)
@@ -445,16 +445,15 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
 
 		/* Switch to the original context & copy edata */
 		MemoryContextSwitchTo(old_mcxt);
-		edata = CopyErrorData();
+		error = CopyErrorData();
 		FlushErrorState();
 
 		/* Produce log message if we're in BGW */
-		ereport(LOG,
-				(errmsg(CppAsString(create_partitions_for_value_internal) ": %s [%u]",
-						edata->message, MyProcPid),
-				(edata->detail) ? errdetail("%s", edata->detail) : 0));
+		error->elevel	= LOG;
+		error->message	= psprintf(CppAsString(create_partitions_for_value_internal)
+								   ": %s [%u]", error->message, MyProcPid);
 
-		FreeErrorData(edata);
+		ReThrowError(error);
 
 		/* Reset 'partid' in case of error */
 		partid = InvalidOid;

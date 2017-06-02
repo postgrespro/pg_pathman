@@ -765,7 +765,6 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	Datum				expr_datum;
 
 	PathmanInitState	init_state;
-	MemoryContext		old_mcxt = CurrentMemoryContext;
 
 	if (!PG_ARGISNULL(0))
 	{
@@ -887,20 +886,11 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 		}
 		PG_CATCH();
 		{
-			ErrorData *edata;
-
-			/* Switch to the original context & copy edata */
-			MemoryContextSwitchTo(old_mcxt);
-			edata = CopyErrorData();
-			FlushErrorState();
-
 			/* We have to restore all changed flags */
 			restore_pathman_init_state(&init_state);
 
-			/* Show error message */
-			elog(ERROR, "%s", edata->message);
-
-			FreeErrorData(edata);
+			/* Rethrow ERROR */
+			PG_RE_THROW();
 		}
 		PG_END_TRY();
 	}
@@ -1262,11 +1252,11 @@ pathman_update_trigger_func(PG_FUNCTION_ARGS)
 		elog(ERROR, ERR_PART_ATTR_MULTIPLE);
 	else if (nparts == 0)
 	{
-		 target_relid = create_partitions_for_value(PrelParentRelid(prel),
+		 target_relid = create_partitions_for_value(parent_relid,
 													value, value_type);
 
 		 /* get_pathman_relation_info() will refresh this entry */
-		 invalidate_pathman_relation_info(PrelParentRelid(prel), NULL);
+		 invalidate_pathman_relation_info(parent_relid, NULL);
 	}
 	else target_relid = parts[0];
 

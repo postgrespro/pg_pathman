@@ -439,7 +439,7 @@ select_partition_for_insert(Datum value, Oid value_type,
 		else if (nparts == 0)
 		{
 			 selected_partid = create_partitions_for_value(parent_relid,
-														   value, prel->ev_type);
+														   value, value_type);
 
 			 /* get_pathman_relation_info() will refresh this entry */
 			 invalidate_pathman_relation_info(parent_relid, NULL);
