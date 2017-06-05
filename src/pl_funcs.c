@@ -1233,7 +1233,7 @@ pathman_update_trigger_func(PG_FUNCTION_ARGS)
 														 new_tuple,
 														 &value_type);
 	value = ExecEvalExprCompat(expr_state, econtext, &isnull,
-							   not_signle_result_handler);
+							   mult_result_handler);
 	MemoryContextSwitchTo(old_mcxt);
 
 	if (isnull)

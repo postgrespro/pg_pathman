@@ -642,7 +642,7 @@ partition_filter_exec(CustomScanState *node)
 		tmp_slot = econtext->ecxt_scantuple;
 		econtext->ecxt_scantuple = slot;
 		value = ExecEvalExprCompat(state->expr_state, econtext, &isnull,
-								   not_signle_result_handler);
+								   mult_result_handler);
 		econtext->ecxt_scantuple = tmp_slot;
 
 		if (isnull)

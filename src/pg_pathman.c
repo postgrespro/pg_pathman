@@ -159,7 +159,8 @@ ExtractConst(Node *node, const WalkerContext *context)
 
 	/* Evaluate expression */
 	estate = ExecInitExpr((Expr *) node, NULL);
-	value = ExecEvalExpr(estate, context->econtext, &isnull, NULL);
+	value = ExecEvalExprCompat(estate, context->econtext, &isnull,
+							   mult_result_handler);
 
 	switch (nodeTag(node))
 	{

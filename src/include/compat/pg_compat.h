@@ -273,25 +273,22 @@ extern void create_plain_partial_paths(PlannerInfo *root,
 
 
 /*
- * ExecEvalExpr
- *
- * 'errmsg' specifies error string when result of ExecEvalExpr doesn't return
- * 		a single value
+ * ExecEvalExpr()
+ * NOTE: 'errmsg' specifies error string when ExecEvalExpr returns multiple values.
  */
 #if PG_VERSION_NUM >= 100000
 #define ExecEvalExprCompat(expr, econtext, isNull, errHandler) \
 	ExecEvalExpr((expr), (econtext), (isNull))
 #elif PG_VERSION_NUM >= 90500
 #include "partition_filter.h"
-extern Datum exprResult;
-extern ExprDoneCond isDone;
-static inline void
-dummy_handler() { }
-static inline void
-not_signle_result_handler()
-{
-	elog(ERROR, ERR_PART_ATTR_MULTIPLE_RESULTS);
-}
+
+/* Variables for ExecEvalExprCompat() */
+extern Datum			exprResult;
+extern ExprDoneCond		isDone;
+
+/* Error handlers */
+static inline void mult_result_handler() { elog(ERROR, ERR_PART_ATTR_MULTIPLE_RESULTS); }
+
 #define ExecEvalExprCompat(expr, econtext, isNull, errHandler) \
 ( \
 	exprResult = ExecEvalExpr((expr), (econtext), (isNull), &isDone), \
@@ -481,11 +478,11 @@ extern int oid_cmp(const void *p1, const void *p2);
 							 completionTag) \
 		do { \
 			PlannedStmt *stmt = makeNode(PlannedStmt); \
-			stmt->commandType = CMD_UTILITY; \
-			stmt->canSetTag = true; \
-			stmt->utilityStmt = (parsetree); \
-			stmt->stmt_location = -1; \
-			stmt->stmt_len = 0; \
+			stmt->commandType	= CMD_UTILITY; \
+			stmt->canSetTag		= true; \
+			stmt->utilityStmt	= (parsetree); \
+			stmt->stmt_location	= -1; \
+			stmt->stmt_len		= 0; \
 			ProcessUtility(stmt, (queryString), (context), (params), NULL, \
 						   (dest), (completionTag)); \
 		} while (0)
@@ -550,9 +547,6 @@ extern void set_rel_consider_parallel(PlannerInfo *root,
  */
 
 void set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel, Index rti);
-List *init_createstmts_for_partition(RangeVar *parent_rv,
-									 RangeVar *partition_rv,
-									 char	  *tablespace);
 
 
 #endif /* PG_COMPAT_H */
