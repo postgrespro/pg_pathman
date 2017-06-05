@@ -150,8 +150,8 @@ void
 init_main_pathman_toggles(void)
 {
 	/* Main toggle, load_config() will enable it */
-	DefineCustomBoolVariable("pg_pathman.enable",
-							 "Enables pg_pathman's optimizations during the planner stage",
+	DefineCustomBoolVariable(PATHMAN_ENABLE,
+							 "Enables pg_pathman's optimizations during planning stage",
 							 NULL,
 							 &pathman_init_state.pg_pathman_enable,
 							 DEFAULT_PATHMAN_ENABLE,
@@ -162,11 +162,11 @@ init_main_pathman_toggles(void)
 							 NULL);
 
 	/* Global toggle for automatic partition creation */
-	DefineCustomBoolVariable("pg_pathman.enable_auto_partition",
+	DefineCustomBoolVariable(PATHMAN_ENABLE_AUTO_PARTITION,
 							 "Enables automatic partition creation",
 							 NULL,
 							 &pathman_init_state.auto_partition,
-							 DEFAULT_AUTO,
+							 DEFAULT_PATHMAN_AUTO,
 							 PGC_SUSET,
 							 0,
 							 NULL,
@@ -174,11 +174,11 @@ init_main_pathman_toggles(void)
 							 NULL);
 
 	/* Global toggle for COPY stmt handling */
-	DefineCustomBoolVariable("pg_pathman.override_copy",
+	DefineCustomBoolVariable(PATHMAN_OVERRIDE_COPY,
 							 "Override COPY statement handling",
 							 NULL,
 							 &pathman_init_state.override_copy,
-							 DEFAULT_OVERRIDE_COPY,
+							 DEFAULT_PATHMAN_OVERRIDE_COPY,
 							 PGC_SUSET,
 							 0,
 							 NULL,

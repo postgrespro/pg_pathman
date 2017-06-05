@@ -34,6 +34,14 @@
 
 
 /*
+ * Main GUC variables.
+ */
+#define PATHMAN_ENABLE					"pg_pathman.enable"
+#define PATHMAN_ENABLE_AUTO_PARTITION	"pg_pathman.enable_auto_partition"
+#define PATHMAN_OVERRIDE_COPY			"pg_pathman.override_copy"
+
+
+/*
  * Definitions for the "pathman_config" table.
  */
 #define PATHMAN_CONFIG						"pathman_config"
@@ -150,7 +158,7 @@ typedef struct
 	} while (0)
 
 /* Check that WalkerContext contains ExprContext (plan execution stage) */
-#define WcxtHasExprContext(wcxt) ( (wcxt)->econtext )
+#define WcxtHasExprContext(wcxt) ( (wcxt)->econtext != NULL )
 
 /* Examine expression in order to select partitions */
 WrapperNode *walk_expr_tree(Expr *expr, const WalkerContext *context);

@@ -30,7 +30,6 @@
 #include "optimizer/paths.h"
 #include "utils/memutils.h"
 
-
 /*
  * ----------
  *  Variants
@@ -89,11 +88,14 @@
 
 
 /*
- * Define ALLOCSET_DEFAULT_SIZES for our precious MemoryContexts
+ * Define ALLOCSET_xxx_SIZES for our precious MemoryContexts
  */
 #if PG_VERSION_NUM >= 90500 && PG_VERSION_NUM < 90600
 #define ALLOCSET_DEFAULT_SIZES \
 	ALLOCSET_DEFAULT_MINSIZE, ALLOCSET_DEFAULT_INITSIZE, ALLOCSET_DEFAULT_MAXSIZE
+
+#define ALLOCSET_SMALL_SIZES \
+	ALLOCSET_SMALL_MINSIZE, ALLOCSET_SMALL_INITSIZE, ALLOCSET_SMALL_MAXSIZE
 #endif
 
 

@@ -64,8 +64,8 @@ PG_FUNCTION_INFO_V1( is_tuple_convertible );
 PG_FUNCTION_INFO_V1( add_to_pathman_config );
 PG_FUNCTION_INFO_V1( pathman_config_params_trigger_func );
 
-PG_FUNCTION_INFO_V1( lock_partitioned_relation );
-PG_FUNCTION_INFO_V1( prevent_relation_modification );
+PG_FUNCTION_INFO_V1( prevent_part_modification );
+PG_FUNCTION_INFO_V1( prevent_data_modification );
 
 PG_FUNCTION_INFO_V1( validate_part_callback_pl );
 PG_FUNCTION_INFO_V1( invoke_on_partition_created_callback );
@@ -766,7 +766,6 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	Datum				expr_datum;
 
 	PathmanInitState	init_state;
-	MemoryContext		old_mcxt = CurrentMemoryContext;
 
 	if (!PG_ARGISNULL(0))
 	{
@@ -775,8 +774,8 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("'parent_relid' should not be NULL")));
 
-	/* Protect relation from concurrent modification */
-	xact_lock_rel_exclusive(relid, true);
+	/* Protect data + definition from concurrent modification */
+	LockRelationOid(relid, AccessExclusiveLock);
 
 	/* Check that relation exists */
 	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
@@ -887,20 +886,11 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 		}
 		PG_CATCH();
 		{
-			ErrorData *edata;
-
-			/* Switch to the original context & copy edata */
-			MemoryContextSwitchTo(old_mcxt);
-			edata = CopyErrorData();
-			FlushErrorState();
-
 			/* We have to restore all changed flags */
 			restore_pathman_init_state(&init_state);
 
-			/* Show error message */
-			elog(ERROR, "%s", edata->message);
-
-			FreeErrorData(edata);
+			/* Rethrow ERROR */
+			PG_RE_THROW();
 		}
 		PG_END_TRY();
 	}
@@ -1000,12 +990,12 @@ pathman_config_params_trigger_func_return:
  * Acquire appropriate lock on a partitioned relation.
  */
 Datum
-lock_partitioned_relation(PG_FUNCTION_ARGS)
+prevent_part_modification(PG_FUNCTION_ARGS)
 {
 	Oid			relid = PG_GETARG_OID(0);
 
 	/* Lock partitioned relation till transaction's end */
-	xact_lock_partitioned_rel(relid, false);
+	LockRelationOid(relid, ShareUpdateExclusiveLock);
 
 	PG_RETURN_VOID();
 }
@@ -1014,9 +1004,9 @@ lock_partitioned_relation(PG_FUNCTION_ARGS)
  * Lock relation exclusively & check for current isolation level.
  */
 Datum
-prevent_relation_modification(PG_FUNCTION_ARGS)
+prevent_data_modification(PG_FUNCTION_ARGS)
 {
-	prevent_relation_modification_internal(PG_GETARG_OID(0));
+	prevent_data_modification_internal(PG_GETARG_OID(0));
 
 	PG_RETURN_VOID();
 }
@@ -1259,11 +1249,11 @@ pathman_update_trigger_func(PG_FUNCTION_ARGS)
 		elog(ERROR, ERR_PART_ATTR_MULTIPLE);
 	else if (nparts == 0)
 	{
-		 target_relid = create_partitions_for_value(PrelParentRelid(prel),
+		 target_relid = create_partitions_for_value(parent_relid,
 													value, value_type);
 
 		 /* get_pathman_relation_info() will refresh this entry */
-		 invalidate_pathman_relation_info(PrelParentRelid(prel), NULL);
+		 invalidate_pathman_relation_info(parent_relid, NULL);
 	}
 	else target_relid = parts[0];
 

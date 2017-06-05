@@ -9,8 +9,17 @@ CREATE TABLE test.hash_rel (
 INSERT INTO test.hash_rel VALUES (1, 1);
 INSERT INTO test.hash_rel VALUES (2, 2);
 INSERT INTO test.hash_rel VALUES (3, 3);
+\set VERBOSITY default
 SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3);
-ERROR:  partitioning key "value" must be marked NOT NULL
+ERROR:  failed to analyze partitioning expression "value"
+DETAIL:  column "value" should be marked NOT NULL
+CONTEXT:  SQL statement "SELECT pathman.validate_expression(parent_relid, expression)"
+PL/pgSQL function pathman.prepare_for_partitioning(regclass,text,boolean) line 9 at PERFORM
+SQL statement "SELECT pathman.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data)"
+PL/pgSQL function pathman.create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 4 at PERFORM
+\set VERBOSITY terse
 ALTER TABLE test.hash_rel ALTER COLUMN value SET NOT NULL;
 SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3, partition_data:=false);
  create_hash_partitions 
@@ -129,8 +138,17 @@ CREATE TABLE test.range_rel (
 CREATE INDEX ON test.range_rel (dt);
 INSERT INTO test.range_rel (dt, txt)
 SELECT g, md5(g::TEXT) FROM generate_series('2015-01-01', '2015-04-30', '1 day'::interval) as g;
+\set VERBOSITY default
 SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL);
-ERROR:  partitioning key "dt" must be marked NOT NULL
+ERROR:  failed to analyze partitioning expression "dt"
+DETAIL:  column "dt" should be marked NOT NULL
+CONTEXT:  SQL statement "SELECT pathman.validate_expression(parent_relid, expression)"
+PL/pgSQL function pathman.prepare_for_partitioning(regclass,text,boolean) line 9 at PERFORM
+SQL statement "SELECT pathman.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data)"
+PL/pgSQL function pathman.create_range_partitions(regclass,text,anyelement,interval,integer,boolean) line 12 at PERFORM
+\set VERBOSITY terse
 ALTER TABLE test.range_rel ALTER COLUMN dt SET NOT NULL;
 SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL, 2);
 ERROR:  not enough partitions to fit all values of "dt"

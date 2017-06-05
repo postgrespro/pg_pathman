@@ -636,11 +636,17 @@ create_append_scan_state_common(CustomScan *node,
 void
 begin_append_common(CustomScanState *node, EState *estate, int eflags)
 {
-	RuntimeAppendState *scan_state = (RuntimeAppendState *) node;
+	RuntimeAppendState	   *scan_state = (RuntimeAppendState *) node;
+	const PartRelationInfo *prel;
 
 #if PG_VERSION_NUM < 100000
 	node->ss.ps.ps_TupFromTlist = false;
 #endif
+
+	prel = get_pathman_relation_info(scan_state->relid);
+
+	/* Prepare expression according to set_set_customscan_references() */
+	scan_state->prel_expr = PrelExpressionForRelid(prel, INDEX_VAR);
 
 	/* Prepare custom expression according to set_set_customscan_references() */
 	scan_state->canon_custom_exprs =
@@ -735,18 +741,14 @@ rescan_append_common(CustomScanState *node)
 	WalkerContext			wcxt;
 	Oid					   *parts;
 	int						nparts;
-	Node				   *prel_expr;
 
 	prel = get_pathman_relation_info(scan_state->relid);
 	Assert(prel);
 
-	/* Prepare expression according to set_set_customscan_references() */
-	prel_expr = PrelExpressionForRelid(prel, INDEX_VAR);
-
 	/* First we select all available partitions... */
 	ranges = list_make1_irange_full(prel, IR_COMPLETE);
 
-	InitWalkerContext(&wcxt, prel_expr, prel, econtext);
+	InitWalkerContext(&wcxt, scan_state->prel_expr, prel, econtext);
 	foreach (lc, scan_state->canon_custom_exprs)
 	{
 		WrapperNode *wrap;

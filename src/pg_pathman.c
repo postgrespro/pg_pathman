@@ -79,9 +79,6 @@ static bool is_key_op_param(const OpExpr *expr,
 							const WalkerContext *context,
 							Node **param_ptr);
 
-static Const *extract_const(Param *param,
-							const WalkerContext *context);
-
 static Datum array_find_min_max(Datum *values,
 								bool *isnull,
 								int length,
@@ -110,16 +107,89 @@ static void generate_mergeappend_paths(PlannerInfo *root,
 									   PathKey *pathkeyDesc);
 
 
-/* We can transform Param into Const provided that 'econtext' is available */
-#define IsConstValue(node, wcxt) \
-	( IsA((node), Const) || (WcxtHasExprContext(wcxt) ? IsA((node), Param) : false) )
+/* Can we transform this node into a Const? */
+static bool
+IsConstValue(Node *node, const WalkerContext *context)
+{
+	switch (nodeTag(node))
+	{
+		case T_Const:
+			return true;
 
-#define ExtractConst(node, wcxt) \
-	( \
-		IsA((node), Param) ? \
-				extract_const((Param *) (node), (wcxt)) : \
-				((Const *) (node)) \
-	)
+		case T_Param:
+			return WcxtHasExprContext(context);
+
+		case T_RowExpr:
+			{
+				RowExpr	   *row = (RowExpr *) node;
+				ListCell   *lc;
+
+				/* Can't do anything about RECORD of wrong type */
+				if (row->row_typeid != context->prel->ev_type)
+					return false;
+
+				/* Check that args are const values */
+				foreach (lc, row->args)
+					if (!IsConstValue((Node *) lfirst(lc), context))
+						return false;
+			}
+			return true;
+
+		default:
+			return false;
+	}
+}
+
+/* Extract a Const from node that has been checked by IsConstValue() */
+static Const *
+ExtractConst(Node *node, const WalkerContext *context)
+{
+	ExprState  *estate;
+
+	Datum		value;
+	bool		isnull;
+
+	Oid			typid,
+				collid;
+	int			typmod;
+
+	/* Fast path for Consts */
+	if (IsA(node, Const))
+		return (Const *) node;
+
+	/* Evaluate expression */
+	estate = ExecInitExpr((Expr *) node, NULL);
+	value = ExecEvalExpr(estate, context->econtext, &isnull, NULL);
+
+	switch (nodeTag(node))
+	{
+		case T_Param:
+			{
+				Param *param = (Param *) node;
+
+				typid	= param->paramtype;
+				typmod	= param->paramtypmod;
+				collid	= param->paramcollid;
+			}
+			break;
+
+		case T_RowExpr:
+			{
+				RowExpr *row = (RowExpr *) node;
+
+				typid	= row->row_typeid;
+				typmod	= - 1;
+				collid	= InvalidOid;
+			}
+			break;
+
+		default:
+			elog(ERROR, "error in function " CppAsString(ExtractConst));;
+	}
+
+	return makeConst(typid, typmod, collid, get_typlen(typid),
+					 value, isnull, get_typbyval(typid));
+}
 
 /* Selectivity estimator for common 'paramsel' */
 static inline double
@@ -162,8 +232,8 @@ _PG_init(void)
 
 	/* Assign pg_pathman's initial state */
 	temp_init_state.pg_pathman_enable		= DEFAULT_PATHMAN_ENABLE;
-	temp_init_state.auto_partition			= DEFAULT_AUTO;
-	temp_init_state.override_copy			= DEFAULT_OVERRIDE_COPY;
+	temp_init_state.auto_partition			= DEFAULT_PATHMAN_AUTO;
+	temp_init_state.override_copy			= DEFAULT_PATHMAN_OVERRIDE_COPY;
 	temp_init_state.initialization_needed	= true; /* ofc it's needed! */
 
 	/* Apply initial state */
@@ -1290,21 +1360,6 @@ is_key_op_param(const OpExpr *expr,
 	}
 
 	return false;
-}
-
-/* Extract (evaluate) Const from Param node */
-static Const *
-extract_const(Param *param,
-			  const WalkerContext *context)
-{
-	ExprState  *estate = ExecInitExpr((Expr *) param, NULL);
-	bool		isnull;
-	Datum		value = ExecEvalExprCompat(estate, context->econtext, &isnull,
-										   dummy_handler);
-
-	return makeConst(param->paramtype, param->paramtypmod,
-					 param->paramcollid, get_typlen(param->paramtype),
-					 value, isnull, get_typbyval(param->paramtype));
 }
 
 /* Find Max or Min value of array */

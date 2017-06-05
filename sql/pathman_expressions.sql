@@ -34,6 +34,38 @@ DROP TABLE test_exprs.canon CASCADE;
 
 
 
+/*
+ * Test composite key.
+ */
+CREATE TABLE test_exprs.composite(a INT4 NOT NULL, b TEXT NOT NULL);
+CREATE SEQUENCE test_exprs.composite_seq;
+SELECT add_to_pathman_config('test_exprs.composite',
+							 '(a, b)::test_exprs.composite',
+							 NULL);
+SELECT add_range_partition('test_exprs.composite',
+						   '(1,a)'::test_exprs.composite,
+						   '(10,a)'::test_exprs.composite);
+SELECT add_range_partition('test_exprs.composite',
+						   '(10,a)'::test_exprs.composite,
+						   '(20,a)'::test_exprs.composite);
+SELECT add_range_partition('test_exprs.composite',
+						   '(20,a)'::test_exprs.composite,
+						   '(30,a)'::test_exprs.composite);
+SELECT add_range_partition('test_exprs.composite',
+						   '(30,a)'::test_exprs.composite,
+						   '(40,a)'::test_exprs.composite);
+SELECT expr FROM pathman_config; /* check expression */
+INSERT INTO test_exprs.composite VALUES(2,  'a');
+INSERT INTO test_exprs.composite VALUES(11, 'a');
+INSERT INTO test_exprs.composite VALUES(2,  'b');
+INSERT INTO test_exprs.composite VALUES(50, 'b');
+SELECT *, tableoid::REGCLASS FROM test_exprs.composite;
+EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.composite WHERE (a, b)::test_exprs.composite < (21, 0)::test_exprs.composite;
+EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.composite WHERE (a, b) < (21, 0)::test_exprs.composite;
+EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.composite WHERE (a, b)::test_exprs.composite < (21, 0);
+DROP TABLE test_exprs.composite CASCADE;
+
+
 /* We use this rel to check 'pathman_hooks_enabled' */
 CREATE TABLE test_exprs.canary(val INT4 NOT NULL);
 CREATE TABLE test_exprs.canary_copy (LIKE test_exprs.canary);
@@ -47,8 +79,8 @@ SELECT create_hash_partitions('test_exprs.canary', 'val', 5);
 
 CREATE TABLE test_exprs.hash_rel (
 	id		SERIAL PRIMARY KEY,
-	value	INTEGER,
-	value2  INTEGER
+	value	INTEGER NOT NULL,
+	value2  INTEGER NOT NULL
 );
 INSERT INTO test_exprs.hash_rel (value, value2)
 	SELECT val, val * 2 FROM generate_series(1, 5) val;
@@ -101,7 +133,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.hash_rel WHERE (value * value2) = 5
  * Test RANGE
  */
 
-CREATE TABLE test_exprs.range_rel (id SERIAL PRIMARY KEY, dt TIMESTAMP, txt TEXT);
+CREATE TABLE test_exprs.range_rel (id SERIAL PRIMARY KEY, dt TIMESTAMP NOT NULL, txt TEXT);
 
 INSERT INTO test_exprs.range_rel (dt, txt)
 SELECT g, md5(g::TEXT) FROM generate_series('2015-01-01', '2020-04-30', '1 month'::interval) as g;

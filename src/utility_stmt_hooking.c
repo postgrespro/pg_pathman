@@ -655,7 +655,10 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 		if (isnull)
 			elog(ERROR, ERR_PART_ATTR_NULL);
 
-		/* Search for a matching partition */
+		/*
+		 * Search for a matching partition.
+		 * WARNING: 'prel' might change after this call!
+		 */
 		rri_holder = select_partition_for_insert(value,
 												 prel->ev_type, prel,
 												 &parts_storage, estate);

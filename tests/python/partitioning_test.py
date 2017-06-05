@@ -193,7 +193,7 @@ class PartitioningTests(unittest.TestCase):
 
 	def test_locks(self):
 		"""Test that a session trying to create new partitions waits for other
-		sessions if they doing the same"""
+		sessions if they are doing the same"""
 
 		import threading
 		import time
@@ -208,11 +208,10 @@ class PartitioningTests(unittest.TestCase):
 			def get(self):
 				return self.flag
 
-		# There is one flag for each thread which shows if thread have done
-		# its work
+		# There is one flag for each thread which shows if thread have done its work
 		flags = [Flag(False) for i in range(3)]
 
-		# All threads synchronizes though this lock
+		# All threads synchronize though this lock
 		lock = threading.Lock()
 
 		# Define thread function
@@ -687,20 +686,34 @@ class PartitioningTests(unittest.TestCase):
 			# Thread for connection #2 (it has to wait)
 			def con2_thread():
 				con2.execute('insert into ins_test values(51)')
+				con2.commit()
 
 			# Step 1: lock partitioned table in con1
 			con1.begin()
+			con1.execute('select count(*) from ins_test') # load pathman's cache
 			con1.execute('lock table ins_test in share update exclusive mode')
 
 			# Step 2: try inserting new value in con2 (waiting)
+			con2.begin()
+			con2.execute('select count(*) from ins_test') # load pathman's cache
 			t = threading.Thread(target=con2_thread)
 			t.start()
 
-			# Step 3: try inserting new value in con1 (success, unlock)
+			# Step 3: wait until 't' locks
+			while True:
+				with node.connect() as con0:
+					locks = con0.execute("""
+						select count(*) from pg_locks where granted = 'f'
+					""")
+
+					if int(locks[0][0]) > 0:
+						break
+
+			# Step 4: try inserting new value in con1 (success, unlock)
 			con1.execute('insert into ins_test values(52)')
 			con1.commit()
 
-			# Step 4: wait for con2
+			# Step 5: wait for con2
 			t.join()
 
 			rows = con1.execute("""
@@ -719,6 +732,75 @@ class PartitioningTests(unittest.TestCase):
 			self.assertEqual(int(rows[3][5]), 41)
 			self.assertEqual(int(rows[4][5]), 51)
 			self.assertEqual(int(rows[5][5]), 61)
+
+		# Stop instance and finish work
+		node.stop()
+		node.cleanup()
+
+	def test_conc_part_merge_insert(self):
+		"""Test concurrent merge_range_partitions() + INSERT"""
+
+		# Create and start new instance
+		node = self.start_new_pathman_cluster(allows_streaming=False)
+
+		# Create table 'ins_test' and partition it
+		with node.connect() as con0:
+			con0.begin()
+			con0.execute('create table ins_test(val int not null)')
+			con0.execute("select create_range_partitions('ins_test', 'val', 1, 10, 10)")
+			con0.commit()
+
+		# Create two separate connections for this test
+		with node.connect() as con1, node.connect() as con2:
+
+			# Thread for connection #2 (it has to wait)
+			def con2_thread():
+				con2.begin()
+				con2.execute('insert into ins_test values(20)')
+				con2.commit()
+
+			# Step 1: initilize con1
+			con1.begin()
+			con1.execute('select count(*) from ins_test') # load pathman's cache
+
+			# Step 2: initilize con2
+			con2.begin()
+			con2.execute('select count(*) from ins_test') # load pathman's cache
+			con2.commit() # unlock relations
+
+			# Step 3: merge 'ins_test1' + 'ins_test_2' in con1 (success)
+			con1.execute("select merge_range_partitions('ins_test_1', 'ins_test_2')")
+
+			# Step 4: try inserting new value in con2 (waiting)
+			t = threading.Thread(target=con2_thread)
+			t.start()
+
+			# Step 5: wait until 't' locks
+			while True:
+				with node.connect() as con0:
+					locks = con0.execute("""
+						select count(*) from pg_locks where granted = 'f'
+					""")
+
+					if int(locks[0][0]) > 0:
+						break
+
+			# Step 6: finish merge in con1 (success, unlock)
+			con1.commit()
+
+			# Step 7: wait for con2
+			t.join()
+
+			rows = con1.execute("select *, tableoid::regclass::text from ins_test")
+
+			# check number of rows in table
+			self.assertEqual(len(rows), 1)
+
+			# check value that has been inserted
+			self.assertEqual(int(rows[0][0]), 20)
+
+			# check partition that was chosen for insert
+			self.assertEqual(str(rows[0][1]), 'ins_test_1')
 
 		# Stop instance and finish work
 		node.stop()

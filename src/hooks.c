@@ -592,15 +592,34 @@ pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
 	if (!pathman_hooks_enabled)
 		return;
 
-	 /* We shouldn't do anything on BEGIN or SET ISOLATION LEVEL stmts */
-	if (query->commandType == CMD_UTILITY &&
-			(xact_is_transaction_stmt(query->utilityStmt) ||
-			 xact_is_set_transaction_stmt(query->utilityStmt)))
-		return;
-
 	/* Finish delayed invalidation jobs */
 	if (IsPathmanReady())
 		finish_delayed_invalidation();
+
+	/*
+	 * We shouldn't proceed on:
+	 *		BEGIN
+	 *		SET [TRANSACTION]
+	 */
+	if (query->commandType == CMD_UTILITY &&
+		   (xact_is_transaction_stmt(query->utilityStmt) ||
+			xact_is_set_stmt(query->utilityStmt)))
+		return;
+
+	/*
+	 * We should also disable pg_pathman on:
+	 *		ALTER EXTENSION pg_pathman
+	 */
+	if (query->commandType == CMD_UTILITY &&
+			xact_is_alter_pathman_stmt(query->utilityStmt))
+	{
+		/* Disable pg_pathman to perform a painless update */
+		(void) set_config_option(PATHMAN_ENABLE, "off",
+								 PGC_SUSET, PGC_S_SESSION,
+								 GUC_ACTION_SAVE, true, 0, false);
+
+		return;
+	}
 
 	/* Load config if pg_pathman exists & it's still necessary */
 	if (IsPathmanEnabled() &&
