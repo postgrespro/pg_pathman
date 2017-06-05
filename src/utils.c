@@ -452,7 +452,7 @@ extract_binary_interval_from_text(Datum interval_text,	/* interval as TEXT */
 			elog(ERROR, "cannot find input function for type %u", part_atttype);
 
 		/*
-		 * Convert interval from CSTRING to 'prel->atttype'.
+		 * Convert interval from CSTRING to 'prel->ev_type'.
 		 *
 		 * Note: We pass 3 arguments in case
 		 * 'typein_proc' also takes Oid & typmod.

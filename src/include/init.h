@@ -135,10 +135,10 @@ simpify_mcxt_name(MemoryContext mcxt)
  */
 #define DisablePathman() \
 	do { \
-		pathman_init_state.pg_pathman_enable = false; \
-		pathman_init_state.auto_partition = false; \
-		pathman_init_state.override_copy = false; \
-		pathman_init_state.initialization_needed = true; \
+		pathman_init_state.pg_pathman_enable		= false; \
+		pathman_init_state.auto_partition			= false; \
+		pathman_init_state.override_copy			= false; \
+		pathman_init_state.initialization_needed	= true; \
 	} while (0)
 
 

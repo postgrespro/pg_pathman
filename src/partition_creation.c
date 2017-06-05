@@ -348,14 +348,14 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
 		/* Get both PartRelationInfo & PATHMAN_CONFIG contents for this relation */
 		if (pathman_config_contains_relation(relid, values, isnull, NULL, NULL))
 		{
-			Oid			base_bound_type;	/* base type of prel->atttype */
+			Oid			base_bound_type;	/* base type of prel->ev_type */
 			Oid			base_value_type;	/* base type of value_type */
 
 			/* Fetch PartRelationInfo by 'relid' */
 			prel = get_pathman_relation_info_after_lock(relid, true, &lock_result);
 			shout_if_prel_is_invalid(relid, prel, PT_RANGE);
 
-			/* Fetch base types of prel->atttype & value_type */
+			/* Fetch base types of prel->ev_type & value_type */
 			base_bound_type = getBaseType(prel->ev_type);
 			base_value_type = getBaseType(value_type);
 
@@ -467,11 +467,7 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
 
 /*
  * Append\prepend partitions if there's no partition to store 'value'.
- *
- * Used by create_partitions_for_value_internal().
- *
- * NB: 'value' type is not needed since we've already taken
- * it into account while searching for the 'cmp_proc'.
+ * NOTE: Used by create_partitions_for_value_internal().
  */
 static Oid
 spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
@@ -479,7 +475,7 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 					 const Bound *range_bound_max,	/* parent's MAX boundary */
 					 Oid range_bound_type,			/* type of boundary's value */
 					 Datum interval_binary,			/* interval in binary form */
-					 Oid interval_type,				/* INTERVALOID or prel->atttype */
+					 Oid interval_type,				/* INTERVALOID or prel->ev_type */
 					 Datum value,					/* value to be INSERTed */
 					 Oid value_type,				/* type of value */
 					 Oid collid)					/* collation id */

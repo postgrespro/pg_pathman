@@ -231,7 +231,7 @@ is_pathman_related_alter_column_type(Node *parsetree,
 		if (!bms_is_member(adjusted_attnum, prel->expr_atts))
 			continue;
 
-		/* Return 'prel->attnum' */
+		/* Return 'attr_number_out' if asked to */
 		if (attr_number_out) *attr_number_out = attnum;
 
 		/* Success! */
