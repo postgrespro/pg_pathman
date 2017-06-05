@@ -100,6 +100,9 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 	RangeVar   *partition_name_rv;
 	char	   *tablespace;
 
+	Datum		values[Natts_pathman_config];
+	bool		isnull[Natts_pathman_config];
+
 
 	/* Handle 'parent_relid' */
 	if (!PG_ARGISNULL(0))
@@ -108,6 +111,15 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 	}
 	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("'parent_relid' should not be NULL")));
+
+	/* Check that table is partitioned by RANGE */
+	if (!pathman_config_contains_relation(parent_relid, values, isnull, NULL, NULL) ||
+		DatumGetPartType(values[Anum_pathman_config_parttype - 1]) != PT_RANGE)
+	{
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("table \"%s\" is not partitioned by RANGE",
+								get_rel_name_or_relid(parent_relid))));
+	}
 
 	bounds_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
 

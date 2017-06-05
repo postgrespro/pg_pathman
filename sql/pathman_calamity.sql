@@ -37,7 +37,13 @@ DELETE FROM calamity.part_test;
 
 
 /* test function create_single_range_partition() */
-SELECT create_single_range_partition(NULL, NULL::INT4, NULL); /* not ok */
+SELECT create_single_range_partition(NULL, NULL::INT4, NULL);					/* not ok */
+SELECT create_single_range_partition('pg_class', NULL::INT4, NULL);				/* not ok */
+
+SELECT add_to_pathman_config('calamity.part_test', 'val');
+SELECT create_single_range_partition('calamity.part_test', NULL::INT4, NULL);	/* not ok */
+DELETE FROM pathman_config WHERE partrel = 'calamity.part_test'::REGCLASS;
+
 
 /* test function create_range_partitions_internal() */
 SELECT create_range_partitions_internal(NULL, '{}'::INT[], NULL, NULL);		/* not ok */
