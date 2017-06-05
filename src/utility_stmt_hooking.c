@@ -325,8 +325,11 @@ CopyGetAttnums(TupleDesc tupDesc, Relation rel, List *attnamelist)
  * NOTE: based on DoCopy() (see copy.c).
  */
 void
-PathmanDoCopy(const CopyStmt *stmt, const char *queryString, int stmt_location,
-			  int stmt_len, uint64 *processed)
+PathmanDoCopy(const CopyStmt *stmt,
+			  const char *queryString,
+			  int stmt_location,
+			  int stmt_len,
+			  uint64 *processed)
 {
 	CopyState	cstate;
 	bool		is_from = stmt->is_from;

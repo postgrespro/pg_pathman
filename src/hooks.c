@@ -213,8 +213,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 			 have_dangerous_phv(root, outer->parent->relids, required_inner)))
 			return;
 
-		initial_cost_nestloop_compat(root, &workspace, jointype, outer, inner,
-									 extra);
+		initial_cost_nestloop_compat(root, &workspace, jointype, outer, inner, extra);
 
 		pathkeys = build_join_pathkeys(root, joinrel, jointype, outer->pathkeys);
 
@@ -771,6 +770,7 @@ pathman_relcache_hook(Datum arg, Oid relid)
 
 /*
  * Utility function invoker hook.
+ * NOTE: 'first_arg' is (PlannedStmt *) in PG 10, or (Node *) in PG <= 9.6.
  */
 void
 #if PG_VERSION_NUM >= 100000
@@ -781,9 +781,9 @@ pathman_process_utility_hook(PlannedStmt *first_arg,
 							 QueryEnvironment *queryEnv,
 							 DestReceiver *dest, char *completionTag)
 {
-	Node   *parsetree = first_arg->utilityStmt;
-	int		stmt_location = first_arg->stmt_location,
-			stmt_len = first_arg->stmt_len;
+	Node   *parsetree		= first_arg->utilityStmt;
+	int		stmt_location	= first_arg->stmt_location,
+			stmt_len		= first_arg->stmt_len;
 #else
 pathman_process_utility_hook(Node *first_arg,
 							 const char *queryString,
@@ -792,9 +792,9 @@ pathman_process_utility_hook(Node *first_arg,
 							 DestReceiver *dest,
 							 char *completionTag)
 {
-	Node   *parsetree = first_arg;
-	int		stmt_location = -1,
-			stmt_len = 0;
+	Node   *parsetree		= first_arg;
+	int		stmt_location	= -1,
+			stmt_len		= 0;
 #endif
 
 	if (IsPathmanReady())
@@ -809,8 +809,8 @@ pathman_process_utility_hook(Node *first_arg,
 			uint64	processed;
 
 			/* Handle our COPY case (and show a special cmd name) */
-			PathmanDoCopy((CopyStmt *) parsetree, queryString, stmt_location,
-						  stmt_len, &processed);
+			PathmanDoCopy((CopyStmt *) parsetree, queryString,
+						  stmt_location, stmt_len, &processed);
 			if (completionTag)
 				snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
 						 "PATHMAN COPY " UINT64_FORMAT, processed);
@@ -845,9 +845,11 @@ pathman_process_utility_hook(Node *first_arg,
 		}
 	}
 
-	/* 'first_arg' is PlannedStmt in pg10 or Node parsetree in pg9.6 and lower */
-	call_process_utility_compat(
-			(process_utility_hook_next) ? process_utility_hook_next :
-										  standard_ProcessUtility,
-			first_arg, queryString, context, params, queryEnv, dest, completionTag);
+	/* Finally call process_utility_hook_next or standard_ProcessUtility */
+	call_process_utility_compat((process_utility_hook_next ?
+										process_utility_hook_next :
+										standard_ProcessUtility),
+								first_arg, queryString,
+								context, params, queryEnv,
+								dest, completionTag);
 }

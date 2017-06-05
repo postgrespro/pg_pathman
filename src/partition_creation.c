@@ -762,8 +762,8 @@ create_single_partition_internal(Oid parent_relid,
 	create_stmt.partition_info	= NULL;
 #endif
 #if PG_VERSION_NUM >= 100000
-	create_stmt.partbound = NULL;
-	create_stmt.partspec = NULL;
+	create_stmt.partbound		= NULL;
+	create_stmt.partspec		= NULL;
 #endif
 
 	/* Obtain the sequence of Stmts to create partition and link it to parent */

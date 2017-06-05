@@ -674,13 +674,11 @@ exec_append_common(CustomScanState *node,
 		return scan_state->slot;
 
 	/*
-	 * Assuming that current projection doesn't involve SRF
-	 *
-	 * Any SFR functions are evaluated in the specialized parent node ProjectSet
+	 * Assuming that current projection doesn't involve SRF.
+	 * NOTE: Any SFR functions are evaluated in ProjectSet node.
 	 */
 	ResetExprContext(node->ss.ps.ps_ExprContext);
-	node->ss.ps.ps_ProjInfo->pi_exprContext->ecxt_scantuple =
-		scan_state->slot;
+	node->ss.ps.ps_ProjInfo->pi_exprContext->ecxt_scantuple = scan_state->slot;
 	result = ExecProject(node->ss.ps.ps_ProjInfo);
 
 	return result;
