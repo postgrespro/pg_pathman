@@ -145,26 +145,6 @@ SELECT count(*) FROM test.insert_into_select_copy;
 DROP TABLE test.insert_into_select_copy, test.insert_into_select CASCADE;
 
 
-/* Test INSERT hooking with DATE type */
-CREATE TABLE test.insert_date_test(val DATE NOT NULL);
-SELECT pathman.create_partitions_from_range('test.insert_date_test', 'val',
-											date '20161001', date '20170101', interval '1 month');
-
-INSERT INTO test.insert_date_test VALUES ('20161201'); /* just insert the date */
-SELECT count(*) FROM pathman.pathman_partition_list WHERE parent = 'test.insert_date_test'::REGCLASS;
-
-INSERT INTO test.insert_date_test VALUES ('20170311'); /* append new partitions */
-SELECT count(*) FROM pathman.pathman_partition_list WHERE parent = 'test.insert_date_test'::REGCLASS;
-
-INSERT INTO test.insert_date_test VALUES ('20160812'); /* prepend new partitions */
-SELECT count(*) FROM pathman.pathman_partition_list WHERE parent = 'test.insert_date_test'::REGCLASS;
-
-SELECT min(val) FROM test.insert_date_test; /* check first date */
-SELECT max(val) FROM test.insert_date_test; /* check last date */
-
-DROP TABLE test.insert_date_test CASCADE;
-
-
 SET pg_pathman.enable_runtimeappend = OFF;
 SET pg_pathman.enable_runtimemergeappend = OFF;
 
@@ -474,8 +454,6 @@ SELECT pathman.append_range_partition('test."RangeRel"');
 SELECT pathman.prepend_range_partition('test."RangeRel"');
 SELECT pathman.merge_range_partitions('test."RangeRel_1"', 'test."RangeRel_' || currval('test."RangeRel_seq"') || '"');
 SELECT pathman.split_range_partition('test."RangeRel_1"', '2015-01-01'::DATE);
-SELECT pathman.drop_partitions('test."RangeRel"');
-SELECT pathman.create_partitions_from_range('test."RangeRel"', 'dt', '2015-01-01'::DATE, '2015-01-05'::DATE, '1 day'::INTERVAL);
 DROP TABLE test."RangeRel" CASCADE;
 SELECT * FROM pathman.pathman_config;
 CREATE TABLE test."RangeRel" (
@@ -483,8 +461,6 @@ CREATE TABLE test."RangeRel" (
 	dt	TIMESTAMP NOT NULL,
 	txt	TEXT);
 SELECT pathman.create_range_partitions('test."RangeRel"', 'id', 1, 100, 3);
-SELECT pathman.drop_partitions('test."RangeRel"');
-SELECT pathman.create_partitions_from_range('test."RangeRel"', 'id', 1, 300, 100);
 DROP TABLE test."RangeRel" CASCADE;
 
 DROP EXTENSION pg_pathman;
@@ -533,10 +509,6 @@ DELETE FROM test.range_rel r USING test.tmp t WHERE r.dt = '2010-01-02' AND r.id
 
 /* Create range partitions from whole range */
 SELECT drop_partitions('test.range_rel');
-SELECT create_partitions_from_range('test.range_rel', 'id', 1, 1000, 100);
-SELECT drop_partitions('test.range_rel', TRUE);
-SELECT create_partitions_from_range('test.range_rel', 'dt', '2015-01-01'::date, '2015-12-01'::date, '1 month'::interval);
-EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt = '2015-12-15';
 
 /* Test NOT operator */
 CREATE TABLE bool_test(a INT NOT NULL, b BOOLEAN);

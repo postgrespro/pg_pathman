@@ -404,50 +404,6 @@ SELECT count(*) FROM test.insert_into_select_copy;
 
 DROP TABLE test.insert_into_select_copy, test.insert_into_select CASCADE;
 NOTICE:  drop cascades to 6 other objects
-/* Test INSERT hooking with DATE type */
-CREATE TABLE test.insert_date_test(val DATE NOT NULL);
-SELECT pathman.create_partitions_from_range('test.insert_date_test', 'val',
-											date '20161001', date '20170101', interval '1 month');
- create_partitions_from_range 
-------------------------------
-                            4
-(1 row)
-
-INSERT INTO test.insert_date_test VALUES ('20161201'); /* just insert the date */
-SELECT count(*) FROM pathman.pathman_partition_list WHERE parent = 'test.insert_date_test'::REGCLASS;
- count 
--------
-     4
-(1 row)
-
-INSERT INTO test.insert_date_test VALUES ('20170311'); /* append new partitions */
-SELECT count(*) FROM pathman.pathman_partition_list WHERE parent = 'test.insert_date_test'::REGCLASS;
- count 
--------
-     6
-(1 row)
-
-INSERT INTO test.insert_date_test VALUES ('20160812'); /* prepend new partitions */
-SELECT count(*) FROM pathman.pathman_partition_list WHERE parent = 'test.insert_date_test'::REGCLASS;
- count 
--------
-     8
-(1 row)
-
-SELECT min(val) FROM test.insert_date_test; /* check first date */
-    min     
-------------
- 08-12-2016
-(1 row)
-
-SELECT max(val) FROM test.insert_date_test; /* check last date */
-    max     
-------------
- 03-11-2017
-(1 row)
-
-DROP TABLE test.insert_date_test CASCADE;
-NOTICE:  drop cascades to 9 other objects
 SET pg_pathman.enable_runtimeappend = OFF;
 SET pg_pathman.enable_runtimemergeappend = OFF;
 VACUUM;
@@ -1527,23 +1483,6 @@ SELECT pathman.split_range_partition('test."RangeRel_1"', '2015-01-01'::DATE);
  {12-31-2014,01-02-2015}
 (1 row)
 
-SELECT pathman.drop_partitions('test."RangeRel"');
-NOTICE:  0 rows copied from test."RangeRel_1"
-NOTICE:  1 rows copied from test."RangeRel_2"
-NOTICE:  1 rows copied from test."RangeRel_3"
-NOTICE:  0 rows copied from test."RangeRel_4"
-NOTICE:  1 rows copied from test."RangeRel_6"
- drop_partitions 
------------------
-               5
-(1 row)
-
-SELECT pathman.create_partitions_from_range('test."RangeRel"', 'dt', '2015-01-01'::DATE, '2015-01-05'::DATE, '1 day'::INTERVAL);
- create_partitions_from_range 
-------------------------------
-                            5
-(1 row)
-
 DROP TABLE test."RangeRel" CASCADE;
 NOTICE:  drop cascades to 6 other objects
 SELECT * FROM pathman.pathman_config;
@@ -1560,21 +1499,6 @@ SELECT pathman.create_range_partitions('test."RangeRel"', 'id', 1, 100, 3);
  create_range_partitions 
 -------------------------
                        3
-(1 row)
-
-SELECT pathman.drop_partitions('test."RangeRel"');
-NOTICE:  0 rows copied from test."RangeRel_1"
-NOTICE:  0 rows copied from test."RangeRel_2"
-NOTICE:  0 rows copied from test."RangeRel_3"
- drop_partitions 
------------------
-               3
-(1 row)
-
-SELECT pathman.create_partitions_from_range('test."RangeRel"', 'id', 1, 300, 100);
- create_partitions_from_range 
-------------------------------
-                            3
 (1 row)
 
 DROP TABLE test."RangeRel" CASCADE;
@@ -1738,32 +1662,6 @@ NOTICE:  0 rows copied from test.range_rel_15
 -----------------
               14
 (1 row)
-
-SELECT create_partitions_from_range('test.range_rel', 'id', 1, 1000, 100);
- create_partitions_from_range 
-------------------------------
-                           10
-(1 row)
-
-SELECT drop_partitions('test.range_rel', TRUE);
- drop_partitions 
------------------
-              10
-(1 row)
-
-SELECT create_partitions_from_range('test.range_rel', 'dt', '2015-01-01'::date, '2015-12-01'::date, '1 month'::interval);
- create_partitions_from_range 
-------------------------------
-                           12
-(1 row)
-
-EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt = '2015-12-15';
-                                   QUERY PLAN                                   
---------------------------------------------------------------------------------
- Append
-   ->  Seq Scan on range_rel_12
-         Filter: (dt = 'Tue Dec 15 00:00:00 2015'::timestamp without time zone)
-(3 rows)
 
 /* Test NOT operator */
 CREATE TABLE bool_test(a INT NOT NULL, b BOOLEAN);
@@ -1943,6 +1841,6 @@ ORDER BY partition;
 DROP TABLE test.provided_part_names CASCADE;
 NOTICE:  drop cascades to 2 other objects
 DROP SCHEMA test CASCADE;
-NOTICE:  drop cascades to 42 other objects
+NOTICE:  drop cascades to 29 other objects
 DROP EXTENSION pg_pathman CASCADE;
 DROP SCHEMA pathman CASCADE;
