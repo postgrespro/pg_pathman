@@ -144,23 +144,22 @@ IsConstValue(Node *node, const WalkerContext *context)
 static Const *
 ExtractConst(Node *node, const WalkerContext *context)
 {
-	ExprState  *estate;
+	ExprState	   *estate;
+	ExprContext	   *econtext = context->econtext;
 
-	Datum		value;
-	bool		isnull;
+	Datum			value;
+	bool			isnull;
 
-	Oid			typid,
-				collid;
-	int			typmod;
+	Oid				typid,
+					collid;
+	int				typmod;
 
 	/* Fast path for Consts */
 	if (IsA(node, Const))
 		return (Const *) node;
 
-	/* Evaluate expression */
-	estate = ExecInitExpr((Expr *) node, NULL);
-	value = ExecEvalExprCompat(estate, context->econtext, &isnull,
-							   mult_result_handler);
+	/* Just a paranoid check */
+	Assert(IsConstValue(node, context));
 
 	switch (nodeTag(node))
 	{
@@ -171,6 +170,9 @@ ExtractConst(Node *node, const WalkerContext *context)
 				typid	= param->paramtype;
 				typmod	= param->paramtypmod;
 				collid	= param->paramcollid;
+
+				/* It must be provided */
+				Assert(WcxtHasExprContext(context));
 			}
 			break;
 
@@ -179,15 +181,33 @@ ExtractConst(Node *node, const WalkerContext *context)
 				RowExpr *row = (RowExpr *) node;
 
 				typid	= row->row_typeid;
-				typmod	= - 1;
+				typmod	= -1;
 				collid	= InvalidOid;
+
+#if PG_VERSION_NUM >= 100000
+				/* If there's no context - create it! */
+				if (!WcxtHasExprContext(context))
+					econtext = CreateStandaloneExprContext();
+#endif
 			}
 			break;
 
 		default:
-			elog(ERROR, "error in function " CppAsString(ExtractConst));;
+			elog(ERROR, "error in function " CppAsString(ExtractConst));
 	}
 
+	/* Evaluate expression */
+	estate = ExecInitExpr((Expr *) node, NULL);
+	value = ExecEvalExprCompat(estate, econtext, &isnull,
+							   mult_result_handler);
+
+#if PG_VERSION_NUM >= 100000
+	/* Free temp econtext if needed */
+	if (econtext && !WcxtHasExprContext(context))
+		FreeExprContext(econtext, true);
+#endif
+
+	/* Finally return Const */
 	return makeConst(typid, typmod, collid, get_typlen(typid),
 					 value, isnull, get_typbyval(typid));
 }
