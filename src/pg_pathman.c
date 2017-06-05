@@ -232,8 +232,8 @@ _PG_init(void)
 
 	/* Assign pg_pathman's initial state */
 	temp_init_state.pg_pathman_enable		= DEFAULT_PATHMAN_ENABLE;
-	temp_init_state.auto_partition			= DEFAULT_AUTO;
-	temp_init_state.override_copy			= DEFAULT_OVERRIDE_COPY;
+	temp_init_state.auto_partition			= DEFAULT_PATHMAN_AUTO;
+	temp_init_state.override_copy			= DEFAULT_PATHMAN_OVERRIDE_COPY;
 	temp_init_state.initialization_needed	= true; /* ofc it's needed! */
 
 	/* Apply initial state */

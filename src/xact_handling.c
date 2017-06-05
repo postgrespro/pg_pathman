@@ -111,22 +111,36 @@ xact_is_transaction_stmt(Node *stmt)
 }
 
 /*
- * Check if 'stmt' is SET TRANSACTION statement.
+ * Check if 'stmt' is SET [TRANSACTION] statement.
  */
 bool
-xact_is_set_transaction_stmt(Node *stmt)
+xact_is_set_stmt(Node *stmt)
 {
+	/* Check that SET TRANSACTION is implemented via VariableSetStmt */
+	Assert(VAR_SET_MULTI > 0);
+
 	if (!stmt)
 		return false;
 
 	if (IsA(stmt, VariableSetStmt))
-	{
-		VariableSetStmt *var_set_stmt = (VariableSetStmt *) stmt;
+		return true;
 
-		/* special case for SET TRANSACTION ... */
-		if (var_set_stmt->kind == VAR_SET_MULTI)
-			return true;
-	}
+	return false;
+}
+
+/*
+ * Check if 'stmt' is ALTER EXTENSION pg_pathman.
+ */
+bool
+xact_is_alter_pathman_stmt(Node *stmt)
+{
+	if (!stmt)
+		return false;
+
+	if (IsA(stmt, AlterExtensionStmt) &&
+		0 == strcmp(((AlterExtensionStmt *) stmt)->extname,
+					"pg_pathman"))
+		return true;
 
 	return false;
 }

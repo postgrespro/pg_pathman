@@ -302,7 +302,7 @@ refresh_pathman_relation_info(Oid relid,
 	/* Else set default values if they cannot be found */
 	else
 	{
-		prel->enable_parent = DEFAULT_ENABLE_PARENT;
+		prel->enable_parent = DEFAULT_PATHMAN_ENABLE_PARENT;
 	}
 
 	/* We've successfully built a cache entry */

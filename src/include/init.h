@@ -143,14 +143,14 @@ simpify_mcxt_name(MemoryContext mcxt)
 
 
 /* Default column values for PATHMAN_CONFIG_PARAMS */
-#define DEFAULT_ENABLE_PARENT		false
-#define DEFAULT_AUTO				true
-#define DEFAULT_INIT_CALLBACK		InvalidOid
-#define DEFAULT_SPAWN_USING_BGW		false
+#define DEFAULT_PATHMAN_ENABLE_PARENT		false
+#define DEFAULT_PATHMAN_AUTO				true
+#define DEFAULT_PATHMAN_INIT_CALLBACK		InvalidOid
+#define DEFAULT_PATHMAN_SPAWN_USING_BGW		false
 
 /* Other default values (for GUCs etc) */
-#define DEFAULT_PATHMAN_ENABLE		true
-#define DEFAULT_OVERRIDE_COPY		true
+#define DEFAULT_PATHMAN_ENABLE				true
+#define DEFAULT_PATHMAN_OVERRIDE_COPY		true
 
 
 /* Lowest version of Pl/PgSQL frontend compatible with internals (0xAA_BB_CC) */

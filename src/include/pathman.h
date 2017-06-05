@@ -41,6 +41,14 @@
 
 
 /*
+ * Main GUC variables.
+ */
+#define PATHMAN_ENABLE					"pg_pathman.enable"
+#define PATHMAN_ENABLE_AUTO_PARTITION	"pg_pathman.enable_auto_partition"
+#define PATHMAN_OVERRIDE_COPY			"pg_pathman.override_copy"
+
+
+/*
  * Definitions for the "pathman_config" table.
  */
 #define PATHMAN_CONFIG						"pathman_config"

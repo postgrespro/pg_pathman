@@ -134,7 +134,7 @@ create_single_range_partition_internal(Oid parent_relid,
 
 	/* Cook args for init_callback */
 	MakeInitCallbackRangeParams(&callback_params,
-								DEFAULT_INIT_CALLBACK,
+								DEFAULT_PATHMAN_INIT_CALLBACK,
 								parent_relid, partition_relid,
 								*start_value, *end_value, value_type);
 
@@ -193,7 +193,7 @@ create_single_hash_partition_internal(Oid parent_relid,
 
 	/* Cook args for init_callback */
 	MakeInitCallbackHashParams(&callback_params,
-							   DEFAULT_INIT_CALLBACK,
+							   DEFAULT_PATHMAN_INIT_CALLBACK,
 							   parent_relid, partition_relid);
 
 	/* Add constraint & execute init_callback */
@@ -263,8 +263,8 @@ create_partitions_for_value(Oid relid, Datum value, Oid value_type)
 	if (pathman_config_contains_relation(relid, NULL, NULL, &rel_xmin, NULL))
 	{
 		/* Take default values */
-		bool	spawn_using_bgw	= DEFAULT_SPAWN_USING_BGW,
-				enable_auto		= DEFAULT_AUTO;
+		bool	spawn_using_bgw	= DEFAULT_PATHMAN_SPAWN_USING_BGW,
+				enable_auto		= DEFAULT_PATHMAN_AUTO;
 
 		/* Values to be extracted from PATHMAN_CONFIG_PARAMS */
 		Datum	values[Natts_pathman_config_params];
@@ -835,7 +835,7 @@ create_table_using_stmt(CreateStmt *create_stmt, Oid relowner)
 	guc_level = NewGUCNestLevel();
 
 	/* ... and set client_min_messages = warning */
-	(void) set_config_option("client_min_messages", "WARNING",
+	(void) set_config_option(CppAsString(client_min_messages), "WARNING",
 							 PGC_USERSET, PGC_S_SESSION,
 							 GUC_ACTION_SAVE, true, 0, false);
 
@@ -1683,7 +1683,7 @@ validate_part_callback(Oid procid, bool emit_error)
 	Form_pg_proc	functup;
 	bool			is_ok = true;
 
-	if (procid == DEFAULT_INIT_CALLBACK)
+	if (procid == DEFAULT_PATHMAN_INIT_CALLBACK)
 		return true;
 
 	tp = SearchSysCache1(PROCOID, ObjectIdGetDatum(procid));
