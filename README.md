@@ -114,21 +114,39 @@ create_hash_partitions(relation         REGCLASS,
 Performs HASH partitioning for `relation` by partitioning expression `expr`. The `partitions_count` parameter specifies the number of partitions to create; it cannot be changed afterwards. If `partition_data` is `true` then all the data will be automatically copied from the parent table to partitions. Note that data migration may took a while to finish and the table will be locked until transaction commits. See `partition_table_concurrently()` for a lock-free way to migrate data. Partition creation callback is invoked for each partition if set beforehand (see `set_init_callback()`).
 
 ```plpgsql
-create_range_partitions(relation       REGCLASS,
-                        expr           TEXT,
-                        start_value    ANYELEMENT,
-                        p_interval     ANYELEMENT,
-                        p_count        INTEGER DEFAULT NULL
-                        partition_data BOOLEAN DEFAULT TRUE)
+create_range_partitions(relation        REGCLASS,
+                        expression      TEXT,
+                        start_value     ANYELEMENT,
+                        p_interval      ANYELEMENT,
+                        p_count         INTEGER DEFAULT NULL
+                        partition_data  BOOLEAN DEFAULT TRUE)
 
-create_range_partitions(relation       REGCLASS,
-                        expr           TEXT,
-                        start_value    ANYELEMENT,
-                        p_interval     INTERVAL,
-                        p_count        INTEGER DEFAULT NULL,
-                        partition_data BOOLEAN DEFAULT TRUE)
+create_range_partitions(relation        REGCLASS,
+                        expression      TEXT,
+                        start_value     ANYELEMENT,
+                        p_interval      INTERVAL,
+                        p_count         INTEGER DEFAULT NULL,
+                        partition_data  BOOLEAN DEFAULT TRUE)
+
+create_range_partitions(relation        REGCLASS,
+                        expression      TEXT,
+                        bounds          ANYARRAY,
+                        partition_names TEXT[] DEFAULT NULL,
+                        tablespaces     TEXT[] DEFAULT NULL,
+                        partition_data  BOOLEAN DEFAULT TRUE)
 ```
-Performs RANGE partitioning for `relation` by partitioning expression `expr`, `start_value` argument specifies initial value, `p_interval` sets the default range for auto created partitions or partitions created with `append_range_partition()` or `prepend_range_partition()` (if `NULL` then auto partition creation feature won't work), `p_count` is the number of premade partitions (if not set then `pg_pathman` tries to determine it based on expression's values). Partition creation callback is invoked for each partition if set beforehand.
+Performs RANGE partitioning for `relation` by partitioning expression `expr`, `start_value` argument specifies initial value, `p_interval` sets the default range for auto created partitions or partitions created with `append_range_partition()` or `prepend_range_partition()` (if `NULL` then auto partition creation feature won't work), `p_count` is the number of premade partitions (if not set then `pg_pathman` tries to determine it based on expression's values). The `bounds` array can be built using `generate_range_bounds()`. Partition creation callback is invoked for each partition if set beforehand.
+
+```plpgsql
+generate_range_bounds(p_start     ANYELEMENT,
+                      p_interval  INTERVAL,
+                      p_count     INTEGER)
+
+generate_range_bounds(p_start     ANYELEMENT,
+                      p_interval  ANYELEMENT,
+                      p_count     INTEGER)
+```
+Builds `bounds` array for `create_range_partitions()`.
 
 
 ### Data migration
