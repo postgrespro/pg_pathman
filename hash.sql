@@ -65,6 +65,7 @@ DECLARE
 	old_constr_def		TEXT;		/* definition of old_partition's constraint */
 	rel_persistence		CHAR;
 	p_init_callback		REGPROCEDURE;
+	derived             BOOLEAN;
 
 BEGIN
 	PERFORM @extschema@.validate_relname(old_partition);
@@ -119,7 +120,11 @@ BEGIN
 				   old_constr_name);
 
 	/* Attach the new one */
-	EXECUTE format('ALTER TABLE %s INHERIT %s', new_partition, parent_relid);
+	SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_inherits WHERE inhrelid = new_partition and inhparent = parent_relid) 
+	INTO derived;
+	IF NOT derived THEN
+  	   EXECUTE format('ALTER TABLE %s INHERIT %s', new_partition, parent_relid);
+	END IF;
 	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s %s',
 				   new_partition,
 				   @extschema@.build_check_constraint_name(new_partition::REGCLASS),
