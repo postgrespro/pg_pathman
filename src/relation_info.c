@@ -731,6 +731,11 @@ cook_partitioning_expression(const Oid relid,
 			AttrNumber	attnum = expr_attr + FirstLowInvalidHeapAttributeNumber;
 			HeapTuple	htup;
 
+			/* Check that there's no system attributes in expression */
+			if (attnum < InvalidAttrNumber)
+				ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+								errmsg("system attributes are not supported")));
+
 			htup = SearchSysCache2(ATTNUM,
 								   ObjectIdGetDatum(relid),
 								   Int16GetDatum(attnum));
