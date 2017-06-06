@@ -89,6 +89,7 @@ DROP FUNCTION @extschema@.on_create_partitions(REGCLASS);
 DROP FUNCTION @extschema@.on_update_partitions(REGCLASS);
 DROP FUNCTION @extschema@.on_remove_partitions(REGCLASS);
 DROP FUNCTION @extschema@.is_attribute_nullable(REGCLASS, TEXT);
+DROP FUNCTION @extschema@.build_check_constraint_name(REGCLASS, TEXT);
 DROP FUNCTION @extschema@.build_check_constraint_name(REGCLASS, INT2);
 DROP FUNCTION @extschema@.add_to_pathman_config(REGCLASS, TEXT, TEXT);
 DROP FUNCTION @extschema@.lock_partitioned_relation(REGCLASS);
@@ -253,6 +254,31 @@ BEGIN
 		RAISE EXCEPTION 'table "%" is referenced from other tables', parent_relid;
 	END IF;
 
+END
+$$ LANGUAGE plpgsql;
+
+
+CREATE OR REPLACE FUNCTION @extschema@.pathman_ddl_trigger_func()
+RETURNS event_trigger AS $$
+DECLARE
+	obj				RECORD;
+	pg_class_oid	OID;
+	relids			REGCLASS[];
+
+BEGIN
+	pg_class_oid = 'pg_catalog.pg_class'::regclass;
+
+	/* Find relids to remove from config */
+	SELECT array_agg(cfg.partrel) INTO relids
+	FROM pg_event_trigger_dropped_objects() AS events
+	JOIN @extschema@.pathman_config AS cfg ON cfg.partrel::oid = events.objid
+	WHERE events.classid = pg_class_oid AND events.objsubid = 0;
+
+	/* Cleanup pathman_config */
+	DELETE FROM @extschema@.pathman_config WHERE partrel = ANY(relids);
+
+	/* Cleanup params table too */
+	DELETE FROM @extschema@.pathman_config_params WHERE partrel = ANY(relids);
 END
 $$ LANGUAGE plpgsql;
 
