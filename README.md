@@ -122,22 +122,6 @@ create_range_partitions(relation       REGCLASS,
 ```
 Performs RANGE partitioning for `relation` by partitioning key `attribute`, `start_value` argument specifies initial value, `p_interval` sets the default range for auto created partitions or partitions created with `append_range_partition()` or `prepend_range_partition()` (if `NULL` then auto partition creation feature won't work), `p_count` is the number of premade partitions (if not set then `pg_pathman` tries to determine it based on attribute values). Partition creation callback is invoked for each partition if set beforehand.
 
-```plpgsql
-create_partitions_from_range(relation       REGCLASS,
-                             attribute      TEXT,
-                             start_value    ANYELEMENT,
-                             end_value      ANYELEMENT,
-                             p_interval     ANYELEMENT,
-                             partition_data BOOLEAN DEFAULT TRUE)
-
-create_partitions_from_range(relation       REGCLASS,
-                             attribute      TEXT,
-                             start_value    ANYELEMENT,
-                             end_value      ANYELEMENT,
-                             p_interval     INTERVAL,
-                             partition_data BOOLEAN DEFAULT TRUE)
-```
-Performs RANGE-partitioning from specified range for `relation` by partitioning key `attribute`. Partition creation callback is invoked for each partition if set beforehand.
 
 ### Data migration
 

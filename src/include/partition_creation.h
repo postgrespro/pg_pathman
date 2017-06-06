@@ -76,7 +76,9 @@ Node * build_raw_hash_check_tree(Node *raw_expression,
 								 Oid relid,
 								 Oid value_type);
 
-void drop_check_constraint(Oid relid);
+/* Add & drop pg_pathman's check constraint */
+void drop_pathman_check_constraint(Oid relid);
+void add_pathman_check_constraint(Oid relid, Constraint *constraint);
 
 
 /* Update triggers */

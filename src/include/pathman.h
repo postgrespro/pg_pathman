@@ -24,13 +24,6 @@
 #include "parser/parsetree.h"
 
 
-/* Check PostgreSQL version (9.5.4 contains an important fix for BGW) */
-#if PG_VERSION_NUM < 90503
-	#error "Cannot build pg_pathman with PostgreSQL version lower than 9.5.3"
-#elif PG_VERSION_NUM < 90504
-	#warning "It is STRONGLY recommended to use pg_pathman with PostgreSQL 9.5.4 since it contains important fixes"
-#endif
-
 /* Get CString representation of Datum (simple wrapper) */
 #ifdef USE_ASSERT_CHECKING
 	#include "utils.h"
@@ -38,6 +31,14 @@
 #else
 	#define DebugPrintDatum(datum, typid) ( "[use --enable-cassert]" )
 #endif
+
+
+/*
+ * Main GUC variables.
+ */
+#define PATHMAN_ENABLE					"pg_pathman.enable"
+#define PATHMAN_ENABLE_AUTO_PARTITION	"pg_pathman.enable_auto_partition"
+#define PATHMAN_OVERRIDE_COPY			"pg_pathman.override_copy"
 
 
 /*
@@ -94,9 +95,6 @@
 extern Oid	pathman_config_relid;
 extern Oid	pathman_config_params_relid;
 
-/* Hooks enable state */
-extern bool pathman_hooks_enabled;
-
 /*
  * Just to clarify our intentions (return the corresponding relid).
  */
@@ -135,11 +133,14 @@ Path *get_cheapest_parameterized_child_path(PlannerInfo *root, RelOptInfo *rel,
 typedef struct
 {
 	const Node			   *orig;		/* examined expression */
-	List				   *args;		/* extracted from 'orig' */
+	List				   *args;		/* clauses/wrappers extracted from 'orig' */
 	List				   *rangeset;	/* IndexRanges representing selected parts */
+	double					paramsel;	/* estimated selectivity of PARAMs
+										   (for RuntimeAppend costs) */
 	bool					found_gap;	/* were there any gaps? */
-	double					paramsel;	/* estimated selectivity */
 } WrapperNode;
+
+#define InvalidWrapperNode	{ NULL, NIL, NIL, 0.0, false }
 
 typedef struct
 {
@@ -157,7 +158,7 @@ typedef struct
 	} while (0)
 
 /* Check that WalkerContext contains ExprContext (plan execution stage) */
-#define WcxtHasExprContext(wcxt) ( (wcxt)->econtext )
+#define WcxtHasExprContext(wcxt) ( (wcxt)->econtext != NULL )
 
 /* Examine expression in order to select partitions */
 WrapperNode *walk_expr_tree(Expr *expr, const WalkerContext *context);
@@ -185,20 +186,20 @@ hash_to_part_index(uint32 value, uint32 partitions)
  *
  * flinfo is a pointer to FmgrInfo, arg1 & arg2 are Datums.
  */
-#define check_lt(finfo, arg1, arg2) \
-	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) < 0 )
+#define check_lt(finfo, collid, arg1, arg2) \
+	( DatumGetInt32(FunctionCall2Coll((finfo), (collid), (arg1), (arg2))) < 0 )
 
-#define check_le(finfo, arg1, arg2) \
-	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) <= 0 )
+#define check_le(finfo, collid, arg1, arg2) \
+	( DatumGetInt32(FunctionCall2Coll((finfo), (collid), (arg1), (arg2))) <= 0 )
 
-#define check_eq(finfo, arg1, arg2) \
-	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) == 0 )
+#define check_eq(finfo, collid, arg1, arg2) \
+	( DatumGetInt32(FunctionCall2Coll((finfo), (collid), (arg1), (arg2))) == 0 )
 
-#define check_ge(finfo, arg1, arg2) \
-	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) >= 0 )
+#define check_ge(finfo, collid, arg1, arg2) \
+	( DatumGetInt32(FunctionCall2Coll((finfo), (collid), (arg1), (arg2))) >= 0 )
 
-#define check_gt(finfo, arg1, arg2) \
-	( DatumGetInt32(FunctionCall2((finfo), (arg1), (arg2))) > 0 )
+#define check_gt(finfo, collid, arg1, arg2) \
+	( DatumGetInt32(FunctionCall2Coll((finfo), (collid), (arg1), (arg2))) > 0 )
 
 
 #endif /* PATHMAN_H */

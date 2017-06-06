@@ -434,13 +434,14 @@ DECLARE
 
 BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
+	PERFORM @extschema@.validate_expression(parent_relid, expression);
 
 	IF partition_data = true THEN
 		/* Acquire data modification lock */
-		PERFORM @extschema@.prevent_relation_modification(parent_relid);
+		PERFORM @extschema@.prevent_data_modification(parent_relid);
 	ELSE
 		/* Acquire lock on parent */
-		PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+		PERFORM @extschema@.prevent_part_modification(parent_relid);
 	END IF;
 
 	/* Ignore temporary tables */
@@ -600,7 +601,7 @@ BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
 
 	/* Acquire data modification lock */
-	PERFORM @extschema@.prevent_relation_modification(parent_relid);
+	PERFORM @extschema@.prevent_data_modification(parent_relid);
 
 	IF NOT EXISTS (SELECT FROM @extschema@.pathman_config
 				   WHERE partrel = parent_relid) THEN
@@ -831,6 +832,15 @@ RETURNS VOID AS 'pg_pathman', 'validate_relname'
 LANGUAGE C;
 
 /*
+ * Check that expression is valid
+ */
+CREATE OR REPLACE FUNCTION @extschema@.validate_expression(
+	relid	REGCLASS,
+	expression TEXT)
+RETURNS VOID AS 'pg_pathman', 'validate_expression'
+LANGUAGE C;
+
+/*
  * Check if regclass is date or timestamp.
  */
 CREATE OR REPLACE FUNCTION @extschema@.is_date_type(
@@ -906,17 +916,17 @@ LANGUAGE C;
  * Lock partitioned relation to restrict concurrent
  * modification of partitioning scheme.
  */
-CREATE OR REPLACE FUNCTION @extschema@.lock_partitioned_relation(
+CREATE OR REPLACE FUNCTION @extschema@.prevent_part_modification(
 	parent_relid	REGCLASS)
-RETURNS VOID AS 'pg_pathman', 'lock_partitioned_relation'
+RETURNS VOID AS 'pg_pathman', 'prevent_part_modification'
 LANGUAGE C STRICT;
 
 /*
  * Lock relation to restrict concurrent modification of data.
  */
-CREATE OR REPLACE FUNCTION @extschema@.prevent_relation_modification(
+CREATE OR REPLACE FUNCTION @extschema@.prevent_data_modification(
 	parent_relid	REGCLASS)
-RETURNS VOID AS 'pg_pathman', 'prevent_relation_modification'
+RETURNS VOID AS 'pg_pathman', 'prevent_data_modification'
 LANGUAGE C STRICT;
 
 

@@ -36,7 +36,7 @@ BEGIN
 
 	/* Check lower boundary */
 	IF start_value > min_value THEN
-		RAISE EXCEPTION 'start value is less than min value of "%"', expression;
+		RAISE EXCEPTION 'start value is greater than min value of "%"', expression;
 	END IF;
 
 	/* Check upper boundary */
@@ -67,7 +67,6 @@ DECLARE
 	i				INTEGER;
 
 BEGIN
-	expression := lower(expression);
 	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
 												 expression,
 												 partition_data);
@@ -167,7 +166,6 @@ DECLARE
 	i				INTEGER;
 
 BEGIN
-	expression := lower(expression);
 	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
 												 expression,
 												 partition_data);
@@ -268,7 +266,6 @@ BEGIN
 		RAISE EXCEPTION 'Bounds array must have at least two values';
 	END IF;
 
-	expression := lower(expression);
 	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
 												 expression,
 												 partition_data);
@@ -304,123 +301,6 @@ END
 $$
 LANGUAGE plpgsql;
 
-/*
- * Creates RANGE partitions for specified range
- */
-CREATE OR REPLACE FUNCTION @extschema@.create_partitions_from_range(
-	parent_relid	REGCLASS,
-	expression		TEXT,
-	start_value		ANYELEMENT,
-	end_value		ANYELEMENT,
-	p_interval		ANYELEMENT,
-	partition_data	BOOLEAN DEFAULT TRUE)
-RETURNS INTEGER AS $$
-DECLARE
-	part_count		INTEGER := 0;
-
-BEGIN
-	expression := lower(expression);
-	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
-												 expression,
-												 partition_data);
-
-	/* Check boundaries */
-	PERFORM @extschema@.check_boundaries(parent_relid,
-										 expression,
-										 start_value,
-										 end_value);
-
-	/* Create sequence for child partitions names */
-	PERFORM @extschema@.create_naming_sequence(parent_relid);
-
-	/* Insert new entry to pathman config */
-	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression,
-											  p_interval::TEXT);
-
-	WHILE start_value <= end_value
-	LOOP
-		PERFORM @extschema@.create_single_range_partition(
-			parent_relid,
-			start_value,
-			start_value + p_interval,
-			tablespace := @extschema@.get_tablespace(parent_relid));
-
-		start_value := start_value + p_interval;
-		part_count := part_count + 1;
-	END LOOP;
-
-	/* Relocate data if asked to */
-	IF partition_data = true THEN
-		PERFORM @extschema@.set_enable_parent(parent_relid, false);
-		PERFORM @extschema@.partition_data(parent_relid);
-	ELSE
-		PERFORM @extschema@.set_enable_parent(parent_relid, true);
-	END IF;
-
-	RETURN part_count; /* number of created partitions */
-END
-$$ LANGUAGE plpgsql;
-
-/*
- * Creates RANGE partitions for specified range based on datetime expression
- */
-CREATE OR REPLACE FUNCTION @extschema@.create_partitions_from_range(
-	parent_relid	REGCLASS,
-	expression		TEXT,
-	start_value		ANYELEMENT,
-	end_value		ANYELEMENT,
-	p_interval		INTERVAL,
-	partition_data	BOOLEAN DEFAULT TRUE)
-RETURNS INTEGER AS $$
-DECLARE
-	part_count		INTEGER := 0;
-
-BEGIN
-	expression := lower(expression);
-	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
-												 expression,
-												 partition_data);
-
-	/* Check boundaries */
-	PERFORM @extschema@.check_boundaries(parent_relid,
-										 expression,
-										 start_value,
-										 end_value);
-
-	/* Create sequence for child partitions names */
-	PERFORM @extschema@.create_naming_sequence(parent_relid);
-
-	/* Insert new entry to pathman config */
-	PERFORM @extschema@.add_to_pathman_config(parent_relid, expression,
-											  p_interval::TEXT);
-
-	WHILE start_value <= end_value
-	LOOP
-		EXECUTE
-			format('SELECT @extschema@.create_single_range_partition($1, $2, $3::%s, tablespace:=$4);',
-				   @extschema@.get_base_type(pg_typeof(start_value))::TEXT)
-		USING
-			parent_relid,
-			start_value,
-			start_value + p_interval,
-			@extschema@.get_tablespace(parent_relid);
-
-		start_value := start_value + p_interval;
-		part_count := part_count + 1;
-	END LOOP;
-
-	/* Relocate data if asked to */
-	IF partition_data = true THEN
-		PERFORM @extschema@.set_enable_parent(parent_relid, false);
-		PERFORM @extschema@.partition_data(parent_relid);
-	ELSE
-		PERFORM @extschema@.set_enable_parent(parent_relid, true);
-	END IF;
-
-	RETURN part_count; /* number of created partitions */
-END
-$$ LANGUAGE plpgsql;
-
 
 /*
  * Split RANGE partition
@@ -448,10 +328,10 @@ BEGIN
 	PERFORM @extschema@.validate_relname(partition_relid);
 
 	/* Acquire lock on parent */
-	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+	PERFORM @extschema@.prevent_part_modification(parent_relid);
 
 	/* Acquire data modification lock (prevent further modifications) */
-	PERFORM @extschema@.prevent_relation_modification(partition_relid);
+	PERFORM @extschema@.prevent_data_modification(partition_relid);
 
 	part_expr_type = @extschema@.get_partition_key_type(parent_relid);
 	part_expr := @extschema@.get_partition_key(parent_relid);
@@ -541,7 +421,7 @@ BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
 
 	/* Acquire lock on parent */
-	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+	PERFORM @extschema@.prevent_part_modification(parent_relid);
 
 	part_expr_type := @extschema@.get_partition_key_type(parent_relid);
 
@@ -645,7 +525,7 @@ BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
 
 	/* Acquire lock on parent */
-	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+	PERFORM @extschema@.prevent_part_modification(parent_relid);
 
 	part_expr_type := @extschema@.get_partition_key_type(parent_relid);
 
@@ -749,7 +629,7 @@ BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
 
 	/* Acquire lock on parent */
-	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+	PERFORM @extschema@.prevent_part_modification(parent_relid);
 
 	IF start_value >= end_value THEN
 		RAISE EXCEPTION 'failed to create partition: start_value is greater than end_value';
@@ -803,7 +683,7 @@ BEGIN
 	END IF;
 
 	/* Acquire lock on parent */
-	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+	PERFORM @extschema@.prevent_part_modification(parent_relid);
 
 	IF NOT delete_data THEN
 		EXECUTE format('INSERT INTO %s SELECT * FROM %s',
@@ -854,7 +734,7 @@ BEGIN
 	PERFORM @extschema@.validate_relname(partition_relid);
 
 	/* Acquire lock on parent */
-	PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+	PERFORM @extschema@.prevent_part_modification(parent_relid);
 
 	/* Ignore temporary tables */
 	SELECT relpersistence FROM pg_catalog.pg_class
@@ -931,7 +811,7 @@ BEGIN
 	PERFORM @extschema@.validate_relname(partition_relid);
 
 	/* Acquire lock on parent */
-	PERFORM @extschema@.prevent_relation_modification(parent_relid);
+	PERFORM @extschema@.prevent_data_modification(parent_relid);
 
 	part_type := @extschema@.get_partition_type(parent_relid);
 

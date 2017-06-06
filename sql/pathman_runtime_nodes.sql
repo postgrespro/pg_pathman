@@ -71,6 +71,7 @@ create or replace function test.pathman_test_2() returns text as $$
 declare
 	plan jsonb;
 	num int;
+	c text;
 begin
 	plan = test.pathman_test('select * from test.runtime_test_1 where id = any (select * from test.run_values limit 4)');
 
@@ -89,11 +90,15 @@ begin
 	select count(*) from jsonb_array_elements_text(plan->0->'Plan'->'Plans'->1->'Plans') into num;
 	perform test.pathman_equal(num::text, '4', 'expected 4 child plans for custom scan');
 
-	for i in 0..3 loop
-		perform test.pathman_equal((plan->0->'Plan'->'Plans'->1->'Plans'->i->'Relation Name')::text,
-								   format('"runtime_test_1_%s"', pathman.get_hash_part_idx(hashint4(i + 1), 6)),
-								   'wrong partition');
+	execute 'select string_agg(y.z, '','') from
+				(select (x->''Relation Name'')::text as z from
+					jsonb_array_elements($1->0->''Plan''->''Plans''->1->''Plans'') x
+				 order by x->''Relation Name'') y'
+		into c using plan;
+	perform test.pathman_equal(c, '"runtime_test_1_2","runtime_test_1_3","runtime_test_1_4","runtime_test_1_5"',
+								'wrong partitions');
 
+	for i in 0..3 loop
 		num = plan->0->'Plan'->'Plans'->1->'Plans'->i->'Actual Loops';
 		perform test.pathman_equal(num::text, '1', 'expected 1 loop');
 	end loop;

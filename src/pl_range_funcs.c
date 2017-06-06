@@ -31,6 +31,12 @@
 #include "utils/ruleutils.h"
 #include "utils/syscache.h"
 
+#if PG_VERSION_NUM >= 100000
+#include "utils/regproc.h"
+#include "utils/varlena.h"
+#include <math.h>
+#endif
+
 
 /* Function declarations */
 
@@ -94,6 +100,9 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 	RangeVar   *partition_name_rv;
 	char	   *tablespace;
 
+	Datum		values[Natts_pathman_config];
+	bool		isnull[Natts_pathman_config];
+
 
 	/* Handle 'parent_relid' */
 	if (!PG_ARGISNULL(0))
@@ -102,6 +111,15 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 	}
 	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("'parent_relid' should not be NULL")));
+
+	/* Check that table is partitioned by RANGE */
+	if (!pathman_config_contains_relation(parent_relid, values, isnull, NULL, NULL) ||
+		DatumGetPartType(values[Anum_pathman_config_parttype - 1]) != PT_RANGE)
+	{
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("table \"%s\" is not partitioned by RANGE",
+								get_rel_name_or_relid(parent_relid))));
+	}
 
 	bounds_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
 
@@ -230,7 +248,8 @@ create_range_partitions_internal(PG_FUNCTION_ARGS)
 							errmsg("only first bound can be NULL")));
 
 		/* Check that bounds are ascending */
-		if (!nulls[i - 1] && !check_le(&cmp_func, datums[i - 1], datums[i]))
+		if (!nulls[i - 1] && !check_le(&cmp_func, InvalidOid,
+									   datums[i - 1], datums[i]))
 			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 							errmsg("'bounds' array must be ascending")));
 	}
@@ -669,15 +688,15 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 	ranges = PrelGetRangesArray(prel);
 
 	/* Lock parent till transaction's end */
-	xact_lock_partitioned_rel(parent, false);
+	LockRelationOid(parent, ShareUpdateExclusiveLock);
 
 	/* Process partitions */
 	for (i = 0; i < nparts; i++)
 	{
 		int j;
 
-		/* Lock partition in ACCESS EXCLUSIVE mode */
-		prevent_relation_modification_internal(parts[0]);
+		/* Prevent modification of partitions */
+		LockRelationOid(parts[0], AccessExclusiveLock);
 
 		/* Look for the specified partition */
 		for (j = 0; j < PrelChildrenCount(prel); j++)
@@ -1071,10 +1090,9 @@ modify_range_constraint(Oid partition_relid,
 {
 	Node		   *expr;
 	Constraint	   *constraint;
-	Relation		partition_rel;
 
 	/* Drop old constraint */
-	drop_check_constraint(partition_relid);
+	drop_pathman_check_constraint(partition_relid);
 
 	/* Parse expression */
 	expr = parse_partitioning_expression(partition_relid, expression, NULL, NULL);
@@ -1086,12 +1104,8 @@ modify_range_constraint(Oid partition_relid,
 											  upper,
 											  expression_type);
 
-	/* Open the relation and add new check constraint */
-	partition_rel = heap_open(partition_relid, AccessExclusiveLock);
-	AddRelationNewConstraints(partition_rel, NIL,
-							  list_make1(constraint),
-							  false, true, true);
-	heap_close(partition_rel, NoLock);
+	/* Add new constraint */
+	add_pathman_check_constraint(partition_relid, constraint);
 }
 
 /*
@@ -1229,7 +1243,9 @@ drop_table_by_oid(Oid relid)
 	n->removeType	= OBJECT_TABLE;
 	n->missing_ok	= false;
 	n->objects		= list_make1(stringToQualifiedNameList(relname));
+#if PG_VERSION_NUM < 100000
 	n->arguments	= NIL;
+#endif
 	n->behavior		= DROP_RESTRICT;  /* default behavior */
 	n->concurrent	= false;
 

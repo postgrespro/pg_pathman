@@ -10,7 +10,7 @@ OBJS = src/init.o src/relation_info.o src/utils.o src/partition_filter.o \
 	src/compat/pg_compat.o src/compat/relation_tags.o src/compat/expand_rte_hook.o \
 	src/compat/rowmarks_fix.o $(WIN32RES)
 
-PG_CPPFLAGS = -I$(CURDIR)/src/include
+override PG_CPPFLAGS += -I$(CURDIR)/src/include
 
 EXTENSION = pg_pathman
 
@@ -24,7 +24,8 @@ DATA = pg_pathman--1.0--1.1.sql \
 
 PGFILEDESC = "pg_pathman - partitioning tool for PostgreSQL"
 
-REGRESS = pathman_basic \
+REGRESS = pathman_array_qual \
+		  pathman_basic \
 		  pathman_bgw \
 		  pathman_calamity \
 		  pathman_callbacks \
@@ -39,11 +40,12 @@ REGRESS = pathman_basic \
 		  pathman_lateral \
 		  pathman_mergejoin \
 		  pathman_only \
+		  pathman_param_upd_del \
 		  pathman_permissions \
+		  pathman_rebuild_updates \
 		  pathman_rowmarks \
 		  pathman_runtime_nodes \
 		  pathman_update_trigger \
-		  pathman_updates \
 		  pathman_utility_stmt
 
 EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add

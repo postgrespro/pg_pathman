@@ -63,7 +63,10 @@ extern HTAB				   *parent_cache;
 extern HTAB				   *bound_cache;
 
 /* pg_pathman's initialization state */
-extern PathmanInitState 	pg_pathman_init_state;
+extern PathmanInitState 	pathman_init_state;
+
+/* pg_pathman's hooks state */
+extern bool					pathman_hooks_enabled;
 
 
 /* Transform pg_pathman's memory context into simple name */
@@ -94,12 +97,12 @@ simpify_mcxt_name(MemoryContext mcxt)
 /*
  * Check if pg_pathman is initialized.
  */
-#define IsPathmanInitialized()		( !pg_pathman_init_state.initialization_needed )
+#define IsPathmanInitialized()		( !pathman_init_state.initialization_needed )
 
 /*
  * Check if pg_pathman is enabled.
  */
-#define IsPathmanEnabled()			( pg_pathman_init_state.pg_pathman_enable )
+#define IsPathmanEnabled()			( pathman_init_state.pg_pathman_enable )
 
 /*
  * Check if pg_pathman is initialized & enabled.
@@ -109,12 +112,12 @@ simpify_mcxt_name(MemoryContext mcxt)
 /*
  * Should we override COPY stmt handling?
  */
-#define IsOverrideCopyEnabled()		( pg_pathman_init_state.override_copy )
+#define IsOverrideCopyEnabled()		( pathman_init_state.override_copy )
 
 /*
  * Check if auto partition creation is enabled.
  */
-#define IsAutoPartitionEnabled()	( pg_pathman_init_state.auto_partition )
+#define IsAutoPartitionEnabled()	( pathman_init_state.auto_partition )
 
 /*
  * Enable/disable auto partition propagation. Note that this only works if
@@ -124,7 +127,7 @@ simpify_mcxt_name(MemoryContext mcxt)
 #define SetAutoPartitionEnabled(value) \
 	do { \
 		Assert((value) == true || (value) == false); \
-		pg_pathman_init_state.auto_partition = (value); \
+		pathman_init_state.auto_partition = (value); \
 	} while (0)
 
 /*
@@ -132,22 +135,22 @@ simpify_mcxt_name(MemoryContext mcxt)
  */
 #define DisablePathman() \
 	do { \
-		pg_pathman_init_state.pg_pathman_enable = false; \
-		pg_pathman_init_state.auto_partition = false; \
-		pg_pathman_init_state.override_copy = false; \
-		pg_pathman_init_state.initialization_needed = true; \
+		pathman_init_state.pg_pathman_enable		= false; \
+		pathman_init_state.auto_partition			= false; \
+		pathman_init_state.override_copy			= false; \
+		pathman_init_state.initialization_needed	= true; \
 	} while (0)
 
 
 /* Default column values for PATHMAN_CONFIG_PARAMS */
-#define DEFAULT_ENABLE_PARENT		false
-#define DEFAULT_AUTO				true
-#define DEFAULT_INIT_CALLBACK		InvalidOid
-#define DEFAULT_SPAWN_USING_BGW		false
+#define DEFAULT_PATHMAN_ENABLE_PARENT		false
+#define DEFAULT_PATHMAN_AUTO				true
+#define DEFAULT_PATHMAN_INIT_CALLBACK		InvalidOid
+#define DEFAULT_PATHMAN_SPAWN_USING_BGW		false
 
 /* Other default values (for GUCs etc) */
-#define DEFAULT_PATHMAN_ENABLE		true
-#define DEFAULT_OVERRIDE_COPY		true
+#define DEFAULT_PATHMAN_ENABLE				true
+#define DEFAULT_PATHMAN_OVERRIDE_COPY		true
 
 
 /* Lowest version of Pl/PgSQL frontend compatible with internals (0xAA_BB_CC) */
@@ -221,6 +224,8 @@ void pathman_config_refresh_parsed_expression(Oid relid,
 bool read_pathman_params(Oid relid,
 						 Datum *values,
 						 bool *isnull);
+
+Oid *read_parent_oids(int *nelems);
 
 
 bool validate_range_constraint(const Expr *expr,

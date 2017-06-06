@@ -40,7 +40,7 @@ void pathman_rel_pathlist_hook(PlannerInfo *root,
 							   Index rti,
 							   RangeTblEntry *rte);
 
-void pg_pathman_enable_assign_hook(char newval, void *extra);
+void pathman_enable_assign_hook(char newval, void *extra);
 
 PlannedStmt * pathman_planner_hook(Query *parse,
 								   int cursorOptions,
@@ -53,12 +53,22 @@ void pathman_shmem_startup_hook(void);
 
 void pathman_relcache_hook(Datum arg, Oid relid);
 
+#if PG_VERSION_NUM >= 100000
+void pathman_process_utility_hook(PlannedStmt *pstmt,
+								  const char *queryString,
+								  ProcessUtilityContext context,
+								  ParamListInfo params,
+								  QueryEnvironment *queryEnv,
+								  DestReceiver *dest,
+								  char *completionTag);
+#else
 void pathman_process_utility_hook(Node *parsetree,
 								  const char *queryString,
 								  ProcessUtilityContext context,
 								  ParamListInfo params,
 								  DestReceiver *dest,
 								  char *completionTag);
+#endif
 
 
 #endif /* PATHMAN_HOOKS_H */

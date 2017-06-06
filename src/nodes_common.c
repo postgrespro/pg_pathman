@@ -7,6 +7,7 @@
  *
  * ------------------------------------------------------------------------
  */
+#include "compat/pg_compat.h"
 
 #include "init.h"
 #include "nodes_common.h"
@@ -175,7 +176,7 @@ tlist_is_var_subset(List *a, List *b)
 		if (!IsA(te->expr, Var) && !IsA(te->expr, RelabelType))
 			continue;
 
-		if (!tlist_member_ignore_relabel((Node *) te->expr, a))
+		if (!tlist_member_ignore_relabel_compat(te->expr, a))
 			return true;
 	}
 
@@ -347,9 +348,6 @@ canonicalize_custom_exprs_mutator(Node *node, void *cxt)
 
 		/* Restore original 'varattno' */
 		var->varattno = var->varoattno;
-
-		/* Forget 'location' */
-		var->location = -1;
 
 		return (Node *) var;
 	}
@@ -638,9 +636,17 @@ create_append_scan_state_common(CustomScan *node,
 void
 begin_append_common(CustomScanState *node, EState *estate, int eflags)
 {
-	RuntimeAppendState *scan_state = (RuntimeAppendState *) node;
+	RuntimeAppendState	   *scan_state = (RuntimeAppendState *) node;
+	const PartRelationInfo *prel;
 
+#if PG_VERSION_NUM < 100000
 	node->ss.ps.ps_TupFromTlist = false;
+#endif
+
+	prel = get_pathman_relation_info(scan_state->relid);
+
+	/* Prepare expression according to set_set_customscan_references() */
+	scan_state->prel_expr = PrelExpressionForRelid(prel, INDEX_VAR);
 
 	/* Prepare custom expression according to set_set_customscan_references() */
 	scan_state->canon_custom_exprs =
@@ -652,11 +658,31 @@ exec_append_common(CustomScanState *node,
 				   void (*fetch_next_tuple) (CustomScanState *node))
 {
 	RuntimeAppendState *scan_state = (RuntimeAppendState *) node;
+	TupleTableSlot	   *result;
 
 	/* ReScan if no plans are selected */
 	if (scan_state->ncur_plans == 0)
 		ExecReScan(&node->ss.ps);
 
+#if PG_VERSION_NUM >= 100000
+	fetch_next_tuple(node); /* use specific callback */
+
+	if (TupIsNull(scan_state->slot))
+		return NULL;
+
+	if (!node->ss.ps.ps_ProjInfo)
+		return scan_state->slot;
+
+	/*
+	 * Assuming that current projection doesn't involve SRF.
+	 * NOTE: Any SFR functions are evaluated in ProjectSet node.
+	 */
+	ResetExprContext(node->ss.ps.ps_ExprContext);
+	node->ss.ps.ps_ProjInfo->pi_exprContext->ecxt_scantuple = scan_state->slot;
+	result = ExecProject(node->ss.ps.ps_ProjInfo);
+
+	return result;
+#elif PG_VERSION_NUM >= 90500
 	for (;;)
 	{
 		/* Fetch next tuple if we're done with Projections */
@@ -671,11 +697,11 @@ exec_append_common(CustomScanState *node,
 		if (node->ss.ps.ps_ProjInfo)
 		{
 			ExprDoneCond	isDone;
-			TupleTableSlot *result;
 
 			ResetExprContext(node->ss.ps.ps_ExprContext);
 
-			node->ss.ps.ps_ProjInfo->pi_exprContext->ecxt_scantuple = scan_state->slot;
+			node->ss.ps.ps_ProjInfo->pi_exprContext->ecxt_scantuple =
+				scan_state->slot;
 			result = ExecProject(node->ss.ps.ps_ProjInfo, &isDone);
 
 			if (isDone != ExprEndResult)
@@ -690,6 +716,7 @@ exec_append_common(CustomScanState *node,
 		else
 			return scan_state->slot;
 	}
+#endif
 }
 
 void
@@ -712,25 +739,21 @@ rescan_append_common(CustomScanState *node)
 	WalkerContext			wcxt;
 	Oid					   *parts;
 	int						nparts;
-	Node				   *prel_expr;
 
 	prel = get_pathman_relation_info(scan_state->relid);
 	Assert(prel);
 
-	/* Prepare expression according to set_set_customscan_references() */
-	prel_expr = PrelExpressionForRelid(prel, INDEX_VAR);
-
 	/* First we select all available partitions... */
 	ranges = list_make1_irange_full(prel, IR_COMPLETE);
 
-	InitWalkerContext(&wcxt, prel_expr, prel, econtext);
+	InitWalkerContext(&wcxt, scan_state->prel_expr, prel, econtext);
 	foreach (lc, scan_state->canon_custom_exprs)
 	{
-		WrapperNode *wn;
+		WrapperNode *wrap;
 
 		/* ... then we cut off irrelevant ones using the provided clauses */
-		wn = walk_expr_tree((Expr *) lfirst(lc), &wcxt);
-		ranges = irange_list_intersection(ranges, wn->rangeset);
+		wrap = walk_expr_tree((Expr *) lfirst(lc), &wcxt);
+		ranges = irange_list_intersection(ranges, wrap->rangeset);
 	}
 
 	/* Get Oids of the required partitions */
