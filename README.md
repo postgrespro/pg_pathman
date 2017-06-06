@@ -12,7 +12,7 @@ The extension is compatible with:
  * Postgres Pro Standard 9.5, 9.6;
  * Postgres Pro Enterprise;
 
-By the way, we have a growing Wiki [out there](https://github.com/postgrespro/pg_pathman/wiki);
+By the way, we have a growing Wiki [out there](https://github.com/postgrespro/pg_pathman/wiki).
 
 ## Overview
 **Partitioning** means splitting one large table into smaller pieces. Each row in such table is moved to a single partition according to the partitioning key. PostgreSQL supports partitioning via table inheritance: each partition must be created as a child table with CHECK CONSTRAINT. For example:
@@ -292,7 +292,7 @@ CREATE TABLE IF NOT EXISTS pathman_config (
     expr            TEXT NOT NULL,
     parttype        INTEGER NOT NULL,
     range_interval  TEXT,
-	cooked_expr     TEXT);
+    cooked_expr     TEXT);
 ```
 This table stores a list of partitioned tables.
 
@@ -345,7 +345,7 @@ AS SELECT * FROM show_partition_list();
 ```
 This view lists all existing partitions, as well as their parents and range boundaries (NULL for HASH partitions).
 
-### `pathman_cache_stats` --- per-backend memory consumption
+#### `pathman_cache_stats` --- per-backend memory consumption
 ```plpgsql
 -- helper SRF function
 CREATE OR REPLACE FUNCTION @extschema@.show_cache_stats()
