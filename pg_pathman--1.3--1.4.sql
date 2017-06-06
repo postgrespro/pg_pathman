@@ -1490,3 +1490,15 @@ CREATE OR REPLACE FUNCTION @extschema@.generate_range_bounds(
 	p_count			INTEGER)
 RETURNS ANYARRAY AS 'pg_pathman', 'generate_range_bounds_pl'
 LANGUAGE C STRICT;
+
+
+
+/* ------------------------------------------------------------------------
+ * Final words of wisdom
+ * ----------------------------------------------------------------------*/
+DO language plpgsql
+$$
+	BEGIN
+		RAISE WARNING 'Don''t forget to execute "SET pg_pathman.enable = t" to activate pg_pathman';
+	END
+$$;
