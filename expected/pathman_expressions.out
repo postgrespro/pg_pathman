@@ -235,7 +235,17 @@ SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
 												 expression,
 												 partition_data)"
 PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 4 at PERFORM
-/* Try using multiple queries */
+/* Try using system attributes */
+SELECT create_hash_partitions('test_exprs.hash_rel', 'xmin', 4);
+ERROR:  failed to analyze partitioning expression "xmin"
+DETAIL:  system attributes are not supported
+CONTEXT:  SQL statement "SELECT public.validate_expression(parent_relid, expression)"
+PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line 9 at PERFORM
+SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data)"
+PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 4 at PERFORM
+/* Try using subqueries */
 SELECT create_hash_partitions('test_exprs.hash_rel',
 							  'value, (select oid from pg_class limit 1)',
 							  4);

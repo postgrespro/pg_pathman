@@ -94,7 +94,10 @@ SELECT COUNT(*) FROM test_exprs.hash_rel;
 /* Try using constant expression */
 SELECT create_hash_partitions('test_exprs.hash_rel', '1 + 1', 4);
 
-/* Try using multiple queries */
+/* Try using system attributes */
+SELECT create_hash_partitions('test_exprs.hash_rel', 'xmin', 4);
+
+/* Try using subqueries */
 SELECT create_hash_partitions('test_exprs.hash_rel',
 							  'value, (select oid from pg_class limit 1)',
 							  4);
