@@ -15,20 +15,31 @@
 ALTER TABLE @extschema@.pathman_config RENAME COLUMN attname TO expr;
 ALTER TABLE @extschema@.pathman_config ADD COLUMN cooked_expr TEXT;
 
-DROP TRIGGER pathman_config_params_trigger;
+DROP TRIGGER pathman_config_params_trigger ON @extschema@.pathman_config_params;
 
 CREATE TRIGGER pathman_config_params_trigger
 AFTER INSERT OR UPDATE OR DELETE ON @extschema@.pathman_config_params
 FOR EACH ROW EXECUTE PROCEDURE @extschema@.pathman_config_params_trigger_func();
 
-CREATE OR REPLACE VIEW @extschema@.pathman_cache_stats
-AS SELECT * FROM @extschema@.show_cache_stats();
+
+DROP FUNCTION @extschema@.validate_interval_value(REGCLASS, TEXT, INTEGER, TEXT) CASCADE;
+
+CREATE OR REPLACE FUNCTION @extschema@.validate_interval_value(
+	partrel			REGCLASS,
+	expr			TEXT,
+	parttype		INTEGER,
+	range_interval	TEXT,
+	cooked_expr		TEXT)
+RETURNS BOOL AS 'pg_pathman', 'validate_interval_value'
+LANGUAGE C;
 
 ALTER TABLE @extschema@.pathman_config
 ADD CONSTRAINT pathman_config_interval_check 
-	CHECK (@extschema@.validate_interval_value(atttype,
+	CHECK (@extschema@.validate_interval_value(partrel,
+											   expr,
 											   parttype,
-											   range_interval));
+											   range_interval,
+											   cooked_expr));
 
 DO $$
 DECLARE
@@ -41,18 +52,35 @@ BEGIN
 		EXECUTE format('ALTER TABLE %s RENAME CONSTRAINT %s TO %s',
 			v_rec.t, v_rec.conname, v_rec.new_conname);
 	END LOOP;
-
-	RETURN TRUE;
 END
 $$ LANGUAGE plpgsql;
+
+
+DROP VIEW pathman_partition_list;
+
+DROP FUNCTION @extschema@.show_partition_list();
+
+CREATE OR REPLACE FUNCTION @extschema@.show_partition_list()
+RETURNS TABLE (
+	parent			REGCLASS,
+	partition		REGCLASS,
+	parttype		INT4,
+	expr			TEXT,
+	range_min		TEXT,
+	range_max		TEXT)
+AS 'pg_pathman', 'show_partition_list_internal'
+LANGUAGE C STRICT;
+
+CREATE OR REPLACE VIEW @extschema@.pathman_partition_list
+AS SELECT * FROM @extschema@.show_partition_list();
+
+GRANT SELECT ON @extschema@.pathman_partition_list TO PUBLIC;
 
 
 /* ------------------------------------------------------------------------
  * Drop irrelevant objects
  * ----------------------------------------------------------------------*/
-DROP FUNCTION @extschema@.validate_interval_value(REGCLASS, TEXT, INTEGER, TEXT);
-DROP FUNCTION @extschema@.show_partition_list();
-DROP FUNCTION @extschema@._partition_data_concurrent(REGCLASS, ANYELEMENT, ANYELEMENT, INT, BIGINT);
+DROP FUNCTION @extschema@._partition_data_concurrent(REGCLASS, ANYELEMENT, ANYELEMENT, INT, OUT BIGINT);
 DROP FUNCTION @extschema@.disable_pathman_for(REGCLASS);
 DROP FUNCTION @extschema@.common_relation_checks(REGCLASS, TEXT);
 DROP FUNCTION @extschema@.validate_relations_equality(OID, OID);
@@ -89,26 +117,6 @@ ALTER FUNCTION @extschema@.build_sequence_name(REGCLASS) STRICT;
 /* ------------------------------------------------------------------------
  * (Re)create functions
  * ----------------------------------------------------------------------*/
-CREATE OR REPLACE FUNCTION @extschema@.validate_interval_value(
-	partrel			REGCLASS,
-	expr			TEXT,
-	parttype		INTEGER,
-	range_interval	TEXT,
-	cooked_expr		TEXT)
-RETURNS BOOL AS 'pg_pathman', 'validate_interval_value'
-LANGUAGE C;
-
-CREATE OR REPLACE FUNCTION @extschema@.show_partition_list()
-RETURNS TABLE (
-	parent			REGCLASS,
-	partition		REGCLASS,
-	parttype		INT4,
-	expr			TEXT,
-	range_min		TEXT,
-	range_max		TEXT)
-AS 'pg_pathman', 'show_partition_list_internal'
-LANGUAGE C STRICT;
-
 CREATE OR REPLACE FUNCTION @extschema@.show_cache_stats()
 RETURNS TABLE (
 	context			TEXT,
@@ -117,6 +125,9 @@ RETURNS TABLE (
 	entries			INT8)
 AS 'pg_pathman', 'show_cache_stats_internal'
 LANGUAGE C STRICT;
+
+CREATE OR REPLACE VIEW @extschema@.pathman_cache_stats
+AS SELECT * FROM @extschema@.show_cache_stats();
 
 
 CREATE OR REPLACE FUNCTION @extschema@._partition_data_concurrent(
