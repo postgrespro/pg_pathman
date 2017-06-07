@@ -161,14 +161,23 @@
  * create_append_path()
  */
 #if PG_VERSION_NUM >= 100000
+
+#ifndef PGPRO_VERSION
 #define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
 		create_append_path((rel), (subpaths), (required_outer), (parallel_workers), NIL)
+#else
+#define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
+		create_append_path((rel), (subpaths), (required_outer), (parallel_workers), NIL, \
+						   false, NIL)
+
+#endif /* PGPRO_VERSION */
+
 #elif PG_VERSION_NUM >= 90600
 
 #ifndef PGPRO_VERSION
 #define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
 		create_append_path((rel), (subpaths), (required_outer), (parallel_workers))
-#else /* ifdef PGPRO_VERSION */
+#else
 #define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
 		create_append_path((rel), (subpaths), (required_outer), \
 						   false, NIL, (parallel_workers))
