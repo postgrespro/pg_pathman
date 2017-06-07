@@ -39,8 +39,8 @@
 PG_MODULE_MAGIC;
 
 
-Oid		pathman_config_relid = InvalidOid,
-		pathman_config_params_relid = InvalidOid;
+Oid		pathman_config_relid		= InvalidOid,
+		pathman_config_params_relid	= InvalidOid;
 
 
 /* pg module functions */
@@ -74,10 +74,6 @@ static void handle_arrexpr(const ScalarArrayOpExpr *expr,
 static void handle_opexpr(const OpExpr *expr,
 						  const WalkerContext *context,
 						  WrapperNode *result);
-
-static bool is_key_op_param(const OpExpr *expr,
-							const WalkerContext *context,
-							Node **param_ptr);
 
 static Datum array_find_min_max(Datum *values,
 								bool *isnull,
@@ -210,6 +206,47 @@ ExtractConst(Node *node, const WalkerContext *context)
 	/* Finally return Const */
 	return makeConst(typid, typmod, collid, get_typlen(typid),
 					 value, isnull, get_typbyval(typid));
+}
+
+/*
+ * Checks if expression is a KEY OP PARAM or PARAM OP KEY,
+ * where KEY is partitioning expression and PARAM is whatever.
+ *
+ * Returns:
+ *		operator's Oid if KEY is a partitioning expr,
+ *		otherwise InvalidOid.
+ */
+static Oid
+IsKeyOpParam(const OpExpr *expr,
+			 const WalkerContext *context,
+			 Node **param_ptr) /* ret value #1 */
+{
+	Node   *left = linitial(expr->args),
+		   *right = lsecond(expr->args);
+
+	/* Check number of arguments */
+	if (list_length(expr->args) != 2)
+		return InvalidOid;
+
+	/* KEY OP PARAM */
+	if (match_expr_to_operand(context->prel_expr, left))
+	{
+		*param_ptr = right;
+
+		/* return the same operator */
+		return expr->opno;
+	}
+
+	/* PARAM OP KEY */
+	if (match_expr_to_operand(context->prel_expr, right))
+	{
+		*param_ptr = left;
+
+		/* commute to (KEY OP PARAM) */
+		return get_commutator(expr->opno);
+	}
+
+	return InvalidOid;
 }
 
 /* Selectivity estimator for common 'paramsel' */
@@ -1315,37 +1352,35 @@ handle_opexpr(const OpExpr *expr,
 {
 	Node					   *param;
 	const PartRelationInfo	   *prel = context->prel;
+	Oid							opid; /* operator's Oid */
 
 	/* Save expression */
 	result->orig = (const Node *) expr;
 
-	if (list_length(expr->args) == 2)
+	/* Is it KEY OP PARAM or PARAM OP KEY? */
+	if (OidIsValid(opid = IsKeyOpParam(expr, context, &param)))
 	{
-		/* Is it KEY OP PARAM or PARAM OP KEY? */
-		if (is_key_op_param(expr, context, &param))
+		TypeCacheEntry *tce;
+		int				strategy;
+
+		tce = lookup_type_cache(prel->ev_type, TYPECACHE_BTREE_OPFAMILY);
+		strategy = get_op_opfamily_strategy(opid, tce->btree_opf);
+
+		if (IsConstValue(param, context))
 		{
-			TypeCacheEntry *tce;
-			int				strategy;
+			handle_const(ExtractConst(param, context),
+						 expr->inputcollid,
+						 strategy, context, result);
 
-			tce = lookup_type_cache(prel->ev_type, TYPECACHE_BTREE_OPFAMILY);
-			strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
+			return; /* done, exit */
+		}
+		/* TODO: estimate selectivity for param if it's Var */
+		else if (IsA(param, Param) || IsA(param, Var))
+		{
+			result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
+			result->paramsel = estimate_paramsel_using_prel(prel, strategy);
 
-			if (IsConstValue(param, context))
-			{
-				handle_const(ExtractConst(param, context),
-							 expr->inputcollid,
-							 strategy, context, result);
-
-				return; /* done, exit */
-			}
-			/* TODO: estimate selectivity for param if it's Var */
-			else if (IsA(param, Param) || IsA(param, Var))
-			{
-				result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
-				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
-
-				return; /* done, exit */
-			}
+			return; /* done, exit */
 		}
 	}
 
@@ -1353,35 +1388,6 @@ handle_opexpr(const OpExpr *expr,
 	result->paramsel = 1.0;
 }
 
-
-/*
- * Checks if expression is a KEY OP PARAM or PARAM OP KEY, where
- * KEY is partitioning expression and PARAM is whatever.
- *
- * NOTE: returns false if partition key is not in expression.
- */
-static bool
-is_key_op_param(const OpExpr *expr,
-				const WalkerContext *context,
-				Node **param_ptr) /* ret value #1 */
-{
-	Node   *left = linitial(expr->args),
-		   *right = lsecond(expr->args);
-
-	if (match_expr_to_operand(context->prel_expr, left))
-	{
-		*param_ptr = right;
-		return true;
-	}
-
-	if (match_expr_to_operand(context->prel_expr, right))
-	{
-		*param_ptr = left;
-		return true;
-	}
-
-	return false;
-}
 
 /* Find Max or Min value of array */
 static Datum
