@@ -94,7 +94,7 @@ static bool		delayed_shutdown = false; /* pathman was dropped */
 
 
 static bool try_invalidate_parent(Oid relid, Oid *parents, int parents_count);
-static Oid try_syscache_parent_search(Oid partition, PartParentSearch *status);
+static Oid try_catalog_parent_search(Oid partition, PartParentSearch *status);
 static Oid get_parent_of_partition_internal(Oid partition,
 											PartParentSearch *status,
 											HASHACTION action);
@@ -1089,16 +1089,16 @@ get_parent_of_partition_internal(Oid partition,
 	}
 	/* Try fetching parent from syscache if 'status' is provided */
 	else if (status)
-		parent = try_syscache_parent_search(partition, status);
+		parent = try_catalog_parent_search(partition, status);
 	else
 		parent = InvalidOid; /* we don't have to set status */
 
 	return parent;
 }
 
-/* Try to find parent of a partition using syscache & PATHMAN_CONFIG */
+/* Try to find parent of a partition using catalog & PATHMAN_CONFIG */
 static Oid
-try_syscache_parent_search(Oid partition, PartParentSearch *status)
+try_catalog_parent_search(Oid partition, PartParentSearch *status)
 {
 	if (!IsTransactionState())
 	{

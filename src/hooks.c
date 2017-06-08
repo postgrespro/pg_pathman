@@ -699,8 +699,7 @@ pathman_shmem_startup_hook(void)
 void
 pathman_relcache_hook(Datum arg, Oid relid)
 {
-	PartParentSearch	search;
-	Oid					partitioned_table;
+	Oid parent_relid;
 
 	/* Hooks can be disabled */
 	if (!pathman_hooks_enabled)
@@ -721,50 +720,23 @@ pathman_relcache_hook(Datum arg, Oid relid)
 	forget_bounds_of_partition(relid);
 
 	/* Invalidate PartParentInfo cache if needed */
-	partitioned_table = forget_parent_of_partition(relid, &search);
+	parent_relid = forget_parent_of_partition(relid, NULL);
 
-	switch (search)
+	/* It *might have been a partition*, invalidate parent */
+	if (OidIsValid(parent_relid))
 	{
-		/* It is (or was) a valid partition */
-		case PPS_ENTRY_PART_PARENT:
-		case PPS_ENTRY_PARENT:
-			{
-				elog(DEBUG2, "Invalidation message for partition %u [%u]",
-					 relid, MyProcPid);
+		delay_invalidation_parent_rel(parent_relid);
 
-				delay_invalidation_parent_rel(partitioned_table);
-			}
-			break;
+		elog(DEBUG2, "Invalidation message for partition %u [%u]",
+			 relid, MyProcPid);
+	}
+	/* We can't say, perform full invalidation procedure */
+	else
+	{
+		delay_invalidation_vague_rel(relid);
 
-		/* Both syscache and pathman's cache say it isn't a partition */
-		case PPS_ENTRY_NOT_FOUND:
-			{
-				Assert(partitioned_table == InvalidOid);
-
-				/* Which means that 'relid' might be parent */
-				if (relid != InvalidOid)
-					delay_invalidation_vague_rel(relid);
-#ifdef NOT_USED
-				elog(DEBUG2, "Invalidation message for relation %u [%u]",
-					 relid, MyProcPid);
-#endif
-			}
-			break;
-
-		/* We can't say anything (state is not transactional) */
-		case PPS_NOT_SURE:
-			{
-				elog(DEBUG2, "Invalidation message for vague relation %u [%u]",
-					 relid, MyProcPid);
-
-				delay_invalidation_vague_rel(relid);
-			}
-			break;
-
-		default:
-			elog(ERROR, "Not implemented yet (%s)",
-				 CppAsString(pathman_relcache_hook));
-			break;
+		elog(DEBUG2, "Invalidation message for vague relation %u [%u]",
+			 relid, MyProcPid);
 	}
 }
 
