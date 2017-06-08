@@ -423,6 +423,25 @@ DROP EXTENSION pg_pathman;
 
 
 /*
+ * -----------------------------------------------------------
+ *  Special tests (drop index concurrently to test snapshots)
+ * -----------------------------------------------------------
+ */
+
+CREATE SCHEMA calamity;
+CREATE EXTENSION pg_pathman;
+
+CREATE TABLE calamity.drop_index (val INT4 NOT NULL);
+CREATE INDEX ON calamity.drop_index (val);
+SELECT create_hash_partitions('calamity.drop_index', 'val', 2);
+DROP INDEX CONCURRENTLY calamity.drop_index_0_val_idx;
+
+DROP SCHEMA calamity CASCADE;
+DROP EXTENSION pg_pathman;
+
+
+
+/*
  * ------------------------------------------
  *  Special tests (uninitialized pg_pathman)
  * ------------------------------------------
