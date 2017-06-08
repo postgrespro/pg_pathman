@@ -366,4 +366,19 @@ WHERE r.conrelid = 'rename.plain_test'::regclass AND r.contype = 'c';
 
 DROP SCHEMA rename CASCADE;
 NOTICE:  drop cascades to 7 other objects
+/*
+ * Test DROP INDEX CONCURRENTLY (test snapshots)
+ */
+CREATE SCHEMA drop_index;
+CREATE TABLE drop_index.test (val INT4 NOT NULL);
+CREATE INDEX ON drop_index.test (val);
+SELECT create_hash_partitions('drop_index.test', 'val', 2);
+ create_hash_partitions 
+------------------------
+                      2
+(1 row)
+
+DROP INDEX CONCURRENTLY drop_index.test_0_val_idx;
+DROP SCHEMA drop_index CASCADE;
+NOTICE:  drop cascades to 3 other objects
 DROP EXTENSION pg_pathman;

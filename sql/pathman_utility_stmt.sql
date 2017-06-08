@@ -2,6 +2,8 @@
 
 CREATE EXTENSION pg_pathman;
 
+
+
 /*
  * Test COPY
  */
@@ -159,6 +161,7 @@ SELECT COUNT(*) FROM copy_stmt_hooking.test2;
 DROP SCHEMA copy_stmt_hooking CASCADE;
 
 
+
 /*
  * Test auto check constraint renaming
  */
@@ -214,5 +217,21 @@ FROM pg_constraint r
 WHERE r.conrelid = 'rename.plain_test'::regclass AND r.contype = 'c';
 
 DROP SCHEMA rename CASCADE;
+
+
+
+/*
+ * Test DROP INDEX CONCURRENTLY (test snapshots)
+ */
+CREATE SCHEMA drop_index;
+
+CREATE TABLE drop_index.test (val INT4 NOT NULL);
+CREATE INDEX ON drop_index.test (val);
+SELECT create_hash_partitions('drop_index.test', 'val', 2);
+DROP INDEX CONCURRENTLY drop_index.test_0_val_idx;
+
+DROP SCHEMA drop_index CASCADE;
+
+
 
 DROP EXTENSION pg_pathman;
