@@ -312,6 +312,15 @@ join (select * from test.run_values limit 4) as t2 on t1.id = t2.val;
 select count(*) = 0 from pathman.pathman_partition_list
 where parent = 'test.runtime_test_4'::regclass and coalesce(range_min::int, 1) < 0;
 
+/* RuntimeAppend (check that dropped columns don't break tlists) */
+create table test.dropped_cols(val int4 not null);
+select pathman.create_hash_partitions('test.dropped_cols', 'val', 4);
+insert into test.dropped_cols select generate_series(1, 100);
+alter table test.dropped_cols add column new_col text;	/* add column */
+alter table test.dropped_cols drop column new_col;		/* drop column! */
+explain (costs off) select * from generate_series(1, 10) f(id), lateral (select count(1) FILTER (WHERE true) from test.dropped_cols where val = f.id) c;
+drop table test.dropped_cols cascade;
+
 set enable_hashjoin = off;
 set enable_mergejoin = off;
 

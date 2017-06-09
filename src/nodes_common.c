@@ -141,18 +141,41 @@ build_parent_tlist(List *tlist, AppendRelInfo *appinfo)
 
 	foreach (lc1, pulled_vars)
 	{
-		Var *tlist_var = (Var *) lfirst(lc1);
+		Var		   *tlist_var = (Var *) lfirst(lc1);
+		bool		found_column = false;
+		AttrNumber	attnum;
 
-		AttrNumber attnum = 0;
+		/* Skip system attributes */
+		if (tlist_var->varattno < InvalidAttrNumber)
+			continue;
+
+		attnum = 0;
 		foreach (lc2, appinfo->translated_vars)
 		{
 			Var *translated_var = (Var *) lfirst(lc2);
 
+			/* Don't forget to inc 'attunum'! */
 			attnum++;
 
+			/* Skip dropped columns */
+			if (!translated_var)
+				continue;
+
+			/* Find this column in list of parent table columns */
 			if (translated_var->varattno == tlist_var->varattno)
+			{
 				tlist_var->varattno = attnum;
+				found_column = true; /* successful mapping */
+			}
 		}
+
+		/* Raise ERROR if mapping failed */
+		if (!found_column)
+			elog(ERROR,
+				 "table \"%s\" has no attribute %d of partition \"%s\"",
+				 get_rel_name_or_relid(appinfo->parent_relid),
+				 tlist_var->varoattno,
+				 get_rel_name_or_relid(appinfo->child_relid));
 	}
 
 	ChangeVarNodes((Node *) temp_tlist,

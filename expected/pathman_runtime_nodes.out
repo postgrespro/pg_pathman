@@ -403,6 +403,37 @@ where parent = 'test.runtime_test_4'::regclass and coalesce(range_min::int, 1) <
  t
 (1 row)
 
+/* RuntimeAppend (check that dropped columns don't break tlists) */
+create table test.dropped_cols(val int4 not null);
+select pathman.create_hash_partitions('test.dropped_cols', 'val', 4);
+ create_hash_partitions 
+------------------------
+                      4
+(1 row)
+
+insert into test.dropped_cols select generate_series(1, 100);
+alter table test.dropped_cols add column new_col text;	/* add column */
+alter table test.dropped_cols drop column new_col;		/* drop column! */
+explain (costs off) select * from generate_series(1, 10) f(id), lateral (select count(1) FILTER (WHERE true) from test.dropped_cols where val = f.id) c;
+                        QUERY PLAN                         
+-----------------------------------------------------------
+ Nested Loop
+   ->  Function Scan on generate_series f
+   ->  Aggregate
+         ->  Custom Scan (RuntimeAppend)
+               Prune by: (dropped_cols.val = f.id)
+               ->  Seq Scan on dropped_cols_0 dropped_cols
+                     Filter: (val = f.id)
+               ->  Seq Scan on dropped_cols_1 dropped_cols
+                     Filter: (val = f.id)
+               ->  Seq Scan on dropped_cols_2 dropped_cols
+                     Filter: (val = f.id)
+               ->  Seq Scan on dropped_cols_3 dropped_cols
+                     Filter: (val = f.id)
+(13 rows)
+
+drop table test.dropped_cols cascade;
+NOTICE:  drop cascades to 4 other objects
 set enable_hashjoin = off;
 set enable_mergejoin = off;
 select from test.runtime_test_4
