@@ -14,7 +14,7 @@ override PG_CPPFLAGS += -I$(CURDIR)/src/include
 
 EXTENSION = pg_pathman
 
-EXTVERSION = 1.4
+EXTVERSION = 1.5
 
 DATA_built = pg_pathman--$(EXTVERSION).sql
 
