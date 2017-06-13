@@ -13,6 +13,7 @@
 #include "partition_filter.h"
 #include "pathman.h"
 #include "pathman_workers.h"
+#include "compat/pg_compat.h"
 #include "xact_handling.h"
 
 #include "access/htup_details.h"
@@ -34,6 +35,7 @@
 #include "nodes/nodeFuncs.h"
 #include "parser/parse_func.h"
 #include "parser/parse_utilcmd.h"
+#include "parser/parse_relation.h"
 #include "tcop/utility.h"
 #include "utils/builtins.h"
 #include "utils/datum.h"
@@ -136,7 +138,7 @@ create_single_range_partition_internal(Oid parent_relid,
 
 	/* Cook args for init_callback */
 	MakeInitCallbackRangeParams(&callback_params,
-								DEFAULT_INIT_CALLBACK,
+								DEFAULT_PATHMAN_INIT_CALLBACK,
 								parent_relid, partition_relid,
 								*start_value, *end_value, value_type);
 
@@ -195,7 +197,7 @@ create_single_hash_partition_internal(Oid parent_relid,
 
 	/* Cook args for init_callback */
 	MakeInitCallbackHashParams(&callback_params,
-							   DEFAULT_INIT_CALLBACK,
+							   DEFAULT_PATHMAN_INIT_CALLBACK,
 							   parent_relid, partition_relid);
 
 	/* Add constraint & execute init_callback */
@@ -264,8 +266,8 @@ create_partitions_for_value(Oid relid, Datum value, Oid value_type)
 	if (pathman_config_contains_relation(relid, NULL, NULL, &rel_xmin, NULL))
 	{
 		/* Take default values */
-		bool	spawn_using_bgw	= DEFAULT_SPAWN_USING_BGW,
-				enable_auto		= DEFAULT_AUTO;
+		bool	spawn_using_bgw	= DEFAULT_PATHMAN_SPAWN_USING_BGW,
+				enable_auto		= DEFAULT_PATHMAN_AUTO;
 
 		/* Values to be extracted from PATHMAN_CONFIG_PARAMS */
 		Datum	values[Natts_pathman_config_params];
@@ -347,14 +349,14 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
 		/* Get both PartRelationInfo & PATHMAN_CONFIG contents for this relation */
 		if (pathman_config_contains_relation(relid, values, isnull, NULL, NULL))
 		{
-			Oid			base_bound_type;	/* base type of prel->atttype */
+			Oid			base_bound_type;	/* base type of prel->ev_type */
 			Oid			base_value_type;	/* base type of value_type */
 
 			/* Fetch PartRelationInfo by 'relid' */
 			prel = get_pathman_relation_info_after_lock(relid, true, &lock_result);
 			shout_if_prel_is_invalid(relid, prel, PT_RANGE);
 
-			/* Fetch base types of prel->atttype & value_type */
+			/* Fetch base types of prel->ev_type & value_type */
 			base_bound_type = getBaseType(prel->ev_type);
 			base_value_type = getBaseType(value_type);
 
@@ -376,7 +378,7 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
 				else if (nparts == 1)
 				{
 					/* Unlock the parent (we're not going to spawn) */
-					xact_unlock_partitioned_rel(relid);
+					UnlockRelationOid(relid, ShareUpdateExclusiveLock);
 
 					/* Simply return the suitable partition */
 					partid = parts[0];
@@ -433,12 +435,12 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
 			}
 		}
 		else
-			elog(ERROR, "pg_pathman's config does not contain relation \"%s\"",
+			elog(ERROR, "table \"%s\" is not partitioned",
 				 get_rel_name_or_relid(relid));
 	}
 	PG_CATCH();
 	{
-		ErrorData *edata;
+		ErrorData *error;
 
 		/* Simply rethrow ERROR if we're in backend */
 		if (!is_background_worker)
@@ -446,16 +448,15 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
 
 		/* Switch to the original context & copy edata */
 		MemoryContextSwitchTo(old_mcxt);
-		edata = CopyErrorData();
+		error = CopyErrorData();
 		FlushErrorState();
 
 		/* Produce log message if we're in BGW */
-		ereport(LOG,
-				(errmsg(CppAsString(create_partitions_for_value_internal) ": %s [%u]",
-						edata->message, MyProcPid),
-				(edata->detail) ? errdetail("%s", edata->detail) : 0));
+		error->elevel	= LOG;
+		error->message	= psprintf(CppAsString(create_partitions_for_value_internal)
+								   ": %s [%u]", error->message, MyProcPid);
 
-		FreeErrorData(edata);
+		ReThrowError(error);
 
 		/* Reset 'partid' in case of error */
 		partid = InvalidOid;
@@ -467,11 +468,7 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
 
 /*
  * Append\prepend partitions if there's no partition to store 'value'.
- *
- * Used by create_partitions_for_value_internal().
- *
- * NB: 'value' type is not needed since we've already taken
- * it into account while searching for the 'cmp_proc'.
+ * NOTE: Used by create_partitions_for_value_internal().
  */
 static Oid
 spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
@@ -479,7 +476,7 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 					 const Bound *range_bound_max,	/* parent's MAX boundary */
 					 Oid range_bound_type,			/* type of boundary's value */
 					 Datum interval_binary,			/* interval in binary form */
-					 Oid interval_type,				/* INTERVALOID or prel->atttype */
+					 Oid interval_type,				/* INTERVALOID or prel->ev_type */
 					 Datum value,					/* value to be INSERTed */
 					 Oid value_type,				/* type of value */
 					 Oid collid)					/* collation id */
@@ -568,8 +565,8 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 
 	/* Execute comparison function cmp(value, cur_leading_bound) */
 	while (should_append ?
-				check_ge(&cmp_value_bound_finfo, value, cur_leading_bound) :
-				check_lt(&cmp_value_bound_finfo, value, cur_leading_bound))
+				check_ge(&cmp_value_bound_finfo, collid, value, cur_leading_bound) :
+				check_lt(&cmp_value_bound_finfo, collid, value, cur_leading_bound))
 	{
 		Bound bounds[2];
 
@@ -705,6 +702,27 @@ create_single_partition_internal(Oid parent_relid,
 		elog(ERROR, "table \"%s\" is not partitioned",
 			 get_rel_name_or_relid(parent_relid));
 
+	/* Do we have to escalate privileges? */
+	if (need_priv_escalation)
+	{
+		/* Get current user's Oid and security context */
+		GetUserIdAndSecContext(&save_userid, &save_sec_context);
+
+		/* Check that user's allowed to spawn partitions */
+		if (ACLCHECK_OK != pg_class_aclcheck(parent_relid, save_userid,
+											 ACL_SPAWN_PARTITIONS))
+			ereport(ERROR,
+					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+					 errmsg("permission denied for parent relation \"%s\"",
+							get_rel_name_or_relid(parent_relid)),
+					 errdetail("user is not allowed to create new partitions"),
+					 errhint("consider granting INSERT privilege")));
+
+		/* Become superuser in order to bypass various ACL checks */
+		SetUserIdAndSecContext(BOOTSTRAP_SUPERUSERID,
+							   save_sec_context | SECURITY_LOCAL_USERID_CHANGE);
+	}
+
 	/* Cache parent's namespace and name */
 	parent_name = get_rel_name(parent_relid);
 	parent_nsp = get_rel_namespace(parent_relid);
@@ -737,33 +755,12 @@ create_single_partition_internal(Oid parent_relid,
 	create_stmt.oncommit		= ONCOMMIT_NOOP;
 	create_stmt.tablespacename	= tablespace;
 	create_stmt.if_not_exists	= false;
-
-#if defined(PGPRO_EE) && PG_VERSION_NUM >= 90600
-	create_stmt.partition_info	= NULL;
+#if PG_VERSION_NUM >= 100000
+	create_stmt.partbound		= NULL;
+	create_stmt.partspec		= NULL;
 #endif
 
-	/* Do we have to escalate privileges? */
-	if (need_priv_escalation)
-	{
-		/* Get current user's Oid and security context */
-		GetUserIdAndSecContext(&save_userid, &save_sec_context);
-
-		/* Check that user's allowed to spawn partitions */
-		if (ACLCHECK_OK != pg_class_aclcheck(parent_relid, save_userid,
-											 ACL_SPAWN_PARTITIONS))
-			ereport(ERROR,
-					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-					 errmsg("permission denied for parent relation \"%s\"",
-							get_rel_name_or_relid(parent_relid)),
-					 errdetail("user is not allowed to create new partitions"),
-					 errhint("consider granting INSERT privilege")));
-
-		/* Become superuser in order to bypass various ACL checks */
-		SetUserIdAndSecContext(BOOTSTRAP_SUPERUSERID,
-							   save_sec_context | SECURITY_LOCAL_USERID_CHANGE);
-	}
-
-	/* Generate columns using the parent table */
+	/* Obtain the sequence of Stmts to create partition and link it to parent */
 	create_stmts = transformCreateStmt(&create_stmt, NULL);
 
 	/* Create the partition and all required relations */
@@ -805,12 +802,12 @@ create_single_partition_internal(Oid parent_relid,
 			 * call will stash the objects so created into our
 			 * event trigger context.
 			 */
-			ProcessUtility(cur_stmt,
-						   "we have to provide a query string",
-						   PROCESS_UTILITY_SUBCOMMAND,
-						   NULL,
-						   None_Receiver,
-						   NULL);
+			ProcessUtilityCompat(cur_stmt,
+								 "we have to provide a query string",
+								 PROCESS_UTILITY_SUBCOMMAND,
+								 NULL,
+								 None_Receiver,
+								 NULL);
 		}
 
 		/* Update config one more time */
@@ -837,12 +834,13 @@ create_table_using_stmt(CreateStmt *create_stmt, Oid relowner)
 	guc_level = NewGUCNestLevel();
 
 	/* ... and set client_min_messages = warning */
-	(void) set_config_option("client_min_messages", "WARNING",
+	(void) set_config_option(CppAsString(client_min_messages), "WARNING",
 							 PGC_USERSET, PGC_S_SESSION,
 							 GUC_ACTION_SAVE, true, 0, false);
 
 	/* Create new partition owned by parent's posessor */
-	table_addr = DefineRelation(create_stmt, RELKIND_RELATION, relowner, NULL);
+	table_addr = DefineRelationCompat(create_stmt, RELKIND_RELATION, relowner,
+									  NULL);
 
 	/* Save data about a simple DDL command that was just executed */
 	EventTriggerCollectSimpleCommand(table_addr,
@@ -961,11 +959,8 @@ postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid)
 		/* Build new tuple with parent's ACL */
 		htup = heap_modify_tuple(htup, pg_class_desc, values, nulls, replaces);
 
-		/* Update child's tuple */
-		simple_heap_update(pg_class_rel, &iptr, htup);
-
-		/* Don't forget to update indexes */
-		CatalogUpdateIndexes(pg_class_rel, htup);
+		/* Update child's tuple with related indexes */
+		CatalogTupleUpdate(pg_class_rel, &iptr, htup);
 	}
 
 	systable_endscan(scan);
@@ -1065,11 +1060,8 @@ postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid)
 			subhtup = heap_modify_tuple(subhtup, pg_attribute_desc,
 										values, nulls, replaces);
 
-			/* Update child's tuple */
-			simple_heap_update(pg_attribute_rel, &iptr, subhtup);
-
-			/* Don't forget to update indexes */
-			CatalogUpdateIndexes(pg_attribute_rel, subhtup);
+			/* Update child's tuple and related indexes */
+			CatalogTupleUpdate(pg_attribute_rel, &iptr, subhtup);
 		}
 
 		systable_endscan(subscan);
@@ -1126,7 +1118,7 @@ copy_foreign_keys(Oid parent_relid, Oid partition_oid)
 
 /* Drop pg_pathman's check constraint by 'relid' */
 void
-drop_check_constraint(Oid relid)
+drop_pathman_check_constraint(Oid relid)
 {
 	char		   *constr_name;
 	AlterTableStmt *stmt;
@@ -1147,8 +1139,24 @@ drop_check_constraint(Oid relid)
 
 	stmt->cmds = list_make1(cmd);
 
-	AlterTable(relid, ShareUpdateExclusiveLock, stmt);
+	/* See function AlterTableGetLockLevel() */
+	AlterTable(relid, AccessExclusiveLock, stmt);
 }
+
+/* Add pg_pathman's check constraint using 'relid' */
+void
+add_pathman_check_constraint(Oid relid, Constraint *constraint)
+{
+	Relation part_rel = heap_open(relid, AccessExclusiveLock);
+
+	AddRelationNewConstraints(part_rel, NIL,
+							  list_make1(constraint),
+							  false, true, true);
+
+	heap_close(part_rel, NoLock);
+}
+
+
 
 /* Build RANGE check constraint expression tree */
 Node *
@@ -1157,6 +1165,29 @@ build_raw_range_check_tree(Node *raw_expression,
 						   const Bound *end_value,
 						   Oid value_type)
 {
+#define BuildConstExpr(node, value, value_type) \
+	do { \
+		(node)->val = make_string_value_struct( \
+							datum_to_cstring((value), (value_type))); \
+		(node)->location = -1; \
+	} while (0)
+
+#define BuildCmpExpr(node, opname, expr, c) \
+	do { \
+		(node)->name		= list_make1(makeString(opname)); \
+		(node)->kind		= AEXPR_OP; \
+		(node)->lexpr		= (Node *) (expr); \
+		(node)->rexpr		= (Node *) (c); \
+		(node)->location	= -1; \
+	} while (0)
+
+#define CopyTypeCastExpr(node, src, argument) \
+	do { \
+		memcpy((node), (src), sizeof(TypeCast)); \
+		(node)->arg			= (Node *) (argument); \
+		(node)->typeName	= (TypeName *) copyObject((node)->typeName); \
+	} while (0)
+
 	BoolExpr   *and_oper	= makeNode(BoolExpr);
 	A_Expr	   *left_arg	= makeNode(A_Expr),
 			   *right_arg	= makeNode(A_Expr);
@@ -1170,16 +1201,22 @@ build_raw_range_check_tree(Node *raw_expression,
 	/* Left comparison (VAR >= start_value) */
 	if (!IsInfinite(start_value))
 	{
-		/* Left boundary */
-		left_const->val = make_string_value_struct(
-			datum_to_cstring(BoundGetValue(start_value), value_type));
-		left_const->location = -1;
+		/* Build left boundary */
+		BuildConstExpr(left_const, BoundGetValue(start_value), value_type);
 
-		left_arg->name		= list_make1(makeString(">="));
-		left_arg->kind		= AEXPR_OP;
-		left_arg->lexpr		= raw_expression;
-		left_arg->rexpr		= (Node *) left_const;
-		left_arg->location	= -1;
+		/* Build ">=" clause */
+		BuildCmpExpr(left_arg, ">=", raw_expression, left_const);
+
+		/* Cast const to expression's type (e.g. composite key, row type) */
+		if (IsA(raw_expression, TypeCast))
+		{
+			TypeCast *cast = makeNode(TypeCast);
+
+			/* Copy cast to expression's type */
+			CopyTypeCastExpr(cast, raw_expression, left_const);
+
+			left_arg->rexpr = (Node *) cast;
+		}
 
 		and_oper->args = lappend(and_oper->args, left_arg);
 	}
@@ -1187,16 +1224,22 @@ build_raw_range_check_tree(Node *raw_expression,
 	/* Right comparision (VAR < end_value) */
 	if (!IsInfinite(end_value))
 	{
-		/* Right boundary */
-		right_const->val = make_string_value_struct(
-			datum_to_cstring(BoundGetValue(end_value), value_type));
-		right_const->location = -1;
+		/* Build right boundary */
+		BuildConstExpr(right_const, BoundGetValue(end_value), value_type);
 
-		right_arg->name		= list_make1(makeString("<"));
-		right_arg->kind		= AEXPR_OP;
-		right_arg->lexpr	= raw_expression;
-		right_arg->rexpr	= (Node *) right_const;
-		right_arg->location	= -1;
+		/* Build "<" clause */
+		BuildCmpExpr(right_arg, "<", raw_expression, right_const);
+
+		/* Cast const to expression's type (e.g. composite key, row type) */
+		if (IsA(raw_expression, TypeCast))
+		{
+			TypeCast *cast = makeNode(TypeCast);
+
+			/* Copy cast to expression's type */
+			CopyTypeCastExpr(cast, raw_expression, right_const);
+
+			right_arg->rexpr = (Node *) cast;
+		}
 
 		and_oper->args = lappend(and_oper->args, right_arg);
 	}
@@ -1206,6 +1249,10 @@ build_raw_range_check_tree(Node *raw_expression,
 		elog(ERROR, "cannot create partition with range (-inf, +inf)");
 
 	return (Node *) and_oper;
+
+#undef BuildConstExpr
+#undef BuildCmpExpr
+#undef CopyTypeCastExpr
 }
 
 /* Build complete RANGE check constraint */
@@ -1278,12 +1325,12 @@ check_range_available(Oid parent_relid,
 			if (raise_error)
 				elog(ERROR, "specified range [%s, %s) overlaps "
 							"with existing partitions",
-					 !IsInfinite(start) ?
-						 datum_to_cstring(BoundGetValue(start), value_type) :
-						 "NULL",
-					 !IsInfinite(end) ?
-						 datum_to_cstring(BoundGetValue(end), value_type) :
-						 "NULL");
+					 IsInfinite(start) ?
+						 "NULL" :
+						 datum_to_cstring(BoundGetValue(start), value_type),
+					 IsInfinite(end) ?
+						 "NULL" :
+						 datum_to_cstring(BoundGetValue(end), value_type));
 
 			else return false;
 		}
@@ -1630,7 +1677,7 @@ validate_part_callback(Oid procid, bool emit_error)
 	Form_pg_proc	functup;
 	bool			is_ok = true;
 
-	if (procid == DEFAULT_INIT_CALLBACK)
+	if (procid == DEFAULT_PATHMAN_INIT_CALLBACK)
 		return true;
 
 	tp = SearchSysCache1(PROCOID, ObjectIdGetDatum(procid));

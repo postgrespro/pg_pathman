@@ -18,6 +18,7 @@
 #include "fmgr.h"
 #include "nodes/bitmapset.h"
 #include "nodes/nodes.h"
+#include "nodes/memnodes.h"
 #include "nodes/primnodes.h"
 #include "nodes/value.h"
 #include "port/atomics.h"
@@ -88,7 +89,7 @@ FreeBound(Bound *bound, bool byval)
 		pfree(DatumGetPointer(BoundGetValue(bound)));
 }
 
-inline static int
+static inline int
 cmp_bounds(FmgrInfo *cmp_func,
 		   const Oid collid,
 		   const Bound *b1,
@@ -163,6 +164,8 @@ typedef struct
 
 	Oid				cmp_proc,		/* comparison fuction for 'ev_type' */
 					hash_proc;		/* hash function for 'ev_type' */
+
+	MemoryContext	mcxt;			/* memory context holding this struct */
 } PartRelationInfo;
 
 #define PART_EXPR_VARNO				( 1 )
@@ -259,15 +262,11 @@ PrelExpressionColumnNames(const PartRelationInfo *prel)
 static inline Node *
 PrelExpressionForRelid(const PartRelationInfo *prel, Index rel_index)
 {
-	Node *expr;
-
 	/* TODO: implement some kind of cache */
+	Node *expr = copyObject(prel->expr);
+
 	if (rel_index != PART_EXPR_VARNO)
-	{
-		expr = copyObject(prel->expr);
 		ChangeVarNodes(expr, PART_EXPR_VARNO, rel_index, 0);
-	}
-	else expr = prel->expr;
 
 	return expr;
 }
@@ -285,13 +284,16 @@ const PartRelationInfo *get_pathman_relation_info_after_lock(Oid relid,
 
 /* Partitioning expression routines */
 Node *parse_partitioning_expression(const Oid relid,
-									const char *expression,
+									const char *expr_cstr,
 									char **query_string_out,
 									Node **parsetree_out);
 
 Datum cook_partitioning_expression(const Oid relid,
 								   const char *expr_cstr,
 								   Oid *expr_type);
+
+char *canonicalize_partitioning_expression(const Oid relid,
+										   const char *expr_cstr);
 
 /* Global invalidation routines */
 void delay_pathman_shutdown(void);
@@ -359,19 +361,13 @@ void shout_if_prel_is_invalid(const Oid parent_oid,
  * Useful functions & macros for freeing memory.
  */
 
-#define FreeIfNotNull(ptr) \
-	do { \
-		if (ptr) \
-		{ \
-			pfree((void *) ptr); \
-			ptr = NULL; \
-		} \
-	} while(0)
-
+/* Remove all references to this parent from parents cache */
 static inline void
-FreeChildrenArray(PartRelationInfo *prel)
+ForgetParent(PartRelationInfo *prel)
 {
-	uint32	i;
+	uint32 i;
+
+	AssertArg(MemoryContextIsValid(prel->mcxt));
 
 	/* Remove relevant PartParentInfos */
 	if (prel->children)
@@ -388,38 +384,6 @@ FreeChildrenArray(PartRelationInfo *prel)
 			if (PrelParentRelid(prel) == get_parent_of_partition(child, NULL))
 				forget_parent_of_partition(child, NULL);
 		}
-
-		pfree(prel->children);
-		prel->children = NULL;
-	}
-}
-
-static inline void
-FreeRangesArray(PartRelationInfo *prel)
-{
-	uint32	i;
-
-	/* Remove RangeEntries array */
-	if (prel->ranges)
-	{
-		/* Remove persistent entries if not byVal */
-		if (!prel->ev_byval)
-		{
-			for (i = 0; i < PrelChildrenCount(prel); i++)
-			{
-				Oid child = prel->ranges[i].child_oid;
-
-				/* Skip if Oid is invalid (e.g. initialization error) */
-				if (!OidIsValid(child))
-					continue;
-
-				FreeBound(&prel->ranges[i].min, prel->ev_byval);
-				FreeBound(&prel->ranges[i].max, prel->ev_byval);
-			}
-		}
-
-		pfree(prel->ranges);
-		prel->ranges = NULL;
 	}
 }
 

@@ -55,7 +55,7 @@ typedef struct {
 	( list_make1_irange(make_irange(0, PrelLastChild(prel), (lossy))) )
 
 
-inline static IndexRange
+static inline IndexRange
 make_irange(uint32 lower, uint32 upper, bool lossy)
 {
 	IndexRange result = { lower & IRANGE_BOUNDARY_MASK,
@@ -72,7 +72,7 @@ make_irange(uint32 lower, uint32 upper, bool lossy)
 	return result;
 }
 
-inline static IndexRange *
+static inline IndexRange *
 alloc_irange(IndexRange irange)
 {
 	IndexRange *result = (IndexRange *) palloc(sizeof(IndexRange));
@@ -84,7 +84,7 @@ alloc_irange(IndexRange irange)
 }
 
 /* Return predecessor or 0 if boundary is 0 */
-inline static uint32
+static inline uint32
 irb_pred(uint32 boundary)
 {
 	if (boundary > 0)
@@ -94,7 +94,7 @@ irb_pred(uint32 boundary)
 }
 
 /* Return successor or IRANGE_BONDARY_MASK */
-inline static uint32
+static inline uint32
 irb_succ(uint32 boundary)
 {
 	if (boundary >= IRANGE_BOUNDARY_MASK)
@@ -113,7 +113,7 @@ typedef enum
 } ir_cmp_lossiness;
 
 /* Comapre lossiness factor of two IndexRanges */
-inline static ir_cmp_lossiness
+static inline ir_cmp_lossiness
 irange_cmp_lossiness(IndexRange a, IndexRange b)
 {
 	if (is_irange_lossy(a) == is_irange_lossy(b))
@@ -129,10 +129,30 @@ irange_cmp_lossiness(IndexRange a, IndexRange b)
 }
 
 
-/* Various traits */
-bool iranges_intersect(IndexRange a, IndexRange b);
-bool iranges_adjoin(IndexRange a, IndexRange b);
-bool irange_eq_bounds(IndexRange a, IndexRange b);
+/* Check if two ranges intersect */
+static inline bool
+iranges_intersect(IndexRange a, IndexRange b)
+{
+	return (irange_lower(a) <= irange_upper(b)) &&
+		   (irange_lower(b) <= irange_upper(a));
+}
+
+/* Check if two ranges adjoin */
+static inline bool
+iranges_adjoin(IndexRange a, IndexRange b)
+{
+	return (irange_upper(a) == irb_pred(irange_lower(b))) ||
+		   (irange_upper(b) == irb_pred(irange_lower(a)));
+}
+
+/* Check if two ranges cover the same area */
+static inline bool
+irange_eq_bounds(IndexRange a, IndexRange b)
+{
+	return (irange_lower(a) == irange_lower(b)) &&
+		   (irange_upper(a) == irange_upper(b));
+}
+
 
 /* Basic operations on IndexRanges */
 IndexRange irange_union_simple(IndexRange a, IndexRange b);
@@ -141,6 +161,7 @@ IndexRange irange_intersection_simple(IndexRange a, IndexRange b);
 /* Operations on Lists of IndexRanges */
 List *irange_list_union(List *a, List *b);
 List *irange_list_intersection(List *a, List *b);
+List *irange_list_set_lossiness(List *ranges, bool lossy);
 
 /* Utility functions */
 int irange_list_length(List *rangeset);

@@ -26,7 +26,7 @@
  */
 #if defined(ENABLE_PGPRO_PATCHES) && \
 	defined(ENABLE_ROWMARKS_FIX) && \
-	defined(NATIVE_EXPAND_RTE_HOOK /* dependency */ )
+	defined(NATIVE_EXPAND_RTE_HOOK) /* dependency */
 #define NATIVE_PARTITIONING_ROWMARKS
 #endif
 

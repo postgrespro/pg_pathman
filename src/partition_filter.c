@@ -8,6 +8,7 @@
  * ------------------------------------------------------------------------
  */
 
+#include "compat/pg_compat.h"
 #include "init.h"
 #include "nodes_common.h"
 #include "pathman.h"
@@ -254,6 +255,11 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 		LockRelationOid(partid, parts_storage->head_open_lock_mode);
 		if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(partid)))
 		{
+			/* Don't forget to drop invalid hash table entry */
+			hash_search(parts_storage->result_rels_table,
+						(const void *) &partid,
+						HASH_REMOVE, NULL);
+
 			UnlockRelationOid(partid, parts_storage->head_open_lock_mode);
 			return NULL;
 		}
@@ -294,10 +300,10 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 		if (!parts_storage->saved_rel_info)
 			elog(ERROR, "ResultPartsStorage contains no saved_rel_info");
 
-		InitResultRelInfo(child_result_rel_info,
-						  child_rel,
-						  child_rte_idx,
-						  parts_storage->estate->es_instrument);
+		InitResultRelInfoCompat(child_result_rel_info,
+								child_rel,
+								child_rte_idx,
+								parts_storage->estate->es_instrument);
 
 		if (parts_storage->command_type != CMD_DELETE)
 			ExecOpenIndices(child_result_rel_info, parts_storage->speculative_inserts);
@@ -432,34 +438,50 @@ select_partition_for_insert(Datum value, Oid value_type,
 {
 	MemoryContext			old_mcxt;
 	ResultRelInfoHolder	   *rri_holder;
+	Oid						parent_relid = PrelParentRelid(prel);
 	Oid						selected_partid = InvalidOid;
 	Oid					   *parts;
 	int						nparts;
 
-	/* Search for matching partitions */
-	parts = find_partitions_for_value(value, value_type, prel, &nparts);
-
-	if (nparts > 1)
-		elog(ERROR, ERR_PART_ATTR_MULTIPLE);
-	else if (nparts == 0)
+	do
 	{
-		 selected_partid = create_partitions_for_value(PrelParentRelid(prel),
-													   value, prel->ev_type);
+		/* Search for matching partitions */
+		parts = find_partitions_for_value(value, value_type, prel, &nparts);
 
-		 /* get_pathman_relation_info() will refresh this entry */
-		 invalidate_pathman_relation_info(PrelParentRelid(prel), NULL);
+		if (nparts > 1)
+			elog(ERROR, ERR_PART_ATTR_MULTIPLE);
+		else if (nparts == 0)
+		{
+			 selected_partid = create_partitions_for_value(parent_relid,
+														   value, value_type);
+
+			 /* get_pathman_relation_info() will refresh this entry */
+			 invalidate_pathman_relation_info(parent_relid, NULL);
+		}
+		else selected_partid = parts[0];
+
+		/* Replace parent table with a suitable partition */
+		old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
+		rri_holder = scan_result_parts_storage(selected_partid, parts_storage);
+		MemoryContextSwitchTo(old_mcxt);
+
+		/* This partition has been dropped, repeat with a new 'prel' */
+		if (rri_holder == NULL)
+		{
+			/* get_pathman_relation_info() will refresh this entry */
+			invalidate_pathman_relation_info(parent_relid, NULL);
+
+			/* Get a fresh PartRelationInfo */
+			prel = get_pathman_relation_info(parent_relid);
+
+			/* Paranoid check (all partitions have vanished) */
+			if (!prel)
+				elog(ERROR, "table \"%s\" is not partitioned",
+					 get_rel_name_or_relid(parent_relid));
+		}
 	}
-	else selected_partid = parts[0];
-
-	/* Replace parent table with a suitable partition */
-	old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
-	rri_holder = scan_result_parts_storage(selected_partid, parts_storage);
-	MemoryContextSwitchTo(old_mcxt);
-
-	/* Could not find suitable partition */
-	if (rri_holder == NULL)
-		elog(ERROR, ERR_PART_ATTR_NO_PART,
-			 datum_to_cstring(value, prel->ev_type));
+	/* Loop until we get some result */
+	while (rri_holder == NULL);
 
 	return rri_holder;
 }
@@ -657,7 +679,6 @@ partition_filter_exec(CustomScanState *node)
 		ResultRelInfoHolder		   *rri_holder;
 		bool						isnull;
 		Datum						value;
-		ExprDoneCond				itemIsDone;
 		TupleTableSlot			   *tmp_slot;
 		ResultRelInfo			   *resultRelInfo;
 
@@ -679,16 +700,17 @@ partition_filter_exec(CustomScanState *node)
 		/* Execute expression */
 		tmp_slot = econtext->ecxt_scantuple;
 		econtext->ecxt_scantuple = slot;
-		value = ExecEvalExpr(state->expr_state, econtext, &isnull, &itemIsDone);
+		value = ExecEvalExprCompat(state->expr_state, econtext, &isnull,
+								   mult_result_handler);
 		econtext->ecxt_scantuple = tmp_slot;
 
 		if (isnull)
 			elog(ERROR, ERR_PART_ATTR_NULL);
 
-		if (itemIsDone != ExprSingleResult)
-			elog(ERROR, ERR_PART_ATTR_MULTIPLE_RESULTS);
-
-		/* Search for a matching partition */
+		/*
+		 * Search for a matching partition.
+		 * WARNING: 'prel' might change after this call!
+		 */
 		rri_holder = select_partition_for_insert(value, prel->ev_type, prel,
 												 &state->result_parts, estate);
 
@@ -841,6 +863,7 @@ prepare_rri_returning_for_insert(EState *estate,
 	ResultRelInfo		   *child_rri,
 						   *parent_rri;
 	Index					parent_rt_idx;
+	TupleTableSlot		   *result_slot;
 
 	/* We don't need to do anything ff there's no map */
 	if (!rri_holder->tuple_map)
@@ -867,13 +890,18 @@ prepare_rri_returning_for_insert(EState *estate,
 									   list_make2(makeInteger(parent_rt_idx),
 												  rri_holder));
 
+	/* Specify tuple slot where will be place projection result in */
+#if PG_VERSION_NUM >= 100000
+	result_slot = parent_rri->ri_projectReturning->pi_state.resultslot;
+#elif PG_VERSION_NUM >= 90500
+	result_slot = parent_rri->ri_projectReturning->pi_slot;
+#endif
+
 	/* Build new projection info */
 	child_rri->ri_projectReturning =
-			ExecBuildProjectionInfo((List *) ExecInitExpr((Expr *) returning_list,
-														  /* HACK: no PlanState */ NULL),
-									pfstate->tup_convert_econtext,
-									parent_rri->ri_projectReturning->pi_slot,
-									RelationGetDescr(child_rri->ri_RelationDesc));
+		ExecBuildProjectionInfoCompat(returning_list, pfstate->tup_convert_econtext,
+									  result_slot, NULL /* HACK: no PlanState */,
+									  RelationGetDescr(child_rri->ri_RelationDesc));
 }
 
 /* Prepare FDW access structs */
@@ -901,6 +929,7 @@ prepare_rri_fdw_for_insert(EState *estate,
 			break;
 
 		case PF_FDW_INSERT_POSTGRES:
+		case PF_FDW_INSERT_ANY_FDW:
 			{
 				ForeignDataWrapper *fdw;
 				ForeignServer	   *fserver;
@@ -908,23 +937,21 @@ prepare_rri_fdw_for_insert(EState *estate,
 				/* Check if it's PostgreSQL FDW */
 				fserver = GetForeignServer(GetForeignTable(partid)->serverid);
 				fdw = GetForeignDataWrapper(fserver->fdwid);
+
+				/* Show message if not postgres_fdw */
 				if (strcmp("postgres_fdw", fdw->fdwname) != 0)
-					elog(ERROR, "FDWs other than postgres_fdw are restricted");
+					switch (pg_pathman_insert_into_fdw)
+					{
+						case PF_FDW_INSERT_POSTGRES:
+							elog(ERROR,
+								 "FDWs other than postgres_fdw are restricted");
+
+						case PF_FDW_INSERT_ANY_FDW:
+							elog(WARNING,
+								 "unrestricted FDW mode may lead to crashes");
+					}
 			}
 			break;
-
-		case PF_FDW_INSERT_ANY_FDW:
-			{
-				ForeignDataWrapper *fdw;
-				ForeignServer	   *fserver;
-
-				fserver = GetForeignServer(GetForeignTable(partid)->serverid);
-				fdw = GetForeignDataWrapper(fserver->fdwid);
-				if (strcmp("postgres_fdw", fdw->fdwname) != 0)
-					elog(WARNING, "unrestricted FDW mode may lead to \"%s\" crashes",
-						 fdw->fdwname);
-			}
-			break; /* do nothing */
 
 		default:
 			elog(ERROR, "Mode is not implemented yet");

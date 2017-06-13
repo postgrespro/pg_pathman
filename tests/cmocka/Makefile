@@ -7,6 +7,7 @@ CFLAGS += -I$(CURDIR)/../../src/include
 CFLAGS += $(shell $(PG_CONFIG) --cflags_sl)
 CFLAGS += $(shell $(PG_CONFIG) --cflags)
 CFLAGS += $(CFLAGS_SL)
+CFLAGS += $(PG_CPPFLAGS)
 LDFLAGS = -lcmocka
 TEST_BIN = rangeset_tests
 

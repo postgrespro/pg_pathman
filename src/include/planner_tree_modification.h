@@ -30,7 +30,7 @@ void plan_tree_walker(Plan *plan,
 					  void *context);
 
 /* Query tree rewriting utility */
-void pathman_transform_query(Query *parse);
+void pathman_transform_query(Query *parse, ParamListInfo params);
 
 /* These functions scribble on Plan tree */
 void add_partition_filters(List *rtable, Plan *plan);

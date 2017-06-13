@@ -7,7 +7,12 @@
 
 The `pg_pathman` module provides optimized partitioning mechanism and functions to manage partitions.
 
-The extension is compatible with PostgreSQL 9.5+.
+The extension is compatible with:
+ * PostgreSQL 9.5, 9.6, 10;
+ * Postgres Pro Standard 9.5, 9.6;
+ * Postgres Pro Enterprise;
+
+By the way, we have a growing Wiki [out there](https://github.com/postgrespro/pg_pathman/wiki).
 
 ## Overview
 **Partitioning** means splitting one large table into smaller pieces. Each row in such table is moved to a single partition according to the partitioning key. PostgreSQL supports partitioning via table inheritance: each partition must be created as a child table with CHECK CONSTRAINT. For example:
@@ -41,6 +46,7 @@ More interesting features are yet to come. Stay tuned!
 ## Feature highlights
 
  * HASH and RANGE partitioning schemes;
+ * Partitioning by expression and composite key;
  * Both automatic and manual partition management;
  * Support for integer, floating point, date and other types, including domains;
  * Effective query planning for partitioned tables (JOINs, subselects etc);
@@ -55,9 +61,11 @@ More interesting features are yet to come. Stay tuned!
  * Various GUC toggles and configurable settings.
 
 ## Roadmap
+ 
+ * Multi-level partitioning (ver 1.5);
+ * Improved referential integrity + foreign keys on partitioned tables (ver 1.5);
 
- * Implement LIST partitioning scheme;
- * Optimize hash join (both tables are partitioned by join key).
+Take a look at [this page](https://github.com/postgrespro/pg_pathman/wiki/Roadmap);
 
 ## Installation guide
 To install `pg_pathman`, execute this in the module's directory:
@@ -97,47 +105,49 @@ SET pg_pathman.enable = t;
 ### Partition creation
 ```plpgsql
 create_hash_partitions(relation         REGCLASS,
-                       attribute        TEXT,
+                       expr             TEXT,
                        partitions_count INTEGER,
                        partition_data   BOOLEAN DEFAULT TRUE,
                        partition_names  TEXT[] DEFAULT NULL,
                        tablespaces      TEXT[] DEFAULT NULL)
 ```
-Performs HASH partitioning for `relation` by integer key `attribute`. The `partitions_count` parameter specifies the number of partitions to create; it cannot be changed afterwards. If `partition_data` is `true` then all the data will be automatically copied from the parent table to partitions. Note that data migration may took a while to finish and the table will be locked until transaction commits. See `partition_table_concurrently()` for a lock-free way to migrate data. Partition creation callback is invoked for each partition if set beforehand (see `set_init_callback()`).
+Performs HASH partitioning for `relation` by partitioning expression `expr`. The `partitions_count` parameter specifies the number of partitions to create; it cannot be changed afterwards. If `partition_data` is `true` then all the data will be automatically copied from the parent table to partitions. Note that data migration may took a while to finish and the table will be locked until transaction commits. See `partition_table_concurrently()` for a lock-free way to migrate data. Partition creation callback is invoked for each partition if set beforehand (see `set_init_callback()`).
 
 ```plpgsql
-create_range_partitions(relation       REGCLASS,
-                        attribute      TEXT,
-                        start_value    ANYELEMENT,
-                        p_interval     ANYELEMENT,
-                        p_count        INTEGER DEFAULT NULL
-                        partition_data BOOLEAN DEFAULT TRUE)
+create_range_partitions(relation        REGCLASS,
+                        expression      TEXT,
+                        start_value     ANYELEMENT,
+                        p_interval      ANYELEMENT,
+                        p_count         INTEGER DEFAULT NULL
+                        partition_data  BOOLEAN DEFAULT TRUE)
 
-create_range_partitions(relation       REGCLASS,
-                        attribute      TEXT,
-                        start_value    ANYELEMENT,
-                        p_interval     INTERVAL,
-                        p_count        INTEGER DEFAULT NULL,
-                        partition_data BOOLEAN DEFAULT TRUE)
+create_range_partitions(relation        REGCLASS,
+                        expression      TEXT,
+                        start_value     ANYELEMENT,
+                        p_interval      INTERVAL,
+                        p_count         INTEGER DEFAULT NULL,
+                        partition_data  BOOLEAN DEFAULT TRUE)
+
+create_range_partitions(relation        REGCLASS,
+                        expression      TEXT,
+                        bounds          ANYARRAY,
+                        partition_names TEXT[] DEFAULT NULL,
+                        tablespaces     TEXT[] DEFAULT NULL,
+                        partition_data  BOOLEAN DEFAULT TRUE)
 ```
-Performs RANGE partitioning for `relation` by partitioning key `attribute`, `start_value` argument specifies initial value, `p_interval` sets the default range for auto created partitions or partitions created with `append_range_partition()` or `prepend_range_partition()` (if `NULL` then auto partition creation feature won't work), `p_count` is the number of premade partitions (if not set then `pg_pathman` tries to determine it based on attribute values). Partition creation callback is invoked for each partition if set beforehand.
+Performs RANGE partitioning for `relation` by partitioning expression `expr`, `start_value` argument specifies initial value, `p_interval` sets the default range for auto created partitions or partitions created with `append_range_partition()` or `prepend_range_partition()` (if `NULL` then auto partition creation feature won't work), `p_count` is the number of premade partitions (if not set then `pg_pathman` tries to determine it based on expression's values). The `bounds` array can be built using `generate_range_bounds()`. Partition creation callback is invoked for each partition if set beforehand.
 
 ```plpgsql
-create_partitions_from_range(relation       REGCLASS,
-                             attribute      TEXT,
-                             start_value    ANYELEMENT,
-                             end_value      ANYELEMENT,
-                             p_interval     ANYELEMENT,
-                             partition_data BOOLEAN DEFAULT TRUE)
+generate_range_bounds(p_start     ANYELEMENT,
+                      p_interval  INTERVAL,
+                      p_count     INTEGER)
 
-create_partitions_from_range(relation       REGCLASS,
-                             attribute      TEXT,
-                             start_value    ANYELEMENT,
-                             end_value      ANYELEMENT,
-                             p_interval     INTERVAL,
-                             partition_data BOOLEAN DEFAULT TRUE)
+generate_range_bounds(p_start     ANYELEMENT,
+                      p_interval  ANYELEMENT,
+                      p_count     INTEGER)
 ```
-Performs RANGE-partitioning from specified range for `relation` by partitioning key `attribute`. Partition creation callback is invoked for each partition if set beforehand.
+Builds `bounds` array for `create_range_partitions()`.
+
 
 ### Data migration
 
@@ -157,7 +167,7 @@ Stops a background worker performing a concurrent partitioning task. Note: worke
 ```plpgsql
 create_hash_update_trigger(parent REGCLASS)
 ```
-Creates the trigger on UPDATE for HASH partitions. The UPDATE trigger isn't created by default because of the overhead. It's useful in cases when the key attribute might change.
+Creates the trigger on UPDATE for HASH partitions. The UPDATE trigger isn't created by default because of the overhead. It's useful in cases when the partitioning expression's value might change.
 ```plpgsql
 create_range_update_trigger(parent REGCLASS)
 ```
@@ -297,9 +307,10 @@ When INSERTing new data beyond the partitioning range, use SpawnPartitionsWorker
 ```plpgsql
 CREATE TABLE IF NOT EXISTS pathman_config (
     partrel         REGCLASS NOT NULL PRIMARY KEY,
-    attname         TEXT NOT NULL,
+    expr            TEXT NOT NULL,
     parttype        INTEGER NOT NULL,
-    range_interval  TEXT);
+    range_interval  TEXT,
+    cooked_expr     TEXT);
 ```
 This table stores a list of partitioned tables.
 
@@ -341,7 +352,7 @@ RETURNS TABLE (
     parent     REGCLASS,
     partition  REGCLASS,
     parttype   INT4,
-    partattr   TEXT,
+    expr       TEXT,
     range_min  TEXT,
     range_max  TEXT)
 AS 'pg_pathman', 'show_partition_list_internal'
@@ -351,6 +362,23 @@ CREATE OR REPLACE VIEW pathman_partition_list
 AS SELECT * FROM show_partition_list();
 ```
 This view lists all existing partitions, as well as their parents and range boundaries (NULL for HASH partitions).
+
+#### `pathman_cache_stats` --- per-backend memory consumption
+```plpgsql
+-- helper SRF function
+CREATE OR REPLACE FUNCTION @extschema@.show_cache_stats()
+RETURNS TABLE (
+	context     TEXT,
+	size        INT8,
+	used        INT8,
+	entries     INT8)
+AS 'pg_pathman', 'show_cache_stats_internal'
+LANGUAGE C STRICT;
+
+CREATE OR REPLACE VIEW @extschema@.pathman_cache_stats
+AS SELECT * FROM @extschema@.show_cache_stats();
+```
+Shows memory consumption of various caches.
 
 
 ## Custom plan nodes

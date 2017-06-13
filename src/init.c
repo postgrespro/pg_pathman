@@ -55,17 +55,30 @@ HTAB			   *parent_cache		= NULL;
 HTAB			   *bound_cache			= NULL;
 
 /* pg_pathman's init status */
-PathmanInitState 	pg_pathman_init_state;
+PathmanInitState 	pathman_init_state;
+
+/* pg_pathman's hooks state */
+bool				pathman_hooks_enabled = true;
+
 
 /* Shall we install new relcache callback? */
 static bool			relcache_callback_needed = true;
+
 
 /* Functions for various local caches */
 static bool init_pathman_relation_oids(void);
 static void fini_pathman_relation_oids(void);
 static void init_local_cache(void);
 static void fini_local_cache(void);
-static void read_pathman_config(void);
+
+/* Special handlers for read_pathman_config() */
+static void add_partrel_to_array(Datum *values, bool *isnull, void *context);
+static void startup_invalidate_parent(Datum *values, bool *isnull, void *context);
+
+static void read_pathman_config(void (*per_row_cb)(Datum *values,
+												   bool *isnull,
+												   void *context),
+								void *context);
 
 static bool validate_range_opexpr(const Expr *expr,
 								  const PartRelationInfo *prel,
@@ -76,8 +89,6 @@ static bool validate_range_opexpr(const Expr *expr,
 static bool read_opexpr_const(const OpExpr *opexpr,
 							  const PartRelationInfo *prel,
 							  Datum *value);
-
-static int oid_cmp(const void *p1, const void *p2);
 
 
 /* Validate SQL facade */
@@ -123,13 +134,13 @@ pathman_cache_search_relid(HTAB *cache_table,
 void
 save_pathman_init_state(PathmanInitState *temp_init_state)
 {
-	*temp_init_state = pg_pathman_init_state;
+	*temp_init_state = pathman_init_state;
 }
 
 void
 restore_pathman_init_state(const PathmanInitState *temp_init_state)
 {
-	pg_pathman_init_state = *temp_init_state;
+	pathman_init_state = *temp_init_state;
 }
 
 /*
@@ -139,23 +150,23 @@ void
 init_main_pathman_toggles(void)
 {
 	/* Main toggle, load_config() will enable it */
-	DefineCustomBoolVariable("pg_pathman.enable",
-							 "Enables pg_pathman's optimizations during the planner stage",
+	DefineCustomBoolVariable(PATHMAN_ENABLE,
+							 "Enables pg_pathman's optimizations during planning stage",
 							 NULL,
-							 &pg_pathman_init_state.pg_pathman_enable,
+							 &pathman_init_state.pg_pathman_enable,
 							 DEFAULT_PATHMAN_ENABLE,
 							 PGC_SUSET,
 							 0,
 							 NULL,
-							 pg_pathman_enable_assign_hook,
+							 pathman_enable_assign_hook,
 							 NULL);
 
 	/* Global toggle for automatic partition creation */
-	DefineCustomBoolVariable("pg_pathman.enable_auto_partition",
+	DefineCustomBoolVariable(PATHMAN_ENABLE_AUTO_PARTITION,
 							 "Enables automatic partition creation",
 							 NULL,
-							 &pg_pathman_init_state.auto_partition,
-							 DEFAULT_AUTO,
+							 &pathman_init_state.auto_partition,
+							 DEFAULT_PATHMAN_AUTO,
 							 PGC_SUSET,
 							 0,
 							 NULL,
@@ -163,11 +174,11 @@ init_main_pathman_toggles(void)
 							 NULL);
 
 	/* Global toggle for COPY stmt handling */
-	DefineCustomBoolVariable("pg_pathman.override_copy",
+	DefineCustomBoolVariable(PATHMAN_OVERRIDE_COPY,
 							 "Override COPY statement handling",
 							 NULL,
-							 &pg_pathman_init_state.override_copy,
-							 DEFAULT_OVERRIDE_COPY,
+							 &pathman_init_state.override_copy,
+							 DEFAULT_PATHMAN_OVERRIDE_COPY,
 							 PGC_SUSET,
 							 0,
 							 NULL,
@@ -197,8 +208,11 @@ load_config(void)
 	/* Validate pg_pathman's Pl/PgSQL facade (might be outdated) */
 	validate_sql_facade_version(get_sql_facade_version());
 
-	init_local_cache();		/* create various hash tables (caches) */
-	read_pathman_config();	/* read PATHMAN_CONFIG table & fill cache */
+	/* Create various hash tables (caches) */
+	init_local_cache();
+
+	/* Read PATHMAN_CONFIG table & fill cache */
+	read_pathman_config(startup_invalidate_parent, NULL);
 
 	/* Register pathman_relcache_hook(), currently we can't unregister it */
 	if (relcache_callback_needed)
@@ -208,7 +222,7 @@ load_config(void)
 	}
 
 	/* Mark pg_pathman as initialized */
-	pg_pathman_init_state.initialization_needed = false;
+	pathman_init_state.initialization_needed = false;
 
 	elog(DEBUG2, "pg_pathman's config has been loaded successfully [%u]", MyProcPid);
 
@@ -228,7 +242,7 @@ unload_config(void)
 	fini_local_cache();
 
 	/* Mark pg_pathman as uninitialized */
-	pg_pathman_init_state.initialization_needed = true;
+	pathman_init_state.initialization_needed = true;
 
 	elog(DEBUG2, "pg_pathman's config has been unloaded successfully [%u]", MyProcPid);
 }
@@ -691,8 +705,7 @@ pathman_config_invalidate_parsed_expression(Oid relid)
 
 		/* Form new tuple and perform an update */
 		new_htup = heap_form_tuple(RelationGetDescr(rel), values, nulls);
-		simple_heap_update(rel, &iptr, new_htup);
-		CatalogUpdateIndexes(rel, new_htup);
+		CatalogTupleUpdate(rel, &iptr, new_htup);
 
 		heap_close(rel, RowExclusiveLock);
 	}
@@ -723,8 +736,7 @@ pathman_config_refresh_parsed_expression(Oid relid,
 	rel = heap_open(get_pathman_config_relid(false), RowExclusiveLock);
 
 	htup_new = heap_form_tuple(RelationGetDescr(rel), values, isnull);
-	simple_heap_update(rel, iptr, htup_new);
-	CatalogUpdateIndexes(rel, htup_new);
+	CatalogTupleUpdate(rel, iptr, htup_new);
 
 	heap_close(rel, RowExclusiveLock);
 }
@@ -776,11 +788,83 @@ read_pathman_params(Oid relid, Datum *values, bool *isnull)
 }
 
 
+typedef struct
+{
+	Oid	   *array;
+	int		nelems;
+	int		capacity;
+} read_parent_oids_cxt;
+
+/*
+ * Get a sorted array of partitioned tables' Oids.
+ */
+Oid *
+read_parent_oids(int *nelems)
+{
+	read_parent_oids_cxt context = { NULL, 0, 0 };
+
+	read_pathman_config(add_partrel_to_array, &context);
+
+	/* Perform sorting */
+	qsort(context.array, context.nelems, sizeof(Oid), oid_cmp);
+
+	/* Return values */
+	*nelems = context.nelems;
+	return context.array;
+}
+
+
+/* read_pathman_config(): add parent to array of Oids */
+static void
+add_partrel_to_array(Datum *values, bool *isnull, void *context)
+{
+	Oid relid = DatumGetObjectId(values[Anum_pathman_config_partrel - 1]);
+	read_parent_oids_cxt *result = (read_parent_oids_cxt *) context;
+
+	if (result->array == NULL)
+	{
+		result->capacity = PART_RELS_SIZE;
+		result->array = palloc(result->capacity * sizeof(Oid));
+	}
+
+	if (result->nelems >= result->capacity)
+	{
+		result->capacity = result->capacity * 2 + 1;
+		result->array = repalloc(result->array, result->capacity * sizeof(Oid));
+	}
+
+	/* Append current relid */
+	result->array[result->nelems++] = relid;
+}
+
+/* read_pathman_config(): create dummy cache entry for parent */
+static void
+startup_invalidate_parent(Datum *values, bool *isnull, void *context)
+{
+	Oid relid = DatumGetObjectId(values[Anum_pathman_config_partrel - 1]);
+
+	/* Check that relation 'relid' exists */
+	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
+	{
+		DisablePathman(); /* disable pg_pathman since config is broken */
+		ereport(ERROR,
+				(errmsg("table \"%s\" contains nonexistent relation %u",
+						PATHMAN_CONFIG, relid),
+				 errhint(INIT_ERROR_HINT)));
+	}
+
+	/* get_pathman_relation_info() will refresh this entry */
+	invalidate_pathman_relation_info(relid, NULL);
+}
+
 /*
  * Go through the PATHMAN_CONFIG table and create PartRelationInfo entries.
  */
 static void
-read_pathman_config(void)
+read_pathman_config(void (*per_row_cb)(Datum *values,
+									   bool *isnull,
+									   void *context),
+					void *context)
 {
 	Relation		rel;
 	HeapScanDesc	scan;
@@ -806,7 +890,6 @@ read_pathman_config(void)
 	{
 		Datum		values[Natts_pathman_config];
 		bool		isnull[Natts_pathman_config];
-		Oid			relid; /* partitioned table */
 
 		/* Extract Datums from tuple 'htup' */
 		heap_deform_tuple(htup, RelationGetDescr(rel), values, isnull);
@@ -816,21 +899,8 @@ read_pathman_config(void)
 		Assert(!isnull[Anum_pathman_config_parttype - 1]);
 		Assert(!isnull[Anum_pathman_config_expr - 1]);
 
-		/* Extract values from Datums */
-		relid = DatumGetObjectId(values[Anum_pathman_config_partrel - 1]);
-
-		/* Check that relation 'relid' exists */
-		if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
-		{
-			DisablePathman(); /* disable pg_pathman since config is broken */
-			ereport(ERROR,
-					(errmsg("table \"%s\" contains nonexistent relation %u",
-							PATHMAN_CONFIG, relid),
-					 errhint(INIT_ERROR_HINT)));
-		}
-
-		/* get_pathman_relation_info() will refresh this entry */
-		invalidate_pathman_relation_info(relid, NULL);
+		/* Execute per row callback */
+		per_row_cb(values, isnull, context);
 	}
 
 	/* Clean resources */
@@ -1120,20 +1190,6 @@ validate_hash_constraint(const Expr *expr,
 	}
 
 	return false;
-}
-
-/* needed for find_inheritance_children_array() function */
-static int
-oid_cmp(const void *p1, const void *p2)
-{
-	Oid			v1 = *((const Oid *) p1);
-	Oid			v2 = *((const Oid *) p2);
-
-	if (v1 < v2)
-		return -1;
-	if (v1 > v2)
-		return 1;
-	return 0;
 }
 
 
