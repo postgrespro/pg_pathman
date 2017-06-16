@@ -671,6 +671,8 @@ create_single_partition_internal(Oid parent_relid,
 								 RangeVar *partition_rv,
 								 char *tablespace)
 {
+	Relation			parentrel;
+
 	/* Value to be returned */
 	Oid					partition_relid = InvalidOid; /* safety */
 
@@ -680,7 +682,8 @@ create_single_partition_internal(Oid parent_relid,
 					   *parent_nsp_name;
 
 	/* Elements of the "CREATE TABLE" query tree */
-	RangeVar		   *parent_rv;
+	RangeVar		   *parent_rv,
+					   *newrel_rv = copyObject(partition_rv);
 	TableLikeClause		like_clause;
 	CreateStmt			create_stmt;
 	List			   *create_stmts;
@@ -730,7 +733,10 @@ create_single_partition_internal(Oid parent_relid,
 	/* Make up parent's RangeVar */
 	parent_rv = makeRangeVar(parent_nsp_name, parent_name, -1);
 
-	Assert(partition_rv);
+	/* Copy attributes */
+	parentrel = heap_open(parent_relid, NoLock);
+	newrel_rv->relpersistence = parentrel->rd_rel->relpersistence;
+	heap_close(parentrel, NoLock);
 
 	/* If no 'tablespace' is provided, get parent's tablespace */
 	if (!tablespace)
@@ -745,7 +751,7 @@ create_single_partition_internal(Oid parent_relid,
 
 	/* Initialize CreateStmt structure */
 	NodeSetTag(&create_stmt, T_CreateStmt);
-	create_stmt.relation		= copyObject(partition_rv);
+	create_stmt.relation		= newrel_rv;
 	create_stmt.tableElts		= list_make1(copyObject(&like_clause));
 	create_stmt.inhRelations	= list_make1(copyObject(parent_rv));
 	create_stmt.ofTypename		= NULL;
