@@ -1,3 +1,9 @@
+/*
+ * -------------------------------------------
+ *  NOTE: This test behaves differenly on 9.5
+ * -------------------------------------------
+ */
+
 CREATE EXTENSION pg_pathman;
 CREATE SCHEMA rowmarks;
 

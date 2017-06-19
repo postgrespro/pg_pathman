@@ -10,7 +10,6 @@
  * ------------------------------------------------------------------------
  */
 
-#include "compat/expand_rte_hook.h"
 #include "compat/pg_compat.h"
 #include "compat/relation_tags.h"
 #include "compat/rowmarks_fix.h"
@@ -276,6 +275,13 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		root->parse->resultRelation == rti)
 		return;
 
+#ifdef LEGACY_ROWMARKS_95
+		/* It's better to exit, since RowMarks might be broken */
+		if (root->parse->commandType != CMD_SELECT &&
+			root->parse->commandType != CMD_INSERT)
+			return;
+#endif
+
 	/* Skip if this table is not allowed to act as parent (e.g. FROM ONLY) */
 	if (PARENTHOOD_DISALLOWED == get_rel_parenthood_status(root->parse->queryId, rte))
 		return;
@@ -538,6 +544,9 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 
 		if (pathman_ready)
 		{
+			/* Give rowmark-related attributes correct names */
+			ExecuteForPlanTree(result, postprocess_lock_rows);
+
 			/* Add PartitionFilter node for INSERT queries */
 			ExecuteForPlanTree(result, add_partition_filters);
 

@@ -13,7 +13,6 @@
 #define ROWMARKS_FIX_H
 
 #include "compat/debug_compat_features.h"
-#include "compat/expand_rte_hook.h"
 
 #include "postgres.h"
 #include "nodes/parsenodes.h"
@@ -21,26 +20,23 @@
 #include "nodes/relation.h"
 
 
-/*
- * If PostgreSQL supports 'expand_inherited_rtentry_hook',
- * our hacks are completely unnecessary.
- */
-#if defined(ENABLE_PGPRO_PATCHES) && \
-	defined(ENABLE_ROWMARKS_FIX) && \
-	defined(NATIVE_EXPAND_RTE_HOOK) /* dependency */
-#define NATIVE_PARTITIONING_ROWMARKS
-#endif
-
-
-#ifndef NATIVE_PARTITIONING_ROWMARKS
+#if PG_VERSION_NUM >= 90600
 
 void append_tle_for_rowmark(PlannerInfo *root, PlanRowMark *rc);
 
+#define postprocess_lock_rows(rtable, plan)	( (void) true )
+#define rowmark_add_tableoids(parse)		( (void) true )
+
 #else
 
-#define append_tle_for_rowmark(root, rc) ( (void) true )
+#define LEGACY_ROWMARKS_95 /* NOTE: can't fix 9.5, see PlannerInfo->processed_tlist */
 
-#endif /* NATIVE_PARTITIONING_ROWMARKS */
+#define append_tle_for_rowmark(root, rc)	( (void) true )
+
+void postprocess_lock_rows(List *rtable, Plan *plan);
+void rowmark_add_tableoids(Query *parse);
+
+#endif
 
 
 #endif /* ROWMARKS_FIX_H */
