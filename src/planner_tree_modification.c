@@ -158,7 +158,6 @@ pathman_transform_query_walker(Node *node, void *context)
 		assign_query_id(query);
 
 		/* Apply Query tree modifiers */
-		rowmark_add_tableoids(query);
 		disable_standard_inheritance(query);
 		handle_modification_query(query, (ParamListInfo) context);
 

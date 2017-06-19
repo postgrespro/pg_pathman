@@ -18,6 +18,7 @@
 #include "postgres.h"
 #include "nodes/parsenodes.h"
 #include "nodes/plannodes.h"
+#include "nodes/relation.h"
 
 
 /*
@@ -31,12 +32,14 @@
 #endif
 
 
-#ifdef NATIVE_PARTITIONING_ROWMARKS
-#define postprocess_lock_rows(rtable, plan)	( (void) true )
-#define rowmark_add_tableoids(parse)		( (void) true )
+#ifndef NATIVE_PARTITIONING_ROWMARKS
+
+void append_tle_for_rowmark(PlannerInfo *root, PlanRowMark *rc);
+
 #else
-void postprocess_lock_rows(List *rtable, Plan *plan);
-void rowmark_add_tableoids(Query *parse);
+
+#define append_tle_for_rowmark(root, rc) ( (void) true )
+
 #endif /* NATIVE_PARTITIONING_ROWMARKS */
 
 

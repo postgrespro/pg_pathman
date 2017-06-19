@@ -11,6 +11,7 @@
 
 #include "compat/expand_rte_hook.h"
 #include "compat/pg_compat.h"
+#include "compat/rowmarks_fix.h"
 
 #include "init.h"
 #include "hooks.h"
@@ -410,6 +411,37 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 	root->total_table_pages += (double) child_rel->pages;
 
 
+	/* Create rowmarks required for child rels */
+	parent_rowmark = get_plan_rowmark(root->rowMarks, parent_rti);
+	if (parent_rowmark)
+	{
+		child_rowmark = makeNode(PlanRowMark);
+
+		child_rowmark->rti			= childRTindex;
+		child_rowmark->prti			= parent_rti;
+		child_rowmark->rowmarkId	= parent_rowmark->rowmarkId;
+		/* Reselect rowmark type, because relkind might not match parent */
+		child_rowmark->markType		= select_rowmark_type(child_rte,
+														  parent_rowmark->strength);
+		child_rowmark->allMarkTypes	= (1 << child_rowmark->markType);
+		child_rowmark->strength		= parent_rowmark->strength;
+		child_rowmark->waitPolicy	= parent_rowmark->waitPolicy;
+		child_rowmark->isParent		= false;
+
+		root->rowMarks = lappend(root->rowMarks, child_rowmark);
+
+		/* Adjust tlist for RowMarks (see planner.c) */
+		if (!parent_rowmark->isParent && !root->parse->setOperations)
+		{
+			append_tle_for_rowmark(root, parent_rowmark);
+		}
+
+		/* Include child's rowmark type in parent's allMarkTypes */
+		parent_rowmark->allMarkTypes |= child_rowmark->allMarkTypes;
+		parent_rowmark->isParent = true;
+	}
+
+
 	/* Build an AppendRelInfo for this child */
 	appinfo = makeNode(AppendRelInfo);
 	appinfo->parent_relid	= parent_rti;
@@ -518,31 +550,6 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 
 	/* Close child relations, but keep locks */
 	heap_close(child_relation, NoLock);
-
-
-	/* Create rowmarks required for child rels */
-	parent_rowmark = get_plan_rowmark(root->rowMarks, parent_rti);
-	if (parent_rowmark)
-	{
-		child_rowmark = makeNode(PlanRowMark);
-
-		child_rowmark->rti			= childRTindex;
-		child_rowmark->prti			= parent_rti;
-		child_rowmark->rowmarkId	= parent_rowmark->rowmarkId;
-		/* Reselect rowmark type, because relkind might not match parent */
-		child_rowmark->markType		= select_rowmark_type(child_rte,
-														  parent_rowmark->strength);
-		child_rowmark->allMarkTypes	= (1 << child_rowmark->markType);
-		child_rowmark->strength		= parent_rowmark->strength;
-		child_rowmark->waitPolicy	= parent_rowmark->waitPolicy;
-		child_rowmark->isParent		= false;
-
-		root->rowMarks = lappend(root->rowMarks, child_rowmark);
-
-		/* Include child's rowmark type in parent's allMarkTypes */
-		parent_rowmark->allMarkTypes |= child_rowmark->allMarkTypes;
-		parent_rowmark->isParent = true;
-	}
 
 	return childRTindex;
 }

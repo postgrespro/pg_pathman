@@ -1,6 +1,8 @@
 CREATE EXTENSION pg_pathman;
 CREATE SCHEMA rowmarks;
 
+
+
 CREATE TABLE rowmarks.first(id int NOT NULL);
 CREATE TABLE rowmarks.second(id int NOT NULL);
 
@@ -55,6 +57,38 @@ WHERE id = (SELECT id FROM rowmarks.second
 			OFFSET 5 LIMIT 1
 			FOR UPDATE)
 FOR SHARE;
+
+/* Check updates (plan) */
+EXPLAIN (COSTS OFF)
+UPDATE rowmarks.second SET id = 2
+WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id = 1);
+EXPLAIN (COSTS OFF)
+UPDATE rowmarks.second SET id = 2
+WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id < 1);
+EXPLAIN (COSTS OFF)
+UPDATE rowmarks.second SET id = 2
+WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id = 1 OR id = 2);
+EXPLAIN (COSTS OFF)
+UPDATE rowmarks.second SET id = 2
+WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id = 1)
+RETURNING *, tableoid::regclass;
+
+/* Check updates (execution) */
+UPDATE rowmarks.second SET id = 1
+WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id = 1 OR id = 2)
+RETURNING *, tableoid::regclass;
+
+/* Check deletes (plan) */
+EXPLAIN (COSTS OFF)
+DELETE FROM rowmarks.second
+WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id = 1);
+EXPLAIN (COSTS OFF)
+DELETE FROM rowmarks.second
+WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id < 1);
+EXPLAIN (COSTS OFF)
+DELETE FROM rowmarks.second
+WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id = 1 OR id = 2);
+
 
 
 DROP SCHEMA rowmarks CASCADE;
