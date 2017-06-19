@@ -390,6 +390,19 @@ DROP TABLE test.num_range_rel CASCADE;
 
 DROP TABLE test.range_rel CASCADE;
 
+/* Test attributes copying */
+CREATE UNLOGGED TABLE test.range_rel (
+	id	SERIAL PRIMARY KEY,
+	dt	DATE NOT NULL)
+WITH (fillfactor = 70);
+INSERT INTO test.range_rel (dt)
+	SELECT g FROM generate_series('2015-01-01', '2015-02-15', '1 month'::interval) AS g;
+SELECT pathman.create_range_partitions('test.range_rel', 'dt',
+	'2015-01-01'::date, '1 month'::interval);
+SELECT reloptions, relpersistence FROM pg_class WHERE oid='test.range_rel'::REGCLASS;
+SELECT reloptions, relpersistence FROM pg_class WHERE oid='test.range_rel_1'::REGCLASS;
+DROP TABLE test.range_rel CASCADE;
+
 /* Test automatic partition creation */
 CREATE TABLE test.range_rel (
 	id	SERIAL PRIMARY KEY,

@@ -74,6 +74,7 @@ static ObjectAddress create_table_using_stmt(CreateStmt *create_stmt,
 											 Oid relowner);
 
 static void copy_foreign_keys(Oid parent_relid, Oid partition_oid);
+static void copy_relation_attributes(Oid partition_relid, Datum reloptions);
 static void postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid);
 
 static Oid text_to_regprocedure(text *proname_args);
@@ -671,6 +672,7 @@ create_single_partition_internal(Oid parent_relid,
 								 RangeVar *partition_rv,
 								 char *tablespace)
 {
+	HeapTuple			tuple = NULL;
 	Relation			parentrel;
 
 	/* Value to be returned */
@@ -693,6 +695,7 @@ create_single_partition_internal(Oid parent_relid,
 	Oid					save_userid;
 	int					save_sec_context;
 	bool				need_priv_escalation = !superuser(); /* we might be a SU */
+	Datum				reloptions = (Datum) 0;
 
 	/* Lock parent and check if it exists */
 	LockRelationOid(parent_relid, ShareUpdateExclusiveLock);
@@ -736,6 +739,19 @@ create_single_partition_internal(Oid parent_relid,
 	/* Copy attributes */
 	parentrel = heap_open(parent_relid, NoLock);
 	newrel_rv->relpersistence = parentrel->rd_rel->relpersistence;
+	if (parentrel->rd_options)
+	{
+		bool		isNull;
+
+		tuple = SearchSysCache1(RELOID, ObjectIdGetDatum(parent_relid));
+		if (!HeapTupleIsValid(tuple))
+			elog(ERROR, "cache lookup failed for relation %u", parent_relid);
+
+		reloptions = SysCacheGetAttr(RELOID, tuple, Anum_pg_class_reloptions,
+									 &isNull);
+		if (isNull)
+			reloptions = (Datum) 0;
+	}
 	heap_close(parentrel, NoLock);
 
 	/* If no 'tablespace' is provided, get parent's tablespace */
@@ -787,6 +803,10 @@ create_single_partition_internal(Oid parent_relid,
 			partition_relid = create_table_using_stmt((CreateStmt *) cur_stmt,
 													  child_relowner).objectId;
 
+			/* Copy attributes to partition */
+			if (reloptions)
+				copy_relation_attributes(partition_relid, reloptions);
+
 			/* Copy FOREIGN KEYS of the parent table */
 			copy_foreign_keys(parent_relid, partition_relid);
 
@@ -822,6 +842,9 @@ create_single_partition_internal(Oid parent_relid,
 	/* Restore user's privileges */
 	if (need_priv_escalation)
 		SetUserIdAndSecContext(save_userid, save_sec_context);
+
+	if (tuple != NULL)
+		ReleaseSysCache(tuple);
 
 	return partition_relid;
 }
@@ -1112,6 +1135,38 @@ copy_foreign_keys(Oid parent_relid, Oid partition_oid)
 
 	/* Invoke the callback */
 	FunctionCallInvoke(&copy_fkeys_proc_fcinfo);
+}
+
+/* Copy attributes to partition. Updates partition's tuple in pg_class */
+static void
+copy_relation_attributes(Oid partition_relid, Datum reloptions)
+{
+	Relation	classRel;
+	HeapTuple	tuple,
+				newtuple;
+	Datum		new_val[Natts_pg_class];
+	bool		new_null[Natts_pg_class],
+				new_repl[Natts_pg_class];
+
+	classRel = heap_open(RelationRelationId, RowExclusiveLock);
+	tuple = SearchSysCacheCopy1(RELOID,
+								ObjectIdGetDatum(partition_relid));
+	if (!HeapTupleIsValid(tuple))
+		elog(ERROR, "cache lookup failed for relation %u",
+			 partition_relid);
+
+	/* Fill in relpartbound value */
+	memset(new_val, 0, sizeof(new_val));
+	memset(new_null, false, sizeof(new_null));
+	memset(new_repl, false, sizeof(new_repl));
+	new_val[Anum_pg_class_reloptions - 1] = reloptions;
+	new_null[Anum_pg_class_reloptions - 1] = false;
+	new_repl[Anum_pg_class_reloptions - 1] = true;
+	newtuple = heap_modify_tuple(tuple, RelationGetDescr(classRel),
+								 new_val, new_null, new_repl);
+	CatalogTupleUpdate(classRel, &newtuple->t_self, newtuple);
+	heap_freetuple(newtuple);
+	heap_close(classRel, RowExclusiveLock);
 }
 
 
