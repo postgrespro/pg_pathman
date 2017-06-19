@@ -59,6 +59,8 @@ WHERE id = (SELECT id FROM rowmarks.second
 FOR SHARE;
 
 /* Check updates (plan) */
+SET enable_hashjoin = f;	/* Hash Semi Join on 10 vs Hash Join on 9.6 */
+SET enable_mergejoin = f;	/* Merge Semi Join on 10 vs Merge Join on 9.6 */
 EXPLAIN (COSTS OFF)
 UPDATE rowmarks.second SET id = 2
 WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id = 1);
@@ -72,6 +74,8 @@ EXPLAIN (COSTS OFF)
 UPDATE rowmarks.second SET id = 2
 WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id = 1)
 RETURNING *, tableoid::regclass;
+SET enable_hashjoin = t;
+SET enable_mergejoin = t;
 
 /* Check updates (execution) */
 UPDATE rowmarks.second SET id = 1
@@ -79,6 +83,8 @@ WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id = 1 OR id = 
 RETURNING *, tableoid::regclass;
 
 /* Check deletes (plan) */
+SET enable_hashjoin = f;	/* Hash Semi Join on 10 vs Hash Join on 9.6 */
+SET enable_mergejoin = f;	/* Merge Semi Join on 10 vs Merge Join on 9.6 */
 EXPLAIN (COSTS OFF)
 DELETE FROM rowmarks.second
 WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id = 1);
@@ -88,6 +94,8 @@ WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id < 1);
 EXPLAIN (COSTS OFF)
 DELETE FROM rowmarks.second
 WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id = 1 OR id = 2);
+SET enable_hashjoin = t;
+SET enable_mergejoin = t;
 
 
 

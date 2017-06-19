@@ -169,6 +169,8 @@ FOR SHARE;
 (1 row)
 
 /* Check updates (plan) */
+SET enable_hashjoin = f;	/* Hash Semi Join on 10 vs Hash Join on 9.6 */
+SET enable_mergejoin = f;	/* Merge Semi Join on 10 vs Merge Join on 9.6 */
 EXPLAIN (COSTS OFF)
 UPDATE rowmarks.second SET id = 2
 WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id = 1);
@@ -187,38 +189,38 @@ WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id = 1);
 EXPLAIN (COSTS OFF)
 UPDATE rowmarks.second SET id = 2
 WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id < 1);
-                    QUERY PLAN                     
----------------------------------------------------
+                  QUERY PLAN                   
+-----------------------------------------------
  Update on second
-   ->  Hash Join
-         Hash Cond: (second.id = first_0.id)
-         ->  Seq Scan on second
-         ->  Hash
-               ->  HashAggregate
-                     Group Key: first_0.id
-                     ->  Append
-                           ->  Seq Scan on first_0
-                                 Filter: (id < 1)
-                           ->  Seq Scan on first_1
-                                 Filter: (id < 1)
-                           ->  Seq Scan on first_2
-                                 Filter: (id < 1)
-                           ->  Seq Scan on first_3
-                                 Filter: (id < 1)
-                           ->  Seq Scan on first_4
-                                 Filter: (id < 1)
+   ->  Nested Loop
+         Join Filter: (second.id = first_0.id)
+         ->  HashAggregate
+               Group Key: first_0.id
+               ->  Append
+                     ->  Seq Scan on first_0
+                           Filter: (id < 1)
+                     ->  Seq Scan on first_1
+                           Filter: (id < 1)
+                     ->  Seq Scan on first_2
+                           Filter: (id < 1)
+                     ->  Seq Scan on first_3
+                           Filter: (id < 1)
+                     ->  Seq Scan on first_4
+                           Filter: (id < 1)
+         ->  Materialize
+               ->  Seq Scan on second
 (18 rows)
 
 EXPLAIN (COSTS OFF)
 UPDATE rowmarks.second SET id = 2
 WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id = 1 OR id = 2);
-                 QUERY PLAN                  
----------------------------------------------
+                  QUERY PLAN                   
+-----------------------------------------------
  Update on second
-   ->  Hash Semi Join
-         Hash Cond: (second.id = first_0.id)
+   ->  Nested Loop Semi Join
+         Join Filter: (second.id = first_0.id)
          ->  Seq Scan on second
-         ->  Hash
+         ->  Materialize
                ->  Append
                      ->  Seq Scan on first_0
                            Filter: (id = 1)
@@ -242,6 +244,8 @@ RETURNING *, tableoid::regclass;
                            Filter: (id = 1)
 (8 rows)
 
+SET enable_hashjoin = t;
+SET enable_mergejoin = t;
 /* Check updates (execution) */
 UPDATE rowmarks.second SET id = 1
 WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id = 1 OR id = 2)
@@ -253,6 +257,8 @@ RETURNING *, tableoid::regclass;
 (2 rows)
 
 /* Check deletes (plan) */
+SET enable_hashjoin = f;	/* Hash Semi Join on 10 vs Hash Join on 9.6 */
+SET enable_mergejoin = f;	/* Merge Semi Join on 10 vs Merge Join on 9.6 */
 EXPLAIN (COSTS OFF)
 DELETE FROM rowmarks.second
 WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id = 1);
@@ -271,38 +277,38 @@ WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id = 1);
 EXPLAIN (COSTS OFF)
 DELETE FROM rowmarks.second
 WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id < 1);
-                    QUERY PLAN                     
----------------------------------------------------
+                  QUERY PLAN                   
+-----------------------------------------------
  Delete on second
-   ->  Hash Join
-         Hash Cond: (second.id = first_0.id)
-         ->  Seq Scan on second
-         ->  Hash
-               ->  HashAggregate
-                     Group Key: first_0.id
-                     ->  Append
-                           ->  Seq Scan on first_0
-                                 Filter: (id < 1)
-                           ->  Seq Scan on first_1
-                                 Filter: (id < 1)
-                           ->  Seq Scan on first_2
-                                 Filter: (id < 1)
-                           ->  Seq Scan on first_3
-                                 Filter: (id < 1)
-                           ->  Seq Scan on first_4
-                                 Filter: (id < 1)
+   ->  Nested Loop
+         Join Filter: (second.id = first_0.id)
+         ->  HashAggregate
+               Group Key: first_0.id
+               ->  Append
+                     ->  Seq Scan on first_0
+                           Filter: (id < 1)
+                     ->  Seq Scan on first_1
+                           Filter: (id < 1)
+                     ->  Seq Scan on first_2
+                           Filter: (id < 1)
+                     ->  Seq Scan on first_3
+                           Filter: (id < 1)
+                     ->  Seq Scan on first_4
+                           Filter: (id < 1)
+         ->  Materialize
+               ->  Seq Scan on second
 (18 rows)
 
 EXPLAIN (COSTS OFF)
 DELETE FROM rowmarks.second
 WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id = 1 OR id = 2);
-                 QUERY PLAN                  
----------------------------------------------
+                  QUERY PLAN                   
+-----------------------------------------------
  Delete on second
-   ->  Hash Semi Join
-         Hash Cond: (second.id = first_0.id)
+   ->  Nested Loop Semi Join
+         Join Filter: (second.id = first_0.id)
          ->  Seq Scan on second
-         ->  Hash
+         ->  Materialize
                ->  Append
                      ->  Seq Scan on first_0
                            Filter: (id = 1)
@@ -310,6 +316,8 @@ WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id = 1 OR id = 
                            Filter: (id = 2)
 (10 rows)
 
+SET enable_hashjoin = t;
+SET enable_mergejoin = t;
 DROP SCHEMA rowmarks CASCADE;
 NOTICE:  drop cascades to 7 other objects
 DETAIL:  drop cascades to table rowmarks.first
