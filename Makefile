@@ -67,9 +67,15 @@ EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add
 
 EXTRA_CLEAN = pg_pathman--$(EXTVERSION).sql ./isolation_output
 
+DECL_CHECK_VERSIONS = 10beta1
+
 ifdef USE_PGXS
 PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
+VNUM := $(shell $(PG_CONFIG) --version | awk '{print $$2}')
+ifeq ($(VNUM),$(filter $(VNUM), $(DECL_CHECK_VERSIONS)))
+	REGRESS += pathman_declarative
+endif
 include $(PGXS)
 else
 subdir = contrib/pg_pathman
