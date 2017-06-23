@@ -233,5 +233,32 @@ void handle_attach_partition(AlterTableStmt *stmt, AlterTableCmd *cmd)
 /* handle ALTER TABLE .. DETACH PARTITION command */
 void handle_detach_partition(AlterTableStmt *stmt, AlterTableCmd *cmd)
 {
+	List				   *proc_name;
+	FmgrInfo				proc_flinfo;
+	FunctionCallInfoData	proc_fcinfo;
+	char				   *pathman_schema;
+	Oid						partition_relid,
+							args	= REGCLASSOID;
+	PartitionCmd			*pcmd	= (PartitionCmd *) cmd->def;
+
 	Assert(cmd->subtype == AT_DetachPartition);
+	partition_relid = RangeVarGetRelid(pcmd->name, NoLock, false);
+
+	/* Fetch pg_pathman's schema */
+	pathman_schema = get_namespace_name(get_pathman_schema());
+
+	/* Build function's name */
+	proc_name = list_make2(makeString(pathman_schema),
+						   makeString(CppAsString(detach_range_partition)));
+
+	/* Lookup function's Oid and get FmgrInfo */
+	fmgr_info(LookupFuncName(proc_name, 1, &args, false), &proc_flinfo);
+
+	InitFunctionCallInfoData(proc_fcinfo, &proc_flinfo,
+							 4, InvalidOid, NULL, NULL);
+	proc_fcinfo.arg[0] = ObjectIdGetDatum(partition_relid);
+	proc_fcinfo.argnull[0] = false;
+
+	/* Invoke the callback */
+	FunctionCallInvoke(&proc_fcinfo);
 }
