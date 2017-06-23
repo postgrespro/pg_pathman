@@ -1,0 +1,72 @@
+\set VERBOSITY terse
+SET search_path = 'public';
+CREATE SCHEMA pathman;
+CREATE EXTENSION pg_pathman SCHEMA pathman;
+CREATE SCHEMA test;
+CREATE TABLE test.range_rel (
+	id	SERIAL PRIMARY KEY,
+	dt	DATE NOT NULL
+);
+INSERT INTO test.range_rel (dt)
+SELECT g FROM generate_series('2015-01-01', '2015-04-30', '1 day'::interval) AS g;
+SELECT pathman.create_range_partitions('test.range_rel', 'dt',
+	'2015-01-01'::DATE, '1 month'::INTERVAL);
+ create_range_partitions 
+-------------------------
+                       4
+(1 row)
+
+SELECT * FROM pathman.pathman_partition_list;
+     parent     |    partition     | parttype | expr | range_min  | range_max  
+----------------+------------------+----------+------+------------+------------
+ test.range_rel | test.range_rel_1 |        2 | dt   | 01-01-2015 | 02-01-2015
+ test.range_rel | test.range_rel_2 |        2 | dt   | 02-01-2015 | 03-01-2015
+ test.range_rel | test.range_rel_3 |        2 | dt   | 03-01-2015 | 04-01-2015
+ test.range_rel | test.range_rel_4 |        2 | dt   | 04-01-2015 | 05-01-2015
+(4 rows)
+
+CREATE TABLE test.r2 (LIKE test.range_rel);
+ALTER TABLE test.range_rel ATTACH PARTITION test.r2
+	FOR VALUES FROM ('2015-05-01') TO ('2015-06-01');
+SELECT * FROM pathman.pathman_partition_list;
+     parent     |    partition     | parttype | expr | range_min  | range_max  
+----------------+------------------+----------+------+------------+------------
+ test.range_rel | test.range_rel_1 |        2 | dt   | 01-01-2015 | 02-01-2015
+ test.range_rel | test.range_rel_2 |        2 | dt   | 02-01-2015 | 03-01-2015
+ test.range_rel | test.range_rel_3 |        2 | dt   | 03-01-2015 | 04-01-2015
+ test.range_rel | test.range_rel_4 |        2 | dt   | 04-01-2015 | 05-01-2015
+ test.range_rel | test.r2          |        2 | dt   | 05-01-2015 | 06-01-2015
+(5 rows)
+
+\d+ test.r2;
+                                     Table "test.r2"
+ Column |  Type   | Collation | Nullable | Default | Storage | Stats target | Description 
+--------+---------+-----------+----------+---------+---------+--------------+-------------
+ id     | integer |           | not null |         | plain   |              | 
+ dt     | date    |           | not null |         | plain   |              | 
+Check constraints:
+    "pathman_r2_check" CHECK (dt >= '05-01-2015'::date AND dt < '06-01-2015'::date)
+Inherits: test.range_rel
+
+ALTER TABLE test.range_rel DETACH PARTITION test.r2;
+NOTICE:  trigger "range_rel_upd_trig" for relation "test.r2" does not exist, skipping
+SELECT * FROM pathman.pathman_partition_list;
+     parent     |    partition     | parttype | expr | range_min  | range_max  
+----------------+------------------+----------+------+------------+------------
+ test.range_rel | test.range_rel_1 |        2 | dt   | 01-01-2015 | 02-01-2015
+ test.range_rel | test.range_rel_2 |        2 | dt   | 02-01-2015 | 03-01-2015
+ test.range_rel | test.range_rel_3 |        2 | dt   | 03-01-2015 | 04-01-2015
+ test.range_rel | test.range_rel_4 |        2 | dt   | 04-01-2015 | 05-01-2015
+(4 rows)
+
+\d+ test.r2;
+                                     Table "test.r2"
+ Column |  Type   | Collation | Nullable | Default | Storage | Stats target | Description 
+--------+---------+-----------+----------+---------+---------+--------------+-------------
+ id     | integer |           | not null |         | plain   |              | 
+ dt     | date    |           | not null |         | plain   |              | 
+
+DROP SCHEMA test CASCADE;
+NOTICE:  drop cascades to 7 other objects
+DROP EXTENSION pg_pathman CASCADE;
+DROP SCHEMA pathman CASCADE;
