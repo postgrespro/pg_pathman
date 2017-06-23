@@ -34,8 +34,9 @@ void state_tree_visitor(PlanState *state,
 						void (*visitor) (PlanState *state, void *context),
 						void *context);
 
-/* Query tree rewriting utility */
+/* Query tree rewriting utilities */
 void pathman_transform_query(Query *parse, ParamListInfo params);
+void pathman_post_analyze_query(Query *parse);
 
 /* These functions scribble on Plan tree */
 Plan *add_partition_filters(List *rtable, Plan *plan);

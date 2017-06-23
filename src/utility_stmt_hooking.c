@@ -271,7 +271,6 @@ is_pathman_related_alter_column_type(Node *parsetree,
 	return result;
 }
 
-
 /*
  * CopyGetAttnums - build an integer list of attnums to be copied
  *
