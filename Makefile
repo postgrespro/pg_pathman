@@ -8,7 +8,7 @@ OBJS = src/init.o src/relation_info.o src/utils.o src/partition_filter.o \
 	src/hooks.o src/nodes_common.o src/xact_handling.o src/utility_stmt_hooking.o \
 	src/planner_tree_modification.o src/debug_print.o src/partition_creation.o \
 	src/compat/pg_compat.o src/compat/rowmarks_fix.o src/partition_router.o \
-	src/partition_overseer.o src/declarative.o $(WIN32RES)
+	src/partition_overseer.o $(WIN32RES)
 
 ifdef USE_PGXS
 override PG_CPPFLAGS += -I$(CURDIR)/src/include
@@ -67,7 +67,7 @@ EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add
 
 EXTRA_CLEAN = pg_pathman--$(EXTVERSION).sql ./isolation_output
 
-DECL_CHECK_VERSIONS = 10beta1
+DECL_CHECK_VERSIONS = 10 11
 
 ifdef USE_PGXS
 PG_CONFIG = pg_config
@@ -75,6 +75,7 @@ PGXS := $(shell $(PG_CONFIG) --pgxs)
 VNUM := $(shell $(PG_CONFIG) --version | awk '{print $$2}')
 ifeq ($(VNUM),$(filter $(VNUM), $(DECL_CHECK_VERSIONS)))
 	REGRESS += pathman_declarative
+	OBJS += src/declarative.o
 endif
 include $(PGXS)
 else
