@@ -2,6 +2,19 @@
 
 MODULE_big = pg_pathman
 
+# versions of postgresql with declarative partitioning
+DECL_CHECK_VERSIONS = 10 11
+
+ifdef USE_PGXS
+PG_CONFIG = pg_config
+VNUM := $(shell $(PG_CONFIG) --version | awk '{print $$2}')
+ifeq ($(VNUM),$(filter $(VNUM), $(DECL_CHECK_VERSIONS)))
+	EXTRA_REGRESS = pathman_declarative
+	EXTRA_OBJS = src/declarative.o
+endif
+endif
+include $(PGXS)
+
 OBJS = src/init.o src/relation_info.o src/utils.o src/partition_filter.o \
 	src/runtime_append.o src/runtime_merge_append.o src/pg_pathman.o src/rangeset.o \
 	src/pl_funcs.o src/pl_range_funcs.o src/pl_hash_funcs.o src/pathman_workers.o \
@@ -60,23 +73,15 @@ REGRESS = pathman_array_qual \
 		  pathman_update_triggers \
 		  pathman_upd_del \
 		  pathman_utility_stmt \
-		  pathman_views
-
+		  pathman_views ${EXTRA_REGRESS}
 
 EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add
 
 EXTRA_CLEAN = pg_pathman--$(EXTVERSION).sql ./isolation_output
 
-DECL_CHECK_VERSIONS = 10 11
-
 ifdef USE_PGXS
 PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
-VNUM := $(shell $(PG_CONFIG) --version | awk '{print $$2}')
-ifeq ($(VNUM),$(filter $(VNUM), $(DECL_CHECK_VERSIONS)))
-	REGRESS += pathman_declarative
-	OBJS += src/declarative.o
-endif
 include $(PGXS)
 else
 subdir = contrib/pg_pathman
