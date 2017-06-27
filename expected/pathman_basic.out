@@ -18,7 +18,7 @@ PL/pgSQL function pathman.prepare_for_partitioning(regclass,text,boolean) line 9
 SQL statement "SELECT pathman.prepare_for_partitioning(parent_relid,
 												 expression,
 												 partition_data)"
-PL/pgSQL function pathman.create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 4 at PERFORM
+PL/pgSQL function pathman.create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 3 at PERFORM
 \set VERBOSITY terse
 ALTER TABLE test.hash_rel ALTER COLUMN value SET NOT NULL;
 SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3, partition_data:=false);
