@@ -1,5 +1,6 @@
 #include "declarative.h"
 #include "utils.h"
+#include "partition_creation.h"
 
 #include "fmgr.h"
 #include "access/htup_details.h"
@@ -57,7 +58,8 @@ modify_declative_partitioning_query(Query *query)
 }
 
 /* is it one of declarative partitioning commands? */
-bool is_pathman_related_partitioning_cmd(Node *parsetree)
+bool
+is_pathman_related_partitioning_cmd(Node *parsetree, Oid *parent_relid)
 {
 	if (IsA(parsetree, AlterTableStmt))
 	{
@@ -65,23 +67,28 @@ bool is_pathman_related_partitioning_cmd(Node *parsetree)
 		AlterTableStmt *stmt = (AlterTableStmt *) parsetree;
 		int				cnt = 0;
 
+		*parent_relid = RangeVarGetRelid(stmt->relation, NoLock, false);
+		if (get_pathman_relation_info(*parent_relid) == NULL)
+			return false;
+
+		/*
+		 * Since cmds can contain multiple commmands but we can handle only
+		 * two of them here, so we need to check that there are only commands
+		 * we can handle. In case if cmds contain other commands we skip all
+		 * commands in this statement.
+		 */
 		foreach(lc, stmt->cmds)
 		{
 			AlterTableCmd  *cmd = (AlterTableCmd *) lfirst(lc);
-			int				subtype = cmd->subtype;
-
-			if (subtype < 0)
-				subtype = -subtype;
-
-			switch (subtype)
+			switch (abs(cmd->subtype))
 			{
 				case AT_AttachPartition:
 				case AT_DetachPartition:
 					/*
-					 * we need to fix all subtypes,
+					 * We need to fix all subtypes,
 					 * possibly we're not going to handle this
 					 */
-					cmd->subtype = -(cmd->subtype);
+					cmd->subtype = abs(cmd->subtype);
 					continue;
 				default:
 					cnt++;
@@ -89,6 +96,26 @@ bool is_pathman_related_partitioning_cmd(Node *parsetree)
 		}
 
 		return (cnt == 0);
+	}
+	else if (IsA(parsetree, CreateStmt))
+	{
+		/* inhRelations != NULL, partbound != NULL, tableElts == NULL */
+		CreateStmt	*stmt = (CreateStmt *) parsetree;
+
+		if (stmt->inhRelations && stmt->partbound != NULL)
+		{
+			RangeVar *rv = castNode(RangeVar, linitial(stmt->inhRelations));
+			*parent_relid = RangeVarGetRelid(rv, NoLock, false);
+			if (get_pathman_relation_info(*parent_relid) == NULL)
+				return false;
+
+			if (stmt->tableElts != NIL)
+				elog(ERROR, "pg_pathman doesn't support column definitions "
+						"in declarative syntax yet");
+
+			return true;
+
+		}
 	}
 	return false;
 }
@@ -157,10 +184,10 @@ transform_bound_value(ParseState *pstate, A_Const *con,
 }
 
 /* handle ALTER TABLE .. ATTACH PARTITION command */
-void handle_attach_partition(AlterTableStmt *stmt, AlterTableCmd *cmd)
+void
+handle_attach_partition(Oid parent_relid, AlterTableCmd *cmd)
 {
-	Oid		parent_relid,
-			partition_relid,
+	Oid		partition_relid,
 			proc_args[] = { REGCLASSOID, REGCLASSOID,
 							ANYELEMENTOID, ANYELEMENTOID };
 
@@ -181,7 +208,10 @@ void handle_attach_partition(AlterTableStmt *stmt, AlterTableCmd *cmd)
 
 	Assert(cmd->subtype == AT_AttachPartition);
 
-	parent_relid = RangeVarGetRelid(stmt->relation, NoLock, false);
+	if (pcmd->bound->strategy != PARTITION_STRATEGY_RANGE)
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+		errmsg("pg_pathman only supports queries for range partitions")));
+
 	if ((prel = get_pathman_relation_info(parent_relid)) == NULL)
 		elog(ERROR, "relation is not partitioned");
 
@@ -231,7 +261,8 @@ void handle_attach_partition(AlterTableStmt *stmt, AlterTableCmd *cmd)
 }
 
 /* handle ALTER TABLE .. DETACH PARTITION command */
-void handle_detach_partition(AlterTableStmt *stmt, AlterTableCmd *cmd)
+void
+handle_detach_partition(AlterTableCmd *cmd)
 {
 	List				   *proc_name;
 	FmgrInfo				proc_flinfo;
@@ -261,4 +292,64 @@ void handle_detach_partition(AlterTableStmt *stmt, AlterTableCmd *cmd)
 
 	/* Invoke the callback */
 	FunctionCallInvoke(&proc_fcinfo);
+}
+
+/* handle CREATE TABLE .. PARTITION OF <parent> FOR VALUES FROM .. TO .. */
+void
+handle_create_partition_of(Oid parent_relid, CreateStmt *stmt)
+{
+	Bound					start,
+							end;
+	const PartRelationInfo *prel;
+	ParseState			   *pstate = make_parsestate(NULL);
+	PartitionRangeDatum	   *ldatum,
+						   *rdatum;
+	Const				   *lval,
+						   *rval;
+	A_Const				   *con;
+
+	/* we show errors earlier for these asserts */
+	Assert(stmt->inhRelations != NULL);
+	Assert(stmt->tableElts == NIL);
+
+	if (stmt->partbound->strategy != PARTITION_STRATEGY_RANGE)
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+		errmsg("pg_pathman only supports queries for range partitions")));
+
+	if ((prel = get_pathman_relation_info(parent_relid)) == NULL)
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("table \"%s\" is not partitioned",
+								get_rel_name_or_relid(parent_relid))));
+
+	if (prel->parttype != PT_RANGE)
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("table \"%s\" is not partitioned by RANGE",
+								get_rel_name_or_relid(parent_relid))));
+
+	ldatum = (PartitionRangeDatum *) linitial(stmt->partbound->lowerdatums);
+	con = castNode(A_Const, ldatum->value);
+	lval = transform_bound_value(pstate, con, prel->ev_type, prel->ev_typmod);
+
+	rdatum = (PartitionRangeDatum *) linitial(stmt->partbound->upperdatums);
+	con = castNode(A_Const, rdatum->value);
+	rval = transform_bound_value(pstate, con, prel->ev_type, prel->ev_typmod);
+
+	start = lval->constisnull?
+		MakeBoundInf(MINUS_INFINITY) :
+		MakeBound(lval->constvalue);
+
+	end = rval->constisnull?
+		MakeBoundInf(PLUS_INFINITY) :
+		MakeBound(rval->constvalue);
+
+	/* more checks */
+	check_range_available(parent_relid, &start, &end, lval->consttype, true);
+
+	/* Create a new RANGE partition and return its Oid */
+	create_single_range_partition_internal(parent_relid,
+										   &start,
+										   &end,
+										   lval->consttype,
+										   stmt->relation,
+										   stmt->tablespacename);
 }

@@ -963,9 +963,9 @@ pathman_process_utility_hook(Node *first_arg,
 								get_rel_name(relation_oid))));
 		}
 #if PG_VERSION_NUM >= 100000
-		else if (is_pathman_related_partitioning_cmd(parsetree))
+		else if (is_pathman_related_partitioning_cmd(parsetree, &relation_oid))
 		{
-			/* we can handle all the partitioning commands */
+			/* we can handle all the partitioning commands in ALTER .. TABLE */
 			if (IsA(parsetree, AlterTableStmt))
 			{
 				ListCell		*lc;
@@ -977,15 +977,20 @@ pathman_process_utility_hook(Node *first_arg,
 					switch (cmd->subtype)
 					{
 						case AT_AttachPartition:
-							handle_attach_partition(stmt, cmd);
+							handle_attach_partition(relation_oid, cmd);
 							return;
 						case AT_DetachPartition:
-							handle_detach_partition(stmt, cmd);
+							handle_detach_partition(cmd);
 							return;
 						default:
 							elog(ERROR, "can't handle this command");
 					}
 				}
+			}
+			else if (IsA(parsetree, CreateStmt))
+			{
+				handle_create_partition_of(relation_oid, (CreateStmt *) parsetree);
+				return;
 			}
 		}
 #endif
