@@ -204,11 +204,14 @@ handle_attach_partition(Oid parent_relid, AlterTableCmd *cmd)
 	ParseState			   *pstate = make_parsestate(NULL);
 	const PartRelationInfo *prel;
 
-	PartitionCmd	*pcmd	= (PartitionCmd *) cmd->def;
+	PartitionCmd		*pcmd	= (PartitionCmd *) cmd->def;
+
+	/* in 10beta1, PartitionCmd->bound is (Node *) */
+	PartitionBoundSpec	*bound = (PartitionBoundSpec *) pcmd->bound;
 
 	Assert(cmd->subtype == AT_AttachPartition);
 
-	if (pcmd->bound->strategy != PARTITION_STRATEGY_RANGE)
+	if (bound->strategy != PARTITION_STRATEGY_RANGE)
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 		errmsg("pg_pathman only supports queries for range partitions")));
 
@@ -224,11 +227,15 @@ handle_attach_partition(Oid parent_relid, AlterTableCmd *cmd)
 	proc_name = list_make2(makeString(pathman_schema),
 						   makeString(CppAsString(attach_range_partition)));
 
-	ldatum = (PartitionRangeDatum *) linitial(pcmd->bound->lowerdatums);
+	if ((!list_length(bound->lowerdatums)) ||
+		(!list_length(bound->upperdatums)))
+		elog(ERROR, "provide start and end value for range partition");
+
+	ldatum = (PartitionRangeDatum *) linitial(bound->lowerdatums);
 	con = castNode(A_Const, ldatum->value);
 	lval = transform_bound_value(pstate, con, prel->ev_type, prel->ev_typmod);
 
-	rdatum = (PartitionRangeDatum *) linitial(pcmd->bound->upperdatums);
+	rdatum = (PartitionRangeDatum *) linitial(bound->upperdatums);
 	con = castNode(A_Const, rdatum->value);
 	rval = transform_bound_value(pstate, con, prel->ev_type, prel->ev_typmod);
 
@@ -246,10 +253,6 @@ handle_attach_partition(Oid parent_relid, AlterTableCmd *cmd)
 	fn_args = list_make4(NULL, NULL, lval, rval);
 	proc_fcinfo.flinfo->fn_expr =
 		(Node *) make_fn_expr(proc_fcinfo.flinfo->fn_oid, fn_args);
-
-	if ((!list_length(pcmd->bound->lowerdatums)) ||
-		(!list_length(pcmd->bound->upperdatums)))
-		elog(ERROR, "provide start and end value for range partition");
 
 	proc_fcinfo.arg[2] = lval->constvalue;
 	proc_fcinfo.argnull[2] = ldatum->infinite || lval->constisnull;
@@ -308,11 +311,14 @@ handle_create_partition_of(Oid parent_relid, CreateStmt *stmt)
 						   *rval;
 	A_Const				   *con;
 
+	/* in 10beta1, PartitionCmd->bound is (Node *) */
+	PartitionBoundSpec	*bound = (PartitionBoundSpec *) stmt->partbound;
+
 	/* we show errors earlier for these asserts */
 	Assert(stmt->inhRelations != NULL);
 	Assert(stmt->tableElts == NIL);
 
-	if (stmt->partbound->strategy != PARTITION_STRATEGY_RANGE)
+	if (bound->strategy != PARTITION_STRATEGY_RANGE)
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 		errmsg("pg_pathman only supports queries for range partitions")));
 
@@ -326,11 +332,11 @@ handle_create_partition_of(Oid parent_relid, CreateStmt *stmt)
 						 errmsg("table \"%s\" is not partitioned by RANGE",
 								get_rel_name_or_relid(parent_relid))));
 
-	ldatum = (PartitionRangeDatum *) linitial(stmt->partbound->lowerdatums);
+	ldatum = (PartitionRangeDatum *) linitial(bound->lowerdatums);
 	con = castNode(A_Const, ldatum->value);
 	lval = transform_bound_value(pstate, con, prel->ev_type, prel->ev_typmod);
 
-	rdatum = (PartitionRangeDatum *) linitial(stmt->partbound->upperdatums);
+	rdatum = (PartitionRangeDatum *) linitial(bound->upperdatums);
 	con = castNode(A_Const, rdatum->value);
 	rval = transform_bound_value(pstate, con, prel->ev_type, prel->ev_typmod);
 
