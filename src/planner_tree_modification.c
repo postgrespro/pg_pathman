@@ -10,7 +10,6 @@
  * ------------------------------------------------------------------------
  */
 
-#include "compat/expand_rte_hook.h"
 #include "compat/relation_tags.h"
 #include "compat/rowmarks_fix.h"
 

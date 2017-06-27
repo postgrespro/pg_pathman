@@ -234,7 +234,7 @@ PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line 9 at PERF
 SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
 												 expression,
 												 partition_data)"
-PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 4 at PERFORM
+PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 3 at PERFORM
 /* Try using system attributes */
 SELECT create_hash_partitions('test_exprs.hash_rel', 'xmin', 4);
 ERROR:  failed to analyze partitioning expression "xmin"
@@ -244,7 +244,7 @@ PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line 9 at PERF
 SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
 												 expression,
 												 partition_data)"
-PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 4 at PERFORM
+PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 3 at PERFORM
 /* Try using subqueries */
 SELECT create_hash_partitions('test_exprs.hash_rel',
 							  'value, (select oid from pg_class limit 1)',
@@ -256,7 +256,7 @@ PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line 9 at PERF
 SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
 												 expression,
 												 partition_data)"
-PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 4 at PERFORM
+PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 3 at PERFORM
 /* Try using mutable expression */
 SELECT create_hash_partitions('test_exprs.hash_rel', 'random()', 4);
 ERROR:  failed to analyze partitioning expression "random()"
@@ -266,7 +266,7 @@ PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line 9 at PERF
 SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
 												 expression,
 												 partition_data)"
-PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 4 at PERFORM
+PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 3 at PERFORM
 /* Try using broken parentheses */
 SELECT create_hash_partitions('test_exprs.hash_rel', 'value * value2))', 4);
 ERROR:  failed to parse partitioning expression "value * value2))"
@@ -276,7 +276,7 @@ CONTEXT:  PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line
 SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
 												 expression,
 												 partition_data)"
-PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 4 at PERFORM
+PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 3 at PERFORM
 /* Try using missing columns */
 SELECT create_hash_partitions('test_exprs.hash_rel', 'value * value3', 4);
 ERROR:  failed to analyze partitioning expression "value * value3"
@@ -287,7 +287,7 @@ CONTEXT:  PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line
 SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
 												 expression,
 												 partition_data)"
-PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 4 at PERFORM
+PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 3 at PERFORM
 /* Check that 'pathman_hooks_enabled' is true (1 partition in plan) */
 EXPLAIN (COSTS OFF) INSERT INTO test_exprs.canary_copy
 SELECT * FROM test_exprs.canary WHERE val = 1;
