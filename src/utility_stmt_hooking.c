@@ -31,8 +31,10 @@
 #include "utils/memutils.h"
 #include "utils/rls.h"
 
-#include "libpq/libpq.h"
-
+/* we avoid includig libpq.h because it requires openssl.h */
+#include "libpq/pqcomm.h"
+extern ProtocolVersion FrontendProtocol;
+extern void pq_endmsgread(void);
 
 /* Determine whether we should enable COPY or not (PostgresPro has a fix) */
 #if defined(WIN32) && \

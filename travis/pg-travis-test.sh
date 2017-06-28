@@ -68,7 +68,7 @@ CLUSTER_PATH=$(pwd)/test_cluster
 $initdb_path -D $CLUSTER_PATH -U $USER -A trust
 
 # build pg_pathman (using CFLAGS_SL for gcov)
-make USE_PGXS=1 PG_CONFIG=$config_path CFLAGS_SL="$($config_path --cflags_sl) -coverage"
+make USE_PGXS=1 CC=${CC} PG_CONFIG=$config_path CFLAGS_SL="$($config_path --cflags_sl) -coverage"
 sudo make install USE_PGXS=1 PG_CONFIG=$config_path
 
 # check build
