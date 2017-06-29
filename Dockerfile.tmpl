@@ -2,12 +2,20 @@ FROM postgres:${PG_VERSION}-alpine
 
 ENV LANG=C.UTF-8 PGDATA=/pg/data
 
-RUN echo 'http://dl-cdn.alpinelinux.org/alpine/v3.6/main' > /etc/apk/repositories && \
-	echo 'http://dl-cdn.alpinelinux.org/alpine/v3.6/community' >> /etc/apk/repositories && \
+RUN if [ "${CHECK_CODE}" = "clang" ] ; then \
+	apk --no-cache add clang-analyzer --repository http://dl-3.alpinelinux.org/alpine/edge/main; \
+	fi
+
+RUN if [ "${CHECK_CODE}" = "cppcheck" ] ; then \
+	apk --no-cache add cppcheck --repository http://dl-cdn.alpinelinux.org/alpine/v3.6/community \
+	fi
+
+RUN if [ "${CHECK_CODE}" = "false" ] ; then \
 	apk --no-cache add python3 gcc make musl-dev cppcheck && \
-	apk --no-cache add clang-analyzer --repository http://dl-3.alpinelinux.org/alpine/edge/main/ && \
 	pip3 install testgres && \
-	mkdir -p /pg/data && \
+	fi
+
+RUN mkdir -p /pg/data && \
 	mkdir /pg/pg_pathman && \
 	chown postgres:postgres ${PGDATA} && \
 	chmod a+rwx /usr/local/lib/postgresql && \
