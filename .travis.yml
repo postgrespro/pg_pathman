@@ -10,7 +10,7 @@ services:
     - docker
 
 install:
-    - sed -e 's/${CC}/'${CC}/g -e 's/${PG_VERSION}/'${PG_VERSION}/g Dockerfile.tmpl  > Dockerfile
+    - sed -e 's/${CHECK_CODE}/'${CHECK_CODE}/g -e 's/${CC}/'${CC}/g -e 's/${PG_VERSION}/'${PG_VERSION}/g Dockerfile.tmpl  > Dockerfile
     - docker-compose build
 
 script:
@@ -18,11 +18,8 @@ script:
 
 env:
     - PG_VERSION=10  CHECK_CODE=true CC=clang
-    - PG_VERSION=10  CHECK_CODE=false CC=clang
     - PG_VERSION=9.6 CHECK_CODE=true CC=clang
-    - PG_VERSION=9.6 CHECK_CODE=false CC=clang
     - PG_VERSION=9.5 CHECK_CODE=true CC=clang
-    - PG_VERSION=9.5 CHECK_CODE=false CC=clang
     - PG_VERSION=10  CHECK_CODE=true CC=gcc
     - PG_VERSION=10  CHECK_CODE=false CC=gcc
     - PG_VERSION=9.6 CHECK_CODE=true CC=gcc
