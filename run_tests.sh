@@ -3,7 +3,8 @@
 set -eux
 
 echo CHECK_CODE=$CHECK_CODE
-echo PG_VERSION=$PG_VERSION
+
+status=0
 
 # perform code analysis if necessary
 if [ "$CHECK_CODE" = "clang" ]; then
@@ -15,6 +16,7 @@ elif [ "$CHECK_CODE" = "cppcheck" ]; then
         --enable=warning,portability,performance \
         --suppress=redundantAssignment \
         --suppress=uselessAssignmentPtrArg \
+		--suppress=literalWithCharPtrCompare \
         --suppress=incorrectStringBooleanError \
         --std=c89 src/*.c src/include/*.h 2> cppcheck.log
 
