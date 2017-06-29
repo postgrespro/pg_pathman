@@ -2,7 +2,9 @@
 
 set -eux
 
-id
+echo CC=$CC
+echo CHECK_CODE=$CHECK_CODE
+echo PG_VERSION=$PG_VERSION
 
 # perform code analysis if necessary
 if [ $CHECK_CODE = "true" ]; then
