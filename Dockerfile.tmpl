@@ -1,9 +1,9 @@
 FROM postgres:${PG_VERSION}-alpine
 
-ENV LANG=C.UTF-8 PGDATA=/pg/data
+ENV LANG=C.UTF-8 PGDATA=/pg/data SELCC=${CC}
 RUN apk --no-cache add python3 gcc make musl-dev ${CC}
 
-RUN if ${CHECK_CODE} -eq "true" && ${CC} -eq "gcc"; then \
+RUN if ${CHECK_CODE} -eq "true" && ${SELCC} -eq "gcc"; then \
 	echo 'http://dl-cdn.alpinelinux.org/alpine/v3.6/main' > /etc/apk/repositories && \
 	echo 'http://dl-cdn.alpinelinux.org/alpine/v3.6/community' >> /etc/apk/repositories && \
 	apk --no-cache add cppcheck; \
