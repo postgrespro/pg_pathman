@@ -2,7 +2,6 @@
 
 set -eux
 
-echo CC=$CC
 echo COMPILER=$COMPILER
 echo CHECK_CODE=$CHECK_CODE
 echo PG_VERSION=$PG_VERSION
