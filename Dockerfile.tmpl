@@ -3,7 +3,8 @@ FROM postgres:${PG_VERSION}-alpine
 ENV LANG=C.UTF-8 PGDATA=/pg/data
 
 RUN if [ "${CHECK_CODE}" = "clang" ] ; then \
-	apk --no-cache add clang-analyzer make musl-dev --repository http://dl-3.alpinelinux.org/alpine/edge/main; \
+	echo 'http://dl-3.alpinelinux.org/alpine/edge/main' > /etc/apk/repositories; \
+	apk --no-cache add clang-analyzer make musl-dev; \
 	fi
 
 RUN if [ "${CHECK_CODE}" = "cppcheck" ] ; then \
