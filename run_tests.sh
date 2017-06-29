@@ -3,17 +3,18 @@
 set -eux
 
 echo CC=$CC
+echo COMPILER=$COMPILER
 echo CHECK_CODE=$CHECK_CODE
 echo PG_VERSION=$PG_VERSION
 
 # perform code analysis if necessary
 if [ $CHECK_CODE = "true" ]; then
 
-	if [ "$CC" = "clang" ]; then
+	if [ "$COMPILER" = "clang" ]; then
 		scan-build --status-bugs make USE_PGXS=1 || status=$?
 		exit $status
 
-	elif [ "$CC" = "gcc" ]; then
+	elif [ "$COMPILER" = "gcc" ]; then
 		cppcheck --template "{file} ({line}): {severity} ({id}): {message}" \
 			--enable=warning,portability,performance \
 			--suppress=redundantAssignment \
