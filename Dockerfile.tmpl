@@ -4,7 +4,7 @@ ENV LANG=C.UTF-8 PGDATA=/pg/data
 
 RUN if [ "${CHECK_CODE}" = "clang" ] ; then \
 	echo 'http://dl-3.alpinelinux.org/alpine/edge/main' > /etc/apk/repositories; \
-	apk --no-cache add clang-analyzer make musl-dev; \
+	apk --no-cache add clang-analyzer make musl-dev gcc; \
 	fi
 
 RUN if [ "${CHECK_CODE}" = "cppcheck" ] ; then \
