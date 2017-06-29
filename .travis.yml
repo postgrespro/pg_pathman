@@ -10,7 +10,7 @@ services:
     - docker
 
 install:
-    - sed -e 's/${CHECK_CODE}/'${CHECK_CODE}/g -e 's/${COMPILER}/'${COMPILER}/g -e 's/${PG_VERSION}/'${PG_VERSION}/g Dockerfile.tmpl  > Dockerfile
+    - sed -e 's/${CHECK_CODE}/'${CHECK_CODE}/g -e 's/${PG_VERSION}/'${PG_VERSION}/g Dockerfile.tmpl  > Dockerfile
     - docker-compose build
 
 script:
