@@ -2,36 +2,32 @@
 
 set -eux
 
-echo COMPILER=$COMPILER
 echo CHECK_CODE=$CHECK_CODE
 echo PG_VERSION=$PG_VERSION
 
 # perform code analysis if necessary
-if [ $CHECK_CODE = "true" ]; then
+if [ "$CHECK_CODE" = "clang" ]; then
+    scan-build --status-bugs make USE_PGXS=1 || status=$?
+    exit $status
 
-	if [ "$COMPILER" = "clang" ]; then
-		scan-build --status-bugs make USE_PGXS=1 || status=$?
-		exit $status
+elif [ "$CHECK_CODE" = "cppcheck" ]; then
+    cppcheck --template "{file} ({line}): {severity} ({id}): {message}" \
+        --enable=warning,portability,performance \
+        --suppress=redundantAssignment \
+        --suppress=uselessAssignmentPtrArg \
+        --suppress=incorrectStringBooleanError \
+        --std=c89 src/*.c src/include/*.h 2> cppcheck.log
 
-	elif [ "$COMPILER" = "gcc" ]; then
-		cppcheck --template "{file} ({line}): {severity} ({id}): {message}" \
-			--enable=warning,portability,performance \
-			--suppress=redundantAssignment \
-			--suppress=uselessAssignmentPtrArg \
-			--suppress=incorrectStringBooleanError \
-			--std=c89 src/*.c src/*.h 2> cppcheck.log
+    if [ -s cppcheck.log ]; then
+        cat cppcheck.log
+        status=1 # error
+    fi
 
-		if [ -s cppcheck.log ]; then
-			cat cppcheck.log
-			status=1 # error
-		fi
-
-		exit $status
-	fi
-
-	# don't forget to "make clean"
-	make USE_PGXS=1 clean
+    exit $status
 fi
+
+# don't forget to "make clean"
+make USE_PGXS=1 clean
 
 # initialize database
 initdb

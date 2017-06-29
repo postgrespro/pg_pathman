@@ -17,15 +17,15 @@ script:
     - docker-compose run tests
 
 env:
-    - PG_VERSION=10  CHECK_CODE=true COMPILER=clang
-    - PG_VERSION=9.6 CHECK_CODE=true COMPILER=clang
-    - PG_VERSION=9.5 CHECK_CODE=true COMPILER=clang
-    - PG_VERSION=10  CHECK_CODE=true COMPILER=gcc
-    - PG_VERSION=10  CHECK_CODE=false COMPILER=gcc
-    - PG_VERSION=9.6 CHECK_CODE=true COMPILER=gcc
-    - PG_VERSION=9.6 CHECK_CODE=false COMPILER=gcc
-    - PG_VERSION=9.5 CHECK_CODE=true COMPILER=gcc
-    - PG_VERSION=9.5 CHECK_CODE=false COMPILER=gcc
+    - PG_VERSION=10  CHECK_CODE=clang
+    - PG_VERSION=9.6 CHECK_CODE=clang
+    - PG_VERSION=9.5 CHECK_CODE=clang
+    - PG_VERSION=10  CHECK_CODE=cppcheck
+    - PG_VERSION=10  CHECK_CODE=false
+    - PG_VERSION=9.6 CHECK_CODE=cppcheck
+    - PG_VERSION=9.6 CHECK_CODE=false
+    - PG_VERSION=9.5 CHECK_CODE=cppcheck
+    - PG_VERSION=9.5 CHECK_CODE=false
 
 after_success:
   - bash <(curl -s https://codecov.io/bash)
