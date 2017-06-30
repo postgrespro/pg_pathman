@@ -671,8 +671,9 @@ merge_range_partitions(PG_FUNCTION_ARGS)
 }
 
 static void
-merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
+merge_range_partitions_internal(Oid parent_relid, Oid *parts, uint32 nparts)
 {
+	Oid					    partition_relid;
 	const PartRelationInfo *prel;
 	List				   *rentry_list = NIL;
 	RangeEntry			   *ranges,
@@ -680,23 +681,24 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 						   *last;
 	FmgrInfo				cmp_proc;
 	int						i;
+	Bound					min,
+							max;
 
-	prel = get_pathman_relation_info(parent);
-	shout_if_prel_is_invalid(parent, prel, PT_RANGE);
+	prel = get_pathman_relation_info(parent_relid);
+	shout_if_prel_is_invalid(parent_relid, prel, PT_RANGE);
 
 	/* Fetch ranges array */
 	ranges = PrelGetRangesArray(prel);
 
 	/* Lock parent till transaction's end */
-	LockRelationOid(parent, ShareUpdateExclusiveLock);
+	LockRelationOid(parent_relid, ShareUpdateExclusiveLock);
 
 	/* Process partitions */
 	for (i = 0; i < nparts; i++)
 	{
 		int j;
 
-		/* Prevent modification of partitions */
-		LockRelationOid(parts[0], AccessExclusiveLock);
+		LockRelationOid(parts[i], AccessShareLock);
 
 		/* Look for the specified partition */
 		for (j = 0; j < PrelChildrenCount(prel); j++)
@@ -724,28 +726,32 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 		first = tmp;
 	}
 
-	/* Drop old constraint and create a new one */
-	modify_range_constraint(parts[0],
-							prel->expr_cstr,
-							prel->ev_type,
-							&first->min,
-							&last->max);
+	/* We need to save bounds, they will be removed at invalidation */
+	min = first->min;
+	max = last->max;
 
-	/* Make constraint visible */
+	/* Create a new RANGE partition and return its Oid */
+	partition_relid = create_single_range_partition_internal(parent_relid,
+															 &min,
+															 &max,
+															 prel->ev_type,
+															 NULL,
+															 NULL);
+	/* Make new relation visible */
 	CommandCounterIncrement();
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "could not connect using SPI");
 
-	/* Migrate the data from all partition to the first one */
+	/* Copy the data from all partition to the first one */
 	for (i = 1; i < nparts; i++)
 	{
-		char *query = psprintf("WITH part_data AS ( "
-									"DELETE FROM %s RETURNING "
-							   "*) "
-							   "INSERT INTO %s SELECT * FROM part_data",
-							   get_qualified_rel_name(parts[i]),
-							   get_qualified_rel_name(parts[0]));
+		/* Prevent modification on relation */
+		LockRelationOid(parts[i], ShareLock);
+
+		char *query = psprintf("INSERT INTO %s SELECT * FROM %s",
+							   get_qualified_rel_name(partition_relid),
+							   get_qualified_rel_name(parts[i]));
 
 		SPI_exec(query, 0);
 		pfree(query);
@@ -753,9 +759,12 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 
 	SPI_finish();
 
-	/* Drop obsolete partitions */
-	for (i = 1; i < nparts; i++)
+	/* Drop partitions */
+	for (i = 0; i < nparts; i++)
+	{
+		LockRelationOid(parts[i], AccessExclusiveLock);
 		drop_table_by_oid(parts[i]);
+	}
 }
 
 
