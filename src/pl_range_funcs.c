@@ -29,6 +29,7 @@
 #include "utils/lsyscache.h"
 #include "utils/numeric.h"
 #include "utils/ruleutils.h"
+#include "utils/snapmgr.h"
 #include "utils/syscache.h"
 
 #if PG_VERSION_NUM >= 100000
@@ -72,10 +73,11 @@ static void modify_range_constraint(Oid partition_relid,
 									const Bound *lower,
 									const Bound *upper);
 static char *get_qualified_rel_name(Oid relid);
-static void drop_table_by_oid(Oid relid);
+static void drop_table_by_oid(Oid relid, bool concurrent);
 static bool interval_is_trivial(Oid atttype,
 								Datum interval,
 								Oid interval_type);
+static void remove_inheritance(Oid parent_relid, Oid partition_relid);
 
 
 /*
@@ -737,6 +739,10 @@ merge_range_partitions_internal(Oid parent_relid, Oid *parts, uint32 nparts)
 															 prel->ev_type,
 															 NULL,
 															 NULL);
+
+	/* should be invalidated */
+	//Assert(!prel->valid);
+
 	/* Make new relation visible */
 	CommandCounterIncrement();
 
@@ -744,12 +750,14 @@ merge_range_partitions_internal(Oid parent_relid, Oid *parts, uint32 nparts)
 		elog(ERROR, "could not connect using SPI");
 
 	/* Copy the data from all partition to the first one */
-	for (i = 1; i < nparts; i++)
+	for (i = 0; i < nparts; i++)
 	{
+		char *query;
+
 		/* Prevent modification on relation */
 		LockRelationOid(parts[i], ShareLock);
 
-		char *query = psprintf("INSERT INTO %s SELECT * FROM %s",
+		query = psprintf("INSERT INTO %s SELECT * FROM %s",
 							   get_qualified_rel_name(partition_relid),
 							   get_qualified_rel_name(parts[i]));
 
@@ -759,11 +767,22 @@ merge_range_partitions_internal(Oid parent_relid, Oid *parts, uint32 nparts)
 
 	SPI_finish();
 
-	/* Drop partitions */
+	/*
+	 * Now detach these partitions.
+	 * this would get AccessExclusiveLock.
+	 */
+	for (i = 0; i < nparts; i++)
+		remove_inheritance(parent_relid, parts[i]);
+
+	/* Now we can drop the partitions */
 	for (i = 0; i < nparts; i++)
 	{
+		/*
+		 * we should get AccessExclusiveLock anyway, because logic of
+		 * ALTER TABLE .. NO INHERIT that we did before could change
+		 */
 		LockRelationOid(parts[i], AccessExclusiveLock);
-		drop_table_by_oid(parts[i]);
+		drop_table_by_oid(parts[i], false);
 	}
 }
 
@@ -825,7 +844,7 @@ drop_range_partition_expand_next(PG_FUNCTION_ARGS)
 	}
 
 	/* Finally drop this partition */
-	drop_table_by_oid(relid);
+	drop_table_by_oid(relid, false);
 
 	PG_RETURN_VOID();
 }
@@ -1244,7 +1263,7 @@ get_qualified_rel_name(Oid relid)
  * Drop table using it's Oid
  */
 static void
-drop_table_by_oid(Oid relid)
+drop_table_by_oid(Oid relid, bool concurrent)
 {
 	DropStmt	   *n = makeNode(DropStmt);
 	const char	   *relname = get_qualified_rel_name(relid);
@@ -1256,7 +1275,30 @@ drop_table_by_oid(Oid relid)
 	n->arguments	= NIL;
 #endif
 	n->behavior		= DROP_RESTRICT;  /* default behavior */
-	n->concurrent	= false;
+	n->concurrent	= concurrent;
 
 	RemoveRelations(n);
+}
+
+/* Remove inheritance for partition */
+static void
+remove_inheritance(Oid parent_relid, Oid partition_relid)
+{
+	AlterTableStmt *stmt = makeNode(AlterTableStmt);
+	AlterTableCmd  *cmd = makeNode(AlterTableCmd);
+	LOCKMODE		lockmode;
+
+	stmt->relation = makeRangeVarFromNameList(
+			stringToQualifiedNameList(get_qualified_rel_name(partition_relid)));
+	stmt->relkind = OBJECT_TABLE;
+	stmt->cmds = list_make1(cmd);
+	stmt->missing_ok = false;
+
+	cmd->subtype = AT_DropInherit;
+	cmd->def = (Node *) makeRangeVarFromNameList(
+			stringToQualifiedNameList(get_qualified_rel_name(parent_relid)));
+
+	lockmode = AlterTableGetLockLevel(stmt->cmds);
+	LockRelationOid(partition_relid, lockmode);
+	AlterTable(partition_relid, lockmode, stmt);
 }
