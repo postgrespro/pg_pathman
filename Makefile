@@ -83,4 +83,4 @@ python_tests:
 	$(MAKE) -C tests/python partitioning_tests
 
 cmocka_tests:
-	$(MAKE) -C tests/cmocka check
+	$(MAKE) -C tests/cmocka clean check

@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# This is a main testing script for:
+#	* regression tests
+#	* testgres-based tests
+#	* cmocka-based tests
+# Copyright (c) 2017, Postgres Professional
+
 set -eux
 
 echo CHECK_CODE=$CHECK_CODE
@@ -12,7 +18,8 @@ if [ "$CHECK_CODE" = "clang" ]; then
     exit $status
 
 elif [ "$CHECK_CODE" = "cppcheck" ]; then
-    cppcheck --template "{file} ({line}): {severity} ({id}): {message}" \
+    cppcheck \
+		--template "{file} ({line}): {severity} ({id}): {message}" \
         --enable=warning,portability,performance \
         --suppress=redundantAssignment \
         --suppress=uselessAssignmentPtrArg \
@@ -34,8 +41,8 @@ make USE_PGXS=1 clean
 # initialize database
 initdb
 
-# build pg_pathman (using CFLAGS_SL for gcov)
-make USE_PGXS=1 CFLAGS_SL="$(pg_config --cflags_sl) -coverage"
+# build pg_pathman (using PG_CPPFLAGS for gcov)
+make USE_PGXS=1 PG_CPPFLAGS="-coverage"
 make USE_PGXS=1 install
 
 # check build
@@ -69,7 +76,10 @@ if [ $status -ne 0 ]; then exit $status; fi
 rm -f tests/cmocka/*.gcno
 rm -f tests/cmocka/*.gcda
 
-#generate *.gcov files
+# generate *.gcov files
 gcov src/*.c src/compat/*.c src/include/*.h src/include/compat/*.h
+
+# send coverage stats to Coveralls
+bash <(curl -s https://codecov.io/bash)
 
 exit $status
