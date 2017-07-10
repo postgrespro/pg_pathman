@@ -14,7 +14,7 @@ install:
     - docker-compose build
 
 script:
-    - docker-compose run tests $(bash <(curl -s https://codecov.io/env))
+    - docker-compose run $(bash <(curl -s https://codecov.io/env)) tests
 
 env:
     - PG_VERSION=10  CHECK_CODE=clang
