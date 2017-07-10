@@ -12,7 +12,8 @@ RUN if [ "${CHECK_CODE}" = "cppcheck" ] ; then \
 	fi
 
 RUN if [ "${CHECK_CODE}" = "false" ] ; then \
-	apk --no-cache add python3 gcc make musl-dev;\
+	echo 'http://dl-3.alpinelinux.org/alpine/edge/main' > /etc/apk/repositories; \
+	apk --no-cache add python3 gcc make musl-dev cmocka-dev;\
 	pip3 install testgres; \
 	fi
 

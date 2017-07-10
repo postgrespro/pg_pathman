@@ -61,7 +61,7 @@ if [ $status -ne 0 ]; then exit $status; fi
 
 set -u
 
-# run mock tests (using CFLAGS_SL for gcov)
+# run cmocka tests (using CFLAGS_SL for gcov)
 make USE_PGXS=1 PG_CPPFLAGS="-coverage" cmocka_tests || status=$?
 if [ $status -ne 0 ]; then exit $status; fi
 

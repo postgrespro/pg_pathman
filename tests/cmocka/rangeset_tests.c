@@ -1,9 +1,9 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <setjmp.h>
+#include <cmocka.h>
 
 #include "rangeset.h"
-#include "cmockery.h"
 
 /* for "print" functions */
 #include "debug_print.c"
@@ -30,18 +30,18 @@ int
 main(void)
 {
 	/* Array of test functions */
-	const struct UnitTest tests[] =
+	const struct CMUnitTest tests[] =
 	{
-		unit_test(test_irange_basic),
-		unit_test(test_irange_list_union_merge),
-		unit_test(test_irange_list_union_lossy_cov),
-		unit_test(test_irange_list_union_complete_cov),
-		unit_test(test_irange_list_union_intersecting),
-		unit_test(test_irange_list_intersection),
+		cmocka_unit_test(test_irange_basic),
+		cmocka_unit_test(test_irange_list_union_merge),
+		cmocka_unit_test(test_irange_list_union_lossy_cov),
+		cmocka_unit_test(test_irange_list_union_complete_cov),
+		cmocka_unit_test(test_irange_list_union_intersecting),
+		cmocka_unit_test(test_irange_list_intersection),
 	};
 
 	/* Run series of tests */
-	return run_tests(tests);
+	return cmocka_run_group_tests(tests, NULL, NULL);
 }
 
 /*
