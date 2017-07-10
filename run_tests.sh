@@ -41,8 +41,8 @@ make USE_PGXS=1 clean
 # initialize database
 initdb
 
-# build pg_pathman (using PG_CPPFLAGS for gcov)
-make USE_PGXS=1 PG_CPPFLAGS="-coverage"
+# build pg_pathman (using PG_CPPFLAGS and SHLIB_LINK for gcov)
+make USE_PGXS=1 PG_CPPFLAGS="-coverage" SHLIB_LINK="-coverage"
 make USE_PGXS=1 install
 
 # check build
