@@ -54,6 +54,10 @@ echo "shared_preload_libraries = 'pg_pathman'" >> $PGDATA/postgresql.conf
 echo "port = 55435" >> $PGDATA/postgresql.conf
 pg_ctl start -l /tmp/postgres.log -w
 
+# check startup
+status=$?
+if [ $status -ne 0 ]; then cat /tmp/postgres.log; fi
+
 # run regression tests
 PGPORT=55435 make USE_PGXS=1 installcheck || status=$?
 
