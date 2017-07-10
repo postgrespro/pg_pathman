@@ -548,6 +548,14 @@ extern void set_rel_consider_parallel(PlannerInfo *root,
 		tlist_member_ignore_relabel((Node *) (expr), (targetlist))
 #endif
 
+#if (PG_VERSION_NUM >= 90500 && PG_VERSION_NUM <= 90505) \
+	|| (PG_VERSION_NUM >= 90600 && PG_VERSION_NUM <= 90601)
+extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
+						   TupleDesc outdesc,
+						   const char *msg);
+#else
+#include "access/tupconvert.h"
+#endif
 
 /*
  * -------------
