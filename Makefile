@@ -83,7 +83,7 @@ python_tests:
 	$(MAKE) -C tests/python partitioning_tests
 
 cmocka_tests:
-	$(MAKE) -C tests/cmocka clean check
+	$(MAKE) -C tests/cmocka check
 
 clean_gcov:
 	find . \
