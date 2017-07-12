@@ -84,3 +84,9 @@ python_tests:
 
 cmocka_tests:
 	$(MAKE) -C tests/cmocka clean check
+
+clean_gcov:
+	find . \
+		-name "*.gcda" -delete -o \
+		-name "*.gcno" -delete -o \
+		-name "*.gcov" -delete
