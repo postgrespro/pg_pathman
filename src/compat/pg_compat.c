@@ -521,64 +521,8 @@ get_rel_persistence(Oid relid)
 #endif
 
 
-
-/*
- * -------------
- *  Common code
- * -------------
- */
-
-void
-set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel, Index rti)
-{
-	double		parent_rows = 0;
-	double		parent_size = 0;
-	ListCell   *l;
-
-	foreach(l, root->append_rel_list)
-	{
-		AppendRelInfo  *appinfo = (AppendRelInfo *) lfirst(l);
-		Index			childRTindex,
-						parentRTindex = rti;
-		RelOptInfo	   *childrel;
-
-		/* append_rel_list contains all append rels; ignore others */
-		if (appinfo->parent_relid != parentRTindex)
-			continue;
-
-		childRTindex = appinfo->child_relid;
-
-		childrel = find_base_rel(root, childRTindex);
-		Assert(childrel->reloptkind == RELOPT_OTHER_MEMBER_REL);
-
-		/*
-		 * Accumulate size information from each live child.
-		 */
-		Assert(childrel->rows > 0);
-
-		parent_rows += childrel->rows;
-
-#if PG_VERSION_NUM >= 90600
-		parent_size += childrel->reltarget->width * childrel->rows;
-#else
-		parent_size += childrel->width * childrel->rows;
-#endif
-	}
-
-	/* Set 'rows' for append relation */
-	rel->rows = parent_rows;
-
-#if PG_VERSION_NUM >= 90600
-	rel->reltarget->width = rint(parent_size / parent_rows);
-#else
-	rel->width = rint(parent_size / parent_rows);
-#endif
-
-	rel->tuples = parent_rows;
-}
-
-#if (PG_VERSION_NUM >= 90500 && PG_VERSION_NUM <= 90505) \
-	|| (PG_VERSION_NUM >= 90600 && PG_VERSION_NUM <= 90601)
+#if (PG_VERSION_NUM >= 90500 && PG_VERSION_NUM <= 90505) || \
+	(PG_VERSION_NUM >= 90600 && PG_VERSION_NUM <= 90601)
 /*
  * Return a palloc'd bare attribute map for tuple conversion, matching input
  * and output columns by name.  (Dropped columns are ignored in both input and
@@ -642,3 +586,60 @@ convert_tuples_by_name_map(TupleDesc indesc,
 	return attrMap;
 }
 #endif
+
+
+
+/*
+ * -------------
+ *  Common code
+ * -------------
+ */
+
+void
+set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel, Index rti)
+{
+	double		parent_rows = 0;
+	double		parent_size = 0;
+	ListCell   *l;
+
+	foreach(l, root->append_rel_list)
+	{
+		AppendRelInfo  *appinfo = (AppendRelInfo *) lfirst(l);
+		Index			childRTindex,
+						parentRTindex = rti;
+		RelOptInfo	   *childrel;
+
+		/* append_rel_list contains all append rels; ignore others */
+		if (appinfo->parent_relid != parentRTindex)
+			continue;
+
+		childRTindex = appinfo->child_relid;
+
+		childrel = find_base_rel(root, childRTindex);
+		Assert(childrel->reloptkind == RELOPT_OTHER_MEMBER_REL);
+
+		/*
+		 * Accumulate size information from each live child.
+		 */
+		Assert(childrel->rows > 0);
+
+		parent_rows += childrel->rows;
+
+#if PG_VERSION_NUM >= 90600
+		parent_size += childrel->reltarget->width * childrel->rows;
+#else
+		parent_size += childrel->width * childrel->rows;
+#endif
+	}
+
+	/* Set 'rows' for append relation */
+	rel->rows = parent_rows;
+
+#if PG_VERSION_NUM >= 90600
+	rel->reltarget->width = rint(parent_size / parent_rows);
+#else
+	rel->width = rint(parent_size / parent_rows);
+#endif
+
+	rel->tuples = parent_rows;
+}
