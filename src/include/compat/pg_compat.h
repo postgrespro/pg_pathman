@@ -22,6 +22,7 @@
 #include "compat/debug_compat_features.h"
 
 #include "postgres.h"
+#include "commands/trigger.h"
 #include "executor/executor.h"
 #include "nodes/memnodes.h"
 #include "nodes/relation.h"
@@ -559,6 +560,33 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 											  const char *msg);
 #else
 #include "access/tupconvert.h"
+#endif
+
+
+/*
+ * ExecARInsertTriggers()
+ */
+#if PG_VERSION_NUM >= 100000
+#define ExecARInsertTriggersCompat(estate, relinfo, trigtuple, \
+								   recheck_indexes, transition_capture) \
+	ExecARInsertTriggers((estate), (relinfo), (trigtuple), \
+						 (recheck_indexes), (transition_capture))
+#elif PG_VERSION_NUM >= 90500
+#define ExecARInsertTriggersCompat(estate, relinfo, trigtuple, \
+								   recheck_indexes, transition_capture) \
+	ExecARInsertTriggers((estate), (relinfo), (trigtuple), (recheck_indexes))
+#endif
+
+
+/*
+ * ExecASInsertTriggers()
+ */
+#if PG_VERSION_NUM >= 100000
+#define ExecASInsertTriggersCompat(estate, relinfo, transition_capture) \
+	ExecASInsertTriggers((estate), (relinfo), (transition_capture))
+#elif PG_VERSION_NUM >= 90500
+#define ExecASInsertTriggersCompat(estate, relinfo, transition_capture) \
+	ExecASInsertTriggers((estate), (relinfo))
 #endif
 
 

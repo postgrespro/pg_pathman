@@ -29,6 +29,7 @@
 #include "catalog/pg_authid.h"
 #include "miscadmin.h"
 #include "optimizer/cost.h"
+#include "optimizer/prep.h"
 #include "optimizer/restrictinfo.h"
 #include "rewrite/rewriteManip.h"
 #include "utils/typcache.h"
@@ -290,6 +291,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 	if ((prel = get_pathman_relation_info(rte->relid)) != NULL)
 	{
 		Relation		parent_rel;				/* parent's relation (heap) */
+		PlanRowMark	   *parent_rowmark;			/* parent's rowmark */
 		Oid			   *children;				/* selected children oids */
 		List		   *ranges,					/* a list of IndexRanges */
 					   *wrappers;				/* a list of WrapperNodes */
@@ -304,6 +306,9 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 
 		/* Make copy of partitioning expression and fix Var's  varno attributes */
 		part_expr = PrelExpressionForRelid(prel, rti);
+
+		/* Get partitioning-related clauses (do this before append_child_relation()) */
+		part_clauses = get_partitioning_clauses(rel->baserestrictinfo, prel, rti);
 
 		if (prel->parttype == PT_RANGE)
 		{
@@ -382,19 +387,25 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		/* Parent has already been locked by rewriter */
 		parent_rel = heap_open(rte->relid, NoLock);
 
-		/* Add parent if asked to */
-		if (prel->enable_parent)
-			append_child_relation(root, parent_rel, rti, 0, rte->relid, NULL);
+		parent_rowmark = get_plan_rowmark(root->rowMarks, rti);
 
 		/*
-		 * Iterate all indexes in rangeset and append corresponding child relations.
+		 * WARNING: 'prel' might become invalid after append_child_relation().
 		 */
+
+		/* Add parent if asked to */
+		if (prel->enable_parent)
+			append_child_relation(root, parent_rel, parent_rowmark,
+								  rti, 0, rte->relid, NULL);
+
+		/* Iterate all indexes in rangeset and append child relations */
 		foreach(lc, ranges)
 		{
 			IndexRange irange = lfirst_irange(lc);
 
 			for (i = irange_lower(irange); i <= irange_upper(irange); i++)
-				append_child_relation(root, parent_rel, rti, i, children[i], wrappers);
+				append_child_relation(root, parent_rel, parent_rowmark,
+									  rti, i, children[i], wrappers);
 		}
 
 		/* Now close parent relation */
@@ -423,9 +434,6 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		if (!(pg_pathman_enable_runtimeappend ||
 			  pg_pathman_enable_runtime_merge_append))
 			return;
-
-		/* Get partitioning-related clauses */
-		part_clauses = get_partitioning_clauses(rel->baserestrictinfo, prel, rti);
 
 		/* Skip if there's no PARAMs in partitioning-related clauses */
 		if (!clause_contains_params((Node *) part_clauses))
