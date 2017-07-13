@@ -30,8 +30,9 @@
 #include "optimizer/restrictinfo.h"
 #include "optimizer/cost.h"
 #include "utils/datum.h"
-#include "utils/lsyscache.h"
 #include "utils/rel.h"
+#include "utils/lsyscache.h"
+#include "utils/syscache.h"
 #include "utils/selfuncs.h"
 #include "utils/typcache.h"
 
@@ -364,8 +365,12 @@ get_pathman_config_params_relid(bool invalid_is_ok)
  * NOTE: partially based on the expand_inherited_rtentry() function.
  */
 Index
-append_child_relation(PlannerInfo *root, Relation parent_relation,
-					  Index parent_rti, int ir_index, Oid child_oid,
+append_child_relation(PlannerInfo *root,
+					  Relation parent_relation,
+					  PlanRowMark *parent_rowmark,
+					  Index parent_rti,
+					  int ir_index,
+					  Oid child_oid,
 					  List *wrappers)
 {
 	RangeTblEntry  *parent_rte,
@@ -375,17 +380,35 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 	Relation		child_relation;
 	AppendRelInfo  *appinfo;
 	Index			childRTindex;
-	PlanRowMark	   *parent_rowmark,
-				   *child_rowmark;
+	PlanRowMark	   *child_rowmark;
 	Node		   *childqual;
 	List		   *childquals;
 	ListCell	   *lc1,
 				   *lc2;
+	LOCKMODE		lockmode;
+
+	/* Choose a correct lock mode */
+	if (parent_rti == root->parse->resultRelation)
+		lockmode = RowExclusiveLock;
+	else if (parent_rowmark && RowMarkRequiresRowShareLock(parent_rowmark->markType))
+		lockmode = RowShareLock;
+	else
+		lockmode = AccessShareLock;
+
+	/* Acquire a suitable lock on partition */
+	LockRelationOid(child_oid, lockmode);
+
+	/* Check that partition exists */
+	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(child_oid)))
+	{
+		UnlockRelationOid(child_oid, lockmode);
+		return 0;
+	}
 
 	parent_rel = root->simple_rel_array[parent_rti];
 	parent_rte = root->simple_rte_array[parent_rti];
 
-	/* FIXME: acquire a suitable lock on partition */
+	/* Open child relation (we've just locked it) */
 	child_relation = heap_open(child_oid, NoLock);
 
 	/* Create RangeTblEntry for child relation */
@@ -408,7 +431,6 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 
 
 	/* Create rowmarks required for child rels */
-	parent_rowmark = get_plan_rowmark(root->rowMarks, parent_rti);
 	if (parent_rowmark)
 	{
 		child_rowmark = makeNode(PlanRowMark);
