@@ -74,7 +74,7 @@ static ObjectAddress create_table_using_stmt(CreateStmt *create_stmt,
 											 Oid relowner);
 
 static void copy_foreign_keys(Oid parent_relid, Oid partition_oid);
-static void copy_relation_attributes(Oid partition_relid, Datum reloptions);
+static void copy_rel_attributes(Oid parent_relid, Oid partition_relid);
 static void postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid);
 
 static Oid text_to_regprocedure(text *proname_args);
@@ -672,9 +672,6 @@ create_single_partition_internal(Oid parent_relid,
 								 RangeVar *partition_rv,
 								 char *tablespace)
 {
-	HeapTuple			tuple = NULL;
-	Relation			parentrel;
-
 	/* Value to be returned */
 	Oid					partition_relid = InvalidOid; /* safety */
 
@@ -695,7 +692,6 @@ create_single_partition_internal(Oid parent_relid,
 	Oid					save_userid;
 	int					save_sec_context;
 	bool				need_priv_escalation = !superuser(); /* we might be a SU */
-	Datum				reloptions = (Datum) 0;
 
 	/* Lock parent and check if it exists */
 	LockRelationOid(parent_relid, ShareUpdateExclusiveLock);
@@ -735,24 +731,6 @@ create_single_partition_internal(Oid parent_relid,
 
 	/* Make up parent's RangeVar */
 	parent_rv = makeRangeVar(parent_nsp_name, parent_name, -1);
-
-	/* Copy attributes */
-	parentrel = heap_open(parent_relid, NoLock);
-	newrel_rv->relpersistence = parentrel->rd_rel->relpersistence;
-	if (parentrel->rd_options)
-	{
-		bool		isNull;
-
-		tuple = SearchSysCache1(RELOID, ObjectIdGetDatum(parent_relid));
-		if (!HeapTupleIsValid(tuple))
-			elog(ERROR, "cache lookup failed for relation %u", parent_relid);
-
-		reloptions = SysCacheGetAttr(RELOID, tuple, Anum_pg_class_reloptions,
-									 &isNull);
-		if (isNull)
-			reloptions = (Datum) 0;
-	}
-	heap_close(parentrel, NoLock);
 
 	/* If no 'tablespace' is provided, get parent's tablespace */
 	if (!tablespace)
@@ -804,8 +782,7 @@ create_single_partition_internal(Oid parent_relid,
 													  child_relowner).objectId;
 
 			/* Copy attributes to partition */
-			if (reloptions)
-				copy_relation_attributes(partition_relid, reloptions);
+			copy_rel_attributes(parent_relid, partition_relid);
 
 			/* Copy FOREIGN KEYS of the parent table */
 			copy_foreign_keys(parent_relid, partition_relid);
@@ -842,9 +819,6 @@ create_single_partition_internal(Oid parent_relid,
 	/* Restore user's privileges */
 	if (need_priv_escalation)
 		SetUserIdAndSecContext(save_userid, save_sec_context);
-
-	if (tuple != NULL)
-		ReleaseSysCache(tuple);
 
 	return partition_relid;
 }
@@ -1104,7 +1078,7 @@ postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid)
 	heap_close(pg_attribute_rel, RowExclusiveLock);
 }
 
-/* Copy foreign keys of parent table */
+/* Copy foreign keys of parent table (updates pg_class) */
 static void
 copy_foreign_keys(Oid parent_relid, Oid partition_oid)
 {
@@ -1135,38 +1109,71 @@ copy_foreign_keys(Oid parent_relid, Oid partition_oid)
 
 	/* Invoke the callback */
 	FunctionCallInvoke(&copy_fkeys_proc_fcinfo);
+
+	/* Make changes visible */
+	CommandCounterIncrement();
 }
 
-/* Copy attributes to partition. Updates partition's tuple in pg_class */
+/* Copy reloptions of foreign table (updates pg_class) */
 static void
-copy_relation_attributes(Oid partition_relid, Datum reloptions)
+copy_rel_attributes(Oid parent_relid, Oid partition_relid)
 {
-	Relation	classRel;
-	HeapTuple	tuple,
-				newtuple;
-	Datum		new_val[Natts_pg_class];
-	bool		new_null[Natts_pg_class],
-				new_repl[Natts_pg_class];
+	Relation	pg_class_rel;
 
-	classRel = heap_open(RelationRelationId, RowExclusiveLock);
-	tuple = SearchSysCacheCopy1(RELOID,
-								ObjectIdGetDatum(partition_relid));
-	if (!HeapTupleIsValid(tuple))
-		elog(ERROR, "cache lookup failed for relation %u",
-			 partition_relid);
+	HeapTuple	parent_htup,
+				partition_htup,
+				new_htup;
 
-	/* Fill in relpartbound value */
-	memset(new_val, 0, sizeof(new_val));
-	memset(new_null, false, sizeof(new_null));
-	memset(new_repl, false, sizeof(new_repl));
-	new_val[Anum_pg_class_reloptions - 1] = reloptions;
-	new_null[Anum_pg_class_reloptions - 1] = false;
-	new_repl[Anum_pg_class_reloptions - 1] = true;
-	newtuple = heap_modify_tuple(tuple, RelationGetDescr(classRel),
-								 new_val, new_null, new_repl);
-	CatalogTupleUpdate(classRel, &newtuple->t_self, newtuple);
-	heap_freetuple(newtuple);
-	heap_close(classRel, RowExclusiveLock);
+	Datum		reloptions;
+	bool		reloptions_null;
+	Datum		relpersistence;
+
+	Datum		values[Natts_pg_class];
+	bool		isnull[Natts_pg_class],
+				replace[Natts_pg_class] = { false };
+
+	pg_class_rel = heap_open(RelationRelationId, RowExclusiveLock);
+
+	parent_htup		= SearchSysCache1(RELOID, ObjectIdGetDatum(parent_relid));
+	partition_htup	= SearchSysCache1(RELOID, ObjectIdGetDatum(partition_relid));
+
+	if (!HeapTupleIsValid(parent_htup))
+		elog(ERROR, "cache lookup failed for relation %u", parent_relid);
+
+	if (!HeapTupleIsValid(partition_htup))
+		elog(ERROR, "cache lookup failed for relation %u", partition_relid);
+
+	/* Extract parent's reloptions */
+	reloptions = SysCacheGetAttr(RELOID, parent_htup,
+								 Anum_pg_class_reloptions,
+								 &reloptions_null);
+
+	/* Extract parent's relpersistence */
+	relpersistence = ((Form_pg_class) GETSTRUCT(parent_htup))->relpersistence;
+
+	/* Fill in reloptions */
+	values[Anum_pg_class_reloptions - 1]	= reloptions;
+	isnull[Anum_pg_class_reloptions - 1]	= reloptions_null;
+	replace[Anum_pg_class_reloptions - 1]	= true;
+
+	/* Fill in relpersistence */
+	values[Anum_pg_class_relpersistence - 1]	= relpersistence;
+	isnull[Anum_pg_class_relpersistence - 1]	= false;
+	replace[Anum_pg_class_relpersistence - 1]	= true;
+
+	new_htup = heap_modify_tuple(partition_htup,
+								 RelationGetDescr(pg_class_rel),
+								 values, isnull, replace);
+	CatalogTupleUpdate(pg_class_rel, &new_htup->t_self, new_htup);
+	heap_freetuple(new_htup);
+
+	ReleaseSysCache(parent_htup);
+	ReleaseSysCache(partition_htup);
+
+	heap_close(pg_class_rel, RowExclusiveLock);
+
+	/* Make changes visible */
+	CommandCounterIncrement();
 }
 
 
