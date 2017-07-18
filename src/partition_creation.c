@@ -74,7 +74,7 @@ static ObjectAddress create_table_using_stmt(CreateStmt *create_stmt,
 											 Oid relowner);
 
 static void copy_foreign_keys(Oid parent_relid, Oid partition_oid);
-static void copy_rel_attributes(Oid parent_relid, Oid partition_relid);
+static void copy_rel_options(Oid parent_relid, Oid partition_relid);
 static void postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid);
 
 static Oid text_to_regprocedure(text *proname_args);
@@ -781,7 +781,7 @@ create_single_partition_internal(Oid parent_relid,
 													  child_relowner).objectId;
 
 			/* Copy attributes to partition */
-			copy_rel_attributes(parent_relid, partition_relid);
+			copy_rel_options(parent_relid, partition_relid);
 
 			/* Copy FOREIGN KEYS of the parent table */
 			copy_foreign_keys(parent_relid, partition_relid);
@@ -1115,7 +1115,7 @@ copy_foreign_keys(Oid parent_relid, Oid partition_oid)
 
 /* Copy reloptions of foreign table (updates pg_class) */
 static void
-copy_rel_attributes(Oid parent_relid, Oid partition_relid)
+copy_rel_options(Oid parent_relid, Oid partition_relid)
 {
 	Relation	pg_class_rel;
 
