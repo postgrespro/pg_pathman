@@ -778,6 +778,10 @@ walk_expr_tree(Expr *expr, const WalkerContext *context)
 {
 	WrapperNode *result = (WrapperNode *) palloc0(sizeof(WrapperNode));
 
+	Assert(PrelIsValid(context->prel));
+
+	CHECK_FOR_INTERRUPTS();
+
 	switch (nodeTag(expr))
 	{
 		/* Useful for INSERT optimization */
@@ -897,6 +901,8 @@ handle_const(const Const *c,
 {
 	const PartRelationInfo *prel = context->prel;
 
+	CHECK_FOR_INTERRUPTS();
+
 	/* Deal with missing strategy */
 	if (strategy == 0)
 		goto handle_const_return;
@@ -957,7 +963,7 @@ handle_const(const Const *c,
 											  &cast_success);
 
 					if (!cast_success)
-						elog(ERROR, "Cannot select partition: "
+						elog(ERROR, "cannot select partition: "
 									"unable to perform type cast");
 				}
 				/* Else use the Const's value */

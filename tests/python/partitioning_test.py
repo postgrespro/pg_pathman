@@ -806,6 +806,81 @@ class PartitioningTests(unittest.TestCase):
 		node.stop()
 		node.cleanup()
 
+	def test_conc_part_split_insert(self):
+		"""Test concurrent split_range_partition() + INSERT"""
+
+		# Create and start new instance
+		node = self.start_new_pathman_cluster(allows_streaming=False)
+
+		# Create table 'ins_test' and partition it
+		with node.connect() as con0:
+			con0.begin()
+			con0.execute('create table ins_test(val int not null)')
+			con0.execute("select create_range_partitions('ins_test', 'val', 1, 10, 10)")
+			con0.commit()
+
+		# Create two separate connections for this test
+		with node.connect() as con1, node.connect() as con2:
+
+			# Thread for connection #2 (it has to wait)
+			def con2_thread():
+				con2.begin()
+				con2.execute('insert into ins_test values (3), (6)')
+				con2.commit()
+
+			# Step 1: initilize con1
+			con1.begin()
+			con1.execute('select count(*) from ins_test') # load pathman's cache
+
+			# Step 2: initilize con2
+			con2.begin()
+			con2.execute('select count(*) from ins_test') # load pathman's cache
+			con2.commit() # unlock relations
+
+			# Step 3: split 'ins_test1' in con1 (success)
+			con1.execute("select split_range_partition('ins_test_1', 5)")
+
+			# Step 4: try inserting new values in con2 (waiting)
+			t = threading.Thread(target=con2_thread)
+			t.start()
+
+			# Step 5: wait until 't' locks
+			while True:
+				with node.connect() as con0:
+					locks = con0.execute("""
+						select count(*) from pg_locks where granted = 'f'
+					""")
+
+					if int(locks[0][0]) > 0:
+						break
+
+			# Step 6: finish split in con1 (success, unlock)
+			con1.commit()
+
+			# Step 7: wait for con2
+			t.join()
+
+			rows = con1.execute("""
+				select *, tableoid::regclass::text
+				from ins_test
+				order by val asc
+			""")
+
+			# check number of rows in table
+			self.assertEqual(len(rows), 2)
+
+			# check values that have been inserted
+			self.assertEqual(int(rows[0][0]), 3)
+			self.assertEqual(int(rows[1][0]), 6)
+
+			# check partitions that were chosen for insert
+			self.assertEqual(str(rows[0][1]), 'ins_test_1')
+			self.assertEqual(str(rows[1][1]), 'ins_test_11')
+
+		# Stop instance and finish work
+		node.stop()
+		node.cleanup()
+
 	def test_pg_dump(self):
 		"""
 		Test using dump and restore of partitioned table through pg_dump and pg_restore tools.

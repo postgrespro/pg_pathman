@@ -816,15 +816,15 @@ drop_range_partition_expand_next(PG_FUNCTION_ARGS)
 	/* Expand next partition if it exists */
 	if (i < PrelChildrenCount(prel) - 1)
 	{
-		RangeEntry	   *cur = &ranges[i],
-					   *next = &ranges[i + 1];
+		RangeEntry	   cur = ranges[i],
+					   next = ranges[i + 1];
 
 		/* Drop old constraint and create a new one */
-		modify_range_constraint(next->child_oid,
-								prel->expr_cstr,
+		modify_range_constraint(next.child_oid,
+								pstrdup(prel->expr_cstr),
 								prel->ev_type,
-								&cur->min,
-								&next->max);
+								&cur.min,
+								&next.max);
 	}
 
 	/* Finally drop this partition */

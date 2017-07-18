@@ -19,6 +19,7 @@
 #include "catalog/pg_type.h"
 #include "foreign/fdwapi.h"
 #include "foreign/foreign.h"
+#include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
 #include "rewrite/rewriteManip.h"
 #include "utils/guc.h"
@@ -239,6 +240,9 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 							 (const void *) &partid,
 							 HASH_ENTER, &found);
 
+	/* Don't execute recheck_partition_for_value() every time */
+	rri_holder->first_time = !found;
+
 	/* If not found, create & cache new ResultRelInfo */
 	if (!found)
 	{
@@ -432,6 +436,8 @@ select_partition_for_insert(Datum value, Oid value_type,
 
 	do
 	{
+		bool refresh_prel;
+
 		/* Search for matching partitions */
 		parts = find_partitions_for_value(value, value_type, prel, &nparts);
 
@@ -439,36 +445,43 @@ select_partition_for_insert(Datum value, Oid value_type,
 			elog(ERROR, ERR_PART_ATTR_MULTIPLE);
 		else if (nparts == 0)
 		{
-			 selected_partid = create_partitions_for_value(parent_relid,
-														   value, value_type);
+			selected_partid = create_partitions_for_value(parent_relid,
+														  value, value_type);
 
-			 /* get_pathman_relation_info() will refresh this entry */
-			 invalidate_pathman_relation_info(parent_relid, NULL);
+			/* get_pathman_relation_info() will refresh this entry */
+			invalidate_pathman_relation_info(parent_relid, NULL);
 		}
 		else selected_partid = parts[0];
 
-		/* Replace parent table with a suitable partition */
+		pfree(parts);
+
+		/* Get ResultRelationInfo of a suitable partition (may invalidate 'prel') */
 		old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
 		rri_holder = scan_result_parts_storage(selected_partid, parts_storage);
 		MemoryContextSwitchTo(old_mcxt);
 
-		/* This partition has been dropped, repeat with a new 'prel' */
-		if (rri_holder == NULL)
+		/*
+		 * We'd like to refresh PartRelationInfo if:
+		 *		1) Partition we've just chosen had been removed;
+		 *		2) It changed and we've chosen a visible partition for the 1st time.
+		 */
+		refresh_prel = !PointerIsValid(rri_holder) ||
+					  (!PrelIsValid(prel) && rri_holder->first_time && nparts > 0);
+
+		if (refresh_prel)
 		{
-			/* get_pathman_relation_info() will refresh this entry */
 			invalidate_pathman_relation_info(parent_relid, NULL);
 
 			/* Get a fresh PartRelationInfo */
 			prel = get_pathman_relation_info(parent_relid);
+			shout_if_prel_is_invalid(parent_relid, prel, PT_ANY);
 
-			/* Paranoid check (all partitions have vanished) */
-			if (!prel)
-				elog(ERROR, "table \"%s\" is not partitioned",
-					 get_rel_name_or_relid(parent_relid));
+			/* Reset selected partition */
+			rri_holder = NULL;
 		}
 	}
 	/* Loop until we get some result */
-	while (rri_holder == NULL);
+	while (!PointerIsValid(rri_holder));
 
 	return rri_holder;
 }

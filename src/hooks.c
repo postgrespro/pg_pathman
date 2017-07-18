@@ -706,7 +706,8 @@ pathman_shmem_startup_hook(void)
 void
 pathman_relcache_hook(Datum arg, Oid relid)
 {
-	Oid parent_relid;
+	Oid		parent_relid;
+	bool	parent_found;
 
 	/* Hooks can be disabled */
 	if (!pathman_hooks_enabled)
@@ -732,6 +733,9 @@ pathman_relcache_hook(Datum arg, Oid relid)
 	/* It *might have been a partition*, invalidate parent */
 	if (OidIsValid(parent_relid))
 	{
+		/* Invalidate PartRelationInfo cache if needed */
+		invalidate_pathman_relation_info(parent_relid, &parent_found);
+
 		delay_invalidation_parent_rel(parent_relid);
 
 		elog(DEBUG2, "Invalidation message for partition %u [%u]",

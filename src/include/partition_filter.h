@@ -40,6 +40,7 @@ typedef struct
 	Oid					partid;				/* partition's relid */
 	ResultRelInfo	   *result_rel_info;	/* cached ResultRelInfo */
 	TupleConversionMap *tuple_map;			/* tuple conversion map (parent => child) */
+	bool				first_time;			/* did this entry exist? */
 } ResultRelInfoHolder;
 
 
@@ -133,6 +134,7 @@ Oid * find_partitions_for_value(Datum value, Oid value_type,
 								const PartRelationInfo *prel,
 								int *nparts);
 
+/* Transform partition's Oid into ResultRelInfo */
 ResultRelInfoHolder * select_partition_for_insert(Datum value, Oid value_type,
 												  const PartRelationInfo *prel,
 												  ResultPartsStorage *parts_storage,
