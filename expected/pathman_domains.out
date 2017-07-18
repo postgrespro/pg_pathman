@@ -43,7 +43,7 @@ SELECT merge_range_partitions('domains.dom_table_1', 'domains.dom_table_2');
  
 (1 row)
 
-SELECT split_range_partition('domains.dom_table_1', 50);
+SELECT split_range_partition('domains.dom_table_14', 50);
  split_range_partition 
 -----------------------
  {1,201}
@@ -58,8 +58,8 @@ WHERE val < 450;
  Append
    ->  Seq Scan on dom_table_13
    ->  Seq Scan on dom_table_11
-   ->  Seq Scan on dom_table_1
    ->  Seq Scan on dom_table_14
+   ->  Seq Scan on dom_table_15
    ->  Seq Scan on dom_table_3
    ->  Seq Scan on dom_table_4
    ->  Seq Scan on dom_table_5
@@ -72,8 +72,8 @@ ORDER BY range_min::INT, range_max::INT;
 -------------------+----------------------+----------+------+-----------+-----------
  domains.dom_table | domains.dom_table_13 |        2 | val  | -199      | -99
  domains.dom_table | domains.dom_table_11 |        2 | val  | -99       | 1
- domains.dom_table | domains.dom_table_1  |        2 | val  | 1         | 50
- domains.dom_table | domains.dom_table_14 |        2 | val  | 50        | 201
+ domains.dom_table | domains.dom_table_14 |        2 | val  | 1         | 50
+ domains.dom_table | domains.dom_table_15 |        2 | val  | 50        | 201
  domains.dom_table | domains.dom_table_3  |        2 | val  | 201       | 301
  domains.dom_table | domains.dom_table_4  |        2 | val  | 301       | 401
  domains.dom_table | domains.dom_table_5  |        2 | val  | 401       | 501
@@ -83,11 +83,10 @@ ORDER BY range_min::INT, range_max::INT;
  domains.dom_table | domains.dom_table_9  |        2 | val  | 801       | 901
  domains.dom_table | domains.dom_table_10 |        2 | val  | 901       | 1001
  domains.dom_table | domains.dom_table_12 |        2 | val  | 1001      | 1101
- domains.dom_table | domains.dom_table_15 |        2 | val  | 1101      | 1201
+ domains.dom_table | domains.dom_table_16 |        2 | val  | 1101      | 1201
 (14 rows)
 
 SELECT drop_partitions('domains.dom_table');
-NOTICE:  49 rows copied from domains.dom_table_1
 NOTICE:  100 rows copied from domains.dom_table_3
 NOTICE:  100 rows copied from domains.dom_table_4
 NOTICE:  100 rows copied from domains.dom_table_5
@@ -99,8 +98,9 @@ NOTICE:  99 rows copied from domains.dom_table_10
 NOTICE:  1 rows copied from domains.dom_table_11
 NOTICE:  0 rows copied from domains.dom_table_12
 NOTICE:  0 rows copied from domains.dom_table_13
-NOTICE:  151 rows copied from domains.dom_table_14
-NOTICE:  1 rows copied from domains.dom_table_15
+NOTICE:  49 rows copied from domains.dom_table_14
+NOTICE:  151 rows copied from domains.dom_table_15
+NOTICE:  1 rows copied from domains.dom_table_16
  drop_partitions 
 -----------------
               14

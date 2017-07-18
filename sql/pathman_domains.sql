@@ -20,7 +20,7 @@ INSERT INTO domains.dom_table VALUES(-10);
 SELECT append_range_partition('domains.dom_table');
 SELECT prepend_range_partition('domains.dom_table');
 SELECT merge_range_partitions('domains.dom_table_1', 'domains.dom_table_2');
-SELECT split_range_partition('domains.dom_table_1', 50);
+SELECT split_range_partition('domains.dom_table_14', 50);
 
 INSERT INTO domains.dom_table VALUES(1101);
 

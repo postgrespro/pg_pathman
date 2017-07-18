@@ -936,11 +936,18 @@ SELECT pathman.merge_range_partitions('test.num_range_rel_1', 'test.num_range_re
  
 (1 row)
 
+/* Table in next explain should have number from this query */
+SELECT currval('test.num_range_rel_seq');
+ currval 
+---------
+       6
+(1 row)
+
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id BETWEEN 100 AND 700;
                            QUERY PLAN                           
 ----------------------------------------------------------------
  Append
-   ->  Index Scan using num_range_rel_1_pkey on num_range_rel_1
+   ->  Index Scan using num_range_rel_6_pkey on num_range_rel_6
          Index Cond: ((id >= 100) AND (id <= 700))
 (3 rows)
 
@@ -954,33 +961,33 @@ SELECT pathman.merge_range_partitions('test.range_rel_1', 'test.range_rel_' || c
 SELECT pathman.append_range_partition('test.num_range_rel');
  append_range_partition 
 ------------------------
- test.num_range_rel_6
+ test.num_range_rel_7
 (1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 4000;
             QUERY PLAN             
 -----------------------------------
  Append
-   ->  Seq Scan on num_range_rel_6
+   ->  Seq Scan on num_range_rel_7
 (2 rows)
 
 SELECT pathman.prepend_range_partition('test.num_range_rel');
  prepend_range_partition 
 -------------------------
- test.num_range_rel_7
+ test.num_range_rel_8
 (1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id < 0;
             QUERY PLAN             
 -----------------------------------
  Append
-   ->  Seq Scan on num_range_rel_7
+   ->  Seq Scan on num_range_rel_8
 (2 rows)
 
-SELECT pathman.drop_range_partition('test.num_range_rel_7');
+SELECT pathman.drop_range_partition('test.num_range_rel_8');
  drop_range_partition 
 ----------------------
- test.num_range_rel_7
+ test.num_range_rel_8
 (1 row)
 
 SELECT pathman.drop_range_partition_expand_next('test.num_range_rel_4');
@@ -992,13 +999,13 @@ SELECT pathman.drop_range_partition_expand_next('test.num_range_rel_4');
 SELECT * FROM pathman.pathman_partition_list WHERE parent = 'test.num_range_rel'::regclass;
        parent       |      partition       | parttype | expr | range_min | range_max 
 --------------------+----------------------+----------+------+-----------+-----------
- test.num_range_rel | test.num_range_rel_1 |        2 | id   | 0         | 1000
+ test.num_range_rel | test.num_range_rel_6 |        2 | id   | 0         | 1000
  test.num_range_rel | test.num_range_rel_2 |        2 | id   | 1000      | 2000
  test.num_range_rel | test.num_range_rel_3 |        2 | id   | 2000      | 3000
- test.num_range_rel | test.num_range_rel_6 |        2 | id   | 3000      | 5000
+ test.num_range_rel | test.num_range_rel_7 |        2 | id   | 3000      | 5000
 (4 rows)
 
-SELECT pathman.drop_range_partition_expand_next('test.num_range_rel_6');
+SELECT pathman.drop_range_partition_expand_next('test.num_range_rel_7');
  drop_range_partition_expand_next 
 ----------------------------------
  
@@ -1007,7 +1014,7 @@ SELECT pathman.drop_range_partition_expand_next('test.num_range_rel_6');
 SELECT * FROM pathman.pathman_partition_list WHERE parent = 'test.num_range_rel'::regclass;
        parent       |      partition       | parttype | expr | range_min | range_max 
 --------------------+----------------------+----------+------+-----------+-----------
- test.num_range_rel | test.num_range_rel_1 |        2 | id   | 0         | 1000
+ test.num_range_rel | test.num_range_rel_6 |        2 | id   | 0         | 1000
  test.num_range_rel | test.num_range_rel_2 |        2 | id   | 1000      | 2000
  test.num_range_rel | test.num_range_rel_3 |        2 | id   | 2000      | 3000
 (3 rows)
@@ -1015,44 +1022,12 @@ SELECT * FROM pathman.pathman_partition_list WHERE parent = 'test.num_range_rel'
 SELECT pathman.append_range_partition('test.range_rel');
  append_range_partition 
 ------------------------
- test.range_rel_6
+ test.range_rel_7
 (1 row)
 
 SELECT pathman.prepend_range_partition('test.range_rel');
  prepend_range_partition 
 -------------------------
- test.range_rel_7
-(1 row)
-
-EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt BETWEEN '2014-12-15' AND '2015-01-15';
-                                     QUERY PLAN                                      
--------------------------------------------------------------------------------------
- Append
-   ->  Index Scan using range_rel_7_dt_idx on range_rel_7
-         Index Cond: (dt >= 'Mon Dec 15 00:00:00 2014'::timestamp without time zone)
-   ->  Index Scan using range_rel_1_dt_idx on range_rel_1
-         Index Cond: (dt <= 'Thu Jan 15 00:00:00 2015'::timestamp without time zone)
-(5 rows)
-
-SELECT pathman.drop_range_partition('test.range_rel_7');
- drop_range_partition 
-----------------------
- test.range_rel_7
-(1 row)
-
-EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt BETWEEN '2014-12-15' AND '2015-01-15';
-                                     QUERY PLAN                                      
--------------------------------------------------------------------------------------
- Append
-   ->  Index Scan using range_rel_1_dt_idx on range_rel_1
-         Index Cond: (dt <= 'Thu Jan 15 00:00:00 2015'::timestamp without time zone)
-(3 rows)
-
-SELECT pathman.add_range_partition('test.range_rel', '2014-12-01'::DATE, '2015-01-02'::DATE);
-ERROR:  specified range [12-01-2014, 01-02-2015) overlaps with existing partitions
-SELECT pathman.add_range_partition('test.range_rel', '2014-12-01'::DATE, '2015-01-01'::DATE);
- add_range_partition 
----------------------
  test.range_rel_8
 (1 row)
 
@@ -1062,7 +1037,39 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt BETWEEN '2014-12-15' A
  Append
    ->  Index Scan using range_rel_8_dt_idx on range_rel_8
          Index Cond: (dt >= 'Mon Dec 15 00:00:00 2014'::timestamp without time zone)
-   ->  Index Scan using range_rel_1_dt_idx on range_rel_1
+   ->  Index Scan using range_rel_6_dt_idx on range_rel_6
+         Index Cond: (dt <= 'Thu Jan 15 00:00:00 2015'::timestamp without time zone)
+(5 rows)
+
+SELECT pathman.drop_range_partition('test.range_rel_8');
+ drop_range_partition 
+----------------------
+ test.range_rel_8
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt BETWEEN '2014-12-15' AND '2015-01-15';
+                                     QUERY PLAN                                      
+-------------------------------------------------------------------------------------
+ Append
+   ->  Index Scan using range_rel_6_dt_idx on range_rel_6
+         Index Cond: (dt <= 'Thu Jan 15 00:00:00 2015'::timestamp without time zone)
+(3 rows)
+
+SELECT pathman.add_range_partition('test.range_rel', '2014-12-01'::DATE, '2015-01-02'::DATE);
+ERROR:  specified range [12-01-2014, 01-02-2015) overlaps with existing partitions
+SELECT pathman.add_range_partition('test.range_rel', '2014-12-01'::DATE, '2015-01-01'::DATE);
+ add_range_partition 
+---------------------
+ test.range_rel_9
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt BETWEEN '2014-12-15' AND '2015-01-15';
+                                     QUERY PLAN                                      
+-------------------------------------------------------------------------------------
+ Append
+   ->  Index Scan using range_rel_9_dt_idx on range_rel_9
+         Index Cond: (dt >= 'Mon Dec 15 00:00:00 2014'::timestamp without time zone)
+   ->  Index Scan using range_rel_6_dt_idx on range_rel_6
          Index Cond: (dt <= 'Thu Jan 15 00:00:00 2015'::timestamp without time zone)
 (5 rows)
 
@@ -1081,8 +1088,8 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt BETWEEN '2014-11-15' A
  Append
    ->  Index Scan using range_rel_archive_dt_idx on range_rel_archive
          Index Cond: (dt >= 'Sat Nov 15 00:00:00 2014'::timestamp without time zone)
-   ->  Seq Scan on range_rel_8
-   ->  Index Scan using range_rel_1_dt_idx on range_rel_1
+   ->  Seq Scan on range_rel_9
+   ->  Index Scan using range_rel_6_dt_idx on range_rel_6
          Index Cond: (dt <= 'Thu Jan 15 00:00:00 2015'::timestamp without time zone)
 (6 rows)
 
@@ -1097,8 +1104,8 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt BETWEEN '2014-11-15' A
                                      QUERY PLAN                                      
 -------------------------------------------------------------------------------------
  Append
-   ->  Seq Scan on range_rel_8
-   ->  Index Scan using range_rel_1_dt_idx on range_rel_1
+   ->  Seq Scan on range_rel_9
+   ->  Index Scan using range_rel_6_dt_idx on range_rel_6
          Index Cond: (dt <= 'Thu Jan 15 00:00:00 2015'::timestamp without time zone)
 (4 rows)
 
@@ -1143,12 +1150,12 @@ SELECT * FROM pathman.pathman_partition_list WHERE parent = 'test.range_rel'::RE
      parent     |           partition           | parttype | expr |        range_min         |        range_max         
 ----------------+-------------------------------+----------+------+--------------------------+--------------------------
  test.range_rel | test.range_rel_minus_infinity |        2 | dt   |                          | Mon Dec 01 00:00:00 2014
- test.range_rel | test.range_rel_8              |        2 | dt   | Mon Dec 01 00:00:00 2014 | Thu Jan 01 00:00:00 2015
- test.range_rel | test.range_rel_1              |        2 | dt   | Thu Jan 01 00:00:00 2015 | Sun Feb 01 00:00:00 2015
+ test.range_rel | test.range_rel_9              |        2 | dt   | Mon Dec 01 00:00:00 2014 | Thu Jan 01 00:00:00 2015
+ test.range_rel | test.range_rel_6              |        2 | dt   | Thu Jan 01 00:00:00 2015 | Sun Feb 01 00:00:00 2015
  test.range_rel | test.range_rel_2              |        2 | dt   | Sun Feb 01 00:00:00 2015 | Sun Mar 01 00:00:00 2015
  test.range_rel | test.range_rel_3              |        2 | dt   | Sun Mar 01 00:00:00 2015 | Wed Apr 01 00:00:00 2015
  test.range_rel | test.range_rel_4              |        2 | dt   | Wed Apr 01 00:00:00 2015 | Fri May 01 00:00:00 2015
- test.range_rel | test.range_rel_6              |        2 | dt   | Fri May 01 00:00:00 2015 | Mon Jun 01 00:00:00 2015
+ test.range_rel | test.range_rel_7              |        2 | dt   | Fri May 01 00:00:00 2015 | Mon Jun 01 00:00:00 2015
  test.range_rel | test.range_rel_plus_infinity  |        2 | dt   | Mon Jun 01 00:00:00 2015 | 
 (8 rows)
 
@@ -1159,14 +1166,14 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt < '2015-01-01';
 --------------------------------------------
  Append
    ->  Seq Scan on range_rel_minus_infinity
-   ->  Seq Scan on range_rel_8
+   ->  Seq Scan on range_rel_9
 (3 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-05-01';
                 QUERY PLAN                 
 -------------------------------------------
  Append
-   ->  Seq Scan on range_rel_6
+   ->  Seq Scan on range_rel_7
    ->  Seq Scan on range_rel_plus_infinity
 (3 rows)
 
@@ -1328,9 +1335,9 @@ SELECT COUNT(*) FROM ONLY test.hash_rel;
 
 DROP TABLE test.hash_rel CASCADE;
 SELECT pathman.drop_partitions('test.num_range_rel');
-NOTICE:  999 rows copied from test.num_range_rel_1
 NOTICE:  1000 rows copied from test.num_range_rel_2
 NOTICE:  1000 rows copied from test.num_range_rel_3
+NOTICE:  999 rows copied from test.num_range_rel_6
  drop_partitions 
 -----------------
                3
@@ -1547,7 +1554,7 @@ SELECT pathman.merge_range_partitions('test."RangeRel_1"', 'test."RangeRel_' || 
  
 (1 row)
 
-SELECT pathman.split_range_partition('test."RangeRel_1"', '2015-01-01'::DATE);
+SELECT pathman.split_range_partition('test."RangeRel_6"', '2015-01-01'::DATE);
   split_range_partition  
 -------------------------
  {12-31-2014,01-02-2015}
@@ -1617,7 +1624,7 @@ SELECT merge_range_partitions('test.range_rel_1', 'test.range_rel_2');
  
 (1 row)
 
-SELECT split_range_partition('test.range_rel_1', '2010-02-15'::date);
+SELECT split_range_partition('test.range_rel_13', '2010-02-15'::date);
   split_range_partition  
 -------------------------
  {01-01-2010,03-01-2010}
@@ -1626,22 +1633,22 @@ SELECT split_range_partition('test.range_rel_1', '2010-02-15'::date);
 SELECT append_range_partition('test.range_rel');
  append_range_partition 
 ------------------------
- test.range_rel_14
+ test.range_rel_15
 (1 row)
 
 SELECT prepend_range_partition('test.range_rel');
  prepend_range_partition 
 -------------------------
- test.range_rel_15
+ test.range_rel_16
 (1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt < '2010-03-01';
            QUERY PLAN           
 --------------------------------
  Append
-   ->  Seq Scan on range_rel_15
-   ->  Seq Scan on range_rel_1
+   ->  Seq Scan on range_rel_16
    ->  Seq Scan on range_rel_13
+   ->  Seq Scan on range_rel_14
 (4 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt > '2010-12-15';
@@ -1650,7 +1657,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt > '2010-12-15';
  Append
    ->  Seq Scan on range_rel_12
          Filter: (dt > 'Wed Dec 15 00:00:00 2010'::timestamp without time zone)
-   ->  Seq Scan on range_rel_14
+   ->  Seq Scan on range_rel_15
 (4 rows)
 
 /* Temporary table for JOINs */
@@ -1689,12 +1696,12 @@ SELECT * FROM test.range_rel WHERE dt = '2010-06-15';
 EXPLAIN (COSTS OFF) UPDATE test.range_rel r SET value = t.value FROM test.tmp t WHERE r.dt = '2010-01-01' AND r.id = t.id;
                                          QUERY PLAN                                         
 --------------------------------------------------------------------------------------------
- Update on range_rel_1 r
+ Update on range_rel_13 r
    ->  Hash Join
          Hash Cond: (t.id = r.id)
          ->  Seq Scan on tmp t
          ->  Hash
-               ->  Index Scan using range_rel_1_pkey on range_rel_1 r
+               ->  Index Scan using range_rel_13_pkey on range_rel_13 r
                      Filter: (dt = 'Fri Jan 01 00:00:00 2010'::timestamp without time zone)
 (7 rows)
 
@@ -1702,19 +1709,18 @@ UPDATE test.range_rel r SET value = t.value FROM test.tmp t WHERE r.dt = '2010-0
 EXPLAIN (COSTS OFF) DELETE FROM test.range_rel r USING test.tmp t WHERE r.dt = '2010-01-02' AND r.id = t.id;
                                          QUERY PLAN                                         
 --------------------------------------------------------------------------------------------
- Delete on range_rel_1 r
+ Delete on range_rel_13 r
    ->  Hash Join
          Hash Cond: (t.id = r.id)
          ->  Seq Scan on tmp t
          ->  Hash
-               ->  Index Scan using range_rel_1_pkey on range_rel_1 r
+               ->  Index Scan using range_rel_13_pkey on range_rel_13 r
                      Filter: (dt = 'Sat Jan 02 00:00:00 2010'::timestamp without time zone)
 (7 rows)
 
 DELETE FROM test.range_rel r USING test.tmp t WHERE r.dt = '2010-01-02' AND r.id = t.id;
 /* Create range partitions from whole range */
 SELECT drop_partitions('test.range_rel');
-NOTICE:  44 rows copied from test.range_rel_1
 NOTICE:  31 rows copied from test.range_rel_3
 NOTICE:  30 rows copied from test.range_rel_4
 NOTICE:  31 rows copied from test.range_rel_5
@@ -1725,9 +1731,10 @@ NOTICE:  30 rows copied from test.range_rel_9
 NOTICE:  31 rows copied from test.range_rel_10
 NOTICE:  30 rows copied from test.range_rel_11
 NOTICE:  31 rows copied from test.range_rel_12
-NOTICE:  14 rows copied from test.range_rel_13
-NOTICE:  0 rows copied from test.range_rel_14
+NOTICE:  44 rows copied from test.range_rel_13
+NOTICE:  14 rows copied from test.range_rel_14
 NOTICE:  0 rows copied from test.range_rel_15
+NOTICE:  0 rows copied from test.range_rel_16
  drop_partitions 
 -----------------
               14

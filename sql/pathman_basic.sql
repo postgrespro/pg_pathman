@@ -268,6 +268,8 @@ SELECT pathman.split_range_partition('test.range_rel_1', '2015-01-15'::DATE);
 
 /* Merge two partitions into one */
 SELECT pathman.merge_range_partitions('test.num_range_rel_1', 'test.num_range_rel_' || currval('test.num_range_rel_seq'));
+/* Table in next explain should have number from this query */
+SELECT currval('test.num_range_rel_seq');
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id BETWEEN 100 AND 700;
 
 SELECT pathman.merge_range_partitions('test.range_rel_1', 'test.range_rel_' || currval('test.range_rel_seq'));
@@ -277,17 +279,17 @@ SELECT pathman.append_range_partition('test.num_range_rel');
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 4000;
 SELECT pathman.prepend_range_partition('test.num_range_rel');
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id < 0;
-SELECT pathman.drop_range_partition('test.num_range_rel_7');
+SELECT pathman.drop_range_partition('test.num_range_rel_8');
 
 SELECT pathman.drop_range_partition_expand_next('test.num_range_rel_4');
 SELECT * FROM pathman.pathman_partition_list WHERE parent = 'test.num_range_rel'::regclass;
-SELECT pathman.drop_range_partition_expand_next('test.num_range_rel_6');
+SELECT pathman.drop_range_partition_expand_next('test.num_range_rel_7');
 SELECT * FROM pathman.pathman_partition_list WHERE parent = 'test.num_range_rel'::regclass;
 
 SELECT pathman.append_range_partition('test.range_rel');
 SELECT pathman.prepend_range_partition('test.range_rel');
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt BETWEEN '2014-12-15' AND '2015-01-15';
-SELECT pathman.drop_range_partition('test.range_rel_7');
+SELECT pathman.drop_range_partition('test.range_rel_8');
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt BETWEEN '2014-12-15' AND '2015-01-15';
 SELECT pathman.add_range_partition('test.range_rel', '2014-12-01'::DATE, '2015-01-02'::DATE);
 SELECT pathman.add_range_partition('test.range_rel', '2014-12-01'::DATE, '2015-01-01'::DATE);
@@ -461,7 +463,7 @@ SELECT pathman.create_range_partitions('test."RangeRel"', 'dt', '2015-01-01'::DA
 SELECT pathman.append_range_partition('test."RangeRel"');
 SELECT pathman.prepend_range_partition('test."RangeRel"');
 SELECT pathman.merge_range_partitions('test."RangeRel_1"', 'test."RangeRel_' || currval('test."RangeRel_seq"') || '"');
-SELECT pathman.split_range_partition('test."RangeRel_1"', '2015-01-01'::DATE);
+SELECT pathman.split_range_partition('test."RangeRel_6"', '2015-01-01'::DATE);
 DROP TABLE test."RangeRel" CASCADE;
 SELECT * FROM pathman.pathman_config;
 CREATE TABLE test."RangeRel" (
@@ -493,7 +495,7 @@ CREATE TABLE test.range_rel (
 INSERT INTO test.range_rel (dt, value) SELECT g, extract(day from g) FROM generate_series('2010-01-01'::date, '2010-12-31'::date, '1 day') as g;
 SELECT create_range_partitions('test.range_rel', 'dt', '2010-01-01'::date, '1 month'::interval, 12);
 SELECT merge_range_partitions('test.range_rel_1', 'test.range_rel_2');
-SELECT split_range_partition('test.range_rel_1', '2010-02-15'::date);
+SELECT split_range_partition('test.range_rel_13', '2010-02-15'::date);
 SELECT append_range_partition('test.range_rel');
 SELECT prepend_range_partition('test.range_rel');
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt < '2010-03-01';
