@@ -516,17 +516,30 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt > '2010-12-15';
 CREATE TABLE test.tmp (id INTEGER NOT NULL, value INTEGER NOT NULL);
 INSERT INTO test.tmp VALUES (1, 1), (2, 2);
 
+
 /* Test UPDATE and DELETE */
-EXPLAIN (COSTS OFF) UPDATE test.range_rel SET value = 111 WHERE dt = '2010-06-15';
+EXPLAIN (COSTS OFF) UPDATE test.range_rel SET value = 111 WHERE dt = '2010-06-15';	/* have partitions for this 'dt' */
 UPDATE test.range_rel SET value = 111 WHERE dt = '2010-06-15';
 SELECT * FROM test.range_rel WHERE dt = '2010-06-15';
-EXPLAIN (COSTS OFF) DELETE FROM test.range_rel WHERE dt = '2010-06-15';
+
+EXPLAIN (COSTS OFF) DELETE FROM test.range_rel WHERE dt = '2010-06-15';	/* have partitions for this 'dt' */
 DELETE FROM test.range_rel WHERE dt = '2010-06-15';
 SELECT * FROM test.range_rel WHERE dt = '2010-06-15';
+
+EXPLAIN (COSTS OFF) UPDATE test.range_rel SET value = 222 WHERE dt = '1990-01-01';	/* no partitions for this 'dt' */
+UPDATE test.range_rel SET value = 111 WHERE dt = '1990-01-01';
+SELECT * FROM test.range_rel WHERE dt = '1990-01-01';
+
+EXPLAIN (COSTS OFF) DELETE FROM test.range_rel WHERE dt < '1990-01-01';	/* no partitions for this 'dt' */
+DELETE FROM test.range_rel WHERE dt < '1990-01-01';
+SELECT * FROM test.range_rel WHERE dt < '1990-01-01';
+
 EXPLAIN (COSTS OFF) UPDATE test.range_rel r SET value = t.value FROM test.tmp t WHERE r.dt = '2010-01-01' AND r.id = t.id;
 UPDATE test.range_rel r SET value = t.value FROM test.tmp t WHERE r.dt = '2010-01-01' AND r.id = t.id;
+
 EXPLAIN (COSTS OFF) DELETE FROM test.range_rel r USING test.tmp t WHERE r.dt = '2010-01-02' AND r.id = t.id;
 DELETE FROM test.range_rel r USING test.tmp t WHERE r.dt = '2010-01-02' AND r.id = t.id;
+
 
 /* Create range partitions from whole range */
 SELECT drop_partitions('test.range_rel');

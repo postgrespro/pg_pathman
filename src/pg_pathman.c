@@ -9,8 +9,8 @@
  * ------------------------------------------------------------------------
  */
 
-#include "compat/expand_rte_hook.h"
 #include "compat/pg_compat.h"
+#include "compat/rowmarks_fix.h"
 
 #include "init.h"
 #include "hooks.h"
@@ -30,8 +30,9 @@
 #include "optimizer/restrictinfo.h"
 #include "optimizer/cost.h"
 #include "utils/datum.h"
-#include "utils/lsyscache.h"
 #include "utils/rel.h"
+#include "utils/lsyscache.h"
+#include "utils/syscache.h"
 #include "utils/selfuncs.h"
 #include "utils/typcache.h"
 
@@ -311,9 +312,6 @@ _PG_init(void)
 	process_utility_hook_next		= ProcessUtility_hook;
 	ProcessUtility_hook				= pathman_process_utility_hook;
 
-	/* Initialize PgPro-specific subsystems */
-	init_expand_rte_hook();
-
 	/* Initialize static data for all subsystems */
 	init_main_pathman_toggles();
 	init_relation_info_static_data();
@@ -367,8 +365,12 @@ get_pathman_config_params_relid(bool invalid_is_ok)
  * NOTE: partially based on the expand_inherited_rtentry() function.
  */
 Index
-append_child_relation(PlannerInfo *root, Relation parent_relation,
-					  Index parent_rti, int ir_index, Oid child_oid,
+append_child_relation(PlannerInfo *root,
+					  Relation parent_relation,
+					  PlanRowMark *parent_rowmark,
+					  Index parent_rti,
+					  int ir_index,
+					  Oid child_oid,
 					  List *wrappers)
 {
 	RangeTblEntry  *parent_rte,
@@ -378,17 +380,35 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 	Relation		child_relation;
 	AppendRelInfo  *appinfo;
 	Index			childRTindex;
-	PlanRowMark	   *parent_rowmark,
-				   *child_rowmark;
+	PlanRowMark	   *child_rowmark;
 	Node		   *childqual;
 	List		   *childquals;
 	ListCell	   *lc1,
 				   *lc2;
+	LOCKMODE		lockmode;
+
+	/* Choose a correct lock mode */
+	if (parent_rti == root->parse->resultRelation)
+		lockmode = RowExclusiveLock;
+	else if (parent_rowmark && RowMarkRequiresRowShareLock(parent_rowmark->markType))
+		lockmode = RowShareLock;
+	else
+		lockmode = AccessShareLock;
+
+	/* Acquire a suitable lock on partition */
+	LockRelationOid(child_oid, lockmode);
+
+	/* Check that partition exists */
+	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(child_oid)))
+	{
+		UnlockRelationOid(child_oid, lockmode);
+		return 0;
+	}
 
 	parent_rel = root->simple_rel_array[parent_rti];
 	parent_rte = root->simple_rte_array[parent_rti];
 
-	/* FIXME: acquire a suitable lock on partition */
+	/* Open child relation (we've just locked it) */
 	child_relation = heap_open(child_oid, NoLock);
 
 	/* Create RangeTblEntry for child relation */
@@ -408,6 +428,36 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 
 	/* Increase total_table_pages using the 'child_rel' */
 	root->total_table_pages += (double) child_rel->pages;
+
+
+	/* Create rowmarks required for child rels */
+	if (parent_rowmark)
+	{
+		child_rowmark = makeNode(PlanRowMark);
+
+		child_rowmark->rti			= childRTindex;
+		child_rowmark->prti			= parent_rti;
+		child_rowmark->rowmarkId	= parent_rowmark->rowmarkId;
+		/* Reselect rowmark type, because relkind might not match parent */
+		child_rowmark->markType		= select_rowmark_type(child_rte,
+														  parent_rowmark->strength);
+		child_rowmark->allMarkTypes	= (1 << child_rowmark->markType);
+		child_rowmark->strength		= parent_rowmark->strength;
+		child_rowmark->waitPolicy	= parent_rowmark->waitPolicy;
+		child_rowmark->isParent		= false;
+
+		root->rowMarks = lappend(root->rowMarks, child_rowmark);
+
+		/* Adjust tlist for RowMarks (see planner.c) */
+		if (!parent_rowmark->isParent && !root->parse->setOperations)
+		{
+			append_tle_for_rowmark(root, parent_rowmark);
+		}
+
+		/* Include child's rowmark type in parent's allMarkTypes */
+		parent_rowmark->allMarkTypes |= child_rowmark->allMarkTypes;
+		parent_rowmark->isParent = true;
+	}
 
 
 	/* Build an AppendRelInfo for this child */
@@ -518,31 +568,6 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 
 	/* Close child relations, but keep locks */
 	heap_close(child_relation, NoLock);
-
-
-	/* Create rowmarks required for child rels */
-	parent_rowmark = get_plan_rowmark(root->rowMarks, parent_rti);
-	if (parent_rowmark)
-	{
-		child_rowmark = makeNode(PlanRowMark);
-
-		child_rowmark->rti			= childRTindex;
-		child_rowmark->prti			= parent_rti;
-		child_rowmark->rowmarkId	= parent_rowmark->rowmarkId;
-		/* Reselect rowmark type, because relkind might not match parent */
-		child_rowmark->markType		= select_rowmark_type(child_rte,
-														  parent_rowmark->strength);
-		child_rowmark->allMarkTypes	= (1 << child_rowmark->markType);
-		child_rowmark->strength		= parent_rowmark->strength;
-		child_rowmark->waitPolicy	= parent_rowmark->waitPolicy;
-		child_rowmark->isParent		= false;
-
-		root->rowMarks = lappend(root->rowMarks, child_rowmark);
-
-		/* Include child's rowmark type in parent's allMarkTypes */
-		parent_rowmark->allMarkTypes |= child_rowmark->allMarkTypes;
-		parent_rowmark->isParent = true;
-	}
 
 	return childRTindex;
 }

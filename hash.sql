@@ -20,7 +20,6 @@ CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions(
 	tablespaces			TEXT[] DEFAULT NULL)
 RETURNS INTEGER AS $$
 BEGIN
-	expression := lower(expression);
 	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
 												 expression,
 												 partition_data);

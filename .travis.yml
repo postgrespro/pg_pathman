@@ -1,33 +1,28 @@
 os:
-  - linux
+    - linux
 
 sudo: required
 dist: trusty
 
 language: c
 
-compiler:
-  - clang
-  - gcc
+services:
+    - docker
 
-before_install:
-  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then sudo apt-get -y install -qq wget ca-certificates; fi
-  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then source ./travis/dep-ubuntu-postgres.sh; fi
-  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then source ./travis/dep-ubuntu-llvm.sh; fi
-  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then sudo apt-get update -qq; fi
+install:
+    - sed -e 's/${CHECK_CODE}/'${CHECK_CODE}/g -e 's/${PG_VERSION}/'${PG_VERSION}/g Dockerfile.tmpl > Dockerfile
+    - docker-compose build
+
+script:
+    - docker-compose run $(bash <(curl -s https://codecov.io/env)) tests
 
 env:
-  global:
-    - LLVM_VER=4.0
-  matrix:
-    - PG_VER=10  CHECK_CODE=true
-    - PG_VER=10  CHECK_CODE=false
-    - PG_VER=9.6 CHECK_CODE=true
-    - PG_VER=9.6 CHECK_CODE=false
-    - PG_VER=9.5 CHECK_CODE=true
-    - PG_VER=9.5 CHECK_CODE=false
-
-script: bash ./travis/pg-travis-test.sh
-
-after_success:
-  - bash <(curl -s https://codecov.io/bash)
+    - PG_VERSION=10  CHECK_CODE=clang
+    - PG_VERSION=9.6 CHECK_CODE=clang
+    - PG_VERSION=9.5 CHECK_CODE=clang
+    - PG_VERSION=10  CHECK_CODE=cppcheck
+    - PG_VERSION=9.6 CHECK_CODE=cppcheck
+    - PG_VERSION=9.5 CHECK_CODE=cppcheck
+    - PG_VERSION=10  CHECK_CODE=false
+    - PG_VERSION=9.6 CHECK_CODE=false
+    - PG_VERSION=9.5 CHECK_CODE=false
