@@ -681,8 +681,7 @@ create_single_partition_internal(Oid parent_relid,
 					   *parent_nsp_name;
 
 	/* Elements of the "CREATE TABLE" query tree */
-	RangeVar		   *parent_rv,
-					   *newrel_rv = copyObject(partition_rv);
+	RangeVar		   *parent_rv;
 	TableLikeClause		like_clause;
 	CreateStmt			create_stmt;
 	List			   *create_stmts;
@@ -745,7 +744,7 @@ create_single_partition_internal(Oid parent_relid,
 
 	/* Initialize CreateStmt structure */
 	NodeSetTag(&create_stmt, T_CreateStmt);
-	create_stmt.relation		= newrel_rv;
+	create_stmt.relation		= copyObject(partition_rv);
 	create_stmt.tableElts		= list_make1(copyObject(&like_clause));
 	create_stmt.inhRelations	= list_make1(copyObject(parent_rv));
 	create_stmt.ofTypename		= NULL;
