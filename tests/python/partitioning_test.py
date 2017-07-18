@@ -800,7 +800,7 @@ class PartitioningTests(unittest.TestCase):
 			self.assertEqual(int(rows[0][0]), 20)
 
 			# check partition that was chosen for insert
-			self.assertEqual(str(rows[0][1]), 'ins_test_1')
+			self.assertEqual(str(rows[0][1]), 'ins_test_11')
 
 		# Stop instance and finish work
 		node.stop()
