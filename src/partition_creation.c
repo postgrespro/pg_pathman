@@ -452,11 +452,10 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
 		FlushErrorState();
 
 		/* Produce log message if we're in BGW */
-		error->elevel	= LOG;
-		error->message	= psprintf(CppAsString(create_partitions_for_value_internal)
-								   ": %s [%u]", error->message, MyProcPid);
-
-		ReThrowError(error);
+		elog(LOG,
+			 CppAsString(create_partitions_for_value_internal) ": %s [%u]",
+			 error->message,
+			 MyProcPid);
 
 		/* Reset 'partid' in case of error */
 		partid = InvalidOid;
