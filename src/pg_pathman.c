@@ -1829,7 +1829,7 @@ make_translation_list(Relation oldrelation, Relation newrelation,
 				 */
 				if (!att)
 					elog(ERROR, "error in function "
-								CppAsString(make_inh_translation_list));
+								CppAsString(make_translation_list));
 
 				if (!att->attisdropped &&
 					strcmp(attname, NameStr(att->attname)) == 0)
