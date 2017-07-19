@@ -17,4 +17,4 @@ script:
     - docker-compose run $(bash <(curl -s https://codecov.io/env)) tests
 
 env:
-    - DOCKER_IMAGE=pg95_clang_check_code
+    - DOCKER_IMAGE=pathman/pg95_clang_check_code
