@@ -18,3 +18,11 @@ script:
 
 env:
     - DOCKER_IMAGE=pathman/pg95_clang_check_code
+    - DOCKER_IMAGE=pathman/pg95_cppcheck
+    - DOCKER_IMAGE=pathman/pg95_pathman_tests
+    - DOCKER_IMAGE=pathman/pg96_clang_check_code
+    - DOCKER_IMAGE=pathman/pg96_cppcheck
+    - DOCKER_IMAGE=pathman/pg96_pathman_tests
+    - DOCKER_IMAGE=pathman/pg10_clang_check_code
+    - DOCKER_IMAGE=pathman/pg10_cppcheck
+    - DOCKER_IMAGE=pathman/pg10_pathman_tests

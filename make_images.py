@@ -17,14 +17,15 @@ image_types = {
 	}
 }
 
-stopline = '###STOP'
-
-password = input("Enter password for `docker login`: ")
+password = input("Enter password for `docker login` for user `%s`: " % DOCKER_ID)
 subprocess.check_output([
 	'docker',
 	'login',
 	'-u', DOCKER_ID,
 	'-p', password])
+
+travis_conf_line = '- DOCKER_IMAGE=%s'
+travis_conf = []
 
 for pg_version in pg_versions:
 	pgname = 'pg%s' % pg_version.replace('.', '')
@@ -33,10 +34,6 @@ for pg_version in pg_versions:
 		with open('Dockerfile', 'w') as out:
 			with open('Dockerfile.tmpl', 'r') as f:
 				for line in f:
-					if line.startswith(stopline):
-						break
-
-					line = line
 					line = line.replace('${PG_VERSION}', pg_version)
 					for key, value in variables.items():
 						varname = '${%s}' % key
@@ -55,4 +52,6 @@ for pg_version in pg_versions:
 		subprocess.check_output(['docker', 'push', image_name],
 				stderr=subprocess.STDOUT)
 		print("upload ok:", image_name)
-		exit()
+		travis_conf.append(travis_conf_line % image_name)
+
+print('\n'.join(travis_conf))
