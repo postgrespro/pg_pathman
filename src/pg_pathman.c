@@ -470,7 +470,7 @@ append_child_relation(PlannerInfo *root,
 	appinfo->parent_reltype = RelationGetDescr(parent_relation)->tdtypeid;
 	appinfo->child_reltype  = RelationGetDescr(child_relation)->tdtypeid;
 
-	make_inh_translation_list(parent_relation, child_relation, childRTindex,
+	make_translation_list(parent_relation, child_relation, childRTindex,
 							  &appinfo->translated_vars);
 
 	/* Now append 'appinfo' to 'root->append_rel_list' */
@@ -1747,14 +1747,14 @@ translate_col_privs(const Bitmapset *parent_privs,
 
 
 /*
- * make_inh_translation_list
+ * make_translation_list
  *	  Build the list of translations from parent Vars to child Vars for
  *	  an inheritance child.
  *
  * For paranoia's sake, we match type/collation as well as attribute name.
  */
 void
-make_inh_translation_list(Relation oldrelation, Relation newrelation,
+make_translation_list(Relation oldrelation, Relation newrelation,
 						  Index newvarno, List **translated_vars)
 {
 	List	   *vars = NIL;
@@ -1812,7 +1812,7 @@ make_inh_translation_list(Relation oldrelation, Relation newrelation,
 		 */
 		if (old_attno < newnatts &&
 			(att = new_tupdesc->attrs[old_attno]) != NULL &&
-			!att->attisdropped && att->attinhcount != 0 &&
+			!att->attisdropped &&
 			strcmp(attname, NameStr(att->attname)) == 0)
 			new_attno = old_attno;
 		else
@@ -1831,7 +1831,7 @@ make_inh_translation_list(Relation oldrelation, Relation newrelation,
 					elog(ERROR, "error in function "
 								CppAsString(make_inh_translation_list));
 
-				if (!att->attisdropped && att->attinhcount != 0 &&
+				if (!att->attisdropped &&
 					strcmp(attname, NameStr(att->attname)) == 0)
 					break;
 			}

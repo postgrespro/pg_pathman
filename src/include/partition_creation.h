@@ -43,6 +43,14 @@ Oid create_single_hash_partition_internal(Oid parent_relid,
 										  RangeVar *partition_rv,
 										  char *tablespace);
 
+/*
+ * Create one partition. Also used to created parent like tables
+ * without any inheritance.
+ */
+Oid create_single_partition_internal(Oid parent_relid,
+								 RangeVar *partition_rv,
+								 char *tablespace,
+								 bool inherit_parent);
 
 /* RANGE constraints */
 Constraint * build_range_check_constraint(Oid child_relid,

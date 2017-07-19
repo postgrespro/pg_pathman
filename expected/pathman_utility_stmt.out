@@ -279,8 +279,30 @@ SELECT COUNT(*) FROM copy_stmt_hooking.test2;
      1
 (1 row)
 
+/* check fallback relation for NULLs */
+COPY copy_stmt_hooking.test2(t) FROM stdin;
+ERROR:  partitioning expression's value should not be NULL
+SET pg_pathman.enable_fallback_relation=ON;
+COPY copy_stmt_hooking.test2(t) FROM stdin;
+ERROR:  null value in column "t" violates not-null constraint
+ALTER TABLE copy_stmt_hooking.test2 ALTER COLUMN t DROP NOT NULL;
+COPY copy_stmt_hooking.test2(t) FROM stdin;
+SELECT * FROM copy_stmt_hooking.pathman_test2_fallback;
+ b | t 
+---+---
+   | 
+(1 row)
+
+SET pg_pathman.fallback_relation_name='fallbacks';
+COPY copy_stmt_hooking.test2(t) FROM stdin;
+SELECT * FROM copy_stmt_hooking.fallbacks;
+ b | t 
+---+---
+   | 
+(1 row)
+
 DROP SCHEMA copy_stmt_hooking CASCADE;
-NOTICE:  drop cascades to 797 other objects
+NOTICE:  drop cascades to 823 other objects
 /*
  * Test auto check constraint renaming
  */

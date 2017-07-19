@@ -158,6 +158,33 @@ COPY copy_stmt_hooking.test2(t) FROM stdin;
 \.
 SELECT COUNT(*) FROM copy_stmt_hooking.test2;
 
+/* check fallback relation for NULLs */
+COPY copy_stmt_hooking.test2(t) FROM stdin;
+2017-02-02 20:00:00
+\N
+2017-02-02 20:00:00
+\.
+SET pg_pathman.enable_fallback_relation=ON;
+COPY copy_stmt_hooking.test2(t) FROM stdin;
+2017-02-02 20:00:00
+\N
+2017-02-02 20:00:00
+\.
+ALTER TABLE copy_stmt_hooking.test2 ALTER COLUMN t DROP NOT NULL;
+COPY copy_stmt_hooking.test2(t) FROM stdin;
+2017-02-02 20:00:00
+\N
+2017-02-02 20:00:00
+\.
+SELECT * FROM copy_stmt_hooking.pathman_test2_fallback;
+SET pg_pathman.fallback_relation_name='fallbacks';
+COPY copy_stmt_hooking.test2(t) FROM stdin;
+2017-02-03 20:00:00
+\N
+2017-02-03 20:00:00
+\.
+SELECT * FROM copy_stmt_hooking.fallbacks;
+
 DROP SCHEMA copy_stmt_hooking CASCADE;
 
 

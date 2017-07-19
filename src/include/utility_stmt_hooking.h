@@ -19,7 +19,6 @@
 #include "commands/copy.h"
 #include "nodes/nodes.h"
 
-
 /* Various traits */
 bool is_pathman_related_copy(Node *parsetree);
 bool is_pathman_related_table_rename(Node *parsetree,

@@ -63,10 +63,6 @@ static void create_single_partition_common(Oid parent_relid,
 										   init_callback_params *callback_params,
 										   List *trigger_columns);
 
-static Oid create_single_partition_internal(Oid parent_relid,
-											RangeVar *partition_rv,
-											char *tablespace);
-
 static char *choose_range_partition_name(Oid parent_relid, Oid parent_nsp);
 static char *choose_hash_partition_name(Oid parent_relid, uint32 part_idx);
 
@@ -123,10 +119,11 @@ create_single_range_partition_internal(Oid parent_relid,
 	/* Check pathman config anld fill variables */
 	expr = build_partitioning_expression(parent_relid, NULL, &trigger_columns);
 
-	/* Create a partition & get 'partitioning expression' */
+	/* Create a partition */
 	partition_relid = create_single_partition_internal(parent_relid,
 													   partition_rv,
-													   tablespace);
+													   tablespace,
+													   true);
 
 	/* Build check constraint for RANGE partition */
 	check_constr = build_range_check_constraint(partition_relid,
@@ -179,12 +176,13 @@ create_single_hash_partition_internal(Oid parent_relid,
 		partition_rv = makeRangeVar(parent_nsp_name, partition_name, -1);
 	}
 
-	/* Create a partition & get 'partitionining expression' */
+	/* Create a partition */
 	partition_relid = create_single_partition_internal(parent_relid,
 													   partition_rv,
-													   tablespace);
+													   tablespace,
+													   true);
 
-	/* check pathman config and fill variables */
+	/* Build an expression and get column used in expression for triggers */
 	expr = build_partitioning_expression(parent_relid, &expr_type, &trigger_columns);
 
 	/* Build check constraint for HASH partition */
@@ -667,10 +665,11 @@ choose_hash_partition_name(Oid parent_relid, uint32 part_idx)
 }
 
 /* Create a partition-like table (no constraints yet) */
-static Oid
+Oid
 create_single_partition_internal(Oid parent_relid,
 								 RangeVar *partition_rv,
-								 char *tablespace)
+								 char *tablespace,
+								 bool inherit_parent)
 {
 	/* Value to be returned */
 	Oid					partition_relid = InvalidOid; /* safety */
@@ -739,14 +738,15 @@ create_single_partition_internal(Oid parent_relid,
 	NodeSetTag(&like_clause, T_TableLikeClause);
 	like_clause.relation		= copyObject(parent_rv);
 	like_clause.options			= CREATE_TABLE_LIKE_DEFAULTS |
-								  CREATE_TABLE_LIKE_INDEXES |
 								  CREATE_TABLE_LIKE_STORAGE;
+	if (inherit_parent)
+		like_clause.options |= CREATE_TABLE_LIKE_INDEXES;
 
 	/* Initialize CreateStmt structure */
 	NodeSetTag(&create_stmt, T_CreateStmt);
 	create_stmt.relation		= copyObject(partition_rv);
 	create_stmt.tableElts		= list_make1(copyObject(&like_clause));
-	create_stmt.inhRelations	= list_make1(copyObject(parent_rv));
+	create_stmt.inhRelations	= inherit_parent? list_make1(copyObject(parent_rv)) : NIL;
 	create_stmt.ofTypename		= NULL;
 	create_stmt.constraints		= NIL;
 	create_stmt.options			= NIL;
@@ -898,7 +898,7 @@ postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid)
 	parent_rel = heap_open(parent_relid, NoLock);
 	partition_rel = heap_open(partition_relid, NoLock);
 
-	make_inh_translation_list(parent_rel, partition_rel, 0, &translated_vars);
+	make_translation_list(parent_rel, partition_rel, 0, &translated_vars);
 
 	heap_close(parent_rel, NoLock);
 	heap_close(partition_rel, NoLock);

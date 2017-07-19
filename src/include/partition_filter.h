@@ -103,6 +103,7 @@ typedef struct
 
 extern bool					pg_pathman_enable_partition_filter;
 extern int					pg_pathman_insert_into_fdw;
+extern bool					pg_pathman_enable_fallback_relation;
 
 extern CustomScanMethods	partition_filter_plan_methods;
 extern CustomExecMethods	partition_filter_exec_methods;
@@ -138,6 +139,9 @@ ResultRelInfoHolder * select_partition_for_insert(Datum value, Oid value_type,
 												  ResultPartsStorage *parts_storage,
 												  EState *estate);
 
+ResultRelInfoHolder * get_relation_for_fallback(const PartRelationInfo *prel,
+												ResultPartsStorage *parts_storage,
+												EState *estate);
 
 Plan * make_partition_filter(Plan *subplan,
 							 Oid parent_relid,

@@ -27,6 +27,7 @@
 
 
 #define ALLOC_EXP	2
+#define PARENT_NAME_FMT "{parent_table}"
 
 
 /*
@@ -63,6 +64,9 @@ static const struct config_enum_entry pg_pathman_insert_into_fdw_options[] = {
 
 bool				pg_pathman_enable_partition_filter = true;
 int					pg_pathman_insert_into_fdw = PF_FDW_INSERT_POSTGRES;
+
+bool				pg_pathman_enable_fallback_relation = true;
+char			   *pg_pathman_fallback_relation_name;
 
 CustomScanMethods	partition_filter_plan_methods;
 CustomExecMethods	partition_filter_exec_methods;
@@ -128,6 +132,25 @@ init_partition_filter_static_data(void)
 							 NULL,
 							 NULL,
 							 NULL);
+
+	DefineCustomBoolVariable("pg_pathman.enable_fallback_relation",
+							 "Enables fallback relation for COPY when partitioning key returns NULL",
+							 NULL,
+							 &pg_pathman_enable_fallback_relation,
+							 false,
+							 PGC_USERSET,
+							 0,
+							 NULL,
+							 NULL,
+							 NULL);
+
+	DefineCustomStringVariable("pg_pathman.fallback_relation_name",
+							   "Partition name for NULL tuples in COPY command",
+							   NULL,
+							   &pg_pathman_fallback_relation_name,
+							   "pathman_" PARENT_NAME_FMT "_fallback",
+							   PGC_SUSET, 0,
+							   NULL, NULL, NULL);
 }
 
 
@@ -270,9 +293,6 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 		child_rel = heap_open(partid, NoLock);
 		CheckValidResultRel(child_rel, parts_storage->command_type);
 
-		/* Build Var translation list for 'inserted_cols' */
-		make_inh_translation_list(parent_rel, child_rel, 0, &translated_vars);
-
 		/* Create RangeTblEntry for partition */
 		child_rte = makeNode(RangeTblEntry);
 		child_rte->rtekind			= RTE_RELATION;
@@ -281,6 +301,9 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 		child_rte->eref				= parent_rte->eref;
 		child_rte->requiredPerms	= parent_rte->requiredPerms;
 		child_rte->checkAsUser		= parent_rte->checkAsUser;
+
+		/* Build Var translation list for 'inserted_cols' */
+		make_translation_list(parent_rel, child_rel, 0, &translated_vars);
 		child_rte->insertedCols		= translate_col_privs(parent_rte->insertedCols,
 														  translated_vars);
 		child_rte->updatedCols		= translate_col_privs(parent_rte->updatedCols,
@@ -473,6 +496,76 @@ select_partition_for_insert(Datum value, Oid value_type,
 	return rri_holder;
 }
 
+static char *
+get_fallback_relation_name(Oid parent_relid)
+{
+	char		   *parent_name = get_rel_name(parent_relid),
+				   *s = pstrdup(pg_pathman_fallback_relation_name);
+	StringInfoData	str;
+	char		   *pos;
+
+	initStringInfo(&str);
+
+	if (strstr(s, PARENT_NAME_FMT) != NULL)
+	{
+		while ((pos = strstr(s, PARENT_NAME_FMT)) != NULL)
+		{
+			int tmpl_len = strlen(PARENT_NAME_FMT);
+
+			appendBinaryStringInfo(&str, s, pos - s);
+			appendBinaryStringInfo(&str, parent_name, strlen(parent_name));
+			appendBinaryStringInfo(&str, pos + tmpl_len, strlen(s) - (pos - s) - tmpl_len);
+			memset(s, 0, tmpl_len);
+		}
+	}
+	else appendStringInfoString(&str, s);
+	pfree(s);
+
+	return str.data;
+}
+
+static Oid
+get_fallback_relation(Oid parent_relid)
+{
+	char       *name = get_fallback_relation_name(parent_relid);
+	Oid			result,
+				nsp;
+
+	nsp = get_rel_namespace(parent_relid);
+	result = get_relname_relid(name, nsp);
+	if (result == InvalidOid)
+	{
+		RangeVar	*rv;
+		char		*nspname = get_namespace_name(nsp);
+
+		rv = makeRangeVar(nspname, name, -1);
+		result = create_single_partition_internal(parent_relid, rv, NULL, false);
+	}
+
+	return result;
+}
+
+/*
+ * Return holder for fallback partition
+ */
+ResultRelInfoHolder *
+get_relation_for_fallback(const PartRelationInfo *prel,
+							ResultPartsStorage *parts_storage,
+							EState *estate)
+{
+	MemoryContext			old_mcxt;
+	ResultRelInfoHolder	   *rri_holder;
+	Oid						parent_relid = PrelParentRelid(prel),
+							fallback_relid;
+
+	/* Replace parent table with a suitable partition */
+	old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
+	fallback_relid = get_fallback_relation(parent_relid);
+	rri_holder = scan_result_parts_storage(fallback_relid, parts_storage);
+	MemoryContextSwitchTo(old_mcxt);
+
+	return rri_holder;
+}
 
 /*
  * --------------------------------

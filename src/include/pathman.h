@@ -115,9 +115,10 @@ Index append_child_relation(PlannerInfo *root,
 
 
 /*
- * Copied from PostgreSQL (prepunion.c)
+ * Copied from PostgreSQL (prepunion.c, make_inh_translation_list)
+ * 'attinhcount' checks were removed
  */
-void make_inh_translation_list(Relation oldrelation, Relation newrelation,
+void make_translation_list(Relation oldrelation, Relation newrelation,
 							   Index newvarno, List **translated_vars);
 
 Bitmapset *translate_col_privs(const Bitmapset *parent_privs,

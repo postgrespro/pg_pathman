@@ -36,6 +36,7 @@
 extern ProtocolVersion FrontendProtocol;
 extern void pq_endmsgread(void);
 
+
 /* Determine whether we should enable COPY or not (PostgresPro has a fix) */
 #if defined(WIN32) && \
 		(!defined(ENABLE_PGPRO_PATCHES) || \
@@ -66,7 +67,6 @@ static void prepare_rri_for_copy(EState *estate,
 								 ResultRelInfoHolder *rri_holder,
 								 const ResultPartsStorage *rps_storage,
 								 void *arg);
-
 
 /*
  * Is pg_pathman supposed to handle this COPY stmt?
@@ -657,16 +657,21 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 								   mult_result_handler);
 		econtext->ecxt_scantuple = tmp_slot;
 
-		if (isnull)
+		if (isnull && pg_pathman_enable_fallback_relation)
+			rri_holder = get_relation_for_fallback(prel, &parts_storage, estate);
+		else if (isnull)
 			elog(ERROR, ERR_PART_ATTR_NULL);
+		else
+		{
+			/*
+			 * Search for a matching partition.
+			 * WARNING: 'prel' might change after this call!
+			 */
+			rri_holder = select_partition_for_insert(value,
+													 prel->ev_type, prel,
+													 &parts_storage, estate);
+		}
 
-		/*
-		 * Search for a matching partition.
-		 * WARNING: 'prel' might change after this call!
-		 */
-		rri_holder = select_partition_for_insert(value,
-												 prel->ev_type, prel,
-												 &parts_storage, estate);
 		child_result_rel = rri_holder->result_rel_info;
 		estate->es_result_relation_info = child_result_rel;
 
