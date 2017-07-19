@@ -26,6 +26,7 @@ subprocess.check_output([
 
 travis_conf_line = '- DOCKER_IMAGE=%s'
 travis_conf = []
+print("")
 
 for pg_version in pg_versions:
 	pgname = 'pg%s' % pg_version.replace('.', '')
@@ -54,4 +55,5 @@ for pg_version in pg_versions:
 		print("upload ok:", image_name)
 		travis_conf.append(travis_conf_line % image_name)
 
+print("\ntravis configuration")
 print('\n'.join(travis_conf))
