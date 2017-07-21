@@ -37,6 +37,7 @@ fi
 
 # we need testgres for pathman tests
 virtualenv env
+export VIRTUAL_ENV_DISABLE_PROMPT=1
 source env/bin/activate
 pip3 install testgres
 pip3 freeze | grep testgres
