@@ -36,6 +36,8 @@ elif [ "$CHECK_CODE" = "cppcheck" ]; then
 fi
 
 # we need testgres for pathman tests
+virtualenv env
+source env/bin/activate
 pip3 install testgres
 pip3 freeze | grep testgres
 
