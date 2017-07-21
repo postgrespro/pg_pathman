@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import subprocess
+import getpass
 
 DOCKER_ID = 'pathman'
 pg_versions = ['9.5','9.6','10']
@@ -17,11 +18,12 @@ image_types = {
 	}
 }
 
-password = input("Enter password for `docker login` for user `%s`: " % DOCKER_ID)
+user = input("Enter username for `docker login`: ")
+password = getpass.getpass()
 subprocess.check_output([
 	'docker',
 	'login',
-	'-u', DOCKER_ID,
+	'-u', user,
 	'-p', password])
 
 travis_conf_line = '- DOCKER_IMAGE=%s'
