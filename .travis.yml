@@ -10,19 +10,19 @@ services:
     - docker
 
 install:
-    - sed -e 's/${CHECK_CODE}/'${CHECK_CODE}/g -e 's/${PG_VERSION}/'${PG_VERSION}/g Dockerfile.tmpl > Dockerfile
+    - echo "FROM ${DOCKER_IMAGE}" > Dockerfile
     - docker-compose build
 
 script:
     - docker-compose run $(bash <(curl -s https://codecov.io/env)) tests
 
 env:
-    - PG_VERSION=10  CHECK_CODE=clang
-    - PG_VERSION=9.6 CHECK_CODE=clang
-    - PG_VERSION=9.5 CHECK_CODE=clang
-    - PG_VERSION=10  CHECK_CODE=cppcheck
-    - PG_VERSION=9.6 CHECK_CODE=cppcheck
-    - PG_VERSION=9.5 CHECK_CODE=cppcheck
-    - PG_VERSION=10  CHECK_CODE=false
-    - PG_VERSION=9.6 CHECK_CODE=false
-    - PG_VERSION=9.5 CHECK_CODE=false
+    - DOCKER_IMAGE=pathman/pg95_clang_check_code
+    - DOCKER_IMAGE=pathman/pg95_cppcheck
+    - DOCKER_IMAGE=pathman/pg95_pathman_tests
+    - DOCKER_IMAGE=pathman/pg96_clang_check_code
+    - DOCKER_IMAGE=pathman/pg96_cppcheck
+    - DOCKER_IMAGE=pathman/pg96_pathman_tests
+    - DOCKER_IMAGE=pathman/pg10_clang_check_code
+    - DOCKER_IMAGE=pathman/pg10_cppcheck
+    - DOCKER_IMAGE=pathman/pg10_pathman_tests

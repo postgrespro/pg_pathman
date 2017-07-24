@@ -706,6 +706,7 @@ pathman_config_invalidate_parsed_expression(Oid relid)
 		/* Form new tuple and perform an update */
 		new_htup = heap_form_tuple(RelationGetDescr(rel), values, nulls);
 		CatalogTupleUpdate(rel, &iptr, new_htup);
+		heap_freetuple(new_htup);
 
 		heap_close(rel, RowExclusiveLock);
 	}
