@@ -629,6 +629,106 @@ class PartitioningTests(unittest.TestCase):
         node.stop()
         node.cleanup()
 
+    def test_conc_part_drop_runtime_append(self):
+        """ Test concurrent partition drop + SELECT (RuntimeAppend) """
+
+        # Create and start new instance
+        node = self.start_new_pathman_cluster(allows_streaming=False)
+
+        # Create table 'drop_test' and partition it
+        with node.connect() as con0:
+            # yapf: disable
+            con0.begin()
+            con0.execute("create table drop_test(val int not null)")
+            con0.execute("insert into drop_test select generate_series(1, 1000)")
+            con0.execute("select create_range_partitions('drop_test', 'val', 1, 10)")
+            con0.commit()
+
+        # Create two separate connections for this test
+        with node.connect() as con1, node.connect() as con2:
+
+            # Thread for connection #2 (it has to wait)
+            def con2_thread():
+                con1.begin()
+                con2.execute('set enable_hashjoin = f')
+                con2.execute('set enable_mergejoin = f')
+
+                res = con2.execute("""
+                    explain (analyze, costs off, timing off)
+                    select * from drop_test
+                    where val = any (select generate_series(1, 40, 34))
+                """) # query selects from drop_test_1 and drop_test_4
+
+                con2.commit()
+
+                has_runtime_append = False
+                has_drop_test_1 = False
+                has_drop_test_4 = False
+
+                for row in res:
+                    if row[0].find('RuntimeAppend') >= 0:
+                        has_runtime_append = True
+                        continue
+
+                    if row[0].find('drop_test_1') >= 0:
+                        has_drop_test_1 = True
+                        continue
+
+                    if row[0].find('drop_test_4') >= 0:
+                        has_drop_test_4 = True
+                        continue
+
+                self.assertTrue(has_runtime_append)
+                self.assertFalse(has_drop_test_1)
+                self.assertTrue(has_drop_test_4)
+
+            # Step 1: cache partitioned table in con1
+            con1.begin()
+            con1.execute('select count(*) from drop_test') # load pathman's cache
+            con1.commit()
+
+            # Step 2: cache partitioned table in con2
+            con2.begin()
+            con2.execute('select count(*) from drop_test') # load pathman's cache
+            con2.commit()
+
+            # Step 3: drop first partition of 'drop_test'
+            con1.begin()
+            con1.execute('drop table drop_test_1')
+
+            # Step 4: try executing select (RuntimeAppend)
+            t = threading.Thread(target=con2_thread)
+            t.start()
+
+            # Step 5: wait until 't' locks
+            while True:
+                with node.connect() as con0:
+                    locks = con0.execute("""
+                        select count(*) from pg_locks where granted = 'f'
+                    """)
+
+                    if int(locks[0][0]) > 0:
+                        break
+
+            # Step 6: commit 'DROP TABLE'
+            con1.commit()
+
+            # Step 7: wait for con2
+            t.join()
+
+            rows = con1.execute("""
+                select * from pathman_partition_list
+                where parent = 'drop_test'::regclass
+                order by range_min, range_max
+            """)
+
+            # check number of partitions
+            self.assertEqual(len(rows), 99)
+
+        # Stop instance and finish work
+        node.stop()
+        node.cleanup()
+
     def test_conc_part_creation_insert(self):
         """ Test concurrent partition creation on INSERT """
 
