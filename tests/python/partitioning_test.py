@@ -647,6 +647,14 @@ class PartitioningTests(unittest.TestCase):
         # Create two separate connections for this test
         with node.connect() as con1, node.connect() as con2:
 
+            try:
+                from queue import Queue
+            except ImportError:
+                from Queue import Queue
+
+            # return values from thread
+            queue = Queue()
+
             # Thread for connection #2 (it has to wait)
             def con2_thread():
                 con1.begin()
@@ -678,9 +686,9 @@ class PartitioningTests(unittest.TestCase):
                         has_drop_test_4 = True
                         continue
 
-                self.assertTrue(has_runtime_append)
-                self.assertFalse(has_drop_test_1)
-                self.assertTrue(has_drop_test_4)
+                # return all values in tuple
+                queue.put((has_runtime_append, has_drop_test_1, has_drop_test_4))
+
 
             # Step 1: cache partitioned table in con1
             con1.begin()
@@ -724,6 +732,12 @@ class PartitioningTests(unittest.TestCase):
 
             # check number of partitions
             self.assertEqual(len(rows), 99)
+
+            # check RuntimeAppend + selected partitions
+            (has_runtime_append, has_drop_test_1, has_drop_test_4) = queue.get()
+            self.assertTrue(has_runtime_append)
+            self.assertFalse(has_drop_test_1)
+            self.assertTrue(has_drop_test_4)
 
         # Stop instance and finish work
         node.stop()
