@@ -30,7 +30,8 @@ bool is_pathman_related_alter_column_type(Node *parsetree,
 										  PartType *part_type_out);
 
 /* Statement handlers */
-void PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed);
+void PathmanDoCopy(const CopyStmt *stmt, const char *queryString,
+				   int stmt_location, int stmt_len, uint64 *processed);
 void PathmanRenameConstraint(Oid partition_relid,
 							 const RenameStmt *partition_rename_stmt);
 

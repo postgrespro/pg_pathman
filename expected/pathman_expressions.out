@@ -2,11 +2,219 @@
 SET search_path = 'public';
 CREATE EXTENSION pg_pathman;
 CREATE SCHEMA test_exprs;
-/* hash */
+/*
+ * Test partitioning expression canonicalization process
+ */
+CREATE TABLE test_exprs.canon(c JSONB NOT NULL);
+SELECT create_range_partitions('test_exprs.canon', '(C->>''key'')::int8', 1, 10, 2);
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+SELECT expr FROM pathman_config; /* check expression */
+             expr              
+-------------------------------
+ ((c ->> 'key'::text))::bigint
+(1 row)
+
+INSERT INTO test_exprs.canon VALUES ('{ "key": 2, "value": 0 }');
+SELECT *, tableoid::REGCLASS FROM test_exprs.canon;
+           c            |      tableoid      
+------------------------+--------------------
+ {"key": 2, "value": 0} | test_exprs.canon_1
+(1 row)
+
+DROP TABLE test_exprs.canon CASCADE;
+NOTICE:  drop cascades to 3 other objects
+CREATE TABLE test_exprs.canon(val TEXT NOT NULL);
+CREATE SEQUENCE test_exprs.canon_seq;
+SELECT add_to_pathman_config('test_exprs.canon', 'VAL collate "C"', NULL);
+ add_to_pathman_config 
+-----------------------
+ t
+(1 row)
+
+SELECT add_range_partition('test_exprs.canon', 'a'::TEXT, 'b');
+ add_range_partition 
+---------------------
+ test_exprs.canon_1
+(1 row)
+
+SELECT add_range_partition('test_exprs.canon', 'b'::TEXT, 'c');
+ add_range_partition 
+---------------------
+ test_exprs.canon_2
+(1 row)
+
+SELECT add_range_partition('test_exprs.canon', 'c'::TEXT, 'd');
+ add_range_partition 
+---------------------
+ test_exprs.canon_3
+(1 row)
+
+SELECT add_range_partition('test_exprs.canon', 'd'::TEXT, 'e');
+ add_range_partition 
+---------------------
+ test_exprs.canon_4
+(1 row)
+
+SELECT expr FROM pathman_config; /* check expression */
+       expr        
+-------------------
+ (val COLLATE "C")
+(1 row)
+
+INSERT INTO test_exprs.canon VALUES ('b');
+SELECT *, tableoid::REGCLASS FROM test_exprs.canon;
+ val |      tableoid      
+-----+--------------------
+ b   | test_exprs.canon_2
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.canon WHERE val COLLATE "C" < ALL (array['b', 'c']);
+        QUERY PLAN         
+---------------------------
+ Append
+   ->  Seq Scan on canon_1
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.canon WHERE val COLLATE "POSIX" < ALL (array['b', 'c']);
+                        QUERY PLAN                         
+-----------------------------------------------------------
+ Append
+   ->  Seq Scan on canon_1
+         Filter: ((val)::text < 'b'::text COLLATE "POSIX")
+   ->  Seq Scan on canon_2
+         Filter: ((val)::text < 'b'::text COLLATE "POSIX")
+   ->  Seq Scan on canon_3
+         Filter: ((val)::text < 'b'::text COLLATE "POSIX")
+   ->  Seq Scan on canon_4
+         Filter: ((val)::text < 'b'::text COLLATE "POSIX")
+(9 rows)
+
+DROP TABLE test_exprs.canon CASCADE;
+NOTICE:  drop cascades to 5 other objects
+/*
+ * Test composite key.
+ */
+CREATE TABLE test_exprs.composite(a INT4 NOT NULL, b TEXT NOT NULL);
+CREATE SEQUENCE test_exprs.composite_seq;
+SELECT add_to_pathman_config('test_exprs.composite',
+							 '(a, b)::test_exprs.composite',
+							 NULL);
+ add_to_pathman_config 
+-----------------------
+ t
+(1 row)
+
+SELECT add_range_partition('test_exprs.composite',
+						   '(1,a)'::test_exprs.composite,
+						   '(10,a)'::test_exprs.composite);
+  add_range_partition   
+------------------------
+ test_exprs.composite_1
+(1 row)
+
+SELECT add_range_partition('test_exprs.composite',
+						   '(10,a)'::test_exprs.composite,
+						   '(20,a)'::test_exprs.composite);
+  add_range_partition   
+------------------------
+ test_exprs.composite_2
+(1 row)
+
+SELECT add_range_partition('test_exprs.composite',
+						   '(20,a)'::test_exprs.composite,
+						   '(30,a)'::test_exprs.composite);
+  add_range_partition   
+------------------------
+ test_exprs.composite_3
+(1 row)
+
+SELECT add_range_partition('test_exprs.composite',
+						   '(30,a)'::test_exprs.composite,
+						   '(40,a)'::test_exprs.composite);
+  add_range_partition   
+------------------------
+ test_exprs.composite_4
+(1 row)
+
+SELECT expr FROM pathman_config; /* check expression */
+              expr               
+---------------------------------
+ ROW(a, b)::test_exprs.composite
+(1 row)
+
+INSERT INTO test_exprs.composite VALUES(2,  'a');
+INSERT INTO test_exprs.composite VALUES(11, 'a');
+INSERT INTO test_exprs.composite VALUES(2,  'b');
+INSERT INTO test_exprs.composite VALUES(50, 'b');
+ERROR:  cannot spawn new partition for key '(50,b)'
+SELECT *, tableoid::REGCLASS FROM test_exprs.composite;
+ a  | b |        tableoid        
+----+---+------------------------
+  2 | a | test_exprs.composite_1
+  2 | b | test_exprs.composite_1
+ 11 | a | test_exprs.composite_2
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.composite WHERE (a, b)::test_exprs.composite < (21, 0)::test_exprs.composite;
+                                          QUERY PLAN                                          
+----------------------------------------------------------------------------------------------
+ Append
+   ->  Seq Scan on composite_1
+   ->  Seq Scan on composite_2
+   ->  Seq Scan on composite_3
+         Filter: (ROW(a, b)::test_exprs.composite < ROW(21, '0'::text)::test_exprs.composite)
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.composite WHERE (a, b) < (21, 0)::test_exprs.composite;
+                               QUERY PLAN                               
+------------------------------------------------------------------------
+ Append
+   ->  Seq Scan on composite_1
+         Filter: (ROW(a, b) < ROW(21, '0'::text)::test_exprs.composite)
+   ->  Seq Scan on composite_2
+         Filter: (ROW(a, b) < ROW(21, '0'::text)::test_exprs.composite)
+   ->  Seq Scan on composite_3
+         Filter: (ROW(a, b) < ROW(21, '0'::text)::test_exprs.composite)
+   ->  Seq Scan on composite_4
+         Filter: (ROW(a, b) < ROW(21, '0'::text)::test_exprs.composite)
+(9 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.composite WHERE (a, b)::test_exprs.composite < (21, 0);
+                           QUERY PLAN                           
+----------------------------------------------------------------
+ Append
+   ->  Seq Scan on composite_1
+         Filter: (ROW(a, b)::test_exprs.composite < ROW(21, 0))
+   ->  Seq Scan on composite_2
+         Filter: (ROW(a, b)::test_exprs.composite < ROW(21, 0))
+   ->  Seq Scan on composite_3
+         Filter: (ROW(a, b)::test_exprs.composite < ROW(21, 0))
+   ->  Seq Scan on composite_4
+         Filter: (ROW(a, b)::test_exprs.composite < ROW(21, 0))
+(9 rows)
+
+DROP TABLE test_exprs.composite CASCADE;
+NOTICE:  drop cascades to 5 other objects
+/* We use this rel to check 'pathman_hooks_enabled' */
+CREATE TABLE test_exprs.canary(val INT4 NOT NULL);
+CREATE TABLE test_exprs.canary_copy (LIKE test_exprs.canary);
+SELECT create_hash_partitions('test_exprs.canary', 'val', 5);
+ create_hash_partitions 
+------------------------
+                      5
+(1 row)
+
+/*
+ * Test HASH
+ */
 CREATE TABLE test_exprs.hash_rel (
 	id		SERIAL PRIMARY KEY,
-	value	INTEGER,
-	value2  INTEGER
+	value	INTEGER NOT NULL,
+	value2  INTEGER NOT NULL
 );
 INSERT INTO test_exprs.hash_rel (value, value2)
 	SELECT val, val * 2 FROM generate_series(1, 5) val;
@@ -17,17 +225,80 @@ SELECT COUNT(*) FROM test_exprs.hash_rel;
 (1 row)
 
 \set VERBOSITY default
+/* Try using constant expression */
+SELECT create_hash_partitions('test_exprs.hash_rel', '1 + 1', 4);
+ERROR:  failed to analyze partitioning expression "1 + 1"
+DETAIL:  partitioning expression should reference table "hash_rel"
+CONTEXT:  SQL statement "SELECT public.validate_expression(parent_relid, expression)"
+PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line 9 at PERFORM
+SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data)"
+PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 6 at PERFORM
+/* Try using system attributes */
+SELECT create_hash_partitions('test_exprs.hash_rel', 'xmin', 4);
+ERROR:  failed to analyze partitioning expression "xmin"
+DETAIL:  system attributes are not supported
+CONTEXT:  SQL statement "SELECT public.validate_expression(parent_relid, expression)"
+PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line 9 at PERFORM
+SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data)"
+PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 6 at PERFORM
+/* Try using subqueries */
+SELECT create_hash_partitions('test_exprs.hash_rel',
+							  'value, (select oid from pg_class limit 1)',
+							  4);
+ERROR:  failed to analyze partitioning expression "value, (select oid from pg_class limit 1)"
+DETAIL:  subqueries are not allowed in partitioning expression
+CONTEXT:  SQL statement "SELECT public.validate_expression(parent_relid, expression)"
+PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line 9 at PERFORM
+SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data)"
+PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 6 at PERFORM
+/* Try using mutable expression */
+SELECT create_hash_partitions('test_exprs.hash_rel', 'random()', 4);
+ERROR:  failed to analyze partitioning expression "random()"
+DETAIL:  functions in partitioning expression must be marked IMMUTABLE
+CONTEXT:  SQL statement "SELECT public.validate_expression(parent_relid, expression)"
+PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line 9 at PERFORM
+SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data)"
+PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 6 at PERFORM
+/* Try using broken parentheses */
 SELECT create_hash_partitions('test_exprs.hash_rel', 'value * value2))', 4);
-ERROR:  partitioning expression parse error
+ERROR:  failed to parse partitioning expression "value * value2))"
 DETAIL:  syntax error at or near ")"
-QUERY:  SELECT public.add_to_pathman_config(parent_relid, expression)
-CONTEXT:  PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 12 at PERFORM
+QUERY:  SELECT public.validate_expression(parent_relid, expression)
+CONTEXT:  PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line 9 at PERFORM
+SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data)"
+PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 6 at PERFORM
+/* Try using missing columns */
 SELECT create_hash_partitions('test_exprs.hash_rel', 'value * value3', 4);
-ERROR:  partitioning expression analyze error
+ERROR:  failed to analyze partitioning expression "value * value3"
 DETAIL:  column "value3" does not exist
 HINT:  Perhaps you meant to reference the column "hash_rel.value" or the column "hash_rel.value2".
-QUERY:  SELECT public.add_to_pathman_config(parent_relid, expression)
-CONTEXT:  PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 12 at PERFORM
+QUERY:  SELECT public.validate_expression(parent_relid, expression)
+CONTEXT:  PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line 9 at PERFORM
+SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data)"
+PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 6 at PERFORM
+/* Check that 'pathman_hooks_enabled' is true (1 partition in plan) */
+EXPLAIN (COSTS OFF) INSERT INTO test_exprs.canary_copy
+SELECT * FROM test_exprs.canary WHERE val = 1;
+            QUERY PLAN            
+----------------------------------
+ Insert on canary_copy
+   ->  Append
+         ->  Seq Scan on canary_0
+               Filter: (val = 1)
+(4 rows)
+
 \set VERBOSITY terse
 SELECT create_hash_partitions('test_exprs.hash_rel', 'value * value2', 4);
  create_hash_partitions 
@@ -83,14 +354,49 @@ EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.hash_rel WHERE (value * value2) = 5
          Filter: ((value * value2) = 5)
 (3 rows)
 
-/* range */
-CREATE TABLE test_exprs.range_rel (id SERIAL PRIMARY KEY, dt TIMESTAMP, txt TEXT);
+/*
+ * Test RANGE
+ */
+CREATE TABLE test_exprs.range_rel (id SERIAL PRIMARY KEY, dt TIMESTAMP NOT NULL, txt TEXT);
 INSERT INTO test_exprs.range_rel (dt, txt)
 SELECT g, md5(g::TEXT) FROM generate_series('2015-01-01', '2020-04-30', '1 month'::interval) as g;
-SELECT create_range_partitions('test_exprs.range_rel', 'RANDOM()', '15 years'::INTERVAL, '1 year'::INTERVAL, 10);
-ERROR:  start value is less than min value of "random()"
+\set VERBOSITY default
+/* Try using constant expression */
+SELECT create_range_partitions('test_exprs.range_rel', '''16 years''::interval',
+							   '15 years'::INTERVAL, '1 year'::INTERVAL, 10);
+ERROR:  failed to analyze partitioning expression "'16 years'::interval"
+DETAIL:  partitioning expression should reference table "range_rel"
+CONTEXT:  SQL statement "SELECT public.validate_expression(parent_relid, expression)"
+PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line 9 at PERFORM
+SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data)"
+PL/pgSQL function create_range_partitions(regclass,text,anyelement,interval,integer,boolean) line 13 at PERFORM
+/* Try using mutable expression */
+SELECT create_range_partitions('test_exprs.range_rel', 'RANDOM()',
+							   '15 years'::INTERVAL, '1 year'::INTERVAL, 10);
+ERROR:  failed to analyze partitioning expression "RANDOM()"
+DETAIL:  functions in partitioning expression must be marked IMMUTABLE
+CONTEXT:  SQL statement "SELECT public.validate_expression(parent_relid, expression)"
+PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line 9 at PERFORM
+SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
+												 expression,
+												 partition_data)"
+PL/pgSQL function create_range_partitions(regclass,text,anyelement,interval,integer,boolean) line 13 at PERFORM
+/* Check that 'pathman_hooks_enabled' is true (1 partition in plan) */
+EXPLAIN (COSTS OFF) INSERT INTO test_exprs.canary_copy
+SELECT * FROM test_exprs.canary WHERE val = 1;
+            QUERY PLAN            
+----------------------------------
+ Insert on canary_copy
+   ->  Append
+         ->  Seq Scan on canary_0
+               Filter: (val = 1)
+(4 rows)
+
+\set VERBOSITY terse
 SELECT create_range_partitions('test_exprs.range_rel', 'AGE(dt, ''2000-01-01''::DATE)',
-		'15 years'::INTERVAL, '1 year'::INTERVAL, 10);
+							   '15 years'::INTERVAL, '1 year'::INTERVAL, 10);
  create_range_partitions 
 -------------------------
                       10
@@ -164,5 +470,5 @@ SELECT COUNT(*) FROM test_exprs.range_rel_2;
 (1 row)
 
 DROP SCHEMA test_exprs CASCADE;
-NOTICE:  drop cascades to 17 other objects
+NOTICE:  drop cascades to 24 other objects
 DROP EXTENSION pg_pathman;

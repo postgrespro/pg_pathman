@@ -23,7 +23,6 @@ DECLARE
 	v_upper_parent		REGCLASS;
 
 BEGIN
-	expression := lower(expression);
 	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
 												 expression,
 												 partition_data);
@@ -88,15 +87,15 @@ BEGIN
 
 	IF lock_parent THEN
 		/* Acquire data modification lock (prevent further modifications) */
-		PERFORM @extschema@.prevent_relation_modification(parent_relid);
+		PERFORM @extschema@.prevent_data_modification(parent_relid);
 	ELSE
 		/* Acquire lock on parent */
-		PERFORM @extschema@.lock_partitioned_relation(parent_relid);
+		PERFORM @extschema@.prevent_part_modification(parent_relid);
 	END IF;
 
 	/* Acquire data modification lock (prevent further modifications) */
-	PERFORM @extschema@.prevent_relation_modification(old_partition);
-	PERFORM @extschema@.prevent_relation_modification(new_partition);
+	PERFORM @extschema@.prevent_data_modification(old_partition);
+	PERFORM @extschema@.prevent_data_modification(new_partition);
 
 	/* Ignore temporary tables */
 	SELECT relpersistence FROM pg_catalog.pg_class

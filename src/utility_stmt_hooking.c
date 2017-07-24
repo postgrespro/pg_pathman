@@ -12,6 +12,7 @@
  */
 
 #include "compat/debug_compat_features.h"
+#include "compat/pg_compat.h"
 #include "init.h"
 #include "utility_stmt_hooking.h"
 #include "partition_filter.h"
@@ -30,8 +31,10 @@
 #include "utils/memutils.h"
 #include "utils/rls.h"
 
-#include "libpq/libpq.h"
-
+/* we avoid includig libpq.h because it requires openssl.h */
+#include "libpq/pqcomm.h"
+extern ProtocolVersion FrontendProtocol;
+extern void pq_endmsgread(void);
 
 /* Determine whether we should enable COPY or not (PostgresPro has a fix) */
 #if defined(WIN32) && \
@@ -230,7 +233,7 @@ is_pathman_related_alter_column_type(Node *parsetree,
 		if (!bms_is_member(adjusted_attnum, prel->expr_atts))
 			continue;
 
-		/* Return 'prel->attnum' */
+		/* Return 'attr_number_out' if asked to */
 		if (attr_number_out) *attr_number_out = attnum;
 
 		/* Success! */
@@ -324,7 +327,11 @@ CopyGetAttnums(TupleDesc tupDesc, Relation rel, List *attnamelist)
  * NOTE: based on DoCopy() (see copy.c).
  */
 void
-PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
+PathmanDoCopy(const CopyStmt *stmt,
+			  const char *queryString,
+			  int stmt_location,
+			  int stmt_len,
+			  uint64 *processed)
 {
 	CopyState	cstate;
 	bool		is_from = stmt->is_from;
@@ -332,6 +339,7 @@ PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
 	Relation	rel;
 	Node	   *query = NULL;
 	List	   *range_table = NIL;
+	ParseState *pstate;
 
 	/* Disallow COPY TO/FROM file or program except to superusers. */
 	if (!pipe && !superuser())
@@ -480,6 +488,9 @@ PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
 	/* This should never happen (see is_pathman_related_copy()) */
 	else elog(ERROR, "error in function " CppAsString(PathmanDoCopy));
 
+	pstate = make_parsestate(NULL);
+	pstate->p_sourcetext = queryString;
+
 	/* COPY ... FROM ... */
 	if (is_from)
 	{
@@ -494,8 +505,9 @@ PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
 			PreventCommandIfReadOnly("PATHMAN COPY FROM");
 		PreventCommandIfParallelMode("PATHMAN COPY FROM");
 
-		cstate = BeginCopyFrom(rel, stmt->filename, stmt->is_program,
-							   stmt->attlist, stmt->options);
+		cstate = BeginCopyFromCompat(pstate, rel, stmt->filename,
+									 stmt->is_program, NULL, stmt->attlist,
+									 stmt->options);
 		*processed = PathmanCopyFrom(cstate, rel, range_table, is_old_protocol);
 		EndCopyFrom(cstate);
 	}
@@ -513,7 +525,8 @@ PathmanDoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
 		modified_copy_stmt.query = query;
 
 		/* Call standard DoCopy using a new CopyStmt */
-		DoCopy(&modified_copy_stmt, queryString, processed);
+		DoCopyCompat(pstate, &modified_copy_stmt, stmt_location, stmt_len,
+					 processed);
 	}
 
 	/*
@@ -554,10 +567,10 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	tupDesc = RelationGetDescr(parent_rel);
 
 	parent_result_rel = makeNode(ResultRelInfo);
-	InitResultRelInfo(parent_result_rel,
-					  parent_rel,
-					  1,		/* dummy rangetable index */
-					  0);
+	InitResultRelInfoCompat(parent_result_rel,
+							parent_rel,
+							1,		/* dummy rangetable index */
+							0);
 	ExecOpenIndices(parent_result_rel, false);
 
 	estate->es_result_relations = parent_result_rel;
@@ -700,9 +713,9 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 				recheckIndexes = ExecInsertIndexTuples(slot, &(tuple->t_self),
 													   estate, false, NULL, NIL);
 
-			/* AFTER ROW INSERT Triggers */
-			ExecARInsertTriggers(estate, child_result_rel, tuple,
-								 recheckIndexes);
+			/* AFTER ROW INSERT Triggers (FIXME: NULL transition) */
+			ExecARInsertTriggersCompat(estate, child_result_rel, tuple,
+									   recheckIndexes, NULL);
 
 			list_free(recheckIndexes);
 
@@ -724,8 +737,8 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	if (old_protocol)
 		pq_endmsgread();
 
-	/* Execute AFTER STATEMENT insertion triggers */
-	ExecASInsertTriggers(estate, parent_result_rel);
+	/* Execute AFTER STATEMENT insertion triggers (FIXME: NULL transition) */
+	ExecASInsertTriggersCompat(estate, parent_result_rel, NULL);
 
 	/* Handle queued AFTER triggers */
 	AfterTriggerEndQuery(estate);

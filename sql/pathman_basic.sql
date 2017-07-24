@@ -11,8 +11,13 @@ CREATE TABLE test.hash_rel (
 INSERT INTO test.hash_rel VALUES (1, 1);
 INSERT INTO test.hash_rel VALUES (2, 2);
 INSERT INTO test.hash_rel VALUES (3, 3);
+
+\set VERBOSITY default
 SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3);
+\set VERBOSITY terse
+
 ALTER TABLE test.hash_rel ALTER COLUMN value SET NOT NULL;
+
 SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3, partition_data:=false);
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
 SELECT * FROM test.hash_rel;
@@ -39,9 +44,14 @@ CREATE TABLE test.range_rel (
 CREATE INDEX ON test.range_rel (dt);
 INSERT INTO test.range_rel (dt, txt)
 SELECT g, md5(g::TEXT) FROM generate_series('2015-01-01', '2015-04-30', '1 day'::interval) as g;
-SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL, 2);
+
+\set VERBOSITY default
 SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL);
+\set VERBOSITY terse
+
 ALTER TABLE test.range_rel ALTER COLUMN dt SET NOT NULL;
+
+SELECT pathman.create_range_partitions('test.range_rel', 'dt', '2015-01-01'::DATE, '1 month'::INTERVAL, 2);
 SELECT pathman.create_range_partitions('test.range_rel', 'DT', '2015-01-01'::DATE, '1 month'::INTERVAL);
 SELECT COUNT(*) FROM test.range_rel;
 SELECT COUNT(*) FROM ONLY test.range_rel;
@@ -135,26 +145,6 @@ SELECT count(*) FROM test.insert_into_select_copy;
 DROP TABLE test.insert_into_select_copy, test.insert_into_select CASCADE;
 
 
-/* Test INSERT hooking with DATE type */
-CREATE TABLE test.insert_date_test(val DATE NOT NULL);
-SELECT pathman.create_partitions_from_range('test.insert_date_test', 'val',
-											date '20161001', date '20170101', interval '1 month');
-
-INSERT INTO test.insert_date_test VALUES ('20161201'); /* just insert the date */
-SELECT count(*) FROM pathman.pathman_partition_list WHERE parent = 'test.insert_date_test'::REGCLASS;
-
-INSERT INTO test.insert_date_test VALUES ('20170311'); /* append new partitions */
-SELECT count(*) FROM pathman.pathman_partition_list WHERE parent = 'test.insert_date_test'::REGCLASS;
-
-INSERT INTO test.insert_date_test VALUES ('20160812'); /* prepend new partitions */
-SELECT count(*) FROM pathman.pathman_partition_list WHERE parent = 'test.insert_date_test'::REGCLASS;
-
-SELECT min(val) FROM test.insert_date_test; /* check first date */
-SELECT max(val) FROM test.insert_date_test; /* check last date */
-
-DROP TABLE test.insert_date_test CASCADE;
-
-
 SET pg_pathman.enable_runtimeappend = OFF;
 SET pg_pathman.enable_runtimemergeappend = OFF;
 
@@ -168,29 +158,18 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE false;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = NULL;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2;
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE 2 = value; /* test commutator */
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2 OR value = 1;
 
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE 2500 = id; /* test commutator */
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE 2500 < id; /* test commutator */
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > 2500;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 1000 AND id < 3000;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 1500 AND id < 2500;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE (id >= 500 AND id < 1500) OR (id > 2500);
 
-EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (2500);
-EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (500, 1500);
-EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (-500, 500, 1500);
-EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (-1, -1, -1);
-EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id IN (-1, -1, -1, NULL);
-
-EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > ANY (ARRAY[1500, 2200]);
-EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > ANY (ARRAY[100, 1500]);
-EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > ALL (ARRAY[1500, 2200]);
-EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > ALL (ARRAY[100, 1500]);
-EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id = ANY (ARRAY[1500, 2200]);
-EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id = ANY (ARRAY[100, 1500]);
-EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id = ALL (ARRAY[1500, 2200]);
-EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id = ALL (ARRAY[100, 1500]);
-
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt > '2015-02-15';
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE '2015-02-15' < dt; /* test commutator */
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-02-01' AND dt < '2015-03-01';
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-02-15' AND dt < '2015-03-15';
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE (dt >= '2015-01-15' AND dt < '2015-02-15') OR (dt > '2015-03-15');
@@ -204,24 +183,11 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE false;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = NULL;
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2;
+EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE 2 = value; /* test commutator */
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2 OR value = 1;
 
-EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (2);
-EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (2, 1);
-EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (1, 2);
-EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (1, 2, -1);
-EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (0, 0, 0);
-EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value IN (NULL::int, NULL, NULL);
-
-EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value > ANY (ARRAY[1, 2]);
-EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value > ANY (ARRAY[1, 2, 3, 4, 5]);
-EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value > ALL (ARRAY[1, 2]);
-EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value > ALL (ARRAY[1, 2, 3, 4, 5]);
-EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = ANY (ARRAY[1, 2]);
-EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = ANY (ARRAY[1, 2, 3, 4, 5]);
-EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = ALL (ARRAY[1, 2]);
-EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = ALL (ARRAY[1, 2, 3, 4, 5]);
-
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE 2500 = id; /* test commutator */
+EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE 2500 < id; /* test commutator */
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id > 2500;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 1000 AND id < 3000;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 1500 AND id < 2500;
@@ -230,6 +196,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel ORDER BY id;
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id <= 2500 ORDER BY id;
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt > '2015-02-15';
+EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE '2015-02-15' < dt; /* test commutator */
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-02-01' AND dt < '2015-03-01';
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-02-15' AND dt < '2015-03-15';
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE (dt >= '2015-01-15' AND dt < '2015-02-15') OR (dt > '2015-03-15');
@@ -382,8 +349,23 @@ SELECT * FROM test.hash_rel WHERE id = 123;
 /* Test replacing hash partition */
 CREATE TABLE test.hash_rel_extern (LIKE test.hash_rel INCLUDING ALL);
 SELECT pathman.replace_hash_partition('test.hash_rel_0', 'test.hash_rel_extern');
-\d+ test.hash_rel_0
-\d+ test.hash_rel_extern
+
+/* Check the consistency of test.hash_rel_0 and test.hash_rel_extern relations */
+EXPLAIN(COSTS OFF) SELECT * FROM test.hash_rel;
+SELECT parent, partition, parttype
+FROM pathman.pathman_partition_list
+WHERE parent='test.hash_rel'::regclass
+ORDER BY 2;
+SELECT c.oid::regclass::text,
+    array_agg(pg_get_indexdef(i.indexrelid)) AS indexes,
+    array_agg(pg_get_triggerdef(t.oid)) AS triggers
+FROM pg_class c
+    LEFT JOIN pg_index i ON c.oid=i.indrelid
+    LEFT JOIN pg_trigger t ON c.oid=t.tgrelid
+WHERE c.oid IN ('test.hash_rel_0'::regclass, 'test.hash_rel_extern'::regclass)
+GROUP BY 1 ORDER BY 1;
+SELECT pathman.is_tuple_convertible('test.hash_rel_0', 'test.hash_rel_extern');
+
 INSERT INTO test.hash_rel SELECT * FROM test.hash_rel_0;
 DROP TABLE test.hash_rel_0;
 /* Table with which we are replacing partition must have exact same structure */
@@ -406,6 +388,19 @@ DROP TABLE test.hash_rel CASCADE;
 SELECT pathman.drop_partitions('test.num_range_rel');
 DROP TABLE test.num_range_rel CASCADE;
 
+DROP TABLE test.range_rel CASCADE;
+
+/* Test attributes copying */
+CREATE UNLOGGED TABLE test.range_rel (
+	id	SERIAL PRIMARY KEY,
+	dt	DATE NOT NULL)
+WITH (fillfactor = 70);
+INSERT INTO test.range_rel (dt)
+	SELECT g FROM generate_series('2015-01-01', '2015-02-15', '1 month'::interval) AS g;
+SELECT pathman.create_range_partitions('test.range_rel', 'dt',
+	'2015-01-01'::date, '1 month'::interval);
+SELECT reloptions, relpersistence FROM pg_class WHERE oid='test.range_rel'::REGCLASS;
+SELECT reloptions, relpersistence FROM pg_class WHERE oid='test.range_rel_1'::REGCLASS;
 DROP TABLE test.range_rel CASCADE;
 
 /* Test automatic partition creation */
@@ -480,8 +475,6 @@ SELECT pathman.append_range_partition('test."RangeRel"');
 SELECT pathman.prepend_range_partition('test."RangeRel"');
 SELECT pathman.merge_range_partitions('test."RangeRel_1"', 'test."RangeRel_' || currval('test."RangeRel_seq"') || '"');
 SELECT pathman.split_range_partition('test."RangeRel_1"', '2015-01-01'::DATE);
-SELECT pathman.drop_partitions('test."RangeRel"');
-SELECT pathman.create_partitions_from_range('test."RangeRel"', 'dt', '2015-01-01'::DATE, '2015-01-05'::DATE, '1 day'::INTERVAL);
 DROP TABLE test."RangeRel" CASCADE;
 SELECT * FROM pathman.pathman_config;
 CREATE TABLE test."RangeRel" (
@@ -489,8 +482,6 @@ CREATE TABLE test."RangeRel" (
 	dt	TIMESTAMP NOT NULL,
 	txt	TEXT);
 SELECT pathman.create_range_partitions('test."RangeRel"', 'id', 1, 100, 3);
-SELECT pathman.drop_partitions('test."RangeRel"');
-SELECT pathman.create_partitions_from_range('test."RangeRel"', 'id', 1, 300, 100);
 DROP TABLE test."RangeRel" CASCADE;
 
 DROP EXTENSION pg_pathman;
@@ -525,24 +516,33 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt > '2010-12-15';
 CREATE TABLE test.tmp (id INTEGER NOT NULL, value INTEGER NOT NULL);
 INSERT INTO test.tmp VALUES (1, 1), (2, 2);
 
+
 /* Test UPDATE and DELETE */
-EXPLAIN (COSTS OFF) UPDATE test.range_rel SET value = 111 WHERE dt = '2010-06-15';
+EXPLAIN (COSTS OFF) UPDATE test.range_rel SET value = 111 WHERE dt = '2010-06-15';	/* have partitions for this 'dt' */
 UPDATE test.range_rel SET value = 111 WHERE dt = '2010-06-15';
 SELECT * FROM test.range_rel WHERE dt = '2010-06-15';
-EXPLAIN (COSTS OFF) DELETE FROM test.range_rel WHERE dt = '2010-06-15';
+
+EXPLAIN (COSTS OFF) DELETE FROM test.range_rel WHERE dt = '2010-06-15';	/* have partitions for this 'dt' */
 DELETE FROM test.range_rel WHERE dt = '2010-06-15';
 SELECT * FROM test.range_rel WHERE dt = '2010-06-15';
+
+EXPLAIN (COSTS OFF) UPDATE test.range_rel SET value = 222 WHERE dt = '1990-01-01';	/* no partitions for this 'dt' */
+UPDATE test.range_rel SET value = 111 WHERE dt = '1990-01-01';
+SELECT * FROM test.range_rel WHERE dt = '1990-01-01';
+
+EXPLAIN (COSTS OFF) DELETE FROM test.range_rel WHERE dt < '1990-01-01';	/* no partitions for this 'dt' */
+DELETE FROM test.range_rel WHERE dt < '1990-01-01';
+SELECT * FROM test.range_rel WHERE dt < '1990-01-01';
+
 EXPLAIN (COSTS OFF) UPDATE test.range_rel r SET value = t.value FROM test.tmp t WHERE r.dt = '2010-01-01' AND r.id = t.id;
 UPDATE test.range_rel r SET value = t.value FROM test.tmp t WHERE r.dt = '2010-01-01' AND r.id = t.id;
+
 EXPLAIN (COSTS OFF) DELETE FROM test.range_rel r USING test.tmp t WHERE r.dt = '2010-01-02' AND r.id = t.id;
 DELETE FROM test.range_rel r USING test.tmp t WHERE r.dt = '2010-01-02' AND r.id = t.id;
 
+
 /* Create range partitions from whole range */
 SELECT drop_partitions('test.range_rel');
-SELECT create_partitions_from_range('test.range_rel', 'id', 1, 1000, 100);
-SELECT drop_partitions('test.range_rel', TRUE);
-SELECT create_partitions_from_range('test.range_rel', 'dt', '2015-01-01'::date, '2015-12-01'::date, '1 month'::interval);
-EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt = '2015-12-15';
 
 /* Test NOT operator */
 CREATE TABLE bool_test(a INT NOT NULL, b BOOLEAN);

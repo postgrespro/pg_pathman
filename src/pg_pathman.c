@@ -9,8 +9,8 @@
  * ------------------------------------------------------------------------
  */
 
-#include "compat/expand_rte_hook.h"
 #include "compat/pg_compat.h"
+#include "compat/rowmarks_fix.h"
 
 #include "init.h"
 #include "hooks.h"
@@ -30,8 +30,9 @@
 #include "optimizer/restrictinfo.h"
 #include "optimizer/cost.h"
 #include "utils/datum.h"
-#include "utils/lsyscache.h"
 #include "utils/rel.h"
+#include "utils/lsyscache.h"
+#include "utils/syscache.h"
 #include "utils/selfuncs.h"
 #include "utils/typcache.h"
 
@@ -39,11 +40,8 @@
 PG_MODULE_MAGIC;
 
 
-Oid		pathman_config_relid = InvalidOid,
-		pathman_config_params_relid = InvalidOid;
-
-/* Used to disable hooks temporarily */
-bool	pathman_hooks_enabled = true;
+Oid		pathman_config_relid		= InvalidOid,
+		pathman_config_params_relid	= InvalidOid;
 
 
 /* pg module functions */
@@ -54,7 +52,15 @@ void _PG_init(void);
 static Node *wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue);
 
 static void handle_const(const Const *c,
+						 const Oid collid,
 						 const int strategy,
+						 const WalkerContext *context,
+						 WrapperNode *result);
+
+static void handle_array(ArrayType *array,
+						 const Oid collid,
+						 const int strategy,
+						 const bool use_or,
 						 const WalkerContext *context,
 						 WrapperNode *result);
 
@@ -70,12 +76,13 @@ static void handle_opexpr(const OpExpr *expr,
 						  const WalkerContext *context,
 						  WrapperNode *result);
 
-static bool is_key_op_param(const OpExpr *expr,
-							const WalkerContext *context,
-							Node **param_ptr);
-
-static Const *extract_const(Param *param,
-							const WalkerContext *context);
+static Datum array_find_min_max(Datum *values,
+								bool *isnull,
+								int length,
+								Oid value_type,
+								Oid collid,
+								bool take_min,
+								bool *result_null);
 
 
 /* Copied from PostgreSQL (allpaths.c) */
@@ -97,16 +104,151 @@ static void generate_mergeappend_paths(PlannerInfo *root,
 									   PathKey *pathkeyDesc);
 
 
-/* We can transform Param into Const provided that 'econtext' is available */
-#define IsConstValue(node, wcxt) \
-	( IsA((node), Const) || (WcxtHasExprContext(wcxt) ? IsA((node), Param) : false) )
+/* Can we transform this node into a Const? */
+static bool
+IsConstValue(Node *node, const WalkerContext *context)
+{
+	switch (nodeTag(node))
+	{
+		case T_Const:
+			return true;
 
-#define ExtractConst(node, wcxt) \
-	( \
-		IsA((node), Param) ? \
-				extract_const((Param *) (node), (wcxt)) : \
-				((Const *) (node)) \
-	)
+		case T_Param:
+			return WcxtHasExprContext(context);
+
+		case T_RowExpr:
+			{
+				RowExpr	   *row = (RowExpr *) node;
+				ListCell   *lc;
+
+				/* Can't do anything about RECORD of wrong type */
+				if (row->row_typeid != context->prel->ev_type)
+					return false;
+
+				/* Check that args are const values */
+				foreach (lc, row->args)
+					if (!IsConstValue((Node *) lfirst(lc), context))
+						return false;
+			}
+			return true;
+
+		default:
+			return false;
+	}
+}
+
+/* Extract a Const from node that has been checked by IsConstValue() */
+static Const *
+ExtractConst(Node *node, const WalkerContext *context)
+{
+	ExprState	   *estate;
+	ExprContext	   *econtext = context->econtext;
+
+	Datum			value;
+	bool			isnull;
+
+	Oid				typid,
+					collid;
+	int				typmod;
+
+	/* Fast path for Consts */
+	if (IsA(node, Const))
+		return (Const *) node;
+
+	/* Just a paranoid check */
+	Assert(IsConstValue(node, context));
+
+	switch (nodeTag(node))
+	{
+		case T_Param:
+			{
+				Param *param = (Param *) node;
+
+				typid	= param->paramtype;
+				typmod	= param->paramtypmod;
+				collid	= param->paramcollid;
+
+				/* It must be provided */
+				Assert(WcxtHasExprContext(context));
+			}
+			break;
+
+		case T_RowExpr:
+			{
+				RowExpr *row = (RowExpr *) node;
+
+				typid	= row->row_typeid;
+				typmod	= -1;
+				collid	= InvalidOid;
+
+#if PG_VERSION_NUM >= 100000
+				/* If there's no context - create it! */
+				if (!WcxtHasExprContext(context))
+					econtext = CreateStandaloneExprContext();
+#endif
+			}
+			break;
+
+		default:
+			elog(ERROR, "error in function " CppAsString(ExtractConst));
+	}
+
+	/* Evaluate expression */
+	estate = ExecInitExpr((Expr *) node, NULL);
+	value = ExecEvalExprCompat(estate, econtext, &isnull,
+							   mult_result_handler);
+
+#if PG_VERSION_NUM >= 100000
+	/* Free temp econtext if needed */
+	if (econtext && !WcxtHasExprContext(context))
+		FreeExprContext(econtext, true);
+#endif
+
+	/* Finally return Const */
+	return makeConst(typid, typmod, collid, get_typlen(typid),
+					 value, isnull, get_typbyval(typid));
+}
+
+/*
+ * Checks if expression is a KEY OP PARAM or PARAM OP KEY,
+ * where KEY is partitioning expression and PARAM is whatever.
+ *
+ * Returns:
+ *		operator's Oid if KEY is a partitioning expr,
+ *		otherwise InvalidOid.
+ */
+static Oid
+IsKeyOpParam(const OpExpr *expr,
+			 const WalkerContext *context,
+			 Node **param_ptr) /* ret value #1 */
+{
+	Node   *left = linitial(expr->args),
+		   *right = lsecond(expr->args);
+
+	/* Check number of arguments */
+	if (list_length(expr->args) != 2)
+		return InvalidOid;
+
+	/* KEY OP PARAM */
+	if (match_expr_to_operand(context->prel_expr, left))
+	{
+		*param_ptr = right;
+
+		/* return the same operator */
+		return expr->opno;
+	}
+
+	/* PARAM OP KEY */
+	if (match_expr_to_operand(context->prel_expr, right))
+	{
+		*param_ptr = left;
+
+		/* commute to (KEY OP PARAM) */
+		return get_commutator(expr->opno);
+	}
+
+	return InvalidOid;
+}
 
 /* Selectivity estimator for common 'paramsel' */
 static inline double
@@ -149,8 +291,8 @@ _PG_init(void)
 
 	/* Assign pg_pathman's initial state */
 	temp_init_state.pg_pathman_enable		= DEFAULT_PATHMAN_ENABLE;
-	temp_init_state.auto_partition			= DEFAULT_AUTO;
-	temp_init_state.override_copy			= DEFAULT_OVERRIDE_COPY;
+	temp_init_state.auto_partition			= DEFAULT_PATHMAN_AUTO;
+	temp_init_state.override_copy			= DEFAULT_PATHMAN_OVERRIDE_COPY;
 	temp_init_state.initialization_needed	= true; /* ofc it's needed! */
 
 	/* Apply initial state */
@@ -169,9 +311,6 @@ _PG_init(void)
 	planner_hook					= pathman_planner_hook;
 	process_utility_hook_next		= ProcessUtility_hook;
 	ProcessUtility_hook				= pathman_process_utility_hook;
-
-	/* Initialize PgPro-specific subsystems */
-	init_expand_rte_hook();
 
 	/* Initialize static data for all subsystems */
 	init_main_pathman_toggles();
@@ -226,8 +365,12 @@ get_pathman_config_params_relid(bool invalid_is_ok)
  * NOTE: partially based on the expand_inherited_rtentry() function.
  */
 Index
-append_child_relation(PlannerInfo *root, Relation parent_relation,
-					  Index parent_rti, int ir_index, Oid child_oid,
+append_child_relation(PlannerInfo *root,
+					  Relation parent_relation,
+					  PlanRowMark *parent_rowmark,
+					  Index parent_rti,
+					  int ir_index,
+					  Oid child_oid,
 					  List *wrappers)
 {
 	RangeTblEntry  *parent_rte,
@@ -237,17 +380,35 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 	Relation		child_relation;
 	AppendRelInfo  *appinfo;
 	Index			childRTindex;
-	PlanRowMark	   *parent_rowmark,
-				   *child_rowmark;
+	PlanRowMark	   *child_rowmark;
 	Node		   *childqual;
 	List		   *childquals;
 	ListCell	   *lc1,
 				   *lc2;
+	LOCKMODE		lockmode;
+
+	/* Choose a correct lock mode */
+	if (parent_rti == root->parse->resultRelation)
+		lockmode = RowExclusiveLock;
+	else if (parent_rowmark && RowMarkRequiresRowShareLock(parent_rowmark->markType))
+		lockmode = RowShareLock;
+	else
+		lockmode = AccessShareLock;
+
+	/* Acquire a suitable lock on partition */
+	LockRelationOid(child_oid, lockmode);
+
+	/* Check that partition exists */
+	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(child_oid)))
+	{
+		UnlockRelationOid(child_oid, lockmode);
+		return 0;
+	}
 
 	parent_rel = root->simple_rel_array[parent_rti];
 	parent_rte = root->simple_rte_array[parent_rti];
 
-	/* FIXME: acquire a suitable lock on partition */
+	/* Open child relation (we've just locked it) */
 	child_relation = heap_open(child_oid, NoLock);
 
 	/* Create RangeTblEntry for child relation */
@@ -269,10 +430,40 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 	root->simple_rte_array[childRTindex] = child_rte;
 
 	/* Create RelOptInfo for this child (and make some estimates as well) */
-	child_rel = build_simple_rel(root, childRTindex, RELOPT_OTHER_MEMBER_REL);
+	child_rel = build_simple_rel_compat(root, childRTindex, parent_rel);
 
 	/* Increase total_table_pages using the 'child_rel' */
 	root->total_table_pages += (double) child_rel->pages;
+
+
+	/* Create rowmarks required for child rels */
+	if (parent_rowmark)
+	{
+		child_rowmark = makeNode(PlanRowMark);
+
+		child_rowmark->rti			= childRTindex;
+		child_rowmark->prti			= parent_rti;
+		child_rowmark->rowmarkId	= parent_rowmark->rowmarkId;
+		/* Reselect rowmark type, because relkind might not match parent */
+		child_rowmark->markType		= select_rowmark_type(child_rte,
+														  parent_rowmark->strength);
+		child_rowmark->allMarkTypes	= (1 << child_rowmark->markType);
+		child_rowmark->strength		= parent_rowmark->strength;
+		child_rowmark->waitPolicy	= parent_rowmark->waitPolicy;
+		child_rowmark->isParent		= false;
+
+		root->rowMarks = lappend(root->rowMarks, child_rowmark);
+
+		/* Adjust tlist for RowMarks (see planner.c) */
+		if (!parent_rowmark->isParent && !root->parse->setOperations)
+		{
+			append_tle_for_rowmark(root, parent_rowmark);
+		}
+
+		/* Include child's rowmark type in parent's allMarkTypes */
+		parent_rowmark->allMarkTypes |= child_rowmark->allMarkTypes;
+		parent_rowmark->isParent = true;
+	}
 
 
 	/* Build an AppendRelInfo for this child */
@@ -301,6 +492,9 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 		child_rte->updatedCols = translate_col_privs(parent_rte->updatedCols,
 													 appinfo->translated_vars);
 	}
+
+	/* Here and below we assume that parent RelOptInfo exists */
+	AssertState(parent_rel);
 
 	/* Adjust join quals for this child */
 	child_rel->joininfo = (List *) adjust_appendrel_attrs(root,
@@ -381,31 +575,6 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 	/* Close child relations, but keep locks */
 	heap_close(child_relation, NoLock);
 
-
-	/* Create rowmarks required for child rels */
-	parent_rowmark = get_plan_rowmark(root->rowMarks, parent_rti);
-	if (parent_rowmark)
-	{
-		child_rowmark = makeNode(PlanRowMark);
-
-		child_rowmark->rti			= childRTindex;
-		child_rowmark->prti			= parent_rti;
-		child_rowmark->rowmarkId	= parent_rowmark->rowmarkId;
-		/* Reselect rowmark type, because relkind might not match parent */
-		child_rowmark->markType		= select_rowmark_type(child_rte,
-														  parent_rowmark->strength);
-		child_rowmark->allMarkTypes	= (1 << child_rowmark->markType);
-		child_rowmark->strength		= parent_rowmark->strength;
-		child_rowmark->waitPolicy	= parent_rowmark->waitPolicy;
-		child_rowmark->isParent		= false;
-
-		root->rowMarks = lappend(root->rowMarks, child_rowmark);
-
-		/* Include child's rowmark type in parent's allMarkTypes */
-		parent_rowmark->allMarkTypes |= child_rowmark->allMarkTypes;
-		parent_rowmark->isParent = true;
-	}
-
 	/*
 	 * Recursively expand child partition if it has subpartitions
 	 */
@@ -423,9 +592,9 @@ append_child_relation(PlannerInfo *root, Relation parent_relation,
 
 
 /*
- * --------------------------
- *  RANGE partition prunning
- * --------------------------
+ * -------------------------
+ *  RANGE partition pruning
+ * -------------------------
  */
 
 /* Given 'value' and 'ranges', return selected partitions list */
@@ -630,7 +799,8 @@ walk_expr_tree(Expr *expr, const WalkerContext *context)
 	{
 		/* Useful for INSERT optimization */
 		case T_Const:
-			handle_const((Const *) expr, BTEqualStrategyNumber, context, result);
+			handle_const((Const *) expr, ((Const *) expr)->constcollid,
+						 BTEqualStrategyNumber, context, result);
 			return result;
 
 		/* AND, OR, NOT expressions */
@@ -726,18 +896,21 @@ wrapper_make_expression(WrapperNode *wrap, int index, bool *alwaysTrue)
 			result->location = expr->location;
 			return (Node *) result;
 		}
-		else return copyObject(wrap->orig);
+		else
+			return (Node *) copyObject(wrap->orig);
 	}
-	else return copyObject(wrap->orig);
+	else
+		return (Node *) copyObject(wrap->orig);
 }
 
 
 /* Const handler */
 static void
 handle_const(const Const *c,
+			 const Oid collid,
 			 const int strategy,
 			 const WalkerContext *context,
-			 WrapperNode *result) /* ret value #1 */
+			 WrapperNode *result)		/* ret value #1 */
 {
 	const PartRelationInfo *prel = context->prel;
 
@@ -772,7 +945,7 @@ handle_const(const Const *c,
 		}
 		else
 		{
-			result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
+			result->rangeset = list_make1_irange_full(prel, IR_COMPLETE);
 			result->paramsel = 1.0;
 		}
 
@@ -813,7 +986,7 @@ handle_const(const Const *c,
 										 PrelChildrenCount(prel));
 
 				result->rangeset = list_make1_irange(make_irange(idx, idx, IR_LOSSY));
-				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
+				result->paramsel = 1.0;
 
 				return; /* done, exit */
 			}
@@ -823,8 +996,7 @@ handle_const(const Const *c,
 				FmgrInfo cmp_finfo;
 
 				/* Cannot do much about non-equal strategies + diff. collations */
-				if (strategy != BTEqualStrategyNumber &&
-					c->constcollid != prel->ev_collid)
+				if (strategy != BTEqualStrategyNumber && collid != prel->ev_collid)
 				{
 					goto handle_const_return;
 				}
@@ -834,14 +1006,13 @@ handle_const(const Const *c,
 										getBaseType(prel->ev_type));
 
 				select_range_partitions(c->constvalue,
-										c->constcollid,
+										collid,
 										&cmp_finfo,
 										PrelGetRangesArray(context->prel),
 										PrelChildrenCount(context->prel),
 										strategy,
-										result); /* output */
-
-				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
+										result); /* result->rangeset = ... */
+				result->paramsel = 1.0;
 
 				return; /* done, exit */
 			}
@@ -852,263 +1023,448 @@ handle_const(const Const *c,
 
 handle_const_return:
 	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
-	result->paramsel = estimate_paramsel_using_prel(prel, strategy);
+	result->paramsel = 1.0;
+}
+
+/* Array handler */
+static void
+handle_array(ArrayType *array,
+			 const Oid collid,
+			 const int strategy,
+			 const bool use_or,
+			 const WalkerContext *context,
+			 WrapperNode *result)		/* ret value #1 */
+{
+	const PartRelationInfo *prel = context->prel;
+
+	/* Elements of the array */
+	Datum	   *elem_values;
+	bool	   *elem_isnull;
+	int			elem_count;
+
+	/* Element's properties */
+	Oid			elem_type;
+	int16		elem_len;
+	bool		elem_byval;
+	char		elem_align;
+
+	/* Check if we can work with this strategy */
+	if (strategy == 0)
+		goto handle_array_return;
+
+	/* Get element's properties */
+	elem_type = ARR_ELEMTYPE(array);
+	get_typlenbyvalalign(elem_type, &elem_len, &elem_byval, &elem_align);
+
+	/* Extract values from the array */
+	deconstruct_array(array, elem_type, elem_len, elem_byval, elem_align,
+					  &elem_values, &elem_isnull, &elem_count);
+
+	/* Handle non-null Const arrays */
+	if (elem_count > 0)
+	{
+		List   *ranges;
+		int		i;
+
+		/* This is only for paranoia's sake */
+		Assert(BTMaxStrategyNumber == 5 && BTEqualStrategyNumber == 3);
+
+		/* Optimizations for <, <=, >=, > */
+		if (strategy != BTEqualStrategyNumber)
+		{
+			bool	take_min;
+			Datum	pivot;
+			bool	pivot_null;
+
+			/*
+			 * OR:		Max for (< | <=); Min for (> | >=)
+			 * AND:		Min for (< | <=); Max for (> | >=)
+			 */
+			take_min = strategy < BTEqualStrategyNumber ? !use_or : use_or;
+
+			/* Extract Min (or Max) element */
+			pivot = array_find_min_max(elem_values, elem_isnull,
+									   elem_count, elem_type, collid,
+									   take_min, &pivot_null);
+
+			/* Write data and "shrink" the array */
+			elem_values[0]	= pivot_null ? (Datum) 0 : pivot;
+			elem_isnull[0]	= pivot_null;
+			elem_count		= 1;
+
+			/* If pivot is not NULL ... */
+			if (!pivot_null)
+			{
+				/* ... append single NULL if array contains NULLs */
+				if (array_contains_nulls(array))
+				{
+					/* Make sure that we have enough space for 2 elements */
+					Assert(ArrayGetNItems(ARR_NDIM(array), ARR_DIMS(array)) >= 2);
+
+					elem_values[1]	= (Datum) 0;
+					elem_isnull[1]	= true;
+					elem_count		= 2;
+				}
+				/* ... optimize clause ('orig') if array does not contain NULLs */
+				else if (result->orig)
+				{
+					/* Should've been provided by the caller */
+					ScalarArrayOpExpr *orig = (ScalarArrayOpExpr *) result->orig;
+
+					/* Rebuild clause using 'pivot' */
+					result->orig = (Node *)
+						   make_opclause(orig->opno, BOOLOID, false,
+										 (Expr *) linitial(orig->args),
+										 (Expr *) makeConst(elem_type,
+															-1,
+															collid,
+															elem_len,
+															elem_values[0],
+															elem_isnull[0],
+															elem_byval),
+										 InvalidOid,
+										 collid);
+				}
+			}
+		}
+
+		/* Set default rangeset */
+		ranges = use_or ? NIL : list_make1_irange_full(prel, IR_COMPLETE);
+
+		/* Select partitions using values */
+		for (i = 0; i < elem_count; i++)
+		{
+			Const			c;
+			WrapperNode		wrap = InvalidWrapperNode;
+
+			NodeSetTag(&c, T_Const);
+			c.consttype		= elem_type;
+			c.consttypmod	= -1;
+			c.constcollid	= InvalidOid;
+			c.constlen		= datumGetSize(elem_values[i],
+										   elem_byval,
+										   elem_len);
+			c.constvalue	= elem_values[i];
+			c.constisnull	= elem_isnull[i];
+			c.constbyval	= elem_byval;
+			c.location		= -1;
+
+			handle_const(&c, collid, strategy, context, &wrap);
+
+			/* Should we use OR | AND? */
+			ranges = use_or ?
+						irange_list_union(ranges, wrap.rangeset) :
+						irange_list_intersection(ranges, wrap.rangeset);
+		}
+
+		/* Free resources */
+		pfree(elem_values);
+		pfree(elem_isnull);
+
+		result->rangeset = ranges;
+		result->paramsel = 1.0;
+
+		return; /* done, exit */
+	}
+
+handle_array_return:
+	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
+	result->paramsel = 1.0;
 }
 
 /* Boolean expression handler */
 static void
 handle_boolexpr(const BoolExpr *expr,
 				const WalkerContext *context,
-				WrapperNode *result)
+				WrapperNode *result)	/* ret value #1 */
 {
-	ListCell				   *lc;
-	const PartRelationInfo	   *prel = context->prel;
+	const PartRelationInfo *prel = context->prel;
+	List				   *ranges,
+						   *args = NIL;
+	double					paramsel = 1.0;
+	ListCell			   *lc;
 
-	result->orig = (const Node *) expr;
-	result->args = NIL;
-	result->paramsel = 1.0;
+	/* Set default rangeset */
+	ranges = (expr->boolop == AND_EXPR) ?
+					list_make1_irange_full(prel, IR_COMPLETE) :
+					NIL;
 
-	/* First, set default rangeset */
-	result->rangeset = (expr->boolop == AND_EXPR) ?
-							list_make1_irange_full(prel, IR_COMPLETE) :
-							NIL;
-
+	/* Examine expressions */
 	foreach (lc, expr->args)
 	{
-		WrapperNode *arg_result;
+		WrapperNode *wrap;
 
-		arg_result = walk_expr_tree((Expr *) lfirst(lc), context);
-		result->args = lappend(result->args, arg_result);
+		wrap = walk_expr_tree((Expr *) lfirst(lc), context);
+		args = lappend(args, wrap);
 
 		switch (expr->boolop)
 		{
 			case OR_EXPR:
-				result->rangeset = irange_list_union(result->rangeset,
-													 arg_result->rangeset);
+				ranges = irange_list_union(ranges, wrap->rangeset);
 				break;
 
 			case AND_EXPR:
-				result->rangeset = irange_list_intersection(result->rangeset,
-															arg_result->rangeset);
-				result->paramsel *= arg_result->paramsel;
+				ranges = irange_list_intersection(ranges, wrap->rangeset);
+				paramsel *= wrap->paramsel;
 				break;
 
 			default:
-				result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
+				ranges = list_make1_irange_full(prel, IR_LOSSY);
 				break;
 		}
 	}
 
+	/* Adjust paramsel for OR */
 	if (expr->boolop == OR_EXPR)
 	{
-		int totallen = irange_list_length(result->rangeset);
+		int totallen = irange_list_length(ranges);
 
-		foreach (lc, result->args)
+		foreach (lc, args)
 		{
 			WrapperNode	   *arg = (WrapperNode *) lfirst(lc);
 			int				len = irange_list_length(arg->rangeset);
 
-			result->paramsel *= (1.0 - arg->paramsel * (double)len / (double)totallen);
+			paramsel *= (1.0 - arg->paramsel * (double)len / (double)totallen);
 		}
-		result->paramsel = 1.0 - result->paramsel;
+
+		paramsel = 1.0 - paramsel;
 	}
+
+	/* Save results */
+	result->rangeset	= ranges;
+	result->paramsel	= paramsel;
+	result->orig		= (const Node *) expr;
+	result->args		= args;
 }
 
 /* Scalar array expression handler */
 static void
 handle_arrexpr(const ScalarArrayOpExpr *expr,
 			   const WalkerContext *context,
-			   WrapperNode *result)
+			   WrapperNode *result)		/* ret value #1 */
 {
-	Node					   *exprnode = (Node *) linitial(expr->args);
-	Node					   *arraynode = (Node *) lsecond(expr->args);
+	Node					   *part_expr = (Node *) linitial(expr->args);
+	Node					   *array = (Node *) lsecond(expr->args);
 	const PartRelationInfo	   *prel = context->prel;
 	TypeCacheEntry			   *tce;
 	int							strategy;
 
-	result->orig = (const Node *) expr;
+	/* Small sanity check */
+	Assert(list_length(expr->args) == 2);
 
 	tce = lookup_type_cache(prel->ev_type, TYPECACHE_BTREE_OPFAMILY);
 	strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
 
-	if (!match_expr_to_operand(context->prel_expr, exprnode))
-		goto handle_arrexpr_return;
+	/* Save expression */
+	result->orig = (const Node *) expr;
 
-	/* Handle non-null Const arrays */
-	if (arraynode && IsA(arraynode, Const) && !((Const *) arraynode)->constisnull)
+	/* Check if expression tree is a partitioning expression */
+	if (!match_expr_to_operand(context->prel_expr, part_expr))
+		goto handle_arrexpr_all;
+
+	/* Check if we can work with this strategy */
+	if (strategy == 0)
+		goto handle_arrexpr_all;
+
+	/* Examine the array node */
+	switch (nodeTag(array))
 	{
-		ArrayType	   *arrayval;
+		case T_Const:
+			{
+				Const	   *c = (Const *) array;
 
-		int16			elemlen;
-		bool			elembyval;
-		char			elemalign;
+				/* Array is NULL */
+				if (c->constisnull)
+				{
+					result->rangeset = NIL;
+					result->paramsel = 0.0;
 
-		int				num_elems;
+					return; /* done, exit */
+				}
 
-		Datum		   *elem_values;
-		bool		   *elem_isnull;
+				/* Examine array */
+				handle_array(DatumGetArrayTypeP(c->constvalue),
+							 expr->inputcollid, strategy,
+							 expr->useOr, context, result);
 
-		WalkerContext	nested_wcxt;
-		List		   *ranges;
-		int				i;
+				return; /* done, exit */
+			}
 
-		/* Extract values from array */
-		arrayval = DatumGetArrayTypeP(((Const *) arraynode)->constvalue);
+		case T_ArrayExpr:
+			{
+				ArrayExpr  *arr_expr = (ArrayExpr *) array;
+				Oid			elem_type = arr_expr->element_typeid;
+				int			array_params = 0;
+				double		paramsel = 1.0;
+				List	   *ranges;
+				ListCell   *lc;
 
-		get_typlenbyvalalign(ARR_ELEMTYPE(arrayval),
-							 &elemlen, &elembyval, &elemalign);
+				if (list_length(arr_expr->elements) == 0)
+					goto handle_arrexpr_all;
 
-		deconstruct_array(arrayval,
-						  ARR_ELEMTYPE(arrayval),
-						  elemlen, elembyval, elemalign,
-						  &elem_values, &elem_isnull, &num_elems);
+				/* Set default ranges for OR | AND */
+				ranges = expr->useOr ? NIL : list_make1_irange_full(prel, IR_COMPLETE);
 
-		/* Copy WalkerContext */
-		memcpy((void *) &nested_wcxt,
-			   (const void *) context,
-			   sizeof(WalkerContext));
+				/* Walk trough elements list */
+				foreach (lc, arr_expr->elements)
+				{
+					Node		   *elem = lfirst(lc);
+					WrapperNode		wrap = InvalidWrapperNode;
 
-		/* Set default ranges for OR | AND */
-		ranges = expr->useOr ? NIL : list_make1_irange_full(prel, IR_COMPLETE);
+					/* Stop if ALL + quals evaluate to NIL */
+					if (!expr->useOr && ranges == NIL)
+						break;
 
-		/* Select partitions using values */
-		for (i = 0; i < num_elems; i++)
-		{
-			WrapperNode		sub_result;
-			Const			c;
+					/* Is this a const value? */
+					if (IsConstValue(elem, context))
+					{
+						Const *c = ExtractConst(elem, context);
 
-			NodeSetTag(&c, T_Const);
-			c.consttype	= ARR_ELEMTYPE(arrayval);
-			c.consttypmod	= -1;
-			c.constcollid	= InvalidOid;
-			c.constlen		= datumGetSize(elem_values[i],
-										   elembyval,
-										   elemlen);
-			c.constvalue	= elem_values[i];
-			c.constisnull	= elem_isnull[i];
-			c.constbyval	= elembyval;
-			c.location		= -1;
+						/* Is this an array?. */
+						if (c->consttype != elem_type && !c->constisnull)
+						{
+							handle_array(DatumGetArrayTypeP(c->constvalue),
+										 expr->inputcollid, strategy,
+										 expr->useOr, context, &wrap);
+						}
+						/* ... or a single element? */
+						else
+						{
+							handle_const(c, expr->inputcollid,
+										 strategy, context, &wrap);
+						}
 
-			handle_const(&c, strategy, &nested_wcxt, &sub_result);
+						/* Should we use OR | AND? */
+						ranges = expr->useOr ?
+									irange_list_union(ranges, wrap.rangeset) :
+									irange_list_intersection(ranges, wrap.rangeset);
+					}
+					else array_params++; /* we've just met non-const nodes */
+				}
 
-			ranges = expr->useOr ?
-						irange_list_union(ranges, sub_result.rangeset) :
-						irange_list_intersection(ranges, sub_result.rangeset);
+				/* Check for PARAM-related optimizations */
+				if (array_params > 0)
+				{
+					double	sel = estimate_paramsel_using_prel(prel, strategy);
+					int		i;
 
-			result->paramsel = Max(result->paramsel, sub_result.paramsel);
-		}
+					if (expr->useOr)
+					{
+						/* We can't say anything if PARAMs + ANY */
+						ranges = list_make1_irange_full(prel, IR_LOSSY);
 
-		result->rangeset = ranges;
-		if (num_elems == 0)
-			result->paramsel = 0.0;
+						/* See handle_boolexpr() */
+						for (i = 0; i < array_params; i++)
+							paramsel *= (1 - sel);
 
-		/* Free resources */
-		pfree(elem_values);
-		pfree(elem_isnull);
+						paramsel = 1 - paramsel;
+					}
+					else
+					{
+						/* Recheck condition on a narrowed set of partitions */
+						ranges = irange_list_set_lossiness(ranges, IR_LOSSY);
 
-		return; /* done, exit */
+						/* See handle_boolexpr() */
+						for (i = 0; i < array_params; i++)
+							paramsel *= sel;
+					}
+				}
+
+				/* Save result */
+				result->rangeset = ranges;
+				result->paramsel = paramsel;
+
+				return; /* done, exit */
+			}
+
+		default:
+			break;
 	}
 
-handle_arrexpr_return:
+handle_arrexpr_all:
 	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
-	result->paramsel = estimate_paramsel_using_prel(prel, strategy);
+	result->paramsel = 1.0;
 }
 
 /* Operator expression handler */
 static void
 handle_opexpr(const OpExpr *expr,
 			  const WalkerContext *context,
-			  WrapperNode *result)
+			  WrapperNode *result)		/* ret value #1 */
 {
 	Node					   *param;
 	const PartRelationInfo	   *prel = context->prel;
+	Oid							opid; /* operator's Oid */
 
-	if (list_length(expr->args) == 2)
+	/* Save expression */
+	result->orig = (const Node *) expr;
+
+	/* Is it KEY OP PARAM or PARAM OP KEY? */
+	if (OidIsValid(opid = IsKeyOpParam(expr, context, &param)))
 	{
-		/* Is it KEY OP PARAM or PARAM OP KEY? */
-		if (is_key_op_param(expr, context, &param))
+		TypeCacheEntry *tce;
+		int				strategy;
+
+		tce = lookup_type_cache(prel->ev_type, TYPECACHE_BTREE_OPFAMILY);
+		strategy = get_op_opfamily_strategy(opid, tce->btree_opf);
+
+		if (IsConstValue(param, context))
 		{
-			TypeCacheEntry *tce;
-			int				strategy;
+			handle_const(ExtractConst(param, context),
+						 expr->inputcollid,
+						 strategy, context, result);
 
-			tce = lookup_type_cache(prel->ev_type, TYPECACHE_BTREE_OPFAMILY);
-			strategy = get_op_opfamily_strategy(expr->opno, tce->btree_opf);
+			return; /* done, exit */
+		}
+		/* TODO: estimate selectivity for param if it's Var */
+		else if (IsA(param, Param) || IsA(param, Var))
+		{
+			result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
+			result->paramsel = estimate_paramsel_using_prel(prel, strategy);
 
-			if (IsConstValue(param, context))
-			{
-				handle_const(ExtractConst(param, context),
-							 strategy, context, result);
-
-				/* Save expression */
-				result->orig = (const Node *) expr;
-
-				return; /* done, exit */
-			}
-			/* TODO: estimate selectivity for param if it's Var */
-			else if (IsA(param, Param) || IsA(param, Var))
-			{
-				result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
-				result->paramsel = estimate_paramsel_using_prel(prel, strategy);
-
-				/* Save expression */
-				result->orig = (const Node *) expr;
-
-				return; /* done, exit */
-			}
+			return; /* done, exit */
 		}
 	}
 
 	result->rangeset = list_make1_irange_full(prel, IR_LOSSY);
-	result->paramsel = 1.0; /* can't give any estimates */
-
-	/* Save expression */
-	result->orig = (const Node *) expr;
+	result->paramsel = 1.0;
 }
 
 
-/*
- * Checks if expression is a KEY OP PARAM or PARAM OP KEY, where
- * KEY is partitioning expression and PARAM is whatever.
- *
- * NOTE: returns false if partition key is not in expression.
- */
-static bool
-is_key_op_param(const OpExpr *expr,
-				const WalkerContext *context,
-				Node **param_ptr) /* ret value #1 */
+/* Find Max or Min value of array */
+static Datum
+array_find_min_max(Datum *values,
+				   bool *isnull,
+				   int length,
+				   Oid value_type,
+				   Oid collid,
+				   bool take_min,
+				   bool *result_null) /* ret value #2 */
 {
-	Node   *left = linitial(expr->args),
-		   *right = lsecond(expr->args);
+	TypeCacheEntry *tce = lookup_type_cache(value_type, TYPECACHE_CMP_PROC_FINFO);
+	Datum		   *pivot = NULL;
+	int				i;
 
-	if (match_expr_to_operand(context->prel_expr, left))
+	for (i = 0; i < length; i++)
 	{
-		*param_ptr = right;
-		return true;
+		if (isnull[i])
+			continue;
+
+		/* Update 'pivot' */
+		if (pivot == NULL || (take_min ?
+								check_lt(&tce->cmp_proc_finfo,
+										 collid, values[i], *pivot) :
+								check_gt(&tce->cmp_proc_finfo,
+										 collid, values[i], *pivot)))
+		{
+			pivot = &values[i];
+		}
 	}
 
-	if (match_expr_to_operand(context->prel_expr, right))
-	{
-		*param_ptr = left;
-		return true;
-	}
-
-	return false;
+	/* Return results */
+	*result_null = (pivot == NULL);
+	return (pivot == NULL) ? (Datum) 0 : *pivot;
 }
-
-/* Extract (evaluate) Const from Param node */
-static Const *
-extract_const(Param *param,
-			  const WalkerContext *context)
-{
-	ExprState  *estate = ExecInitExpr((Expr *) param, NULL);
-	bool		isnull;
-	Datum		value = ExecEvalExpr(estate, context->econtext, &isnull, NULL);
-
-	return makeConst(param->paramtype, param->paramtypmod,
-					 param->paramcollid, get_typlen(param->paramtype),
-					 value, isnull, get_typbyval(param->paramtype));
-}
-
 
 
 /*
@@ -1258,15 +1614,17 @@ generate_mergeappend_paths(PlannerInfo *root, RelOptInfo *rel,
 
 			/* Locate the right paths, if they are available. */
 			cheapest_startup =
-				get_cheapest_path_for_pathkeys(childrel->pathlist,
-											   pathkeys,
-											   NULL,
-											   STARTUP_COST);
+				get_cheapest_path_for_pathkeys_compat(childrel->pathlist,
+													  pathkeys,
+													  NULL,
+													  STARTUP_COST,
+													  false);
 			cheapest_total =
-				get_cheapest_path_for_pathkeys(childrel->pathlist,
-											   pathkeys,
-											   NULL,
-											   TOTAL_COST);
+				get_cheapest_path_for_pathkeys_compat(childrel->pathlist,
+													  pathkeys,
+													  NULL,
+													  TOTAL_COST,
+													  false);
 
 			/*
 			 * If we can't find any paths with the right order just use the
@@ -1341,17 +1699,11 @@ generate_mergeappend_paths(PlannerInfo *root, RelOptInfo *rel,
 		else
 		{
 			/* ... and build the MergeAppend paths */
-			add_path(rel, (Path *) create_merge_append_path(root,
-															rel,
-															startup_subpaths,
-															pathkeys,
-															NULL));
+			add_path(rel, (Path *) create_merge_append_path_compat(
+							root, rel, startup_subpaths, pathkeys, NULL));
 			if (startup_neq_total)
-				add_path(rel, (Path *) create_merge_append_path(root,
-																rel,
-																total_subpaths,
-																pathkeys,
-																NULL));
+				add_path(rel, (Path *) create_merge_append_path_compat(
+								root, rel, total_subpaths, pathkeys, NULL));
 		}
 	}
 }
@@ -1836,10 +2188,11 @@ get_cheapest_parameterized_child_path(PlannerInfo *root, RelOptInfo *rel,
 	 * parameterization.  If it has exactly the needed parameterization, we're
 	 * done.
 	 */
-	cheapest = get_cheapest_path_for_pathkeys(rel->pathlist,
-											  NIL,
-											  required_outer,
-											  TOTAL_COST);
+	cheapest = get_cheapest_path_for_pathkeys_compat(rel->pathlist,
+													 NIL,
+													 required_outer,
+													 TOTAL_COST,
+													 false);
 	Assert(cheapest != NULL);
 	if (bms_equal(PATH_REQ_OUTER(cheapest), required_outer))
 		return cheapest;

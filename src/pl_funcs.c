@@ -18,7 +18,6 @@
 #include "xact_handling.h"
 #include "utils.h"
 
-#include "access/tupconvert.h"
 #include "access/htup_details.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
@@ -34,7 +33,6 @@
 #include "nodes/nodeFuncs.h"
 #include "utils/builtins.h"
 #include "utils/inval.h"
-#include "utils/ruleutils.h"
 #include "utils/snapmgr.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
@@ -57,6 +55,7 @@ PG_FUNCTION_INFO_V1( build_update_trigger_func_name );
 PG_FUNCTION_INFO_V1( build_check_constraint_name );
 
 PG_FUNCTION_INFO_V1( validate_relname );
+PG_FUNCTION_INFO_V1( validate_expression );
 PG_FUNCTION_INFO_V1( is_date_type );
 PG_FUNCTION_INFO_V1( is_operator_supported );
 PG_FUNCTION_INFO_V1( is_tuple_convertible );
@@ -64,8 +63,8 @@ PG_FUNCTION_INFO_V1( is_tuple_convertible );
 PG_FUNCTION_INFO_V1( add_to_pathman_config );
 PG_FUNCTION_INFO_V1( pathman_config_params_trigger_func );
 
-PG_FUNCTION_INFO_V1( lock_partitioned_relation );
-PG_FUNCTION_INFO_V1( prevent_relation_modification );
+PG_FUNCTION_INFO_V1( prevent_part_modification );
+PG_FUNCTION_INFO_V1( prevent_data_modification );
 
 PG_FUNCTION_INFO_V1( validate_part_callback_pl );
 PG_FUNCTION_INFO_V1( invoke_on_partition_created_callback );
@@ -604,6 +603,49 @@ validate_relname(PG_FUNCTION_ARGS)
 	PG_RETURN_VOID();
 }
 
+/*
+ * Validate a partitioning expression.
+ * NOTE: We need this in range functions because
+ * we do many things before actual partitioning.
+ */
+Datum
+validate_expression(PG_FUNCTION_ARGS)
+{
+	Oid			relid;
+	char	   *expression;
+
+	/* Fetch relation's Oid */
+	if (!PG_ARGISNULL(0))
+	{
+		relid = PG_GETARG_OID(0);
+	}
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("'relid' should not be NULL")));
+
+	/* Protect relation from concurrent drop */
+	LockRelationOid(relid, AccessShareLock);
+
+	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("relation \"%u\" does not exist", relid),
+						errdetail("triggered in function "
+								  CppAsString(validate_expression))));
+
+	if (!PG_ARGISNULL(1))
+	{
+		expression = TextDatumGetCString(PG_GETARG_TEXT_P(1));
+	}
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("'expression' should not be NULL")));
+
+	/* Perform some checks */
+	cook_partitioning_expression(relid, expression, NULL);
+
+	UnlockRelationOid(relid, AccessShareLock);
+
+	PG_RETURN_VOID();
+}
+
 Datum
 is_date_type(PG_FUNCTION_ARGS)
 {
@@ -709,6 +751,7 @@ build_check_constraint_name(PG_FUNCTION_ARGS)
  * ------------------------
  */
 
+
 /*
  * Try to add previously partitioned table to PATHMAN_CONFIG.
  */
@@ -731,7 +774,6 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	Datum				expr_datum;
 
 	PathmanInitState	init_state;
-	MemoryContext		old_mcxt = CurrentMemoryContext;
 
 	if (!PG_ARGISNULL(0))
 	{
@@ -740,8 +782,8 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("'parent_relid' should not be NULL")));
 
-	/* Lock relation */
-	xact_lock_rel_exclusive(relid, true);
+	/* Protect data + definition from concurrent modification */
+	LockRelationOid(relid, AccessExclusiveLock);
 
 	/* Check that relation exists */
 	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
@@ -797,9 +839,7 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	expr_datum = cook_partitioning_expression(relid, expression, &expr_type);
 
 	/* Canonicalize user's expression (trim whitespaces etc) */
-	expression = deparse_expression(stringToNode(TextDatumGetCString(expr_datum)),
-									deparse_context_for(get_rel_name(relid), relid),
-									false, false);
+	expression = canonicalize_partitioning_expression(relid, expression);
 
 	/* Check hash function for HASH partitioning */
 	if (parttype == PT_HASH)
@@ -831,8 +871,7 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	pathman_config = heap_open(get_pathman_config_relid(false), RowExclusiveLock);
 
 	htup = heap_form_tuple(RelationGetDescr(pathman_config), values, isnull);
-	simple_heap_insert(pathman_config, htup);
-	CatalogUpdateIndexes(pathman_config, htup);
+	CatalogTupleInsert(pathman_config, htup);
 
 	heap_close(pathman_config, RowExclusiveLock);
 
@@ -855,20 +894,11 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 		}
 		PG_CATCH();
 		{
-			ErrorData *edata;
-
-			/* Switch to the original context & copy edata */
-			MemoryContextSwitchTo(old_mcxt);
-			edata = CopyErrorData();
-			FlushErrorState();
-
 			/* We have to restore all changed flags */
 			restore_pathman_init_state(&init_state);
 
-			/* Show error message */
-			elog(ERROR, "%s", edata->message);
-
-			FreeErrorData(edata);
+			/* Rethrow ERROR */
+			PG_RE_THROW();
 		}
 		PG_END_TRY();
 	}
@@ -968,12 +998,12 @@ pathman_config_params_trigger_func_return:
  * Acquire appropriate lock on a partitioned relation.
  */
 Datum
-lock_partitioned_relation(PG_FUNCTION_ARGS)
+prevent_part_modification(PG_FUNCTION_ARGS)
 {
 	Oid			relid = PG_GETARG_OID(0);
 
 	/* Lock partitioned relation till transaction's end */
-	xact_lock_partitioned_rel(relid, false);
+	LockRelationOid(relid, ShareUpdateExclusiveLock);
 
 	PG_RETURN_VOID();
 }
@@ -982,9 +1012,9 @@ lock_partitioned_relation(PG_FUNCTION_ARGS)
  * Lock relation exclusively & check for current isolation level.
  */
 Datum
-prevent_relation_modification(PG_FUNCTION_ARGS)
+prevent_data_modification(PG_FUNCTION_ARGS)
 {
-	prevent_relation_modification_internal(PG_GETARG_OID(0));
+	prevent_data_modification_internal(PG_GETARG_OID(0));
 
 	PG_RETURN_VOID();
 }
@@ -1268,7 +1298,6 @@ find_deepest_partition(Oid parent, Relation source_rel, HeapTuple tuple)
 	Datum					value;
 	Oid						value_type;
 	bool					isnull;
-	ExprDoneCond			itemIsDone;
 
 	Oid target_relid;
 	Oid subpartition;
@@ -1285,14 +1314,12 @@ find_deepest_partition(Oid parent, Relation source_rel, HeapTuple tuple)
 														 source_rel,
 														 tuple,
 														 &value_type);
-	value = ExecEvalExpr(expr_state, econtext, &isnull, &itemIsDone);
+	value = ExecEvalExprCompat(expr_state, econtext, &isnull,
+							   mult_result_handler);
 	MemoryContextSwitchTo(old_mcxt);
 
 	if (isnull)
 		elog(ERROR, ERR_PART_ATTR_NULL);
-
-	if (itemIsDone != ExprSingleResult)
-		elog(ERROR, ERR_PART_ATTR_MULTIPLE_RESULTS);
 
 	/* Search for matching partitions */
 	parts = find_partitions_for_value(value, value_type, prel, &nparts);

@@ -4,11 +4,12 @@
  *		Functions for query- and plan- tree modification
  *
  * Copyright (c) 2016, Postgres Professional
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1994, Regents of the University of California
  *
  * ------------------------------------------------------------------------
  */
 
-#include "compat/expand_rte_hook.h"
 #include "compat/relation_tags.h"
 #include "compat/rowmarks_fix.h"
 
@@ -37,13 +38,14 @@ typedef enum
 static bool pathman_transform_query_walker(Node *node, void *context);
 
 static void disable_standard_inheritance(Query *parse);
-static void handle_modification_query(Query *parse);
+static void handle_modification_query(Query *parse, ParamListInfo params);
 
 static void partition_filter_visitor(Plan *plan, void *context);
 
 static rel_parenthood_status tag_extract_parenthood_status(List *relation_tag);
 
 static FindPartitionResult find_deepest_partition(Oid relid, Index idx, Expr *quals, Oid *partition);
+static Node *eval_extern_params_mutator(Node *node, ParamListInfo params);
 
 
 /*
@@ -143,9 +145,9 @@ plan_tree_walker(Plan *plan,
 
 /* Perform some transformations on Query tree */
 void
-pathman_transform_query(Query *parse)
+pathman_transform_query(Query *parse, ParamListInfo params)
 {
-	pathman_transform_query_walker((Node *) parse, NULL);
+	pathman_transform_query_walker((Node *) parse, (void *) params);
 }
 
 /* Walker for pathman_transform_query() */
@@ -165,7 +167,7 @@ pathman_transform_query_walker(Node *node, void *context)
 		/* Apply Query tree modifiers */
 		rowmark_add_tableoids(query);
 		disable_standard_inheritance(query);
-		handle_modification_query(query);
+		handle_modification_query(query, (ParamListInfo) context);
 
 		/* Handle Query node */
 		return query_tree_walker(query,
@@ -245,7 +247,7 @@ disable_standard_inheritance(Query *parse)
 
 /* Checks if query affects only one partition */
 static void
-handle_modification_query(Query *parse)
+handle_modification_query(Query *parse, ParamListInfo params)
 {
 	RangeTblEntry		   *rte;
 	Expr				   *quals;
@@ -268,6 +270,10 @@ handle_modification_query(Query *parse)
 	if (!rte->inh) return;
 
 	quals = (Expr *) eval_const_expressions(NULL, parse->jointree->quals);
+
+	/* Check if we can replace PARAMs with CONSTs */
+	if (params && clause_contains_params((Node *) quals))
+		quals = (Expr *) eval_extern_params_mutator((Node *) quals, params);
 
 	/*
 	 * Parse syntax tree and extract deepest partition (if there is only one
@@ -361,6 +367,7 @@ find_deepest_partition(Oid relid, Index idx, Expr *quals, Oid *partition)
 		return FP_NON_SINGULAR_RESULT;
 
 	/* Exit if there's no quals (no use) */
+	/* TODO: What if there is only one partition? */
 	if (!quals)
 		return FP_NON_SINGULAR_RESULT;
 
@@ -528,4 +535,63 @@ tag_extract_parenthood_status(List *relation_tag)
 		   status <= PARENTHOOD_ALLOWED);
 
 	return status;
+}
+
+
+/* Replace extern param nodes with consts */
+static Node *
+eval_extern_params_mutator(Node *node, ParamListInfo params)
+{
+	if (node == NULL)
+		return NULL;
+
+	if (IsA(node, Param))
+	{
+		Param *param = (Param *) node;
+
+		Assert(params);
+
+		/* Look to see if we've been given a value for this Param */
+		if (param->paramkind == PARAM_EXTERN &&
+			param->paramid > 0 &&
+			param->paramid <= params->numParams)
+		{
+			ParamExternData *prm = &params->params[param->paramid - 1];
+
+			if (OidIsValid(prm->ptype))
+			{
+				/* OK to substitute parameter value? */
+				if (prm->pflags & PARAM_FLAG_CONST)
+				{
+					/*
+					 * Return a Const representing the param value.
+					 * Must copy pass-by-ref datatypes, since the
+					 * Param might be in a memory context
+					 * shorter-lived than our output plan should be.
+					 */
+					int16		typLen;
+					bool		typByVal;
+					Datum		pval;
+
+					Assert(prm->ptype == param->paramtype);
+					get_typlenbyval(param->paramtype,
+									&typLen, &typByVal);
+					if (prm->isnull || typByVal)
+						pval = prm->value;
+					else
+						pval = datumCopy(prm->value, typByVal, typLen);
+					return (Node *) makeConst(param->paramtype,
+											  param->paramtypmod,
+											  param->paramcollid,
+											  (int) typLen,
+											  pval,
+											  prm->isnull,
+											  typByVal);
+				}
+			}
+		}
+	}
+
+	return expression_tree_mutator(node, eval_extern_params_mutator,
+								   (void *) params);
 }
