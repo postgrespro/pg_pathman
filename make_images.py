@@ -10,21 +10,20 @@ from urllib.parse import urljoin
 from urllib.request import urlopen
 
 DOCKER_ID = 'pathman'
-ALPINE_BASE_URL = 'https://raw.githubusercontent.com/docker-library/postgres/master/9.6/alpine/'
+ALPINE_BASE_URL = 'https://raw.githubusercontent.com/docker-library/postgres/master/10/alpine/'
 ALPINE_ENTRYPOINT = 'docker-entrypoint.sh'
 ALPINE_PATCH = b'''
-diff --git a/Dockerfile b/Dockerfile
-index 9878023..ba215bc 100644
---- a/Dockerfile
-+++ b/Dockerfile
-@@ -80,6 +80,7 @@ RUN set -ex \\
- # configure options taken from:
- # https://anonscm.debian.org/cgit/pkg-postgresql/postgresql.git/tree/debian/rules?h=9.5
- 	&& ./configure \\
+--- Dockerfile	2017-07-25 12:43:20.424984422 +0300
++++ Dockerfile	2017-07-25 12:46:10.279267520 +0300
+@@ -86,6 +86,7 @@
+ 		--enable-integer-datetimes \\
+ 		--enable-thread-safety \\
+ 		--enable-tap-tests \\
 +		--enable-cassert \\
- 		--build="$gnuArch" \\
- # "/usr/src/postgresql/src/backend/access/common/tupconvert.c:105: undefined reference to `libintl_gettext'"
- #		--enable-nls \\
+ # skip debugging info -- we want tiny size instead
+ #		--enable-debug \\
+ 		--disable-rpath \\
+
 '''
 CUSTOM_IMAGE_NAME = "%s/postgres_stable" % DOCKER_ID
 
@@ -34,16 +33,20 @@ def make_alpine_image(image_name):
 
 	with tempfile.TemporaryDirectory() as tmpdir:
 		print("Creating build in %s" % tmpdir)
+		patch_name = os.path.join(tmpdir, "cassert.patch")
+
 		with open(os.path.join(tmpdir, 'Dockerfile'), 'w') as f:
 			f.write(dockerfile.decode())
 
 		with open(os.path.join(tmpdir, ALPINE_ENTRYPOINT), 'w') as f:
 			f.write(entrypoint_sh.decode())
 
-		with open(os.path.join(tmpdir, 'cassert.patch'), 'w') as f:
+		with open(patch_name, 'w') as f:
 			f.write(ALPINE_PATCH.decode())
 
-		subprocess.check_output(["git", "apply", "cassert.patch"], cwd=tmpdir)
+		with open(patch_name, 'r') as f:
+			p = subprocess.Popen(["patch", "-p0"], cwd=tmpdir, stdin=subprocess.PIPE)
+			p.communicate(str.encode(f.read()))
 		print("patch applied")
 		subprocess.check_output(["docker", "build", ".", '-t', image_name], cwd=tmpdir)
 		print("build ok: ", image_name)
@@ -57,7 +60,7 @@ pg_containers = [
 	('pg95', 'postgres:9.5-alpine'),
 	('pg96', 'postgres:9.6-alpine'),
 	('pg10', 'postgres:10-alpine'),
-	('pg96_ca', CUSTOM_IMAGE_NAME),
+	('pg10_ca', CUSTOM_IMAGE_NAME),
 ]
 
 image_types = {

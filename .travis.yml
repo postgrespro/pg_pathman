@@ -26,6 +26,6 @@ env:
     - DOCKER_IMAGE=pathman/pg10_clang_check_code
     - DOCKER_IMAGE=pathman/pg10_cppcheck
     - DOCKER_IMAGE=pathman/pg10_pathman_tests
-    - DOCKER_IMAGE=pathman/pg96_ca_clang_check_code
-    - DOCKER_IMAGE=pathman/pg96_ca_cppcheck
-    - DOCKER_IMAGE=pathman/pg96_ca_pathman_tests
+    - DOCKER_IMAGE=pathman/pg10_ca_clang_check_code
+    - DOCKER_IMAGE=pathman/pg10_ca_cppcheck
+    - DOCKER_IMAGE=pathman/pg10_ca_pathman_tests
