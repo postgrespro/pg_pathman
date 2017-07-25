@@ -671,8 +671,10 @@ is_tuple_convertible(PG_FUNCTION_ARGS)
 		map = convert_tuples_by_name(RelationGetDescr(rel1),
 									 RelationGetDescr(rel2),
 									 ERR_PART_DESC_CONVERT);
-		/* Now free map */
-		pfree(map);
+
+		/* Now free map. Note that map can be NULL if conversion isn't needed */
+		if (map)
+			pfree(map);
 	}
 	PG_CATCH();
 	{

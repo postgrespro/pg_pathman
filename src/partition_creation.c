@@ -47,6 +47,9 @@
 #include "utils/syscache.h"
 #include "utils/typcache.h"
 
+#if PG_VERSION_NUM >= 100000
+#include "utils/regproc.h"
+#endif
 
 static Oid spawn_partitions_val(Oid parent_relid,
 								const Bound *range_bound_min,
@@ -1955,18 +1958,29 @@ drop_single_update_trigger_internal(Oid relid,
 	 * To avoid warning message about missing trigger we check it beforehand.
 	 * and quit if it doesn't
 	 */
+#if PG_VERSION_NUM >= 100000
+	address = get_object_address(OBJECT_TRIGGER,
+								 (Node *) namelist,
+								 &relation,
+								 AccessExclusiveLock,
+								 true);
+#else
 	address = get_object_address(OBJECT_TRIGGER,
 								 namelist, NIL,
 								 &relation,
 								 AccessExclusiveLock,
 								 true);
+#endif
+
 	if (!OidIsValid(address.objectId))
 		return;
 
 	/* Actually remove trigger */
 	n->removeType	= OBJECT_TRIGGER;
 	n->objects		= list_make1(namelist);
+#if PG_VERSION_NUM < 100000
 	n->arguments	= NIL;
+#endif
 	n->behavior		= DROP_RESTRICT;  /* default behavior */
 	n->missing_ok	= true;
 	n->concurrent	= false;		

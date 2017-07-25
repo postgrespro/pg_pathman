@@ -436,6 +436,7 @@ select_partition_for_insert(ExprContext *econtext, ExprState *expr_state,
 	int						nparts;
 	bool					isnull;
 	Datum					value;
+	Oid						parent = PrelParentRelid(prel);
 
 	/* Execute expression */
 	value = ExecEvalExprCompat(expr_state, econtext, &isnull,
@@ -453,11 +454,11 @@ select_partition_for_insert(ExprContext *econtext, ExprState *expr_state,
 			elog(ERROR, ERR_PART_ATTR_MULTIPLE);
 		else if (nparts == 0)
 		{
-			 selected_partid = create_partitions_for_value(PrelParentRelid(prel),
+			 selected_partid = create_partitions_for_value(parent,
 														   value, prel->ev_type);
 
 			 /* get_pathman_relation_info() will refresh this entry */
-			 invalidate_pathman_relation_info(PrelParentRelid(prel), NULL);
+			 invalidate_pathman_relation_info(parent, NULL);
 		}
 		else selected_partid = parts[0];
 
@@ -469,15 +470,15 @@ select_partition_for_insert(ExprContext *econtext, ExprState *expr_state,
 		if (rri_holder == NULL)
 		{
 			/* get_pathman_relation_info() will refresh this entry */
-			invalidate_pathman_relation_info(PrelParentRelid(prel), NULL);
+			invalidate_pathman_relation_info(parent, NULL);
 
 			/* Get a fresh PartRelationInfo */
-			prel = get_pathman_relation_info(PrelParentRelid(prel));
+			prel = get_pathman_relation_info(parent);
 
 			/* Paranoid check (all partitions have vanished) */
 			if (!prel)
 				elog(ERROR, "table \"%s\" is not partitioned",
-					 get_rel_name_or_relid(PrelParentRelid(prel)));
+					 get_rel_name_or_relid(parent));
 		}
 		/* If partition has subpartitions */
 		else if (rri_holder->has_subpartitions)
