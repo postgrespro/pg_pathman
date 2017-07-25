@@ -367,7 +367,6 @@ find_deepest_partition(Oid relid, Index idx, Expr *quals, Oid *partition)
 		return FP_NON_SINGULAR_RESULT;
 
 	/* Exit if there's no quals (no use) */
-	/* TODO: What if there is only one partition? */
 	if (!quals)
 		return FP_NON_SINGULAR_RESULT;
 
