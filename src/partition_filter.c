@@ -431,12 +431,12 @@ select_partition_for_insert(ExprContext *econtext, ExprState *expr_state,
 {
 	MemoryContext			old_mcxt;
 	ResultRelInfoHolder	   *rri_holder;
-	Oid						selected_partid = InvalidOid;
+	Oid						parent_relid = PrelParentRelid(prel),
+							partition_relid = InvalidOid;
 	Oid					   *parts;
 	int						nparts;
 	bool					isnull;
 	Datum					value;
-	Oid						parent = PrelParentRelid(prel);
 
 	/* Execute expression */
 	value = ExecEvalExprCompat(expr_state, econtext, &isnull,
@@ -454,31 +454,31 @@ select_partition_for_insert(ExprContext *econtext, ExprState *expr_state,
 			elog(ERROR, ERR_PART_ATTR_MULTIPLE);
 		else if (nparts == 0)
 		{
-			 selected_partid = create_partitions_for_value(parent,
+			 partition_relid = create_partitions_for_value(parent_relid,
 														   value, prel->ev_type);
 
 			 /* get_pathman_relation_info() will refresh this entry */
-			 invalidate_pathman_relation_info(parent, NULL);
+			 invalidate_pathman_relation_info(parent_relid, NULL);
 		}
-		else selected_partid = parts[0];
+		else partition_relid = parts[0];
 
 		old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
-		rri_holder = scan_result_parts_storage(selected_partid, parts_storage);
+		rri_holder = scan_result_parts_storage(partition_relid, parts_storage);
 		MemoryContextSwitchTo(old_mcxt);
 
-		/* Could not find suitable partition */
+		/* This partition has been dropped, repeat with a new 'prel' */
 		if (rri_holder == NULL)
 		{
 			/* get_pathman_relation_info() will refresh this entry */
-			invalidate_pathman_relation_info(parent, NULL);
+			invalidate_pathman_relation_info(parent_relid, NULL);
 
 			/* Get a fresh PartRelationInfo */
-			prel = get_pathman_relation_info(parent);
+			prel = get_pathman_relation_info(parent_relid);
 
 			/* Paranoid check (all partitions have vanished) */
 			if (!prel)
 				elog(ERROR, "table \"%s\" is not partitioned",
-					 get_rel_name_or_relid(parent));
+					 get_rel_name_or_relid(parent_relid));
 		}
 		/* If partition has subpartitions */
 		else if (rri_holder->has_subpartitions)
@@ -486,7 +486,7 @@ select_partition_for_insert(ExprContext *econtext, ExprState *expr_state,
 			const PartRelationInfo *subprel;
 
 			/* Fetch PartRelationInfo for this partitioned relation */
-			subprel = get_pathman_relation_info(selected_partid);
+			subprel = get_pathman_relation_info(partition_relid);
 			Assert(subprel != NULL);
 
 			/* Build an expression state if not yet */
@@ -685,7 +685,10 @@ partition_filter_exec(CustomScanState *node)
 		tmp_slot = econtext->ecxt_scantuple;
 		econtext->ecxt_scantuple = slot;
 
-		/* Search for a matching partition */
+		/*
+		 * Search for a matching partition.
+		 * WARNING: 'prel' might change after this call!
+		 */
 		rri_holder = select_partition_for_insert(econtext, state->expr_state, prel,
 												 &state->result_parts, estate);
 
