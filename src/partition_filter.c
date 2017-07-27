@@ -424,10 +424,11 @@ find_partitions_for_value(Datum value, Oid value_type,
  * Smart wrapper for scan_result_parts_storage().
  */
 ResultRelInfoHolder *
-select_partition_for_insert(ExprContext *econtext, ExprState *expr_state,
+select_partition_for_insert(ExprState *expr_state,
+							ExprContext *econtext,
+							EState *estate,
 							const PartRelationInfo *prel,
-							ResultPartsStorage *parts_storage,
-							EState *estate)
+							ResultPartsStorage *parts_storage)
 {
 	MemoryContext			old_mcxt;
 	ResultRelInfoHolder	   *rri_holder;
@@ -496,11 +497,9 @@ select_partition_for_insert(ExprContext *econtext, ExprState *expr_state,
 			Assert(rri_holder->expr_state != NULL);
 
 			/* Recursively search for subpartitions */
-			rri_holder = select_partition_for_insert(econtext,
-													 rri_holder->expr_state,
-													 subprel,
-													 parts_storage,
-													 estate);
+			rri_holder = select_partition_for_insert(rri_holder->expr_state,
+													 econtext, estate,
+													 subprel, parts_storage);
 		}
 	}
 	/* Loop until we get some result */
@@ -665,7 +664,6 @@ partition_filter_exec(CustomScanState *node)
 		MemoryContext				old_mcxt;
 		const PartRelationInfo	   *prel;
 		ResultRelInfoHolder		   *rri_holder;
-		TupleTableSlot			   *tmp_slot;
 
 		/* Fetch PartRelationInfo for this partitioned relation */
 		prel = get_pathman_relation_info(state->partitioned_table);
@@ -682,17 +680,16 @@ partition_filter_exec(CustomScanState *node)
 		/* Switch to per-tuple context */
 		old_mcxt = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 
-		tmp_slot = econtext->ecxt_scantuple;
+		/* Store slot for expression evaluation */
 		econtext->ecxt_scantuple = slot;
 
 		/*
 		 * Search for a matching partition.
 		 * WARNING: 'prel' might change after this call!
 		 */
-		rri_holder = select_partition_for_insert(econtext, state->expr_state, prel,
-												 &state->result_parts, estate);
-
-		econtext->ecxt_scantuple = tmp_slot;
+		rri_holder = select_partition_for_insert(state->expr_state,
+												 econtext, estate,
+												 prel, &state->result_parts);
 
 		/* Switch back and clean up per-tuple context */
 		MemoryContextSwitchTo(old_mcxt);

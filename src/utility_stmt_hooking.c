@@ -608,8 +608,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 
 	for (;;)
 	{
-		TupleTableSlot		   *slot,
-							   *tmp_slot;
+		TupleTableSlot		   *slot;
 		bool					skip_tuple;
 		Oid						tuple_oid = InvalidOid;
 
@@ -637,7 +636,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 		if (!NextCopyFrom(cstate, econtext, values, nulls, &tuple_oid))
 			break;
 
-		/* We can form the input tuple. */
+		/* We can form the input tuple */
 		tuple = heap_form_tuple(tupDesc, values, nulls);
 
 		if (tuple_oid != InvalidOid)
@@ -648,15 +647,19 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 		ExecSetSlotDescriptor(slot, tupDesc);
 		ExecStoreTuple(tuple, slot, InvalidBuffer, false);
 
-		/* Execute expression */
-		tmp_slot = econtext->ecxt_scantuple;
+		/* Store slot for expression evaluation */
 		econtext->ecxt_scantuple = slot;
 
-		/* Search for a matching partition */
-		rri_holder = select_partition_for_insert(econtext, expr_state, prel,
-												 &parts_storage, estate);
-		econtext->ecxt_scantuple = tmp_slot;
+		/*
+		 * Search for a matching partition.
+		 * WARNING: 'prel' might change after this call!
+		 */
+		rri_holder = select_partition_for_insert(expr_state, econtext, estate,
+												 prel, &parts_storage);
+
 		child_result_rel = rri_holder->result_rel_info;
+
+		/* Magic: replace parent's ResultRelInfo with ours */
 		estate->es_result_relation_info = child_result_rel;
 
 		/*

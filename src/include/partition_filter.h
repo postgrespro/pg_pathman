@@ -135,10 +135,11 @@ Oid * find_partitions_for_value(Datum value, Oid value_type,
 								const PartRelationInfo *prel,
 								int *nparts);
 
-ResultRelInfoHolder *select_partition_for_insert(ExprContext *econtext, ExprState *expr_state,
+ResultRelInfoHolder *select_partition_for_insert(ExprState *expr_state,
+												 ExprContext *econtext,
+												 EState *estate,
 												 const PartRelationInfo *prel,
-												 ResultPartsStorage *parts_storage,
-												 EState *estate);
+												 ResultPartsStorage *parts_storage);
 
 Plan * make_partition_filter(Plan *subplan,
 							 Oid parent_relid,
