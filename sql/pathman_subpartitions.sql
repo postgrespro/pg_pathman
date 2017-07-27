@@ -12,7 +12,7 @@ SELECT create_range_partitions('subpartitions.abc', 'a', 0, 100, 2);
 SELECT create_hash_partitions('subpartitions.abc_1', 'a', 3);
 SELECT create_hash_partitions('subpartitions.abc_2', 'b', 2);
 SELECT * FROM pathman_partition_list;
-SELECT tableoid::regclass, * FROM subpartitions.abc;
+SELECT tableoid::regclass, * FROM subpartitions.abc ORDER BY a, b;
 
 /* Insert should result in creation of new subpartition */
 SELECT append_range_partition('subpartitions.abc', 'subpartitions.abc_3');
@@ -20,7 +20,7 @@ SELECT create_range_partitions('subpartitions.abc_3', 'b', 200, 10, 2);
 SELECT * FROM pathman_partition_list WHERE parent = 'subpartitions.abc_3'::regclass;
 INSERT INTO subpartitions.abc VALUES (215, 215);
 SELECT * FROM pathman_partition_list WHERE parent = 'subpartitions.abc_3'::regclass;
-SELECT tableoid::regclass, * FROM subpartitions.abc WHERE a = 215 AND b = 215;
+SELECT tableoid::regclass, * FROM subpartitions.abc WHERE a = 215 AND b = 215 ORDER BY a, b;
 
 /* Pruning tests */
 EXPLAIN (COSTS OFF) SELECT * FROM subpartitions.abc WHERE a  < 150;
@@ -72,17 +72,20 @@ $$ LANGUAGE plpgsql;
 SELECT create_update_triggers('subpartitions.abc_1');	/* Cannot perform on partition */
 SELECT create_update_triggers('subpartitions.abc');		/* Can perform on parent */
 SELECT p, subpartitions.get_triggers(p)
-FROM subpartitions.partitions_tree('subpartitions.abc') as p;
+FROM subpartitions.partitions_tree('subpartitions.abc') as p
+ORDER BY p;
 
 SELECT append_range_partition('subpartitions.abc', 'subpartitions.abc_4');
 SELECT create_hash_partitions('subpartitions.abc_4', 'b', 2);
 SELECT p, subpartitions.get_triggers(p)
-FROM subpartitions.partitions_tree('subpartitions.abc_4') as p;
+FROM subpartitions.partitions_tree('subpartitions.abc_4') as p
+ORDER BY p;
 
 SELECT drop_triggers('subpartitions.abc_1');	/* Cannot perform on partition */
 SELECT drop_triggers('subpartitions.abc');		/* Can perform on parent */
 SELECT p, subpartitions.get_triggers(p)
-FROM subpartitions.partitions_tree('subpartitions.abc') as p;
+FROM subpartitions.partitions_tree('subpartitions.abc') as p
+ORDER BY p;
 
 DROP TABLE subpartitions.abc CASCADE;
 
