@@ -327,8 +327,7 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 		rri_holder->tuple_map = build_part_tuple_map(parent_rel, child_rel);
 
 		/* Are there subpartitions? */
-		rri_holder->has_subpartitions = 
-			(get_pathman_relation_info(partid) != NULL);
+		rri_holder->has_children = child_rel->rd_rel->relhassubclass;
 		rri_holder->expr_state = NULL;
 
 		/* Call on_new_rri_holder_callback() if needed */
@@ -481,25 +480,26 @@ select_partition_for_insert(ExprState *expr_state,
 				elog(ERROR, "table \"%s\" is not partitioned",
 					 get_rel_name_or_relid(parent_relid));
 		}
-		/* If partition has subpartitions */
-		else if (rri_holder->has_subpartitions)
+		/* This partition might have sub-partitions */
+		else if (rri_holder->has_children)
 		{
-			const PartRelationInfo *subprel;
+			const PartRelationInfo *sub_prel;
 
 			/* Fetch PartRelationInfo for this partitioned relation */
-			subprel = get_pathman_relation_info(partition_relid);
-			Assert(subprel != NULL);
+			sub_prel = get_pathman_relation_info(partition_relid);
+
+			/* Might be a false alarm */
+			if (!sub_prel)
+				break;
 
 			/* Build an expression state if not yet */
 			if (!rri_holder->expr_state)
-				rri_holder->expr_state = prepare_expr_state(subprel, estate);
-
-			Assert(rri_holder->expr_state != NULL);
+				rri_holder->expr_state = prepare_expr_state(sub_prel, estate);
 
 			/* Recursively search for subpartitions */
 			rri_holder = select_partition_for_insert(rri_holder->expr_state,
 													 econtext, estate,
-													 subprel, parts_storage);
+													 sub_prel, parts_storage);
 		}
 	}
 	/* Loop until we get some result */

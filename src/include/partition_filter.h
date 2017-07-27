@@ -39,9 +39,9 @@ typedef struct
 {
 	Oid					partid;				/* partition's relid */
 	ResultRelInfo	   *result_rel_info;	/* cached ResultRelInfo */
-	TupleConversionMap *tuple_map;			/* tuple conversion map (parent => child) */
-	bool				has_subpartitions;
-	ExprState		   *expr_state;			/* if has_subpartitions true */
+	TupleConversionMap *tuple_map;			/* tuple mapping (parent => child) */
+	bool				has_children;		/* hint that it might have children */
+	ExprState		   *expr_state;			/* children have their own expressions */
 } ResultRelInfoHolder;
 
 
