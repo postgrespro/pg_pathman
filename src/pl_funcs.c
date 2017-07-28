@@ -18,7 +18,6 @@
 #include "xact_handling.h"
 #include "utils.h"
 
-#include "access/tupconvert.h"
 #include "access/htup_details.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"

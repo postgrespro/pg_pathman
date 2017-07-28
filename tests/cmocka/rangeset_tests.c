@@ -16,6 +16,7 @@
  */
 
 static void test_irange_basic(void **state);
+static void test_irange_change_lossiness(void **state);
 
 static void test_irange_list_union_merge(void **state);
 static void test_irange_list_union_lossy_cov(void **state);
@@ -33,6 +34,7 @@ main(void)
 	const struct CMUnitTest tests[] =
 	{
 		cmocka_unit_test(test_irange_basic),
+		cmocka_unit_test(test_irange_change_lossiness),
 		cmocka_unit_test(test_irange_list_union_merge),
 		cmocka_unit_test(test_irange_list_union_lossy_cov),
 		cmocka_unit_test(test_irange_list_union_complete_cov),
@@ -75,10 +77,76 @@ test_irange_basic(void **state)
 	assert_true(is_irange_valid(irange));
 
 	/* test allocation */
-	irange_list = NIL;
-	irange_list = lappend_irange(irange_list, irange);
+	irange = make_irange(100, 200, IR_LOSSY);
+	irange_list = lappend_irange(NIL, irange);
 	assert_memory_equal(&irange, &linitial_irange(irange_list), sizeof(IndexRange));
 	assert_memory_equal(&irange, &llast_irange(irange_list), sizeof(IndexRange));
+
+	/* test length */
+	irange_list = NIL;
+	assert_int_equal(irange_list_length(irange_list), 0);
+	irange_list = lappend_irange(irange_list, make_irange(10, 20, IR_LOSSY));
+	assert_int_equal(irange_list_length(irange_list), 11);
+	irange_list = lappend_irange(irange_list, make_irange(21, 30, IR_LOSSY));
+	assert_int_equal(irange_list_length(irange_list), 21);
+}
+
+
+/* Test lossiness switcher */
+static void
+test_irange_change_lossiness(void **state)
+{
+	List *irange_list;
+
+	/* test lossiness change (NIL) */
+	irange_list = irange_list_set_lossiness(NIL, IR_LOSSY);
+	assert_ptr_equal(irange_list, NIL);
+	irange_list = irange_list_set_lossiness(NIL, IR_COMPLETE);
+	assert_ptr_equal(irange_list, NIL);
+
+	/* test lossiness change (no-op) #1 */
+	irange_list = list_make1_irange(make_irange(10, 20, IR_LOSSY));
+	irange_list = irange_list_set_lossiness(irange_list, IR_LOSSY);
+	assert_string_equal(rangeset_print(irange_list), "[10-20]L");
+
+	/* test lossiness change (no-op) #2 */
+	irange_list = list_make1_irange(make_irange(30, 40, IR_COMPLETE));
+	irange_list = irange_list_set_lossiness(irange_list, IR_COMPLETE);
+	assert_string_equal(rangeset_print(irange_list), "[30-40]C");
+
+	/* test lossiness change (single element) #1 */
+	irange_list = list_make1_irange(make_irange(10, 20, IR_LOSSY));
+	irange_list = irange_list_set_lossiness(irange_list, IR_COMPLETE);
+	assert_string_equal(rangeset_print(irange_list), "[10-20]C");
+
+	/* test lossiness change (single element) #2 */
+	irange_list = list_make1_irange(make_irange(30, 40, IR_COMPLETE));
+	irange_list = irange_list_set_lossiness(irange_list, IR_LOSSY);
+	assert_string_equal(rangeset_print(irange_list), "[30-40]L");
+
+	/* test lossiness change (multiple elements, adjacent) #1 */
+	irange_list = list_make1_irange(make_irange(10, 20, IR_LOSSY));
+	irange_list = lappend_irange(irange_list, make_irange(21, 40, IR_COMPLETE));
+	irange_list = irange_list_set_lossiness(irange_list, IR_COMPLETE);
+	assert_string_equal(rangeset_print(irange_list), "[10-40]C");
+
+	/* test lossiness change (multiple elements, adjacent) #2 */
+	irange_list = list_make1_irange(make_irange(10, 20, IR_COMPLETE));
+	irange_list = lappend_irange(irange_list, make_irange(21, 40, IR_LOSSY));
+	irange_list = irange_list_set_lossiness(irange_list, IR_LOSSY);
+	assert_string_equal(rangeset_print(irange_list), "[10-40]L");
+
+	/* test lossiness change (multiple elements, non-adjacent) #1 */
+	irange_list = list_make1_irange(make_irange(10, 15, IR_COMPLETE));
+	irange_list = lappend_irange(irange_list, make_irange(21, 40, IR_LOSSY));
+	irange_list = irange_list_set_lossiness(irange_list, IR_COMPLETE);
+	assert_string_equal(rangeset_print(irange_list), "[10-15]C, [21-40]C");
+
+	/* test lossiness change (multiple elements, non-adjacent) #2 */
+	irange_list = list_make1_irange(make_irange(10, 15, IR_LOSSY));
+	irange_list = lappend_irange(irange_list, make_irange(21, 40, IR_COMPLETE));
+	irange_list = irange_list_set_lossiness(irange_list, IR_LOSSY);
+	assert_string_equal(rangeset_print(irange_list), "[10-15]L, [21-40]L");
 }
 
 

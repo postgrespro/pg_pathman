@@ -390,6 +390,19 @@ DROP TABLE test.num_range_rel CASCADE;
 
 DROP TABLE test.range_rel CASCADE;
 
+/* Test attributes copying */
+CREATE UNLOGGED TABLE test.range_rel (
+	id	SERIAL PRIMARY KEY,
+	dt	DATE NOT NULL)
+WITH (fillfactor = 70);
+INSERT INTO test.range_rel (dt)
+	SELECT g FROM generate_series('2015-01-01', '2015-02-15', '1 month'::interval) AS g;
+SELECT pathman.create_range_partitions('test.range_rel', 'dt',
+	'2015-01-01'::date, '1 month'::interval);
+SELECT reloptions, relpersistence FROM pg_class WHERE oid='test.range_rel'::REGCLASS;
+SELECT reloptions, relpersistence FROM pg_class WHERE oid='test.range_rel_1'::REGCLASS;
+DROP TABLE test.range_rel CASCADE;
+
 /* Test automatic partition creation */
 CREATE TABLE test.range_rel (
 	id	SERIAL PRIMARY KEY,
@@ -503,17 +516,30 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt > '2010-12-15';
 CREATE TABLE test.tmp (id INTEGER NOT NULL, value INTEGER NOT NULL);
 INSERT INTO test.tmp VALUES (1, 1), (2, 2);
 
+
 /* Test UPDATE and DELETE */
-EXPLAIN (COSTS OFF) UPDATE test.range_rel SET value = 111 WHERE dt = '2010-06-15';
+EXPLAIN (COSTS OFF) UPDATE test.range_rel SET value = 111 WHERE dt = '2010-06-15';	/* have partitions for this 'dt' */
 UPDATE test.range_rel SET value = 111 WHERE dt = '2010-06-15';
 SELECT * FROM test.range_rel WHERE dt = '2010-06-15';
-EXPLAIN (COSTS OFF) DELETE FROM test.range_rel WHERE dt = '2010-06-15';
+
+EXPLAIN (COSTS OFF) DELETE FROM test.range_rel WHERE dt = '2010-06-15';	/* have partitions for this 'dt' */
 DELETE FROM test.range_rel WHERE dt = '2010-06-15';
 SELECT * FROM test.range_rel WHERE dt = '2010-06-15';
+
+EXPLAIN (COSTS OFF) UPDATE test.range_rel SET value = 222 WHERE dt = '1990-01-01';	/* no partitions for this 'dt' */
+UPDATE test.range_rel SET value = 111 WHERE dt = '1990-01-01';
+SELECT * FROM test.range_rel WHERE dt = '1990-01-01';
+
+EXPLAIN (COSTS OFF) DELETE FROM test.range_rel WHERE dt < '1990-01-01';	/* no partitions for this 'dt' */
+DELETE FROM test.range_rel WHERE dt < '1990-01-01';
+SELECT * FROM test.range_rel WHERE dt < '1990-01-01';
+
 EXPLAIN (COSTS OFF) UPDATE test.range_rel r SET value = t.value FROM test.tmp t WHERE r.dt = '2010-01-01' AND r.id = t.id;
 UPDATE test.range_rel r SET value = t.value FROM test.tmp t WHERE r.dt = '2010-01-01' AND r.id = t.id;
+
 EXPLAIN (COSTS OFF) DELETE FROM test.range_rel r USING test.tmp t WHERE r.dt = '2010-01-02' AND r.id = t.id;
 DELETE FROM test.range_rel r USING test.tmp t WHERE r.dt = '2010-01-02' AND r.id = t.id;
+
 
 /* Create range partitions from whole range */
 SELECT drop_partitions('test.range_rel');

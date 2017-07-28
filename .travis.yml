@@ -1,33 +1,31 @@
 os:
-  - linux
+    - linux
 
 sudo: required
 dist: trusty
 
 language: c
 
-compiler:
-  - clang
-  - gcc
+services:
+    - docker
 
-before_install:
-  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then sudo apt-get -y install -qq wget ca-certificates; fi
-  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then source ./travis/dep-ubuntu-postgres.sh; fi
-  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then source ./travis/dep-ubuntu-llvm.sh; fi
-  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then sudo apt-get update -qq; fi
+install:
+    - echo "FROM ${DOCKER_IMAGE}" > Dockerfile
+    - docker-compose build
+
+script:
+    - docker-compose run $(bash <(curl -s https://codecov.io/env)) tests
 
 env:
-  global:
-    - LLVM_VER=4.0
-  matrix:
-    - PG_VER=10  CHECK_CODE=true
-    - PG_VER=10  CHECK_CODE=false
-    - PG_VER=9.6 CHECK_CODE=true
-    - PG_VER=9.6 CHECK_CODE=false
-    - PG_VER=9.5 CHECK_CODE=true
-    - PG_VER=9.5 CHECK_CODE=false
-
-script: bash ./travis/pg-travis-test.sh
-
-after_success:
-  - bash <(curl -s https://codecov.io/bash)
+    - DOCKER_IMAGE=pathman/pg95_clang_check_code
+    - DOCKER_IMAGE=pathman/pg95_cppcheck
+    - DOCKER_IMAGE=pathman/pg95_pathman_tests
+    - DOCKER_IMAGE=pathman/pg96_clang_check_code
+    - DOCKER_IMAGE=pathman/pg96_cppcheck
+    - DOCKER_IMAGE=pathman/pg96_pathman_tests
+    - DOCKER_IMAGE=pathman/pg10_clang_check_code
+    - DOCKER_IMAGE=pathman/pg10_cppcheck
+    - DOCKER_IMAGE=pathman/pg10_pathman_tests
+    - DOCKER_IMAGE=pathman/pg10_ca_clang_check_code
+    - DOCKER_IMAGE=pathman/pg10_ca_cppcheck
+    - DOCKER_IMAGE=pathman/pg10_ca_pathman_tests

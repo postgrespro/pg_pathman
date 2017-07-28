@@ -18,7 +18,7 @@ PL/pgSQL function pathman.prepare_for_partitioning(regclass,text,boolean) line 9
 SQL statement "SELECT pathman.prepare_for_partitioning(parent_relid,
 												 expression,
 												 partition_data)"
-PL/pgSQL function pathman.create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 4 at PERFORM
+PL/pgSQL function pathman.create_hash_partitions(regclass,text,integer,boolean,text[],text[]) line 3 at PERFORM
 \set VERBOSITY terse
 ALTER TABLE test.hash_rel ALTER COLUMN value SET NOT NULL;
 SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3, partition_data:=false);
@@ -1339,6 +1339,34 @@ NOTICE:  1000 rows copied from test.num_range_rel_3
 DROP TABLE test.num_range_rel CASCADE;
 DROP TABLE test.range_rel CASCADE;
 NOTICE:  drop cascades to 10 other objects
+/* Test attributes copying */
+CREATE UNLOGGED TABLE test.range_rel (
+	id	SERIAL PRIMARY KEY,
+	dt	DATE NOT NULL)
+WITH (fillfactor = 70);
+INSERT INTO test.range_rel (dt)
+	SELECT g FROM generate_series('2015-01-01', '2015-02-15', '1 month'::interval) AS g;
+SELECT pathman.create_range_partitions('test.range_rel', 'dt',
+	'2015-01-01'::date, '1 month'::interval);
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+SELECT reloptions, relpersistence FROM pg_class WHERE oid='test.range_rel'::REGCLASS;
+   reloptions    | relpersistence 
+-----------------+----------------
+ {fillfactor=70} | u
+(1 row)
+
+SELECT reloptions, relpersistence FROM pg_class WHERE oid='test.range_rel_1'::REGCLASS;
+   reloptions    | relpersistence 
+-----------------+----------------
+ {fillfactor=70} | u
+(1 row)
+
+DROP TABLE test.range_rel CASCADE;
+NOTICE:  drop cascades to 3 other objects
 /* Test automatic partition creation */
 CREATE TABLE test.range_rel (
 	id	SERIAL PRIMARY KEY,
@@ -1657,7 +1685,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt > '2010-12-15';
 CREATE TABLE test.tmp (id INTEGER NOT NULL, value INTEGER NOT NULL);
 INSERT INTO test.tmp VALUES (1, 1), (2, 2);
 /* Test UPDATE and DELETE */
-EXPLAIN (COSTS OFF) UPDATE test.range_rel SET value = 111 WHERE dt = '2010-06-15';
+EXPLAIN (COSTS OFF) UPDATE test.range_rel SET value = 111 WHERE dt = '2010-06-15';	/* have partitions for this 'dt' */
                                    QUERY PLAN                                   
 --------------------------------------------------------------------------------
  Update on range_rel_6
@@ -1672,7 +1700,7 @@ SELECT * FROM test.range_rel WHERE dt = '2010-06-15';
  166 | Tue Jun 15 00:00:00 2010 |   111
 (1 row)
 
-EXPLAIN (COSTS OFF) DELETE FROM test.range_rel WHERE dt = '2010-06-15';
+EXPLAIN (COSTS OFF) DELETE FROM test.range_rel WHERE dt = '2010-06-15';	/* have partitions for this 'dt' */
                                    QUERY PLAN                                   
 --------------------------------------------------------------------------------
  Delete on range_rel_6
@@ -1682,6 +1710,34 @@ EXPLAIN (COSTS OFF) DELETE FROM test.range_rel WHERE dt = '2010-06-15';
 
 DELETE FROM test.range_rel WHERE dt = '2010-06-15';
 SELECT * FROM test.range_rel WHERE dt = '2010-06-15';
+ id | dt | value 
+----+----+-------
+(0 rows)
+
+EXPLAIN (COSTS OFF) UPDATE test.range_rel SET value = 222 WHERE dt = '1990-01-01';	/* no partitions for this 'dt' */
+                                   QUERY PLAN                                   
+--------------------------------------------------------------------------------
+ Update on range_rel
+   ->  Seq Scan on range_rel
+         Filter: (dt = 'Mon Jan 01 00:00:00 1990'::timestamp without time zone)
+(3 rows)
+
+UPDATE test.range_rel SET value = 111 WHERE dt = '1990-01-01';
+SELECT * FROM test.range_rel WHERE dt = '1990-01-01';
+ id | dt | value 
+----+----+-------
+(0 rows)
+
+EXPLAIN (COSTS OFF) DELETE FROM test.range_rel WHERE dt < '1990-01-01';	/* no partitions for this 'dt' */
+                                   QUERY PLAN                                   
+--------------------------------------------------------------------------------
+ Delete on range_rel
+   ->  Seq Scan on range_rel
+         Filter: (dt < 'Mon Jan 01 00:00:00 1990'::timestamp without time zone)
+(3 rows)
+
+DELETE FROM test.range_rel WHERE dt < '1990-01-01';
+SELECT * FROM test.range_rel WHERE dt < '1990-01-01';
  id | dt | value 
 ----+----+-------
 (0 rows)

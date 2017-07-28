@@ -13,3 +13,5 @@ regression.out
 pg_pathman--*.sql
 tags
 cscope*
+Dockerfile
+testgres

@@ -12,6 +12,7 @@
 
 #include "partition_filter.h"
 #include "partition_update.h"
+#include "compat/pg_compat.h"
 
 #include "access/xact.h"
 #include "access/htup_details.h"
@@ -313,7 +314,7 @@ ldelete:;
 		elog(ERROR, "tupleid should be specified for deletion");
 
 	/* AFTER ROW DELETE Triggers */
-	ExecARDeleteTriggers(estate, resultRelInfo, tupleid, NULL);
+	ExecARDeleteTriggersCompat(estate, resultRelInfo, tupleid, NULL, NULL);
 
 	return NULL;
 }

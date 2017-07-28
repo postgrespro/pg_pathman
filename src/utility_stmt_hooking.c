@@ -31,8 +31,10 @@
 #include "utils/memutils.h"
 #include "utils/rls.h"
 
-#include "libpq/libpq.h"
-
+/* we avoid includig libpq.h because it requires openssl.h */
+#include "libpq/pqcomm.h"
+extern ProtocolVersion FrontendProtocol;
+extern void pq_endmsgread(void);
 
 /* Determine whether we should enable COPY or not (PostgresPro has a fix) */
 #if defined(WIN32) && \
@@ -723,9 +725,9 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 				recheckIndexes = ExecInsertIndexTuples(slot, &(tuple->t_self),
 													   estate, false, NULL, NIL);
 
-			/* AFTER ROW INSERT Triggers */
-			ExecARInsertTriggers(estate, child_result_rel, tuple,
-								 recheckIndexes);
+			/* AFTER ROW INSERT Triggers (FIXME: NULL transition) */
+			ExecARInsertTriggersCompat(estate, child_result_rel, tuple,
+									   recheckIndexes, NULL);
 
 			list_free(recheckIndexes);
 
@@ -747,8 +749,8 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	if (old_protocol)
 		pq_endmsgread();
 
-	/* Execute AFTER STATEMENT insertion triggers */
-	ExecASInsertTriggers(estate, parent_result_rel);
+	/* Execute AFTER STATEMENT insertion triggers (FIXME: NULL transition) */
+	ExecASInsertTriggersCompat(estate, parent_result_rel, NULL);
 
 	/* Handle queued AFTER triggers */
 	AfterTriggerEndQuery(estate);

@@ -24,6 +24,7 @@
 #include "optimizer/prep.h"
 #include "parser/parse_utilcmd.h"
 #include "port.h"
+#include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 
@@ -516,6 +517,73 @@ get_rel_persistence(Oid relid)
 	ReleaseSysCache(tp);
 
 	return result;
+}
+#endif
+
+
+#if (PG_VERSION_NUM >= 90500 && PG_VERSION_NUM <= 90505) || \
+	(PG_VERSION_NUM >= 90600 && PG_VERSION_NUM <= 90601)
+/*
+ * Return a palloc'd bare attribute map for tuple conversion, matching input
+ * and output columns by name.  (Dropped columns are ignored in both input and
+ * output.)  This is normally a subroutine for convert_tuples_by_name, but can
+ * be used standalone.
+ */
+AttrNumber *
+convert_tuples_by_name_map(TupleDesc indesc,
+						   TupleDesc outdesc,
+						   const char *msg)
+{
+	AttrNumber *attrMap;
+	int			n;
+	int			i;
+
+	n = outdesc->natts;
+	attrMap = (AttrNumber *) palloc0(n * sizeof(AttrNumber));
+	for (i = 0; i < n; i++)
+	{
+		Form_pg_attribute att = outdesc->attrs[i];
+		char	   *attname;
+		Oid			atttypid;
+		int32		atttypmod;
+		int			j;
+
+		if (att->attisdropped)
+			continue;			/* attrMap[i] is already 0 */
+		attname = NameStr(att->attname);
+		atttypid = att->atttypid;
+		atttypmod = att->atttypmod;
+		for (j = 0; j < indesc->natts; j++)
+		{
+			att = indesc->attrs[j];
+			if (att->attisdropped)
+				continue;
+			if (strcmp(attname, NameStr(att->attname)) == 0)
+			{
+				/* Found it, check type */
+				if (atttypid != att->atttypid || atttypmod != att->atttypmod)
+					ereport(ERROR,
+							(errcode(ERRCODE_DATATYPE_MISMATCH),
+							 errmsg_internal("%s", _(msg)),
+							 errdetail("Attribute \"%s\" of type %s does not match corresponding attribute of type %s.",
+									   attname,
+									   format_type_be(outdesc->tdtypeid),
+									   format_type_be(indesc->tdtypeid))));
+				attrMap[i] = (AttrNumber) (j + 1);
+				break;
+			}
+		}
+		if (attrMap[i] == 0)
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg_internal("%s", _(msg)),
+					 errdetail("Attribute \"%s\" of type %s does not exist in type %s.",
+							   attname,
+							   format_type_be(outdesc->tdtypeid),
+							   format_type_be(indesc->tdtypeid))));
+	}
+
+	return attrMap;
 }
 #endif
 

@@ -251,6 +251,25 @@ drop_partitions(parent      REGCLASS,
 ```
 Drop partitions of the `parent` table (both foreign and local relations). If `delete_data` is `false`, the data is copied to the parent table first. Default is `false`.
 
+To remove partitioned table along with all partitions fully, use conventional
+`DROP TABLE relation CASCADE`. However, care should be taken in somewhat rare
+case when you are running logical replication and `DROP` was executed by
+replication apply worker, e.g. via trigger on replicated table. `pg_pathman`
+uses `pathman_ddl_trigger` event trigger to remove the record about dropped
+table from `pathman_config`, and this trigger by default won't fire on replica,
+leading to inconsistent state when `pg_pathman` thinks that the table still
+exists, but in fact it doesn't. If this is the case, configure this trigger to
+fire on replica too:
+
+```plpgsql
+ALTER EVENT TRIGGER pathman_ddl_trigger ENABLE ALWAYS;
+```
+
+Physical replication doesn't have this problem since DDL as well as
+`pathman_config` table is replicated too; master and slave PostgreSQL instances
+are basically identical, and it is only harmful to keep this trigger in `ALWAYS`
+mode.
+
 
 ### Additional parameters
 
