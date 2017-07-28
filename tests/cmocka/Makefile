@@ -8,6 +8,7 @@ CFLAGS += $(shell $(PG_CONFIG) --cflags_sl)
 CFLAGS += $(shell $(PG_CONFIG) --cflags)
 CFLAGS += $(CFLAGS_SL)
 CFLAGS += $(PG_CPPFLAGS)
+CFLAGS += -DCMOCKA_TESTS
 LDFLAGS += -lcmocka
 TEST_BIN = rangeset_tests
 

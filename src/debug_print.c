@@ -105,10 +105,9 @@ irange_print(IndexRange irange)
 	return str.data;
 }
 
-
-/* ----------------
- *		printatt
- * ----------------
+#ifndef CMOCKA_TESTS
+/*
+ * Print attribute information
  */
 static char *
 printatt(unsigned attributeId,
@@ -127,9 +126,8 @@ printatt(unsigned attributeId,
 		   attributeP->attbyval ? 't' : 'f');
 }
 
-/* ----------------
- *		debugtup - print one tuple for an interactive backend
- * ----------------
+/*
+ * Print one tuple for an interactive backend
  */
 static char *
 debugtup(TupleTableSlot *slot)
@@ -170,6 +168,9 @@ debugtup(TupleTableSlot *slot)
 	return result;
 }
 
+/*
+ * Print contents of tuple slot
+ */
 #ifdef __GNUC__
 __attribute__((unused))
 #endif
@@ -186,8 +187,7 @@ slot_print(TupleTableSlot *slot)
 }
 
 /*
- * rt_print
- *	  return contents of range table
+ * Print contents of range table
  */
 #ifdef __GNUC__
 __attribute__((unused))
@@ -251,3 +251,4 @@ rt_print(const List *rtable)
 	return str.data;
 #undef APPEND_STR
 }
+#endif
