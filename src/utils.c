@@ -220,6 +220,19 @@ get_rel_name_or_relid(Oid relid)
 	return relname;
 }
 
+/*
+ * Return palloced fully qualified relation name as a cstring
+ */
+char *
+get_qualified_rel_name(Oid relid)
+{
+	Oid nspid = get_rel_namespace(relid);
+
+	return psprintf("%s.%s",
+					quote_identifier(get_namespace_name(nspid)),
+					quote_identifier(get_rel_name(relid)));
+}
+
 RangeVar *
 makeRangeVarFromRelid(Oid relid)
 {

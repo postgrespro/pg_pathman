@@ -26,6 +26,7 @@
 #include "catalog/pg_trigger.h"
 #include "catalog/pg_type.h"
 #include "catalog/toasting.h"
+#include "commands/defrem.h"
 #include "commands/event_trigger.h"
 #include "commands/sequence.h"
 #include "commands/tablecmds.h"
@@ -46,6 +47,9 @@
 #include "utils/syscache.h"
 #include "utils/typcache.h"
 
+#if PG_VERSION_NUM >= 100000
+#include "utils/regproc.h"
+#endif
 
 static Oid spawn_partitions_val(Oid parent_relid,
 								const Bound *range_bound_min,
@@ -86,8 +90,6 @@ static Value make_int_value_struct(int int_val);
 static Node *build_partitioning_expression(Oid parent_relid,
 										   Oid *expr_type,
 										   List **columns);
-
-static bool has_trigger_internal(Oid relid, const char *trigname);
 
 /*
  * ---------------------------------------
@@ -221,7 +223,6 @@ create_single_partition_common(Oid parent_relid,
 							   List *trigger_columns)
 {
 	Relation	 child_relation;
-	const char	*trigger_name;
 
 	/* Open the relation and add new check constraint & fkeys */
 	child_relation = heap_open(partition_relid, AccessExclusiveLock);
@@ -232,15 +233,6 @@ create_single_partition_common(Oid parent_relid,
 
 	/* Make constraint visible */
 	CommandCounterIncrement();
-
-	/* Create trigger if needed */
-	if (has_update_trigger_internal(parent_relid))
-	{
-		trigger_name = build_update_trigger_name_internal(parent_relid);
-		create_single_update_trigger_internal(partition_relid,
-											  trigger_name,
-											  trigger_columns);
-	}
 
 	/* Make trigger visible */
 	CommandCounterIncrement();
@@ -1861,7 +1853,7 @@ build_partitioning_expression(Oid parent_relid,
 
 /*
  * -------------------------
- *  Update trigger creation
+ *  Update triggers management
  * -------------------------
  */
 
@@ -1894,52 +1886,6 @@ create_single_update_trigger_internal(Oid partition_relid,
 
 	(void) CreateTrigger(stmt, NULL, InvalidOid, InvalidOid,
 						 InvalidOid, InvalidOid, false);
-}
 
-/* Check if relation has some trigger */
-static bool
-has_trigger_internal(Oid relid, const char *trigname)
-{
-	bool			res = false;
-	Relation		tgrel;
-	SysScanDesc		scan;
-	ScanKeyData		key[1];
-	HeapTuple		tuple;
-
-	tgrel = heap_open(TriggerRelationId, RowExclusiveLock);
-
-	ScanKeyInit(&key[0],
-				Anum_pg_trigger_tgrelid,
-				BTEqualStrategyNumber, F_OIDEQ,
-				ObjectIdGetDatum(relid));
-
-	scan = systable_beginscan(tgrel, TriggerRelidNameIndexId,
-							  true, NULL, lengthof(key), key);
-
-	while (HeapTupleIsValid(tuple = systable_getnext(scan)))
-	{
-		Form_pg_trigger trigger = (Form_pg_trigger) GETSTRUCT(tuple);
-
-		if (namestrcmp(&(trigger->tgname), trigname) == 0)
-		{
-			res = true;
-			break;
-		}
-	}
-
-	systable_endscan(scan);
-	heap_close(tgrel, RowExclusiveLock);
-
-	return res;
-}
-
-/* Check if relation has pg_pathman's update trigger */
-bool
-has_update_trigger_internal(Oid parent_relid)
-{
-	const char	   *trigname;
-
-	/* Build update trigger's name */
-	trigname = build_update_trigger_name_internal(parent_relid);
-	return has_trigger_internal(parent_relid, trigname);
+	CommandCounterIncrement();
 }

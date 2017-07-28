@@ -68,7 +68,8 @@ int					pg_pathman_insert_into_fdw = PF_FDW_INSERT_POSTGRES;
 CustomScanMethods	partition_filter_plan_methods;
 CustomExecMethods	partition_filter_exec_methods;
 
-
+static ExprState *prepare_expr_state(const PartRelationInfo *prel,
+								     EState *estate);
 static void prepare_rri_for_insert(EState *estate,
 								   ResultRelInfoHolder *rri_holder,
 								   const ResultPartsStorage *rps_storage,
@@ -338,6 +339,10 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 		/* Generate tuple transformation map and some other stuff */
 		rri_holder->tuple_map = build_part_tuple_map(base_rel, child_rel);
 
+		/* Are there subpartitions? */
+		rri_holder->has_children = child_rel->rd_rel->relhassubclass;
+		rri_holder->expr_state = NULL;
+
 		/* Call on_new_rri_holder_callback() if needed */
 		if (parts_storage->on_new_rri_holder_callback)
 			parts_storage->on_new_rri_holder_callback(parts_storage->estate,
@@ -431,38 +436,47 @@ find_partitions_for_value(Datum value, Oid value_type,
  * Smart wrapper for scan_result_parts_storage().
  */
 ResultRelInfoHolder *
-select_partition_for_insert(Datum value, Oid value_type,
+select_partition_for_insert(ExprState *expr_state,
+							ExprContext *econtext,
+							EState *estate,
 							const PartRelationInfo *prel,
-							ResultPartsStorage *parts_storage,
-							EState *estate)
+							ResultPartsStorage *parts_storage)
 {
 	MemoryContext			old_mcxt;
 	ResultRelInfoHolder	   *rri_holder;
-	Oid						parent_relid = PrelParentRelid(prel);
-	Oid						selected_partid = InvalidOid;
+	Oid						parent_relid = PrelParentRelid(prel),
+							partition_relid = InvalidOid;
 	Oid					   *parts;
 	int						nparts;
+	bool					isnull;
+	Datum					value;
+
+	/* Execute expression */
+	value = ExecEvalExprCompat(expr_state, econtext, &isnull,
+							   mult_result_handler);
+
+	if (isnull)
+		elog(ERROR, ERR_PART_ATTR_NULL);
 
 	do
 	{
 		/* Search for matching partitions */
-		parts = find_partitions_for_value(value, value_type, prel, &nparts);
+		parts = find_partitions_for_value(value, prel->ev_type, prel, &nparts);
 
 		if (nparts > 1)
 			elog(ERROR, ERR_PART_ATTR_MULTIPLE);
 		else if (nparts == 0)
 		{
-			 selected_partid = create_partitions_for_value(parent_relid,
-														   value, value_type);
+			 partition_relid = create_partitions_for_value(parent_relid,
+														   value, prel->ev_type);
 
 			 /* get_pathman_relation_info() will refresh this entry */
 			 invalidate_pathman_relation_info(parent_relid, NULL);
 		}
-		else selected_partid = parts[0];
+		else partition_relid = parts[0];
 
-		/* Replace parent table with a suitable partition */
 		old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
-		rri_holder = scan_result_parts_storage(selected_partid, parts_storage);
+		rri_holder = scan_result_parts_storage(partition_relid, parts_storage);
 		MemoryContextSwitchTo(old_mcxt);
 
 		/* This partition has been dropped, repeat with a new 'prel' */
@@ -479,6 +493,27 @@ select_partition_for_insert(Datum value, Oid value_type,
 				elog(ERROR, "table \"%s\" is not partitioned",
 					 get_rel_name_or_relid(parent_relid));
 		}
+		/* This partition might have sub-partitions */
+		else if (rri_holder->has_children)
+		{
+			const PartRelationInfo *sub_prel;
+
+			/* Fetch PartRelationInfo for this partitioned relation */
+			sub_prel = get_pathman_relation_info(partition_relid);
+
+			/* Might be a false alarm */
+			if (!sub_prel)
+				break;
+
+			/* Build an expression state if not yet */
+			if (!rri_holder->expr_state)
+				rri_holder->expr_state = prepare_expr_state(sub_prel, estate);
+
+			/* Recursively search for subpartitions */
+			rri_holder = select_partition_for_insert(rri_holder->expr_state,
+													 econtext, estate,
+													 sub_prel, parts_storage);
+		}
 	}
 	/* Loop until we get some result */
 	while (rri_holder == NULL);
@@ -486,6 +521,34 @@ select_partition_for_insert(Datum value, Oid value_type,
 	return rri_holder;
 }
 
+static ExprState *
+prepare_expr_state(const PartRelationInfo *prel, EState *estate)
+{
+	ExprState		   *expr_state;
+	MemoryContext		old_mcxt;
+	Index				parent_varno = 1;
+	Node			   *expr;
+	ListCell		   *lc;
+
+	/* Change varno in Vars according to range table */
+	foreach(lc, estate->es_range_table)
+	{
+		RangeTblEntry *entry = lfirst(lc);
+
+		if (entry->relid == PrelParentRelid(prel))
+			break;
+
+		parent_varno += 1;
+	}
+	expr = PrelExpressionForRelid(prel, parent_varno);
+
+	/* Prepare state for expression execution */
+	old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
+	expr_state = ExecInitExpr((Expr *) expr, NULL);
+	MemoryContextSwitchTo(old_mcxt);
+
+	return expr_state;
+}
 
 /*
  * --------------------------------
@@ -571,7 +634,6 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 {
 	PartitionFilterState	   *state = (PartitionFilterState *) node;
 
-	MemoryContext				old_mcxt;
 	const PartRelationInfo	   *prel;
 	Node					   *expr;
 	Index						parent_varno = 1;
@@ -633,9 +695,7 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 		}
 
 		/* Prepare state for expression execution */
-		old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
-		state->expr_state = ExecInitExpr((Expr *) expr, NULL);
-		MemoryContextSwitchTo(old_mcxt);
+		state->expr_state = prepare_expr_state(prel, estate);
 	}
 
 	/* Init ResultRelInfo cache */
@@ -677,9 +737,6 @@ partition_filter_exec(CustomScanState *node)
 		MemoryContext				old_mcxt;
 		const PartRelationInfo	   *prel;
 		ResultRelInfoHolder		   *rri_holder;
-		bool						isnull;
-		Datum						value;
-		TupleTableSlot			   *tmp_slot;
 		ResultRelInfo			   *resultRelInfo;
 
 		/* Fetch PartRelationInfo for this partitioned relation */
@@ -697,22 +754,16 @@ partition_filter_exec(CustomScanState *node)
 		/* Switch to per-tuple context */
 		old_mcxt = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 
-		/* Execute expression */
-		tmp_slot = econtext->ecxt_scantuple;
+		/* Store slot for expression evaluation */
 		econtext->ecxt_scantuple = slot;
-		value = ExecEvalExprCompat(state->expr_state, econtext, &isnull,
-								   mult_result_handler);
-		econtext->ecxt_scantuple = tmp_slot;
-
-		if (isnull)
-			elog(ERROR, ERR_PART_ATTR_NULL);
 
 		/*
 		 * Search for a matching partition.
 		 * WARNING: 'prel' might change after this call!
 		 */
-		rri_holder = select_partition_for_insert(value, prel->ev_type, prel,
-												 &state->result_parts, estate);
+		rri_holder = select_partition_for_insert(state->expr_state,
+												 econtext, estate,
+												 prel, &state->result_parts);
 
 		/* Switch back and clean up per-tuple context */
 		MemoryContextSwitchTo(old_mcxt);

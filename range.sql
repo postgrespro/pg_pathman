@@ -65,6 +65,7 @@ DECLARE
 	end_value		start_value%TYPE;
 	part_count		INTEGER := 0;
 	i				INTEGER;
+	v_upper_parent	REGCLASS;
 
 BEGIN
 	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
@@ -164,6 +165,7 @@ DECLARE
 	end_value		start_value%TYPE;
 	part_count		INTEGER := 0;
 	i				INTEGER;
+	v_upper_parent	REGCLASS;
 
 BEGIN
 	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
@@ -778,11 +780,6 @@ BEGIN
 	ON params.partrel = parent_relid
 	INTO v_init_callback;
 
-	/* If update trigger is enabled then create one for this partition */
-	IF @extschema@.has_update_trigger(parent_relid) THEN
-		PERFORM @extschema@.create_single_update_trigger(parent_relid, partition_relid);
-	END IF;
-
 	/* Invoke an initialization callback */
 	PERFORM @extschema@.invoke_on_partition_created_callback(parent_relid,
 															 partition_relid,
@@ -829,11 +826,6 @@ BEGIN
 	EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %s',
 				   partition_relid::TEXT,
 				   @extschema@.build_check_constraint_name(partition_relid));
-
-	/* Remove update trigger */
-	EXECUTE format('DROP TRIGGER IF EXISTS %s ON %s',
-				   @extschema@.build_update_trigger_name(parent_relid),
-				   partition_relid::TEXT);
 
 	RETURN partition_relid;
 END

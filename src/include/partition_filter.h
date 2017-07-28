@@ -39,9 +39,11 @@ typedef struct
 {
 	Oid					partid;				/* partition's relid */
 	ResultRelInfo	   *result_rel_info;	/* cached ResultRelInfo */
-	TupleConversionMap *tuple_map;			/* tuple conversion map (parent => child) */
+	TupleConversionMap *tuple_map;			/* tuple mapping (parent => child) */
 	JunkFilter		   *src_junkFilter;		/* we keep junkfilter from scanned
 											   ResultRelInfo here */
+	bool				has_children;		/* hint that it might have children */
+	ExprState		   *expr_state;			/* children have their own expressions */
 } ResultRelInfoHolder;
 
 
@@ -140,11 +142,11 @@ Oid * find_partitions_for_value(Datum value, Oid value_type,
 								const PartRelationInfo *prel,
 								int *nparts);
 
-ResultRelInfoHolder * select_partition_for_insert(Datum value, Oid value_type,
-												  const PartRelationInfo *prel,
-												  ResultPartsStorage *parts_storage,
-												  EState *estate);
-
+ResultRelInfoHolder *select_partition_for_insert(ExprState *expr_state,
+												 ExprContext *econtext,
+												 EState *estate,
+												 const PartRelationInfo *prel,
+												 ResultPartsStorage *parts_storage);
 
 Plan * make_partition_filter(Plan *subplan,
 							 Oid parent_relid,

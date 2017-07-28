@@ -19,6 +19,9 @@ CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions(
 	partition_names		TEXT[] DEFAULT NULL,
 	tablespaces			TEXT[] DEFAULT NULL)
 RETURNS INTEGER AS $$
+DECLARE
+	v_upper_parent		REGCLASS;
+
 BEGIN
 	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
 												 expression,

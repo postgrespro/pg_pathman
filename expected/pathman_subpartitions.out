@@ -1,0 +1,303 @@
+\set VERBOSITY terse
+CREATE EXTENSION pg_pathman;
+CREATE SCHEMA subpartitions;
+/* Create two level partitioning structure */
+CREATE TABLE subpartitions.abc(a INTEGER NOT NULL, b INTEGER NOT NULL);
+INSERT INTO subpartitions.abc SELECT i, i FROM generate_series(1, 200, 20) as i;
+SELECT create_range_partitions('subpartitions.abc', 'a', 0, 100, 2);
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+SELECT create_hash_partitions('subpartitions.abc_1', 'a', 3);
+ create_hash_partitions 
+------------------------
+                      3
+(1 row)
+
+SELECT create_hash_partitions('subpartitions.abc_2', 'b', 2);
+ create_hash_partitions 
+------------------------
+                      2
+(1 row)
+
+SELECT * FROM pathman_partition_list;
+       parent        |       partition       | parttype | expr | range_min | range_max 
+---------------------+-----------------------+----------+------+-----------+-----------
+ subpartitions.abc   | subpartitions.abc_1   |        2 | a    | 0         | 100
+ subpartitions.abc   | subpartitions.abc_2   |        2 | a    | 100       | 200
+ subpartitions.abc_1 | subpartitions.abc_1_0 |        1 | a    |           | 
+ subpartitions.abc_1 | subpartitions.abc_1_1 |        1 | a    |           | 
+ subpartitions.abc_1 | subpartitions.abc_1_2 |        1 | a    |           | 
+ subpartitions.abc_2 | subpartitions.abc_2_0 |        1 | b    |           | 
+ subpartitions.abc_2 | subpartitions.abc_2_1 |        1 | b    |           | 
+(7 rows)
+
+SELECT tableoid::regclass, * FROM subpartitions.abc ORDER BY a, b;
+       tableoid        |  a  |  b  
+-----------------------+-----+-----
+ subpartitions.abc_1_2 |   1 |   1
+ subpartitions.abc_1_0 |  21 |  21
+ subpartitions.abc_1_1 |  41 |  41
+ subpartitions.abc_1_0 |  61 |  61
+ subpartitions.abc_1_2 |  81 |  81
+ subpartitions.abc_2_0 | 101 | 101
+ subpartitions.abc_2_1 | 121 | 121
+ subpartitions.abc_2_0 | 141 | 141
+ subpartitions.abc_2_1 | 161 | 161
+ subpartitions.abc_2_1 | 181 | 181
+(10 rows)
+
+/* Insert should result in creation of new subpartition */
+SELECT append_range_partition('subpartitions.abc', 'subpartitions.abc_3');
+ append_range_partition 
+------------------------
+ subpartitions.abc_3
+(1 row)
+
+SELECT create_range_partitions('subpartitions.abc_3', 'b', 200, 10, 2);
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+SELECT * FROM pathman_partition_list WHERE parent = 'subpartitions.abc_3'::regclass;
+       parent        |       partition       | parttype | expr | range_min | range_max 
+---------------------+-----------------------+----------+------+-----------+-----------
+ subpartitions.abc_3 | subpartitions.abc_3_1 |        2 | b    | 200       | 210
+ subpartitions.abc_3 | subpartitions.abc_3_2 |        2 | b    | 210       | 220
+(2 rows)
+
+INSERT INTO subpartitions.abc VALUES (215, 215);
+SELECT * FROM pathman_partition_list WHERE parent = 'subpartitions.abc_3'::regclass;
+       parent        |       partition       | parttype | expr | range_min | range_max 
+---------------------+-----------------------+----------+------+-----------+-----------
+ subpartitions.abc_3 | subpartitions.abc_3_1 |        2 | b    | 200       | 210
+ subpartitions.abc_3 | subpartitions.abc_3_2 |        2 | b    | 210       | 220
+(2 rows)
+
+SELECT tableoid::regclass, * FROM subpartitions.abc WHERE a = 215 AND b = 215 ORDER BY a, b;
+       tableoid        |  a  |  b  
+-----------------------+-----+-----
+ subpartitions.abc_3_2 | 215 | 215
+(1 row)
+
+/* Pruning tests */
+EXPLAIN (COSTS OFF) SELECT * FROM subpartitions.abc WHERE a  < 150;
+           QUERY PLAN            
+---------------------------------
+ Append
+   ->  Append
+         ->  Seq Scan on abc_1_0
+         ->  Seq Scan on abc_1_1
+         ->  Seq Scan on abc_1_2
+   ->  Append
+         ->  Seq Scan on abc_2_0
+               Filter: (a < 150)
+         ->  Seq Scan on abc_2_1
+               Filter: (a < 150)
+(10 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM subpartitions.abc WHERE b  = 215;
+           QUERY PLAN            
+---------------------------------
+ Append
+   ->  Append
+         ->  Seq Scan on abc_1_0
+               Filter: (b = 215)
+         ->  Seq Scan on abc_1_1
+               Filter: (b = 215)
+         ->  Seq Scan on abc_1_2
+               Filter: (b = 215)
+   ->  Append
+         ->  Seq Scan on abc_2_1
+               Filter: (b = 215)
+   ->  Append
+         ->  Seq Scan on abc_3_2
+               Filter: (b = 215)
+(14 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM subpartitions.abc WHERE a  = 215 AND b  = 215;
+                   QUERY PLAN                    
+-------------------------------------------------
+ Append
+   ->  Append
+         ->  Seq Scan on abc_3_2
+               Filter: ((a = 215) AND (b = 215))
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM subpartitions.abc WHERE a >= 210 AND b >= 210;
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Append
+         ->  Seq Scan on abc_3_2
+               Filter: (a >= 210)
+(4 rows)
+
+/* Multilevel partitioning with update triggers */
+CREATE OR REPLACE FUNCTION subpartitions.partitions_tree(rel REGCLASS)
+RETURNS SETOF REGCLASS AS
+$$
+DECLARE
+	partition		REGCLASS;
+	subpartition	REGCLASS;
+BEGIN
+	IF rel IS NULL THEN
+		RETURN;
+	END IF;
+
+	RETURN NEXT rel;
+
+	FOR partition IN (SELECT l.partition FROM pathman_partition_list l WHERE parent = rel)
+	LOOP
+		FOR subpartition IN (SELECT subpartitions.partitions_tree(partition))
+		LOOP
+			RETURN NEXT subpartition;
+		END LOOP;
+	END LOOP;
+END
+$$ LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION subpartitions.get_triggers(rel REGCLASS)
+RETURNS SETOF TEXT AS
+$$
+DECLARE
+	def TEXT;
+BEGIN
+	FOR def IN (SELECT pg_get_triggerdef(oid) FROM pg_trigger WHERE tgrelid = rel)
+	LOOP
+		RETURN NEXT def;
+	END LOOP;
+
+	RETURN;
+END;
+$$ LANGUAGE plpgsql;
+SELECT create_update_triggers('subpartitions.abc_1');	/* Cannot perform on partition */
+ERROR:  Parent table must have an update trigger
+SELECT create_update_triggers('subpartitions.abc');		/* Can perform on parent */
+ create_update_triggers 
+------------------------
+ 
+(1 row)
+
+SELECT p, subpartitions.get_triggers(p)
+FROM subpartitions.partitions_tree('subpartitions.abc') as p
+ORDER BY p;
+           p           |                                                               get_triggers                                                                
+-----------------------+-------------------------------------------------------------------------------------------------------------------------------------------
+ subpartitions.abc     | CREATE TRIGGER abc_upd_trig BEFORE UPDATE OF a ON subpartitions.abc FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ subpartitions.abc_1   | CREATE TRIGGER abc_upd_trig BEFORE UPDATE OF a ON subpartitions.abc_1 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ subpartitions.abc_1   | CREATE TRIGGER abc_1_upd_trig BEFORE UPDATE OF a ON subpartitions.abc_1 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ subpartitions.abc_2   | CREATE TRIGGER abc_upd_trig BEFORE UPDATE OF a ON subpartitions.abc_2 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ subpartitions.abc_2   | CREATE TRIGGER abc_2_upd_trig BEFORE UPDATE OF b, a ON subpartitions.abc_2 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ subpartitions.abc_1_0 | CREATE TRIGGER abc_1_upd_trig BEFORE UPDATE OF a ON subpartitions.abc_1_0 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ subpartitions.abc_1_1 | CREATE TRIGGER abc_1_upd_trig BEFORE UPDATE OF a ON subpartitions.abc_1_1 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ subpartitions.abc_1_2 | CREATE TRIGGER abc_1_upd_trig BEFORE UPDATE OF a ON subpartitions.abc_1_2 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ subpartitions.abc_2_0 | CREATE TRIGGER abc_2_upd_trig BEFORE UPDATE OF b, a ON subpartitions.abc_2_0 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ subpartitions.abc_2_1 | CREATE TRIGGER abc_2_upd_trig BEFORE UPDATE OF b, a ON subpartitions.abc_2_1 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ subpartitions.abc_3   | CREATE TRIGGER abc_upd_trig BEFORE UPDATE OF a ON subpartitions.abc_3 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ subpartitions.abc_3   | CREATE TRIGGER abc_3_upd_trig BEFORE UPDATE OF b, a ON subpartitions.abc_3 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ subpartitions.abc_3_1 | CREATE TRIGGER abc_3_upd_trig BEFORE UPDATE OF b, a ON subpartitions.abc_3_1 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ subpartitions.abc_3_2 | CREATE TRIGGER abc_3_upd_trig BEFORE UPDATE OF b, a ON subpartitions.abc_3_2 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+(14 rows)
+
+SELECT append_range_partition('subpartitions.abc', 'subpartitions.abc_4');
+ append_range_partition 
+------------------------
+ subpartitions.abc_4
+(1 row)
+
+SELECT create_hash_partitions('subpartitions.abc_4', 'b', 2);
+ create_hash_partitions 
+------------------------
+                      2
+(1 row)
+
+SELECT p, subpartitions.get_triggers(p)
+FROM subpartitions.partitions_tree('subpartitions.abc_4') as p
+ORDER BY p;
+           p           |                                                               get_triggers                                                                
+-----------------------+-------------------------------------------------------------------------------------------------------------------------------------------
+ subpartitions.abc_4   | CREATE TRIGGER abc_upd_trig BEFORE UPDATE OF a ON subpartitions.abc_4 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ subpartitions.abc_4   | CREATE TRIGGER abc_4_upd_trig BEFORE UPDATE OF b, a ON subpartitions.abc_4 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ subpartitions.abc_4_0 | CREATE TRIGGER abc_4_upd_trig BEFORE UPDATE OF b, a ON subpartitions.abc_4_0 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ subpartitions.abc_4_1 | CREATE TRIGGER abc_4_upd_trig BEFORE UPDATE OF b, a ON subpartitions.abc_4_1 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+(4 rows)
+
+SELECT drop_triggers('subpartitions.abc_1');	/* Cannot perform on partition */
+ERROR:  Parent table must not have an update trigger
+SELECT drop_triggers('subpartitions.abc');		/* Can perform on parent */
+ drop_triggers 
+---------------
+ 
+(1 row)
+
+SELECT p, subpartitions.get_triggers(p)
+FROM subpartitions.partitions_tree('subpartitions.abc') as p
+ORDER BY p;
+ p | get_triggers 
+---+--------------
+(0 rows)
+
+DROP TABLE subpartitions.abc CASCADE;
+NOTICE:  drop cascades to 15 other objects
+/* Test that update trigger works correctly */
+CREATE TABLE subpartitions.abc(a INTEGER NOT NULL, b INTEGER NOT NULL);
+SELECT create_range_partitions('subpartitions.abc', 'a', 0, 100, 2);
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+SELECT create_range_partitions('subpartitions.abc_1', 'b', 0, 50, 2);
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+SELECT create_range_partitions('subpartitions.abc_2', 'b', 0, 50, 2);
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+SELECT create_update_triggers('subpartitions.abc');
+ create_update_triggers 
+------------------------
+ 
+(1 row)
+
+INSERT INTO subpartitions.abc VALUES (25, 25);
+SELECT tableoid::regclass, * FROM subpartitions.abc;	/* Should be in subpartitions.abc_1_1 */
+       tableoid        | a  | b  
+-----------------------+----+----
+ subpartitions.abc_1_1 | 25 | 25
+(1 row)
+
+UPDATE subpartitions.abc SET a = 125 WHERE a = 25 and b = 25;
+SELECT tableoid::regclass, * FROM subpartitions.abc;	/* Should be in subpartitions.abc_2_1 */
+       tableoid        |  a  | b  
+-----------------------+-----+----
+ subpartitions.abc_2_1 | 125 | 25
+(1 row)
+
+UPDATE subpartitions.abc SET b = 75  WHERE a = 125 and b = 25;
+SELECT tableoid::regclass, * FROM subpartitions.abc;	/* Should be in subpartitions.abc_2_2 */
+       tableoid        |  a  | b  
+-----------------------+-----+----
+ subpartitions.abc_2_2 | 125 | 75
+(1 row)
+
+UPDATE subpartitions.abc SET b = 125 WHERE a = 125 and b = 75;
+SELECT tableoid::regclass, * FROM subpartitions.abc;	/* Should create subpartitions.abc_2_3 */
+       tableoid        |  a  |  b  
+-----------------------+-----+-----
+ subpartitions.abc_2_3 | 125 | 125
+(1 row)
+
+DROP TABLE subpartitions.abc CASCADE;
+NOTICE:  drop cascades to 10 other objects
+DROP SCHEMA subpartitions CASCADE;
+NOTICE:  drop cascades to 2 other objects
+DROP EXTENSION pg_pathman;

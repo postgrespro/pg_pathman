@@ -88,6 +88,9 @@ void create_single_update_trigger_internal(Oid partition_relid,
 
 bool has_update_trigger_internal(Oid parent);
 
+void drop_single_update_trigger_internal(Oid relid,
+										 const char *trigname);
+
 /* Partitioning callback type */
 typedef enum
 {

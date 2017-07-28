@@ -47,8 +47,9 @@ REGRESS = pathman_array_qual \
 		  pathman_rowmarks \
 		  pathman_runtime_nodes \
 		  pathman_update_node \
-		  pathman_update_trigger \
+		  pathman_subpartitions \
 		  pathman_utility_stmt
+
 
 EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add
 
