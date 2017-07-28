@@ -181,23 +181,23 @@ SELECT create_update_triggers('subpartitions.abc');		/* Can perform on parent */
  
 (1 row)
 
-SELECT p, subpartitions.get_triggers(p)
+SELECT p, subpartitions.get_triggers(p) as trig
 FROM subpartitions.partitions_tree('subpartitions.abc') as p
-ORDER BY p;
-           p           |                                                               get_triggers                                                                
+ORDER BY p, trig;
+           p           |                                                                   trig                                                                    
 -----------------------+-------------------------------------------------------------------------------------------------------------------------------------------
  subpartitions.abc     | CREATE TRIGGER abc_upd_trig BEFORE UPDATE OF a ON subpartitions.abc FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
- subpartitions.abc_1   | CREATE TRIGGER abc_upd_trig BEFORE UPDATE OF a ON subpartitions.abc_1 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
  subpartitions.abc_1   | CREATE TRIGGER abc_1_upd_trig BEFORE UPDATE OF a ON subpartitions.abc_1 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
- subpartitions.abc_2   | CREATE TRIGGER abc_upd_trig BEFORE UPDATE OF a ON subpartitions.abc_2 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ subpartitions.abc_1   | CREATE TRIGGER abc_upd_trig BEFORE UPDATE OF a ON subpartitions.abc_1 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
  subpartitions.abc_2   | CREATE TRIGGER abc_2_upd_trig BEFORE UPDATE OF b, a ON subpartitions.abc_2 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ subpartitions.abc_2   | CREATE TRIGGER abc_upd_trig BEFORE UPDATE OF a ON subpartitions.abc_2 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
  subpartitions.abc_1_0 | CREATE TRIGGER abc_1_upd_trig BEFORE UPDATE OF a ON subpartitions.abc_1_0 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
  subpartitions.abc_1_1 | CREATE TRIGGER abc_1_upd_trig BEFORE UPDATE OF a ON subpartitions.abc_1_1 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
  subpartitions.abc_1_2 | CREATE TRIGGER abc_1_upd_trig BEFORE UPDATE OF a ON subpartitions.abc_1_2 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
  subpartitions.abc_2_0 | CREATE TRIGGER abc_2_upd_trig BEFORE UPDATE OF b, a ON subpartitions.abc_2_0 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
  subpartitions.abc_2_1 | CREATE TRIGGER abc_2_upd_trig BEFORE UPDATE OF b, a ON subpartitions.abc_2_1 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
- subpartitions.abc_3   | CREATE TRIGGER abc_upd_trig BEFORE UPDATE OF a ON subpartitions.abc_3 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
  subpartitions.abc_3   | CREATE TRIGGER abc_3_upd_trig BEFORE UPDATE OF b, a ON subpartitions.abc_3 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ subpartitions.abc_3   | CREATE TRIGGER abc_upd_trig BEFORE UPDATE OF a ON subpartitions.abc_3 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
  subpartitions.abc_3_1 | CREATE TRIGGER abc_3_upd_trig BEFORE UPDATE OF b, a ON subpartitions.abc_3_1 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
  subpartitions.abc_3_2 | CREATE TRIGGER abc_3_upd_trig BEFORE UPDATE OF b, a ON subpartitions.abc_3_2 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
 (14 rows)
@@ -214,13 +214,13 @@ SELECT create_hash_partitions('subpartitions.abc_4', 'b', 2);
                       2
 (1 row)
 
-SELECT p, subpartitions.get_triggers(p)
+SELECT p, subpartitions.get_triggers(p) as trig
 FROM subpartitions.partitions_tree('subpartitions.abc_4') as p
-ORDER BY p;
-           p           |                                                               get_triggers                                                                
+ORDER BY p, trig;
+           p           |                                                                   trig                                                                    
 -----------------------+-------------------------------------------------------------------------------------------------------------------------------------------
- subpartitions.abc_4   | CREATE TRIGGER abc_upd_trig BEFORE UPDATE OF a ON subpartitions.abc_4 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
  subpartitions.abc_4   | CREATE TRIGGER abc_4_upd_trig BEFORE UPDATE OF b, a ON subpartitions.abc_4 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
+ subpartitions.abc_4   | CREATE TRIGGER abc_upd_trig BEFORE UPDATE OF a ON subpartitions.abc_4 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
  subpartitions.abc_4_0 | CREATE TRIGGER abc_4_upd_trig BEFORE UPDATE OF b, a ON subpartitions.abc_4_0 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
  subpartitions.abc_4_1 | CREATE TRIGGER abc_4_upd_trig BEFORE UPDATE OF b, a ON subpartitions.abc_4_1 FOR EACH ROW EXECUTE PROCEDURE pathman_update_trigger_func()
 (4 rows)
@@ -233,11 +233,11 @@ SELECT drop_triggers('subpartitions.abc');		/* Can perform on parent */
  
 (1 row)
 
-SELECT p, subpartitions.get_triggers(p)
+SELECT p, subpartitions.get_triggers(p) as trig
 FROM subpartitions.partitions_tree('subpartitions.abc') as p
-ORDER BY p;
- p | get_triggers 
----+--------------
+ORDER BY p, trig;
+ p | trig 
+---+------
 (0 rows)
 
 DROP TABLE subpartitions.abc CASCADE;

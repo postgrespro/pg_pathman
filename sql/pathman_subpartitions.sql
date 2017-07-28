@@ -71,21 +71,21 @@ $$ LANGUAGE plpgsql;
 
 SELECT create_update_triggers('subpartitions.abc_1');	/* Cannot perform on partition */
 SELECT create_update_triggers('subpartitions.abc');		/* Can perform on parent */
-SELECT p, subpartitions.get_triggers(p)
+SELECT p, subpartitions.get_triggers(p) as trig
 FROM subpartitions.partitions_tree('subpartitions.abc') as p
-ORDER BY p;
+ORDER BY p, trig;
 
 SELECT append_range_partition('subpartitions.abc', 'subpartitions.abc_4');
 SELECT create_hash_partitions('subpartitions.abc_4', 'b', 2);
-SELECT p, subpartitions.get_triggers(p)
+SELECT p, subpartitions.get_triggers(p) as trig
 FROM subpartitions.partitions_tree('subpartitions.abc_4') as p
-ORDER BY p;
+ORDER BY p, trig;
 
 SELECT drop_triggers('subpartitions.abc_1');	/* Cannot perform on partition */
 SELECT drop_triggers('subpartitions.abc');		/* Can perform on parent */
-SELECT p, subpartitions.get_triggers(p)
+SELECT p, subpartitions.get_triggers(p) as trig
 FROM subpartitions.partitions_tree('subpartitions.abc') as p
-ORDER BY p;
+ORDER BY p, trig;
 
 DROP TABLE subpartitions.abc CASCADE;
 
