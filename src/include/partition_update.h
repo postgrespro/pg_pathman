@@ -29,7 +29,6 @@ typedef struct PartitionUpdateState
 	CustomScanState		css;
 
 	Oid					partitioned_table;
-	ResultRelInfo	   *resultRelInfo;
 	JunkFilter		   *junkfilter;
 	Plan			   *subplan;				/* proxy variable to store subplan */
 } PartitionUpdateState;

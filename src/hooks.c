@@ -873,17 +873,13 @@ pathman_executor_hook(QueryDesc *queryDesc, ScanDirection direction,
 
 			if (strcmp(subplanstate->methods->CustomName, UPDATE_NODE_DESCRIPTION) == 0)
 			{
-				PartitionUpdateState	*cstate = (PartitionUpdateState *) subplanstate;
-
-				/* Save parent resultRelInfo in PartitionUpdate node */
-				cstate->resultRelInfo = mt_state->resultRelInfo + i;
+				ResultRelInfo *rri = mt_state->resultRelInfo + i;
 
 				/*
 				 * We unset junkfilter to disable junk cleaning in
-				 * ExecModifyTable. We don't need junk cleaning because
-				 * there is possible modification of tuple in `partition_filter_exec`
+				 * ExecModifyTable.
 				 */
-				cstate->resultRelInfo->ri_junkFilter = NULL;
+				rri->ri_junkFilter = NULL;
 
 				/* hack, change UPDATE operation to INSERT */
 				mt_state->operation = CMD_INSERT;

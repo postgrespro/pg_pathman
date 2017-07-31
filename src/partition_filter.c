@@ -641,21 +641,21 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 		/* Prepare state for expression execution */
 		if (state->command_type == CMD_UPDATE)
 		{
-			int				natts;
-			bool			found_whole_row;
-			AttrNumber	   *attr_map;
-			MemoryContext	old_mcxt;
-
 			/*
 			 * In UPDATE queries we would operate with child relation, but
 			 * expression expects varattnos like in base relation, so we map
 			 * parent varattnos to child varattnos
 			 */
 
-			Index relno = ((Scan *) child_state->plan)->scanrelid;
-			Node *expr = PrelExpressionForRelid(prel, relno);
-			Oid			 child_relid = getrelid(relno, estate->es_range_table);
-			Relation	 child_rel = heap_open(child_relid, NoLock);
+			int				natts;
+			bool			found_whole_row;
+
+			AttrNumber	   *attr_map;
+			MemoryContext	old_mcxt;
+			Index			relno = ((Scan *) child_state->plan)->scanrelid;
+			Node		   *expr = PrelExpressionForRelid(prel, relno);
+			Relation		child_rel = heap_open(
+					getrelid(relno, estate->es_range_table), NoLock);
 
 			attr_map = build_attributes_map(prel, child_rel, &natts);
 			expr = map_variable_attnos(expr, relno, 0, attr_map, natts,
