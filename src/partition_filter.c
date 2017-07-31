@@ -625,37 +625,12 @@ void
 partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 {
 	PartitionFilterState	   *state = (PartitionFilterState *) node;
-
 	const PartRelationInfo	   *prel;
-	Node					   *expr;
-	Index						parent_varno = 1;
-	ListCell				   *lc;
 	PlanState				   *child_state;
 
 	/* It's convenient to store PlanState in 'custom_ps' */
 	child_state = ExecInitNode(state->subplan, estate, eflags);
 	node->custom_ps = list_make1(child_state);
-
-	if (state->command_type == CMD_UPDATE)
-		parent_varno = ((Scan *) child_state->plan)->scanrelid;
-	else
-	{
-		Index varno = 1;
-
-		foreach(lc, estate->es_range_table)
-		{
-			RangeTblEntry *entry = lfirst(lc);
-
-			if (entry->relid == state->partitioned_table)
-				break;
-
-			varno++;
-		}
-
-		parent_varno = varno;
-		Assert(parent_varno <= list_length(estate->es_range_table));
-	}
-
 
 	if (state->expr_state == NULL)
 	{
@@ -663,32 +638,41 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 		prel = get_pathman_relation_info(state->partitioned_table);
 		Assert(prel != NULL);
 
-		/* Change varno in expression Vars according to range table */
-		Assert(parent_varno >= 1);
-		expr = PrelExpressionForRelid(prel, parent_varno);
-
-		/*
-		 * Also in updates we would operate with child relation, but
-		 * expression expects varattnos like in base relation, so we map
-		 * parent varattnos to child varattnos
-		 */
+		/* Prepare state for expression execution */
 		if (state->command_type == CMD_UPDATE)
 		{
-			int			 natts;
-			bool		 found_whole_row;
-			AttrNumber	*attr_map;
-			Oid			 child_relid = getrelid(parent_varno, estate->es_range_table);
+			int				natts;
+			bool			found_whole_row;
+			AttrNumber	   *attr_map;
+			MemoryContext	old_mcxt;
+
+			/*
+			 * In UPDATE queries we would operate with child relation, but
+			 * expression expects varattnos like in base relation, so we map
+			 * parent varattnos to child varattnos
+			 */
+
+			Index relno = ((Scan *) child_state->plan)->scanrelid;
+			Node *expr = PrelExpressionForRelid(prel, relno);
+			Oid			 child_relid = getrelid(relno, estate->es_range_table);
 			Relation	 child_rel = heap_open(child_relid, NoLock);
 
 			attr_map = build_attributes_map(prel, child_rel, &natts);
-			expr = map_variable_attnos(expr, parent_varno, 0, attr_map, natts,
+			expr = map_variable_attnos(expr, relno, 0, attr_map, natts,
 					&found_whole_row);
 			Assert(!found_whole_row);
 			heap_close(child_rel, NoLock);
-		}
 
-		/* Prepare state for expression execution */
-		state->expr_state = prepare_expr_state(prel, estate);
+			/* Prepare state for expression execution */
+			old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
+			state->expr_state = ExecInitExpr((Expr *) expr, NULL);
+			MemoryContextSwitchTo(old_mcxt);
+		}
+		else
+		{
+			/* simple INSERT, expression based on parent attribute numbers */
+			state->expr_state = prepare_expr_state(prel, estate);
+		}
 	}
 
 	/* Init ResultRelInfo cache */
