@@ -312,7 +312,11 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 		/* Copy necessary fields from saved ResultRelInfo */
 		CopyToResultRelInfo(ri_WithCheckOptions);
 		CopyToResultRelInfo(ri_WithCheckOptionExprs);
-		CopyToResultRelInfo(ri_junkFilter);
+		if (parts_storage->command_type != CMD_UPDATE)
+			CopyToResultRelInfo(ri_junkFilter);
+		else
+			child_result_rel_info->ri_junkFilter = NULL;
+
 		CopyToResultRelInfo(ri_projectReturning);
 		CopyToResultRelInfo(ri_onConflictSetProj);
 		CopyToResultRelInfo(ri_onConflictSetWhere);
@@ -323,18 +327,6 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 		/* Fill the ResultRelInfo holder */
 		rri_holder->partid = partid;
 		rri_holder->result_rel_info = child_result_rel_info;
-		rri_holder->src_junkFilter = NULL;
-
-		if (parts_storage->command_type == CMD_UPDATE)
-		{
-			JunkFilter	*junkfilter = parts_storage->saved_rel_info->ri_junkFilter;
-
-			/* we don't need junk cleaning in ExecModifyTable */
-			child_result_rel_info->ri_junkFilter = NULL;
-
-			/* instead we do junk filtering ourselves */
-			rri_holder->src_junkFilter = junkfilter;
-		}
 
 		/* Generate tuple transformation map and some other stuff */
 		rri_holder->tuple_map = build_part_tuple_map(base_rel, child_rel);
@@ -691,6 +683,7 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 			attr_map = build_attributes_map(prel, child_rel, &natts);
 			expr = map_variable_attnos(expr, parent_varno, 0, attr_map, natts,
 					&found_whole_row);
+			Assert(!found_whole_row);
 			heap_close(child_rel, NoLock);
 		}
 
@@ -722,7 +715,6 @@ partition_filter_exec(CustomScanState *node)
 
 	slot = ExecProcNode(child_ps);
 	state->subplan_slot = slot;
-	state->src_junkFilter = NULL;
 
 	/* Save original ResultRelInfo */
 	saved_resultRelInfo = estate->es_result_relation_info;
@@ -773,9 +765,6 @@ partition_filter_exec(CustomScanState *node)
 
 		/* Magic: replace parent's ResultRelInfo with ours */
 		estate->es_result_relation_info = resultRelInfo;
-
-		/* pass junkfilter to upper node */
-		state->src_junkFilter = rri_holder->src_junkFilter;
 
 		/* If there's a transform map, rebuild the tuple */
 		if (rri_holder->tuple_map)

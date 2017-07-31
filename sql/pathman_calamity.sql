@@ -179,16 +179,6 @@ SELECT build_check_constraint_name('calamity.part_test');		/* OK */
 SELECT build_check_constraint_name(0::REGCLASS);				/* not ok */
 SELECT build_check_constraint_name(NULL) IS NULL;
 
-/* check function build_update_trigger_name() */
-SELECT build_update_trigger_name('calamity.part_test');			/* OK */
-SELECT build_update_trigger_name(0::REGCLASS);					/* not ok */
-SELECT build_update_trigger_name(NULL) IS NULL;
-
-/* check function build_update_trigger_func_name() */
-SELECT build_update_trigger_func_name('calamity.part_test');	/* OK */
-SELECT build_update_trigger_func_name(0::REGCLASS);				/* not ok */
-SELECT build_update_trigger_func_name(NULL) IS NULL;
-
 /* check function build_sequence_name() */
 SELECT build_sequence_name('calamity.part_test');				/* OK */
 SELECT build_sequence_name(1::REGCLASS);						/* not ok */
@@ -221,9 +211,6 @@ SELECT generate_range_bounds('1-jan-2017'::DATE,
 
 SELECT check_range_available(NULL, NULL::INT4, NULL);	/* not ok */
 SELECT check_range_available('pg_class', 1, 10);		/* OK (not partitioned) */
-
-SELECT has_update_trigger(NULL);
-SELECT has_update_trigger(0::REGCLASS); /* not ok */
 
 /* check invoke_on_partition_created_callback() */
 CREATE FUNCTION calamity.dummy_cb(arg jsonb) RETURNS void AS $$
@@ -346,23 +333,6 @@ SELECT merge_range_partitions('{calamity.merge_test_a_1,
 								calamity.merge_test_b_1}');			/* not ok */
 
 DROP TABLE calamity.merge_test_a,calamity.merge_test_b CASCADE;
-
-
-/* check function drop_triggers() */
-CREATE TABLE calamity.trig_test_tbl(val INT4 NOT NULL);
-SELECT create_hash_partitions('calamity.trig_test_tbl', 'val', 2);
-SELECT create_update_triggers('calamity.trig_test_tbl');
-
-SELECT count(*) FROM pg_trigger WHERE tgrelid = 'calamity.trig_test_tbl'::REGCLASS;
-SELECT count(*) FROM pg_trigger WHERE tgrelid = 'calamity.trig_test_tbl_1'::REGCLASS;
-
-SELECT drop_triggers('calamity.trig_test_tbl');						/* OK */
-
-SELECT count(*) FROM pg_trigger WHERE tgrelid = 'calamity.trig_test_tbl'::REGCLASS;
-SELECT count(*) FROM pg_trigger WHERE tgrelid = 'calamity.trig_test_tbl_1'::REGCLASS;
-
-DROP TABLE calamity.trig_test_tbl CASCADE;
-
 
 DROP SCHEMA calamity CASCADE;
 DROP EXTENSION pg_pathman;

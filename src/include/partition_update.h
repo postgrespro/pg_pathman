@@ -26,12 +26,12 @@
 
 typedef struct PartitionUpdateState
 {
-	CustomScanState		 css;
+	CustomScanState		css;
 
-	Oid					 partitioned_table;
-	ResultRelInfo		*resultRelInfo;
-	JunkFilter			*saved_junkFilter;
-	Plan				*subplan;				/* proxy variable to store subplan */
+	Oid					partitioned_table;
+	ResultRelInfo	   *resultRelInfo;
+	JunkFilter		   *junkfilter;
+	Plan			   *subplan;				/* proxy variable to store subplan */
 } PartitionUpdateState;
 
 extern bool					 pg_pathman_enable_partition_update;

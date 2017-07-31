@@ -123,29 +123,19 @@ partition_update_exec(CustomScanState *node)
 	TupleTableSlot			*slot;
 	PartitionUpdateState	*state = (PartitionUpdateState *) node;
 
-	/*
-	 * Restore junkfilter in base resultRelInfo,
-	 * we do it because child's RelResultInfo expects its existence
-	 * for proper initialization.
-	 * Also we set jf_junkAttNo there, because
-	 * it wasn't set in ModifyTable node initialization
-	 */
-	state->resultRelInfo->ri_junkFilter = state->saved_junkFilter;
-
 	/* execute PartitionFilter child node */
 	slot = ExecProcNode(child_ps);
 
 	if (!TupIsNull(slot))
 	{
-		Datum					 datum;
-		char					 relkind;
-		ResultRelInfo			*resultRelInfo,
-								*sourceRelInfo;
-		ItemPointer				 tupleid = NULL;
-		ItemPointerData			 tuple_ctid;
-		EPQState				 epqstate;
-		PartitionFilterState	*child_state;
-		JunkFilter				*junkfilter;
+		Datum					datum;
+		ResultRelInfo		   *resultRelInfo,
+							   *sourceRelInfo;
+		ItemPointer				tupleid = NULL;
+		ItemPointerData			tuple_ctid;
+		EPQState				epqstate;
+		PartitionFilterState   *child_state;
+		char					relkind;
 
 		child_state = (PartitionFilterState *) child_ps;
 		Assert(child_state->command_type == CMD_UPDATE);
@@ -154,41 +144,51 @@ partition_update_exec(CustomScanState *node)
 
 		sourceRelInfo = child_state->result_parts.saved_rel_info;
 		resultRelInfo = estate->es_result_relation_info;
-		junkfilter = child_state->src_junkFilter;
 
-		if (junkfilter != NULL)
+		/* we generate junkfilter, if it wasn't created before */
+		if (state->junkfilter == NULL)
 		{
-			relkind = sourceRelInfo->ri_RelationDesc->rd_rel->relkind;
-			if (relkind == RELKIND_RELATION)
-			{
-				bool			isNull;
+			state->junkfilter = ExecInitJunkFilter(state->subplan->targetlist,
+				sourceRelInfo->ri_RelationDesc->rd_att->tdhasoid,
+				ExecInitExtraTupleSlot(estate));
 
-				datum = ExecGetJunkAttribute(child_state->subplan_slot,
-						junkfilter->jf_junkAttNo, &isNull);
-				/* shouldn't ever get a null result... */
-				if (isNull)
-					elog(ERROR, "ctid is NULL");
-
-				tupleid = (ItemPointer) DatumGetPointer(datum);
-				tuple_ctid = *tupleid;		/* be sure we don't free
-											 * ctid!! */
-				tupleid = &tuple_ctid;
-			}
-			else if (relkind == RELKIND_FOREIGN_TABLE)
-				elog(ERROR, "update node is not supported for foreign tables");
-			else
-				elog(ERROR, "got unexpected type of relation for update");
-
-			/*
-			 * Clean from junk attributes before INSERT,
-			 * but only if slot wasn't converted in PartitionFilter
-			 */
-			if (TupIsNull(child_state->tup_convert_slot))
-				slot = ExecFilterJunk(junkfilter, slot);
+			state->junkfilter->jf_junkAttNo = ExecFindJunkAttribute(state->junkfilter, "ctid");
+			if (!AttributeNumberIsValid(state->junkfilter->jf_junkAttNo))
+				elog(ERROR, "could not find junk ctid column");
 		}
+
+		relkind = sourceRelInfo->ri_RelationDesc->rd_rel->relkind;
+		if (relkind == RELKIND_RELATION)
+		{
+			bool			isNull;
+
+			datum = ExecGetJunkAttribute(child_state->subplan_slot,
+					state->junkfilter->jf_junkAttNo, &isNull);
+			/* shouldn't ever get a null result... */
+			if (isNull)
+				elog(ERROR, "ctid is NULL");
+
+			tupleid = (ItemPointer) DatumGetPointer(datum);
+			tuple_ctid = *tupleid;		/* be sure we don't free
+										 * ctid!! */
+			tupleid = &tuple_ctid;
+		}
+		else if (relkind == RELKIND_FOREIGN_TABLE)
+			elog(ERROR, "update node is not supported for foreign tables");
+		else
+			elog(ERROR, "got unexpected type of relation for update");
+
+		/*
+		 * Clean from junk attributes before INSERT,
+		 * but only if slot wasn't converted in PartitionFilter
+		 */
+		if (TupIsNull(child_state->tup_convert_slot))
+			slot = ExecFilterJunk(state->junkfilter, slot);
 
 		/* Delete old tuple */
 		estate->es_result_relation_info = sourceRelInfo;
+
+		Assert(tupleid != NULL);
 		ExecDeleteInternal(tupleid, child_state->subplan_slot, &epqstate, estate);
 
 		/* we've got the slot that can be inserted to child partition */

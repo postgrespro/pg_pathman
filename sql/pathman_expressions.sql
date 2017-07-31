@@ -168,17 +168,5 @@ INSERT INTO test_exprs.range_rel_6 (dt, txt) VALUES ('2020-01-01'::DATE, md5('as
 SELECT COUNT(*) FROM test_exprs.range_rel_6;
 EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.range_rel WHERE (AGE(dt, '2000-01-01'::DATE)) = '18 years'::interval;
 
-SELECT create_update_triggers('test_exprs.range_rel');
-SELECT COUNT(*) FROM test_exprs.range_rel;
-SELECT COUNT(*) FROM test_exprs.range_rel_1;
-SELECT COUNT(*) FROM test_exprs.range_rel_2;
-UPDATE test_exprs.range_rel SET dt = '2016-12-01' WHERE dt >= '2015-10-10' AND dt <= '2017-10-10';
-
-/* counts in partitions should be changed */
-SELECT COUNT(*) FROM test_exprs.range_rel;
-SELECT COUNT(*) FROM test_exprs.range_rel_1;
-SELECT COUNT(*) FROM test_exprs.range_rel_2;
-
-
 DROP SCHEMA test_exprs CASCADE;
 DROP EXTENSION pg_pathman;

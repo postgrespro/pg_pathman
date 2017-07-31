@@ -882,10 +882,7 @@ pathman_executor_hook(QueryDesc *queryDesc, ScanDirection direction,
 				 * We unset junkfilter to disable junk cleaning in
 				 * ExecModifyTable. We don't need junk cleaning because
 				 * there is possible modification of tuple in `partition_filter_exec`
-				 * Same time we need this junkfilter in PartitionFilter
-				 * nodes, so we save it in node.
 				 */
-				cstate->saved_junkFilter = cstate->resultRelInfo->ri_junkFilter;
 				cstate->resultRelInfo->ri_junkFilter = NULL;
 
 				/* hack, change UPDATE operation to INSERT */

@@ -40,8 +40,7 @@ typedef struct
 	Oid					partid;				/* partition's relid */
 	ResultRelInfo	   *result_rel_info;	/* cached ResultRelInfo */
 	TupleConversionMap *tuple_map;			/* tuple mapping (parent => child) */
-	JunkFilter		   *src_junkFilter;		/* we keep junkfilter from scanned
-											   ResultRelInfo here */
+	JunkFilter		   *junkfilter;			/* junkfilter for cached ResultRelInfo */
 	bool				has_children;		/* hint that it might have children */
 	ExprState		   *expr_state;			/* children have their own expressions */
 } ResultRelInfoHolder;
@@ -102,7 +101,7 @@ typedef struct
 	CmdType				command_type;
 
 	TupleTableSlot     *subplan_slot;			/* slot that was returned from subplan */
-	JunkFilter		   *src_junkFilter;			/* junkfilter for subplan_slot */
+	JunkFilter		   *junkfilter;				/* junkfilter for subplan_slot */
 
 	ExprContext		   *tup_convert_econtext;	/* ExprContext for projections */
 	ExprState		   *expr_state;				/* for partitioning expression */
