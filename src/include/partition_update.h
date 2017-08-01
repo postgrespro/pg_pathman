@@ -22,7 +22,7 @@
 #include "nodes/extensible.h"
 #endif
 
-#define UPDATE_NODE_DESCRIPTION ("PrepareInsert")
+#define UPDATE_NODE_DESCRIPTION ("PartitionRoute")
 
 typedef struct PartitionUpdateState
 {

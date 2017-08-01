@@ -1309,7 +1309,7 @@ class PartitioningTests(unittest.TestCase):
 				],
 				"Node Type": "Custom Scan",
 				"Parent Relationship": "Member",
-				"Custom Plan Provider": "PrepareInsert"
+				"Custom Plan Provider": "PartitionRoute"
 			}
 		'''
             for i, f in enumerate([''] + list(map(str, range(1, 10)))):
