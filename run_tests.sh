@@ -66,6 +66,7 @@ status=$?
 if [ $status -ne 0 ]; then cat /tmp/postgres.log; fi
 
 # run regression tests
+export PG_REGRESS_DIFF_OPTS="-w -U3" # for alpine's diff (BusyBox)
 PGPORT=55435 make USE_PGXS=1 installcheck || status=$?
 
 # show diff if it exists
