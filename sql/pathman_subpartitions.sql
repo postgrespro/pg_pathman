@@ -58,7 +58,6 @@ SELECT create_hash_partitions('subpartitions.abc_4', 'b', 2);
 SELECT subpartitions.partitions_tree('subpartitions.abc');
 DROP TABLE subpartitions.abc CASCADE;
 
-\q
 /* Test that update works correctly */
 SET pg_pathman.enable_partitionupdate=on;
 CREATE TABLE subpartitions.abc(a INTEGER NOT NULL, b INTEGER NOT NULL);

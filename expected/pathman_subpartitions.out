@@ -137,24 +137,27 @@ EXPLAIN (COSTS OFF) SELECT * FROM subpartitions.abc WHERE a >= 210 AND b >= 210;
 (4 rows)
 
 /* Multilevel partitioning with updates */
-CREATE OR REPLACE FUNCTION subpartitions.partitions_tree(rel REGCLASS)
-RETURNS SETOF REGCLASS AS
+CREATE OR REPLACE FUNCTION subpartitions.partitions_tree(
+	rel REGCLASS,
+	level TEXT DEFAULT ' '
+)
+RETURNS SETOF TEXT AS
 $$
 DECLARE
-	partition		REGCLASS;
-	subpartition	REGCLASS;
+	partition REGCLASS;
+	subpartition TEXT;
 BEGIN
 	IF rel IS NULL THEN
 		RETURN;
 	END IF;
 
-	RETURN NEXT rel;
+	RETURN NEXT rel::TEXT;
 
 	FOR partition IN (SELECT l.partition FROM pathman_partition_list l WHERE parent = rel)
 	LOOP
-		FOR subpartition IN (SELECT subpartitions.partitions_tree(partition))
+		FOR subpartition IN (SELECT subpartitions.partitions_tree(partition, level || ' '))
 		LOOP
-			RETURN NEXT subpartition;
+			RETURN NEXT level || subpartition::TEXT;
 		END LOOP;
 	END LOOP;
 END
@@ -170,6 +173,25 @@ SELECT create_hash_partitions('subpartitions.abc_4', 'b', 2);
 ------------------------
                       2
 (1 row)
+
+SELECT subpartitions.partitions_tree('subpartitions.abc');
+     partitions_tree      
+--------------------------
+ subpartitions.abc
+  subpartitions.abc_1
+    subpartitions.abc_1_0
+    subpartitions.abc_1_1
+    subpartitions.abc_1_2
+  subpartitions.abc_2
+    subpartitions.abc_2_0
+    subpartitions.abc_2_1
+  subpartitions.abc_3
+    subpartitions.abc_3_1
+    subpartitions.abc_3_2
+  subpartitions.abc_4
+    subpartitions.abc_4_0
+    subpartitions.abc_4_1
+(14 rows)
 
 DROP TABLE subpartitions.abc CASCADE;
 NOTICE:  drop cascades to 15 other objects
@@ -223,7 +245,7 @@ SELECT tableoid::regclass, * FROM subpartitions.abc;	/* Should create subpartiti
 (1 row)
 
 DROP TABLE subpartitions.abc CASCADE;
-NOTICE:  drop cascades to 9 other objects
+NOTICE:  drop cascades to 10 other objects
 DROP SCHEMA subpartitions CASCADE;
-NOTICE:  drop cascades to function subpartitions.partitions_tree(regclass)
+NOTICE:  drop cascades to function subpartitions.partitions_tree(regclass,text)
 DROP EXTENSION pg_pathman;

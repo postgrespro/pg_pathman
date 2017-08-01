@@ -539,25 +539,17 @@ partition_update_visitor(Plan *plan, void *context)
 	lc3 = list_head(modify_table->returningLists);
 	forboth (lc1, modify_table->plans, lc2, modify_table->resultRelations)
 	{
-		Oid						parent_relid;
 		Index					rindex = lfirst_int(lc2);
-		Oid						relid = getrelid(rindex, rtable);
-		const PartRelationInfo *prel = get_pathman_relation_info(relid);
+		Oid						tmp_relid,
+								relid = getrelid(rindex, rtable);
+		const PartRelationInfo *prel;
 
-		/* query can be changed earlier to point on child partition,
-		 * so we're possibly now looking at query that updates child partition
-		 */
-		if (prel == NULL)
-		{
-			parent_relid = get_parent_of_partition(relid, NULL);
-			if (parent_relid)
-			{
-				prel = get_pathman_relation_info(parent_relid);
-				relid = parent_relid;
-			}
-		}
+		while ((tmp_relid = get_parent_of_partition(relid, NULL)) != 0)
+			relid = tmp_relid;
 
 		/* Check that table is partitioned */
+		prel = get_pathman_relation_info(relid);
+
 		if (prel)
 		{
 			List *returning_list = NIL;
