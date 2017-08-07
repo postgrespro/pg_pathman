@@ -7,7 +7,7 @@ CREATE SCHEMA calamity;
 /* call for coverage test */
 set client_min_messages = ERROR;
 SELECT debug_capture();
-SELECT get_pathman_lib_version();
+SELECT pathman_version();
 set client_min_messages = NOTICE;
 
 

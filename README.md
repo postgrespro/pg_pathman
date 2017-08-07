@@ -102,6 +102,13 @@ SET pg_pathman.enable = t;
 
 ## Available functions
 
+### Module's version
+
+```plpgsql
+pathman_version()
+```
+Although it's possible to get major and minor version numbers using `\dx pg_pathman`, it doesn't show the actual [patch number](http://semver.org/). This function returns a complete version number of the loaded pg_pathman module in `MAJOR.MINOR.PATCH` format.
+
 ### Partition creation
 ```plpgsql
 create_hash_partitions(relation         REGCLASS,

@@ -960,6 +960,6 @@ CREATE OR REPLACE FUNCTION @extschema@.debug_capture()
 RETURNS VOID AS 'pg_pathman', 'debug_capture'
 LANGUAGE C STRICT;
 
-CREATE OR REPLACE FUNCTION @extschema@.get_pathman_lib_version()
-RETURNS CSTRING AS 'pg_pathman', 'get_pathman_lib_version'
+CREATE OR REPLACE FUNCTION @extschema@.pathman_version()
+RETURNS CSTRING AS 'pg_pathman', 'pathman_version'
 LANGUAGE C STRICT;
