@@ -758,6 +758,9 @@ create_single_partition_internal(Oid parent_relid,
 	create_stmt.partbound		= NULL;
 	create_stmt.partspec		= NULL;
 #endif
+#if defined(PGPRO_EE) && PG_VERSION_NUM >= 90600
+	create_stmt.partition_info	= NULL;
+#endif
 
 	/* Obtain the sequence of Stmts to create partition and link it to parent */
 	create_stmts = transformCreateStmt(&create_stmt, NULL);

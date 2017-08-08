@@ -208,7 +208,7 @@
 /*
  * create_nestloop_path()
  */
-#if PG_VERSION_NUM >= 100000
+#if PG_VERSION_NUM >= 100000 || (defined(PGPRO_VERSION) && PG_VERSION_NUM >= 90603)
 #define create_nestloop_path_compat(root, joinrel, jointype, workspace, extra, \
 									outer, inner, filtered_joinclauses, pathkeys, \
 									required_outer) \
