@@ -53,6 +53,26 @@ SELECT * FROM pathman_partition_list ORDER BY partition; /* should contain 3 par
 DROP TABLE test_bgw.test_4 CASCADE;
 
 
+/* test error handling in BGW */
+CREATE TABLE test_bgw.test_5(val INT4 NOT NULL);
+SELECT create_range_partitions('test_bgw.test_5', 'val', 1, 10, 2);
+
+CREATE OR REPLACE FUNCTION test_bgw.abort_xact(args JSONB)
+RETURNS VOID AS $$
+BEGIN
+	RAISE EXCEPTION 'aborting xact!';
+END
+$$ language plpgsql;
+
+SELECT set_spawn_using_bgw('test_bgw.test_5', true);
+SELECT set_init_callback('test_bgw.test_5', 'test_bgw.abort_xact(jsonb)');
+INSERT INTO test_bgw.test_5 VALUES (-100);
+SELECT * FROM pathman_partition_list ORDER BY partition; /* should contain 3 partitions */
+
+DROP FUNCTION test_bgw.abort_xact(args JSONB);
+DROP TABLE test_bgw.test_5 CASCADE;
+
+
 
 DROP SCHEMA test_bgw CASCADE;
 DROP EXTENSION pg_pathman;

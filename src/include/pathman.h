@@ -105,8 +105,12 @@ Oid get_pathman_config_params_relid(bool invalid_is_ok);
 /*
  * Create RelOptInfo & RTE for a selected partition.
  */
-Index append_child_relation(PlannerInfo *root, Relation parent_relation,
-							Index parent_rti, int ir_index, Oid child_oid,
+Index append_child_relation(PlannerInfo *root,
+							Relation parent_relation,
+							PlanRowMark *parent_rowmark,
+							Index parent_rti,
+							int ir_index,
+							Oid child_oid,
 							List *wrappers);
 
 

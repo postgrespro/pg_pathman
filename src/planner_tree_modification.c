@@ -10,7 +10,6 @@
  * ------------------------------------------------------------------------
  */
 
-#include "compat/expand_rte_hook.h"
 #include "compat/relation_tags.h"
 #include "compat/rowmarks_fix.h"
 
@@ -250,6 +249,7 @@ handle_modification_query(Query *parse, ParamListInfo params)
 	Expr				   *expr;
 	WalkerContext			context;
 	Index					result_rel;
+	int						num_selected;
 
 	/* Fetch index of result relation */
 	result_rel = parse->resultRelation;
@@ -292,12 +292,10 @@ handle_modification_query(Query *parse, ParamListInfo params)
 	wrap = walk_expr_tree(expr, &context);
 
 	ranges = irange_list_intersection(ranges, wrap->rangeset);
+	num_selected = irange_list_length(ranges);
 
-	/*
-	 * If only one partition is affected,
-	 * substitute parent table with the partition.
-	 */
-	if (irange_list_length(ranges) == 1)
+	/* Special case #1: only one partition is affected */
+	if (num_selected == 1)
 	{
 		IndexRange irange = linitial_irange(ranges);
 
@@ -361,6 +359,13 @@ handle_modification_query(Query *parse, ParamListInfo params)
 			/* HACK: unset the 'inh' flag (no children) */
 			rte->inh = false;
 		}
+	}
+
+	/* Special case #2: no partitions are affected */
+	else if (num_selected == 0)
+	{
+		/* HACK: unset the 'inh' flag (no children) */
+		rte->inh = false;
 	}
 }
 

@@ -14,13 +14,45 @@
 
 #include "access/sysattr.h"
 #include "catalog/pg_type.h"
-#include "nodes/relation.h"
 #include "nodes/nodeFuncs.h"
+#include "optimizer/planmain.h"
 #include "utils/builtins.h"
 #include "utils/rel.h"
 
 
-#ifndef NATIVE_PARTITIONING_ROWMARKS
+#if PG_VERSION_NUM >= 90600
+
+
+/* Add missing "tableoid" column for partitioned table */
+void
+append_tle_for_rowmark(PlannerInfo *root, PlanRowMark *rc)
+{
+	Var			   *var;
+	char			resname[32];
+	TargetEntry	   *tle;
+
+	var = makeVar(rc->rti,
+				  TableOidAttributeNumber,
+				  OIDOID,
+				  -1,
+				  InvalidOid,
+				  0);
+
+	snprintf(resname, sizeof(resname), "tableoid%u", rc->rowmarkId);
+
+	tle = makeTargetEntry((Expr *) var,
+						  list_length(root->processed_tlist) + 1,
+						  pstrdup(resname),
+						  true);
+
+	root->processed_tlist = lappend(root->processed_tlist, tle);
+
+	add_vars_to_targetlist(root, list_make1(var), bms_make_singleton(0), true);
+}
+
+
+#else
+
 
 /* Special column name for rowmarks */
 #define TABLEOID_STR(subst)		( "pathman_tableoid" subst )
@@ -175,4 +207,5 @@ lock_rows_visitor(Plan *plan, void *context)
 	}
 }
 
-#endif /* NATIVE_PARTITIONING_ROWMARKS */
+
+#endif
