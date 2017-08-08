@@ -188,6 +188,11 @@ disable_standard_inheritance(Query *parse)
 	ListCell   *lc;
 	Index		current_rti; /* current range table entry index */
 
+#ifdef LEGACY_ROWMARKS_95
+	if (parse->commandType != CMD_SELECT)
+			return;
+#endif
+
 	/* Walk through RangeTblEntries list */
 	current_rti = 0;
 	foreach (lc, parse->rtable)
