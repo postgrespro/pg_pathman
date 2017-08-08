@@ -188,15 +188,6 @@ disable_standard_inheritance(Query *parse)
 	ListCell   *lc;
 	Index		current_rti; /* current range table entry index */
 
-/*
- * We can't handle non-SELECT queries unless
- * there's a pathman_expand_inherited_rtentry_hook()
- */
-#ifndef NATIVE_EXPAND_RTE_HOOK
-	if (parse->commandType != CMD_SELECT)
-		return;
-#endif
-
 	/* Walk through RangeTblEntries list */
 	current_rti = 0;
 	foreach (lc, parse->rtable)

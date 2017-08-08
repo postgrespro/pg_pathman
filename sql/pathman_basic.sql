@@ -527,6 +527,9 @@ UPDATE test.range_rel r SET value = t.value FROM test.tmp t WHERE r.dt = '2010-0
 EXPLAIN (COSTS OFF) DELETE FROM test.range_rel r USING test.tmp t WHERE r.dt = '2010-01-02' AND r.id = t.id;
 DELETE FROM test.range_rel r USING test.tmp t WHERE r.dt = '2010-01-02' AND r.id = t.id;
 
+EXPLAIN (COSTS OFF) DELETE FROM test.tmp t USING test.range_rel r WHERE r.dt = '2010-01-02' AND r.id = t.id;
+DELETE FROM test.tmp t USING test.range_rel r WHERE r.dt = '2010-01-02' AND r.id = t.id;
+
 
 /* Create range partitions from whole range */
 SELECT drop_partitions('test.range_rel');

@@ -1740,6 +1740,20 @@ EXPLAIN (COSTS OFF) DELETE FROM test.range_rel r USING test.tmp t WHERE r.dt = '
 (7 rows)
 
 DELETE FROM test.range_rel r USING test.tmp t WHERE r.dt = '2010-01-02' AND r.id = t.id;
+EXPLAIN (COSTS OFF) DELETE FROM test.tmp t USING test.range_rel r WHERE r.dt = '2010-01-02' AND r.id = t.id;
+                                            QUERY PLAN                                            
+--------------------------------------------------------------------------------------------------
+ Delete on tmp t
+   ->  Hash Join
+         Hash Cond: (t.id = r.id)
+         ->  Seq Scan on tmp t
+         ->  Hash
+               ->  Append
+                     ->  Index Scan using range_rel_1_pkey on range_rel_1 r
+                           Filter: (dt = 'Sat Jan 02 00:00:00 2010'::timestamp without time zone)
+(8 rows)
+
+DELETE FROM test.tmp t USING test.range_rel r WHERE r.dt = '2010-01-02' AND r.id = t.id;
 /* Create range partitions from whole range */
 SELECT drop_partitions('test.range_rel');
 NOTICE:  44 rows copied from test.range_rel_1
