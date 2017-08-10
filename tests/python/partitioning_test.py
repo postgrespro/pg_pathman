@@ -89,6 +89,11 @@ class PartitioningTests(unittest.TestCase):
     def tearDown(self):
         stop_all()
 
+    def set_trace(self, con, command="pg_debug"):
+        pid = con.execute("select pg_backend_pid()")[0][0]
+        p = subprocess.Popen([command], stdin=subprocess.PIPE)
+        p.communicate(str(pid).encode())
+
     def start_new_pathman_cluster(self, name='test', allows_streaming=False):
         node = get_new_node(name)
         node.init(allows_streaming=allows_streaming)
