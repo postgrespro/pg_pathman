@@ -65,7 +65,6 @@ DECLARE
 	end_value		start_value%TYPE;
 	part_count		INTEGER := 0;
 	i				INTEGER;
-	v_upper_parent	REGCLASS;
 
 BEGIN
 	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
@@ -165,7 +164,6 @@ DECLARE
 	end_value		start_value%TYPE;
 	part_count		INTEGER := 0;
 	i				INTEGER;
-	v_upper_parent	REGCLASS;
 
 BEGIN
 	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
