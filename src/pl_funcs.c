@@ -77,7 +77,7 @@ PG_FUNCTION_INFO_V1( create_single_update_trigger );
 PG_FUNCTION_INFO_V1( has_update_trigger );
 
 PG_FUNCTION_INFO_V1( debug_capture );
-PG_FUNCTION_INFO_V1( get_pathman_lib_version );
+PG_FUNCTION_INFO_V1( pathman_version );
 
 
 /* User context for function show_partition_list_internal() */
@@ -1594,7 +1594,7 @@ debug_capture(PG_FUNCTION_ARGS)
 
 /* NOTE: just in case */
 Datum
-get_pathman_lib_version(PG_FUNCTION_ARGS)
+pathman_version(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_CSTRING(psprintf("%x", CURRENT_LIB_VERSION));
+	PG_RETURN_CSTRING(CURRENT_LIB_VERSION);
 }
