@@ -102,6 +102,13 @@ SET pg_pathman.enable = t;
 
 ## Available functions
 
+### Module's version
+
+```plpgsql
+pathman_version()
+```
+Although it's possible to get major and minor version numbers using `\dx pg_pathman`, it doesn't show the actual [patch number](http://semver.org/). This function returns a complete version number of the loaded pg_pathman module in `MAJOR.MINOR.PATCH` format.
+
 ### Partition creation
 ```plpgsql
 create_hash_partitions(relation         REGCLASS,
@@ -282,7 +289,7 @@ Update RANGE partitioned table interval. Note that interval must not be negative
 ```plpgsql
 set_enable_parent(relation REGCLASS, value BOOLEAN)
 ```
-Include/exclude parent table into/from query plan. In original PostgreSQL planner parent table is always included into query plan even if it's empty which can lead to additional overhead. You can use `disable_parent()` if you are never going to use parent table as a storage. Default value depends on the `partition_data` parameter that was specified during initial partitioning in `create_range_partitions()` or `create_partitions_from_range()` functions. If the `partition_data` parameter was `true` then all data have already been migrated to partitions and parent table disabled. Otherwise it is enabled.
+Include/exclude parent table into/from query plan. In original PostgreSQL planner parent table is always included into query plan even if it's empty which can lead to additional overhead. You can use `disable_parent()` if you are never going to use parent table as a storage. Default value depends on the `partition_data` parameter that was specified during initial partitioning in `create_range_partitions()` function. If the `partition_data` parameter was `true` then all data have already been migrated to partitions and parent table disabled. Otherwise it is enabled.
 
 ```plpgsql
 set_auto(relation REGCLASS, value BOOLEAN)

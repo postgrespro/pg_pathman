@@ -38,6 +38,8 @@
 #include "utils/syscache.h"
 #include "utils/typcache.h"
 
+#include <stdlib.h>
+
 
 /* Various memory contexts for caches */
 MemoryContext		TopPathmanContext				= NULL;
@@ -92,9 +94,10 @@ static bool read_opexpr_const(const OpExpr *opexpr,
 
 
 /* Validate SQL facade */
-static uint32 build_sql_facade_version(char *version_cstr);
-static uint32 get_sql_facade_version(void);
-static void validate_sql_facade_version(uint32 ver);
+static uint32 build_semver_uint32(char *version_cstr);
+static uint32 get_plpgsql_frontend_version(void);
+static void validate_plpgsql_frontend_version(uint32 current_ver,
+											  uint32 compatible_ver);
 
 
 /*
@@ -206,7 +209,8 @@ load_config(void)
 		return false; /* remain 'uninitialized', exit before creating main caches */
 
 	/* Validate pg_pathman's Pl/PgSQL facade (might be outdated) */
-	validate_sql_facade_version(get_sql_facade_version());
+	validate_plpgsql_frontend_version(get_plpgsql_frontend_version(),
+									  build_semver_uint32(LOWEST_COMPATIBLE_FRONT));
 
 	/* Create various hash tables (caches) */
 	init_local_cache();
@@ -1196,27 +1200,66 @@ validate_hash_constraint(const Expr *expr,
 
 /* Parse cstring and build uint32 representing the version */
 static uint32
-build_sql_facade_version(char *version_cstr)
+build_semver_uint32(char *version_cstr)
 {
-	uint32	version;
+	uint32	version = 0;
+	bool	expect_num_token = false;
+	long	max_dots = 2;
+	char   *pos = version_cstr;
 
-	/* expect to see x+.y+.z+ */
-	version = strtol(version_cstr, &version_cstr, 10) & 0xFF;
+	while (*pos)
+	{
+		/* Invert expected token type */
+		expect_num_token = !expect_num_token;
 
-	version <<= 8;
-	if (strlen(version_cstr) > 1)
-		version |= (strtol(version_cstr + 1, &version_cstr, 10) & 0xFF);
+		if (expect_num_token)
+		{
+			char   *end_pos;
+			long	num;
+			long	i;
 
-	version <<= 8;
-	if (strlen(version_cstr) > 1)
-		version |= (strtol(version_cstr + 1, &version_cstr, 10) & 0xFF);
+			/* Parse number */
+			num = strtol(pos, &end_pos, 10);
+
+			if (pos == end_pos || num > 99 || num < 0)
+				goto version_error;
+
+			for (i = 0; i < max_dots; i++)
+				num *= 100;
+
+			version += num;
+
+			/* Move position */
+			pos = end_pos;
+		}
+		else
+		{
+			/* Expect to see less dots */
+			max_dots--;
+
+			if (*pos != '.' || max_dots < 0)
+				goto version_error;
+
+			/* Move position */
+			pos++;
+		}
+	}
+
+	if (!expect_num_token)
+		goto version_error;
 
 	return version;
+
+version_error:
+	DisablePathman(); /* disable pg_pathman since config is broken */
+	ereport(ERROR, (errmsg("wrong version: \"%s\"", version_cstr),
+					errhint(INIT_ERROR_HINT)));
+	return 0; /* keep compiler happy */
 }
 
 /* Get version of pg_pathman's facade written in Pl/PgSQL */
 static uint32
-get_sql_facade_version(void)
+get_plpgsql_frontend_version(void)
 {
 	Relation		pg_extension_rel;
 	ScanKeyData		skey;
@@ -1255,20 +1298,21 @@ get_sql_facade_version(void)
 	systable_endscan(scan);
 	heap_close(pg_extension_rel, AccessShareLock);
 
-	return build_sql_facade_version(version_cstr);
+	return build_semver_uint32(version_cstr);
 }
 
 /* Check that current Pl/PgSQL facade is compatible with internals */
 static void
-validate_sql_facade_version(uint32 ver)
+validate_plpgsql_frontend_version(uint32 current_ver, uint32 compatible_ver)
 {
-	Assert(ver > 0);
+	Assert(current_ver > 0);
+	Assert(compatible_ver > 0);
 
 	/* Compare ver to 'lowest compatible frontend' version */
-	if (ver < LOWEST_COMPATIBLE_FRONT)
+	if (current_ver < compatible_ver)
 	{
 		elog(DEBUG1, "current version: %x, lowest compatible: %x",
-					 ver, LOWEST_COMPATIBLE_FRONT);
+					 current_ver, compatible_ver);
 
 		DisablePathman(); /* disable pg_pathman since config is broken */
 		ereport(ERROR,
