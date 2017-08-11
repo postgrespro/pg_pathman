@@ -74,7 +74,7 @@ struct ResultPartsStorage
 
 	EState			   *estate;					/* pointer to executor's state */
 
-	CmdType				command_type;			/* currenly we only allow INSERT */
+	CmdType				command_type;			/* INSERT | UPDATE */
 	LOCKMODE			head_open_lock_mode;
 	LOCKMODE			heap_close_lock_mode;
 };

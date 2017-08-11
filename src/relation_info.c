@@ -1447,17 +1447,12 @@ shout_if_prel_is_invalid(const Oid parent_oid,
  * And it should be faster if expression uses not all fields from relation.
  */
 AttrNumber *
-build_attributes_map(const PartRelationInfo *prel, Relation child_rel,
-		int *map_length)
+build_attributes_map(const PartRelationInfo *prel, TupleDesc child_tupdesc)
 {
 	AttrNumber	i = -1;
 	Oid			parent_relid = PrelParentRelid(prel);
-	TupleDesc	child_descr = RelationGetDescr(child_rel);
-	int			natts = child_descr->natts;
+	int			natts = child_tupdesc->natts;
 	AttrNumber *result = (AttrNumber *) palloc0(natts * sizeof(AttrNumber));
-
-	if (map_length != NULL)
-		*map_length = natts;
 
 	while ((i = bms_next_member(prel->expr_atts, i)) >= 0)
 	{
@@ -1467,7 +1462,7 @@ build_attributes_map(const PartRelationInfo *prel, Relation child_rel,
 
 		for (j = 0; j < natts; j++)
 		{
-			Form_pg_attribute att = child_descr->attrs[j];
+			Form_pg_attribute att = child_tupdesc->attrs[j];
 
 			if (att->attisdropped)
 				continue; /* attrMap[attnum - 1] is already 0 */

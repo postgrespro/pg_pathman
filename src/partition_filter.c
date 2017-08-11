@@ -169,6 +169,7 @@ init_result_parts_storage(ResultPartsStorage *parts_storage,
 	parts_storage->on_new_rri_holder_callback = on_new_rri_holder_cb;
 	parts_storage->callback_arg = on_new_rri_holder_cb_arg;
 
+	Assert(cmd_type == CMD_INSERT || cmd_type == CMD_UPDATE);
 	parts_storage->command_type = cmd_type;
 	parts_storage->speculative_inserts = speculative_inserts;
 
@@ -582,15 +583,16 @@ partition_filter_create_scan_state(CustomScan *node)
 	state = (PartitionFilterState *) palloc0(sizeof(PartitionFilterState));
 	NodeSetTag(state, T_CustomScanState);
 
-	state->css.flags = node->flags;
-	state->css.methods = &partition_filter_exec_methods;
+	/* Initialize base CustomScanState */
+	state->css.flags	= node->flags;
+	state->css.methods	= &partition_filter_exec_methods;
 
 	/* Extract necessary variables */
-	state->subplan = (Plan *) linitial(node->custom_plans);
-	state->partitioned_table = intVal(linitial(node->custom_private));
-	state->on_conflict_action = intVal(lsecond(node->custom_private));
-	state->returning_list = lthird(node->custom_private);
-	state->command_type = (CmdType) intVal(lfourth(node->custom_private));
+	state->subplan				= (Plan *) linitial(node->custom_plans);
+	state->partitioned_table	= (Oid) intVal(linitial(node->custom_private));
+	state->on_conflict_action	= intVal(lsecond(node->custom_private));
+	state->returning_list		= (List *) lthird(node->custom_private);
+	state->command_type			= (CmdType) intVal(lfourth(node->custom_private));
 
 	/* Check boundaries */
 	Assert(state->on_conflict_action >= ONCONFLICT_NONE ||
@@ -619,7 +621,6 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 	{
 		/* Fetch PartRelationInfo for this partitioned relation */
 		prel = get_pathman_relation_info(state->partitioned_table);
-		Assert(prel != NULL);
 
 		/* Prepare state for expression execution */
 		if (state->command_type == CMD_UPDATE)
@@ -630,20 +631,25 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 			 * parent varattnos to child varattnos
 			 */
 
-			int				natts;
 			bool			found_whole_row;
 
-			AttrNumber	   *attr_map;
+			AttrNumber	   *map;
 			MemoryContext	old_mcxt;
 			Index			relno = ((Scan *) child_state->plan)->scanrelid;
-			Node		   *expr = PrelExpressionForRelid(prel, relno);
-			Relation		child_rel = heap_open(
-					getrelid(relno, estate->es_range_table), NoLock);
+			Node		   *expr;
+			Relation		child_rel;
 
-			attr_map = build_attributes_map(prel, child_rel, &natts);
-			expr = map_variable_attnos(expr, relno, 0, attr_map, natts,
-					&found_whole_row);
-			Assert(!found_whole_row);
+			child_rel = heap_open(getrelid(relno, estate->es_range_table), NoLock);
+
+			map = build_attributes_map(prel, RelationGetDescr(child_rel));
+			expr = map_variable_attnos(PrelExpressionForRelid(prel, relno),
+									   relno, 0, map,
+									   RelationGetDescr(child_rel)->natts,
+									   &found_whole_row);
+
+			if (found_whole_row)
+				elog(ERROR, "unexpected whole-row reference found in partition key");
+
 			heap_close(child_rel, NoLock);
 
 			/* Prepare state for expression execution */
@@ -653,7 +659,7 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 		}
 		else
 		{
-			/* simple INSERT, expression based on parent attribute numbers */
+			/* Simple INSERT, expression based on parent attribute numbers */
 			state->expr_state = prepare_expr_state(prel, estate);
 		}
 	}
