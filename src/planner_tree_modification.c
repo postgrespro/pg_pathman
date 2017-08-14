@@ -423,8 +423,8 @@ partition_filter_visitor(Plan *plan, void *context)
 				lc3 = lnext(lc3);
 			}
 
-			lfirst(lc1) = make_partition_filter((Plan *) lfirst(lc1),
-												relid,
+			lfirst(lc1) = make_partition_filter((Plan *) lfirst(lc1), relid,
+												modify_table->nominalRelation,
 												modify_table->onConflictAction,
 												returning_list);
 		}
