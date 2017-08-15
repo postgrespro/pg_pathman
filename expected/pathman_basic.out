@@ -1653,100 +1653,13 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt > '2010-12-15';
    ->  Seq Scan on range_rel_14
 (4 rows)
 
-/* Temporary table for JOINs */
-CREATE TABLE test.tmp (id INTEGER NOT NULL, value INTEGER NOT NULL);
-INSERT INTO test.tmp VALUES (1, 1), (2, 2);
-/* Test UPDATE and DELETE */
-EXPLAIN (COSTS OFF) UPDATE test.range_rel SET value = 111 WHERE dt = '2010-06-15';	/* have partitions for this 'dt' */
-                                   QUERY PLAN                                   
---------------------------------------------------------------------------------
- Update on range_rel_6
-   ->  Seq Scan on range_rel_6
-         Filter: (dt = 'Tue Jun 15 00:00:00 2010'::timestamp without time zone)
-(3 rows)
-
-UPDATE test.range_rel SET value = 111 WHERE dt = '2010-06-15';
-SELECT * FROM test.range_rel WHERE dt = '2010-06-15';
- id  |            dt            | value 
------+--------------------------+-------
- 166 | Tue Jun 15 00:00:00 2010 |   111
-(1 row)
-
-EXPLAIN (COSTS OFF) DELETE FROM test.range_rel WHERE dt = '2010-06-15';	/* have partitions for this 'dt' */
-                                   QUERY PLAN                                   
---------------------------------------------------------------------------------
- Delete on range_rel_6
-   ->  Seq Scan on range_rel_6
-         Filter: (dt = 'Tue Jun 15 00:00:00 2010'::timestamp without time zone)
-(3 rows)
-
-DELETE FROM test.range_rel WHERE dt = '2010-06-15';
-SELECT * FROM test.range_rel WHERE dt = '2010-06-15';
- id | dt | value 
-----+----+-------
-(0 rows)
-
-EXPLAIN (COSTS OFF) UPDATE test.range_rel SET value = 222 WHERE dt = '1990-01-01';	/* no partitions for this 'dt' */
-                                   QUERY PLAN                                   
---------------------------------------------------------------------------------
- Update on range_rel
-   ->  Seq Scan on range_rel
-         Filter: (dt = 'Mon Jan 01 00:00:00 1990'::timestamp without time zone)
-(3 rows)
-
-UPDATE test.range_rel SET value = 111 WHERE dt = '1990-01-01';
-SELECT * FROM test.range_rel WHERE dt = '1990-01-01';
- id | dt | value 
-----+----+-------
-(0 rows)
-
-EXPLAIN (COSTS OFF) DELETE FROM test.range_rel WHERE dt < '1990-01-01';	/* no partitions for this 'dt' */
-                                   QUERY PLAN                                   
---------------------------------------------------------------------------------
- Delete on range_rel
-   ->  Seq Scan on range_rel
-         Filter: (dt < 'Mon Jan 01 00:00:00 1990'::timestamp without time zone)
-(3 rows)
-
-DELETE FROM test.range_rel WHERE dt < '1990-01-01';
-SELECT * FROM test.range_rel WHERE dt < '1990-01-01';
- id | dt | value 
-----+----+-------
-(0 rows)
-
-EXPLAIN (COSTS OFF) UPDATE test.range_rel r SET value = t.value FROM test.tmp t WHERE r.dt = '2010-01-01' AND r.id = t.id;
-                                         QUERY PLAN                                         
---------------------------------------------------------------------------------------------
- Update on range_rel_1 r
-   ->  Hash Join
-         Hash Cond: (t.id = r.id)
-         ->  Seq Scan on tmp t
-         ->  Hash
-               ->  Index Scan using range_rel_1_pkey on range_rel_1 r
-                     Filter: (dt = 'Fri Jan 01 00:00:00 2010'::timestamp without time zone)
-(7 rows)
-
-UPDATE test.range_rel r SET value = t.value FROM test.tmp t WHERE r.dt = '2010-01-01' AND r.id = t.id;
-EXPLAIN (COSTS OFF) DELETE FROM test.range_rel r USING test.tmp t WHERE r.dt = '2010-01-02' AND r.id = t.id;
-                                         QUERY PLAN                                         
---------------------------------------------------------------------------------------------
- Delete on range_rel_1 r
-   ->  Hash Join
-         Hash Cond: (t.id = r.id)
-         ->  Seq Scan on tmp t
-         ->  Hash
-               ->  Index Scan using range_rel_1_pkey on range_rel_1 r
-                     Filter: (dt = 'Sat Jan 02 00:00:00 2010'::timestamp without time zone)
-(7 rows)
-
-DELETE FROM test.range_rel r USING test.tmp t WHERE r.dt = '2010-01-02' AND r.id = t.id;
 /* Create range partitions from whole range */
 SELECT drop_partitions('test.range_rel');
-NOTICE:  44 rows copied from test.range_rel_1
+NOTICE:  45 rows copied from test.range_rel_1
 NOTICE:  31 rows copied from test.range_rel_3
 NOTICE:  30 rows copied from test.range_rel_4
 NOTICE:  31 rows copied from test.range_rel_5
-NOTICE:  29 rows copied from test.range_rel_6
+NOTICE:  30 rows copied from test.range_rel_6
 NOTICE:  31 rows copied from test.range_rel_7
 NOTICE:  31 rows copied from test.range_rel_8
 NOTICE:  30 rows copied from test.range_rel_9
@@ -1939,6 +1852,6 @@ ORDER BY partition;
 DROP TABLE test.provided_part_names CASCADE;
 NOTICE:  drop cascades to 2 other objects
 DROP SCHEMA test CASCADE;
-NOTICE:  drop cascades to 29 other objects
+NOTICE:  drop cascades to 28 other objects
 DROP EXTENSION pg_pathman CASCADE;
 DROP SCHEMA pathman CASCADE;
