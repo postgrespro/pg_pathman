@@ -28,10 +28,38 @@
 #define PARENTHOOD_TAG CppAsString(PARENTHOOD)
 
 
+/* Build transform_query_cxt field name */
+#define TRANSFORM_CONTEXT_FIELD(command_type) \
+	has_parent_##command_type##_query
+
+/* Check that transform_query_cxt field is TRUE */
+#define TRANSFORM_CONTEXT_HAS_PARENT(context, command_type) \
+	( (context)->TRANSFORM_CONTEXT_FIELD(command_type) )
+
+/* Used in switch(CmdType) statements */
+#define TRANSFORM_CONTEXT_SWITCH_SET(context, command_type) \
+	case CMD_##command_type: \
+		(context)->TRANSFORM_CONTEXT_FIELD(command_type) = true; \
+		break; \
+
+typedef struct
+{
+	/* bool has_parent_CMD_TYPE_query; */
+	bool			TRANSFORM_CONTEXT_FIELD(SELECT),
+					TRANSFORM_CONTEXT_FIELD(INSERT),
+					TRANSFORM_CONTEXT_FIELD(UPDATE),
+					TRANSFORM_CONTEXT_FIELD(DELETE);
+
+	/* params for handle_modification_query() */
+	ParamListInfo	query_params;
+} transform_query_cxt;
+
+
+
 static bool pathman_transform_query_walker(Node *node, void *context);
 
-static void disable_standard_inheritance(Query *parse);
-static void handle_modification_query(Query *parse, ParamListInfo params);
+static void disable_standard_inheritance(Query *parse, transform_query_cxt *context);
+static void handle_modification_query(Query *parse, transform_query_cxt *context);
 
 static void partition_filter_visitor(Plan *plan, void *context);
 
@@ -139,7 +167,13 @@ plan_tree_walker(Plan *plan,
 void
 pathman_transform_query(Query *parse, ParamListInfo params)
 {
-	pathman_transform_query_walker((Node *) parse, (void *) params);
+	transform_query_cxt context;
+
+	/* Initialize context */
+	memset((void *) &context, 0, sizeof(context));
+	context.query_params = params;
+
+	pathman_transform_query_walker((Node *) parse, (void *) &context);
 }
 
 /* Walker for pathman_transform_query() */
@@ -151,20 +185,35 @@ pathman_transform_query_walker(Node *node, void *context)
 
 	else if (IsA(node, Query))
 	{
-		Query *query = (Query *) node;
+		Query				   *query = (Query *) node;
+		transform_query_cxt	   *current_context = context,
+								next_context;
+
+		/* Initialize next context for bottom subqueries */
+		next_context = *current_context;
+		switch (query->commandType)
+		{
+			TRANSFORM_CONTEXT_SWITCH_SET(&next_context, SELECT);
+			TRANSFORM_CONTEXT_SWITCH_SET(&next_context, INSERT);
+			TRANSFORM_CONTEXT_SWITCH_SET(&next_context, UPDATE);
+			TRANSFORM_CONTEXT_SWITCH_SET(&next_context, DELETE);
+
+			default:
+				break;
+		}
 
 		/* Assign Query a 'queryId' */
 		assign_query_id(query);
 
 		/* Apply Query tree modifiers */
 		rowmark_add_tableoids(query);
-		disable_standard_inheritance(query);
-		handle_modification_query(query, (ParamListInfo) context);
+		disable_standard_inheritance(query, current_context);
+		handle_modification_query(query, current_context);
 
 		/* Handle Query node */
 		return query_tree_walker(query,
 								 pathman_transform_query_walker,
-								 context,
+								 (void *) &next_context,
 								 0);
 	}
 
@@ -183,14 +232,17 @@ pathman_transform_query_walker(Node *node, void *context)
 
 /* Disable standard inheritance if table is partitioned by pg_pathman */
 static void
-disable_standard_inheritance(Query *parse)
+disable_standard_inheritance(Query *parse, transform_query_cxt *context)
 {
 	ListCell   *lc;
 	Index		current_rti; /* current range table entry index */
 
 #ifdef LEGACY_ROWMARKS_95
-	if (parse->commandType != CMD_SELECT)
-			return;
+	/* Don't process non-topmost non-select queries */
+	if (parse->commandType != CMD_SELECT ||
+		TRANSFORM_CONTEXT_HAS_PARENT(context, UPDATE) ||
+		TRANSFORM_CONTEXT_HAS_PARENT(context, DELETE))
+		return;	
 #endif
 
 	/* Walk through RangeTblEntries list */
@@ -235,7 +287,7 @@ disable_standard_inheritance(Query *parse)
 
 /* Checks if query affects only one partition */
 static void
-handle_modification_query(Query *parse, ParamListInfo params)
+handle_modification_query(Query *parse, transform_query_cxt *context)
 {
 	const PartRelationInfo *prel;
 	Node				   *prel_expr;
@@ -243,9 +295,10 @@ handle_modification_query(Query *parse, ParamListInfo params)
 	RangeTblEntry		   *rte;
 	WrapperNode			   *wrap;
 	Expr				   *expr;
-	WalkerContext			context;
+	WalkerContext			wcxt;
 	Index					result_rel;
 	int						num_selected;
+	ParamListInfo			params;
 
 	/* Fetch index of result relation */
 	result_rel = parse->resultRelation;
@@ -276,6 +329,8 @@ handle_modification_query(Query *parse, ParamListInfo params)
 	/* Exit if there's no expr (no use) */
 	if (!expr) return;
 
+	params = context->query_params;
+
 	/* Check if we can replace PARAMs with CONSTs */
 	if (params && clause_contains_params((Node *) expr))
 		expr = (Expr *) eval_extern_params_mutator((Node *) expr, params);
@@ -284,8 +339,8 @@ handle_modification_query(Query *parse, ParamListInfo params)
 	prel_expr = PrelExpressionForRelid(prel, result_rel);
 
 	/* Parse syntax tree and extract partition ranges */
-	InitWalkerContext(&context, prel_expr, prel, NULL);
-	wrap = walk_expr_tree(expr, &context);
+	InitWalkerContext(&wcxt, prel_expr, prel, NULL);
+	wrap = walk_expr_tree(expr, &wcxt);
 
 	ranges = irange_list_intersection(ranges, wrap->rangeset);
 	num_selected = irange_list_length(ranges);
