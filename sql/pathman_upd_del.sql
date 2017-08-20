@@ -5,6 +5,8 @@ CREATE SCHEMA pathman;
 CREATE EXTENSION pg_pathman SCHEMA pathman;
 CREATE SCHEMA test;
 
+
+
 SET enable_indexscan = ON;
 SET enable_seqscan = OFF;
 
@@ -45,6 +47,11 @@ DELETE FROM test.range_rel r USING test.tmp t WHERE r.dt = '2010-01-02' AND r.id
 
 EXPLAIN (COSTS OFF) DELETE FROM test.tmp t USING test.range_rel r WHERE r.dt = '2010-01-02' AND r.id = t.id;
 DELETE FROM test.tmp t USING test.range_rel r WHERE r.dt = '2010-01-02' AND r.id = t.id;
+
+EXPLAIN (COSTS OFF) WITH q AS (SELECT * FROM test.range_rel r WHERE r.dt = '2010-01-02') DELETE FROM test.tmp USING q;
+WITH q AS (SELECT * FROM test.range_rel r WHERE r.dt = '2010-01-02') DELETE FROM test.tmp USING q;
+
+
 
 DROP SCHEMA test CASCADE;
 DROP EXTENSION pg_pathman CASCADE;

@@ -118,6 +118,21 @@ EXPLAIN (COSTS OFF) DELETE FROM test.tmp t USING test.range_rel r WHERE r.dt = '
 (8 rows)
 
 DELETE FROM test.tmp t USING test.range_rel r WHERE r.dt = '2010-01-02' AND r.id = t.id;
+EXPLAIN (COSTS OFF) WITH q AS (SELECT * FROM test.range_rel r WHERE r.dt = '2010-01-02') DELETE FROM test.tmp USING q;
+                                       QUERY PLAN                                       
+----------------------------------------------------------------------------------------
+ Delete on tmp
+   CTE q
+     ->  Append
+           ->  Seq Scan on range_rel_1 r
+                 Filter: (dt = 'Sat Jan 02 00:00:00 2010'::timestamp without time zone)
+   ->  Nested Loop
+         ->  CTE Scan on q
+         ->  Materialize
+               ->  Seq Scan on tmp
+(9 rows)
+
+WITH q AS (SELECT * FROM test.range_rel r WHERE r.dt = '2010-01-02') DELETE FROM test.tmp USING q;
 DROP SCHEMA test CASCADE;
 NOTICE:  drop cascades to 15 other objects
 DROP EXTENSION pg_pathman CASCADE;

@@ -95,8 +95,12 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	if (!IsPathmanReady() || !pg_pathman_enable_runtimeappend)
 		return;
 
+	/* We should only consider base relations */
+	if (innerrel->reloptkind != RELOPT_BASEREL)
+		return;
+
 	/* We shouldn't process tables with active children */
-	if (inner_rte && inner_rte->inh)
+	if (inner_rte->inh)
 		return;
 
 	/* We can't handle full or right outer joins */

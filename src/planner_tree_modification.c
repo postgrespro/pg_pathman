@@ -52,6 +52,7 @@ typedef struct
 
 	/* params for handle_modification_query() */
 	ParamListInfo	query_params;
+	SubLink		   *parent_sublink;
 } transform_query_cxt;
 
 
@@ -183,6 +184,20 @@ pathman_transform_query_walker(Node *node, void *context)
 	if (node == NULL)
 		return false;
 
+	else if (IsA(node, SubLink))
+	{
+		transform_query_cxt	   *current_context = context,
+								next_context;
+
+		/* Initialize next context for bottom subqueries */
+		next_context = *current_context;
+		next_context.parent_sublink = (SubLink *) node;
+
+		return expression_tree_walker(node,
+									  pathman_transform_query_walker,
+									  (void *) &next_context);
+	}
+
 	else if (IsA(node, Query))
 	{
 		Query				   *query = (Query *) node;
@@ -238,11 +253,17 @@ disable_standard_inheritance(Query *parse, transform_query_cxt *context)
 	Index		current_rti; /* current range table entry index */
 
 #ifdef LEGACY_ROWMARKS_95
-	/* Don't process non-topmost non-select queries */
-	if (parse->commandType != CMD_SELECT ||
-		TRANSFORM_CONTEXT_HAS_PARENT(context, UPDATE) ||
-		TRANSFORM_CONTEXT_HAS_PARENT(context, DELETE))
-		return;	
+	/* Don't process non-SELECT queries */
+	if (parse->commandType != CMD_SELECT)
+		return;
+
+	/* Don't process queries under UPDATE or DELETE (except for CTEs) */
+	if ((TRANSFORM_CONTEXT_HAS_PARENT(context, UPDATE) ||
+		 TRANSFORM_CONTEXT_HAS_PARENT(context, DELETE)) &&
+			(context->parent_sublink &&
+			 context->parent_sublink->subselect == (Node *) parse &&
+			 context->parent_sublink->subLinkType != CTE_SUBLINK))
+		return;
 #endif
 
 	/* Walk through RangeTblEntries list */
