@@ -200,13 +200,9 @@ disable_standard_inheritance(Query *parse)
 	ListCell   *lc;
 	Index		current_rti; /* current range table entry index */
 
-/*
- * We can't handle non-SELECT queries unless
- * there's a pathman_expand_inherited_rtentry_hook()
- */
-#ifndef NATIVE_EXPAND_RTE_HOOK
+#ifdef LEGACY_ROWMARKS_95
 	if (parse->commandType != CMD_SELECT)
-		return;
+			return;
 #endif
 
 	/* Walk through RangeTblEntries list */
@@ -479,8 +475,8 @@ partition_filter_visitor(Plan *plan, void *context)
 				lc3 = lnext(lc3);
 			}
 
-			lfirst(lc1) = make_partition_filter((Plan *) lfirst(lc1),
-												relid,
+			lfirst(lc1) = make_partition_filter((Plan *) lfirst(lc1), relid,
+												modify_table->nominalRelation,
 												modify_table->onConflictAction,
 												returning_list,
 												CMD_INSERT);

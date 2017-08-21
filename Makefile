@@ -46,8 +46,9 @@ REGRESS = pathman_array_qual \
 		  pathman_rebuild_updates \
 		  pathman_rowmarks \
 		  pathman_runtime_nodes \
-		  pathman_update_node \
 		  pathman_subpartitions \
+		  pathman_update_node \
+		  pathman_upd_del \
 		  pathman_utility_stmt
 
 

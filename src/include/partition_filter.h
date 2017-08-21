@@ -149,6 +149,7 @@ ResultRelInfoHolder *select_partition_for_insert(ExprState *expr_state,
 
 Plan * make_partition_filter(Plan *subplan,
 							 Oid parent_relid,
+							 Index parent_rti,
 							 OnConflictAction conflict_action,
 							 List *returning_list,
 							 CmdType command_type);

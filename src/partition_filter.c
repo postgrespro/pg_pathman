@@ -533,7 +533,9 @@ prepare_expr_state(const PartRelationInfo *prel, EState *estate)
  */
 
 Plan *
-make_partition_filter(Plan *subplan, Oid parent_relid,
+make_partition_filter(Plan *subplan,
+					  Oid parent_relid,
+					  Index parent_rti,
 					  OnConflictAction conflict_action,
 					  List *returning_list,
 					  CmdType command_type)
@@ -564,7 +566,10 @@ make_partition_filter(Plan *subplan, Oid parent_relid,
 
 	/* No physical relation will be scanned */
 	cscan->scan.scanrelid = 0;
-	cscan->custom_scan_tlist = subplan->targetlist;
+
+	/* Prepare 'custom_scan_tlist' for EXPLAIN (VERBOSE) */
+	cscan->custom_scan_tlist = copyObject(cscan->scan.plan.targetlist);
+	ChangeVarNodes((Node *) cscan->custom_scan_tlist, INDEX_VAR, parent_rti, 0);
 
 	/* Pack partitioned table's Oid and conflict_action */
 	cscan->custom_private = list_make4(makeInteger(parent_relid),
