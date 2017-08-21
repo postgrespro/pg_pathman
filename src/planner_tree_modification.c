@@ -44,14 +44,16 @@
 
 typedef struct
 {
-	/* bool has_parent_CMD_TYPE_query; */
+	/* Do we have a parent CmdType query? */
 	bool			TRANSFORM_CONTEXT_FIELD(SELECT),
 					TRANSFORM_CONTEXT_FIELD(INSERT),
 					TRANSFORM_CONTEXT_FIELD(UPDATE),
 					TRANSFORM_CONTEXT_FIELD(DELETE);
 
-	/* params for handle_modification_query() */
+	/* Parameters for handle_modification_query() */
 	ParamListInfo	query_params;
+
+	/* SubLink that might contain an examined query */
 	SubLink		   *parent_sublink;
 } transform_query_cxt;
 
