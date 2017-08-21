@@ -163,6 +163,33 @@ FROM generate_series(-2, 130, 5) i
 RETURNING e * 2, b, tableoid::regclass;
 
 
+/* test EXPLAIN (VERBOSE) - for PartitionFilter's targetlists */
+EXPLAIN (VERBOSE, COSTS OFF)
+INSERT INTO test_inserts.storage (b, d, e) SELECT i, i, i
+FROM generate_series(1, 10) i
+RETURNING e * 2, b, tableoid::regclass;
+
+EXPLAIN (VERBOSE, COSTS OFF)
+INSERT INTO test_inserts.storage (d, e) SELECT i, i
+FROM generate_series(1, 10) i;
+
+EXPLAIN (VERBOSE, COSTS OFF)
+INSERT INTO test_inserts.storage (b) SELECT i
+FROM generate_series(1, 10) i;
+
+EXPLAIN (VERBOSE, COSTS OFF)
+INSERT INTO test_inserts.storage (b, d, e) SELECT b, d, e
+FROM test_inserts.storage;
+
+EXPLAIN (VERBOSE, COSTS OFF)
+INSERT INTO test_inserts.storage (b, d) SELECT b, d
+FROM test_inserts.storage;
+
+EXPLAIN (VERBOSE, COSTS OFF)
+INSERT INTO test_inserts.storage (b) SELECT b
+FROM test_inserts.storage;
+
+
 /* test gap case (missing partition in between) */
 CREATE TABLE test_inserts.test_gap(val INT NOT NULL);
 INSERT INTO test_inserts.test_gap SELECT generate_series(1, 30);

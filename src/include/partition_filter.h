@@ -141,6 +141,7 @@ ResultRelInfoHolder * select_partition_for_insert(Datum value, Oid value_type,
 
 Plan * make_partition_filter(Plan *subplan,
 							 Oid parent_relid,
+							 Index parent_rti,
 							 OnConflictAction conflict_action,
 							 List *returning_list);
 
