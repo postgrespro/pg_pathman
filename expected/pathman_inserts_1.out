@@ -872,11 +872,11 @@ RETURNING e * 2, b, tableoid::regclass;
 EXPLAIN (VERBOSE, COSTS OFF)
 INSERT INTO test_inserts.storage (d, e) SELECT i, i
 FROM generate_series(1, 10) i;
-                                  QUERY PLAN                                   
--------------------------------------------------------------------------------
+                                    QUERY PLAN                                     
+-----------------------------------------------------------------------------------
  Insert on test_inserts.storage
    ->  Custom Scan (PartitionFilter)
-         Output: NULL::integer, storage.b, NULL::integer, storage.d, storage.e
+         Output: NULL::integer, NULL::integer, NULL::integer, storage.d, storage.e
          ->  Function Scan on pg_catalog.generate_series i
                Output: NULL::integer, NULL::integer, NULL::integer, i, i
                Function Call: generate_series(1, 10)
@@ -885,11 +885,11 @@ FROM generate_series(1, 10) i;
 EXPLAIN (VERBOSE, COSTS OFF)
 INSERT INTO test_inserts.storage (b) SELECT i
 FROM generate_series(1, 10) i;
-                                   QUERY PLAN                                    
----------------------------------------------------------------------------------
+                                    QUERY PLAN                                     
+-----------------------------------------------------------------------------------
  Insert on test_inserts.storage
    ->  Custom Scan (PartitionFilter)
-         Output: NULL::integer, storage.b, NULL::integer, storage.d, storage.e
+         Output: NULL::integer, storage.b, NULL::integer, NULL::text, NULL::bigint
          ->  Function Scan on pg_catalog.generate_series i
                Output: NULL::integer, i, NULL::integer, NULL::text, NULL::bigint
                Function Call: generate_series(1, 10)
@@ -939,11 +939,11 @@ FROM test_inserts.storage;
 EXPLAIN (VERBOSE, COSTS OFF)
 INSERT INTO test_inserts.storage (b, d) SELECT b, d
 FROM test_inserts.storage;
-                                  QUERY PLAN                                   
--------------------------------------------------------------------------------
+                                    QUERY PLAN                                    
+----------------------------------------------------------------------------------
  Insert on test_inserts.storage
    ->  Custom Scan (PartitionFilter)
-         Output: NULL::integer, storage.b, NULL::integer, storage.d, storage.e
+         Output: NULL::integer, storage.b, NULL::integer, storage.d, NULL::bigint
          ->  Result
                Output: NULL::integer, b, NULL::integer, d, NULL::bigint
                ->  Append
@@ -980,11 +980,11 @@ FROM test_inserts.storage;
 EXPLAIN (VERBOSE, COSTS OFF)
 INSERT INTO test_inserts.storage (b) SELECT b
 FROM test_inserts.storage;
-                                   QUERY PLAN                                    
----------------------------------------------------------------------------------
+                                    QUERY PLAN                                     
+-----------------------------------------------------------------------------------
  Insert on test_inserts.storage
    ->  Custom Scan (PartitionFilter)
-         Output: NULL::integer, storage.b, NULL::integer, storage.d, storage.e
+         Output: NULL::integer, storage.b, NULL::integer, NULL::text, NULL::bigint
          ->  Result
                Output: NULL::integer, b, NULL::integer, NULL::text, NULL::bigint
                ->  Append

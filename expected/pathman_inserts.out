@@ -872,11 +872,11 @@ RETURNING e * 2, b, tableoid::regclass;
 EXPLAIN (VERBOSE, COSTS OFF)
 INSERT INTO test_inserts.storage (d, e) SELECT i, i
 FROM generate_series(1, 10) i;
-                                  QUERY PLAN                                   
--------------------------------------------------------------------------------
+                                    QUERY PLAN                                     
+-----------------------------------------------------------------------------------
  Insert on test_inserts.storage
    ->  Custom Scan (PartitionFilter)
-         Output: NULL::integer, storage.b, NULL::integer, storage.d, storage.e
+         Output: NULL::integer, NULL::integer, NULL::integer, storage.d, storage.e
          ->  Function Scan on pg_catalog.generate_series i
                Output: NULL::integer, NULL::integer, NULL::integer, i.i, i.i
                Function Call: generate_series(1, 10)
@@ -889,7 +889,7 @@ FROM generate_series(1, 10) i;
 -----------------------------------------------------------------------------------
  Insert on test_inserts.storage
    ->  Custom Scan (PartitionFilter)
-         Output: NULL::integer, storage.b, NULL::integer, storage.d, storage.e
+         Output: NULL::integer, storage.b, NULL::integer, NULL::text, NULL::bigint
          ->  Function Scan on pg_catalog.generate_series i
                Output: NULL::integer, i.i, NULL::integer, NULL::text, NULL::bigint
                Function Call: generate_series(1, 10)
@@ -943,7 +943,7 @@ FROM test_inserts.storage;
 ----------------------------------------------------------------------------------------------
  Insert on test_inserts.storage
    ->  Custom Scan (PartitionFilter)
-         Output: NULL::integer, storage.b, NULL::integer, storage.d, storage.e
+         Output: NULL::integer, storage.b, NULL::integer, storage.d, NULL::bigint
          ->  Result
                Output: NULL::integer, storage_11.b, NULL::integer, storage_11.d, NULL::bigint
                ->  Append
@@ -984,7 +984,7 @@ FROM test_inserts.storage;
 --------------------------------------------------------------------------------------------
  Insert on test_inserts.storage
    ->  Custom Scan (PartitionFilter)
-         Output: NULL::integer, storage.b, NULL::integer, storage.d, storage.e
+         Output: NULL::integer, storage.b, NULL::integer, NULL::text, NULL::bigint
          ->  Result
                Output: NULL::integer, storage_11.b, NULL::integer, NULL::text, NULL::bigint
                ->  Append

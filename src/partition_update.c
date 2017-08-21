@@ -63,11 +63,20 @@ init_partition_update_static_data(void)
 Plan *
 make_partition_update(Plan *subplan,
 					  Oid parent_relid,
+					  Index parent_rti,
 					  List *returning_list)
 
 {
-	Plan		*pfilter;
-	CustomScan	*cscan = makeNode(CustomScan);
+	CustomScan *cscan = makeNode(CustomScan);
+	Plan	   *pfilter;
+
+	/* Create child PartitionFilter node */
+	pfilter = make_partition_filter(subplan,
+									parent_relid,
+									parent_rti,
+									ONCONFLICT_NONE,
+									returning_list,
+									CMD_UPDATE);
 
 	/* Copy costs etc */
 	cscan->scan.plan.startup_cost = subplan->startup_cost;
@@ -77,15 +86,16 @@ make_partition_update(Plan *subplan,
 
 	/* Setup methods and child plan */
 	cscan->methods = &partition_update_plan_methods;
-	pfilter = make_partition_filter(subplan, parent_relid, ONCONFLICT_NONE,
-									returning_list, CMD_UPDATE);
 	cscan->custom_plans = list_make1(pfilter);
+
+	/* Build an appropriate target list */
 	cscan->scan.plan.targetlist = pfilter->targetlist;
 
 	/* No physical relation will be scanned */
 	cscan->scan.scanrelid = 0;
+
+	/* FIXME: should we use the same tlist? */
 	cscan->custom_scan_tlist = subplan->targetlist;
-	cscan->custom_private = NULL;
 
 	return &cscan->scan.plan;
 }

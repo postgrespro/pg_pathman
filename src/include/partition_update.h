@@ -51,6 +51,7 @@ TupleTableSlot *partition_update_exec(CustomScanState *node);
 
 Plan *make_partition_update(Plan *subplan,
 							Oid parent_relid,
+							Index parent_rti,
 							List *returning_list);
 
 #endif /* PARTITION_UPDATE_H */
