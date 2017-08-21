@@ -134,6 +134,8 @@ plan_tree_walker(Plan *plan,
 		/* Since they look alike */
 		case T_MergeAppend:
 		case T_Append:
+			Assert(offsetof(Append, appendplans) ==
+				   offsetof(MergeAppend, mergeplans));
 			foreach(l, ((Append *) plan)->appendplans)
 				plan_tree_walker((Plan *) lfirst(l), visitor, context);
 			break;
@@ -195,6 +197,7 @@ pathman_transform_query_walker(Node *node, void *context)
 		next_context = *current_context;
 		next_context.parent_sublink = (SubLink *) node;
 
+		/* Handle expression subtree */
 		return expression_tree_walker(node,
 									  pathman_transform_query_walker,
 									  (void *) &next_context);
