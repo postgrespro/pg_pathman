@@ -17,7 +17,7 @@
 #include "hooks.h"
 #include "init.h"
 #include "partition_filter.h"
-#include "partition_update.h"
+#include "partition_router.h"
 #include "pathman_workers.h"
 #include "planner_tree_modification.h"
 #include "runtimeappend.h"
@@ -559,8 +559,8 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 			/* Add PartitionFilter node for INSERT queries */
 			ExecuteForPlanTree(result, add_partition_filters);
 
-			/* Add PartitionUpdate node for UPDATE queries */
-			ExecuteForPlanTree(result, add_partition_update_nodes);
+			/* Add PartitionRouter node for UPDATE queries */
+			ExecuteForPlanTree(result, add_partition_routers);
 
 			/* Decrement relation tags refcount */
 			decr_refcount_relation_tags();
@@ -847,41 +847,45 @@ pathman_process_utility_hook(Node *first_arg,
 #define EXECUTOR_RUN(q,d,c) standard_ExecutorRun((q),(d),(c))
 #endif
 
+/*
+ * Executor hook (for PartitionRouter).
+ */
 #if PG_VERSION_NUM >= 100000
 void
-pathman_executor_hook(QueryDesc *queryDesc, ScanDirection direction,
-		ExecutorRun_CountArgType count, bool execute_once)
+pathman_executor_hook(QueryDesc *queryDesc,
+					  ScanDirection direction,
+					  ExecutorRun_CountArgType count,
+					  bool execute_once)
 #else
 void
-pathman_executor_hook(QueryDesc *queryDesc, ScanDirection direction,
-		ExecutorRun_CountArgType count)
+pathman_executor_hook(QueryDesc *queryDesc,
+					  ScanDirection direction,
+					  ExecutorRun_CountArgType count)
 #endif
 {
 	PlanState *state = (PlanState *) queryDesc->planstate;
 
 	if (IsA(state, ModifyTableState))
 	{
-		int					 i;
 		ModifyTableState	*mt_state = (ModifyTableState *) state;
+		int					 i;
 
 		for (i = 0; i < mt_state->mt_nplans; i++)
 		{
-			CustomScanState *subplanstate = (CustomScanState *) mt_state->mt_plans[i];
+			CustomScanState *pr_state = (CustomScanState *) mt_state->mt_plans[i];
 
-			if (!IsA(subplanstate, CustomScanState))
-				continue;
-
-			if (strcmp(subplanstate->methods->CustomName, UPDATE_NODE_DESCRIPTION) == 0)
+			/* Check if this is a PartitionRouter node */
+			if (IsPartitionRouterState(pr_state))
 			{
-				ResultRelInfo *rri = mt_state->resultRelInfo + i;
+				ResultRelInfo *rri = &mt_state->resultRelInfo[i];
 
 				/*
-				 * We unset junkfilter to disable junk cleaning in
-				 * ExecModifyTable.
+				 * We unset junkfilter to disable junk
+				 * cleaning in ExecModifyTable.
 				 */
 				rri->ri_junkFilter = NULL;
 
-				/* hack, change UPDATE operation to INSERT */
+				/* HACK: change UPDATE operation to INSERT */
 				mt_state->operation = CMD_INSERT;
 			}
 		}
@@ -891,6 +895,5 @@ pathman_executor_hook(QueryDesc *queryDesc, ScanDirection direction,
 	if (executor_run_hook_next)
 		EXECUTOR_HOOK_NEXT(queryDesc, direction, count);
 	/* Else call internal implementation */
-	else
-		EXECUTOR_RUN(queryDesc, direction, count);
+	else EXECUTOR_RUN(queryDesc, direction, count);
 }

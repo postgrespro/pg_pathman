@@ -551,7 +551,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	bool			   *nulls;
 
 	ResultPartsStorage	parts_storage;
-	ResultRelInfo	   *parent_result_rel;
+	ResultRelInfo	   *parent_rri;
 
 	EState			   *estate = CreateExecutorState(); /* for ExecConstraints() */
 	ExprContext		   *econtext;
@@ -566,16 +566,16 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 
 	tupDesc = RelationGetDescr(parent_rel);
 
-	parent_result_rel = makeNode(ResultRelInfo);
-	InitResultRelInfoCompat(parent_result_rel,
+	parent_rri = makeNode(ResultRelInfo);
+	InitResultRelInfoCompat(parent_rri,
 							parent_rel,
 							1,		/* dummy rangetable index */
 							0);
-	ExecOpenIndices(parent_result_rel, false);
+	ExecOpenIndices(parent_rri, false);
 
-	estate->es_result_relations = parent_result_rel;
+	estate->es_result_relations = parent_rri;
 	estate->es_num_result_relations = 1;
-	estate->es_result_relation_info = parent_result_rel;
+	estate->es_result_relation_info = parent_rri;
 	estate->es_range_table = range_table;
 
 	/* Initialize ResultPartsStorage */
@@ -583,7 +583,9 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 							  ResultPartsStorageStandard,
 							  prepare_rri_for_copy, NULL,
 							  CMD_INSERT);
-	parts_storage.saved_rel_info = parent_result_rel;
+
+	/* Don't forget to initialize 'base_rri'! */
+	parts_storage.base_rri = parent_rri;
 
 	/* Set up a tuple slot too */
 	myslot = ExecInitExtraTupleSlot(estate);
@@ -600,7 +602,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	 * such. However, executing these triggers maintains consistency with the
 	 * EACH ROW triggers that we already fire on COPY.
 	 */
-	ExecBSInsertTriggers(estate, parent_result_rel);
+	ExecBSInsertTriggers(estate, parent_rri);
 
 	values = (Datum *) palloc(tupDesc->natts * sizeof(Datum));
 	nulls = (bool *) palloc(tupDesc->natts * sizeof(bool));
@@ -742,7 +744,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 		pq_endmsgread();
 
 	/* Execute AFTER STATEMENT insertion triggers (FIXME: NULL transition) */
-	ExecASInsertTriggersCompat(estate, parent_result_rel, NULL);
+	ExecASInsertTriggersCompat(estate, parent_rri, NULL);
 
 	/* Handle queued AFTER triggers */
 	AfterTriggerEndQuery(estate);
@@ -756,7 +758,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	fini_result_parts_storage(&parts_storage, true);
 
 	/* Close parent's indices */
-	ExecCloseIndices(parent_result_rel);
+	ExecCloseIndices(parent_rri);
 
 	FreeExecutorState(estate);
 

@@ -196,7 +196,7 @@ SELECT subpartitions.partitions_tree('subpartitions.abc');
 DROP TABLE subpartitions.abc CASCADE;
 NOTICE:  drop cascades to 15 other objects
 /* Test that update works correctly */
-SET pg_pathman.enable_partitionupdate=on;
+SET pg_pathman.enable_partitionrouter = ON;
 CREATE TABLE subpartitions.abc(a INTEGER NOT NULL, b INTEGER NOT NULL);
 SELECT create_range_partitions('subpartitions.abc', 'a', 0, 100, 2);
  create_range_partitions 

@@ -14,7 +14,7 @@
 #include "compat/rowmarks_fix.h"
 
 #include "partition_filter.h"
-#include "partition_update.h"
+#include "partition_router.h"
 #include "planner_tree_modification.h"
 #include "relation_info.h"
 #include "rewrite/rewriteManip.h"
@@ -38,19 +38,22 @@ typedef enum
 	FP_NON_SINGULAR_RESULT		/* Multiple or no partitions */
 } FindPartitionResult;
 
+
 static bool pathman_transform_query_walker(Node *node, void *context);
 
 static void disable_standard_inheritance(Query *parse);
 static void handle_modification_query(Query *parse, ParamListInfo params);
 
 static void partition_filter_visitor(Plan *plan, void *context);
-static void partition_update_visitor(Plan *plan, void *context);
+static void partition_router_visitor(Plan *plan, void *context);
 
 static rel_parenthood_status tag_extract_parenthood_status(List *relation_tag);
 
-static FindPartitionResult find_deepest_partition(Oid relid, Index idx, Expr *quals, Oid *partition);
+static FindPartitionResult find_deepest_partition(Oid relid, Index idx,
+												  Expr *quals, Oid *partition);
 static Node *eval_extern_params_mutator(Node *node, ParamListInfo params);
 static bool modifytable_contains_fdw(List *rtable, ModifyTable *node);
+
 
 /*
  * HACK: We have to mark each Query with a unique
@@ -274,10 +277,7 @@ handle_modification_query(Query *parse, ParamListInfo params)
 	if (params && clause_contains_params((Node *) quals))
 		quals = (Expr *) eval_extern_params_mutator((Node *) quals, params);
 
-	/*
-	 * Parse syntax tree and extract deepest partition (if there is only one
-	 * satisfying quals)
-	 */
+	/* Parse syntax tree and extract deepest partition */
 	fp_result = find_deepest_partition(rte->relid, result_rel, quals, &child);
 
 	/*
@@ -342,82 +342,11 @@ handle_modification_query(Query *parse, ParamListInfo params)
 	}
 }
 
-/*
- * Find a single deepest subpartition. If there are more than one partitions
- * satisfies quals or no such partition at all then return InvalidOid.
- */
-static FindPartitionResult
-find_deepest_partition(Oid relid, Index idx, Expr *quals, Oid *partition)
-{
-	const PartRelationInfo *prel;
-	Node				   *prel_expr;
-	WalkerContext			context;
-	List				   *ranges;
-	WrapperNode			   *wrap;
-
-	prel = get_pathman_relation_info(relid);
-
-	/* Exit if it's not partitioned */
-	if (!prel)
-		return FP_PLAIN_TABLE;
-
-	/* Exit if we must include parent */
-	if (prel->enable_parent)
-		return FP_NON_SINGULAR_RESULT;
-
-	/* Exit if there's no quals (no use) */
-	if (!quals)
-		return FP_NON_SINGULAR_RESULT;
-
-	/* Prepare partitioning expression */
-	prel_expr = PrelExpressionForRelid(prel, idx);
-
-	ranges = list_make1_irange_full(prel, IR_COMPLETE);
-
-	/* Parse syntax tree and extract partition ranges */
-	InitWalkerContext(&context, prel_expr, prel, NULL);
-	wrap = walk_expr_tree(quals, &context);
-	ranges = irange_list_intersection(ranges, wrap->rangeset);
-
-	if (irange_list_length(ranges) == 1)
-	{
-		IndexRange irange = linitial_irange(ranges);
-
-		if (irange_lower(irange) == irange_upper(irange))
-		{
-			Oid		   *children	= PrelGetChildrenArray(prel),
-						child		= children[irange_lower(irange)],
-						subpartition;
-			FindPartitionResult result;
-
-			/*
-			 * Try to go deeper and see if there is subpartition
-			 */
-			result = find_deepest_partition(child,
-											idx,
-											quals,
-											&subpartition);
-			switch(result)
-			{
-				case FP_FOUND:
-					*partition = subpartition;
-					return FP_FOUND;
-				case FP_PLAIN_TABLE:
-					*partition = child;
-					return FP_FOUND;
-				case FP_NON_SINGULAR_RESULT:
-					return FP_NON_SINGULAR_RESULT;
-			}
-		}
-	}
-
-	return FP_NON_SINGULAR_RESULT;
-}
 
 /*
- * -------------------------------
- *  PartitionFilter and PartitionUpdate-related stuff
- * -------------------------------
+ * ----------------------------------------------------
+ *  PartitionFilter and PartitionRouter -related stuff
+ * ----------------------------------------------------
  */
 
 /* Add PartitionFilter nodes to the plan tree */
@@ -428,16 +357,16 @@ add_partition_filters(List *rtable, Plan *plan)
 		plan_tree_walker(plan, partition_filter_visitor, rtable);
 }
 
-/* Add PartitionUpdate nodes to the plan tree */
+/* Add PartitionRouter nodes to the plan tree */
 void
-add_partition_update_nodes(List *context, Plan *plan)
+add_partition_routers(List *rtable, Plan *plan)
 {
-	if (pg_pathman_enable_partition_update)
-		plan_tree_walker(plan, partition_update_visitor, context);
+	if (pg_pathman_enable_partition_router)
+		plan_tree_walker(plan, partition_router_visitor, rtable);
 }
 
 /*
- * Add partition filters to ModifyTable node's children.
+ * Add PartitionFilters to ModifyTable node's children.
  *
  * 'context' should point to the PlannedStmt->rtable.
  */
@@ -484,32 +413,13 @@ partition_filter_visitor(Plan *plan, void *context)
 	}
 }
 
-
-static bool
-modifytable_contains_fdw(List *rtable, ModifyTable *node)
-{
-	ListCell	*lc;
-
-	foreach(lc, node->resultRelations)
-	{
-		Index			 rti = lfirst_int(lc);
-		RangeTblEntry	*rte = rt_fetch(rti, rtable);
-
-		if (rte->relkind == RELKIND_FOREIGN_TABLE)
-			return true;
-	}
-
-	return false;
-}
-
-
 /*
- * Add partition update to ModifyTable node's children.
+ * Add PartitionRouter to ModifyTable node's children.
  *
  * 'context' should point to the PlannedStmt->rtable.
  */
 static void
-partition_update_visitor(Plan *plan, void *context)
+partition_router_visitor(Plan *plan, void *context)
 {
 	List			*rtable = (List *) context;
 	ModifyTable		*modify_table = (ModifyTable *) plan;
@@ -527,8 +437,8 @@ partition_update_visitor(Plan *plan, void *context)
 	{
 		ereport(NOTICE,
 				(errcode(ERRCODE_STATEMENT_TOO_COMPLEX),
-				 errmsg("discovered mix of local and foreign tables,"
-					 " pg_pathman's update node will not be used")));
+				 errmsg("discovered mix of local and foreign tables, "
+						UPDATE_NODE_NAME " will be disabled")));
 		return;
 	}
 
@@ -540,7 +450,8 @@ partition_update_visitor(Plan *plan, void *context)
 								relid = getrelid(rindex, rtable);
 		const PartRelationInfo *prel;
 
-		while ((tmp_relid = get_parent_of_partition(relid, NULL)) != 0)
+		/* Find topmost parent */
+		while ((tmp_relid = get_parent_of_partition(relid, NULL)) != InvalidOid)
 			relid = tmp_relid;
 
 		/* Check that table is partitioned */
@@ -557,7 +468,7 @@ partition_update_visitor(Plan *plan, void *context)
 				lc3 = lnext(lc3);
 			}
 
-			lfirst(lc1) = make_partition_update((Plan *) lfirst(lc1), relid,
+			lfirst(lc1) = make_partition_router((Plan *) lfirst(lc1), relid,
 												modify_table->nominalRelation,
 												returning_list);
 		}
@@ -624,6 +535,102 @@ tag_extract_parenthood_status(List *relation_tag)
 	return status;
 }
 
+
+/*
+ * --------------------------
+ *  Various helper functions
+ * --------------------------
+ */
+
+/* Does ModifyTable node contain any FDWs? */
+static bool
+modifytable_contains_fdw(List *rtable, ModifyTable *node)
+{
+	ListCell	*lc;
+
+	foreach(lc, node->resultRelations)
+	{
+		Index			 rti = lfirst_int(lc);
+		RangeTblEntry	*rte = rt_fetch(rti, rtable);
+
+		if (rte->relkind == RELKIND_FOREIGN_TABLE)
+			return true;
+	}
+
+	return false;
+}
+
+/*
+ * Find a single deepest subpartition.
+ * Return InvalidOid if that's impossible.
+ */
+static FindPartitionResult
+find_deepest_partition(Oid relid, Index idx, Expr *quals, Oid *partition)
+{
+	const PartRelationInfo *prel;
+	Node				   *prel_expr;
+	WalkerContext			context;
+	List				   *ranges;
+	WrapperNode			   *wrap;
+
+	prel = get_pathman_relation_info(relid);
+
+	/* Exit if it's not partitioned */
+	if (!prel)
+		return FP_PLAIN_TABLE;
+
+	/* Exit if we must include parent */
+	if (prel->enable_parent)
+		return FP_NON_SINGULAR_RESULT;
+
+	/* Exit if there's no quals (no use) */
+	if (!quals)
+		return FP_NON_SINGULAR_RESULT;
+
+	/* Prepare partitioning expression */
+	prel_expr = PrelExpressionForRelid(prel, idx);
+
+	ranges = list_make1_irange_full(prel, IR_COMPLETE);
+
+	/* Parse syntax tree and extract partition ranges */
+	InitWalkerContext(&context, prel_expr, prel, NULL);
+	wrap = walk_expr_tree(quals, &context);
+	ranges = irange_list_intersection(ranges, wrap->rangeset);
+
+	if (irange_list_length(ranges) == 1)
+	{
+		IndexRange irange = linitial_irange(ranges);
+
+		if (irange_lower(irange) == irange_upper(irange))
+		{
+			Oid		   *children	= PrelGetChildrenArray(prel),
+						child		= children[irange_lower(irange)],
+						subpartition;
+			FindPartitionResult result;
+
+			/* Try to go deeper and see if there is subpartition */
+			result = find_deepest_partition(child,
+											idx,
+											quals,
+											&subpartition);
+			switch(result)
+			{
+				case FP_FOUND:
+					*partition = subpartition;
+					return FP_FOUND;
+
+				case FP_PLAIN_TABLE:
+					*partition = child;
+					return FP_FOUND;
+
+				case FP_NON_SINGULAR_RESULT:
+					return FP_NON_SINGULAR_RESULT;
+			}
+		}
+	}
+
+	return FP_NON_SINGULAR_RESULT;
+}
 
 /* Replace extern param nodes with consts */
 static Node *

@@ -2,7 +2,7 @@
 SET search_path = 'public';
 CREATE EXTENSION pg_pathman;
 CREATE SCHEMA test_update_node;
-SET pg_pathman.enable_partitionupdate=on;
+SET pg_pathman.enable_partitionrouter = ON;
 /* Partition table by RANGE (NUMERIC) */
 CREATE TABLE test_update_node.test_range(val NUMERIC NOT NULL, comment TEXT);
 CREATE INDEX val_idx ON test_update_node.test_range (val);
@@ -18,7 +18,7 @@ EXPLAIN (COSTS OFF) UPDATE test_update_node.test_range SET val = 5 WHERE val = 1
                             QUERY PLAN                             
 -------------------------------------------------------------------
  Update on test_range_2
-   ->  Custom Scan (PartitionRoute)
+   ->  Custom Scan (PartitionRouter)
          ->  Custom Scan (PartitionFilter)
                ->  Bitmap Heap Scan on test_range_2
                      Recheck Cond: (val = '15'::numeric)
@@ -31,7 +31,7 @@ EXPLAIN (COSTS OFF) UPDATE test_update_node.test_range SET val = 14 WHERE val = 
                             QUERY PLAN                             
 -------------------------------------------------------------------
  Update on test_range_2
-   ->  Custom Scan (PartitionRoute)
+   ->  Custom Scan (PartitionRouter)
          ->  Custom Scan (PartitionFilter)
                ->  Bitmap Heap Scan on test_range_2
                      Recheck Cond: (val = '15'::numeric)

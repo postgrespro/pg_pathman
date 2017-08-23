@@ -25,10 +25,13 @@
 #endif
 
 
+#define INSERT_NODE_NAME "PartitionFilter"
+
+
 #define ERR_PART_ATTR_NULL				"partitioning expression's value should not be NULL"
 #define ERR_PART_ATTR_MULTIPLE_RESULTS	"partitioning expression should return single value"
 #define ERR_PART_ATTR_NO_PART			"no suitable partition for key '%s'"
-#define ERR_PART_ATTR_MULTIPLE			"PartitionFilter selected more than one partition"
+#define ERR_PART_ATTR_MULTIPLE			INSERT_NODE_NAME " selected more than one partition"
 #define ERR_PART_DESC_CONVERT			"could not convert row type for partition"
 
 
@@ -45,6 +48,9 @@ typedef struct
 	ExprState		   *expr_state;			/* children have their own expressions */
 } ResultRelInfoHolder;
 
+
+/* Standard size of ResultPartsStorage entry */
+#define ResultPartsStorageStandard	0
 
 /* Forward declaration (for on_new_rri_holder()) */
 struct ResultPartsStorage;
@@ -63,7 +69,8 @@ typedef void (*on_new_rri_holder)(EState *estate,
  */
 struct ResultPartsStorage
 {
-	ResultRelInfo	   *saved_rel_info;			/* original ResultRelInfo (parent) */
+	ResultRelInfo	   *base_rri;				/* original ResultRelInfo (parent) */
+
 	HTAB			   *result_rels_table;
 	HASHCTL				result_rels_table_config;
 
@@ -78,11 +85,6 @@ struct ResultPartsStorage
 	LOCKMODE			head_open_lock_mode;
 	LOCKMODE			heap_close_lock_mode;
 };
-
-/*
- * Standard size of ResultPartsStorage entry.
- */
-#define ResultPartsStorageStandard	0
 
 typedef struct
 {
@@ -113,6 +115,23 @@ extern int					pg_pathman_insert_into_fdw;
 
 extern CustomScanMethods	partition_filter_plan_methods;
 extern CustomExecMethods	partition_filter_exec_methods;
+
+
+#define IsPartitionFilterPlan(node) \
+	( \
+		IsA((node), CustomScan) && \
+		(((CustomScan *) (node))->methods == &partition_filter_plan_methods) \
+	)
+
+#define IsPartitionFilterState(node) \
+	( \
+		IsA((node), CustomScanState) && \
+		(((CustomScanState *) (node))->methods == &partition_filter_exec_methods) \
+	)
+
+#define IsPartitionFilter(node) \
+	( IsPartitionFilterPlan(node) || IsPartitionFilterState(node) )
+
 
 
 void init_partition_filter_static_data(void);

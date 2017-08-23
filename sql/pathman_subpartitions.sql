@@ -3,6 +3,8 @@
 CREATE EXTENSION pg_pathman;
 CREATE SCHEMA subpartitions;
 
+
+
 /* Create two level partitioning structure */
 CREATE TABLE subpartitions.abc(a INTEGER NOT NULL, b INTEGER NOT NULL);
 INSERT INTO subpartitions.abc SELECT i, i FROM generate_series(1, 200, 20) as i;
@@ -58,8 +60,10 @@ SELECT create_hash_partitions('subpartitions.abc_4', 'b', 2);
 SELECT subpartitions.partitions_tree('subpartitions.abc');
 DROP TABLE subpartitions.abc CASCADE;
 
+
 /* Test that update works correctly */
-SET pg_pathman.enable_partitionupdate=on;
+SET pg_pathman.enable_partitionrouter = ON;
+
 CREATE TABLE subpartitions.abc(a INTEGER NOT NULL, b INTEGER NOT NULL);
 SELECT create_range_partitions('subpartitions.abc', 'a', 0, 100, 2);
 SELECT create_range_partitions('subpartitions.abc_1', 'b', 0, 50, 2);
@@ -76,6 +80,8 @@ SELECT tableoid::regclass, * FROM subpartitions.abc;	/* Should be in subpartitio
 
 UPDATE subpartitions.abc SET b = 125 WHERE a = 125 and b = 75;
 SELECT tableoid::regclass, * FROM subpartitions.abc;	/* Should create subpartitions.abc_2_3 */
+
+
 
 DROP TABLE subpartitions.abc CASCADE;
 DROP SCHEMA subpartitions CASCADE;

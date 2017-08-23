@@ -79,11 +79,13 @@ typedef long ExecutorRun_CountArgType;
 #endif
 
 #if PG_VERSION_NUM >= 100000
-void pathman_executor_hook(QueryDesc *queryDesc, ScanDirection direction,
+void pathman_executor_hook(QueryDesc *queryDesc,
+						   ScanDirection direction,
 						   ExecutorRun_CountArgType count,
 						   bool execute_once);
 #else
-void pathman_executor_hook(QueryDesc *queryDesc, ScanDirection direction,
+void pathman_executor_hook(QueryDesc *queryDesc,
+						   ScanDirection direction,
 						   ExecutorRun_CountArgType count);
 #endif
 

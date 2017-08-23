@@ -1,7 +1,7 @@
 /* ------------------------------------------------------------------------
  *
- * partition_update.c
- *		Insert row to right partition in UPDATE operation
+ * partition_router.c
+ *		Route row to a right partition in UPDATE operation
  *
  * Copyright (c) 2017, Postgres Professional
  * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
@@ -11,7 +11,7 @@
  */
 
 #include "partition_filter.h"
-#include "partition_update.h"
+#include "partition_router.h"
 #include "compat/pg_compat.h"
 
 #include "access/xact.h"
@@ -23,10 +23,10 @@
 #include "utils/guc.h"
 #include "utils/rel.h"
 
-bool				 pg_pathman_enable_partition_update = true;
+bool				pg_pathman_enable_partition_router = true;
 
-CustomScanMethods	partition_update_plan_methods;
-CustomExecMethods	partition_update_exec_methods;
+CustomScanMethods	partition_router_plan_methods;
+CustomExecMethods	partition_router_exec_methods;
 
 static TupleTableSlot *ExecDeleteInternal(ItemPointer tupleid,
 										  TupleTableSlot *planSlot,
@@ -34,24 +34,24 @@ static TupleTableSlot *ExecDeleteInternal(ItemPointer tupleid,
 										  EState *estate);
 
 void
-init_partition_update_static_data(void)
+init_partition_router_static_data(void)
 {
-	partition_update_plan_methods.CustomName 			= UPDATE_NODE_DESCRIPTION;
-	partition_update_plan_methods.CreateCustomScanState	= partition_update_create_scan_state;
+	partition_router_plan_methods.CustomName 			= UPDATE_NODE_NAME;
+	partition_router_plan_methods.CreateCustomScanState	= partition_router_create_scan_state;
 
-	partition_update_exec_methods.CustomName			= UPDATE_NODE_DESCRIPTION;
-	partition_update_exec_methods.BeginCustomScan		= partition_update_begin;
-	partition_update_exec_methods.ExecCustomScan		= partition_update_exec;
-	partition_update_exec_methods.EndCustomScan			= partition_update_end;
-	partition_update_exec_methods.ReScanCustomScan		= partition_update_rescan;
-	partition_update_exec_methods.MarkPosCustomScan		= NULL;
-	partition_update_exec_methods.RestrPosCustomScan	= NULL;
-	partition_update_exec_methods.ExplainCustomScan		= partition_update_explain;
+	partition_router_exec_methods.CustomName			= UPDATE_NODE_NAME;
+	partition_router_exec_methods.BeginCustomScan		= partition_router_begin;
+	partition_router_exec_methods.ExecCustomScan		= partition_router_exec;
+	partition_router_exec_methods.EndCustomScan			= partition_router_end;
+	partition_router_exec_methods.ReScanCustomScan		= partition_router_rescan;
+	partition_router_exec_methods.MarkPosCustomScan		= NULL;
+	partition_router_exec_methods.RestrPosCustomScan	= NULL;
+	partition_router_exec_methods.ExplainCustomScan		= partition_router_explain;
 
-	DefineCustomBoolVariable("pg_pathman.enable_partitionupdate",
-							 "Enables the planner's use of PartitionUpdate custom node.",
+	DefineCustomBoolVariable("pg_pathman.enable_partitionrouter",
+							 "Enables the planner's use of " UPDATE_NODE_NAME " custom node.",
 							 NULL,
-							 &pg_pathman_enable_partition_update,
+							 &pg_pathman_enable_partition_router,
 							 false,
 							 PGC_USERSET,
 							 0,
@@ -61,7 +61,7 @@ init_partition_update_static_data(void)
 }
 
 Plan *
-make_partition_update(Plan *subplan,
+make_partition_router(Plan *subplan,
 					  Oid parent_relid,
 					  Index parent_rti,
 					  List *returning_list)
@@ -79,13 +79,13 @@ make_partition_update(Plan *subplan,
 									CMD_UPDATE);
 
 	/* Copy costs etc */
-	cscan->scan.plan.startup_cost = subplan->startup_cost;
-	cscan->scan.plan.total_cost = subplan->total_cost;
-	cscan->scan.plan.plan_rows = subplan->plan_rows;
-	cscan->scan.plan.plan_width = subplan->plan_width;
+	cscan->scan.plan.startup_cost	= subplan->startup_cost;
+	cscan->scan.plan.total_cost		= subplan->total_cost;
+	cscan->scan.plan.plan_rows		= subplan->plan_rows;
+	cscan->scan.plan.plan_width		= subplan->plan_width;
 
 	/* Setup methods and child plan */
-	cscan->methods = &partition_update_plan_methods;
+	cscan->methods = &partition_router_plan_methods;
 	cscan->custom_plans = list_make1(pfilter);
 
 	/* Build an appropriate target list */
@@ -101,15 +101,15 @@ make_partition_update(Plan *subplan,
 }
 
 Node *
-partition_update_create_scan_state(CustomScan *node)
+partition_router_create_scan_state(CustomScan *node)
 {
-	PartitionUpdateState   *state;
+	PartitionRouterState   *state;
 
-	state = (PartitionUpdateState *) palloc0(sizeof(PartitionUpdateState));
+	state = (PartitionRouterState *) palloc0(sizeof(PartitionRouterState));
 	NodeSetTag(state, T_CustomScanState);
 
 	state->css.flags = node->flags;
-	state->css.methods = &partition_update_exec_methods;
+	state->css.methods = &partition_router_exec_methods;
 
 	/* Extract necessary variables */
 	state->subplan = (Plan *) linitial(node->custom_plans);
@@ -117,30 +117,29 @@ partition_update_create_scan_state(CustomScan *node)
 }
 
 void
-partition_update_begin(CustomScanState *node, EState *estate, int eflags)
+partition_router_begin(CustomScanState *node, EState *estate, int eflags)
 {
-	PartitionUpdateState   *state = (PartitionUpdateState *) node;
+	PartitionRouterState   *state = (PartitionRouterState *) node;
 
 	/* Initialize PartitionFilter child node */
 	node->custom_ps = list_make1(ExecInitNode(state->subplan, estate, eflags));
 }
 
 TupleTableSlot *
-partition_update_exec(CustomScanState *node)
+partition_router_exec(CustomScanState *node)
 {
 	EState					*estate = node->ss.ps.state;
 	PlanState				*child_ps = (PlanState *) linitial(node->custom_ps);
 	TupleTableSlot			*slot;
-	PartitionUpdateState	*state = (PartitionUpdateState *) node;
+	PartitionRouterState	*state = (PartitionRouterState *) node;
 
 	/* execute PartitionFilter child node */
 	slot = ExecProcNode(child_ps);
 
 	if (!TupIsNull(slot))
 	{
-		Datum					datum;
-		ResultRelInfo		   *resultRelInfo,
-							   *sourceRelInfo;
+		ResultRelInfo		   *result_rri,
+							   *parent_rri;
 		ItemPointer				tupleid = NULL;
 		ItemPointerData			tuple_ctid;
 		EPQState				epqstate;
@@ -152,41 +151,46 @@ partition_update_exec(CustomScanState *node)
 
 		EvalPlanQualSetSlot(&epqstate, child_state->subplan_slot);
 
-		sourceRelInfo = child_state->result_parts.saved_rel_info;
-		resultRelInfo = estate->es_result_relation_info;
+		parent_rri = child_state->result_parts.base_rri;
+		result_rri = estate->es_result_relation_info;
 
-		/* we generate junkfilter, if it wasn't created before */
+		/* Build new junkfilter if we have to */
 		if (state->junkfilter == NULL)
 		{
-			state->junkfilter = ExecInitJunkFilter(state->subplan->targetlist,
-				sourceRelInfo->ri_RelationDesc->rd_att->tdhasoid,
-				ExecInitExtraTupleSlot(estate));
+			state->junkfilter =
+				ExecInitJunkFilter(state->subplan->targetlist,
+								   parent_rri->ri_RelationDesc->rd_att->tdhasoid,
+								   ExecInitExtraTupleSlot(estate));
 
-			state->junkfilter->jf_junkAttNo = ExecFindJunkAttribute(state->junkfilter, "ctid");
+			state->junkfilter->jf_junkAttNo =
+				ExecFindJunkAttribute(state->junkfilter, "ctid");
+
 			if (!AttributeNumberIsValid(state->junkfilter->jf_junkAttNo))
 				elog(ERROR, "could not find junk ctid column");
 		}
 
-		relkind = sourceRelInfo->ri_RelationDesc->rd_rel->relkind;
+		relkind = parent_rri->ri_RelationDesc->rd_rel->relkind;
 		if (relkind == RELKIND_RELATION)
 		{
-			bool			isNull;
+			Datum	ctid_datum;
+			bool	ctid_isnull;
 
-			datum = ExecGetJunkAttribute(child_state->subplan_slot,
-					state->junkfilter->jf_junkAttNo, &isNull);
+			ctid_datum = ExecGetJunkAttribute(child_state->subplan_slot,
+											  state->junkfilter->jf_junkAttNo,
+											  &ctid_isnull);
+
 			/* shouldn't ever get a null result... */
-			if (isNull)
+			if (ctid_isnull)
 				elog(ERROR, "ctid is NULL");
 
-			tupleid = (ItemPointer) DatumGetPointer(datum);
-			tuple_ctid = *tupleid;		/* be sure we don't free
-										 * ctid!! */
+			tupleid = (ItemPointer) DatumGetPointer(ctid_datum);
+			tuple_ctid = *tupleid;		/* be sure we don't free ctid! */
 			tupleid = &tuple_ctid;
 		}
 		else if (relkind == RELKIND_FOREIGN_TABLE)
-			elog(ERROR, "update node is not supported for foreign tables");
+			elog(ERROR, UPDATE_NODE_NAME " does not support foreign tables");
 		else
-			elog(ERROR, "got unexpected type of relation for update");
+			elog(ERROR, UPDATE_NODE_NAME " cannot handle relkind %u", relkind);
 
 		/*
 		 * Clean from junk attributes before INSERT,
@@ -196,13 +200,13 @@ partition_update_exec(CustomScanState *node)
 			slot = ExecFilterJunk(state->junkfilter, slot);
 
 		/* Delete old tuple */
-		estate->es_result_relation_info = sourceRelInfo;
+		estate->es_result_relation_info = parent_rri;
 
 		Assert(tupleid != NULL);
 		ExecDeleteInternal(tupleid, child_state->subplan_slot, &epqstate, estate);
 
-		/* we've got the slot that can be inserted to child partition */
-		estate->es_result_relation_info = resultRelInfo;
+		/* We've got the slot that can be inserted to child partition */
+		estate->es_result_relation_info = result_rri;
 		return slot;
 	}
 
@@ -210,21 +214,21 @@ partition_update_exec(CustomScanState *node)
 }
 
 void
-partition_update_end(CustomScanState *node)
+partition_router_end(CustomScanState *node)
 {
 	Assert(list_length(node->custom_ps) == 1);
 	ExecEndNode((PlanState *) linitial(node->custom_ps));
 }
 
 void
-partition_update_rescan(CustomScanState *node)
+partition_router_rescan(CustomScanState *node)
 {
 	Assert(list_length(node->custom_ps) == 1);
 	ExecReScan((PlanState *) linitial(node->custom_ps));
 }
 
 void
-partition_update_explain(CustomScanState *node, List *ancestors, ExplainState *es)
+partition_router_explain(CustomScanState *node, List *ancestors, ExplainState *es)
 {
 	/* Nothing to do here now */
 }

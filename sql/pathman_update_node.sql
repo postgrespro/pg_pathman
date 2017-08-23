@@ -3,7 +3,9 @@
 SET search_path = 'public';
 CREATE EXTENSION pg_pathman;
 CREATE SCHEMA test_update_node;
-SET pg_pathman.enable_partitionupdate=on;
+
+
+SET pg_pathman.enable_partitionrouter = ON;
 
 
 /* Partition table by RANGE (NUMERIC) */

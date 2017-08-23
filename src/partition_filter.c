@@ -96,10 +96,10 @@ static estate_mod_data * fetch_estate_mod_data(EState *estate);
 void
 init_partition_filter_static_data(void)
 {
-	partition_filter_plan_methods.CustomName 			= "PartitionFilter";
+	partition_filter_plan_methods.CustomName 			= INSERT_NODE_NAME;
 	partition_filter_plan_methods.CreateCustomScanState	= partition_filter_create_scan_state;
 
-	partition_filter_exec_methods.CustomName			= "PartitionFilter";
+	partition_filter_exec_methods.CustomName			= INSERT_NODE_NAME;
 	partition_filter_exec_methods.BeginCustomScan		= partition_filter_begin;
 	partition_filter_exec_methods.ExecCustomScan		= partition_filter_exec;
 	partition_filter_exec_methods.EndCustomScan			= partition_filter_end;
@@ -109,7 +109,7 @@ init_partition_filter_static_data(void)
 	partition_filter_exec_methods.ExplainCustomScan		= partition_filter_explain;
 
 	DefineCustomBoolVariable("pg_pathman.enable_partitionfilter",
-							 "Enables the planner's use of PartitionFilter custom node.",
+							 "Enables the planner's use of " INSERT_NODE_NAME " custom node.",
 							 NULL,
 							 &pg_pathman_enable_partition_filter,
 							 true,
@@ -164,7 +164,7 @@ init_result_parts_storage(ResultPartsStorage *parts_storage,
 												   result_rels_table_config,
 												   HASH_ELEM | HASH_BLOBS);
 	parts_storage->estate = estate;
-	parts_storage->saved_rel_info = NULL;
+	parts_storage->base_rri = NULL;
 
 	parts_storage->on_new_rri_holder_callback = on_new_rri_holder_cb;
 	parts_storage->callback_arg = on_new_rri_holder_cb_arg;
@@ -216,7 +216,7 @@ ResultRelInfoHolder *
 scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 {
 #define CopyToResultRelInfo(field_name) \
-	( child_result_rel_info->field_name = parts_storage->saved_rel_info->field_name )
+	( child_result_rel_info->field_name = parts_storage->base_rri->field_name )
 
 	ResultRelInfoHolder	   *rri_holder;
 	bool					found;
@@ -229,12 +229,16 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 	if (!found)
 	{
 		Relation		child_rel,
-						base_rel = parts_storage->saved_rel_info->ri_RelationDesc;
+						base_rel;
 		RangeTblEntry  *child_rte,
 					   *parent_rte;
 		Index			child_rte_idx;
 		ResultRelInfo  *child_result_rel_info;
 		List		   *translated_vars;
+
+		/* Check that 'base_rri' is set */
+		if (!parts_storage->base_rri)
+			elog(ERROR, "ResultPartsStorage contains no base_rri");
 
 		/* Lock partition and check if it exists */
 		LockRelationOid(partid, parts_storage->head_open_lock_mode);
@@ -249,10 +253,13 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 			return NULL;
 		}
 
-		parent_rte = rt_fetch(parts_storage->saved_rel_info->ri_RangeTableIndex,
+		parent_rte = rt_fetch(parts_storage->base_rri->ri_RangeTableIndex,
 							  parts_storage->estate->es_range_table);
 
-		/* Open relation and check if it is a valid target */
+		/* Get base relation */
+		base_rel = parts_storage->base_rri->ri_RelationDesc;
+
+		/* Open child relation and check if it is a valid target */
 		child_rel = heap_open(partid, NoLock);
 		CheckValidResultRel(child_rel, parts_storage->command_type);
 
@@ -280,10 +287,6 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 
 		/* Create ResultRelInfo for partition */
 		child_result_rel_info = makeNode(ResultRelInfo);
-
-		/* Check that 'saved_rel_info' is set */
-		if (!parts_storage->saved_rel_info)
-			elog(ERROR, "ResultPartsStorage contains no saved_rel_info");
 
 		InitResultRelInfoCompat(child_result_rel_info,
 								child_rel,
@@ -550,10 +553,10 @@ make_partition_filter(Plan *subplan,
 				 errmsg("ON CONFLICT clause is not supported with partitioned tables")));
 
 	/* Copy costs etc */
-	cscan->scan.plan.startup_cost = subplan->startup_cost;
-	cscan->scan.plan.total_cost = subplan->total_cost;
-	cscan->scan.plan.plan_rows = subplan->plan_rows;
-	cscan->scan.plan.plan_width = subplan->plan_width;
+	cscan->scan.plan.startup_cost	= subplan->startup_cost;
+	cscan->scan.plan.total_cost		= subplan->total_cost;
+	cscan->scan.plan.plan_rows		= subplan->plan_rows;
+	cscan->scan.plan.plan_width		= subplan->plan_width;
 
 	/* Setup methods and child plan */
 	cscan->methods = &partition_filter_plan_methods;
@@ -689,15 +692,13 @@ partition_filter_exec(CustomScanState *node)
 	EState				   *estate = node->ss.ps.state;
 	PlanState			   *child_ps = (PlanState *) linitial(node->custom_ps);
 	TupleTableSlot		   *slot;
-	ResultRelInfo		   *saved_resultRelInfo;
 
 	slot = ExecProcNode(child_ps);
 	state->subplan_slot = slot;
 
-	/* Save original ResultRelInfo */
-	saved_resultRelInfo = estate->es_result_relation_info;
-	if (!state->result_parts.saved_rel_info)
-		state->result_parts.saved_rel_info = saved_resultRelInfo;
+	/* Don't forget to initialize 'base_rri'! */
+	if (!state->result_parts.base_rri)
+		state->result_parts.base_rri = estate->es_result_relation_info;
 
 	if (state->tup_convert_slot)
 		ExecClearTuple(state->tup_convert_slot);
@@ -715,7 +716,7 @@ partition_filter_exec(CustomScanState *node)
 		{
 			if (!state->warning_triggered)
 				elog(WARNING, "table \"%s\" is not partitioned, "
-							  "PartitionFilter will behave as a normal INSERT",
+							  INSERT_NODE_NAME " will behave as a normal INSERT",
 					 get_rel_name_or_relid(state->partitioned_table));
 
 			return slot;
@@ -895,7 +896,7 @@ prepare_rri_returning_for_insert(EState *estate,
 		return;
 
 	child_rri = rri_holder->result_rel_info;
-	parent_rri = rps_storage->saved_rel_info;
+	parent_rri = rps_storage->base_rri;
 	parent_rt_idx = parent_rri->ri_RangeTableIndex;
 
 	/* Create ExprContext for tuple projections */
