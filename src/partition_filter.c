@@ -505,21 +505,10 @@ prepare_expr_state(const PartRelationInfo *prel, EState *estate)
 {
 	ExprState		   *expr_state;
 	MemoryContext		old_mcxt;
-	Index				parent_varno = 1;
 	Node			   *expr;
-	ListCell		   *lc;
 
 	/* Change varno in Vars according to range table */
-	foreach(lc, estate->es_range_table)
-	{
-		RangeTblEntry *entry = lfirst(lc);
-
-		if (entry->relid == PrelParentRelid(prel))
-			break;
-
-		parent_varno += 1;
-	}
-	expr = PrelExpressionForRelid(prel, parent_varno);
+	expr = PrelExpressionForRelid(prel, PART_EXPR_VARNO);
 
 	/* Prepare state for expression execution */
 	old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
@@ -634,31 +623,27 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 		if (state->command_type == CMD_UPDATE)
 		{
 			/*
-			 * In UPDATE queries we would operate with child relation, but
-			 * expression expects varattnos like in base relation, so we map
-			 * parent varattnos to child varattnos
+			 * In UPDATE queries we would work with child relation, but
+			 * expression contains varattnos of base relation, so we map
+			 * parent varattnos to child varattnos.
 			 */
-
 			bool			found_whole_row;
 
 			AttrNumber	   *map;
-			MemoryContext	old_mcxt;
-			Index			relno = ((Scan *) child_state->plan)->scanrelid;
 			Node		   *expr;
-			Relation		child_rel;
+			ResultRelInfo  *child_rri = estate->es_result_relation_info;
+			Relation		child_rel = child_rri->ri_RelationDesc;
 
-			child_rel = heap_open(getrelid(relno, estate->es_range_table), NoLock);
+			MemoryContext	old_mcxt;
 
 			map = build_attributes_map(prel, RelationGetDescr(child_rel));
-			expr = map_variable_attnos(PrelExpressionForRelid(prel, relno),
-									   relno, 0, map,
+			expr = map_variable_attnos(PrelExpressionForRelid(prel, PART_EXPR_VARNO),
+									   PART_EXPR_VARNO, 0, map,
 									   RelationGetDescr(child_rel)->natts,
 									   &found_whole_row);
 
 			if (found_whole_row)
 				elog(ERROR, "unexpected whole-row reference found in partition key");
-
-			heap_close(child_rel, NoLock);
 
 			/* Prepare state for expression execution */
 			old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
