@@ -184,7 +184,7 @@ partition_router_exec(CustomScanState *node)
 				elog(ERROR, "ctid is NULL");
 
 			tupleid = (ItemPointer) DatumGetPointer(ctid_datum);
-			tuple_ctid = *tupleid;		/* be sure we don't free ctid! */
+			tuple_ctid = *tupleid; /* be sure we don't free ctid! */
 			tupleid = &tuple_ctid;
 		}
 		else if (relkind == RELKIND_FOREIGN_TABLE)
@@ -194,19 +194,20 @@ partition_router_exec(CustomScanState *node)
 
 		/*
 		 * Clean from junk attributes before INSERT,
-		 * but only if slot wasn't converted in PartitionFilter
+		 * but only if slot wasn't transformed in PartitionFilter.
 		 */
 		if (TupIsNull(child_state->tup_convert_slot))
 			slot = ExecFilterJunk(state->junkfilter, slot);
 
-		/* Delete old tuple */
+		/* Magic: replace current ResultRelInfo with parent's one (DELETE) */
 		estate->es_result_relation_info = parent_rri;
 
 		Assert(tupleid != NULL);
 		ExecDeleteInternal(tupleid, child_state->subplan_slot, &epqstate, estate);
 
-		/* We've got the slot that can be inserted to child partition */
+		/* Magic: replace parent's ResultRelInfo with child's one (INSERT) */
 		estate->es_result_relation_info = result_rri;
+
 		return slot;
 	}
 
@@ -234,11 +235,13 @@ partition_router_explain(CustomScanState *node, List *ancestors, ExplainState *e
 }
 
 
-/* ----------------------------------------------------------------
- *		ExecDeleteInternal
+/*
+ * ----------------------------------------------------------------
+ *  ExecDeleteInternal
  *		Basicly copy of ExecDelete from executor/nodeModifyTable.c
  * ----------------------------------------------------------------
  */
+
 static TupleTableSlot *
 ExecDeleteInternal(ItemPointer tupleid,
 				   TupleTableSlot *planSlot,
@@ -272,7 +275,7 @@ ExecDeleteInternal(ItemPointer tupleid,
 	if (tupleid != NULL)
 	{
 		/* delete the tuple */
-ldelete:;
+ldelete:
 		result = heap_delete(resultRelationDesc, tupleid,
 							 estate->es_output_cid,
 							 estate->es_crosscheck_snapshot,
