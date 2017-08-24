@@ -478,11 +478,11 @@ select_partition_for_insert(ExprState *expr_state,
 			const PartRelationInfo *sub_prel;
 
 			/* Fetch PartRelationInfo for this partitioned relation */
-			sub_prel = get_pathman_relation_info(partition_relid);
+			sub_prel = get_pathman_relation_info(rri_holder->partid);
 
 			/* Might be a false alarm */
 			if (!sub_prel)
-				break;
+				return rri_holder;
 
 			/* Build an expression state if not yet */
 			if (!rri_holder->expr_state)
