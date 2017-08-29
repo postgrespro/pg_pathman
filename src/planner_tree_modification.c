@@ -24,9 +24,25 @@
 #include "utils/syscache.h"
 
 
+#ifdef SELECT
+#undef SELECT
+#endif
+
+#ifdef INSERT
+#undef INSERT
+#endif
+
+#ifdef UPDATE
+#undef UPDATE
+#endif
+
+#ifdef DELETE
+#undef DELETE
+#endif
+
+
 /* for assign_rel_parenthood_status() */
 #define PARENTHOOD_TAG CppAsString(PARENTHOOD)
-
 
 /* Build transform_query_cxt field name */
 #define TRANSFORM_CONTEXT_FIELD(command_type) \
