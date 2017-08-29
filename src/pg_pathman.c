@@ -704,6 +704,11 @@ select_range_partitions(const Datum value,
 			if (strategy == BTEqualStrategyNumber)
 				return;
 
+			/*
+			 * Use current partition 'i' as a pivot that will be
+			 * excluded by relation_excluded_by_constraints() if
+			 * (lossy == true) & its WHERE clauses are trivial.
+			 */
 			if ((miss_left  && (strategy == BTLessStrategyNumber ||
 								strategy == BTLessEqualStrategyNumber)) ||
 				(miss_right && (strategy == BTGreaterStrategyNumber ||
