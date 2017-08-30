@@ -28,7 +28,7 @@ LockAcquireResult xact_lock_rel(Oid relid, LOCKMODE lockmode, bool nowait);
 bool xact_bgw_conflicting_lock_exists(Oid relid);
 bool xact_is_level_read_committed(void);
 bool xact_is_transaction_stmt(Node *stmt);
-bool xact_is_set_stmt(Node *stmt);
+bool xact_is_set_stmt(Node *stmt, const char *name);
 bool xact_is_alter_pathman_stmt(Node *stmt);
 bool xact_object_is_visible(TransactionId obj_xmin);
 

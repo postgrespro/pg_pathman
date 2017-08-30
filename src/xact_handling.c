@@ -96,7 +96,7 @@ xact_is_level_read_committed(void)
 }
 
 /*
- * Check if 'stmt' is BEGIN\ROLLBACK etc transaction statement.
+ * Check if 'stmt' is BEGIN/ROLLBACK/etc [TRANSACTION] statement.
  */
 bool
 xact_is_transaction_stmt(Node *stmt)
@@ -111,10 +111,10 @@ xact_is_transaction_stmt(Node *stmt)
 }
 
 /*
- * Check if 'stmt' is SET [TRANSACTION] statement.
+ * Check if 'stmt' is SET ('name' | [TRANSACTION]) statement.
  */
 bool
-xact_is_set_stmt(Node *stmt)
+xact_is_set_stmt(Node *stmt, const char *name)
 {
 	/* Check that SET TRANSACTION is implemented via VariableSetStmt */
 	Assert(VAR_SET_MULTI > 0);
@@ -122,7 +122,10 @@ xact_is_set_stmt(Node *stmt)
 	if (!stmt)
 		return false;
 
-	if (IsA(stmt, VariableSetStmt))
+	if (!IsA(stmt, VariableSetStmt))
+		return false;
+
+	if (!name || pg_strcasecmp(name, ((VariableSetStmt *) stmt)->name) == 0)
 		return true;
 
 	return false;
@@ -137,16 +140,17 @@ xact_is_alter_pathman_stmt(Node *stmt)
 	if (!stmt)
 		return false;
 
-	if (IsA(stmt, AlterExtensionStmt) &&
-		0 == strcmp(((AlterExtensionStmt *) stmt)->extname,
-					"pg_pathman"))
+	if (!IsA(stmt, AlterExtensionStmt))
+		return false;
+
+	if (pg_strcasecmp(((AlterExtensionStmt *) stmt)->extname, "pg_pathman") == 0)
 		return true;
 
 	return false;
 }
 
 /*
- * Check if object is visible in newer transactions.
+ * Check if object is visible to newer transactions.
  */
 bool
 xact_object_is_visible(TransactionId obj_xmin)

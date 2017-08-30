@@ -632,38 +632,50 @@ pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
 	if (post_parse_analyze_hook_next)
 		post_parse_analyze_hook_next(pstate, query);
 
-	/* Hooks can be disabled */
+	/* See cook_partitioning_expression() */
 	if (!pathman_hooks_enabled)
 		return;
 
-	/* Finish delayed invalidation jobs */
+	/* We shouldn't proceed on: ... */
+	if (query->commandType == CMD_UTILITY)
+	{
+		/* ... BEGIN */
+		if (xact_is_transaction_stmt(query->utilityStmt))
+			return;
+
+		/* ... SET pg_pathman.enable */
+		if (xact_is_set_stmt(query->utilityStmt, PATHMAN_ENABLE))
+		{
+			/* Accept all events in case it's "enable = OFF" */
+			if (IsPathmanReady())
+				finish_delayed_invalidation();
+
+			return;
+		}
+
+		/* ... SET [TRANSACTION] */
+		if (xact_is_set_stmt(query->utilityStmt, NULL))
+			return;
+
+		/* ... ALTER EXTENSION pg_pathman */
+		if (xact_is_alter_pathman_stmt(query->utilityStmt))
+		{
+			/* Leave no delayed events before ALTER EXTENSION */
+			if (IsPathmanReady())
+				finish_delayed_invalidation();
+
+			/* Disable pg_pathman to perform a painless update */
+			(void) set_config_option(PATHMAN_ENABLE, "off",
+									 PGC_SUSET, PGC_S_SESSION,
+									 GUC_ACTION_SAVE, true, 0, false);
+
+			return;
+		}
+	}
+
+	/* Finish all delayed invalidation jobs */
 	if (IsPathmanReady())
 		finish_delayed_invalidation();
-
-	/*
-	 * We shouldn't proceed on:
-	 *		BEGIN
-	 *		SET [TRANSACTION]
-	 */
-	if (query->commandType == CMD_UTILITY &&
-		   (xact_is_transaction_stmt(query->utilityStmt) ||
-			xact_is_set_stmt(query->utilityStmt)))
-		return;
-
-	/*
-	 * We should also disable pg_pathman on:
-	 *		ALTER EXTENSION pg_pathman
-	 */
-	if (query->commandType == CMD_UTILITY &&
-			xact_is_alter_pathman_stmt(query->utilityStmt))
-	{
-		/* Disable pg_pathman to perform a painless update */
-		(void) set_config_option(PATHMAN_ENABLE, "off",
-								 PGC_SUSET, PGC_S_SESSION,
-								 GUC_ACTION_SAVE, true, 0, false);
-
-		return;
-	}
 
 	/* Load config if pg_pathman exists & it's still necessary */
 	if (IsPathmanEnabled() &&
@@ -746,7 +758,7 @@ pathman_relcache_hook(Datum arg, Oid relid)
 {
 	Oid parent_relid;
 
-	/* Hooks can be disabled */
+	/* See cook_partitioning_expression() */
 	if (!pathman_hooks_enabled)
 		return;
 
