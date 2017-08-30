@@ -24,6 +24,10 @@
 #include "utils/syscache.h"
 
 
+/*
+ * Drop conflicting macros for the sake of TRANSFORM_CONTEXT_FIELD(...).
+ * For instance, Windows.h contains a nasty "#define DELETE".
+ */
 #ifdef SELECT
 #undef SELECT
 #endif
