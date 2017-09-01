@@ -125,8 +125,15 @@ xact_is_set_stmt(Node *stmt, const char *name)
 	if (!IsA(stmt, VariableSetStmt))
 		return false;
 
-	if (!name || pg_strcasecmp(name, ((VariableSetStmt *) stmt)->name) == 0)
+	if (!name)
 		return true;
+	else
+	{
+		char *set_name = ((VariableSetStmt *) stmt)->name;
+
+		if (set_name && pg_strcasecmp(name, set_name) == 0)
+			return true;
+	}
 
 	return false;
 }
