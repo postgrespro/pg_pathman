@@ -27,20 +27,22 @@ select * from
 						 where t1.id = t2.id and t.id = t3.id);
                                          QUERY PLAN                                         
 --------------------------------------------------------------------------------------------
- Nested Loop Semi Join
+ Nested Loop
    ->  Nested Loop
-         Join Filter: ((t2.id + t1.id) = t3.id)
-         ->  Append
-               ->  Seq Scan on data_0 t3
-               ->  Seq Scan on data_1 t3_1
-               ->  Seq Scan on data_2 t3_2
-               ->  Seq Scan on data_3 t3_3
-               ->  Seq Scan on data_4 t3_4
-               ->  Seq Scan on data_5 t3_5
-               ->  Seq Scan on data_6 t3_6
-               ->  Seq Scan on data_7 t3_7
-               ->  Seq Scan on data_8 t3_8
-               ->  Seq Scan on data_9 t3_9
+         Join Filter: ((t2.id + t1.id) = t.id)
+         ->  HashAggregate
+               Group Key: t.id
+               ->  Append
+                     ->  Seq Scan on data_0 t
+                     ->  Seq Scan on data_1 t_1
+                     ->  Seq Scan on data_2 t_2
+                     ->  Seq Scan on data_3 t_3
+                     ->  Seq Scan on data_4 t_4
+                     ->  Seq Scan on data_5 t_5
+                     ->  Seq Scan on data_6 t_6
+                     ->  Seq Scan on data_7 t_7
+                     ->  Seq Scan on data_8 t_8
+                     ->  Seq Scan on data_9 t_9
          ->  Materialize
                ->  Nested Loop
                      Join Filter: ((t2.id > t1.id) AND (t1.id > t2.id) AND (t1.id = t2.id))
@@ -88,28 +90,28 @@ select * from
                                  ->  Seq Scan on data_9 t1_9
                                        Filter: ((id >= 1) AND (id <= 100))
    ->  Custom Scan (RuntimeAppend)
-         Prune by: (t3.id = t.id)
-         ->  Seq Scan on data_0 t
-               Filter: (t3.id = id)
-         ->  Seq Scan on data_1 t
-               Filter: (t3.id = id)
-         ->  Seq Scan on data_2 t
-               Filter: (t3.id = id)
-         ->  Seq Scan on data_3 t
-               Filter: (t3.id = id)
-         ->  Seq Scan on data_4 t
-               Filter: (t3.id = id)
-         ->  Seq Scan on data_5 t
-               Filter: (t3.id = id)
-         ->  Seq Scan on data_6 t
-               Filter: (t3.id = id)
-         ->  Seq Scan on data_7 t
-               Filter: (t3.id = id)
-         ->  Seq Scan on data_8 t
-               Filter: (t3.id = id)
-         ->  Seq Scan on data_9 t
-               Filter: (t3.id = id)
-(82 rows)
+         Prune by: (t.id = t3.id)
+         ->  Seq Scan on data_0 t3
+               Filter: (t.id = id)
+         ->  Seq Scan on data_1 t3
+               Filter: (t.id = id)
+         ->  Seq Scan on data_2 t3
+               Filter: (t.id = id)
+         ->  Seq Scan on data_3 t3
+               Filter: (t.id = id)
+         ->  Seq Scan on data_4 t3
+               Filter: (t.id = id)
+         ->  Seq Scan on data_5 t3
+               Filter: (t.id = id)
+         ->  Seq Scan on data_6 t3
+               Filter: (t.id = id)
+         ->  Seq Scan on data_7 t3
+               Filter: (t.id = id)
+         ->  Seq Scan on data_8 t3
+               Filter: (t.id = id)
+         ->  Seq Scan on data_9 t3
+               Filter: (t.id = id)
+(84 rows)
 
 set enable_hashjoin = on;
 set enable_mergejoin = on;

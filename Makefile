@@ -35,6 +35,7 @@ REGRESS = pathman_array_qual \
 		  pathman_domains \
 		  pathman_expressions \
 		  pathman_foreign_keys \
+		  pathman_gaps \
 		  pathman_inserts \
 		  pathman_interval \
 		  pathman_join_clause \

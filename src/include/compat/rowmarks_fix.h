@@ -29,7 +29,16 @@ void append_tle_for_rowmark(PlannerInfo *root, PlanRowMark *rc);
 
 #else
 
-#define LEGACY_ROWMARKS_95 /* NOTE: can't fix 9.5, see PlannerInfo->processed_tlist */
+/*
+ * Starting from 9.6, it's possible to append junk
+ * tableoid columns using the PlannerInfo->processed_tlist.
+ * This is absolutely crucial for UPDATE and DELETE queries,
+ * so we had to add some special fixes for 9.5:
+ *
+ *		1) provide legacy code for RowMarks (tableoids);
+ *		2) disable dangerous UPDATE & DELETE optimizations.
+ */
+#define LEGACY_ROWMARKS_95
 
 #define append_tle_for_rowmark(root, rc)	( (void) true )
 

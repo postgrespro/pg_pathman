@@ -370,6 +370,27 @@ DROP EXTENSION pg_pathman;
 
 
 /*
+ * -------------------------------
+ *  Special tests (SET statement)
+ * -------------------------------
+ */
+
+CREATE EXTENSION pg_pathman;
+
+SET pg_pathman.enable = false;
+SET pg_pathman.enable = true;
+SET pg_pathman.enable = false;
+RESET pg_pathman.enable;
+RESET ALL;
+BEGIN; ROLLBACK;
+BEGIN ISOLATION LEVEL SERIALIZABLE; ROLLBACK;
+BEGIN; SET TRANSACTION ISOLATION LEVEL SERIALIZABLE; ROLLBACK;
+
+DROP EXTENSION pg_pathman;
+
+
+
+/*
  * -------------------------------------
  *  Special tests (pathman_cache_stats)
  * -------------------------------------
