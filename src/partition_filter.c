@@ -69,7 +69,9 @@ CustomScanMethods	partition_filter_plan_methods;
 CustomExecMethods	partition_filter_exec_methods;
 
 static ExprState *prepare_expr_state(const PartRelationInfo *prel,
-								     EState *estate);
+									 Relation source_rel,
+									 EState *estate,
+									 bool try_map);
 static void prepare_rri_for_insert(EState *estate,
 								   ResultRelInfoHolder *rri_holder,
 								   const ResultPartsStorage *rps_storage,
@@ -261,7 +263,6 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 
 		/* Open child relation and check if it is a valid target */
 		child_rel = heap_open(partid, NoLock);
-		CheckValidResultRel(child_rel, parts_storage->command_type);
 
 		/* Build Var translation list for 'inserted_cols' */
 		make_inh_translation_list(base_rel, child_rel, 0, &translated_vars);
@@ -310,6 +311,10 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 
 		/* ri_ConstraintExprs will be initialized by ExecRelCheck() */
 		child_result_rel_info->ri_ConstraintExprs = NULL;
+
+		/* Check that this partition is a valid result relation */
+		CheckValidResultRelCompat(child_result_rel_info,
+								  parts_storage->command_type);
 
 		/* Fill the ResultRelInfo holder */
 		rri_holder->partid = partid;
@@ -446,11 +451,11 @@ select_partition_for_insert(ExprState *expr_state,
 			elog(ERROR, ERR_PART_ATTR_MULTIPLE);
 		else if (nparts == 0)
 		{
-			 partition_relid = create_partitions_for_value(parent_relid,
-														   value, prel->ev_type);
+			partition_relid = create_partitions_for_value(parent_relid,
+														  value, prel->ev_type);
 
-			 /* get_pathman_relation_info() will refresh this entry */
-			 invalidate_pathman_relation_info(parent_relid, NULL);
+			/* get_pathman_relation_info() will refresh this entry */
+			invalidate_pathman_relation_info(parent_relid, NULL);
 		}
 		else partition_relid = parts[0];
 
@@ -475,23 +480,32 @@ select_partition_for_insert(ExprState *expr_state,
 		/* This partition might have sub-partitions */
 		else if (rri_holder->has_children)
 		{
-			const PartRelationInfo *sub_prel;
+			const PartRelationInfo *child_prel;
 
 			/* Fetch PartRelationInfo for this partitioned relation */
-			sub_prel = get_pathman_relation_info(rri_holder->partid);
+			child_prel = get_pathman_relation_info(rri_holder->partid);
 
 			/* Might be a false alarm */
-			if (!sub_prel)
+			if (!child_prel)
 				return rri_holder;
 
-			/* Build an expression state if not yet */
+			/* Build an expression state if it's not ready yet */
 			if (!rri_holder->expr_state)
-				rri_holder->expr_state = prepare_expr_state(sub_prel, estate);
+			{
+				/* Fetch original topmost parent */
+				Relation source_rel = parts_storage->base_rri->ri_RelationDesc;
+
+				/* Build a partitioning expression state */
+				rri_holder->expr_state = prepare_expr_state(child_prel,
+															source_rel,
+															estate,
+															true);
+			}
 
 			/* Recursively search for subpartitions */
 			rri_holder = select_partition_for_insert(rri_holder->expr_state,
 													 econtext, estate,
-													 sub_prel, parts_storage);
+													 child_prel, parts_storage);
 		}
 	}
 	/* Loop until we get some result */
@@ -501,14 +515,44 @@ select_partition_for_insert(ExprState *expr_state,
 }
 
 static ExprState *
-prepare_expr_state(const PartRelationInfo *prel, EState *estate)
+prepare_expr_state(const PartRelationInfo *prel,
+				   Relation source_rel,
+				   EState *estate,
+				   bool try_map)
 {
 	ExprState		   *expr_state;
 	MemoryContext		old_mcxt;
 	Node			   *expr;
 
-	/* Change varno in Vars according to range table */
+	/* Fetch partitioning expression (we don't care about varno) */
 	expr = PrelExpressionForRelid(prel, PART_EXPR_VARNO);
+
+	/* Should we try using map? */
+	if (try_map)
+	{
+
+		AttrNumber	   *map;
+		int				map_length;
+		TupleDesc		source_tupdesc = RelationGetDescr(source_rel);
+
+		/* Remap expression attributes for source relation */
+		map = PrelExpressionAttributesMap(prel, source_tupdesc, &map_length);
+
+		if (map)
+		{
+			bool found_whole_row;
+
+			expr = map_variable_attnos_compat(expr, PART_EXPR_VARNO, 0, map,
+											  map_length, InvalidOid,
+											  &found_whole_row);
+
+			if (found_whole_row)
+				elog(ERROR, "unexpected whole-row reference"
+							" found in partition key");
+
+			pfree(map);
+		}
+	}
 
 	/* Prepare state for expression execution */
 	old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
@@ -595,8 +639,6 @@ partition_filter_create_scan_state(CustomScan *node)
 	Assert(state->on_conflict_action >= ONCONFLICT_NONE ||
 		   state->on_conflict_action <= ONCONFLICT_UPDATE);
 
-	state->expr_state = NULL;
-
 	/* There should be exactly one subplan */
 	Assert(list_length(node->custom_plans) == 1);
 
@@ -607,55 +649,35 @@ void
 partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 {
 	PartitionFilterState	   *state = (PartitionFilterState *) node;
-	const PartRelationInfo	   *prel;
 	PlanState				   *child_state;
+	ResultRelInfo			   *current_rri;
+	Relation					current_rel;
+	const PartRelationInfo	   *prel;
+	bool						try_map;
 
 	/* It's convenient to store PlanState in 'custom_ps' */
 	child_state = ExecInitNode(state->subplan, estate, eflags);
 	node->custom_ps = list_make1(child_state);
 
-	if (state->expr_state == NULL)
-	{
-		/* Fetch PartRelationInfo for this partitioned relation */
-		prel = get_pathman_relation_info(state->partitioned_table);
+	/* Fetch current result relation (rri + rel) */
+	current_rri = estate->es_result_relation_info;
+	current_rel = current_rri->ri_RelationDesc;
 
-		/* Prepare state for expression execution */
-		if (state->command_type == CMD_UPDATE)
-		{
-			/*
-			 * In UPDATE queries we would work with child relation, but
-			 * expression contains varattnos of base relation, so we map
-			 * parent varattnos to child varattnos.
-			 */
-			bool			found_whole_row;
+	/* Fetch PartRelationInfo for this partitioned relation */
+	prel = get_pathman_relation_info(state->partitioned_table);
 
-			AttrNumber	   *map;
-			Node		   *expr;
-			ResultRelInfo  *child_rri = estate->es_result_relation_info;
-			Relation		child_rel = child_rri->ri_RelationDesc;
+	/*
+	 * In UPDATE queries we have to work with child relation tlist,
+	 * but expression contains varattnos of base relation, so we
+	 * map parent varattnos to child varattnos.
+	 *
+	 * We don't need map if current relation == base relation.
+	 */
+	try_map = state->command_type == CMD_UPDATE &&
+			  RelationGetRelid(current_rel) != state->partitioned_table;
 
-			MemoryContext	old_mcxt;
-
-			map = build_attributes_map(prel, RelationGetDescr(child_rel));
-			expr = map_variable_attnos(PrelExpressionForRelid(prel, PART_EXPR_VARNO),
-									   PART_EXPR_VARNO, 0, map,
-									   RelationGetDescr(child_rel)->natts,
-									   &found_whole_row);
-
-			if (found_whole_row)
-				elog(ERROR, "unexpected whole-row reference found in partition key");
-
-			/* Prepare state for expression execution */
-			old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
-			state->expr_state = ExecInitExpr((Expr *) expr, NULL);
-			MemoryContextSwitchTo(old_mcxt);
-		}
-		else
-		{
-			/* Simple INSERT, expression based on parent attribute numbers */
-			state->expr_state = prepare_expr_state(prel, estate);
-		}
-	}
+	/* Build a partitioning expression state */
+	state->expr_state = prepare_expr_state(prel, current_rel, estate, try_map);
 
 	/* Init ResultRelInfo cache */
 	init_result_parts_storage(&state->result_parts, estate,
@@ -665,6 +687,10 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 							  (void *) state,
 							  state->command_type);
 
+	/* Don't forget to initialize 'base_rri'! */
+	state->result_parts.base_rri = current_rri;
+
+	/* No warnings yet */
 	state->warning_triggered = false;
 }
 
@@ -680,10 +706,6 @@ partition_filter_exec(CustomScanState *node)
 
 	slot = ExecProcNode(child_ps);
 	state->subplan_slot = slot;
-
-	/* Don't forget to initialize 'base_rri'! */
-	if (!state->result_parts.base_rri)
-		state->result_parts.base_rri = estate->es_result_relation_info;
 
 	if (state->tup_convert_slot)
 		ExecClearTuple(state->tup_convert_slot);

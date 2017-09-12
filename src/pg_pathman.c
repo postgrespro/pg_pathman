@@ -420,11 +420,7 @@ append_child_relation(PlannerInfo *root,
 	child_rte->relid			= child_oid;
 	child_rte->relkind			= child_relation->rd_rel->relkind;
 	child_rte->requiredPerms	= 0; /* perform all checks on parent */
-
-	/* Does this child have subpartitions? */
-	child_rte->inh = (child_oid == parent_rte->relid) ?
-						false : /* it's a parent, skip */
-						child_relation->rd_rel->relhassubclass;
+	child_rte->inh				= false;
 
 	/* Add 'child_rte' to rtable and 'root->simple_rte_array' */
 	root->parse->rtable = lappend(root->parse->rtable, child_rte);
@@ -574,19 +570,18 @@ append_child_relation(PlannerInfo *root,
 		add_child_rel_equivalences(root, appinfo, parent_rel, child_rel);
 	child_rel->has_eclass_joins = parent_rel->has_eclass_joins;
 
-	/* Close child relations, but keep locks */
-	heap_close(child_relation, NoLock);
-
-	/* Recursively expand child partition if it has subpartitions */
-	if (child_rte->inh)
+	/* Expand child partition if it might have subpartitions */
+	if (parent_rte->relid != child_oid &&
+		child_relation->rd_rel->relhassubclass)
 	{
-		child_rte->inh = false;
-
 		pathman_rel_pathlist_hook(root,
 								  child_rel,
 								  child_rti,
 								  child_rte);
 	}
+
+	/* Close child relations, but keep locks */
+	heap_close(child_relation, NoLock);
 
 	return child_rti;
 }

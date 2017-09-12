@@ -159,6 +159,18 @@
 
 
 /*
+ * CheckValidResultRel()
+ */
+#if PG_VERSION_NUM >= 100000
+#define CheckValidResultRelCompat(rri, cmd) \
+		CheckValidResultRel((rri), (cmd))
+#elif PG_VERSION_NUM >= 90500
+#define CheckValidResultRelCompat(rri, cmd) \
+		CheckValidResultRel((rri)->ri_RelationDesc, (cmd))
+#endif
+
+
+/*
  * create_append_path()
  */
 #if PG_VERSION_NUM >= 100000
@@ -266,7 +278,7 @@ extern void create_plain_partial_paths(PlannerInfo *root,
 
 
 /*
- * ExecBuildProjectionInfo
+ * ExecBuildProjectionInfo()
  */
 #if PG_VERSION_NUM >= 100000
 #define ExecBuildProjectionInfoCompat(targetList, econtext, resultSlot, \
@@ -366,7 +378,7 @@ char get_rel_persistence(Oid relid);
 
 
 /*
- * initial_cost_nestloop
+ * initial_cost_nestloop()
  */
 #if PG_VERSION_NUM >= 100000 || (defined(PGPRO_VERSION) && PG_VERSION_NUM >= 90603)
 #define initial_cost_nestloop_compat(root, workspace, jointype, outer_path, \
@@ -382,7 +394,7 @@ char get_rel_persistence(Oid relid);
 
 
 /*
- * InitResultRelInfo
+ * InitResultRelInfo()
  *
  * for v10 set NULL into 'partition_root' argument to specify that result
  * relation is not vanilla partition
@@ -461,7 +473,7 @@ extern int oid_cmp(const void *p1, const void *p2);
 
 
 /*
- * pg_analyze_and_rewrite
+ * pg_analyze_and_rewrite()
  *
  * for v10 cast first arg to RawStmt type
  */
@@ -479,7 +491,7 @@ extern int oid_cmp(const void *p1, const void *p2);
 
 
 /*
- * ProcessUtility
+ * ProcessUtility()
  *
  * for v10 set NULL into 'queryEnv' argument
  */
@@ -577,6 +589,7 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 	ExecARInsertTriggers((estate), (relinfo), (trigtuple), (recheck_indexes))
 #endif
 
+
 /*
  * ExecARDeleteTriggers()
  */
@@ -591,6 +604,7 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 	ExecARDeleteTriggers((estate), (relinfo), (tupleid), (fdw_trigtuple))
 #endif
 
+
 /*
  * ExecASInsertTriggers()
  */
@@ -600,6 +614,26 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 #elif PG_VERSION_NUM >= 90500
 #define ExecASInsertTriggersCompat(estate, relinfo, transition_capture) \
 	ExecASInsertTriggers((estate), (relinfo))
+#endif
+
+
+/*
+ * map_variable_attnos()
+ */
+#if PG_VERSION_NUM >= 100000
+#define map_variable_attnos_compat(node, varno, \
+								   sublevels_up, map, map_len, \
+								   to_rowtype, found_wholerow) \
+		map_variable_attnos((node), (varno), \
+							(sublevels_up), (map), (map_len), \
+							(to_rowtype), (found_wholerow))
+#elif PG_VERSION_NUM >= 90500
+#define map_variable_attnos_compat(node, varno, \
+								   sublevels_up, map, map_len, \
+								   to_rowtype, found_wholerow) \
+		map_variable_attnos((node), (varno), \
+							(sublevels_up), (map), (map_len), \
+							(found_wholerow))
 #endif
 
 

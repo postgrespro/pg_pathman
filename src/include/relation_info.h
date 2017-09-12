@@ -271,6 +271,10 @@ PrelExpressionForRelid(const PartRelationInfo *prel, Index rel_index)
 	return expr;
 }
 
+AttrNumber *PrelExpressionAttributesMap(const PartRelationInfo *prel,
+										TupleDesc source_tupdesc,
+										int *map_length);
+
 
 const PartRelationInfo *refresh_pathman_relation_info(Oid relid,
 													  Datum *values,
@@ -392,9 +396,6 @@ ForgetParent(PartRelationInfo *prel)
 extern bool pg_pathman_enable_bounds_cache;
 
 void init_relation_info_static_data(void);
-
-AttrNumber *build_attributes_map(const PartRelationInfo *prel,
-								 TupleDesc child_tupdesc);
 
 
 #endif /* RELATION_INFO_H */

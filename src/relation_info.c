@@ -1442,27 +1442,43 @@ shout_if_prel_is_invalid(const Oid parent_oid,
 }
 
 /*
- * Get attributes map between parent and child relation.
- * This is simplified version of functions that return TupleConversionMap.
- * And it should be faster if expression uses not all fields from relation.
+ * Remap partitioning expression columns for tuple source relation.
+ * This is a simplified version of functions that return TupleConversionMap.
+ * It should be faster if expression uses a few fields of relation.
  */
 AttrNumber *
-build_attributes_map(const PartRelationInfo *prel, TupleDesc child_tupdesc)
+PrelExpressionAttributesMap(const PartRelationInfo *prel,
+							TupleDesc source_tupdesc,
+							int *map_length)
 {
-	AttrNumber	i = -1;
 	Oid			parent_relid = PrelParentRelid(prel);
-	int			natts = child_tupdesc->natts;
-	AttrNumber *result = (AttrNumber *) palloc0(natts * sizeof(AttrNumber));
+	int			source_natts = source_tupdesc->natts,
+				expr_natts = 0;
+	AttrNumber *result,
+				i;
+	bool		is_trivial = true;
 
+	/* Get largest attribute number used in expression */
+	i = -1;
+	while ((i = bms_next_member(prel->expr_atts, i)) >= 0)
+		expr_natts = i;
+
+	/* Allocate array for map */
+	result = (AttrNumber *) palloc0(expr_natts * sizeof(AttrNumber));
+
+	/* Find a match for each attribute */
+	i = -1;
 	while ((i = bms_next_member(prel->expr_atts, i)) >= 0)
 	{
-		int			j;
 		AttrNumber	attnum = i + FirstLowInvalidHeapAttributeNumber;
 		char	   *attname = get_attname(parent_relid, attnum);
+		int			j;
 
-		for (j = 0; j < natts; j++)
+		Assert(attnum <= expr_natts);
+
+		for (j = 0; j < source_natts; j++)
 		{
-			Form_pg_attribute att = child_tupdesc->attrs[j];
+			Form_pg_attribute att = source_tupdesc->attrs[j];
 
 			if (att->attisdropped)
 				continue; /* attrMap[attnum - 1] is already 0 */
@@ -1475,8 +1491,19 @@ build_attributes_map(const PartRelationInfo *prel, TupleDesc child_tupdesc)
 		}
 
 		if (result[attnum - 1] == 0)
-			elog(ERROR, "Couldn't find '%s' column in child relation", attname);
+			elog(ERROR, "cannot find column \"%s\" in child relation", attname);
+
+		if (result[attnum - 1] != attnum)
+			is_trivial = false;
 	}
 
+	/* Check if map is trivial */
+	if (is_trivial)
+	{
+		pfree(result);
+		return NULL;
+	}
+
+	*map_length = expr_natts;
 	return result;
 }
