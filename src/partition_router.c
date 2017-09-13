@@ -238,7 +238,7 @@ partition_router_explain(CustomScanState *node, List *ancestors, ExplainState *e
 /*
  * ----------------------------------------------------------------
  *  ExecDeleteInternal
- *		Basicly copy of ExecDelete from executor/nodeModifyTable.c
+ *		Basicly is a copy of ExecDelete from executor/nodeModifyTable.c
  * ----------------------------------------------------------------
  */
 
