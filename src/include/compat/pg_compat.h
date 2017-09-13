@@ -30,6 +30,7 @@
 #include "nodes/pg_list.h"
 #include "optimizer/cost.h"
 #include "optimizer/paths.h"
+#include "optimizer/pathnode.h"
 #include "utils/memutils.h"
 
 /*
@@ -38,11 +39,61 @@
  * ----------
  */
 
+/*
+ * calc_nestloop_required_outer()
+ */
+
+#if PG_VERSION_NUM >= 110000
+static inline Relids
+calc_nestloop_required_outer_compat(Path *outer_path, Path *inner_path)
+{
+	RelOptInfo *innerrel = inner_path->parent;
+	RelOptInfo *outerrel = outer_path->parent;
+	Relids		innerrelids = innerrel->relids;
+	Relids		outerrelids = outerrel->relids;
+	Relids		inner_paramrels = PATH_REQ_OUTER(inner_path);
+	Relids		outer_paramrels = PATH_REQ_OUTER(outer_path);
+
+	return calc_nestloop_required_outer(outerrelids, outer_paramrels,
+										innerrelids, inner_paramrels);
+}
+#else
+#define calc_nestloop_required_outer_compat(outer_path, inner_path) \
+	(calc_nestloop_required_outer((outer_path), (inner_path)))
+#endif
 
 /*
  * adjust_appendrel_attrs()
  */
-#if PG_VERSION_NUM >= 90600
+
+#if PG_VERSION_NUM >= 110000
+#define adjust_appendrel_attrs_compat(root, node, appinfo) \
+		adjust_appendrel_attrs((root), \
+							   node, \
+							   1, &(appinfo))
+#elif PG_VERSION_NUM >= 90600
+#define adjust_appendrel_attrs_compat(root, node, appinfo) \
+		adjust_appendrel_attrs((root), \
+							   node, \
+							   (appinfo))
+#elif PG_VERSION_NUM >= 90500
+#define adjust_appendrel_attrs_compat(root, node, appinfo) \
+		adjust_appendrel_attrs((root), \
+							   node, \
+							   (appinfo))
+#endif
+
+
+#if PG_VERSION_NUM >= 110000
+#define adjust_rel_targetlist_compat(root, dst_rel, src_rel, appinfo) \
+	do { \
+		(dst_rel)->reltarget->exprs = (List *) \
+				adjust_appendrel_attrs((root), \
+									   (Node *) (src_rel)->reltarget->exprs, \
+									   1,	\
+									   &(appinfo)); \
+	} while (0)
+#elif PG_VERSION_NUM >= 90600
 #define adjust_rel_targetlist_compat(root, dst_rel, src_rel, appinfo) \
 	do { \
 		(dst_rel)->reltarget->exprs = (List *) \

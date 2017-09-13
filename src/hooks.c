@@ -199,7 +199,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 			return; /* could not build it, retreat! */
 
 
-		required_nestloop = calc_nestloop_required_outer(outer, inner);
+		required_nestloop = calc_nestloop_required_outer_compat(outer, inner);
 
 		/*
 		 * Check to see if proposed path is still parameterized, and reject if the
@@ -230,9 +230,9 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 
 		nest_path =
 			create_nestloop_path_compat(root, joinrel, jointype,
-										&workspace, extra, outer, inner,
-										filtered_joinclauses, pathkeys,
-										calc_nestloop_required_outer(outer, inner));
+							&workspace, extra, outer, inner,
+							filtered_joinclauses, pathkeys,
+							calc_nestloop_required_outer_compat(outer, inner));
 
 		/*
 		 * NOTE: Override 'rows' value produced by standard estimator.

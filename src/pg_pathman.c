@@ -495,7 +495,7 @@ append_child_relation(PlannerInfo *root,
 	AssertState(parent_rel);
 
 	/* Adjust join quals for this child */
-	child_rel->joininfo = (List *) adjust_appendrel_attrs(root,
+	child_rel->joininfo = (List *) adjust_appendrel_attrs_compat(root,
 														  (Node *) parent_rel->joininfo,
 														  appinfo);
 
@@ -532,7 +532,7 @@ append_child_relation(PlannerInfo *root,
 	else childquals = get_all_actual_clauses(parent_rel->baserestrictinfo);
 
 	/* Now it's time to change varnos and rebuld quals */
-	childquals = (List *) adjust_appendrel_attrs(root,
+	childquals = (List *) adjust_appendrel_attrs_compat(root,
 												 (Node *) childquals,
 												 appinfo);
 	childqual = eval_const_expressions(root, (Node *)
