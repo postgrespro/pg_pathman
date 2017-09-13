@@ -1022,7 +1022,7 @@ prepare_rri_fdw_for_insert(EState *estate,
 			TargetEntry		   *te;
 			Param			   *param;
 
-			attr = tupdesc->attrs[i];
+			attr = TupleDescAttr(tupdesc, i);
 
 			if (attr->attisdropped)
 				continue;

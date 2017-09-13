@@ -262,13 +262,12 @@ CopyGetAttnums(TupleDesc tupDesc, Relation rel, List *attnamelist)
 	if (attnamelist == NIL)
 	{
 		/* Generate default column list */
-		Form_pg_attribute *attr = tupDesc->attrs;
 		int			attr_count = tupDesc->natts;
 		int			i;
 
 		for (i = 0; i < attr_count; i++)
 		{
-			if (attr[i]->attisdropped)
+			if (TupleDescAttr(tupDesc, i)->attisdropped)
 				continue;
 			attnums = lappend_int(attnums, i + 1);
 		}
@@ -288,11 +287,13 @@ CopyGetAttnums(TupleDesc tupDesc, Relation rel, List *attnamelist)
 			attnum = InvalidAttrNumber;
 			for (i = 0; i < tupDesc->natts; i++)
 			{
-				if (tupDesc->attrs[i]->attisdropped)
+				Form_pg_attribute att = TupleDescAttr(tupDesc, i);
+
+				if (att->attisdropped)
 					continue;
-				if (namestrcmp(&(tupDesc->attrs[i]->attname), name) == 0)
+				if (namestrcmp(&(att->attname), name) == 0)
 				{
-					attnum = tupDesc->attrs[i]->attnum;
+					attnum = att->attnum;
 					break;
 				}
 			}

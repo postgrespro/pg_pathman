@@ -520,6 +520,9 @@ get_rel_persistence(Oid relid)
 }
 #endif
 
+#if PG_VERSION_NUM < 110000
+#define TupleDescAttr(tupdesc, i) ((tupdesc)->attrs[(i)])
+#endif
 
 #if (PG_VERSION_NUM >= 90500 && PG_VERSION_NUM <= 90505) || \
 	(PG_VERSION_NUM >= 90600 && PG_VERSION_NUM <= 90601)
@@ -542,7 +545,7 @@ convert_tuples_by_name_map(TupleDesc indesc,
 	attrMap = (AttrNumber *) palloc0(n * sizeof(AttrNumber));
 	for (i = 0; i < n; i++)
 	{
-		Form_pg_attribute att = outdesc->attrs[i];
+		Form_pg_attribute att = TupleDescAttr(outdesc, i);
 		char	   *attname;
 		Oid			atttypid;
 		int32		atttypmod;
@@ -555,7 +558,7 @@ convert_tuples_by_name_map(TupleDesc indesc,
 		atttypmod = att->atttypmod;
 		for (j = 0; j < indesc->natts; j++)
 		{
-			att = indesc->attrs[j];
+			att = TupleDescAttr(indesc, j);
 			if (att->attisdropped)
 				continue;
 			if (strcmp(attname, NameStr(att->attname)) == 0)
@@ -586,8 +589,6 @@ convert_tuples_by_name_map(TupleDesc indesc,
 	return attrMap;
 }
 #endif
-
-
 
 /*
  * -------------

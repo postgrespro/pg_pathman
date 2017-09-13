@@ -1478,7 +1478,7 @@ PrelExpressionAttributesMap(const PartRelationInfo *prel,
 
 		for (j = 0; j < source_natts; j++)
 		{
-			Form_pg_attribute att = source_tupdesc->attrs[j];
+			Form_pg_attribute att = TupleDescAttr(source_tupdesc, j);
 
 			if (att->attisdropped)
 				continue; /* attrMap[attnum - 1] is already 0 */

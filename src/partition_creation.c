@@ -920,8 +920,7 @@ postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid)
 	{
 		Form_pg_attribute acl_column;
 
-		acl_column = pg_class_desc->attrs[Anum_pg_class_relacl - 1];
-
+		acl_column = TupleDescAttr(pg_class_desc, Anum_pg_class_relacl - 1);
 		acl_datum = datumCopy(acl_datum, acl_column->attbyval, acl_column->attlen);
 	}
 
@@ -997,7 +996,7 @@ postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid)
 		{
 			Form_pg_attribute acl_column;
 
-			acl_column = pg_attribute_desc->attrs[Anum_pg_attribute_attacl - 1];
+			acl_column = TupleDescAttr(pg_attribute_desc, Anum_pg_attribute_attacl - 1);
 
 			acl_datum = datumCopy(acl_datum,
 								  acl_column->attbyval,
