@@ -520,10 +520,6 @@ get_rel_persistence(Oid relid)
 }
 #endif
 
-#if PG_VERSION_NUM < 110000
-#define TupleDescAttr(tupdesc, i) ((tupdesc)->attrs[(i)])
-#endif
-
 #if (PG_VERSION_NUM >= 90500 && PG_VERSION_NUM <= 90505) || \
 	(PG_VERSION_NUM >= 90600 && PG_VERSION_NUM <= 90601)
 /*

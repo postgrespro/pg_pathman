@@ -22,6 +22,7 @@
 #include "compat/debug_compat_features.h"
 
 #include "postgres.h"
+#include "access/tupdesc.h"
 #include "commands/trigger.h"
 #include "executor/executor.h"
 #include "nodes/memnodes.h"
@@ -636,6 +637,9 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 							(found_wholerow))
 #endif
 
+#ifndef TupleDescAttr
+#define TupleDescAttr(tupdesc, i) ((tupdesc)->attrs[(i)])
+#endif
 
 
 /*

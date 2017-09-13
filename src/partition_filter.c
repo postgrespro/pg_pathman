@@ -524,6 +524,9 @@ prepare_expr_state(const PartRelationInfo *prel,
 	MemoryContext		old_mcxt;
 	Node			   *expr;
 
+	/* Make sure we use query memory context */
+	old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
+
 	/* Fetch partitioning expression (we don't care about varno) */
 	expr = PrelExpressionForRelid(prel, PART_EXPR_VARNO);
 
@@ -555,7 +558,6 @@ prepare_expr_state(const PartRelationInfo *prel,
 	}
 
 	/* Prepare state for expression execution */
-	old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
 	expr_state = ExecInitExpr((Expr *) expr, NULL);
 	MemoryContextSwitchTo(old_mcxt);
 

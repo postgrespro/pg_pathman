@@ -216,33 +216,69 @@ SELECT create_range_partitions('subpartitions.abc_2', 'b', 0, 50, 2);
                        2
 (1 row)
 
-INSERT INTO subpartitions.abc VALUES (25, 25);
+INSERT INTO subpartitions.abc SELECT 25, 25 FROM generate_series(1, 10);
 SELECT tableoid::regclass, * FROM subpartitions.abc;	/* Should be in subpartitions.abc_1_1 */
        tableoid        | a  | b  
 -----------------------+----+----
  subpartitions.abc_1_1 | 25 | 25
-(1 row)
+ subpartitions.abc_1_1 | 25 | 25
+ subpartitions.abc_1_1 | 25 | 25
+ subpartitions.abc_1_1 | 25 | 25
+ subpartitions.abc_1_1 | 25 | 25
+ subpartitions.abc_1_1 | 25 | 25
+ subpartitions.abc_1_1 | 25 | 25
+ subpartitions.abc_1_1 | 25 | 25
+ subpartitions.abc_1_1 | 25 | 25
+ subpartitions.abc_1_1 | 25 | 25
+(10 rows)
 
 UPDATE subpartitions.abc SET a = 125 WHERE a = 25 and b = 25;
 SELECT tableoid::regclass, * FROM subpartitions.abc;	/* Should be in subpartitions.abc_2_1 */
        tableoid        |  a  | b  
 -----------------------+-----+----
  subpartitions.abc_2_1 | 125 | 25
-(1 row)
+ subpartitions.abc_2_1 | 125 | 25
+ subpartitions.abc_2_1 | 125 | 25
+ subpartitions.abc_2_1 | 125 | 25
+ subpartitions.abc_2_1 | 125 | 25
+ subpartitions.abc_2_1 | 125 | 25
+ subpartitions.abc_2_1 | 125 | 25
+ subpartitions.abc_2_1 | 125 | 25
+ subpartitions.abc_2_1 | 125 | 25
+ subpartitions.abc_2_1 | 125 | 25
+(10 rows)
 
 UPDATE subpartitions.abc SET b = 75  WHERE a = 125 and b = 25;
 SELECT tableoid::regclass, * FROM subpartitions.abc;	/* Should be in subpartitions.abc_2_2 */
        tableoid        |  a  | b  
 -----------------------+-----+----
  subpartitions.abc_2_2 | 125 | 75
-(1 row)
+ subpartitions.abc_2_2 | 125 | 75
+ subpartitions.abc_2_2 | 125 | 75
+ subpartitions.abc_2_2 | 125 | 75
+ subpartitions.abc_2_2 | 125 | 75
+ subpartitions.abc_2_2 | 125 | 75
+ subpartitions.abc_2_2 | 125 | 75
+ subpartitions.abc_2_2 | 125 | 75
+ subpartitions.abc_2_2 | 125 | 75
+ subpartitions.abc_2_2 | 125 | 75
+(10 rows)
 
 UPDATE subpartitions.abc SET b = 125 WHERE a = 125 and b = 75;
 SELECT tableoid::regclass, * FROM subpartitions.abc;	/* Should create subpartitions.abc_2_3 */
        tableoid        |  a  |  b  
 -----------------------+-----+-----
  subpartitions.abc_2_3 | 125 | 125
-(1 row)
+ subpartitions.abc_2_3 | 125 | 125
+ subpartitions.abc_2_3 | 125 | 125
+ subpartitions.abc_2_3 | 125 | 125
+ subpartitions.abc_2_3 | 125 | 125
+ subpartitions.abc_2_3 | 125 | 125
+ subpartitions.abc_2_3 | 125 | 125
+ subpartitions.abc_2_3 | 125 | 125
+ subpartitions.abc_2_3 | 125 | 125
+ subpartitions.abc_2_3 | 125 | 125
+(10 rows)
 
 DROP TABLE subpartitions.abc CASCADE;
 NOTICE:  drop cascades to 10 other objects

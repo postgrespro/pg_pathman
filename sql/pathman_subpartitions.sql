@@ -69,7 +69,7 @@ SELECT create_range_partitions('subpartitions.abc', 'a', 0, 100, 2);
 SELECT create_range_partitions('subpartitions.abc_1', 'b', 0, 50, 2);
 SELECT create_range_partitions('subpartitions.abc_2', 'b', 0, 50, 2);
 
-INSERT INTO subpartitions.abc VALUES (25, 25);
+INSERT INTO subpartitions.abc SELECT 25, 25 FROM generate_series(1, 10);
 SELECT tableoid::regclass, * FROM subpartitions.abc;	/* Should be in subpartitions.abc_1_1 */
 
 UPDATE subpartitions.abc SET a = 125 WHERE a = 25 and b = 25;
