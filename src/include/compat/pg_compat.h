@@ -69,17 +69,17 @@ calc_nestloop_required_outer_compat(Path *outer_path, Path *inner_path)
 #if PG_VERSION_NUM >= 110000
 #define adjust_appendrel_attrs_compat(root, node, appinfo) \
 		adjust_appendrel_attrs((root), \
-							   node, \
+							   (node), \
 							   1, &(appinfo))
 #elif PG_VERSION_NUM >= 90600
 #define adjust_appendrel_attrs_compat(root, node, appinfo) \
 		adjust_appendrel_attrs((root), \
-							   node, \
+							   (node), \
 							   (appinfo))
 #elif PG_VERSION_NUM >= 90500
 #define adjust_appendrel_attrs_compat(root, node, appinfo) \
 		adjust_appendrel_attrs((root), \
-							   node, \
+							   (node), \
 							   (appinfo))
 #endif
 
