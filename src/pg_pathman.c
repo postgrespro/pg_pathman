@@ -410,6 +410,11 @@ append_child_relation(PlannerInfo *root,
 	}
 
 	parent_rel = root->simple_rel_array[parent_rti];
+
+	/* make clang analyzer quiet */
+	if (!parent_rel)
+		elog(ERROR, "parent relation is NULL");
+
 	parent_rte = root->simple_rte_array[parent_rti];
 
 	/* Open child relation (we've just locked it) */
