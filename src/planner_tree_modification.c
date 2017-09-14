@@ -27,8 +27,59 @@
 #include "utils/syscache.h"
 
 
+/*
+ * Drop conflicting macros for the sake of TRANSFORM_CONTEXT_FIELD(...).
+ * For instance, Windows.h contains a nasty "#define DELETE".
+ */
+#ifdef SELECT
+#undef SELECT
+#endif
+
+#ifdef INSERT
+#undef INSERT
+#endif
+
+#ifdef UPDATE
+#undef UPDATE
+#endif
+
+#ifdef DELETE
+#undef DELETE
+#endif
+
+
 /* for assign_rel_parenthood_status() */
 #define PARENTHOOD_TAG CppAsString(PARENTHOOD)
+
+/* Build transform_query_cxt field name */
+#define TRANSFORM_CONTEXT_FIELD(command_type) \
+	has_parent_##command_type##_query
+
+/* Check that transform_query_cxt field is TRUE */
+#define TRANSFORM_CONTEXT_HAS_PARENT(context, command_type) \
+	( (context)->TRANSFORM_CONTEXT_FIELD(command_type) )
+
+/* Used in switch(CmdType) statements */
+#define TRANSFORM_CONTEXT_SWITCH_SET(context, command_type) \
+	case CMD_##command_type: \
+		(context)->TRANSFORM_CONTEXT_FIELD(command_type) = true; \
+		break; \
+
+typedef struct
+{
+	/* Do we have a parent CmdType query? */
+	bool			TRANSFORM_CONTEXT_FIELD(SELECT),
+					TRANSFORM_CONTEXT_FIELD(INSERT),
+					TRANSFORM_CONTEXT_FIELD(UPDATE),
+					TRANSFORM_CONTEXT_FIELD(DELETE);
+
+	/* Parameters for handle_modification_query() */
+	ParamListInfo	query_params;
+
+	/* SubLink that might contain an examined query */
+	SubLink		   *parent_sublink;
+} transform_query_cxt;
+
 
 
 typedef enum
@@ -41,8 +92,8 @@ typedef enum
 
 static bool pathman_transform_query_walker(Node *node, void *context);
 
-static void disable_standard_inheritance(Query *parse);
-static void handle_modification_query(Query *parse, ParamListInfo params);
+static void disable_standard_inheritance(Query *parse, transform_query_cxt *context);
+static void handle_modification_query(Query *parse, transform_query_cxt *context);
 
 static void partition_filter_visitor(Plan *plan, void *context);
 static void partition_router_visitor(Plan *plan, void *context);
@@ -118,6 +169,8 @@ plan_tree_walker(Plan *plan,
 		/* Since they look alike */
 		case T_MergeAppend:
 		case T_Append:
+			Assert(offsetof(Append, appendplans) ==
+				   offsetof(MergeAppend, mergeplans));
 			foreach(l, ((Append *) plan)->appendplans)
 				plan_tree_walker((Plan *) lfirst(l), visitor, context);
 			break;
@@ -154,7 +207,13 @@ plan_tree_walker(Plan *plan,
 void
 pathman_transform_query(Query *parse, ParamListInfo params)
 {
-	pathman_transform_query_walker((Node *) parse, (void *) params);
+	transform_query_cxt context;
+
+	/* Initialize context */
+	memset((void *) &context, 0, sizeof(context));
+	context.query_params = params;
+
+	pathman_transform_query_walker((Node *) parse, (void *) &context);
 }
 
 /* Walker for pathman_transform_query() */
@@ -164,22 +223,52 @@ pathman_transform_query_walker(Node *node, void *context)
 	if (node == NULL)
 		return false;
 
+	else if (IsA(node, SubLink))
+	{
+		transform_query_cxt	   *current_context = context,
+								next_context;
+
+		/* Initialize next context for bottom subqueries */
+		next_context = *current_context;
+		next_context.parent_sublink = (SubLink *) node;
+
+		/* Handle expression subtree */
+		return expression_tree_walker(node,
+									  pathman_transform_query_walker,
+									  (void *) &next_context);
+	}
+
 	else if (IsA(node, Query))
 	{
-		Query *query = (Query *) node;
+		Query				   *query = (Query *) node;
+		transform_query_cxt	   *current_context = context,
+								next_context;
+
+		/* Initialize next context for bottom subqueries */
+		next_context = *current_context;
+		switch (query->commandType)
+		{
+			TRANSFORM_CONTEXT_SWITCH_SET(&next_context, SELECT);
+			TRANSFORM_CONTEXT_SWITCH_SET(&next_context, INSERT);
+			TRANSFORM_CONTEXT_SWITCH_SET(&next_context, UPDATE);
+			TRANSFORM_CONTEXT_SWITCH_SET(&next_context, DELETE);
+
+			default:
+				break;
+		}
 
 		/* Assign Query a 'queryId' */
 		assign_query_id(query);
 
 		/* Apply Query tree modifiers */
 		rowmark_add_tableoids(query);
-		disable_standard_inheritance(query);
-		handle_modification_query(query, (ParamListInfo) context);
+		disable_standard_inheritance(query, current_context);
+		handle_modification_query(query, current_context);
 
 		/* Handle Query node */
 		return query_tree_walker(query,
 								 pathman_transform_query_walker,
-								 context,
+								 (void *) &next_context,
 								 0);
 	}
 
@@ -198,14 +287,23 @@ pathman_transform_query_walker(Node *node, void *context)
 
 /* Disable standard inheritance if table is partitioned by pg_pathman */
 static void
-disable_standard_inheritance(Query *parse)
+disable_standard_inheritance(Query *parse, transform_query_cxt *context)
 {
 	ListCell   *lc;
 	Index		current_rti; /* current range table entry index */
 
 #ifdef LEGACY_ROWMARKS_95
+	/* Don't process non-SELECT queries */
 	if (parse->commandType != CMD_SELECT)
-			return;
+		return;
+
+	/* Don't process queries under UPDATE or DELETE (except for CTEs) */
+	if ((TRANSFORM_CONTEXT_HAS_PARENT(context, UPDATE) ||
+		 TRANSFORM_CONTEXT_HAS_PARENT(context, DELETE)) &&
+			(context->parent_sublink &&
+			 context->parent_sublink->subselect == (Node *) parse &&
+			 context->parent_sublink->subLinkType != CTE_SUBLINK))
+		return;
 #endif
 
 	/* Walk through RangeTblEntries list */
@@ -250,13 +348,14 @@ disable_standard_inheritance(Query *parse)
 
 /* Checks if query affects only one partition */
 static void
-handle_modification_query(Query *parse, ParamListInfo params)
+handle_modification_query(Query *parse, transform_query_cxt *context)
 {
 	RangeTblEntry		   *rte;
 	Expr				   *quals;
 	Index					result_rel;
 	Oid						child;
 	FindPartitionResult		fp_result;
+	ParamListInfo			params;
 
 	/* Fetch index of result relation */
 	result_rel = parse->resultRelation;
@@ -272,6 +371,8 @@ handle_modification_query(Query *parse, ParamListInfo params)
 	if (!rte->inh) return;
 
 	quals = (Expr *) eval_const_expressions(NULL, parse->jointree->quals);
+
+	params = context->query_params;
 
 	/* Check if we can replace PARAMs with CONSTs */
 	if (params && clause_contains_params((Node *) quals))

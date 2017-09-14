@@ -2,7 +2,13 @@
  *
  * relation_tags.h
  *		Attach custom (Key, Value) pairs to an arbitrary RangeTblEntry
- *		NOTE: implementations for vanilla and PostgresPro differ
+ *
+ *		NOTE: implementations for vanilla and PostgresPro differ,
+ *		which means that subquery pull-up might break the bond
+ *		between a RangeTblEntry and the corresponding KVPs.
+ *
+ *		This subsystem was meant to replace the broken 'inh' flag
+ *		(see get_rel_parenthood_status() for more details).
  *
  * Copyright (c) 2017, Postgres Professional
  *

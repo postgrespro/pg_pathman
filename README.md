@@ -8,6 +8,7 @@
 The `pg_pathman` module provides optimized partitioning mechanism and functions to manage partitions.
 
 The extension is compatible with:
+
  * PostgreSQL 9.5, 9.6, 10;
  * Postgres Pro Standard 9.5, 9.6;
  * Postgres Pro Enterprise;

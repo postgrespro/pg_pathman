@@ -610,22 +610,20 @@ select_range_partitions(const Datum value,
 						WrapperNode *result) /* returned partitions */
 {
 	bool	lossy = false,
-			is_less,
-			is_greater;
-
-#ifdef USE_ASSERT_CHECKING
-	bool	found = false;
-	int		counter = 0;
-#endif
+			miss_left,	/* 'value' is less than left bound */
+			miss_right;	/* 'value' is greater that right bound */
 
 	int		startidx = 0,
 			endidx = nranges - 1,
 			cmp_min,
 			cmp_max,
-			i;
+			i = 0;
 
 	Bound	value_bound = MakeBound(value); /* convert value to Bound */
 
+#ifdef USE_ASSERT_CHECKING
+	int		counter = 0;
+#endif
 
 	/* Initial value (no missing partitions found) */
 	result->found_gap = false;
@@ -647,9 +645,9 @@ select_range_partitions(const Datum value,
 		cmp_min = cmp_bounds(cmp_func, collid, &value_bound, &ranges[startidx].min);
 		cmp_max = cmp_bounds(cmp_func, collid, &value_bound, &ranges[endidx].max);
 
-		if ((cmp_min <= 0 && strategy == BTLessStrategyNumber) ||
-			(cmp_min < 0 && (strategy == BTLessEqualStrategyNumber ||
-							 strategy == BTEqualStrategyNumber)))
+		if ((cmp_min <= 0 &&  strategy == BTLessStrategyNumber) ||
+			(cmp_min <  0 && (strategy == BTLessEqualStrategyNumber ||
+							  strategy == BTEqualStrategyNumber)))
 		{
 			result->rangeset = NIL;
 			return;
@@ -663,7 +661,7 @@ select_range_partitions(const Datum value,
 			return;
 		}
 
-		if ((cmp_min < 0 && strategy == BTGreaterStrategyNumber) ||
+		if ((cmp_min <  0 && strategy == BTGreaterStrategyNumber) ||
 			(cmp_min <= 0 && strategy == BTGreaterEqualStrategyNumber))
 		{
 			result->rangeset = list_make1_irange(make_irange(startidx,
@@ -696,43 +694,59 @@ select_range_partitions(const Datum value,
 		cmp_min = cmp_bounds(cmp_func, collid, &value_bound, &ranges[i].min);
 		cmp_max = cmp_bounds(cmp_func, collid, &value_bound, &ranges[i].max);
 
-		is_less = (cmp_min < 0 || (cmp_min == 0 && strategy == BTLessStrategyNumber));
-		is_greater = (cmp_max > 0 || (cmp_max >= 0 && strategy != BTLessStrategyNumber));
+		/* How is 'value' located with respect to left & right bounds? */
+		miss_left	= (cmp_min < 0 || (cmp_min == 0 && strategy == BTLessStrategyNumber));
+		miss_right	= (cmp_max > 0 || (cmp_max == 0 && strategy != BTLessStrategyNumber));
 
-		if (!is_less && !is_greater)
+		/* Searched value is inside of partition */
+		if (!miss_left && !miss_right)
 		{
-			if (strategy == BTGreaterEqualStrategyNumber && cmp_min == 0)
+			/* 'value' == 'min' and we want everything on the right */
+			if (cmp_min == 0 && strategy == BTGreaterEqualStrategyNumber)
 				lossy = false;
-			else if (strategy == BTLessStrategyNumber && cmp_max == 0)
+			/* 'value' == 'max' and we want everything on the left */
+			else if (cmp_max == 0 && strategy == BTLessStrategyNumber)
 				lossy = false;
-			else
-				lossy = true;
+			/* We're somewhere in the middle */
+			else lossy = true;
 
-#ifdef USE_ASSERT_CHECKING
-			found = true;
-#endif
-			break;
+			break; /* just exit loop */
 		}
 
 		/* Indices have met, looks like there's no partition */
 		if (startidx >= endidx)
 		{
-			result->rangeset = NIL;
+			result->rangeset  = NIL;
 			result->found_gap = true;
-			return;
+
+			/* Return if it's "key = value" */
+			if (strategy == BTEqualStrategyNumber)
+				return;
+
+			/*
+			 * Use current partition 'i' as a pivot that will be
+			 * excluded by relation_excluded_by_constraints() if
+			 * (lossy == true) & its WHERE clauses are trivial.
+			 */
+			if ((miss_left  && (strategy == BTLessStrategyNumber ||
+								strategy == BTLessEqualStrategyNumber)) ||
+				(miss_right && (strategy == BTGreaterStrategyNumber ||
+								strategy == BTGreaterEqualStrategyNumber)))
+				lossy = true;
+			else
+				lossy = false;
+
+			break; /* just exit loop */
 		}
 
-		if (is_less)
+		if (miss_left)
 			endidx = i - 1;
-		else if (is_greater)
+		else if (miss_right)
 			startidx = i + 1;
 
 		/* For debug's sake */
 		Assert(++counter < 100);
 	}
-
-	/* Should've been found by now */
-	Assert(found);
 
 	/* Filter partitions */
 	switch(strategy)
@@ -762,18 +776,16 @@ select_range_partitions(const Datum value,
 			{
 				result->rangeset = list_make1_irange(make_irange(i, i, IR_LOSSY));
 				if (i < nranges - 1)
-					result->rangeset =
-							lappend_irange(result->rangeset,
-										   make_irange(i + 1,
-													   nranges - 1,
-													   IR_COMPLETE));
+					result->rangeset = lappend_irange(result->rangeset,
+													  make_irange(i + 1,
+																  nranges - 1,
+																  IR_COMPLETE));
 			}
 			else
 			{
-				result->rangeset =
-						list_make1_irange(make_irange(i,
-													  nranges - 1,
-													  IR_COMPLETE));
+				result->rangeset = list_make1_irange(make_irange(i,
+																 nranges - 1,
+																 IR_COMPLETE));
 			}
 			break;
 
@@ -1940,7 +1952,7 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		 * table and we've already filled it, skip it. Otherwise build a
 		 * pathlist for it
 		 */
-		if(!childRTE->inh || childrel->pathlist == NIL)
+		if (!childRTE->inh || !childrel->pathlist)
 		{
 			/* Compute child's access paths & sizes */
 			if (childRTE->relkind == RELKIND_FOREIGN_TABLE)
@@ -1954,7 +1966,7 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 
 				set_foreign_pathlist(root, childrel, childRTE);
 			}
-			else 
+			else
 			{
 				/* childrel->rows should be >= 1 */
 				set_plain_rel_size(root, childrel, childRTE);
