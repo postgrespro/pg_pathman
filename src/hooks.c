@@ -36,10 +36,10 @@
 #include "utils/typcache.h"
 #include "utils/lsyscache.h"
 
+
 /* Borrowed from joinpath.c */
 #define PATH_PARAM_BY_REL(path, rel)  \
 	((path)->param_info && bms_overlap(PATH_REQ_OUTER(path), (rel)->relids))
-
 
 static inline bool
 allow_star_schema_join(PlannerInfo *root,
@@ -373,6 +373,9 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			if (pathkeys)
 				pathkeyDesc = (PathKey *) linitial(pathkeys);
 		}
+
+		/* mark as partitioned table */
+		MarkPartitionedRTE(rti);
 
 		children = PrelGetChildrenArray(prel);
 		ranges = list_make1_irange_full(prel, IR_COMPLETE);

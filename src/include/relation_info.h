@@ -214,8 +214,6 @@ typedef enum
 	PPS_NOT_SURE			/* can't determine (not transactional state) */
 } PartParentSearch;
 
-
-
 /*
  * PartRelationInfo field access macros & functions.
  */

@@ -28,6 +28,22 @@ EXPLAIN (COSTS OFF) SELECT * FROM subpartitions.abc WHERE b  = 215;
 EXPLAIN (COSTS OFF) SELECT * FROM subpartitions.abc WHERE a  = 215 AND b  = 215;
 EXPLAIN (COSTS OFF) SELECT * FROM subpartitions.abc WHERE a >= 210 AND b >= 210;
 
+CREATE OR REPLACE FUNCTION check_multilevel_queries()
+RETURNS VOID AS
+$$
+BEGIN
+	IF NOT EXISTS(SELECT * FROM (SELECT tableoid::regclass, *
+				  FROM subpartitions.abc
+				  WHERE a = 215 AND b = 215
+			      ORDER BY a, b) t1)
+	THEN
+		RAISE EXCEPTION 'should be at least one record in result';
+	END IF;
+END
+$$ LANGUAGE plpgsql;
+SELECT check_multilevel_queries();
+DROP FUNCTION check_multilevel_queries();
+
 /* Multilevel partitioning with updates */
 CREATE OR REPLACE FUNCTION subpartitions.partitions_tree(
 	rel REGCLASS,

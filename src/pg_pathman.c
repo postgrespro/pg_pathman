@@ -1952,7 +1952,7 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		 * table and we've already filled it, skip it. Otherwise build a
 		 * pathlist for it
 		 */
-		if (!childRTE->inh || !childrel->pathlist)
+		if (!IsPartitionedRTE(childRTindex) || childrel->pathlist == NIL)
 		{
 			/* Compute child's access paths & sizes */
 			if (childRTE->relkind == RELKIND_FOREIGN_TABLE)

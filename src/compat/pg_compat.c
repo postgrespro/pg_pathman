@@ -618,8 +618,7 @@ set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel, Index rti)
 		/*
 		 * Accumulate size information from each live child.
 		 */
-		Assert(childrel->rows > 0);
-
+		Assert(childrel->rows >= 0);
 		parent_rows += childrel->rows;
 
 #if PG_VERSION_NUM >= 90600
@@ -631,6 +630,9 @@ set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel, Index rti)
 
 	/* Set 'rows' for append relation */
 	rel->rows = parent_rows;
+
+	if (parent_rows == 0)
+		parent_rows = 1;
 
 #if PG_VERSION_NUM >= 90600
 	rel->reltarget->width = rint(parent_size / parent_rows);

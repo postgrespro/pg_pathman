@@ -36,6 +36,8 @@
 /* Memory context we're going to use for tags */
 #define RELATION_TAG_MCXT TopTransactionContext
 
+extern void MarkPartitionedRTE(Index rti);
+extern bool IsPartitionedRTE(Index rti);
 
 /* Safe TAG constructor (Integer) */
 static inline List *
@@ -73,6 +75,5 @@ void rte_deconstruct_tag(const List *key_value_pair,
 void incr_refcount_relation_tags(void);
 uint32 get_refcount_relation_tags(void);
 void decr_refcount_relation_tags(void);
-
 
 #endif /* RELATION_TAGS_H */
