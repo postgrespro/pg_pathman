@@ -46,8 +46,10 @@ def if_fdw_enabled(func):
 
 
 class Tests(unittest.TestCase):
-    def start_new_pathman_cluster(self, name='test',
-                                  allow_streaming=False, test_data=False):
+    def start_new_pathman_cluster(self,
+                                  name='test',
+                                  allow_streaming=False,
+                                  test_data=False):
         node = get_new_node(name)
         node.init(allow_streaming=allow_streaming)
         node.append_conf("postgresql.conf", "shared_preload_libraries='pg_pathman'\n")
@@ -79,8 +81,7 @@ class Tests(unittest.TestCase):
                 WHERE application_name = '{0}'
             """
 
-        master.poll_query_until('postgres',
-                                wait_lsn_query.format(replica.name))
+        master.poll_query_until('postgres', wait_lsn_query.format(replica.name))
 
     def test_concurrent(self):
         """ Test concurrent partitioning """
@@ -126,7 +127,7 @@ class Tests(unittest.TestCase):
                     replica.psql('postgres', 'explain (costs off) select * from abc'))
 
                 # enable parent and see if it is enabled in replica
-                node.psql('postgres', 'select enable_parent(\'abc\'')
+                node.psql('postgres', "select enable_parent('abc')")
 
                 self.catchup_replica(node, replica)
                 self.assertEqual(
@@ -139,7 +140,8 @@ class Tests(unittest.TestCase):
                     node.execute('postgres', 'select count(*) from abc')[0][0], 300000)
 
                 # check that UPDATE in pathman_config_params invalidates cache
-                node.psql('postgres', 'update pathman_config_params set enable_parent = false')
+                node.psql('postgres',
+                          'update pathman_config_params set enable_parent = false')
                 self.catchup_replica(node, replica)
                 self.assertEqual(
                     node.psql('postgres', 'explain (costs off) select * from abc'),
@@ -147,7 +149,8 @@ class Tests(unittest.TestCase):
                 self.assertEqual(
                     node.psql('postgres', 'select * from abc'),
                     replica.psql('postgres', 'select * from abc'))
-                self.assertEqual(node.execute('postgres', 'select count(*) from abc')[0][0], 0)
+                self.assertEqual(
+                    node.execute('postgres', 'select count(*) from abc')[0][0], 0)
 
     def test_locks(self):
         """
@@ -197,15 +200,14 @@ class Tests(unittest.TestCase):
             # Start transaction that will create partition
             with node.connect() as con:
                 con.begin()
-                con.execute('select append_range_partition(\'abc\')')
+                con.execute("select append_range_partition('abc')")
 
                 # Start threads that suppose to add new partitions and wait some
                 # time
                 query = (
                     "select prepend_range_partition('abc')",
                     "select append_range_partition('abc')",
-                    "select add_range_partition('abc', 500000, 550000)",
-                )
+                    "select add_range_partition('abc', 500000, 550000)", )
                 threads = []
                 for i in range(3):
                     thread = threading.Thread(
@@ -245,7 +247,7 @@ class Tests(unittest.TestCase):
 
         def check_tablespace(node, tablename, tablespace):
             res = node.execute('postgres',
-                               'select get_tablespace(\'{}\')'.format(tablename))
+                               "select get_tablespace('{}')".format(tablename))
             if len(res) == 0:
                 return False
 
@@ -253,57 +255,63 @@ class Tests(unittest.TestCase):
 
         with get_new_node('master') as node:
             node.init()
-            node.append_conf('postgresql.conf', 'shared_preload_libraries=\'pg_pathman\'\n')
+            node.append_conf('postgresql.conf',
+                             "shared_preload_libraries='pg_pathman'\n")
             node.start()
             node.psql('postgres', 'create extension pg_pathman')
 
             # create tablespace
             path = os.path.join(node.data_dir, 'test_space_location')
             os.mkdir(path)
-            node.psql('postgres', 'create tablespace test_space location \'{}\''.format(path))
+            node.psql('postgres',
+                      "create tablespace test_space location '{}'".format(path))
 
             # create table in this tablespace
-            node.psql('postgres', 'create table abc(a serial, b int) tablespace test_space')
+            node.psql('postgres',
+                      'create table abc(a serial, b int) tablespace test_space')
 
             # create three partitions. Excpect that they will be created in the
             # same tablespace as the parent table
-            node.psql('postgres', 'select create_range_partitions(\'abc\', \'a\', 1, 10, 3)')
+            node.psql('postgres',
+                      "select create_range_partitions('abc', 'a', 1, 10, 3)")
             self.assertTrue(check_tablespace(node, 'abc', 'test_space'))
 
             # check tablespace for appended partition
-            node.psql('postgres', 'select append_range_partition(\'abc\', \'abc_appended\')')
+            node.psql('postgres',
+                      "select append_range_partition('abc', 'abc_appended')")
             self.assertTrue(check_tablespace(node, 'abc_appended', 'test_space'))
 
             # check tablespace for prepended partition
             node.psql('postgres',
-                      'select prepend_range_partition(\'abc\', \'abc_prepended\')')
+                      "select prepend_range_partition('abc', 'abc_prepended')")
             self.assertTrue(check_tablespace(node, 'abc_prepended', 'test_space'))
 
             # check tablespace for prepended partition
             node.psql('postgres',
-                      'select add_range_partition(\'abc\', 41, 51, \'abc_added\')')
+                      "select add_range_partition('abc', 41, 51, 'abc_added')")
             self.assertTrue(check_tablespace(node, 'abc_added', 'test_space'))
 
             # check tablespace for split
             node.psql('postgres',
-                      'select split_range_partition(\'abc_added\', 45, \'abc_splitted\')')
+                      "select split_range_partition('abc_added', 45, 'abc_splitted')")
             self.assertTrue(check_tablespace(node, 'abc_splitted', 'test_space'))
 
             # now let's specify tablespace explicitly
             node.psql(
                 'postgres',
-                'select append_range_partition(\'abc\', \'abc_appended_2\', \'pg_default\')')
-            node.psql(
-                'postgres',
-                'select prepend_range_partition(\'abc\', \'abc_prepended_2\', \'pg_default\')'
+                "select append_range_partition('abc', 'abc_appended_2', 'pg_default')"
             )
             node.psql(
                 'postgres',
-                'select add_range_partition(\'abc\', 61, 71, \'abc_added_2\', \'pg_default\')'
+                "select prepend_range_partition('abc', 'abc_prepended_2', 'pg_default')"
             )
             node.psql(
                 'postgres',
-                'select split_range_partition(\'abc_added_2\', 65, \'abc_splitted_2\', \'pg_default\')'
+                "select add_range_partition('abc', 61, 71, 'abc_added_2', 'pg_default')"
+            )
+            node.psql(
+                'postgres',
+                "select split_range_partition('abc_added_2', 65, 'abc_splitted_2', 'pg_default')"
             )
 
             # yapf: disable
@@ -372,13 +380,13 @@ class Tests(unittest.TestCase):
                 b'25|foreign\n')
 
             # Check that we can successfully insert new data into foreign partition
-            master.safe_psql('postgres', 'insert into abc values (26, \'part\')')
+            master.safe_psql('postgres', "insert into abc values (26, 'part')")
             self.assertEqual(
                 master.safe_psql('postgres', 'select * from ftable order by id'),
                 b'25|foreign\n26|part\n')
 
             # Testing drop partitions (including foreign partitions)
-            master.safe_psql('postgres', 'select drop_partitions(\'abc\')')
+            master.safe_psql('postgres', "select drop_partitions('abc')")
 
             # HASH partitioning with FDW:
             #   - create hash partitioned table in master
@@ -417,7 +425,7 @@ class Tests(unittest.TestCase):
             node.init()
             node.append_conf(
                 'postgresql.conf',
-                'shared_preload_libraries=\'pg_pathman, postgres_fdw\'\n')
+                "shared_preload_libraries='pg_pathman, postgres_fdw'\n")
             node.start()
 
             # Check version of postgres server
@@ -468,7 +476,7 @@ class Tests(unittest.TestCase):
 
                 # Check parallel aggregate plan
                 test_query = 'select count(*) from range_partitioned where i < 1500'
-                plan = con.execute('select query_plan(\'%s\')' % test_query)[0][0]
+                plan = con.execute("select query_plan('%s')" % test_query)[0][0]
                 expected = json.loads("""
                         [
                             {
@@ -532,7 +540,7 @@ class Tests(unittest.TestCase):
 
                 # Check simple parallel seq scan plan with limit
                 test_query = 'select * from range_partitioned where i < 1500 limit 5'
-                plan = con.execute('select query_plan(\'%s\')' % test_query)[0][0]
+                plan = con.execute("select query_plan('%s')" % test_query)[0][0]
                 expected = json.loads("""
                             [
                               {
@@ -587,7 +595,7 @@ class Tests(unittest.TestCase):
 
                 # Check the case when none partition is selected in result plan
                 test_query = 'select * from range_partitioned where i < 1'
-                plan = con.execute('select query_plan(\'%s\')' % test_query)[0][0]
+                plan = con.execute("select query_plan('%s')" % test_query)[0][0]
                 expected = json.loads("""
                     [
                         {
@@ -869,7 +877,7 @@ class Tests(unittest.TestCase):
         with get_new_node('test') as node:
             node.init()
             node.append_conf('postgresql.conf', """
-                shared_preload_libraries=\'pg_pathman\'
+                shared_preload_libraries='pg_pathman'
                 pg_pathman.override_copy=false
             """)
             node.start()
