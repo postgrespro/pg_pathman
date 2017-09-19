@@ -59,6 +59,16 @@
 	} while (0)
 #endif
 
+/*
+ * CheckValidResultRel()
+ */
+#if PG_VERSION_NUM >= 100000
+#define CheckValidResultRelCompat(rri, cmd) \
+               CheckValidResultRel((rri), (cmd))
+#elif PG_VERSION_NUM >= 90500
+#define CheckValidResultRelCompat(rri, cmd) \
+               CheckValidResultRel((rri)->ri_RelationDesc, (cmd))
+#endif
 
 /*
  * BeginCopyFrom()
@@ -588,7 +598,6 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 #define ExecASInsertTriggersCompat(estate, relinfo, transition_capture) \
 	ExecASInsertTriggers((estate), (relinfo))
 #endif
-
 
 
 /*
