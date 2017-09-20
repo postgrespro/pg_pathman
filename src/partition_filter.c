@@ -251,7 +251,6 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 
 		/* Open relation and check if it is a valid target */
 		child_rel = heap_open(partid, NoLock);
-		CheckValidResultRel(child_rel, parts_storage->command_type);
 
 		/* Build Var translation list for 'inserted_cols' */
 		make_inh_translation_list(parent_rel, child_rel, 0, &translated_vars);
@@ -300,6 +299,9 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 
 		/* ri_ConstraintExprs will be initialized by ExecRelCheck() */
 		child_result_rel_info->ri_ConstraintExprs = NULL;
+
+		/* Check that this partition is a valid result relation */
+		CheckValidResultRelCompat(child_result_rel_info, parts_storage->command_type);
 
 		/* Fill the ResultRelInfo holder */
 		rri_holder->partid = partid;
