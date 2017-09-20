@@ -13,6 +13,13 @@ SET enable_seqscan = OFF;
 /* Temporary table for JOINs */
 CREATE TABLE test.tmp (id INTEGER NOT NULL, value INTEGER NOT NULL);
 INSERT INTO test.tmp VALUES (1, 1), (2, 2);
+CREATE TABLE test.tmp2 (id INTEGER NOT NULL, value INTEGER NOT NULL);
+SELECT pathman.create_range_partitions('test.tmp2', 'id', 1, 1, 10);
+ create_range_partitions 
+-------------------------
+                      10
+(1 row)
+
 /* Partition table by RANGE */
 CREATE TABLE test.range_rel (
 	id		SERIAL PRIMARY KEY,
@@ -258,7 +265,10 @@ WITH q AS (DELETE FROM test.tmp t
 		   RETURNING *)
 DELETE FROM test.tmp USING q;
 ROLLBACK;
+/* Test special rule for CTE; DELETE + USING with partitioned table */
+DELETE FROM test.range_rel r USING test.tmp2 t WHERE t.id = r.id;
+ERROR:  pg_pathman doesn't support DELETE queries with joining of partitioned tables
 DROP SCHEMA test CASCADE;
-NOTICE:  drop cascades to 15 other objects
+NOTICE:  drop cascades to 27 other objects
 DROP EXTENSION pg_pathman CASCADE;
 DROP SCHEMA pathman CASCADE;

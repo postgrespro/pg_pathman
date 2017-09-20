@@ -99,6 +99,23 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	if (innerrel->reloptkind != RELOPT_BASEREL)
 		return;
 
+	/* check if query DELETE FROM .. USING .. */
+	if (root->parse->commandType == CMD_DELETE && jointype == JOIN_INNER)
+	{
+		int x = -1;
+		int count = 0;
+
+		while ((x = bms_next_member(joinrel->relids, x)) >= 0)
+			if (get_pathman_relation_info(root->simple_rte_array[x]->relid))
+				count += 1;
+
+		if (count > 1)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("pg_pathman doesn't support DELETE queries with "\
+							"joining of partitioned tables")));
+	}
+
 	/* We shouldn't process tables with active children */
 	if (inner_rte->inh)
 		return;
