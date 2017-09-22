@@ -99,23 +99,6 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	if (innerrel->reloptkind != RELOPT_BASEREL)
 		return;
 
-	/* check if query DELETE FROM .. USING .. */
-	if (root->parse->commandType == CMD_DELETE && jointype == JOIN_INNER)
-	{
-		int x = -1;
-		int count = 0;
-
-		while ((x = bms_next_member(joinrel->relids, x)) >= 0)
-			if (get_pathman_relation_info(root->simple_rte_array[x]->relid))
-				count += 1;
-
-		if (count > 1)
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("pg_pathman doesn't support DELETE queries with "\
-							"joining of partitioned tables")));
-	}
-
 	/* We shouldn't process tables with active children */
 	if (inner_rte->inh)
 		return;
@@ -128,6 +111,41 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	if (innerrel->reloptkind != RELOPT_BASEREL ||
 		!(inner_prel = get_pathman_relation_info(inner_rte->relid)))
 		return;
+
+	/*
+	 * Check if query is:
+	 *		1) UPDATE part_table SET = .. FROM part_table.
+	 *		2) DELETE FROM part_table USING part_table.
+	 *
+	 * Either outerrel or innerrel may be a result relation.
+	 */
+	if ((root->parse->resultRelation == outerrel->relid ||
+		 root->parse->resultRelation == innerrel->relid) &&
+			(root->parse->commandType == CMD_UPDATE ||
+			 root->parse->commandType == CMD_DELETE))
+	{
+		int		rti = -1,
+				count = 0;
+
+		/* Inner relation must be partitioned */
+		Assert(inner_prel);
+
+		/* Check each base rel of outer relation */
+		while ((rti = bms_next_member(outerrel->relids, rti)) >= 0)
+		{
+			Oid outer_baserel = root->simple_rte_array[rti]->relid;
+
+			/* Is it partitioned? */
+			if (get_pathman_relation_info(outer_baserel))
+				count++;
+		}
+
+		if (count > 0)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("DELETE and UPDATE queries with a join "
+							"of partitioned tables are not supported")));
+	}
 
 	/* Skip if inner table is not allowed to act as parent (e.g. FROM ONLY) */
 	if (PARENTHOOD_DISALLOWED == get_rel_parenthood_status(root->parse->queryId,
