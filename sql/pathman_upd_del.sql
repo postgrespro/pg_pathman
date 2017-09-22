@@ -21,6 +21,9 @@ SET enable_seqscan = OFF;
 CREATE TABLE test.tmp (id INTEGER NOT NULL, value INTEGER NOT NULL);
 INSERT INTO test.tmp VALUES (1, 1), (2, 2);
 
+CREATE TABLE test.tmp2 (id INTEGER NOT NULL, value INTEGER NOT NULL);
+SELECT pathman.create_range_partitions('test.tmp2', 'id', 1, 1, 10);
+
 
 /* Partition table by RANGE */
 CREATE TABLE test.range_rel (
@@ -164,7 +167,8 @@ WITH q AS (DELETE FROM test.tmp t
 DELETE FROM test.tmp USING q;
 ROLLBACK;
 
-
+/* Test special rule for CTE; DELETE + USING with partitioned table */
+DELETE FROM test.range_rel r USING test.tmp2 t WHERE t.id = r.id;
 
 DROP SCHEMA test CASCADE;
 DROP EXTENSION pg_pathman CASCADE;

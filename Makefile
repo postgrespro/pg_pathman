@@ -10,7 +10,11 @@ OBJS = src/init.o src/relation_info.o src/utils.o src/partition_filter.o \
 	src/compat/pg_compat.o src/compat/relation_tags.o src/compat/rowmarks_fix.o \
 	$(WIN32RES)
 
+ifdef USE_PGXS
 override PG_CPPFLAGS += -I$(CURDIR)/src/include
+else
+override PG_CPPFLAGS += -I$(top_srcdir)/$(subdir)/src/include
+endif
 
 EXTENSION = pg_pathman
 
