@@ -15,30 +15,33 @@ ALPINE_ENTRYPOINT = 'docker-entrypoint.sh'
 
 '''
 How to create this patch:
-	1) put `import ipdb; ipdb.set_trace()` in make_alpine_image, after `open(patch_name)..`
-	2) run the script
-	3) in temporary folder run `cp Dockerfile Dockerfile.1 && vim Dockerfile.1 && diff -Naur Dockerfile Dockerfile.1 > ./cassert.patch`
-	4) contents of cassert.patch put to variable below
-	5) change Dockerfile.1 to Dockerfile in text, change `\` symbols to `\\`
+	* put `import ipdb; ipdb.set_trace()` in make_alpine_image, just before `open(patch_name)..`
+	* run the script
+	* in temporary folder run `cp Dockerfile Dockerfile.1 && vim Dockerfile.1`
+	* uncomment --enable-debug, add --enable-cassert, add `CFLAGS="-g3 -O0"` before ./configure
+	* run `diff -Naur Dockerfile Dockerfile.1 > ./cassert.patch`
+	* contents of cassert.patch put to variable below
+	* change Dockerfile.1 to Dockerfile in text, change `\` symbols to `\\`
 '''
 ALPINE_PATCH = b'''
---- Dockerfile	2017-07-27 14:54:10.403971867 +0300
-+++ Dockerfile	2017-07-27 14:56:01.132503106 +0300
-@@ -79,7 +79,7 @@
+--- Dockerfile	2017-09-25 12:01:24.597813507 +0300
++++ Dockerfile	2017-09-25 12:09:06.104059704 +0300
+@@ -79,15 +79,15 @@
  	&& wget -O config/config.sub 'https://git.savannah.gnu.org/cgit/config.git/plain/config.sub?id=7d3d27baf8107b630586c962c057e22149653deb' \\
  # configure options taken from:
  # https://anonscm.debian.org/cgit/pkg-postgresql/postgresql.git/tree/debian/rules?h=9.5
 -	&& ./configure \\
-+	&& CFLAGS="-O0" ./configure \\
++	&& CFLAGS="-g3 -O0" ./configure \\
  		--build="$gnuArch" \\
  # "/usr/src/postgresql/src/backend/access/common/tupconvert.c:105: undefined reference to `libintl_gettext'"
  #		--enable-nls \\
-@@ -87,7 +87,7 @@
+ 		--enable-integer-datetimes \\
  		--enable-thread-safety \\
  		--enable-tap-tests \\
- # skip debugging info -- we want tiny size instead
+-# skip debugging info -- we want tiny size instead
 -#		--enable-debug \\
 +		--enable-debug \\
++		--enable-cassert \\
  		--disable-rpath \\
  		--with-uuid=e2fs \\
  		--with-gnu-ld \\
