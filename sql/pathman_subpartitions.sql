@@ -97,7 +97,15 @@ SELECT tableoid::regclass, * FROM subpartitions.abc;	/* Should be in subpartitio
 UPDATE subpartitions.abc SET b = 125 WHERE a = 125 and b = 75;
 SELECT tableoid::regclass, * FROM subpartitions.abc;	/* Should create subpartitions.abc_2_3 */
 
+/* split_range_partition */
+SELECT split_range_partition('subpartitions.abc_2', 150);
+SELECT split_range_partition('subpartitions.abc_2_2', 75);
+SELECT subpartitions.partitions_tree('subpartitions.abc');
 
+/* merge_range_partitions */
+SELECT append_range_partition('subpartitions.abc', 'subpartitions.abc_3');
+select merge_range_partitions('subpartitions.abc_2', 'subpartitions.abc_3');
+select merge_range_partitions('subpartitions.abc_2_1', 'subpartitions.abc_2_2');
 
 DROP TABLE subpartitions.abc CASCADE;
 DROP SCHEMA subpartitions CASCADE;

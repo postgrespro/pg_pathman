@@ -300,8 +300,46 @@ SELECT tableoid::regclass, * FROM subpartitions.abc;	/* Should create subpartiti
  subpartitions.abc_2_3 | 125 | 125
 (10 rows)
 
+/* split_range_partition */
+SELECT split_range_partition('subpartitions.abc_2', 150);
+ERROR:  could not split partition if it has children
+SELECT split_range_partition('subpartitions.abc_2_2', 75);
+ split_range_partition 
+-----------------------
+ {50,100}
+(1 row)
+
+SELECT subpartitions.partitions_tree('subpartitions.abc');
+     partitions_tree      
+--------------------------
+ subpartitions.abc
+  subpartitions.abc_1
+    subpartitions.abc_1_1
+    subpartitions.abc_1_2
+  subpartitions.abc_2
+    subpartitions.abc_2_1
+    subpartitions.abc_2_2
+    subpartitions.abc_2_4
+    subpartitions.abc_2_3
+(9 rows)
+
+/* merge_range_partitions */
+SELECT append_range_partition('subpartitions.abc', 'subpartitions.abc_3');
+ append_range_partition 
+------------------------
+ subpartitions.abc_3
+(1 row)
+
+select merge_range_partitions('subpartitions.abc_2', 'subpartitions.abc_3');
+ERROR:  cannot merge partitions
+select merge_range_partitions('subpartitions.abc_2_1', 'subpartitions.abc_2_2');
+ merge_range_partitions 
+------------------------
+ 
+(1 row)
+
 DROP TABLE subpartitions.abc CASCADE;
-NOTICE:  drop cascades to 10 other objects
+NOTICE:  drop cascades to 11 other objects
 DROP SCHEMA subpartitions CASCADE;
 NOTICE:  drop cascades to function subpartitions.partitions_tree(regclass,text)
 DROP EXTENSION pg_pathman;

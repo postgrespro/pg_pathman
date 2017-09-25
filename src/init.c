@@ -406,7 +406,7 @@ fini_local_cache(void)
  * find_inheritance_children
  *
  * Returns an array containing the OIDs of all relations which
- * inherit *directly* from the relation with OID 'parentrelId'.
+ * inherit *directly* from the relation with OID 'parent_relid'.
  *
  * The specified lock type is acquired on each child relation (but not on the
  * given rel; caller should already have locked it).  If lockmode is NoLock
@@ -416,7 +416,7 @@ fini_local_cache(void)
  * borrowed from pg_inherits.c
  */
 find_children_status
-find_inheritance_children_array(Oid parentrelId,
+find_inheritance_children_array(Oid parent_relid,
 								LOCKMODE lockmode,
 								bool nowait,
 								uint32 *children_size,	/* ret value #1 */
@@ -444,7 +444,7 @@ find_inheritance_children_array(Oid parentrelId,
 	 * Can skip the scan if pg_class shows the
 	 * relation has never had a subclass.
 	 */
-	if (!has_subclass(parentrelId))
+	if (!has_subclass(parent_relid))
 		return FCS_NO_CHILDREN;
 
 	/*
@@ -459,7 +459,7 @@ find_inheritance_children_array(Oid parentrelId,
 	ScanKeyInit(&key[0],
 				Anum_pg_inherits_inhparent,
 				BTEqualStrategyNumber, F_OIDEQ,
-				ObjectIdGetDatum(parentrelId));
+				ObjectIdGetDatum(parent_relid));
 
 	scan = systable_beginscan(relation, InheritsParentIndexId, true,
 							  NULL, 1, key);

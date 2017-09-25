@@ -313,19 +313,28 @@ CREATE OR REPLACE FUNCTION @extschema@.split_range_partition(
 	OUT p_range		ANYARRAY)
 RETURNS ANYARRAY AS $$
 DECLARE
-	parent_relid	REGCLASS;
-	part_type		INTEGER;
-	part_expr		TEXT;
-	part_expr_type	REGTYPE;
-	check_name		TEXT;
-	check_cond		TEXT;
-	new_partition	TEXT;
+	parent_relid		REGCLASS;
+	inhparent			REGCLASS;
+	part_type			INTEGER;
+	part_expr			TEXT;
+	part_expr_type		REGTYPE;
+	check_name			TEXT;
+	check_cond			TEXT;
+	new_partition		TEXT;
 
 BEGIN
 	parent_relid = @extschema@.get_parent_of_partition(partition_relid);
 
 	PERFORM @extschema@.validate_relname(parent_relid);
 	PERFORM @extschema@.validate_relname(partition_relid);
+
+	EXECUTE format('SELECT inhparent::REGCLASS FROM pg_inherits WHERE inhparent = $1 LIMIT 1')
+	USING partition_relid
+	INTO inhparent;
+
+	if inhparent IS NOT NULL THEN
+		RAISE EXCEPTION 'could not split partition if it has children';
+	END IF;
 
 	/* Acquire lock on parent */
 	PERFORM @extschema@.prevent_part_modification(parent_relid);

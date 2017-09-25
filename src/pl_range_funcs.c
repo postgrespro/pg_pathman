@@ -16,9 +16,10 @@
 #include "xact_handling.h"
 
 #include "access/xact.h"
-#include "catalog/namespace.h"
-#include "catalog/pg_type.h"
 #include "catalog/heap.h"
+#include "catalog/namespace.h"
+#include "catalog/pg_inherits_fn.h"
+#include "catalog/pg_type.h"
 #include "commands/tablecmds.h"
 #include "executor/spi.h"
 #include "nodes/nodeFuncs.h"
@@ -636,7 +637,17 @@ merge_range_partitions(PG_FUNCTION_ARGS)
 	/* Extract partition Oids from array */
 	partitions = palloc(sizeof(Oid) * nparts);
 	for (i = 0; i < nparts; i++)
-		partitions[i] = DatumGetObjectId(datums[i]);
+	{
+		Oid		partition_relid;
+		partition_relid = DatumGetObjectId(datums[i]);
+
+		/* check that is not has subpartitions */
+		if (has_subclass(partition_relid))
+			ereport(ERROR, (errmsg("cannot merge partitions"),
+							errdetail("at least one of specified partitions has children")));
+
+		partitions[i] = partition_relid;
+	}
 
 	if (nparts < 2)
 		ereport(ERROR, (errmsg("cannot merge partitions"),
