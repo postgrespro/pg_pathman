@@ -93,7 +93,7 @@ if test -f regression.diffs; then cat regression.diffs; fi
 set +u
 
 # create virtual environment and activate it
-virtualenv /tmp/envs/pg_pathman
+virtualenv /tmp/envs/pg_pathman --python=python3
 source /tmp/envs/pg_pathman/bin/activate
 type python
 type pip
