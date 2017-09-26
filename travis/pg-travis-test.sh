@@ -7,7 +7,7 @@ sudo apt-get update
 
 # required packages
 apt_packages="postgresql-$PG_VER postgresql-server-dev-$PG_VER postgresql-common python-pip python-dev build-essential"
-pip_packages="testgres"
+pip_packages="testgres==0.4.0"
 
 # exit code
 status=0
