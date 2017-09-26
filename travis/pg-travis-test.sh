@@ -95,6 +95,8 @@ set +u
 # create virtual environment and activate it
 virtualenv /tmp/envs/pg_pathman
 source /tmp/envs/pg_pathman/bin/activate
+type python
+type pip
 
 # install pip packages
 pip install $pip_packages
