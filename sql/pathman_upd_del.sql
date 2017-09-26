@@ -17,7 +17,7 @@ SET enable_indexscan = ON;
 SET enable_seqscan = OFF;
 
 
-/* Temporary table for JOINs */
+/* Temporary tables for JOINs */
 CREATE TABLE test.tmp (id INTEGER NOT NULL, value INTEGER NOT NULL);
 INSERT INTO test.tmp VALUES (1, 1), (2, 2);
 
@@ -37,6 +37,9 @@ FROM generate_series('2010-01-01'::date, '2010-12-31'::date, '1 day') AS g;
 SELECT pathman.create_range_partitions('test.range_rel', 'dt',
 									   '2010-01-01'::date, '1 month'::interval,
 									   12);
+
+
+VACUUM ANALYZE;
 
 
 /*
@@ -123,6 +126,66 @@ WHERE r.dt = '2010-01-02' AND r.id = t.id;
 ROLLBACK;
 
 
+/* DELETE + USING, two partitioned tables */
+EXPLAIN (COSTS OFF)
+DELETE FROM test.range_rel r USING test.tmp2 t
+WHERE t.id = r.id;
+
+BEGIN;
+DELETE FROM test.range_rel r USING test.tmp2 t
+WHERE t.id = r.id;
+ROLLBACK;
+
+
+/* DELETE + USING, partitioned table + two partitioned tables in subselect */
+EXPLAIN (COSTS OFF)
+DELETE FROM test.range_rel r
+USING (SELECT *
+	   FROM test.tmp2 a1
+	   JOIN test.tmp2 a2
+	   USING(id)) t
+WHERE t.id = r.id;
+
+BEGIN;
+DELETE FROM test.range_rel r
+USING (SELECT *
+	   FROM test.tmp2 a1
+	   JOIN test.tmp2 a2
+	   USING(id)) t
+WHERE t.id = r.id;
+ROLLBACK;
+
+
+/* DELETE + USING, single table + two partitioned tables in subselect */
+EXPLAIN (COSTS OFF)
+DELETE FROM test.tmp r
+USING (SELECT *
+	   FROM test.tmp2 a1
+	   JOIN test.tmp2 a2
+	   USING(id)) t
+WHERE t.id = r.id;
+
+BEGIN;
+DELETE FROM test.tmp r
+USING (SELECT *
+	   FROM test.tmp2 a1
+	   JOIN test.tmp2 a2
+	   USING(id)) t
+WHERE t.id = r.id;
+ROLLBACK;
+
+
+/* UPDATE + FROM, two partitioned tables */
+EXPLAIN (COSTS OFF)
+UPDATE test.range_rel r SET value = 1 FROM test.tmp2 t
+WHERE t.id = r.id;
+
+BEGIN;
+UPDATE test.range_rel r SET value = 1 FROM test.tmp2 t
+WHERE t.id = r.id;
+ROLLBACK;
+
+
 /* Test special rule for CTE; SELECT (PostgreSQL 9.5) */
 EXPLAIN (COSTS OFF)
 WITH q AS (SELECT * FROM test.range_rel r
@@ -167,8 +230,7 @@ WITH q AS (DELETE FROM test.tmp t
 DELETE FROM test.tmp USING q;
 ROLLBACK;
 
-/* Test special rule for CTE; DELETE + USING with partitioned table */
-DELETE FROM test.range_rel r USING test.tmp2 t WHERE t.id = r.id;
+
 
 DROP SCHEMA test CASCADE;
 DROP EXTENSION pg_pathman CASCADE;
