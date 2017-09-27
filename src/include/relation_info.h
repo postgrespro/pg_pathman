@@ -296,6 +296,8 @@ Datum cook_partitioning_expression(const Oid relid,
 
 char *canonicalize_partitioning_expression(const Oid relid,
 										   const char *expr_cstr);
+bool is_equal_to_partitioning_expression(Oid relid, char *expression,
+										 Oid value_type);
 
 /* Global invalidation routines */
 void delay_pathman_shutdown(void);
@@ -312,6 +314,8 @@ Oid get_parent_of_partition(Oid partition, PartParentSearch *status);
 void forget_bounds_of_partition(Oid partition);
 PartBoundInfo *get_bounds_of_partition(Oid partition,
 									   const PartRelationInfo *prel);
+Datum get_lower_bound(Oid parent_relid, Oid value_type);
+Datum get_upper_bound(Oid relid, Oid value_type);
 
 /* PartType wrappers */
 

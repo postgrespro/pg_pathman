@@ -82,8 +82,8 @@ SET pg_pathman.enable_partitionrouter = ON;
 
 CREATE TABLE subpartitions.abc(a INTEGER NOT NULL, b INTEGER NOT NULL);
 SELECT create_range_partitions('subpartitions.abc', 'a', 0, 100, 2);
-SELECT create_range_partitions('subpartitions.abc_1', 'b', 0, 50, 2);
-SELECT create_range_partitions('subpartitions.abc_2', 'b', 0, 50, 2);
+SELECT create_range_partitions('subpartitions.abc_1', 'b', 0, 50, 2); /* 0 - 100 */
+SELECT create_range_partitions('subpartitions.abc_2', 'b', 0, 50, 2); /* 100 - 200 */
 
 INSERT INTO subpartitions.abc SELECT 25, 25 FROM generate_series(1, 10);
 SELECT tableoid::regclass, * FROM subpartitions.abc;	/* Should be in subpartitions.abc_1_1 */
@@ -103,9 +103,12 @@ SELECT split_range_partition('subpartitions.abc_2_2', 75);
 SELECT subpartitions.partitions_tree('subpartitions.abc');
 
 /* merge_range_partitions */
-SELECT append_range_partition('subpartitions.abc', 'subpartitions.abc_3');
+SELECT append_range_partition('subpartitions.abc', 'subpartitions.abc_3'); /* 200 - 300 */
 select merge_range_partitions('subpartitions.abc_2', 'subpartitions.abc_3');
 select merge_range_partitions('subpartitions.abc_2_1', 'subpartitions.abc_2_2');
+
+/* create subpartitions but use same expression */
+SELECT create_range_partitions('subpartitions.abc_3', 'a', 150, 50, 2);
 
 DROP TABLE subpartitions.abc CASCADE;
 DROP SCHEMA subpartitions CASCADE;
