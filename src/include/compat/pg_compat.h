@@ -106,6 +106,16 @@ calc_nestloop_required_outer_compat(Path *outer_path, Path *inner_path)
 	} while (0)
 #endif
 
+/*
+ * CheckValidResultRel()
+ */
+#if PG_VERSION_NUM >= 100000
+#define CheckValidResultRelCompat(rri, cmd) \
+               CheckValidResultRel((rri), (cmd))
+#elif PG_VERSION_NUM >= 90500
+#define CheckValidResultRelCompat(rri, cmd) \
+               CheckValidResultRel((rri)->ri_RelationDesc, (cmd))
+#endif
 
 /*
  * BeginCopyFrom()

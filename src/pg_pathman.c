@@ -1936,6 +1936,9 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		childRTE = root->simple_rte_array[childRTindex];
 		childrel = root->simple_rel_array[childRTindex];
 
+		if (!childrel)
+			elog(ERROR, "could not make access paths to a relation");
+
 #if PG_VERSION_NUM >= 90600
 		/*
 		 * If parallelism is allowable for this query in general and for parent
