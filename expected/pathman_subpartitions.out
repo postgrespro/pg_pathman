@@ -224,13 +224,13 @@ SELECT create_range_partitions('subpartitions.abc', 'a', 0, 100, 2);
                        2
 (1 row)
 
-SELECT create_range_partitions('subpartitions.abc_1', 'b', 0, 50, 2);
+SELECT create_range_partitions('subpartitions.abc_1', 'b', 0, 50, 2); /* 0 - 100 */
  create_range_partitions 
 -------------------------
                        2
 (1 row)
 
-SELECT create_range_partitions('subpartitions.abc_2', 'b', 0, 50, 2);
+SELECT create_range_partitions('subpartitions.abc_2', 'b', 0, 50, 2); /* 100 - 200 */
  create_range_partitions 
 -------------------------
                        2
@@ -324,7 +324,7 @@ SELECT subpartitions.partitions_tree('subpartitions.abc');
 (9 rows)
 
 /* merge_range_partitions */
-SELECT append_range_partition('subpartitions.abc', 'subpartitions.abc_3');
+SELECT append_range_partition('subpartitions.abc', 'subpartitions.abc_3'); /* 200 - 300 */
  append_range_partition 
 ------------------------
  subpartitions.abc_3
@@ -340,6 +340,149 @@ select merge_range_partitions('subpartitions.abc_2_1', 'subpartitions.abc_2_2');
 
 DROP TABLE subpartitions.abc CASCADE;
 NOTICE:  drop cascades to 11 other objects
+/* subpartitions on same expressions */
+CREATE TABLE subpartitions.abc(a INTEGER NOT NULL);
+INSERT INTO subpartitions.abc SELECT i FROM generate_series(1, 200, 20) as i;
+SELECT create_range_partitions('subpartitions.abc', 'a', 0, 100, 4);
+ create_range_partitions 
+-------------------------
+                       4
+(1 row)
+
+SELECT create_range_partitions('subpartitions.abc_1', 'a', 0, 11, 9); /* not multiple */
+ create_range_partitions 
+-------------------------
+                       9
+(1 row)
+
+SELECT create_range_partitions('subpartitions.abc_2', 'a', 150, 11, 8); /* start_value should be lower */
+WARNING:  "start_value" was set to 100
+ create_range_partitions 
+-------------------------
+                       8
+(1 row)
+
+SELECT create_range_partitions('subpartitions.abc_3', 'a', 200, 11, 20); /* too big p_count */
+WARNING:  "p_interval" is not multiple of range (200, 310)
+NOTICE:  "p_count" was limited to 10
+ create_range_partitions 
+-------------------------
+                      10
+(1 row)
+
+SELECT create_range_partitions('subpartitions.abc_4', 'a', ARRAY[301, 350, 400]); /* bounds check */
+ERROR:  Bounds should start from 300
+SELECT create_range_partitions('subpartitions.abc_4', 'a', ARRAY[300, 450, 500]); /* bounds check */
+ERROR:  Lower bound of rightmost partition should be less than 400
+SELECT create_range_partitions('subpartitions.abc_4', 'a', ARRAY[300, 350, 450]); /* bounds check */
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+\d+ subpartitions.abc_1
+                               Table "subpartitions.abc_1"
+ Column |  Type   | Collation | Nullable | Default | Storage | Stats target | Description 
+--------+---------+-----------+----------+---------+---------+--------------+-------------
+ a      | integer |           | not null |         | plain   |              | 
+Check constraints:
+    "pathman_abc_1_check" CHECK (a >= 0 AND a < 100)
+Inherits: subpartitions.abc
+Child tables: subpartitions.abc_1_1,
+              subpartitions.abc_1_2,
+              subpartitions.abc_1_3,
+              subpartitions.abc_1_4,
+              subpartitions.abc_1_5,
+              subpartitions.abc_1_6,
+              subpartitions.abc_1_7,
+              subpartitions.abc_1_8,
+              subpartitions.abc_1_9
+
+SELECT * FROM pathman_partition_list;
+       parent        |       partition        | parttype | expr | range_min | range_max 
+---------------------+------------------------+----------+------+-----------+-----------
+ subpartitions.abc   | subpartitions.abc_1    |        2 | a    | 0         | 100
+ subpartitions.abc   | subpartitions.abc_2    |        2 | a    | 100       | 200
+ subpartitions.abc   | subpartitions.abc_3    |        2 | a    | 200       | 300
+ subpartitions.abc   | subpartitions.abc_4    |        2 | a    | 300       | 400
+ subpartitions.abc_1 | subpartitions.abc_1_1  |        2 | a    | 0         | 11
+ subpartitions.abc_1 | subpartitions.abc_1_2  |        2 | a    | 11        | 22
+ subpartitions.abc_1 | subpartitions.abc_1_3  |        2 | a    | 22        | 33
+ subpartitions.abc_1 | subpartitions.abc_1_4  |        2 | a    | 33        | 44
+ subpartitions.abc_1 | subpartitions.abc_1_5  |        2 | a    | 44        | 55
+ subpartitions.abc_1 | subpartitions.abc_1_6  |        2 | a    | 55        | 66
+ subpartitions.abc_1 | subpartitions.abc_1_7  |        2 | a    | 66        | 77
+ subpartitions.abc_1 | subpartitions.abc_1_8  |        2 | a    | 77        | 88
+ subpartitions.abc_1 | subpartitions.abc_1_9  |        2 | a    | 88        | 99
+ subpartitions.abc_2 | subpartitions.abc_2_1  |        2 | a    | 100       | 111
+ subpartitions.abc_2 | subpartitions.abc_2_2  |        2 | a    | 111       | 122
+ subpartitions.abc_2 | subpartitions.abc_2_3  |        2 | a    | 122       | 133
+ subpartitions.abc_2 | subpartitions.abc_2_4  |        2 | a    | 133       | 144
+ subpartitions.abc_2 | subpartitions.abc_2_5  |        2 | a    | 144       | 155
+ subpartitions.abc_2 | subpartitions.abc_2_6  |        2 | a    | 155       | 166
+ subpartitions.abc_2 | subpartitions.abc_2_7  |        2 | a    | 166       | 177
+ subpartitions.abc_2 | subpartitions.abc_2_8  |        2 | a    | 177       | 188
+ subpartitions.abc_3 | subpartitions.abc_3_1  |        2 | a    | 200       | 211
+ subpartitions.abc_3 | subpartitions.abc_3_2  |        2 | a    | 211       | 222
+ subpartitions.abc_3 | subpartitions.abc_3_3  |        2 | a    | 222       | 233
+ subpartitions.abc_3 | subpartitions.abc_3_4  |        2 | a    | 233       | 244
+ subpartitions.abc_3 | subpartitions.abc_3_5  |        2 | a    | 244       | 255
+ subpartitions.abc_3 | subpartitions.abc_3_6  |        2 | a    | 255       | 266
+ subpartitions.abc_3 | subpartitions.abc_3_7  |        2 | a    | 266       | 277
+ subpartitions.abc_3 | subpartitions.abc_3_8  |        2 | a    | 277       | 288
+ subpartitions.abc_3 | subpartitions.abc_3_9  |        2 | a    | 288       | 299
+ subpartitions.abc_3 | subpartitions.abc_3_10 |        2 | a    | 299       | 310
+ subpartitions.abc_4 | subpartitions.abc_4_1  |        2 | a    | 300       | 350
+ subpartitions.abc_4 | subpartitions.abc_4_2  |        2 | a    | 350       | 450
+(33 rows)
+
+SELECT append_range_partition('subpartitions.abc_1'::regclass);
+ append_range_partition 
+------------------------
+ subpartitions.abc_1_10
+(1 row)
+
+SELECT append_range_partition('subpartitions.abc_1'::regclass);
+ERROR:  reached upper bound in the current level of subpartitions
+DROP TABLE subpartitions.abc_1_10;
+/* detach_range_partition */
+SELECt detach_range_partition('subpartitions.abc_1');
+ERROR:  could not detach partition if it has children
+/* attach_range_partition */
+CREATE TABLE subpartitions.abc_c(LIKE subpartitions.abc_1 INCLUDING ALL);
+SELECT attach_range_partition('subpartitions.abc_1', 'subpartitions.abc_c', 98, 110); /* fail */
+ERROR:  specified range [98, 110) overlaps with existing partitions
+SELECT attach_range_partition('subpartitions.abc_1', 'subpartitions.abc_c', 100, 110); /* fail */
+ERROR:  "start value" exceeds upper bound of the current level of subpartitions
+SELECT attach_range_partition('subpartitions.abc_1', 'subpartitions.abc_c', 99, 110); /* ok */
+ attach_range_partition 
+------------------------
+ subpartitions.abc_c
+(1 row)
+
+DROP TABLE subpartitions.abc CASCADE;
+NOTICE:  drop cascades to 39 other objects
+/* subpartitions on same expression but dates */
+CREATE TABLE subpartitions.abc(a DATE NOT NULL);
+INSERT INTO subpartitions.abc SELECT current_date + i  FROM generate_series(1, 200, 20) as i;
+SELECT create_range_partitions('subpartitions.abc', 'a', current_date, '1 month'::INTERVAL);
+ create_range_partitions 
+-------------------------
+                       6
+(1 row)
+
+SELECT create_range_partitions('subpartitions.abc_1', 'a', current_date + 1,
+	'32 day'::INTERVAL, 10); /* not multiple, and limited p_count */
+WARNING:  "start_value" was set to 10-02-2017
+WARNING:  "p_interval" is not multiple of range (10-02-2017, 11-03-2017)
+NOTICE:  "p_count" was limited to 1
+ create_range_partitions 
+-------------------------
+                       1
+(1 row)
+
+DROP TABLE subpartitions.abc CASCADE;
+NOTICE:  drop cascades to 9 other objects
 DROP SCHEMA subpartitions CASCADE;
 NOTICE:  drop cascades to function subpartitions.partitions_tree(regclass,text)
 DROP EXTENSION pg_pathman;

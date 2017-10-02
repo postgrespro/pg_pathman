@@ -1061,7 +1061,7 @@ is_equal_to_partitioning_expression(Oid relid, char *expression,
 	/* caller should have been check it already */
 	Assert(prel != NULL);
 
-	return (expr_type == value_type) &&
+	return (getBaseType(expr_type) == value_type) &&
 		   (strcmp(cexpr, prel->expr_cstr) == 0);
 }
 

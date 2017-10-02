@@ -371,7 +371,7 @@ PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line 9 at PERF
 SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
 												 expression,
 												 partition_data)"
-PL/pgSQL function create_range_partitions(regclass,text,anyelement,interval,integer,boolean) line 12 at PERFORM
+PL/pgSQL function create_range_partitions(regclass,text,anyelement,interval,integer,boolean) line 13 at PERFORM
 /* Try using mutable expression */
 SELECT create_range_partitions('test_exprs.range_rel', 'RANDOM()',
 							   '15 years'::INTERVAL, '1 year'::INTERVAL, 10);
@@ -382,7 +382,7 @@ PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line 9 at PERF
 SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
 												 expression,
 												 partition_data)"
-PL/pgSQL function create_range_partitions(regclass,text,anyelement,interval,integer,boolean) line 12 at PERFORM
+PL/pgSQL function create_range_partitions(regclass,text,anyelement,interval,integer,boolean) line 13 at PERFORM
 /* Check that 'pathman_hooks_enabled' is true (1 partition in plan) */
 EXPLAIN (COSTS OFF) INSERT INTO test_exprs.canary_copy
 SELECT * FROM test_exprs.canary WHERE val = 1;

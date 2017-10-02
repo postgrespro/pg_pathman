@@ -107,8 +107,41 @@ SELECT append_range_partition('subpartitions.abc', 'subpartitions.abc_3'); /* 20
 select merge_range_partitions('subpartitions.abc_2', 'subpartitions.abc_3');
 select merge_range_partitions('subpartitions.abc_2_1', 'subpartitions.abc_2_2');
 
-/* create subpartitions but use same expression */
-SELECT create_range_partitions('subpartitions.abc_3', 'a', 150, 50, 2);
+DROP TABLE subpartitions.abc CASCADE;
+
+/* subpartitions on same expressions */
+CREATE TABLE subpartitions.abc(a INTEGER NOT NULL);
+INSERT INTO subpartitions.abc SELECT i FROM generate_series(1, 200, 20) as i;
+SELECT create_range_partitions('subpartitions.abc', 'a', 0, 100, 4);
+SELECT create_range_partitions('subpartitions.abc_1', 'a', 0, 11, 9); /* not multiple */
+SELECT create_range_partitions('subpartitions.abc_2', 'a', 150, 11, 8); /* start_value should be lower */
+SELECT create_range_partitions('subpartitions.abc_3', 'a', 200, 11, 20); /* too big p_count */
+SELECT create_range_partitions('subpartitions.abc_4', 'a', ARRAY[301, 350, 400]); /* bounds check */
+SELECT create_range_partitions('subpartitions.abc_4', 'a', ARRAY[300, 450, 500]); /* bounds check */
+SELECT create_range_partitions('subpartitions.abc_4', 'a', ARRAY[300, 350, 450]); /* bounds check */
+\d+ subpartitions.abc_1
+SELECT * FROM pathman_partition_list;
+SELECT append_range_partition('subpartitions.abc_1'::regclass);
+SELECT append_range_partition('subpartitions.abc_1'::regclass);
+DROP TABLE subpartitions.abc_1_10;
+
+/* detach_range_partition */
+SELECt detach_range_partition('subpartitions.abc_1');
+
+/* attach_range_partition */
+CREATE TABLE subpartitions.abc_c(LIKE subpartitions.abc_1 INCLUDING ALL);
+SELECT attach_range_partition('subpartitions.abc_1', 'subpartitions.abc_c', 98, 110); /* fail */
+SELECT attach_range_partition('subpartitions.abc_1', 'subpartitions.abc_c', 100, 110); /* fail */
+SELECT attach_range_partition('subpartitions.abc_1', 'subpartitions.abc_c', 99, 110); /* ok */
+
+DROP TABLE subpartitions.abc CASCADE;
+
+/* subpartitions on same expression but dates */
+CREATE TABLE subpartitions.abc(a DATE NOT NULL);
+INSERT INTO subpartitions.abc SELECT current_date + i  FROM generate_series(1, 200, 20) as i;
+SELECT create_range_partitions('subpartitions.abc', 'a', current_date, '1 month'::INTERVAL);
+SELECT create_range_partitions('subpartitions.abc_1', 'a', current_date + 1,
+	'32 day'::INTERVAL, 10); /* not multiple, and limited p_count */
 
 DROP TABLE subpartitions.abc CASCADE;
 DROP SCHEMA subpartitions CASCADE;
