@@ -380,24 +380,6 @@ SELECT create_range_partitions('subpartitions.abc_4', 'a', ARRAY[300, 350, 450])
                        2
 (1 row)
 
-\d+ subpartitions.abc_1
-                               Table "subpartitions.abc_1"
- Column |  Type   | Collation | Nullable | Default | Storage | Stats target | Description 
---------+---------+-----------+----------+---------+---------+--------------+-------------
- a      | integer |           | not null |         | plain   |              | 
-Check constraints:
-    "pathman_abc_1_check" CHECK (a >= 0 AND a < 100)
-Inherits: subpartitions.abc
-Child tables: subpartitions.abc_1_1,
-              subpartitions.abc_1_2,
-              subpartitions.abc_1_3,
-              subpartitions.abc_1_4,
-              subpartitions.abc_1_5,
-              subpartitions.abc_1_6,
-              subpartitions.abc_1_7,
-              subpartitions.abc_1_8,
-              subpartitions.abc_1_9
-
 SELECT * FROM pathman_partition_list;
        parent        |       partition        | parttype | expr | range_min | range_max 
 ---------------------+------------------------+----------+------+-----------+-----------
@@ -464,14 +446,14 @@ DROP TABLE subpartitions.abc CASCADE;
 NOTICE:  drop cascades to 39 other objects
 /* subpartitions on same expression but dates */
 CREATE TABLE subpartitions.abc(a DATE NOT NULL);
-INSERT INTO subpartitions.abc SELECT current_date + i  FROM generate_series(1, 200, 20) as i;
-SELECT create_range_partitions('subpartitions.abc', 'a', current_date, '1 month'::INTERVAL);
+INSERT INTO subpartitions.abc SELECT '2017-10-02'::DATE + i  FROM generate_series(1, 200, 20) as i;
+SELECT create_range_partitions('subpartitions.abc', 'a', '2017-10-02'::DATE, '1 month'::INTERVAL);
  create_range_partitions 
 -------------------------
                        6
 (1 row)
 
-SELECT create_range_partitions('subpartitions.abc_1', 'a', current_date + 1,
+SELECT create_range_partitions('subpartitions.abc_1', 'a', '2017-10-02'::DATE + 1,
 	'32 day'::INTERVAL, 10); /* not multiple, and limited p_count */
 WARNING:  "start_value" was set to 10-02-2017
 WARNING:  "p_interval" is not multiple of range (10-02-2017, 11-03-2017)
