@@ -22,6 +22,7 @@ CREATE TABLE test.tmp (id INTEGER NOT NULL, value INTEGER NOT NULL);
 INSERT INTO test.tmp VALUES (1, 1), (2, 2);
 
 CREATE TABLE test.tmp2 (id INTEGER NOT NULL, value INTEGER NOT NULL);
+INSERT INTO test.tmp2 SELECT i % 10 + 1, i FROM generate_series(1, 100) i;
 SELECT pathman.create_range_partitions('test.tmp2', 'id', 1, 1, 10);
 
 
@@ -184,6 +185,17 @@ BEGIN;
 UPDATE test.range_rel r SET value = 1 FROM test.tmp2 t
 WHERE t.id = r.id;
 ROLLBACK;
+
+
+/*
+ * UPDATE + subquery with partitioned table (PG 9.5).
+ * See pathman_rel_pathlist_hook() + RELOPT_OTHER_MEMBER_REL.
+ */
+EXPLAIN (COSTS OFF)
+UPDATE test.tmp t SET value = 2
+WHERE t.id IN (SELECT id
+			   FROM test.tmp2 t2
+			   WHERE id = t.id);
 
 
 /* Test special rule for CTE; SELECT (PostgreSQL 9.5) */

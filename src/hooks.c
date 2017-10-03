@@ -358,6 +358,17 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		/*
 		 * Check that this child is not the parent table itself.
 		 * This is exactly how standard inheritance works.
+		 *
+		 * Helps with queries like this one:
+		 *
+		 *		UPDATE test.tmp t SET value = 2
+		 *		WHERE t.id IN (SELECT id
+		 *					   FROM test.tmp2 t2
+		 *					   WHERE id = t.id);
+		 *
+		 * Since we disable optimizations on 9.5, we
+		 * have to skip parent table that has already
+		 * been expanded by standard inheritance.
 		 */
 		if (rel->reloptkind == RELOPT_OTHER_MEMBER_REL)
 		{
