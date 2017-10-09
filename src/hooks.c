@@ -636,9 +636,6 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 
 		if (pathman_ready)
 		{
-			/* Give rowmark-related attributes correct names */
-			ExecuteForPlanTree(result, postprocess_lock_rows);
-
 			/* Add PartitionFilter node for INSERT queries */
 			ExecuteForPlanTree(result, add_partition_filters);
 

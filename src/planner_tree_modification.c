@@ -246,7 +246,6 @@ pathman_transform_query_walker(Node *node, void *context)
 		assign_query_id(query);
 
 		/* Apply Query tree modifiers */
-		rowmark_add_tableoids(query);
 		disable_standard_inheritance(query, current_context);
 		handle_modification_query(query, current_context);
 
@@ -310,6 +309,12 @@ disable_standard_inheritance(Query *parse, transform_query_cxt *context)
 		if (rte->inh)
 		{
 			const PartRelationInfo *prel;
+
+#ifdef LEGACY_ROWMARKS_95
+			/* Don't process queries with RowMarks on 9.5 */
+			if (get_parse_rowmark(parse, current_rti))
+				continue;
+#endif
 
 			/* Proceed if table is partitioned by pg_pathman */
 			if ((prel = get_pathman_relation_info(rte->relid)) != NULL)

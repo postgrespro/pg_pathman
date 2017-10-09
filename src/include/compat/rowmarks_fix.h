@@ -24,9 +24,6 @@
 
 void append_tle_for_rowmark(PlannerInfo *root, PlanRowMark *rc);
 
-#define postprocess_lock_rows(rtable, plan)	( (void) true )
-#define rowmark_add_tableoids(parse)		( (void) true )
-
 #else
 
 /*
@@ -35,15 +32,12 @@ void append_tle_for_rowmark(PlannerInfo *root, PlanRowMark *rc);
  * This is absolutely crucial for UPDATE and DELETE queries,
  * so we had to add some special fixes for 9.5:
  *
- *		1) provide legacy code for RowMarks (tableoids);
- *		2) disable dangerous UPDATE & DELETE optimizations.
+ *		1) disable dangerous UPDATE & DELETE optimizations.
+ *		2) disable optimizations for SELECT .. FOR UPDATE etc.
  */
 #define LEGACY_ROWMARKS_95
 
 #define append_tle_for_rowmark(root, rc)	( (void) true )
-
-void postprocess_lock_rows(List *rtable, Plan *plan);
-void rowmark_add_tableoids(Query *parse);
 
 #endif
 
