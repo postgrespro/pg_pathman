@@ -757,7 +757,7 @@ create_single_partition_internal(Oid parent_relid,
 	create_stmt.partbound		= NULL;
 	create_stmt.partspec		= NULL;
 #endif
-#if defined(PGPRO_EE) && PG_VERSION_NUM >= 90600
+#if defined(PGPRO_EE) && PG_VERSION_NUM < 100000
 	create_stmt.partition_info	= NULL;
 #endif
 
