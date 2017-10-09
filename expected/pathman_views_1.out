@@ -56,6 +56,41 @@ explain (costs off) select * from views.abc where id = 1;
          Filter: (id = 1)
 (3 rows)
 
+explain (costs off) select * from views.abc where id = 1 for update;
+           QUERY PLAN           
+--------------------------------
+ LockRows
+   ->  Append
+         ->  Seq Scan on _abc
+               Filter: (id = 1)
+         ->  Seq Scan on _abc_0
+               Filter: (id = 1)
+         ->  Seq Scan on _abc_1
+               Filter: (id = 1)
+         ->  Seq Scan on _abc_2
+               Filter: (id = 1)
+         ->  Seq Scan on _abc_3
+               Filter: (id = 1)
+         ->  Seq Scan on _abc_4
+               Filter: (id = 1)
+         ->  Seq Scan on _abc_5
+               Filter: (id = 1)
+         ->  Seq Scan on _abc_6
+               Filter: (id = 1)
+         ->  Seq Scan on _abc_7
+               Filter: (id = 1)
+         ->  Seq Scan on _abc_8
+               Filter: (id = 1)
+         ->  Seq Scan on _abc_9
+               Filter: (id = 1)
+(24 rows)
+
+select * from views.abc where id = 1 for update;
+ id 
+----
+  1
+(1 row)
+
 select count (*) from views.abc;
  count 
 -------

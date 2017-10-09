@@ -40,6 +40,8 @@ execute procedure views.disable_modification();
 /* Test SELECT */
 explain (costs off) select * from views.abc;
 explain (costs off) select * from views.abc where id = 1;
+explain (costs off) select * from views.abc where id = 1 for update;
+select * from views.abc where id = 1 for update;
 select count (*) from views.abc;
 
 
