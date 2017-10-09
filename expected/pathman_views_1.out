@@ -1,0 +1,143 @@
+/*
+ * -------------------------------------------
+ *  NOTE: This test behaves differenly on 9.5
+ * -------------------------------------------
+ */
+\set VERBOSITY terse
+SET search_path = 'public';
+CREATE EXTENSION pg_pathman;
+CREATE SCHEMA views;
+/* create a partitioned table */
+create table views._abc(id int4 not null);
+select create_hash_partitions('views._abc', 'id', 10);
+ create_hash_partitions 
+------------------------
+                     10
+(1 row)
+
+insert into views._abc select generate_series(1, 100);
+/* create a facade view */
+create view views.abc as select * from views._abc;
+create or replace function views.disable_modification()
+returns trigger as
+$$
+BEGIN
+  RAISE EXCEPTION '%', TG_OP;
+  RETURN NULL;
+END;
+$$
+language 'plpgsql';
+create trigger abc_mod_tr
+instead of insert or update or delete
+on views.abc for each row
+execute procedure views.disable_modification();
+/* Test SELECT */
+explain (costs off) select * from views.abc;
+        QUERY PLAN        
+--------------------------
+ Append
+   ->  Seq Scan on _abc_0
+   ->  Seq Scan on _abc_1
+   ->  Seq Scan on _abc_2
+   ->  Seq Scan on _abc_3
+   ->  Seq Scan on _abc_4
+   ->  Seq Scan on _abc_5
+   ->  Seq Scan on _abc_6
+   ->  Seq Scan on _abc_7
+   ->  Seq Scan on _abc_8
+   ->  Seq Scan on _abc_9
+(11 rows)
+
+explain (costs off) select * from views.abc where id = 1;
+        QUERY PLAN        
+--------------------------
+ Append
+   ->  Seq Scan on _abc_0
+         Filter: (id = 1)
+(3 rows)
+
+select count (*) from views.abc;
+ count 
+-------
+   100
+(1 row)
+
+/* Test INSERT */
+explain (costs off) insert into views.abc values (1);
+  QUERY PLAN   
+---------------
+ Insert on abc
+   ->  Result
+(2 rows)
+
+insert into views.abc values (1);
+ERROR:  INSERT
+/* Test UPDATE */
+explain (costs off) update views.abc set id = 2 where id = 1 or id = 2;
+                     QUERY PLAN                     
+----------------------------------------------------
+ Update on abc
+   ->  Result
+         ->  Append
+               ->  Seq Scan on _abc
+                     Filter: ((id = 1) OR (id = 2))
+               ->  Seq Scan on _abc_0
+                     Filter: ((id = 1) OR (id = 2))
+               ->  Seq Scan on _abc_1
+                     Filter: ((id = 1) OR (id = 2))
+               ->  Seq Scan on _abc_2
+                     Filter: ((id = 1) OR (id = 2))
+               ->  Seq Scan on _abc_3
+                     Filter: ((id = 1) OR (id = 2))
+               ->  Seq Scan on _abc_4
+                     Filter: ((id = 1) OR (id = 2))
+               ->  Seq Scan on _abc_5
+                     Filter: ((id = 1) OR (id = 2))
+               ->  Seq Scan on _abc_6
+                     Filter: ((id = 1) OR (id = 2))
+               ->  Seq Scan on _abc_7
+                     Filter: ((id = 1) OR (id = 2))
+               ->  Seq Scan on _abc_8
+                     Filter: ((id = 1) OR (id = 2))
+               ->  Seq Scan on _abc_9
+                     Filter: ((id = 1) OR (id = 2))
+(25 rows)
+
+update views.abc set id = 2 where id = 1 or id = 2;
+ERROR:  UPDATE
+/* Test DELETE */
+explain (costs off) delete from views.abc where id = 1 or id = 2;
+                     QUERY PLAN                     
+----------------------------------------------------
+ Delete on abc
+   ->  Result
+         ->  Append
+               ->  Seq Scan on _abc
+                     Filter: ((id = 1) OR (id = 2))
+               ->  Seq Scan on _abc_0
+                     Filter: ((id = 1) OR (id = 2))
+               ->  Seq Scan on _abc_1
+                     Filter: ((id = 1) OR (id = 2))
+               ->  Seq Scan on _abc_2
+                     Filter: ((id = 1) OR (id = 2))
+               ->  Seq Scan on _abc_3
+                     Filter: ((id = 1) OR (id = 2))
+               ->  Seq Scan on _abc_4
+                     Filter: ((id = 1) OR (id = 2))
+               ->  Seq Scan on _abc_5
+                     Filter: ((id = 1) OR (id = 2))
+               ->  Seq Scan on _abc_6
+                     Filter: ((id = 1) OR (id = 2))
+               ->  Seq Scan on _abc_7
+                     Filter: ((id = 1) OR (id = 2))
+               ->  Seq Scan on _abc_8
+                     Filter: ((id = 1) OR (id = 2))
+               ->  Seq Scan on _abc_9
+                     Filter: ((id = 1) OR (id = 2))
+(25 rows)
+
+delete from views.abc where id = 1 or id = 2;
+ERROR:  DELETE
+DROP SCHEMA views CASCADE;
+NOTICE:  drop cascades to 13 other objects
+DROP EXTENSION pg_pathman;

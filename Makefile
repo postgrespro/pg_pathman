@@ -53,7 +53,8 @@ REGRESS = pathman_array_qual \
 		  pathman_runtime_nodes \
 		  pathman_update_trigger \
 		  pathman_upd_del \
-		  pathman_utility_stmt
+		  pathman_utility_stmt \
+		  pathman_views
 
 EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add
 
