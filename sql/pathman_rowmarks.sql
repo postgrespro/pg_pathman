@@ -18,6 +18,10 @@ INSERT INTO rowmarks.second SELECT generate_series(1, 10);
 
 SELECT create_hash_partitions('rowmarks.first', 'id', 5);
 
+
+VACUUM ANALYZE;
+
+
 /* Not partitioned */
 SELECT * FROM rowmarks.second ORDER BY id FOR UPDATE;
 
@@ -63,6 +67,26 @@ WHERE id = (SELECT id FROM rowmarks.second
 			OFFSET 5 LIMIT 1
 			FOR UPDATE)
 FOR SHARE;
+
+/* JOIN (plan) */
+EXPLAIN (COSTS OFF)
+SELECT * FROM rowmarks.first
+JOIN rowmarks.second USING(id)
+ORDER BY id
+FOR UPDATE;
+
+/* JOIN (execution) */
+SELECT * FROM rowmarks.first
+JOIN rowmarks.second USING(id)
+ORDER BY id
+FOR UPDATE;
+
+/* ONLY (plan) */
+EXPLAIN (COSTS OFF)
+SELECT * FROM ONLY rowmarks.first FOR SHARE;
+
+/* ONLY (execution) */
+SELECT * FROM ONLY rowmarks.first FOR SHARE;
 
 /* Check updates (plan) */
 SET enable_hashjoin = f;	/* Hash Semi Join on 10 vs Hash Join on 9.6 */
