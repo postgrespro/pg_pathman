@@ -81,6 +81,13 @@ JOIN rowmarks.second USING(id)
 ORDER BY id
 FOR UPDATE;
 
+/* ONLY (plan) */
+EXPLAIN (COSTS OFF)
+SELECT * FROM ONLY rowmarks.first FOR SHARE;
+
+/* ONLY (execution) */
+SELECT * FROM ONLY rowmarks.first FOR SHARE;
+
 /* Check updates (plan) */
 SET enable_hashjoin = f;	/* Hash Semi Join on 10 vs Hash Join on 9.6 */
 SET enable_mergejoin = f;	/* Merge Semi Join on 10 vs Merge Join on 9.6 */

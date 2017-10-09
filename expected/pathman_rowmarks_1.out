@@ -221,6 +221,21 @@ FOR UPDATE;
  10
 (10 rows)
 
+/* ONLY (plan) */
+EXPLAIN (COSTS OFF)
+SELECT * FROM ONLY rowmarks.first FOR SHARE;
+       QUERY PLAN        
+-------------------------
+ LockRows
+   ->  Seq Scan on first
+(2 rows)
+
+/* ONLY (execution) */
+SELECT * FROM ONLY rowmarks.first FOR SHARE;
+ id 
+----
+(0 rows)
+
 /* Check updates (plan) */
 SET enable_hashjoin = f;	/* Hash Semi Join on 10 vs Hash Join on 9.6 */
 SET enable_mergejoin = f;	/* Merge Semi Join on 10 vs Merge Join on 9.6 */
