@@ -413,9 +413,6 @@ BEGIN
 	/* Delete rows from both config tables */
 	DELETE FROM @extschema@.pathman_config WHERE partrel = parent_relid;
 	DELETE FROM @extschema@.pathman_config_params WHERE partrel = parent_relid;
-
-	/* Drop triggers on update */
-	PERFORM @extschema@.drop_triggers(parent_relid);
 END
 $$ LANGUAGE plpgsql STRICT;
 
@@ -549,41 +546,6 @@ $$ LANGUAGE plpgsql
 SET client_min_messages = WARNING; /* mute NOTICE message */
 
 /*
- * Drop triggers
- */
-CREATE OR REPLACE FUNCTION @extschema@.drop_triggers(
-	parent_relid	REGCLASS)
-RETURNS VOID AS $$
-DECLARE
-	triggername		TEXT;
-	relation		OID;
-
-BEGIN
-	triggername := @extschema@.build_update_trigger_name(parent_relid);
-
-	/* Drop trigger for each partition if exists */
-	FOR relation IN (SELECT pg_catalog.pg_inherits.inhrelid
-					 FROM pg_catalog.pg_inherits
-					 JOIN pg_catalog.pg_trigger ON inhrelid = tgrelid
-					 WHERE inhparent = parent_relid AND tgname = triggername)
-	LOOP
-		EXECUTE format('DROP TRIGGER IF EXISTS %s ON %s',
-					   triggername,
-					   relation::REGCLASS);
-	END LOOP;
-
-	/* Drop trigger on parent */
-	IF EXISTS (SELECT * FROM pg_catalog.pg_trigger
-			   WHERE tgname = triggername AND tgrelid = parent_relid)
-	THEN
-		EXECUTE format('DROP TRIGGER IF EXISTS %s ON %s',
-					   triggername,
-					   parent_relid::TEXT);
-	END IF;
-END
-$$ LANGUAGE plpgsql STRICT;
-
-/*
  * Drop partitions. If delete_data set to TRUE, partitions
  * will be dropped with all the data.
  */
@@ -607,9 +569,6 @@ BEGIN
 				   WHERE partrel = parent_relid) THEN
 		RAISE EXCEPTION 'table "%" has no partitions', parent_relid::TEXT;
 	END IF;
-
-	/* First, drop all triggers */
-	PERFORM @extschema@.drop_triggers(parent_relid);
 
 	/* Also drop naming sequence */
 	PERFORM @extschema@.drop_naming_sequence(parent_relid);
@@ -719,39 +678,6 @@ $$ LANGUAGE plpgsql;
 
 
 /*
- * Function for UPDATE triggers.
- */
-CREATE OR REPLACE FUNCTION @extschema@.pathman_update_trigger_func()
-RETURNS TRIGGER AS 'pg_pathman', 'pathman_update_trigger_func'
-LANGUAGE C STRICT;
-
-/*
- * Creates UPDATE triggers.
- */
-CREATE OR REPLACE FUNCTION @extschema@.create_update_triggers(
-	parent_relid	REGCLASS)
-RETURNS VOID AS 'pg_pathman', 'create_update_triggers'
-LANGUAGE C STRICT;
-
-/*
- * Creates single UPDATE trigger.
- */
-CREATE OR REPLACE FUNCTION @extschema@.create_single_update_trigger(
-	parent_relid	REGCLASS,
-	partition_relid	REGCLASS)
-RETURNS VOID AS 'pg_pathman', 'create_single_update_trigger'
-LANGUAGE C STRICT;
-
-/*
- * Check if relation has pg_pathman's UPDATE trigger.
- */
-CREATE OR REPLACE FUNCTION @extschema@.has_update_trigger(
-	parent_relid	REGCLASS)
-RETURNS BOOL AS 'pg_pathman', 'has_update_trigger'
-LANGUAGE C STRICT;
-
-
-/*
  * Create DDL trigger to call pathman_ddl_trigger_func().
  */
 CREATE EVENT TRIGGER pathman_ddl_trigger
@@ -802,7 +728,8 @@ LANGUAGE C STRICT;
  * Get parent of pg_pathman's partition.
  */
 CREATE OR REPLACE FUNCTION @extschema@.get_parent_of_partition(
-	partition_relid		REGCLASS)
+	partition_relid		REGCLASS,
+	raise_error			BOOL DEFAULT TRUE)
 RETURNS REGCLASS AS 'pg_pathman', 'get_parent_of_partition_pl'
 LANGUAGE C STRICT;
 
@@ -876,23 +803,6 @@ RETURNS TEXT AS 'pg_pathman', 'build_check_constraint_name'
 LANGUAGE C STRICT;
 
 /*
- * Build UPDATE trigger's name.
- */
-CREATE OR REPLACE FUNCTION @extschema@.build_update_trigger_name(
-	relid			REGCLASS)
-RETURNS TEXT AS 'pg_pathman', 'build_update_trigger_name'
-LANGUAGE C STRICT;
-
-/*
- * Buld UPDATE trigger function's name.
- */
-CREATE OR REPLACE FUNCTION @extschema@.build_update_trigger_func_name(
-	relid			REGCLASS)
-RETURNS TEXT AS 'pg_pathman', 'build_update_trigger_func_name'
-LANGUAGE C STRICT;
-
-
-/*
  * Add record to pathman_config (RANGE) and validate partitions.
  */
 CREATE OR REPLACE FUNCTION @extschema@.add_to_pathman_config(
@@ -952,6 +862,36 @@ CREATE OR REPLACE FUNCTION @extschema@.invoke_on_partition_created_callback(
 RETURNS VOID AS 'pg_pathman', 'invoke_on_partition_created_callback'
 LANGUAGE C;
 
+/*
+ * Get parent of pg_pathman's partition.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.is_equal_to_partitioning_expression(
+	parent_relid		REGCLASS,
+	expression			TEXT,
+	value_type			OID)
+RETURNS BOOL AS 'pg_pathman', 'is_equal_to_partitioning_expression_pl'
+LANGUAGE C STRICT;
+
+/*
+ * Get lower bound of a partitioned relation
+ * bound_value is used to determine the type of bound
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_lower_bound(
+	relid				REGCLASS,
+	bound_value			ANYELEMENT
+)
+RETURNS ANYELEMENT AS 'pg_pathman', 'get_lower_bound_pl'
+LANGUAGE C STRICT;
+
+/*
+ * Get upper bound of a partition
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_upper_bound(
+	relid				REGCLASS,
+	bound_value			ANYELEMENT
+)
+RETURNS ANYELEMENT AS 'pg_pathman', 'get_upper_bound_pl'
+LANGUAGE C STRICT;
 
 /*
  * DEBUG: Place this inside some plpgsql fuction and set breakpoint.

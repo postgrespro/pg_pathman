@@ -16,12 +16,14 @@
 #include "hooks.h"
 #include "pathman.h"
 #include "partition_filter.h"
+#include "partition_router.h"
 #include "runtimeappend.h"
 #include "runtime_merge_append.h"
 
 #include "postgres.h"
 #include "access/sysattr.h"
 #include "catalog/pg_type.h"
+#include "compat/relation_tags.h"
 #include "foreign/fdwapi.h"
 #include "miscadmin.h"
 #include "optimizer/clauses.h"
@@ -311,6 +313,8 @@ _PG_init(void)
 	planner_hook					= pathman_planner_hook;
 	process_utility_hook_next		= ProcessUtility_hook;
 	ProcessUtility_hook				= pathman_process_utility_hook;
+	executor_run_hook_next			= ExecutorRun_hook;
+	ExecutorRun_hook				= pathman_executor_hook;
 
 	/* Initialize static data for all subsystems */
 	init_main_pathman_toggles();
@@ -318,6 +322,7 @@ _PG_init(void)
 	init_runtimeappend_static_data();
 	init_runtime_merge_append_static_data();
 	init_partition_filter_static_data();
+	init_partition_router_static_data();
 }
 
 /* Get cached PATHMAN_CONFIG relation Oid */
@@ -379,7 +384,7 @@ append_child_relation(PlannerInfo *root,
 				   *child_rel;
 	Relation		child_relation;
 	AppendRelInfo  *appinfo;
-	Index			childRTindex;
+	Index			child_rti;
 	PlanRowMark	   *child_rowmark;
 	Node		   *childqual;
 	List		   *childquals;
@@ -406,6 +411,11 @@ append_child_relation(PlannerInfo *root,
 	}
 
 	parent_rel = root->simple_rel_array[parent_rti];
+
+	/* make clang analyzer quiet */
+	if (!parent_rel)
+		elog(ERROR, "parent relation is NULL");
+
 	parent_rte = root->simple_rte_array[parent_rti];
 
 	/* Open child relation (we've just locked it) */
@@ -415,16 +425,16 @@ append_child_relation(PlannerInfo *root,
 	child_rte = copyObject(parent_rte);
 	child_rte->relid			= child_oid;
 	child_rte->relkind			= child_relation->rd_rel->relkind;
-	child_rte->inh				= false;	/* relation has no children */
-	child_rte->requiredPerms	= 0;		/* perform all checks on parent */
+	child_rte->requiredPerms	= 0; /* perform all checks on parent */
+	child_rte->inh				= false;
 
 	/* Add 'child_rte' to rtable and 'root->simple_rte_array' */
 	root->parse->rtable = lappend(root->parse->rtable, child_rte);
-	childRTindex = list_length(root->parse->rtable);
-	root->simple_rte_array[childRTindex] = child_rte;
+	child_rti = list_length(root->parse->rtable);
+	root->simple_rte_array[child_rti] = child_rte;
 
 	/* Create RelOptInfo for this child (and make some estimates as well) */
-	child_rel = build_simple_rel_compat(root, childRTindex, parent_rel);
+	child_rel = build_simple_rel_compat(root, child_rti, parent_rel);
 
 	/* Increase total_table_pages using the 'child_rel' */
 	root->total_table_pages += (double) child_rel->pages;
@@ -435,7 +445,7 @@ append_child_relation(PlannerInfo *root,
 	{
 		child_rowmark = makeNode(PlanRowMark);
 
-		child_rowmark->rti			= childRTindex;
+		child_rowmark->rti			= child_rti;
 		child_rowmark->prti			= parent_rti;
 		child_rowmark->rowmarkId	= parent_rowmark->rowmarkId;
 		/* Reselect rowmark type, because relkind might not match parent */
@@ -463,14 +473,14 @@ append_child_relation(PlannerInfo *root,
 	/* Build an AppendRelInfo for this child */
 	appinfo = makeNode(AppendRelInfo);
 	appinfo->parent_relid	= parent_rti;
-	appinfo->child_relid	= childRTindex;
+	appinfo->child_relid	= child_rti;
 	appinfo->parent_reloid	= parent_rte->relid;
 
 	/* Store table row types for wholerow references */
 	appinfo->parent_reltype = RelationGetDescr(parent_relation)->tdtypeid;
 	appinfo->child_reltype  = RelationGetDescr(child_relation)->tdtypeid;
 
-	make_inh_translation_list(parent_relation, child_relation, childRTindex,
+	make_inh_translation_list(parent_relation, child_relation, child_rti,
 							  &appinfo->translated_vars);
 
 	/* Now append 'appinfo' to 'root->append_rel_list' */
@@ -491,7 +501,7 @@ append_child_relation(PlannerInfo *root,
 	AssertState(parent_rel);
 
 	/* Adjust join quals for this child */
-	child_rel->joininfo = (List *) adjust_appendrel_attrs(root,
+	child_rel->joininfo = (List *) adjust_appendrel_attrs_compat(root,
 														  (Node *) parent_rel->joininfo,
 														  appinfo);
 
@@ -528,7 +538,7 @@ append_child_relation(PlannerInfo *root,
 	else childquals = get_all_actual_clauses(parent_rel->baserestrictinfo);
 
 	/* Now it's time to change varnos and rebuld quals */
-	childquals = (List *) adjust_appendrel_attrs(root,
+	childquals = (List *) adjust_appendrel_attrs_compat(root,
 												 (Node *) childquals,
 												 appinfo);
 	childqual = eval_const_expressions(root, (Node *)
@@ -566,10 +576,20 @@ append_child_relation(PlannerInfo *root,
 		add_child_rel_equivalences(root, appinfo, parent_rel, child_rel);
 	child_rel->has_eclass_joins = parent_rel->has_eclass_joins;
 
+	/* Expand child partition if it might have subpartitions */
+	if (parent_rte->relid != child_oid &&
+		child_relation->rd_rel->relhassubclass)
+	{
+		pathman_rel_pathlist_hook(root,
+								  child_rel,
+								  child_rti,
+								  child_rte);
+	}
+
 	/* Close child relations, but keep locks */
 	heap_close(child_relation, NoLock);
 
-	return childRTindex;
+	return child_rti;
 }
 
 
@@ -1785,7 +1805,7 @@ make_inh_translation_list(Relation oldrelation, Relation newrelation,
 		Oid			attcollation;
 		int			new_attno;
 
-		att = old_tupdesc->attrs[old_attno];
+		att = TupleDescAttr(old_tupdesc, old_attno);
 		if (att->attisdropped)
 		{
 			/* Just put NULL into this list entry */
@@ -1823,7 +1843,7 @@ make_inh_translation_list(Relation oldrelation, Relation newrelation,
 		 * notational device to include the assignment into the if-clause.
 		 */
 		if (old_attno < newnatts &&
-			(att = new_tupdesc->attrs[old_attno]) != NULL &&
+			(att = TupleDescAttr(new_tupdesc, old_attno)) != NULL &&
 			!att->attisdropped && att->attinhcount != 0 &&
 			strcmp(attname, NameStr(att->attname)) == 0)
 			new_attno = old_attno;
@@ -1831,7 +1851,7 @@ make_inh_translation_list(Relation oldrelation, Relation newrelation,
 		{
 			for (new_attno = 0; new_attno < newnatts; new_attno++)
 			{
-				att = new_tupdesc->attrs[new_attno];
+				att = TupleDescAttr(new_tupdesc, new_attno);
 
 				/*
 				 * Make clang analyzer happy:
@@ -1931,28 +1951,36 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 			set_rel_consider_parallel_compat(root, childrel, childRTE);
 #endif
 
-		/* Compute child's access paths & sizes */
-		if (childRTE->relkind == RELKIND_FOREIGN_TABLE)
+		/*
+		 * If inh is True and pathlist is not null then it is a partitioned
+		 * table and we've already filled it, skip it. Otherwise build a
+		 * pathlist for it
+		 */
+		if (!IsPartitionedRTE(childRTindex) || childrel->pathlist == NIL)
 		{
-			/* childrel->rows should be >= 1 */
-			set_foreign_size(root, childrel, childRTE);
+			/* Compute child's access paths & sizes */
+			if (childRTE->relkind == RELKIND_FOREIGN_TABLE)
+			{
+				/* childrel->rows should be >= 1 */
+				set_foreign_size(root, childrel, childRTE);
 
-			/* If child IS dummy, ignore it */
-			if (IS_DUMMY_REL(childrel))
-				continue;
+				/* If child IS dummy, ignore it */
+				if (IS_DUMMY_REL(childrel))
+					continue;
 
-			set_foreign_pathlist(root, childrel, childRTE);
-		}
-		else
-		{
-			/* childrel->rows should be >= 1 */
-			set_plain_rel_size(root, childrel, childRTE);
+				set_foreign_pathlist(root, childrel, childRTE);
+			}
+			else
+			{
+				/* childrel->rows should be >= 1 */
+				set_plain_rel_size(root, childrel, childRTE);
 
-			/* If child IS dummy, ignore it */
-			if (IS_DUMMY_REL(childrel))
-				continue;
+				/* If child IS dummy, ignore it */
+				if (IS_DUMMY_REL(childrel))
+					continue;
 
-			set_plain_rel_pathlist(root, childrel, childRTE);
+				set_plain_rel_pathlist(root, childrel, childRTE);
+			}
 		}
 
 		/* Set cheapest path for child */

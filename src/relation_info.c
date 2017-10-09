@@ -1040,6 +1040,91 @@ get_parent_of_partition(Oid partition, PartParentSearch *status)
 	return get_parent_of_partition_internal(partition, status, HASH_FIND);
 }
 
+/* Check that expression is equal to expression of some partitioned table */
+bool
+is_equal_to_partitioning_expression(Oid relid, char *expression,
+									Oid value_type)
+{
+	const PartRelationInfo *prel;
+	char				   *cexpr;
+	Oid						expr_type;
+
+	/*
+	 * Cook and get a canonicalized expression,
+	 * we don't need a result of the cooking
+	 */
+	cook_partitioning_expression(relid, expression, &expr_type);
+	cexpr = canonicalize_partitioning_expression(relid, expression);
+
+	prel = get_pathman_relation_info(relid);
+
+	/* caller should have been check it already */
+	Assert(prel != NULL);
+
+	return (getBaseType(expr_type) == value_type) &&
+		   (strcmp(cexpr, prel->expr_cstr) == 0);
+}
+
+/* Get lower bound of a partition */
+Datum
+get_lower_bound(Oid relid, Oid value_type)
+{
+	Oid						parent_relid;
+	Datum					result;
+	const PartRelationInfo *prel;
+	PartBoundInfo		   *pbin;
+	PartParentSearch		parent_search;
+
+	parent_relid = get_parent_of_partition(relid, &parent_search);
+	if (parent_search != PPS_ENTRY_PART_PARENT)
+		elog(ERROR, "relation \"%s\" is not a partition",
+			 get_rel_name_or_relid(relid));
+
+	prel = get_pathman_relation_info(parent_relid);
+	Assert(prel && prel->parttype == PT_RANGE);
+	pbin = get_bounds_of_partition(relid, prel);
+	Assert(prel != NULL);
+
+	if (IsInfinite(&pbin->range_min))
+		return PointerGetDatum(NULL);
+
+	result = BoundGetValue(&pbin->range_min);
+	if (value_type != prel->ev_type)
+		result = perform_type_cast(result, prel->ev_type, value_type, NULL);
+
+	return result;
+}
+
+/* Get upper bound of a partition */
+Datum
+get_upper_bound(Oid relid, Oid value_type)
+{
+	Oid						parent_relid;
+	Datum					result;
+	const PartRelationInfo *prel;
+	PartBoundInfo		   *pbin;
+	PartParentSearch		parent_search;
+
+	parent_relid = get_parent_of_partition(relid, &parent_search);
+	if (parent_search != PPS_ENTRY_PART_PARENT)
+		elog(ERROR, "relation \"%s\" is not a partition",
+			 get_rel_name_or_relid(relid));
+
+	prel = get_pathman_relation_info(parent_relid);
+	Assert(prel && prel->parttype == PT_RANGE);
+	pbin = get_bounds_of_partition(relid, prel);
+	Assert(prel != NULL);
+
+	if (IsInfinite(&pbin->range_max))
+		return PointerGetDatum(NULL);
+
+	result = BoundGetValue(&pbin->range_max);
+	if (value_type != prel->ev_type)
+		result = perform_type_cast(result, prel->ev_type, value_type, NULL);
+
+	return result;
+}
+
 /*
  * Get [and remove] "partition+parent" pair from cache,
  * also check syscache if 'status' is provided.
@@ -1439,4 +1524,71 @@ shout_if_prel_is_invalid(const Oid parent_oid,
 			 get_rel_name_or_relid(parent_oid),
 			 expected_str);
 	}
+}
+
+/*
+ * Remap partitioning expression columns for tuple source relation.
+ * This is a simplified version of functions that return TupleConversionMap.
+ * It should be faster if expression uses a few fields of relation.
+ */
+AttrNumber *
+PrelExpressionAttributesMap(const PartRelationInfo *prel,
+							TupleDesc source_tupdesc,
+							int *map_length)
+{
+	Oid			parent_relid = PrelParentRelid(prel);
+	int			source_natts = source_tupdesc->natts,
+				expr_natts = 0;
+	AttrNumber *result,
+				i;
+	bool		is_trivial = true;
+
+	/* Get largest attribute number used in expression */
+	i = -1;
+	while ((i = bms_next_member(prel->expr_atts, i)) >= 0)
+		expr_natts = i;
+
+	/* Allocate array for map */
+	result = (AttrNumber *) palloc0(expr_natts * sizeof(AttrNumber));
+
+	/* Find a match for each attribute */
+	i = -1;
+	while ((i = bms_next_member(prel->expr_atts, i)) >= 0)
+	{
+		AttrNumber	attnum = i + FirstLowInvalidHeapAttributeNumber;
+		char	   *attname = get_attname(parent_relid, attnum);
+		int			j;
+
+		Assert(attnum <= expr_natts);
+
+		for (j = 0; j < source_natts; j++)
+		{
+			Form_pg_attribute att = TupleDescAttr(source_tupdesc, j);
+
+			if (att->attisdropped)
+				continue; /* attrMap[attnum - 1] is already 0 */
+
+			if (strcmp(NameStr(att->attname), attname) == 0)
+			{
+				result[attnum - 1] = (AttrNumber) (j + 1);
+				break;
+			}
+		}
+
+		if (result[attnum - 1] == 0)
+			elog(ERROR, "cannot find column \"%s\" in child relation", attname);
+
+		if (result[attnum - 1] != attnum)
+			is_trivial = false;
+	}
+
+	/* Check if map is trivial */
+	if (is_trivial)
+	{
+		pfree(result);
+		return NULL;
+	}
+
+	*map_length = expr_natts;
+	return result;
 }

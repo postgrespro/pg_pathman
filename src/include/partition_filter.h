@@ -25,10 +25,13 @@
 #endif
 
 
+#define INSERT_NODE_NAME "PartitionFilter"
+
+
 #define ERR_PART_ATTR_NULL				"partitioning expression's value should not be NULL"
 #define ERR_PART_ATTR_MULTIPLE_RESULTS	"partitioning expression should return single value"
 #define ERR_PART_ATTR_NO_PART			"no suitable partition for key '%s'"
-#define ERR_PART_ATTR_MULTIPLE			"PartitionFilter selected more than one partition"
+#define ERR_PART_ATTR_MULTIPLE			INSERT_NODE_NAME " selected more than one partition"
 #define ERR_PART_DESC_CONVERT			"could not convert row type for partition"
 
 
@@ -39,9 +42,15 @@ typedef struct
 {
 	Oid					partid;				/* partition's relid */
 	ResultRelInfo	   *result_rel_info;	/* cached ResultRelInfo */
-	TupleConversionMap *tuple_map;			/* tuple conversion map (parent => child) */
+	TupleConversionMap *tuple_map;			/* tuple mapping (parent => child) */
+	JunkFilter		   *junkfilter;			/* junkfilter for cached ResultRelInfo */
+	bool				has_children;		/* hint that it might have children */
+	ExprState		   *expr_state;			/* children have their own expressions */
 } ResultRelInfoHolder;
 
+
+/* Standard size of ResultPartsStorage entry */
+#define ResultPartsStorageStandard	0
 
 /* Forward declaration (for on_new_rri_holder()) */
 struct ResultPartsStorage;
@@ -60,7 +69,8 @@ typedef void (*on_new_rri_holder)(EState *estate,
  */
 struct ResultPartsStorage
 {
-	ResultRelInfo	   *saved_rel_info;			/* original ResultRelInfo (parent) */
+	ResultRelInfo	   *base_rri;				/* original ResultRelInfo (parent) */
+
 	HTAB			   *result_rels_table;
 	HASHCTL				result_rels_table_config;
 
@@ -71,15 +81,10 @@ struct ResultPartsStorage
 
 	EState			   *estate;					/* pointer to executor's state */
 
-	CmdType				command_type;			/* currenly we only allow INSERT */
+	CmdType				command_type;			/* INSERT | UPDATE */
 	LOCKMODE			head_open_lock_mode;
 	LOCKMODE			heap_close_lock_mode;
 };
-
-/*
- * Standard size of ResultPartsStorage entry.
- */
-#define ResultPartsStorageStandard	0
 
 typedef struct
 {
@@ -95,8 +100,12 @@ typedef struct
 	bool				warning_triggered;		/* warning message counter */
 
 	TupleTableSlot	   *tup_convert_slot;		/* slot for rebuilt tuples */
-	ExprContext		   *tup_convert_econtext;	/* ExprContext for projections */
+	CmdType				command_type;
 
+	TupleTableSlot     *subplan_slot;			/* slot that was returned from subplan */
+	JunkFilter		   *junkfilter;				/* junkfilter for subplan_slot */
+
+	ExprContext		   *tup_convert_econtext;	/* ExprContext for projections */
 	ExprState		   *expr_state;				/* for partitioning expression */
 } PartitionFilterState;
 
@@ -108,6 +117,23 @@ extern CustomScanMethods	partition_filter_plan_methods;
 extern CustomExecMethods	partition_filter_exec_methods;
 
 
+#define IsPartitionFilterPlan(node) \
+	( \
+		IsA((node), CustomScan) && \
+		(((CustomScan *) (node))->methods == &partition_filter_plan_methods) \
+	)
+
+#define IsPartitionFilterState(node) \
+	( \
+		IsA((node), CustomScanState) && \
+		(((CustomScanState *) (node))->methods == &partition_filter_exec_methods) \
+	)
+
+#define IsPartitionFilter(node) \
+	( IsPartitionFilterPlan(node) || IsPartitionFilterState(node) )
+
+
+
 void init_partition_filter_static_data(void);
 
 
@@ -117,7 +143,8 @@ void init_result_parts_storage(ResultPartsStorage *parts_storage,
 							   bool speculative_inserts,
 							   Size table_entry_size,
 							   on_new_rri_holder on_new_rri_holder_cb,
-							   void *on_new_rri_holder_cb_arg);
+							   void *on_new_rri_holder_cb_arg,
+							   CmdType cmd_type);
 
 void fini_result_parts_storage(ResultPartsStorage *parts_storage,
 							   bool close_rels);
@@ -133,17 +160,18 @@ Oid * find_partitions_for_value(Datum value, Oid value_type,
 								const PartRelationInfo *prel,
 								int *nparts);
 
-ResultRelInfoHolder * select_partition_for_insert(Datum value, Oid value_type,
-												  const PartRelationInfo *prel,
-												  ResultPartsStorage *parts_storage,
-												  EState *estate);
-
+ResultRelInfoHolder *select_partition_for_insert(ExprState *expr_state,
+												 ExprContext *econtext,
+												 EState *estate,
+												 const PartRelationInfo *prel,
+												 ResultPartsStorage *parts_storage);
 
 Plan * make_partition_filter(Plan *subplan,
 							 Oid parent_relid,
 							 Index parent_rti,
 							 OnConflictAction conflict_action,
-							 List *returning_list);
+							 List *returning_list,
+							 CmdType command_type);
 
 
 Node * partition_filter_create_scan_state(CustomScan *node);

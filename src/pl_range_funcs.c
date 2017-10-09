@@ -16,9 +16,10 @@
 #include "xact_handling.h"
 
 #include "access/xact.h"
-#include "catalog/namespace.h"
-#include "catalog/pg_type.h"
 #include "catalog/heap.h"
+#include "catalog/namespace.h"
+#include "catalog/pg_inherits_fn.h"
+#include "catalog/pg_type.h"
 #include "commands/tablecmds.h"
 #include "executor/spi.h"
 #include "nodes/nodeFuncs.h"
@@ -71,7 +72,6 @@ static void modify_range_constraint(Oid partition_relid,
 									Oid expression_type,
 									const Bound *lower,
 									const Bound *upper);
-static char *get_qualified_rel_name(Oid relid);
 static void drop_table_by_oid(Oid relid);
 static bool interval_is_trivial(Oid atttype,
 								Datum interval,
@@ -637,7 +637,17 @@ merge_range_partitions(PG_FUNCTION_ARGS)
 	/* Extract partition Oids from array */
 	partitions = palloc(sizeof(Oid) * nparts);
 	for (i = 0; i < nparts; i++)
-		partitions[i] = DatumGetObjectId(datums[i]);
+	{
+		Oid		partition_relid;
+		partition_relid = DatumGetObjectId(datums[i]);
+
+		/* check that is not has subpartitions */
+		if (has_subclass(partition_relid))
+			ereport(ERROR, (errmsg("cannot merge partitions"),
+							errdetail("at least one of specified partitions has children")));
+
+		partitions[i] = partition_relid;
+	}
 
 	if (nparts < 2)
 		ereport(ERROR, (errmsg("cannot merge partitions"),
@@ -1216,19 +1226,6 @@ check_range_adjacence(Oid cmp_proc, Oid collid, List *ranges)
 
 		last = cur;
 	}
-}
-
-/*
- * Return palloced fully qualified relation name as a cstring
- */
-static char *
-get_qualified_rel_name(Oid relid)
-{
-	Oid nspid = get_rel_namespace(relid);
-
-	return psprintf("%s.%s",
-					quote_identifier(get_namespace_name(nspid)),
-					quote_identifier(get_rel_name(relid)));
 }
 
 /*

@@ -8,12 +8,17 @@
  * ------------------------------------------------------------------------
  */
 
+#include <unistd.h>
 #include "rangeset.h"
 
 #include "postgres.h"
+#include "fmgr.h"
+#include "executor/tuptable.h"
 #include "nodes/bitmapset.h"
+#include "nodes/parsenodes.h"
 #include "nodes/pg_list.h"
 #include "lib/stringinfo.h"
+#include "utils/lsyscache.h"
 
 
 /*

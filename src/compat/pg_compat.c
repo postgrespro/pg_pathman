@@ -520,7 +520,6 @@ get_rel_persistence(Oid relid)
 }
 #endif
 
-
 #if (PG_VERSION_NUM >= 90500 && PG_VERSION_NUM <= 90505) || \
 	(PG_VERSION_NUM >= 90600 && PG_VERSION_NUM <= 90601)
 /*
@@ -542,7 +541,7 @@ convert_tuples_by_name_map(TupleDesc indesc,
 	attrMap = (AttrNumber *) palloc0(n * sizeof(AttrNumber));
 	for (i = 0; i < n; i++)
 	{
-		Form_pg_attribute att = outdesc->attrs[i];
+		Form_pg_attribute att = TupleDescAttr(outdesc, i);
 		char	   *attname;
 		Oid			atttypid;
 		int32		atttypmod;
@@ -555,7 +554,7 @@ convert_tuples_by_name_map(TupleDesc indesc,
 		atttypmod = att->atttypmod;
 		for (j = 0; j < indesc->natts; j++)
 		{
-			att = indesc->attrs[j];
+			att = TupleDescAttr(indesc, j);
 			if (att->attisdropped)
 				continue;
 			if (strcmp(attname, NameStr(att->attname)) == 0)
@@ -586,8 +585,6 @@ convert_tuples_by_name_map(TupleDesc indesc,
 	return attrMap;
 }
 #endif
-
-
 
 /*
  * -------------
@@ -621,8 +618,7 @@ set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel, Index rti)
 		/*
 		 * Accumulate size information from each live child.
 		 */
-		Assert(childrel->rows > 0);
-
+		Assert(childrel->rows >= 0);
 		parent_rows += childrel->rows;
 
 #if PG_VERSION_NUM >= 90600
@@ -634,6 +630,9 @@ set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel, Index rti)
 
 	/* Set 'rows' for append relation */
 	rel->rows = parent_rows;
+
+	if (parent_rows == 0)
+		parent_rows = 1;
 
 #if PG_VERSION_NUM >= 90600
 	rel->reltarget->width = rint(parent_size / parent_rows);

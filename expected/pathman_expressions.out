@@ -371,7 +371,7 @@ PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line 9 at PERF
 SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
 												 expression,
 												 partition_data)"
-PL/pgSQL function create_range_partitions(regclass,text,anyelement,interval,integer,boolean) line 12 at PERFORM
+PL/pgSQL function create_range_partitions(regclass,text,anyelement,interval,integer,boolean) line 13 at PERFORM
 /* Try using mutable expression */
 SELECT create_range_partitions('test_exprs.range_rel', 'RANDOM()',
 							   '15 years'::INTERVAL, '1 year'::INTERVAL, 10);
@@ -382,7 +382,7 @@ PL/pgSQL function prepare_for_partitioning(regclass,text,boolean) line 9 at PERF
 SQL statement "SELECT public.prepare_for_partitioning(parent_relid,
 												 expression,
 												 partition_data)"
-PL/pgSQL function create_range_partitions(regclass,text,anyelement,interval,integer,boolean) line 12 at PERFORM
+PL/pgSQL function create_range_partitions(regclass,text,anyelement,interval,integer,boolean) line 13 at PERFORM
 /* Check that 'pathman_hooks_enabled' is true (1 partition in plan) */
 EXPLAIN (COSTS OFF) INSERT INTO test_exprs.canary_copy
 SELECT * FROM test_exprs.canary WHERE val = 1;
@@ -424,50 +424,6 @@ EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.range_rel WHERE (AGE(dt, '2000-01-0
    ->  Seq Scan on range_rel_4
          Filter: (age(dt, 'Sat Jan 01 00:00:00 2000'::timestamp without time zone) = '@ 18 years'::interval)
 (3 rows)
-
-SELECT create_update_triggers('test_exprs.range_rel');
- create_update_triggers 
-------------------------
- 
-(1 row)
-
-SELECT COUNT(*) FROM test_exprs.range_rel;
- count 
--------
-    65
-(1 row)
-
-SELECT COUNT(*) FROM test_exprs.range_rel_1;
- count 
--------
-    12
-(1 row)
-
-SELECT COUNT(*) FROM test_exprs.range_rel_2;
- count 
--------
-    12
-(1 row)
-
-UPDATE test_exprs.range_rel SET dt = '2016-12-01' WHERE dt >= '2015-10-10' AND dt <= '2017-10-10';
-/* counts in partitions should be changed */
-SELECT COUNT(*) FROM test_exprs.range_rel;
- count 
--------
-    65
-(1 row)
-
-SELECT COUNT(*) FROM test_exprs.range_rel_1;
- count 
--------
-    10
-(1 row)
-
-SELECT COUNT(*) FROM test_exprs.range_rel_2;
- count 
--------
-    24
-(1 row)
 
 DROP SCHEMA test_exprs CASCADE;
 NOTICE:  drop cascades to 24 other objects

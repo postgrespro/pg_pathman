@@ -455,13 +455,6 @@ INSERT INTO test."TeSt" VALUES (1, 1);
 INSERT INTO test."TeSt" VALUES (2, 2);
 INSERT INTO test."TeSt" VALUES (3, 3);
 SELECT * FROM test."TeSt";
-SELECT pathman.create_update_triggers('test."TeSt"');
-UPDATE test."TeSt" SET a = 1;
-SELECT * FROM test."TeSt";
-SELECT * FROM test."TeSt" WHERE a = 1;
-EXPLAIN (COSTS OFF) SELECT * FROM test."TeSt" WHERE a = 1;
-SELECT pathman.drop_partitions('test."TeSt"');
-SELECT * FROM test."TeSt";
 DROP TABLE test."TeSt" CASCADE;
 
 CREATE TABLE test."RangeRel" (

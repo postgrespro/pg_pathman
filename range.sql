@@ -46,6 +46,29 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
+CREATE OR REPLACE FUNCTION @extschema@.has_parent_partitioned_by_expression(
+	parent_relid	REGCLASS,
+	expression		TEXT,
+	expr_type		REGTYPE)
+RETURNS BOOL AS $$
+DECLARE
+	relid		REGCLASS;
+	part_type	INTEGER;
+BEGIN
+	relid := @extschema@.get_parent_of_partition(parent_relid, false);
+	IF relid IS NOT NULL THEN
+		part_type := @extschema@.get_partition_type(relid);
+		IF (part_type = 2) AND @extschema@.is_equal_to_partitioning_expression(
+				relid, expression, expr_type)
+		THEN
+			RETURN TRUE;
+		END IF;
+	END IF;
+
+	RETURN FALSE;
+END
+$$ LANGUAGE plpgsql;
+
 /*
  * Creates RANGE partitions for specified relation based on datetime attribute
  */
@@ -63,13 +86,32 @@ DECLARE
 	max_value		start_value%TYPE;
 	cur_value		start_value%TYPE := start_value;
 	end_value		start_value%TYPE;
+	lower_bound		start_value%TYPE = NULL;
+	upper_bound		start_value%TYPE = NULL;
 	part_count		INTEGER := 0;
 	i				INTEGER;
-
 BEGIN
 	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
 												 expression,
 												 partition_data);
+
+	value_type := @extschema@.get_base_type(pg_typeof(start_value));
+
+	/*
+	 * Check that we're trying to make subpartitions.
+	 * If expressions are same then we set and use upper bound.
+	 * We change start_value if it's greater than lower bound.
+	 */
+	IF @extschema@.has_parent_partitioned_by_expression(parent_relid,
+		expression, value_type)
+	THEN
+		lower_bound := @extschema@.get_lower_bound(parent_relid, start_value);
+		upper_bound	:= @extschema@.get_upper_bound(parent_relid, start_value);
+		IF lower_bound != start_value THEN
+			start_value := lower_bound;
+			RAISE WARNING '"start_value" was set to %', start_value;
+		END IF;
+	END IF;
 
 	IF p_count < 0 THEN
 		RAISE EXCEPTION '"p_count" must not be less than 0';
@@ -86,13 +128,12 @@ BEGIN
 
 		p_count := 0;
 		WHILE cur_value <= max_value
+			OR (upper_bound IS NOT NULL AND cur_value < upper_bound)
 		LOOP
 			cur_value := cur_value + p_interval;
 			p_count := p_count + 1;
 		END LOOP;
 	END IF;
-
-	value_type := @extschema@.get_base_type(pg_typeof(start_value));
 
 	/*
 	 * In case when user doesn't want to automatically create partitions
@@ -104,6 +145,20 @@ BEGIN
 		FOR i IN 1..p_count
 		LOOP
 			end_value := end_value + p_interval;
+			IF upper_bound IS NOT NULL AND end_value >= upper_bound THEN
+				part_count := i;
+				IF end_value > upper_bound THEN
+					RAISE WARNING '"p_interval" is not multiple of range (%, %)',
+						start_value, end_value;
+				END IF;
+				IF p_count != part_count THEN
+					p_count := part_count;
+					RAISE NOTICE '"p_count" was limited to %', p_count;
+				END IF;
+
+				/* we got our partitions count */
+				EXIT;
+			END IF;
 		END LOOP;
 
 		/* Check boundaries */
@@ -158,17 +213,37 @@ CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions(
 	partition_data	BOOLEAN DEFAULT TRUE)
 RETURNS INTEGER AS $$
 DECLARE
+	value_type		REGTYPE;
 	rows_count		BIGINT;
 	max_value		start_value%TYPE;
 	cur_value		start_value%TYPE := start_value;
 	end_value		start_value%TYPE;
+	lower_bound		start_value%TYPE = NULL;
+	upper_bound		start_value%TYPE = NULL;
 	part_count		INTEGER := 0;
 	i				INTEGER;
-
 BEGIN
 	PERFORM @extschema@.prepare_for_partitioning(parent_relid,
 												 expression,
 												 partition_data);
+
+	value_type := @extschema@.get_base_type(pg_typeof(start_value));
+
+	/*
+	 * Check that we're trying to make subpartitions.
+	 * If expressions are same then we set and use upper bound.
+	 * We change start_value if it's greater than lower bound.
+	 */
+	IF @extschema@.has_parent_partitioned_by_expression(parent_relid,
+		expression, value_type)
+	THEN
+		lower_bound := @extschema@.get_lower_bound(parent_relid, start_value);
+		upper_bound	:= @extschema@.get_upper_bound(parent_relid, start_value);
+		IF lower_bound != start_value THEN
+			start_value := lower_bound;
+			RAISE WARNING '"start_value" was set to %', start_value;
+		END IF;
+	END IF;
 
 	IF p_count < 0 THEN
 		RAISE EXCEPTION 'partitions count must not be less than zero';
@@ -189,6 +264,7 @@ BEGIN
 
 		p_count := 0;
 		WHILE cur_value <= max_value
+			OR (upper_bound IS NOT NULL AND cur_value < upper_bound)
 		LOOP
 			cur_value := cur_value + p_interval;
 			p_count := p_count + 1;
@@ -205,6 +281,20 @@ BEGIN
 		FOR i IN 1..p_count
 		LOOP
 			end_value := end_value + p_interval;
+			IF upper_bound IS NOT NULL AND end_value >= upper_bound THEN
+				part_count := i;
+				IF end_value > upper_bound THEN
+					RAISE WARNING '"p_interval" is not multiple of range (%, %)',
+						start_value, end_value;
+				END IF;
+				IF p_count != part_count THEN
+					p_count := part_count;
+					RAISE NOTICE '"p_count" was limited to %', p_count;
+				END IF;
+
+				/* we got our partitions count */
+				EXIT;
+			END IF;
 		END LOOP;
 
 		/* check boundaries */
@@ -256,6 +346,7 @@ CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions(
 RETURNS INTEGER AS $$
 DECLARE
 	part_count		INTEGER := 0;
+	part_bounds		bounds%TYPE;
 
 BEGIN
 	IF array_ndims(bounds) > 1 THEN
@@ -270,11 +361,31 @@ BEGIN
 												 expression,
 												 partition_data);
 
+	/*
+	 * Subpartitions checks, in array version of create_range_partitions
+	 * we raise exception instead of notice
+	 */
+	IF @extschema@.has_parent_partitioned_by_expression(parent_relid,
+		expression, pg_typeof(bounds[1]))
+	THEN
+		part_bounds[1] := @extschema@.get_lower_bound(parent_relid, bounds[1]);
+		part_bounds[2]	:= @extschema@.get_upper_bound(parent_relid, bounds[1]);
+		IF part_bounds[1] != bounds[1] THEN
+			RAISE EXCEPTION 'Bounds should start from %', part_bounds[1];
+		END IF;
+	END IF;
+
+	IF part_bounds[2] IS NOT NULL AND
+		bounds[array_length(bounds, 1) - 1] > part_bounds[2]
+	THEN
+		RAISE EXCEPTION 'Lower bound of rightmost partition should be less than %', part_bounds[2];
+	END IF;
+
 	/* Check boundaries */
 	PERFORM @extschema@.check_boundaries(parent_relid,
 										 expression,
-										 bounds[0],
-										 bounds[array_length(bounds, 1) - 1]);
+										 bounds[1],
+										 bounds[array_length(bounds, 1)]);
 
 	/* Create sequence for child partitions names */
 	PERFORM @extschema@.create_naming_sequence(parent_relid);
@@ -313,19 +424,28 @@ CREATE OR REPLACE FUNCTION @extschema@.split_range_partition(
 	OUT p_range		ANYARRAY)
 RETURNS ANYARRAY AS $$
 DECLARE
-	parent_relid	REGCLASS;
-	part_type		INTEGER;
-	part_expr		TEXT;
-	part_expr_type	REGTYPE;
-	check_name		TEXT;
-	check_cond		TEXT;
-	new_partition	TEXT;
+	parent_relid		REGCLASS;
+	inhparent			REGCLASS;
+	part_type			INTEGER;
+	part_expr			TEXT;
+	part_expr_type		REGTYPE;
+	check_name			TEXT;
+	check_cond			TEXT;
+	new_partition		TEXT;
 
 BEGIN
 	parent_relid = @extschema@.get_parent_of_partition(partition_relid);
 
 	PERFORM @extschema@.validate_relname(parent_relid);
 	PERFORM @extschema@.validate_relname(partition_relid);
+
+	EXECUTE format('SELECT inhparent::REGCLASS FROM pg_inherits WHERE inhparent = $1 LIMIT 1')
+	USING partition_relid
+	INTO inhparent;
+
+	if inhparent IS NOT NULL THEN
+		RAISE EXCEPTION 'could not split partition if it has children';
+	END IF;
 
 	/* Acquire lock on parent */
 	PERFORM @extschema@.prevent_part_modification(parent_relid);
@@ -451,6 +571,26 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
+
+/*
+ * NOTE: we need this function just to determine the type
+ * of "upper_bound" var
+ */
+CREATE OR REPLACE FUNCTION @extschema@.check_against_upper_bound_internal(
+	relid			REGCLASS,
+	bound_value		ANYELEMENT,
+	error_message	TEXT)
+RETURNS VOID AS $$
+DECLARE
+	upper_bound		bound_value%TYPE;
+BEGIN
+	upper_bound := get_upper_bound(relid, bound_value);
+	IF bound_value >= upper_bound THEN
+		RAISE EXCEPTION '%', error_message;
+	END IF;
+END
+$$ LANGUAGE plpgsql;
+
 /*
  * Spawn logic for append_partition(). We have to
  * separate this in order to pass the 'p_range'.
@@ -466,10 +606,12 @@ CREATE OR REPLACE FUNCTION @extschema@.append_partition_internal(
 	tablespace		TEXT DEFAULT NULL)
 RETURNS TEXT AS $$
 DECLARE
+	relid			REGCLASS;
 	part_expr_type	REGTYPE;
 	part_name		TEXT;
 	v_args_format	TEXT;
-
+	part_expr		TEXT;
+	part_type		INTEGER;
 BEGIN
 	IF @extschema@.get_number_of_partitions(parent_relid) = 0 THEN
 		RAISE EXCEPTION 'cannot append to empty partitions set';
@@ -485,6 +627,24 @@ BEGIN
 
 	IF p_range[2] IS NULL THEN
 		RAISE EXCEPTION 'Cannot append partition because last partition''s range is half open';
+	END IF;
+
+	/*
+	 * In case a user has used same expression on two levels, we need to check
+	 * that we've not reached upper bound of higher partitioned table
+	 */
+	relid := @extschema@.get_parent_of_partition(parent_relid, false);
+	IF relid IS NOT NULL THEN
+		SELECT expr FROM @extschema@.pathman_config WHERE partrel = parent_relid
+		INTO part_expr;
+
+		part_type := @extschema@.get_partition_type(relid);
+		IF (part_type = 2) AND @extschema@.is_equal_to_partitioning_expression(
+				relid, part_expr, part_expr_type)
+		THEN
+			PERFORM @extschema@.check_against_upper_bound_internal(parent_relid,
+				p_range[2], 'reached upper bound in the current level of subpartitions');
+		END IF;
 	END IF;
 
 	IF @extschema@.is_date_type(p_atttype) THEN
@@ -726,9 +886,11 @@ CREATE OR REPLACE FUNCTION @extschema@.attach_range_partition(
 RETURNS TEXT AS $$
 DECLARE
 	part_expr			TEXT;
+	part_expr_type		REGTYPE;
+	part_type			INTEGER;
 	rel_persistence		CHAR;
 	v_init_callback		REGPROCEDURE;
-
+	relid				REGCLASS;
 BEGIN
 	PERFORM @extschema@.validate_relname(parent_relid);
 	PERFORM @extschema@.validate_relname(partition_relid);
@@ -750,6 +912,25 @@ BEGIN
 
 	IF NOT @extschema@.is_tuple_convertible(parent_relid, partition_relid) THEN
 		RAISE EXCEPTION 'partition must have a compatible tuple format';
+	END IF;
+
+	/*
+	 * In case a user has used same expression on two levels, we need to check
+	 * that we've not reached upper bound of higher partitioned table
+	 */
+	relid := @extschema@.get_parent_of_partition(parent_relid, false);
+	IF relid IS NOT NULL THEN
+		part_expr_type := @extschema@.get_partition_key_type(parent_relid);
+		SELECT expr FROM @extschema@.pathman_config WHERE partrel = parent_relid
+		INTO part_expr;
+
+		part_type := @extschema@.get_partition_type(relid);
+		IF (part_type = 2) AND @extschema@.is_equal_to_partitioning_expression(
+				relid, part_expr, part_expr_type)
+		THEN
+			PERFORM @extschema@.check_against_upper_bound_internal(parent_relid,
+				start_value, '"start value" exceeds upper bound of the current level of subpartitions');
+		END IF;
 	END IF;
 
 	/* Set inheritance */
@@ -778,11 +959,6 @@ BEGIN
 	ON params.partrel = parent_relid
 	INTO v_init_callback;
 
-	/* If update trigger is enabled then create one for this partition */
-	if @extschema@.has_update_trigger(parent_relid) THEN
-		PERFORM @extschema@.create_single_update_trigger(parent_relid, partition_relid);
-	END IF;
-
 	/* Invoke an initialization callback */
 	PERFORM @extschema@.invoke_on_partition_created_callback(parent_relid,
 															 partition_relid,
@@ -802,6 +978,7 @@ CREATE OR REPLACE FUNCTION @extschema@.detach_range_partition(
 RETURNS TEXT AS $$
 DECLARE
 	parent_relid	REGCLASS;
+	inhparent		REGCLASS;
 	part_type		INTEGER;
 
 BEGIN
@@ -809,6 +986,14 @@ BEGIN
 
 	PERFORM @extschema@.validate_relname(parent_relid);
 	PERFORM @extschema@.validate_relname(partition_relid);
+
+	EXECUTE format('SELECT inhparent::REGCLASS FROM pg_inherits WHERE inhparent = $1 LIMIT 1')
+	USING partition_relid
+	INTO inhparent;
+
+	if inhparent IS NOT NULL THEN
+		RAISE EXCEPTION 'could not detach partition if it has children';
+	END IF;
 
 	/* Acquire lock on parent */
 	PERFORM @extschema@.prevent_data_modification(parent_relid);
@@ -829,11 +1014,6 @@ BEGIN
 	EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %s',
 				   partition_relid::TEXT,
 				   @extschema@.build_check_constraint_name(partition_relid));
-
-	/* Remove update trigger */
-	EXECUTE format('DROP TRIGGER IF EXISTS %s ON %s',
-				   @extschema@.build_update_trigger_name(parent_relid),
-				   partition_relid::TEXT);
 
 	RETURN partition_relid;
 END

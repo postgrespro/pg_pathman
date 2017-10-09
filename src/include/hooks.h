@@ -13,6 +13,7 @@
 
 
 #include "postgres.h"
+#include "executor/executor.h"
 #include "optimizer/planner.h"
 #include "optimizer/paths.h"
 #include "parser/analyze.h"
@@ -26,6 +27,7 @@ extern planner_hook_type				planner_hook_next;
 extern post_parse_analyze_hook_type		post_parse_analyze_hook_next;
 extern shmem_startup_hook_type			shmem_startup_hook_next;
 extern ProcessUtility_hook_type			process_utility_hook_next;
+extern ExecutorRun_hook_type			executor_run_hook_next;
 
 
 void pathman_join_pathlist_hook(PlannerInfo *root,
@@ -70,5 +72,21 @@ void pathman_process_utility_hook(Node *parsetree,
 								  char *completionTag);
 #endif
 
+#if PG_VERSION_NUM >= 90600
+typedef uint64 ExecutorRun_CountArgType;
+#else
+typedef long ExecutorRun_CountArgType;
+#endif
+
+#if PG_VERSION_NUM >= 100000
+void pathman_executor_hook(QueryDesc *queryDesc,
+						   ScanDirection direction,
+						   ExecutorRun_CountArgType count,
+						   bool execute_once);
+#else
+void pathman_executor_hook(QueryDesc *queryDesc,
+						   ScanDirection direction,
+						   ExecutorRun_CountArgType count);
+#endif
 
 #endif /* PATHMAN_HOOKS_H */

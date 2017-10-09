@@ -17,6 +17,7 @@
 #include "hooks.h"
 #include "init.h"
 #include "partition_filter.h"
+#include "partition_router.h"
 #include "pathman_workers.h"
 #include "planner_tree_modification.h"
 #include "runtimeappend.h"
@@ -39,7 +40,6 @@
 /* Borrowed from joinpath.c */
 #define PATH_PARAM_BY_REL(path, rel)  \
 	((path)->param_info && bms_overlap(PATH_REQ_OUTER(path), (rel)->relids))
-
 
 static inline bool
 allow_star_schema_join(PlannerInfo *root,
@@ -64,6 +64,7 @@ planner_hook_type				planner_hook_next = NULL;
 post_parse_analyze_hook_type	post_parse_analyze_hook_next = NULL;
 shmem_startup_hook_type			shmem_startup_hook_next = NULL;
 ProcessUtility_hook_type		process_utility_hook_next = NULL;
+ExecutorRun_hook_type			executor_run_hook_next = NULL;
 
 
 /* Take care of joins */
@@ -245,7 +246,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 			return; /* could not build it, retreat! */
 
 
-		required_nestloop = calc_nestloop_required_outer(outer, inner);
+		required_nestloop = calc_nestloop_required_outer_compat(outer, inner);
 
 		/*
 		 * Check to see if proposed path is still parameterized, and reject if the
@@ -276,9 +277,9 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 
 		nest_path =
 			create_nestloop_path_compat(root, joinrel, jointype,
-										&workspace, extra, outer, inner,
-										filtered_joinclauses, pathkeys,
-										calc_nestloop_required_outer(outer, inner));
+							&workspace, extra, outer, inner,
+							filtered_joinclauses, pathkeys,
+							calc_nestloop_required_outer_compat(outer, inner));
 
 		/*
 		 * NOTE: Override 'rows' value produced by standard estimator.
@@ -418,6 +419,9 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			if (pathkeys)
 				pathkeyDesc = (PathKey *) linitial(pathkeys);
 		}
+
+		/* mark as partitioned table */
+		MarkPartitionedRTE(rti);
 
 		children = PrelGetChildrenArray(prel);
 		ranges = list_make1_irange_full(prel, IR_COMPLETE);
@@ -639,6 +643,9 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 			/* Add PartitionFilter node for INSERT queries */
 			ExecuteForPlanTree(result, add_partition_filters);
 
+			/* Add PartitionRouter node for UPDATE queries */
+			ExecuteForPlanTree(result, add_partition_routers);
+
 			/* Decrement relation tags refcount */
 			decr_refcount_relation_tags();
 
@@ -662,6 +669,7 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 
 	/* Finally return the Plan */
 	return result;
+#undef ExecuteForPlanTree
 }
 
 /*
@@ -924,4 +932,64 @@ pathman_process_utility_hook(Node *first_arg,
 								first_arg, queryString,
 								context, params, queryEnv,
 								dest, completionTag);
+}
+
+
+#if PG_VERSION_NUM >= 100000
+#define EXECUTOR_HOOK_NEXT(q,d,c) executor_run_hook_next((q),(d),(c), execute_once)
+#define EXECUTOR_RUN(q,d,c) standard_ExecutorRun((q),(d),(c), execute_once)
+#else
+#define EXECUTOR_HOOK_NEXT(q,d,c) executor_run_hook_next((q),(d),(c))
+#define EXECUTOR_RUN(q,d,c) standard_ExecutorRun((q),(d),(c))
+#endif
+
+/*
+ * Executor hook (for PartitionRouter).
+ */
+#if PG_VERSION_NUM >= 100000
+void
+pathman_executor_hook(QueryDesc *queryDesc,
+					  ScanDirection direction,
+					  ExecutorRun_CountArgType count,
+					  bool execute_once)
+#else
+void
+pathman_executor_hook(QueryDesc *queryDesc,
+					  ScanDirection direction,
+					  ExecutorRun_CountArgType count)
+#endif
+{
+	PlanState *state = (PlanState *) queryDesc->planstate;
+
+	if (IsA(state, ModifyTableState))
+	{
+		ModifyTableState	*mt_state = (ModifyTableState *) state;
+		int					 i;
+
+		for (i = 0; i < mt_state->mt_nplans; i++)
+		{
+			CustomScanState *pr_state = (CustomScanState *) mt_state->mt_plans[i];
+
+			/* Check if this is a PartitionRouter node */
+			if (IsPartitionRouterState(pr_state))
+			{
+				ResultRelInfo *rri = &mt_state->resultRelInfo[i];
+
+				/*
+				 * We unset junkfilter to disable junk
+				 * cleaning in ExecModifyTable.
+				 */
+				rri->ri_junkFilter = NULL;
+
+				/* HACK: change UPDATE operation to INSERT */
+				mt_state->operation = CMD_INSERT;
+			}
+		}
+	}
+
+	/* Call hooks set by other extensions if needed */
+	if (executor_run_hook_next)
+		EXECUTOR_HOOK_NEXT(queryDesc, direction, count);
+	/* Else call internal implementation */
+	else EXECUTOR_RUN(queryDesc, direction, count);
 }

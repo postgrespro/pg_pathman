@@ -16,6 +16,7 @@
 #include "partition_filter.h"
 #include "utils.h"
 
+#include "catalog/pg_class.h"
 #include "catalog/pg_type.h"
 #include "foreign/fdwapi.h"
 #include "foreign/foreign.h"
@@ -67,7 +68,10 @@ int					pg_pathman_insert_into_fdw = PF_FDW_INSERT_POSTGRES;
 CustomScanMethods	partition_filter_plan_methods;
 CustomExecMethods	partition_filter_exec_methods;
 
-
+static ExprState *prepare_expr_state(const PartRelationInfo *prel,
+									 Relation source_rel,
+									 EState *estate,
+									 bool try_map);
 static void prepare_rri_for_insert(EState *estate,
 								   ResultRelInfoHolder *rri_holder,
 								   const ResultPartsStorage *rps_storage,
@@ -85,7 +89,7 @@ static Node *fix_returning_list_mutator(Node *node, void *state);
 static Index append_rte_to_estate(EState *estate, RangeTblEntry *rte);
 static int append_rri_to_estate(EState *estate, ResultRelInfo *rri);
 
-static List * pfilter_build_tlist(Relation parent_rel, List *tlist);
+static List * pfilter_build_tlist(Relation parent_rel, Plan *subplan);
 
 static void pf_memcxt_callback(void *arg);
 static estate_mod_data * fetch_estate_mod_data(EState *estate);
@@ -94,10 +98,10 @@ static estate_mod_data * fetch_estate_mod_data(EState *estate);
 void
 init_partition_filter_static_data(void)
 {
-	partition_filter_plan_methods.CustomName 			= "PartitionFilter";
+	partition_filter_plan_methods.CustomName 			= INSERT_NODE_NAME;
 	partition_filter_plan_methods.CreateCustomScanState	= partition_filter_create_scan_state;
 
-	partition_filter_exec_methods.CustomName			= "PartitionFilter";
+	partition_filter_exec_methods.CustomName			= INSERT_NODE_NAME;
 	partition_filter_exec_methods.BeginCustomScan		= partition_filter_begin;
 	partition_filter_exec_methods.ExecCustomScan		= partition_filter_exec;
 	partition_filter_exec_methods.EndCustomScan			= partition_filter_end;
@@ -107,7 +111,7 @@ init_partition_filter_static_data(void)
 	partition_filter_exec_methods.ExplainCustomScan		= partition_filter_explain;
 
 	DefineCustomBoolVariable("pg_pathman.enable_partitionfilter",
-							 "Enables the planner's use of PartitionFilter custom node.",
+							 "Enables the planner's use of " INSERT_NODE_NAME " custom node.",
 							 NULL,
 							 &pg_pathman_enable_partition_filter,
 							 true,
@@ -144,7 +148,8 @@ init_result_parts_storage(ResultPartsStorage *parts_storage,
 						  bool speculative_inserts,
 						  Size table_entry_size,
 						  on_new_rri_holder on_new_rri_holder_cb,
-						  void *on_new_rri_holder_cb_arg)
+						  void *on_new_rri_holder_cb_arg,
+						  CmdType cmd_type)
 {
 	HASHCTL *result_rels_table_config = &parts_storage->result_rels_table_config;
 
@@ -161,13 +166,13 @@ init_result_parts_storage(ResultPartsStorage *parts_storage,
 												   result_rels_table_config,
 												   HASH_ELEM | HASH_BLOBS);
 	parts_storage->estate = estate;
-	parts_storage->saved_rel_info = NULL;
+	parts_storage->base_rri = NULL;
 
 	parts_storage->on_new_rri_holder_callback = on_new_rri_holder_cb;
 	parts_storage->callback_arg = on_new_rri_holder_cb_arg;
 
-	/* Currenly ResultPartsStorage is used only for INSERTs */
-	parts_storage->command_type = CMD_INSERT;
+	Assert(cmd_type == CMD_INSERT || cmd_type == CMD_UPDATE);
+	parts_storage->command_type = cmd_type;
 	parts_storage->speculative_inserts = speculative_inserts;
 
 	/* Partitions must remain locked till transaction's end */
@@ -213,7 +218,7 @@ ResultRelInfoHolder *
 scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 {
 #define CopyToResultRelInfo(field_name) \
-	( child_result_rel_info->field_name = parts_storage->saved_rel_info->field_name )
+	( child_result_rel_info->field_name = parts_storage->base_rri->field_name )
 
 	ResultRelInfoHolder	   *rri_holder;
 	bool					found;
@@ -226,12 +231,16 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 	if (!found)
 	{
 		Relation		child_rel,
-						parent_rel = parts_storage->saved_rel_info->ri_RelationDesc;
+						base_rel;
 		RangeTblEntry  *child_rte,
 					   *parent_rte;
 		Index			child_rte_idx;
 		ResultRelInfo  *child_result_rel_info;
 		List		   *translated_vars;
+
+		/* Check that 'base_rri' is set */
+		if (!parts_storage->base_rri)
+			elog(ERROR, "ResultPartsStorage contains no base_rri");
 
 		/* Lock partition and check if it exists */
 		LockRelationOid(partid, parts_storage->head_open_lock_mode);
@@ -246,14 +255,17 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 			return NULL;
 		}
 
-		parent_rte = rt_fetch(parts_storage->saved_rel_info->ri_RangeTableIndex,
+		parent_rte = rt_fetch(parts_storage->base_rri->ri_RangeTableIndex,
 							  parts_storage->estate->es_range_table);
 
-		/* Open relation and check if it is a valid target */
+		/* Get base relation */
+		base_rel = parts_storage->base_rri->ri_RelationDesc;
+
+		/* Open child relation and check if it is a valid target */
 		child_rel = heap_open(partid, NoLock);
 
 		/* Build Var translation list for 'inserted_cols' */
-		make_inh_translation_list(parent_rel, child_rel, 0, &translated_vars);
+		make_inh_translation_list(base_rel, child_rel, 0, &translated_vars);
 
 		/* Create RangeTblEntry for partition */
 		child_rte = makeNode(RangeTblEntry);
@@ -277,10 +289,6 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 		/* Create ResultRelInfo for partition */
 		child_result_rel_info = makeNode(ResultRelInfo);
 
-		/* Check that 'saved_rel_info' is set */
-		if (!parts_storage->saved_rel_info)
-			elog(ERROR, "ResultPartsStorage contains no saved_rel_info");
-
 		InitResultRelInfoCompat(child_result_rel_info,
 								child_rel,
 								child_rte_idx,
@@ -292,7 +300,11 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 		/* Copy necessary fields from saved ResultRelInfo */
 		CopyToResultRelInfo(ri_WithCheckOptions);
 		CopyToResultRelInfo(ri_WithCheckOptionExprs);
-		CopyToResultRelInfo(ri_junkFilter);
+		if (parts_storage->command_type != CMD_UPDATE)
+			CopyToResultRelInfo(ri_junkFilter);
+		else
+			child_result_rel_info->ri_junkFilter = NULL;
+
 		CopyToResultRelInfo(ri_projectReturning);
 		CopyToResultRelInfo(ri_onConflictSetProj);
 		CopyToResultRelInfo(ri_onConflictSetWhere);
@@ -301,14 +313,19 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 		child_result_rel_info->ri_ConstraintExprs = NULL;
 
 		/* Check that this partition is a valid result relation */
-		CheckValidResultRelCompat(child_result_rel_info, parts_storage->command_type);
+		CheckValidResultRelCompat(child_result_rel_info,
+								  parts_storage->command_type);
 
 		/* Fill the ResultRelInfo holder */
 		rri_holder->partid = partid;
 		rri_holder->result_rel_info = child_result_rel_info;
 
 		/* Generate tuple transformation map and some other stuff */
-		rri_holder->tuple_map = build_part_tuple_map(parent_rel, child_rel);
+		rri_holder->tuple_map = build_part_tuple_map(base_rel, child_rel);
+
+		/* Are there subpartitions? */
+		rri_holder->has_children = child_rel->rd_rel->relhassubclass;
+		rri_holder->expr_state = NULL;
 
 		/* Call on_new_rri_holder_callback() if needed */
 		if (parts_storage->on_new_rri_holder_callback)
@@ -327,7 +344,7 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 
 /* Build tuple conversion map (e.g. parent has a dropped column) */
 TupleConversionMap *
-build_part_tuple_map(Relation parent_rel, Relation child_rel)
+build_part_tuple_map(Relation base_rel, Relation child_rel)
 {
 	TupleConversionMap *tuple_map;
 	TupleDesc			child_tupdesc,
@@ -337,7 +354,7 @@ build_part_tuple_map(Relation parent_rel, Relation child_rel)
 	child_tupdesc = CreateTupleDescCopy(RelationGetDescr(child_rel));
 	child_tupdesc->tdtypeid = InvalidOid;
 
-	parent_tupdesc = CreateTupleDescCopy(RelationGetDescr(parent_rel));
+	parent_tupdesc = CreateTupleDescCopy(RelationGetDescr(base_rel));
 	parent_tupdesc->tdtypeid = InvalidOid;
 
 	/* Generate tuple transformation map and some other stuff */
@@ -403,38 +420,47 @@ find_partitions_for_value(Datum value, Oid value_type,
  * Smart wrapper for scan_result_parts_storage().
  */
 ResultRelInfoHolder *
-select_partition_for_insert(Datum value, Oid value_type,
+select_partition_for_insert(ExprState *expr_state,
+							ExprContext *econtext,
+							EState *estate,
 							const PartRelationInfo *prel,
-							ResultPartsStorage *parts_storage,
-							EState *estate)
+							ResultPartsStorage *parts_storage)
 {
 	MemoryContext			old_mcxt;
 	ResultRelInfoHolder	   *rri_holder;
-	Oid						parent_relid = PrelParentRelid(prel);
-	Oid						selected_partid = InvalidOid;
+	Oid						parent_relid = PrelParentRelid(prel),
+							partition_relid = InvalidOid;
 	Oid					   *parts;
 	int						nparts;
+	bool					isnull;
+	Datum					value;
+
+	/* Execute expression */
+	value = ExecEvalExprCompat(expr_state, econtext, &isnull,
+							   mult_result_handler);
+
+	if (isnull)
+		elog(ERROR, ERR_PART_ATTR_NULL);
 
 	do
 	{
 		/* Search for matching partitions */
-		parts = find_partitions_for_value(value, value_type, prel, &nparts);
+		parts = find_partitions_for_value(value, prel->ev_type, prel, &nparts);
 
 		if (nparts > 1)
 			elog(ERROR, ERR_PART_ATTR_MULTIPLE);
 		else if (nparts == 0)
 		{
-			 selected_partid = create_partitions_for_value(parent_relid,
-														   value, value_type);
+			partition_relid = create_partitions_for_value(parent_relid,
+														  value, prel->ev_type);
 
-			 /* get_pathman_relation_info() will refresh this entry */
-			 invalidate_pathman_relation_info(parent_relid, NULL);
+			/* get_pathman_relation_info() will refresh this entry */
+			invalidate_pathman_relation_info(parent_relid, NULL);
 		}
-		else selected_partid = parts[0];
+		else partition_relid = parts[0];
 
-		/* Replace parent table with a suitable partition */
 		old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
-		rri_holder = scan_result_parts_storage(selected_partid, parts_storage);
+		rri_holder = scan_result_parts_storage(partition_relid, parts_storage);
 		MemoryContextSwitchTo(old_mcxt);
 
 		/* This partition has been dropped, repeat with a new 'prel' */
@@ -451,6 +477,36 @@ select_partition_for_insert(Datum value, Oid value_type,
 				elog(ERROR, "table \"%s\" is not partitioned",
 					 get_rel_name_or_relid(parent_relid));
 		}
+		/* This partition might have sub-partitions */
+		else if (rri_holder->has_children)
+		{
+			const PartRelationInfo *child_prel;
+
+			/* Fetch PartRelationInfo for this partitioned relation */
+			child_prel = get_pathman_relation_info(rri_holder->partid);
+
+			/* Might be a false alarm */
+			if (!child_prel)
+				return rri_holder;
+
+			/* Build an expression state if it's not ready yet */
+			if (!rri_holder->expr_state)
+			{
+				/* Fetch original topmost parent */
+				Relation source_rel = parts_storage->base_rri->ri_RelationDesc;
+
+				/* Build a partitioning expression state */
+				rri_holder->expr_state = prepare_expr_state(child_prel,
+															source_rel,
+															estate,
+															true);
+			}
+
+			/* Recursively search for subpartitions */
+			rri_holder = select_partition_for_insert(rri_holder->expr_state,
+													 econtext, estate,
+													 child_prel, parts_storage);
+		}
 	}
 	/* Loop until we get some result */
 	while (rri_holder == NULL);
@@ -458,6 +514,55 @@ select_partition_for_insert(Datum value, Oid value_type,
 	return rri_holder;
 }
 
+static ExprState *
+prepare_expr_state(const PartRelationInfo *prel,
+				   Relation source_rel,
+				   EState *estate,
+				   bool try_map)
+{
+	ExprState		   *expr_state;
+	MemoryContext		old_mcxt;
+	Node			   *expr;
+
+	/* Make sure we use query memory context */
+	old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
+
+	/* Fetch partitioning expression (we don't care about varno) */
+	expr = PrelExpressionForRelid(prel, PART_EXPR_VARNO);
+
+	/* Should we try using map? */
+	if (try_map)
+	{
+
+		AttrNumber	   *map;
+		int				map_length;
+		TupleDesc		source_tupdesc = RelationGetDescr(source_rel);
+
+		/* Remap expression attributes for source relation */
+		map = PrelExpressionAttributesMap(prel, source_tupdesc, &map_length);
+
+		if (map)
+		{
+			bool found_whole_row;
+
+			expr = map_variable_attnos_compat(expr, PART_EXPR_VARNO, 0, map,
+											  map_length, InvalidOid,
+											  &found_whole_row);
+
+			if (found_whole_row)
+				elog(ERROR, "unexpected whole-row reference"
+							" found in partition key");
+
+			pfree(map);
+		}
+	}
+
+	/* Prepare state for expression execution */
+	expr_state = ExecInitExpr((Expr *) expr, NULL);
+	MemoryContextSwitchTo(old_mcxt);
+
+	return expr_state;
+}
 
 /*
  * --------------------------------
@@ -470,7 +575,8 @@ make_partition_filter(Plan *subplan,
 					  Oid parent_relid,
 					  Index parent_rti,
 					  OnConflictAction conflict_action,
-					  List *returning_list)
+					  List *returning_list,
+					  CmdType command_type)
 {
 	CustomScan *cscan = makeNode(CustomScan);
 	Relation	parent_rel;
@@ -482,10 +588,10 @@ make_partition_filter(Plan *subplan,
 				 errmsg("ON CONFLICT clause is not supported with partitioned tables")));
 
 	/* Copy costs etc */
-	cscan->scan.plan.startup_cost = subplan->startup_cost;
-	cscan->scan.plan.total_cost = subplan->total_cost;
-	cscan->scan.plan.plan_rows = subplan->plan_rows;
-	cscan->scan.plan.plan_width = subplan->plan_width;
+	cscan->scan.plan.startup_cost	= subplan->startup_cost;
+	cscan->scan.plan.total_cost		= subplan->total_cost;
+	cscan->scan.plan.plan_rows		= subplan->plan_rows;
+	cscan->scan.plan.plan_width		= subplan->plan_width;
 
 	/* Setup methods and child plan */
 	cscan->methods = &partition_filter_plan_methods;
@@ -493,7 +599,7 @@ make_partition_filter(Plan *subplan,
 
 	/* Build an appropriate target list using a cached Relation entry */
 	parent_rel = RelationIdGetRelation(parent_relid);
-	cscan->scan.plan.targetlist = pfilter_build_tlist(parent_rel, subplan->targetlist);
+	cscan->scan.plan.targetlist = pfilter_build_tlist(parent_rel, subplan);
 	RelationClose(parent_rel);
 
 	/* No physical relation will be scanned */
@@ -504,9 +610,10 @@ make_partition_filter(Plan *subplan,
 	ChangeVarNodes((Node *) cscan->custom_scan_tlist, INDEX_VAR, parent_rti, 0);
 
 	/* Pack partitioned table's Oid and conflict_action */
-	cscan->custom_private = list_make3(makeInteger(parent_relid),
+	cscan->custom_private = list_make4(makeInteger(parent_relid),
 									   makeInteger(conflict_action),
-									   returning_list);
+									   returning_list,
+									   makeInteger(command_type));
 
 	return &cscan->scan.plan;
 }
@@ -519,20 +626,20 @@ partition_filter_create_scan_state(CustomScan *node)
 	state = (PartitionFilterState *) palloc0(sizeof(PartitionFilterState));
 	NodeSetTag(state, T_CustomScanState);
 
-	state->css.flags = node->flags;
-	state->css.methods = &partition_filter_exec_methods;
+	/* Initialize base CustomScanState */
+	state->css.flags	= node->flags;
+	state->css.methods	= &partition_filter_exec_methods;
 
 	/* Extract necessary variables */
-	state->subplan = (Plan *) linitial(node->custom_plans);
-	state->partitioned_table = intVal(linitial(node->custom_private));
-	state->on_conflict_action = intVal(lsecond(node->custom_private));
-	state->returning_list = lthird(node->custom_private);
+	state->subplan				= (Plan *) linitial(node->custom_plans);
+	state->partitioned_table	= (Oid) intVal(linitial(node->custom_private));
+	state->on_conflict_action	= intVal(lsecond(node->custom_private));
+	state->returning_list		= (List *) lthird(node->custom_private);
+	state->command_type			= (CmdType) intVal(lfourth(node->custom_private));
 
 	/* Check boundaries */
 	Assert(state->on_conflict_action >= ONCONFLICT_NONE ||
 		   state->on_conflict_action <= ONCONFLICT_UPDATE);
-
-	state->expr_state = NULL;
 
 	/* There should be exactly one subplan */
 	Assert(list_length(node->custom_plans) == 1);
@@ -544,47 +651,48 @@ void
 partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 {
 	PartitionFilterState	   *state = (PartitionFilterState *) node;
-
-	MemoryContext				old_mcxt;
+	PlanState				   *child_state;
+	ResultRelInfo			   *current_rri;
+	Relation					current_rel;
 	const PartRelationInfo	   *prel;
-	Node					   *expr;
-	Index						parent_varno = 1;
-	ListCell				   *lc;
+	bool						try_map;
 
 	/* It's convenient to store PlanState in 'custom_ps' */
-	node->custom_ps = list_make1(ExecInitNode(state->subplan, estate, eflags));
+	child_state = ExecInitNode(state->subplan, estate, eflags);
+	node->custom_ps = list_make1(child_state);
 
-	if (state->expr_state == NULL)
-	{
-		/* Fetch PartRelationInfo for this partitioned relation */
-		prel = get_pathman_relation_info(state->partitioned_table);
-		Assert(prel != NULL);
+	/* Fetch current result relation (rri + rel) */
+	current_rri = estate->es_result_relation_info;
+	current_rel = current_rri->ri_RelationDesc;
 
-		/* Change varno in Vars according to range table */
-		foreach(lc, estate->es_range_table)
-		{
-			RangeTblEntry *entry = lfirst(lc);
+	/* Fetch PartRelationInfo for this partitioned relation */
+	prel = get_pathman_relation_info(state->partitioned_table);
 
-			if (entry->relid == state->partitioned_table)
-				break;
+	/*
+	 * In UPDATE queries we have to work with child relation tlist,
+	 * but expression contains varattnos of base relation, so we
+	 * map parent varattnos to child varattnos.
+	 *
+	 * We don't need map if current relation == base relation.
+	 */
+	try_map = state->command_type == CMD_UPDATE &&
+			  RelationGetRelid(current_rel) != state->partitioned_table;
 
-			parent_varno += 1;
-		}
-		expr = PrelExpressionForRelid(prel, parent_varno);
-
-		/* Prepare state for expression execution */
-		old_mcxt = MemoryContextSwitchTo(estate->es_query_cxt);
-		state->expr_state = ExecInitExpr((Expr *) expr, NULL);
-		MemoryContextSwitchTo(old_mcxt);
-	}
+	/* Build a partitioning expression state */
+	state->expr_state = prepare_expr_state(prel, current_rel, estate, try_map);
 
 	/* Init ResultRelInfo cache */
 	init_result_parts_storage(&state->result_parts, estate,
 							  state->on_conflict_action != ONCONFLICT_NONE,
 							  ResultPartsStorageStandard,
 							  prepare_rri_for_insert,
-							  (void *) state);
+							  (void *) state,
+							  state->command_type);
 
+	/* Don't forget to initialize 'base_rri'! */
+	state->result_parts.base_rri = current_rri;
+
+	/* No warnings yet */
 	state->warning_triggered = false;
 }
 
@@ -599,19 +707,17 @@ partition_filter_exec(CustomScanState *node)
 	TupleTableSlot		   *slot;
 
 	slot = ExecProcNode(child_ps);
+	state->subplan_slot = slot;
 
-	/* Save original ResultRelInfo */
-	if (!state->result_parts.saved_rel_info)
-		state->result_parts.saved_rel_info = estate->es_result_relation_info;
+	if (state->tup_convert_slot)
+		ExecClearTuple(state->tup_convert_slot);
 
 	if (!TupIsNull(slot))
 	{
 		MemoryContext				old_mcxt;
 		const PartRelationInfo	   *prel;
 		ResultRelInfoHolder		   *rri_holder;
-		bool						isnull;
-		Datum						value;
-		TupleTableSlot			   *tmp_slot;
+		ResultRelInfo			   *resultRelInfo;
 
 		/* Fetch PartRelationInfo for this partitioned relation */
 		prel = get_pathman_relation_info(state->partitioned_table);
@@ -619,7 +725,7 @@ partition_filter_exec(CustomScanState *node)
 		{
 			if (!state->warning_triggered)
 				elog(WARNING, "table \"%s\" is not partitioned, "
-							  "PartitionFilter will behave as a normal INSERT",
+							  INSERT_NODE_NAME " will behave as a normal INSERT",
 					 get_rel_name_or_relid(state->partitioned_table));
 
 			return slot;
@@ -628,36 +734,32 @@ partition_filter_exec(CustomScanState *node)
 		/* Switch to per-tuple context */
 		old_mcxt = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 
-		/* Execute expression */
-		tmp_slot = econtext->ecxt_scantuple;
+		/* Store slot for expression evaluation */
 		econtext->ecxt_scantuple = slot;
-		value = ExecEvalExprCompat(state->expr_state, econtext, &isnull,
-								   mult_result_handler);
-		econtext->ecxt_scantuple = tmp_slot;
-
-		if (isnull)
-			elog(ERROR, ERR_PART_ATTR_NULL);
 
 		/*
 		 * Search for a matching partition.
 		 * WARNING: 'prel' might change after this call!
 		 */
-		rri_holder = select_partition_for_insert(value, prel->ev_type, prel,
-												 &state->result_parts, estate);
+		rri_holder = select_partition_for_insert(state->expr_state,
+												 econtext, estate,
+												 prel, &state->result_parts);
 
 		/* Switch back and clean up per-tuple context */
 		MemoryContextSwitchTo(old_mcxt);
 		ResetExprContext(econtext);
 
+		resultRelInfo = rri_holder->result_rel_info;
+
 		/* Magic: replace parent's ResultRelInfo with ours */
-		estate->es_result_relation_info = rri_holder->result_rel_info;
+		estate->es_result_relation_info = resultRelInfo;
 
 		/* If there's a transform map, rebuild the tuple */
 		if (rri_holder->tuple_map)
 		{
 			HeapTuple	htup_old,
 						htup_new;
-			Relation	child_rel = rri_holder->result_rel_info->ri_RelationDesc;
+			Relation	child_rel = resultRelInfo->ri_RelationDesc;
 
 			htup_old = ExecMaterializeSlot(slot);
 			htup_new = do_convert_tuple(htup_old, rri_holder->tuple_map);
@@ -714,59 +816,51 @@ partition_filter_explain(CustomScanState *node, List *ancestors, ExplainState *e
  * Build partition filter's target list pointing to subplan tuple's elements.
  */
 static List *
-pfilter_build_tlist(Relation parent_rel, List *tlist)
+pfilter_build_tlist(Relation parent_rel, Plan *subplan)
 {
 	List	   *result_tlist = NIL;
 	ListCell   *lc;
-	int			i = 1;
 
-	foreach (lc, tlist)
+	foreach (lc, subplan->targetlist)
 	{
-		TargetEntry		   *tle = (TargetEntry *) lfirst(lc);
-		Expr			   *col_expr;
-		Form_pg_attribute	attr;
+		TargetEntry		   *tle = (TargetEntry *) lfirst(lc),
+						   *newtle = NULL;
 
-		/* Make sure that this attribute exists */
-		if (i > RelationGetDescr(parent_rel)->natts)
-			elog(ERROR, "error in function " CppAsString(pfilter_build_tlist));
+		if (IsA(tle->expr, Const))
+			newtle = makeTargetEntry(copyObject(tle->expr), tle->resno, tle->resname,
+											tle->resjunk);
 
-		/* Fetch pg_attribute entry for this column */
-		attr = RelationGetDescr(parent_rel)->attrs[i - 1];
-
-		/* If this column is dropped, create a placeholder Const */
-		if (attr->attisdropped)
-		{
-			/* Insert NULL for dropped column */
-			col_expr = (Expr *) makeConst(INT4OID,
-										  -1,
-										  InvalidOid,
-										  sizeof(int32),
-										  (Datum) 0,
-										  true,
-										  true);
-		}
-		/* Otherwise we should create a Var referencing subplan's output */
 		else
 		{
-			col_expr = (Expr *) makeVar(INDEX_VAR,	/* point to subplan's elements */
-										i,			/* direct attribute mapping */
-										exprType((Node *) tle->expr),
-										exprTypmod((Node *) tle->expr),
-										exprCollation((Node *) tle->expr),
-										0);
+			if (tle->expr != NULL && IsA(tle->expr, Var))
+			{
+				Var *var = (Var *) palloc(sizeof(Var));
+				*var = *((Var *)(tle->expr));
+				var->varno = INDEX_VAR;
+				var->varattno = tle->resno;
+
+				newtle = makeTargetEntry((Expr *) var, tle->resno, tle->resname,
+											tle->resjunk);
+			}
+			else
+			{
+				Var *var = makeVar(INDEX_VAR,	/* point to subplan's elements */
+								   tle->resno,
+								   exprType((Node *) tle->expr),
+								   exprTypmod((Node *) tle->expr),
+								   exprCollation((Node *) tle->expr),
+								   0);
+
+				newtle = makeTargetEntry((Expr *) var, tle->resno, tle->resname,
+											tle->resjunk);
+			}
 		}
 
-		result_tlist = lappend(result_tlist,
-							   makeTargetEntry(col_expr,
-											   i,
-											   NULL,
-											   tle->resjunk));
-		i++; /* next resno */
+		result_tlist = lappend(result_tlist, newtle);
 	}
 
 	return result_tlist;
 }
-
 
 /*
  * ----------------------------------------------
@@ -811,7 +905,7 @@ prepare_rri_returning_for_insert(EState *estate,
 		return;
 
 	child_rri = rri_holder->result_rel_info;
-	parent_rri = rps_storage->saved_rel_info;
+	parent_rri = rps_storage->base_rri;
 	parent_rt_idx = parent_rri->ri_RangeTableIndex;
 
 	/* Create ExprContext for tuple projections */
@@ -930,7 +1024,7 @@ prepare_rri_fdw_for_insert(EState *estate,
 			TargetEntry		   *te;
 			Param			   *param;
 
-			attr = tupdesc->attrs[i];
+			attr = TupleDescAttr(tupdesc, i);
 
 			if (attr->attisdropped)
 				continue;

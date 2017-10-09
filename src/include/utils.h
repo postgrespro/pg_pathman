@@ -30,13 +30,14 @@ bool match_expr_to_operand(Node *expr, Node *operand);
  * Misc.
  */
 Oid get_pathman_schema(void);
-List * list_reverse(List *l);
+List *list_reverse(List *l);
 
 /*
  * Useful functions for relations.
  */
 Oid get_rel_owner(Oid relid);
-char * get_rel_name_or_relid(Oid relid);
+char *get_rel_name_or_relid(Oid relid);
+char *get_qualified_rel_name(Oid relid);
 RangeVar *makeRangeVarFromRelid(Oid relid);
 
 /*
@@ -52,13 +53,12 @@ void extract_op_func_and_ret_type(char *opname,
 /*
  * Print values and cast types.
  */
-char * datum_to_cstring(Datum datum, Oid typid);
+char *datum_to_cstring(Datum datum, Oid typid);
 Datum perform_type_cast(Datum value, Oid in_type, Oid out_type, bool *success);
 Datum extract_binary_interval_from_text(Datum interval_text,
 										Oid part_atttype,
 										Oid *interval_type);
-char ** deconstruct_text_array(Datum array, int *array_size);
-RangeVar ** qualified_relnames_to_rangevars(char **relnames, size_t nrelnames);
-
+char **deconstruct_text_array(Datum array, int *array_size);
+RangeVar **qualified_relnames_to_rangevars(char **relnames, size_t nrelnames);
 
 #endif /* PATHMAN_UTILS_H */

@@ -135,20 +135,20 @@ get_pathman_schema(void)
 	SysScanDesc		scandesc;
 	HeapTuple		tuple;
 	ScanKeyData		entry[1];
-	Oid				ext_schema;
+	Oid				ext_oid;
 
 	/* It's impossible to fetch pg_pathman's schema now */
 	if (!IsTransactionState())
 		return InvalidOid;
 
-	ext_schema = get_extension_oid("pg_pathman", true);
-	if (ext_schema == InvalidOid)
+	ext_oid = get_extension_oid("pg_pathman", true);
+	if (ext_oid == InvalidOid)
 		return InvalidOid; /* exit if pg_pathman does not exist */
 
 	ScanKeyInit(&entry[0],
 				ObjectIdAttributeNumber,
 				BTEqualStrategyNumber, F_OIDEQ,
-				ObjectIdGetDatum(ext_schema));
+				ObjectIdGetDatum(ext_oid));
 
 	rel = heap_open(ExtensionRelationId, AccessShareLock);
 	scandesc = systable_beginscan(rel, ExtensionOidIndexId, true,
@@ -218,6 +218,19 @@ get_rel_name_or_relid(Oid relid)
 		return DatumGetCString(DirectFunctionCall1(oidout, ObjectIdGetDatum(relid)));
 
 	return relname;
+}
+
+/*
+ * Return palloced fully qualified relation name as a cstring
+ */
+char *
+get_qualified_rel_name(Oid relid)
+{
+	Oid nspid = get_rel_namespace(relid);
+
+	return psprintf("%s.%s",
+					quote_identifier(get_namespace_name(nspid)),
+					quote_identifier(get_rel_name(relid)));
 }
 
 RangeVar *
@@ -548,3 +561,4 @@ qualified_relnames_to_rangevars(char **relnames, size_t nrelnames)
 
 	return rangevars;
 }
+

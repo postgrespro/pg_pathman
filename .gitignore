@@ -9,6 +9,7 @@ regression.out
 *.gcda
 *.gcno
 *.gcov
+*.log
 pg_pathman--*.sql
 tags
 cscope*

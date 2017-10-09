@@ -406,7 +406,7 @@ fini_local_cache(void)
  * find_inheritance_children
  *
  * Returns an array containing the OIDs of all relations which
- * inherit *directly* from the relation with OID 'parentrelId'.
+ * inherit *directly* from the relation with OID 'parent_relid'.
  *
  * The specified lock type is acquired on each child relation (but not on the
  * given rel; caller should already have locked it).  If lockmode is NoLock
@@ -416,7 +416,7 @@ fini_local_cache(void)
  * borrowed from pg_inherits.c
  */
 find_children_status
-find_inheritance_children_array(Oid parentrelId,
+find_inheritance_children_array(Oid parent_relid,
 								LOCKMODE lockmode,
 								bool nowait,
 								uint32 *children_size,	/* ret value #1 */
@@ -444,7 +444,7 @@ find_inheritance_children_array(Oid parentrelId,
 	 * Can skip the scan if pg_class shows the
 	 * relation has never had a subclass.
 	 */
-	if (!has_subclass(parentrelId))
+	if (!has_subclass(parent_relid))
 		return FCS_NO_CHILDREN;
 
 	/*
@@ -459,7 +459,7 @@ find_inheritance_children_array(Oid parentrelId,
 	ScanKeyInit(&key[0],
 				Anum_pg_inherits_inhparent,
 				BTEqualStrategyNumber, F_OIDEQ,
-				ObjectIdGetDatum(parentrelId));
+				ObjectIdGetDatum(parent_relid));
 
 	scan = systable_beginscan(relation, InheritsParentIndexId, true,
 							  NULL, 1, key);
@@ -631,9 +631,8 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 	rel = heap_open(get_pathman_config_relid(false), AccessShareLock);
 
 	/* Check that 'partrel' column is of regclass type */
-	Assert(RelationGetDescr(rel)->
-		   attrs[Anum_pathman_config_partrel - 1]->
-		   atttypid == REGCLASSOID);
+	Assert(TupleDescAttr(RelationGetDescr(rel),
+				Anum_pathman_config_partrel - 1)->atttypid == REGCLASSOID);
 
 	/* Check that number of columns == Natts_pathman_config */
 	Assert(RelationGetDescr(rel)->natts == Natts_pathman_config);
@@ -880,9 +879,8 @@ read_pathman_config(void (*per_row_cb)(Datum *values,
 	rel = heap_open(get_pathman_config_relid(false), AccessShareLock);
 
 	/* Check that 'partrel' column is if regclass type */
-	Assert(RelationGetDescr(rel)->
-		   attrs[Anum_pathman_config_partrel - 1]->
-		   atttypid == REGCLASSOID);
+	Assert(TupleDescAttr(RelationGetDescr(rel),
+				Anum_pathman_config_partrel - 1)->atttypid == REGCLASSOID);
 
 	/* Check that number of columns == Natts_pathman_config */
 	Assert(RelationGetDescr(rel)->natts == Natts_pathman_config);

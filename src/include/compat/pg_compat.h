@@ -22,6 +22,7 @@
 #include "compat/debug_compat_features.h"
 
 #include "postgres.h"
+#include "access/tupdesc.h"
 #include "commands/trigger.h"
 #include "executor/executor.h"
 #include "nodes/memnodes.h"
@@ -29,6 +30,7 @@
 #include "nodes/pg_list.h"
 #include "optimizer/cost.h"
 #include "optimizer/paths.h"
+#include "optimizer/pathnode.h"
 #include "utils/memutils.h"
 
 /*
@@ -37,11 +39,56 @@
  * ----------
  */
 
+/*
+ * calc_nestloop_required_outer()
+ */
+
+#if PG_VERSION_NUM >= 110000
+static inline Relids
+calc_nestloop_required_outer_compat(Path *outer_path, Path *inner_path)
+{
+	RelOptInfo *innerrel = inner_path->parent;
+	RelOptInfo *outerrel = outer_path->parent;
+	Relids		innerrelids = innerrel->relids;
+	Relids		outerrelids = outerrel->relids;
+	Relids		inner_paramrels = PATH_REQ_OUTER(inner_path);
+	Relids		outer_paramrels = PATH_REQ_OUTER(outer_path);
+
+	return calc_nestloop_required_outer(outerrelids, outer_paramrels,
+										innerrelids, inner_paramrels);
+}
+#else
+#define calc_nestloop_required_outer_compat(outer_path, inner_path) \
+	(calc_nestloop_required_outer((outer_path), (inner_path)))
+#endif
 
 /*
  * adjust_appendrel_attrs()
  */
-#if PG_VERSION_NUM >= 90600
+
+#if PG_VERSION_NUM >= 110000
+#define adjust_appendrel_attrs_compat(root, node, appinfo) \
+		adjust_appendrel_attrs((root), \
+							   (node), \
+							   1, &(appinfo))
+#elif PG_VERSION_NUM >= 90500
+#define adjust_appendrel_attrs_compat(root, node, appinfo) \
+		adjust_appendrel_attrs((root), \
+							   (node), \
+							   (appinfo))
+#endif
+
+
+#if PG_VERSION_NUM >= 110000
+#define adjust_rel_targetlist_compat(root, dst_rel, src_rel, appinfo) \
+	do { \
+		(dst_rel)->reltarget->exprs = (List *) \
+				adjust_appendrel_attrs((root), \
+									   (Node *) (src_rel)->reltarget->exprs, \
+									   1,	\
+									   &(appinfo)); \
+	} while (0)
+#elif PG_VERSION_NUM >= 90600
 #define adjust_rel_targetlist_compat(root, dst_rel, src_rel, appinfo) \
 	do { \
 		(dst_rel)->reltarget->exprs = (List *) \
@@ -169,6 +216,18 @@
 
 
 /*
+ * CheckValidResultRel()
+ */
+#if PG_VERSION_NUM >= 100000
+#define CheckValidResultRelCompat(rri, cmd) \
+		CheckValidResultRel((rri), (cmd))
+#elif PG_VERSION_NUM >= 90500
+#define CheckValidResultRelCompat(rri, cmd) \
+		CheckValidResultRel((rri)->ri_RelationDesc, (cmd))
+#endif
+
+
+/*
  * create_append_path()
  */
 #if PG_VERSION_NUM >= 100000
@@ -276,7 +335,7 @@ extern void create_plain_partial_paths(PlannerInfo *root,
 
 
 /*
- * ExecBuildProjectionInfo
+ * ExecBuildProjectionInfo()
  */
 #if PG_VERSION_NUM >= 100000
 #define ExecBuildProjectionInfoCompat(targetList, econtext, resultSlot, \
@@ -376,7 +435,7 @@ char get_rel_persistence(Oid relid);
 
 
 /*
- * initial_cost_nestloop
+ * initial_cost_nestloop()
  */
 #if PG_VERSION_NUM >= 100000 || (defined(PGPRO_VERSION) && PG_VERSION_NUM >= 90603)
 #define initial_cost_nestloop_compat(root, workspace, jointype, outer_path, \
@@ -392,7 +451,7 @@ char get_rel_persistence(Oid relid);
 
 
 /*
- * InitResultRelInfo
+ * InitResultRelInfo()
  *
  * for v10 set NULL into 'partition_root' argument to specify that result
  * relation is not vanilla partition
@@ -471,7 +530,7 @@ extern int oid_cmp(const void *p1, const void *p2);
 
 
 /*
- * pg_analyze_and_rewrite
+ * pg_analyze_and_rewrite()
  *
  * for v10 cast first arg to RawStmt type
  */
@@ -489,7 +548,7 @@ extern int oid_cmp(const void *p1, const void *p2);
 
 
 /*
- * ProcessUtility
+ * ProcessUtility()
  *
  * for v10 set NULL into 'queryEnv' argument
  */
@@ -589,6 +648,21 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 
 
 /*
+ * ExecARDeleteTriggers()
+ */
+#if PG_VERSION_NUM >= 100000
+#define ExecARDeleteTriggersCompat(estate, relinfo, tupleid, \
+								   fdw_trigtuple, transition_capture) \
+	ExecARDeleteTriggers((estate), (relinfo), (tupleid), \
+						 (fdw_trigtuple), (transition_capture))
+#elif PG_VERSION_NUM >= 90500
+#define ExecARDeleteTriggersCompat(estate, relinfo, tupleid, \
+								   fdw_trigtuple, transition_capture) \
+	ExecARDeleteTriggers((estate), (relinfo), (tupleid), (fdw_trigtuple))
+#endif
+
+
+/*
  * ExecASInsertTriggers()
  */
 #if PG_VERSION_NUM >= 100000
@@ -597,6 +671,30 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 #elif PG_VERSION_NUM >= 90500
 #define ExecASInsertTriggersCompat(estate, relinfo, transition_capture) \
 	ExecASInsertTriggers((estate), (relinfo))
+#endif
+
+
+/*
+ * map_variable_attnos()
+ */
+#if PG_VERSION_NUM >= 100000
+#define map_variable_attnos_compat(node, varno, \
+								   sublevels_up, map, map_len, \
+								   to_rowtype, found_wholerow) \
+		map_variable_attnos((node), (varno), \
+							(sublevels_up), (map), (map_len), \
+							(to_rowtype), (found_wholerow))
+#elif PG_VERSION_NUM >= 90500
+#define map_variable_attnos_compat(node, varno, \
+								   sublevels_up, map, map_len, \
+								   to_rowtype, found_wholerow) \
+		map_variable_attnos((node), (varno), \
+							(sublevels_up), (map), (map_len), \
+							(found_wholerow))
+#endif
+
+#ifndef TupleDescAttr
+#define TupleDescAttr(tupdesc, i) ((tupdesc)->attrs[(i)])
 #endif
 
 

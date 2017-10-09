@@ -262,13 +262,12 @@ CopyGetAttnums(TupleDesc tupDesc, Relation rel, List *attnamelist)
 	if (attnamelist == NIL)
 	{
 		/* Generate default column list */
-		Form_pg_attribute *attr = tupDesc->attrs;
 		int			attr_count = tupDesc->natts;
 		int			i;
 
 		for (i = 0; i < attr_count; i++)
 		{
-			if (attr[i]->attisdropped)
+			if (TupleDescAttr(tupDesc, i)->attisdropped)
 				continue;
 			attnums = lappend_int(attnums, i + 1);
 		}
@@ -288,11 +287,13 @@ CopyGetAttnums(TupleDesc tupDesc, Relation rel, List *attnamelist)
 			attnum = InvalidAttrNumber;
 			for (i = 0; i < tupDesc->natts; i++)
 			{
-				if (tupDesc->attrs[i]->attisdropped)
+				Form_pg_attribute att = TupleDescAttr(tupDesc, i);
+
+				if (att->attisdropped)
 					continue;
-				if (namestrcmp(&(tupDesc->attrs[i]->attname), name) == 0)
+				if (namestrcmp(&(att->attname), name) == 0)
 				{
-					attnum = tupDesc->attrs[i]->attnum;
+					attnum = att->attnum;
 					break;
 				}
 			}
@@ -551,7 +552,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	bool			   *nulls;
 
 	ResultPartsStorage	parts_storage;
-	ResultRelInfo	   *parent_result_rel;
+	ResultRelInfo	   *parent_rri;
 
 	EState			   *estate = CreateExecutorState(); /* for ExecConstraints() */
 	ExprContext		   *econtext;
@@ -566,23 +567,26 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 
 	tupDesc = RelationGetDescr(parent_rel);
 
-	parent_result_rel = makeNode(ResultRelInfo);
-	InitResultRelInfoCompat(parent_result_rel,
+	parent_rri = makeNode(ResultRelInfo);
+	InitResultRelInfoCompat(parent_rri,
 							parent_rel,
 							1,		/* dummy rangetable index */
 							0);
-	ExecOpenIndices(parent_result_rel, false);
+	ExecOpenIndices(parent_rri, false);
 
-	estate->es_result_relations = parent_result_rel;
+	estate->es_result_relations = parent_rri;
 	estate->es_num_result_relations = 1;
-	estate->es_result_relation_info = parent_result_rel;
+	estate->es_result_relation_info = parent_rri;
 	estate->es_range_table = range_table;
 
 	/* Initialize ResultPartsStorage */
 	init_result_parts_storage(&parts_storage, estate, false,
 							  ResultPartsStorageStandard,
-							  prepare_rri_for_copy, NULL);
-	parts_storage.saved_rel_info = parent_result_rel;
+							  prepare_rri_for_copy, NULL,
+							  CMD_INSERT);
+
+	/* Don't forget to initialize 'base_rri'! */
+	parts_storage.base_rri = parent_rri;
 
 	/* Set up a tuple slot too */
 	myslot = ExecInitExtraTupleSlot(estate);
@@ -599,7 +603,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	 * such. However, executing these triggers maintains consistency with the
 	 * EACH ROW triggers that we already fire on COPY.
 	 */
-	ExecBSInsertTriggers(estate, parent_result_rel);
+	ExecBSInsertTriggers(estate, parent_rri);
 
 	values = (Datum *) palloc(tupDesc->natts * sizeof(Datum));
 	nulls = (bool *) palloc(tupDesc->natts * sizeof(bool));
@@ -608,12 +612,9 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 
 	for (;;)
 	{
-		TupleTableSlot		   *slot,
-							   *tmp_slot;
-		bool					skip_tuple,
-								isnull;
+		TupleTableSlot		   *slot;
+		bool					skip_tuple;
 		Oid						tuple_oid = InvalidOid;
-		Datum					value;
 
 		const PartRelationInfo *prel;
 		ResultRelInfoHolder	   *rri_holder;
@@ -639,7 +640,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 		if (!NextCopyFrom(cstate, econtext, values, nulls, &tuple_oid))
 			break;
 
-		/* We can form the input tuple. */
+		/* We can form the input tuple */
 		tuple = heap_form_tuple(tupDesc, values, nulls);
 
 		if (tuple_oid != InvalidOid)
@@ -650,24 +651,19 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 		ExecSetSlotDescriptor(slot, tupDesc);
 		ExecStoreTuple(tuple, slot, InvalidBuffer, false);
 
-		/* Execute expression */
-		tmp_slot = econtext->ecxt_scantuple;
+		/* Store slot for expression evaluation */
 		econtext->ecxt_scantuple = slot;
-		value = ExecEvalExprCompat(expr_state, econtext, &isnull,
-								   mult_result_handler);
-		econtext->ecxt_scantuple = tmp_slot;
-
-		if (isnull)
-			elog(ERROR, ERR_PART_ATTR_NULL);
 
 		/*
 		 * Search for a matching partition.
 		 * WARNING: 'prel' might change after this call!
 		 */
-		rri_holder = select_partition_for_insert(value,
-												 prel->ev_type, prel,
-												 &parts_storage, estate);
+		rri_holder = select_partition_for_insert(expr_state, econtext, estate,
+												 prel, &parts_storage);
+
 		child_result_rel = rri_holder->result_rel_info;
+
+		/* Magic: replace parent's ResultRelInfo with ours */
 		estate->es_result_relation_info = child_result_rel;
 
 		/*
@@ -749,7 +745,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 		pq_endmsgread();
 
 	/* Execute AFTER STATEMENT insertion triggers (FIXME: NULL transition) */
-	ExecASInsertTriggersCompat(estate, parent_result_rel, NULL);
+	ExecASInsertTriggersCompat(estate, parent_rri, NULL);
 
 	/* Handle queued AFTER triggers */
 	AfterTriggerEndQuery(estate);
@@ -763,7 +759,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	fini_result_parts_storage(&parts_storage, true);
 
 	/* Close parent's indices */
-	ExecCloseIndices(parent_result_rel);
+	ExecCloseIndices(parent_rri);
 
 	FreeExecutorState(estate);
 

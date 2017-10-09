@@ -13,6 +13,7 @@
 #include "planner_tree_modification.h"
 
 #include "nodes/nodes.h"
+#include "nodes/pg_list.h"
 
 
 #ifndef NATIVE_RELATION_TAGS
@@ -22,6 +23,15 @@
  * cant't be referenced as ONLY and non-ONLY at the same time.
  */
 static HTAB *per_table_relation_tags = NULL;
+
+/*
+ * List of bitmapsets, where we keep partitioned RangeTblEntry indexes
+ * for each level of planner
+ */
+List *partitioned_rti_sets = NIL;
+
+/* Points to last bitmapset in list */
+Bitmapset *current_partitioned_rti = NULL;
 
 /*
  * Single row of 'per_table_relation_tags'.
@@ -219,6 +229,11 @@ incr_refcount_relation_tags(void)
 	if (++per_table_relation_tags_refcount <= 0)
 		elog(WARNING, "imbalanced %s",
 			 CppAsString(incr_refcount_relation_tags));
+
+	if (per_table_relation_tags_refcount == 1)
+		partitioned_rti_sets = NIL;
+
+	current_partitioned_rti = NULL;
 }
 
 /* Return current value of usage counter */
@@ -233,10 +248,25 @@ get_refcount_relation_tags(void)
 void
 decr_refcount_relation_tags(void)
 {
+	int len;
+
 	/* Decrement reference counter */
 	if (--per_table_relation_tags_refcount < 0)
 		elog(WARNING, "imbalanced %s",
 			 CppAsString(decr_refcount_relation_tags));
+
+	/* Partitioned RTEs list management */
+	len = list_length(partitioned_rti_sets);
+	if (len && current_partitioned_rti)
+	{
+		bms_free(current_partitioned_rti);
+
+		partitioned_rti_sets = list_truncate(partitioned_rti_sets, len - 1);
+		if (partitioned_rti_sets)
+			current_partitioned_rti = llast(partitioned_rti_sets);
+		else
+			current_partitioned_rti = NULL;
+	}
 
 	/* Free resources if no one is using them */
 	if (per_table_relation_tags_refcount == 0)
@@ -248,4 +278,20 @@ decr_refcount_relation_tags(void)
 		per_table_relation_tags = NULL;
 #endif
 	}
+}
+
+void
+MarkPartitionedRTE(Index rti)
+{
+	bool add = (current_partitioned_rti == NULL);
+
+	current_partitioned_rti = bms_add_member(current_partitioned_rti, rti);
+	if (add)
+		partitioned_rti_sets = lappend(partitioned_rti_sets, current_partitioned_rti);
+}
+
+bool
+IsPartitionedRTE(Index rti)
+{
+	return bms_is_member(rti, current_partitioned_rti);
 }

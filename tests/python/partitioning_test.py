@@ -13,22 +13,57 @@ import os
 import re
 import subprocess
 import threading
-import time
+import json
 import time
 import unittest
 
 from distutils.version import LooseVersion
 from testgres import get_new_node, get_bin_path, get_pg_config
 
+# set setup base logging config, it can be turned on by `use_logging`
+# parameter on node setup
+
+import logging
+import logging.config
+
+logfile = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'tests.log')
+LOG_CONFIG = {
+    'version': 1,
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'base_format',
+            'level': logging.DEBUG,
+        },
+        'file': {
+            'class': 'logging.FileHandler',
+            'filename': logfile,
+            'formatter': 'base_format',
+            'level': logging.DEBUG,
+        },
+    },
+    'formatters': {
+        'base_format': {
+            'format': '%(node)-5s: %(message)s',
+        },
+    },
+    'root': {
+        'handlers': ('file', ),
+        'level': 'DEBUG',
+    },
+}
+
+logging.config.dictConfig(LOG_CONFIG)
 version = LooseVersion(get_pg_config().get("VERSION_NUM"))
 
 
 # Helper function for json equality
-def ordered(obj):
+def ordered(obj, skip_keys=None):
     if isinstance(obj, dict):
-        return sorted((k, ordered(v)) for k, v in obj.items())
+        return sorted((k, ordered(v, skip_keys=skip_keys)) for k, v in obj.items()
+                      if skip_keys is None or (skip_keys and k not in skip_keys))
     if isinstance(obj, list):
-        return sorted(ordered(x) for x in obj)
+        return sorted(ordered(x, skip_keys=skip_keys) for x in obj)
     else:
         return obj
 
@@ -46,6 +81,11 @@ def if_fdw_enabled(func):
 
 
 class Tests(unittest.TestCase):
+    def set_trace(self, con, command="pg_debug"):
+        pid = con.execute("select pg_backend_pid()")[0][0]
+        p = subprocess.Popen([command], stdin=subprocess.PIPE)
+        p.communicate(str(pid).encode())
+
     def start_new_pathman_cluster(self,
                                   name='test',
                                   allow_streaming=False,
@@ -1156,6 +1196,84 @@ class Tests(unittest.TestCase):
                         Race condition between detach and concurrent
                         inserts with append partition is expired
                     """)
+
+    def test_update_node_plan1(self):
+        '''
+        Test scan on all partititions when using update node.
+        We can't use regression tests here because 9.5 and 9.6 give
+        different plans
+		'''
+
+        with get_new_node('test_update_node') as node:
+            node.init()
+            node.append_conf(
+             'postgresql.conf',
+             """
+            shared_preload_libraries=\'pg_pathman\'
+            pg_pathman.override_copy=false
+            pg_pathman.enable_partitionrouter=on
+            """)
+            node.start()
+
+            # Prepare test database
+            node.psql('postgres', 'CREATE EXTENSION pg_pathman;')
+            node.psql('postgres', 'CREATE SCHEMA test_update_node;')
+            node.psql('postgres', 'CREATE TABLE test_update_node.test_range(val NUMERIC NOT NULL, comment TEXT)')
+            node.psql('postgres', 'INSERT INTO test_update_node.test_range SELECT i, i FROM generate_series(1, 100) i;')
+            node.psql('postgres', "SELECT create_range_partitions('test_update_node.test_range', 'val', 1, 10);")
+
+            node.psql('postgres', """
+                create or replace function query_plan(query text) returns jsonb as $$
+                declare
+                        plan jsonb;
+                begin
+                        execute 'explain (costs off, format json)' || query into plan;
+                        return plan;
+                end;
+                $$ language plpgsql;
+            """)
+
+            with node.connect() as con:
+                test_query = "UPDATE test_update_node.test_range SET val = 14 WHERE comment=''15''"
+                plan = con.execute('SELECT query_plan(\'%s\')' % test_query)[0][0]
+                plan = plan[0]["Plan"]
+
+                self.assertEqual(plan["Node Type"], "ModifyTable")
+                self.assertEqual(plan["Operation"], "Update")
+                self.assertEqual(plan["Relation Name"], "test_range")
+                self.assertEqual(len(plan["Target Tables"]), 11)
+
+            expected_format = '''
+                {
+                    "Plans": [
+                        {
+                            "Plans": [
+                                {
+                                    "Filter": "(comment = '15'::text)",
+                                    "Node Type": "Seq Scan",
+                                    "Relation Name": "test_range%s",
+                                    "Parent Relationship": "child"
+                                }
+                            ],
+                            "Node Type": "Custom Scan",
+                            "Parent Relationship": "child",
+                            "Custom Plan Provider": "PartitionFilter"
+                        }
+                    ],
+                    "Node Type": "Custom Scan",
+                    "Parent Relationship": "Member",
+                    "Custom Plan Provider": "PartitionRouter"
+                }
+            '''
+
+            for i, f in enumerate([''] + list(map(str, range(1, 10)))):
+                num = '_' + f if f else ''
+                expected = json.loads(expected_format % num)
+                p = ordered(plan["Plans"][i], skip_keys=['Parallel Aware', 'Alias'])
+                self.assertEqual(p, ordered(expected))
+
+            node.psql('postgres', 'DROP SCHEMA test_update_node CASCADE;')
+            node.psql('postgres', 'DROP EXTENSION pg_pathman CASCADE;')
 
 if __name__ == "__main__":
     unittest.main()
