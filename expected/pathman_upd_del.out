@@ -404,6 +404,55 @@ WITH q AS (DELETE FROM test.tmp t
 		   RETURNING *)
 DELETE FROM test.tmp USING q;
 ROLLBACK;
+/* Test special rule for CTE; Nested CTEs (PostgreSQL 9.5) */
+EXPLAIN (COSTS OFF)
+WITH q AS (WITH n AS (SELECT id FROM test.tmp2 WHERE id = 2)
+		   DELETE FROM test.tmp t
+		   USING n
+		   WHERE t.id = n.id
+		   RETURNING *)
+DELETE FROM test.tmp USING q;
+                 QUERY PLAN                 
+--------------------------------------------
+ Delete on tmp
+   CTE q
+     ->  Delete on tmp t
+           CTE n
+             ->  Append
+                   ->  Seq Scan on tmp2_2
+                         Filter: (id = 2)
+           ->  Nested Loop
+                 Join Filter: (t.id = n.id)
+                 ->  Seq Scan on tmp t
+                 ->  CTE Scan on n
+   ->  Nested Loop
+         ->  Seq Scan on tmp
+         ->  CTE Scan on q
+(14 rows)
+
+/* Test special rule for CTE; CTE in quals (PostgreSQL 9.5) */
+EXPLAIN (COSTS OFF)
+WITH q AS (SELECT id FROM test.tmp2
+		   WHERE id < 3)
+DELETE FROM test.tmp t WHERE t.id in (SELECT id FROM q);
+             QUERY PLAN             
+------------------------------------
+ Delete on tmp t
+   CTE q
+     ->  Append
+           ->  Seq Scan on tmp2_1
+           ->  Seq Scan on tmp2_2
+   ->  Nested Loop Semi Join
+         Join Filter: (t.id = q.id)
+         ->  Seq Scan on tmp t
+         ->  CTE Scan on q
+(9 rows)
+
+BEGIN;
+WITH q AS (SELECT id FROM test.tmp2
+		   WHERE id < 3)
+DELETE FROM test.tmp t WHERE t.id in (SELECT id FROM q);
+ROLLBACK;
 DROP SCHEMA test CASCADE;
 NOTICE:  drop cascades to 27 other objects
 DROP EXTENSION pg_pathman CASCADE;

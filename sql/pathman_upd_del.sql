@@ -243,6 +243,29 @@ DELETE FROM test.tmp USING q;
 ROLLBACK;
 
 
+/* Test special rule for CTE; Nested CTEs (PostgreSQL 9.5) */
+EXPLAIN (COSTS OFF)
+WITH q AS (WITH n AS (SELECT id FROM test.tmp2 WHERE id = 2)
+		   DELETE FROM test.tmp t
+		   USING n
+		   WHERE t.id = n.id
+		   RETURNING *)
+DELETE FROM test.tmp USING q;
+
+
+/* Test special rule for CTE; CTE in quals (PostgreSQL 9.5) */
+EXPLAIN (COSTS OFF)
+WITH q AS (SELECT id FROM test.tmp2
+		   WHERE id < 3)
+DELETE FROM test.tmp t WHERE t.id in (SELECT id FROM q);
+
+BEGIN;
+WITH q AS (SELECT id FROM test.tmp2
+		   WHERE id < 3)
+DELETE FROM test.tmp t WHERE t.id in (SELECT id FROM q);
+ROLLBACK;
+
+
 
 DROP SCHEMA test CASCADE;
 DROP EXTENSION pg_pathman CASCADE;

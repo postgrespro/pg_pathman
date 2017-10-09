@@ -62,19 +62,36 @@
 		(context)->TRANSFORM_CONTEXT_FIELD(command_type) = true; \
 		break; \
 
+#define TRANSFORM_CONTEXT_QUERY_IS_CTE_CTE(context, query) \
+	( (context)->parent_cte && \
+	  (context)->parent_cte->ctequery == (Node *) (query) )
+
+#define TRANSFORM_CONTEXT_QUERY_IS_CTE_SL(context, query) \
+	( (context)->parent_sublink && \
+	  (context)->parent_sublink->subselect == (Node *) (query) && \
+	  (context)->parent_sublink->subLinkType == CTE_SUBLINK )
+
+/* Check if 'query' is CTE according to 'context' */
+#define TRANSFORM_CONTEXT_QUERY_IS_CTE(context, query) \
+	( TRANSFORM_CONTEXT_QUERY_IS_CTE_CTE((context), (query)) || \
+	  TRANSFORM_CONTEXT_QUERY_IS_CTE_SL ((context), (query)) )
+
 typedef struct
 {
 	/* Do we have a parent CmdType query? */
-	bool			TRANSFORM_CONTEXT_FIELD(SELECT),
-					TRANSFORM_CONTEXT_FIELD(INSERT),
-					TRANSFORM_CONTEXT_FIELD(UPDATE),
-					TRANSFORM_CONTEXT_FIELD(DELETE);
+	bool				TRANSFORM_CONTEXT_FIELD(SELECT),
+						TRANSFORM_CONTEXT_FIELD(INSERT),
+						TRANSFORM_CONTEXT_FIELD(UPDATE),
+						TRANSFORM_CONTEXT_FIELD(DELETE);
 
 	/* Parameters for handle_modification_query() */
-	ParamListInfo	query_params;
+	ParamListInfo		query_params;
 
 	/* SubLink that might contain an examined query */
-	SubLink		   *parent_sublink;
+	SubLink			   *parent_sublink;
+
+	/* CommonTableExpr that might containt an examined query */
+	CommonTableExpr	   *parent_cte;
 } transform_query_cxt;
 
 
@@ -208,14 +225,24 @@ pathman_transform_query_walker(Node *node, void *context)
 	if (node == NULL)
 		return false;
 
-	else if (IsA(node, SubLink))
+	else if (IsA(node, SubLink) || IsA(node, CommonTableExpr))
 	{
 		transform_query_cxt	   *current_context = context,
 								next_context;
 
 		/* Initialize next context for bottom subqueries */
 		next_context = *current_context;
-		next_context.parent_sublink = (SubLink *) node;
+
+		if (IsA(node, SubLink))
+		{
+			next_context.parent_sublink = (SubLink *) node;
+			next_context.parent_cte = NULL;
+		}
+		else
+		{
+			next_context.parent_sublink = NULL;
+			next_context.parent_cte = (CommonTableExpr *) node;
+		}
 
 		/* Handle expression subtree */
 		return expression_tree_walker(node,
@@ -241,6 +268,8 @@ pathman_transform_query_walker(Node *node, void *context)
 			default:
 				break;
 		}
+		next_context.parent_sublink = NULL;
+		next_context.parent_cte = NULL;
 
 		/* Assign Query a 'queryId' */
 		assign_query_id(query);
@@ -284,9 +313,7 @@ disable_standard_inheritance(Query *parse, transform_query_cxt *context)
 	/* Don't process queries under UPDATE or DELETE (except for CTEs) */
 	if ((TRANSFORM_CONTEXT_HAS_PARENT(context, UPDATE) ||
 		 TRANSFORM_CONTEXT_HAS_PARENT(context, DELETE)) &&
-			(context->parent_sublink &&
-			 context->parent_sublink->subselect == (Node *) parse &&
-			 context->parent_sublink->subLinkType != CTE_SUBLINK))
+			!TRANSFORM_CONTEXT_QUERY_IS_CTE(context, parse))
 		return;
 #endif
 

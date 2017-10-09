@@ -229,23 +229,41 @@ USING (SELECT *
 	   JOIN test.tmp2 a2
 	   USING(id)) t
 WHERE t.id = r.id;
-                 QUERY PLAN                  
----------------------------------------------
+                       QUERY PLAN                        
+---------------------------------------------------------
  Delete on tmp r
-   ->  Merge Join
-         Merge Cond: (a1.id = a2.id)
-         ->  Merge Join
-               Merge Cond: (r.id = a1.id)
-               ->  Sort
-                     Sort Key: r.id
-                     ->  Seq Scan on tmp r
-               ->  Sort
-                     Sort Key: a1.id
-                     ->  Seq Scan on tmp2 a1
-         ->  Sort
-               Sort Key: a2.id
-               ->  Seq Scan on tmp2 a2
-(14 rows)
+   ->  Nested Loop
+         Join Filter: (a1.id = a2.id)
+         ->  Nested Loop
+               Join Filter: (r.id = a1.id)
+               ->  Seq Scan on tmp r
+               ->  Materialize
+                     ->  Append
+                           ->  Seq Scan on tmp2 a1
+                           ->  Seq Scan on tmp2_1 a1_1
+                           ->  Seq Scan on tmp2_2 a1_2
+                           ->  Seq Scan on tmp2_3 a1_3
+                           ->  Seq Scan on tmp2_4 a1_4
+                           ->  Seq Scan on tmp2_5 a1_5
+                           ->  Seq Scan on tmp2_6 a1_6
+                           ->  Seq Scan on tmp2_7 a1_7
+                           ->  Seq Scan on tmp2_8 a1_8
+                           ->  Seq Scan on tmp2_9 a1_9
+                           ->  Seq Scan on tmp2_10 a1_10
+         ->  Materialize
+               ->  Append
+                     ->  Seq Scan on tmp2 a2
+                     ->  Seq Scan on tmp2_1 a2_1
+                     ->  Seq Scan on tmp2_2 a2_2
+                     ->  Seq Scan on tmp2_3 a2_3
+                     ->  Seq Scan on tmp2_4 a2_4
+                     ->  Seq Scan on tmp2_5 a2_5
+                     ->  Seq Scan on tmp2_6 a2_6
+                     ->  Seq Scan on tmp2_7 a2_7
+                     ->  Seq Scan on tmp2_8 a2_8
+                     ->  Seq Scan on tmp2_9 a2_9
+                     ->  Seq Scan on tmp2_10 a2_10
+(32 rows)
 
 BEGIN;
 DELETE FROM test.tmp r
@@ -385,6 +403,55 @@ WITH q AS (DELETE FROM test.tmp t
 		   WHERE r.dt = '2010-01-02' AND r.id = t.id
 		   RETURNING *)
 DELETE FROM test.tmp USING q;
+ROLLBACK;
+/* Test special rule for CTE; Nested CTEs (PostgreSQL 9.5) */
+EXPLAIN (COSTS OFF)
+WITH q AS (WITH n AS (SELECT id FROM test.tmp2 WHERE id = 2)
+		   DELETE FROM test.tmp t
+		   USING n
+		   WHERE t.id = n.id
+		   RETURNING *)
+DELETE FROM test.tmp USING q;
+                 QUERY PLAN                 
+--------------------------------------------
+ Delete on tmp
+   CTE q
+     ->  Delete on tmp t
+           CTE n
+             ->  Append
+                   ->  Seq Scan on tmp2_2
+                         Filter: (id = 2)
+           ->  Nested Loop
+                 Join Filter: (t.id = n.id)
+                 ->  Seq Scan on tmp t
+                 ->  CTE Scan on n
+   ->  Nested Loop
+         ->  Seq Scan on tmp
+         ->  CTE Scan on q
+(14 rows)
+
+/* Test special rule for CTE; CTE in quals (PostgreSQL 9.5) */
+EXPLAIN (COSTS OFF)
+WITH q AS (SELECT id FROM test.tmp2
+		   WHERE id < 3)
+DELETE FROM test.tmp t WHERE t.id in (SELECT id FROM q);
+             QUERY PLAN             
+------------------------------------
+ Delete on tmp t
+   CTE q
+     ->  Append
+           ->  Seq Scan on tmp2_1
+           ->  Seq Scan on tmp2_2
+   ->  Nested Loop Semi Join
+         Join Filter: (t.id = q.id)
+         ->  Seq Scan on tmp t
+         ->  CTE Scan on q
+(9 rows)
+
+BEGIN;
+WITH q AS (SELECT id FROM test.tmp2
+		   WHERE id < 3)
+DELETE FROM test.tmp t WHERE t.id in (SELECT id FROM q);
 ROLLBACK;
 DROP SCHEMA test CASCADE;
 NOTICE:  drop cascades to 27 other objects
