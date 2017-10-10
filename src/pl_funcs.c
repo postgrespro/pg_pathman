@@ -886,7 +886,7 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 		Oid			naming_seq;
 
 		naming_seq_rv = makeRangeVar(get_namespace_name(get_rel_namespace(relid)),
-									 build_sequence_name_internal(relid),
+									 build_sequence_name_relid_internal(relid),
 									 -1);
 
 		naming_seq = RangeVarGetRelid(naming_seq_rv, AccessShareLock, true);

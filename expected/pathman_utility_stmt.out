@@ -285,6 +285,58 @@ NOTICE:  drop cascades to 797 other objects
  * Test auto check constraint renaming
  */
 CREATE SCHEMA rename;
+/*
+ * Check that auto naming sequence is renamed
+ */
+CREATE TABLE rename.parent(id int not null);
+SELECT create_range_partitions('rename.parent', 'id', 1, 2, 2);
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+SELECT 'rename.parent'::regclass;		/* parent is OK */
+   regclass    
+---------------
+ rename.parent
+(1 row)
+
+SELECT 'rename.parent_seq'::regclass;	/* sequence is OK */
+     regclass      
+-------------------
+ rename.parent_seq
+(1 row)
+
+ALTER TABLE rename.parent RENAME TO parent_renamed;
+SELECT 'rename.parent_renamed'::regclass;		/* parent is OK */
+       regclass        
+-----------------------
+ rename.parent_renamed
+(1 row)
+
+SELECT 'rename.parent_renamed_seq'::regclass;	/* sequence is OK */
+         regclass          
+---------------------------
+ rename.parent_renamed_seq
+(1 row)
+
+SELECT append_range_partition('rename.parent_renamed'); /* can append */
+ append_range_partition  
+-------------------------
+ rename.parent_renamed_3
+(1 row)
+
+DROP SEQUENCE rename.parent_renamed_seq;
+ALTER TABLE rename.parent_renamed RENAME TO parent;
+SELECT 'rename.parent'::regclass;		/* parent is OK */
+   regclass    
+---------------
+ rename.parent
+(1 row)
+
+/*
+ * Check that partitioning constraints are renamed
+ */
 CREATE TABLE rename.test(a serial, b int);
 SELECT create_hash_partitions('rename.test', 'a', 3);
  create_hash_partitions 
@@ -336,7 +388,9 @@ WHERE r.conrelid = 'rename.test_inh_one'::regclass AND r.contype = 'c';
  pathman_test_inh_1_check | CHECK (a < 100)
 (1 row)
 
-/* Check that plain tables are not affected too */
+/*
+ * Check that plain tables are not affected too
+ */
 CREATE TABLE rename.plain_test(a serial, b int);
 ALTER TABLE rename.plain_test RENAME TO plain_test_renamed;
 SELECT add_constraint('rename.plain_test_renamed');
@@ -365,7 +419,7 @@ WHERE r.conrelid = 'rename.plain_test'::regclass AND r.contype = 'c';
 (1 row)
 
 DROP SCHEMA rename CASCADE;
-NOTICE:  drop cascades to 7 other objects
+NOTICE:  drop cascades to 11 other objects
 /*
  * Test DROP INDEX CONCURRENTLY (test snapshots)
  */
