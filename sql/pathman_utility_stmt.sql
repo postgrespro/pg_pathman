@@ -167,6 +167,25 @@ DROP SCHEMA copy_stmt_hooking CASCADE;
  */
 CREATE SCHEMA rename;
 
+
+/*
+ * Check that auto naming sequence is renamed
+ */
+CREATE TABLE rename.parent(id int not null);
+SELECT create_range_partitions('rename.parent', 'id', 1, 2, 2);
+SELECT 'rename.parent'::regclass;		/* parent is OK */
+SELECT 'rename.parent_seq'::regclass;	/* sequence is OK */
+ALTER TABLE rename.parent RENAME TO parent_renamed;
+SELECT 'rename.parent_renamed'::regclass;		/* parent is OK */
+SELECT 'rename.parent_renamed_seq'::regclass;	/* sequence is OK */
+SELECT append_range_partition('rename.parent_renamed'); /* can append */
+DROP SEQUENCE rename.parent_renamed_seq;
+ALTER TABLE rename.parent_renamed RENAME TO parent;
+SELECT 'rename.parent'::regclass;		/* parent is OK */
+
+/*
+ * Check that partitioning constraints are renamed
+ */
 CREATE TABLE rename.test(a serial, b int);
 SELECT create_hash_partitions('rename.test', 'a', 3);
 ALTER TABLE rename.test_0 RENAME TO test_one;
@@ -201,7 +220,9 @@ SELECT r.conname, pg_get_constraintdef(r.oid, true)
 FROM pg_constraint r
 WHERE r.conrelid = 'rename.test_inh_one'::regclass AND r.contype = 'c';
 
-/* Check that plain tables are not affected too */
+/*
+ * Check that plain tables are not affected too
+ */
 CREATE TABLE rename.plain_test(a serial, b int);
 ALTER TABLE rename.plain_test RENAME TO plain_test_renamed;
 SELECT add_constraint('rename.plain_test_renamed');
@@ -215,6 +236,7 @@ ALTER TABLE rename.plain_test_renamed RENAME TO plain_test;
 SELECT r.conname, pg_get_constraintdef(r.oid, true)
 FROM pg_constraint r
 WHERE r.conrelid = 'rename.plain_test'::regclass AND r.contype = 'c';
+
 
 DROP SCHEMA rename CASCADE;
 

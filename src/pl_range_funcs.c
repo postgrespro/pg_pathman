@@ -589,16 +589,18 @@ build_sequence_name(PG_FUNCTION_ARGS)
 {
 	Oid		parent_relid = PG_GETARG_OID(0);
 	Oid		parent_nsp;
+	char   *seq_name;
 	char   *result;
 
 	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(parent_relid)))
 		ereport(ERROR, (errmsg("relation \"%u\" does not exist", parent_relid)));
 
 	parent_nsp = get_rel_namespace(parent_relid);
+	seq_name = build_sequence_name_relid_internal(parent_relid);
 
 	result = psprintf("%s.%s",
 					  quote_identifier(get_namespace_name(parent_nsp)),
-					  quote_identifier(build_sequence_name_internal(parent_relid)));
+					  quote_identifier(seq_name));
 
 	PG_RETURN_TEXT_P(cstring_to_text(result));
 }

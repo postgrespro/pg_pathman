@@ -134,18 +134,19 @@ is_pathman_related_copy(Node *parsetree)
  */
 bool
 is_pathman_related_table_rename(Node *parsetree,
-								Oid *partition_relid_out)			/* ret value */
+								Oid *relation_oid_out,	/* ret value #1 */
+								bool *is_parent_out)	/* ret value #2 */
 {
 	RenameStmt			   *rename_stmt = (RenameStmt *) parsetree;
-	Oid						partition_relid,
+	Oid						relation_oid,
 							parent_relid;
-	const PartRelationInfo *prel;
 	PartParentSearch		parent_search;
+	const PartRelationInfo *prel;
 
 	Assert(IsPathmanReady());
 
 	/* Set default values */
-	if (partition_relid_out) *partition_relid_out = InvalidOid;
+	if (relation_oid_out) *relation_oid_out = InvalidOid;
 
 	if (!IsA(parsetree, RenameStmt))
 		return false;
@@ -154,20 +155,33 @@ is_pathman_related_table_rename(Node *parsetree,
 	if (rename_stmt->renameType != OBJECT_TABLE)
 		return false;
 
-	/* Assume it's a partition, fetch its Oid */
-	partition_relid = RangeVarGetRelid(rename_stmt->relation,
-									   AccessShareLock,
-									   false);
+	/* Fetch Oid of this relation */
+	relation_oid = RangeVarGetRelid(rename_stmt->relation,
+									AccessShareLock,
+									false);
 
-	/* Try fetching parent of this table */
-	parent_relid = get_parent_of_partition(partition_relid, &parent_search);
+	/* Assume it's a parent */
+	if (get_pathman_relation_info(relation_oid))
+	{
+		if (relation_oid_out)
+			*relation_oid_out = relation_oid;
+		if (is_parent_out)
+			*is_parent_out = true;
+		return true;
+	}
+
+	/* Assume it's a partition, fetch its parent */
+	parent_relid = get_parent_of_partition(relation_oid, &parent_search);
 	if (parent_search != PPS_ENTRY_PART_PARENT)
 		return false;
 
 	/* Is parent partitioned? */
 	if ((prel = get_pathman_relation_info(parent_relid)) != NULL)
 	{
-		if (partition_relid_out) *partition_relid_out = partition_relid;
+		if (relation_oid_out)
+			*relation_oid_out = relation_oid;
+		if (is_parent_out)
+			*is_parent_out = false;
 		return true;
 	}
 
@@ -789,12 +803,12 @@ prepare_rri_for_copy(EState *estate,
  * Rename RANGE\HASH check constraint of a partition on table rename event.
  */
 void
-PathmanRenameConstraint(Oid partition_relid,				/* cached partition Oid */
-						const RenameStmt *part_rename_stmt)	/* partition rename stmt */
+PathmanRenameConstraint(Oid partition_relid,			/* partition Oid */
+						const RenameStmt *rename_stmt)	/* partition rename stmt */
 {
 	char		   *old_constraint_name,
 				   *new_constraint_name;
-	RenameStmt		rename_stmt;
+	RenameStmt		rename_con_stmt;
 
 	/* Generate old constraint name */
 	old_constraint_name =
@@ -802,16 +816,61 @@ PathmanRenameConstraint(Oid partition_relid,				/* cached partition Oid */
 
 	/* Generate new constraint name */
 	new_constraint_name =
-			build_check_constraint_name_relname_internal(part_rename_stmt->newname);
+			build_check_constraint_name_relname_internal(rename_stmt->newname);
 
 	/* Build check constraint RENAME statement */
-	memset((void *) &rename_stmt, 0, sizeof(RenameStmt));
-	NodeSetTag(&rename_stmt, T_RenameStmt);
-	rename_stmt.renameType = OBJECT_TABCONSTRAINT;
-	rename_stmt.relation = part_rename_stmt->relation;
-	rename_stmt.subname = old_constraint_name;
-	rename_stmt.newname = new_constraint_name;
-	rename_stmt.missing_ok = false;
+	memset((void *) &rename_con_stmt, 0, sizeof(RenameStmt));
+	NodeSetTag(&rename_con_stmt, T_RenameStmt);
+	rename_con_stmt.renameType	= OBJECT_TABCONSTRAINT;
+	rename_con_stmt.relation	= rename_stmt->relation;
+	rename_con_stmt.subname		= old_constraint_name;
+	rename_con_stmt.newname		= new_constraint_name;
+	rename_con_stmt.missing_ok	= false;
 
-	RenameConstraint(&rename_stmt);
+	/* Finally, rename partitioning constraint */
+	RenameConstraint(&rename_con_stmt);
+
+	pfree(old_constraint_name);
+	pfree(new_constraint_name);
+
+	/* Make changes visible */
+	CommandCounterIncrement();
+}
+
+/*
+ * Rename auto naming sequence of a parent on table rename event.
+ */
+void
+PathmanRenameSequence(Oid parent_relid,					/* parent Oid */
+					  const RenameStmt *rename_stmt)	/* parent rename stmt */
+{
+	char	   *old_seq_name,
+			   *new_seq_name,
+			   *seq_nsp_name;
+	RangeVar   *seq_rv;
+	Oid			seq_relid;
+
+	/* Produce old & new names and RangeVar */
+	seq_nsp_name	= get_namespace_name(get_rel_namespace(parent_relid));
+	old_seq_name	= build_sequence_name_relid_internal(parent_relid);
+	new_seq_name	= build_sequence_name_relname_internal(rename_stmt->newname);
+	seq_rv			= makeRangeVar(seq_nsp_name, old_seq_name, -1);
+
+	/* Fetch Oid of sequence */
+	seq_relid = RangeVarGetRelid(seq_rv, AccessExclusiveLock, true);
+
+	/* Do nothing if there's no naming sequence */
+	if (!OidIsValid(seq_relid))
+		return;
+
+	/* Finally, rename auto naming sequence */
+	RenameRelationInternal(seq_relid, new_seq_name, false);
+
+	pfree(seq_nsp_name);
+	pfree(old_seq_name);
+	pfree(new_seq_name);
+	pfree(seq_rv);
+
+	/* Make changes visible */
+	CommandCounterIncrement();
 }

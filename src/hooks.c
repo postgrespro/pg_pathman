@@ -874,6 +874,7 @@ pathman_process_utility_hook(Node *first_arg,
 		Oid			relation_oid;
 		PartType	part_type;
 		AttrNumber	attr_number;
+		bool		is_parent;
 
 		/* Override standard COPY statement if needed */
 		if (is_pathman_related_copy(parsetree))
@@ -892,10 +893,15 @@ pathman_process_utility_hook(Node *first_arg,
 
 		/* Override standard RENAME statement if needed */
 		else if (is_pathman_related_table_rename(parsetree,
-												 &relation_oid))
+												 &relation_oid,
+												 &is_parent))
 		{
-			PathmanRenameConstraint(relation_oid,
-									(const RenameStmt *) parsetree);
+			const RenameStmt *rename_stmt = (const RenameStmt *) parsetree;
+
+			if (is_parent)
+				PathmanRenameSequence(relation_oid, rename_stmt);
+			else
+				PathmanRenameConstraint(relation_oid, rename_stmt);
 		}
 
 		/* Override standard ALTER COLUMN TYPE statement if needed */

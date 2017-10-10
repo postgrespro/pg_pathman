@@ -565,6 +565,7 @@ build_check_constraint_name_relid_internal(Oid relid)
 char *
 build_check_constraint_name_relname_internal(const char *relname)
 {
+	AssertArg(relname != NULL);
 	return psprintf("pathman_%s_check", relname);
 }
 
@@ -573,10 +574,21 @@ build_check_constraint_name_relname_internal(const char *relname)
  * NOTE: this function does not perform sanity checks at all.
  */
 char *
-build_sequence_name_internal(Oid relid)
+build_sequence_name_relid_internal(Oid relid)
 {
 	AssertArg(OidIsValid(relid));
-	return psprintf("%s_seq", get_rel_name(relid));
+	return build_sequence_name_relname_internal(get_rel_name(relid));
+}
+
+/*
+ * Generate part sequence name for a parent.
+ * NOTE: this function does not perform sanity checks at all.
+ */
+char *
+build_sequence_name_relname_internal(const char *relname)
+{
+	AssertArg(relname != NULL);
+	return psprintf("%s_seq", relname);
 }
 
 /*
