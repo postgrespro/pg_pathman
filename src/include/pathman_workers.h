@@ -112,10 +112,29 @@ cps_set_status(ConcurrentPartSlot *slot, ConcurrentPartSlotStatus status)
 	SpinLockRelease(&slot->mutex);
 }
 
+static inline const char *
+cps_print_status(ConcurrentPartSlotStatus status)
+{
+	switch(status)
+	{
+		case CPS_FREE:
+			return "free";
+
+		case CPS_WORKING:
+			return "working";
+
+		case CPS_STOPPING:
+			return "stopping";
+
+		default:
+			return "[unknown]";
+	}
+}
+
 
 
 /* Number of worker slots for concurrent partitioning */
-#define PART_WORKER_SLOTS			10
+#define PART_WORKER_SLOTS			max_worker_processes
 
 /* Max number of attempts per batch */
 #define PART_WORKER_MAX_ATTEMPTS	60

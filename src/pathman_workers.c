@@ -57,7 +57,7 @@ extern PGDLLEXPORT void bgw_main_concurrent_part(Datum main_arg);
 
 static void handle_sigterm(SIGNAL_ARGS);
 static void bg_worker_load_config(const char *bgw_name);
-static void start_bg_worker(const char bgworker_name[BGW_MAXLEN],
+static bool start_bgworker(const char bgworker_name[BGW_MAXLEN],
 							const char bgworker_proc[BGW_MAXLEN],
 							Datum bgw_arg, bool wait_for_shutdown);
 
@@ -90,6 +90,7 @@ static const char		   *concurrent_part_bgw		= "ConcurrentPartWorker";
 Size
 estimate_concurrent_part_task_slots_size(void)
 {
+	/* NOTE: we suggest that max_worker_processes is in PGC_POSTMASTER */
 	return sizeof(ConcurrentPartSlot) * PART_WORKER_SLOTS;
 }
 
@@ -125,6 +126,7 @@ init_concurrent_part_task_slots(void)
 
 /*
  * Handle SIGTERM in BGW's process.
+ * Use it in favor of bgworker_die().
  */
 static void
 handle_sigterm(SIGNAL_ARGS)
@@ -160,8 +162,8 @@ bg_worker_load_config(const char *bgw_name)
 /*
  * Common function to start background worker.
  */
-static void
-start_bg_worker(const char bgworker_name[BGW_MAXLEN],
+static bool
+start_bgworker(const char bgworker_name[BGW_MAXLEN],
 				const char bgworker_proc[BGW_MAXLEN],
 				Datum bgw_arg, bool wait_for_shutdown)
 {
@@ -218,10 +220,9 @@ handle_exec_state:
 
 	switch (exec_state)
 	{
+		/* Caller might want to handle this case */
 		case BGW_COULD_NOT_START:
-			elog(ERROR, "Unable to create background %s for pg_pathman",
-				 bgworker_name);
-			break;
+			return false;
 
 		case BGW_PM_DIED:
 			ereport(ERROR,
@@ -232,6 +233,8 @@ handle_exec_state:
 		default:
 			break;
 	}
+
+	return true;
 }
 
 
@@ -311,10 +314,10 @@ create_partitions_for_value_bg_worker(Oid relid, Datum value, Oid value_type)
 #endif
 
 	/* Start worker and wait for it to finish */
-	start_bg_worker(spawn_partitions_bgw,
-					CppAsString(bgw_main_spawn_partitions),
-					UInt32GetDatum(segment_handle),
-					true);
+	(void) start_bgworker(spawn_partitions_bgw,
+						  CppAsString(bgw_main_spawn_partitions),
+						  UInt32GetDatum(segment_handle),
+						  true);
 
 	/* Save the result (partition Oid) */
 	child_oid = bgw_args->result;
@@ -324,7 +327,7 @@ create_partitions_for_value_bg_worker(Oid relid, Datum value, Oid value_type)
 
 	if (child_oid == InvalidOid)
 		ereport(ERROR,
-				(errmsg("Attempt to spawn new partitions of relation \"%s\" failed",
+				(errmsg("attempt to spawn new partitions of relation \"%s\" failed",
 						get_rel_name_or_relid(relid)),
 				 errhint("See server log for more details.")));
 
@@ -412,6 +415,15 @@ bgw_main_spawn_partitions(Datum main_arg)
  * -------------------------------------
  */
 
+/* Free bgworker's CPS slot */
+static void
+free_cps_slot(int code, Datum arg)
+{
+	ConcurrentPartSlot *part_slot =(ConcurrentPartSlot *) DatumGetPointer(arg);
+
+	cps_set_status(part_slot, CPS_FREE);
+}
+
 /*
  * Entry point for ConcurrentPartWorker's process.
  */
@@ -424,7 +436,14 @@ bgw_main_concurrent_part(Datum main_arg)
 	char			   *sql = NULL;
 	ConcurrentPartSlot *part_slot;
 
-	/* Establish signal handlers before unblocking signals. */
+	/* Update concurrent part slot */
+	part_slot = &concurrent_part_slots[DatumGetInt32(main_arg)];
+	part_slot->pid = MyProcPid;
+
+	/* Establish atexit callback that will fre CPS slot */
+	on_proc_exit(free_cps_slot, PointerGetDatum(part_slot));
+
+	/* Establish signal handlers before unblocking signals */
 	pqsignal(SIGTERM, handle_sigterm);
 
 	/* We're now ready to receive signals */
@@ -432,10 +451,6 @@ bgw_main_concurrent_part(Datum main_arg)
 
 	/* Create resource owner */
 	CurrentResourceOwner = ResourceOwnerCreate(NULL, concurrent_part_bgw);
-
-	/* Update concurrent part slot */
-	part_slot = &concurrent_part_slots[DatumGetInt32(main_arg)];
-	part_slot->pid = MyProcPid;
 
 	/* Disable auto partition propagation */
 	SetAutoPartitionEnabled(false);
@@ -460,6 +475,8 @@ bgw_main_concurrent_part(Datum main_arg)
 		/* Reset loop variables */
 		failed = false;
 		rows = 0;
+
+		CHECK_FOR_INTERRUPTS();
 
 		/* Start new transaction (syscache access etc.) */
 		StartTransactionCommand();
@@ -592,12 +609,13 @@ bgw_main_concurrent_part(Datum main_arg)
 			/* Add rows to total_rows */
 			SpinLockAcquire(&part_slot->mutex);
 			part_slot->total_rows += rows;
-/* Report debug message */
+			SpinLockRelease(&part_slot->mutex);
+
 #ifdef USE_ASSERT_CHECKING
+			/* Report debug message */
 			elog(DEBUG1, "%s: relocated %d rows, total: " UINT64_FORMAT " [%u]",
 				 concurrent_part_bgw, rows, part_slot->total_rows, MyProcPid);
 #endif
-			SpinLockRelease(&part_slot->mutex);
 		}
 
 		/* If other backend requested to stop us, quit */
@@ -608,9 +626,6 @@ bgw_main_concurrent_part(Datum main_arg)
 
 	/* Reclaim the resources */
 	pfree(sql);
-
-	/* Mark slot as FREE */
-	cps_set_status(part_slot, CPS_FREE);
 }
 
 
@@ -694,9 +709,8 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 			if (empty_slot_idx >= 0 && empty_slot_idx != i)
 				SpinLockRelease(&concurrent_part_slots[empty_slot_idx].mutex);
 
-			elog(ERROR,
-				 "table \"%s\" is already being partitioned",
-				 get_rel_name(relid));
+			ereport(ERROR, (errmsg("table \"%s\" is already being partitioned",
+								   get_rel_name(relid))));
 		}
 
 		/* Normally we don't want to keep it */
@@ -706,7 +720,9 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 
 	/* Looks like we could not find an empty slot */
 	if (empty_slot_idx < 0)
-		elog(ERROR, "no empty worker slots found");
+		ereport(ERROR, (ERRCODE_CONFIGURATION_LIMIT_EXCEEDED,
+						errmsg("no empty worker slots found"),
+						errhint("consider increasing max_worker_processes")));
 	else
 	{
 		/* Initialize concurrent part slot */
@@ -719,10 +735,14 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 	}
 
 	/* Start worker (we should not wait) */
-	start_bg_worker(concurrent_part_bgw,
-					CppAsString(bgw_main_concurrent_part),
-					Int32GetDatum(empty_slot_idx),
-					false);
+	if (!start_bgworker(concurrent_part_bgw,
+						CppAsString(bgw_main_concurrent_part),
+						Int32GetDatum(empty_slot_idx),
+						false))
+	{
+		/* Couldn't start, free CPS slot */
+		cps_set_status(&concurrent_part_slots[empty_slot_idx], CPS_FREE);
+	}
 
 	/* Tell user everything's fine */
 	elog(NOTICE,
@@ -807,22 +827,8 @@ show_concurrent_part_tasks_internal(PG_FUNCTION_ARGS)
 			values[Anum_pathman_cp_tasks_processed - 1]	= cur_slot->total_rows;
 
 			/* Now build a status string */
-			switch(cur_slot->worker_status)
-			{
-				case CPS_WORKING:
-					values[Anum_pathman_cp_tasks_status - 1] =
-							PointerGetDatum(cstring_to_text("working"));
-					break;
-
-				case CPS_STOPPING:
-					values[Anum_pathman_cp_tasks_status - 1] =
-							PointerGetDatum(cstring_to_text("stopping"));
-					break;
-
-				default:
-					values[Anum_pathman_cp_tasks_status - 1] =
-							PointerGetDatum(cstring_to_text("[unknown]"));
-			}
+			values[Anum_pathman_cp_tasks_status - 1] =
+					CStringGetTextDatum(cps_print_status(cur_slot->worker_status));
 
 			/* Form output tuple */
 			htup = heap_form_tuple(funcctx->tuple_desc, values, isnull);
@@ -857,26 +863,25 @@ stop_concurrent_part_task(PG_FUNCTION_ARGS)
 	{
 		ConcurrentPartSlot *cur_slot = &concurrent_part_slots[i];
 
-		HOLD_INTERRUPTS();
 		SpinLockAcquire(&cur_slot->mutex);
 
 		if (cur_slot->worker_status != CPS_FREE &&
 			cur_slot->relid == relid &&
 			cur_slot->dbid == MyDatabaseId)
 		{
-			elog(NOTICE, "worker will stop after it finishes current batch");
-
 			/* Change worker's state & set 'worker_found' */
 			cur_slot->worker_status = CPS_STOPPING;
 			worker_found = true;
 		}
 
 		SpinLockRelease(&cur_slot->mutex);
-		RESUME_INTERRUPTS();
 	}
 
 	if (worker_found)
+	{
+		elog(NOTICE, "worker will stop after it finishes current batch");
 		PG_RETURN_BOOL(true);
+	}
 	else
 	{
 		elog(ERROR, "cannot find worker for relation \"%s\"",
