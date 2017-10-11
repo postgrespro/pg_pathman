@@ -132,7 +132,7 @@ SELECT set_init_callback('test_bgw.test_5', 'test_bgw.abort_xact(jsonb)');
 (1 row)
 
 INSERT INTO test_bgw.test_5 VALUES (-100);
-ERROR:  Attempt to spawn new partitions of relation "test_5" failed
+ERROR:  attempt to spawn new partitions of relation "test_5" failed
 SELECT * FROM pathman_partition_list ORDER BY partition; /* should contain 3 partitions */
      parent      |     partition     | parttype | expr | range_min | range_max 
 -----------------+-------------------+----------+------+-----------+-----------
@@ -143,5 +143,80 @@ SELECT * FROM pathman_partition_list ORDER BY partition; /* should contain 3 par
 DROP FUNCTION test_bgw.abort_xact(args JSONB);
 DROP TABLE test_bgw.test_5 CASCADE;
 NOTICE:  drop cascades to 3 other objects
+/*
+ * Tests for ConcurrentPartWorker
+ */
+CREATE TABLE test_bgw.conc_part(id INT4 NOT NULL);
+INSERT INTO test_bgw.conc_part SELECT generate_series(1, 500);
+SELECT create_hash_partitions('test_bgw.conc_part', 'id', 5, false);
+ create_hash_partitions 
+------------------------
+                      5
+(1 row)
+
+BEGIN;
+/* Also test FOR SHARE/UPDATE conflicts in BGW */
+SELECT * FROM test_bgw.conc_part ORDER BY id LIMIT 1 FOR SHARE;
+ id 
+----
+  1
+(1 row)
+
+/* Run partitioning bgworker */
+SELECT partition_table_concurrently('test_bgw.conc_part', 10, 1);
+NOTICE:  worker started, you can stop it with the following command: select public.stop_concurrent_part_task('conc_part');
+ partition_table_concurrently 
+------------------------------
+ 
+(1 row)
+
+/* Wait until bgworker starts */
+SELECT pg_sleep(1);
+ pg_sleep 
+----------
+ 
+(1 row)
+
+ROLLBACK;
+/* Wait until it finises */
+DO $$
+DECLARE
+	ops int8;
+BEGIN
+	LOOP
+		SELECT count(*)
+		FROM pathman_concurrent_part_tasks
+		WHERE processed < 500 -- protect from endless loops
+		INTO ops;
+
+		IF ops > 0 THEN
+			PERFORM pg_sleep(0.2);
+		ELSE
+			EXIT;
+		END IF;
+	END LOOP;
+END
+$$ LANGUAGE plpgsql;
+/* Check amount of tasks and rows in parent and partitions */
+SELECT count(*) FROM pathman_concurrent_part_tasks;
+ count 
+-------
+     0
+(1 row)
+
+SELECT count(*) FROM ONLY test_bgw.conc_part;
+ count 
+-------
+     0
+(1 row)
+
+SELECT count(*) FROM test_bgw.conc_part;
+ count 
+-------
+   500
+(1 row)
+
+DROP TABLE test_bgw.conc_part CASCADE;
+NOTICE:  drop cascades to 5 other objects
 DROP SCHEMA test_bgw CASCADE;
 DROP EXTENSION pg_pathman;

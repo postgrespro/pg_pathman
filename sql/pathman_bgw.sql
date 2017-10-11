@@ -5,6 +5,7 @@ CREATE EXTENSION pg_pathman;
 CREATE SCHEMA test_bgw;
 
 
+
 /*
  * Tests for SpawnPartitionsWorker
  */
@@ -71,6 +72,52 @@ SELECT * FROM pathman_partition_list ORDER BY partition; /* should contain 3 par
 
 DROP FUNCTION test_bgw.abort_xact(args JSONB);
 DROP TABLE test_bgw.test_5 CASCADE;
+
+
+
+/*
+ * Tests for ConcurrentPartWorker
+ */
+
+CREATE TABLE test_bgw.conc_part(id INT4 NOT NULL);
+INSERT INTO test_bgw.conc_part SELECT generate_series(1, 500);
+SELECT create_hash_partitions('test_bgw.conc_part', 'id', 5, false);
+
+BEGIN;
+/* Also test FOR SHARE/UPDATE conflicts in BGW */
+SELECT * FROM test_bgw.conc_part ORDER BY id LIMIT 1 FOR SHARE;
+/* Run partitioning bgworker */
+SELECT partition_table_concurrently('test_bgw.conc_part', 10, 1);
+/* Wait until bgworker starts */
+SELECT pg_sleep(1);
+ROLLBACK;
+
+/* Wait until it finises */
+DO $$
+DECLARE
+	ops int8;
+BEGIN
+	LOOP
+		SELECT count(*)
+		FROM pathman_concurrent_part_tasks
+		WHERE processed < 500 -- protect from endless loops
+		INTO ops;
+
+		IF ops > 0 THEN
+			PERFORM pg_sleep(0.2);
+		ELSE
+			EXIT;
+		END IF;
+	END LOOP;
+END
+$$ LANGUAGE plpgsql;
+
+/* Check amount of tasks and rows in parent and partitions */
+SELECT count(*) FROM pathman_concurrent_part_tasks;
+SELECT count(*) FROM ONLY test_bgw.conc_part;
+SELECT count(*) FROM test_bgw.conc_part;
+
+DROP TABLE test_bgw.conc_part CASCADE;
 
 
 
