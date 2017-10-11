@@ -237,6 +237,16 @@ handle_exec_state:
 	return true;
 }
 
+/*
+ * Show generic error message if we failed to start bgworker.
+ */
+static inline void
+start_bgworker_errmsg(const char *bgworker_name)
+{
+	ereport(ERROR, (errmsg("could not start %s", bgworker_name),
+					errhint("consider increasing max_worker_processes")));
+}
+
 
 /*
  * --------------------------------------
@@ -314,10 +324,13 @@ create_partitions_for_value_bg_worker(Oid relid, Datum value, Oid value_type)
 #endif
 
 	/* Start worker and wait for it to finish */
-	(void) start_bgworker(spawn_partitions_bgw,
-						  CppAsString(bgw_main_spawn_partitions),
-						  UInt32GetDatum(segment_handle),
-						  true);
+	if (!start_bgworker(spawn_partitions_bgw,
+						CppAsString(bgw_main_spawn_partitions),
+						UInt32GetDatum(segment_handle),
+						true))
+	{
+		start_bgworker_errmsg(spawn_partitions_bgw);
+	}
 
 	/* Save the result (partition Oid) */
 	child_oid = bgw_args->result;
@@ -742,6 +755,8 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 	{
 		/* Couldn't start, free CPS slot */
 		cps_set_status(&concurrent_part_slots[empty_slot_idx], CPS_FREE);
+
+		start_bgworker_errmsg(concurrent_part_bgw);
 	}
 
 	/* Tell user everything's fine */
