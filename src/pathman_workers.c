@@ -432,7 +432,7 @@ bgw_main_spawn_partitions(Datum main_arg)
 static void
 free_cps_slot(int code, Datum arg)
 {
-	ConcurrentPartSlot *part_slot =(ConcurrentPartSlot *) DatumGetPointer(arg);
+	ConcurrentPartSlot *part_slot = (ConcurrentPartSlot *) DatumGetPointer(arg);
 
 	cps_set_status(part_slot, CPS_FREE);
 }

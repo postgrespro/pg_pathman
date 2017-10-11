@@ -95,19 +95,38 @@ ROLLBACK;
 /* Wait until it finises */
 DO $$
 DECLARE
-	ops int8;
+	ops			int8;
+	rows		int8;
+	rows_old	int8 := 0;
+	i			int4 := 0; -- protect from endless loop
 BEGIN
 	LOOP
-		SELECT count(*)
+		SELECT processed
 		FROM pathman_concurrent_part_tasks
-		WHERE processed < 500 -- protect from endless loops
-		INTO ops;
+		WHERE relid = 'test_bgw.conc_part'::regclass
+		INTO rows;
+
+		-- get number of partitioning tasks
+		GET DIAGNOSTICS ops = ROW_COUNT;
 
 		IF ops > 0 THEN
 			PERFORM pg_sleep(0.2);
+
+			ASSERT rows IS NOT NULL;
+
+			IF rows_old = rows THEN
+				i = i + 1;
+			END IF;
 		ELSE
-			EXIT;
+			EXIT; -- exit loop
 		END IF;
+
+		IF i > 50 THEN
+			RAISE WARNING 'looks like partitioning bgw is stuck!';
+			EXIT; -- exit loop
+		END IF;
+
+		rows_old = rows;
 	END LOOP;
 END
 $$ LANGUAGE plpgsql;
