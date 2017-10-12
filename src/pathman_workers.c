@@ -443,11 +443,12 @@ free_cps_slot(int code, Datum arg)
 void
 bgw_main_concurrent_part(Datum main_arg)
 {
-	int					rows;
+	ConcurrentPartSlot *part_slot;
+	char			   *sql = NULL;
+	int64				rows;
 	bool				failed;
 	int					failures_count = 0;
-	char			   *sql = NULL;
-	ConcurrentPartSlot *part_slot;
+	LOCKMODE			lockmode = RowExclusiveLock;
 
 	/* Update concurrent part slot */
 	part_slot = &concurrent_part_slots[DatumGetInt32(main_arg)];
@@ -479,11 +480,13 @@ bgw_main_concurrent_part(Datum main_arg)
 	/* Do the job */
 	do
 	{
-		MemoryContext	old_mcxt;
+		MemoryContext old_mcxt;
 
 		Oid		types[2]	= { OIDOID,				INT4OID };
 		Datum	vals[2]		= { part_slot->relid,	part_slot->batch_size };
 		bool	nulls[2]	= { false,				false };
+
+		bool	rel_locked = false;
 
 		/* Reset loop variables */
 		failed = false;
@@ -520,44 +523,76 @@ bgw_main_concurrent_part(Datum main_arg)
 		/* Exec ret = _partition_data_concurrent() */
 		PG_TRY();
 		{
-			/* Make sure that relation exists and has partitions */
-			if (SearchSysCacheExists1(RELOID, ObjectIdGetDatum(part_slot->relid)) &&
-				get_pathman_relation_info(part_slot->relid) != NULL)
+			int		ret;
+			bool	isnull;
+
+			/* Lock relation for DELETE and INSERT */
+			if (!ConditionalLockRelationOid(part_slot->relid, lockmode))
 			{
-				int		ret;
-				bool	isnull;
-
-				ret = SPI_execute_with_args(sql, 2, types, vals, nulls, false, 0);
-				if (ret == SPI_OK_SELECT)
-				{
-					TupleDesc	tupdesc = SPI_tuptable->tupdesc;
-					HeapTuple	tuple = SPI_tuptable->vals[0];
-
-					Assert(SPI_processed == 1); /* there should be 1 result at most */
-
-					rows = DatumGetInt32(SPI_getbinval(tuple, tupdesc, 1, &isnull));
-
-					Assert(!isnull); /* ... and ofc it must not be NULL */
-				}
+				elog(ERROR, "could not take lock on relation %u", part_slot->relid);
 			}
-			/* Otherwise it's time to exit */
-			else
+
+			/* Great, now relation is locked */
+			rel_locked = true;
+			(void) rel_locked; /* mute clang analyzer */
+
+			/* Make sure that relation exists */
+			if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(part_slot->relid)))
 			{
+				/* Exit after we raise ERROR */
 				failures_count = PART_WORKER_MAX_ATTEMPTS;
+				(void) failures_count; /* mute clang analyzer */
 
-				elog(LOG, "relation \"%u\" is not partitioned (or does not exist)",
-						  part_slot->relid);
+				elog(ERROR, "relation %u does not exist", part_slot->relid);
 			}
+
+			/* Make sure that relation has partitions */
+			if (get_pathman_relation_info(part_slot->relid) == NULL)
+			{
+				/* Exit after we raise ERROR */
+				failures_count = PART_WORKER_MAX_ATTEMPTS;
+				(void) failures_count; /* mute clang analyzer */
+
+				elog(ERROR, "relation \"%s\" is not partitioned",
+					 get_rel_name(part_slot->relid));
+			}
+
+			/* Call concurrent partitioning function */
+			ret = SPI_execute_with_args(sql, 2, types, vals, nulls, false, 0);
+			if (ret == SPI_OK_SELECT)
+			{
+				TupleDesc	tupdesc	= SPI_tuptable->tupdesc;
+				HeapTuple	tuple	= SPI_tuptable->vals[0];
+
+				/* There should be 1 result at most */
+				Assert(SPI_processed == 1);
+
+				/* Extract number of processed rows */
+				rows = DatumGetInt64(SPI_getbinval(tuple, tupdesc, 1, &isnull));
+				Assert(!isnull); /* ... and ofc it must not be NULL */
+			}
+			/* Else raise generic error */
+			else elog(ERROR, "partitioning function returned %u", ret);
+
+			/* Finally, unlock our partitioned table */
+			UnlockRelationOid(part_slot->relid, lockmode);
 		}
 		PG_CATCH();
 		{
 			/*
 			 * The most common exception we can catch here is a deadlock with
 			 * concurrent user queries. Check that attempts count doesn't exceed
-			 * some reasonable value
+			 * some reasonable value.
 			 */
-			ErrorData  *error;
-			char	   *sleep_time_str;
+			ErrorData *error;
+
+			/* Unlock relation if we caught ERROR too early */
+			if (rel_locked)
+				UnlockRelationOid(part_slot->relid, lockmode);
+
+			/* Increase number of failures and set 'failed' status */
+			failures_count++;
+			failed = true;
 
 			/* Switch to the original context & copy edata */
 			MemoryContextSwitchTo(old_mcxt);
@@ -565,21 +600,15 @@ bgw_main_concurrent_part(Datum main_arg)
 			FlushErrorState();
 
 			/* Print messsage for this BGWorker to server log */
-			sleep_time_str = datum_to_cstring(Float8GetDatum(part_slot->sleep_time),
-											  FLOAT8OID);
-			failures_count++;
 			ereport(LOG,
 					(errmsg("%s: %s", concurrent_part_bgw, error->message),
-					 errdetail("attempt: %d/%d, sleep time: %s",
+					 errdetail("attempt: %d/%d, sleep time: %.2f",
 							   failures_count,
 							   PART_WORKER_MAX_ATTEMPTS,
-							   sleep_time_str)));
-			pfree(sleep_time_str); /* free the time string */
+							   (float) part_slot->sleep_time)));
 
+			/* Finally, free error data */
 			FreeErrorData(error);
-
-			/* Set 'failed' flag */
-			failed = true;
 		}
 		PG_END_TRY();
 
@@ -606,9 +635,10 @@ bgw_main_concurrent_part(Datum main_arg)
 		/* Failed this time, wait */
 		else if (failed)
 		{
-			/* Abort transaction and sleep for a second */
+			/* Abort transaction */
 			AbortCurrentTransaction();
 
+			/* Sleep for a specified amount of time (default 1s) */
 			DirectFunctionCall1(pg_sleep, Float8GetDatum(part_slot->sleep_time));
 		}
 
@@ -626,8 +656,10 @@ bgw_main_concurrent_part(Datum main_arg)
 
 #ifdef USE_ASSERT_CHECKING
 			/* Report debug message */
-			elog(DEBUG1, "%s: relocated %d rows, total: " UINT64_FORMAT " [%u]",
-				 concurrent_part_bgw, rows, part_slot->total_rows, MyProcPid);
+			elog(DEBUG1, "%s: "
+						 "relocated" INT64_FORMAT "rows, "
+						 "total: " INT64_FORMAT,
+				 concurrent_part_bgw, rows, part_slot->total_rows);
 #endif
 		}
 
@@ -636,9 +668,6 @@ bgw_main_concurrent_part(Datum main_arg)
 			break;
 	}
 	while(rows > 0 || failed); /* do while there's still rows to be relocated */
-
-	/* Reclaim the resources */
-	pfree(sql);
 }
 
 
@@ -824,26 +853,33 @@ show_concurrent_part_tasks_internal(PG_FUNCTION_ARGS)
 	/* Iterate through worker slots */
 	for (i = userctx->cur_idx; i < PART_WORKER_SLOTS; i++)
 	{
-		ConcurrentPartSlot *cur_slot = &concurrent_part_slots[i];
+		ConcurrentPartSlot *cur_slot = &concurrent_part_slots[i],
+							slot_copy;
 		HeapTuple			htup = NULL;
 
-		HOLD_INTERRUPTS();
+		/* Copy slot to process local memory */
 		SpinLockAcquire(&cur_slot->mutex);
+		memcpy(&slot_copy, cur_slot, sizeof(ConcurrentPartSlot));
+		SpinLockRelease(&cur_slot->mutex);
 
-		if (cur_slot->worker_status != CPS_FREE)
+		if (slot_copy.worker_status != CPS_FREE)
 		{
 			Datum		values[Natts_pathman_cp_tasks];
 			bool		isnull[Natts_pathman_cp_tasks] = { 0 };
 
-			values[Anum_pathman_cp_tasks_userid - 1]	= cur_slot->userid;
-			values[Anum_pathman_cp_tasks_pid - 1]		= cur_slot->pid;
-			values[Anum_pathman_cp_tasks_dbid - 1]		= cur_slot->dbid;
-			values[Anum_pathman_cp_tasks_relid - 1]		= cur_slot->relid;
-			values[Anum_pathman_cp_tasks_processed - 1]	= cur_slot->total_rows;
+			values[Anum_pathman_cp_tasks_userid - 1]	= slot_copy.userid;
+			values[Anum_pathman_cp_tasks_pid - 1]		= slot_copy.pid;
+			values[Anum_pathman_cp_tasks_dbid - 1]		= slot_copy.dbid;
+			values[Anum_pathman_cp_tasks_relid - 1]		= slot_copy.relid;
+
+			/* Record processed rows */
+			values[Anum_pathman_cp_tasks_processed - 1]	=
+					/* FIXME: use Int64GetDatum() in release 1.5 */
+					Int32GetDatum((int32) slot_copy.total_rows);
 
 			/* Now build a status string */
 			values[Anum_pathman_cp_tasks_status - 1] =
-					CStringGetTextDatum(cps_print_status(cur_slot->worker_status));
+					CStringGetTextDatum(cps_print_status(slot_copy.worker_status));
 
 			/* Form output tuple */
 			htup = heap_form_tuple(funcctx->tuple_desc, values, isnull);
@@ -851,9 +887,6 @@ show_concurrent_part_tasks_internal(PG_FUNCTION_ARGS)
 			/* Switch to next worker */
 			userctx->cur_idx = i + 1;
 		}
-
-		SpinLockRelease(&cur_slot->mutex);
-		RESUME_INTERRUPTS();
 
 		/* Return tuple if needed */
 		if (htup)
