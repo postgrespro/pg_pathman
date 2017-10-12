@@ -74,7 +74,7 @@ typedef struct
 	pid_t	pid;			/* worker's PID */
 	Oid		dbid;			/* database which contains the relation */
 	Oid		relid;			/* table to be partitioned concurrently */
-	uint64	total_rows;		/* total amount of rows processed */
+	int64	total_rows;		/* total amount of rows processed */
 
 	int32	batch_size;		/* number of rows in a batch */
 	float8	sleep_time;		/* how long should we sleep in case of error? */
