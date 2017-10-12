@@ -569,6 +569,7 @@ bgw_main_concurrent_part(Datum main_arg)
 
 				/* Extract number of processed rows */
 				rows = DatumGetInt64(SPI_getbinval(tuple, tupdesc, 1, &isnull));
+				Assert(tupdesc->attrs[0]->atttypid == INT8OID); /* check type */
 				Assert(!isnull); /* ... and ofc it must not be NULL */
 			}
 			/* Else raise generic error */
