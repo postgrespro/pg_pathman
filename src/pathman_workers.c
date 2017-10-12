@@ -837,7 +837,7 @@ show_concurrent_part_tasks_internal(PG_FUNCTION_ARGS)
 		TupleDescInitEntry(tupdesc, Anum_pathman_cp_tasks_relid,
 						   "relid", REGCLASSOID, -1, 0);
 		TupleDescInitEntry(tupdesc, Anum_pathman_cp_tasks_processed,
-						   "processed", INT4OID, -1, 0);
+						   "processed", INT8OID, -1, 0);
 		TupleDescInitEntry(tupdesc, Anum_pathman_cp_tasks_status,
 						   "status", TEXTOID, -1, 0);
 
@@ -874,8 +874,7 @@ show_concurrent_part_tasks_internal(PG_FUNCTION_ARGS)
 
 			/* Record processed rows */
 			values[Anum_pathman_cp_tasks_processed - 1]	=
-					/* FIXME: use Int64GetDatum() in release 1.5 */
-					Int32GetDatum((int32) slot_copy.total_rows);
+					Int64GetDatum(slot_copy.total_rows);
 
 			/* Now build a status string */
 			values[Anum_pathman_cp_tasks_status - 1] =

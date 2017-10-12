@@ -285,7 +285,7 @@ RETURNS TABLE (
 	pid			INT,
 	dbid		OID,
 	relid		REGCLASS,
-	processed	INT,
+	processed	INT8,
 	status		TEXT)
 AS 'pg_pathman', 'show_concurrent_part_tasks_internal'
 LANGUAGE C STRICT;
