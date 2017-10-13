@@ -114,7 +114,8 @@ BEGIN
 
 			ASSERT rows IS NOT NULL;
 
-			IF rows_old = rows THEN
+			-- rows should increase!
+			IF rows_old <= rows THEN
 				i = i + 1;
 			END IF;
 		ELSE
