@@ -101,6 +101,7 @@ DECLARE
 	i			int4 := 0; -- protect from endless loop
 BEGIN
 	LOOP
+		-- get total number of processed rows
 		SELECT processed
 		FROM pathman_concurrent_part_tasks
 		WHERE relid = 'test_bgw.conc_part'::regclass
@@ -114,9 +115,12 @@ BEGIN
 
 			ASSERT rows IS NOT NULL;
 
-			-- rows should increase!
-			IF rows_old <= rows THEN
+			IF rows_old = rows THEN
 				i = i + 1;
+			ELSIF rows < rows_old THEN
+				RAISE EXCEPTION 'rows is decreasing: new %, old %', rows, rows_old;
+			ELSIF rows > 500 THEN
+				RAISE EXCEPTION 'processed % rows', rows;
 			END IF;
 		ELSE
 			EXIT; -- exit loop
