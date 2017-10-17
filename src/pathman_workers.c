@@ -763,7 +763,7 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 
 	/* Looks like we could not find an empty slot */
 	if (empty_slot_idx < 0)
-		ereport(ERROR, (ERRCODE_CONFIGURATION_LIMIT_EXCEEDED,
+		ereport(ERROR, (errcode(ERRCODE_CONFIGURATION_LIMIT_EXCEEDED),
 						errmsg("no empty worker slots found"),
 						errhint("consider increasing max_worker_processes")));
 	else
