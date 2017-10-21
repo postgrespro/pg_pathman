@@ -886,7 +886,7 @@ pathman_process_utility_hook(Node *first_arg,
 						  stmt_location, stmt_len, &processed);
 			if (completionTag)
 				snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
-						 "PATHMAN COPY " UINT64_FORMAT, processed);
+						 "COPY " UINT64_FORMAT, processed);
 
 			return; /* don't call standard_ProcessUtility() or hooks */
 		}
