@@ -41,6 +41,7 @@
 
 /* Various memory contexts for caches */
 MemoryContext		TopPathmanContext				= NULL;
+MemoryContext		PathmanInvalJobsContext			= NULL;
 MemoryContext		PathmanRelationCacheContext		= NULL;
 MemoryContext		PathmanParentCacheContext		= NULL;
 MemoryContext		PathmanBoundCacheContext		= NULL;
@@ -312,6 +313,7 @@ init_local_cache(void)
 	if (TopPathmanContext)
 	{
 		/* Check that child contexts exist */
+		Assert(MemoryContextIsValid(PathmanInvalJobsContext));
 		Assert(MemoryContextIsValid(PathmanRelationCacheContext));
 		Assert(MemoryContextIsValid(PathmanParentCacheContext));
 		Assert(MemoryContextIsValid(PathmanBoundCacheContext));
@@ -322,6 +324,7 @@ init_local_cache(void)
 	/* Initialize pg_pathman's memory contexts */
 	else
 	{
+		Assert(PathmanInvalJobsContext == NULL);
 		Assert(PathmanRelationCacheContext == NULL);
 		Assert(PathmanParentCacheContext == NULL);
 		Assert(PathmanBoundCacheContext == NULL);
@@ -330,6 +333,11 @@ init_local_cache(void)
 				AllocSetContextCreate(TopMemoryContext,
 									  CppAsString(TopPathmanContext),
 									  ALLOCSET_DEFAULT_SIZES);
+
+		PathmanInvalJobsContext =
+				AllocSetContextCreate(TopMemoryContext,
+									  CppAsString(PathmanInvalJobsContext),
+									  ALLOCSET_SMALL_SIZES);
 
 		/* For PartRelationInfo */
 		PathmanRelationCacheContext =

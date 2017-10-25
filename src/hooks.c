@@ -36,6 +36,11 @@
 #include "utils/lsyscache.h"
 
 
+#ifdef USE_ASSERT_CHECKING
+#define USE_RELCACHE_LOGGING
+#endif
+
+
 /* Borrowed from joinpath.c */
 #define PATH_PARAM_BY_REL(path, rel)  \
 	((path)->param_info && bms_overlap(PATH_REQ_OUTER(path), (rel)->relids))
@@ -808,6 +813,18 @@ pathman_relcache_hook(Datum arg, Oid relid)
 	if (!IsPathmanReady())
 		return;
 
+	/* Special case: flush whole relcache */
+	if (relid == InvalidOid)
+	{
+		delay_invalidation_whole_cache();
+
+#ifdef USE_RELCACHE_LOGGING
+		elog(DEBUG2, "Invalidation message for all relations [%u]", MyProcPid);
+#endif
+
+		return;
+	}
+
 	/* We shouldn't even consider special OIDs */
 	if (relid < FirstNormalObjectId)
 		return;
@@ -827,16 +844,20 @@ pathman_relcache_hook(Datum arg, Oid relid)
 	{
 		delay_invalidation_parent_rel(parent_relid);
 
+#ifdef USE_RELCACHE_LOGGING
 		elog(DEBUG2, "Invalidation message for partition %u [%u]",
 			 relid, MyProcPid);
+#endif
 	}
 	/* We can't say, perform full invalidation procedure */
 	else
 	{
 		delay_invalidation_vague_rel(relid);
 
-		elog(DEBUG2, "Invalidation message for vague relation %u [%u]",
+#ifdef USE_RELCACHE_LOGGING
+		elog(DEBUG2, "Invalidation message for vague rel %u [%u]",
 			 relid, MyProcPid);
+#endif
 	}
 }
 
