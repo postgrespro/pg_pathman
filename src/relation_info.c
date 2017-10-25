@@ -990,7 +990,7 @@ finish_delayed_invalidation(void)
 	if (IsTransactionState())
 	{
 		Oid		   *parents = NULL;
-		int			parents_count;
+		int			parents_count = 0;
 		bool		parents_fetched = false;
 		ListCell   *lc;
 
