@@ -33,6 +33,7 @@
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
 #include "utils/hsearch.h"
+#include "utils/inval.h"
 #include "utils/memutils.h"
 #include "utils/ruleutils.h"
 #include "utils/syscache.h"
@@ -53,6 +54,11 @@
 #define COOK_PART_EXPR_ERROR	"failed to analyze partitioning expression \"%s\""
 
 
+#ifdef USE_ASSERT_CHECKING
+#define USE_RELINFO_LOGGING
+#endif
+
+
 /* Comparison function info */
 typedef struct cmp_func_info
 {
@@ -70,22 +76,26 @@ bool			pg_pathman_enable_bounds_cache = true;
  * We delay all invalidation jobs received in relcache hook.
  */
 static List	   *delayed_invalidation_parent_rels = NIL;
-static List	   *delayed_invalidation_vague_rels = NIL;
+static List	   *delayed_invalidation_vague_rels  = NIL;
+static bool		delayed_invalidation_whole_cache = false;
 static bool		delayed_shutdown = false; /* pathman was dropped */
 
+
+#define INVAL_LIST_MAX_ITEMS 10000
 
 /* Add unique Oid to list, allocate in TopPathmanContext */
 #define list_add_unique(list, oid) \
 	do { \
-		MemoryContext old_mcxt = MemoryContextSwitchTo(TopPathmanContext); \
-		list = list_append_unique_oid(list, ObjectIdGetDatum(oid)); \
+		MemoryContext old_mcxt = MemoryContextSwitchTo(PathmanInvalJobsContext); \
+		list = list_append_unique_oid(list, (oid)); \
 		MemoryContextSwitchTo(old_mcxt); \
 	} while (0)
 
-#define free_invalidation_list(list) \
+#define free_invalidation_lists() \
 	do { \
-		list_free(list); \
-		list = NIL; \
+		MemoryContextReset(PathmanInvalJobsContext); \
+		delayed_invalidation_parent_rels = NIL; \
+		delayed_invalidation_vague_rels  = NIL; \
 	} while (0)
 
 /* Handy wrappers for Oids */
@@ -100,6 +110,8 @@ static Oid get_parent_of_partition_internal(Oid partition,
 											HASHACTION action);
 
 static Expr *get_partition_constraint_expr(Oid partition);
+
+static void free_prel_partitions(PartRelationInfo *prel);
 
 static void fill_prel_with_partitions(PartRelationInfo *prel,
 									  const Oid *partitions,
@@ -323,35 +335,70 @@ invalidate_pathman_relation_info(Oid relid, bool *found)
 									  relid, action,
 									  &prel_found);
 
-	/* Handle valid PartRelationInfo */
-	if ((action == HASH_FIND ||
-		(action == HASH_ENTER && prel_found)) && PrelIsValid(prel))
-	{
-		/* Remove this parent from parents cache */
-		ForgetParent(prel);
+	/* It's a new entry, mark it 'invalid' */
+	if (prel && !prel_found)
+		prel->valid = false;
 
-		/* Drop cached bounds etc */
-		MemoryContextDelete(prel->mcxt);
-	}
-
-	/* Set important default values */
-	if (prel)
-	{
-		prel->children	= NULL;
-		prel->ranges	= NULL;
-		prel->mcxt		= NULL;
-
-		prel->valid	= false; /* now cache entry is invalid */
-	}
+	/* Clear the remaining resources */
+	free_prel_partitions(prel);
 
 	/* Set 'found' if necessary */
 	if (found) *found = prel_found;
 
+#ifdef USE_ASSERT_CHECKING
 	elog(DEBUG2,
-		 "Invalidating record for relation %u in pg_pathman's cache [%u]",
-		 relid, MyProcPid);
+		 "dispatch_cache: invalidating %s record for parent %u [%u]",
+		 (prel ? "live" : "NULL"), relid, MyProcPid);
+#endif
 
 	return prel;
+}
+
+/* Invalidate PartRelationInfo cache entries that exist in 'parents` array */
+void
+invalidate_pathman_relation_info_cache(const Oid *parents, int parents_count)
+{
+	HASH_SEQ_STATUS		stat;
+	PartRelationInfo   *prel;
+	List			   *prel_bad = NIL;
+	ListCell		   *lc;
+	int					i;
+
+	for (i = 0; i < parents_count; i++)
+	{
+		invalidate_pathman_relation_info(parents[i], NULL);
+	}
+
+	hash_seq_init(&stat, partitioned_rels);
+
+	while ((prel = (PartRelationInfo *) hash_seq_search(&stat)) != NULL)
+	{
+		Oid parent_relid = PrelParentRelid(prel);
+
+		/* Does this entry exist in PATHMAN_CONFIG table? */
+		if (!bsearch_oid(parent_relid, parents, parents_count))
+		{
+			/* All entry to 'outdated' list */
+			prel_bad = lappend_oid(prel_bad, parent_relid);
+
+			/* Clear the remaining resources */
+			free_prel_partitions(prel);
+		}
+	}
+
+	/* Remove outdated entries */
+	foreach (lc, prel_bad)
+	{
+		pathman_cache_search_relid(partitioned_rels,
+								   lfirst_oid(lc),
+								   HASH_REMOVE,
+								   NULL);
+	}
+
+#ifdef USE_ASSERT_CHECKING
+	elog(DEBUG2,
+		 "dispatch_cache: invalidated all records [%u]", MyProcPid);
+#endif
 }
 
 /* Get PartRelationInfo from local cache. */
@@ -387,9 +434,11 @@ get_pathman_relation_info(Oid relid)
 		}
 	}
 
+#ifdef USE_RELINFO_LOGGING
 	elog(DEBUG2,
-		 "Fetching %s record for relation %u from pg_pathman's cache [%u]",
+		 "dispatch_cache: fetching %s record for parent %u [%u]",
 		 (prel ? "live" : "NULL"), relid, MyProcPid);
+#endif
 
 	/* Make sure that 'prel' is valid */
 	Assert(!prel || PrelIsValid(prel));
@@ -423,7 +472,7 @@ get_pathman_relation_info_after_lock(Oid relid,
 	return prel;
 }
 
-/* Remove PartRelationInfo from local cache. */
+/* Remove PartRelationInfo from local cache */
 void
 remove_pathman_relation_info(Oid relid)
 {
@@ -434,11 +483,39 @@ remove_pathman_relation_info(Oid relid)
 
 	/* Now let's remove the entry completely */
 	if (found)
+	{
 		pathman_cache_search_relid(partitioned_rels, relid, HASH_REMOVE, NULL);
 
-	elog(DEBUG2,
-		 "Removing record for relation %u in pg_pathman's cache [%u]",
-		 relid, MyProcPid);
+#ifdef USE_RELINFO_LOGGING
+		elog(DEBUG2,
+			 "dispatch_cache: removing record for parent %u [%u]",
+			 relid, MyProcPid);
+#endif
+	}
+}
+
+static void
+free_prel_partitions(PartRelationInfo *prel)
+{
+	/* Handle valid PartRelationInfo */
+	if (PrelIsValid(prel))
+	{
+		/* Remove this parent from parents cache */
+		ForgetParent(prel);
+
+		/* Drop cached bounds etc */
+		MemoryContextDelete(prel->mcxt);
+	}
+
+	/* Set important default values */
+	if (prel)
+	{
+		prel->children	= NULL;
+		prel->ranges	= NULL;
+		prel->mcxt		= NULL;
+
+		prel->valid	= false; /* now cache entry is invalid */
+	}
 }
 
 /* Fill PartRelationInfo with partition-related info */
@@ -854,26 +931,55 @@ delay_pathman_shutdown(void)
 	delayed_shutdown = true;
 }
 
+/* Add new delayed invalidation job for whole dispatch cache */
+void
+delay_invalidation_whole_cache(void)
+{
+	/* Free useless invalidation lists */
+	free_invalidation_lists();
+
+	delayed_invalidation_whole_cache = true;
+}
+
+/* Generic wrapper for lists */
+static void
+delay_invalidation_event(List **inval_list, Oid relation)
+{
+	/* Skip if we already need to drop whole cache */
+	if (delayed_invalidation_whole_cache)
+		return;
+
+	if (list_length(*inval_list) > INVAL_LIST_MAX_ITEMS)
+	{
+		/* Too many events, drop whole cache */
+		delay_invalidation_whole_cache();
+		return;
+	}
+
+	list_add_unique(*inval_list, relation);
+}
+
 /* Add new delayed invalidation job for a [ex-]parent relation */
 void
 delay_invalidation_parent_rel(Oid parent)
 {
-	list_add_unique(delayed_invalidation_parent_rels, parent);
+	delay_invalidation_event(&delayed_invalidation_parent_rels, parent);
 }
 
 /* Add new delayed invalidation job for a vague relation */
 void
 delay_invalidation_vague_rel(Oid vague_rel)
 {
-	list_add_unique(delayed_invalidation_vague_rels, vague_rel);
+	delay_invalidation_event(&delayed_invalidation_vague_rels, vague_rel);
 }
 
 /* Finish all pending invalidation jobs if possible */
 void
 finish_delayed_invalidation(void)
-{
+{	
 	/* Exit early if there's nothing to do */
-	if (delayed_invalidation_parent_rels == NIL &&
+	if (delayed_invalidation_whole_cache  == false &&
+		delayed_invalidation_parent_rels == NIL &&
 		delayed_invalidation_vague_rels == NIL &&
 		delayed_shutdown == false)
 	{
@@ -884,9 +990,11 @@ finish_delayed_invalidation(void)
 	if (IsTransactionState())
 	{
 		Oid		   *parents = NULL;
-		int			parents_count;
+		int			parents_count = 0;
 		bool		parents_fetched = false;
 		ListCell   *lc;
+
+		AcceptInvalidationMessages();
 
 		/* Handle the probable 'DROP EXTENSION' case */
 		if (delayed_shutdown)
@@ -908,12 +1016,29 @@ finish_delayed_invalidation(void)
 				unload_config();
 
 				/* Disregard all remaining invalidation jobs */
-				free_invalidation_list(delayed_invalidation_parent_rels);
-				free_invalidation_list(delayed_invalidation_vague_rels);
+				delayed_invalidation_whole_cache = false;
+				free_invalidation_lists();
 
 				/* No need to continue, exit */
 				return;
 			}
+		}
+
+		/* We might be asked to perform a complete cache invalidation */
+		if (delayed_invalidation_whole_cache)
+		{
+			/* Unset 'invalidation_whole_cache' flag */
+			delayed_invalidation_whole_cache = false;
+
+			/* Fetch all partitioned tables */
+			if (!parents_fetched)
+			{
+				parents = read_parent_oids(&parents_count);
+				parents_fetched = true;
+			}
+
+			/* Invalidate live entries and remove dead ones */
+			invalidate_pathman_relation_info_cache(parents, parents_count);
 		}
 
 		/* Process relations that are (or were) definitely partitioned */
@@ -992,8 +1117,8 @@ finish_delayed_invalidation(void)
 			}
 		}
 
-		free_invalidation_list(delayed_invalidation_parent_rels);
-		free_invalidation_list(delayed_invalidation_vague_rels);
+		/* Finally, free invalidation jobs lists */
+		free_invalidation_lists();
 
 		if (parents)
 			pfree(parents);
@@ -1009,20 +1134,14 @@ finish_delayed_invalidation(void)
 void
 cache_parent_of_partition(Oid partition, Oid parent)
 {
-	bool			found;
 	PartParentInfo *ppar;
 
 	ppar = pathman_cache_search_relid(parent_cache,
 									  partition,
 									  HASH_ENTER,
-									  &found);
-	elog(DEBUG2,
-		 found ?
-			 "Refreshing record for child %u in pg_pathman's cache [%u]" :
-			 "Creating new record for child %u in pg_pathman's cache [%u]",
-		 partition, MyProcPid);
+									  NULL);
 
-	ppar->child_rel = partition;
+	ppar->child_rel  = partition;
 	ppar->parent_rel = parent;
 }
 
@@ -1137,30 +1256,11 @@ get_parent_of_partition_internal(Oid partition,
 								 PartParentSearch *status,
 								 HASHACTION action)
 {
-	const char	   *action_str; /* "Fetching"\"Resetting" */
 	Oid				parent;
 	PartParentInfo *ppar = pathman_cache_search_relid(parent_cache,
 													  partition,
 													  HASH_FIND,
 													  NULL);
-	/* Set 'action_str' */
-	switch (action)
-	{
-		case HASH_REMOVE:
-			action_str = "Resetting";
-			break;
-
-		case HASH_FIND:
-			action_str = "Fetching";
-			break;
-
-		default:
-			elog(ERROR, "Unexpected HTAB action %u", action);
-	}
-
-	elog(DEBUG2,
-		 "%s %s record for child %u from pg_pathman's cache [%u]",
-		 action_str, (ppar ? "live" : "NULL"), partition, MyProcPid);
 
 	if (ppar)
 	{

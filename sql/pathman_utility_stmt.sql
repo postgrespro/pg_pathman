@@ -28,11 +28,6 @@ VACUUM FULL copy_stmt_hooking.test_2;
 VACUUM FULL copy_stmt_hooking.test_3;
 VACUUM FULL copy_stmt_hooking.test_4;
 
-/* COPY TO */
-COPY copy_stmt_hooking.test TO stdout;
-\copy copy_stmt_hooking.test to stdout (format csv)
-\copy copy_stmt_hooking.test(comment) to stdout
-
 /* DELETE ROWS, COPY FROM */
 DELETE FROM copy_stmt_hooking.test;
 COPY copy_stmt_hooking.test FROM stdin;
@@ -52,20 +47,21 @@ VACUUM FULL copy_stmt_hooking.test_2;
 VACUUM FULL copy_stmt_hooking.test_3;
 VACUUM FULL copy_stmt_hooking.test_4;
 
-/* COPY FROM (specified columns) */
-COPY copy_stmt_hooking.test (val) TO stdout;
-COPY copy_stmt_hooking.test (val, comment) TO stdout;
-COPY copy_stmt_hooking.test (c3, val, comment) TO stdout;
-COPY copy_stmt_hooking.test (val, comment, c3, c4) TO stdout;
+/* COPY TO */
+COPY copy_stmt_hooking.test TO stdout;			/* not ok */
+COPY copy_stmt_hooking.test (val) TO stdout;	/* not ok */
+COPY (SELECT * FROM copy_stmt_hooking.test) TO stdout;
+COPY (SELECT * FROM copy_stmt_hooking.test) TO stdout (FORMAT CSV);
+\copy (SELECT * FROM copy_stmt_hooking.test) TO stdout
 
-/* COPY TO (partition does not exist, NOT allowed to create partitions) */
+/* COPY FROM (partition does not exist, NOT allowed to create partitions) */
 SET pg_pathman.enable_auto_partition = OFF;
 COPY copy_stmt_hooking.test FROM stdin;
 21	test_no_part	0	0
 \.
 SELECT * FROM copy_stmt_hooking.test WHERE val > 20;
 
-/* COPY TO (partition does not exist, allowed to create partitions) */
+/* COPY FROM (partition does not exist, allowed to create partitions) */
 SET pg_pathman.enable_auto_partition = ON;
 COPY copy_stmt_hooking.test FROM stdin;
 21	test_no_part	0	0
@@ -98,16 +94,16 @@ WHERE attnum > 0 AND attrelid = 'copy_stmt_hooking.test'::REGCLASS;
 SELECT count(*) FROM pg_attribute
 WHERE attnum > 0 AND attrelid = 'copy_stmt_hooking.test_6'::REGCLASS;
 
+/* test transformed tuples */
+COPY (SELECT * FROM copy_stmt_hooking.test) TO stdout;
 
-/* COPY FROM (test transformed tuples) */
-COPY copy_stmt_hooking.test (val, c3, c4) TO stdout;
 
-/* COPY TO (insert into table with dropped column) */
+/* COPY FROM (insert into table with dropped column) */
 COPY copy_stmt_hooking.test(val, c3, c4) FROM stdin;
 2	1	2
 \.
 
-/* COPY TO (insert into table without dropped column) */
+/* COPY FROM (insert into table without dropped column) */
 COPY copy_stmt_hooking.test(val, c3, c4) FROM stdin;
 27	1	2
 \.

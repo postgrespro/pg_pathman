@@ -278,6 +278,7 @@ const PartRelationInfo *refresh_pathman_relation_info(Oid relid,
 													  Datum *values,
 													  bool allow_incomplete);
 PartRelationInfo *invalidate_pathman_relation_info(Oid relid, bool *found);
+void invalidate_pathman_relation_info_cache(const Oid *parents, int parents_count);
 void remove_pathman_relation_info(Oid relid);
 const PartRelationInfo *get_pathman_relation_info(Oid relid);
 const PartRelationInfo *get_pathman_relation_info_after_lock(Oid relid,
@@ -301,6 +302,7 @@ bool is_equal_to_partitioning_expression(Oid relid, char *expression,
 
 /* Global invalidation routines */
 void delay_pathman_shutdown(void);
+void delay_invalidation_whole_cache(void);
 void delay_invalidation_parent_rel(Oid parent);
 void delay_invalidation_vague_rel(Oid vague_rel);
 void finish_delayed_invalidation(void);

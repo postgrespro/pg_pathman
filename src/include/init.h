@@ -54,6 +54,7 @@ typedef struct
 
 #define PATHMAN_MCXT_COUNT	4
 extern MemoryContext		TopPathmanContext;
+extern MemoryContext		PathmanInvalJobsContext;
 extern MemoryContext		PathmanRelationCacheContext;
 extern MemoryContext		PathmanParentCacheContext;
 extern MemoryContext		PathmanBoundCacheContext;

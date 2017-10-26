@@ -57,6 +57,10 @@ ProtocolVersion		FrontendProtocol = (ProtocolVersion) 0;
 #endif
 
 
+#define PATHMAN_COPY_READ_LOCK		AccessShareLock
+#define PATHMAN_COPY_WRITE_LOCK		RowExclusiveLock
+
+
 static uint64 PathmanCopyFrom(CopyState cstate,
 							  Relation parent_rel,
 							  List *range_table,
@@ -96,8 +100,8 @@ is_pathman_related_copy(Node *parsetree)
 	/* Get partition's Oid while locking it */
 	parent_relid = RangeVarGetRelid(copy_stmt->relation,
 									(copy_stmt->is_from ?
-										RowExclusiveLock :
-										AccessShareLock),
+										PATHMAN_COPY_WRITE_LOCK :
+										PATHMAN_COPY_READ_LOCK),
 									false);
 
 	/* Check that relation is partitioned */
@@ -349,12 +353,12 @@ PathmanDoCopy(const CopyStmt *stmt,
 			  uint64 *processed)
 {
 	CopyState	cstate;
-	bool		is_from = stmt->is_from;
-	bool		pipe = (stmt->filename == NULL);
-	Relation	rel;
-	Node	   *query = NULL;
-	List	   *range_table = NIL;
 	ParseState *pstate;
+	Relation	rel;
+	List	   *range_table = NIL;
+	bool		is_from = stmt->is_from,
+				pipe = (stmt->filename == NULL),
+				is_old_protocol = PG_PROTOCOL_MAJOR(FrontendProtocol) < 3 && pipe;
 
 	/* Disallow COPY TO/FROM file or program except to superusers. */
 	if (!pipe && !superuser())
@@ -407,96 +411,22 @@ PathmanDoCopy(const CopyStmt *stmt,
 		}
 		ExecCheckRTPerms(range_table, true);
 
-		/*
-		 * We should perform a query instead of low-level heap scan whenever:
-		 *		a) table has a RLS policy;
-		 *		b) table is partitioned & it's COPY FROM.
-		 */
-		if (check_enable_rls(rte->relid, InvalidOid, false) == RLS_ENABLED ||
-			is_from == false) /* rewrite COPY table TO statements */
+		/* Disable COPY FROM if table has RLS */
+		if (is_from && check_enable_rls(rte->relid, InvalidOid, false) == RLS_ENABLED)
 		{
-			SelectStmt *select;
-			RangeVar   *from;
-			List	   *target_list = NIL;
-
-			if (is_from)
 				ereport(ERROR,
 						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				  errmsg("COPY FROM not supported with row-level security"),
 						 errhint("Use INSERT statements instead.")));
+		}
 
-			/* Build target list */
-			if (!stmt->attlist)
-			{
-				ColumnRef  *cr;
-				ResTarget  *target;
-
-				cr = makeNode(ColumnRef);
-				cr->fields = list_make1(makeNode(A_Star));
-				cr->location = -1;
-
-				/* Build the ResTarget and add the ColumnRef to it. */
-				target = makeNode(ResTarget);
-				target->name = NULL;
-				target->indirection = NIL;
-				target->val = (Node *) cr;
-				target->location = -1;
-
-				target_list = list_make1(target);
-			}
-			else
-			{
-				ListCell   *lc;
-
-				foreach(lc, stmt->attlist)
-				{
-					ColumnRef  *cr;
-					ResTarget  *target;
-
-					/*
-					 * Build the ColumnRef for each column.  The ColumnRef
-					 * 'fields' property is a String 'Value' node (see
-					 * nodes/value.h) that corresponds to the column name
-					 * respectively.
-					 */
-					cr = makeNode(ColumnRef);
-					cr->fields = list_make1(lfirst(lc));
-					cr->location = -1;
-
-					/* Build the ResTarget and add the ColumnRef to it. */
-					target = makeNode(ResTarget);
-					target->name = NULL;
-					target->indirection = NIL;
-					target->val = (Node *) cr;
-					target->location = -1;
-
-					/* Add each column to the SELECT statements target list */
-					target_list = lappend(target_list, target);
-				}
-			}
-
-			/*
-			 * Build RangeVar for from clause, fully qualified based on the
-			 * relation which we have opened and locked.
-			 */
-			from = makeRangeVar(get_namespace_name(RelationGetNamespace(rel)),
-								RelationGetRelationName(rel), -1);
-
-			/* Build query */
-			select = makeNode(SelectStmt);
-			select->targetList = target_list;
-			select->fromClause = list_make1(from);
-
-			query = (Node *) select;
-
-			/*
-			 * Close the relation for now, but keep the lock on it to prevent
-			 * changes between now and when we start the query-based COPY.
-			 *
-			 * We'll reopen it later as part of the query-based COPY.
-			 */
-			heap_close(rel, NoLock);
-			rel = NULL;
+		/* Disable COPY TO */
+		if (!is_from)
+		{
+			ereport(WARNING,
+					(errmsg("COPY TO will only select rows from parent table \"%s\"",
+							RelationGetRelationName(rel)),
+					 errhint("Consider using the COPY (SELECT ...) TO variant.")));
 		}
 	}
 
@@ -506,19 +436,12 @@ PathmanDoCopy(const CopyStmt *stmt,
 	pstate = make_parsestate(NULL);
 	pstate->p_sourcetext = queryString;
 
-	/* COPY ... FROM ... */
 	if (is_from)
 	{
-		bool is_old_protocol = PG_PROTOCOL_MAJOR(FrontendProtocol) < 3 &&
-							   stmt->filename == NULL;
-
-		/* There should be relation */
-		if (!rel) elog(FATAL, "No relation for PATHMAN COPY FROM");
-
 		/* check read-only transaction and parallel mode */
 		if (XactReadOnly && !rel->rd_islocaltemp)
-			PreventCommandIfReadOnly("PATHMAN COPY FROM");
-		PreventCommandIfParallelMode("PATHMAN COPY FROM");
+			PreventCommandIfReadOnly("COPY FROM");
+		PreventCommandIfParallelMode("COPY FROM");
 
 		cstate = BeginCopyFromCompat(pstate, rel, stmt->filename,
 									 stmt->is_program, NULL, stmt->attlist,
@@ -526,31 +449,14 @@ PathmanDoCopy(const CopyStmt *stmt,
 		*processed = PathmanCopyFrom(cstate, rel, range_table, is_old_protocol);
 		EndCopyFrom(cstate);
 	}
-	/* COPY ... TO ... */
 	else
 	{
-		CopyStmt	modified_copy_stmt;
-
-		/* We should've created a query */
-		Assert(query);
-
-		/* Copy 'stmt' and override some of the fields */
-		modified_copy_stmt = *stmt;
-		modified_copy_stmt.relation = NULL;
-		modified_copy_stmt.query = query;
-
 		/* Call standard DoCopy using a new CopyStmt */
-		DoCopyCompat(pstate, &modified_copy_stmt, stmt_location, stmt_len,
-					 processed);
+		DoCopyCompat(pstate, stmt, stmt_location, stmt_len, processed);
 	}
 
-	/*
-	 * Close the relation. If reading, we can release the AccessShareLock we
-	 * got; if writing, we should hold the lock until end of transaction to
-	 * ensure that updates will be committed before lock is released.
-	 */
-	if (rel != NULL)
-		heap_close(rel, (is_from ? NoLock : AccessShareLock));
+	/* Close the relation, but keep it locked */
+	heap_close(rel, (is_from ? NoLock : PATHMAN_COPY_READ_LOCK));
 }
 
 /*
