@@ -2,7 +2,7 @@
    "name": "pg_pathman",
    "abstract": "Partitioning tool",
    "description": "The `pg_pathman` module provides optimized partitioning mechanism and functions to manage partitions.",
-   "version": "1.4.7",
+   "version": "1.4.8",
    "maintainer": [
       "Ildar Musin <i.musin@postgrespro.ru>",
       "Dmitry Ivanov <d.ivanov@postgrespro.ru>",
@@ -24,7 +24,7 @@
        "pg_pathman": {
            "file": "pg_pathman--1.4.sql",
            "docfile": "README.md",
-           "version": "1.4.7",
+           "version": "1.4.8",
            "abstract": "Partitioning tool"
       }
    },
