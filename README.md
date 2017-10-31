@@ -53,7 +53,7 @@ More interesting features are yet to come. Stay tuned!
  * `RuntimeAppend` & `RuntimeMergeAppend` custom plan nodes to pick partitions at runtime;
  * `PartitionFilter`: an efficient drop-in replacement for INSERT triggers;
  * Automatic partition creation for new INSERTed data (only for RANGE partitioning);
- * Improved `COPY FROM\TO` statement that is able to insert rows directly into partitions;
+ * Improved `COPY FROM` statement that is able to insert rows directly into partitions;
  * UPDATE triggers generation out of the box (will be replaced with custom nodes too);
  * User-defined callbacks for partition creation event handling;
  * Non-blocking concurrent table partitioning;
