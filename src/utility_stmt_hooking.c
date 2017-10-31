@@ -499,7 +499,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	/* Initialize ResultPartsStorage */
 	init_result_parts_storage(&parts_storage, estate, false,
 							  ResultPartsStorageStandard,
-							  prepare_rri_for_copy, NULL);
+							  prepare_rri_for_copy, cstate);
 	parts_storage.saved_rel_info = parent_result_rel;
 
 	/* Set up a tuple slot too */
@@ -634,13 +634,20 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 			/* Check the constraints of the tuple */
 			if (child_result_rel->ri_RelationDesc->rd_att->constr)
 				ExecConstraints(child_result_rel, slot, estate);
+			if (!child_result_rel->ri_FdwRoutine)
+			{
+				/* OK, store the tuple and create index entries for it */
+				simple_heap_insert(child_result_rel->ri_RelationDesc, tuple);
 
-			/* OK, store the tuple and create index entries for it */
-			simple_heap_insert(child_result_rel->ri_RelationDesc, tuple);
-
-			if (child_result_rel->ri_NumIndices > 0)
-				recheckIndexes = ExecInsertIndexTuples(slot, &(tuple->t_self),
-													   estate, false, NULL, NIL);
+				if (child_result_rel->ri_NumIndices > 0)
+					recheckIndexes = ExecInsertIndexTuples(slot, &(tuple->t_self),
+														   estate, false, NULL, NIL);
+			}
+			else /* FDW table */
+			{
+				child_result_rel->ri_FdwRoutine->ForeignNextCopyFrom(
+					estate, child_result_rel, cstate);
+			}
 
 			/* AFTER ROW INSERT Triggers (FIXME: NULL transition) */
 			ExecARInsertTriggersCompat(estate, child_result_rel, tuple,
@@ -677,6 +684,24 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 
 	ExecResetTupleTable(estate->es_tupleTable, false);
 
+	{
+		/* Shut down FDWs. TODO: make hook in fini_result_parts_storage? */
+		HASH_SEQ_STATUS			stat;
+		ResultRelInfoHolder	   *rri_holder; /* ResultRelInfo holder */
+
+		hash_seq_init(&stat, parts_storage.result_rels_table);
+		while ((rri_holder = (ResultRelInfoHolder *) hash_seq_search(&stat)) != NULL)
+		{
+			ResultRelInfo *resultRelInfo = rri_holder->result_rel_info;
+
+			if (resultRelInfo->ri_FdwRoutine)
+			{
+				resultRelInfo->ri_FdwRoutine->EndForeignCopyFrom(
+					estate, resultRelInfo);
+			}
+		}
+	}
+
 	/* Close partitions and destroy hash table */
 	fini_result_parts_storage(&parts_storage, true);
 
@@ -689,7 +714,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 }
 
 /*
- * COPY FROM does not support FDWs, emit ERROR.
+ * Init COPY FROM, if supported.
  */
 static void
 prepare_rri_for_copy(EState *estate,
@@ -699,10 +724,17 @@ prepare_rri_for_copy(EState *estate,
 {
 	ResultRelInfo  *rri = rri_holder->result_rel_info;
 	FdwRoutine	   *fdw_routine = rri->ri_FdwRoutine;
+	CopyState cstate = (CopyState) arg;
 
 	if (fdw_routine != NULL)
-		elog(ERROR, "cannot copy to foreign partition \"%s\"",
-			 get_rel_name(RelationGetRelid(rri->ri_RelationDesc)));
+	{
+		if (!FdwCopyFromIsSupported(fdw_routine))
+			ereport(ERROR,
+					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+					 errmsg("FDW adapter for relation \"%s\" doesn't support COPY FROM",
+							RelationGetRelationName(rri->ri_RelationDesc))));
+		rri->ri_FdwRoutine->BeginForeignCopyFrom(estate, rri, cstate);
+	}
 }
 
 /*
