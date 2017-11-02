@@ -13,12 +13,11 @@ import os
 import re
 import subprocess
 import threading
-import json
 import time
 import unittest
 
 from distutils.version import LooseVersion
-from testgres import get_new_node, get_bin_path, get_pg_config
+from testgres import get_new_node, get_bin_path, get_pg_version
 
 # set setup base logging config, it can be turned on by `use_logging`
 # parameter on node setup
@@ -54,7 +53,7 @@ LOG_CONFIG = {
 }
 
 logging.config.dictConfig(LOG_CONFIG)
-version = LooseVersion(get_pg_config().get("VERSION_NUM"))
+version = LooseVersion(get_pg_version())
 
 
 # Helper function for json equality
@@ -106,23 +105,6 @@ class Tests(unittest.TestCase):
 
         return node
 
-    def catchup_replica(self, master, replica):
-        """ Wait until replica synchronizes with master """
-        if version >= LooseVersion('10'):
-            wait_lsn_query = """
-                SELECT pg_current_wal_lsn() <= replay_lsn
-                FROM pg_stat_replication
-                WHERE application_name = '{0}'
-            """
-        else:
-            wait_lsn_query = """
-                SELECT pg_current_xlog_location() <= replay_location
-                FROM pg_stat_replication
-                WHERE application_name = '{0}'
-            """
-
-        master.poll_query_until('postgres', wait_lsn_query.format(replica.name))
-
     def test_concurrent(self):
         """ Test concurrent partitioning """
 
@@ -158,8 +140,7 @@ class Tests(unittest.TestCase):
         with self.start_new_pathman_cluster(allow_streaming=True, test_data=True) as node:
             with node.replicate('node2') as replica:
                 replica.start()
-                # wait until replica catches up
-                self.catchup_replica(node, replica)
+                replica.catchup()
 
                 # check that results are equal
                 self.assertEqual(
@@ -169,7 +150,9 @@ class Tests(unittest.TestCase):
                 # enable parent and see if it is enabled in replica
                 node.psql('postgres', "select enable_parent('abc')")
 
-                self.catchup_replica(node, replica)
+                # wait until replica catches up
+                replica.catchup()
+
                 self.assertEqual(
                     node.psql('postgres', 'explain (costs off) select * from abc'),
                     replica.psql('postgres', 'explain (costs off) select * from abc'))
@@ -182,7 +165,10 @@ class Tests(unittest.TestCase):
                 # check that UPDATE in pathman_config_params invalidates cache
                 node.psql('postgres',
                           'update pathman_config_params set enable_parent = false')
-                self.catchup_replica(node, replica)
+
+                # wait until replica catches up
+                replica.catchup()
+
                 self.assertEqual(
                     node.psql('postgres', 'explain (costs off) select * from abc'),
                     replica.psql('postgres', 'explain (costs off) select * from abc'))
@@ -688,7 +674,7 @@ class Tests(unittest.TestCase):
                         explain (analyze, costs off, timing off)
                         select * from drop_test
                         where val = any (select generate_series(1, 40, 34))
-                    """) # query selects from drop_test_1 and drop_test_4
+                    """)  # query selects from drop_test_1 and drop_test_4
 
                     con2.commit()
 
@@ -712,15 +698,14 @@ class Tests(unittest.TestCase):
                     # return all values in tuple
                     queue.put((has_runtime_append, has_drop_test_1, has_drop_test_4))
 
-
                 # Step 1: cache partitioned table in con1
                 con1.begin()
-                con1.execute('select count(*) from drop_test') # load pathman's cache
+                con1.execute('select count(*) from drop_test')  # load pathman's cache
                 con1.commit()
 
                 # Step 2: cache partitioned table in con2
                 con2.begin()
-                con2.execute('select count(*) from drop_test') # load pathman's cache
+                con2.execute('select count(*) from drop_test')  # load pathman's cache
                 con2.commit()
 
                 # Step 3: drop first partition of 'drop_test'
@@ -786,12 +771,12 @@ class Tests(unittest.TestCase):
 
                 # Step 1: lock partitioned table in con1
                 con1.begin()
-                con1.execute('select count(*) from ins_test') # load pathman's cache
+                con1.execute('select count(*) from ins_test')  # load pathman's cache
                 con1.execute('lock table ins_test in share update exclusive mode')
 
                 # Step 2: try inserting new value in con2 (waiting)
                 con2.begin()
-                con2.execute('select count(*) from ins_test') # load pathman's cache
+                con2.execute('select count(*) from ins_test')  # load pathman's cache
                 t = threading.Thread(target=con2_thread)
                 t.start()
 
@@ -853,12 +838,12 @@ class Tests(unittest.TestCase):
 
                 # Step 1: initilize con1
                 con1.begin()
-                con1.execute('select count(*) from ins_test') # load pathman's cache
+                con1.execute('select count(*) from ins_test')  # load pathman's cache
 
                 # Step 2: initilize con2
                 con2.begin()
-                con2.execute('select count(*) from ins_test') # load pathman's cache
-                con2.commit()                                 # unlock relations
+                con2.execute('select count(*) from ins_test')  # load pathman's cache
+                con2.commit()                                  # unlock relations
 
                 # Step 3: merge 'ins_test1' + 'ins_test_2' in con1 (success)
                 con1.execute(
@@ -1031,12 +1016,12 @@ class Tests(unittest.TestCase):
                     get_bin_path("pg_dump"), "-p {}".format(node.port),
                     "initial"
                 ], [get_bin_path("psql"), "-p {}".format(node.port), "copy"],
-                 cmp_full),    # dump as plain text and restore via COPY
+                    cmp_full),    # dump as plain text and restore via COPY
                 (turnoff_pathman, turnon_pathman, [
                     get_bin_path("pg_dump"), "-p {}".format(node.port),
                     "--inserts", "initial"
                 ], [get_bin_path("psql"), "-p {}".format(node.port), "copy"],
-                 cmp_full),    # dump as plain text and restore via INSERTs
+                    cmp_full),    # dump as plain text and restore via INSERTs
                 (None, None, [
                     get_bin_path("pg_dump"), "-p {}".format(node.port),
                     "--format=custom", "initial"
@@ -1052,7 +1037,7 @@ class Tests(unittest.TestCase):
                     dump_restore_cmd = " | ".join((' '.join(pg_dump_params),
                                                    ' '.join(pg_restore_params)))
 
-                    if (preproc != None):
+                    if (preproc is not None):
                         preproc(node)
 
                     # transfer and restore data
@@ -1065,12 +1050,12 @@ class Tests(unittest.TestCase):
                         stderr=fnull)
                     p2.communicate(input=stdoutdata)
 
-                    if (postproc != None):
+                    if (postproc is not None):
                         postproc(node)
 
                     # validate data
                     with node.connect('initial') as con1, \
-                        node.connect('copy') as con2:
+                            node.connect('copy') as con2:
 
                         # compare plans and contents of initial and copy
                         cmp_result = cmp_dbs(con1, con2)
@@ -1092,8 +1077,8 @@ class Tests(unittest.TestCase):
                             config_params_initial[row[0]] = row[1:]
                         for row in con2.execute(config_params_query):
                             config_params_copy[row[0]] = row[1:]
-                        self.assertEqual(config_params_initial, config_params_copy, \
-                          "mismatch in pathman_config_params under the command: %s" % dump_restore_cmd)
+                        self.assertEqual(config_params_initial, config_params_copy,
+                                         "mismatch in pathman_config_params under the command: %s" % dump_restore_cmd)
 
                         # compare constraints on each partition
                         constraints_query = """
@@ -1106,8 +1091,8 @@ class Tests(unittest.TestCase):
                             constraints_initial[row[0]] = row[1:]
                         for row in con2.execute(constraints_query):
                             constraints_copy[row[0]] = row[1:]
-                        self.assertEqual(constraints_initial, constraints_copy, \
-                          "mismatch in partitions' constraints under the command: %s" % dump_restore_cmd)
+                        self.assertEqual(constraints_initial, constraints_copy,
+                                         "mismatch in partitions' constraints under the command: %s" % dump_restore_cmd)
 
                     # clear copy database
                     node.psql('copy', 'drop schema public cascade')
@@ -1128,9 +1113,9 @@ class Tests(unittest.TestCase):
         test_interval = int(math.ceil(detach_timeout * num_detachs))
 
         insert_pgbench_script = os.path.dirname(os.path.realpath(__file__)) \
-           + "/pgbench_scripts/insert_current_timestamp.pgbench"
+            + "/pgbench_scripts/insert_current_timestamp.pgbench"
         detach_pgbench_script = os.path.dirname(os.path.realpath(__file__)) \
-           + "/pgbench_scripts/detachs_in_timeout.pgbench"
+            + "/pgbench_scripts/detachs_in_timeout.pgbench"
 
         # Check pgbench scripts on existance
         self.assertTrue(
@@ -1202,16 +1187,14 @@ class Tests(unittest.TestCase):
         Test scan on all partititions when using update node.
         We can't use regression tests here because 9.5 and 9.6 give
         different plans
-		'''
+        '''
 
         with get_new_node('test_update_node') as node:
             node.init()
-            node.append_conf(
-             'postgresql.conf',
-             """
-            shared_preload_libraries=\'pg_pathman\'
-            pg_pathman.override_copy=false
-            pg_pathman.enable_partitionrouter=on
+            node.append_conf('postgresql.conf', """
+                shared_preload_libraries=\'pg_pathman\'
+                pg_pathman.override_copy=false
+                pg_pathman.enable_partitionrouter=on
             """)
             node.start()
 
@@ -1274,6 +1257,7 @@ class Tests(unittest.TestCase):
 
             node.psql('postgres', 'DROP SCHEMA test_update_node CASCADE;')
             node.psql('postgres', 'DROP EXTENSION pg_pathman CASCADE;')
+
 
 if __name__ == "__main__":
     unittest.main()
