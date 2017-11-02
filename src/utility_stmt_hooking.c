@@ -64,10 +64,10 @@ static uint64 PathmanCopyFrom(CopyState cstate,
 							  List *range_table,
 							  bool old_protocol);
 
-static void prepare_rri_for_copy(EState *estate,
-								 ResultRelInfoHolder *rri_holder,
-								 const ResultPartsStorage *rps_storage,
-								 void *arg);
+static void prepare_rri_for_copy(ResultRelInfoHolder *rri_holder,
+								 const ResultPartsStorage *rps_storage);
+static void finish_rri_copy(ResultRelInfoHolder *rri_holder,
+							const ResultPartsStorage *rps_storage);
 
 
 /*
@@ -105,20 +105,6 @@ is_pathman_related_copy(Node *parsetree)
 	/* Check that relation is partitioned */
 	if (get_pathman_relation_info(parent_relid))
 	{
-		ListCell *lc;
-
-		/* Analyze options list */
-		foreach (lc, copy_stmt->options)
-		{
-			DefElem *defel = (DefElem *) lfirst(lc);
-
-			Assert(IsA(defel, DefElem));
-
-			/* We do not support freeze */
-			if (strcmp(defel->defname, "freeze") == 0)
-				elog(ERROR, "freeze is not supported for partitioned tables");
-		}
-
 		/* Emit ERROR if we can't see the necessary symbols */
 		#ifdef DISABLE_PATHMAN_COPY
 			elog(ERROR, "COPY is not supported for partitioned tables on Windows");
@@ -481,6 +467,10 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 
 	uint64				processed = 0;
 
+	/* We do not support freeze */
+	if (cstate->freeze)
+		elog(ERROR, "freeze is not supported for partitioned tables");
+
 
 	tupDesc = RelationGetDescr(parent_rel);
 
@@ -684,26 +674,8 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 
 	ExecResetTupleTable(estate->es_tupleTable, false);
 
-	{
-		/* Shut down FDWs. TODO: make hook in fini_result_parts_storage? */
-		HASH_SEQ_STATUS			stat;
-		ResultRelInfoHolder	   *rri_holder; /* ResultRelInfo holder */
-
-		hash_seq_init(&stat, parts_storage.result_rels_table);
-		while ((rri_holder = (ResultRelInfoHolder *) hash_seq_search(&stat)) != NULL)
-		{
-			ResultRelInfo *resultRelInfo = rri_holder->result_rel_info;
-
-			if (resultRelInfo->ri_FdwRoutine)
-			{
-				resultRelInfo->ri_FdwRoutine->EndForeignCopyFrom(
-					estate, resultRelInfo);
-			}
-		}
-	}
-
 	/* Close partitions and destroy hash table */
-	fini_result_parts_storage(&parts_storage, true);
+	fini_result_parts_storage(&parts_storage, true, finish_rri_copy);
 
 	/* Close parent's indices */
 	ExecCloseIndices(parent_result_rel);
@@ -717,23 +689,46 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
  * Init COPY FROM, if supported.
  */
 static void
-prepare_rri_for_copy(EState *estate,
-					 ResultRelInfoHolder *rri_holder,
-					 const ResultPartsStorage *rps_storage,
-					 void *arg)
+prepare_rri_for_copy(ResultRelInfoHolder *rri_holder,
+					 const ResultPartsStorage *rps_storage)
 {
-	ResultRelInfo  *rri = rri_holder->result_rel_info;
-	FdwRoutine	   *fdw_routine = rri->ri_FdwRoutine;
-	CopyState cstate = (CopyState) arg;
+	ResultRelInfo	*rri = rri_holder->result_rel_info;
+	FdwRoutine		*fdw_routine = rri->ri_FdwRoutine;
+	CopyState		cstate = (CopyState) rps_storage->callback_arg;
+	ResultRelInfo	*parent_rri;
+	const char		*parent_relname;
+	EState		   *estate;
+
+	estate = rps_storage->estate;
 
 	if (fdw_routine != NULL)
 	{
+		parent_rri = rps_storage->saved_rel_info;
+		parent_relname = psprintf(
+			"%s.%s", "public",
+			quote_identifier(RelationGetRelationName(parent_rri->ri_RelationDesc)));
 		if (!FdwCopyFromIsSupported(fdw_routine))
 			ereport(ERROR,
 					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 					 errmsg("FDW adapter for relation \"%s\" doesn't support COPY FROM",
 							RelationGetRelationName(rri->ri_RelationDesc))));
-		rri->ri_FdwRoutine->BeginForeignCopyFrom(estate, rri, cstate);
+		fdw_routine->BeginForeignCopyFrom(estate, rri, cstate, parent_relname);
+	}
+}
+
+/*
+ * Shut down FDWs.
+ */
+static void
+finish_rri_copy(ResultRelInfoHolder *rri_holder,
+				const ResultPartsStorage *rps_storage)
+{
+	ResultRelInfo *resultRelInfo = rri_holder->result_rel_info;
+
+	if (resultRelInfo->ri_FdwRoutine)
+	{
+		resultRelInfo->ri_FdwRoutine->EndForeignCopyFrom(
+			rps_storage->estate, resultRelInfo);
 	}
 }
 

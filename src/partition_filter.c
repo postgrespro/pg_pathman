@@ -68,18 +68,12 @@ CustomScanMethods	partition_filter_plan_methods;
 CustomExecMethods	partition_filter_exec_methods;
 
 
-static void prepare_rri_for_insert(EState *estate,
-								   ResultRelInfoHolder *rri_holder,
-								   const ResultPartsStorage *rps_storage,
-								   void *arg);
-static void prepare_rri_returning_for_insert(EState *estate,
-											 ResultRelInfoHolder *rri_holder,
-											 const ResultPartsStorage *rps_storage,
-											 void *arg);
-static void prepare_rri_fdw_for_insert(EState *estate,
-									   ResultRelInfoHolder *rri_holder,
-									   const ResultPartsStorage *rps_storage,
-									   void *arg);
+static void prepare_rri_for_insert(ResultRelInfoHolder *rri_holder,
+								   const ResultPartsStorage *rps_storage);
+static void prepare_rri_returning_for_insert(ResultRelInfoHolder *rri_holder,
+											 const ResultPartsStorage *rps_storage);
+static void prepare_rri_fdw_for_insert(ResultRelInfoHolder *rri_holder,
+									   const ResultPartsStorage *rps_storage);
 static Node *fix_returning_list_mutator(Node *node, void *state);
 
 static Index append_rte_to_estate(EState *estate, RangeTblEntry *rte);
@@ -143,7 +137,7 @@ init_result_parts_storage(ResultPartsStorage *parts_storage,
 						  EState *estate,
 						  bool speculative_inserts,
 						  Size table_entry_size,
-						  on_new_rri_holder on_new_rri_holder_cb,
+						  on_rri_holder on_new_rri_holder_cb,
 						  void *on_new_rri_holder_cb_arg)
 {
 	HASHCTL *result_rels_table_config = &parts_storage->result_rels_table_config;
@@ -177,16 +171,21 @@ init_result_parts_storage(ResultPartsStorage *parts_storage,
 
 /* Free ResultPartsStorage (close relations etc) */
 void
-fini_result_parts_storage(ResultPartsStorage *parts_storage, bool close_rels)
+fini_result_parts_storage(ResultPartsStorage *parts_storage, bool close_rels,
+						  on_rri_holder hook)
 {
 	HASH_SEQ_STATUS			stat;
 	ResultRelInfoHolder	   *rri_holder; /* ResultRelInfo holder */
 
-	/* Close partitions and free free conversion-related stuff */
-	if (close_rels)
+	hash_seq_init(&stat, parts_storage->result_rels_table);
+	while ((rri_holder = (ResultRelInfoHolder *) hash_seq_search(&stat)) != NULL)
 	{
-		hash_seq_init(&stat, parts_storage->result_rels_table);
-		while ((rri_holder = (ResultRelInfoHolder *) hash_seq_search(&stat)) != NULL)
+		/* Call destruction hook, if needed */
+		if (hook != NULL)
+			hook(rri_holder, parts_storage);
+
+		/* Close partitions and free free conversion-related stuff */
+		if (close_rels)
 		{
 			ExecCloseIndices(rri_holder->result_rel_info);
 
@@ -202,13 +201,8 @@ fini_result_parts_storage(ResultPartsStorage *parts_storage, bool close_rels)
 
 			free_conversion_map(rri_holder->tuple_map);
 		}
-	}
-
-	/* Else just free conversion-related stuff */
-	else
-	{
-		hash_seq_init(&stat, parts_storage->result_rels_table);
-		while ((rri_holder = (ResultRelInfoHolder *) hash_seq_search(&stat)) != NULL)
+		/* Else just free conversion-related stuff */
+		else
 		{
 			/* Skip if there's no map */
 			if (!rri_holder->tuple_map)
@@ -329,10 +323,8 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 
 		/* Call on_new_rri_holder_callback() if needed */
 		if (parts_storage->on_new_rri_holder_callback)
-			parts_storage->on_new_rri_holder_callback(parts_storage->estate,
-													  rri_holder,
-													  parts_storage,
-													  parts_storage->callback_arg);
+			parts_storage->on_new_rri_holder_callback(rri_holder,
+													  parts_storage);
 
 		/* Finally append ResultRelInfo to storage->es_alloc_result_rels */
 		append_rri_to_estate(parts_storage->estate, child_result_rel_info);
@@ -702,7 +694,7 @@ partition_filter_end(CustomScanState *node)
 	PartitionFilterState   *state = (PartitionFilterState *) node;
 
 	/* Executor will close rels via estate->es_result_relations */
-	fini_result_parts_storage(&state->result_parts, false);
+	fini_result_parts_storage(&state->result_parts, false, NULL);
 
 	Assert(list_length(node->custom_ps) == 1);
 	ExecEndNode((PlanState *) linitial(node->custom_ps));
@@ -793,21 +785,17 @@ pfilter_build_tlist(Relation parent_rel, List *tlist)
 
 /* Main trigger */
 static void
-prepare_rri_for_insert(EState *estate,
-					   ResultRelInfoHolder *rri_holder,
-					   const ResultPartsStorage *rps_storage,
-					   void *arg)
+prepare_rri_for_insert(ResultRelInfoHolder *rri_holder,
+					   const ResultPartsStorage *rps_storage)
 {
-	prepare_rri_returning_for_insert(estate, rri_holder, rps_storage, arg);
-	prepare_rri_fdw_for_insert(estate, rri_holder, rps_storage, arg);
+	prepare_rri_returning_for_insert(rri_holder, rps_storage);
+	prepare_rri_fdw_for_insert(rri_holder, rps_storage);
 }
 
 /* Prepare 'RETURNING *' tlist & projection */
 static void
-prepare_rri_returning_for_insert(EState *estate,
-								 ResultRelInfoHolder *rri_holder,
-								 const ResultPartsStorage *rps_storage,
-								 void *arg)
+prepare_rri_returning_for_insert(ResultRelInfoHolder *rri_holder,
+								 const ResultPartsStorage *rps_storage)
 {
 	PartitionFilterState   *pfstate;
 	List				   *returning_list;
@@ -815,12 +803,15 @@ prepare_rri_returning_for_insert(EState *estate,
 						   *parent_rri;
 	Index					parent_rt_idx;
 	TupleTableSlot		   *result_slot;
+	EState				   *estate;
+
+	estate = rps_storage->estate;
 
 	/* We don't need to do anything ff there's no map */
 	if (!rri_holder->tuple_map)
 		return;
 
-	pfstate = (PartitionFilterState *) arg;
+	pfstate = (PartitionFilterState *) rps_storage->callback_arg;
 	returning_list = pfstate->returning_list;
 
 	/* Exit if there's no RETURNING list */
@@ -857,14 +848,15 @@ prepare_rri_returning_for_insert(EState *estate,
 
 /* Prepare FDW access structs */
 static void
-prepare_rri_fdw_for_insert(EState *estate,
-						   ResultRelInfoHolder *rri_holder,
-						   const ResultPartsStorage *rps_storage,
-						   void *arg)
+prepare_rri_fdw_for_insert(ResultRelInfoHolder *rri_holder,
+						   const ResultPartsStorage *rps_storage)
 {
 	ResultRelInfo  *rri = rri_holder->result_rel_info;
 	FdwRoutine	   *fdw_routine = rri->ri_FdwRoutine;
 	Oid				partid;
+	EState		   *estate;
+
+	estate = rps_storage->estate;
 
 	/* Nothing to do if not FDW */
 	if (fdw_routine == NULL)
