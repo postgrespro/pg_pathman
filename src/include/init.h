@@ -46,22 +46,21 @@ typedef struct
 	do { \
 		Assert(CurrentMemoryContext != TopMemoryContext); \
 		Assert(CurrentMemoryContext != TopPathmanContext); \
-		Assert(CurrentMemoryContext != PathmanRelationCacheContext); \
-		Assert(CurrentMemoryContext != PathmanParentCacheContext); \
-		Assert(CurrentMemoryContext != PathmanBoundCacheContext); \
+		Assert(CurrentMemoryContext != PathmanParentsCacheContext); \
+		Assert(CurrentMemoryContext != PathmanStatusCacheContext); \
+		Assert(CurrentMemoryContext != PathmanBoundsCacheContext); \
 	} while (0)
 
 
 #define PATHMAN_MCXT_COUNT	4
 extern MemoryContext		TopPathmanContext;
-extern MemoryContext		PathmanInvalJobsContext;
-extern MemoryContext		PathmanRelationCacheContext;
-extern MemoryContext		PathmanParentCacheContext;
-extern MemoryContext		PathmanBoundCacheContext;
+extern MemoryContext		PathmanParentsCacheContext;
+extern MemoryContext		PathmanStatusCacheContext;
+extern MemoryContext		PathmanBoundsCacheContext;
 
-extern HTAB				   *partitioned_rels;
-extern HTAB				   *parent_cache;
-extern HTAB				   *bound_cache;
+extern HTAB				   *parents_cache;
+extern HTAB				   *status_cache;
+extern HTAB				   *bounds_cache;
 
 /* pg_pathman's initialization state */
 extern PathmanInitState 	pathman_init_state;
@@ -70,28 +69,29 @@ extern PathmanInitState 	pathman_init_state;
 extern bool					pathman_hooks_enabled;
 
 
+#define PATHMAN_TOP_CONTEXT		"maintenance"
+#define PATHMAN_PARENTS_CACHE	"partition parents cache"
+#define PATHMAN_STATUS_CACHE	"partition status cache"
+#define PATHMAN_BOUNDS_CACHE	"partition bounds cache"
+
+
 /* Transform pg_pathman's memory context into simple name */
 static inline const char *
-simpify_mcxt_name(MemoryContext mcxt)
+simplify_mcxt_name(MemoryContext mcxt)
 {
-	static const char  *top_mcxt	= "maintenance",
-					   *rel_mcxt	= "partition dispatch cache",
-					   *parent_mcxt	= "partition parents cache",
-					   *bound_mcxt	= "partition bounds cache";
-
 	if (mcxt == TopPathmanContext)
-		return top_mcxt;
+		return PATHMAN_TOP_CONTEXT;
 
-	else if (mcxt == PathmanRelationCacheContext)
-		return rel_mcxt;
+	else if (mcxt == PathmanParentsCacheContext)
+		return PATHMAN_PARENTS_CACHE;
 
-	else if (mcxt == PathmanParentCacheContext)
-		return parent_mcxt;
+	else if (mcxt == PathmanStatusCacheContext)
+		return PATHMAN_STATUS_CACHE;
 
-	else if (mcxt == PathmanBoundCacheContext)
-		return bound_mcxt;
+	else if (mcxt == PathmanBoundsCacheContext)
+		return PATHMAN_BOUNDS_CACHE;
 
-	else elog(ERROR, "error in function " CppAsString(simpify_mcxt_name));
+	else elog(ERROR, "unknown memory context");
 }
 
 

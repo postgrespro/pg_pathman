@@ -110,9 +110,7 @@ cmp_bounds(FmgrInfo *cmp_func,
 }
 
 
-/*
- * Partitioning type.
- */
+/* Partitioning type */
 typedef enum
 {
 	PT_ANY = 0, /* for part type traits (virtual type) */
@@ -120,9 +118,7 @@ typedef enum
 	PT_RANGE
 } PartType;
 
-/*
- * Child relation info for RANGE partitioning.
- */
+/* Child relation info for RANGE partitioning */
 typedef struct
 {
 	Oid				child_oid;
@@ -131,15 +127,59 @@ typedef struct
 } RangeEntry;
 
 /*
+ * PartStatusInfo
+ *		Cached partitioning status of the specified relation.
+ *		Allows us to quickly search for PartRelationInfo.
+ */
+typedef struct PartStatusInfo
+{
+	Oid				relid;		/* key */
+	int32			refcount;	/* reference counter */
+	bool			is_valid;	/* is this entry fresh? */
+	struct PartRelationInfo *prel;
+} PartStatusInfo;
+
+/*
+ * PartParentInfo
+ *		Cached parent of the specified partition.
+ *		Allows us to quickly search for PartRelationInfo.
+ */
+typedef struct PartParentInfo
+{
+	Oid				child_relid;	/* key */
+	Oid				parent_relid;
+} PartParentInfo;
+
+/*
+ * PartBoundInfo
+ *		Cached bounds of the specified partition.
+ *		Allows us to deminish overhead of check constraints.
+ */
+typedef struct PartBoundInfo
+{
+	Oid				child_relid;	/* key */
+
+	PartType		parttype;
+
+	/* For RANGE partitions */
+	Bound			range_min;
+	Bound			range_max;
+	bool			byval;
+
+	/* For HASH partitions */
+	uint32			part_idx;
+} PartBoundInfo;
+
+/*
  * PartRelationInfo
  *		Per-relation partitioning information.
  *		Allows us to perform partition pruning.
  */
-typedef struct
+typedef struct PartRelationInfo
 {
-	Oid				key;			/* partitioned table's Oid */
-	bool			valid,			/* is this entry valid? */
-					enable_parent;	/* should plan include parent? */
+	PartStatusInfo *psin;			/* entry holding this prel */
+
+	bool			enable_parent;	/* should plan include parent? */
 
 	PartType		parttype;		/* partitioning type (HASH | RANGE) */
 
@@ -171,54 +211,10 @@ typedef struct
 #define PART_EXPR_VARNO				( 1 )
 
 /*
- * PartParentInfo
- *		Cached parent of the specified partition.
- *		Allows us to quickly search for PartRelationInfo.
- */
-typedef struct
-{
-	Oid				child_rel;		/* key */
-	Oid				parent_rel;
-} PartParentInfo;
-
-/*
- * PartBoundInfo
- *		Cached bounds of the specified partition.
- *		Allows us to deminish overhead of check constraints.
- */
-typedef struct
-{
-	Oid				child_rel;		/* key */
-
-	PartType		parttype;
-
-	/* For RANGE partitions */
-	Bound			range_min;
-	Bound			range_max;
-	bool			byval;
-
-	/* For HASH partitions */
-	uint32			part_idx;
-} PartBoundInfo;
-
-/*
- * PartParentSearch
- *		Represents status of a specific cached entry.
- *		Returned by [for]get_parent_of_partition().
- */
-typedef enum
-{
-	PPS_ENTRY_NOT_FOUND = 0,
-	PPS_ENTRY_PARENT,		/* entry was found, but pg_pathman doesn't know it */
-	PPS_ENTRY_PART_PARENT,	/* entry is parent and is known by pg_pathman */
-	PPS_NOT_SURE			/* can't determine (not transactional state) */
-} PartParentSearch;
-
-/*
  * PartRelationInfo field access macros & functions.
  */
 
-#define PrelParentRelid(prel)		( (prel)->key )
+#define PrelParentRelid(prel)		( (prel)->psin->relid )
 
 #define PrelGetChildrenArray(prel)	( (prel)->children )
 
@@ -226,13 +222,9 @@ typedef enum
 
 #define PrelChildrenCount(prel)		( (prel)->children_count )
 
-#define PrelIsValid(prel)			( (prel) && (prel)->valid )
-
 static inline uint32
 PrelLastChild(const PartRelationInfo *prel)
 {
-	Assert(PrelIsValid(prel));
-
 	if (PrelChildrenCount(prel) == 0)
 		elog(ERROR, "pg_pathman's cache entry for relation %u has 0 children",
 			 PrelParentRelid(prel));
@@ -258,13 +250,13 @@ PrelExpressionColumnNames(const PartRelationInfo *prel)
 }
 
 static inline Node *
-PrelExpressionForRelid(const PartRelationInfo *prel, Index rel_index)
+PrelExpressionForRelid(const PartRelationInfo *prel, Index rti)
 {
 	/* TODO: implement some kind of cache */
 	Node *expr = copyObject(prel->expr);
 
-	if (rel_index != PART_EXPR_VARNO)
-		ChangeVarNodes(expr, PART_EXPR_VARNO, rel_index, 0);
+	if (rti != PART_EXPR_VARNO)
+		ChangeVarNodes(expr, PART_EXPR_VARNO, rti, 0);
 
 	return expr;
 }
@@ -273,54 +265,16 @@ AttrNumber *PrelExpressionAttributesMap(const PartRelationInfo *prel,
 										TupleDesc source_tupdesc,
 										int *map_length);
 
+/*
+ * PartStatusInfo field access macros & functions.
+ */
 
-const PartRelationInfo *refresh_pathman_relation_info(Oid relid,
-													  Datum *values,
-													  bool allow_incomplete);
-PartRelationInfo *invalidate_pathman_relation_info(Oid relid, bool *found);
-void invalidate_pathman_relation_info_cache(const Oid *parents, int parents_count);
-void remove_pathman_relation_info(Oid relid);
-const PartRelationInfo *get_pathman_relation_info(Oid relid);
-const PartRelationInfo *get_pathman_relation_info_after_lock(Oid relid,
-															 bool unlock_if_not_found,
-															 LockAcquireResult *lock_result);
+#define PsinIsValid(psin)			( (psin)->is_valid )
 
-/* Partitioning expression routines */
-Node *parse_partitioning_expression(const Oid relid,
-									const char *expr_cstr,
-									char **query_string_out,
-									Node **parsetree_out);
+#define PsinReferenceCount(psin)	( (psin)->refcount )
 
-Datum cook_partitioning_expression(const Oid relid,
-								   const char *expr_cstr,
-								   Oid *expr_type);
-
-char *canonicalize_partitioning_expression(const Oid relid,
-										   const char *expr_cstr);
-bool is_equal_to_partitioning_expression(Oid relid, char *expression,
-										 Oid value_type);
-
-/* Global invalidation routines */
-void delay_pathman_shutdown(void);
-void delay_invalidation_whole_cache(void);
-void delay_invalidation_parent_rel(Oid parent);
-void delay_invalidation_vague_rel(Oid vague_rel);
-void finish_delayed_invalidation(void);
-
-/* Parent cache */
-void cache_parent_of_partition(Oid partition, Oid parent);
-Oid forget_parent_of_partition(Oid partition, PartParentSearch *status);
-Oid get_parent_of_partition(Oid partition, PartParentSearch *status);
-
-/* Bounds cache */
-void forget_bounds_of_partition(Oid partition);
-PartBoundInfo *get_bounds_of_partition(Oid partition,
-									   const PartRelationInfo *prel);
-Datum get_lower_bound(Oid parent_relid, Oid value_type);
-Datum get_upper_bound(Oid relid, Oid value_type);
 
 /* PartType wrappers */
-
 static inline void
 WrongPartType(PartType parttype)
 {
@@ -341,16 +295,13 @@ DatumGetPartType(Datum datum)
 static inline char *
 PartTypeToCString(PartType parttype)
 {
-	static char *hash_str	= "1",
-				*range_str	= "2";
-
 	switch (parttype)
 	{
 		case PT_HASH:
-			return hash_str;
+			return "1";
 
 		case PT_RANGE:
-			return range_str;
+			return "2";
 
 		default:
 			WrongPartType(parttype);
@@ -359,41 +310,68 @@ PartTypeToCString(PartType parttype)
 }
 
 
-/* PartRelationInfo checker */
+/* Dispatch cache */
+void refresh_pathman_relation_info(Oid relid);
+const PartRelationInfo *get_pathman_relation_info(Oid relid);
+const PartRelationInfo *get_pathman_relation_info_after_lock(Oid relid,
+															 bool unlock_if_not_found,
+															 LockAcquireResult *lock_result);
+
 void shout_if_prel_is_invalid(const Oid parent_oid,
 							  const PartRelationInfo *prel,
 							  const PartType expected_part_type);
 
+/* Status cache */
+PartStatusInfo *open_pathman_status_info(Oid relid);
+void close_pathman_status_info(PartStatusInfo *psin);
+void invalidate_pathman_status_info(Oid relid);
+void invalidate_pathman_status_info_cache(void);
 
-/*
- * Useful functions & macros for freeing memory.
- */
+/* Bounds cache */
+void forget_bounds_of_partition(Oid partition);
+PartBoundInfo *get_bounds_of_partition(Oid partition, const PartRelationInfo *prel);
+Datum get_lower_bound(Oid partition_relid, Oid value_type);
+Datum get_upper_bound(Oid partition_relid, Oid value_type);
 
-/* Remove all references to this parent from parents cache */
-static inline void
-ForgetParent(PartRelationInfo *prel)
-{
-	uint32 i;
+/* Parent cache */
+void cache_parent_of_partition(Oid partition, Oid parent);
+void forget_parent_of_partition(Oid partition);
+Oid get_parent_of_partition(Oid partition);
 
-	AssertArg(MemoryContextIsValid(prel->mcxt));
+/* Partitioning expression routines */
+Node *parse_partitioning_expression(const Oid relid,
+									const char *expr_cstr,
+									char **query_string_out,
+									Node **parsetree_out);
 
-	/* Remove relevant PartParentInfos */
-	if (prel->children)
-	{
-		for (i = 0; i < PrelChildrenCount(prel); i++)
-		{
-			Oid child = prel->children[i];
+Datum cook_partitioning_expression(const Oid relid,
+								   const char *expr_cstr,
+								   Oid *expr_type);
 
-			/* Skip if Oid is invalid (e.g. initialization error) */
-			if (!OidIsValid(child))
-				continue;
+char *canonicalize_partitioning_expression(const Oid relid,
+										   const char *expr_cstr);
 
-			/* If it's *always been* relid's partition, free cache */
-			if (PrelParentRelid(prel) == get_parent_of_partition(child, NULL))
-				forget_parent_of_partition(child, NULL);
-		}
-	}
-}
+bool is_equal_to_partitioning_expression(const Oid relid,
+										 const char *expression,
+										 const Oid value_type);
+
+/* Partitioning expression routines */
+Node *parse_partitioning_expression(const Oid relid,
+									const char *expr_cstr,
+									char **query_string_out,
+									Node **parsetree_out);
+
+Datum cook_partitioning_expression(const Oid relid,
+								   const char *expr_cstr,
+								   Oid *expr_type);
+
+char *canonicalize_partitioning_expression(const Oid relid,
+										   const char *expr_cstr);
+
+
+/* Global invalidation routines */
+void delay_pathman_shutdown(void);
+void finish_delayed_invalidation(void);
 
 
 /* For pg_pathman.enable_bounds_cache GUC */

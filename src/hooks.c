@@ -812,8 +812,6 @@ pathman_shmem_startup_hook(void)
 void
 pathman_relcache_hook(Datum arg, Oid relid)
 {
-	Oid parent_relid;
-
 	/* See cook_partitioning_expression() */
 	if (!pathman_hooks_enabled)
 		return;
@@ -821,51 +819,29 @@ pathman_relcache_hook(Datum arg, Oid relid)
 	if (!IsPathmanReady())
 		return;
 
-	/* Special case: flush whole relcache */
+	/* Invalidation event for whole cache */
 	if (relid == InvalidOid)
 	{
-		delay_invalidation_whole_cache();
-
-#ifdef USE_RELCACHE_LOGGING
-		elog(DEBUG2, "Invalidation message for all relations [%u]", MyProcPid);
-#endif
-
-		return;
+		invalidate_pathman_status_info_cache();
 	}
-
-	/* We shouldn't even consider special OIDs */
-	if (relid < FirstNormalObjectId)
-		return;
 
 	/* Invalidation event for PATHMAN_CONFIG table (probably DROP) */
 	if (relid == get_pathman_config_relid(false))
+	{
 		delay_pathman_shutdown();
-
-	/* Invalidate PartBoundInfo cache if needed */
-	forget_bounds_of_partition(relid);
-
-	/* Invalidate PartParentInfo cache if needed */
-	parent_relid = forget_parent_of_partition(relid, NULL);
-
-	/* It *might have been a partition*, invalidate parent */
-	if (OidIsValid(parent_relid))
-	{
-		delay_invalidation_parent_rel(parent_relid);
-
-#ifdef USE_RELCACHE_LOGGING
-		elog(DEBUG2, "Invalidation message for partition %u [%u]",
-			 relid, MyProcPid);
-#endif
 	}
-	/* We can't say, perform full invalidation procedure */
-	else
-	{
-		delay_invalidation_vague_rel(relid);
 
-#ifdef USE_RELCACHE_LOGGING
-		elog(DEBUG2, "Invalidation message for vague rel %u [%u]",
-			 relid, MyProcPid);
-#endif
+	/* Invalidation event for some user table */
+	else if (relid >= FirstNormalObjectId)
+	{
+		/* Invalidate PartBoundInfo entry if needed */
+		forget_bounds_of_partition(relid);
+
+		/* Invalidate PartParentInfo entry if needed */
+		forget_parent_of_partition(relid);
+
+		/* Invalidate PartStatusInfo entry if needed */
+		invalidate_pathman_status_info(relid);
 	}
 }
 

@@ -146,7 +146,6 @@ is_pathman_related_table_rename(Node *parsetree,
 	RenameStmt			   *rename_stmt = (RenameStmt *) parsetree;
 	Oid						relation_oid,
 							parent_relid;
-	PartParentSearch		parent_search;
 	const PartRelationInfo *prel;
 
 	Assert(IsPathmanReady());
@@ -177,8 +176,7 @@ is_pathman_related_table_rename(Node *parsetree,
 	}
 
 	/* Assume it's a partition, fetch its parent */
-	parent_relid = get_parent_of_partition(relation_oid, &parent_search);
-	if (parent_search != PPS_ENTRY_PART_PARENT)
+	if (!OidIsValid(parent_relid = get_parent_of_partition(relation_oid)))
 		return false;
 
 	/* Is parent partitioned? */

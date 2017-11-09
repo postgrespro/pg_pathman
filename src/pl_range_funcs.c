@@ -403,7 +403,6 @@ get_part_range_by_oid(PG_FUNCTION_ARGS)
 {
 	Oid						partition_relid,
 							parent_relid;
-	PartParentSearch		parent_search;
 	RangeEntry			   *ranges;
 	const PartRelationInfo *prel;
 	uint32					i;
@@ -415,8 +414,8 @@ get_part_range_by_oid(PG_FUNCTION_ARGS)
 	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("'partition_relid' should not be NULL")));
 
-	parent_relid = get_parent_of_partition(partition_relid, &parent_search);
-	if (parent_search != PPS_ENTRY_PART_PARENT)
+	parent_relid = get_parent_of_partition(partition_relid);
+	if (!OidIsValid(parent_relid))
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("relation \"%s\" is not a partition",
 							   get_rel_name_or_relid(partition_relid))));
@@ -615,7 +614,6 @@ Datum
 merge_range_partitions(PG_FUNCTION_ARGS)
 {
 	Oid					parent = InvalidOid;
-	PartParentSearch	parent_search;
 	ArrayType		   *arr = PG_GETARG_ARRAYTYPE_P(0);
 
 	Oid				   *partitions;
@@ -658,10 +656,10 @@ merge_range_partitions(PG_FUNCTION_ARGS)
 	/* Check if all partitions are from the same parent */
 	for (i = 0; i < nparts; i++)
 	{
-		Oid cur_parent = get_parent_of_partition(partitions[i], &parent_search);
+		Oid cur_parent = get_parent_of_partition(partitions[i]);
 
 		/* If we couldn't find a parent, it's not a partition */
-		if (parent_search != PPS_ENTRY_PART_PARENT)
+		if (!OidIsValid(cur_parent))
 			ereport(ERROR, (errmsg("cannot merge partitions"),
 							errdetail("relation \"%s\" is not a partition",
 									  get_rel_name_or_relid(partitions[i]))));
@@ -783,15 +781,14 @@ Datum
 drop_range_partition_expand_next(PG_FUNCTION_ARGS)
 {
 	const PartRelationInfo *prel;
-	PartParentSearch		parent_search;
 	Oid						relid = PG_GETARG_OID(0),
 							parent;
 	RangeEntry			   *ranges;
 	int						i;
 
 	/* Get parent's relid */
-	parent = get_parent_of_partition(relid, &parent_search);
-	if (parent_search != PPS_ENTRY_PART_PARENT)
+	parent = get_parent_of_partition(relid);
+	if (!OidIsValid(parent))
 		elog(ERROR, "relation \"%s\" is not a partition",
 			 get_rel_name_or_relid(relid));
 

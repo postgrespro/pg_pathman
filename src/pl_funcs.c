@@ -126,25 +126,11 @@ get_number_of_partitions_pl(PG_FUNCTION_ARGS)
 Datum
 get_parent_of_partition_pl(PG_FUNCTION_ARGS)
 {
-	Oid					partition = PG_GETARG_OID(0);
-	PartParentSearch	parent_search;
-	Oid					parent;
-	bool				emit_error = PG_GETARG_BOOL(1);
+	Oid		partition = PG_GETARG_OID(0),
+			parent = get_parent_of_partition(partition);
 
-	/* Fetch parent & write down search status */
-	parent = get_parent_of_partition(partition, &parent_search);
-
-	/* We MUST be sure :) */
-	Assert(parent_search != PPS_NOT_SURE);
-
-	/* It must be parent known by pg_pathman */
-	if (parent_search == PPS_ENTRY_PART_PARENT)
+	if (OidIsValid(parent))
 		PG_RETURN_OID(parent);
-
-	if (emit_error)
-		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						errmsg("\"%s\" is not a partition",
-							   get_rel_name_or_relid(partition))));
 
 	PG_RETURN_NULL();
 }
@@ -160,8 +146,7 @@ is_equal_to_partitioning_expression_pl(PG_FUNCTION_ARGS)
 	char   *expr			= TextDatumGetCString(PG_GETARG_TEXT_P(1));
 	Oid		value_type		= PG_GETARG_OID(2);
 
-	result = is_equal_to_partitioning_expression(parent_relid, expr,
-												 value_type);
+	result = is_equal_to_partitioning_expression(parent_relid, expr, value_type);
 	PG_RETURN_BOOL(result);
 }
 
@@ -171,10 +156,10 @@ is_equal_to_partitioning_expression_pl(PG_FUNCTION_ARGS)
 Datum
 get_lower_bound_pl(PG_FUNCTION_ARGS)
 {
-	Oid		relid = PG_GETARG_OID(0);
+	Oid		partition_relid = PG_GETARG_OID(0);
 	Oid		value_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
 
-	PG_RETURN_POINTER(get_lower_bound(relid, value_type));
+	PG_RETURN_POINTER(get_lower_bound(partition_relid, value_type));
 }
 
 /*
@@ -183,10 +168,10 @@ get_lower_bound_pl(PG_FUNCTION_ARGS)
 Datum
 get_upper_bound_pl(PG_FUNCTION_ARGS)
 {
-	Oid		relid = PG_GETARG_OID(0);
+	Oid		partition_relid = PG_GETARG_OID(0);
 	Oid		value_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
 
-	PG_RETURN_POINTER(get_upper_bound(relid, value_type));
+	PG_RETURN_POINTER(get_upper_bound(partition_relid, value_type));
 }
 
 /*
@@ -269,14 +254,14 @@ show_cache_stats_internal(PG_FUNCTION_ARGS)
 		usercxt = (show_cache_stats_cxt *) palloc(sizeof(show_cache_stats_cxt));
 
 		usercxt->pathman_contexts[0] = TopPathmanContext;
-		usercxt->pathman_contexts[1] = PathmanRelationCacheContext;
-		usercxt->pathman_contexts[2] = PathmanParentCacheContext;
-		usercxt->pathman_contexts[3] = PathmanBoundCacheContext;
+		usercxt->pathman_contexts[1] = PathmanParentsCacheContext;
+		usercxt->pathman_contexts[2] = PathmanStatusCacheContext;
+		usercxt->pathman_contexts[3] = PathmanBoundsCacheContext;
 
 		usercxt->pathman_htables[0] = NULL; /* no HTAB for this entry */
-		usercxt->pathman_htables[1] = partitioned_rels;
-		usercxt->pathman_htables[2] = parent_cache;
-		usercxt->pathman_htables[3] = bound_cache;
+		usercxt->pathman_htables[1] = parents_cache;
+		usercxt->pathman_htables[2] = status_cache;
+		usercxt->pathman_htables[3] = bounds_cache;
 
 		usercxt->current_item = 0;
 
@@ -318,7 +303,7 @@ show_cache_stats_internal(PG_FUNCTION_ARGS)
 		current_htab = usercxt->pathman_htables[usercxt->current_item];
 
 		values[Anum_pathman_cs_context - 1]	=
-				CStringGetTextDatum(simpify_mcxt_name(current_mcxt));
+				CStringGetTextDatum(simplify_mcxt_name(current_mcxt));
 
 /* We can't check stats of mcxt prior to 9.6 */
 #if PG_VERSION_NUM >= 90600
@@ -864,9 +849,7 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 			/* Some flags might change during refresh attempt */
 			save_pathman_init_state(&init_state);
 
-			refresh_pathman_relation_info(relid,
-										  values,
-										  false); /* initialize immediately */
+			get_pathman_relation_info(relid);
 		}
 		PG_CATCH();
 		{

@@ -584,7 +584,7 @@ partition_router_visitor(Plan *plan, void *context)
 		const PartRelationInfo *prel;
 
 		/* Find topmost parent */
-		while ((tmp_relid = get_parent_of_partition(relid, NULL)) != InvalidOid)
+		while (OidIsValid(tmp_relid = get_parent_of_partition(relid)))
 			relid = tmp_relid;
 
 		/* Check that table is partitioned */

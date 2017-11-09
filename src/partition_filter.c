@@ -455,7 +455,7 @@ select_partition_for_insert(ExprState *expr_state,
 														  value, prel->ev_type);
 
 			/* get_pathman_relation_info() will refresh this entry */
-			invalidate_pathman_relation_info(parent_relid, NULL);
+			refresh_pathman_relation_info(parent_relid);
 		}
 		else partition_relid = parts[0];
 
@@ -467,7 +467,7 @@ select_partition_for_insert(ExprState *expr_state,
 		if (rri_holder == NULL)
 		{
 			/* get_pathman_relation_info() will refresh this entry */
-			invalidate_pathman_relation_info(parent_relid, NULL);
+			refresh_pathman_relation_info(parent_relid);
 
 			/* Get a fresh PartRelationInfo */
 			prel = get_pathman_relation_info(parent_relid);

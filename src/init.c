@@ -43,19 +43,18 @@
 
 /* Various memory contexts for caches */
 MemoryContext		TopPathmanContext				= NULL;
-MemoryContext		PathmanInvalJobsContext			= NULL;
-MemoryContext		PathmanRelationCacheContext		= NULL;
-MemoryContext		PathmanParentCacheContext		= NULL;
-MemoryContext		PathmanBoundCacheContext		= NULL;
+MemoryContext		PathmanParentsCacheContext		= NULL;
+MemoryContext		PathmanStatusCacheContext		= NULL;
+MemoryContext		PathmanBoundsCacheContext		= NULL;
 
 /* Storage for PartRelationInfos */
-HTAB			   *partitioned_rels	= NULL;
+HTAB			   *parents_cache	= NULL;
 
 /* Storage for PartParentInfos */
-HTAB			   *parent_cache		= NULL;
+HTAB			   *status_cache		= NULL;
 
 /* Storage for PartBoundInfos */
-HTAB			   *bound_cache			= NULL;
+HTAB			   *bounds_cache			= NULL;
 
 /* pg_pathman's init status */
 PathmanInitState 	pathman_init_state;
@@ -309,18 +308,17 @@ init_local_cache(void)
 	HASHCTL ctl;
 
 	/* Destroy caches, just in case */
-	hash_destroy(partitioned_rels);
-	hash_destroy(parent_cache);
-	hash_destroy(bound_cache);
+	hash_destroy(parents_cache);
+	hash_destroy(status_cache);
+	hash_destroy(bounds_cache);
 
 	/* Reset pg_pathman's memory contexts */
 	if (TopPathmanContext)
 	{
 		/* Check that child contexts exist */
-		Assert(MemoryContextIsValid(PathmanInvalJobsContext));
-		Assert(MemoryContextIsValid(PathmanRelationCacheContext));
-		Assert(MemoryContextIsValid(PathmanParentCacheContext));
-		Assert(MemoryContextIsValid(PathmanBoundCacheContext));
+		Assert(MemoryContextIsValid(PathmanParentsCacheContext));
+		Assert(MemoryContextIsValid(PathmanStatusCacheContext));
+		Assert(MemoryContextIsValid(PathmanBoundsCacheContext));
 
 		/* Clear children */
 		MemoryContextResetChildren(TopPathmanContext);
@@ -328,66 +326,60 @@ init_local_cache(void)
 	/* Initialize pg_pathman's memory contexts */
 	else
 	{
-		Assert(PathmanInvalJobsContext == NULL);
-		Assert(PathmanRelationCacheContext == NULL);
-		Assert(PathmanParentCacheContext == NULL);
-		Assert(PathmanBoundCacheContext == NULL);
+		Assert(PathmanParentsCacheContext == NULL);
+		Assert(PathmanStatusCacheContext == NULL);
+		Assert(PathmanBoundsCacheContext == NULL);
 
 		TopPathmanContext =
 				AllocSetContextCreate(TopMemoryContext,
-									  CppAsString(TopPathmanContext),
-									  ALLOCSET_DEFAULT_SIZES);
-
-		PathmanInvalJobsContext =
-				AllocSetContextCreate(TopMemoryContext,
-									  CppAsString(PathmanInvalJobsContext),
-									  ALLOCSET_SMALL_SIZES);
-
-		/* For PartRelationInfo */
-		PathmanRelationCacheContext =
-				AllocSetContextCreate(TopPathmanContext,
-									  CppAsString(PathmanRelationCacheContext),
+									  PATHMAN_TOP_CONTEXT,
 									  ALLOCSET_DEFAULT_SIZES);
 
 		/* For PartParentInfo */
-		PathmanParentCacheContext =
+		PathmanParentsCacheContext =
 				AllocSetContextCreate(TopPathmanContext,
-									  CppAsString(PathmanParentCacheContext),
-									  ALLOCSET_DEFAULT_SIZES);
+									  PATHMAN_PARENTS_CACHE,
+									  ALLOCSET_SMALL_SIZES);
+
+		/* For PartStatusInfo */
+		PathmanStatusCacheContext =
+				AllocSetContextCreate(TopPathmanContext,
+									  PATHMAN_STATUS_CACHE,
+									  ALLOCSET_SMALL_SIZES);
 
 		/* For PartBoundInfo */
-		PathmanBoundCacheContext =
+		PathmanBoundsCacheContext =
 				AllocSetContextCreate(TopPathmanContext,
-									  CppAsString(PathmanBoundCacheContext),
-									  ALLOCSET_DEFAULT_SIZES);
+									  PATHMAN_BOUNDS_CACHE,
+									  ALLOCSET_SMALL_SIZES);
 	}
 
 	memset(&ctl, 0, sizeof(ctl));
 	ctl.keysize = sizeof(Oid);
 	ctl.entrysize = sizeof(PartRelationInfo);
-	ctl.hcxt = PathmanRelationCacheContext;
+	ctl.hcxt = PathmanParentsCacheContext;
 
-	partitioned_rels = hash_create("pg_pathman's partition dispatch cache",
-								   PART_RELS_SIZE, &ctl,
-								   HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
+	parents_cache = hash_create(PATHMAN_PARENTS_CACHE,
+								PART_RELS_SIZE, &ctl,
+								HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
 
 	memset(&ctl, 0, sizeof(ctl));
 	ctl.keysize = sizeof(Oid);
-	ctl.entrysize = sizeof(PartParentInfo);
-	ctl.hcxt = PathmanParentCacheContext;
+	ctl.entrysize = sizeof(PartStatusInfo);
+	ctl.hcxt = PathmanStatusCacheContext;
 
-	parent_cache = hash_create("pg_pathman's partition parents cache",
+	status_cache = hash_create(PATHMAN_STATUS_CACHE,
 							   PART_RELS_SIZE * CHILD_FACTOR, &ctl,
 							   HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
 
 	memset(&ctl, 0, sizeof(ctl));
 	ctl.keysize = sizeof(Oid);
 	ctl.entrysize = sizeof(PartBoundInfo);
-	ctl.hcxt = PathmanBoundCacheContext;
+	ctl.hcxt = PathmanBoundsCacheContext;
 
-	bound_cache = hash_create("pg_pathman's partition bounds cache",
-							  PART_RELS_SIZE * CHILD_FACTOR, &ctl,
-							  HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
+	bounds_cache = hash_create(PATHMAN_BOUNDS_CACHE,
+							   PART_RELS_SIZE * CHILD_FACTOR, &ctl,
+							   HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
 }
 
 /*
@@ -397,13 +389,13 @@ static void
 fini_local_cache(void)
 {
 	/* First, destroy hash tables */
-	hash_destroy(partitioned_rels);
-	hash_destroy(parent_cache);
-	hash_destroy(bound_cache);
+	hash_destroy(parents_cache);
+	hash_destroy(status_cache);
+	hash_destroy(bounds_cache);
 
-	partitioned_rels	= NULL;
-	parent_cache		= NULL;
-	bound_cache			= NULL;
+	parents_cache	= NULL;
+	status_cache		= NULL;
+	bounds_cache			= NULL;
 
 	/* Now we can clear allocations */
 	MemoryContextResetChildren(TopPathmanContext);
@@ -876,9 +868,6 @@ startup_invalidate_parent(Datum *values, bool *isnull, void *context)
 						PATHMAN_CONFIG, relid),
 				 errhint(INIT_ERROR_HINT)));
 	}
-
-	/* get_pathman_relation_info() will refresh this entry */
-	invalidate_pathman_relation_info(relid, NULL);
 }
 
 /*
