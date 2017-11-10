@@ -692,7 +692,7 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 	UnregisterSnapshot(snapshot);
 	heap_close(rel, AccessShareLock);
 
-	elog(DEBUG2, "PATHMAN_CONFIG table %s relation %u",
+	elog(DEBUG2, "PATHMAN_CONFIG %s relation %u",
 		 (contains_rel ? "contains" : "doesn't contain"), relid);
 
 	return contains_rel;

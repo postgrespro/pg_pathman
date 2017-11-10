@@ -83,6 +83,7 @@ static bool		delayed_shutdown = false; /* pathman was dropped */
 	bsearch((const void *) &(key), (array), (array_size), sizeof(Oid), oid_cmp)
 
 
+static void invalidate_pathman_status_info(PartStatusInfo *psin);
 static PartRelationInfo *build_pathman_relation_info(Oid relid, Datum *values);
 static void free_pathman_relation_info(PartRelationInfo *prel);
 
@@ -128,20 +129,147 @@ refresh_pathman_relation_info(Oid relid)
 
 }
 
+/* TODO: comment */
+void
+invalidate_pathman_relation_info(Oid relid)
+{
+	PartStatusInfo *psin;
+
+	psin = pathman_cache_search_relid(status_cache,
+									  relid, HASH_FIND,
+									  NULL);
+
+	if (psin)
+	{
+#ifdef USE_RELINFO_LOGGING
+		elog(DEBUG2, "invalidation message for relation %u [%u]",
+			 relid, MyProcPid);
+#endif
+
+		invalidate_pathman_status_info(psin);
+	}
+}
+
+/* TODO: comment */
+void
+invalidate_pathman_relation_info_cache(void)
+{
+	HASH_SEQ_STATUS		status;
+	PartStatusInfo	   *psin;
+
+	while ((psin = (PartStatusInfo *) hash_seq_search(&status)) != NULL)
+	{
+#ifdef USE_RELINFO_LOGGING
+		elog(DEBUG2, "invalidation message for relation %u [%u]",
+			 psin->relid, MyProcPid);
+#endif
+
+		invalidate_pathman_status_info(psin);
+	}
+}
+
+/* TODO: comment */
+static void
+invalidate_pathman_status_info(PartStatusInfo *psin)
+{
+	/* Mark entry as invalid */
+	if (psin->prel && PrelReferenceCount(psin->prel) > 0)
+	{
+		PrelIsFresh(psin->prel) = false;
+	}
+	else
+	{
+		(void) pathman_cache_search_relid(status_cache,
+										  psin->relid,
+										  HASH_REMOVE,
+										  NULL);
+	}
+}
+
+/* TODO: comment */
+void
+close_pathman_relation_info(PartRelationInfo *prel)
+{
+
+}
+
 /* Get PartRelationInfo from local cache */
 const PartRelationInfo *
 get_pathman_relation_info(Oid relid)
 {
-	PartStatusInfo	   *psin = open_pathman_status_info(relid);
-	PartRelationInfo   *prel = psin ? psin->prel : NULL;
+	PartStatusInfo *psin;
+	bool			refresh;
+
+	/* Should always be called in transaction */
+	Assert(IsTransactionState());
+
+	/* We don't create entries for catalog */
+	if (relid < FirstNormalObjectId)
+		return NULL;
+
+	/* Create a new entry for this table if needed */
+	psin = pathman_cache_search_relid(status_cache,
+									  relid, HASH_FIND,
+									  NULL);
+
+	/* Should we build a new PartRelationInfo? */
+	refresh = psin ?
+				(psin->prel &&
+				 !PrelIsFresh(psin->prel) &&
+				 PrelReferenceCount(psin->prel) == 0) :
+				true;
+
+	if (refresh)
+	{
+		PartRelationInfo   *prel = NULL;
+		ItemPointerData		iptr;
+		Datum				values[Natts_pathman_config];
+		bool				isnull[Natts_pathman_config];
+
+		/* Check if PATHMAN_CONFIG table contains this relation */
+		if (pathman_config_contains_relation(relid, values, isnull, NULL, &iptr))
+		{
+			bool upd_expr = isnull[Anum_pathman_config_cooked_expr - 1];
+
+			/* Update pending partitioning expression */
+			if (upd_expr)
+				pathman_config_refresh_parsed_expression(relid, values,
+														 isnull, &iptr);
+
+			/* Build a partitioned table cache entry (might emit ERROR) */
+			prel = build_pathman_relation_info(relid, values);
+		}
+
+		/* Create a new entry for this table if needed */
+		if (!psin)
+		{
+			bool found;
+
+			psin = pathman_cache_search_relid(status_cache,
+											  relid, HASH_ENTER,
+											  &found);
+			Assert(!found);
+		}
+		/* Otherwise, free old entry */
+		else if (psin->prel)
+		{
+			free_pathman_relation_info(psin->prel);
+		}
+
+		/* Cache fresh entry */
+		psin->prel = prel;
+	}
 
 #ifdef USE_RELINFO_LOGGING
 	elog(DEBUG2,
 		 "fetching %s record for parent %u [%u]",
-		 (prel ? "live" : "NULL"), relid, MyProcPid);
+		 (psin->prel ? "live" : "NULL"), relid, MyProcPid);
 #endif
 
-	return prel;
+	if (psin->prel)
+		PrelReferenceCount(psin->prel) += 1;
+
+	return psin->prel;
 }
 
 /* Acquire lock on a table and try to get PartRelationInfo */
@@ -156,9 +284,6 @@ get_pathman_relation_info_after_lock(Oid relid,
 	/* Restrict concurrent partition creation (it's dangerous) */
 	acquire_result = xact_lock_rel(relid, ShareUpdateExclusiveLock, false);
 
-	/* Invalidate cache entry (see AcceptInvalidationMessages()) */
-	refresh_pathman_relation_info(relid);
-
 	/* Set 'lock_result' if asked to */
 	if (lock_result)
 		*lock_result = acquire_result;
@@ -170,7 +295,7 @@ get_pathman_relation_info_after_lock(Oid relid,
 	return prel;
 }
 
-/* Build a new PartRelationInfo for relation (might emit ERROR) */
+/* Build a new PartRelationInfo for partitioned relation */
 static PartRelationInfo *
 build_pathman_relation_info(Oid relid, Datum *values)
 {
@@ -198,7 +323,10 @@ build_pathman_relation_info(Oid relid, Datum *values)
 
 	/* Create a new PartRelationInfo */
 	prel = MemoryContextAlloc(prel_mcxt, sizeof(PartRelationInfo));
-	prel->mcxt = prel_mcxt;
+	prel->relid		= relid;
+	prel->refcount	= 0;
+	prel->fresh		= true;
+	prel->mcxt		= prel_mcxt;
 
 	/* Memory leak protection */
 	PG_TRY();
@@ -554,135 +682,6 @@ PrelExpressionAttributesMap(const PartRelationInfo *prel,
 
 	*map_length = expr_natts;
 	return result;
-}
-
-
-/*
- * Partitioning status cache routines.
- */
-
-PartStatusInfo *
-open_pathman_status_info(Oid relid)
-{
-	PartStatusInfo *psin;
-	bool			found;
-	bool			refresh;
-
-	/* Should always be called in transaction */
-	Assert(IsTransactionState());
-
-	/* We don't cache catalog objects */
-	if (relid < FirstNormalObjectId)
-		return NULL;
-
-	/* Create a new entry for this table if needed */
-	psin = pathman_cache_search_relid(status_cache,
-									  relid, HASH_ENTER,
-									  &found);
-
-	/* Initialize new entry */
-	if (!found)
-	{
-		psin->refcount	= 0;
-		psin->is_valid	= false;
-		psin->prel		= NULL;
-	}
-
-	/* Should we refresh this entry? */
-	refresh = !psin->is_valid && psin->refcount == 0;
-
-	if (refresh)
-	{
-		ItemPointerData		iptr;
-		Datum				values[Natts_pathman_config];
-		bool				isnull[Natts_pathman_config];
-
-		/* Set basic fields */
-		psin->is_valid = false;
-
-		/* Free old dispatch info */
-		if (psin->prel)
-		{
-			free_pathman_relation_info(psin->prel);
-			psin->prel = NULL;
-		}
-
-		/* Check if PATHMAN_CONFIG table contains this relation */
-		if (pathman_config_contains_relation(relid, values, isnull, NULL, &iptr))
-		{
-			bool upd_expr = isnull[Anum_pathman_config_cooked_expr - 1];
-
-			if (upd_expr)
-				pathman_config_refresh_parsed_expression(relid, values,
-														 isnull, &iptr);
-
-			/* Build a partitioned table cache entry (might emit ERROR) */
-			psin->prel = build_pathman_relation_info(relid, values);
-		}
-
-		/* Good, entry is valid */
-		psin->is_valid = true;
-	}
-
-	/* Increase refcount */
-	psin->refcount++;
-
-	return psin;
-}
-
-void
-close_pathman_status_info(PartStatusInfo *psin)
-{
-	/* Should always be called in transaction */
-	Assert(IsTransactionState());
-
-	/* Should not be NULL */
-	Assert(psin);
-
-	/* Should be referenced elsewhere */
-	Assert(psin->refcount > 0);
-
-	/* Decrease recount */
-	psin->refcount--;
-}
-
-void
-invalidate_pathman_status_info(Oid relid)
-{
-	PartStatusInfo *psin;
-
-	psin = pathman_cache_search_relid(status_cache,
-									  relid, HASH_FIND,
-									  NULL);
-
-	if (psin)
-	{
-#ifdef USE_RELINFO_LOGGING
-		elog(DEBUG2, "invalidation message for relation %u [%u]",
-			 relid, MyProcPid);
-#endif
-
-		/* Mark entry as invalid */
-		psin->is_valid = false;
-	}
-}
-
-void
-invalidate_pathman_status_info_cache(void)
-{
-	HASH_SEQ_STATUS		status;
-	PartStatusInfo	   *psin;
-
-	while ((psin = (PartStatusInfo *) hash_seq_search(&status)) != NULL)
-	{
-#ifdef USE_RELINFO_LOGGING
-		elog(DEBUG2, "invalidation message for relation %u [%u]",
-			 psin->relid, MyProcPid);
-#endif
-
-		/* Mark entry as invalid */
-		psin->is_valid = false;
-	}
 }
 
 

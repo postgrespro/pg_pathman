@@ -133,16 +133,14 @@ typedef struct
  */
 typedef struct PartStatusInfo
 {
-	Oid				relid;		/* key */
-	int32			refcount;	/* reference counter */
-	bool			is_valid;	/* is this entry fresh? */
+	Oid				relid;			/* key */
 	struct PartRelationInfo *prel;
 } PartStatusInfo;
 
 /*
  * PartParentInfo
  *		Cached parent of the specified partition.
- *		Allows us to quickly search for PartRelationInfo.
+ *		Allows us to quickly search for parent PartRelationInfo.
  */
 typedef struct PartParentInfo
 {
@@ -177,7 +175,9 @@ typedef struct PartBoundInfo
  */
 typedef struct PartRelationInfo
 {
-	PartStatusInfo *psin;			/* entry holding this prel */
+	Oid				relid;			/* key */
+	int32			refcount;		/* reference counter */
+	bool			fresh;			/* is this entry fresh? */
 
 	bool			enable_parent;	/* should plan include parent? */
 
@@ -214,13 +214,17 @@ typedef struct PartRelationInfo
  * PartRelationInfo field access macros & functions.
  */
 
-#define PrelParentRelid(prel)		( (prel)->psin->relid )
+#define PrelParentRelid(prel)		( (prel)->relid )
 
 #define PrelGetChildrenArray(prel)	( (prel)->children )
 
 #define PrelGetRangesArray(prel)	( (prel)->ranges )
 
 #define PrelChildrenCount(prel)		( (prel)->children_count )
+
+#define PrelReferenceCount(prel)	( (prel)->refcount )
+
+#define PrelIsFresh(prel)			( (prel)->fresh )
 
 static inline uint32
 PrelLastChild(const PartRelationInfo *prel)
@@ -265,14 +269,6 @@ AttrNumber *PrelExpressionAttributesMap(const PartRelationInfo *prel,
 										TupleDesc source_tupdesc,
 										int *map_length);
 
-/*
- * PartStatusInfo field access macros & functions.
- */
-
-#define PsinIsValid(psin)			( (psin)->is_valid )
-
-#define PsinReferenceCount(psin)	( (psin)->refcount )
-
 
 /* PartType wrappers */
 static inline void
@@ -312,6 +308,9 @@ PartTypeToCString(PartType parttype)
 
 /* Dispatch cache */
 void refresh_pathman_relation_info(Oid relid);
+void invalidate_pathman_relation_info(Oid relid);
+void invalidate_pathman_relation_info_cache(void);
+void close_pathman_relation_info(PartRelationInfo *prel);
 const PartRelationInfo *get_pathman_relation_info(Oid relid);
 const PartRelationInfo *get_pathman_relation_info_after_lock(Oid relid,
 															 bool unlock_if_not_found,
@@ -320,12 +319,6 @@ const PartRelationInfo *get_pathman_relation_info_after_lock(Oid relid,
 void shout_if_prel_is_invalid(const Oid parent_oid,
 							  const PartRelationInfo *prel,
 							  const PartType expected_part_type);
-
-/* Status cache */
-PartStatusInfo *open_pathman_status_info(Oid relid);
-void close_pathman_status_info(PartStatusInfo *psin);
-void invalidate_pathman_status_info(Oid relid);
-void invalidate_pathman_status_info_cache(void);
 
 /* Bounds cache */
 void forget_bounds_of_partition(Oid partition);

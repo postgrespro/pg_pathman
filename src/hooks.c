@@ -822,7 +822,7 @@ pathman_relcache_hook(Datum arg, Oid relid)
 	/* Invalidation event for whole cache */
 	if (relid == InvalidOid)
 	{
-		invalidate_pathman_status_info_cache();
+		invalidate_pathman_relation_info_cache();
 	}
 
 	/* Invalidation event for PATHMAN_CONFIG table (probably DROP) */
@@ -841,7 +841,7 @@ pathman_relcache_hook(Datum arg, Oid relid)
 		forget_parent_of_partition(relid);
 
 		/* Invalidate PartStatusInfo entry if needed */
-		invalidate_pathman_status_info(relid);
+		invalidate_pathman_relation_info(relid);
 	}
 }
 
