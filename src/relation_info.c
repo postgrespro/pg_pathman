@@ -190,11 +190,27 @@ invalidate_pathman_status_info(PartStatusInfo *psin)
 void
 close_pathman_relation_info(PartRelationInfo *prel)
 {
+	PrelReferenceCount(prel) -= 1;
+}
 
+/* Check if relation is partitioned by pg_pathman */
+bool
+has_pathman_relation_info(Oid relid)
+{
+	PartRelationInfo *prel;
+
+	if ((prel = get_pathman_relation_info(relid)) != NULL)
+	{
+		close_pathman_relation_info(prel);
+
+		return true;
+	}
+
+	return false;
 }
 
 /* Get PartRelationInfo from local cache */
-const PartRelationInfo *
+PartRelationInfo *
 get_pathman_relation_info(Oid relid)
 {
 	PartStatusInfo *psin;
@@ -273,13 +289,13 @@ get_pathman_relation_info(Oid relid)
 }
 
 /* Acquire lock on a table and try to get PartRelationInfo */
-const PartRelationInfo *
+PartRelationInfo *
 get_pathman_relation_info_after_lock(Oid relid,
 									 bool unlock_if_not_found,
 									 LockAcquireResult *lock_result)
 {
-	const PartRelationInfo *prel;
-	LockAcquireResult		acquire_result;
+	PartRelationInfo   *prel;
+	LockAcquireResult	acquire_result;
 
 	/* Restrict concurrent partition creation (it's dangerous) */
 	acquire_result = xact_lock_rel(relid, ShareUpdateExclusiveLock, false);
@@ -1297,10 +1313,10 @@ char *
 canonicalize_partitioning_expression(const Oid relid,
 									 const char *expr_cstr)
 {
-	Node		   *parse_tree;
-	Expr		   *expr;
-	char		   *query_string;
-	Query		   *query;
+	Node   *parse_tree;
+	Expr   *expr;
+	char   *query_string;
+	Query  *query;
 
 	AssertTemporaryContext();
 

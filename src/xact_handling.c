@@ -212,23 +212,3 @@ SetLocktagRelationOid(LOCKTAG *tag, Oid relid)
 
 	SET_LOCKTAG_RELATION(*tag, dbid, relid);
 }
-
-
-/*
- * Lock relation exclusively & check for current isolation level.
- */
-void
-prevent_data_modification_internal(Oid relid)
-{
-	/*
-	 * Check that isolation level is READ COMMITTED.
-	 * Else we won't be able to see new rows
-	 * which could slip through locks.
-	 */
-	if (!xact_is_level_read_committed())
-		ereport(ERROR,
-				(errmsg("Cannot perform blocking partitioning operation"),
-				 errdetail("Expected READ COMMITTED isolation level")));
-
-	LockRelationOid(relid, AccessExclusiveLock);
-}

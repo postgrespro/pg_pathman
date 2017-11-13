@@ -32,7 +32,5 @@ bool xact_is_set_stmt(Node *stmt, const char *name);
 bool xact_is_alter_pathman_stmt(Node *stmt);
 bool xact_object_is_visible(TransactionId obj_xmin);
 
-void prevent_data_modification_internal(Oid relid);
-
 
 #endif /* XACT_HANDLING_H */

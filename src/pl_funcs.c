@@ -42,9 +42,9 @@
 /* Function declarations */
 
 PG_FUNCTION_INFO_V1( get_number_of_partitions_pl );
+PG_FUNCTION_INFO_V1( get_partition_key_type_pl );
 PG_FUNCTION_INFO_V1( get_parent_of_partition_pl );
 PG_FUNCTION_INFO_V1( get_base_type_pl );
-PG_FUNCTION_INFO_V1( get_partition_key_type );
 PG_FUNCTION_INFO_V1( get_tablespace_pl );
 
 PG_FUNCTION_INFO_V1( show_cache_stats_internal );
@@ -105,23 +105,7 @@ typedef struct
  */
 
 /*
- * Get number of relation's partitions managed by pg_pathman.
- */
-Datum
-get_number_of_partitions_pl(PG_FUNCTION_ARGS)
-{
-	Oid						parent = PG_GETARG_OID(0);
-	const PartRelationInfo *prel;
-
-	/* If we couldn't find PartRelationInfo, return 0 */
-	if ((prel = get_pathman_relation_info(parent)) == NULL)
-		PG_RETURN_INT32(0);
-
-	PG_RETURN_INT32(PrelChildrenCount(prel));
-}
-
-/*
- * Get parent of a specified partition.
+ * Return parent of a specified partition.
  */
 Datum
 get_parent_of_partition_pl(PG_FUNCTION_ARGS)
@@ -131,6 +115,26 @@ get_parent_of_partition_pl(PG_FUNCTION_ARGS)
 
 	if (OidIsValid(parent))
 		PG_RETURN_OID(parent);
+
+	PG_RETURN_NULL();
+}
+
+/*
+ * Return partition key type.
+ */
+Datum
+get_partition_key_type_pl(PG_FUNCTION_ARGS)
+{
+	Oid					relid = PG_GETARG_OID(0);
+	PartRelationInfo   *prel;
+
+	if ((prel = get_pathman_relation_info(relid)) != NULL)
+	{
+		Oid result = prel->ev_type;
+		close_pathman_relation_info(prel);
+
+		PG_RETURN_OID(result);
+	}
 
 	PG_RETURN_NULL();
 }
@@ -151,7 +155,7 @@ is_equal_to_partitioning_expression_pl(PG_FUNCTION_ARGS)
 }
 
 /*
- * Get min bound value for parent relation
+ * Get min bound value for parent relation.
  */
 Datum
 get_lower_bound_pl(PG_FUNCTION_ARGS)
@@ -163,7 +167,7 @@ get_lower_bound_pl(PG_FUNCTION_ARGS)
 }
 
 /*
- * Get min bound value for parent relation
+ * Get min bound value for parent relation.
  */
 Datum
 get_upper_bound_pl(PG_FUNCTION_ARGS)
@@ -181,21 +185,6 @@ Datum
 get_base_type_pl(PG_FUNCTION_ARGS)
 {
 	PG_RETURN_OID(getBaseType(PG_GETARG_OID(0)));
-}
-
-/*
- * Return partition key type.
- */
-Datum
-get_partition_key_type(PG_FUNCTION_ARGS)
-{
-	Oid						relid = PG_GETARG_OID(0);
-	const PartRelationInfo *prel;
-
-	prel = get_pathman_relation_info(relid);
-	shout_if_prel_is_invalid(relid, prel, PT_ANY);
-
-	PG_RETURN_OID(prel->ev_type);
 }
 
 /*
@@ -650,7 +639,6 @@ is_date_type(PG_FUNCTION_ARGS)
 	PG_RETURN_BOOL(is_date_type_internal(PG_GETARG_OID(0)));
 }
 
-
 Datum
 is_tuple_convertible(PG_FUNCTION_ARGS)
 {
@@ -685,12 +673,12 @@ is_tuple_convertible(PG_FUNCTION_ARGS)
 	PG_RETURN_BOOL(res);
 }
 
+
 /*
  * ------------------------
  *  Useful string builders
  * ------------------------
  */
-
 
 Datum
 build_check_constraint_name(PG_FUNCTION_ARGS)
@@ -706,12 +694,12 @@ build_check_constraint_name(PG_FUNCTION_ARGS)
 	PG_RETURN_TEXT_P(cstring_to_text(quote_identifier(result)));
 }
 
+
 /*
  * ------------------------
  *  Cache & config updates
  * ------------------------
  */
-
 
 /*
  * Try to add previously partitioned table to PATHMAN_CONFIG.
@@ -889,7 +877,6 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	PG_RETURN_BOOL(true);
 }
 
-
 /*
  * Invalidate relcache to refresh PartRelationInfo.
  */
@@ -954,12 +941,12 @@ pathman_config_params_trigger_func_return:
  */
 
 /*
- * Acquire appropriate lock on a partitioned relation.
+ * Prevent concurrent modifiction of partitioning schema.
  */
 Datum
 prevent_part_modification(PG_FUNCTION_ARGS)
 {
-	Oid			relid = PG_GETARG_OID(0);
+	Oid relid = PG_GETARG_OID(0);
 
 	/* Lock partitioned relation till transaction's end */
 	LockRelationOid(relid, ShareUpdateExclusiveLock);
@@ -973,7 +960,19 @@ prevent_part_modification(PG_FUNCTION_ARGS)
 Datum
 prevent_data_modification(PG_FUNCTION_ARGS)
 {
-	prevent_data_modification_internal(PG_GETARG_OID(0));
+	Oid relid = PG_GETARG_OID(0);
+
+	/*
+	 * Check that isolation level is READ COMMITTED.
+	 * Else we won't be able to see new rows
+	 * which could slip through locks.
+	 */
+	if (!xact_is_level_read_committed())
+		ereport(ERROR,
+				(errmsg("Cannot perform blocking partitioning operation"),
+				 errdetail("Expected READ COMMITTED isolation level")));
+
+	LockRelationOid(relid, AccessExclusiveLock);
 
 	PG_RETURN_VOID();
 }
@@ -1126,6 +1125,7 @@ is_operator_supported(PG_FUNCTION_ARGS)
 	PG_RETURN_BOOL(OidIsValid(opid));
 }
 
+
 /*
  * -------
  *  DEBUG
@@ -1145,7 +1145,7 @@ debug_capture(PG_FUNCTION_ARGS)
 	PG_RETURN_VOID();
 }
 
-/* NOTE: just in case */
+/* Return pg_pathman's shared library version */
 Datum
 pathman_version(PG_FUNCTION_ARGS)
 {

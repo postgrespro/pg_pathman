@@ -311,10 +311,11 @@ void refresh_pathman_relation_info(Oid relid);
 void invalidate_pathman_relation_info(Oid relid);
 void invalidate_pathman_relation_info_cache(void);
 void close_pathman_relation_info(PartRelationInfo *prel);
-const PartRelationInfo *get_pathman_relation_info(Oid relid);
-const PartRelationInfo *get_pathman_relation_info_after_lock(Oid relid,
-															 bool unlock_if_not_found,
-															 LockAcquireResult *lock_result);
+bool has_pathman_relation_info(Oid relid);
+PartRelationInfo *get_pathman_relation_info(Oid relid);
+PartRelationInfo *get_pathman_relation_info_after_lock(Oid relid,
+													   bool unlock_if_not_found,
+													   LockAcquireResult *lock_result);
 
 void shout_if_prel_is_invalid(const Oid parent_oid,
 							  const PartRelationInfo *prel,

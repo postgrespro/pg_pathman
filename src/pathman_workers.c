@@ -547,7 +547,7 @@ bgw_main_concurrent_part(Datum main_arg)
 			}
 
 			/* Make sure that relation has partitions */
-			if (get_pathman_relation_info(part_slot->relid) == NULL)
+			if (!has_pathman_relation_info(part_slot->relid))
 			{
 				/* Exit after we raise ERROR */
 				failures_count = PART_WORKER_MAX_ATTEMPTS;

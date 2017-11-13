@@ -105,7 +105,7 @@ is_pathman_related_copy(Node *parsetree)
 									false);
 
 	/* Check that relation is partitioned */
-	if (get_pathman_relation_info(parent_relid))
+	if (has_pathman_relation_info(parent_relid))
 	{
 		ListCell *lc;
 
@@ -143,10 +143,9 @@ is_pathman_related_table_rename(Node *parsetree,
 								Oid *relation_oid_out,	/* ret value #1 */
 								bool *is_parent_out)	/* ret value #2 */
 {
-	RenameStmt			   *rename_stmt = (RenameStmt *) parsetree;
-	Oid						relation_oid,
-							parent_relid;
-	const PartRelationInfo *prel;
+	RenameStmt	   *rename_stmt = (RenameStmt *) parsetree;
+	Oid				relation_oid,
+					parent_relid;
 
 	Assert(IsPathmanReady());
 
@@ -166,7 +165,7 @@ is_pathman_related_table_rename(Node *parsetree,
 									false);
 
 	/* Assume it's a parent */
-	if (get_pathman_relation_info(relation_oid))
+	if (has_pathman_relation_info(relation_oid))
 	{
 		if (relation_oid_out)
 			*relation_oid_out = relation_oid;
@@ -176,11 +175,12 @@ is_pathman_related_table_rename(Node *parsetree,
 	}
 
 	/* Assume it's a partition, fetch its parent */
-	if (!OidIsValid(parent_relid = get_parent_of_partition(relation_oid)))
+	parent_relid = get_parent_of_partition(relation_oid);
+	if (!OidIsValid(parent_relid))
 		return false;
 
 	/* Is parent partitioned? */
-	if ((prel = get_pathman_relation_info(parent_relid)) != NULL)
+	if (has_pathman_relation_info(parent_relid))
 	{
 		if (relation_oid_out)
 			*relation_oid_out = relation_oid;
@@ -201,10 +201,10 @@ is_pathman_related_alter_column_type(Node *parsetree,
 									 AttrNumber *attr_number_out,
 									 PartType *part_type_out)
 {
-	AlterTableStmt		   *alter_table_stmt = (AlterTableStmt *) parsetree;
-	ListCell			   *lc;
-	Oid						parent_relid;
-	const PartRelationInfo *prel;
+	AlterTableStmt	   *alter_table_stmt = (AlterTableStmt *) parsetree;
+	ListCell		   *lc;
+	Oid					parent_relid;
+	PartRelationInfo   *prel;
 
 	Assert(IsPathmanReady());
 
@@ -226,6 +226,8 @@ is_pathman_related_alter_column_type(Node *parsetree,
 		/* Return 'parent_relid' and 'prel->parttype' */
 		if (parent_relid_out) *parent_relid_out = parent_relid;
 		if (part_type_out) *part_type_out = prel->parttype;
+
+		close_pathman_relation_info(prel);
 	}
 	else return false;
 

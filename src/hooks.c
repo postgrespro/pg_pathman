@@ -63,13 +63,13 @@ allow_star_schema_join(PlannerInfo *root,
 }
 
 
-set_join_pathlist_hook_type		set_join_pathlist_next = NULL;
-set_rel_pathlist_hook_type		set_rel_pathlist_hook_next = NULL;
-planner_hook_type				planner_hook_next = NULL;
-post_parse_analyze_hook_type	post_parse_analyze_hook_next = NULL;
-shmem_startup_hook_type			shmem_startup_hook_next = NULL;
-ProcessUtility_hook_type		process_utility_hook_next = NULL;
-ExecutorRun_hook_type			executor_run_hook_next = NULL;
+set_join_pathlist_hook_type		set_join_pathlist_next			= NULL;
+set_rel_pathlist_hook_type		set_rel_pathlist_hook_next		= NULL;
+planner_hook_type				planner_hook_next				= NULL;
+post_parse_analyze_hook_type	post_parse_analyze_hook_next	= NULL;
+shmem_startup_hook_type			shmem_startup_hook_next			= NULL;
+ProcessUtility_hook_type		process_utility_hook_next		= NULL;
+ExecutorRun_hook_type			executor_run_hook_next			= NULL;
 
 
 /* Take care of joins */
@@ -101,7 +101,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	if (!IsPathmanReady() || !pg_pathman_enable_runtimeappend)
 		return;
 
-	/* We should only consider base relations */
+	/* We should only consider base inner relations */
 	if (innerrel->reloptkind != RELOPT_BASEREL)
 		return;
 
@@ -113,9 +113,13 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	if (jointype == JOIN_FULL || jointype == JOIN_RIGHT)
 		return;
 
-	/* Check that innerrel is a BASEREL with PartRelationInfo */
-	if (innerrel->reloptkind != RELOPT_BASEREL ||
-		!(inner_prel = get_pathman_relation_info(inner_rte->relid)))
+	/* Skip if inner table is not allowed to act as parent (e.g. FROM ONLY) */
+	if (PARENTHOOD_DISALLOWED == get_rel_parenthood_status(root->parse->queryId,
+														   inner_rte))
+		return;
+
+	/* Proceed iff relation 'innerrel' is partitioned */
+	if ((inner_prel = get_pathman_relation_info(inner_rte->relid)) == NULL)
 		return;
 
 	/*
@@ -142,7 +146,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 			Oid outer_baserel = root->simple_rte_array[rti]->relid;
 
 			/* Is it partitioned? */
-			if (get_pathman_relation_info(outer_baserel))
+			if (has_pathman_relation_info(outer_baserel))
 				count++;
 		}
 
@@ -152,11 +156,6 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 					 errmsg("DELETE and UPDATE queries with a join "
 							"of partitioned tables are not supported")));
 	}
-
-	/* Skip if inner table is not allowed to act as parent (e.g. FROM ONLY) */
-	if (PARENTHOOD_DISALLOWED == get_rel_parenthood_status(root->parse->queryId,
-														   inner_rte))
-		return;
 
 	/*
 	 * These codes are used internally in the planner, but are not supported
@@ -223,7 +222,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 			Assert(outer);
 		}
 
-		 /* No way to do this in a parameterized inner path */
+		/* No way to do this in a parameterized inner path */
 		if (saved_jointype == JOIN_UNIQUE_INNER)
 			return;
 
@@ -607,7 +606,7 @@ pathman_enable_assign_hook(bool newval, void *extra)
 /*
  * Planner hook. It disables inheritance for tables that have been partitioned
  * by pathman to prevent standart PostgreSQL partitioning mechanism from
- * handling that tables.
+ * handling those tables.
  */
 PlannedStmt *
 pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
@@ -679,7 +678,7 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 
 /*
  * Post parse analysis hook. It makes sure the config is loaded before executing
- * any statement, including utility commands
+ * any statement, including utility commands.
  */
 void
 pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)

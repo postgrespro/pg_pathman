@@ -1021,6 +1021,44 @@ $$ LANGUAGE plpgsql;
 
 
 /*
+ * Create a naming sequence for partitioned table.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.create_naming_sequence(
+	parent_relid	REGCLASS)
+RETURNS TEXT AS $$
+DECLARE
+	seq_name TEXT;
+
+BEGIN
+	seq_name := @extschema@.build_sequence_name(parent_relid);
+
+	EXECUTE format('DROP SEQUENCE IF EXISTS %s', seq_name);
+	EXECUTE format('CREATE SEQUENCE %s START 1', seq_name);
+
+	RETURN seq_name;
+END
+$$ LANGUAGE plpgsql
+SET client_min_messages = WARNING; /* mute NOTICE message */
+
+/*
+ * Drop a naming sequence for partitioned table.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.drop_naming_sequence(
+	parent_relid	REGCLASS)
+RETURNS VOID AS $$
+DECLARE
+	seq_name TEXT;
+
+BEGIN
+	seq_name := @extschema@.build_sequence_name(parent_relid);
+
+	EXECUTE format('DROP SEQUENCE IF EXISTS %s', seq_name);
+END
+$$ LANGUAGE plpgsql
+SET client_min_messages = WARNING; /* mute NOTICE message */
+
+
+/*
  * Merge multiple partitions. All data will be copied to the first one.
  * The rest of partitions will be dropped.
  */
@@ -1040,7 +1078,6 @@ CREATE OR REPLACE FUNCTION @extschema@.drop_range_partition_expand_next(
 	partition_relid		REGCLASS)
 RETURNS VOID AS 'pg_pathman', 'drop_range_partition_expand_next'
 LANGUAGE C STRICT;
-
 
 CREATE OR REPLACE FUNCTION @extschema@.create_range_partitions_internal(
 	parent_relid	REGCLASS,
@@ -1075,11 +1112,13 @@ CREATE OR REPLACE FUNCTION @extschema@.build_range_condition(
 RETURNS TEXT AS 'pg_pathman', 'build_range_condition'
 LANGUAGE C;
 
+/*
+ * Generate a name for naming sequence.
+ */
 CREATE OR REPLACE FUNCTION @extschema@.build_sequence_name(
 	parent_relid	REGCLASS)
 RETURNS TEXT AS 'pg_pathman', 'build_sequence_name'
 LANGUAGE C STRICT;
-
 
 /*
  * Returns N-th range (as an array of two elements).

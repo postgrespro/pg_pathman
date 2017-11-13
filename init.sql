@@ -513,38 +513,6 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
-
-CREATE OR REPLACE FUNCTION @extschema@.create_naming_sequence(
-	parent_relid	REGCLASS)
-RETURNS TEXT AS $$
-DECLARE
-	seq_name		TEXT;
-
-BEGIN
-	seq_name := @extschema@.build_sequence_name(parent_relid);
-
-	EXECUTE format('DROP SEQUENCE IF EXISTS %s', seq_name);
-	EXECUTE format('CREATE SEQUENCE %s START 1', seq_name);
-
-	RETURN seq_name;
-END
-$$ LANGUAGE plpgsql
-SET client_min_messages = WARNING; /* mute NOTICE message */
-
-CREATE OR REPLACE FUNCTION @extschema@.drop_naming_sequence(
-	parent_relid	REGCLASS)
-RETURNS VOID AS $$
-DECLARE
-	seq_name		TEXT;
-
-BEGIN
-	seq_name := @extschema@.build_sequence_name(parent_relid);
-
-	EXECUTE format('DROP SEQUENCE IF EXISTS %s', seq_name);
-END
-$$ LANGUAGE plpgsql
-SET client_min_messages = WARNING; /* mute NOTICE message */
-
 /*
  * Drop partitions. If delete_data set to TRUE, partitions
  * will be dropped with all the data.
@@ -686,43 +654,51 @@ EXECUTE PROCEDURE @extschema@.pathman_ddl_trigger_func();
 
 
 /*
- * Partitioning key.
+ * Get partitioning key.
  */
 CREATE OR REPLACE FUNCTION @extschema@.get_partition_key(
-	relid	REGCLASS)
+	parent_relid	REGCLASS)
 RETURNS TEXT AS
 $$
-	SELECT expr FROM @extschema@.pathman_config WHERE partrel = relid;
+	SELECT expr
+	FROM @extschema@.pathman_config
+	WHERE partrel = parent_relid;
 $$
 LANGUAGE sql STRICT;
 
 /*
- * Partitioning key type.
+ * Get partitioning key type.
  */
 CREATE OR REPLACE FUNCTION @extschema@.get_partition_key_type(
-	relid	REGCLASS)
-RETURNS REGTYPE AS 'pg_pathman', 'get_partition_key_type'
+	parent_relid	REGCLASS)
+RETURNS REGTYPE AS 'pg_pathman', 'get_partition_key_type_pl'
 LANGUAGE C STRICT;
 
 /*
- * Partitioning type.
+ * Get partitioning type.
  */
 CREATE OR REPLACE FUNCTION @extschema@.get_partition_type(
-	relid	REGCLASS)
+	parent_relid	REGCLASS)
 RETURNS INT4 AS
 $$
-	SELECT parttype FROM @extschema@.pathman_config WHERE partrel = relid;
+	SELECT parttype
+	FROM @extschema@.pathman_config
+	WHERE partrel = parent_relid;
 $$
 LANGUAGE sql STRICT;
-
 
 /*
  * Get number of partitions managed by pg_pathman.
  */
 CREATE OR REPLACE FUNCTION @extschema@.get_number_of_partitions(
-	parent_relid		REGCLASS)
-RETURNS INT4 AS 'pg_pathman', 'get_number_of_partitions_pl'
-LANGUAGE C STRICT;
+	parent_relid	REGCLASS)
+RETURNS INT4 AS
+$$
+	SELECT count(*)::INT4
+	FROM pg_catalog.pg_inherits
+	WHERE inhparent = parent_relid;
+$$
+LANGUAGE sql STRICT;
 
 /*
  * Get parent of pg_pathman's partition.
@@ -806,9 +782,9 @@ LANGUAGE C STRICT;
  * Add record to pathman_config (RANGE) and validate partitions.
  */
 CREATE OR REPLACE FUNCTION @extschema@.add_to_pathman_config(
-	parent_relid		REGCLASS,
-	expression			TEXT,
-	range_interval		TEXT)
+	parent_relid	REGCLASS,
+	expression		TEXT,
+	range_interval	TEXT)
 RETURNS BOOLEAN AS 'pg_pathman', 'add_to_pathman_config'
 LANGUAGE C;
 
@@ -816,8 +792,8 @@ LANGUAGE C;
  * Add record to pathman_config (HASH) and validate partitions.
  */
 CREATE OR REPLACE FUNCTION @extschema@.add_to_pathman_config(
-	parent_relid		REGCLASS,
-	expression			TEXT)
+	parent_relid	REGCLASS,
+	expression		TEXT)
 RETURNS BOOLEAN AS 'pg_pathman', 'add_to_pathman_config'
 LANGUAGE C;
 
@@ -866,9 +842,9 @@ LANGUAGE C;
  * Get parent of pg_pathman's partition.
  */
 CREATE OR REPLACE FUNCTION @extschema@.is_equal_to_partitioning_expression(
-	parent_relid		REGCLASS,
-	expression			TEXT,
-	value_type			OID)
+	parent_relid	REGCLASS,
+	expression		TEXT,
+	value_type		OID)
 RETURNS BOOL AS 'pg_pathman', 'is_equal_to_partitioning_expression_pl'
 LANGUAGE C STRICT;
 
@@ -877,8 +853,8 @@ LANGUAGE C STRICT;
  * bound_value is used to determine the type of bound
  */
 CREATE OR REPLACE FUNCTION @extschema@.get_lower_bound(
-	relid				REGCLASS,
-	bound_value			ANYELEMENT
+	relid			REGCLASS,
+	bound_value		ANYELEMENT
 )
 RETURNS ANYELEMENT AS 'pg_pathman', 'get_lower_bound_pl'
 LANGUAGE C STRICT;
@@ -887,8 +863,8 @@ LANGUAGE C STRICT;
  * Get upper bound of a partition
  */
 CREATE OR REPLACE FUNCTION @extschema@.get_upper_bound(
-	relid				REGCLASS,
-	bound_value			ANYELEMENT
+	relid			REGCLASS,
+	bound_value		ANYELEMENT
 )
 RETURNS ANYELEMENT AS 'pg_pathman', 'get_upper_bound_pl'
 LANGUAGE C STRICT;
