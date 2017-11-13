@@ -179,6 +179,9 @@ invalidate_pathman_status_info(PartStatusInfo *psin)
 	}
 	else
 	{
+		if (psin->prel)
+			free_pathman_relation_info(psin->prel);
+
 		(void) pathman_cache_search_relid(status_cache,
 										  psin->relid,
 										  HASH_REMOVE,
@@ -265,11 +268,6 @@ get_pathman_relation_info(Oid relid)
 											  relid, HASH_ENTER,
 											  &found);
 			Assert(!found);
-		}
-		/* Otherwise, free old entry */
-		else if (psin->prel)
-		{
-			free_pathman_relation_info(psin->prel);
 		}
 
 		/* Cache fresh entry */
@@ -794,60 +792,6 @@ get_bounds_of_partition(Oid partition, const PartRelationInfo *prel)
 	return pbin;
 }
 
-/* Get lower bound of a partition */
-Datum
-get_lower_bound(Oid partition_relid, Oid value_type)
-{
-	Oid						parent_relid;
-	Datum					result;
-	const PartRelationInfo *prel;
-	const PartBoundInfo	   *pbin;
-
-	parent_relid = get_parent_of_partition(partition_relid);
-	if (!OidIsValid(parent_relid))
-		elog(ERROR, "relation \"%s\" is not a partition",
-			 get_rel_name_or_relid(partition_relid));
-
-	prel = get_pathman_relation_info(parent_relid);
-	pbin = get_bounds_of_partition(partition_relid, prel);
-
-	if (IsInfinite(&pbin->range_min))
-		return PointerGetDatum(NULL);
-
-	result = BoundGetValue(&pbin->range_min);
-	if (value_type != prel->ev_type)
-		result = perform_type_cast(result, prel->ev_type, value_type, NULL);
-
-	return result;
-}
-
-/* Get upper bound of a partition */
-Datum
-get_upper_bound(Oid partition_relid, Oid value_type)
-{
-	Oid						parent_relid;
-	Datum					result;
-	const PartRelationInfo *prel;
-	const PartBoundInfo	   *pbin;
-
-	parent_relid = get_parent_of_partition(partition_relid);
-	if (!OidIsValid(parent_relid))
-		elog(ERROR, "relation \"%s\" is not a partition",
-			 get_rel_name_or_relid(partition_relid));
-
-	prel = get_pathman_relation_info(parent_relid);
-	pbin = get_bounds_of_partition(partition_relid, prel);
-
-	if (IsInfinite(&pbin->range_max))
-		return PointerGetDatum(NULL);
-
-	result = BoundGetValue(&pbin->range_max);
-	if (value_type != prel->ev_type)
-		result = perform_type_cast(result, prel->ev_type, value_type, NULL);
-
-	return result;
-}
-
 /*
  * Get constraint expression tree of a partition.
  *
@@ -1331,30 +1275,6 @@ canonicalize_partitioning_expression(const Oid relid,
 	return deparse_expression((Node *) expr,
 							  deparse_context_for(get_rel_name(relid), relid),
 							  false, false);
-}
-
-/* Check that expression is equal to expression of some partitioned table */
-bool
-is_equal_to_partitioning_expression(const Oid relid,
-									const char *expression,
-									const Oid value_type)
-{
-	const PartRelationInfo *prel;
-	char				   *cexpr;
-	Oid						expr_type;
-
-	/*
-	 * Cook and get a canonicalized expression,
-	 * we don't need a result of the cooking
-	 */
-	cook_partitioning_expression(relid, expression, &expr_type);
-	cexpr = canonicalize_partitioning_expression(relid, expression);
-
-	prel = get_pathman_relation_info(relid);
-	Assert(prel);
-
-	return (getBaseType(expr_type) == value_type) &&
-		   (strcmp(cexpr, prel->expr_cstr) == 0);
 }
 
 /* Check if query has subqueries */

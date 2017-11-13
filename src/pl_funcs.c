@@ -72,11 +72,6 @@ PG_FUNCTION_INFO_V1( check_security_policy );
 PG_FUNCTION_INFO_V1( debug_capture );
 PG_FUNCTION_INFO_V1( pathman_version );
 
-PG_FUNCTION_INFO_V1( get_lower_bound_pl );
-PG_FUNCTION_INFO_V1( get_upper_bound_pl );
-PG_FUNCTION_INFO_V1( is_equal_to_partitioning_expression_pl );
-
-
 /* User context for function show_partition_list_internal() */
 typedef struct
 {
@@ -137,45 +132,6 @@ get_partition_key_type_pl(PG_FUNCTION_ARGS)
 	}
 
 	PG_RETURN_NULL();
-}
-
-/*
- * Get parent of a specified partition.
- */
-Datum
-is_equal_to_partitioning_expression_pl(PG_FUNCTION_ARGS)
-{
-	bool	result;
-	Oid		parent_relid	= PG_GETARG_OID(0);
-	char   *expr			= TextDatumGetCString(PG_GETARG_TEXT_P(1));
-	Oid		value_type		= PG_GETARG_OID(2);
-
-	result = is_equal_to_partitioning_expression(parent_relid, expr, value_type);
-	PG_RETURN_BOOL(result);
-}
-
-/*
- * Get min bound value for parent relation.
- */
-Datum
-get_lower_bound_pl(PG_FUNCTION_ARGS)
-{
-	Oid		partition_relid = PG_GETARG_OID(0);
-	Oid		value_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
-
-	PG_RETURN_POINTER(get_lower_bound(partition_relid, value_type));
-}
-
-/*
- * Get min bound value for parent relation.
- */
-Datum
-get_upper_bound_pl(PG_FUNCTION_ARGS)
-{
-	Oid		partition_relid = PG_GETARG_OID(0);
-	Oid		value_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
-
-	PG_RETURN_POINTER(get_upper_bound(partition_relid, value_type));
 }
 
 /*

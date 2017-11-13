@@ -704,8 +704,7 @@ LANGUAGE sql STRICT;
  * Get parent of pg_pathman's partition.
  */
 CREATE OR REPLACE FUNCTION @extschema@.get_parent_of_partition(
-	partition_relid		REGCLASS,
-	raise_error			BOOL DEFAULT TRUE)
+	partition_relid		REGCLASS)
 RETURNS REGCLASS AS 'pg_pathman', 'get_parent_of_partition_pl'
 LANGUAGE C STRICT;
 
@@ -837,37 +836,6 @@ CREATE OR REPLACE FUNCTION @extschema@.invoke_on_partition_created_callback(
 	init_callback	REGPROCEDURE)
 RETURNS VOID AS 'pg_pathman', 'invoke_on_partition_created_callback'
 LANGUAGE C;
-
-/*
- * Get parent of pg_pathman's partition.
- */
-CREATE OR REPLACE FUNCTION @extschema@.is_equal_to_partitioning_expression(
-	parent_relid	REGCLASS,
-	expression		TEXT,
-	value_type		OID)
-RETURNS BOOL AS 'pg_pathman', 'is_equal_to_partitioning_expression_pl'
-LANGUAGE C STRICT;
-
-/*
- * Get lower bound of a partitioned relation
- * bound_value is used to determine the type of bound
- */
-CREATE OR REPLACE FUNCTION @extschema@.get_lower_bound(
-	relid			REGCLASS,
-	bound_value		ANYELEMENT
-)
-RETURNS ANYELEMENT AS 'pg_pathman', 'get_lower_bound_pl'
-LANGUAGE C STRICT;
-
-/*
- * Get upper bound of a partition
- */
-CREATE OR REPLACE FUNCTION @extschema@.get_upper_bound(
-	relid			REGCLASS,
-	bound_value		ANYELEMENT
-)
-RETURNS ANYELEMENT AS 'pg_pathman', 'get_upper_bound_pl'
-LANGUAGE C STRICT;
 
 /*
  * DEBUG: Place this inside some plpgsql fuction and set breakpoint.

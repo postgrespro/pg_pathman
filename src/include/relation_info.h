@@ -324,8 +324,6 @@ void shout_if_prel_is_invalid(const Oid parent_oid,
 /* Bounds cache */
 void forget_bounds_of_partition(Oid partition);
 PartBoundInfo *get_bounds_of_partition(Oid partition, const PartRelationInfo *prel);
-Datum get_lower_bound(Oid partition_relid, Oid value_type);
-Datum get_upper_bound(Oid partition_relid, Oid value_type);
 
 /* Parent cache */
 void cache_parent_of_partition(Oid partition, Oid parent);
@@ -344,10 +342,6 @@ Datum cook_partitioning_expression(const Oid relid,
 
 char *canonicalize_partitioning_expression(const Oid relid,
 										   const char *expr_cstr);
-
-bool is_equal_to_partitioning_expression(const Oid relid,
-										 const char *expression,
-										 const Oid value_type);
 
 /* Partitioning expression routines */
 Node *parse_partitioning_expression(const Oid relid,
