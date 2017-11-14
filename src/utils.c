@@ -10,6 +10,7 @@
  * ------------------------------------------------------------------------
  */
 
+#include "pathman.h"
 #include "utils.h"
 
 #include "access/htup_details.h"

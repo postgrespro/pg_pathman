@@ -334,16 +334,16 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
 
 	PG_TRY();
 	{
-		const PartRelationInfo *prel;
-		LockAcquireResult		lock_result; /* could we lock the parent? */
-		Datum					values[Natts_pathman_config];
-		bool					isnull[Natts_pathman_config];
+		LockAcquireResult	lock_result; /* could we lock the parent? */
+		Datum				values[Natts_pathman_config];
+		bool				isnull[Natts_pathman_config];
 
 		/* Get both PartRelationInfo & PATHMAN_CONFIG contents for this relation */
 		if (pathman_config_contains_relation(relid, values, isnull, NULL, NULL))
 		{
-			Oid			base_bound_type;	/* base type of prel->ev_type */
-			Oid			base_value_type;	/* base type of value_type */
+			PartRelationInfo   *prel;
+			Oid					base_bound_type;	/* base type of prel->ev_type */
+			Oid					base_value_type;	/* base type of value_type */
 
 			/* Fetch PartRelationInfo by 'relid' */
 			prel = get_pathman_relation_info_after_lock(relid, true, &lock_result);
@@ -426,6 +426,9 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
 											  value, base_value_type,
 											  prel->ev_collid);
 			}
+
+			/* Don't forget to close 'prel'! */
+			close_pathman_relation_info(prel);
 		}
 		else
 			elog(ERROR, "table \"%s\" is not partitioned",
@@ -1356,56 +1359,57 @@ check_range_available(Oid parent_relid,
 					  Oid value_type,
 					  bool raise_error)
 {
-	const PartRelationInfo	   *prel;
-	RangeEntry				   *ranges;
-	FmgrInfo					cmp_func;
-	uint32						i;
+	PartRelationInfo   *prel;
+	bool				result = true;
 
 	/* Try fetching the PartRelationInfo structure */
-	prel = get_pathman_relation_info(parent_relid);
+	if ((prel = get_pathman_relation_info(parent_relid)) != NULL)
+	{
+		RangeEntry	   *ranges;
+		FmgrInfo		cmp_func;
+		uint32			i;
 
-	/* If there's no prel, return TRUE (overlap is not possible) */
-	if (!prel)
+		/* Emit an error if it is not partitioned by RANGE */
+		shout_if_prel_is_invalid(parent_relid, prel, PT_RANGE);
+
+		/* Fetch comparison function */
+		fill_type_cmp_fmgr_info(&cmp_func,
+								getBaseType(value_type),
+								getBaseType(prel->ev_type));
+
+		ranges = PrelGetRangesArray(prel);
+		for (i = 0; i < PrelChildrenCount(prel); i++)
+		{
+			int c1, c2;
+
+			c1 = cmp_bounds(&cmp_func, prel->ev_collid, start, &ranges[i].max);
+			c2 = cmp_bounds(&cmp_func, prel->ev_collid, end,   &ranges[i].min);
+
+			/* There's something! */
+			if (c1 < 0 && c2 > 0)
+			{
+				if (raise_error)
+				{
+					elog(ERROR, "specified range [%s, %s) overlaps "
+								"with existing partitions",
+						 BoundToCString(start, value_type),
+						 BoundToCString(end, value_type));
+				}
+				/* Too bad, so sad */
+				else result = false;
+			}
+		}
+
+		/* Don't forget to close 'prel'! */
+		close_pathman_relation_info(prel);
+	}
+	else
 	{
 		ereport(WARNING, (errmsg("table \"%s\" is not partitioned",
 								 get_rel_name_or_relid(parent_relid))));
-		return true;
 	}
 
-	/* Emit an error if it is not partitioned by RANGE */
-	shout_if_prel_is_invalid(parent_relid, prel, PT_RANGE);
-
-	/* Fetch comparison function */
-	fill_type_cmp_fmgr_info(&cmp_func,
-							getBaseType(value_type),
-							getBaseType(prel->ev_type));
-
-	ranges = PrelGetRangesArray(prel);
-	for (i = 0; i < PrelChildrenCount(prel); i++)
-	{
-		int c1, c2;
-
-		c1 = cmp_bounds(&cmp_func, prel->ev_collid, start, &ranges[i].max);
-		c2 = cmp_bounds(&cmp_func, prel->ev_collid, end, &ranges[i].min);
-
-		/* There's something! */
-		if (c1 < 0 && c2 > 0)
-		{
-			if (raise_error)
-				elog(ERROR, "specified range [%s, %s) overlaps "
-							"with existing partitions",
-					 IsInfinite(start) ?
-						 "NULL" :
-						 datum_to_cstring(BoundGetValue(start), value_type),
-					 IsInfinite(end) ?
-						 "NULL" :
-						 datum_to_cstring(BoundGetValue(end), value_type));
-
-			else return false;
-		}
-	}
-
-	return true;
+	return result;
 }
 
 /* Build HASH check constraint expression tree */
@@ -1669,15 +1673,15 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 					   *end_value	= NULL;
 				Bound	sv_datum	= cb_params->params.range_params.start_value,
 						ev_datum	= cb_params->params.range_params.end_value;
-				Oid		type		= cb_params->params.range_params.value_type;
+				Oid		value_type	= cb_params->params.range_params.value_type;
 
 				/* Convert min to CSTRING */
 				if (!IsInfinite(&sv_datum))
-					start_value = datum_to_cstring(BoundGetValue(&sv_datum), type);
+					start_value = BoundToCString(&sv_datum, value_type);
 
 				/* Convert max to CSTRING */
 				if (!IsInfinite(&ev_datum))
-					end_value = datum_to_cstring(BoundGetValue(&ev_datum), type);
+					end_value = BoundToCString(&ev_datum, value_type);
 
 				pushJsonbValue(&jsonb_state, WJB_BEGIN_OBJECT, NULL);
 
@@ -1860,43 +1864,4 @@ build_partitioning_expression(Oid parent_relid,
 	}
 
 	return expr;
-}
-
-/*
- * -------------------------
- *  Update triggers management
- * -------------------------
- */
-
-/* Create trigger for partition */
-void
-create_single_update_trigger_internal(Oid partition_relid,
-									  const char *trigname,
-									  List *columns)
-{
-	CreateTrigStmt	   *stmt;
-	List			   *func;
-
-	func = list_make2(makeString(get_namespace_name(get_pathman_schema())),
-					  makeString(CppAsString(pathman_update_trigger_func)));
-
-	stmt = makeNode(CreateTrigStmt);
-	stmt->trigname		= (char *) trigname;
-	stmt->relation		= makeRangeVarFromRelid(partition_relid);
-	stmt->funcname		= func;
-	stmt->args			= NIL;
-	stmt->row			= true;
-	stmt->timing		= TRIGGER_TYPE_BEFORE;
-	stmt->events		= TRIGGER_TYPE_UPDATE;
-	stmt->columns		= columns;
-	stmt->whenClause	= NULL;
-	stmt->isconstraint	= false;
-	stmt->deferrable	= false;
-	stmt->initdeferred	= false;
-	stmt->constrrel		= NULL;
-
-	(void) CreateTrigger(stmt, NULL, InvalidOid, InvalidOid,
-						 InvalidOid, InvalidOid, false);
-
-	CommandCounterIncrement();
 }

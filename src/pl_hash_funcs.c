@@ -54,7 +54,7 @@ create_hash_partitions_internal(PG_FUNCTION_ARGS)
 	RangeVar  **rangevars				= NULL;
 
 	/* Check that there's no partitions yet */
-	if (get_pathman_relation_info(parent_relid))
+	if (has_pathman_relation_info(parent_relid))
 		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 						errmsg("cannot add new HASH partitions")));
 

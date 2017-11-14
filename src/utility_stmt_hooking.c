@@ -26,6 +26,7 @@
 #include "commands/tablecmds.h"
 #include "foreign/fdwapi.h"
 #include "miscadmin.h"
+#include "nodes/makefuncs.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"

@@ -437,8 +437,8 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 						if (!IsInfinite(&re->min))
 						{
 							Datum rmin = CStringGetTextDatum(
-											datum_to_cstring(BoundGetValue(&re->min),
-															 prel->ev_type));
+											BoundToCString(&re->min,
+														   prel->ev_type));
 
 							values[Anum_pathman_pl_range_min - 1] = rmin;
 						}
@@ -448,8 +448,8 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 						if (!IsInfinite(&re->max))
 						{
 							Datum rmax = CStringGetTextDatum(
-											datum_to_cstring(BoundGetValue(&re->max),
-															 prel->ev_type));
+											BoundToCString(&re->max,
+														   prel->ev_type));
 
 							values[Anum_pathman_pl_range_max - 1] = rmax;
 						}

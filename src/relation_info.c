@@ -193,6 +193,9 @@ invalidate_pathman_status_info(PartStatusInfo *psin)
 void
 close_pathman_relation_info(PartRelationInfo *prel)
 {
+	/* Check that refcount is valid */
+	Assert(PrelReferenceCount(prel) > 0);
+
 	PrelReferenceCount(prel) -= 1;
 }
 
@@ -977,7 +980,7 @@ get_parent_of_partition(Oid partition)
 	/* Nice, we have a cached entry */
 	if (ppar)
 	{
-		return ppar->child_relid;
+		return ppar->parent_relid;
 	}
 	/* Bad luck, let's search in catalog */
 	else
@@ -1115,7 +1118,7 @@ cook_partitioning_expression(const Oid relid,
 	 */
 	parse_mcxt = AllocSetContextCreate(CurrentMemoryContext,
 									   CppAsString(cook_partitioning_expression),
-									   ALLOCSET_DEFAULT_SIZES);
+									   ALLOCSET_SMALL_SIZES);
 
 	/* Switch to mcxt for cooking :) */
 	old_mcxt = MemoryContextSwitchTo(parse_mcxt);

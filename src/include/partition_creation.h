@@ -81,16 +81,6 @@ void drop_pathman_check_constraint(Oid relid);
 void add_pathman_check_constraint(Oid relid, Constraint *constraint);
 
 
-/* Update triggers */
-void create_single_update_trigger_internal(Oid partition_relid,
-										   const char *trigname,
-										   List *columns);
-
-bool has_update_trigger_internal(Oid parent);
-
-void drop_single_update_trigger_internal(Oid relid,
-										 const char *trigname);
-
 /* Partitioning callback type */
 typedef enum
 {

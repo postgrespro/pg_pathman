@@ -12,6 +12,8 @@
 #define RELATION_INFO_H
 
 
+#include "utils.h"
+
 #include "postgres.h"
 #include "access/attnum.h"
 #include "access/sysattr.h"
@@ -87,6 +89,14 @@ FreeBound(Bound *bound, bool byval)
 {
 	if (!IsInfinite(bound) && !byval)
 		pfree(DatumGetPointer(BoundGetValue(bound)));
+}
+
+static inline char *
+BoundToCString(const Bound *bound, Oid value_type)
+{
+	return IsInfinite(bound) ?
+			pstrdup("NULL") :
+			datum_to_cstring(bound->value, value_type);
 }
 
 static inline int

@@ -72,7 +72,6 @@ static void modify_range_constraint(Oid partition_relid,
 									Oid expression_type,
 									const Bound *lower,
 									const Bound *upper);
-static void drop_table_by_oid(Oid relid);
 static bool interval_is_trivial(Oid atttype,
 								Datum interval,
 								Oid interval_type);
@@ -710,11 +709,13 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 
 		/* Look for the specified partition */
 		for (j = 0; j < PrelChildrenCount(prel); j++)
+		{
 			if (ranges[j].child_oid == parts[i])
 			{
 				rentry_list = lappend(rentry_list, &ranges[j]);
 				break;
 			}
+		}
 	}
 
 	/* Check that partitions are adjacent */
@@ -765,67 +766,97 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 
 	/* Drop obsolete partitions */
 	for (i = 1; i < nparts; i++)
-		drop_table_by_oid(parts[i]);
+	{
+		ObjectAddress object;
+
+		ObjectAddressSet(object, RelationRelationId, parts[i]);
+		performDeletion(&object, DROP_CASCADE, 0);
+	}
 }
 
 
 /*
  * Drops partition and expands the next partition
- * so that it could cover the dropped one
+ * so that it could cover the dropped one.
  *
- * This function was written in order to support Oracle-like ALTER TABLE ...
- * DROP PARTITION. In Oracle partitions only have upper bound and when
- * partition is dropped the next one automatically covers freed range
+ * This function was written in order to support
+ * Oracle-like ALTER TABLE ... DROP PARTITION.
+ *
+ * In Oracle partitions only have upper bound and when partition
+ * is dropped the next one automatically covers freed range.
  */
 Datum
 drop_range_partition_expand_next(PG_FUNCTION_ARGS)
 {
-	const PartRelationInfo *prel;
-	Oid						relid = PG_GETARG_OID(0),
-							parent;
-	RangeEntry			   *ranges;
-	int						i;
+	Oid					partition = PG_GETARG_OID(0),
+						parent;
+	PartRelationInfo   *prel;
+
+	/* Lock the partition we're going to drop */
+	LockRelationOid(partition, AccessExclusiveLock);
+
+	/* Check if partition exists */
+	if (!SearchSysCacheExists1(RELOID, partition))
+		elog(ERROR, "relation %u does not exist", partition);
 
 	/* Get parent's relid */
-	parent = get_parent_of_partition(relid);
+	parent = get_parent_of_partition(partition);
 	if (!OidIsValid(parent))
 		elog(ERROR, "relation \"%s\" is not a partition",
-			 get_rel_name_or_relid(relid));
+			 get_rel_name(partition));
 
-	/* Fetch PartRelationInfo and perform some checks */
-	prel = get_pathman_relation_info(parent);
-	shout_if_prel_is_invalid(parent, prel, PT_RANGE);
-
-	/* Fetch ranges array */
-	ranges = PrelGetRangesArray(prel);
-
-	/* Looking for partition in child relations */
-	for (i = 0; i < PrelChildrenCount(prel); i++)
-		if (ranges[i].child_oid == relid)
-			break;
-
-	/*
-	 * It must be in ranges array because we already
-	 * know that this table is a partition
-	 */
-	Assert(i < PrelChildrenCount(prel));
-
-	/* Expand next partition if it exists */
-	if (i < PrelChildrenCount(prel) - 1)
+	if ((prel = get_pathman_relation_info(parent)) != NULL)
 	{
-		RangeEntry	   *cur = &ranges[i],
-					   *next = &ranges[i + 1];
+		ObjectAddress	object;
+		RangeEntry	   *ranges;
+		int				i;
 
-		/* Drop old constraint and create a new one */
-		modify_range_constraint(next->child_oid,
-								prel->expr_cstr,
-								prel->ev_type,
-								&cur->min,
-								&next->max);
+		/* Emit an error if it is not partitioned by RANGE */
+		shout_if_prel_is_invalid(parent, prel, PT_RANGE);
+
+		/* Fetch ranges array */
+		ranges = PrelGetRangesArray(prel);
+
+		/* Looking for partition in child relations */
+		for (i = 0; i < PrelChildrenCount(prel); i++)
+			if (ranges[i].child_oid == partition)
+				break;
+
+		/* Should have found it */
+		Assert(i < PrelChildrenCount(prel));
+
+		/* Expand next partition if it exists */
+		if (i < PrelChildrenCount(prel) - 1)
+		{
+			RangeEntry	   *cur  = &ranges[i],
+						   *next = &ranges[i + 1];
+			Oid				next_partition = next->child_oid;
+			LOCKMODE		lockmode = AccessExclusiveLock;
+
+			/* Lock next partition */
+			LockRelationOid(next_partition, lockmode);
+
+			/* Does next partition exist? */
+			if (SearchSysCacheExists1(RELOID, next_partition))
+			{
+				/* Stretch next partition to cover range */
+				modify_range_constraint(next_partition,
+										prel->expr_cstr,
+										prel->ev_type,
+										&cur->min,
+										&next->max);
+			}
+			/* Bad luck, unlock missing partition */
+			else UnlockRelationOid(next_partition, lockmode);
+		}
+
+		/* Drop partition */
+		ObjectAddressSet(object, RelationRelationId, partition);
+		performDeletion(&object, DROP_CASCADE, 0);
+
+		/* Don't forget to close 'prel'! */
+		close_pathman_relation_info(prel);
 	}
-
-	/* Finally drop this partition */
-	drop_table_by_oid(relid);
 
 	PG_RETURN_VOID();
 }
@@ -1225,25 +1256,4 @@ check_range_adjacence(Oid cmp_proc, Oid collid, List *ranges)
 
 		last = cur;
 	}
-}
-
-/*
- * Drop table using it's Oid
- */
-static void
-drop_table_by_oid(Oid relid)
-{
-	DropStmt	   *n = makeNode(DropStmt);
-	const char	   *relname = get_qualified_rel_name(relid);
-
-	n->removeType	= OBJECT_TABLE;
-	n->missing_ok	= false;
-	n->objects		= list_make1(stringToQualifiedNameList(relname));
-#if PG_VERSION_NUM < 100000
-	n->arguments	= NIL;
-#endif
-	n->behavior		= DROP_RESTRICT;  /* default behavior */
-	n->concurrent	= false;
-
-	RemoveRelations(n);
 }

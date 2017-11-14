@@ -12,10 +12,9 @@
 #define PATHMAN_UTILS_H
 
 
-#include "pathman.h"
-
 #include "postgres.h"
 #include "parser/parse_oper.h"
+#include "fmgr.h"
 
 
 /*
