@@ -340,8 +340,6 @@ disable_standard_inheritance(Query *parse, transform_query_cxt *context)
 		/* Table may be partitioned */
 		if (rte->inh)
 		{
-			PartRelationInfo *prel;
-
 #ifdef LEGACY_ROWMARKS_95
 			/* Don't process queries with RowMarks on 9.5 */
 			if (get_parse_rowmark(parse, current_rti))
@@ -349,7 +347,7 @@ disable_standard_inheritance(Query *parse, transform_query_cxt *context)
 #endif
 
 			/* Proceed if table is partitioned by pg_pathman */
-			if ((prel = get_pathman_relation_info(rte->relid)) != NULL)
+			if (has_pathman_relation_info(rte->relid))
 			{
 				/* HACK: unset the 'inh' flag to disable standard planning */
 				rte->inh = false;
@@ -357,9 +355,6 @@ disable_standard_inheritance(Query *parse, transform_query_cxt *context)
 				/* Try marking it using PARENTHOOD_ALLOWED */
 				assign_rel_parenthood_status(parse->queryId, rte,
 											 PARENTHOOD_ALLOWED);
-
-				/* Don't forget to close 'prel'! */
-				close_pathman_relation_info(prel);
 			}
 		}
 		/* Else try marking it using PARENTHOOD_DISALLOWED */

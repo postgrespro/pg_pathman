@@ -84,7 +84,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	JoinCostWorkspace		workspace;
 	JoinType				saved_jointype = jointype;
 	RangeTblEntry		   *inner_rte = root->simple_rte_array[innerrel->relid];
-	const PartRelationInfo *inner_prel;
+	PartRelationInfo	   *inner_prel;
 	List				   *joinclauses,
 						   *otherclauses;
 	WalkerContext			context;
@@ -109,8 +109,10 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	if (inner_rte->inh)
 		return;
 
-	/* We can't handle full or right outer joins */
-	if (jointype == JOIN_FULL || jointype == JOIN_RIGHT)
+	/* We don't support these join types (since inner will be parameterized) */
+	if (jointype == JOIN_FULL ||
+		jointype == JOIN_RIGHT ||
+		jointype == JOIN_UNIQUE_INNER)
 		return;
 
 	/* Skip if inner table is not allowed to act as parent (e.g. FROM ONLY) */
@@ -157,12 +159,9 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 							"of partitioned tables are not supported")));
 	}
 
-	/*
-	 * These codes are used internally in the planner, but are not supported
-	 * by the executor (nor, indeed, by most of the planner).
-	 */
+	/* Replace virtual join types with a real one */
 	if (jointype == JOIN_UNIQUE_OUTER || jointype == JOIN_UNIQUE_INNER)
-		jointype = JOIN_INNER; /* replace with a proper value */
+		jointype = JOIN_INNER;
 
 	/* Extract join clauses which will separate partitions */
 	if (IS_OUTER_JOIN(extra->sjinfo->jointype))
@@ -222,11 +221,6 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 			Assert(outer);
 		}
 
-		/* No way to do this in a parameterized inner path */
-		if (saved_jointype == JOIN_UNIQUE_INNER)
-			return;
-
-
 		/* Make inner path depend on outerrel's columns */
 		required_inner = bms_union(PATH_REQ_OUTER((Path *) cur_inner_path),
 								   outerrel->relids);
@@ -245,10 +239,10 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 											  innerrel->relid)))
 			continue;
 
+		/* Try building RuntimeAppend path, skip if it's not possible */
 		inner = create_runtimeappend_path(root, cur_inner_path, ppi, paramsel);
 		if (!inner)
-			return; /* could not build it, retreat! */
-
+			continue;
 
 		required_nestloop = calc_nestloop_required_outer_compat(outer, inner);
 
@@ -263,7 +257,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 			((!bms_overlap(required_nestloop, extra->param_source_rels) &&
 			  !allow_star_schema_join(root, outer, inner)) ||
 			 have_dangerous_phv(root, outer->parent->relids, required_inner)))
-			return;
+			continue;
 
 		initial_cost_nestloop_compat(root, &workspace, jointype, outer, inner, extra);
 
@@ -299,6 +293,9 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		/* Finally we can add the new NestLoop path */
 		add_path(joinrel, (Path *) nest_path);
 	}
+
+	/* Don't forget to close 'inner_prel'! */
+	close_pathman_relation_info(inner_prel);
 }
 
 /* Cope with simple relations */
@@ -308,8 +305,21 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 						  Index rti,
 						  RangeTblEntry *rte)
 {
-	const PartRelationInfo *prel;
-	int						irange_len;
+	PartRelationInfo   *prel;
+	Relation			parent_rel;			/* parent's relation (heap) */
+	PlanRowMark		   *parent_rowmark;		/* parent's rowmark */
+	Oid				   *children;			/* selected children oids */
+	List			   *ranges,				/* a list of IndexRanges */
+					   *wrappers;			/* a list of WrapperNodes */
+	PathKey			   *pathkeyAsc = NULL,
+					   *pathkeyDesc = NULL;
+	double				paramsel = 1.0;		/* default part selectivity */
+	WalkerContext		context;
+	Node			   *part_expr;
+	List			   *part_clauses;
+	ListCell		   *lc;
+	int					irange_len,
+						i;
 
 	/* Invoke original hook if needed */
 	if (set_rel_pathlist_hook_next != NULL)
@@ -344,231 +354,221 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		return;
 
 	/* Proceed iff relation 'rel' is partitioned */
-	if ((prel = get_pathman_relation_info(rte->relid)) != NULL)
+	if ((prel = get_pathman_relation_info(rte->relid)) == NULL)
+		return;
+
+	/*
+	 * Check that this child is not the parent table itself.
+	 * This is exactly how standard inheritance works.
+	 *
+	 * Helps with queries like this one:
+	 *
+	 *		UPDATE test.tmp t SET value = 2
+	 *		WHERE t.id IN (SELECT id
+	 *					   FROM test.tmp2 t2
+	 *					   WHERE id = t.id);
+	 *
+	 * Since we disable optimizations on 9.5, we
+	 * have to skip parent table that has already
+	 * been expanded by standard inheritance.
+	 */
+	if (rel->reloptkind == RELOPT_OTHER_MEMBER_REL)
 	{
-		Relation		parent_rel;				/* parent's relation (heap) */
-		PlanRowMark	   *parent_rowmark;			/* parent's rowmark */
-		Oid			   *children;				/* selected children oids */
-		List		   *ranges,					/* a list of IndexRanges */
-					   *wrappers;				/* a list of WrapperNodes */
-		PathKey		   *pathkeyAsc = NULL,
-					   *pathkeyDesc = NULL;
-		double			paramsel = 1.0;			/* default part selectivity */
-		WalkerContext	context;
-		Node		   *part_expr;
-		List		   *part_clauses;
-		ListCell	   *lc;
-		int				i;
-
-		/*
-		 * Check that this child is not the parent table itself.
-		 * This is exactly how standard inheritance works.
-		 *
-		 * Helps with queries like this one:
-		 *
-		 *		UPDATE test.tmp t SET value = 2
-		 *		WHERE t.id IN (SELECT id
-		 *					   FROM test.tmp2 t2
-		 *					   WHERE id = t.id);
-		 *
-		 * Since we disable optimizations on 9.5, we
-		 * have to skip parent table that has already
-		 * been expanded by standard inheritance.
-		 */
-		if (rel->reloptkind == RELOPT_OTHER_MEMBER_REL)
+		foreach (lc, root->append_rel_list)
 		{
-			foreach (lc, root->append_rel_list)
-			{
-				AppendRelInfo  *appinfo = (AppendRelInfo *) lfirst(lc);
-				RangeTblEntry  *cur_parent_rte,
-							   *cur_child_rte;
+			AppendRelInfo  *appinfo = (AppendRelInfo *) lfirst(lc);
+			RangeTblEntry  *cur_parent_rte,
+						   *cur_child_rte;
 
-				/*  This 'appinfo' is not for this child */
-				if (appinfo->child_relid != rti)
-					continue;
-
-				cur_parent_rte = root->simple_rte_array[appinfo->parent_relid];
-				cur_child_rte  = rte; /* we already have it, saves time */
-
-				/* This child == its own parent table! */
-				if (cur_parent_rte->relid == cur_child_rte->relid)
-					return;
-			}
-		}
-
-		/* Make copy of partitioning expression and fix Var's  varno attributes */
-		part_expr = PrelExpressionForRelid(prel, rti);
-
-		/* Get partitioning-related clauses (do this before append_child_relation()) */
-		part_clauses = get_partitioning_clauses(rel->baserestrictinfo, prel, rti);
-
-		if (prel->parttype == PT_RANGE)
-		{
-			/*
-			 * Get pathkeys for ascending and descending sort by partitioned column.
-			 */
-			List		   *pathkeys;
-			TypeCacheEntry *tce;
-
-			/* Determine operator type */
-			tce = lookup_type_cache(prel->ev_type, TYPECACHE_LT_OPR | TYPECACHE_GT_OPR);
-
-			/* Make pathkeys */
-			pathkeys = build_expression_pathkey(root, (Expr *) part_expr, NULL,
-												tce->lt_opr, NULL, false);
-			if (pathkeys)
-				pathkeyAsc = (PathKey *) linitial(pathkeys);
-			pathkeys = build_expression_pathkey(root, (Expr *) part_expr, NULL,
-												tce->gt_opr, NULL, false);
-			if (pathkeys)
-				pathkeyDesc = (PathKey *) linitial(pathkeys);
-		}
-
-		/* mark as partitioned table */
-		MarkPartitionedRTE(rti);
-
-		children = PrelGetChildrenArray(prel);
-		ranges = list_make1_irange_full(prel, IR_COMPLETE);
-
-		/* Make wrappers over restrictions and collect final rangeset */
-		InitWalkerContext(&context, part_expr, prel, NULL);
-		wrappers = NIL;
-		foreach(lc, rel->baserestrictinfo)
-		{
-			WrapperNode	   *wrap;
-			RestrictInfo   *rinfo = (RestrictInfo *) lfirst(lc);
-
-			wrap = walk_expr_tree(rinfo->clause, &context);
-
-			paramsel *= wrap->paramsel;
-			wrappers = lappend(wrappers, wrap);
-			ranges = irange_list_intersection(ranges, wrap->rangeset);
-		}
-
-		/* Get number of selected partitions */
-		irange_len = irange_list_length(ranges);
-		if (prel->enable_parent)
-			irange_len++; /* also add parent */
-
-		/* Expand simple_rte_array and simple_rel_array */
-		if (irange_len > 0)
-		{
-			int current_len	= root->simple_rel_array_size,
-				new_len		= current_len + irange_len;
-
-			/* Expand simple_rel_array */
-			root->simple_rel_array = (RelOptInfo **)
-					repalloc(root->simple_rel_array,
-							 new_len * sizeof(RelOptInfo *));
-
-			memset((void *) &root->simple_rel_array[current_len], 0,
-				   irange_len * sizeof(RelOptInfo *));
-
-			/* Expand simple_rte_array */
-			root->simple_rte_array = (RangeTblEntry **)
-					repalloc(root->simple_rte_array,
-							 new_len * sizeof(RangeTblEntry *));
-
-			memset((void *) &root->simple_rte_array[current_len], 0,
-				   irange_len * sizeof(RangeTblEntry *));
-
-			/* Don't forget to update array size! */
-			root->simple_rel_array_size = new_len;
-		}
-
-		/* Parent has already been locked by rewriter */
-		parent_rel = heap_open(rte->relid, NoLock);
-
-		parent_rowmark = get_plan_rowmark(root->rowMarks, rti);
-
-		/*
-		 * WARNING: 'prel' might become invalid after append_child_relation().
-		 */
-
-		/* Add parent if asked to */
-		if (prel->enable_parent)
-			append_child_relation(root, parent_rel, parent_rowmark,
-								  rti, 0, rte->relid, NULL);
-
-		/* Iterate all indexes in rangeset and append child relations */
-		foreach(lc, ranges)
-		{
-			IndexRange irange = lfirst_irange(lc);
-
-			for (i = irange_lower(irange); i <= irange_upper(irange); i++)
-				append_child_relation(root, parent_rel, parent_rowmark,
-									  rti, i, children[i], wrappers);
-		}
-
-		/* Now close parent relation */
-		heap_close(parent_rel, NoLock);
-
-		/* Clear path list and make it point to NIL */
-		list_free_deep(rel->pathlist);
-		rel->pathlist = NIL;
-
-#if PG_VERSION_NUM >= 90600
-		/* Clear old partial path list */
-		list_free(rel->partial_pathlist);
-		rel->partial_pathlist = NIL;
-#endif
-
-		/* Generate new paths using the rels we've just added */
-		set_append_rel_pathlist(root, rel, rti, pathkeyAsc, pathkeyDesc);
-		set_append_rel_size_compat(root, rel, rti);
-
-#if PG_VERSION_NUM >= 90600
-		/* consider gathering partial paths for the parent appendrel */
-		generate_gather_paths(root, rel);
-#endif
-
-		/* No need to go further (both nodes are disabled), return */
-		if (!(pg_pathman_enable_runtimeappend ||
-			  pg_pathman_enable_runtime_merge_append))
-			return;
-
-		/* Skip if there's no PARAMs in partitioning-related clauses */
-		if (!clause_contains_params((Node *) part_clauses))
-			return;
-
-		/* Generate Runtime[Merge]Append paths if needed */
-		foreach (lc, rel->pathlist)
-		{
-			AppendPath	   *cur_path = (AppendPath *) lfirst(lc);
-			Relids			inner_required = PATH_REQ_OUTER((Path *) cur_path);
-			Path		   *inner_path = NULL;
-			ParamPathInfo  *ppi;
-
-			/* Skip if rel contains some join-related stuff or path type mismatched */
-			if (!(IsA(cur_path, AppendPath) || IsA(cur_path, MergeAppendPath)) ||
-				rel->has_eclass_joins || rel->joininfo)
-			{
+			/*  This 'appinfo' is not for this child */
+			if (appinfo->child_relid != rti)
 				continue;
-			}
 
-			/* Get existing parameterization */
-			ppi = get_appendrel_parampathinfo(rel, inner_required);
+			cur_parent_rte = root->simple_rte_array[appinfo->parent_relid];
+			cur_child_rte  = rte; /* we already have it, saves time */
 
-			if (IsA(cur_path, AppendPath) && pg_pathman_enable_runtimeappend)
-				inner_path = create_runtimeappend_path(root, cur_path,
-													   ppi, paramsel);
-			else if (IsA(cur_path, MergeAppendPath) &&
-					 pg_pathman_enable_runtime_merge_append)
-			{
-				/* Check struct layout compatibility */
-				if (offsetof(AppendPath, subpaths) !=
-						offsetof(MergeAppendPath, subpaths))
-					elog(FATAL, "Struct layouts of AppendPath and "
-								"MergeAppendPath differ");
-
-				inner_path = create_runtimemergeappend_path(root, cur_path,
-															ppi, paramsel);
-			}
-
-			if (inner_path)
-				add_path(rel, inner_path);
+			/* This child == its own parent table! */
+			if (cur_parent_rte->relid == cur_child_rte->relid)
+				goto cleanup;
 		}
 	}
+
+	/* Make copy of partitioning expression and fix Var's  varno attributes */
+	part_expr = PrelExpressionForRelid(prel, rti);
+
+	/* Get partitioning-related clauses (do this before append_child_relation()) */
+	part_clauses = get_partitioning_clauses(rel->baserestrictinfo, prel, rti);
+
+	if (prel->parttype == PT_RANGE)
+	{
+		/*
+		 * Get pathkeys for ascending and descending sort by partitioned column.
+		 */
+		List		   *pathkeys;
+		TypeCacheEntry *tce;
+
+		/* Determine operator type */
+		tce = lookup_type_cache(prel->ev_type, TYPECACHE_LT_OPR | TYPECACHE_GT_OPR);
+
+		/* Make pathkeys */
+		pathkeys = build_expression_pathkey(root, (Expr *) part_expr, NULL,
+											tce->lt_opr, NULL, false);
+		if (pathkeys)
+			pathkeyAsc = (PathKey *) linitial(pathkeys);
+		pathkeys = build_expression_pathkey(root, (Expr *) part_expr, NULL,
+											tce->gt_opr, NULL, false);
+		if (pathkeys)
+			pathkeyDesc = (PathKey *) linitial(pathkeys);
+	}
+
+	/* mark as partitioned table */
+	MarkPartitionedRTE(rti);
+
+	children = PrelGetChildrenArray(prel);
+	ranges = list_make1_irange_full(prel, IR_COMPLETE);
+
+	/* Make wrappers over restrictions and collect final rangeset */
+	InitWalkerContext(&context, part_expr, prel, NULL);
+	wrappers = NIL;
+	foreach(lc, rel->baserestrictinfo)
+	{
+		WrapperNode	   *wrap;
+		RestrictInfo   *rinfo = (RestrictInfo *) lfirst(lc);
+
+		wrap = walk_expr_tree(rinfo->clause, &context);
+
+		paramsel *= wrap->paramsel;
+		wrappers = lappend(wrappers, wrap);
+		ranges = irange_list_intersection(ranges, wrap->rangeset);
+	}
+
+	/* Get number of selected partitions */
+	irange_len = irange_list_length(ranges);
+	if (prel->enable_parent)
+		irange_len++; /* also add parent */
+
+	/* Expand simple_rte_array and simple_rel_array */
+	if (irange_len > 0)
+	{
+		int current_len	= root->simple_rel_array_size,
+			new_len		= current_len + irange_len;
+
+		/* Expand simple_rel_array */
+		root->simple_rel_array = (RelOptInfo **)
+				repalloc(root->simple_rel_array,
+						 new_len * sizeof(RelOptInfo *));
+
+		memset((void *) &root->simple_rel_array[current_len], 0,
+			   irange_len * sizeof(RelOptInfo *));
+
+		/* Expand simple_rte_array */
+		root->simple_rte_array = (RangeTblEntry **)
+				repalloc(root->simple_rte_array,
+						 new_len * sizeof(RangeTblEntry *));
+
+		memset((void *) &root->simple_rte_array[current_len], 0,
+			   irange_len * sizeof(RangeTblEntry *));
+
+		/* Don't forget to update array size! */
+		root->simple_rel_array_size = new_len;
+	}
+
+	/* Parent has already been locked by rewriter */
+	parent_rel = heap_open(rte->relid, NoLock);
+
+	parent_rowmark = get_plan_rowmark(root->rowMarks, rti);
+
+	/*
+	 * WARNING: 'prel' might become invalid after append_child_relation().
+	 */
+
+	/* Add parent if asked to */
+	if (prel->enable_parent)
+		append_child_relation(root, parent_rel, parent_rowmark,
+							  rti, 0, rte->relid, NULL);
+
+	/* Iterate all indexes in rangeset and append child relations */
+	foreach(lc, ranges)
+	{
+		IndexRange irange = lfirst_irange(lc);
+
+		for (i = irange_lower(irange); i <= irange_upper(irange); i++)
+			append_child_relation(root, parent_rel, parent_rowmark,
+								  rti, i, children[i], wrappers);
+	}
+
+	/* Now close parent relation */
+	heap_close(parent_rel, NoLock);
+
+	/* Clear path list and make it point to NIL */
+	list_free_deep(rel->pathlist);
+	rel->pathlist = NIL;
+
+#if PG_VERSION_NUM >= 90600
+	/* Clear old partial path list */
+	list_free(rel->partial_pathlist);
+	rel->partial_pathlist = NIL;
+#endif
+
+	/* Generate new paths using the rels we've just added */
+	set_append_rel_pathlist(root, rel, rti, pathkeyAsc, pathkeyDesc);
+	set_append_rel_size_compat(root, rel, rti);
+
+#if PG_VERSION_NUM >= 90600
+	/* consider gathering partial paths for the parent appendrel */
+	generate_gather_paths(root, rel);
+#endif
+
+	/* Skip if both custom nodes are disabled */
+	if (!(pg_pathman_enable_runtimeappend ||
+		  pg_pathman_enable_runtime_merge_append))
+		goto cleanup;
+
+	/* Skip if there's no PARAMs in partitioning-related clauses */
+	if (!clause_contains_params((Node *) part_clauses))
+		goto cleanup;
+
+	/* Generate Runtime[Merge]Append paths if needed */
+	foreach (lc, rel->pathlist)
+	{
+		AppendPath	   *cur_path = (AppendPath *) lfirst(lc);
+		Relids			inner_required = PATH_REQ_OUTER((Path *) cur_path);
+		Path		   *inner_path = NULL;
+		ParamPathInfo  *ppi;
+
+		/* Skip if rel contains some join-related stuff or path type mismatched */
+		if (!(IsA(cur_path, AppendPath) || IsA(cur_path, MergeAppendPath)) ||
+			rel->has_eclass_joins || rel->joininfo)
+		{
+			continue;
+		}
+
+		/* Get existing parameterization */
+		ppi = get_appendrel_parampathinfo(rel, inner_required);
+
+		if (IsA(cur_path, AppendPath) && pg_pathman_enable_runtimeappend)
+			inner_path = create_runtimeappend_path(root, cur_path,
+												   ppi, paramsel);
+		else if (IsA(cur_path, MergeAppendPath) &&
+				 pg_pathman_enable_runtime_merge_append)
+		{
+			/* Check struct layout compatibility */
+			if (offsetof(AppendPath, subpaths) !=
+					offsetof(MergeAppendPath, subpaths))
+				elog(FATAL, "Struct layouts of AppendPath and "
+							"MergeAppendPath differ");
+
+			inner_path = create_runtimemergeappend_path(root, cur_path,
+														ppi, paramsel);
+		}
+
+		if (inner_path)
+			add_path(rel, inner_path);
+	}
+
+cleanup:
+	/* Don't forget to close 'prel'! */
+	close_pathman_relation_info(prel);
 }
 
 /*

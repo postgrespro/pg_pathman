@@ -289,29 +289,6 @@ get_pathman_relation_info(Oid relid)
 	return psin->prel;
 }
 
-/* Acquire lock on a table and try to get PartRelationInfo */
-PartRelationInfo *
-get_pathman_relation_info_after_lock(Oid relid,
-									 bool unlock_if_not_found,
-									 LockAcquireResult *lock_result)
-{
-	PartRelationInfo   *prel;
-	LockAcquireResult	acquire_result;
-
-	/* Restrict concurrent partition creation (it's dangerous) */
-	acquire_result = xact_lock_rel(relid, ShareUpdateExclusiveLock, false);
-
-	/* Set 'lock_result' if asked to */
-	if (lock_result)
-		*lock_result = acquire_result;
-
-	prel = get_pathman_relation_info(relid);
-	if (!prel && unlock_if_not_found)
-		UnlockRelationOid(relid, ShareUpdateExclusiveLock);
-
-	return prel;
-}
-
 /* Build a new PartRelationInfo for partitioned relation */
 static PartRelationInfo *
 build_pathman_relation_info(Oid relid, Datum *values)

@@ -691,6 +691,7 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 	int				empty_slot_idx = -1,		/* do we have a slot for BGWorker? */
 					i;
 	TransactionId	rel_xmin;
+	LOCKMODE		lockmode = ShareUpdateExclusiveLock;
 
 	/* Check batch_size */
 	if (batch_size < 1 || batch_size > 10000)
@@ -703,12 +704,12 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("'sleep_time' should not be less than 0.5")));
 
+	/* Prevent concurrent function calls */
+	LockRelationOid(relid, lockmode);
+
 	/* Check if relation is a partitioned table */
-	shout_if_prel_is_invalid(relid,
-							 /* We also lock the parent relation */
-							 get_pathman_relation_info_after_lock(relid, true, NULL),
-							 /* Partitioning type does not matter here */
-							 PT_ANY);
+	if (!has_pathman_relation_info(relid))
+		shout_if_prel_is_invalid(relid, NULL, PT_ANY);
 
 	/* Check that partitioning operation result is visible */
 	if (pathman_config_contains_relation(relid, NULL, NULL, &rel_xmin, NULL))
@@ -723,7 +724,7 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 
 	/*
 	 * Look for an empty slot and also check that a concurrent
-	 * partitioning operation for this table hasn't been started yet
+	 * partitioning operation for this table hasn't started yet.
 	 */
 	for (i = 0; i < PART_WORKER_SLOTS; i++)
 	{
@@ -796,6 +797,9 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 		 get_namespace_name(get_pathman_schema()),
 		 CppAsString(stop_concurrent_part_task),
 		 get_rel_name(relid));
+
+	/* We don't need this lock anymore */
+	UnlockRelationOid(relid, lockmode);
 
 	PG_RETURN_VOID();
 }

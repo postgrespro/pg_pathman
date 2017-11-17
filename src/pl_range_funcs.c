@@ -56,22 +56,29 @@ PG_FUNCTION_INFO_V1( drop_range_partition_expand_next );
 PG_FUNCTION_INFO_V1( validate_interval_value );
 
 
-static char *deparse_constraint(Oid relid, Node *expr);
-static ArrayType *construct_infinitable_array(Bound *elems,
-											  int nelems,
-											  Oid elmtype,
-											  int elmlen,
-											  bool elmbyval,
-											  char elmalign);
-static void check_range_adjacence(Oid cmp_proc, Oid collid, List *ranges);
+static ArrayType *construct_bounds_array(Bound *elems,
+										 int nelems,
+										 Oid elmtype,
+										 int elmlen,
+										 bool elmbyval,
+										 char elmalign);
+
+static void check_range_adjacence(Oid cmp_proc,
+								  Oid collid,
+								  List *ranges);
+
 static void merge_range_partitions_internal(Oid parent,
 											Oid *parts,
 											uint32 nparts);
+
+static char *deparse_constraint(Oid relid, Node *expr);
+
 static void modify_range_constraint(Oid partition_relid,
 									const char *expression,
 									Oid expression_type,
 									const Bound *lower,
 									const Bound *upper);
+
 static bool interval_is_trivial(Oid atttype,
 								Datum interval,
 								Oid interval_type);
@@ -400,11 +407,12 @@ generate_range_bounds_pl(PG_FUNCTION_ARGS)
 Datum
 get_part_range_by_oid(PG_FUNCTION_ARGS)
 {
-	Oid						partition_relid,
-							parent_relid;
-	RangeEntry			   *ranges;
-	const PartRelationInfo *prel;
-	uint32					i;
+	Oid					partition_relid,
+						parent_relid;
+	Oid					arg_type;
+	RangeEntry		   *ranges;
+	PartRelationInfo   *prel;
+	uint32				i;
 
 	if (!PG_ARGISNULL(0))
 	{
@@ -419,11 +427,13 @@ get_part_range_by_oid(PG_FUNCTION_ARGS)
 						errmsg("relation \"%s\" is not a partition",
 							   get_rel_name_or_relid(partition_relid))));
 
+	/* Emit an error if it is not partitioned by RANGE */
 	prel = get_pathman_relation_info(parent_relid);
 	shout_if_prel_is_invalid(parent_relid, prel, PT_RANGE);
 
 	/* Check type of 'dummy' (for correct output) */
-	if (getBaseType(get_fn_expr_argtype(fcinfo->flinfo, 1)) != getBaseType(prel->ev_type))
+	arg_type = get_fn_expr_argtype(fcinfo->flinfo, 2);
+	if (getBaseType(arg_type) != getBaseType(prel->ev_type))
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("pg_typeof(dummy) should be %s",
 							   format_type_be(getBaseType(prel->ev_type)))));
@@ -432,6 +442,7 @@ get_part_range_by_oid(PG_FUNCTION_ARGS)
 
 	/* Look for the specified partition */
 	for (i = 0; i < PrelChildrenCount(prel); i++)
+	{
 		if (ranges[i].child_oid == partition_relid)
 		{
 			ArrayType  *arr;
@@ -440,12 +451,15 @@ get_part_range_by_oid(PG_FUNCTION_ARGS)
 			elems[0] = ranges[i].min;
 			elems[1] = ranges[i].max;
 
-			arr = construct_infinitable_array(elems, 2,
-											  prel->ev_type, prel->ev_len,
-											  prel->ev_byval, prel->ev_align);
+			arr = construct_bounds_array(elems, 2,
+										 prel->ev_type,
+										 prel->ev_len,
+										 prel->ev_byval,
+										 prel->ev_align);
 
 			PG_RETURN_ARRAYTYPE_P(arr);
 		}
+	}
 
 	/* No partition found, report error */
 	ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -466,11 +480,13 @@ get_part_range_by_oid(PG_FUNCTION_ARGS)
 Datum
 get_part_range_by_idx(PG_FUNCTION_ARGS)
 {
-	Oid						parent_relid;
-	int						partition_idx = 0;
-	Bound					elems[2];
-	RangeEntry			   *ranges;
-	const PartRelationInfo *prel;
+	Oid					parent_relid;
+	int					partition_idx = 0;
+	Oid					arg_type;
+	Bound				elems[2];
+	RangeEntry		   *ranges;
+	PartRelationInfo   *prel;
+	ArrayType		   *arr;
 
 	if (!PG_ARGISNULL(0))
 	{
@@ -486,11 +502,13 @@ get_part_range_by_idx(PG_FUNCTION_ARGS)
 	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("'partition_idx' should not be NULL")));
 
+	/* Emit an error if it is not partitioned by RANGE */
 	prel = get_pathman_relation_info(parent_relid);
 	shout_if_prel_is_invalid(parent_relid, prel, PT_RANGE);
 
 	/* Check type of 'dummy' (for correct output) */
-	if (getBaseType(get_fn_expr_argtype(fcinfo->flinfo, 2)) != getBaseType(prel->ev_type))
+	arg_type = get_fn_expr_argtype(fcinfo->flinfo, 2);
+	if (getBaseType(arg_type) != getBaseType(prel->ev_type))
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("pg_typeof(dummy) should be %s",
 							   format_type_be(getBaseType(prel->ev_type)))));
@@ -520,11 +538,13 @@ get_part_range_by_idx(PG_FUNCTION_ARGS)
 	elems[0] = ranges[partition_idx].min;
 	elems[1] = ranges[partition_idx].max;
 
-	PG_RETURN_ARRAYTYPE_P(construct_infinitable_array(elems, 2,
-													  prel->ev_type,
-													  prel->ev_len,
-													  prel->ev_byval,
-													  prel->ev_align));
+	arr = construct_bounds_array(elems, 2,
+								 prel->ev_type,
+								 prel->ev_len,
+								 prel->ev_byval,
+								 prel->ev_align);
+
+	PG_RETURN_ARRAYTYPE_P(arr);
 }
 
 
@@ -688,8 +708,10 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 						   *first,
 						   *last;
 	FmgrInfo				cmp_proc;
+	ObjectAddresses		   *objects = new_object_addresses();
 	int						i;
 
+	/* Emit an error if it is not partitioned by RANGE */
 	prel = get_pathman_relation_info(parent);
 	shout_if_prel_is_invalid(parent, prel, PT_RANGE);
 
@@ -702,7 +724,8 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 	/* Process partitions */
 	for (i = 0; i < nparts; i++)
 	{
-		int j;
+		ObjectAddress	object;
+		int				j;
 
 		/* Prevent modification of partitions */
 		LockRelationOid(parts[0], AccessExclusiveLock);
@@ -716,6 +739,9 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 				break;
 			}
 		}
+
+		ObjectAddressSet(object, RelationRelationId, parts[i]);
+		add_exact_object_address(&object, objects);
 	}
 
 	/* Check that partitions are adjacent */
@@ -765,13 +791,8 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 	SPI_finish();
 
 	/* Drop obsolete partitions */
-	for (i = 1; i < nparts; i++)
-	{
-		ObjectAddress object;
-
-		ObjectAddressSet(object, RelationRelationId, parts[i]);
-		performDeletion(&object, DROP_CASCADE, 0);
-	}
+	performMultipleDeletions(objects, DROP_CASCADE, 0);
+	free_object_addresses(objects);
 }
 
 
@@ -791,72 +812,74 @@ drop_range_partition_expand_next(PG_FUNCTION_ARGS)
 	Oid					partition = PG_GETARG_OID(0),
 						parent;
 	PartRelationInfo   *prel;
+	ObjectAddress		object;
+	RangeEntry		   *ranges;
+	int					i;
 
 	/* Lock the partition we're going to drop */
 	LockRelationOid(partition, AccessExclusiveLock);
 
 	/* Check if partition exists */
-	if (!SearchSysCacheExists1(RELOID, partition))
+	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(partition)))
 		elog(ERROR, "relation %u does not exist", partition);
 
 	/* Get parent's relid */
 	parent = get_parent_of_partition(partition);
-	if (!OidIsValid(parent))
+
+	/* Prevent changes in partitioning scheme */
+	LockRelationOid(parent, ShareUpdateExclusiveLock);
+
+	/* Check if parent exists */
+	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(parent)))
 		elog(ERROR, "relation \"%s\" is not a partition",
 			 get_rel_name(partition));
 
-	if ((prel = get_pathman_relation_info(parent)) != NULL)
+	/* Emit an error if it is not partitioned by RANGE */
+	prel = get_pathman_relation_info(parent);
+	shout_if_prel_is_invalid(parent, prel, PT_RANGE);
+
+	/* Fetch ranges array */
+	ranges = PrelGetRangesArray(prel);
+
+	/* Looking for partition in child relations */
+	for (i = 0; i < PrelChildrenCount(prel); i++)
+		if (ranges[i].child_oid == partition)
+			break;
+
+	/* Should have found it */
+	Assert(i < PrelChildrenCount(prel));
+
+	/* Expand next partition if it exists */
+	if (i < PrelLastChild(prel))
 	{
-		ObjectAddress	object;
-		RangeEntry	   *ranges;
-		int				i;
+		RangeEntry	   *cur  = &ranges[i],
+					   *next = &ranges[i + 1];
+		Oid				next_partition = next->child_oid;
+		LOCKMODE		lockmode = AccessExclusiveLock;
 
-		/* Emit an error if it is not partitioned by RANGE */
-		shout_if_prel_is_invalid(parent, prel, PT_RANGE);
+		/* Lock next partition */
+		LockRelationOid(next_partition, lockmode);
 
-		/* Fetch ranges array */
-		ranges = PrelGetRangesArray(prel);
-
-		/* Looking for partition in child relations */
-		for (i = 0; i < PrelChildrenCount(prel); i++)
-			if (ranges[i].child_oid == partition)
-				break;
-
-		/* Should have found it */
-		Assert(i < PrelChildrenCount(prel));
-
-		/* Expand next partition if it exists */
-		if (i < PrelChildrenCount(prel) - 1)
+		/* Does next partition exist? */
+		if (SearchSysCacheExists1(RELOID, ObjectIdGetDatum(next_partition)))
 		{
-			RangeEntry	   *cur  = &ranges[i],
-						   *next = &ranges[i + 1];
-			Oid				next_partition = next->child_oid;
-			LOCKMODE		lockmode = AccessExclusiveLock;
-
-			/* Lock next partition */
-			LockRelationOid(next_partition, lockmode);
-
-			/* Does next partition exist? */
-			if (SearchSysCacheExists1(RELOID, next_partition))
-			{
-				/* Stretch next partition to cover range */
-				modify_range_constraint(next_partition,
-										prel->expr_cstr,
-										prel->ev_type,
-										&cur->min,
-										&next->max);
-			}
-			/* Bad luck, unlock missing partition */
-			else UnlockRelationOid(next_partition, lockmode);
+			/* Stretch next partition to cover range */
+			modify_range_constraint(next_partition,
+									prel->expr_cstr,
+									prel->ev_type,
+									&cur->min,
+									&next->max);
 		}
-
-		/* Drop partition */
-		ObjectAddressSet(object, RelationRelationId, partition);
-		performDeletion(&object, DROP_CASCADE, 0);
-
-		/* Don't forget to close 'prel'! */
-		close_pathman_relation_info(prel);
+		/* Bad luck, unlock missing partition */
+		else UnlockRelationOid(next_partition, lockmode);
 	}
+
+	/* Drop partition */
+	ObjectAddressSet(object, RelationRelationId, partition);
+	performDeletion(&object, DROP_CASCADE, 0);
+
+	/* Don't forget to close 'prel'! */
+	close_pathman_relation_info(prel);
 
 	PG_RETURN_VOID();
 }
@@ -1182,18 +1205,18 @@ deparse_constraint(Oid relid, Node *expr)
 }
 
 /*
- * Build an 1d array of Bound elements
+ * Build an 1d array of Bound elements.
  *
- *		The main difference from construct_array() is that
- *		it will substitute infinite values with NULLs
+ * The main difference from construct_array() is that
+ * it will substitute infinite values with NULLs.
  */
 static ArrayType *
-construct_infinitable_array(Bound *elems,
-							int nelems,
-							Oid elemtype,
-							int elemlen,
-							bool elembyval,
-							char elemalign)
+construct_bounds_array(Bound *elems,
+					   int nelems,
+					   Oid elemtype,
+					   int elemlen,
+					   bool elembyval,
+					   char elemalign)
 {
 	ArrayType  *arr;
 	Datum	   *datums;

@@ -476,7 +476,6 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	ResultRelInfo	   *parent_rri;
 
 	EState			   *estate = CreateExecutorState(); /* for ExecConstraints() */
-	ExprContext		   *econtext;
 	TupleTableSlot	   *myslot;
 	MemoryContext		oldcontext = CurrentMemoryContext;
 
@@ -529,15 +528,14 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	values = (Datum *) palloc(tupDesc->natts * sizeof(Datum));
 	nulls = (bool *) palloc(tupDesc->natts * sizeof(bool));
 
-	econtext = GetPerTupleExprContext(estate);
-
 	for (;;)
 	{
 		TupleTableSlot		   *slot;
 		bool					skip_tuple;
 		Oid						tuple_oid = InvalidOid;
+		ExprContext		 	   *econtext = GetPerTupleExprContext(estate);
 
-		const PartRelationInfo *prel;
+		PartRelationInfo	   *prel;
 		ResultRelInfoHolder	   *rri_holder;
 		ResultRelInfo		   *child_result_rel;
 
@@ -551,7 +549,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 		/* Initialize expression and expression state */
 		if (expr == NULL)
 		{
-			expr = copyObject(prel->expr);
+			expr = PrelExpressionForRelid(prel, PART_EXPR_VARNO);
 			expr_state = ExecInitExpr((Expr *) expr, NULL);
 		}
 
@@ -575,10 +573,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 		/* Store slot for expression evaluation */
 		econtext->ecxt_scantuple = slot;
 
-		/*
-		 * Search for a matching partition.
-		 * WARNING: 'prel' might change after this call!
-		 */
+		/* Search for a matching partition */
 		rri_holder = select_partition_for_insert(expr_state, econtext, estate,
 												 prel, &parts_storage);
 
@@ -598,13 +593,12 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 		{
 			HeapTuple tuple_old;
 
-			/* TODO: use 'tuple_map' directly instead of do_convert_tuple() */
 			tuple_old = tuple;
 			tuple = do_convert_tuple(tuple, rri_holder->tuple_map);
 			heap_freetuple(tuple_old);
 		}
 
-		/* now we can set proper tuple descriptor according to child relation */
+		/* Now we can set proper tuple descriptor according to child relation */
 		ExecSetSlotDescriptor(slot, RelationGetDescr(child_result_rel->ri_RelationDesc));
 		ExecStoreTuple(tuple, slot, InvalidBuffer, false);
 
@@ -656,12 +650,10 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 		}
 	}
 
+	/* Switch back to query context */
 	MemoryContextSwitchTo(oldcontext);
 
-	/*
-	 * In the old protocol, tell pqcomm that we can process normal protocol
-	 * messages again.
-	 */
+	/* Required for old protocol */
 	if (old_protocol)
 		pq_endmsgread();
 
@@ -674,6 +666,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	pfree(values);
 	pfree(nulls);
 
+	/* Release resources for tuple table */
 	ExecResetTupleTable(estate->es_tupleTable, false);
 
 	/* Close partitions and destroy hash table */
@@ -682,6 +675,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	/* Close parent's indices */
 	ExecCloseIndices(parent_rri);
 
+	/* Release an EState along with all remaining working storage */
 	FreeExecutorState(estate);
 
 	return processed;

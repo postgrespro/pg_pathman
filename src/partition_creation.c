@@ -334,7 +334,6 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
 
 	PG_TRY();
 	{
-		LockAcquireResult	lock_result; /* could we lock the parent? */
 		Datum				values[Natts_pathman_config];
 		bool				isnull[Natts_pathman_config];
 
@@ -342,18 +341,29 @@ create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
 		if (pathman_config_contains_relation(relid, values, isnull, NULL, NULL))
 		{
 			PartRelationInfo   *prel;
+			LockAcquireResult	lock_result;		/* could we lock the parent? */
 			Oid					base_bound_type;	/* base type of prel->ev_type */
 			Oid					base_value_type;	/* base type of value_type */
 
+			/* Prevent modifications of partitioning scheme */
+			lock_result = xact_lock_rel(relid, ShareUpdateExclusiveLock, false);
+
 			/* Fetch PartRelationInfo by 'relid' */
-			prel = get_pathman_relation_info_after_lock(relid, true, &lock_result);
+			prel = get_pathman_relation_info(relid);
 			shout_if_prel_is_invalid(relid, prel, PT_RANGE);
 
 			/* Fetch base types of prel->ev_type & value_type */
 			base_bound_type = getBaseType(prel->ev_type);
 			base_value_type = getBaseType(value_type);
 
-			/* Search for a suitable partition if we didn't hold it */
+			/*
+			 * Search for a suitable partition if we didn't hold it,
+			 * since somebody might have just created it for us.
+			 *
+			 * If the table is locked, it means that we've
+			 * already failed to find a suitable partition
+			 * and called this function to do the job.
+			 */
 			Assert(lock_result != LOCKACQUIRE_NOT_AVAIL);
 			if (lock_result == LOCKACQUIRE_OK)
 			{

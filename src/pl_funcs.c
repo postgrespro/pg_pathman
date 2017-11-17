@@ -75,22 +75,22 @@ PG_FUNCTION_INFO_V1( pathman_version );
 /* User context for function show_partition_list_internal() */
 typedef struct
 {
-	Relation				pathman_config;
-	HeapScanDesc			pathman_config_scan;
-	Snapshot				snapshot;
+	Relation			pathman_config;
+	HeapScanDesc		pathman_config_scan;
+	Snapshot			snapshot;
 
-	const PartRelationInfo *current_prel;	/* selected PartRelationInfo */
+	PartRelationInfo   *current_prel;	/* selected PartRelationInfo */
 
-	Size					child_number;	/* child we're looking at */
-	SPITupleTable		   *tuptable;		/* buffer for tuples */
+	Size				child_number;	/* child we're looking at */
+	SPITupleTable	   *tuptable;		/* buffer for tuples */
 } show_partition_list_cxt;
 
 /* User context for function show_pathman_cache_stats_internal() */
 typedef struct
 {
-	MemoryContext			pathman_contexts[PATHMAN_MCXT_COUNT];
-	HTAB				   *pathman_htables[PATHMAN_MCXT_COUNT];
-	int						current_item;
+	MemoryContext		pathman_contexts[PATHMAN_MCXT_COUNT];
+	HTAB			   *pathman_htables[PATHMAN_MCXT_COUNT];
+	int					current_item;
 } show_cache_stats_cxt;
 
 /*
@@ -362,10 +362,10 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 		/* Iterate through pathman cache */
 		for (;;)
 		{
-			const PartRelationInfo *prel;
-			HeapTuple				htup;
-			Datum					values[Natts_pathman_partition_list];
-			bool					isnull[Natts_pathman_partition_list] = { 0 };
+			HeapTuple			htup;
+			Datum				values[Natts_pathman_partition_list];
+			bool				isnull[Natts_pathman_partition_list] = { 0 };
+			PartRelationInfo   *prel;
 
 			/* Fetch next PartRelationInfo if needed */
 			if (usercxt->current_prel == NULL)
@@ -401,6 +401,9 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 			/* If we've run out of partitions, switch to the next 'prel' */
 			if (usercxt->child_number >= PrelChildrenCount(prel))
 			{
+				/* Don't forget to close 'prel'! */
+				close_pathman_relation_info(prel);
+
 				usercxt->current_prel = NULL;
 				usercxt->child_number = 0;
 
@@ -787,13 +790,13 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	{
 		pfree(children);
 
-		/* Now try to create a PartRelationInfo */
 		PG_TRY();
 		{
 			/* Some flags might change during refresh attempt */
 			save_pathman_init_state(&init_state);
 
-			get_pathman_relation_info(relid);
+			/* Now try to create a PartRelationInfo */
+			has_pathman_relation_info(relid);
 		}
 		PG_CATCH();
 		{
