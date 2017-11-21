@@ -474,13 +474,11 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 
 	ResultPartsStorage	parts_storage;
 	ResultRelInfo	   *parent_rri;
+	ExprState		   *expr_state = NULL;
 
+	MemoryContext		query_mcxt = CurrentMemoryContext;
 	EState			   *estate = CreateExecutorState(); /* for ExecConstraints() */
 	TupleTableSlot	   *myslot;
-	MemoryContext		oldcontext = CurrentMemoryContext;
-
-	Node			   *expr = NULL;
-	ExprState		   *expr_state = NULL;
 
 	uint64				processed = 0;
 
@@ -531,27 +529,17 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	for (;;)
 	{
 		TupleTableSlot		   *slot;
-		bool					skip_tuple;
+		bool					skip_tuple = false;
 		Oid						tuple_oid = InvalidOid;
 		ExprContext		 	   *econtext = GetPerTupleExprContext(estate);
 
 		PartRelationInfo	   *prel;
 		ResultRelInfoHolder	   *rri_holder;
-		ResultRelInfo		   *child_result_rel;
+		ResultRelInfo		   *child_rri;
 
 		CHECK_FOR_INTERRUPTS();
 
 		ResetPerTupleExprContext(estate);
-
-		/* Fetch PartRelationInfo for parent relation */
-		prel = get_pathman_relation_info(RelationGetRelid(parent_rel));
-
-		/* Initialize expression and expression state */
-		if (expr == NULL)
-		{
-			expr = PrelExpressionForRelid(prel, PART_EXPR_VARNO);
-			expr_state = ExecInitExpr((Expr *) expr, NULL);
-		}
 
 		/* Switch into per tuple memory context */
 		MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
@@ -573,20 +561,39 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 		/* Store slot for expression evaluation */
 		econtext->ecxt_scantuple = slot;
 
+		/* Fetch PartRelationInfo for parent relation */
+		prel = get_pathman_relation_info(RelationGetRelid(parent_rel));
+
+		/* Initialize expression state */
+		if (expr_state == NULL)
+		{
+			MemoryContext	old_mcxt;
+			Node		   *expr;
+
+			old_mcxt = MemoryContextSwitchTo(query_mcxt);
+
+			expr = PrelExpressionForRelid(prel, PART_EXPR_VARNO);
+			expr_state = ExecInitExpr((Expr *) expr, NULL);
+
+			MemoryContextSwitchTo(old_mcxt);
+		}
+
 		/* Search for a matching partition */
 		rri_holder = select_partition_for_insert(expr_state, econtext, estate,
 												 prel, &parts_storage);
+		child_rri = rri_holder->result_rel_info;
 
-		child_result_rel = rri_holder->result_rel_info;
+		/* Don't forget to close 'prel'! */
+		close_pathman_relation_info(prel);
 
 		/* Magic: replace parent's ResultRelInfo with ours */
-		estate->es_result_relation_info = child_result_rel;
+		estate->es_result_relation_info = child_rri;
 
 		/*
 		 * Constraints might reference the tableoid column, so initialize
 		 * t_tableOid before evaluating them.
 		 */
-		tuple->t_tableOid = RelationGetRelid(child_result_rel->ri_RelationDesc);
+		tuple->t_tableOid = RelationGetRelid(child_rri->ri_RelationDesc);
 
 		/* If there's a transform map, rebuild the tuple */
 		if (rri_holder->tuple_map)
@@ -599,19 +606,17 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 		}
 
 		/* Now we can set proper tuple descriptor according to child relation */
-		ExecSetSlotDescriptor(slot, RelationGetDescr(child_result_rel->ri_RelationDesc));
+		ExecSetSlotDescriptor(slot, RelationGetDescr(child_rri->ri_RelationDesc));
 		ExecStoreTuple(tuple, slot, InvalidBuffer, false);
 
 		/* Triggers and stuff need to be invoked in query context. */
-		MemoryContextSwitchTo(oldcontext);
-
-		skip_tuple = false;
+		MemoryContextSwitchTo(query_mcxt);
 
 		/* BEFORE ROW INSERT Triggers */
-		if (child_result_rel->ri_TrigDesc &&
-			child_result_rel->ri_TrigDesc->trig_insert_before_row)
+		if (child_rri->ri_TrigDesc &&
+			child_rri->ri_TrigDesc->trig_insert_before_row)
 		{
-			slot = ExecBRInsertTriggers(estate, child_result_rel, slot);
+			slot = ExecBRInsertTriggers(estate, child_rri, slot);
 
 			if (slot == NULL)	/* "do nothing" */
 				skip_tuple = true;
@@ -625,18 +630,18 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 			List *recheckIndexes = NIL;
 
 			/* Check the constraints of the tuple */
-			if (child_result_rel->ri_RelationDesc->rd_att->constr)
-				ExecConstraints(child_result_rel, slot, estate);
+			if (child_rri->ri_RelationDesc->rd_att->constr)
+				ExecConstraints(child_rri, slot, estate);
 
 			/* OK, store the tuple and create index entries for it */
-			simple_heap_insert(child_result_rel->ri_RelationDesc, tuple);
+			simple_heap_insert(child_rri->ri_RelationDesc, tuple);
 
-			if (child_result_rel->ri_NumIndices > 0)
+			if (child_rri->ri_NumIndices > 0)
 				recheckIndexes = ExecInsertIndexTuples(slot, &(tuple->t_self),
 													   estate, false, NULL, NIL);
 
 			/* AFTER ROW INSERT Triggers (FIXME: NULL transition) */
-			ExecARInsertTriggersCompat(estate, child_result_rel, tuple,
+			ExecARInsertTriggersCompat(estate, child_rri, tuple,
 									   recheckIndexes, NULL);
 
 			list_free(recheckIndexes);
@@ -651,7 +656,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	}
 
 	/* Switch back to query context */
-	MemoryContextSwitchTo(oldcontext);
+	MemoryContextSwitchTo(query_mcxt);
 
 	/* Required for old protocol */
 	if (old_protocol)
