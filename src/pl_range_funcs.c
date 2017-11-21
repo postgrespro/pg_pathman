@@ -412,7 +412,7 @@ get_part_range_by_oid(PG_FUNCTION_ARGS)
 	Oid					arg_type;
 	RangeEntry		   *ranges;
 	PartRelationInfo   *prel;
-	uint32				i;
+	uint32				idx;
 
 	if (!PG_ARGISNULL(0))
 	{
@@ -441,24 +441,24 @@ get_part_range_by_oid(PG_FUNCTION_ARGS)
 	ranges = PrelGetRangesArray(prel);
 
 	/* Look for the specified partition */
-	for (i = 0; i < PrelChildrenCount(prel); i++)
+	if ((idx = PrelHasPartition(prel, partition_relid)) > 0)
 	{
-		if (ranges[i].child_oid == partition_relid)
-		{
-			ArrayType  *arr;
-			Bound		elems[2];
+		ArrayType  *arr;
+		Bound		elems[2];
 
-			elems[0] = ranges[i].min;
-			elems[1] = ranges[i].max;
+		elems[0] = ranges[idx - 1].min;
+		elems[1] = ranges[idx - 1].max;
 
-			arr = construct_bounds_array(elems, 2,
-										 prel->ev_type,
-										 prel->ev_len,
-										 prel->ev_byval,
-										 prel->ev_align);
+		arr = construct_bounds_array(elems, 2,
+									 prel->ev_type,
+									 prel->ev_len,
+									 prel->ev_byval,
+									 prel->ev_align);
 
-			PG_RETURN_ARRAYTYPE_P(arr);
-		}
+		/* Don't forget to close 'prel'! */
+		close_pathman_relation_info(prel);
+
+		PG_RETURN_ARRAYTYPE_P(arr);
 	}
 
 	/* No partition found, report error */
@@ -543,6 +543,9 @@ get_part_range_by_idx(PG_FUNCTION_ARGS)
 								 prel->ev_len,
 								 prel->ev_byval,
 								 prel->ev_align);
+
+	/* Don't forget to close 'prel'! */
+	close_pathman_relation_info(prel);
 
 	PG_RETURN_ARRAYTYPE_P(arr);
 }
@@ -702,14 +705,14 @@ merge_range_partitions(PG_FUNCTION_ARGS)
 static void
 merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 {
-	const PartRelationInfo *prel;
-	List				   *rentry_list = NIL;
-	RangeEntry			   *ranges,
-						   *first,
-						   *last;
-	FmgrInfo				cmp_proc;
-	ObjectAddresses		   *objects = new_object_addresses();
-	int						i;
+	PartRelationInfo   *prel;
+	List			   *rentry_list = NIL;
+	RangeEntry		   *ranges,
+					   *first,
+					   *last;
+	FmgrInfo			cmp_proc;
+	ObjectAddresses	   *objects = new_object_addresses();
+	int					i;
 
 	/* Emit an error if it is not partitioned by RANGE */
 	prel = get_pathman_relation_info(parent);
@@ -749,7 +752,7 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 
 	/* First determine the bounds of a new constraint */
 	first = (RangeEntry *) linitial(rentry_list);
-	last = (RangeEntry *) llast(rentry_list);
+	last  = (RangeEntry *) llast(rentry_list);
 
 	/* Swap ranges if 'last' < 'first' */
 	fmgr_info(prel->cmp_proc, &cmp_proc);
@@ -793,6 +796,9 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 	/* Drop obsolete partitions */
 	performMultipleDeletions(objects, DROP_CASCADE, 0);
 	free_object_addresses(objects);
+
+	/* Don't forget to close 'prel'! */
+	close_pathman_relation_info(prel);
 }
 
 

@@ -237,6 +237,19 @@ typedef struct PartRelationInfo
 #define PrelIsFresh(prel)			( (prel)->fresh )
 
 static inline uint32
+PrelHasPartition(const PartRelationInfo *prel, Oid partition_relid)
+{
+	Oid	   *children = PrelGetChildrenArray(prel);
+	uint32	i;
+
+	for (i = 0; i < PrelChildrenCount(prel); i++)
+		if (children[i] == partition_relid)
+			return i + 1;
+
+	return 0;
+}
+
+static inline uint32
 PrelLastChild(const PartRelationInfo *prel)
 {
 	if (PrelChildrenCount(prel) == 0)
@@ -316,10 +329,12 @@ PartTypeToCString(PartType parttype)
 }
 
 
+/* Status chache */
+void invalidate_pathman_status_info(Oid relid);
+void invalidate_pathman_status_info_cache(void);
+
 /* Dispatch cache */
 void refresh_pathman_relation_info(Oid relid);
-void invalidate_pathman_relation_info(Oid relid);
-void invalidate_pathman_relation_info_cache(void);
 void close_pathman_relation_info(PartRelationInfo *prel);
 bool has_pathman_relation_info(Oid relid);
 PartRelationInfo *get_pathman_relation_info(Oid relid);
@@ -332,7 +347,7 @@ void shout_if_prel_is_invalid(const Oid parent_oid,
 void forget_bounds_of_partition(Oid partition);
 PartBoundInfo *get_bounds_of_partition(Oid partition, const PartRelationInfo *prel);
 
-/* Parent cache */
+/* Parents cache */
 void cache_parent_of_partition(Oid partition, Oid parent);
 void forget_parent_of_partition(Oid partition);
 Oid get_parent_of_partition(Oid partition);

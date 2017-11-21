@@ -83,9 +83,10 @@ static bool		delayed_shutdown = false; /* pathman was dropped */
 	bsearch((const void *) &(key), (array), (array_size), sizeof(Oid), oid_cmp)
 
 
-static void invalidate_pathman_status_info(PartStatusInfo *psin);
 static PartRelationInfo *build_pathman_relation_info(Oid relid, Datum *values);
 static void free_pathman_relation_info(PartRelationInfo *prel);
+static void invalidate_psin_entries_using_relid(Oid relid);
+static void invalidate_psin_entry(PartStatusInfo *psin);
 
 static Expr *get_partition_constraint_expr(Oid partition);
 
@@ -119,59 +120,91 @@ init_relation_info_static_data(void)
 
 
 /*
- * Partition dispatch routines.
+ * Status cache routines.
  */
 
-/* TODO: comment */
+/* Invalidate PartStatusInfo for 'relid' */
 void
-refresh_pathman_relation_info(Oid relid)
-{
-
-}
-
-/* TODO: comment */
-void
-invalidate_pathman_relation_info(Oid relid)
+invalidate_pathman_status_info(Oid relid)
 {
 	PartStatusInfo *psin;
+	PartParentInfo *ppar;
 
+	/* Find status cache entry for this relation */
 	psin = pathman_cache_search_relid(status_cache,
 									  relid, HASH_FIND,
 									  NULL);
-
 	if (psin)
-	{
-#ifdef USE_RELINFO_LOGGING
-		elog(DEBUG2, "invalidation message for relation %u [%u]",
-			 relid, MyProcPid);
-#endif
+		invalidate_psin_entry(psin);
 
-		invalidate_pathman_status_info(psin);
+	/*
+	 * Find parent of this relation.
+	 *
+	 * We don't want to use get_parent_of_partition()
+	 * since it relies upon the syscache.
+	 */
+	ppar = pathman_cache_search_relid(parents_cache,
+									  relid, HASH_FIND,
+									  NULL);
+
+	/* Invalidate parent directly */
+	if (ppar)
+	{
+		/* Find status cache entry for parent */
+		psin = pathman_cache_search_relid(status_cache,
+										  relid, HASH_FIND,
+										  NULL);
+		if (psin)
+			invalidate_psin_entry(psin);
 	}
+	/* Otherwise, look through all entries */
+	else invalidate_psin_entries_using_relid(relid);
 }
 
-/* TODO: comment */
+/* Invalidate all PartStatusInfo entries */
 void
-invalidate_pathman_relation_info_cache(void)
+invalidate_pathman_status_info_cache(void)
+{
+	invalidate_psin_entries_using_relid(InvalidOid);
+}
+
+/* Invalidate PartStatusInfo entry referencing 'relid' */
+static void
+invalidate_psin_entries_using_relid(Oid relid)
 {
 	HASH_SEQ_STATUS		status;
 	PartStatusInfo	   *psin;
 
+	hash_seq_init(&status, status_cache);
+
 	while ((psin = (PartStatusInfo *) hash_seq_search(&status)) != NULL)
 	{
-#ifdef USE_RELINFO_LOGGING
-		elog(DEBUG2, "invalidation message for relation %u [%u]",
-			 psin->relid, MyProcPid);
-#endif
+		if (relid == InvalidOid ||
+			psin->relid == relid ||
+			(psin->prel && PrelHasPartition(psin->prel, relid)))
+		{
+			/* Perform invalidation */
+			invalidate_psin_entry(psin);
 
-		invalidate_pathman_status_info(psin);
+			/* Exit if found */
+			if (OidIsValid(relid))
+			{
+				hash_seq_term(&status);
+				break;
+			}
+		}
 	}
 }
 
-/* TODO: comment */
+/* Invalidate single PartStatusInfo entry */
 static void
-invalidate_pathman_status_info(PartStatusInfo *psin)
+invalidate_psin_entry(PartStatusInfo *psin)
 {
+#ifdef USE_RELINFO_LOGGING
+	elog(DEBUG2, "invalidation message for relation %u [%u]",
+		 psin->relid, MyProcPid);
+#endif
+
 	/* Mark entry as invalid */
 	if (psin->prel && PrelReferenceCount(psin->prel) > 0)
 	{
@@ -189,7 +222,19 @@ invalidate_pathman_status_info(PartStatusInfo *psin)
 	}
 }
 
-/* TODO: comment */
+
+/*
+ * Dispatch cache routines.
+ */
+
+/* Make changes to PartRelationInfo visible */
+void
+refresh_pathman_relation_info(Oid relid)
+{
+
+}
+
+/* Close PartRelationInfo entry */
 void
 close_pathman_relation_info(PartRelationInfo *prel)
 {
@@ -680,7 +725,7 @@ PrelExpressionAttributesMap(const PartRelationInfo *prel,
 
 
 /*
- * Partition bounds cache routines.
+ * Bounds cache routines.
  */
 
 /* Remove partition's constraint from cache */
@@ -904,7 +949,7 @@ fill_pbin_with_bounds(PartBoundInfo *pbin,
 
 
 /*
- * Partition parents cache routines.
+ * Parents cache routines.
  */
 
 /* Add parent of partition to cache */

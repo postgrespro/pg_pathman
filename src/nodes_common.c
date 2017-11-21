@@ -558,9 +558,9 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 						  List *clauses, List *custom_plans,
 						  CustomScanMethods *scan_methods)
 {
-	RuntimeAppendPath	   *rpath = (RuntimeAppendPath *) best_path;
-	const PartRelationInfo *prel;
-	CustomScan			   *cscan;
+	RuntimeAppendPath  *rpath = (RuntimeAppendPath *) best_path;
+	PartRelationInfo   *prel;
+	CustomScan		   *cscan;
 
 	prel = get_pathman_relation_info(rpath->relid);
 	Assert(prel);
@@ -630,6 +630,9 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 	/* Cache 'prel->enable_parent' as well */
 	pack_runtimeappend_private(cscan, rpath, prel->enable_parent);
 
+	/* Don't forget to close 'prel'! */
+	close_pathman_relation_info(prel);
+
 	return &cscan->scan.plan;
 }
 
@@ -659,14 +662,15 @@ create_append_scan_state_common(CustomScan *node,
 void
 begin_append_common(CustomScanState *node, EState *estate, int eflags)
 {
-	RuntimeAppendState	   *scan_state = (RuntimeAppendState *) node;
-	const PartRelationInfo *prel;
+	RuntimeAppendState *scan_state = (RuntimeAppendState *) node;
+	PartRelationInfo   *prel;
 
 #if PG_VERSION_NUM < 100000
 	node->ss.ps.ps_TupFromTlist = false;
 #endif
 
 	prel = get_pathman_relation_info(scan_state->relid);
+	Assert(prel);
 
 	/* Prepare expression according to set_set_customscan_references() */
 	scan_state->prel_expr = PrelExpressionForRelid(prel, INDEX_VAR);
@@ -674,6 +678,9 @@ begin_append_common(CustomScanState *node, EState *estate, int eflags)
 	/* Prepare custom expression according to set_set_customscan_references() */
 	scan_state->canon_custom_exprs =
 			canonicalize_custom_exprs(scan_state->custom_exprs);
+
+	/* Don't forget to close 'prel'! */
+	close_pathman_relation_info(prel);
 }
 
 TupleTableSlot *
@@ -754,14 +761,14 @@ end_append_common(CustomScanState *node)
 void
 rescan_append_common(CustomScanState *node)
 {
-	RuntimeAppendState	   *scan_state = (RuntimeAppendState *) node;
-	ExprContext			   *econtext = node->ss.ps.ps_ExprContext;
-	const PartRelationInfo *prel;
-	List				   *ranges;
-	ListCell			   *lc;
-	WalkerContext			wcxt;
-	Oid					   *parts;
-	int						nparts;
+	RuntimeAppendState *scan_state = (RuntimeAppendState *) node;
+	ExprContext		   *econtext = node->ss.ps.ps_ExprContext;
+	PartRelationInfo   *prel;
+	List			   *ranges;
+	ListCell		   *lc;
+	WalkerContext		wcxt;
+	Oid				   *parts;
+	int					nparts;
 
 	prel = get_pathman_relation_info(scan_state->relid);
 	Assert(prel);
@@ -796,6 +803,9 @@ rescan_append_common(CustomScanState *node)
 								scan_state->cur_plans,
 								scan_state->ncur_plans,
 								scan_state->css.ss.ps.state);
+
+	/* Don't forget to close 'prel'! */
+	close_pathman_relation_info(prel);
 
 	scan_state->running_idx = 0;
 }
