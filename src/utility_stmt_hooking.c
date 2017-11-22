@@ -498,13 +498,11 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	estate->es_range_table = range_table;
 
 	/* Initialize ResultPartsStorage */
-	init_result_parts_storage(&parts_storage, estate, false,
-							  ResultPartsStorageStandard,
-							  prepare_rri_for_copy, NULL,
-							  CMD_INSERT);
-
-	/* Don't forget to initialize 'base_rri'! */
-	parts_storage.base_rri = parent_rri;
+	init_result_parts_storage(&parts_storage, parent_rri,
+							  estate, CMD_INSERT,
+							  RPS_DEFAULT_ENTRY_SIZE,
+							  RPS_DEFAULT_SPECULATIVE,
+							  prepare_rri_for_copy, NULL);
 
 	/* Set up a tuple slot too */
 	myslot = ExecInitExtraTupleSlot(estate);

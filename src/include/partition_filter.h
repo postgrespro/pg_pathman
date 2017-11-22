@@ -49,8 +49,9 @@ typedef struct
 } ResultRelInfoHolder;
 
 
-/* Standard size of ResultPartsStorage entry */
-#define ResultPartsStorageStandard	0
+/* Default settings for ResultPartsStorage */
+#define RPS_DEFAULT_ENTRY_SIZE		sizeof(ResultPartsStorage)
+#define RPS_DEFAULT_SPECULATIVE		false /* speculative inserts */
 
 /* Forward declaration (for on_new_rri_holder()) */
 struct ResultPartsStorage;
@@ -137,18 +138,25 @@ extern CustomExecMethods	partition_filter_exec_methods;
 void init_partition_filter_static_data(void);
 
 
-/* ResultPartsStorage init\fini\scan function */
-void init_result_parts_storage(ResultPartsStorage *parts_storage,
-							   EState *estate,
-							   bool speculative_inserts,
-							   Size table_entry_size,
-							   on_new_rri_holder on_new_rri_holder_cb,
-							   void *on_new_rri_holder_cb_arg,
-							   CmdType cmd_type);
+/*
+ * ResultPartsStorage API (select partition for INSERT & UPDATE).
+ */
 
+/* Initialize storage for some parent table */
+void init_result_parts_storage(ResultPartsStorage *parts_storage,
+							   ResultRelInfo *parent_rri,
+							   EState *estate,
+							   CmdType cmd_type,
+							   Size table_entry_size,
+							   bool speculative_inserts,
+							   on_new_rri_holder on_new_rri_holder_cb,
+							   void *on_new_rri_holder_cb_arg);
+
+/* Free storage and opened relations */
 void fini_result_parts_storage(ResultPartsStorage *parts_storage,
 							   bool close_rels);
 
+/* Find ResultRelInfo holder in storage */
 ResultRelInfoHolder * scan_result_parts_storage(Oid partid,
 												ResultPartsStorage *storage);
 
