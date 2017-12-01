@@ -22,6 +22,7 @@
 #include "access/xact.h"
 #include "catalog/namespace.h"
 #include "commands/copy.h"
+#include "commands/defrem.h"
 #include "commands/trigger.h"
 #include "commands/tablecmds.h"
 #include "foreign/fdwapi.h"
@@ -105,6 +106,26 @@ is_pathman_related_copy(Node *parsetree)
 	/* Check that relation is partitioned */
 	if (get_pathman_relation_info(parent_relid))
 	{
+		ListCell *lc;
+
+		/* Analyze options list */
+		foreach (lc, copy_stmt->options)
+		{
+			DefElem *defel = lfirst_node(DefElem, lc);
+
+			/* We do not support freeze */
+			/*
+			 * It would be great to allow copy.c extract option value and
+			 * check it ready. However, there is no possibility (hooks) to do
+			 * that before messaging 'ok, begin streaming data' to the client,
+			 * which is ugly and confusing: e.g. it would require us to
+			 * actually send something in regression tests before we notice
+			 * the error.
+			 */
+			if (strcmp(defel->defname, "freeze") == 0 && defGetBoolean(defel))
+				elog(ERROR, "freeze is not supported for partitioned tables");
+		}
+
 		/* Emit ERROR if we can't see the necessary symbols */
 		#ifdef DISABLE_PATHMAN_COPY
 			elog(ERROR, "COPY is not supported for partitioned tables on Windows");
@@ -467,11 +488,6 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 
 	uint64				processed = 0;
 
-	/* We do not support freeze */
-	if (cstate->freeze)
-		elog(ERROR, "freeze is not supported for partitioned tables");
-
-
 	tupDesc = RelationGetDescr(parent_rel);
 
 	parent_result_rel = makeNode(ResultRelInfo);
@@ -633,11 +649,13 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 					recheckIndexes = ExecInsertIndexTuples(slot, &(tuple->t_self),
 														   estate, false, NULL, NIL);
 			}
+#ifdef PG_SHARDMAN
 			else /* FDW table */
 			{
 				child_result_rel->ri_FdwRoutine->ForeignNextCopyFrom(
 					estate, child_result_rel, cstate);
 			}
+#endif
 
 			/* AFTER ROW INSERT Triggers (FIXME: NULL transition) */
 			ExecARInsertTriggersCompat(estate, child_result_rel, tuple,
@@ -694,25 +712,51 @@ prepare_rri_for_copy(ResultRelInfoHolder *rri_holder,
 {
 	ResultRelInfo	*rri = rri_holder->result_rel_info;
 	FdwRoutine		*fdw_routine = rri->ri_FdwRoutine;
-	CopyState		cstate = (CopyState) rps_storage->callback_arg;
-	ResultRelInfo	*parent_rri;
-	const char		*parent_relname;
-	EState		   *estate;
-
-	estate = rps_storage->estate;
 
 	if (fdw_routine != NULL)
 	{
-		parent_rri = rps_storage->saved_rel_info;
-		parent_relname = psprintf(
-			"%s.%s", "public",
-			quote_identifier(RelationGetRelationName(parent_rri->ri_RelationDesc)));
-		if (!FdwCopyFromIsSupported(fdw_routine))
-			ereport(ERROR,
-					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-					 errmsg("FDW adapter for relation \"%s\" doesn't support COPY FROM",
-							RelationGetRelationName(rri->ri_RelationDesc))));
-		fdw_routine->BeginForeignCopyFrom(estate, rri, cstate, parent_relname);
+		/*
+		 * If this Postgres has no idea about shardman, behave as usual:
+		 * vanilla Postgres doesn't support COPY FROM to foreign partitions.
+		 * However, shardman patches to core extend FDW API to allow it,
+		 * though currently postgres_fdw does so in a bit perverted way: we
+		 * redirect COPY FROM to parent table on foreign server, assuming it
+		 * exists, and let it direct tuple to proper partition. This is
+		 * because otherwise we have to modify logic of managing connections
+		 * in postgres_fdw and keep many connections open to one server from
+		 * one backend.
+		 */
+#ifndef PG_SHARDMAN
+		goto bail_out; /* to avoid 'unused label' warning */
+#else
+		{ /* separate block to avoid 'unused var' warnings */
+			CopyState		cstate = (CopyState) rps_storage->callback_arg;
+			ResultRelInfo	*parent_rri;
+			const char		*parent_relname;
+			EState		   	*estate;
+
+			/* shardman COPY FROM requested? */
+			if (*find_rendezvous_variable(
+					"shardman_pathman_copy_from_rendezvous") == NULL)
+				goto bail_out;
+
+			estate = rps_storage->estate;
+			parent_rri = rps_storage->saved_rel_info;
+			parent_relname = psprintf(
+				"%s.%s", "public",
+				quote_identifier(RelationGetRelationName(parent_rri->ri_RelationDesc)));
+			if (!FdwCopyFromIsSupported(fdw_routine))
+				ereport(ERROR,
+						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+						 errmsg("FDW adapter for relation \"%s\" doesn't support COPY FROM",
+								RelationGetRelationName(rri->ri_RelationDesc))));
+			fdw_routine->BeginForeignCopyFrom(estate, rri, cstate, parent_relname);
+			return;
+		}
+#endif
+bail_out:
+		elog(ERROR, "cannot copy to foreign partition \"%s\"",
+			 get_rel_name(RelationGetRelid(rri->ri_RelationDesc)));
 	}
 }
 
@@ -723,6 +767,7 @@ static void
 finish_rri_copy(ResultRelInfoHolder *rri_holder,
 				const ResultPartsStorage *rps_storage)
 {
+#ifdef PG_SHARDMAN
 	ResultRelInfo *resultRelInfo = rri_holder->result_rel_info;
 
 	if (resultRelInfo->ri_FdwRoutine)
@@ -730,6 +775,7 @@ finish_rri_copy(ResultRelInfoHolder *rri_holder,
 		resultRelInfo->ri_FdwRoutine->EndForeignCopyFrom(
 			rps_storage->estate, resultRelInfo);
 	}
+#endif
 }
 
 /*
