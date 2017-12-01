@@ -937,8 +937,11 @@ validate_interval_value(PG_FUNCTION_ARGS)
 	/*
 	 * Fetch partitioning expression's type using
 	 * either user's expression or parsed expression.
+	 *
+	 * NOTE: we check number of function's arguments
+	 * in case of late updates (e.g. 1.1 => 1.4).
 	 */
-	if (PG_ARGISNULL(ARG_EXPRESSION_P))
+	if (PG_ARGISNULL(ARG_EXPRESSION_P) || PG_NARGS() <= ARG_EXPRESSION_P)
 	{
 		Datum expr_datum;
 

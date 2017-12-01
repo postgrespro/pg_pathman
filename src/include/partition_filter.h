@@ -53,17 +53,22 @@ typedef struct
 #define RPS_DEFAULT_ENTRY_SIZE		sizeof(ResultPartsStorage)
 #define RPS_DEFAULT_SPECULATIVE		false /* speculative inserts */
 
-/* Forward declaration (for on_new_rri_holder()) */
+#define RPS_CLOSE_RELATIONS			true
+#define RPS_SKIP_RELATIONS			false
+
+/* Neat wrapper for readability */
+#define RPS_RRI_CB(cb, args)		(cb), ((void *) args)
+
+
+/* Forward declaration (for on_rri_holder()) */
 struct ResultPartsStorage;
 typedef struct ResultPartsStorage ResultPartsStorage;
 
 /*
- * Callback to be fired at rri_holder creation.
+ * Callback to be fired at rri_holder creation/destruction.
  */
-typedef void (*on_new_rri_holder)(EState *estate,
-								  ResultRelInfoHolder *rri_holder,
-								  const ResultPartsStorage *rps_storage,
-								  void *arg);
+typedef void (*rri_holder_cb)(ResultRelInfoHolder *rri_holder,
+							  const ResultPartsStorage *rps_storage);
 
 /*
  * Cached ResultRelInfos of partitions.
@@ -71,18 +76,21 @@ typedef void (*on_new_rri_holder)(EState *estate,
 struct ResultPartsStorage
 {
 	ResultRelInfo	   *base_rri;				/* original ResultRelInfo (parent) */
+	EState			   *estate;					/* pointer to executor's state */
+	CmdType				command_type;			/* INSERT | UPDATE */
 
 	HTAB			   *result_rels_table;
 	HASHCTL				result_rels_table_config;
 
 	bool				speculative_inserts;	/* for ExecOpenIndices() */
 
-	on_new_rri_holder	on_new_rri_holder_callback;
-	void			   *callback_arg;
+	rri_holder_cb		init_rri_holder_cb;
+	void			   *init_rri_holder_cb_arg;
 
-	EState			   *estate;					/* pointer to executor's state */
+	rri_holder_cb		fini_rri_holder_cb;
+	void			   *fini_rri_holder_cb_arg;
 
-	CmdType				command_type;			/* INSERT | UPDATE */
+	bool				close_relations;
 	LOCKMODE			head_open_lock_mode;
 	LOCKMODE			heap_close_lock_mode;
 };
@@ -148,13 +156,15 @@ void init_result_parts_storage(ResultPartsStorage *parts_storage,
 							   EState *estate,
 							   CmdType cmd_type,
 							   Size table_entry_size,
+							   bool close_relations,
 							   bool speculative_inserts,
-							   on_new_rri_holder on_new_rri_holder_cb,
-							   void *on_new_rri_holder_cb_arg);
+							   rri_holder_cb init_rri_holder_cb,
+							   void *init_rri_holder_cb_arg,
+							   rri_holder_cb fini_rri_holder_cb,
+							   void *fini_rri_holder_cb_arg);
 
 /* Free storage and opened relations */
-void fini_result_parts_storage(ResultPartsStorage *parts_storage,
-							   bool close_rels);
+void fini_result_parts_storage(ResultPartsStorage *parts_storage);
 
 /* Find ResultRelInfo holder in storage */
 ResultRelInfoHolder * scan_result_parts_storage(Oid partid,
