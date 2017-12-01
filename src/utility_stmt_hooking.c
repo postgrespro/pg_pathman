@@ -718,43 +718,23 @@ prepare_rri_for_copy(ResultRelInfoHolder *rri_holder,
 		/*
 		 * If this Postgres has no idea about shardman, behave as usual:
 		 * vanilla Postgres doesn't support COPY FROM to foreign partitions.
-		 * However, shardman patches to core extend FDW API to allow it,
-		 * though currently postgres_fdw does so in a bit perverted way: we
-		 * redirect COPY FROM to parent table on foreign server, assuming it
-		 * exists, and let it direct tuple to proper partition. This is
-		 * because otherwise we have to modify logic of managing connections
-		 * in postgres_fdw and keep many connections open to one server from
-		 * one backend.
+		 * However, shardman patches to core extend FDW API to allow it.
 		 */
-#ifndef PG_SHARDMAN
-		goto bail_out; /* to avoid 'unused label' warning */
-#else
-		{ /* separate block to avoid 'unused var' warnings */
+#ifdef PG_SHARDMAN
+		/* shardman COPY FROM requested? */
+		if (*find_rendezvous_variable(
+				"shardman_pathman_copy_from_rendezvous") != NULL &&
+			FdwCopyFromIsSupported(fdw_routine))
+		{
 			CopyState		cstate = (CopyState) rps_storage->callback_arg;
-			ResultRelInfo	*parent_rri;
-			const char		*parent_relname;
-			EState		   	*estate;
+			ResultRelInfo	*parent_rri = rps_storage->saved_rel_info;
+			EState			*estate = rps_storage->estate;
 
-			/* shardman COPY FROM requested? */
-			if (*find_rendezvous_variable(
-					"shardman_pathman_copy_from_rendezvous") == NULL)
-				goto bail_out;
-
-			estate = rps_storage->estate;
-			parent_rri = rps_storage->saved_rel_info;
-			parent_relname = psprintf(
-				"%s.%s", "public",
-				quote_identifier(RelationGetRelationName(parent_rri->ri_RelationDesc)));
-			if (!FdwCopyFromIsSupported(fdw_routine))
-				ereport(ERROR,
-						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-						 errmsg("FDW adapter for relation \"%s\" doesn't support COPY FROM",
-								RelationGetRelationName(rri->ri_RelationDesc))));
-			fdw_routine->BeginForeignCopyFrom(estate, rri, cstate, parent_relname);
+			fdw_routine->BeginForeignCopyFrom(estate, rri, cstate, parent_rri);
 			return;
 		}
 #endif
-bail_out:
+
 		elog(ERROR, "cannot copy to foreign partition \"%s\"",
 			 get_rel_name(RelationGetRelid(rri->ri_RelationDesc)));
 	}
