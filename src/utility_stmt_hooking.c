@@ -22,6 +22,7 @@
 #include "access/xact.h"
 #include "catalog/namespace.h"
 #include "commands/copy.h"
+#include "commands/defrem.h"
 #include "commands/trigger.h"
 #include "commands/tablecmds.h"
 #include "foreign/fdwapi.h"
@@ -64,10 +65,10 @@ static uint64 PathmanCopyFrom(CopyState cstate,
 							  List *range_table,
 							  bool old_protocol);
 
-static void prepare_rri_for_copy(EState *estate,
-								 ResultRelInfoHolder *rri_holder,
-								 const ResultPartsStorage *rps_storage,
-								 void *arg);
+static void prepare_rri_for_copy(ResultRelInfoHolder *rri_holder,
+								 const ResultPartsStorage *rps_storage);
+static void finish_rri_copy(ResultRelInfoHolder *rri_holder,
+							const ResultPartsStorage *rps_storage);
 
 
 /*
@@ -110,12 +111,18 @@ is_pathman_related_copy(Node *parsetree)
 		/* Analyze options list */
 		foreach (lc, copy_stmt->options)
 		{
-			DefElem *defel = (DefElem *) lfirst(lc);
-
-			Assert(IsA(defel, DefElem));
+			DefElem *defel = lfirst_node(DefElem, lc);
 
 			/* We do not support freeze */
-			if (strcmp(defel->defname, "freeze") == 0)
+			/*
+			 * It would be great to allow copy.c extract option value and
+			 * check it ready. However, there is no possibility (hooks) to do
+			 * that before messaging 'ok, begin streaming data' to the client,
+			 * which is ugly and confusing: e.g. it would require us to
+			 * actually send something in regression tests before we notice
+			 * the error.
+			 */
+			if (strcmp(defel->defname, "freeze") == 0 && defGetBoolean(defel))
 				elog(ERROR, "freeze is not supported for partitioned tables");
 		}
 
@@ -481,7 +488,6 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 
 	uint64				processed = 0;
 
-
 	tupDesc = RelationGetDescr(parent_rel);
 
 	parent_result_rel = makeNode(ResultRelInfo);
@@ -499,7 +505,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	/* Initialize ResultPartsStorage */
 	init_result_parts_storage(&parts_storage, estate, false,
 							  ResultPartsStorageStandard,
-							  prepare_rri_for_copy, NULL);
+							  prepare_rri_for_copy, cstate);
 	parts_storage.saved_rel_info = parent_result_rel;
 
 	/* Set up a tuple slot too */
@@ -634,13 +640,22 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 			/* Check the constraints of the tuple */
 			if (child_result_rel->ri_RelationDesc->rd_att->constr)
 				ExecConstraints(child_result_rel, slot, estate);
+			if (!child_result_rel->ri_FdwRoutine)
+			{
+				/* OK, store the tuple and create index entries for it */
+				simple_heap_insert(child_result_rel->ri_RelationDesc, tuple);
 
-			/* OK, store the tuple and create index entries for it */
-			simple_heap_insert(child_result_rel->ri_RelationDesc, tuple);
-
-			if (child_result_rel->ri_NumIndices > 0)
-				recheckIndexes = ExecInsertIndexTuples(slot, &(tuple->t_self),
-													   estate, false, NULL, NIL);
+				if (child_result_rel->ri_NumIndices > 0)
+					recheckIndexes = ExecInsertIndexTuples(slot, &(tuple->t_self),
+														   estate, false, NULL, NIL);
+			}
+#ifdef PG_SHARDMAN
+			else /* FDW table */
+			{
+				child_result_rel->ri_FdwRoutine->ForeignNextCopyFrom(
+					estate, child_result_rel, cstate);
+			}
+#endif
 
 			/* AFTER ROW INSERT Triggers (FIXME: NULL transition) */
 			ExecARInsertTriggersCompat(estate, child_result_rel, tuple,
@@ -678,7 +693,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	ExecResetTupleTable(estate->es_tupleTable, false);
 
 	/* Close partitions and destroy hash table */
-	fini_result_parts_storage(&parts_storage, true);
+	fini_result_parts_storage(&parts_storage, true, finish_rri_copy);
 
 	/* Close parent's indices */
 	ExecCloseIndices(parent_result_rel);
@@ -689,20 +704,58 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 }
 
 /*
- * COPY FROM does not support FDWs, emit ERROR.
+ * Init COPY FROM, if supported.
  */
 static void
-prepare_rri_for_copy(EState *estate,
-					 ResultRelInfoHolder *rri_holder,
-					 const ResultPartsStorage *rps_storage,
-					 void *arg)
+prepare_rri_for_copy(ResultRelInfoHolder *rri_holder,
+					 const ResultPartsStorage *rps_storage)
 {
-	ResultRelInfo  *rri = rri_holder->result_rel_info;
-	FdwRoutine	   *fdw_routine = rri->ri_FdwRoutine;
+	ResultRelInfo	*rri = rri_holder->result_rel_info;
+	FdwRoutine		*fdw_routine = rri->ri_FdwRoutine;
 
 	if (fdw_routine != NULL)
+	{
+		/*
+		 * If this Postgres has no idea about shardman, behave as usual:
+		 * vanilla Postgres doesn't support COPY FROM to foreign partitions.
+		 * However, shardman patches to core extend FDW API to allow it.
+		 */
+#ifdef PG_SHARDMAN
+		/* shardman COPY FROM requested? */
+		if (*find_rendezvous_variable(
+				"shardman_pathman_copy_from_rendezvous") != NULL &&
+			FdwCopyFromIsSupported(fdw_routine))
+		{
+			CopyState		cstate = (CopyState) rps_storage->callback_arg;
+			ResultRelInfo	*parent_rri = rps_storage->saved_rel_info;
+			EState			*estate = rps_storage->estate;
+
+			fdw_routine->BeginForeignCopyFrom(estate, rri, cstate, parent_rri);
+			return;
+		}
+#endif
+
 		elog(ERROR, "cannot copy to foreign partition \"%s\"",
 			 get_rel_name(RelationGetRelid(rri->ri_RelationDesc)));
+	}
+}
+
+/*
+ * Shut down FDWs.
+ */
+static void
+finish_rri_copy(ResultRelInfoHolder *rri_holder,
+				const ResultPartsStorage *rps_storage)
+{
+#ifdef PG_SHARDMAN
+	ResultRelInfo *resultRelInfo = rri_holder->result_rel_info;
+
+	if (resultRelInfo->ri_FdwRoutine)
+	{
+		resultRelInfo->ri_FdwRoutine->EndForeignCopyFrom(
+			rps_storage->estate, resultRelInfo);
+	}
+#endif
 }
 
 /*

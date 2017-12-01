@@ -43,17 +43,15 @@ typedef struct
 } ResultRelInfoHolder;
 
 
-/* Forward declaration (for on_new_rri_holder()) */
+/* Forward declaration (for on_rri_holder()) */
 struct ResultPartsStorage;
 typedef struct ResultPartsStorage ResultPartsStorage;
 
 /*
- * Callback to be fired at rri_holder creation.
+ * Callback to be fired at rri_holder creation/destruction.
  */
-typedef void (*on_new_rri_holder)(EState *estate,
-								  ResultRelInfoHolder *rri_holder,
-								  const ResultPartsStorage *rps_storage,
-								  void *arg);
+typedef void (*on_rri_holder)(ResultRelInfoHolder *rri_holder,
+							  const ResultPartsStorage *rps_storage);
 
 /*
  * Cached ResultRelInfos of partitions.
@@ -66,7 +64,7 @@ struct ResultPartsStorage
 
 	bool				speculative_inserts;	/* for ExecOpenIndices() */
 
-	on_new_rri_holder	on_new_rri_holder_callback;
+	on_rri_holder		on_new_rri_holder_callback;
 	void			   *callback_arg;
 
 	EState			   *estate;					/* pointer to executor's state */
@@ -116,11 +114,11 @@ void init_result_parts_storage(ResultPartsStorage *parts_storage,
 							   EState *estate,
 							   bool speculative_inserts,
 							   Size table_entry_size,
-							   on_new_rri_holder on_new_rri_holder_cb,
+							   on_rri_holder on_new_rri_holder_cb,
 							   void *on_new_rri_holder_cb_arg);
 
 void fini_result_parts_storage(ResultPartsStorage *parts_storage,
-							   bool close_rels);
+							   bool close_rels, on_rri_holder hook);
 
 ResultRelInfoHolder * scan_result_parts_storage(Oid partid,
 												ResultPartsStorage *storage);
