@@ -10,7 +10,6 @@
  * ------------------------------------------------------------------------
  */
 
-#include "compat/relation_tags.h"
 #include "compat/rowmarks_fix.h"
 
 #include "partition_filter.h"
@@ -102,8 +101,6 @@ static void disable_standard_inheritance(Query *parse, transform_query_cxt *cont
 static void handle_modification_query(Query *parse, transform_query_cxt *context);
 
 static void partition_filter_visitor(Plan *plan, void *context);
-
-static rel_parenthood_status tag_extract_parenthood_status(List *relation_tag);
 
 static Node *eval_extern_params_mutator(Node *node, ParamListInfo params);
 
@@ -353,13 +350,11 @@ disable_standard_inheritance(Query *parse, transform_query_cxt *context)
 				rte->inh = false;
 
 				/* Try marking it using PARENTHOOD_ALLOWED */
-				assign_rel_parenthood_status(parse->queryId, rte,
-											 PARENTHOOD_ALLOWED);
+				assign_rel_parenthood_status(rte, PARENTHOOD_ALLOWED);
 			}
 		}
 		/* Else try marking it using PARENTHOOD_DISALLOWED */
-		else assign_rel_parenthood_status(parse->queryId, rte,
-										  PARENTHOOD_DISALLOWED);
+		else assign_rel_parenthood_status(rte, PARENTHOOD_DISALLOWED);
 	}
 }
 
@@ -567,57 +562,32 @@ partition_filter_visitor(Plan *plan, void *context)
  * -----------------------------------------------
  */
 
+#define RPS_STATUS_ASSIGNED		( (uint32) (1 << 31) )
+#define RPS_ENABLE_PARENT		( (uint32) (1 << 30) )
+
 /* Set parenthood status (per query level) */
 void
-assign_rel_parenthood_status(uint32 query_id,
-							 RangeTblEntry *rte,
+assign_rel_parenthood_status(RangeTblEntry *rte,
 							 rel_parenthood_status new_status)
 {
-
-	List *old_relation_tag;
-
-	old_relation_tag = rte_attach_tag(query_id, rte,
-									  make_rte_tag_int(PARENTHOOD_TAG,
-													   new_status));
-
-	/* We already have a PARENTHOOD_TAG, examine it's value */
-	if (old_relation_tag &&
-		tag_extract_parenthood_status(old_relation_tag) != new_status)
-	{
-		elog(ERROR,
-			 "it is prohibited to apply ONLY modifier to partitioned "
-			 "tables which have already been mentioned without ONLY");
-	}
+	/* HACK: set relevant bits in RTE */
+	rte->requiredPerms |= RPS_STATUS_ASSIGNED;
+	if (new_status == PARENTHOOD_ALLOWED)
+		rte->requiredPerms |= RPS_ENABLE_PARENT;
 }
 
 /* Get parenthood status (per query level) */
 rel_parenthood_status
-get_rel_parenthood_status(uint32 query_id, RangeTblEntry *rte)
+get_rel_parenthood_status(RangeTblEntry *rte)
 {
-	List *relation_tag;
-
-	relation_tag = rte_fetch_tag(query_id, rte, PARENTHOOD_TAG);
-	if (relation_tag)
-		return tag_extract_parenthood_status(relation_tag);
+	/* HACK: check relevant bits in RTE */
+	if (rte->requiredPerms & RPS_STATUS_ASSIGNED)
+		return (rte->requiredPerms & RPS_ENABLE_PARENT) ?
+					PARENTHOOD_ALLOWED :
+					PARENTHOOD_DISALLOWED;
 
 	/* Not found, return stub value */
 	return PARENTHOOD_NOT_SET;
-}
-
-static rel_parenthood_status
-tag_extract_parenthood_status(List *relation_tag)
-{
-	const Value			   *value;
-	rel_parenthood_status	status;
-
-	rte_deconstruct_tag(relation_tag, NULL, &value);
-	Assert(value && IsA(value, Integer));
-
-	status = (rel_parenthood_status) intVal(value);
-	Assert(status >= PARENTHOOD_NOT_SET &&
-		   status <= PARENTHOOD_ALLOWED);
-
-	return status;
 }
 
 
@@ -677,4 +647,35 @@ eval_extern_params_mutator(Node *node, ParamListInfo params)
 
 	return expression_tree_mutator(node, eval_extern_params_mutator,
 								   (void *) params);
+}
+
+
+/*
+ * -----------------------------------------------
+ *  Count number of times we've visited planner()
+ * -----------------------------------------------
+ */
+
+static int32 planner_calls = 0;
+
+void
+incr_planner_calls_count(void)
+{
+	Assert(planner_calls < INT32_MAX);
+
+	planner_calls++;
+}
+
+void
+decr_planner_calls_count(void)
+{
+	Assert(planner_calls > 0);
+
+	planner_calls--;
+}
+
+int32
+get_planner_calls_count(void)
+{
+	return planner_calls;
 }

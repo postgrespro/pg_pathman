@@ -11,7 +11,6 @@
  */
 
 #include "compat/pg_compat.h"
-#include "compat/relation_tags.h"
 #include "compat/rowmarks_fix.h"
 
 #include "hooks.h"
@@ -153,8 +152,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	}
 
 	/* Skip if inner table is not allowed to act as parent (e.g. FROM ONLY) */
-	if (PARENTHOOD_DISALLOWED == get_rel_parenthood_status(root->parse->queryId,
-														   inner_rte))
+	if (PARENTHOOD_DISALLOWED == get_rel_parenthood_status(inner_rte))
 		return;
 
 	/*
@@ -340,7 +338,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 #endif
 
 	/* Skip if this table is not allowed to act as parent (e.g. FROM ONLY) */
-	if (PARENTHOOD_DISALLOWED == get_rel_parenthood_status(root->parse->queryId, rte))
+	if (PARENTHOOD_DISALLOWED == get_rel_parenthood_status(rte))
 		return;
 
 	/* Proceed iff relation 'rel' is partitioned */
@@ -626,8 +624,8 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	{
 		if (pathman_ready)
 		{
-			/* Increment relation tags refcount */
-			incr_refcount_relation_tags();
+			/* Increase planner() calls count */
+			incr_planner_calls_count();
 
 			/* Modify query tree if needed */
 			pathman_transform_query(parse, boundParams);
@@ -644,8 +642,8 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 			/* Add PartitionFilter node for INSERT queries */
 			ExecuteForPlanTree(result, add_partition_filters);
 
-			/* Decrement relation tags refcount */
-			decr_refcount_relation_tags();
+			/* Decrement planner() calls count */
+			decr_planner_calls_count();
 
 			/* HACK: restore queryId set by pg_stat_statements */
 			result->queryId = query_id;
@@ -656,8 +654,8 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	{
 		if (pathman_ready)
 		{
-			/* Caught an ERROR, decrease refcount */
-			decr_refcount_relation_tags();
+			/* Caught an ERROR, decrease count */
+			decr_planner_calls_count();
 		}
 
 		/* Rethrow ERROR further */
@@ -735,7 +733,7 @@ pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
 	}
 
 	/* Process inlined SQL functions (we've already entered planning stage) */
-	if (IsPathmanReady() && get_refcount_relation_tags() > 0)
+	if (IsPathmanReady() && get_planner_calls_count() > 0)
 	{
 		/* Check that pg_pathman is the last extension loaded */
 		if (post_parse_analyze_hook != pathman_post_parse_analysis_hook)

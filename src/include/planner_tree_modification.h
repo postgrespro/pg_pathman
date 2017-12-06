@@ -44,12 +44,16 @@ typedef enum
 	PARENTHOOD_ALLOWED		/* children are enabled (default) */
 } rel_parenthood_status;
 
-void assign_rel_parenthood_status(uint32 query_id,
-								  RangeTblEntry *rte,
+void assign_rel_parenthood_status(RangeTblEntry *rte,
 								  rel_parenthood_status new_status);
 
-rel_parenthood_status get_rel_parenthood_status(uint32 query_id,
-												RangeTblEntry *rte);
+rel_parenthood_status get_rel_parenthood_status(RangeTblEntry *rte);
+
+
+/* used to determine nested planner() calls */
+void incr_planner_calls_count(void);
+void decr_planner_calls_count(void);
+int32 get_planner_calls_count(void);
 
 
 #endif /* PLANNER_TREE_MODIFICATION_H */
