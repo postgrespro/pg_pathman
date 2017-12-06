@@ -562,27 +562,31 @@ partition_filter_visitor(Plan *plan, void *context)
  * -----------------------------------------------
  */
 
-#define RPS_STATUS_ASSIGNED		( (uint32) (1 << 31) )
-#define RPS_ENABLE_PARENT		( (uint32) (1 << 30) )
+#define RPS_STATUS_ASSIGNED		( (Index) 0x2 )
+#define RPS_ENABLE_PARENT		( (Index) 0x1 )
 
 /* Set parenthood status (per query level) */
 void
 assign_rel_parenthood_status(RangeTblEntry *rte,
 							 rel_parenthood_status new_status)
-{
+{	
+	Assert(rte->rtekind != RTE_CTE);
+
 	/* HACK: set relevant bits in RTE */
-	rte->requiredPerms |= RPS_STATUS_ASSIGNED;
+	rte->ctelevelsup |= RPS_STATUS_ASSIGNED;
 	if (new_status == PARENTHOOD_ALLOWED)
-		rte->requiredPerms |= RPS_ENABLE_PARENT;
+		rte->ctelevelsup |= RPS_ENABLE_PARENT;
 }
 
 /* Get parenthood status (per query level) */
 rel_parenthood_status
 get_rel_parenthood_status(RangeTblEntry *rte)
 {
+	Assert(rte->rtekind != RTE_CTE);
+
 	/* HACK: check relevant bits in RTE */
-	if (rte->requiredPerms & RPS_STATUS_ASSIGNED)
-		return (rte->requiredPerms & RPS_ENABLE_PARENT) ?
+	if (rte->ctelevelsup & RPS_STATUS_ASSIGNED)
+		return (rte->ctelevelsup & RPS_ENABLE_PARENT) ?
 					PARENTHOOD_ALLOWED :
 					PARENTHOOD_DISALLOWED;
 
