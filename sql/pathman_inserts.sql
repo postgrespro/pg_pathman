@@ -199,5 +199,24 @@ INSERT INTO test_inserts.test_gap VALUES(15); /* not ok */
 DROP TABLE test_inserts.test_gap CASCADE;
 
 
+/* test a few "special" ONLY queries used in pg_repack */
+CREATE TABLE test_inserts.test_special_only(val INT NOT NULL);
+INSERT INTO test_inserts.test_special_only SELECT generate_series(1, 30);
+SELECT create_hash_partitions('test_inserts.test_special_only', 'val', 4);
+
+/* create table as select only */
+CREATE TABLE test_inserts.special_1 AS SELECT * FROM ONLY test_inserts.test_special_only;
+SELECT count(*) FROM test_inserts.special_1;
+DROP TABLE test_inserts.special_1;
+
+/* insert into ... select only */
+CREATE TABLE test_inserts.special_2 AS SELECT * FROM ONLY test_inserts.test_special_only WITH NO DATA;
+INSERT INTO test_inserts.special_2 SELECT * FROM ONLY test_inserts.test_special_only;
+SELECT count(*) FROM test_inserts.special_2;
+DROP TABLE test_inserts.special_2;
+
+DROP TABLE test_inserts.test_special_only CASCADE;
+
+
 DROP SCHEMA test_inserts CASCADE;
 DROP EXTENSION pg_pathman CASCADE;
