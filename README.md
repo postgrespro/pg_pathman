@@ -165,13 +165,9 @@ Stops a background worker performing a concurrent partitioning task. Note: worke
 
 ### Triggers
 ```plpgsql
-create_hash_update_trigger(parent REGCLASS)
+create_update_triggers(parent REGCLASS)
 ```
-Creates the trigger on UPDATE for HASH partitions. The UPDATE trigger isn't created by default because of the overhead. It's useful in cases when the partitioning expression's value might change.
-```plpgsql
-create_range_update_trigger(parent REGCLASS)
-```
-Same as above, but for a RANGE-partitioned table.
+Creates a for-each-row trigger to enable cross-partition UPDATE on a table partitioned by HASH/RANGE. The trigger is not created automatically because of the overhead caused by its function. You don't have to use this feature unless partitioning key might change during an UPDATE.
 
 ### Post-creation partition management
 ```plpgsql
