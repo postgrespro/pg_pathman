@@ -665,7 +665,7 @@ static int32 planner_calls = 0;
 void
 incr_planner_calls_count(void)
 {
-	Assert(planner_calls < INT32_MAX);
+	Assert(planner_calls < PG_INT32_MAX);
 
 	planner_calls++;
 }
