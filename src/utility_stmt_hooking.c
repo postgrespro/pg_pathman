@@ -111,7 +111,7 @@ is_pathman_related_copy(Node *parsetree)
 		/* Analyze options list */
 		foreach (lc, copy_stmt->options)
 		{
-			DefElem *defel = lfirst_node(DefElem, lc);
+			DefElem *defel = (DefElem *) lfirst(lc);
 
 			/* We do not support freeze */
 			/*
