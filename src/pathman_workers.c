@@ -185,17 +185,16 @@ start_bgworker(const char bgworker_name[BGW_MAXLEN],
 	pid_t					pid;
 
 	/* Initialize worker struct */
-	memcpy(worker.bgw_name, bgworker_name, BGW_MAXLEN);
-	memcpy(worker.bgw_function_name, bgworker_proc, BGW_MAXLEN);
-	memcpy(worker.bgw_library_name, "pg_pathman", BGW_MAXLEN);
+	memset(&worker, 0, sizeof(worker));
+
+	snprintf(worker.bgw_name, BGW_MAXLEN, "%s", bgworker_name);
+	snprintf(worker.bgw_function_name, BGW_MAXLEN, "%s", bgworker_proc);
+	snprintf(worker.bgw_library_name, BGW_MAXLEN, "pg_pathman");
 
 	worker.bgw_flags			= BGWORKER_SHMEM_ACCESS |
 									BGWORKER_BACKEND_DATABASE_CONNECTION;
 	worker.bgw_start_time		= BgWorkerStart_RecoveryFinished;
 	worker.bgw_restart_time		= BGW_NEVER_RESTART;
-#if PG_VERSION_NUM < 100000
-	worker.bgw_main				= NULL;
-#endif
 	worker.bgw_main_arg			= bgw_arg;
 	worker.bgw_notify_pid		= MyProcPid;
 
