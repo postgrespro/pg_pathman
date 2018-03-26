@@ -272,7 +272,7 @@ Enable/disable auto partition propagation (only for RANGE partitioning). It is e
 ```plpgsql
 set_init_callback(relation REGCLASS, callback REGPROC DEFAULT 0)
 ```
-Set partition creation callback to be invoked for each attached or created partition (both HASH and RANGE). The callback must have the following signature: `part_init_callback(args JSONB) RETURNS VOID`. Parameter `arg` consists of several fields whose presence depends on partitioning type:
+Set partition creation callback to be invoked for each attached or created partition (both HASH and RANGE). If callback is marked with SECURITY INVOKER, it's executed with the privileges of the user that produced a statement which has led to creation of a new partition (e.g. `INSERT INTO partitioned_table VALUES (-5)`). The callback must have the following signature: `part_init_callback(args JSONB) RETURNS VOID`. Parameter `arg` consists of several fields whose presence depends on partitioning type:
 ```json
 /* RANGE-partitioned table abc (child abc_4) */
 {
