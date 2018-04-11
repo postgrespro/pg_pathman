@@ -551,6 +551,12 @@ ORDER BY partition;
 
 DROP TABLE test.provided_part_names CASCADE;
 
+/* Check that multilivel is prohibited */
+CREATE TABLE test.multi(key int NOT NULL);
+SELECT create_hash_partitions('test.multi', 'key', 3);
+SELECT create_hash_partitions('test.multi_1', 'key', 3);
+DROP TABLE test.multi CASCADE;
+
 
 DROP SCHEMA test CASCADE;
 DROP EXTENSION pg_pathman CASCADE;

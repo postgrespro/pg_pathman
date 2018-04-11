@@ -765,6 +765,7 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	Datum				expr_datum;
 
 	PathmanInitState	init_state;
+	PartParentSearch	parent_search;
 
 	if (!PG_ARGISNULL(0))
 	{
@@ -796,6 +797,15 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 				 errmsg("only the owner or superuser can change "
 						"partitioning configuration of table \"%s\"",
 						get_rel_name_or_relid(relid))));
+	}
+
+	/* Check if it's a partition */
+	if (get_parent_of_partition(relid, &parent_search) &&
+		parent_search == PPS_ENTRY_PART_PARENT)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("multilevel partitioning is not supported")));
 	}
 
 	/* Select partitioning type */
