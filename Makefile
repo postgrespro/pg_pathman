@@ -37,6 +37,7 @@ REGRESS = pathman_array_qual \
 		  pathman_column_type \
 		  pathman_cte \
 		  pathman_domains \
+		  pathman_dropped_cols \
 		  pathman_expressions \
 		  pathman_foreign_keys \
 		  pathman_gaps \

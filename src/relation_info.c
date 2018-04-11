@@ -976,7 +976,7 @@ delay_invalidation_vague_rel(Oid vague_rel)
 /* Finish all pending invalidation jobs if possible */
 void
 finish_delayed_invalidation(void)
-{	
+{
 	/* Exit early if there's nothing to do */
 	if (delayed_invalidation_whole_cache  == false &&
 		delayed_invalidation_parent_rels == NIL &&

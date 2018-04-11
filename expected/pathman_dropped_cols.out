@@ -1,0 +1,84 @@
+\set VERBOSITY terse
+SET search_path = 'public';
+CREATE EXTENSION pg_pathman;
+CREATE SCHEMA dropped_cols;
+/*
+ * we should be able to manage tables with dropped columns
+ */
+create table test_range(a int, b int, key int not null);
+alter table test_range drop column a;
+select create_range_partitions('test_range', 'key', 1, 10, 2);
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+alter table test_range drop column b;
+select prepend_range_partition('test_range');
+ prepend_range_partition 
+-------------------------
+ test_range_3
+(1 row)
+
+select * from pathman_partition_list order by parent, partition;
+   parent   |  partition   | parttype | expr | range_min | range_max 
+------------+--------------+----------+------+-----------+-----------
+ test_range | test_range_1 |        2 | key  | 1         | 11
+ test_range | test_range_2 |        2 | key  | 11        | 21
+ test_range | test_range_3 |        2 | key  | -9        | 1
+(3 rows)
+
+select pg_get_constraintdef(oid, true) from pg_constraint where conname = 'pathman_test_range_1_check';
+     pg_get_constraintdef      
+-------------------------------
+ CHECK (key >= 1 AND key < 11)
+(1 row)
+
+select pg_get_constraintdef(oid, true) from pg_constraint where conname = 'pathman_test_range_3_check';
+           pg_get_constraintdef           
+------------------------------------------
+ CHECK (key >= '-9'::integer AND key < 1)
+(1 row)
+
+drop table test_range cascade;
+NOTICE:  drop cascades to 4 other objects
+create table test_hash(a int, b int, key int not null);
+alter table test_hash drop column a;
+select create_hash_partitions('test_hash', 'key', 3);
+ create_hash_partitions 
+------------------------
+                      3
+(1 row)
+
+alter table test_hash drop column b;
+create table test_dummy (like test_hash);
+select replace_hash_partition('test_hash_2', 'test_dummy', true);
+ replace_hash_partition 
+------------------------
+ test_dummy
+(1 row)
+
+select * from pathman_partition_list order by parent, partition;
+  parent   |  partition  | parttype | expr | range_min | range_max 
+-----------+-------------+----------+------+-----------+-----------
+ test_hash | test_hash_0 |        1 | key  |           | 
+ test_hash | test_hash_1 |        1 | key  |           | 
+ test_hash | test_dummy  |        1 | key  |           | 
+(3 rows)
+
+select pg_get_constraintdef(oid, true) from pg_constraint where conname = 'pathman_test_hash_1_check';
+              pg_get_constraintdef               
+-------------------------------------------------
+ CHECK (get_hash_part_idx(hashint4(key), 3) = 1)
+(1 row)
+
+select pg_get_constraintdef(oid, true) from pg_constraint where conname = 'pathman_test_dummy_check';
+              pg_get_constraintdef               
+-------------------------------------------------
+ CHECK (get_hash_part_idx(hashint4(key), 3) = 2)
+(1 row)
+
+drop table test_hash cascade;
+NOTICE:  drop cascades to 3 other objects
+DROP SCHEMA dropped_cols CASCADE;
+DROP EXTENSION pg_pathman;
