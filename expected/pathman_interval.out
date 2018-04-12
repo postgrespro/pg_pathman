@@ -1,4 +1,5 @@
 \set VERBOSITY terse
+SET search_path = 'public';
 CREATE EXTENSION pg_pathman;
 CREATE SCHEMA test_interval;
 /* Range partitions for INT2 type */
