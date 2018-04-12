@@ -674,18 +674,7 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 
 		/* Set xmin if necessary */
 		if (xmin)
-		{
-			Datum	value;
-			bool	isnull;
-
-			value = heap_getsysattr(htup,
-									MinTransactionIdAttributeNumber,
-									RelationGetDescr(rel),
-									&isnull);
-
-			Assert(!isnull);
-			*xmin = DatumGetTransactionId(value);
-		}
+			*xmin = HeapTupleHeaderGetXmin(htup->t_data);
 
 		/* Set ItemPointer if necessary */
 		if (iptr)

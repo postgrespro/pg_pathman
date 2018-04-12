@@ -162,8 +162,8 @@ xact_is_alter_pathman_stmt(Node *stmt)
 bool
 xact_object_is_visible(TransactionId obj_xmin)
 {
-	return TransactionIdPrecedes(obj_xmin, GetCurrentTransactionId()) ||
-		   TransactionIdEquals(obj_xmin, FrozenTransactionId);
+	return TransactionIdEquals(obj_xmin, FrozenTransactionId) ||
+		   TransactionIdPrecedes(obj_xmin, GetCurrentTransactionId());
 }
 
 /*
