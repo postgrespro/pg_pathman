@@ -218,7 +218,7 @@ refresh_pathman_relation_info(Oid relid,
 	prel->ev_typmod	= exprTypmod(prel->expr);
 	prel->ev_collid = exprCollation(prel->expr);
 
-	/* Fetch HASH & CMP fuctions and other stuff from type cache */
+	/* Fetch HASH & CMP functions and other stuff from type cache */
 	typcache = lookup_type_cache(prel->ev_type,
 								 TYPECACHE_CMP_PROC | TYPECACHE_HASH_PROC);
 

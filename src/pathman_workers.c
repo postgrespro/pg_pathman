@@ -599,7 +599,7 @@ bgw_main_concurrent_part(Datum main_arg)
 			error = CopyErrorData();
 			FlushErrorState();
 
-			/* Print messsage for this BGWorker to server log */
+			/* Print message for this BGWorker to server log */
 			ereport(LOG,
 					(errmsg("%s: %s", concurrent_part_bgw, error->message),
 					 errdetail("attempt: %d/%d, sleep time: %.2f",

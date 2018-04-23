@@ -600,7 +600,7 @@ pathman_enable_assign_hook(bool newval, void *extra)
 
 /*
  * Planner hook. It disables inheritance for tables that have been partitioned
- * by pathman to prevent standart PostgreSQL partitioning mechanism from
+ * by pathman to prevent standard PostgreSQL partitioning mechanism from
  * handling that tables.
  */
 PlannedStmt *

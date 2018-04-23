@@ -161,7 +161,7 @@ typedef struct
 	int				ev_align;		/* alignment of the expression val's type */
 	Oid				ev_collid;		/* collation of the expression val */
 
-	Oid				cmp_proc,		/* comparison fuction for 'ev_type' */
+	Oid				cmp_proc,		/* comparison function for 'ev_type' */
 					hash_proc;		/* hash function for 'ev_type' */
 
 	MemoryContext	mcxt;			/* memory context holding this struct */

@@ -377,7 +377,7 @@ perform_type_cast(Datum value, Oid in_type, Oid out_type, bool *success)
 	if (IsBinaryCoercible(in_type, out_type))
 		return value;
 
-	/* If not, try to perfrom a type cast */
+	/* If not, try to perform a type cast */
 	ret = find_coercion_pathway(out_type, in_type,
 								COERCION_EXPLICIT,
 								&castfunc);
@@ -422,7 +422,7 @@ perform_type_cast(Datum value, Oid in_type, Oid out_type, bool *success)
 }
 
 /*
- * Convert interval from TEXT to binary form using partitioninig expresssion type.
+ * Convert interval from TEXT to binary form using partitioninig expression type.
  */
 Datum
 extract_binary_interval_from_text(Datum interval_text,	/* interval as TEXT */

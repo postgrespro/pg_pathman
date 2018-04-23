@@ -89,7 +89,7 @@ typedef struct
 	/* SubLink that might contain an examined query */
 	SubLink			   *parent_sublink;
 
-	/* CommonTableExpr that might containt an examined query */
+	/* CommonTableExpr that might contain an examined query */
 	CommonTableExpr	   *parent_cte;
 } transform_query_cxt;
 
