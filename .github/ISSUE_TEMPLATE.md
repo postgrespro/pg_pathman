@@ -22,7 +22,5 @@ Explain your problem here (it's always better to provide reproduction steps) ...
 
 <!-- For Postgres Pro: put the result of (SELECT pgpro_edition()) below -->
 
-<!-- For pg_pathman 1.4: put the result of (SELECT get_pathman_lib_version()) below -->
-
-<!-- For pg_pathman 1.5: put the result of (SELECT pathman_version()) below -->
+<!-- put the result of (SELECT get_pathman_lib_version()) below -->
 
