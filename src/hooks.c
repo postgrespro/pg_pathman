@@ -369,6 +369,8 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		 *					   FROM test.tmp2 t2
 		 *					   WHERE id = t.id);
 		 *
+		 * or unions, multilevel partitioning, etc.
+		 *
 		 * Since we disable optimizations on 9.5, we
 		 * have to skip parent table that has already
 		 * been expanded by standard inheritance.
@@ -378,23 +380,18 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			foreach (lc, root->append_rel_list)
 			{
 				AppendRelInfo  *appinfo = (AppendRelInfo *) lfirst(lc);
-				RangeTblEntry  *cur_parent_rte,
-							   *cur_child_rte;
 
-				/*  This 'appinfo' is not for this child */
-				if (appinfo->child_relid != rti)
-					continue;
-
-				cur_parent_rte = root->simple_rte_array[appinfo->parent_relid];
-				cur_child_rte  = rte; /* we already have it, saves time */
-
-				/* This child == its own parent table! */
-				if (cur_parent_rte->relid == cur_child_rte->relid)
+				/*
+				 * If there's an 'appinfo', it means that somebody
+				 * (PG?) has already processed this partitioned table
+				 * and added its children to the plan.
+				 */
+				if (appinfo->child_relid == rti)
 					return;
 			}
 		}
 
-		/* Make copy of partitioning expression and fix Var's  varno attributes */
+		/* Make copy of partitioning expression and fix Var's varno attributes */
 		part_expr = PrelExpressionForRelid(prel, rti);
 
 		/* Get partitioning-related clauses (do this before append_child_relation()) */

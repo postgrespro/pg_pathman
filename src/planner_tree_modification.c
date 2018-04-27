@@ -343,10 +343,7 @@ disable_standard_inheritance(Query *parse, transform_query_cxt *context)
 			/* Proceed if table is partitioned by pg_pathman */
 			if ((prel = get_pathman_relation_info(rte->relid)) != NULL)
 			{
-				/*
-				 * HACK: unset the 'inh' flag to disable standard
-				 * planning. We'll set it again later.
-				 */
+				/* HACK: unset the 'inh' flag to disable standard planning */
 				rte->inh = false;
 
 				/* Try marking it using PARENTHOOD_ALLOWED */
@@ -569,7 +566,7 @@ partition_filter_visitor(Plan *plan, void *context)
 void
 assign_rel_parenthood_status(RangeTblEntry *rte,
 							 rel_parenthood_status new_status)
-{	
+{
 	Assert(rte->rtekind != RTE_CTE);
 
 	/* HACK: set relevant bits in RTE */
