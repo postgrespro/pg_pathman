@@ -13,7 +13,7 @@ SELECT debug_capture();
 SELECT get_pathman_lib_version();
  get_pathman_lib_version 
 -------------------------
- 10410
+ 1.4.10
 (1 row)
 
 set client_min_messages = NOTICE;

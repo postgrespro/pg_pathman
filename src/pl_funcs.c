@@ -1606,5 +1606,9 @@ debug_capture(PG_FUNCTION_ARGS)
 Datum
 get_pathman_lib_version(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_CSTRING(psprintf("%x", CURRENT_LIB_VERSION));
+	uint8	ver_major = (CURRENT_LIB_VERSION & 0xFF0000) >> 16,
+			ver_minor = (CURRENT_LIB_VERSION & 0xFF00) >> 8,
+			ver_patch = (CURRENT_LIB_VERSION & 0xFF);
+
+	PG_RETURN_CSTRING(psprintf("%x.%x.%x", ver_major, ver_minor, ver_patch));
 }
