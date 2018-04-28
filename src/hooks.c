@@ -165,8 +165,10 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	/* Extract join clauses which will separate partitions */
 	if (IS_OUTER_JOIN(extra->sjinfo->jointype))
 	{
-		extract_actual_join_clauses(extra->restrictlist,
-									&joinclauses, &otherclauses);
+		extract_actual_join_clauses_compat(extra->restrictlist,
+										   joinrel->relids,
+										   &joinclauses,
+										   &otherclauses);
 	}
 	else
 	{
