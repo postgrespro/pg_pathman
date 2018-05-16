@@ -62,12 +62,12 @@ allow_star_schema_join(PlannerInfo *root,
 }
 
 
-set_join_pathlist_hook_type		set_join_pathlist_next = NULL;
-set_rel_pathlist_hook_type		set_rel_pathlist_hook_next = NULL;
-planner_hook_type				planner_hook_next = NULL;
-post_parse_analyze_hook_type	post_parse_analyze_hook_next = NULL;
-shmem_startup_hook_type			shmem_startup_hook_next = NULL;
-ProcessUtility_hook_type		process_utility_hook_next = NULL;
+set_join_pathlist_hook_type		pathman_set_join_pathlist_next		= NULL;
+set_rel_pathlist_hook_type		pathman_set_rel_pathlist_hook_next	= NULL;
+planner_hook_type				pathman_planner_hook_next			= NULL;
+post_parse_analyze_hook_type	pathman_post_parse_analyze_hook_next = NULL;
+shmem_startup_hook_type			pathman_shmem_startup_hook_next		= NULL;
+ProcessUtility_hook_type		pathman_process_utility_hook_next	= NULL;
 
 
 /* Take care of joins */
@@ -91,9 +91,9 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	ListCell			   *lc;
 
 	/* Call hooks set by other extensions */
-	if (set_join_pathlist_next)
-		set_join_pathlist_next(root, joinrel, outerrel,
-							   innerrel, jointype, extra);
+	if (pathman_set_join_pathlist_next)
+		pathman_set_join_pathlist_next(root, joinrel, outerrel,
+									   innerrel, jointype, extra);
 
 	/* Check that both pg_pathman & RuntimeAppend nodes are enabled */
 	if (!IsPathmanReady() || !pg_pathman_enable_runtimeappend)
@@ -312,8 +312,8 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 	int						irange_len;
 
 	/* Invoke original hook if needed */
-	if (set_rel_pathlist_hook_next != NULL)
-		set_rel_pathlist_hook_next(root, rel, rti, rte);
+	if (pathman_set_rel_pathlist_hook_next)
+		pathman_set_rel_pathlist_hook_next(root, rel, rti, rte);
 
 	/* Make sure that pg_pathman is ready */
 	if (!IsPathmanReady())
@@ -631,8 +631,8 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 		}
 
 		/* Invoke original hook if needed */
-		if (planner_hook_next)
-			result = planner_hook_next(parse, cursorOptions, boundParams);
+		if (pathman_planner_hook_next)
+			result = pathman_planner_hook_next(parse, cursorOptions, boundParams);
 		else
 			result = standard_planner(parse, cursorOptions, boundParams);
 
@@ -671,11 +671,11 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
  * any statement, including utility commands
  */
 void
-pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
+pathman_post_parse_analyze_hook(ParseState *pstate, Query *query)
 {
 	/* Invoke original hook if needed */
-	if (post_parse_analyze_hook_next)
-		post_parse_analyze_hook_next(pstate, query);
+	if (pathman_post_parse_analyze_hook_next)
+		pathman_post_parse_analyze_hook_next(pstate, query);
 
 	/* See cook_partitioning_expression() */
 	if (!pathman_hooks_enabled)
@@ -735,7 +735,7 @@ pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
 	if (IsPathmanReady() && get_planner_calls_count() > 0)
 	{
 		/* Check that pg_pathman is the last extension loaded */
-		if (post_parse_analyze_hook != pathman_post_parse_analysis_hook)
+		if (post_parse_analyze_hook != pathman_post_parse_analyze_hook)
 		{
 			Oid		save_userid;
 			int		save_sec_context;
@@ -786,8 +786,8 @@ void
 pathman_shmem_startup_hook(void)
 {
 	/* Invoke original hook if needed */
-	if (shmem_startup_hook_next != NULL)
-		shmem_startup_hook_next();
+	if (pathman_shmem_startup_hook_next)
+		pathman_shmem_startup_hook_next();
 
 	/* Allocate shared memory objects */
 	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
@@ -942,8 +942,8 @@ pathman_process_utility_hook(Node *first_arg,
 	}
 
 	/* Finally call process_utility_hook_next or standard_ProcessUtility */
-	call_process_utility_compat((process_utility_hook_next ?
-										process_utility_hook_next :
+	call_process_utility_compat((pathman_process_utility_hook_next ?
+										pathman_process_utility_hook_next :
 										standard_ProcessUtility),
 								first_arg, queryString,
 								context, params, queryEnv,

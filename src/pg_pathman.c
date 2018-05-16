@@ -299,18 +299,18 @@ _PG_init(void)
 	restore_pathman_init_state(&temp_init_state);
 
 	/* Set basic hooks */
-	set_rel_pathlist_hook_next		= set_rel_pathlist_hook;
-	set_rel_pathlist_hook			= pathman_rel_pathlist_hook;
-	set_join_pathlist_next			= set_join_pathlist_hook;
-	set_join_pathlist_hook			= pathman_join_pathlist_hook;
-	shmem_startup_hook_next			= shmem_startup_hook;
-	shmem_startup_hook				= pathman_shmem_startup_hook;
-	post_parse_analyze_hook_next	= post_parse_analyze_hook;
-	post_parse_analyze_hook			= pathman_post_parse_analysis_hook;
-	planner_hook_next				= planner_hook;
-	planner_hook					= pathman_planner_hook;
-	process_utility_hook_next		= ProcessUtility_hook;
-	ProcessUtility_hook				= pathman_process_utility_hook;
+	pathman_set_rel_pathlist_hook_next	= set_rel_pathlist_hook;
+	set_rel_pathlist_hook				= pathman_rel_pathlist_hook;
+	pathman_set_join_pathlist_next		= set_join_pathlist_hook;
+	set_join_pathlist_hook				= pathman_join_pathlist_hook;
+	pathman_shmem_startup_hook_next		= shmem_startup_hook;
+	shmem_startup_hook					= pathman_shmem_startup_hook;
+	pathman_post_parse_analyze_hook_next = post_parse_analyze_hook;
+	post_parse_analyze_hook				= pathman_post_parse_analyze_hook;
+	pathman_planner_hook_next			= planner_hook;
+	planner_hook						= pathman_planner_hook;
+	pathman_process_utility_hook_next	= ProcessUtility_hook;
+	ProcessUtility_hook					= pathman_process_utility_hook;
 
 	/* Initialize static data for all subsystems */
 	init_main_pathman_toggles();
