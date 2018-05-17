@@ -72,13 +72,19 @@ More interesting features are yet to come. Stay tuned!
 
 ## Installation guide
 To install `pg_pathman`, execute this in the module's directory:
+
 ```shell
 make install USE_PGXS=1
 ```
+
+> **Important:** Don't forget to set the `PG_CONFIG` variable (`make PG_CONFIG=...`) in case you want to test `pg_pathman` on a non-default or custom build of PostgreSQL. Read more [here](https://wiki.postgresql.org/wiki/Building_and_Installing_PostgreSQL_Extension_Modules).
+
 Modify the **`shared_preload_libraries`** parameter in `postgresql.conf` as following:
+
 ```
 shared_preload_libraries = 'pg_pathman'
 ```
+
 > **Important:** `pg_pathman` may cause conflicts with some other extensions that use the same hook functions. For example, `pg_pathman` uses `ProcessUtility_hook` to handle COPY queries for partitioned tables, which means it may interfere with `pg_stat_statements` from time to time. In this case, try listing libraries in certain order: `shared_preload_libraries = 'pg_stat_statements, pg_pathman'`.
 
 It is essential to restart the PostgreSQL instance. After that, execute the following query in psql:
@@ -87,8 +93,6 @@ CREATE EXTENSION pg_pathman;
 ```
 
 Done! Now it's time to setup your partitioning schemes.
-
-> **Important:** Don't forget to set the `PG_CONFIG` variable in case you want to test `pg_pathman` on a custom build of PostgreSQL. Read more [here](https://wiki.postgresql.org/wiki/Building_and_Installing_PostgreSQL_Extension_Modules).
 
 ## How to update
 In order to update pg_pathman:
