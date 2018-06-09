@@ -698,7 +698,7 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 		int j;
 
 		/* Prevent modification of partitions */
-		LockRelationOid(parts[0], AccessExclusiveLock);
+		LockRelationOid(parts[i], AccessExclusiveLock);
 
 		/* Look for the specified partition */
 		for (j = 0; j < PrelChildrenCount(prel); j++)
