@@ -94,6 +94,8 @@ CREATE EXTENSION pg_pathman;
 
 Done! Now it's time to setup your partitioning schemes.
 
+> **Windows-specific**: pg_pathman imports several symbols (e.g. None_Receiver, InvalidObjectAddress) from PostgreSQL, which is fine by itself, but requires that those symbols are marked as `PGDLLIMPORT`. Unfortunately, some of them are not exported from vanilla PostgreSQL, which means that you have to either use Postgres Pro Standard/Enterprise (which includes all necessary patches), or patch and build your own distribution of PostgreSQL.
+
 ## How to update
 In order to update pg_pathman:
 
