@@ -104,8 +104,8 @@ In order to update pg_pathman:
 3. Execute the following queries:
 
 ```plpgsql
-/* replace X.Y with the version number, e.g. 1.3 */
-ALTER EXTENSION pg_pathman UPDATE TO "X.Y";
+/* only required for major releases, e.g. 1.3 -> 1.4 */
+ALTER EXTENSION pg_pathman UPDATE;
 SET pg_pathman.enable = t;
 ```
 
