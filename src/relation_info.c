@@ -532,7 +532,7 @@ resowner_prel_add(PartRelationInfo *prel)
 
 		/* Register this 'prel' */
 		old_mcxt = MemoryContextSwitchTo(TopPathmanContext);
-		info->prels = list_append_unique(info->prels, prel);
+		info->prels = list_append_unique_ptr(info->prels, prel);
 		MemoryContextSwitchTo(old_mcxt);
 
 		/* Finally, increment refcount */
@@ -561,11 +561,11 @@ resowner_prel_del(PartRelationInfo *prel)
 		if (info)
 		{
 			/* Check that 'prel' is registered! */
-			Assert(list_member(info->prels, prel));
+			Assert(list_member_ptr(info->prels, prel));
 
 			/* Remove it iff we're the only user */
 			if (PrelReferenceCount(prel) == 1)
-				info->prels = list_delete(info->prels, prel);
+				info->prels = list_delete_ptr(info->prels, prel);
 		}
 
 		/* Check that refcount is valid */
