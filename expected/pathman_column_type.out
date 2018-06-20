@@ -20,12 +20,12 @@ SELECT * FROM test_column_type.test;
 (0 rows)
 
 SELECT context, entries FROM pathman_cache_stats ORDER BY context;
-         context          | entries 
---------------------------+---------
- maintenance              |       0
- partition bounds cache   |      10
- partition dispatch cache |       1
- partition parents cache  |      10
+         context         | entries 
+-------------------------+---------
+ maintenance             |       0
+ partition bounds cache  |      10
+ partition parents cache |      10
+ partition status cache  |       3
 (4 rows)
 
 /* change column's type (should flush caches) */
@@ -51,12 +51,12 @@ SELECT partrel, cooked_expr FROM pathman_config;
 (1 row)
 
 SELECT context, entries FROM pathman_cache_stats ORDER BY context;
-         context          | entries 
---------------------------+---------
- maintenance              |       0
- partition bounds cache   |      10
- partition dispatch cache |       1
- partition parents cache  |      10
+         context         | entries 
+-------------------------+---------
+ maintenance             |       0
+ partition bounds cache  |      10
+ partition parents cache |      10
+ partition status cache  |       3
 (4 rows)
 
 /* check insert dispatching */
@@ -102,12 +102,12 @@ SELECT * FROM test_column_type.test;
 (0 rows)
 
 SELECT context, entries FROM pathman_cache_stats ORDER BY context;
-         context          | entries 
---------------------------+---------
- maintenance              |       0
- partition bounds cache   |       5
- partition dispatch cache |       1
- partition parents cache  |       5
+         context         | entries 
+-------------------------+---------
+ maintenance             |       0
+ partition bounds cache  |       5
+ partition parents cache |       5
+ partition status cache  |       3
 (4 rows)
 
 /* change column's type (should NOT work) */
@@ -120,12 +120,12 @@ SELECT * FROM test_column_type.test;
 (0 rows)
 
 SELECT context, entries FROM pathman_cache_stats ORDER BY context;
-         context          | entries 
---------------------------+---------
- maintenance              |       0
- partition bounds cache   |       5
- partition dispatch cache |       1
- partition parents cache  |       5
+         context         | entries 
+-------------------------+---------
+ maintenance             |       0
+ partition bounds cache  |       5
+ partition parents cache |       5
+ partition status cache  |       3
 (4 rows)
 
 /* change column's type (should flush caches) */
@@ -137,12 +137,12 @@ SELECT * FROM test_column_type.test;
 (0 rows)
 
 SELECT context, entries FROM pathman_cache_stats ORDER BY context;
-         context          | entries 
---------------------------+---------
- maintenance              |       0
- partition bounds cache   |       5
- partition dispatch cache |       1
- partition parents cache  |       5
+         context         | entries 
+-------------------------+---------
+ maintenance             |       0
+ partition bounds cache  |       5
+ partition parents cache |       5
+ partition status cache  |       3
 (4 rows)
 
 /* check insert dispatching */
