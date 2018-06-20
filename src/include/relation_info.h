@@ -334,7 +334,6 @@ void invalidate_pathman_status_info(Oid relid);
 void invalidate_pathman_status_info_cache(void);
 
 /* Dispatch cache */
-void refresh_pathman_relation_info(Oid relid);
 void close_pathman_relation_info(PartRelationInfo *prel);
 bool has_pathman_relation_info(Oid relid);
 PartRelationInfo *get_pathman_relation_info(Oid relid);

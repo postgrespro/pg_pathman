@@ -432,7 +432,7 @@ get_part_range_by_oid(PG_FUNCTION_ARGS)
 	shout_if_prel_is_invalid(parent_relid, prel, PT_RANGE);
 
 	/* Check type of 'dummy' (for correct output) */
-	arg_type = get_fn_expr_argtype(fcinfo->flinfo, 2);
+	arg_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
 	if (getBaseType(arg_type) != getBaseType(prel->ev_type))
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("pg_typeof(dummy) should be %s",

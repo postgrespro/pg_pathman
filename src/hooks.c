@@ -167,6 +167,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	if (IS_OUTER_JOIN(extra->sjinfo->jointype))
 	{
 		extract_actual_join_clauses(extra->restrictlist,
+									joinrel->relids,
 									&joinclauses, &otherclauses);
 	}
 	else

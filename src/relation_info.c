@@ -205,34 +205,29 @@ invalidate_psin_entry(PartStatusInfo *psin)
 		 psin->relid, MyProcPid);
 #endif
 
-	/* Mark entry as invalid */
-	if (psin->prel && PrelReferenceCount(psin->prel) > 0)
+	if (psin->prel)
 	{
-		PrelIsFresh(psin->prel) = false;
-	}
-	else
-	{
-		if (psin->prel)
+		if (PrelReferenceCount(psin->prel) > 0)
+		{
+			/* Mark entry as outdated and detach it */
+			PrelIsFresh(psin->prel) = false;
+		}
+		else
+		{
 			free_pathman_relation_info(psin->prel);
-
-		(void) pathman_cache_search_relid(status_cache,
-										  psin->relid,
-										  HASH_REMOVE,
-										  NULL);
+		}
 	}
+
+	(void) pathman_cache_search_relid(status_cache,
+									  psin->relid,
+									  HASH_REMOVE,
+									  NULL);
 }
 
 
 /*
  * Dispatch cache routines.
  */
-
-/* Make changes to PartRelationInfo visible */
-void
-refresh_pathman_relation_info(Oid relid)
-{
-
-}
 
 /* Close PartRelationInfo entry */
 void
@@ -242,6 +237,10 @@ close_pathman_relation_info(PartRelationInfo *prel)
 	Assert(PrelReferenceCount(prel) > 0);
 
 	PrelReferenceCount(prel) -= 1;
+
+	/* Remove entry is it's outdated and we're the last user */
+	if (PrelReferenceCount(prel) == 0 && !PrelIsFresh(prel))
+		free_pathman_relation_info(prel);
 }
 
 /* Check if relation is partitioned by pg_pathman */

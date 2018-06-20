@@ -213,6 +213,7 @@ is_pathman_related_alter_column_type(Node *parsetree,
 	AlterTableStmt	   *alter_table_stmt = (AlterTableStmt *) parsetree;
 	ListCell		   *lc;
 	Oid					parent_relid;
+	bool				result = false;
 	PartRelationInfo   *prel;
 
 	Assert(IsPathmanReady());
@@ -235,8 +236,6 @@ is_pathman_related_alter_column_type(Node *parsetree,
 		/* Return 'parent_relid' and 'prel->parttype' */
 		if (parent_relid_out) *parent_relid_out = parent_relid;
 		if (part_type_out) *part_type_out = prel->parttype;
-
-		close_pathman_relation_info(prel);
 	}
 	else return false;
 
@@ -264,11 +263,12 @@ is_pathman_related_alter_column_type(Node *parsetree,
 		if (attr_number_out) *attr_number_out = attnum;
 
 		/* Success! */
-		return true;
+		result = true;
 	}
 
-	/* Default failure */
-	return false;
+	close_pathman_relation_info(prel);
+
+	return result;
 }
 
 
