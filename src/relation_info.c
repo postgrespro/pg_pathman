@@ -35,6 +35,7 @@
 #include "utils/hsearch.h"
 #include "utils/inval.h"
 #include "utils/memutils.h"
+#include "utils/resowner.h"
 #include "utils/ruleutils.h"
 #include "utils/syscache.h"
 #include "utils/lsyscache.h"
@@ -66,6 +67,12 @@ typedef struct cmp_func_info
 	Oid			collid;
 } cmp_func_info;
 
+typedef struct prel_resowner_info
+{
+	ResourceOwner	owner;
+	List		   *prels;
+} prel_resowner_info;
+
 /*
  * For pg_pathman.enable_bounds_cache GUC.
  */
@@ -77,6 +84,11 @@ bool			pg_pathman_enable_bounds_cache = true;
  */
 static bool		delayed_shutdown = false; /* pathman was dropped */
 
+/*
+ * PartRelationInfo is controlled by ResourceOwner;
+ */
+static HTAB	   *prel_resowner = NULL;
+
 
 /* Handy wrappers for Oids */
 #define bsearch_oid(key, array, array_size) \
@@ -87,6 +99,13 @@ static PartRelationInfo *build_pathman_relation_info(Oid relid, Datum *values);
 static void free_pathman_relation_info(PartRelationInfo *prel);
 static void invalidate_psin_entries_using_relid(Oid relid);
 static void invalidate_psin_entry(PartStatusInfo *psin);
+
+static PartRelationInfo *resowner_prel_add(PartRelationInfo *prel);
+static PartRelationInfo *resowner_prel_del(PartRelationInfo *prel);
+static void resonwner_prel_callback(ResourceReleasePhase phase,
+									bool isCommit,
+									bool isTopLevel,
+									void *arg);
 
 static Expr *get_partition_constraint_expr(Oid partition);
 
@@ -233,10 +252,7 @@ invalidate_psin_entry(PartStatusInfo *psin)
 void
 close_pathman_relation_info(PartRelationInfo *prel)
 {
-	/* Check that refcount is valid */
-	Assert(PrelReferenceCount(prel) > 0);
-
-	PrelReferenceCount(prel) -= 1;
+	(void) resowner_prel_del(prel);
 
 	/* Remove entry is it's outdated and we're the last user */
 	if (PrelReferenceCount(prel) == 0 && !PrelIsFresh(prel))
@@ -327,10 +343,7 @@ get_pathman_relation_info(Oid relid)
 		 (psin->prel ? "live" : "NULL"), relid, MyProcPid);
 #endif
 
-	if (psin->prel)
-		PrelReferenceCount(psin->prel) += 1;
-
-	return psin->prel;
+	return resowner_prel_add(psin->prel);
 }
 
 /* Build a new PartRelationInfo for partitioned relation */
@@ -481,6 +494,141 @@ static void
 free_pathman_relation_info(PartRelationInfo *prel)
 {
 	MemoryContextDelete(prel->mcxt);
+}
+
+static PartRelationInfo *
+resowner_prel_add(PartRelationInfo *prel)
+{
+	if (!prel_resowner)
+	{
+		HASHCTL ctl;
+
+		memset(&ctl, 0, sizeof(ctl));
+		ctl.keysize = sizeof(ResourceOwner);
+		ctl.entrysize = sizeof(prel_resowner_info);
+		ctl.hcxt = TopPathmanContext;
+
+		prel_resowner = hash_create("prel resowner",
+									PART_RELS_SIZE, &ctl,
+									HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
+
+		RegisterResourceReleaseCallback(resonwner_prel_callback, NULL);
+	}
+
+	if (prel)
+	{
+		ResourceOwner		resowner = CurrentResourceOwner;
+		prel_resowner_info *info;
+		bool				found;
+		MemoryContext		old_mcxt;
+
+		info = hash_search(prel_resowner,
+						   (void *) &resowner,
+						   HASH_ENTER,
+						   &found);
+
+		if (!found)
+			info->prels = NIL;
+
+		/* Register this 'prel' */
+		old_mcxt = MemoryContextSwitchTo(TopPathmanContext);
+		info->prels = list_append_unique(info->prels, prel);
+		MemoryContextSwitchTo(old_mcxt);
+
+		/* Finally, increment refcount */
+		PrelReferenceCount(prel) += 1;
+	}
+
+	return prel;
+}
+
+static PartRelationInfo *
+resowner_prel_del(PartRelationInfo *prel)
+{
+	/* Must be active! */
+	Assert(prel_resowner);
+
+	if (prel)
+	{
+		ResourceOwner		resowner = CurrentResourceOwner;
+		prel_resowner_info *info;
+
+		info = hash_search(prel_resowner,
+						   (void *) &resowner,
+						   HASH_FIND,
+						   NULL);
+
+		if (info)
+		{
+			/* Check that 'prel' is registered! */
+			Assert(list_member(info->prels, prel));
+
+			/* Remove it iff we're the only user */
+			if (PrelReferenceCount(prel) == 1)
+				info->prels = list_delete(info->prels, prel);
+		}
+
+		/* Check that refcount is valid */
+		Assert(PrelReferenceCount(prel) > 0);
+
+		/* Finally, decrement refcount */
+		PrelReferenceCount(prel) -= 1;
+	}
+
+	return prel;
+}
+
+static void
+resonwner_prel_callback(ResourceReleasePhase phase,
+						bool isCommit,
+						bool isTopLevel,
+						void *arg)
+{
+	ResourceOwner		resowner = CurrentResourceOwner;
+	prel_resowner_info *info;
+
+	if (prel_resowner)
+	{
+		ListCell *lc;
+
+		info = hash_search(prel_resowner,
+						   (void *) &resowner,
+						   HASH_FIND,
+						   NULL);
+
+		if (info)
+		{
+			foreach (lc, info->prels)
+			{
+				PartRelationInfo *prel = lfirst(lc);
+
+				if (!isCommit)
+				{
+					/* Reset refcount for valid entry */
+					if (PrelIsFresh(prel))
+					{
+						PrelReferenceCount(prel) = 0;
+					}
+					/* Otherwise, free it when refcount is zero */
+					else if (--PrelReferenceCount(prel) == 0)
+					{
+						free_pathman_relation_info(prel);
+					}
+				}
+				else
+					elog(ERROR,
+						 "cache reference leak: PartRelationInfo(%d) has count %d",
+						 PrelParentRelid(prel), PrelReferenceCount(prel));
+			}
+
+			list_free(info->prels);
+
+			hash_search(prel_resowner,
+						(void *) &resowner,
+						HASH_REMOVE,
+						NULL);
+		}
+	}
 }
 
 /* Fill PartRelationInfo with partition-related info */

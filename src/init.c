@@ -47,24 +47,21 @@ MemoryContext		PathmanParentsCacheContext		= NULL;
 MemoryContext		PathmanStatusCacheContext		= NULL;
 MemoryContext		PathmanBoundsCacheContext		= NULL;
 
-/* Storage for PartRelationInfos */
-HTAB			   *parents_cache	= NULL;
 
 /* Storage for PartParentInfos */
-HTAB			   *status_cache		= NULL;
+HTAB			   *parents_cache	= NULL;
+
+/* Storage for PartStatusInfos */
+HTAB			   *status_cache	= NULL;
 
 /* Storage for PartBoundInfos */
-HTAB			   *bounds_cache			= NULL;
+HTAB			   *bounds_cache	= NULL;
 
 /* pg_pathman's init status */
 PathmanInitState 	pathman_init_state;
 
 /* pg_pathman's hooks state */
 bool				pathman_hooks_enabled = true;
-
-
-/* Shall we install new relcache callback? */
-static bool			relcache_callback_needed = true;
 
 
 /* Functions for various local caches */
@@ -196,6 +193,8 @@ init_main_pathman_toggles(void)
 bool
 load_config(void)
 {
+	static bool relcache_callback_needed = true;
+
 	/*
 	 * Try to cache important relids.
 	 *
@@ -321,7 +320,9 @@ init_local_cache(void)
 		Assert(MemoryContextIsValid(PathmanBoundsCacheContext));
 
 		/* Clear children */
-		MemoryContextResetChildren(TopPathmanContext);
+		MemoryContextReset(PathmanParentsCacheContext);
+		MemoryContextReset(PathmanStatusCacheContext);
+		MemoryContextReset(PathmanBoundsCacheContext);
 	}
 	/* Initialize pg_pathman's memory contexts */
 	else
@@ -356,7 +357,7 @@ init_local_cache(void)
 
 	memset(&ctl, 0, sizeof(ctl));
 	ctl.keysize = sizeof(Oid);
-	ctl.entrysize = sizeof(PartRelationInfo);
+	ctl.entrysize = sizeof(PartParentInfo);
 	ctl.hcxt = PathmanParentsCacheContext;
 
 	parents_cache = hash_create(PATHMAN_PARENTS_CACHE,
@@ -394,11 +395,13 @@ fini_local_cache(void)
 	hash_destroy(bounds_cache);
 
 	parents_cache	= NULL;
-	status_cache		= NULL;
-	bounds_cache			= NULL;
+	status_cache	= NULL;
+	bounds_cache	= NULL;
 
 	/* Now we can clear allocations */
-	MemoryContextResetChildren(TopPathmanContext);
+	MemoryContextReset(PathmanParentsCacheContext);
+	MemoryContextReset(PathmanStatusCacheContext);
+	MemoryContextReset(PathmanBoundsCacheContext);
 }
 
 
