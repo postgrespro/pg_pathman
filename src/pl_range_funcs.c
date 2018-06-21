@@ -743,8 +743,11 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 			}
 		}
 
-		ObjectAddressSet(object, RelationRelationId, parts[i]);
-		add_exact_object_address(&object, objects);
+		if (i > 0)
+		{
+			ObjectAddressSet(object, RelationRelationId, parts[i]);
+			add_exact_object_address(&object, objects);
+		}
 	}
 
 	/* Check that partitions are adjacent */
