@@ -226,8 +226,6 @@ bool read_pathman_params(Oid relid,
 						 Datum *values,
 						 bool *isnull);
 
-Oid *read_parent_oids(int *nelems);
-
 
 bool validate_range_constraint(const Expr *expr,
 							   const PartRelationInfo *prel,

@@ -71,7 +71,6 @@ static void init_local_cache(void);
 static void fini_local_cache(void);
 
 /* Special handlers for read_pathman_config() */
-static void add_partrel_to_array(Datum *values, bool *isnull, void *context);
 static void startup_invalidate_parent(Datum *values, bool *isnull, void *context);
 
 static void read_pathman_config(void (*per_row_cb)(Datum *values,
@@ -795,55 +794,6 @@ read_pathman_params(Oid relid, Datum *values, bool *isnull)
 	return row_found;
 }
 
-
-typedef struct
-{
-	Oid	   *array;
-	int		nelems;
-	int		capacity;
-} read_parent_oids_cxt;
-
-/*
- * Get a sorted array of partitioned tables' Oids.
- */
-Oid *
-read_parent_oids(int *nelems)
-{
-	read_parent_oids_cxt context = { NULL, 0, 0 };
-
-	read_pathman_config(add_partrel_to_array, &context);
-
-	/* Perform sorting */
-	qsort(context.array, context.nelems, sizeof(Oid), oid_cmp);
-
-	/* Return values */
-	*nelems = context.nelems;
-	return context.array;
-}
-
-
-/* read_pathman_config(): add parent to array of Oids */
-static void
-add_partrel_to_array(Datum *values, bool *isnull, void *context)
-{
-	Oid relid = DatumGetObjectId(values[Anum_pathman_config_partrel - 1]);
-	read_parent_oids_cxt *result = (read_parent_oids_cxt *) context;
-
-	if (result->array == NULL)
-	{
-		result->capacity = PART_RELS_SIZE;
-		result->array = palloc(result->capacity * sizeof(Oid));
-	}
-
-	if (result->nelems >= result->capacity)
-	{
-		result->capacity = result->capacity * 2 + 1;
-		result->array = repalloc(result->array, result->capacity * sizeof(Oid));
-	}
-
-	/* Append current relid */
-	result->array[result->nelems++] = relid;
-}
 
 /* read_pathman_config(): create dummy cache entry for parent */
 static void
