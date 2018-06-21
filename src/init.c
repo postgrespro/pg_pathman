@@ -70,14 +70,6 @@ static void fini_pathman_relation_oids(void);
 static void init_local_cache(void);
 static void fini_local_cache(void);
 
-/* Special handlers for read_pathman_config() */
-static void startup_invalidate_parent(Datum *values, bool *isnull, void *context);
-
-static void read_pathman_config(void (*per_row_cb)(Datum *values,
-												   bool *isnull,
-												   void *context),
-								void *context);
-
 static bool validate_range_opexpr(const Expr *expr,
 								  const PartRelationInfo *prel,
 								  const TypeCacheEntry *tce,
@@ -212,9 +204,6 @@ load_config(void)
 
 	/* Create various hash tables (caches) */
 	init_local_cache();
-
-	/* Read PATHMAN_CONFIG table & fill cache */
-	read_pathman_config(startup_invalidate_parent, NULL);
 
 	/* Register pathman_relcache_hook(), currently we can't unregister it */
 	if (relcache_callback_needed)
@@ -794,75 +783,6 @@ read_pathman_params(Oid relid, Datum *values, bool *isnull)
 	heap_close(rel, AccessShareLock);
 
 	return row_found;
-}
-
-
-/* read_pathman_config(): create dummy cache entry for parent */
-static void
-startup_invalidate_parent(Datum *values, bool *isnull, void *context)
-{
-	Oid relid = DatumGetObjectId(values[Anum_pathman_config_partrel - 1]);
-
-	/* Check that relation 'relid' exists */
-	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(relid)))
-	{
-		DisablePathman(); /* disable pg_pathman since config is broken */
-		ereport(ERROR,
-				(errmsg("table \"%s\" contains nonexistent relation %u",
-						PATHMAN_CONFIG, relid),
-				 errhint(INIT_ERROR_HINT)));
-	}
-}
-
-/*
- * Go through the PATHMAN_CONFIG table and create PartRelationInfo entries.
- */
-static void
-read_pathman_config(void (*per_row_cb)(Datum *values,
-									   bool *isnull,
-									   void *context),
-					void *context)
-{
-	Relation		rel;
-	HeapScanDesc	scan;
-	Snapshot		snapshot;
-	HeapTuple		htup;
-
-	/* Open PATHMAN_CONFIG with latest snapshot available */
-	rel = heap_open(get_pathman_config_relid(false), AccessShareLock);
-
-	/* Check that 'partrel' column is if regclass type */
-	Assert(TupleDescAttr(RelationGetDescr(rel),
-				Anum_pathman_config_partrel - 1)->atttypid == REGCLASSOID);
-
-	/* Check that number of columns == Natts_pathman_config */
-	Assert(RelationGetDescr(rel)->natts == Natts_pathman_config);
-
-	snapshot = RegisterSnapshot(GetLatestSnapshot());
-	scan = heap_beginscan(rel, snapshot, 0, NULL);
-
-	/* Examine each row and create a PartRelationInfo in local cache */
-	while((htup = heap_getnext(scan, ForwardScanDirection)) != NULL)
-	{
-		Datum		values[Natts_pathman_config];
-		bool		isnull[Natts_pathman_config];
-
-		/* Extract Datums from tuple 'htup' */
-		heap_deform_tuple(htup, RelationGetDescr(rel), values, isnull);
-
-		/* These attributes are marked as NOT NULL, check anyway */
-		Assert(!isnull[Anum_pathman_config_partrel - 1]);
-		Assert(!isnull[Anum_pathman_config_parttype - 1]);
-		Assert(!isnull[Anum_pathman_config_expr - 1]);
-
-		/* Execute per row callback */
-		per_row_cb(values, isnull, context);
-	}
-
-	/* Clean resources */
-	heap_endscan(scan);
-	UnregisterSnapshot(snapshot);
-	heap_close(rel, AccessShareLock);
 }
 
 
