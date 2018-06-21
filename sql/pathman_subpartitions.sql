@@ -3,9 +3,6 @@
 CREATE EXTENSION pg_pathman;
 CREATE SCHEMA subpartitions;
 
-:gdb
-select pg_sleep(5);
-
 
 
 /* Create two level partitioning structure */
