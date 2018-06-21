@@ -31,6 +31,12 @@
 #include "utils/relcache.h"
 
 
+#ifdef USE_ASSERT_CHECKING
+#define USE_RELINFO_LOGGING
+#define USE_RELINFO_LEAK_TRACKER
+#endif
+
+
 /* Range bound */
 typedef struct
 {
@@ -215,6 +221,10 @@ typedef struct PartRelationInfo
 	Oid				cmp_proc,		/* comparison fuction for 'ev_type' */
 					hash_proc;		/* hash function for 'ev_type' */
 
+#ifdef USE_RELINFO_LEAK_TRACKER
+	List		   *owners;			/* saved callers of get_pathman_relation_info() */
+#endif
+
 	MemoryContext	mcxt;			/* memory context holding this struct */
 } PartRelationInfo;
 
@@ -334,9 +344,9 @@ void invalidate_pathman_status_info(Oid relid);
 void invalidate_pathman_status_info_cache(void);
 
 /* Dispatch cache */
-void close_pathman_relation_info(PartRelationInfo *prel);
 bool has_pathman_relation_info(Oid relid);
 PartRelationInfo *get_pathman_relation_info(Oid relid);
+void close_pathman_relation_info(PartRelationInfo *prel);
 
 void shout_if_prel_is_invalid(const Oid parent_oid,
 							  const PartRelationInfo *prel,
@@ -382,11 +392,31 @@ char *canonicalize_partitioning_expression(const Oid relid,
 void delay_pathman_shutdown(void);
 void finish_delayed_invalidation(void);
 
+void init_relation_info_static_data(void);
+
 
 /* For pg_pathman.enable_bounds_cache GUC */
-extern bool pg_pathman_enable_bounds_cache;
+extern bool			pg_pathman_enable_bounds_cache;
 
-void init_relation_info_static_data(void);
+
+/* This allows us to track leakers of PartRelationInfo */
+#ifdef USE_RELINFO_LEAK_TRACKER
+extern const char  *prel_resowner_function;
+extern int			prel_resowner_line;
+
+#define get_pathman_relation_info(relid) \
+	( \
+		prel_resowner_function = __FUNCTION__, \
+		prel_resowner_line = __LINE__, \
+		get_pathman_relation_info(relid) \
+	)
+
+#define close_pathman_relation_info(prel) \
+	do { \
+		close_pathman_relation_info(prel); \
+		prel = NULL; \
+	} while (0)
+#endif
 
 
 #endif /* RELATION_INFO_H */

@@ -55,8 +55,11 @@
 #define COOK_PART_EXPR_ERROR	"failed to analyze partitioning expression \"%s\""
 
 
-#ifdef USE_ASSERT_CHECKING
-#define USE_RELINFO_LOGGING
+#ifdef USE_RELINFO_LEAK_TRACKER
+#undef get_pathman_relation_info
+#undef close_pathman_relation_info
+const char	   *prel_resowner_function = NULL;
+int				prel_resowner_line = 0;
 #endif
 
 
@@ -72,6 +75,7 @@ typedef struct prel_resowner_info
 	ResourceOwner	owner;
 	List		   *prels;
 } prel_resowner_info;
+
 
 /*
  * For pg_pathman.enable_bounds_cache GUC.
@@ -373,7 +377,7 @@ build_pathman_relation_info(Oid relid, Datum *values)
 									  ALLOCSET_SMALL_SIZES);
 
 	/* Create a new PartRelationInfo */
-	prel = MemoryContextAlloc(prel_mcxt, sizeof(PartRelationInfo));
+	prel = MemoryContextAllocZero(prel_mcxt, sizeof(PartRelationInfo));
 	prel->relid		= relid;
 	prel->refcount	= 0;
 	prel->fresh		= true;
@@ -535,6 +539,15 @@ resowner_prel_add(PartRelationInfo *prel)
 		info->prels = list_append_unique_ptr(info->prels, prel);
 		MemoryContextSwitchTo(old_mcxt);
 
+#ifdef USE_RELINFO_LEAK_TRACKER
+		/* Save current caller (function:line) */
+		old_mcxt = MemoryContextSwitchTo(prel->mcxt);
+		prel->owners = lappend(prel->owners,
+							   list_make2(makeString((char *) prel_resowner_function),
+										  makeInteger(prel_resowner_line)));
+		MemoryContextSwitchTo(old_mcxt);
+#endif
+
 		/* Finally, increment refcount */
 		PrelReferenceCount(prel) += 1;
 	}
@@ -616,9 +629,21 @@ resonwner_prel_callback(ResourceReleasePhase phase,
 					}
 				}
 				else
+				{
+#ifdef USE_RELINFO_LEAK_TRACKER
+					ListCell *lc;
+
+					foreach (lc, prel->owners)
+					{
+						char *fun = strVal(linitial(lfirst(lc)));
+						int line = intVal(lsecond(lfirst(lc)));
+						elog(WARNING, "PartRelationInfo referenced in %s:%d", fun, line);
+					}
+#endif
 					elog(ERROR,
 						 "cache reference leak: PartRelationInfo(%d) has count %d",
 						 PrelParentRelid(prel), PrelReferenceCount(prel));
+				}
 			}
 
 			list_free(info->prels);
