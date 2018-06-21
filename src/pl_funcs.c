@@ -108,10 +108,12 @@ get_parent_of_partition_pl(PG_FUNCTION_ARGS)
 	Oid		partition = PG_GETARG_OID(0),
 			parent = get_parent_of_partition(partition);
 
-	if (OidIsValid(parent))
-		PG_RETURN_OID(parent);
+	if (!OidIsValid(parent))
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("\"%s\" is not a partition",
+							   get_rel_name_or_relid(partition))));
 
-	PG_RETURN_NULL();
+	PG_RETURN_OID(parent);
 }
 
 /*
@@ -121,17 +123,17 @@ Datum
 get_partition_key_type_pl(PG_FUNCTION_ARGS)
 {
 	Oid					relid = PG_GETARG_OID(0);
+	Oid					typid;
 	PartRelationInfo   *prel;
 
-	if ((prel = get_pathman_relation_info(relid)) != NULL)
-	{
-		Oid result = prel->ev_type;
-		close_pathman_relation_info(prel);
+	prel = get_pathman_relation_info(relid);
+	shout_if_prel_is_invalid(relid, prel, PT_ANY);
 
-		PG_RETURN_OID(result);
-	}
+	typid = prel->ev_type;
 
-	PG_RETURN_NULL();
+	close_pathman_relation_info(prel);
+
+	PG_RETURN_OID(typid);
 }
 
 /*
