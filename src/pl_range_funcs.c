@@ -31,6 +31,7 @@
 #include "utils/numeric.h"
 #include "utils/ruleutils.h"
 #include "utils/syscache.h"
+#include "utils/snapmgr.h"
 
 #if PG_VERSION_NUM >= 100000
 #include "utils/regproc.h"
@@ -712,6 +713,7 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 					   *last;
 	FmgrInfo			cmp_proc;
 	ObjectAddresses	   *objects = new_object_addresses();
+	Snapshot			fresh_snapshot;
 	int					i;
 
 	/* Emit an error if it is not partitioned by RANGE */
@@ -731,7 +733,7 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 		int				j;
 
 		/* Prevent modification of partitions */
-		LockRelationOid(parts[0], AccessExclusiveLock);
+		LockRelationOid(parts[i], AccessExclusiveLock);
 
 		/* Look for the specified partition */
 		for (j = 0; j < PrelChildrenCount(prel); j++)
@@ -780,6 +782,13 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "could not connect using SPI");
 
+	/*
+	 * Get latest snapshot to see data that might have been
+	 * added to partitions before this transaction has started,
+	 * but was committed a moment before we acquired the locks.
+	 */
+	fresh_snapshot = RegisterSnapshot(GetLatestSnapshot());
+
 	/* Migrate the data from all partition to the first one */
 	for (i = 1; i < nparts; i++)
 	{
@@ -790,9 +799,23 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 							   get_qualified_rel_name(parts[i]),
 							   get_qualified_rel_name(parts[0]));
 
-		SPI_exec(query, 0);
+		SPIPlanPtr plan = SPI_prepare(query, 0, NULL);
+
+		if (!plan)
+			elog(ERROR, "%s: SPI_prepare returned %d",
+				 CppAsString(merge_range_partitions),
+				 SPI_result);
+
+		SPI_execute_snapshot(plan, NULL, NULL,
+							 fresh_snapshot,
+							 InvalidSnapshot,
+							 false, true, 0);
+
 		pfree(query);
 	}
+
+	/* Free snapshot */
+	UnregisterSnapshot(fresh_snapshot);
 
 	SPI_finish();
 

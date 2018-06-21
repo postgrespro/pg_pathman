@@ -11,7 +11,6 @@
  */
 
 #include "compat/pg_compat.h"
-#include "compat/relation_tags.h"
 #include "compat/rowmarks_fix.h"
 
 #include "hooks.h"
@@ -63,13 +62,13 @@ allow_star_schema_join(PlannerInfo *root,
 }
 
 
-set_join_pathlist_hook_type		set_join_pathlist_next			= NULL;
-set_rel_pathlist_hook_type		set_rel_pathlist_hook_next		= NULL;
-planner_hook_type				planner_hook_next				= NULL;
-post_parse_analyze_hook_type	post_parse_analyze_hook_next	= NULL;
-shmem_startup_hook_type			shmem_startup_hook_next			= NULL;
-ProcessUtility_hook_type		process_utility_hook_next		= NULL;
-ExecutorRun_hook_type			executor_run_hook_next			= NULL;
+set_join_pathlist_hook_type		pathman_set_join_pathlist_next			= NULL;
+set_rel_pathlist_hook_type		pathman_set_rel_pathlist_hook_next		= NULL;
+planner_hook_type				pathman_planner_hook_next				= NULL;
+post_parse_analyze_hook_type	pathman_post_parse_analyze_hook_next	= NULL;
+shmem_startup_hook_type			pathman_shmem_startup_hook_next			= NULL;
+ProcessUtility_hook_type		pathman_process_utility_hook_next		= NULL;
+ExecutorRun_hook_type			pathman_executor_run_hook_next			= NULL;
 
 
 /* Take care of joins */
@@ -93,9 +92,9 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	ListCell			   *lc;
 
 	/* Call hooks set by other extensions */
-	if (set_join_pathlist_next)
-		set_join_pathlist_next(root, joinrel, outerrel,
-							   innerrel, jointype, extra);
+	if (pathman_set_join_pathlist_next)
+		pathman_set_join_pathlist_next(root, joinrel, outerrel,
+									   innerrel, jointype, extra);
 
 	/* Check that both pg_pathman & RuntimeAppend nodes are enabled */
 	if (!IsPathmanReady() || !pg_pathman_enable_runtimeappend)
@@ -115,14 +114,13 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		jointype == JOIN_UNIQUE_INNER)
 		return;
 
-	/* Skip if inner table is not allowed to act as parent (e.g. FROM ONLY) */
-	if (PARENTHOOD_DISALLOWED == get_rel_parenthood_status(root->parse->queryId,
-														   inner_rte))
-		return;
-
 	/* Proceed iff relation 'innerrel' is partitioned */
 	if ((inner_prel = get_pathman_relation_info(inner_rte->relid)) == NULL)
 		return;
+
+	/* Skip if inner table is not allowed to act as parent (e.g. FROM ONLY) */
+	if (PARENTHOOD_DISALLOWED == get_rel_parenthood_status(inner_rte))
+		goto cleanup;
 
 	/*
 	 * Check if query is:
@@ -166,9 +164,10 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	/* Extract join clauses which will separate partitions */
 	if (IS_OUTER_JOIN(extra->sjinfo->jointype))
 	{
-		extract_actual_join_clauses(extra->restrictlist,
-									joinrel->relids,
-									&joinclauses, &otherclauses);
+		extract_actual_join_clauses_compat(extra->restrictlist,
+										   joinrel->relids,
+										   &joinclauses,
+										   &otherclauses);
 	}
 	else
 	{
@@ -295,6 +294,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		add_path(joinrel, (Path *) nest_path);
 	}
 
+cleanup:
 	/* Don't forget to close 'inner_prel'! */
 	close_pathman_relation_info(inner_prel);
 }
@@ -323,8 +323,8 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 						i;
 
 	/* Invoke original hook if needed */
-	if (set_rel_pathlist_hook_next != NULL)
-		set_rel_pathlist_hook_next(root, rel, rti, rte);
+	if (pathman_set_rel_pathlist_hook_next)
+		pathman_set_rel_pathlist_hook_next(root, rel, rti, rte);
 
 	/* Make sure that pg_pathman is ready */
 	if (!IsPathmanReady())
@@ -351,7 +351,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 #endif
 
 	/* Skip if this table is not allowed to act as parent (e.g. FROM ONLY) */
-	if (PARENTHOOD_DISALLOWED == get_rel_parenthood_status(root->parse->queryId, rte))
+	if (PARENTHOOD_DISALLOWED == get_rel_parenthood_status(rte))
 		return;
 
 	/* Proceed iff relation 'rel' is partitioned */
@@ -369,6 +369,8 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 	 *					   FROM test.tmp2 t2
 	 *					   WHERE id = t.id);
 	 *
+	 * or unions, multilevel partitioning, etc.
+	 *
 	 * Since we disable optimizations on 9.5, we
 	 * have to skip parent table that has already
 	 * been expanded by standard inheritance.
@@ -378,18 +380,13 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		foreach (lc, root->append_rel_list)
 		{
 			AppendRelInfo  *appinfo = (AppendRelInfo *) lfirst(lc);
-			RangeTblEntry  *cur_parent_rte,
-						   *cur_child_rte;
 
-			/*  This 'appinfo' is not for this child */
-			if (appinfo->child_relid != rti)
-				continue;
-
-			cur_parent_rte = root->simple_rte_array[appinfo->parent_relid];
-			cur_child_rte  = rte; /* we already have it, saves time */
-
-			/* This child == its own parent table! */
-			if (cur_parent_rte->relid == cur_child_rte->relid)
+			/*
+			 * If there's an 'appinfo', it means that somebody
+			 * (PG?) has already processed this partitioned table
+			 * and added its children to the plan.
+			 */
+			if (appinfo->child_relid == rti)
 				goto cleanup;
 		}
 	}
@@ -422,8 +419,8 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			pathkeyDesc = (PathKey *) linitial(pathkeys);
 	}
 
-	/* mark as partitioned table */
-	MarkPartitionedRTE(rti);
+	/* Mark as partitioned table */
+	assign_rel_parenthood_status(rte, PARENTHOOD_DISALLOWED);
 
 	children = PrelGetChildrenArray(prel);
 	ranges = list_make1_irange_full(prel, IR_COMPLETE);
@@ -630,16 +627,16 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	{
 		if (pathman_ready)
 		{
-			/* Increment relation tags refcount */
-			incr_refcount_relation_tags();
+			/* Increase planner() calls count */
+			incr_planner_calls_count();
 
 			/* Modify query tree if needed */
 			pathman_transform_query(parse, boundParams);
 		}
 
 		/* Invoke original hook if needed */
-		if (planner_hook_next)
-			result = planner_hook_next(parse, cursorOptions, boundParams);
+		if (pathman_planner_hook_next)
+			result = pathman_planner_hook_next(parse, cursorOptions, boundParams);
 		else
 			result = standard_planner(parse, cursorOptions, boundParams);
 
@@ -651,8 +648,8 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 			/* Add PartitionRouter node for UPDATE queries */
 			ExecuteForPlanTree(result, add_partition_routers);
 
-			/* Decrement relation tags refcount */
-			decr_refcount_relation_tags();
+			/* Decrement planner() calls count */
+			decr_planner_calls_count();
 
 			/* HACK: restore queryId set by pg_stat_statements */
 			result->queryId = query_id;
@@ -663,8 +660,8 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	{
 		if (pathman_ready)
 		{
-			/* Caught an ERROR, decrease refcount */
-			decr_refcount_relation_tags();
+			/* Caught an ERROR, decrease count */
+			decr_planner_calls_count();
 		}
 
 		/* Rethrow ERROR further */
@@ -682,11 +679,11 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
  * any statement, including utility commands.
  */
 void
-pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
+pathman_post_parse_analyze_hook(ParseState *pstate, Query *query)
 {
 	/* Invoke original hook if needed */
-	if (post_parse_analyze_hook_next)
-		post_parse_analyze_hook_next(pstate, query);
+	if (pathman_post_parse_analyze_hook_next)
+		pathman_post_parse_analyze_hook_next(pstate, query);
 
 	/* See cook_partitioning_expression() */
 	if (!pathman_hooks_enabled)
@@ -743,10 +740,10 @@ pathman_post_parse_analysis_hook(ParseState *pstate, Query *query)
 	}
 
 	/* Process inlined SQL functions (we've already entered planning stage) */
-	if (IsPathmanReady() && get_refcount_relation_tags() > 0)
+	if (IsPathmanReady() && get_planner_calls_count() > 0)
 	{
 		/* Check that pg_pathman is the last extension loaded */
-		if (post_parse_analyze_hook != pathman_post_parse_analysis_hook)
+		if (post_parse_analyze_hook != pathman_post_parse_analyze_hook)
 		{
 			Oid		save_userid;
 			int		save_sec_context;
@@ -797,8 +794,8 @@ void
 pathman_shmem_startup_hook(void)
 {
 	/* Invoke original hook if needed */
-	if (shmem_startup_hook_next != NULL)
-		shmem_startup_hook_next();
+	if (pathman_shmem_startup_hook_next)
+		pathman_shmem_startup_hook_next();
 
 	/* Allocate shared memory objects */
 	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
@@ -929,22 +926,13 @@ pathman_process_utility_hook(Node *first_arg,
 	}
 
 	/* Finally call process_utility_hook_next or standard_ProcessUtility */
-	call_process_utility_compat((process_utility_hook_next ?
-										process_utility_hook_next :
+	call_process_utility_compat((pathman_process_utility_hook_next ?
+										pathman_process_utility_hook_next :
 										standard_ProcessUtility),
 								first_arg, queryString,
 								context, params, queryEnv,
 								dest, completionTag);
 }
-
-
-#if PG_VERSION_NUM >= 100000
-#define EXECUTOR_HOOK_NEXT(q,d,c) executor_run_hook_next((q),(d),(c), execute_once)
-#define EXECUTOR_RUN(q,d,c) standard_ExecutorRun((q),(d),(c), execute_once)
-#else
-#define EXECUTOR_HOOK_NEXT(q,d,c) executor_run_hook_next((q),(d),(c))
-#define EXECUTOR_RUN(q,d,c) standard_ExecutorRun((q),(d),(c))
-#endif
 
 /*
  * Executor hook (for PartitionRouter).
@@ -962,6 +950,15 @@ pathman_executor_hook(QueryDesc *queryDesc,
 					  ExecutorRun_CountArgType count)
 #endif
 {
+#define EXECUTOR_HOOK				pathman_executor_run_hook_next
+#if PG_VERSION_NUM >= 100000
+#define EXECUTOR_HOOK_NEXT(q,d,c)	EXECUTOR_HOOK((q),(d),(c), execute_once)
+#define EXECUTOR_RUN(q,d,c)			standard_ExecutorRun((q),(d),(c), execute_once)
+#else
+#define EXECUTOR_HOOK_NEXT(q,d,c)	EXECUTOR_HOOK((q),(d),(c))
+#define EXECUTOR_RUN(q,d,c)			standard_ExecutorRun((q),(d),(c))
+#endif
+
 	PlanState *state = (PlanState *) queryDesc->planstate;
 
 	if (IsA(state, ModifyTableState))
@@ -991,7 +988,7 @@ pathman_executor_hook(QueryDesc *queryDesc,
 	}
 
 	/* Call hooks set by other extensions if needed */
-	if (executor_run_hook_next)
+	if (EXECUTOR_HOOK)
 		EXECUTOR_HOOK_NEXT(queryDesc, direction, count);
 	/* Else call internal implementation */
 	else EXECUTOR_RUN(queryDesc, direction, count);

@@ -1032,6 +1032,36 @@ INSERT INTO test_inserts.test_gap VALUES(15); /* not ok */
 ERROR:  cannot spawn a partition
 DROP TABLE test_inserts.test_gap CASCADE;
 NOTICE:  drop cascades to 3 other objects
+/* test a few "special" ONLY queries used in pg_repack */
+CREATE TABLE test_inserts.test_special_only(val INT NOT NULL);
+INSERT INTO test_inserts.test_special_only SELECT generate_series(1, 30);
+SELECT create_hash_partitions('test_inserts.test_special_only', 'val', 4);
+ create_hash_partitions 
+------------------------
+                      4
+(1 row)
+
+/* create table as select only */
+CREATE TABLE test_inserts.special_1 AS SELECT * FROM ONLY test_inserts.test_special_only;
+SELECT count(*) FROM test_inserts.special_1;
+ count 
+-------
+     0
+(1 row)
+
+DROP TABLE test_inserts.special_1;
+/* insert into ... select only */
+CREATE TABLE test_inserts.special_2 AS SELECT * FROM ONLY test_inserts.test_special_only WITH NO DATA;
+INSERT INTO test_inserts.special_2 SELECT * FROM ONLY test_inserts.test_special_only;
+SELECT count(*) FROM test_inserts.special_2;
+ count 
+-------
+     0
+(1 row)
+
+DROP TABLE test_inserts.special_2;
+DROP TABLE test_inserts.test_special_only CASCADE;
+NOTICE:  drop cascades to 4 other objects
 DROP SCHEMA test_inserts CASCADE;
 NOTICE:  drop cascades to 19 other objects
 DROP EXTENSION pg_pathman CASCADE;

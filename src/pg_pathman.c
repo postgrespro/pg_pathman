@@ -17,13 +17,13 @@
 #include "pathman.h"
 #include "partition_filter.h"
 #include "partition_router.h"
+#include "planner_tree_modification.h"
 #include "runtimeappend.h"
 #include "runtime_merge_append.h"
 
 #include "postgres.h"
 #include "access/sysattr.h"
 #include "catalog/pg_type.h"
-#include "compat/relation_tags.h"
 #include "foreign/fdwapi.h"
 #include "miscadmin.h"
 #include "optimizer/clauses.h"
@@ -301,20 +301,20 @@ _PG_init(void)
 	restore_pathman_init_state(&temp_init_state);
 
 	/* Set basic hooks */
-	set_rel_pathlist_hook_next		= set_rel_pathlist_hook;
-	set_rel_pathlist_hook			= pathman_rel_pathlist_hook;
-	set_join_pathlist_next			= set_join_pathlist_hook;
-	set_join_pathlist_hook			= pathman_join_pathlist_hook;
-	shmem_startup_hook_next			= shmem_startup_hook;
-	shmem_startup_hook				= pathman_shmem_startup_hook;
-	post_parse_analyze_hook_next	= post_parse_analyze_hook;
-	post_parse_analyze_hook			= pathman_post_parse_analysis_hook;
-	planner_hook_next				= planner_hook;
-	planner_hook					= pathman_planner_hook;
-	process_utility_hook_next		= ProcessUtility_hook;
-	ProcessUtility_hook				= pathman_process_utility_hook;
-	executor_run_hook_next			= ExecutorRun_hook;
-	ExecutorRun_hook				= pathman_executor_hook;
+	pathman_set_rel_pathlist_hook_next		= set_rel_pathlist_hook;
+	set_rel_pathlist_hook					= pathman_rel_pathlist_hook;
+	pathman_set_join_pathlist_next			= set_join_pathlist_hook;
+	set_join_pathlist_hook					= pathman_join_pathlist_hook;
+	pathman_shmem_startup_hook_next			= shmem_startup_hook;
+	shmem_startup_hook						= pathman_shmem_startup_hook;
+	pathman_post_parse_analyze_hook_next	= post_parse_analyze_hook;
+	post_parse_analyze_hook					= pathman_post_parse_analyze_hook;
+	pathman_planner_hook_next				= planner_hook;
+	planner_hook							= pathman_planner_hook;
+	pathman_process_utility_hook_next		= ProcessUtility_hook;
+	ProcessUtility_hook						= pathman_process_utility_hook;
+	pathman_executor_run_hook_next			= ExecutorRun_hook;
+	ExecutorRun_hook						= pathman_executor_hook;
 
 	/* Initialize static data for all subsystems */
 	init_main_pathman_toggles();
@@ -1922,9 +1922,9 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 	foreach(l, root->append_rel_list)
 	{
 		AppendRelInfo  *appinfo = (AppendRelInfo *) lfirst(l);
-		Index			childRTindex;
-		RangeTblEntry  *childRTE;
-		RelOptInfo	   *childrel;
+		Index			child_rti;
+		RangeTblEntry  *child_rte;
+		RelOptInfo	   *child_rel;
 		ListCell	   *lcp;
 
 		/* append_rel_list contains all append rels; ignore others */
@@ -1932,11 +1932,11 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 			continue;
 
 		/* Re-locate the child RTE and RelOptInfo */
-		childRTindex = appinfo->child_relid;
-		childRTE = root->simple_rte_array[childRTindex];
-		childrel = root->simple_rel_array[childRTindex];
+		child_rti = appinfo->child_relid;
+		child_rte = root->simple_rte_array[child_rti];
+		child_rel = root->simple_rel_array[child_rti];
 
-		if (!childrel)
+		if (!child_rel)
 			elog(ERROR, "could not make access paths to a relation");
 
 #if PG_VERSION_NUM >= 90600
@@ -1948,7 +1948,7 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		 * For consistency, do this before calling set_rel_size() for the child.
 		 */
 		if (root->glob->parallelModeOK && rel->consider_parallel)
-			set_rel_consider_parallel_compat(root, childrel, childRTE);
+			set_rel_consider_parallel_compat(root, child_rel, child_rte);
 #endif
 
 		/*
@@ -1956,44 +1956,45 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		 * table and we've already filled it, skip it. Otherwise build a
 		 * pathlist for it
 		 */
-		if (!IsPartitionedRTE(childRTindex) || childrel->pathlist == NIL)
+		if (PARENTHOOD_DISALLOWED != get_rel_parenthood_status(child_rte) ||
+			child_rel->pathlist == NIL)
 		{
 			/* Compute child's access paths & sizes */
-			if (childRTE->relkind == RELKIND_FOREIGN_TABLE)
+			if (child_rte->relkind == RELKIND_FOREIGN_TABLE)
 			{
 				/* childrel->rows should be >= 1 */
-				set_foreign_size(root, childrel, childRTE);
+				set_foreign_size(root, child_rel, child_rte);
 
 				/* If child IS dummy, ignore it */
-				if (IS_DUMMY_REL(childrel))
+				if (IS_DUMMY_REL(child_rel))
 					continue;
 
-				set_foreign_pathlist(root, childrel, childRTE);
+				set_foreign_pathlist(root, child_rel, child_rte);
 			}
 			else
 			{
 				/* childrel->rows should be >= 1 */
-				set_plain_rel_size(root, childrel, childRTE);
+				set_plain_rel_size(root, child_rel, child_rte);
 
 				/* If child IS dummy, ignore it */
-				if (IS_DUMMY_REL(childrel))
+				if (IS_DUMMY_REL(child_rel))
 					continue;
 
-				set_plain_rel_pathlist(root, childrel, childRTE);
+				set_plain_rel_pathlist(root, child_rel, child_rte);
 			}
 		}
 
 		/* Set cheapest path for child */
-		set_cheapest(childrel);
+		set_cheapest(child_rel);
 
 		/* If child BECAME dummy, ignore it */
-		if (IS_DUMMY_REL(childrel))
+		if (IS_DUMMY_REL(child_rel))
 			continue;
 
 		/*
 		 * Child is live, so add it to the live_childrels list for use below.
 		 */
-		live_childrels = lappend(live_childrels, childrel);
+		live_childrels = lappend(live_childrels, child_rel);
 
 #if PG_VERSION_NUM >= 90600
 		/*
@@ -2003,7 +2004,7 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		 * not; but we don't have that today, so it's a waste to consider
 		 * partial paths anywhere in the appendrel unless it's all safe.
 		 */
-		if (!childrel->consider_parallel)
+		if (!child_rel->consider_parallel)
 			rel->consider_parallel = false;
 #endif
 
@@ -2012,17 +2013,17 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		 * the unparameterized Append path we are constructing for the parent.
 		 * If not, there's no workable unparameterized path.
 		 */
-		if (childrel->cheapest_total_path->param_info == NULL)
+		if (child_rel->cheapest_total_path->param_info == NULL)
 			subpaths = accumulate_append_subpath(subpaths,
-											  childrel->cheapest_total_path);
+											  child_rel->cheapest_total_path);
 		else
 			subpaths_valid = false;
 
 #if PG_VERSION_NUM >= 90600
 		/* Same idea, but for a partial plan. */
-		if (childrel->partial_pathlist != NIL)
+		if (child_rel->partial_pathlist != NIL)
 			partial_subpaths = accumulate_append_subpath(partial_subpaths,
-									   linitial(childrel->partial_pathlist));
+									   linitial(child_rel->partial_pathlist));
 		else
 			partial_subpaths_valid = false;
 #endif
@@ -2033,7 +2034,7 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 		 * heuristic to indicate which sort orderings and parameterizations we
 		 * should build Append and MergeAppend paths for.
 		 */
-		foreach(lcp, childrel->pathlist)
+		foreach(lcp, child_rel->pathlist)
 		{
 			Path	   *childpath = (Path *) lfirst(lcp);
 			List	   *childkeys = childpath->pathkeys;

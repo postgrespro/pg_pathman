@@ -3,7 +3,7 @@
  *  NOTE: This test behaves differenly on 9.5
  * -------------------------------------------
  */
-
+SET search_path = 'public';
 CREATE EXTENSION pg_pathman;
 CREATE SCHEMA rowmarks;
 

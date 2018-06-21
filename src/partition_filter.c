@@ -588,7 +588,7 @@ make_partition_filter(Plan *subplan,
 	CustomScan *cscan = makeNode(CustomScan);
 	Relation	parent_rel;
 
-	/* Currenly we don't support ON CONFLICT clauses */
+	/* Currently we don't support ON CONFLICT clauses */
 	if (conflict_action != ONCONFLICT_NONE)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),

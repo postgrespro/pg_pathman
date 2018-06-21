@@ -38,6 +38,21 @@
 #include "utils/regproc.h"
 #endif
 
+static const Node *
+drop_irrelevant_expr_wrappers(const Node *expr)
+{
+	switch (nodeTag(expr))
+	{
+		/* Strip relabeling */
+		case T_RelabelType:
+			return (const Node *) ((const RelabelType *) expr)->arg;
+
+		/* no special actions required */
+		default:
+			return expr;
+	}
+}
+
 static bool
 clause_contains_params_walker(Node *node, void *context)
 {
@@ -111,14 +126,10 @@ check_security_policy_internal(Oid relid, Oid role)
 
 /* Compare clause operand with expression */
 bool
-match_expr_to_operand(Node *expr, Node *operand)
+match_expr_to_operand(const Node *expr, const Node *operand)
 {
-	/* Strip relabeling for both operand and expr */
-	if (operand && IsA(operand, RelabelType))
-		operand = (Node *) ((RelabelType *) operand)->arg;
-
-	if (expr && IsA(expr, RelabelType))
-		expr = (Node *) ((RelabelType *) expr)->arg;
+	expr = drop_irrelevant_expr_wrappers(expr);
+	operand = drop_irrelevant_expr_wrappers(operand);
 
 	/* compare expressions and return result right away */
 	return equal(expr, operand);
@@ -380,7 +391,7 @@ perform_type_cast(Datum value, Oid in_type, Oid out_type, bool *success)
 	if (IsBinaryCoercible(in_type, out_type))
 		return value;
 
-	/* If not, try to perfrom a type cast */
+	/* If not, try to perform a type cast */
 	ret = find_coercion_pathway(out_type, in_type,
 								COERCION_EXPLICIT,
 								&castfunc);
@@ -425,7 +436,7 @@ perform_type_cast(Datum value, Oid in_type, Oid out_type, bool *success)
 }
 
 /*
- * Convert interval from TEXT to binary form using partitioninig expresssion type.
+ * Convert interval from TEXT to binary form using partitioninig expression type.
  */
 Datum
 extract_binary_interval_from_text(Datum interval_text,	/* interval as TEXT */

@@ -13,16 +13,26 @@ The extension is compatible with:
  * Postgres Pro Standard 9.5, 9.6;
  * Postgres Pro Enterprise;
 
-By the way, we have a growing Wiki [out there](https://github.com/postgrespro/pg_pathman/wiki).
+Take a look at our Wiki [out there](https://github.com/postgrespro/pg_pathman/wiki).
 
 ## Overview
-**Partitioning** means splitting one large table into smaller pieces. Each row in such table is moved to a single partition according to the partitioning key. PostgreSQL supports partitioning via table inheritance: each partition must be created as a child table with CHECK CONSTRAINT. For example:
+**Partitioning** means splitting one large table into smaller pieces. Each row in such table is moved to a single partition according to the partitioning key. PostgreSQL <= 10 supports partitioning via table inheritance: each partition must be created as a child table with CHECK CONSTRAINT:
 
 ```plpgsql
 CREATE TABLE test (id SERIAL PRIMARY KEY, title TEXT);
 CREATE TABLE test_1 (CHECK ( id >= 100 AND id < 200 )) INHERITS (test);
 CREATE TABLE test_2 (CHECK ( id >= 200 AND id < 300 )) INHERITS (test);
 ```
+
+PostgreSQL 10 provides native partitioning:
+
+```plpgsql
+CREATE TABLE test(id int4, value text) PARTITION BY RANGE(id);
+CREATE TABLE test_1 PARTITION OF test FOR VALUES FROM (1) TO (10);
+CREATE TABLE test_2 PARTITION OF test FOR VALUES FROM (10) TO (20);
+```
+
+It's not so different from the classic approach; there are implicit check constraints, and most of its limitations are still relevant.
 
 Despite the flexibility, this approach forces the planner to perform an exhaustive search and to check constraints on each partition to determine whether it should be present in the plan or not. Large amount of partitions may result in significant planning overhead.
 
@@ -61,22 +71,21 @@ More interesting features are yet to come. Stay tuned!
  * FDW support (foreign partitions);
  * Various GUC toggles and configurable settings.
 
-## Roadmap
- 
- * Multi-level partitioning (ver 1.5);
- * Improved referential integrity + foreign keys on partitioned tables (ver 1.5);
-
-Take a look at [this page](https://github.com/postgrespro/pg_pathman/wiki/Roadmap);
-
 ## Installation guide
 To install `pg_pathman`, execute this in the module's directory:
+
 ```shell
 make install USE_PGXS=1
 ```
+
+> **Important:** Don't forget to set the `PG_CONFIG` variable (`make PG_CONFIG=...`) in case you want to test `pg_pathman` on a non-default or custom build of PostgreSQL. Read more [here](https://wiki.postgresql.org/wiki/Building_and_Installing_PostgreSQL_Extension_Modules).
+
 Modify the **`shared_preload_libraries`** parameter in `postgresql.conf` as following:
+
 ```
 shared_preload_libraries = 'pg_pathman'
 ```
+
 > **Important:** `pg_pathman` may cause conflicts with some other extensions that use the same hook functions. For example, `pg_pathman` uses `ProcessUtility_hook` to handle COPY queries for partitioned tables, which means it may interfere with `pg_stat_statements` from time to time. In this case, try listing libraries in certain order: `shared_preload_libraries = 'pg_stat_statements, pg_pathman'`.
 
 It is essential to restart the PostgreSQL instance. After that, execute the following query in psql:
@@ -86,7 +95,7 @@ CREATE EXTENSION pg_pathman;
 
 Done! Now it's time to setup your partitioning schemes.
 
-> **Important:** Don't forget to set the `PG_CONFIG` variable in case you want to test `pg_pathman` on a custom build of PostgreSQL. Read more [here](https://wiki.postgresql.org/wiki/Building_and_Installing_PostgreSQL_Extension_Modules).
+> **Windows-specific**: pg_pathman imports several symbols (e.g. None_Receiver, InvalidObjectAddress) from PostgreSQL, which is fine by itself, but requires that those symbols are marked as `PGDLLIMPORT`. Unfortunately, some of them are not exported from vanilla PostgreSQL, which means that you have to either use Postgres Pro Standard/Enterprise (which includes all necessary patches), or patch and build your own distribution of PostgreSQL.
 
 ## How to update
 In order to update pg_pathman:
@@ -96,8 +105,8 @@ In order to update pg_pathman:
 3. Execute the following queries:
 
 ```plpgsql
-/* replace X.Y with the version number, e.g. 1.3 */
-ALTER EXTENSION pg_pathman UPDATE TO "X.Y";
+/* only required for major releases, e.g. 1.3 -> 1.4 */
+ALTER EXTENSION pg_pathman UPDATE;
 SET pg_pathman.enable = t;
 ```
 
@@ -173,13 +182,9 @@ Stops a background worker performing a concurrent partitioning task. Note: worke
 
 ### Triggers
 ```plpgsql
-create_hash_update_trigger(parent REGCLASS)
+create_update_triggers(parent REGCLASS)
 ```
-Creates the trigger on UPDATE for HASH partitions. The UPDATE trigger isn't created by default because of the overhead. It's useful in cases when the partitioning expression's value might change.
-```plpgsql
-create_range_update_trigger(parent REGCLASS)
-```
-Same as above, but for a RANGE-partitioned table.
+Creates a for-each-row trigger to enable cross-partition UPDATE on a table partitioned by HASH/RANGE. The trigger is not created automatically because of the overhead caused by its function. You don't have to use this feature unless partitioning key might change during an UPDATE.
 
 ### Post-creation partition management
 ```plpgsql
@@ -300,7 +305,7 @@ Enable/disable auto partition propagation (only for RANGE partitioning). It is e
 ```plpgsql
 set_init_callback(relation REGCLASS, callback REGPROC DEFAULT 0)
 ```
-Set partition creation callback to be invoked for each attached or created partition (both HASH and RANGE). The callback must have the following signature: `part_init_callback(args JSONB) RETURNS VOID`. Parameter `arg` consists of several fields whose presence depends on partitioning type:
+Set partition creation callback to be invoked for each attached or created partition (both HASH and RANGE). If callback is marked with SECURITY INVOKER, it's executed with the privileges of the user that produced a statement which has led to creation of a new partition (e.g. `INSERT INTO partitioned_table VALUES (-5)`). The callback must have the following signature: `part_init_callback(args JSONB) RETURNS VOID`. Parameter `arg` consists of several fields whose presence depends on partitioning type:
 ```json
 /* RANGE-partitioned table abc (child abc_4) */
 {

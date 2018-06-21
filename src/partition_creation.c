@@ -654,7 +654,7 @@ choose_range_partition_name(Oid parent_relid, Oid parent_nsp)
 						   (uint64) DatumGetInt64(part_num)); /* can't use UInt64 on 9.5 */
 
 		/*
-		 * If we found a unique name or attemps number exceeds some reasonable
+		 * If we found a unique name or attempts number exceeds some reasonable
 		 * value then we quit
 		 *
 		 * XXX Should we throw an exception if max attempts number is reached?
@@ -1303,7 +1303,7 @@ build_raw_range_check_tree(Node *raw_expression,
 		and_oper->args = lappend(and_oper->args, left_arg);
 	}
 
-	/* Right comparision (VAR < end_value) */
+	/* Right comparison (VAR < end_value) */
 	if (!IsInfinite(end_value))
 	{
 		/* Build right boundary */

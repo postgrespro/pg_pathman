@@ -21,13 +21,13 @@
 #include "tcop/utility.h"
 
 
-extern set_join_pathlist_hook_type		set_join_pathlist_next;
-extern set_rel_pathlist_hook_type		set_rel_pathlist_hook_next;
-extern planner_hook_type				planner_hook_next;
-extern post_parse_analyze_hook_type		post_parse_analyze_hook_next;
-extern shmem_startup_hook_type			shmem_startup_hook_next;
-extern ProcessUtility_hook_type			process_utility_hook_next;
-extern ExecutorRun_hook_type			executor_run_hook_next;
+extern set_join_pathlist_hook_type		pathman_set_join_pathlist_next;
+extern set_rel_pathlist_hook_type		pathman_set_rel_pathlist_hook_next;
+extern planner_hook_type				pathman_planner_hook_next;
+extern post_parse_analyze_hook_type		pathman_post_parse_analyze_hook_next;
+extern shmem_startup_hook_type			pathman_shmem_startup_hook_next;
+extern ProcessUtility_hook_type			pathman_process_utility_hook_next;
+extern ExecutorRun_hook_type			pathman_executor_run_hook_next;
 
 
 void pathman_join_pathlist_hook(PlannerInfo *root,
@@ -48,7 +48,7 @@ PlannedStmt * pathman_planner_hook(Query *parse,
 								   int cursorOptions,
 								   ParamListInfo boundParams);
 
-void pathman_post_parse_analysis_hook(ParseState *pstate,
+void pathman_post_parse_analyze_hook(ParseState *pstate,
 									  Query *query);
 
 void pathman_shmem_startup_hook(void);

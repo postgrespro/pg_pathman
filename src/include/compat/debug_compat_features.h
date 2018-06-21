@@ -12,5 +12,4 @@
 #define ENABLE_PGPRO_PATCHES
 
 /* PgPro exclusive features */
-//#define ENABLE_RELATION_TAGS
 #define ENABLE_PATHMAN_AWARE_COPY_WIN32

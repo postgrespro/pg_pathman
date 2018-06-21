@@ -7,8 +7,8 @@ OBJS = src/init.o src/relation_info.o src/utils.o src/partition_filter.o \
 	src/pl_funcs.o src/pl_range_funcs.o src/pl_hash_funcs.o src/pathman_workers.o \
 	src/hooks.o src/nodes_common.o src/xact_handling.o src/utility_stmt_hooking.o \
 	src/planner_tree_modification.o src/debug_print.o src/partition_creation.o \
-	src/compat/pg_compat.o src/compat/relation_tags.o src/compat/rowmarks_fix.o \
-	src/partition_router.o $(WIN32RES)
+	src/compat/pg_compat.o src/compat/rowmarks_fix.o src/partition_router.o \
+	$(WIN32RES)
 
 ifdef USE_PGXS
 override PG_CPPFLAGS += -I$(CURDIR)/src/include
@@ -37,6 +37,7 @@ REGRESS = pathman_array_qual \
 		  pathman_column_type \
 		  pathman_cte \
 		  pathman_domains \
+		  pathman_dropped_cols \
 		  pathman_expressions \
 		  pathman_foreign_keys \
 		  pathman_gaps \

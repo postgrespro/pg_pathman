@@ -23,7 +23,7 @@
 bool clause_contains_params(Node *clause);
 bool is_date_type_internal(Oid typid);
 bool check_security_policy_internal(Oid relid, Oid role);
-bool match_expr_to_operand(Node *expr, Node *operand);
+bool match_expr_to_operand(const Node *expr, const Node *operand);
 
 /*
  * Misc.

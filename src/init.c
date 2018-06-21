@@ -672,18 +672,7 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 
 		/* Set xmin if necessary */
 		if (xmin)
-		{
-			Datum	value;
-			bool	isnull;
-
-			value = heap_getsysattr(htup,
-									MinTransactionIdAttributeNumber,
-									RelationGetDescr(rel),
-									&isnull);
-
-			Assert(!isnull);
-			*xmin = DatumGetTransactionId(value);
-		}
+			*xmin = HeapTupleHeaderGetXmin(htup->t_data);
 
 		/* Set ItemPointer if necessary */
 		if (iptr)
@@ -1160,7 +1149,6 @@ validate_hash_constraint(const Expr *expr,
 		Node   *first = linitial(get_hash_expr->args);	/* arg #1: TYPE_HASH_PROC(EXPRESSION) */
 		Node   *second = lsecond(get_hash_expr->args);	/* arg #2: PARTITIONS_COUNT */
 		Const  *cur_partition_idx;						/* hash value for this partition */
-		Node   *hash_arg;
 
 		if (!IsA(first, FuncExpr) || !IsA(second, Const))
 			return false;
@@ -1173,13 +1161,6 @@ validate_hash_constraint(const Expr *expr,
 
 		/* There should be exactly 1 argument */
 		if (list_length(type_hash_proc_expr->args) != 1)
-			return false;
-
-		/* Extract arg of TYPE_HASH_PROC() */
-		hash_arg = (Node *) linitial(type_hash_proc_expr->args);
-
-		/* Check arg of TYPE_HASH_PROC() */
-		if (!match_expr_to_operand(prel->expr, hash_arg))
 			return false;
 
 		/* Check that PARTITIONS_COUNT is equal to total amount of partitions */

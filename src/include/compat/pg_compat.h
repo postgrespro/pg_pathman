@@ -378,6 +378,31 @@ static inline void mult_result_handler() { elog(ERROR, ERR_PART_ATTR_MULTIPLE_RE
 
 
 /*
+ * extract_actual_join_clauses()
+ */
+#if (PG_VERSION_NUM >= 100004) || \
+	(PG_VERSION_NUM <  100000 && PG_VERSION_NUM >= 90609) || \
+	(PG_VERSION_NUM <   90600 && PG_VERSION_NUM >= 90513)
+#define extract_actual_join_clauses_compat(restrictinfo_list, \
+										   joinrelids, \
+										   joinquals, \
+										   otherquals) \
+	extract_actual_join_clauses((restrictinfo_list), \
+								(joinrelids), \
+								(joinquals), \
+								(otherquals))
+#else
+#define extract_actual_join_clauses_compat(restrictinfo_list, \
+										   joinrelids, \
+										   joinquals, \
+										   otherquals) \
+	extract_actual_join_clauses((restrictinfo_list), \
+								(joinquals), \
+								(otherquals))
+#endif
+
+
+/*
  * get_all_actual_clauses()
  */
 #if PG_VERSION_NUM >= 100000
