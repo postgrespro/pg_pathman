@@ -13,7 +13,7 @@ RUN if [ "${CHECK_CODE}" = "cppcheck" ] ; then \
 
 RUN if [ "${CHECK_CODE}" = "false" ] ; then \
 	echo 'http://dl-3.alpinelinux.org/alpine/edge/main' > /etc/apk/repositories; \
-	apk --no-cache add curl python3 gcc make musl-dev cmocka-dev;\
+	apk --no-cache add curl python3 python3-dev gcc make musl-dev cmocka-dev linux-headers;\
 	pip3 install virtualenv;\
 	fi
 
