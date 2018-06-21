@@ -661,6 +661,7 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 		/* Extract data if necessary */
 		if (values && isnull)
 		{
+			htup = heap_copytuple(htup);
 			heap_deform_tuple(htup, RelationGetDescr(rel), values, isnull);
 
 			/* Perform checks for non-NULL columns */
@@ -776,6 +777,7 @@ read_pathman_params(Oid relid, Datum *values, bool *isnull)
 	if ((htup = heap_getnext(scan, ForwardScanDirection)) != NULL)
 	{
 		/* Extract data if necessary */
+		htup = heap_copytuple(htup);
 		heap_deform_tuple(htup, RelationGetDescr(rel), values, isnull);
 		row_found = true;
 
