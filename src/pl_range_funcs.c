@@ -64,14 +64,6 @@ static ArrayType *construct_bounds_array(Bound *elems,
 										 bool elmbyval,
 										 char elmalign);
 
-static void check_range_adjacence(Oid cmp_proc,
-								  Oid collid,
-								  List *ranges);
-
-static void merge_range_partitions_internal(Oid parent,
-											Oid *parts,
-											uint32 nparts);
-
 static char *deparse_constraint(Oid relid, Node *expr);
 
 static void modify_range_constraint(Oid partition_relid,
@@ -639,13 +631,22 @@ merge_range_partitions(PG_FUNCTION_ARGS)
 	Oid					parent = InvalidOid;
 	ArrayType		   *arr = PG_GETARG_ARRAYTYPE_P(0);
 
-	Oid				   *partitions;
+	Oid				   *parts;
+	int					nparts;
+
 	Datum			   *datums;
 	bool			   *nulls;
-	int					nparts;
 	int16				typlen;
 	bool				typbyval;
 	char				typalign;
+
+	PartRelationInfo   *prel;
+	Bound				min_bound,
+						max_bound;
+	RangeEntry		   *bounds;
+	ObjectAddresses	   *objects = new_object_addresses();
+	Snapshot			fresh_snapshot;
+	FmgrInfo			finfo;
 	int					i;
 
 	/* Validate array type */
@@ -657,35 +658,32 @@ merge_range_partitions(PG_FUNCTION_ARGS)
 					  typlen, typbyval, typalign,
 					  &datums, &nulls, &nparts);
 
-	/* Extract partition Oids from array */
-	partitions = palloc(sizeof(Oid) * nparts);
-	for (i = 0; i < nparts; i++)
-	{
-		Oid		partition_relid;
-		partition_relid = DatumGetObjectId(datums[i]);
-
-		/* check that is not has subpartitions */
-		if (has_subclass(partition_relid))
-			ereport(ERROR, (errmsg("cannot merge partitions"),
-							errdetail("at least one of specified partitions has children")));
-
-		partitions[i] = partition_relid;
-	}
-
 	if (nparts < 2)
 		ereport(ERROR, (errmsg("cannot merge partitions"),
 						errdetail("there must be at least two partitions")));
 
-	/* Check if all partitions are from the same parent */
+	/* Allocate arrays */
+	parts = palloc(nparts * sizeof(Oid));
+	bounds = palloc(nparts * sizeof(RangeEntry));
+
 	for (i = 0; i < nparts; i++)
 	{
-		Oid cur_parent = get_parent_of_partition(partitions[i]);
+		Oid cur_parent;
+
+		/* Extract partition Oids from array */
+		parts[i] = DatumGetObjectId(datums[i]);
+
+		/* Prevent modification of partitions */
+		LockRelationOid(parts[i], AccessExclusiveLock);
+
+		/* Check if all partitions are from the same parent */
+		cur_parent = get_parent_of_partition(parts[i]);
 
 		/* If we couldn't find a parent, it's not a partition */
 		if (!OidIsValid(cur_parent))
 			ereport(ERROR, (errmsg("cannot merge partitions"),
 							errdetail("relation \"%s\" is not a partition",
-									  get_rel_name_or_relid(partitions[i]))));
+									  get_rel_name_or_relid(parts[i]))));
 
 		/* 'parent' is not initialized */
 		if (parent == InvalidOid)
@@ -697,84 +695,52 @@ merge_range_partitions(PG_FUNCTION_ARGS)
 							errdetail("all relations must share the same parent")));
 	}
 
-	/* Now merge partitions */
-	merge_range_partitions_internal(parent, partitions, nparts);
-
-	PG_RETURN_VOID();
-}
-
-static void
-merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
-{
-	PartRelationInfo   *prel;
-	List			   *rentry_list = NIL;
-	RangeEntry		   *ranges,
-					   *first,
-					   *last;
-	FmgrInfo			cmp_proc;
-	ObjectAddresses	   *objects = new_object_addresses();
-	Snapshot			fresh_snapshot;
-	int					i;
+	/* Lock parent till transaction's end */
+	LockRelationOid(parent, ShareUpdateExclusiveLock);
 
 	/* Emit an error if it is not partitioned by RANGE */
 	prel = get_pathman_relation_info(parent);
 	shout_if_prel_is_invalid(parent, prel, PT_RANGE);
 
-	/* Fetch ranges array */
-	ranges = PrelGetRangesArray(prel);
-
-	/* Lock parent till transaction's end */
-	LockRelationOid(parent, ShareUpdateExclusiveLock);
-
-	/* Process partitions */
+	/* Copy rentries from 'prel' */
 	for (i = 0; i < nparts; i++)
 	{
-		ObjectAddress	object;
-		int				j;
+		uint32 idx = PrelHasPartition(prel, parts[i]);
+		Assert(idx > 0);
 
-		/* Prevent modification of partitions */
-		LockRelationOid(parts[i], AccessExclusiveLock);
-
-		/* Look for the specified partition */
-		for (j = 0; j < PrelChildrenCount(prel); j++)
-		{
-			if (ranges[j].child_oid == parts[i])
-			{
-				rentry_list = lappend(rentry_list, &ranges[j]);
-				break;
-			}
-		}
-
-		if (i > 0)
-		{
-			ObjectAddressSet(object, RelationRelationId, parts[i]);
-			add_exact_object_address(&object, objects);
-		}
+		bounds[i] = PrelGetRangesArray(prel)[idx - 1];
 	}
+
+	/* Sort rentries by increasing bound */
+	qsort_range_entries(bounds, nparts, prel);
+
+	fmgr_info(prel->cmp_proc, &finfo);
 
 	/* Check that partitions are adjacent */
-	check_range_adjacence(prel->cmp_proc, prel->ev_collid, rentry_list);
+	for (i = 1; i < nparts; i++)
+	{
+		Bound	cur_min  = bounds[i].min,
+				prev_max = bounds[i - 1].max;
+
+		if (cmp_bounds(&finfo, prel->ev_collid, &cur_min, &prev_max) != 0)
+		{
+			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+							errmsg("partitions \"%s\" and \"%s\" are not adjacent",
+								   get_rel_name(bounds[i - 1].child_oid),
+								   get_rel_name(bounds[i].child_oid))));
+		}
+	}
 
 	/* First determine the bounds of a new constraint */
-	first = (RangeEntry *) linitial(rentry_list);
-	last  = (RangeEntry *) llast(rentry_list);
-
-	/* Swap ranges if 'last' < 'first' */
-	fmgr_info(prel->cmp_proc, &cmp_proc);
-	if (cmp_bounds(&cmp_proc, prel->ev_collid, &last->min, &first->min) < 0)
-	{
-		RangeEntry *tmp = last;
-
-		last = first;
-		first = tmp;
-	}
+	min_bound = bounds[0].min;
+	max_bound = bounds[nparts - 1].max;
 
 	/* Drop old constraint and create a new one */
 	modify_range_constraint(parts[0],
 							prel->expr_cstr,
 							prel->ev_type,
-							&first->min,
-							&last->max);
+							&min_bound,
+							&max_bound);
 
 	/* Make constraint visible */
 	CommandCounterIncrement();
@@ -792,6 +758,8 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 	/* Migrate the data from all partition to the first one */
 	for (i = 1; i < nparts; i++)
 	{
+		ObjectAddress object;
+
 		char *query = psprintf("WITH part_data AS ( "
 									"DELETE FROM %s RETURNING "
 							   "*) "
@@ -812,6 +780,10 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 							 false, true, 0);
 
 		pfree(query);
+
+		/* To be deleted */
+		ObjectAddressSet(object, RelationRelationId, parts[i]);
+		add_exact_object_address(&object, objects);
 	}
 
 	/* Free snapshot */
@@ -823,8 +795,13 @@ merge_range_partitions_internal(Oid parent, Oid *parts, uint32 nparts)
 	performMultipleDeletions(objects, DROP_CASCADE, 0);
 	free_object_addresses(objects);
 
+	pfree(bounds);
+	pfree(parts);
+
 	/* Don't forget to close 'prel'! */
 	close_pathman_relation_info(prel);
+
+	PG_RETURN_VOID();
 }
 
 
@@ -1277,41 +1254,4 @@ construct_bounds_array(Bound *elems,
 							 elembyval, elemalign);
 
 	return arr;
-}
-
-/*
- * Check that range entries are adjacent
- */
-static void
-check_range_adjacence(Oid cmp_proc, Oid collid, List *ranges)
-{
-	ListCell   *lc;
-	RangeEntry *last = NULL;
-	FmgrInfo	finfo;
-
-	fmgr_info(cmp_proc, &finfo);
-
-	foreach(lc, ranges)
-	{
-		RangeEntry *cur = (RangeEntry *) lfirst(lc);
-
-		/* Skip first iteration */
-		if (!last)
-		{
-			last = cur;
-			continue;
-		}
-
-		/* Check that last and current partitions are adjacent */
-		if ((cmp_bounds(&finfo, collid, &last->max, &cur->min) != 0) &&
-			(cmp_bounds(&finfo, collid, &cur->max, &last->min) != 0))
-		{
-			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-							errmsg("partitions \"%s\" and \"%s\" are not adjacent",
-								   get_rel_name(last->child_oid),
-								   get_rel_name(cur->child_oid))));
-		}
-
-		last = cur;
-	}
 }

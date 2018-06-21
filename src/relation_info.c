@@ -746,16 +746,9 @@ fill_prel_with_partitions(PartRelationInfo *prel,
 	/* Finalize 'prel' for a RANGE-partitioned table */
 	if (prel->parttype == PT_RANGE)
 	{
-		cmp_func_info	cmp_info;
-
-		/* Prepare function info */
-		fmgr_info(prel->cmp_proc, &cmp_info.flinfo);
-		cmp_info.collid = prel->ev_collid;
-
-		/* Sort partitions by RangeEntry->min asc */
-		qsort_arg((void *) prel->ranges, PrelChildrenCount(prel),
-				  sizeof(RangeEntry), cmp_range_entries,
-				  (void *) &cmp_info);
+		qsort_range_entries(PrelGetRangesArray(prel),
+							PrelChildrenCount(prel),
+							prel);
 
 		/* Initialize 'prel->children' array */
 		for (i = 0; i < PrelChildrenCount(prel); i++)
@@ -787,6 +780,23 @@ cmp_range_entries(const void *p1, const void *p2, void *arg)
 	cmp_func_info	   *info = (cmp_func_info *) arg;
 
 	return cmp_bounds(&info->flinfo, info->collid, &v1->min, &v2->min);
+}
+
+void
+qsort_range_entries(RangeEntry *entries, int nentries,
+					const PartRelationInfo *prel)
+{
+	cmp_func_info cmp_info;
+
+	/* Prepare function info */
+	fmgr_info(prel->cmp_proc, &cmp_info.flinfo);
+	cmp_info.collid = prel->ev_collid;
+
+	/* Sort partitions by RangeEntry->min asc */
+	qsort_arg(entries, nentries,
+			  sizeof(RangeEntry),
+			  cmp_range_entries,
+			  (void *) &cmp_info);
 }
 
 /*

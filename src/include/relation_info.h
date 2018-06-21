@@ -348,6 +348,9 @@ bool has_pathman_relation_info(Oid relid);
 PartRelationInfo *get_pathman_relation_info(Oid relid);
 void close_pathman_relation_info(PartRelationInfo *prel);
 
+void qsort_range_entries(RangeEntry *entries, int nentries,
+						 const PartRelationInfo *prel);
+
 void shout_if_prel_is_invalid(const Oid parent_oid,
 							  const PartRelationInfo *prel,
 							  const PartType expected_part_type);
