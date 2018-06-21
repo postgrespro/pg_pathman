@@ -482,7 +482,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 
 	ResultPartsStorage	parts_storage;
 	ResultRelInfo	   *parent_rri;
-	ExprState		   *expr_state = NULL;
+	Oid					parent_relid = RelationGetRelid(parent_rel);
 
 	MemoryContext		query_mcxt = CurrentMemoryContext;
 	EState			   *estate = CreateExecutorState(); /* for ExecConstraints() */
@@ -505,9 +505,9 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	estate->es_range_table = range_table;
 
 	/* Initialize ResultPartsStorage */
-	init_result_parts_storage(&parts_storage, parent_rri,
+	init_result_parts_storage(&parts_storage,
+							  parent_relid, parent_rri,
 							  estate, CMD_INSERT,
-							  RPS_DEFAULT_ENTRY_SIZE,
 							  RPS_CLOSE_RELATIONS,
 							  RPS_DEFAULT_SPECULATIVE,
 							  RPS_RRI_CB(prepare_rri_for_copy, cstate),
@@ -540,7 +540,6 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 		Oid						tuple_oid = InvalidOid;
 		ExprContext		 	   *econtext = GetPerTupleExprContext(estate);
 
-		PartRelationInfo	   *prel;
 		ResultRelInfoHolder	   *rri_holder;
 		ResultRelInfo		   *child_rri;
 
@@ -565,33 +564,9 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 		ExecSetSlotDescriptor(slot, tupDesc);
 		ExecStoreTuple(tuple, slot, InvalidBuffer, false);
 
-		/* Store slot for expression evaluation */
-		econtext->ecxt_scantuple = slot;
-
-		/* Fetch PartRelationInfo for parent relation */
-		prel = get_pathman_relation_info(RelationGetRelid(parent_rel));
-
-		/* Initialize expression state */
-		if (expr_state == NULL)
-		{
-			MemoryContext	old_mcxt;
-			Node		   *expr;
-
-			old_mcxt = MemoryContextSwitchTo(query_mcxt);
-
-			expr = PrelExpressionForRelid(prel, PART_EXPR_VARNO);
-			expr_state = ExecInitExpr((Expr *) expr, NULL);
-
-			MemoryContextSwitchTo(old_mcxt);
-		}
-
 		/* Search for a matching partition */
-		rri_holder = select_partition_for_insert(expr_state, econtext, estate,
-												 prel, &parts_storage);
+		rri_holder = select_partition_for_insert(&parts_storage, slot);
 		child_rri = rri_holder->result_rel_info;
-
-		/* Don't forget to close 'prel'! */
-		close_pathman_relation_info(prel);
 
 		/* Magic: replace parent's ResultRelInfo with ours */
 		estate->es_result_relation_info = child_rri;

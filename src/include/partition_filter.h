@@ -50,9 +50,7 @@ typedef struct
 
 
 /* Default settings for ResultPartsStorage */
-#define RPS_DEFAULT_ENTRY_SIZE		sizeof(ResultPartsStorage)
 #define RPS_DEFAULT_SPECULATIVE		false /* speculative inserts */
-
 #define RPS_CLOSE_RELATIONS			true
 #define RPS_SKIP_RELATIONS			false
 
@@ -75,7 +73,7 @@ typedef void (*rri_holder_cb)(ResultRelInfoHolder *rri_holder,
  */
 struct ResultPartsStorage
 {
-	ResultRelInfo	   *base_rri;				/* original ResultRelInfo (parent) */
+	ResultRelInfo	   *base_rri;				/* original ResultRelInfo */
 	EState			   *estate;					/* pointer to executor's state */
 	CmdType				command_type;			/* INSERT | UPDATE */
 
@@ -93,6 +91,10 @@ struct ResultPartsStorage
 	bool				close_relations;
 	LOCKMODE			head_open_lock_mode;
 	LOCKMODE			heap_close_lock_mode;
+
+	PartRelationInfo   *prel;
+	ExprState		   *prel_expr_state;
+	ExprContext		   *prel_econtext;
 };
 
 typedef struct
@@ -115,7 +117,6 @@ typedef struct
 	JunkFilter		   *junkfilter;				/* junkfilter for subplan_slot */
 
 	ExprContext		   *tup_convert_econtext;	/* ExprContext for projections */
-	ExprState		   *expr_state;				/* for partitioning expression */
 } PartitionFilterState;
 
 
@@ -152,10 +153,10 @@ void init_partition_filter_static_data(void);
 
 /* Initialize storage for some parent table */
 void init_result_parts_storage(ResultPartsStorage *parts_storage,
-							   ResultRelInfo *parent_rri,
+							   Oid parent_relid,
+							   ResultRelInfo *current_rri,
 							   EState *estate,
 							   CmdType cmd_type,
-							   Size table_entry_size,
 							   bool close_relations,
 							   bool speculative_inserts,
 							   rri_holder_cb init_rri_holder_cb,
@@ -178,11 +179,8 @@ Oid * find_partitions_for_value(Datum value, Oid value_type,
 								const PartRelationInfo *prel,
 								int *nparts);
 
-ResultRelInfoHolder *select_partition_for_insert(ExprState *expr_state,
-												 ExprContext *econtext,
-												 EState *estate,
-												 const PartRelationInfo *prel,
-												 ResultPartsStorage *parts_storage);
+ResultRelInfoHolder *select_partition_for_insert(ResultPartsStorage *parts_storage,
+												 TupleTableSlot *slot);
 
 Plan * make_partition_filter(Plan *subplan,
 							 Oid parent_relid,
