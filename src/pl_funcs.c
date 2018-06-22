@@ -19,6 +19,7 @@
 #include "utils.h"
 
 #include "access/htup_details.h"
+#include "access/xact.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
 #include "catalog/namespace.h"
@@ -784,6 +785,9 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	CatalogTupleInsert(pathman_config, htup);
 
 	heap_close(pathman_config, RowExclusiveLock);
+
+	/* Make changes visible */
+	CommandCounterIncrement();
 
 	/* Update caches only if this relation has children */
 	if (FCS_FOUND == find_inheritance_children_array(relid, NoLock, true,
