@@ -665,7 +665,7 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 
 		/* Set ItemPointer if necessary */
 		if (iptr)
-			*iptr = htup->t_self;
+			*iptr = htup->t_self; /* FIXME: callers should lock table beforehand */
 	}
 
 	/* Clean resources */

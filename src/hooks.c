@@ -484,10 +484,6 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 
 	parent_rowmark = get_plan_rowmark(root->rowMarks, rti);
 
-	/*
-	 * WARNING: 'prel' might become invalid after append_child_relation().
-	 */
-
 	/* Add parent if asked to */
 	if (prel->enable_parent)
 		append_child_relation(root, parent_rel, parent_rowmark,
