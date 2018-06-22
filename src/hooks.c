@@ -108,19 +108,23 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 	if (inner_rte->inh)
 		return;
 
+	/* We shouldn't process functions etc */
+	if (inner_rte->rtekind != RTE_RELATION)
+		return;
+
 	/* We don't support these join types (since inner will be parameterized) */
 	if (jointype == JOIN_FULL ||
 		jointype == JOIN_RIGHT ||
 		jointype == JOIN_UNIQUE_INNER)
 		return;
 
+	/* Skip if inner table is not allowed to act as parent (e.g. FROM ONLY) */
+	if (PARENTHOOD_DISALLOWED == get_rel_parenthood_status(inner_rte))
+		return;
+
 	/* Proceed iff relation 'innerrel' is partitioned */
 	if ((inner_prel = get_pathman_relation_info(inner_rte->relid)) == NULL)
 		return;
-
-	/* Skip if inner table is not allowed to act as parent (e.g. FROM ONLY) */
-	if (PARENTHOOD_DISALLOWED == get_rel_parenthood_status(inner_rte))
-		goto cleanup;
 
 	/*
 	 * Check if query is:
@@ -294,7 +298,6 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		add_path(joinrel, (Path *) nest_path);
 	}
 
-cleanup:
 	/* Don't forget to close 'inner_prel'! */
 	close_pathman_relation_info(inner_prel);
 }
@@ -380,14 +383,22 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		foreach (lc, root->append_rel_list)
 		{
 			AppendRelInfo  *appinfo = (AppendRelInfo *) lfirst(lc);
+			Oid				child_oid,
+							parent_oid;
+
+			/* Is it actually the same table? */
+			child_oid  = root->simple_rte_array[appinfo->child_relid]->relid;
+			parent_oid = root->simple_rte_array[appinfo->parent_relid]->relid;
 
 			/*
 			 * If there's an 'appinfo', it means that somebody
 			 * (PG?) has already processed this partitioned table
 			 * and added its children to the plan.
 			 */
-			if (appinfo->child_relid == rti)
+			if (appinfo->child_relid == rti && child_oid == parent_oid)
+			{
 				goto cleanup;
+			}
 		}
 	}
 
@@ -418,9 +429,6 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		if (pathkeys)
 			pathkeyDesc = (PathKey *) linitial(pathkeys);
 	}
-
-	/* Mark as partitioned table */
-	assign_rel_parenthood_status(rte, PARENTHOOD_DISALLOWED);
 
 	children = PrelGetChildrenArray(prel);
 	ranges = list_make1_irange_full(prel, IR_COMPLETE);

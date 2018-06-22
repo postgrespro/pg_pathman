@@ -1951,13 +1951,8 @@ set_append_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, Index rti,
 			set_rel_consider_parallel_compat(root, child_rel, child_rte);
 #endif
 
-		/*
-		 * If inh is True and pathlist is not null then it is a partitioned
-		 * table and we've already filled it, skip it. Otherwise build a
-		 * pathlist for it
-		 */
-		if (PARENTHOOD_DISALLOWED != get_rel_parenthood_status(child_rte) ||
-			child_rel->pathlist == NIL)
+		/* Build a few paths for this relation */
+		if (child_rel->pathlist == NIL)
 		{
 			/* Compute child's access paths & sizes */
 			if (child_rte->relkind == RELKIND_FOREIGN_TABLE)
