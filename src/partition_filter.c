@@ -498,7 +498,7 @@ select_partition_for_insert(ResultPartsStorage *parts_storage,
 		{
 			/* This partition has been dropped | we have a new one */
 			prel = get_pathman_relation_info(parent_relid);
-			shout_if_prel_is_invalid(parent_relid, prel, PT_RANGE);
+			shout_if_prel_is_invalid(parent_relid, prel, PT_ANY);
 
 			/* Store new 'prel' in 'parts_storage' */
 			close_pathman_relation_info(parts_storage->prel);
@@ -508,7 +508,7 @@ select_partition_for_insert(ResultPartsStorage *parts_storage,
 		{
 			/* This partition is a parent itself, repeat */
 			prel = get_pathman_relation_info(partition_relid);
-			shout_if_prel_is_invalid(partition_relid, prel, PT_RANGE);
+			shout_if_prel_is_invalid(partition_relid, prel, PT_ANY);
 			close_prel = true;
 
 			/* We're not done yet */
