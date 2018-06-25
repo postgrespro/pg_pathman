@@ -967,8 +967,8 @@ pathman_executor_hook(QueryDesc *queryDesc,
 
 	if (IsA(state, ModifyTableState))
 	{
-		ModifyTableState	*mt_state = (ModifyTableState *) state;
-		int					 i;
+		ModifyTableState   *mt_state = (ModifyTableState *) state;
+		int					i;
 
 		for (i = 0; i < mt_state->mt_nplans; i++)
 		{
@@ -980,8 +980,8 @@ pathman_executor_hook(QueryDesc *queryDesc,
 				ResultRelInfo *rri = &mt_state->resultRelInfo[i];
 
 				/*
-				 * We unset junkfilter to disable junk
-				 * cleaning in ExecModifyTable.
+				 * HACK: We unset junkfilter to disable
+				 * junk cleaning in ExecModifyTable.
 				 */
 				rri->ri_junkFilter = NULL;
 

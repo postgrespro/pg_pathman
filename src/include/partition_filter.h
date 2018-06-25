@@ -43,7 +43,6 @@ typedef struct
 	Oid					partid;				/* partition's relid */
 	ResultRelInfo	   *result_rel_info;	/* cached ResultRelInfo */
 	TupleConversionMap *tuple_map;			/* tuple mapping (parent => child) */
-	JunkFilter		   *junkfilter;			/* junkfilter for cached ResultRelInfo */
 	bool				has_children;		/* hint that it might have children */
 	ExprState		   *expr_state;			/* children have their own expressions */
 } ResultRelInfoHolder;
@@ -107,15 +106,12 @@ typedef struct
 
 	Plan			   *subplan;				/* proxy variable to store subplan */
 	ResultPartsStorage	result_parts;			/* partition ResultRelInfo cache */
+	CmdType				command_type;
 
 	bool				warning_triggered;		/* warning message counter */
 
-	TupleTableSlot	   *tup_convert_slot;		/* slot for rebuilt tuples */
-	CmdType				command_type;
-
 	TupleTableSlot     *subplan_slot;			/* slot that was returned from subplan */
-	JunkFilter		   *junkfilter;				/* junkfilter for subplan_slot */
-
+	TupleTableSlot	   *tup_convert_slot;		/* slot for rebuilt tuples */
 	ExprContext		   *tup_convert_econtext;	/* ExprContext for projections */
 } PartitionFilterState;
 
