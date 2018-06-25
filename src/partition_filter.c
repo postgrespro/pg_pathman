@@ -861,9 +861,6 @@ prepare_rri_returning_for_insert(ResultRelInfoHolder *rri_holder,
 						   *parent_rri;
 	Index					parent_rt_idx;
 	TupleTableSlot		   *result_slot;
-	EState				   *estate;
-
-	estate = rps_storage->estate;
 
 	/* We don't need to do anything ff there's no map */
 	if (!rri_holder->tuple_map)
@@ -880,10 +877,6 @@ prepare_rri_returning_for_insert(ResultRelInfoHolder *rri_holder,
 	parent_rri = rps_storage->base_rri;
 	parent_rt_idx = parent_rri->ri_RangeTableIndex;
 
-	/* Create ExprContext for tuple projections */
-	if (!pfstate->tup_convert_econtext)
-		pfstate->tup_convert_econtext = CreateExprContext(estate);
-
 	/* Replace parent's varattnos with child's */
 	returning_list = (List *)
 			fix_returning_list_mutator((Node *) returning_list,
@@ -899,7 +892,7 @@ prepare_rri_returning_for_insert(ResultRelInfoHolder *rri_holder,
 
 	/* Build new projection info */
 	child_rri->ri_projectReturning =
-		ExecBuildProjectionInfoCompat(returning_list, pfstate->tup_convert_econtext,
+		ExecBuildProjectionInfoCompat(returning_list, pfstate->css.ss.ps.ps_ExprContext,
 									  result_slot, NULL /* HACK: no PlanState */,
 									  RelationGetDescr(child_rri->ri_RelationDesc));
 }

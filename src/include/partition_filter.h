@@ -112,7 +112,6 @@ typedef struct
 
 	TupleTableSlot     *subplan_slot;			/* slot that was returned from subplan */
 	TupleTableSlot	   *tup_convert_slot;		/* slot for rebuilt tuples */
-	ExprContext		   *tup_convert_econtext;	/* ExprContext for projections */
 } PartitionFilterState;
 
 
