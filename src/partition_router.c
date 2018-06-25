@@ -29,7 +29,6 @@ CustomScanMethods	partition_router_plan_methods;
 CustomExecMethods	partition_router_exec_methods;
 
 static TupleTableSlot *ExecDeleteInternal(ItemPointer tupleid,
-										  TupleTableSlot *planSlot,
 										  EPQState *epqstate,
 										  EState *estate);
 
@@ -140,28 +139,27 @@ partition_router_exec(CustomScanState *node)
 
 	if (!TupIsNull(slot))
 	{
-		ResultRelInfo		   *result_rri,
-							   *parent_rri;
-		ItemPointer				tupleid = NULL;
-		ItemPointerData			tuple_ctid;
+		ResultRelInfo		   *new_rri,	/* new tuple owner */
+							   *old_rri;	/* previous tuple owner */
 		EPQState				epqstate;
 		PartitionFilterState   *child_state;
 		char					relkind;
+		ItemPointerData			ctid;
+
+		ItemPointerSetInvalid(&ctid);
 
 		child_state = (PartitionFilterState *) child_ps;
 		Assert(child_state->command_type == CMD_UPDATE);
 
-		EvalPlanQualSetSlot(&epqstate, child_state->subplan_slot);
-
-		parent_rri = child_state->result_parts.base_rri;
-		result_rri = estate->es_result_relation_info;
+		old_rri = child_state->result_parts.base_rri;
+		new_rri = estate->es_result_relation_info;
 
 		/* Build new junkfilter if we have to */
 		if (state->junkfilter == NULL)
 		{
 			state->junkfilter =
 				ExecInitJunkFilter(state->subplan->targetlist,
-								   parent_rri->ri_RelationDesc->rd_att->tdhasoid,
+								   old_rri->ri_RelationDesc->rd_att->tdhasoid,
 								   ExecInitExtraTupleSlot(estate));
 
 			state->junkfilter->jf_junkAttNo =
@@ -171,7 +169,7 @@ partition_router_exec(CustomScanState *node)
 				elog(ERROR, "could not find junk ctid column");
 		}
 
-		relkind = parent_rri->ri_RelationDesc->rd_rel->relkind;
+		relkind = old_rri->ri_RelationDesc->rd_rel->relkind;
 		if (relkind == RELKIND_RELATION)
 		{
 			Datum	ctid_datum;
@@ -185,9 +183,8 @@ partition_router_exec(CustomScanState *node)
 			if (ctid_isnull)
 				elog(ERROR, "ctid is NULL");
 
-			tupleid = (ItemPointer) DatumGetPointer(ctid_datum);
-			tuple_ctid = *tupleid; /* be sure we don't free ctid! */
-			tupleid = &tuple_ctid;
+			/* Get item pointer to tuple */
+			ctid = *(ItemPointer) DatumGetPointer(ctid_datum);
 		}
 		else if (relkind == RELKIND_FOREIGN_TABLE)
 			elog(ERROR, UPDATE_NODE_NAME " does not support foreign tables");
@@ -202,14 +199,17 @@ partition_router_exec(CustomScanState *node)
 			slot = ExecFilterJunk(state->junkfilter, slot);
 
 		/* Magic: replace current ResultRelInfo with parent's one (DELETE) */
-		estate->es_result_relation_info = parent_rri;
+		estate->es_result_relation_info = old_rri;
 
-		Assert(tupleid != NULL);
-		ExecDeleteInternal(tupleid, child_state->subplan_slot, &epqstate, estate);
+		/* Delete tuple from old partition */
+		Assert(ItemPointerIsValid(&ctid));
+		EvalPlanQualSetSlot(&epqstate, child_state->subplan_slot);
+		ExecDeleteInternal(&ctid, &epqstate, estate);
 
 		/* Magic: replace parent's ResultRelInfo with child's one (INSERT) */
-		estate->es_result_relation_info = result_rri;
+		estate->es_result_relation_info = new_rri;
 
+		/* Tuple will be inserted by ModifyTable */
 		return slot;
 	}
 
@@ -246,7 +246,6 @@ partition_router_explain(CustomScanState *node, List *ancestors, ExplainState *e
 
 static TupleTableSlot *
 ExecDeleteInternal(ItemPointer tupleid,
-				   TupleTableSlot *planSlot,
 				   EPQState *epqstate,
 				   EState *estate)
 {
