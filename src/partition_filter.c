@@ -233,6 +233,10 @@ fini_result_parts_storage(ResultPartsStorage *parts_storage)
 
 			free_conversion_map(rri_holder->tuple_map);
 		}
+
+		/* Don't forget to close 'prel'! */
+		if (rri_holder->prel)
+			close_pathman_relation_info(rri_holder->prel);
 	}
 
 	/* Finally destroy hash table */
@@ -352,9 +356,18 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 		/* Generate tuple transformation map and some other stuff */
 		rri_holder->tuple_map = build_part_tuple_map(base_rel, child_rel);
 
-		/* Are there subpartitions? */
-		rri_holder->has_children = child_rel->rd_rel->relhassubclass;
-		rri_holder->expr_state = NULL;
+		/* Default values */
+		rri_holder->prel = NULL;
+		rri_holder->prel_expr_state = NULL;
+
+		if ((rri_holder->prel = get_pathman_relation_info(partid)) != NULL)
+		{
+			rri_holder->prel_expr_state =
+					prepare_expr_state(rri_holder->prel, /* NOTE: this prel! */
+									   parts_storage->base_rri->ri_RelationDesc,
+									   parts_storage->estate,
+									   parts_storage->command_type == CMD_UPDATE);
+		}
 
 		/* Call initialization callback if needed */
 		if (parts_storage->init_rri_holder_cb)
@@ -452,29 +465,41 @@ ResultRelInfoHolder *
 select_partition_for_insert(ResultPartsStorage *parts_storage,
 							TupleTableSlot *slot)
 {
-	bool					close_prel = false;
 	PartRelationInfo	   *prel = parts_storage->prel;
 	ExprState			   *expr_state = parts_storage->prel_expr_state;
 	ExprContext			   *expr_context = parts_storage->prel_econtext;
+
 	Oid						parent_relid = PrelParentRelid(prel),
 							partition_relid = InvalidOid;
+
+	Datum					value;
+	bool					isnull;
+	bool					compute_value = true;
+
 	Oid					   *parts;
 	int						nparts;
-	bool					isnull;
-	Datum					value;
 	ResultRelInfoHolder	   *result;
-
-	parts_storage->prel_econtext->ecxt_scantuple = slot;
-
-	/* Execute expression */
-	value = ExecEvalExprCompat(expr_state, expr_context,
-							   &isnull, mult_result_handler);
-
-	if (isnull)
-		elog(ERROR, ERR_PART_ATTR_NULL);
 
 	do
 	{
+		if (compute_value)
+		{
+			/* Prepare expression context */
+			ResetExprContext(expr_context);
+
+			/* Execute expression */
+			expr_context->ecxt_scantuple = slot;
+
+			value = ExecEvalExprCompat(expr_state, expr_context,
+									   &isnull, mult_result_handler);
+
+			if (isnull)
+				elog(ERROR, ERR_PART_ATTR_NULL);
+
+			/* Ok, we have a value */
+			compute_value = false;
+		}
+
 		/* Search for matching partitions */
 		parts = find_partitions_for_value(value, prel->ev_type, prel, &nparts);
 
@@ -492,28 +517,37 @@ select_partition_for_insert(ResultPartsStorage *parts_storage,
 		/* Get ResultRelationInfo holder for the selected partition */
 		result = scan_result_parts_storage(partition_relid, parts_storage);
 
-		/* Should we close 'prel'? */
-		if (close_prel)
+		/* Somebody has dropped or created partitions */
+		if (!PrelIsFresh(prel) && (nparts == 0 || result == NULL))
+		{
+			/* Compare original and current Oids */
+			Oid	relid1 = PrelParentRelid(parts_storage->prel),
+				relid2 = PrelParentRelid(prel);
+
+			/* Reopen 'prel' to make it fresh again */
 			close_pathman_relation_info(prel);
-
-		if (result == NULL || nparts == 0)
-		{
-			/* This partition has been dropped | we have a new one */
 			prel = get_pathman_relation_info(parent_relid);
-			shout_if_prel_is_invalid(parent_relid, prel, PT_ANY);
 
-			/* Store new 'prel' in 'parts_storage' */
-			close_pathman_relation_info(parts_storage->prel);
-			parts_storage->prel = prel;
+			/* Store new 'prel' */
+			if (relid1 == relid2)
+			{
+				shout_if_prel_is_invalid(parent_relid, prel, PT_ANY);
+				parts_storage->prel = prel;
+			}
+			else if (result && result->prel)
+				/* TODO: WTF? this is a new RRI, not the one we used before */
+				result->prel = prel;
 		}
-		else if (result->has_children)
-		{
-			/* This partition is a parent itself, repeat */
-			prel = get_pathman_relation_info(partition_relid);
-			shout_if_prel_is_invalid(partition_relid, prel, PT_ANY);
-			close_prel = true;
 
-			/* We're not done yet */
+		/* This partition is a parent itself */
+		if (result && result->prel)
+		{
+			prel = result->prel;
+			expr_state = result->prel_expr_state;
+			parent_relid = PrelParentRelid(prel);
+			compute_value = true;
+
+			/* Repeat with a new dispatch */
 			result = NULL;
 		}
 	}

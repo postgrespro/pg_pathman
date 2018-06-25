@@ -40,11 +40,12 @@
  */
 typedef struct
 {
-	Oid					partid;				/* partition's relid */
-	ResultRelInfo	   *result_rel_info;	/* cached ResultRelInfo */
-	TupleConversionMap *tuple_map;			/* tuple mapping (parent => child) */
-	bool				has_children;		/* hint that it might have children */
-	ExprState		   *expr_state;			/* children have their own expressions */
+	Oid					partid;					/* partition's relid */
+	ResultRelInfo	   *result_rel_info;		/* cached ResultRelInfo */
+	TupleConversionMap *tuple_map;				/* tuple mapping (parent => child) */
+
+	PartRelationInfo   *prel;					/* this child might be a parent... */
+	ExprState		   *prel_expr_state;		/* and have its own part. expression */
 } ResultRelInfoHolder;
 
 

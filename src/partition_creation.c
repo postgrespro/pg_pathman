@@ -41,6 +41,7 @@
 #include "utils/builtins.h"
 #include "utils/datum.h"
 #include "utils/fmgroids.h"
+#include "utils/inval.h"
 #include "utils/jsonb.h"
 #include "utils/snapmgr.h"
 #include "utils/lsyscache.h"
@@ -308,6 +309,9 @@ create_partitions_for_value(Oid relid, Datum value, Oid value_type)
 	if (last_partition == InvalidOid)
 		elog(ERROR, "could not create new partitions for relation \"%s\"",
 			 get_rel_name_or_relid(relid));
+
+	/* Make changes visible */
+	AcceptInvalidationMessages();
 
 	return last_partition;
 }
