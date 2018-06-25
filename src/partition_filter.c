@@ -131,6 +131,8 @@ init_partition_filter_static_data(void)
 							 NULL,
 							 NULL,
 							 NULL);
+
+	RegisterCustomScanMethods(&partition_filter_plan_methods);
 }
 
 
@@ -659,12 +661,10 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 {
 	PartitionFilterState   *state = (PartitionFilterState *) node;
 	Oid						parent_relid = state->partitioned_table;
-	PlanState			   *child_state;
 	ResultRelInfo		   *current_rri;
 
 	/* It's convenient to store PlanState in 'custom_ps' */
-	child_state = ExecInitNode(state->subplan, estate, eflags);
-	node->custom_ps = list_make1(child_state);
+	node->custom_ps = list_make1(ExecInitNode(state->subplan, estate, eflags));
 
 	/* Fetch current result relation (rri + rel) */
 	current_rri = estate->es_result_relation_info;

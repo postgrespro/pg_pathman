@@ -19,7 +19,7 @@
 #include "partition_router.h"
 #include "pathman_workers.h"
 #include "planner_tree_modification.h"
-#include "runtimeappend.h"
+#include "runtime_append.h"
 #include "runtime_merge_append.h"
 #include "utility_stmt_hooking.h"
 #include "utils.h"
@@ -244,7 +244,7 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 			continue;
 
 		/* Try building RuntimeAppend path, skip if it's not possible */
-		inner = create_runtimeappend_path(root, cur_inner_path, ppi, paramsel);
+		inner = create_runtime_append_path(root, cur_inner_path, ppi, paramsel);
 		if (!inner)
 			continue;
 
@@ -549,8 +549,8 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		ppi = get_appendrel_parampathinfo(rel, inner_required);
 
 		if (IsA(cur_path, AppendPath) && pg_pathman_enable_runtimeappend)
-			inner_path = create_runtimeappend_path(root, cur_path,
-												   ppi, paramsel);
+			inner_path = create_runtime_append_path(root, cur_path,
+													ppi, paramsel);
 		else if (IsA(cur_path, MergeAppendPath) &&
 				 pg_pathman_enable_runtime_merge_append)
 		{
@@ -560,8 +560,8 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 				elog(FATAL, "Struct layouts of AppendPath and "
 							"MergeAppendPath differ");
 
-			inner_path = create_runtimemergeappend_path(root, cur_path,
-														ppi, paramsel);
+			inner_path = create_runtime_merge_append_path(root, cur_path,
+														  ppi, paramsel);
 		}
 
 		if (inner_path)

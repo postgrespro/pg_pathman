@@ -11,7 +11,7 @@
 
 #include "init.h"
 #include "nodes_common.h"
-#include "runtimeappend.h"
+#include "runtime_append.h"
 #include "utils.h"
 
 #include "nodes/nodeFuncs.h"

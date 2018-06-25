@@ -191,23 +191,23 @@ unpack_runtimemergeappend_private(RuntimeMergeAppendState *scan_state,
 void
 init_runtime_merge_append_static_data(void)
 {
-	runtime_merge_append_path_methods.CustomName			= "RuntimeMergeAppend";
-	runtime_merge_append_path_methods.PlanCustomPath		= create_runtimemergeappend_plan;
+	runtime_merge_append_path_methods.CustomName			= RUNTIME_MERGE_APPEND_NODE_NAME;
+	runtime_merge_append_path_methods.PlanCustomPath		= create_runtime_merge_append_plan;
 
-	runtime_merge_append_plan_methods.CustomName 			= "RuntimeMergeAppend";
-	runtime_merge_append_plan_methods.CreateCustomScanState	= runtimemergeappend_create_scan_state;
+	runtime_merge_append_plan_methods.CustomName 			= RUNTIME_MERGE_APPEND_NODE_NAME;
+	runtime_merge_append_plan_methods.CreateCustomScanState	= runtime_merge_append_create_scan_state;
 
-	runtime_merge_append_exec_methods.CustomName			= "RuntimeMergeAppend";
-	runtime_merge_append_exec_methods.BeginCustomScan		= runtimemergeappend_begin;
-	runtime_merge_append_exec_methods.ExecCustomScan		= runtimemergeappend_exec;
-	runtime_merge_append_exec_methods.EndCustomScan			= runtimemergeappend_end;
-	runtime_merge_append_exec_methods.ReScanCustomScan		= runtimemergeappend_rescan;
+	runtime_merge_append_exec_methods.CustomName			= RUNTIME_MERGE_APPEND_NODE_NAME;
+	runtime_merge_append_exec_methods.BeginCustomScan		= runtime_merge_append_begin;
+	runtime_merge_append_exec_methods.ExecCustomScan		= runtime_merge_append_exec;
+	runtime_merge_append_exec_methods.EndCustomScan			= runtime_merge_append_end;
+	runtime_merge_append_exec_methods.ReScanCustomScan		= runtime_merge_append_rescan;
 	runtime_merge_append_exec_methods.MarkPosCustomScan		= NULL;
 	runtime_merge_append_exec_methods.RestrPosCustomScan	= NULL;
-	runtime_merge_append_exec_methods.ExplainCustomScan		= runtimemergeappend_explain;
+	runtime_merge_append_exec_methods.ExplainCustomScan		= runtime_merge_append_explain;
 
 	DefineCustomBoolVariable("pg_pathman.enable_runtimemergeappend",
-							 "Enables the planner's use of RuntimeMergeAppend custom node.",
+							 "Enables the planner's use of " RUNTIME_MERGE_APPEND_NODE_NAME " custom node.",
 							 NULL,
 							 &pg_pathman_enable_runtime_merge_append,
 							 true,
@@ -216,13 +216,15 @@ init_runtime_merge_append_static_data(void)
 							 NULL,
 							 NULL,
 							 NULL);
+
+	RegisterCustomScanMethods(&runtime_merge_append_plan_methods);
 }
 
 Path *
-create_runtimemergeappend_path(PlannerInfo *root,
-							   AppendPath *inner_append,
-							   ParamPathInfo *param_info,
-							   double sel)
+create_runtime_merge_append_path(PlannerInfo *root,
+								 AppendPath *inner_append,
+								 ParamPathInfo *param_info,
+								 double sel)
 {
 	RelOptInfo *rel = inner_append->path.parent;
 	Path	   *path;
@@ -245,9 +247,9 @@ create_runtimemergeappend_path(PlannerInfo *root,
 }
 
 Plan *
-create_runtimemergeappend_plan(PlannerInfo *root, RelOptInfo *rel,
-							   CustomPath *best_path, List *tlist,
-							   List *clauses, List *custom_plans)
+create_runtime_merge_append_plan(PlannerInfo *root, RelOptInfo *rel,
+								 CustomPath *best_path, List *tlist,
+								 List *clauses, List *custom_plans)
 {
 	CustomScan	   *node;
 	Plan		   *plan;
@@ -337,7 +339,7 @@ create_runtimemergeappend_plan(PlannerInfo *root, RelOptInfo *rel,
 }
 
 Node *
-runtimemergeappend_create_scan_state(CustomScan *node)
+runtime_merge_append_create_scan_state(CustomScan *node)
 {
 	Node *state;
 	state = create_append_scan_state_common(node,
@@ -350,7 +352,7 @@ runtimemergeappend_create_scan_state(CustomScan *node)
 }
 
 void
-runtimemergeappend_begin(CustomScanState *node, EState *estate, int eflags)
+runtime_merge_append_begin(CustomScanState *node, EState *estate, int eflags)
 {
 	begin_append_common(node, estate, eflags);
 }
@@ -412,13 +414,13 @@ fetch_next_tuple(CustomScanState *node)
 }
 
 TupleTableSlot *
-runtimemergeappend_exec(CustomScanState *node)
+runtime_merge_append_exec(CustomScanState *node)
 {
 	return exec_append_common(node, fetch_next_tuple);
 }
 
 void
-runtimemergeappend_end(CustomScanState *node)
+runtime_merge_append_end(CustomScanState *node)
 {
 	RuntimeMergeAppendState	   *scan_state = (RuntimeMergeAppendState *) node;
 
@@ -429,7 +431,7 @@ runtimemergeappend_end(CustomScanState *node)
 }
 
 void
-runtimemergeappend_rescan(CustomScanState *node)
+runtime_merge_append_rescan(CustomScanState *node)
 {
 	RuntimeMergeAppendState	   *scan_state = (RuntimeMergeAppendState *) node;
 	int							nplans;
@@ -475,7 +477,7 @@ runtimemergeappend_rescan(CustomScanState *node)
 }
 
 void
-runtimemergeappend_explain(CustomScanState *node, List *ancestors, ExplainState *es)
+runtime_merge_append_explain(CustomScanState *node, List *ancestors, ExplainState *es)
 {
 	RuntimeMergeAppendState *scan_state = (RuntimeMergeAppendState *) node;
 

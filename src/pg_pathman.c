@@ -18,7 +18,7 @@
 #include "partition_filter.h"
 #include "partition_router.h"
 #include "planner_tree_modification.h"
-#include "runtimeappend.h"
+#include "runtime_append.h"
 #include "runtime_merge_append.h"
 
 #include "postgres.h"
@@ -319,7 +319,7 @@ _PG_init(void)
 	/* Initialize static data for all subsystems */
 	init_main_pathman_toggles();
 	init_relation_info_static_data();
-	init_runtimeappend_static_data();
+	init_runtime_append_static_data();
 	init_runtime_merge_append_static_data();
 	init_partition_filter_static_data();
 	init_partition_router_static_data();

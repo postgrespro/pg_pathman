@@ -21,6 +21,9 @@
 #include "commands/explain.h"
 
 
+#define RUNTIME_APPEND_NODE_NAME "RuntimeAppend"
+
+
 typedef struct
 {
 	CustomPath			cpath;
@@ -70,32 +73,32 @@ extern CustomScanMethods	runtimeappend_plan_methods;
 extern CustomExecMethods	runtimeappend_exec_methods;
 
 
-void init_runtimeappend_static_data(void);
+void init_runtime_append_static_data(void);
 
-Path * create_runtimeappend_path(PlannerInfo *root,
-								 AppendPath *inner_append,
-								 ParamPathInfo *param_info,
-								 double sel);
+Path * create_runtime_append_path(PlannerInfo *root,
+								  AppendPath *inner_append,
+								  ParamPathInfo *param_info,
+								  double sel);
 
-Plan * create_runtimeappend_plan(PlannerInfo *root, RelOptInfo *rel,
-								 CustomPath *best_path, List *tlist,
-								 List *clauses, List *custom_plans);
+Plan * create_runtime_append_plan(PlannerInfo *root, RelOptInfo *rel,
+								  CustomPath *best_path, List *tlist,
+								  List *clauses, List *custom_plans);
 
-Node * runtimeappend_create_scan_state(CustomScan *node);
+Node * runtime_append_create_scan_state(CustomScan *node);
 
-void runtimeappend_begin(CustomScanState *node,
-						 EState *estate,
-						 int eflags);
+void runtime_append_begin(CustomScanState *node,
+						  EState *estate,
+						  int eflags);
 
-TupleTableSlot * runtimeappend_exec(CustomScanState *node);
+TupleTableSlot * runtime_append_exec(CustomScanState *node);
 
-void runtimeappend_end(CustomScanState *node);
+void runtime_append_end(CustomScanState *node);
 
-void runtimeappend_rescan(CustomScanState *node);
+void runtime_append_rescan(CustomScanState *node);
 
-void runtimeappend_explain(CustomScanState *node,
-						   List *ancestors,
-						   ExplainState *es);
+void runtime_append_explain(CustomScanState *node,
+							List *ancestors,
+							ExplainState *es);
 
 
 #endif /* RUNTIME_APPEND_H */

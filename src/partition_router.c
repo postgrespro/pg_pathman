@@ -58,6 +58,8 @@ init_partition_router_static_data(void)
 							 NULL,
 							 NULL,
 							 NULL);
+
+	RegisterCustomScanMethods(&partition_router_plan_methods);
 }
 
 Plan *
@@ -121,7 +123,7 @@ partition_router_begin(CustomScanState *node, EState *estate, int eflags)
 {
 	PartitionRouterState   *state = (PartitionRouterState *) node;
 
-	/* Initialize PartitionFilter child node */
+	/* It's convenient to store PlanState in 'custom_ps' */
 	node->custom_ps = list_make1(ExecInitNode(state->subplan, estate, eflags));
 }
 

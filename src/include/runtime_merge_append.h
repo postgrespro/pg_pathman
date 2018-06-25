@@ -14,10 +14,13 @@
 #define RUNTIME_MERGE_APPEND_H
 
 
-#include "runtimeappend.h"
+#include "runtime_append.h"
 #include "pathman.h"
 
 #include "postgres.h"
+
+
+#define RUNTIME_MERGE_APPEND_NODE_NAME "RuntimeMergeAppend"
 
 
 typedef struct
@@ -54,30 +57,30 @@ extern CustomExecMethods	runtime_merge_append_exec_methods;
 
 void init_runtime_merge_append_static_data(void);
 
-Path * create_runtimemergeappend_path(PlannerInfo *root,
-									  AppendPath *inner_append,
-									  ParamPathInfo *param_info,
-									  double sel);
+Path * create_runtime_merge_append_path(PlannerInfo *root,
+										AppendPath *inner_append,
+										ParamPathInfo *param_info,
+										double sel);
 
-Plan * create_runtimemergeappend_plan(PlannerInfo *root, RelOptInfo *rel,
-									  CustomPath *best_path, List *tlist,
-									  List *clauses, List *custom_plans);
+Plan * create_runtime_merge_append_plan(PlannerInfo *root, RelOptInfo *rel,
+										CustomPath *best_path, List *tlist,
+										List *clauses, List *custom_plans);
 
-Node * runtimemergeappend_create_scan_state(CustomScan *node);
+Node * runtime_merge_append_create_scan_state(CustomScan *node);
 
-void runtimemergeappend_begin(CustomScanState *node,
-							  EState *estate,
-							  int eflags);
+void runtime_merge_append_begin(CustomScanState *node,
+								EState *estate,
+								int eflags);
 
-TupleTableSlot * runtimemergeappend_exec(CustomScanState *node);
+TupleTableSlot * runtime_merge_append_exec(CustomScanState *node);
 
-void runtimemergeappend_end(CustomScanState *node);
+void runtime_merge_append_end(CustomScanState *node);
 
-void runtimemergeappend_rescan(CustomScanState *node);
+void runtime_merge_append_rescan(CustomScanState *node);
 
-void runtimemergeappend_explain(CustomScanState *node,
-								List *ancestors,
-								ExplainState *es);
+void runtime_merge_append_explain(CustomScanState *node,
+								  List *ancestors,
+								  ExplainState *es);
 
 
 #endif /* RUNTIME_MERGE_APPEND_H */

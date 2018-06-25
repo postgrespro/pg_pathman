@@ -8,7 +8,7 @@
  * ------------------------------------------------------------------------
  */
 
-#include "runtimeappend.h"
+#include "runtime_append.h"
 
 #include "utils/guc.h"
 
@@ -21,25 +21,25 @@ CustomExecMethods	runtimeappend_exec_methods;
 
 
 void
-init_runtimeappend_static_data(void)
+init_runtime_append_static_data(void)
 {
-	runtimeappend_path_methods.CustomName				= "RuntimeAppend";
-	runtimeappend_path_methods.PlanCustomPath			= create_runtimeappend_plan;
+	runtimeappend_path_methods.CustomName				= RUNTIME_APPEND_NODE_NAME;
+	runtimeappend_path_methods.PlanCustomPath			= create_runtime_append_plan;
 
-	runtimeappend_plan_methods.CustomName 				= "RuntimeAppend";
-	runtimeappend_plan_methods.CreateCustomScanState	= runtimeappend_create_scan_state;
+	runtimeappend_plan_methods.CustomName 				= RUNTIME_APPEND_NODE_NAME;
+	runtimeappend_plan_methods.CreateCustomScanState	= runtime_append_create_scan_state;
 
-	runtimeappend_exec_methods.CustomName				= "RuntimeAppend";
-	runtimeappend_exec_methods.BeginCustomScan			= runtimeappend_begin;
-	runtimeappend_exec_methods.ExecCustomScan			= runtimeappend_exec;
-	runtimeappend_exec_methods.EndCustomScan			= runtimeappend_end;
-	runtimeappend_exec_methods.ReScanCustomScan			= runtimeappend_rescan;
+	runtimeappend_exec_methods.CustomName				= RUNTIME_APPEND_NODE_NAME;
+	runtimeappend_exec_methods.BeginCustomScan			= runtime_append_begin;
+	runtimeappend_exec_methods.ExecCustomScan			= runtime_append_exec;
+	runtimeappend_exec_methods.EndCustomScan			= runtime_append_end;
+	runtimeappend_exec_methods.ReScanCustomScan			= runtime_append_rescan;
 	runtimeappend_exec_methods.MarkPosCustomScan		= NULL;
 	runtimeappend_exec_methods.RestrPosCustomScan		= NULL;
-	runtimeappend_exec_methods.ExplainCustomScan		= runtimeappend_explain;
+	runtimeappend_exec_methods.ExplainCustomScan		= runtime_append_explain;
 
 	DefineCustomBoolVariable("pg_pathman.enable_runtimeappend",
-							 "Enables the planner's use of RuntimeAppend custom node.",
+							 "Enables the planner's use of " RUNTIME_APPEND_NODE_NAME " custom node.",
 							 NULL,
 							 &pg_pathman_enable_runtimeappend,
 							 true,
@@ -48,13 +48,15 @@ init_runtimeappend_static_data(void)
 							 NULL,
 							 NULL,
 							 NULL);
+
+	RegisterCustomScanMethods(&runtimeappend_plan_methods);
 }
 
 Path *
-create_runtimeappend_path(PlannerInfo *root,
-						  AppendPath *inner_append,
-						  ParamPathInfo *param_info,
-						  double sel)
+create_runtime_append_path(PlannerInfo *root,
+						   AppendPath *inner_append,
+						   ParamPathInfo *param_info,
+						   double sel)
 {
 	return create_append_path_common(root, inner_append,
 									 param_info,
@@ -64,9 +66,9 @@ create_runtimeappend_path(PlannerInfo *root,
 }
 
 Plan *
-create_runtimeappend_plan(PlannerInfo *root, RelOptInfo *rel,
-						  CustomPath *best_path, List *tlist,
-						  List *clauses, List *custom_plans)
+create_runtime_append_plan(PlannerInfo *root, RelOptInfo *rel,
+						   CustomPath *best_path, List *tlist,
+						   List *clauses, List *custom_plans)
 {
 	return create_append_plan_common(root, rel,
 									 best_path, tlist,
@@ -75,7 +77,7 @@ create_runtimeappend_plan(PlannerInfo *root, RelOptInfo *rel,
 }
 
 Node *
-runtimeappend_create_scan_state(CustomScan *node)
+runtime_append_create_scan_state(CustomScan *node)
 {
 	return create_append_scan_state_common(node,
 										   &runtimeappend_exec_methods,
@@ -83,7 +85,7 @@ runtimeappend_create_scan_state(CustomScan *node)
 }
 
 void
-runtimeappend_begin(CustomScanState *node, EState *estate, int eflags)
+runtime_append_begin(CustomScanState *node, EState *estate, int eflags)
 {
 	begin_append_common(node, estate, eflags);
 }
@@ -116,25 +118,25 @@ fetch_next_tuple(CustomScanState *node)
 }
 
 TupleTableSlot *
-runtimeappend_exec(CustomScanState *node)
+runtime_append_exec(CustomScanState *node)
 {
 	return exec_append_common(node, fetch_next_tuple);
 }
 
 void
-runtimeappend_end(CustomScanState *node)
+runtime_append_end(CustomScanState *node)
 {
 	end_append_common(node);
 }
 
 void
-runtimeappend_rescan(CustomScanState *node)
+runtime_append_rescan(CustomScanState *node)
 {
 	rescan_append_common(node);
 }
 
 void
-runtimeappend_explain(CustomScanState *node, List *ancestors, ExplainState *es)
+runtime_append_explain(CustomScanState *node, List *ancestors, ExplainState *es)
 {
 	RuntimeAppendState *scan_state = (RuntimeAppendState *) node;
 
