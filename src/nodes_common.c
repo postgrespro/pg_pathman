@@ -663,24 +663,20 @@ void
 begin_append_common(CustomScanState *node, EState *estate, int eflags)
 {
 	RuntimeAppendState *scan_state = (RuntimeAppendState *) node;
-	PartRelationInfo   *prel;
 
 #if PG_VERSION_NUM < 100000
 	node->ss.ps.ps_TupFromTlist = false;
 #endif
 
-	prel = get_pathman_relation_info(scan_state->relid);
-	Assert(prel);
+	scan_state->prel = get_pathman_relation_info(scan_state->relid);
+	Assert(scan_state->prel);
 
 	/* Prepare expression according to set_set_customscan_references() */
-	scan_state->prel_expr = PrelExpressionForRelid(prel, INDEX_VAR);
+	scan_state->prel_expr = PrelExpressionForRelid(scan_state->prel, INDEX_VAR);
 
 	/* Prepare custom expression according to set_set_customscan_references() */
 	scan_state->canon_custom_exprs =
 			canonicalize_custom_exprs(scan_state->custom_exprs);
-
-	/* Don't forget to close 'prel'! */
-	close_pathman_relation_info(prel);
 }
 
 TupleTableSlot *
@@ -756,6 +752,7 @@ end_append_common(CustomScanState *node)
 
 	clear_plan_states(&scan_state->css);
 	hash_destroy(scan_state->children_table);
+	close_pathman_relation_info(scan_state->prel);
 }
 
 void
@@ -763,15 +760,12 @@ rescan_append_common(CustomScanState *node)
 {
 	RuntimeAppendState *scan_state = (RuntimeAppendState *) node;
 	ExprContext		   *econtext = node->ss.ps.ps_ExprContext;
-	PartRelationInfo   *prel;
+	PartRelationInfo   *prel = scan_state->prel;
 	List			   *ranges;
 	ListCell		   *lc;
 	WalkerContext		wcxt;
 	Oid				   *parts;
 	int					nparts;
-
-	prel = get_pathman_relation_info(scan_state->relid);
-	Assert(prel);
 
 	/* First we select all available partitions... */
 	ranges = list_make1_irange_full(prel, IR_COMPLETE);
@@ -803,9 +797,6 @@ rescan_append_common(CustomScanState *node)
 								scan_state->cur_plans,
 								scan_state->ncur_plans,
 								scan_state->css.ss.ps.state);
-
-	/* Don't forget to close 'prel'! */
-	close_pathman_relation_info(prel);
 
 	scan_state->running_idx = 0;
 }

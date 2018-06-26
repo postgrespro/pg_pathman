@@ -44,8 +44,9 @@ typedef struct
 	/* Refined clauses for partition pruning */
 	List			   *canon_custom_exprs;
 
-	/* Copy of partitioning expression (protect from invalidations) */
+	/* Copy of partitioning expression and dispatch info */
 	Node			   *prel_expr;
+	PartRelationInfo   *prel;
 
 	/* All available plans \ plan states */
 	HTAB			   *children_table;
