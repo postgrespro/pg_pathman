@@ -25,7 +25,6 @@
 
 /* Allocation settings */
 #define INITIAL_ALLOC_NUM	10
-#define ALLOC_EXP			2
 
 
 /* Compare plans by 'original_order' */
@@ -92,12 +91,12 @@ transform_plans_into_states(RuntimeAppendState *scan_state,
 static ChildScanCommon *
 select_required_plans(HTAB *children_table, Oid *parts, int nparts, int *nres)
 {
-	uint32				allocated = INITIAL_ALLOC_NUM,
-						used = 0;
+	uint32				allocated,
+						used;
 	ChildScanCommon	   *result;
 	int					i;
 
-	result = (ChildScanCommon *) palloc(allocated * sizeof(ChildScanCommon));
+	ArrayAlloc(result, allocated, used, INITIAL_ALLOC_NUM);
 
 	for (i = 0; i < nparts; i++)
 	{
@@ -107,13 +106,7 @@ select_required_plans(HTAB *children_table, Oid *parts, int nparts, int *nres)
 		if (!child)
 			continue; /* no plan for this partition */
 
-		if (allocated <= used)
-		{
-			allocated = allocated * ALLOC_EXP + 1;
-			result = repalloc(result, allocated * sizeof(ChildScanCommon));
-		}
-
-		result[used++] = child;
+		ArrayPush(result, allocated, used, child);
 	}
 
 	/* Get rid of useless array */
@@ -418,10 +411,12 @@ get_partition_oids(List *ranges, int *n, const PartRelationInfo *prel,
 				   bool include_parent)
 {
 	ListCell   *range_cell;
-	uint32		allocated = INITIAL_ALLOC_NUM,
-				used = 0;
-	Oid		   *result = (Oid *) palloc(allocated * sizeof(Oid));
+	uint32		allocated,
+				used;
+	Oid		   *result;
 	Oid		   *children = PrelGetChildrenArray(prel);
+
+	ArrayAlloc(result, allocated, used, INITIAL_ALLOC_NUM);
 
 	/* If required, add parent to result */
 	Assert(INITIAL_ALLOC_NUM >= 1);
@@ -437,14 +432,8 @@ get_partition_oids(List *ranges, int *n, const PartRelationInfo *prel,
 
 		for (i = a; i <= b; i++)
 		{
-			if (allocated <= used)
-			{
-				allocated = allocated * ALLOC_EXP + 1;
-				result = repalloc(result, allocated * sizeof(Oid));
-			}
-
 			Assert(i < PrelChildrenCount(prel));
-			result[used++] = children[i];
+			ArrayPush(result, allocated, used, children[i]);
 		}
 	}
 
@@ -826,14 +815,14 @@ explain_append_common(CustomScanState *node,
 	/* Construct excess PlanStates */
 	if (!es->analyze)
 	{
-		uint32				allocated = INITIAL_ALLOC_NUM,
-							used = 0;
+		uint32				allocated,
+							used;
 		ChildScanCommon	   *custom_ps,
 							child;
 		HASH_SEQ_STATUS		seqstat;
 		int					i;
 
-		custom_ps = (ChildScanCommon *) palloc(allocated * sizeof(ChildScanCommon));
+		ArrayAlloc(custom_ps, allocated, used, INITIAL_ALLOC_NUM);
 
 		/* There can't be any nodes since we're not scanning anything */
 		Assert(!node->custom_ps);
@@ -843,13 +832,7 @@ explain_append_common(CustomScanState *node,
 
 		while ((child = (ChildScanCommon) hash_seq_search(&seqstat)))
 		{
-			if (allocated <= used)
-			{
-				allocated = allocated * ALLOC_EXP + 1;
-				custom_ps = repalloc(custom_ps, allocated * sizeof(ChildScanCommon));
-			}
-
-			custom_ps[used++] = child;
+			ArrayPush(custom_ps, allocated, used, child);
 		}
 
 		/*

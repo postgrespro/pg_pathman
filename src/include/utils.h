@@ -32,6 +32,32 @@ Oid get_pathman_schema(void);
 List *list_reverse(List *l);
 
 /*
+ * Dynamic arrays.
+ */
+
+#define ARRAY_EXP 2
+
+#define ArrayAlloc(array, alloced, used, size) \
+	do { \
+		(array) = palloc((size) * sizeof(*(array))); \
+		(alloced) = (size); \
+		(used) = 0; \
+	} while (0)
+
+#define ArrayPush(array, alloced, used, value) \
+	do { \
+		if ((alloced) <= (used)) \
+		{ \
+			(alloced) = (alloced) * ARRAY_EXP + 1; \
+			(array) = repalloc((array), (alloced) * sizeof(*(array))); \
+		} \
+		\
+		(array)[(used)] = (value); \
+		\
+		(used)++; \
+	} while (0)
+
+/*
  * Useful functions for relations.
  */
 Oid get_rel_owner(Oid relid);

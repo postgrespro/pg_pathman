@@ -441,9 +441,7 @@ find_inheritance_children_array(Oid parent_relid,
 	/*
 	 * Scan pg_inherits and build a working array of subclass OIDs.
 	 */
-	maxoids = 32;
-	oidarr = (Oid *) palloc(maxoids * sizeof(Oid));
-	numoids = 0;
+	ArrayAlloc(oidarr, maxoids, numoids, 32);
 
 	relation = heap_open(InheritsRelationId, AccessShareLock);
 
@@ -460,12 +458,7 @@ find_inheritance_children_array(Oid parent_relid,
 		Oid inhrelid;
 
 		inhrelid = ((Form_pg_inherits) GETSTRUCT(inheritsTuple))->inhrelid;
-		if (numoids >= maxoids)
-		{
-			maxoids *= 2;
-			oidarr = (Oid *) repalloc(oidarr, maxoids * sizeof(Oid));
-		}
-		oidarr[numoids++] = inhrelid;
+		ArrayPush(oidarr, maxoids, numoids, inhrelid);
 	}
 
 	systable_endscan(scan);
