@@ -724,6 +724,15 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 
 
 /*
+ * RegisterCustomScanMethods()
+ */
+#if PG_VERSION_NUM < 96000
+#define RegisterCustomScanMethods(methods)
+#endif
+
+
+
+/*
  * -------------
  *  Common code
  * -------------

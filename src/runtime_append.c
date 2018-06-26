@@ -8,6 +8,8 @@
  * ------------------------------------------------------------------------
  */
 
+#include "compat/pg_compat.h"
+
 #include "runtime_append.h"
 
 #include "utils/guc.h"
