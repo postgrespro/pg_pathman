@@ -86,61 +86,60 @@ SELECT create_range_partitions('subpartitions.abc_1', 'b', 0, 50, 2); /* 0 - 100
 SELECT create_range_partitions('subpartitions.abc_2', 'b', 0, 50, 2); /* 100 - 200 */
 
 INSERT INTO subpartitions.abc SELECT 25, 25 FROM generate_series(1, 10);
-SELECT tableoid::regclass, * FROM subpartitions.abc;	/* Should be in subpartitions.abc_1_1 */
+SELECT tableoid::regclass, * FROM subpartitions.abc;	/* subpartitions.abc_1_1 */
 
 UPDATE subpartitions.abc SET a = 125 WHERE a = 25 and b = 25;
-SELECT tableoid::regclass, * FROM subpartitions.abc;	/* Should be in subpartitions.abc_2_1 */
+SELECT tableoid::regclass, * FROM subpartitions.abc;	/* subpartitions.abc_2_1 */
 
 UPDATE subpartitions.abc SET b = 75  WHERE a = 125 and b = 25;
-SELECT tableoid::regclass, * FROM subpartitions.abc;	/* Should be in subpartitions.abc_2_2 */
+SELECT tableoid::regclass, * FROM subpartitions.abc;	/* subpartitions.abc_2_2 */
 
 UPDATE subpartitions.abc SET b = 125 WHERE a = 125 and b = 75;
-SELECT tableoid::regclass, * FROM subpartitions.abc;	/* Should create subpartitions.abc_2_3 */
+SELECT tableoid::regclass, * FROM subpartitions.abc;	/* subpartitions.abc_2_3 */
+
 
 /* split_range_partition */
-SELECT split_range_partition('subpartitions.abc_2', 150);
-SELECT split_range_partition('subpartitions.abc_2_2', 75);
+SELECT split_range_partition('subpartitions.abc_2', 150);	/* FAIL */
+SELECT split_range_partition('subpartitions.abc_2_2', 75);	/* OK */
 SELECT subpartitions.partitions_tree('subpartitions.abc');
 
+
 /* merge_range_partitions */
-SELECT append_range_partition('subpartitions.abc', 'subpartitions.abc_3'); /* 200 - 300 */
-select merge_range_partitions('subpartitions.abc_2', 'subpartitions.abc_3');
-select merge_range_partitions('subpartitions.abc_2_1', 'subpartitions.abc_2_2');
+TRUNCATE subpartitions.abc;
+INSERT INTO subpartitions.abc VALUES (150, 0);
+
+SELECT append_range_partition('subpartitions.abc', 'subpartitions.abc_3');			/* 200 - 300 */
+INSERT INTO subpartitions.abc VALUES (250, 50);
+
+SELECT merge_range_partitions('subpartitions.abc_2', 'subpartitions.abc_3');		/* OK */
+SELECT tableoid::regclass, * FROM subpartitions.abc ORDER BY a, b;
+
+SELECT merge_range_partitions('subpartitions.abc_2_1', 'subpartitions.abc_2_2');	/* OK */
+SELECT tableoid::regclass, * FROM subpartitions.abc ORDER BY a, b;
+
 
 DROP TABLE subpartitions.abc CASCADE;
 
-/* subpartitions on same expressions */
-CREATE TABLE subpartitions.abc(a INTEGER NOT NULL);
-INSERT INTO subpartitions.abc SELECT i FROM generate_series(1, 200, 20) as i;
-SELECT create_range_partitions('subpartitions.abc', 'a', 0, 100, 4);
-SELECT create_range_partitions('subpartitions.abc_1', 'a', 0, 11, 9); /* not multiple */
-SELECT create_range_partitions('subpartitions.abc_2', 'a', 150, 11, 8); /* start_value should be lower */
-SELECT create_range_partitions('subpartitions.abc_3', 'a', 200, 11, 20); /* too big p_count */
-SELECT create_range_partitions('subpartitions.abc_4', 'a', ARRAY[301, 350, 400]); /* bounds check */
-SELECT create_range_partitions('subpartitions.abc_4', 'a', ARRAY[300, 450, 500]); /* bounds check */
-SELECT create_range_partitions('subpartitions.abc_4', 'a', ARRAY[300, 350, 450]); /* bounds check */
-SELECT * FROM pathman_partition_list;
-SELECT append_range_partition('subpartitions.abc_1'::regclass);
-SELECT append_range_partition('subpartitions.abc_1'::regclass);
-DROP TABLE subpartitions.abc_1_10;
 
-/* detach_range_partition */
-SELECt detach_range_partition('subpartitions.abc_1');
+/* Check insert & update with dropped columns */
+CREATE TABLE subpartitions.abc(a int, b int, c int, id1 int not null, id2 int not null, val serial);
+SELECT create_range_partitions('subpartitions.abc', 'id1', 0, 100, 2);
+ALTER TABLE subpartitions.abc DROP COLUMN c;
+SELECT prepend_range_partition('subpartitions.abc');
+ALTER TABLE subpartitions.abc DROP COLUMN b;
+SELECT create_range_partitions('subpartitions.abc_3', 'id2', 0, 10, 3);
+ALTER TABLE subpartitions.abc DROP COLUMN a;
+SELECT prepend_range_partition('subpartitions.abc_3');
 
-/* attach_range_partition */
-CREATE TABLE subpartitions.abc_c(LIKE subpartitions.abc_1 INCLUDING ALL);
-SELECT attach_range_partition('subpartitions.abc_1', 'subpartitions.abc_c', 98, 110); /* fail */
-SELECT attach_range_partition('subpartitions.abc_1', 'subpartitions.abc_c', 100, 110); /* fail */
-SELECT attach_range_partition('subpartitions.abc_1', 'subpartitions.abc_c', 99, 110); /* ok */
+SELECT * FROM pathman_partition_list ORDER BY parent, partition;
 
-DROP TABLE subpartitions.abc CASCADE;
+INSERT INTO subpartitions.abc VALUES (10, 0), (110, 0), (-1, 0), (-1, -1);
+SELECT tableoid::regclass, * FROM subpartitions.abc ORDER BY id1, id2, val;
 
-/* subpartitions on same expression but dates */
-CREATE TABLE subpartitions.abc(a DATE NOT NULL);
-INSERT INTO subpartitions.abc SELECT '2017-10-02'::DATE + i  FROM generate_series(1, 200, 20) as i;
-SELECT create_range_partitions('subpartitions.abc', 'a', '2017-10-02'::DATE, '1 month'::INTERVAL);
-SELECT create_range_partitions('subpartitions.abc_1', 'a', '2017-10-02'::DATE + 1,
-	'32 day'::INTERVAL, 10); /* not multiple, and limited p_count */
+SET pg_pathman.enable_partitionrouter = ON;
+UPDATE subpartitions.abc SET id1 = -1, id2 = -1 RETURNING tableoid::regclass, *;
+
+
 
 DROP TABLE subpartitions.abc CASCADE;
 DROP SCHEMA subpartitions CASCADE;

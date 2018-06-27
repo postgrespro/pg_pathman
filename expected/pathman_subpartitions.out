@@ -237,7 +237,7 @@ SELECT create_range_partitions('subpartitions.abc_2', 'b', 0, 50, 2); /* 100 - 2
 (1 row)
 
 INSERT INTO subpartitions.abc SELECT 25, 25 FROM generate_series(1, 10);
-SELECT tableoid::regclass, * FROM subpartitions.abc;	/* Should be in subpartitions.abc_1_1 */
+SELECT tableoid::regclass, * FROM subpartitions.abc;	/* subpartitions.abc_1_1 */
        tableoid        | a  | b  
 -----------------------+----+----
  subpartitions.abc_1_1 | 25 | 25
@@ -253,7 +253,7 @@ SELECT tableoid::regclass, * FROM subpartitions.abc;	/* Should be in subpartitio
 (10 rows)
 
 UPDATE subpartitions.abc SET a = 125 WHERE a = 25 and b = 25;
-SELECT tableoid::regclass, * FROM subpartitions.abc;	/* Should be in subpartitions.abc_2_1 */
+SELECT tableoid::regclass, * FROM subpartitions.abc;	/* subpartitions.abc_2_1 */
        tableoid        |  a  | b  
 -----------------------+-----+----
  subpartitions.abc_2_1 | 125 | 25
@@ -269,7 +269,7 @@ SELECT tableoid::regclass, * FROM subpartitions.abc;	/* Should be in subpartitio
 (10 rows)
 
 UPDATE subpartitions.abc SET b = 75  WHERE a = 125 and b = 25;
-SELECT tableoid::regclass, * FROM subpartitions.abc;	/* Should be in subpartitions.abc_2_2 */
+SELECT tableoid::regclass, * FROM subpartitions.abc;	/* subpartitions.abc_2_2 */
        tableoid        |  a  | b  
 -----------------------+-----+----
  subpartitions.abc_2_2 | 125 | 75
@@ -285,7 +285,7 @@ SELECT tableoid::regclass, * FROM subpartitions.abc;	/* Should be in subpartitio
 (10 rows)
 
 UPDATE subpartitions.abc SET b = 125 WHERE a = 125 and b = 75;
-SELECT tableoid::regclass, * FROM subpartitions.abc;	/* Should create subpartitions.abc_2_3 */
+SELECT tableoid::regclass, * FROM subpartitions.abc;	/* subpartitions.abc_2_3 */
        tableoid        |  a  |  b  
 -----------------------+-----+-----
  subpartitions.abc_2_3 | 125 | 125
@@ -301,9 +301,9 @@ SELECT tableoid::regclass, * FROM subpartitions.abc;	/* Should create subpartiti
 (10 rows)
 
 /* split_range_partition */
-SELECT split_range_partition('subpartitions.abc_2', 150);
-ERROR:  could not split partition if it has children
-SELECT split_range_partition('subpartitions.abc_2_2', 75);
+SELECT split_range_partition('subpartitions.abc_2', 150);	/* FAIL */
+ERROR:  cannot split partition that has children
+SELECT split_range_partition('subpartitions.abc_2_2', 75);	/* OK */
  split_range_partition 
 -----------------------
  {50,100}
@@ -324,144 +324,103 @@ SELECT subpartitions.partitions_tree('subpartitions.abc');
 (9 rows)
 
 /* merge_range_partitions */
-SELECT append_range_partition('subpartitions.abc', 'subpartitions.abc_3'); /* 200 - 300 */
+TRUNCATE subpartitions.abc;
+INSERT INTO subpartitions.abc VALUES (150, 0);
+SELECT append_range_partition('subpartitions.abc', 'subpartitions.abc_3');			/* 200 - 300 */
  append_range_partition 
 ------------------------
  subpartitions.abc_3
 (1 row)
 
-select merge_range_partitions('subpartitions.abc_2', 'subpartitions.abc_3');
-ERROR:  cannot merge partitions
-select merge_range_partitions('subpartitions.abc_2_1', 'subpartitions.abc_2_2');
+INSERT INTO subpartitions.abc VALUES (250, 50);
+SELECT merge_range_partitions('subpartitions.abc_2', 'subpartitions.abc_3');		/* OK */
  merge_range_partitions 
 ------------------------
  
 (1 row)
 
+SELECT tableoid::regclass, * FROM subpartitions.abc ORDER BY a, b;
+       tableoid        |  a  | b  
+-----------------------+-----+----
+ subpartitions.abc_2_1 | 150 |  0
+ subpartitions.abc_2_2 | 250 | 50
+(2 rows)
+
+SELECT merge_range_partitions('subpartitions.abc_2_1', 'subpartitions.abc_2_2');	/* OK */
+ merge_range_partitions 
+------------------------
+ 
+(1 row)
+
+SELECT tableoid::regclass, * FROM subpartitions.abc ORDER BY a, b;
+       tableoid        |  a  | b  
+-----------------------+-----+----
+ subpartitions.abc_2_1 | 150 |  0
+ subpartitions.abc_2_1 | 250 | 50
+(2 rows)
+
 DROP TABLE subpartitions.abc CASCADE;
-NOTICE:  drop cascades to 11 other objects
-/* subpartitions on same expressions */
-CREATE TABLE subpartitions.abc(a INTEGER NOT NULL);
-INSERT INTO subpartitions.abc SELECT i FROM generate_series(1, 200, 20) as i;
-SELECT create_range_partitions('subpartitions.abc', 'a', 0, 100, 4);
- create_range_partitions 
--------------------------
-                       4
-(1 row)
-
-SELECT create_range_partitions('subpartitions.abc_1', 'a', 0, 11, 9); /* not multiple */
- create_range_partitions 
--------------------------
-                       9
-(1 row)
-
-SELECT create_range_partitions('subpartitions.abc_2', 'a', 150, 11, 8); /* start_value should be lower */
-WARNING:  "start_value" was set to 100
- create_range_partitions 
--------------------------
-                       8
-(1 row)
-
-SELECT create_range_partitions('subpartitions.abc_3', 'a', 200, 11, 20); /* too big p_count */
-WARNING:  "p_interval" is not multiple of range (200, 310)
-NOTICE:  "p_count" was limited to 10
- create_range_partitions 
--------------------------
-                      10
-(1 row)
-
-SELECT create_range_partitions('subpartitions.abc_4', 'a', ARRAY[301, 350, 400]); /* bounds check */
-ERROR:  Bounds should start from 300
-SELECT create_range_partitions('subpartitions.abc_4', 'a', ARRAY[300, 450, 500]); /* bounds check */
-ERROR:  Lower bound of rightmost partition should be less than 400
-SELECT create_range_partitions('subpartitions.abc_4', 'a', ARRAY[300, 350, 450]); /* bounds check */
+NOTICE:  drop cascades to 10 other objects
+/* Check insert & update with dropped columns */
+CREATE TABLE subpartitions.abc(a int, b int, c int, id1 int not null, id2 int not null, val serial);
+SELECT create_range_partitions('subpartitions.abc', 'id1', 0, 100, 2);
  create_range_partitions 
 -------------------------
                        2
 (1 row)
 
-SELECT * FROM pathman_partition_list;
-       parent        |       partition        | parttype | expr | range_min | range_max 
----------------------+------------------------+----------+------+-----------+-----------
- subpartitions.abc   | subpartitions.abc_1    |        2 | a    | 0         | 100
- subpartitions.abc   | subpartitions.abc_2    |        2 | a    | 100       | 200
- subpartitions.abc   | subpartitions.abc_3    |        2 | a    | 200       | 300
- subpartitions.abc   | subpartitions.abc_4    |        2 | a    | 300       | 400
- subpartitions.abc_1 | subpartitions.abc_1_1  |        2 | a    | 0         | 11
- subpartitions.abc_1 | subpartitions.abc_1_2  |        2 | a    | 11        | 22
- subpartitions.abc_1 | subpartitions.abc_1_3  |        2 | a    | 22        | 33
- subpartitions.abc_1 | subpartitions.abc_1_4  |        2 | a    | 33        | 44
- subpartitions.abc_1 | subpartitions.abc_1_5  |        2 | a    | 44        | 55
- subpartitions.abc_1 | subpartitions.abc_1_6  |        2 | a    | 55        | 66
- subpartitions.abc_1 | subpartitions.abc_1_7  |        2 | a    | 66        | 77
- subpartitions.abc_1 | subpartitions.abc_1_8  |        2 | a    | 77        | 88
- subpartitions.abc_1 | subpartitions.abc_1_9  |        2 | a    | 88        | 99
- subpartitions.abc_2 | subpartitions.abc_2_1  |        2 | a    | 100       | 111
- subpartitions.abc_2 | subpartitions.abc_2_2  |        2 | a    | 111       | 122
- subpartitions.abc_2 | subpartitions.abc_2_3  |        2 | a    | 122       | 133
- subpartitions.abc_2 | subpartitions.abc_2_4  |        2 | a    | 133       | 144
- subpartitions.abc_2 | subpartitions.abc_2_5  |        2 | a    | 144       | 155
- subpartitions.abc_2 | subpartitions.abc_2_6  |        2 | a    | 155       | 166
- subpartitions.abc_2 | subpartitions.abc_2_7  |        2 | a    | 166       | 177
- subpartitions.abc_2 | subpartitions.abc_2_8  |        2 | a    | 177       | 188
- subpartitions.abc_3 | subpartitions.abc_3_1  |        2 | a    | 200       | 211
- subpartitions.abc_3 | subpartitions.abc_3_2  |        2 | a    | 211       | 222
- subpartitions.abc_3 | subpartitions.abc_3_3  |        2 | a    | 222       | 233
- subpartitions.abc_3 | subpartitions.abc_3_4  |        2 | a    | 233       | 244
- subpartitions.abc_3 | subpartitions.abc_3_5  |        2 | a    | 244       | 255
- subpartitions.abc_3 | subpartitions.abc_3_6  |        2 | a    | 255       | 266
- subpartitions.abc_3 | subpartitions.abc_3_7  |        2 | a    | 266       | 277
- subpartitions.abc_3 | subpartitions.abc_3_8  |        2 | a    | 277       | 288
- subpartitions.abc_3 | subpartitions.abc_3_9  |        2 | a    | 288       | 299
- subpartitions.abc_3 | subpartitions.abc_3_10 |        2 | a    | 299       | 310
- subpartitions.abc_4 | subpartitions.abc_4_1  |        2 | a    | 300       | 350
- subpartitions.abc_4 | subpartitions.abc_4_2  |        2 | a    | 350       | 450
-(33 rows)
-
-SELECT append_range_partition('subpartitions.abc_1'::regclass);
- append_range_partition 
-------------------------
- subpartitions.abc_1_10
+ALTER TABLE subpartitions.abc DROP COLUMN c;
+SELECT prepend_range_partition('subpartitions.abc');
+ prepend_range_partition 
+-------------------------
+ subpartitions.abc_3
 (1 row)
 
-SELECT append_range_partition('subpartitions.abc_1'::regclass);
-ERROR:  reached upper bound in the current level of subpartitions
-DROP TABLE subpartitions.abc_1_10;
-/* detach_range_partition */
-SELECt detach_range_partition('subpartitions.abc_1');
-ERROR:  could not detach partition if it has children
-/* attach_range_partition */
-CREATE TABLE subpartitions.abc_c(LIKE subpartitions.abc_1 INCLUDING ALL);
-SELECT attach_range_partition('subpartitions.abc_1', 'subpartitions.abc_c', 98, 110); /* fail */
-ERROR:  specified range [98, 110) overlaps with existing partitions
-SELECT attach_range_partition('subpartitions.abc_1', 'subpartitions.abc_c', 100, 110); /* fail */
-ERROR:  "start value" exceeds upper bound of the current level of subpartitions
-SELECT attach_range_partition('subpartitions.abc_1', 'subpartitions.abc_c', 99, 110); /* ok */
- attach_range_partition 
-------------------------
- subpartitions.abc_c
-(1 row)
-
-DROP TABLE subpartitions.abc CASCADE;
-NOTICE:  drop cascades to 39 other objects
-/* subpartitions on same expression but dates */
-CREATE TABLE subpartitions.abc(a DATE NOT NULL);
-INSERT INTO subpartitions.abc SELECT '2017-10-02'::DATE + i  FROM generate_series(1, 200, 20) as i;
-SELECT create_range_partitions('subpartitions.abc', 'a', '2017-10-02'::DATE, '1 month'::INTERVAL);
+ALTER TABLE subpartitions.abc DROP COLUMN b;
+SELECT create_range_partitions('subpartitions.abc_3', 'id2', 0, 10, 3);
  create_range_partitions 
 -------------------------
-                       6
+                       3
 (1 row)
 
-SELECT create_range_partitions('subpartitions.abc_1', 'a', '2017-10-02'::DATE + 1,
-	'32 day'::INTERVAL, 10); /* not multiple, and limited p_count */
-WARNING:  "start_value" was set to 10-02-2017
-WARNING:  "p_interval" is not multiple of range (10-02-2017, 11-03-2017)
-NOTICE:  "p_count" was limited to 1
- create_range_partitions 
+ALTER TABLE subpartitions.abc DROP COLUMN a;
+SELECT prepend_range_partition('subpartitions.abc_3');
+ prepend_range_partition 
 -------------------------
-                       1
+ subpartitions.abc_3_4
 (1 row)
+
+SELECT * FROM pathman_partition_list ORDER BY parent, partition;
+       parent        |       partition       | parttype | expr | range_min | range_max 
+---------------------+-----------------------+----------+------+-----------+-----------
+ subpartitions.abc   | subpartitions.abc_1   |        2 | id1  | 0         | 100
+ subpartitions.abc   | subpartitions.abc_2   |        2 | id1  | 100       | 200
+ subpartitions.abc   | subpartitions.abc_3   |        2 | id1  | -100      | 0
+ subpartitions.abc_3 | subpartitions.abc_3_1 |        2 | id2  | 0         | 10
+ subpartitions.abc_3 | subpartitions.abc_3_2 |        2 | id2  | 10        | 20
+ subpartitions.abc_3 | subpartitions.abc_3_3 |        2 | id2  | 20        | 30
+ subpartitions.abc_3 | subpartitions.abc_3_4 |        2 | id2  | -10       | 0
+(7 rows)
+
+INSERT INTO subpartitions.abc VALUES (10, 0), (110, 0), (-1, 0), (-1, -1);
+SELECT tableoid::regclass, * FROM subpartitions.abc ORDER BY id1, id2, val;
+       tableoid        | id1 | id2 | val 
+-----------------------+-----+-----+-----
+ subpartitions.abc_3_4 |  -1 |  -1 |   4
+ subpartitions.abc_3_1 |  -1 |   0 |   3
+ subpartitions.abc_1   |  10 |   0 |   1
+ subpartitions.abc_2   | 110 |   0 |   2
+(4 rows)
+
+SET pg_pathman.enable_partitionrouter = ON;
+UPDATE subpartitions.abc SET id1 = -1, id2 = -1 RETURNING tableoid::regclass, *;
+       tableoid        | id1 | id2 | val 
+-----------------------+-----+-----+-----
+ subpartitions.abc_3_4 |  -1 |  -1 |   1
+ subpartitions.abc_3_4 |  -1 |  -1 |   2
+ subpartitions.abc_3_4 |  -1 |  -1 |   3
+ subpartitions.abc_3_4 |  -1 |  -1 |   4
+(4 rows)
 
 DROP TABLE subpartitions.abc CASCADE;
 NOTICE:  drop cascades to 9 other objects
