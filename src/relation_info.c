@@ -536,7 +536,7 @@ resowner_prel_add(PartRelationInfo *prel)
 
 		/* Register this 'prel' */
 		old_mcxt = MemoryContextSwitchTo(TopPathmanContext);
-		info->prels = list_append_unique_ptr(info->prels, prel);
+		info->prels = lappend(info->prels, prel);
 		MemoryContextSwitchTo(old_mcxt);
 
 #ifdef USE_RELINFO_LEAK_TRACKER
@@ -576,9 +576,8 @@ resowner_prel_del(PartRelationInfo *prel)
 			/* Check that 'prel' is registered! */
 			Assert(list_member_ptr(info->prels, prel));
 
-			/* Remove it iff we're the only user */
-			if (PrelReferenceCount(prel) == 1)
-				info->prels = list_delete_ptr(info->prels, prel);
+			/* Remove it from list */
+			info->prels = list_delete_ptr(info->prels, prel);
 		}
 
 		/* Check that refcount is valid */
@@ -615,20 +614,7 @@ resonwner_prel_callback(ResourceReleasePhase phase,
 			{
 				PartRelationInfo *prel = lfirst(lc);
 
-				if (!isCommit)
-				{
-					/* Reset refcount for valid entry */
-					if (PrelIsFresh(prel))
-					{
-						PrelReferenceCount(prel) = 0;
-					}
-					/* Otherwise, free it when refcount is zero */
-					else if (--PrelReferenceCount(prel) == 0)
-					{
-						free_pathman_relation_info(prel);
-					}
-				}
-				else
+				if (isCommit)
 				{
 #ifdef USE_RELINFO_LEAK_TRACKER
 					ListCell *lc;
@@ -640,9 +626,21 @@ resonwner_prel_callback(ResourceReleasePhase phase,
 						elog(WARNING, "PartRelationInfo referenced in %s:%d", fun, line);
 					}
 #endif
-					elog(ERROR,
+					elog(WARNING,
 						 "cache reference leak: PartRelationInfo(%d) has count %d",
 						 PrelParentRelid(prel), PrelReferenceCount(prel));
+				}
+
+				/* Check that refcount is valid */
+				Assert(PrelReferenceCount(prel) > 0);
+
+				/* Decrease refcount */
+				PrelReferenceCount(prel) -= 1;
+
+				/* Free this entry if it's time */
+				if (PrelReferenceCount(prel) == 0 && !PrelIsFresh(prel))
+				{
+					free_pathman_relation_info(prel);
 				}
 			}
 
