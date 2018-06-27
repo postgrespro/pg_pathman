@@ -248,7 +248,7 @@ fini_result_parts_storage(ResultPartsStorage *parts_storage)
 
 /* Find a ResultRelInfo for the partition using ResultPartsStorage */
 ResultRelInfoHolder *
-scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
+scan_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid)
 {
 #define CopyToResultRelInfo(field_name) \
 	( child_result_rel_info->field_name = parts_storage->base_rri->field_name )
@@ -383,6 +383,32 @@ scan_result_parts_storage(Oid partid, ResultPartsStorage *parts_storage)
 	return rri_holder;
 }
 
+/* Refresh PartRelationInfo for the partition in storage */
+void
+refresh_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid)
+{
+	if (partid == PrelParentRelid(parts_storage->prel))
+	{
+		close_pathman_relation_info(parts_storage->prel);
+		parts_storage->prel = get_pathman_relation_info(partid);
+		shout_if_prel_is_invalid(partid, parts_storage->prel, PT_ANY);
+	}
+	else
+	{
+		ResultRelInfoHolder *rri_holder;
+
+		rri_holder = hash_search(parts_storage->result_rels_table,
+								 (const void *) &partid,
+								 HASH_FIND, NULL);
+
+		if (rri_holder && rri_holder->prel)
+		{
+			close_pathman_relation_info(rri_holder->prel);
+			rri_holder->prel = get_pathman_relation_info(partid);
+			shout_if_prel_is_invalid(partid, rri_holder->prel, PT_ANY);
+		}
+	}
+}
 
 /* Build tuple conversion map (e.g. parent has a dropped column) */
 TupleConversionMap *
@@ -486,10 +512,9 @@ select_partition_for_insert(ResultPartsStorage *parts_storage,
 		{
 			/* Prepare expression context */
 			ResetExprContext(expr_context);
-
-			/* Execute expression */
 			expr_context->ecxt_scantuple = slot;
 
+			/* Execute expression */
 			value = ExecEvalExprCompat(expr_state, expr_context,
 									   &isnull, mult_result_handler);
 
@@ -515,28 +540,13 @@ select_partition_for_insert(ResultPartsStorage *parts_storage,
 		else partition_relid = parts[0];
 
 		/* Get ResultRelationInfo holder for the selected partition */
-		result = scan_result_parts_storage(partition_relid, parts_storage);
+		result = scan_result_parts_storage(parts_storage, partition_relid);
 
 		/* Somebody has dropped or created partitions */
-		if (!PrelIsFresh(prel) && (nparts == 0 || result == NULL))
+		if ((nparts == 0 || result == NULL) && !PrelIsFresh(prel))
 		{
-			/* Compare original and current Oids */
-			Oid	relid1 = PrelParentRelid(parts_storage->prel),
-				relid2 = PrelParentRelid(prel);
-
-			/* Reopen 'prel' to make it fresh again */
-			close_pathman_relation_info(prel);
-			prel = get_pathman_relation_info(parent_relid);
-
-			/* Store new 'prel' */
-			if (relid1 == relid2)
-			{
-				shout_if_prel_is_invalid(parent_relid, prel, PT_ANY);
-				parts_storage->prel = prel;
-			}
-			else if (result && result->prel)
-				/* TODO: WTF? this is a new RRI, not the one we used before */
-				result->prel = prel;
+			/* Try building a new 'prel' for this relation */
+			refresh_result_parts_storage(parts_storage, parent_relid);
 		}
 
 		/* This partition is a parent itself */
@@ -544,7 +554,7 @@ select_partition_for_insert(ResultPartsStorage *parts_storage,
 		{
 			prel = result->prel;
 			expr_state = result->prel_expr_state;
-			parent_relid = PrelParentRelid(prel);
+			parent_relid = result->partid;
 			compute_value = true;
 
 			/* Repeat with a new dispatch */
@@ -735,13 +745,8 @@ partition_filter_exec(CustomScanState *node)
 	if (!TupIsNull(slot))
 	{
 		MemoryContext			old_mcxt;
-		PartRelationInfo	   *prel;
 		ResultRelInfoHolder	   *rri_holder;
 		ResultRelInfo		   *resultRelInfo;
-
-		/* Fetch PartRelationInfo for this partitioned relation */
-		if ((prel = get_pathman_relation_info(state->partitioned_table)) == NULL)
-			return slot; /* table is not partitioned anymore */
 
 		/* Switch to per-tuple context */
 		old_mcxt = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
@@ -778,9 +783,6 @@ partition_filter_exec(CustomScanState *node)
 			/* Now replace the original slot */
 			slot = state->tup_convert_slot;
 		}
-
-		/* Don't forget to close 'prel'! */
-		close_pathman_relation_info(prel);
 
 		return slot;
 	}

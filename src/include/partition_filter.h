@@ -164,8 +164,10 @@ void init_result_parts_storage(ResultPartsStorage *parts_storage,
 void fini_result_parts_storage(ResultPartsStorage *parts_storage);
 
 /* Find ResultRelInfo holder in storage */
-ResultRelInfoHolder * scan_result_parts_storage(Oid partid,
-												ResultPartsStorage *storage);
+ResultRelInfoHolder * scan_result_parts_storage(ResultPartsStorage *storage, Oid partid);
+
+/* Refresh PartRelationInfo in storage */
+void refresh_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid);
 
 TupleConversionMap * build_part_tuple_map(Relation parent_rel, Relation child_rel);
 
