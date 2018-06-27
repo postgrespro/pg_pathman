@@ -71,8 +71,7 @@ CustomExecMethods	partition_filter_exec_methods;
 
 static ExprState *prepare_expr_state(const PartRelationInfo *prel,
 									 Relation source_rel,
-									 EState *estate,
-									 bool try_map);
+									 EState *estate);
 
 static void prepare_rri_for_insert(ResultRelInfoHolder *rri_holder,
 								   const ResultPartsStorage *rps_storage);
@@ -195,8 +194,7 @@ init_result_parts_storage(ResultPartsStorage *parts_storage,
 	/* Build a partitioning expression state */
 	parts_storage->prel_expr_state = prepare_expr_state(parts_storage->prel,
 														parts_storage->base_rri->ri_RelationDesc,
-														parts_storage->estate,
-														cmd_type == CMD_UPDATE);
+														parts_storage->estate);
 
 	/* Build expression context */
 	parts_storage->prel_econtext = CreateExprContext(parts_storage->estate);
@@ -365,8 +363,7 @@ scan_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid)
 			rri_holder->prel_expr_state =
 					prepare_expr_state(rri_holder->prel, /* NOTE: this prel! */
 									   parts_storage->base_rri->ri_RelationDesc,
-									   parts_storage->estate,
-									   parts_storage->command_type == CMD_UPDATE);
+									   parts_storage->estate);
 		}
 
 		/* Call initialization callback if needed */
@@ -570,8 +567,7 @@ select_partition_for_insert(ResultPartsStorage *parts_storage,
 static ExprState *
 prepare_expr_state(const PartRelationInfo *prel,
 				   Relation source_rel,
-				   EState *estate,
-				   bool try_map)
+				   EState *estate)
 {
 	ExprState	   *expr_state;
 	MemoryContext	old_mcxt;
@@ -584,9 +580,8 @@ prepare_expr_state(const PartRelationInfo *prel,
 	expr = PrelExpressionForRelid(prel, PART_EXPR_VARNO);
 
 	/* Should we try using map? */
-	if (try_map)
+	if (PrelParentRelid(prel) != RelationGetRelid(source_rel))
 	{
-
 		AttrNumber	   *map;
 		int				map_length;
 		TupleDesc		source_tupdesc = RelationGetDescr(source_rel);
