@@ -223,6 +223,7 @@ typedef struct PartRelationInfo
 
 #ifdef USE_RELINFO_LEAK_TRACKER
 	List		   *owners;			/* saved callers of get_pathman_relation_info() */
+	uint64			access_total;	/* total amount of accesses to this entry */
 #endif
 
 	MemoryContext	mcxt;			/* memory context holding this struct */

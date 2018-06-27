@@ -58,8 +58,48 @@
 #ifdef USE_RELINFO_LEAK_TRACKER
 #undef get_pathman_relation_info
 #undef close_pathman_relation_info
+
 const char	   *prel_resowner_function = NULL;
 int				prel_resowner_line = 0;
+
+#define LeakTrackerAdd(prel) \
+	do { \
+		MemoryContext old_mcxt = MemoryContextSwitchTo((prel)->mcxt); \
+		(prel)->owners = \
+				list_append_unique( \
+						(prel)->owners, \
+						list_make2(makeString((char *) prel_resowner_function), \
+								   makeInteger(prel_resowner_line))); \
+		MemoryContextSwitchTo(old_mcxt); \
+		\
+		(prel)->access_total++; \
+	} while (0)
+
+#define LeakTrackerPrint(prel) \
+	do { \
+		ListCell *lc; \
+		foreach (lc, (prel)->owners) \
+		{ \
+			char   *fun = strVal(linitial(lfirst(lc))); \
+			int		line = intVal(lsecond(lfirst(lc))); \
+			elog(WARNING, "PartRelationInfo referenced in %s:%d", fun, line); \
+		} \
+	} while (0)
+
+#define LeakTrackerFree(prel) \
+	do { \
+		ListCell *lc; \
+		foreach (lc, (prel)->owners) \
+		{ \
+			list_free_deep(lfirst(lc)); \
+		} \
+		list_free((prel)->owners); \
+		(prel)->owners = NIL; \
+	} while (0)
+#else
+#define LeakTrackerAdd(prel)
+#define LeakTrackerPrint(prel)
+#define LeakTrackerFree(prel)
 #endif
 
 
@@ -256,11 +296,9 @@ invalidate_psin_entry(PartStatusInfo *psin)
 void
 close_pathman_relation_info(PartRelationInfo *prel)
 {
-	(void) resowner_prel_del(prel);
+	AssertArg(prel);
 
-	/* Remove entry is it's outdated and we're the last user */
-	if (PrelReferenceCount(prel) == 0 && !PrelIsFresh(prel))
-		free_pathman_relation_info(prel);
+	(void) resowner_prel_del(prel);
 }
 
 /* Check if relation is partitioned by pg_pathman */
@@ -539,14 +577,8 @@ resowner_prel_add(PartRelationInfo *prel)
 		info->prels = lappend(info->prels, prel);
 		MemoryContextSwitchTo(old_mcxt);
 
-#ifdef USE_RELINFO_LEAK_TRACKER
 		/* Save current caller (function:line) */
-		old_mcxt = MemoryContextSwitchTo(prel->mcxt);
-		prel->owners = lappend(prel->owners,
-							   list_make2(makeString((char *) prel_resowner_function),
-										  makeInteger(prel_resowner_line)));
-		MemoryContextSwitchTo(old_mcxt);
-#endif
+		LeakTrackerAdd(prel);
 
 		/* Finally, increment refcount */
 		PrelReferenceCount(prel) += 1;
@@ -583,8 +615,20 @@ resowner_prel_del(PartRelationInfo *prel)
 		/* Check that refcount is valid */
 		Assert(PrelReferenceCount(prel) > 0);
 
-		/* Finally, decrement refcount */
+		/* Decrease refcount */
 		PrelReferenceCount(prel) -= 1;
+
+		/* Free list of owners */
+		if (PrelReferenceCount(prel) == 0)
+		{
+			LeakTrackerFree(prel);
+		}
+
+		/* Free this entry if it's time */
+		if (PrelReferenceCount(prel) == 0 && !PrelIsFresh(prel))
+		{
+			free_pathman_relation_info(prel);
+		}
 	}
 
 	return prel;
@@ -616,16 +660,9 @@ resonwner_prel_callback(ResourceReleasePhase phase,
 
 				if (isCommit)
 				{
-#ifdef USE_RELINFO_LEAK_TRACKER
-					ListCell *lc;
+					/* Print verbose list of *possible* owners */
+					LeakTrackerPrint(prel);
 
-					foreach (lc, prel->owners)
-					{
-						char *fun = strVal(linitial(lfirst(lc)));
-						int line = intVal(lsecond(lfirst(lc)));
-						elog(WARNING, "PartRelationInfo referenced in %s:%d", fun, line);
-					}
-#endif
 					elog(WARNING,
 						 "cache reference leak: PartRelationInfo(%d) has count %d",
 						 PrelParentRelid(prel), PrelReferenceCount(prel));
@@ -636,6 +673,9 @@ resonwner_prel_callback(ResourceReleasePhase phase,
 
 				/* Decrease refcount */
 				PrelReferenceCount(prel) -= 1;
+
+				/* Free list of owners */
+				LeakTrackerFree(prel);
 
 				/* Free this entry if it's time */
 				if (PrelReferenceCount(prel) == 0 && !PrelIsFresh(prel))
