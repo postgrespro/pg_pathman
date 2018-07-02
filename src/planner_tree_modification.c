@@ -93,13 +93,12 @@ typedef struct
 	CommonTableExpr	   *parent_cte;
 } transform_query_cxt;
 
-
 typedef struct
 {
 	Index	child_varno;
+	Oid		parent_relid;
 	List   *translated_vars;
 } adjust_appendrel_varnos_cxt;
-
 
 
 static bool pathman_transform_query_walker(Node *node, void *context);
@@ -473,9 +472,9 @@ handle_modification_query(Query *parse, transform_query_cxt *context)
 
 			/* Translate varnos for this child */
 			aav_cxt.child_varno = result_rti;
+			aav_cxt.parent_relid = parent;
 			aav_cxt.translated_vars = translated_vars;
-			if (adjust_appendrel_varnos((Node *) parse, &aav_cxt))
-				return; /* failed to perform rewrites */
+			adjust_appendrel_varnos((Node *) parse, &aav_cxt);
 
 			/* Translate column privileges for this child */
 			rte->selectedCols = translate_col_privs(rte->selectedCols, translated_vars);
@@ -561,6 +560,7 @@ eval_extern_params_mutator(Node *node, ParamListInfo params)
 								   (void *) params);
 }
 
+/* Remap parent's attributes to child ones s*/
 static bool
 adjust_appendrel_varnos(Node *node, adjust_appendrel_varnos_cxt *context)
 {
@@ -572,6 +572,7 @@ adjust_appendrel_varnos(Node *node, adjust_appendrel_varnos_cxt *context)
 		Query	   *query = (Query *) node;
 		ListCell   *lc;
 
+		/* FIXME: we might need to reorder TargetEntries */
 		foreach (lc, query->targetList)
 		{
 			TargetEntry *te = (TargetEntry *) lfirst(lc);
@@ -581,11 +582,13 @@ adjust_appendrel_varnos(Node *node, adjust_appendrel_varnos_cxt *context)
 				continue;
 
 			if (te->resno > list_length(context->translated_vars))
-				return true;
+				elog(ERROR, "attribute %d of relation \"%s\" does not exist",
+					 te->resno, get_rel_name(context->parent_relid));
 
 			child_var = list_nth(context->translated_vars, te->resno - 1);
 			if (!child_var)
-				return true;
+				elog(ERROR, "attribute %d of relation \"%s\" does not exist",
+					 te->resno, get_rel_name(context->parent_relid));
 
 			/* Transform attribute number */
 			te->resno = child_var->varattno;
@@ -601,17 +604,19 @@ adjust_appendrel_varnos(Node *node, adjust_appendrel_varnos_cxt *context)
 	{
 		Var *var = (Var *) node;
 
-		/* Don't tranform system columns & other relations' Vars */
+		/* Don't transform system columns & other relations' Vars */
 		if (var->varoattno > 0 && var->varno == context->child_varno)
 		{
 			Var *child_var;
 
 			if (var->varattno > list_length(context->translated_vars))
-				return true;
+				elog(ERROR, "attribute %d of relation \"%s\" does not exist",
+					 var->varattno, get_rel_name(context->parent_relid));
 
 			child_var = list_nth(context->translated_vars, var->varattno - 1);
 			if (!child_var)
-				return true;
+				elog(ERROR, "attribute %d of relation \"%s\" does not exist",
+					 var->varattno, get_rel_name(context->parent_relid));
 
 			/* Transform attribute number */
 			var->varattno = child_var->varattno;
