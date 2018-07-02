@@ -94,6 +94,13 @@ typedef struct
 } transform_query_cxt;
 
 
+typedef struct
+{
+	Index	child_varno;
+	List   *translated_vars;
+} adjust_appendrel_varnos_cxt;
+
+
 
 static bool pathman_transform_query_walker(Node *node, void *context);
 
@@ -103,6 +110,7 @@ static void handle_modification_query(Query *parse, transform_query_cxt *context
 static void partition_filter_visitor(Plan *plan, void *context);
 
 static Node *eval_extern_params_mutator(Node *node, ParamListInfo params);
+static bool adjust_appendrel_varnos(Node *node, adjust_appendrel_varnos_cxt *context);
 
 
 /*
@@ -366,20 +374,20 @@ handle_modification_query(Query *parse, transform_query_cxt *context)
 	WrapperNode			   *wrap;
 	Expr				   *expr;
 	WalkerContext			wcxt;
-	Index					result_rel;
+	Index					result_rti;
 	int						num_selected;
 	ParamListInfo			params;
 
 	/* Fetch index of result relation */
-	result_rel = parse->resultRelation;
+	result_rti = parse->resultRelation;
 
 	/* Exit if it's not a DELETE or UPDATE query */
-	if (result_rel == 0 ||
+	if (result_rti == 0 ||
 			(parse->commandType != CMD_UPDATE &&
 			 parse->commandType != CMD_DELETE))
 		return;
 
-	rte = rt_fetch(result_rel, parse->rtable);
+	rte = rt_fetch(result_rti, parse->rtable);
 
 	/* Exit if it's DELETE FROM ONLY table */
 	if (!rte->inh) return;
@@ -406,7 +414,7 @@ handle_modification_query(Query *parse, transform_query_cxt *context)
 		expr = (Expr *) eval_extern_params_mutator((Node *) expr, params);
 
 	/* Prepare partitioning expression */
-	prel_expr = PrelExpressionForRelid(prel, result_rel);
+	prel_expr = PrelExpressionForRelid(prel, result_rti);
 
 	/* Parse syntax tree and extract partition ranges */
 	InitWalkerContext(&wcxt, prel_expr, prel, NULL);
@@ -430,12 +438,13 @@ handle_modification_query(Query *parse, transform_query_cxt *context)
 			Relation	child_rel,
 						parent_rel;
 
-			void	   *tuple_map; /* we don't need the map itself */
-
 			LOCKMODE	lockmode = RowExclusiveLock; /* UPDATE | DELETE */
 
 			HeapTuple	syscache_htup;
 			char		child_relkind;
+
+			List	   *translated_vars;
+			adjust_appendrel_varnos_cxt aav_cxt;
 
 			/* Lock 'child' table */
 			LockRelationOid(child, lockmode);
@@ -460,18 +469,22 @@ handle_modification_query(Query *parse, transform_query_cxt *context)
 			child_rel = heap_open(child, NoLock);
 			parent_rel = heap_open(parent, NoLock);
 
-			/* Build a conversion map (may be trivial, i.e. NULL) */
-			tuple_map = build_part_tuple_map(parent_rel, child_rel);
-			if (tuple_map)
-				free_conversion_map((TupleConversionMap *) tuple_map);
+			make_inh_translation_list(parent_rel, child_rel, 0, &translated_vars);
+
+			/* Translate varnos for this child */
+			aav_cxt.child_varno = result_rti;
+			aav_cxt.translated_vars = translated_vars;
+			if (adjust_appendrel_varnos((Node *) parse, &aav_cxt))
+				return; /* failed to perform rewrites */
+
+			/* Translate column privileges for this child */
+			rte->selectedCols = translate_col_privs(rte->selectedCols, translated_vars);
+			rte->insertedCols = translate_col_privs(rte->insertedCols, translated_vars);
+			rte->updatedCols = translate_col_privs(rte->updatedCols, translated_vars);
 
 			/* Close relations (should remain locked, though) */
 			heap_close(child_rel, NoLock);
 			heap_close(parent_rel, NoLock);
-
-			/* Exit if tuple map was NOT trivial */
-			if (tuple_map) /* just checking the pointer! */
-				return;
 
 			/* Update RTE's relid and relkind (for FDW) */
 			rte->relid = child;
@@ -488,6 +501,128 @@ handle_modification_query(Query *parse, transform_query_cxt *context)
 		/* HACK: unset the 'inh' flag (no children) */
 		rte->inh = false;
 	}
+}
+
+/* Replace extern param nodes with consts */
+static Node *
+eval_extern_params_mutator(Node *node, ParamListInfo params)
+{
+	if (node == NULL)
+		return NULL;
+
+	if (IsA(node, Param))
+	{
+		Param *param = (Param *) node;
+
+		Assert(params);
+
+		/* Look to see if we've been given a value for this Param */
+		if (param->paramkind == PARAM_EXTERN &&
+			param->paramid > 0 &&
+			param->paramid <= params->numParams)
+		{
+			ParamExternData *prm = &params->params[param->paramid - 1];
+
+			if (OidIsValid(prm->ptype))
+			{
+				/* OK to substitute parameter value? */
+				if (prm->pflags & PARAM_FLAG_CONST)
+				{
+					/*
+					 * Return a Const representing the param value.
+					 * Must copy pass-by-ref datatypes, since the
+					 * Param might be in a memory context
+					 * shorter-lived than our output plan should be.
+					 */
+					int16		typLen;
+					bool		typByVal;
+					Datum		pval;
+
+					Assert(prm->ptype == param->paramtype);
+					get_typlenbyval(param->paramtype,
+									&typLen, &typByVal);
+					if (prm->isnull || typByVal)
+						pval = prm->value;
+					else
+						pval = datumCopy(prm->value, typByVal, typLen);
+					return (Node *) makeConst(param->paramtype,
+											  param->paramtypmod,
+											  param->paramcollid,
+											  (int) typLen,
+											  pval,
+											  prm->isnull,
+											  typByVal);
+				}
+			}
+		}
+	}
+
+	return expression_tree_mutator(node, eval_extern_params_mutator,
+								   (void *) params);
+}
+
+static bool
+adjust_appendrel_varnos(Node *node, adjust_appendrel_varnos_cxt *context)
+{
+	if (node == NULL)
+		return false;
+
+	if (IsA(node, Query))
+	{
+		Query	   *query = (Query *) node;
+		ListCell   *lc;
+
+		foreach (lc, query->targetList)
+		{
+			TargetEntry *te = (TargetEntry *) lfirst(lc);
+			Var *child_var;
+
+			if (te->resjunk)
+				continue;
+
+			if (te->resno > list_length(context->translated_vars))
+				return true;
+
+			child_var = list_nth(context->translated_vars, te->resno - 1);
+			if (!child_var)
+				return true;
+
+			/* Transform attribute number */
+			te->resno = child_var->varattno;
+		}
+
+		return query_tree_walker((Query *) node,
+								 adjust_appendrel_varnos,
+								 context,
+								 QTW_IGNORE_RC_SUBQUERIES);
+	}
+
+	if (IsA(node, Var))
+	{
+		Var *var = (Var *) node;
+
+		/* Don't tranform system columns & other relations' Vars */
+		if (var->varoattno > 0 && var->varno == context->child_varno)
+		{
+			Var *child_var;
+
+			if (var->varattno > list_length(context->translated_vars))
+				return true;
+
+			child_var = list_nth(context->translated_vars, var->varattno - 1);
+			if (!child_var)
+				return true;
+
+			/* Transform attribute number */
+			var->varattno = child_var->varattno;
+		}
+
+		return false;
+	}
+
+	return expression_tree_walker(node,
+								  adjust_appendrel_varnos,
+								  context);
 }
 
 
@@ -589,65 +724,6 @@ get_rel_parenthood_status(RangeTblEntry *rte)
 
 	/* Not found, return stub value */
 	return PARENTHOOD_NOT_SET;
-}
-
-
-/* Replace extern param nodes with consts */
-static Node *
-eval_extern_params_mutator(Node *node, ParamListInfo params)
-{
-	if (node == NULL)
-		return NULL;
-
-	if (IsA(node, Param))
-	{
-		Param *param = (Param *) node;
-
-		Assert(params);
-
-		/* Look to see if we've been given a value for this Param */
-		if (param->paramkind == PARAM_EXTERN &&
-			param->paramid > 0 &&
-			param->paramid <= params->numParams)
-		{
-			ParamExternData *prm = &params->params[param->paramid - 1];
-
-			if (OidIsValid(prm->ptype))
-			{
-				/* OK to substitute parameter value? */
-				if (prm->pflags & PARAM_FLAG_CONST)
-				{
-					/*
-					 * Return a Const representing the param value.
-					 * Must copy pass-by-ref datatypes, since the
-					 * Param might be in a memory context
-					 * shorter-lived than our output plan should be.
-					 */
-					int16		typLen;
-					bool		typByVal;
-					Datum		pval;
-
-					Assert(prm->ptype == param->paramtype);
-					get_typlenbyval(param->paramtype,
-									&typLen, &typByVal);
-					if (prm->isnull || typByVal)
-						pval = prm->value;
-					else
-						pval = datumCopy(prm->value, typByVal, typLen);
-					return (Node *) makeConst(param->paramtype,
-											  param->paramtypmod,
-											  param->paramcollid,
-											  (int) typLen,
-											  pval,
-											  prm->isnull,
-											  typByVal);
-				}
-			}
-		}
-	}
-
-	return expression_tree_mutator(node, eval_extern_params_mutator,
-								   (void *) params);
 }
 
 

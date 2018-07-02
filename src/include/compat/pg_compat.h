@@ -29,6 +29,7 @@
 #include "nodes/pg_list.h"
 #include "optimizer/cost.h"
 #include "optimizer/paths.h"
+#include "optimizer/prep.h"
 #include "utils/memutils.h"
 
 /*

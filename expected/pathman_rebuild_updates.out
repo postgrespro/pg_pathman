@@ -43,14 +43,10 @@ UPDATE test_updates.test SET b = 0 WHERE val = 1 RETURNING *, tableoid::REGCLASS
 EXPLAIN (COSTS OFF) UPDATE test_updates.test SET b = 0 WHERE val = 101;
          QUERY PLAN          
 -----------------------------
- Update on test
-   Update on test
-   Update on test_11
-   ->  Seq Scan on test
-         Filter: (val = 101)
+ Update on test_11
    ->  Seq Scan on test_11
          Filter: (val = 101)
-(7 rows)
+(3 rows)
 
 UPDATE test_updates.test SET b = 0 WHERE val = 101 RETURNING *, tableoid::REGCLASS;
  val | b |       tableoid       
