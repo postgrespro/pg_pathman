@@ -174,7 +174,7 @@ build_parent_tlist(List *tlist, AppendRelInfo *appinfo)
 			elog(ERROR,
 				 "table \"%s\" has no attribute %d of partition \"%s\"",
 				 get_rel_name_or_relid(appinfo->parent_relid),
-				 tlist_var->varoattno,
+				 tlist_var->varattno,
 				 get_rel_name_or_relid(appinfo->child_relid));
 	}
 
@@ -232,7 +232,7 @@ append_part_attr_to_tlist(List *tlist,
 			TargetEntry	    *te = (TargetEntry *) lfirst(lc);
 			Var				*var = (Var *) te->expr;
 
-			if (IsA(var, Var) && var->varoattno == child_var->varattno)
+			if (IsA(var, Var) && var->varattno == child_var->varattno)
 			{
 				part_attr_found = true;
 				break;
