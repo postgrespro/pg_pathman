@@ -384,6 +384,383 @@ generate_range_bounds_pl(PG_FUNCTION_ARGS)
 	PG_RETURN_ARRAYTYPE_P(array);
 }
 
+/*
+ * Takes text representation of interval value and checks
+ * if it corresponds to partitioning expression.
+ * NOTE: throws an ERROR if it fails to convert text to Datum.
+ */
+Datum
+validate_interval_value(PG_FUNCTION_ARGS)
+{
+#define ARG_PARTREL			0
+#define ARG_EXPRESSION		1
+#define ARG_PARTTYPE		2
+#define ARG_RANGE_INTERVAL	3
+#define ARG_EXPRESSION_P	4
+
+	Oid			partrel;
+	PartType	parttype;
+	char	   *expr_cstr;
+	Oid			expr_type;
+
+	if (PG_ARGISNULL(ARG_PARTREL))
+	{
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("'partrel' should not be NULL")));
+	}
+	else partrel = PG_GETARG_OID(ARG_PARTREL);
+
+	/* Check that relation exists */
+	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(partrel)))
+		elog(ERROR, "relation \"%u\" does not exist", partrel);
+
+	if (PG_ARGISNULL(ARG_EXPRESSION))
+	{
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("'expression' should not be NULL")));
+	}
+	else expr_cstr = TextDatumGetCString(PG_GETARG_TEXT_P(ARG_EXPRESSION));
+
+	if (PG_ARGISNULL(ARG_PARTTYPE))
+	{
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("'parttype' should not be NULL")));
+	}
+	else parttype = DatumGetPartType(PG_GETARG_DATUM(ARG_PARTTYPE));
+
+	/*
+	 * Fetch partitioning expression's type using
+	 * either user's expression or parsed expression.
+	 *
+	 * NOTE: we check number of function's arguments
+	 * in case of late updates (e.g. 1.1 => 1.4).
+	 */
+	if (PG_ARGISNULL(ARG_EXPRESSION_P) || PG_NARGS() <= ARG_EXPRESSION_P)
+	{
+		Datum expr_datum;
+
+		/* We'll have to parse expression with our own hands */
+		expr_datum = cook_partitioning_expression(partrel, expr_cstr, &expr_type);
+
+		/* Free both expressions */
+		pfree(DatumGetPointer(expr_datum));
+		pfree(expr_cstr);
+	}
+	else
+	{
+		char *expr_p_cstr;
+
+		/* Good, let's use a cached parsed expression */
+		expr_p_cstr = TextDatumGetCString(PG_GETARG_TEXT_P(ARG_EXPRESSION_P));
+		expr_type = exprType(stringToNode(expr_p_cstr));
+
+		/* Free both expressions */
+		pfree(expr_p_cstr);
+		pfree(expr_cstr);
+	}
+
+	/*
+	 * NULL interval is fine for both HASH and RANGE.
+	 * But for RANGE we need to make some additional checks.
+	 */
+	if (!PG_ARGISNULL(ARG_RANGE_INTERVAL))
+	{
+		Datum		interval_text = PG_GETARG_DATUM(ARG_RANGE_INTERVAL),
+					interval_value;
+		Oid			interval_type;
+
+		if (parttype == PT_HASH)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("interval should be NULL for HASH partitioned table")));
+
+		/* Try converting textual representation */
+		interval_value = extract_binary_interval_from_text(interval_text,
+														   expr_type,
+														   &interval_type);
+
+		/* Check that interval isn't trivial */
+		if (interval_is_trivial(expr_type, interval_value, interval_type))
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("interval should not be trivial")));
+	}
+
+	PG_RETURN_BOOL(true);
+}
+
+/*
+ * Merge multiple partitions.
+ * All data will be copied to the first one.
+ * The rest of partitions will be dropped.
+ */
+Datum
+merge_range_partitions(PG_FUNCTION_ARGS)
+{
+	Oid					parent = InvalidOid,
+						partition = InvalidOid;
+	ArrayType		   *arr = PG_GETARG_ARRAYTYPE_P(0);
+
+	Oid				   *parts;
+	int					nparts;
+
+	Datum			   *datums;
+	bool			   *nulls;
+	int16				typlen;
+	bool				typbyval;
+	char				typalign;
+
+	PartRelationInfo   *prel;
+	Bound				min_bound,
+						max_bound;
+	RangeEntry		   *bounds;
+	ObjectAddresses	   *objects = new_object_addresses();
+	Snapshot			fresh_snapshot;
+	FmgrInfo			finfo;
+	int					i;
+
+	/* Validate array type */
+	Assert(ARR_ELEMTYPE(arr) == REGCLASSOID);
+
+	/* Extract Oids */
+	get_typlenbyvalalign(REGCLASSOID, &typlen, &typbyval, &typalign);
+	deconstruct_array(arr, REGCLASSOID,
+					  typlen, typbyval, typalign,
+					  &datums, &nulls, &nparts);
+
+	if (nparts < 2)
+		ereport(ERROR, (errmsg("cannot merge partitions"),
+						errdetail("there must be at least two partitions")));
+
+	/* Allocate arrays */
+	parts = palloc(nparts * sizeof(Oid));
+	bounds = palloc(nparts * sizeof(RangeEntry));
+
+	for (i = 0; i < nparts; i++)
+	{
+		Oid cur_parent;
+
+		/* Extract partition Oids from array */
+		parts[i] = DatumGetObjectId(datums[i]);
+
+		/* Prevent modification of partitions */
+		LockRelationOid(parts[i], AccessExclusiveLock);
+
+		/* Check if all partitions are from the same parent */
+		cur_parent = get_parent_of_partition(parts[i]);
+
+		/* If we couldn't find a parent, it's not a partition */
+		if (!OidIsValid(cur_parent))
+			ereport(ERROR, (errmsg("cannot merge partitions"),
+							errdetail("relation \"%s\" is not a partition",
+									  get_rel_name_or_relid(parts[i]))));
+
+		/* 'parent' is not initialized */
+		if (parent == InvalidOid)
+			parent = cur_parent; /* save parent */
+
+		/* Oops, parent mismatch! */
+		if (cur_parent != parent)
+			ereport(ERROR, (errmsg("cannot merge partitions"),
+							errdetail("all relations must share the same parent")));
+	}
+
+	/* Lock parent till transaction's end */
+	LockRelationOid(parent, ShareUpdateExclusiveLock);
+
+	/* Emit an error if it is not partitioned by RANGE */
+	prel = get_pathman_relation_info(parent);
+	shout_if_prel_is_invalid(parent, prel, PT_RANGE);
+
+	/* Copy rentries from 'prel' */
+	for (i = 0; i < nparts; i++)
+	{
+		uint32 idx = PrelHasPartition(prel, parts[i]);
+		Assert(idx > 0);
+
+		bounds[i] = PrelGetRangesArray(prel)[idx - 1];
+	}
+
+	/* Sort rentries by increasing bound */
+	qsort_range_entries(bounds, nparts, prel);
+
+	fmgr_info(prel->cmp_proc, &finfo);
+
+	/* Check that partitions are adjacent */
+	for (i = 1; i < nparts; i++)
+	{
+		Bound	cur_min  = bounds[i].min,
+				prev_max = bounds[i - 1].max;
+
+		if (cmp_bounds(&finfo, prel->ev_collid, &cur_min, &prev_max) != 0)
+		{
+			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+							errmsg("partitions \"%s\" and \"%s\" are not adjacent",
+								   get_rel_name(bounds[i - 1].child_oid),
+								   get_rel_name(bounds[i].child_oid))));
+		}
+	}
+
+	/* First determine the bounds of a new constraint */
+	min_bound = bounds[0].min;
+	max_bound = bounds[nparts - 1].max;
+	partition = parts[0];
+
+	/* Drop old constraint and create a new one */
+	modify_range_constraint(partition,
+							prel->expr_cstr,
+							prel->ev_type,
+							&min_bound,
+							&max_bound);
+
+	/* Make constraint visible */
+	CommandCounterIncrement();
+
+	if (SPI_connect() != SPI_OK_CONNECT)
+		elog(ERROR, "could not connect using SPI");
+
+	/*
+	 * Get latest snapshot to see data that might have been
+	 * added to partitions before this transaction has started,
+	 * but was committed a moment before we acquired the locks.
+	 */
+	fresh_snapshot = RegisterSnapshot(GetLatestSnapshot());
+
+	/* Migrate the data from all partition to the first one */
+	for (i = 1; i < nparts; i++)
+	{
+		ObjectAddress object;
+
+		char *query = psprintf("WITH part_data AS ( "
+									"DELETE FROM %s RETURNING "
+							   "*) "
+							   "INSERT INTO %s SELECT * FROM part_data",
+							   get_qualified_rel_name(parts[i]),
+							   get_qualified_rel_name(parts[0]));
+
+		SPIPlanPtr plan = SPI_prepare(query, 0, NULL);
+
+		if (!plan)
+			elog(ERROR, "%s: SPI_prepare returned %d",
+				 CppAsString(merge_range_partitions),
+				 SPI_result);
+
+		SPI_execute_snapshot(plan, NULL, NULL,
+							 fresh_snapshot,
+							 InvalidSnapshot,
+							 false, true, 0);
+
+		pfree(query);
+
+		/* To be deleted */
+		ObjectAddressSet(object, RelationRelationId, parts[i]);
+		add_exact_object_address(&object, objects);
+	}
+
+	/* Free snapshot */
+	UnregisterSnapshot(fresh_snapshot);
+
+	SPI_finish();
+
+	/* Drop obsolete partitions */
+	performMultipleDeletions(objects, DROP_CASCADE, 0);
+	free_object_addresses(objects);
+
+	pfree(bounds);
+	pfree(parts);
+
+	/* Don't forget to close 'prel'! */
+	close_pathman_relation_info(prel);
+
+	PG_RETURN_OID(partition);
+}
+
+/*
+ * Drops partition and expands the next partition
+ * so that it could cover the dropped one.
+ *
+ * This function was written in order to support
+ * Oracle-like ALTER TABLE ... DROP PARTITION.
+ *
+ * In Oracle partitions only have upper bound and when partition
+ * is dropped the next one automatically covers freed range.
+ */
+Datum
+drop_range_partition_expand_next(PG_FUNCTION_ARGS)
+{
+	Oid					partition = PG_GETARG_OID(0),
+						parent;
+	PartRelationInfo   *prel;
+	ObjectAddress		object;
+	RangeEntry		   *ranges;
+	int					i;
+
+	/* Lock the partition we're going to drop */
+	LockRelationOid(partition, AccessExclusiveLock);
+
+	/* Check if partition exists */
+	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(partition)))
+		elog(ERROR, "relation %u does not exist", partition);
+
+	/* Get parent's relid */
+	parent = get_parent_of_partition(partition);
+
+	/* Prevent changes in partitioning scheme */
+	LockRelationOid(parent, ShareUpdateExclusiveLock);
+
+	/* Check if parent exists */
+	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(parent)))
+		elog(ERROR, "relation \"%s\" is not a partition",
+			 get_rel_name(partition));
+
+	/* Emit an error if it is not partitioned by RANGE */
+	prel = get_pathman_relation_info(parent);
+	shout_if_prel_is_invalid(parent, prel, PT_RANGE);
+
+	/* Fetch ranges array */
+	ranges = PrelGetRangesArray(prel);
+
+	/* Looking for partition in child relations */
+	i = PrelHasPartition(prel, partition) - 1;
+
+	/* Should have found it */
+	Assert(i >= 0 && i < PrelChildrenCount(prel));
+
+	/* Expand next partition if it exists */
+	if (i < PrelLastChild(prel))
+	{
+		RangeEntry	   *cur  = &ranges[i],
+					   *next = &ranges[i + 1];
+		Oid				next_partition = next->child_oid;
+		LOCKMODE		lockmode = AccessExclusiveLock;
+
+		/* Lock next partition */
+		LockRelationOid(next_partition, lockmode);
+
+		/* Does next partition exist? */
+		if (SearchSysCacheExists1(RELOID, ObjectIdGetDatum(next_partition)))
+		{
+			/* Stretch next partition to cover range */
+			modify_range_constraint(next_partition,
+									prel->expr_cstr,
+									prel->ev_type,
+									&cur->min,
+									&next->max);
+		}
+		/* Bad luck, unlock missing partition */
+		else UnlockRelationOid(next_partition, lockmode);
+	}
+
+	/* Drop partition */
+	ObjectAddressSet(object, RelationRelationId, partition);
+	performDeletion(&object, DROP_CASCADE, 0);
+
+	/* Don't forget to close 'prel'! */
+	close_pathman_relation_info(prel);
+
+	PG_RETURN_VOID();
+}
+
 
 /*
  * ------------------------
@@ -617,385 +994,6 @@ build_sequence_name(PG_FUNCTION_ARGS)
 					  quote_identifier(seq_name));
 
 	PG_RETURN_TEXT_P(cstring_to_text(result));
-}
-
-
-/*
- * Merge multiple partitions.
- * All data will be copied to the first one.
- * The rest of partitions will be dropped.
- */
-Datum
-merge_range_partitions(PG_FUNCTION_ARGS)
-{
-	Oid					parent = InvalidOid,
-						partition = InvalidOid;
-	ArrayType		   *arr = PG_GETARG_ARRAYTYPE_P(0);
-
-	Oid				   *parts;
-	int					nparts;
-
-	Datum			   *datums;
-	bool			   *nulls;
-	int16				typlen;
-	bool				typbyval;
-	char				typalign;
-
-	PartRelationInfo   *prel;
-	Bound				min_bound,
-						max_bound;
-	RangeEntry		   *bounds;
-	ObjectAddresses	   *objects = new_object_addresses();
-	Snapshot			fresh_snapshot;
-	FmgrInfo			finfo;
-	int					i;
-
-	/* Validate array type */
-	Assert(ARR_ELEMTYPE(arr) == REGCLASSOID);
-
-	/* Extract Oids */
-	get_typlenbyvalalign(REGCLASSOID, &typlen, &typbyval, &typalign);
-	deconstruct_array(arr, REGCLASSOID,
-					  typlen, typbyval, typalign,
-					  &datums, &nulls, &nparts);
-
-	if (nparts < 2)
-		ereport(ERROR, (errmsg("cannot merge partitions"),
-						errdetail("there must be at least two partitions")));
-
-	/* Allocate arrays */
-	parts = palloc(nparts * sizeof(Oid));
-	bounds = palloc(nparts * sizeof(RangeEntry));
-
-	for (i = 0; i < nparts; i++)
-	{
-		Oid cur_parent;
-
-		/* Extract partition Oids from array */
-		parts[i] = DatumGetObjectId(datums[i]);
-
-		/* Prevent modification of partitions */
-		LockRelationOid(parts[i], AccessExclusiveLock);
-
-		/* Check if all partitions are from the same parent */
-		cur_parent = get_parent_of_partition(parts[i]);
-
-		/* If we couldn't find a parent, it's not a partition */
-		if (!OidIsValid(cur_parent))
-			ereport(ERROR, (errmsg("cannot merge partitions"),
-							errdetail("relation \"%s\" is not a partition",
-									  get_rel_name_or_relid(parts[i]))));
-
-		/* 'parent' is not initialized */
-		if (parent == InvalidOid)
-			parent = cur_parent; /* save parent */
-
-		/* Oops, parent mismatch! */
-		if (cur_parent != parent)
-			ereport(ERROR, (errmsg("cannot merge partitions"),
-							errdetail("all relations must share the same parent")));
-	}
-
-	/* Lock parent till transaction's end */
-	LockRelationOid(parent, ShareUpdateExclusiveLock);
-
-	/* Emit an error if it is not partitioned by RANGE */
-	prel = get_pathman_relation_info(parent);
-	shout_if_prel_is_invalid(parent, prel, PT_RANGE);
-
-	/* Copy rentries from 'prel' */
-	for (i = 0; i < nparts; i++)
-	{
-		uint32 idx = PrelHasPartition(prel, parts[i]);
-		Assert(idx > 0);
-
-		bounds[i] = PrelGetRangesArray(prel)[idx - 1];
-	}
-
-	/* Sort rentries by increasing bound */
-	qsort_range_entries(bounds, nparts, prel);
-
-	fmgr_info(prel->cmp_proc, &finfo);
-
-	/* Check that partitions are adjacent */
-	for (i = 1; i < nparts; i++)
-	{
-		Bound	cur_min  = bounds[i].min,
-				prev_max = bounds[i - 1].max;
-
-		if (cmp_bounds(&finfo, prel->ev_collid, &cur_min, &prev_max) != 0)
-		{
-			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-							errmsg("partitions \"%s\" and \"%s\" are not adjacent",
-								   get_rel_name(bounds[i - 1].child_oid),
-								   get_rel_name(bounds[i].child_oid))));
-		}
-	}
-
-	/* First determine the bounds of a new constraint */
-	min_bound = bounds[0].min;
-	max_bound = bounds[nparts - 1].max;
-	partition = parts[0];
-
-	/* Drop old constraint and create a new one */
-	modify_range_constraint(partition,
-							prel->expr_cstr,
-							prel->ev_type,
-							&min_bound,
-							&max_bound);
-
-	/* Make constraint visible */
-	CommandCounterIncrement();
-
-	if (SPI_connect() != SPI_OK_CONNECT)
-		elog(ERROR, "could not connect using SPI");
-
-	/*
-	 * Get latest snapshot to see data that might have been
-	 * added to partitions before this transaction has started,
-	 * but was committed a moment before we acquired the locks.
-	 */
-	fresh_snapshot = RegisterSnapshot(GetLatestSnapshot());
-
-	/* Migrate the data from all partition to the first one */
-	for (i = 1; i < nparts; i++)
-	{
-		ObjectAddress object;
-
-		char *query = psprintf("WITH part_data AS ( "
-									"DELETE FROM %s RETURNING "
-							   "*) "
-							   "INSERT INTO %s SELECT * FROM part_data",
-							   get_qualified_rel_name(parts[i]),
-							   get_qualified_rel_name(parts[0]));
-
-		SPIPlanPtr plan = SPI_prepare(query, 0, NULL);
-
-		if (!plan)
-			elog(ERROR, "%s: SPI_prepare returned %d",
-				 CppAsString(merge_range_partitions),
-				 SPI_result);
-
-		SPI_execute_snapshot(plan, NULL, NULL,
-							 fresh_snapshot,
-							 InvalidSnapshot,
-							 false, true, 0);
-
-		pfree(query);
-
-		/* To be deleted */
-		ObjectAddressSet(object, RelationRelationId, parts[i]);
-		add_exact_object_address(&object, objects);
-	}
-
-	/* Free snapshot */
-	UnregisterSnapshot(fresh_snapshot);
-
-	SPI_finish();
-
-	/* Drop obsolete partitions */
-	performMultipleDeletions(objects, DROP_CASCADE, 0);
-	free_object_addresses(objects);
-
-	pfree(bounds);
-	pfree(parts);
-
-	/* Don't forget to close 'prel'! */
-	close_pathman_relation_info(prel);
-
-	PG_RETURN_OID(partition);
-}
-
-
-/*
- * Drops partition and expands the next partition
- * so that it could cover the dropped one.
- *
- * This function was written in order to support
- * Oracle-like ALTER TABLE ... DROP PARTITION.
- *
- * In Oracle partitions only have upper bound and when partition
- * is dropped the next one automatically covers freed range.
- */
-Datum
-drop_range_partition_expand_next(PG_FUNCTION_ARGS)
-{
-	Oid					partition = PG_GETARG_OID(0),
-						parent;
-	PartRelationInfo   *prel;
-	ObjectAddress		object;
-	RangeEntry		   *ranges;
-	int					i;
-
-	/* Lock the partition we're going to drop */
-	LockRelationOid(partition, AccessExclusiveLock);
-
-	/* Check if partition exists */
-	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(partition)))
-		elog(ERROR, "relation %u does not exist", partition);
-
-	/* Get parent's relid */
-	parent = get_parent_of_partition(partition);
-
-	/* Prevent changes in partitioning scheme */
-	LockRelationOid(parent, ShareUpdateExclusiveLock);
-
-	/* Check if parent exists */
-	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(parent)))
-		elog(ERROR, "relation \"%s\" is not a partition",
-			 get_rel_name(partition));
-
-	/* Emit an error if it is not partitioned by RANGE */
-	prel = get_pathman_relation_info(parent);
-	shout_if_prel_is_invalid(parent, prel, PT_RANGE);
-
-	/* Fetch ranges array */
-	ranges = PrelGetRangesArray(prel);
-
-	/* Looking for partition in child relations */
-	i = PrelHasPartition(prel, partition) - 1;
-
-	/* Should have found it */
-	Assert(i >= 0 && i < PrelChildrenCount(prel));
-
-	/* Expand next partition if it exists */
-	if (i < PrelLastChild(prel))
-	{
-		RangeEntry	   *cur  = &ranges[i],
-					   *next = &ranges[i + 1];
-		Oid				next_partition = next->child_oid;
-		LOCKMODE		lockmode = AccessExclusiveLock;
-
-		/* Lock next partition */
-		LockRelationOid(next_partition, lockmode);
-
-		/* Does next partition exist? */
-		if (SearchSysCacheExists1(RELOID, ObjectIdGetDatum(next_partition)))
-		{
-			/* Stretch next partition to cover range */
-			modify_range_constraint(next_partition,
-									prel->expr_cstr,
-									prel->ev_type,
-									&cur->min,
-									&next->max);
-		}
-		/* Bad luck, unlock missing partition */
-		else UnlockRelationOid(next_partition, lockmode);
-	}
-
-	/* Drop partition */
-	ObjectAddressSet(object, RelationRelationId, partition);
-	performDeletion(&object, DROP_CASCADE, 0);
-
-	/* Don't forget to close 'prel'! */
-	close_pathman_relation_info(prel);
-
-	PG_RETURN_VOID();
-}
-
-/*
- * Takes text representation of interval value and checks
- * if it corresponds to partitioning expression.
- * NOTE: throws an ERROR if it fails to convert text to Datum.
- */
-Datum
-validate_interval_value(PG_FUNCTION_ARGS)
-{
-#define ARG_PARTREL			0
-#define ARG_EXPRESSION		1
-#define ARG_PARTTYPE		2
-#define ARG_RANGE_INTERVAL	3
-#define ARG_EXPRESSION_P	4
-
-	Oid			partrel;
-	PartType	parttype;
-	char	   *expr_cstr;
-	Oid			expr_type;
-
-	if (PG_ARGISNULL(ARG_PARTREL))
-	{
-		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						errmsg("'partrel' should not be NULL")));
-	}
-	else partrel = PG_GETARG_OID(ARG_PARTREL);
-
-	/* Check that relation exists */
-	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(partrel)))
-		elog(ERROR, "relation \"%u\" does not exist", partrel);
-
-	if (PG_ARGISNULL(ARG_EXPRESSION))
-	{
-		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						errmsg("'expression' should not be NULL")));
-	}
-	else expr_cstr = TextDatumGetCString(PG_GETARG_TEXT_P(ARG_EXPRESSION));
-
-	if (PG_ARGISNULL(ARG_PARTTYPE))
-	{
-		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						errmsg("'parttype' should not be NULL")));
-	}
-	else parttype = DatumGetPartType(PG_GETARG_DATUM(ARG_PARTTYPE));
-
-	/*
-	 * Fetch partitioning expression's type using
-	 * either user's expression or parsed expression.
-	 *
-	 * NOTE: we check number of function's arguments
-	 * in case of late updates (e.g. 1.1 => 1.4).
-	 */
-	if (PG_ARGISNULL(ARG_EXPRESSION_P) || PG_NARGS() <= ARG_EXPRESSION_P)
-	{
-		Datum expr_datum;
-
-		/* We'll have to parse expression with our own hands */
-		expr_datum = cook_partitioning_expression(partrel, expr_cstr, &expr_type);
-
-		/* Free both expressions */
-		pfree(DatumGetPointer(expr_datum));
-		pfree(expr_cstr);
-	}
-	else
-	{
-		char *expr_p_cstr;
-
-		/* Good, let's use a cached parsed expression */
-		expr_p_cstr = TextDatumGetCString(PG_GETARG_TEXT_P(ARG_EXPRESSION_P));
-		expr_type = exprType(stringToNode(expr_p_cstr));
-
-		/* Free both expressions */
-		pfree(expr_p_cstr);
-		pfree(expr_cstr);
-	}
-
-	/*
-	 * NULL interval is fine for both HASH and RANGE.
-	 * But for RANGE we need to make some additional checks.
-	 */
-	if (!PG_ARGISNULL(ARG_RANGE_INTERVAL))
-	{
-		Datum		interval_text = PG_GETARG_DATUM(ARG_RANGE_INTERVAL),
-					interval_value;
-		Oid			interval_type;
-
-		if (parttype == PT_HASH)
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("interval should be NULL for HASH partitioned table")));
-
-		/* Try converting textual representation */
-		interval_value = extract_binary_interval_from_text(interval_text,
-														   expr_type,
-														   &interval_type);
-
-		/* Check that interval isn't trivial */
-		if (interval_is_trivial(expr_type, interval_value, interval_type))
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("interval should not be trivial")));
-	}
-
-	PG_RETURN_BOOL(true);
 }
 
 
