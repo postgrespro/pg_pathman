@@ -15,48 +15,6 @@ import subprocess
 import threading
 import time
 import unittest
-<<<<<<< HEAD
-
-from distutils.version import LooseVersion
-from testgres import get_new_node, get_bin_path, get_pg_version
-
-# set setup base logging config, it can be turned on by `use_logging`
-# parameter on node setup
-
-import logging
-import logging.config
-
-logfile = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'tests.log')
-LOG_CONFIG = {
-    'version': 1,
-    'handlers': {
-        'console': {
-            'class': 'logging.StreamHandler',
-            'formatter': 'base_format',
-            'level': logging.DEBUG,
-        },
-        'file': {
-            'class': 'logging.FileHandler',
-            'filename': logfile,
-            'formatter': 'base_format',
-            'level': logging.DEBUG,
-        },
-    },
-    'formatters': {
-        'base_format': {
-            'format': '%(node)-5s: %(message)s',
-        },
-    },
-    'root': {
-        'handlers': ('file', ),
-        'level': 'DEBUG',
-    },
-}
-
-logging.config.dictConfig(LOG_CONFIG)
-version = LooseVersion(get_pg_version())
-
-=======
 import functools
 
 from distutils.version import LooseVersion
@@ -99,7 +57,6 @@ LOG_CONFIG = {
 logging.config.dictConfig(LOG_CONFIG)
 version = LooseVersion(get_pg_version())
 
->>>>>>> master
 
 # Helper function for json equality
 def ordered(obj, skip_keys=None):
@@ -112,18 +69,6 @@ def ordered(obj, skip_keys=None):
         return obj
 
 
-<<<<<<< HEAD
-def if_fdw_enabled(func):
-    """ To run tests with FDW support, set environment variable TEST_FDW=1 """
-
-    def wrapper(*args, **kwargs):
-        if os.environ.get('FDW_DISABLED') != '1':
-            func(*args, **kwargs)
-        else:
-            print('Warning: FDW features tests are disabled, skipping...')
-
-    return wrapper
-=======
 # Check if postgres_fdw is available
 @functools.lru_cache(maxsize=1)
 def is_postgres_fdw_ready():
@@ -136,7 +81,6 @@ def is_postgres_fdw_ready():
             return True
 
         return False
->>>>>>> master
 
 
 class Tests(unittest.TestCase):
@@ -145,25 +89,6 @@ class Tests(unittest.TestCase):
         p = subprocess.Popen([command], stdin=subprocess.PIPE)
         p.communicate(str(pid).encode())
 
-<<<<<<< HEAD
-    def start_new_pathman_cluster(self,
-                                  name='test',
-                                  allow_streaming=False,
-                                  test_data=False):
-        node = get_new_node(name)
-        node.init(allow_streaming=allow_streaming)
-        node.append_conf("postgresql.conf", "shared_preload_libraries='pg_pathman'\n")
-        node.start()
-        node.psql('postgres', 'create extension pg_pathman')
-        if test_data:
-            cmds = (
-                "create table abc(id serial, t text)",
-                "insert into abc select generate_series(1, 300000)",
-                "select create_hash_partitions('abc', 'id', 3, partition_data := false)",
-            )
-            for cmd in cmds:
-                node.safe_psql('postgres', cmd)
-=======
     def start_new_pathman_cluster(self, allow_streaming=False, test_data=False):
         node = get_new_node()
         node.init(allow_streaming=allow_streaming)
@@ -179,7 +104,6 @@ class Tests(unittest.TestCase):
             """)
 
             node.safe_psql('vacuum analyze')
->>>>>>> master
 
         return node
 
@@ -187,29 +111,17 @@ class Tests(unittest.TestCase):
         """ Test concurrent partitioning """
 
         with self.start_new_pathman_cluster(test_data=True) as node:
-<<<<<<< HEAD
-            node.psql('postgres', "select partition_table_concurrently('abc')")
-
-            while True:
-                # update some rows to check for deadlocks
-                node.safe_psql('postgres', """
-=======
             node.psql("select partition_table_concurrently('abc')")
 
             while True:
                 # update some rows to check for deadlocks
                 node.safe_psql("""
->>>>>>> master
                     update abc set t = 'test'
                     where id in (select (random() * 300000)::int
                     from generate_series(1, 3000))
                 """)
 
-<<<<<<< HEAD
-                count = node.execute('postgres', """
-=======
                 count = node.execute("""
->>>>>>> master
                     select count(*) from pathman_concurrent_part_tasks
                 """)
 
@@ -218,15 +130,9 @@ class Tests(unittest.TestCase):
                     break
                 time.sleep(1)
 
-<<<<<<< HEAD
-            data = node.execute('postgres', 'select count(*) from only abc')
-            self.assertEqual(data[0][0], 0)
-            data = node.execute('postgres', 'select count(*) from abc')
-=======
             data = node.execute('select count(*) from only abc')
             self.assertEqual(data[0][0], 0)
             data = node.execute('select count(*) from abc')
->>>>>>> master
             self.assertEqual(data[0][0], 300000)
             node.stop()
 
@@ -234,47 +140,22 @@ class Tests(unittest.TestCase):
         """ Test how pg_pathman works with replication """
 
         with self.start_new_pathman_cluster(allow_streaming=True, test_data=True) as node:
-<<<<<<< HEAD
-            with node.replicate('node2') as replica:
-=======
             with node.replicate() as replica:
->>>>>>> master
                 replica.start()
                 replica.catchup()
 
                 # check that results are equal
                 self.assertEqual(
-<<<<<<< HEAD
-                    node.psql('postgres', 'explain (costs off) select * from abc'),
-                    replica.psql('postgres', 'explain (costs off) select * from abc'))
-
-                # enable parent and see if it is enabled in replica
-                node.psql('postgres', "select enable_parent('abc')")
-=======
                     node.psql('explain (costs off) select * from abc'),
                     replica.psql('explain (costs off) select * from abc'))
 
                 # enable parent and see if it is enabled in replica
                 node.psql("select enable_parent('abc')")
->>>>>>> master
 
                 # wait until replica catches up
                 replica.catchup()
 
                 self.assertEqual(
-<<<<<<< HEAD
-                    node.psql('postgres', 'explain (costs off) select * from abc'),
-                    replica.psql('postgres', 'explain (costs off) select * from abc'))
-                self.assertEqual(
-                    node.psql('postgres', 'select * from abc'),
-                    replica.psql('postgres', 'select * from abc'))
-                self.assertEqual(
-                    node.execute('postgres', 'select count(*) from abc')[0][0], 300000)
-
-                # check that UPDATE in pathman_config_params invalidates cache
-                node.psql('postgres',
-                          'update pathman_config_params set enable_parent = false')
-=======
                     node.psql('explain (costs off) select * from abc'),
                     replica.psql('explain (costs off) select * from abc'))
                 self.assertEqual(
@@ -285,21 +166,11 @@ class Tests(unittest.TestCase):
 
                 # check that UPDATE in pathman_config_params invalidates cache
                 node.psql('update pathman_config_params set enable_parent = false')
->>>>>>> master
 
                 # wait until replica catches up
                 replica.catchup()
 
                 self.assertEqual(
-<<<<<<< HEAD
-                    node.psql('postgres', 'explain (costs off) select * from abc'),
-                    replica.psql('postgres', 'explain (costs off) select * from abc'))
-                self.assertEqual(
-                    node.psql('postgres', 'select * from abc'),
-                    replica.psql('postgres', 'select * from abc'))
-                self.assertEqual(
-                    node.execute('postgres', 'select count(*) from abc')[0][0], 0)
-=======
                     node.psql('explain (costs off) select * from abc'),
                     replica.psql('explain (costs off) select * from abc'))
                 self.assertEqual(
@@ -307,7 +178,6 @@ class Tests(unittest.TestCase):
                     replica.psql('select * from abc'))
                 self.assertEqual(
                     node.execute('select count(*) from abc')[0][0], 0)
->>>>>>> master
 
     def test_locks(self):
         """
@@ -337,39 +207,22 @@ class Tests(unittest.TestCase):
             We expect that this query will wait until
             another session commits or rolls back
             """
-<<<<<<< HEAD
-            node.safe_psql('postgres', query)
-=======
             node.safe_psql(query)
->>>>>>> master
             with lock:
                 flag.set(True)
 
         # Initialize master server
-<<<<<<< HEAD
-        with get_new_node('master') as node:
-            node.init()
-            node.append_conf("postgresql.conf", "shared_preload_libraries='pg_pathman'\n")
-            node.start()
-            sql = """
-=======
         with get_new_node() as node:
             node.init()
             node.append_conf("shared_preload_libraries='pg_pathman'")
             node.start()
 
             node.safe_psql("""
->>>>>>> master
                 create extension pg_pathman;
                 create table abc(id serial, t text);
                 insert into abc select generate_series(1, 100000);
                 select create_range_partitions('abc', 'id', 1, 50000);
-<<<<<<< HEAD
-            """
-            node.safe_psql('postgres', sql)
-=======
             """)
->>>>>>> master
 
             # Start transaction that will create partition
             with node.connect() as con:
@@ -381,13 +234,9 @@ class Tests(unittest.TestCase):
                 query = (
                     "select prepend_range_partition('abc')",
                     "select append_range_partition('abc')",
-<<<<<<< HEAD
-                    "select add_range_partition('abc', 500000, 550000)", )
-=======
                     "select add_range_partition('abc', 500000, 550000)",
                 )
 
->>>>>>> master
                 threads = []
                 for i in range(3):
                     thread = threading.Thread(
@@ -396,11 +245,7 @@ class Tests(unittest.TestCase):
                     thread.start()
                 time.sleep(3)
 
-<<<<<<< HEAD
-                # This threads should wait until current transaction finished
-=======
                 # These threads should wait until current transaction finished
->>>>>>> master
                 with lock:
                     for i in range(3):
                         self.assertEqual(flags[i].get(), False)
@@ -422,10 +267,6 @@ class Tests(unittest.TestCase):
             # Check that all partitions are created
             self.assertEqual(
                 node.safe_psql(
-<<<<<<< HEAD
-                    'postgres',
-=======
->>>>>>> master
                     "select count(*) from pg_inherits where inhparent='abc'::regclass"),
                 b'6\n')
 
@@ -433,68 +274,21 @@ class Tests(unittest.TestCase):
         """ Check tablespace support """
 
         def check_tablespace(node, tablename, tablespace):
-<<<<<<< HEAD
-            res = node.execute('postgres',
-                               "select get_tablespace('{}')".format(tablename))
-=======
             res = node.execute("select get_tablespace('{}')".format(tablename))
->>>>>>> master
             if len(res) == 0:
                 return False
 
             return res[0][0] == tablespace
 
-<<<<<<< HEAD
-        with get_new_node('master') as node:
-            node.init()
-            node.append_conf('postgresql.conf',
-                             "shared_preload_libraries='pg_pathman'\n")
-            node.start()
-            node.psql('postgres', 'create extension pg_pathman')
-=======
         with get_new_node() as node:
             node.init()
             node.append_conf("shared_preload_libraries='pg_pathman'")
             node.start()
             node.psql('create extension pg_pathman')
->>>>>>> master
 
             # create tablespace
             path = os.path.join(node.data_dir, 'test_space_location')
             os.mkdir(path)
-<<<<<<< HEAD
-            node.psql('postgres',
-                      "create tablespace test_space location '{}'".format(path))
-
-            # create table in this tablespace
-            node.psql('postgres',
-                      'create table abc(a serial, b int) tablespace test_space')
-
-            # create three partitions. Excpect that they will be created in the
-            # same tablespace as the parent table
-            node.psql('postgres',
-                      "select create_range_partitions('abc', 'a', 1, 10, 3)")
-            self.assertTrue(check_tablespace(node, 'abc', 'test_space'))
-
-            # check tablespace for appended partition
-            node.psql('postgres',
-                      "select append_range_partition('abc', 'abc_appended')")
-            self.assertTrue(check_tablespace(node, 'abc_appended', 'test_space'))
-
-            # check tablespace for prepended partition
-            node.psql('postgres',
-                      "select prepend_range_partition('abc', 'abc_prepended')")
-            self.assertTrue(check_tablespace(node, 'abc_prepended', 'test_space'))
-
-            # check tablespace for prepended partition
-            node.psql('postgres',
-                      "select add_range_partition('abc', 41, 51, 'abc_added')")
-            self.assertTrue(check_tablespace(node, 'abc_added', 'test_space'))
-
-            # check tablespace for split
-            node.psql('postgres',
-                      "select split_range_partition('abc_added', 45, 'abc_splitted')")
-=======
             node.psql("create tablespace test_space location '{}'".format(path))
 
             # create table in this tablespace
@@ -519,26 +313,10 @@ class Tests(unittest.TestCase):
 
             # check tablespace for split
             node.psql("select split_range_partition('abc_added', 45, 'abc_splitted')")
->>>>>>> master
             self.assertTrue(check_tablespace(node, 'abc_splitted', 'test_space'))
 
             # now let's specify tablespace explicitly
             node.psql(
-<<<<<<< HEAD
-                'postgres',
-                "select append_range_partition('abc', 'abc_appended_2', 'pg_default')"
-            )
-            node.psql(
-                'postgres',
-                "select prepend_range_partition('abc', 'abc_prepended_2', 'pg_default')"
-            )
-            node.psql(
-                'postgres',
-                "select add_range_partition('abc', 61, 71, 'abc_added_2', 'pg_default')"
-            )
-            node.psql(
-                'postgres',
-=======
                 "select append_range_partition('abc', 'abc_appended_2', 'pg_default')"
             )
             node.psql(
@@ -548,7 +326,6 @@ class Tests(unittest.TestCase):
                 "select add_range_partition('abc', 61, 71, 'abc_added_2', 'pg_default')"
             )
             node.psql(
->>>>>>> master
                 "select split_range_partition('abc_added_2', 65, 'abc_splitted_2', 'pg_default')"
             )
 
@@ -558,25 +335,11 @@ class Tests(unittest.TestCase):
             self.assertTrue(check_tablespace(node, 'abc_added_2',     'pg_default'))
             self.assertTrue(check_tablespace(node, 'abc_splitted_2',  'pg_default'))
 
-<<<<<<< HEAD
-    @if_fdw_enabled
-=======
     @unittest.skipUnless(is_postgres_fdw_ready(), 'might be missing')
->>>>>>> master
     def test_foreign_table(self):
         """ Test foreign tables """
 
         # Start master server
-<<<<<<< HEAD
-        with get_new_node('test') as master, get_new_node('fserv') as fserv:
-            master.init()
-            master.append_conf('postgresql.conf', """
-                shared_preload_libraries='pg_pathman, postgres_fdw'\n
-            """)
-            master.start()
-            master.psql('postgres', 'create extension pg_pathman')
-            master.psql('postgres', 'create extension postgres_fdw')
-=======
         with get_new_node() as master, get_new_node() as fserv:
             master.init()
             master.append_conf("""
@@ -585,7 +348,6 @@ class Tests(unittest.TestCase):
             master.start()
             master.psql('create extension pg_pathman')
             master.psql('create extension postgres_fdw')
->>>>>>> master
 
             # RANGE partitioning test with FDW:
             #   - create range partitioned table in master
@@ -594,26 +356,12 @@ class Tests(unittest.TestCase):
             #   - attach foreign table to partitioned one
             #   - try inserting data into foreign partition via parent
             #   - drop partitions
-<<<<<<< HEAD
-            master.psql('postgres', """
-=======
             master.psql("""
->>>>>>> master
                 create table abc(id serial, name text);
                 select create_range_partitions('abc', 'id', 0, 10, 2)
             """)
 
             # Current user name (needed for user mapping)
-<<<<<<< HEAD
-            username = master.execute('postgres', 'select current_user')[0][0]
-
-            fserv.init().start()
-            fserv.safe_psql('postgres', "create table ftable(id serial, name text)")
-            fserv.safe_psql('postgres', "insert into ftable values (25, 'foreign')")
-
-            # Create foreign table and attach it to partitioned table
-            master.safe_psql('postgres', """
-=======
             username = master.execute('select current_user')[0][0]
 
             fserv.init().start()
@@ -622,52 +370,26 @@ class Tests(unittest.TestCase):
 
             # Create foreign table and attach it to partitioned table
             master.safe_psql("""
->>>>>>> master
                 create server fserv
                 foreign data wrapper postgres_fdw
                 options (dbname 'postgres', host '127.0.0.1', port '{}')
             """.format(fserv.port))
 
-<<<<<<< HEAD
-            master.safe_psql('postgres', """
-=======
             master.safe_psql("""
->>>>>>> master
                 create user mapping for {0} server fserv
                 options (user '{0}')
             """.format(username))
 
-<<<<<<< HEAD
-            master.safe_psql('postgres', """
-=======
             master.safe_psql("""
->>>>>>> master
                 import foreign schema public limit to (ftable)
                 from server fserv into public
             """)
 
             master.safe_psql(
-<<<<<<< HEAD
-                'postgres',
-=======
->>>>>>> master
                 "select attach_range_partition('abc', 'ftable', 20, 30)")
 
             # Check that table attached to partitioned table
             self.assertEqual(
-<<<<<<< HEAD
-                master.safe_psql('postgres', 'select * from ftable'),
-                b'25|foreign\n')
-
-            # Check that we can successfully insert new data into foreign partition
-            master.safe_psql('postgres', "insert into abc values (26, 'part')")
-            self.assertEqual(
-                master.safe_psql('postgres', 'select * from ftable order by id'),
-                b'25|foreign\n26|part\n')
-
-            # Testing drop partitions (including foreign partitions)
-            master.safe_psql('postgres', "select drop_partitions('abc')")
-=======
                 master.safe_psql('select * from ftable'),
                 b'25|foreign\n')
 
@@ -679,7 +401,6 @@ class Tests(unittest.TestCase):
 
             # Testing drop partitions (including foreign partitions)
             master.safe_psql("select drop_partitions('abc')")
->>>>>>> master
 
             # HASH partitioning with FDW:
             #   - create hash partitioned table in master
@@ -687,31 +408,6 @@ class Tests(unittest.TestCase):
             #   - replace local partition with foreign one
             #   - insert data
             #   - drop partitions
-<<<<<<< HEAD
-            master.psql('postgres', """
-                create table hash_test(id serial, name text);
-                select create_hash_partitions('hash_test', 'id', 2)
-            """)
-            fserv.safe_psql('postgres',
-                            'create table f_hash_test(id serial, name text)')
-
-            master.safe_psql('postgres', """
-                import foreign schema public limit to (f_hash_test)
-                from server fserv into public
-            """)
-            master.safe_psql('postgres', """
-                select replace_hash_partition('hash_test_1', 'f_hash_test')
-            """)
-            master.safe_psql('postgres',
-                             'insert into hash_test select generate_series(1,10)')
-
-            self.assertEqual(
-                master.safe_psql('postgres', 'select * from hash_test'),
-                b'1|\n2|\n5|\n6|\n8|\n9|\n3|\n4|\n7|\n10|\n')
-            master.safe_psql('postgres', "select drop_partitions('hash_test')")
-
-    @if_fdw_enabled
-=======
             master.psql("""
                 create table hash_test(id serial, name text);
                 select create_hash_partitions('hash_test', 'id', 2)
@@ -733,23 +429,14 @@ class Tests(unittest.TestCase):
             master.safe_psql("select drop_partitions('hash_test')")
 
     @unittest.skipUnless(is_postgres_fdw_ready(), 'might be missing')
->>>>>>> master
     def test_parallel_nodes(self):
         """ Test parallel queries under partitions """
 
         # Init and start postgres instance with preload pg_pathman module
-<<<<<<< HEAD
-        with get_new_node('test') as node:
-            node.init()
-            node.append_conf(
-                'postgresql.conf',
-                "shared_preload_libraries='pg_pathman, postgres_fdw'\n")
-=======
         with get_new_node() as node:
             node.init()
             node.append_conf(
                 "shared_preload_libraries='pg_pathman, postgres_fdw'")
->>>>>>> master
             node.start()
 
             # Check version of postgres server
@@ -758,13 +445,8 @@ class Tests(unittest.TestCase):
                 return
 
             # Prepare test database
-<<<<<<< HEAD
-            node.psql('postgres', 'create extension pg_pathman')
-            node.psql('postgres', """
-=======
             node.psql('create extension pg_pathman')
             node.psql("""
->>>>>>> master
                 create table range_partitioned as
                 select generate_series(1, 1e4::integer) i;
 
@@ -779,15 +461,9 @@ class Tests(unittest.TestCase):
             """)
 
             # create statistics for both partitioned tables
-<<<<<<< HEAD
-            node.psql('postgres', 'vacuum analyze')
-
-            node.psql('postgres', """
-=======
             node.psql('vacuum analyze')
 
             node.psql("""
->>>>>>> master
                 create or replace function query_plan(query text)
                 returns jsonb as $$
                     declare
@@ -945,15 +621,9 @@ class Tests(unittest.TestCase):
                 self.assertEqual(ordered(plan), ordered(expected))
 
             # Remove all objects for testing
-<<<<<<< HEAD
-            node.psql('postgres', 'drop table range_partitioned cascade')
-            node.psql('postgres', 'drop table hash_partitioned cascade')
-            node.psql('postgres', 'drop extension pg_pathman cascade')
-=======
             node.psql('drop table range_partitioned cascade')
             node.psql('drop table hash_partitioned cascade')
             node.psql('drop extension pg_pathman cascade')
->>>>>>> master
 
     def test_conc_part_drop_runtime_append(self):
         """ Test concurrent partition drop + SELECT (RuntimeAppend) """
@@ -1196,225 +866,6 @@ class Tests(unittest.TestCase):
                 self.assertEqual(str(rows[0][1]), 'ins_test_1')
 
     def test_pg_dump(self):
-<<<<<<< HEAD
-        """
-        Test using dump and restore of partitioned table through pg_dump and pg_restore tools.
-
-        Test strategy:
-            - test range and hash partitioned tables;
-            - for each partitioned table check on restorable side the following quantities:
-                * constraints related to partitioning;
-                * init callback function and enable parent flag;
-                * number of rows in parent and child tables;
-                * plan validity of simple SELECT query under partitioned table;
-            - check dumping using the following parameters of pg_dump:
-                * format = plain | custom;
-                * using of inserts and copy.
-            - all test cases are carried out on tables half-full with data located in parent part,
-                the rest of data - in child tables.
-        """
-
-        # Init and start postgres instance with preload pg_pathman module
-        with get_new_node('test') as node:
-            node.init()
-            node.append_conf('postgresql.conf', """
-                shared_preload_libraries='pg_pathman'
-                pg_pathman.override_copy=false
-            """)
-            node.start()
-
-            # Init two databases: initial and copy
-            node.psql('postgres', 'create database initial')
-            node.psql('postgres', 'create database copy')
-            node.psql('initial', 'create extension pg_pathman')
-
-            # Create and fillin partitioned table in initial database
-            with node.connect('initial') as con:
-
-                # create and initailly fillin tables
-                con.execute('create table range_partitioned (i integer not null)')
-                con.execute(
-                    'insert into range_partitioned select i from generate_series(1, 500) i'
-                )
-                con.execute('create table hash_partitioned (i integer not null)')
-                con.execute(
-                    'insert into hash_partitioned select i from generate_series(1, 500) i'
-                )
-
-                # partition table keeping data in base table
-                # enable_parent parameter automatically becames true
-                con.execute(
-                    "select create_range_partitions('range_partitioned', 'i', 1, 200, partition_data := false)"
-                )
-                con.execute(
-                    "select create_hash_partitions('hash_partitioned', 'i', 5, false)"
-                )
-
-                # fillin child tables with remain data
-                con.execute(
-                    'insert into range_partitioned select i from generate_series(501, 1000) i'
-                )
-                con.execute(
-                    'insert into hash_partitioned select i from generate_series(501, 1000) i'
-                )
-
-                # set init callback
-                con.execute("""
-                    create or replace function init_partition_stub_callback(args jsonb)
-                    returns void as $$
-                        begin
-                        end
-                    $$ language plpgsql;
-                """)
-                con.execute(
-                    "select set_init_callback('range_partitioned', 'init_partition_stub_callback(jsonb)')"
-                )
-                con.execute(
-                    "select set_init_callback('hash_partitioned', 'init_partition_stub_callback(jsonb)')"
-                )
-
-                # turn off enable_parent option
-                con.execute(
-                    "select set_enable_parent('range_partitioned', false)")
-                con.execute("select set_enable_parent('hash_partitioned', false)")
-                con.commit()
-
-            # compare strategies
-            CMP_OK, PLANS_MISMATCH, CONTENTS_MISMATCH = range(3)
-
-            def cmp_full(con1, con2):
-                """
-                Compare selection partitions in plan
-                and contents in partitioned tables
-                """
-
-                plan_query = 'explain (costs off, format json) select * from %s'
-                content_query = 'select * from %s order by i'
-                table_refs = [
-                    'range_partitioned', 'only range_partitioned',
-                    'hash_partitioned', 'only hash_partitioned'
-                ]
-                for table_ref in table_refs:
-                    plan_initial = con1.execute(
-                        plan_query % table_ref)[0][0][0]['Plan']
-                    plan_copy = con2.execute(
-                        plan_query % table_ref)[0][0][0]['Plan']
-                    if ordered(plan_initial) != ordered(plan_copy):
-                        return PLANS_MISMATCH
-
-                    content_initial = [
-                        x[0] for x in con1.execute(content_query % table_ref)
-                    ]
-                    content_copy = [
-                        x[0] for x in con2.execute(content_query % table_ref)
-                    ]
-                    if content_initial != content_copy:
-                        return CONTENTS_MISMATCH
-
-                    return CMP_OK
-
-            def turnoff_pathman(node):
-                node.psql('initial', 'alter system set pg_pathman.enable to off')
-                node.reload()
-
-            def turnon_pathman(node):
-                node.psql('initial', 'alter system set pg_pathman.enable to on')
-                node.psql('copy', 'alter system set pg_pathman.enable to on')
-                node.psql('initial',
-                          'alter system set pg_pathman.override_copy to off')
-                node.psql('copy',
-                          'alter system set pg_pathman.override_copy to off')
-                node.reload()
-
-            # Test dump/restore from init database to copy functionality
-            test_params = [
-                (None, None, [
-                    get_bin_path("pg_dump"), "-p {}".format(node.port),
-                    "initial"
-                ], [get_bin_path("psql"), "-p {}".format(node.port), "copy"],
-                    cmp_full),    # dump as plain text and restore via COPY
-                (turnoff_pathman, turnon_pathman, [
-                    get_bin_path("pg_dump"), "-p {}".format(node.port),
-                    "--inserts", "initial"
-                ], [get_bin_path("psql"), "-p {}".format(node.port), "copy"],
-                    cmp_full),    # dump as plain text and restore via INSERTs
-                (None, None, [
-                    get_bin_path("pg_dump"), "-p {}".format(node.port),
-                    "--format=custom", "initial"
-                ], [
-                    get_bin_path("pg_restore"), "-p {}".format(node.port),
-                    "--dbname=copy"
-                ], cmp_full),    # dump in archive format
-            ]
-
-            with open(os.devnull, 'w') as fnull:
-                for preproc, postproc, pg_dump_params, pg_restore_params, cmp_dbs in test_params:
-
-                    dump_restore_cmd = " | ".join((' '.join(pg_dump_params),
-                                                   ' '.join(pg_restore_params)))
-
-                    if (preproc is not None):
-                        preproc(node)
-
-                    # transfer and restore data
-                    p1 = subprocess.Popen(pg_dump_params, stdout=subprocess.PIPE)
-                    stdoutdata, _ = p1.communicate()
-                    p2 = subprocess.Popen(
-                        pg_restore_params,
-                        stdin=subprocess.PIPE,
-                        stdout=fnull,
-                        stderr=fnull)
-                    p2.communicate(input=stdoutdata)
-
-                    if (postproc is not None):
-                        postproc(node)
-
-                    # validate data
-                    with node.connect('initial') as con1, \
-                            node.connect('copy') as con2:
-
-                        # compare plans and contents of initial and copy
-                        cmp_result = cmp_dbs(con1, con2)
-                        self.assertNotEqual(
-                            cmp_result, PLANS_MISMATCH,
-                            "mismatch in plans of select query on partitioned tables under the command: %s"
-                            % dump_restore_cmd)
-                        self.assertNotEqual(
-                            cmp_result, CONTENTS_MISMATCH,
-                            "mismatch in contents of partitioned tables under the command: %s"
-                            % dump_restore_cmd)
-
-                        # compare enable_parent flag and callback function
-                        config_params_query = """
-                            select partrel, enable_parent, init_callback from pathman_config_params
-                        """
-                        config_params_initial, config_params_copy = {}, {}
-                        for row in con1.execute(config_params_query):
-                            config_params_initial[row[0]] = row[1:]
-                        for row in con2.execute(config_params_query):
-                            config_params_copy[row[0]] = row[1:]
-                        self.assertEqual(config_params_initial, config_params_copy,
-                                         "mismatch in pathman_config_params under the command: %s" % dump_restore_cmd)
-
-                        # compare constraints on each partition
-                        constraints_query = """
-                            select r.relname, c.conname, c.consrc from
-                            pg_constraint c join pg_class r on c.conrelid=r.oid
-                            where relname similar to '(range|hash)_partitioned_\d+'
-                        """
-                        constraints_initial, constraints_copy = {}, {}
-                        for row in con1.execute(constraints_query):
-                            constraints_initial[row[0]] = row[1:]
-                        for row in con2.execute(constraints_query):
-                            constraints_copy[row[0]] = row[1:]
-                        self.assertEqual(constraints_initial, constraints_copy,
-                                         "mismatch in partitions' constraints under the command: %s" % dump_restore_cmd)
-
-                    # clear copy database
-                    node.psql('copy', 'drop schema public cascade')
-                    node.psql('copy', 'create schema public')
-                    node.psql('copy', 'drop extension pg_pathman cascade')
-=======
         with self.start_new_pathman_cluster() as node:
             node.safe_psql('create database copy')
 
@@ -1452,8 +903,6 @@ class Tests(unittest.TestCase):
             p1 = node.execute('postgres', 'select * from pathman_partition_list')
             p2 = node.execute('copy', 'select * from pathman_partition_list')
             self.assertEqual(sorted(p1), sorted(p2))
-
->>>>>>> master
 
     def test_concurrent_detach(self):
         """
@@ -1537,7 +986,6 @@ class Tests(unittest.TestCase):
                         Race condition between detach and concurrent
                         inserts with append partition is expired
                     """)
-<<<<<<< HEAD
 
     def test_update_node_plan1(self):
         '''
@@ -1614,8 +1062,6 @@ class Tests(unittest.TestCase):
 
             node.psql('postgres', 'DROP SCHEMA test_update_node CASCADE;')
             node.psql('postgres', 'DROP EXTENSION pg_pathman CASCADE;')
-=======
->>>>>>> master
 
 
 if __name__ == "__main__":
