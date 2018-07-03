@@ -625,6 +625,14 @@ adjust_appendrel_varnos(Node *node, adjust_appendrel_varnos_cxt *context)
 		return false;
 	}
 
+	if (IsA(node, SubLink))
+	{
+		SubLink *sl = (SubLink *) node;
+
+		/* Examine its expression */
+		node = sl->testexpr;
+	}
+
 	return expression_tree_walker(node,
 								  adjust_appendrel_varnos,
 								  context);
