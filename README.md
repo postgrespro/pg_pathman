@@ -203,14 +203,9 @@ split_range_partition(partition      REGCLASS,
 Split RANGE `partition` in two by `split_value`. Partition creation callback is invoked for a new partition if available.
 
 ```plpgsql
-merge_range_partitions(partition1 REGCLASS, partition2 REGCLASS)
+merge_range_partitions(variadic partitions REGCLASS[])
 ```
-Merge two adjacent RANGE partitions. First, data from `partition2` is copied to `partition1`, then `partition2` is removed.
-
-```plpgsql
-merge_range_partitions(partitions REGCLASS[])
-```
-Merge several adjacent RANGE partitions (partitions must be specified in ascending or descending order). All the data will be accumulated in the first partition.
+Merge several adjacent RANGE partitions. Partitions are automatically ordered by increasing bounds; all the data will be accumulated in the first partition.
 
 ```plpgsql
 append_range_partition(parent         REGCLASS,

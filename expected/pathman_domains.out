@@ -41,7 +41,7 @@ SELECT prepend_range_partition('domains.dom_table');
 SELECT merge_range_partitions('domains.dom_table_1', 'domains.dom_table_2');
  merge_range_partitions 
 ------------------------
- 
+ domains.dom_table_1
 (1 row)
 
 SELECT split_range_partition('domains.dom_table_1', 50);

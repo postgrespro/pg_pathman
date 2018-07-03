@@ -320,8 +320,8 @@ DROP TABLE calamity.test_range_oid CASCADE;
 
 
 /* check function merge_range_partitions() */
-SELECT merge_range_partitions('{pg_class}');						/* not ok */
-SELECT merge_range_partitions('{pg_class, pg_inherits}');			/* not ok */
+SELECT merge_range_partitions('pg_class');							/* not ok */
+SELECT merge_range_partitions('pg_class', 'pg_inherits');			/* not ok */
 
 CREATE TABLE calamity.merge_test_a(val INT4 NOT NULL);
 CREATE TABLE calamity.merge_test_b(val INT4 NOT NULL);
@@ -329,8 +329,8 @@ CREATE TABLE calamity.merge_test_b(val INT4 NOT NULL);
 SELECT create_range_partitions('calamity.merge_test_a', 'val', 1, 10, 2);
 SELECT create_range_partitions('calamity.merge_test_b', 'val', 1, 10, 2);
 
-SELECT merge_range_partitions('{calamity.merge_test_a_1,
-								calamity.merge_test_b_1}');			/* not ok */
+SELECT merge_range_partitions('calamity.merge_test_a_1',
+							  'calamity.merge_test_b_1');			/* not ok */
 
 DROP TABLE calamity.merge_test_a,calamity.merge_test_b CASCADE;
 

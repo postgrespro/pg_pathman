@@ -628,7 +628,8 @@ build_sequence_name(PG_FUNCTION_ARGS)
 Datum
 merge_range_partitions(PG_FUNCTION_ARGS)
 {
-	Oid					parent = InvalidOid;
+	Oid					parent = InvalidOid,
+						partition = InvalidOid;
 	ArrayType		   *arr = PG_GETARG_ARRAYTYPE_P(0);
 
 	Oid				   *parts;
@@ -734,9 +735,10 @@ merge_range_partitions(PG_FUNCTION_ARGS)
 	/* First determine the bounds of a new constraint */
 	min_bound = bounds[0].min;
 	max_bound = bounds[nparts - 1].max;
+	partition = parts[0];
 
 	/* Drop old constraint and create a new one */
-	modify_range_constraint(parts[0],
+	modify_range_constraint(partition,
 							prel->expr_cstr,
 							prel->ev_type,
 							&min_bound,
@@ -801,7 +803,7 @@ merge_range_partitions(PG_FUNCTION_ARGS)
 	/* Don't forget to close 'prel'! */
 	close_pathman_relation_info(prel);
 
-	PG_RETURN_VOID();
+	PG_RETURN_OID(partition);
 }
 
 
@@ -851,12 +853,10 @@ drop_range_partition_expand_next(PG_FUNCTION_ARGS)
 	ranges = PrelGetRangesArray(prel);
 
 	/* Looking for partition in child relations */
-	for (i = 0; i < PrelChildrenCount(prel); i++)
-		if (ranges[i].child_oid == partition)
-			break;
+	i = PrelHasPartition(prel, partition) - 1;
 
 	/* Should have found it */
-	Assert(i < PrelChildrenCount(prel));
+	Assert(i >= 0 && i < PrelChildrenCount(prel));
 
 	/* Expand next partition if it exists */
 	if (i < PrelLastChild(prel))

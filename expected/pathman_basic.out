@@ -933,7 +933,7 @@ SELECT pathman.split_range_partition('test.range_rel_1', '2015-01-15'::DATE);
 SELECT pathman.merge_range_partitions('test.num_range_rel_1', 'test.num_range_rel_' || currval('test.num_range_rel_seq'));
  merge_range_partitions 
 ------------------------
- 
+ test.num_range_rel_1
 (1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id BETWEEN 100 AND 700;
@@ -947,7 +947,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id BETWEEN 100 AND 70
 SELECT pathman.merge_range_partitions('test.range_rel_1', 'test.range_rel_' || currval('test.range_rel_seq'));
  merge_range_partitions 
 ------------------------
- 
+ test.range_rel_1
 (1 row)
 
 /* Append and prepend partitions */
@@ -1524,7 +1524,7 @@ SELECT pathman.prepend_range_partition('test."RangeRel"');
 SELECT pathman.merge_range_partitions('test."RangeRel_1"', 'test."RangeRel_' || currval('test."RangeRel_seq"') || '"');
  merge_range_partitions 
 ------------------------
- 
+ test."RangeRel_1"
 (1 row)
 
 SELECT pathman.split_range_partition('test."RangeRel_1"', '2015-01-01'::DATE);
@@ -1594,7 +1594,7 @@ SELECT create_range_partitions('test.range_rel', 'dt', '2010-01-01'::date, '1 mo
 SELECT merge_range_partitions('test.range_rel_1', 'test.range_rel_2');
  merge_range_partitions 
 ------------------------
- 
+ test.range_rel_1
 (1 row)
 
 SELECT split_range_partition('test.range_rel_1', '2010-02-15'::date);

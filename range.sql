@@ -393,18 +393,6 @@ END
 $$ LANGUAGE plpgsql;
 
 /*
- * The special case of merging two partitions
- */
-CREATE OR REPLACE FUNCTION @extschema@.merge_range_partitions(
-	partition1		REGCLASS,
-	partition2		REGCLASS)
-RETURNS VOID AS $$
-BEGIN
-	PERFORM @extschema@.merge_range_partitions(array[partition1, partition2]::regclass[]);
-END
-$$ LANGUAGE plpgsql;
-
-/*
  * Append new partition.
  */
 CREATE OR REPLACE FUNCTION @extschema@.append_range_partition(
@@ -883,8 +871,8 @@ SET client_min_messages = WARNING; /* mute NOTICE message */
  * The rest of partitions will be dropped.
  */
 CREATE OR REPLACE FUNCTION @extschema@.merge_range_partitions(
-	partitions		REGCLASS[])
-RETURNS VOID AS 'pg_pathman', 'merge_range_partitions'
+	variadic partitions		REGCLASS[])
+RETURNS REGCLASS AS 'pg_pathman', 'merge_range_partitions'
 LANGUAGE C STRICT;
 
 /*

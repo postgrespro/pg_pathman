@@ -746,9 +746,9 @@ SELECT get_part_range('calamity.test_range_oid_1', NULL::INT4);		/* OK */
 DROP TABLE calamity.test_range_oid CASCADE;
 NOTICE:  drop cascades to 2 other objects
 /* check function merge_range_partitions() */
-SELECT merge_range_partitions('{pg_class}');						/* not ok */
+SELECT merge_range_partitions('pg_class');							/* not ok */
 ERROR:  cannot merge partitions
-SELECT merge_range_partitions('{pg_class, pg_inherits}');			/* not ok */
+SELECT merge_range_partitions('pg_class', 'pg_inherits');			/* not ok */
 ERROR:  cannot merge partitions
 CREATE TABLE calamity.merge_test_a(val INT4 NOT NULL);
 CREATE TABLE calamity.merge_test_b(val INT4 NOT NULL);
@@ -764,8 +764,8 @@ SELECT create_range_partitions('calamity.merge_test_b', 'val', 1, 10, 2);
                        2
 (1 row)
 
-SELECT merge_range_partitions('{calamity.merge_test_a_1,
-								calamity.merge_test_b_1}');			/* not ok */
+SELECT merge_range_partitions('calamity.merge_test_a_1',
+							  'calamity.merge_test_b_1');			/* not ok */
 ERROR:  cannot merge partitions
 DROP TABLE calamity.merge_test_a,calamity.merge_test_b CASCADE;
 NOTICE:  drop cascades to 6 other objects

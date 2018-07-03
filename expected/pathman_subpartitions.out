@@ -336,7 +336,7 @@ INSERT INTO subpartitions.abc VALUES (250, 50);
 SELECT merge_range_partitions('subpartitions.abc_2', 'subpartitions.abc_3');		/* OK */
  merge_range_partitions 
 ------------------------
- 
+ subpartitions.abc_2
 (1 row)
 
 SELECT tableoid::regclass, * FROM subpartitions.abc ORDER BY a, b;
@@ -349,7 +349,7 @@ SELECT tableoid::regclass, * FROM subpartitions.abc ORDER BY a, b;
 SELECT merge_range_partitions('subpartitions.abc_2_1', 'subpartitions.abc_2_2');	/* OK */
  merge_range_partitions 
 ------------------------
- 
+ subpartitions.abc_2_1
 (1 row)
 
 SELECT tableoid::regclass, * FROM subpartitions.abc ORDER BY a, b;
