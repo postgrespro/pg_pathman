@@ -395,7 +395,9 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			 * (PG?) has already processed this partitioned table
 			 * and added its children to the plan.
 			 */
-			if (appinfo->child_relid == rti && child_oid == parent_oid)
+			if (appinfo->child_relid == rti &&
+				child_oid == parent_oid &&
+				OidIsValid(appinfo->parent_reloid))
 			{
 				goto cleanup;
 			}

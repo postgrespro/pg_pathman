@@ -17,6 +17,12 @@ create table views._abc(id int4 not null);
 select create_hash_partitions('views._abc', 'id', 10);
 insert into views._abc select generate_series(1, 100);
 
+/* create a dummy table */
+create table views._abc_add (like views._abc);
+
+
+vacuum analyze;
+
 
 /* create a facade view */
 create view views.abc as select * from views._abc;
@@ -58,6 +64,15 @@ update views.abc set id = 2 where id = 1 or id = 2;
 /* Test DELETE */
 explain (costs off) delete from views.abc where id = 1 or id = 2;
 delete from views.abc where id = 1 or id = 2;
+
+
+/* Test SELECT with UNION */
+create view views.abc_union as table views._abc union table views._abc_add;
+create view views.abc_union_all as table views._abc union all table views._abc_add;
+explain (costs off) table views.abc_union;
+explain (costs off) select * from views.abc_union where id = 5;
+explain (costs off) table views.abc_union_all;
+explain (costs off) select * from views.abc_union_all where id = 5;
 
 
 
