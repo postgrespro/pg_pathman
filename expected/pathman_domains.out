@@ -47,7 +47,7 @@ SELECT merge_range_partitions('domains.dom_table_1', 'domains.dom_table_2');
 SELECT split_range_partition('domains.dom_table_1', 50);
  split_range_partition 
 -----------------------
- {1,201}
+ domains.dom_table_14
 (1 row)
 
 INSERT INTO domains.dom_table VALUES(1101);

@@ -46,15 +46,16 @@ PG_FUNCTION_INFO_V1( create_single_range_partition_pl );
 PG_FUNCTION_INFO_V1( create_range_partitions_internal );
 PG_FUNCTION_INFO_V1( check_range_available_pl );
 PG_FUNCTION_INFO_V1( generate_range_bounds_pl );
+PG_FUNCTION_INFO_V1( validate_interval_value );
+PG_FUNCTION_INFO_V1( split_range_partition );
+PG_FUNCTION_INFO_V1( merge_range_partitions );
+PG_FUNCTION_INFO_V1( drop_range_partition_expand_next );
 
 PG_FUNCTION_INFO_V1( get_part_range_by_oid );
 PG_FUNCTION_INFO_V1( get_part_range_by_idx );
 
 PG_FUNCTION_INFO_V1( build_range_condition );
 PG_FUNCTION_INFO_V1( build_sequence_name );
-PG_FUNCTION_INFO_V1( merge_range_partitions );
-PG_FUNCTION_INFO_V1( drop_range_partition_expand_next );
-PG_FUNCTION_INFO_V1( validate_interval_value );
 
 
 static ArrayType *construct_bounds_array(Bound *elems,
@@ -489,6 +490,162 @@ validate_interval_value(PG_FUNCTION_ARGS)
 	PG_RETURN_BOOL(true);
 }
 
+Datum
+split_range_partition(PG_FUNCTION_ARGS)
+{
+	Oid					parent = InvalidOid,
+						partition1,
+						partition2;
+	RangeVar		   *part_name = NULL;
+	char			   *tablespace_name = NULL;
+
+	Datum				pivot_value;
+	Oid					pivot_type;
+
+	PartRelationInfo   *prel;
+	Bound				min_bound,
+						max_bound,
+						split_bound;
+
+	Snapshot			fresh_snapshot;
+	FmgrInfo			finfo;
+	SPIPlanPtr			plan;
+	char			   *query;
+	int					i;
+
+	if (!PG_ARGISNULL(0))
+	{
+		partition1 = PG_GETARG_OID(0);
+	}
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("'partition1' should not be NULL")));
+
+	if (!PG_ARGISNULL(1))
+	{
+		pivot_value = PG_GETARG_DATUM(1);
+		pivot_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
+	}
+	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("'split_value' should not be NULL")));
+
+	LockRelationOid(partition1, ExclusiveLock);
+
+	/* Get parent of partition */
+	parent = get_parent_of_partition(partition1);
+	if (!OidIsValid(parent))
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("relation \"%s\" is not a partition",
+							   get_rel_name_or_relid(partition1))));
+
+	/* This partition should not have children */
+	if (has_pathman_relation_info(partition1))
+		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						errmsg("cannot split partition that has children")));
+
+	/* Prevent changes in partitioning scheme */
+	LockRelationOid(parent, ShareUpdateExclusiveLock);
+
+	/* Emit an error if it is not partitioned by RANGE */
+	prel = get_pathman_relation_info(parent);
+	shout_if_prel_is_invalid(parent, prel, PT_RANGE);
+
+	i = PrelHasPartition(prel, partition1) - 1;
+	Assert(i >= 0 && i < PrelChildrenCount(prel));
+
+	min_bound = PrelGetRangesArray(prel)[i].min;
+	max_bound = PrelGetRangesArray(prel)[i].max;
+
+	split_bound = MakeBound(perform_type_cast(pivot_value,
+											  getBaseType(pivot_type),
+											  getBaseType(prel->ev_type),
+											  NULL));
+
+	fmgr_info(prel->cmp_proc, &finfo);
+
+	/* Validate pivot's value */
+	if (cmp_bounds(&finfo, prel->ev_collid, &split_bound, &min_bound) <= 0 ||
+		cmp_bounds(&finfo, prel->ev_collid, &split_bound, &max_bound) >= 0)
+	{
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("specified value does not fit into the range (%s, %s)",
+							   BoundToCString(&min_bound, prel->ev_type),
+							   BoundToCString(&max_bound, prel->ev_type))));
+	}
+
+	if (!PG_ARGISNULL(2))
+	{
+		part_name = makeRangeVar(get_namespace_name(get_rel_namespace(parent)),
+								 TextDatumGetCString(PG_GETARG_DATUM(2)),
+								 0);
+	}
+
+	if (!PG_ARGISNULL(3))
+	{
+		tablespace_name = TextDatumGetCString(PG_GETARG_DATUM(3));
+	}
+
+	/* Create a new partition */
+	partition2 = create_single_range_partition_internal(parent,
+														&split_bound,
+														&max_bound,
+														prel->ev_type,
+														part_name,
+														tablespace_name);
+
+	/* Make constraint visible */
+	CommandCounterIncrement();
+
+	if (SPI_connect() != SPI_OK_CONNECT)
+		elog(ERROR, "could not connect using SPI");
+
+	/*
+	 * Get latest snapshot to see data that might have been
+	 * added to partitions before this transaction has started,
+	 * but was committed a moment before we acquired the locks.
+	 */
+	fresh_snapshot = RegisterSnapshot(GetLatestSnapshot());
+
+	query = psprintf("WITH part_data AS ( "
+						"DELETE FROM %1$s WHERE (%3$s) >= $1 RETURNING "
+					 "*) "
+					 "INSERT INTO %2$s SELECT * FROM part_data",
+					 get_qualified_rel_name(partition1),
+					 get_qualified_rel_name(partition2),
+					 prel->expr_cstr);
+
+	plan = SPI_prepare(query, 1, &prel->ev_type);
+
+	if (!plan)
+		elog(ERROR, "%s: SPI_prepare returned %d",
+			 __FUNCTION__, SPI_result);
+
+	SPI_execute_snapshot(plan,
+						 &split_bound.value, NULL,
+						 fresh_snapshot,
+						 InvalidSnapshot,
+						 false, true, 0);
+
+	/* Free snapshot */
+	UnregisterSnapshot(fresh_snapshot);
+
+	SPI_finish();
+
+	/* Drop old constraint and create a new one */
+	modify_range_constraint(partition1,
+							prel->expr_cstr,
+							prel->ev_type,
+							&min_bound,
+							&split_bound);
+
+	/* Make constraint visible */
+	CommandCounterIncrement();
+
+	/* Don't forget to close 'prel'! */
+	close_pathman_relation_info(prel);
+
+	PG_RETURN_OID(partition2);
+}
+
 /*
  * Merge multiple partitions.
  * All data will be copied to the first one.
@@ -565,7 +722,7 @@ merge_range_partitions(PG_FUNCTION_ARGS)
 							errdetail("all relations must share the same parent")));
 	}
 
-	/* Lock parent till transaction's end */
+	/* Prevent changes in partitioning scheme */
 	LockRelationOid(parent, ShareUpdateExclusiveLock);
 
 	/* Emit an error if it is not partitioned by RANGE */
@@ -632,9 +789,9 @@ merge_range_partitions(PG_FUNCTION_ARGS)
 		ObjectAddress object;
 
 		char *query = psprintf("WITH part_data AS ( "
-									"DELETE FROM %s RETURNING "
+									"DELETE FROM %1$s RETURNING "
 							   "*) "
-							   "INSERT INTO %s SELECT * FROM part_data",
+							   "INSERT INTO %2$s SELECT * FROM part_data",
 							   get_qualified_rel_name(parts[i]),
 							   get_qualified_rel_name(parts[0]));
 
@@ -642,8 +799,7 @@ merge_range_partitions(PG_FUNCTION_ARGS)
 
 		if (!plan)
 			elog(ERROR, "%s: SPI_prepare returned %d",
-				 CppAsString(merge_range_partitions),
-				 SPI_result);
+				 __FUNCTION__, SPI_result);
 
 		SPI_execute_snapshot(plan, NULL, NULL,
 							 fresh_snapshot,
@@ -698,20 +854,15 @@ drop_range_partition_expand_next(PG_FUNCTION_ARGS)
 	/* Lock the partition we're going to drop */
 	LockRelationOid(partition, AccessExclusiveLock);
 
-	/* Check if partition exists */
-	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(partition)))
-		elog(ERROR, "relation %u does not exist", partition);
-
 	/* Get parent's relid */
 	parent = get_parent_of_partition(partition);
+	if (!OidIsValid(parent))
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("relation \"%s\" is not a partition",
+							   get_rel_name_or_relid(partition))));
 
 	/* Prevent changes in partitioning scheme */
 	LockRelationOid(parent, ShareUpdateExclusiveLock);
-
-	/* Check if parent exists */
-	if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(parent)))
-		elog(ERROR, "relation \"%s\" is not a partition",
-			 get_rel_name(partition));
 
 	/* Emit an error if it is not partitioned by RANGE */
 	prel = get_pathman_relation_info(parent);
@@ -722,8 +873,6 @@ drop_range_partition_expand_next(PG_FUNCTION_ARGS)
 
 	/* Looking for partition in child relations */
 	i = PrelHasPartition(prel, partition) - 1;
-
-	/* Should have found it */
 	Assert(i >= 0 && i < PrelChildrenCount(prel));
 
 	/* Expand next partition if it exists */

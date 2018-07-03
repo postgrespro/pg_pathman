@@ -306,7 +306,7 @@ ERROR:  cannot split partition that has children
 SELECT split_range_partition('subpartitions.abc_2_2', 75);	/* OK */
  split_range_partition 
 -----------------------
- {50,100}
+ subpartitions.abc_2_4
 (1 row)
 
 SELECT subpartitions.partitions_tree('subpartitions.abc');

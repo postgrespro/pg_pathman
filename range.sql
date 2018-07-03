@@ -294,104 +294,6 @@ END
 $$
 LANGUAGE plpgsql;
 
-
-/*
- * Split RANGE partition
- */
-CREATE OR REPLACE FUNCTION @extschema@.split_range_partition(
-	partition_relid	REGCLASS,
-	split_value		ANYELEMENT,
-	partition_name	TEXT DEFAULT NULL,
-	tablespace		TEXT DEFAULT NULL,
-	OUT p_range		ANYARRAY)
-RETURNS ANYARRAY AS $$
-DECLARE
-	parent_relid		REGCLASS;
-	part_type			INTEGER;
-	part_expr			TEXT;
-	part_expr_type		REGTYPE;
-	check_name			TEXT;
-	check_cond			TEXT;
-	new_partition		TEXT;
-
-BEGIN
-	parent_relid = @extschema@.get_parent_of_partition(partition_relid);
-
-	PERFORM @extschema@.validate_relname(parent_relid);
-	PERFORM @extschema@.validate_relname(partition_relid);
-
-	/* Acquire lock on parent's scheme */
-	PERFORM @extschema@.prevent_part_modification(parent_relid);
-
-	/* Acquire lock on partition's scheme */
-	PERFORM @extschema@.prevent_part_modification(partition_relid);
-
-	/* Acquire data modification lock (prevent further modifications) */
-	PERFORM @extschema@.prevent_data_modification(partition_relid);
-
-	/* Check that partition is not partitioned */
-	if @extschema@.get_number_of_partitions(partition_relid) > 0 THEN
-		RAISE EXCEPTION 'cannot split partition that has children';
-	END IF;
-
-	part_expr_type = @extschema@.get_partition_key_type(parent_relid);
-	part_expr := @extschema@.get_partition_key(parent_relid);
-	part_type := @extschema@.get_partition_type(parent_relid);
-
-	/* Check if this is a RANGE partition */
-	IF part_type != 2 THEN
-		RAISE EXCEPTION '"%" is not a RANGE partition', partition_relid::TEXT;
-	END IF;
-
-	/* Get partition values range */
-	EXECUTE format('SELECT @extschema@.get_part_range($1, NULL::%s)',
-				   @extschema@.get_base_type(part_expr_type)::TEXT)
-	USING partition_relid
-	INTO p_range;
-
-	IF p_range IS NULL THEN
-		RAISE EXCEPTION 'could not find specified partition';
-	END IF;
-
-	/* Check if value fit into the range */
-	IF p_range[1] > split_value OR p_range[2] <= split_value
-	THEN
-		RAISE EXCEPTION 'specified value does not fit into the range [%, %)',
-			p_range[1], p_range[2];
-	END IF;
-
-	/* Create new partition */
-	new_partition := @extschema@.create_single_range_partition(parent_relid,
-															   split_value,
-															   p_range[2],
-															   partition_name,
-															   tablespace);
-
-	/* Copy data */
-	check_cond := @extschema@.build_range_condition(new_partition::regclass,
-													part_expr, split_value, p_range[2]);
-	EXECUTE format('WITH part_data AS (DELETE FROM %s WHERE %s RETURNING *)
-					INSERT INTO %s SELECT * FROM part_data',
-				   partition_relid::TEXT,
-				   check_cond,
-				   new_partition);
-
-	/* Alter original partition */
-	check_cond := @extschema@.build_range_condition(partition_relid::regclass,
-													part_expr, p_range[1], split_value);
-	check_name := @extschema@.build_check_constraint_name(partition_relid);
-
-	EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %s',
-				   partition_relid::TEXT,
-				   check_name);
-
-	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)',
-				   partition_relid::TEXT,
-				   check_name,
-				   check_cond);
-END
-$$ LANGUAGE plpgsql;
-
 /*
  * Append new partition.
  */
@@ -867,8 +769,18 @@ SET client_min_messages = WARNING; /* mute NOTICE message */
 
 
 /*
- * Merge multiple partitions. All data will be copied to the first one.
- * The rest of partitions will be dropped.
+ * Split RANGE partition in two using a pivot.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.split_range_partition(
+	partition_relid	REGCLASS,
+	split_value		ANYELEMENT,
+	partition_name	TEXT DEFAULT NULL,
+	tablespace		TEXT DEFAULT NULL)
+RETURNS REGCLASS AS 'pg_pathman', 'split_range_partition'
+LANGUAGE C;
+
+/*
+ * Merge RANGE partitions.
  */
 CREATE OR REPLACE FUNCTION @extschema@.merge_range_partitions(
 	variadic partitions		REGCLASS[])

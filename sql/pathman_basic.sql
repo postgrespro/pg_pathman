@@ -263,6 +263,7 @@ DROP TABLE test.hash_varchar CASCADE;
 /* Split first partition in half */
 SELECT pathman.split_range_partition('test.num_range_rel_1', 500);
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id BETWEEN 100 AND 700;
+SELECT tableoid::regclass, id FROM test.num_range_rel WHERE id IN (499, 500, 501) ORDER BY id;
 
 SELECT pathman.split_range_partition('test.range_rel_1', '2015-01-15'::DATE);
 
