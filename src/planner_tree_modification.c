@@ -96,7 +96,9 @@ typedef struct
 typedef struct
 {
 	Index	child_varno;
-	Oid		parent_relid;
+	Oid		parent_relid,
+			parent_reltype,
+			child_reltype;
 	List   *translated_vars;
 } adjust_appendrel_varnos_cxt;
 
@@ -483,9 +485,11 @@ handle_modification_query(Query *parse, transform_query_cxt *context)
 			if (!inh_translation_list_is_trivial(translated_vars))
 			{
 				/* Translate varnos for this child */
-				aav_cxt.child_varno = result_rti;
-				aav_cxt.parent_relid = parent;
-				aav_cxt.translated_vars = translated_vars;
+				aav_cxt.child_varno		= result_rti;
+				aav_cxt.parent_relid	= parent;
+				aav_cxt.parent_reltype	= RelationGetDescr(parent_rel)->tdtypeid;
+				aav_cxt.child_reltype	= RelationGetDescr(child_rel)->tdtypeid;
+				aav_cxt.translated_vars	= translated_vars;
 				adjust_appendrel_varnos((Node *) parse, &aav_cxt);
 
 				/* Translate column privileges for this child */
@@ -612,24 +616,43 @@ adjust_appendrel_varnos(Node *node, adjust_appendrel_varnos_cxt *context)
 	{
 		Var *var = (Var *) node;
 
-		/* Don't transform system columns & other relations' Vars */
-		if (var->varattno > 0 && var->varno == context->child_varno)
+		/* See adjust_appendrel_attrs_mutator() */
+		if (var->varno == context->child_varno)
 		{
-			Var *child_var;
+			if (var->varattno > 0)
+			{
+				Var *child_var;
 
-			var = copyObject(var);
+				var = copyObject(var);
 
-			if (var->varattno > list_length(context->translated_vars))
-				elog(ERROR, "attribute %d of relation \"%s\" does not exist",
-					 var->varattno, get_rel_name(context->parent_relid));
+				if (var->varattno > list_length(context->translated_vars))
+					elog(ERROR, "attribute %d of relation \"%s\" does not exist",
+						 var->varattno, get_rel_name(context->parent_relid));
 
-			child_var = list_nth(context->translated_vars, var->varattno - 1);
-			if (!child_var)
-				elog(ERROR, "attribute %d of relation \"%s\" does not exist",
-					 var->varattno, get_rel_name(context->parent_relid));
+				child_var = list_nth(context->translated_vars, var->varattno - 1);
+				if (!child_var)
+					elog(ERROR, "attribute %d of relation \"%s\" does not exist",
+						 var->varattno, get_rel_name(context->parent_relid));
 
-			/* Transform attribute number */
-			var->varattno = child_var->varattno;
+				/* Transform attribute number */
+				var->varattno = child_var->varattno;
+			}
+			else if (var->varattno == 0)
+			{
+				ConvertRowtypeExpr *r = makeNode(ConvertRowtypeExpr);
+
+				Assert(var->vartype = context->parent_reltype);
+
+				r->arg = (Expr *) var;
+				r->resulttype = context->parent_reltype;
+				r->convertformat = COERCE_IMPLICIT_CAST;
+				r->location = -1;
+
+				/* Make sure the Var node has the right type ID, too */
+				var->vartype = context->child_reltype;
+
+				return (Node *) r;
+			}
 		}
 
 		return (Node *) var;

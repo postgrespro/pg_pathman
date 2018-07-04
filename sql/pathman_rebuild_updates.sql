@@ -45,6 +45,15 @@ FROM test_updates.test_dummy t2
 WHERE t1.val = 101 AND t1.val = t2.val
 RETURNING t1.*, t1.tableoid::REGCLASS;
 
+EXPLAIN (COSTS OFF) UPDATE test_updates.test SET b = 0
+WHERE val = 101 AND test >= (100, 8)
+RETURNING *, tableoid::REGCLASS;
+
+/* execute this one */
+UPDATE test_updates.test SET b = 0
+WHERE val = 101 AND test >= (100, -1)
+RETURNING test;
+
 DROP TABLE test_updates.test_dummy;
 
 

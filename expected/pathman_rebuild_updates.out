@@ -83,6 +83,25 @@ RETURNING t1.*, t1.tableoid::REGCLASS;
                Filter: (val = 101)
 (6 rows)
 
+EXPLAIN (COSTS OFF) UPDATE test_updates.test SET b = 0
+WHERE val = 101 AND test >= (100, 8)
+RETURNING *, tableoid::REGCLASS;
+                                    QUERY PLAN                                     
+-----------------------------------------------------------------------------------
+ Update on test_11
+   ->  Seq Scan on test_11
+         Filter: (((test_11.*)::test_updates.test >= ROW(100, 8)) AND (val = 101))
+(3 rows)
+
+/* execute this one */
+UPDATE test_updates.test SET b = 0
+WHERE val = 101 AND test >= (100, -1)
+RETURNING test;
+  test   
+---------
+ (101,0)
+(1 row)
+
 DROP TABLE test_updates.test_dummy;
 DROP SCHEMA test_updates CASCADE;
 NOTICE:  drop cascades to 13 other objects
