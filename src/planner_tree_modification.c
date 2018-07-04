@@ -132,9 +132,9 @@ reset_query_id_generator(void)
 
 
 /*
- * Basic plan tree walker
+ * Basic plan tree walker.
  *
- * 'visitor' is applied right before return
+ * 'visitor' is applied right before return.
  */
 void
 plan_tree_walker(Plan *plan,
@@ -165,12 +165,13 @@ plan_tree_walker(Plan *plan,
 				plan_tree_walker((Plan *) lfirst(l), visitor, context);
 			break;
 
-		/* Since they look alike */
-		case T_MergeAppend:
 		case T_Append:
-			Assert(offsetof(Append, appendplans) ==
-				   offsetof(MergeAppend, mergeplans));
 			foreach(l, ((Append *) plan)->appendplans)
+				plan_tree_walker((Plan *) lfirst(l), visitor, context);
+			break;
+
+		case T_MergeAppend:
+			foreach(l, ((MergeAppend *) plan)->mergeplans)
 				plan_tree_walker((Plan *) lfirst(l), visitor, context);
 			break;
 
