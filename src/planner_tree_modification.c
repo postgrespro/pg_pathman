@@ -109,7 +109,8 @@ static void handle_modification_query(Query *parse, transform_query_cxt *context
 static void partition_filter_visitor(Plan *plan, void *context);
 
 static Node *eval_extern_params_mutator(Node *node, ParamListInfo params);
-static bool adjust_appendrel_varnos(Node *node, adjust_appendrel_varnos_cxt *context);
+static Node *adjust_appendrel_varnos(Node *node, adjust_appendrel_varnos_cxt *context);
+static bool inh_translation_list_is_trivial(List *translated_vars);
 
 
 /*
@@ -389,7 +390,7 @@ handle_modification_query(Query *parse, transform_query_cxt *context)
 
 	rte = rt_fetch(result_rti, parse->rtable);
 
-	/* Exit if it's DELETE FROM ONLY table */
+	/* Exit if it's ONLY table */
 	if (!rte->inh) return;
 
 	prel = get_pathman_relation_info(rte->relid);
@@ -465,33 +466,37 @@ handle_modification_query(Query *parse, transform_query_cxt *context)
 				return; /* nothing to do here */
 			}
 
-			/* Both tables are already locked */
-			child_rel = heap_open(child, NoLock);
-			parent_rel = heap_open(parent, NoLock);
-
-			make_inh_translation_list(parent_rel, child_rel, 0, &translated_vars);
-
-			/* Translate varnos for this child */
-			aav_cxt.child_varno = result_rti;
-			aav_cxt.parent_relid = parent;
-			aav_cxt.translated_vars = translated_vars;
-			adjust_appendrel_varnos((Node *) parse, &aav_cxt);
-
-			/* Translate column privileges for this child */
-			rte->selectedCols = translate_col_privs(rte->selectedCols, translated_vars);
-			rte->insertedCols = translate_col_privs(rte->insertedCols, translated_vars);
-			rte->updatedCols = translate_col_privs(rte->updatedCols, translated_vars);
-
-			/* Close relations (should remain locked, though) */
-			heap_close(child_rel, NoLock);
-			heap_close(parent_rel, NoLock);
-
 			/* Update RTE's relid and relkind (for FDW) */
 			rte->relid = child;
 			rte->relkind = child_relkind;
 
 			/* HACK: unset the 'inh' flag (no children) */
 			rte->inh = false;
+
+			/* Both tables are already locked */
+			child_rel = heap_open(child, NoLock);
+			parent_rel = heap_open(parent, NoLock);
+
+			make_inh_translation_list(parent_rel, child_rel, 0, &translated_vars);
+
+			/* Perform some additional adjustments */
+			if (!inh_translation_list_is_trivial(translated_vars))
+			{
+				/* Translate varnos for this child */
+				aav_cxt.child_varno = result_rti;
+				aav_cxt.parent_relid = parent;
+				aav_cxt.translated_vars = translated_vars;
+				adjust_appendrel_varnos((Node *) parse, &aav_cxt);
+
+				/* Translate column privileges for this child */
+				rte->selectedCols = translate_col_privs(rte->selectedCols, translated_vars);
+				rte->insertedCols = translate_col_privs(rte->insertedCols, translated_vars);
+				rte->updatedCols = translate_col_privs(rte->updatedCols, translated_vars);
+			}
+
+			/* Close relations (should remain locked, though) */
+			heap_close(child_rel, NoLock);
+			heap_close(parent_rel, NoLock);
 		}
 	}
 
@@ -562,11 +567,11 @@ eval_extern_params_mutator(Node *node, ParamListInfo params)
 }
 
 /* Remap parent's attributes to child ones s*/
-static bool
+static Node *
 adjust_appendrel_varnos(Node *node, adjust_appendrel_varnos_cxt *context)
 {
 	if (node == NULL)
-		return false;
+		return NULL;
 
 	if (IsA(node, Query))
 	{
@@ -577,7 +582,7 @@ adjust_appendrel_varnos(Node *node, adjust_appendrel_varnos_cxt *context)
 		foreach (lc, query->targetList)
 		{
 			TargetEntry *te = (TargetEntry *) lfirst(lc);
-			Var *child_var;
+			Var			*child_var;
 
 			if (te->resjunk)
 				continue;
@@ -595,10 +600,12 @@ adjust_appendrel_varnos(Node *node, adjust_appendrel_varnos_cxt *context)
 			te->resno = child_var->varattno;
 		}
 
-		return query_tree_walker((Query *) node,
-								 adjust_appendrel_varnos,
-								 context,
-								 QTW_IGNORE_RC_SUBQUERIES);
+		/* NOTE: we shouldn't copy top-level Query */
+		return (Node *) query_tree_mutator((Query *) node,
+										   adjust_appendrel_varnos,
+										   context,
+										   (QTW_IGNORE_RC_SUBQUERIES |
+											QTW_DONT_COPY_QUERY));
 	}
 
 	if (IsA(node, Var))
@@ -609,6 +616,8 @@ adjust_appendrel_varnos(Node *node, adjust_appendrel_varnos_cxt *context)
 		if (var->varattno > 0 && var->varno == context->child_varno)
 		{
 			Var *child_var;
+
+			var = copyObject(var);
 
 			if (var->varattno > list_length(context->translated_vars))
 				elog(ERROR, "attribute %d of relation \"%s\" does not exist",
@@ -623,7 +632,7 @@ adjust_appendrel_varnos(Node *node, adjust_appendrel_varnos_cxt *context)
 			var->varattno = child_var->varattno;
 		}
 
-		return false;
+		return (Node *) var;
 	}
 
 	if (IsA(node, SubLink))
@@ -631,14 +640,36 @@ adjust_appendrel_varnos(Node *node, adjust_appendrel_varnos_cxt *context)
 		SubLink *sl = (SubLink *) node;
 
 		/* Examine its expression */
-		node = sl->testexpr;
+		sl->testexpr = expression_tree_mutator(sl->testexpr,
+											   adjust_appendrel_varnos,
+											   context);
+		return (Node *) sl;
 	}
 
-	return expression_tree_walker(node,
-								  adjust_appendrel_varnos,
-								  context);
+	return expression_tree_mutator(node,
+								   adjust_appendrel_varnos,
+								   context);
 }
 
+/* Check whether Var translation list is trivial (no shuffle) */
+static bool
+inh_translation_list_is_trivial(List *translated_vars)
+{
+	ListCell   *lc;
+	AttrNumber	i = 1;
+
+	foreach (lc, translated_vars)
+	{
+		Var *var = (Var *) lfirst(lc);
+
+		if (var && var->varattno != i)
+			return false;
+
+		i++;
+	}
+
+	return true;
+}
 
 /*
  * -------------------------------
