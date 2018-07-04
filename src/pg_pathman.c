@@ -28,7 +28,6 @@
 #include "miscadmin.h"
 #include "optimizer/clauses.h"
 #include "optimizer/plancat.h"
-#include "optimizer/prep.h"
 #include "optimizer/restrictinfo.h"
 #include "optimizer/cost.h"
 #include "utils/datum.h"

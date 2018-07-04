@@ -96,6 +96,14 @@ typedef struct
 	CommonTableExpr	   *parent_cte;
 } transform_query_cxt;
 
+typedef struct
+{
+	Index	child_varno;
+	Oid		parent_relid,
+			parent_reltype,
+			child_reltype;
+	List   *translated_vars;
+} adjust_appendrel_varnos_cxt;
 
 static bool pathman_transform_query_walker(Node *node, void *context);
 
@@ -107,6 +115,8 @@ static void partition_router_visitor(Plan *plan, void *context);
 
 static Oid find_deepest_partition(Oid relid, Index rti, Expr *quals);
 static Node *eval_extern_params_mutator(Node *node, ParamListInfo params);
+static Node *adjust_appendrel_varnos(Node *node, adjust_appendrel_varnos_cxt *context);
+static bool inh_translation_list_is_trivial(List *translated_vars);
 static bool modifytable_contains_fdw(List *rtable, ModifyTable *node);
 
 
@@ -137,9 +147,9 @@ reset_query_id_generator(void)
 
 
 /*
- * Basic plan tree walker
+ * Basic plan tree walker.
  *
- * 'visitor' is applied right before return
+ * 'visitor' is applied right before return.
  */
 void
 plan_tree_walker(Plan *plan,
@@ -170,12 +180,13 @@ plan_tree_walker(Plan *plan,
 				plan_tree_walker((Plan *) lfirst(l), visitor, context);
 			break;
 
-		/* Since they look alike */
-		case T_MergeAppend:
 		case T_Append:
-			Assert(offsetof(Append, appendplans) ==
-				   offsetof(MergeAppend, mergeplans));
 			foreach(l, ((Append *) plan)->appendplans)
+				plan_tree_walker((Plan *) lfirst(l), visitor, context);
+			break;
+
+		case T_MergeAppend:
+			foreach(l, ((MergeAppend *) plan)->mergeplans)
 				plan_tree_walker((Plan *) lfirst(l), visitor, context);
 			break;
 
@@ -365,17 +376,17 @@ handle_modification_query(Query *parse, transform_query_cxt *context)
 	RangeTblEntry  *rte;
 	Expr		   *quals;
 	Oid				child;
-	Index			result_rel = parse->resultRelation;
+	Index			result_rti = parse->resultRelation;
 	ParamListInfo	params = context->query_params;
 
 	/* Exit if it's not a DELETE or UPDATE query */
-	if (result_rel == 0 || (parse->commandType != CMD_UPDATE &&
+	if (result_rti == 0 || (parse->commandType != CMD_UPDATE &&
 							parse->commandType != CMD_DELETE))
 		return;
 
-	rte = rt_fetch(result_rel, parse->rtable);
+	rte = rt_fetch(result_rti, parse->rtable);
 
-	/* Exit if it's DELETE FROM ONLY table */
+	/* Exit if it's ONLY table */
 	if (!rte->inh)
 		return;
 
@@ -386,7 +397,7 @@ handle_modification_query(Query *parse, transform_query_cxt *context)
 		quals = (Expr *) eval_extern_params_mutator((Node *) quals, params);
 
 	/* Parse syntax tree and extract deepest partition if possible */
-	child = find_deepest_partition(rte->relid, result_rel, quals);
+	child = find_deepest_partition(rte->relid, result_rti, quals);
 
 	/* Substitute parent table with partition */
 	if (OidIsValid(child))
@@ -394,13 +405,14 @@ handle_modification_query(Query *parse, transform_query_cxt *context)
 		Relation	child_rel,
 					parent_rel;
 
-		void	   *tuple_map; /* we don't need the map itself */
-
 		LOCKMODE	lockmode = RowExclusiveLock; /* UPDATE | DELETE */
 
 		HeapTuple	syscache_htup;
 		char		child_relkind;
 		Oid			parent = rte->relid;
+
+		List	   *translated_vars;
+		adjust_appendrel_varnos_cxt aav_cxt;
 
 		/* Lock 'child' table */
 		LockRelationOid(child, lockmode);
@@ -421,30 +433,144 @@ handle_modification_query(Query *parse, transform_query_cxt *context)
 			return; /* nothing to do here */
 		}
 
-		/* Both tables are already locked */
-		child_rel  = heap_open(child,  NoLock);
-		parent_rel = heap_open(parent, NoLock);
-
-		/* Build a conversion map (may be trivial, i.e. NULL) */
-		tuple_map = build_part_tuple_map(parent_rel, child_rel);
-		if (tuple_map)
-			free_conversion_map((TupleConversionMap *) tuple_map);
-
-		/* Close relations (should remain locked, though) */
-		heap_close(child_rel,  NoLock);
-		heap_close(parent_rel, NoLock);
-
-		/* Exit if tuple map WAS NOT trivial */
-		if (tuple_map)
-			return;
-
 		/* Update RTE's relid and relkind (for FDW) */
 		rte->relid   = child;
 		rte->relkind = child_relkind;
 
 		/* HACK: unset the 'inh' flag (no children) */
 		rte->inh = false;
+
+		/* Both tables are already locked */
+		child_rel  = heap_open(child,  NoLock);
+		parent_rel = heap_open(parent, NoLock);
+
+		make_inh_translation_list(parent_rel, child_rel, 0, &translated_vars);
+
+		/* Perform some additional adjustments */
+		if (!inh_translation_list_is_trivial(translated_vars))
+		{
+			/* Translate varnos for this child */
+			aav_cxt.child_varno		= result_rti;
+			aav_cxt.parent_relid	= parent;
+			aav_cxt.parent_reltype	= RelationGetDescr(parent_rel)->tdtypeid;
+			aav_cxt.child_reltype	= RelationGetDescr(child_rel)->tdtypeid;
+			aav_cxt.translated_vars	= translated_vars;
+			adjust_appendrel_varnos((Node *) parse, &aav_cxt);
+
+			/* Translate column privileges for this child */
+			rte->selectedCols = translate_col_privs(rte->selectedCols, translated_vars);
+			rte->insertedCols = translate_col_privs(rte->insertedCols, translated_vars);
+			rte->updatedCols = translate_col_privs(rte->updatedCols, translated_vars);
+		}
+
+		/* Close relations (should remain locked, though) */
+		heap_close(child_rel,  NoLock);
+		heap_close(parent_rel, NoLock);
 	}
+}
+
+/* Remap parent's attributes to child ones */
+static Node *
+adjust_appendrel_varnos(Node *node, adjust_appendrel_varnos_cxt *context)
+{
+	if (node == NULL)
+		return NULL;
+
+	if (IsA(node, Query))
+	{
+		Query	   *query = (Query *) node;
+		ListCell   *lc;
+
+		/* FIXME: we might need to reorder TargetEntries */
+		foreach (lc, query->targetList)
+		{
+			TargetEntry *te = (TargetEntry *) lfirst(lc);
+			Var			*child_var;
+
+			if (te->resjunk)
+				continue;
+
+			if (te->resno > list_length(context->translated_vars))
+				elog(ERROR, "attribute %d of relation \"%s\" does not exist",
+					 te->resno, get_rel_name(context->parent_relid));
+
+			child_var = list_nth(context->translated_vars, te->resno - 1);
+			if (!child_var)
+				elog(ERROR, "attribute %d of relation \"%s\" does not exist",
+					 te->resno, get_rel_name(context->parent_relid));
+
+			/* Transform attribute number */
+			te->resno = child_var->varattno;
+		}
+
+		/* NOTE: we shouldn't copy top-level Query */
+		return (Node *) query_tree_mutator((Query *) node,
+										   adjust_appendrel_varnos,
+										   context,
+										   (QTW_IGNORE_RC_SUBQUERIES |
+											QTW_DONT_COPY_QUERY));
+	}
+
+	if (IsA(node, Var))
+	{
+		Var *var = (Var *) node;
+
+		/* See adjust_appendrel_attrs_mutator() */
+		if (var->varno == context->child_varno)
+		{
+			if (var->varattno > 0)
+			{
+				Var *child_var;
+
+				var = copyObject(var);
+
+				if (var->varattno > list_length(context->translated_vars))
+					elog(ERROR, "attribute %d of relation \"%s\" does not exist",
+						 var->varattno, get_rel_name(context->parent_relid));
+
+				child_var = list_nth(context->translated_vars, var->varattno - 1);
+				if (!child_var)
+					elog(ERROR, "attribute %d of relation \"%s\" does not exist",
+						 var->varattno, get_rel_name(context->parent_relid));
+
+				/* Transform attribute number */
+				var->varattno = child_var->varattno;
+			}
+			else if (var->varattno == 0)
+			{
+				ConvertRowtypeExpr *r = makeNode(ConvertRowtypeExpr);
+
+				Assert(var->vartype = context->parent_reltype);
+
+				r->arg = (Expr *) var;
+				r->resulttype = context->parent_reltype;
+				r->convertformat = COERCE_IMPLICIT_CAST;
+				r->location = -1;
+
+				/* Make sure the Var node has the right type ID, too */
+				var->vartype = context->child_reltype;
+
+				return (Node *) r;
+			}
+		}
+
+		return (Node *) var;
+	}
+
+	if (IsA(node, SubLink))
+	{
+		SubLink *sl = (SubLink *) node;
+
+		/* Examine its expression */
+		sl->testexpr = expression_tree_mutator(sl->testexpr,
+											   adjust_appendrel_varnos,
+											   context);
+		return (Node *) sl;
+	}
+
+	return expression_tree_mutator(node,
+								   adjust_appendrel_varnos,
+								   context);
 }
 
 
@@ -762,6 +888,26 @@ eval_extern_params_mutator(Node *node, ParamListInfo params)
 
 	return expression_tree_mutator(node, eval_extern_params_mutator,
 								   (void *) params);
+}
+
+/* Check whether Var translation list is trivial (no shuffle) */
+static bool
+inh_translation_list_is_trivial(List *translated_vars)
+{
+	ListCell   *lc;
+	AttrNumber	i = 1;
+
+	foreach (lc, translated_vars)
+	{
+		Var *var = (Var *) lfirst(lc);
+
+		if (var && var->varattno != i)
+			return false;
+
+		i++;
+	}
+
+	return true;
 }
 
 

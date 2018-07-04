@@ -24,6 +24,7 @@ SELECT append_range_partition('test_updates.test');
 (1 row)
 
 INSERT INTO test_updates.test_11 (val, b) VALUES (101, 10);
+VACUUM ANALYZE;
 /* tuple descs are the same */
 EXPLAIN (COSTS OFF) UPDATE test_updates.test SET b = 0 WHERE val = 1;
         QUERY PLAN         
@@ -43,14 +44,10 @@ UPDATE test_updates.test SET b = 0 WHERE val = 1 RETURNING *, tableoid::REGCLASS
 EXPLAIN (COSTS OFF) UPDATE test_updates.test SET b = 0 WHERE val = 101;
          QUERY PLAN          
 -----------------------------
- Update on test
-   Update on test
-   Update on test_11
-   ->  Seq Scan on test
-         Filter: (val = 101)
+ Update on test_11
    ->  Seq Scan on test_11
          Filter: (val = 101)
-(7 rows)
+(3 rows)
 
 UPDATE test_updates.test SET b = 0 WHERE val = 101 RETURNING *, tableoid::REGCLASS;
  val | b |       tableoid       
@@ -58,6 +55,54 @@ UPDATE test_updates.test SET b = 0 WHERE val = 101 RETURNING *, tableoid::REGCLA
  101 | 0 | test_updates.test_11
 (1 row)
 
+CREATE TABLE test_updates.test_dummy (val INT4);
+EXPLAIN (COSTS OFF) UPDATE test_updates.test SET val = val + 1
+WHERE val = 101 AND val = ANY (TABLE test_updates.test_dummy)
+RETURNING *, tableoid::REGCLASS;
+             QUERY PLAN             
+------------------------------------
+ Update on test_11
+   ->  Nested Loop Semi Join
+         ->  Seq Scan on test_11
+               Filter: (val = 101)
+         ->  Seq Scan on test_dummy
+               Filter: (val = 101)
+(6 rows)
+
+EXPLAIN (COSTS OFF) UPDATE test_updates.test t1 SET b = 0
+FROM test_updates.test_dummy t2
+WHERE t1.val = 101 AND t1.val = t2.val
+RETURNING t1.*, t1.tableoid::REGCLASS;
+              QUERY PLAN               
+---------------------------------------
+ Update on test_11 t1
+   ->  Nested Loop
+         ->  Seq Scan on test_11 t1
+               Filter: (val = 101)
+         ->  Seq Scan on test_dummy t2
+               Filter: (val = 101)
+(6 rows)
+
+EXPLAIN (COSTS OFF) UPDATE test_updates.test SET b = 0
+WHERE val = 101 AND test >= (100, 8)
+RETURNING *, tableoid::REGCLASS;
+                                    QUERY PLAN                                     
+-----------------------------------------------------------------------------------
+ Update on test_11
+   ->  Seq Scan on test_11
+         Filter: (((test_11.*)::test_updates.test >= ROW(100, 8)) AND (val = 101))
+(3 rows)
+
+/* execute this one */
+UPDATE test_updates.test SET b = 0
+WHERE val = 101 AND test >= (100, -1)
+RETURNING test;
+  test   
+---------
+ (101,0)
+(1 row)
+
+DROP TABLE test_updates.test_dummy;
 DROP SCHEMA test_updates CASCADE;
 NOTICE:  drop cascades to 13 other objects
 DROP EXTENSION pg_pathman;
