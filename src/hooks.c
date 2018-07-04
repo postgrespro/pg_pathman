@@ -384,11 +384,14 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 				AppendRelInfo  *appinfo = (AppendRelInfo *) lfirst(lc);
 
 				/*
-				 * If there's an 'appinfo', it means that somebody
+				 * If there's an 'appinfo' with Oid, it means that somebody
 				 * (PG?) has already processed this partitioned table
 				 * and added its children to the plan.
+				 *
+				 * NOTE: there's no Oid iff it's UNION.
 				 */
-				if (appinfo->child_relid == rti)
+				if (appinfo->child_relid == rti &&
+					OidIsValid(appinfo->parent_reloid))
 					return;
 			}
 		}
