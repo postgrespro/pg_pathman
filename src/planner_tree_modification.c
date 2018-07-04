@@ -605,7 +605,7 @@ adjust_appendrel_varnos(Node *node, adjust_appendrel_varnos_cxt *context)
 		Var *var = (Var *) node;
 
 		/* Don't transform system columns & other relations' Vars */
-		if (var->varoattno > 0 && var->varno == context->child_varno)
+		if (var->varattno > 0 && var->varno == context->child_varno)
 		{
 			Var *child_var;
 
