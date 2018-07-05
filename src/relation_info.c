@@ -20,6 +20,9 @@
 #include "catalog/catalog.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_constraint.h"
+#if PG_VERSION_NUM < 110000 && PG_VERSION_NUM >= 90600
+#include "catalog/pg_constraint_fn.h"
+#endif
 #include "catalog/pg_inherits.h"
 #include "catalog/pg_type.h"
 #include "miscadmin.h"
@@ -45,7 +48,7 @@
 #include "optimizer/planmain.h"
 #endif
 
-#if PG_VERSION_NUM >= 90600
+#if PG_VERSION_NUM >= 90600 && PG_VERSION_NUM < 11000
 #include "catalog/pg_constraint_fn.h"
 #endif
 
@@ -402,7 +405,7 @@ build_pathman_relation_info(Oid relid, Datum *values)
 
 	/* Create a new memory context to store expression tree etc */
 	prel_mcxt = AllocSetContextCreate(PathmanParentsCacheContext,
-									  __FUNCTION__,
+									  "build_pathman_relation_info",
 									  ALLOCSET_SMALL_SIZES);
 
 	/* Create a new PartRelationInfo */
@@ -897,7 +900,7 @@ PrelExpressionAttributesMap(const PartRelationInfo *prel,
 	while ((i = bms_next_member(prel->expr_atts, i)) >= 0)
 	{
 		AttrNumber	attnum = i + FirstLowInvalidHeapAttributeNumber;
-		char	   *attname = get_attname(parent_relid, attnum);
+		char	   *attname = get_attname_compat(parent_relid, attnum);
 		int			j;
 
 		Assert(attnum <= expr_natts);
@@ -1435,7 +1438,7 @@ cook_partitioning_expression(const Oid relid,
 				if (nullable)
 					ereport(ERROR, (errcode(ERRCODE_NOT_NULL_VIOLATION),
 									errmsg("column \"%s\" should be marked NOT NULL",
-										   get_attname(relid, attnum))));
+										   get_attname_compat(relid, attnum))));
 			}
 		}
 

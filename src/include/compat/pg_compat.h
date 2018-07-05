@@ -41,32 +41,33 @@
  */
 
 /*
- * calc_nestloop_required_outer()
+ * get_attname()
  */
-
 #if PG_VERSION_NUM >= 110000
-static inline Relids
-calc_nestloop_required_outer_compat(Path *outer_path, Path *inner_path)
-{
-	RelOptInfo *innerrel = inner_path->parent;
-	RelOptInfo *outerrel = outer_path->parent;
-	Relids		innerrelids = innerrel->relids;
-	Relids		outerrelids = outerrel->relids;
-	Relids		inner_paramrels = PATH_REQ_OUTER(inner_path);
-	Relids		outer_paramrels = PATH_REQ_OUTER(outer_path);
-
-	return calc_nestloop_required_outer(outerrelids, outer_paramrels,
-										innerrelids, inner_paramrels);
-}
+#define get_attname_compat(relid, attnum) \
+	get_attname((relid), (attnum), false)
 #else
-#define calc_nestloop_required_outer_compat(outer_path, inner_path) \
-	(calc_nestloop_required_outer((outer_path), (inner_path)))
+#define get_attname_compat(relid, attnum) \
+	get_attname((relid), (attnum))
 #endif
+
+
+/*
+ * calc_nestloop_required_outer
+ */
+#if PG_VERSION_NUM >= 110000
+#define calc_nestloop_required_outer_compat(outer, inner) \
+	calc_nestloop_required_outer((outer)->parent->relids, PATH_REQ_OUTER(outer), \
+								 (inner)->parent->relids, PATH_REQ_OUTER(inner))
+#else
+#define calc_nestloop_required_outer_compat(outer, inner) \
+	calc_nestloop_required_outer((outer), (inner))
+#endif
+
 
 /*
  * adjust_appendrel_attrs()
  */
-
 #if PG_VERSION_NUM >= 110000
 #define adjust_appendrel_attrs_compat(root, node, appinfo) \
 		adjust_appendrel_attrs((root), \
@@ -93,17 +94,17 @@ calc_nestloop_required_outer_compat(Path *outer_path, Path *inner_path)
 #define adjust_rel_targetlist_compat(root, dst_rel, src_rel, appinfo) \
 	do { \
 		(dst_rel)->reltarget->exprs = (List *) \
-				adjust_appendrel_attrs((root), \
-									   (Node *) (src_rel)->reltarget->exprs, \
-									   (appinfo)); \
+			adjust_appendrel_attrs((root), \
+								   (Node *) (src_rel)->reltarget->exprs, \
+								   (appinfo)); \
 	} while (0)
 #elif PG_VERSION_NUM >= 90500
 #define adjust_rel_targetlist_compat(root, dst_rel, src_rel, appinfo) \
 	do { \
 		(dst_rel)->reltargetlist = (List *) \
-				adjust_appendrel_attrs((root), \
-									   (Node *) (src_rel)->reltargetlist, \
-									   (appinfo)); \
+			adjust_appendrel_attrs((root), \
+								   (Node *) (src_rel)->reltargetlist, \
+								   (appinfo)); \
 	} while (0)
 #endif
 
@@ -231,7 +232,17 @@ calc_nestloop_required_outer_compat(Path *outer_path, Path *inner_path)
 /*
  * create_append_path()
  */
-#if PG_VERSION_NUM >= 100000
+#if PG_VERSION_NUM >= 110000
+
+#ifndef PGPRO_VERSION
+#define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
+	create_append_path(NULL, (rel), (subpaths), NIL, (required_outer), \
+					   (parallel_workers), false, NIL, -1)
+#else
+/* TODO */
+#endif /* PGPRO_VERSION */
+
+#elif PG_VERSION_NUM >= 100000
 
 #ifndef PGPRO_VERSION
 #define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
@@ -240,7 +251,6 @@ calc_nestloop_required_outer_compat(Path *outer_path, Path *inner_path)
 #define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
 		create_append_path((rel), (subpaths), (required_outer), (parallel_workers), NIL, \
 						   false, NIL)
-
 #endif /* PGPRO_VERSION */
 
 #elif PG_VERSION_NUM >= 90600
@@ -360,14 +370,16 @@ extern void create_plain_partial_paths(PlannerInfo *root,
 #define ExecEvalExprCompat(expr, econtext, isNull, errHandler) \
 	ExecEvalExpr((expr), (econtext), (isNull))
 #elif PG_VERSION_NUM >= 90500
-#include "partition_filter.h"
 
 /* Variables for ExecEvalExprCompat() */
 extern Datum			exprResult;
 extern ExprDoneCond		isDone;
 
 /* Error handlers */
-static inline void mult_result_handler() { elog(ERROR, ERR_PART_ATTR_MULTIPLE_RESULTS); }
+static inline void mult_result_handler()
+{
+	elog(ERROR, "partitioning expression should return single value");
+}
 
 #define ExecEvalExprCompat(expr, econtext, isNull, errHandler) \
 ( \
@@ -727,11 +739,53 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 /*
  * RegisterCustomScanMethods()
  */
-#if PG_VERSION_NUM < 96000
+#if PG_VERSION_NUM < 90600
 #define RegisterCustomScanMethods(methods)
 #endif
 
+/*
+ * MakeTupleTableSlot()
+ */
+#if PG_VERSION_NUM >= 110000
+#define MakeTupleTableSlotCompat() \
+	MakeTupleTableSlot(NULL)
+#else
+#define MakeTupleTableSlotCompat() \
+	MakeTupleTableSlot()
+#endif
 
+/*
+ * ExecInitExtraTupleSlot()
+ */
+#if PG_VERSION_NUM >= 110000
+#define ExecInitExtraTupleSlotCompat(estate) \
+	ExecInitExtraTupleSlot((estate), NULL)
+#else
+#define ExecInitExtraTupleSlotCompat(estate) \
+	ExecInitExtraTupleSlot(estate)
+#endif
+
+/*
+ * BackgroundWorkerInitializeConnectionByOid()
+ */
+#if PG_VERSION_NUM >= 110000
+#define BackgroundWorkerInitializeConnectionByOidCompat(dboid, useroid) \
+	BackgroundWorkerInitializeConnectionByOid((dboid), (useroid), 0)
+#else
+#define BackgroundWorkerInitializeConnectionByOidCompat(dboid, useroid) \
+	BackgroundWorkerInitializeConnectionByOid((dboid), (useroid))
+#endif
+
+/*
+ * heap_delete()
+ */
+#if PG_VERSION_NUM >= 110000
+#define heap_delete_compat(relation, tid, cid, crosscheck, wait, hufd) \
+	heap_delete((relation), (tid), (cid), (crosscheck), (wait), (hufd), false)
+#else
+#define heap_delete_compat(relation, tid, cid, crosscheck, wait, hufd) \
+	heap_delete((relation), (tid), (cid), (crosscheck), (wait), (hufd))
+#endif
 
 /*
  * -------------

@@ -160,7 +160,7 @@ partition_router_exec(CustomScanState *node)
 			state->junkfilter =
 				ExecInitJunkFilter(state->subplan->targetlist,
 								   old_rri->ri_RelationDesc->rd_att->tdhasoid,
-								   ExecInitExtraTupleSlot(estate));
+								   ExecInitExtraTupleSlotCompat(estate));
 
 			state->junkfilter->jf_junkAttNo =
 				ExecFindJunkAttribute(state->junkfilter, "ctid");
@@ -277,11 +277,11 @@ ExecDeleteInternal(ItemPointer tupleid,
 	{
 		/* delete the tuple */
 ldelete:
-		result = heap_delete(resultRelationDesc, tupleid,
-							 estate->es_output_cid,
-							 estate->es_crosscheck_snapshot,
-							 true /* wait for commit */ ,
-							 &hufd);
+		result = heap_delete_compat(resultRelationDesc, tupleid,
+									estate->es_output_cid,
+									estate->es_crosscheck_snapshot,
+									true /* wait for commit */ ,
+									&hufd);
 		switch (result)
 		{
 			case HeapTupleSelfUpdated:

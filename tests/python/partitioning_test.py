@@ -650,7 +650,7 @@ class Tests(unittest.TestCase):
 
                 # Thread for connection #2 (it has to wait)
                 def con2_thread():
-                    con1.begin()
+                    con2.begin()
                     con2.execute('set enable_hashjoin = f')
                     con2.execute('set enable_mergejoin = f')
 

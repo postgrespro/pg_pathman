@@ -18,7 +18,12 @@ INSERT INTO permissions.user1_table SELECT g, g FROM generate_series(1, 20) as g
 
 /* Should fail (can't SELECT) */
 SET ROLE user2;
-SELECT create_range_partitions('permissions.user1_table', 'id', 1, 10, 2);
+DO $$
+BEGIN
+    SELECT create_range_partitions('permissions.user1_table', 'id', 1, 10, 2);
+EXCEPTION
+    WHEN insufficient_privilege THEN
+END$$;
 
 /* Grant SELECT to user2 */
 SET ROLE user1;
@@ -26,7 +31,12 @@ GRANT SELECT ON permissions.user1_table TO user2;
 
 /* Should fail (don't own parent) */
 SET ROLE user2;
-SELECT create_range_partitions('permissions.user1_table', 'id', 1, 10, 2);
+DO $$
+BEGIN
+    SELECT create_range_partitions('permissions.user1_table', 'id', 1, 10, 2);
+EXCEPTION
+    WHEN insufficient_privilege THEN
+END$$;
 
 /* Should be ok */
 SET ROLE user1;
@@ -49,7 +59,12 @@ WHERE partrel = 'permissions.user1_table'::regclass;
 
 /* No rights to insert, should fail */
 SET ROLE user2;
-INSERT INTO permissions.user1_table (id, a) VALUES (35, 0);
+DO $$
+BEGIN
+    INSERT INTO permissions.user1_table (id, a) VALUES (35, 0);
+EXCEPTION
+    WHEN insufficient_privilege THEN
+END$$;
 
 /* No rights to create partitions (need INSERT privilege) */
 SET ROLE user2;
@@ -81,7 +96,12 @@ WHERE oid = ANY (SELECT "partition" FROM pathman_partition_list
 ORDER BY relname; /* we also check ACL for "user1_table_2" */
 
 /* Try to drop partition, should fail */
-SELECT drop_range_partition('permissions.user1_table_4');
+DO $$
+BEGIN
+    SELECT drop_range_partition('permissions.user1_table_4');
+EXCEPTION
+    WHEN insufficient_privilege THEN
+END$$;
 
 /* Disable automatic partition creation */
 SET ROLE user1;

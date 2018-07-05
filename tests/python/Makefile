@@ -1,2 +1,2 @@
 partitioning_tests:
-	python -m unittest partitioning_test.py
+	python -m unittest --verbose --failfast partitioning_test.py

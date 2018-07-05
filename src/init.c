@@ -25,7 +25,9 @@
 #include "catalog/indexing.h"
 #include "catalog/pg_extension.h"
 #include "catalog/pg_inherits.h"
+#if PG_VERSION_NUM < 110000
 #include "catalog/pg_inherits_fn.h"
+#endif
 #include "catalog/pg_type.h"
 #include "miscadmin.h"
 #include "optimizer/clauses.h"

@@ -851,7 +851,20 @@ eval_extern_params_mutator(Node *node, ParamListInfo params)
 			param->paramid > 0 &&
 			param->paramid <= params->numParams)
 		{
-			ParamExternData *prm = &params->params[param->paramid - 1];
+			ParamExternData *prm;
+
+#if PG_VERSION_NUM >= 110000
+			ParamExternData prmdata;
+			if (params->paramFetch != NULL)
+				prm = params->paramFetch(params, param->paramid, false, &prmdata);
+			else
+				prm = &params->params[param->paramid - 1];
+#else
+			prm = &params->params[param->paramid - 1];
+			if (!OidIsValid(prm->ptype) && params->paramFetch != NULL)
+				(*params->paramFetch) (params, param->paramid);
+#endif
+
 
 			if (OidIsValid(prm->ptype))
 			{

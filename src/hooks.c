@@ -514,13 +514,20 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 	rel->partial_pathlist = NIL;
 #endif
 
+/* Convert list to array for faster lookups */
+#if PG_VERSION_NUM >= 110000
+	setup_append_rel_array(root);
+#endif
+
 	/* Generate new paths using the rels we've just added */
 	set_append_rel_pathlist(root, rel, rti, pathkeyAsc, pathkeyDesc);
 	set_append_rel_size_compat(root, rel, rti);
 
-#if PG_VERSION_NUM >= 90600
-	/* consider gathering partial paths for the parent appendrel */
-	generate_gather_paths(root, rel);
+		/* consider gathering partial paths for the parent appendrel */
+#if PG_VERSION_NUM >= 110000
+		generate_gather_paths(root, rel, false);
+#elif PG_VERSION_NUM >= 90600
+		generate_gather_paths(root, rel);
 #endif
 
 	/* Skip if both custom nodes are disabled */
@@ -925,7 +932,7 @@ pathman_process_utility_hook(Node *first_arg,
 						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 						 errmsg("cannot change type of column \"%s\""
 								" of table \"%s\" partitioned by HASH",
-								get_attname(relation_oid, attr_number),
+								get_attname_compat(relation_oid, attr_number),
 								get_rel_name(relation_oid))));
 
 			/* Don't forget to invalidate parsed partitioning expression */

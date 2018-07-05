@@ -384,7 +384,7 @@ bgw_main_spawn_partitions(Datum main_arg)
 #endif
 	/* Establish connection and start transaction */
 
-	BackgroundWorkerInitializeConnectionByOid(args->dbid, args->userid);
+	BackgroundWorkerInitializeConnectionByOidCompat(args->dbid, args->userid);
 
 	/* Start new transaction (syscache access etc.) */
 	StartTransactionCommand();
@@ -469,7 +469,7 @@ bgw_main_concurrent_part(Datum main_arg)
 	SetAutoPartitionEnabled(false);
 
 	/* Establish connection and start transaction */
-	BackgroundWorkerInitializeConnectionByOid(part_slot->dbid, part_slot->userid);
+	BackgroundWorkerInitializeConnectionByOidCompat(part_slot->dbid, part_slot->userid);
 
 	/* Initialize pg_pathman's local config */
 	StartTransactionCommand();
@@ -483,7 +483,7 @@ bgw_main_concurrent_part(Datum main_arg)
 
 		Oid		types[2]	= { OIDOID,				INT4OID };
 		Datum	vals[2]		= { part_slot->relid,	part_slot->batch_size };
-		bool	nulls[2]	= { false,				false };
+		char	nulls[2]	= { false,				false };
 
 		bool	rel_locked = false;
 
@@ -568,7 +568,7 @@ bgw_main_concurrent_part(Datum main_arg)
 
 				/* Extract number of processed rows */
 				rows = DatumGetInt64(SPI_getbinval(tuple, tupdesc, 1, &isnull));
-				Assert(tupdesc->attrs[0]->atttypid == INT8OID); /* check type */
+				Assert(TupleDescAttr(tupdesc, 0)->atttypid == INT8OID); /* check type */
 				Assert(!isnull); /* ... and ofc it must not be NULL */
 			}
 			/* Else raise generic error */

@@ -29,7 +29,7 @@
 
 
 #define ERR_PART_ATTR_NULL				"partitioning expression's value should not be NULL"
-#define ERR_PART_ATTR_MULTIPLE_RESULTS	"partitioning expression should return single value"
+#define ERR_PART_ATTR_MULTIPLE_RESULTS
 #define ERR_PART_ATTR_NO_PART			"no suitable partition for key '%s'"
 #define ERR_PART_ATTR_MULTIPLE			INSERT_NODE_NAME " selected more than one partition"
 #define ERR_PART_DESC_CONVERT			"could not convert row type for partition"
