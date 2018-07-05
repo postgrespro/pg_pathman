@@ -1,8 +1,4 @@
-os:
-    - linux
-
 sudo: required
-dist: trusty
 
 language: c
 
@@ -10,18 +6,26 @@ services:
     - docker
 
 install:
-    - echo "FROM ${DOCKER_IMAGE}" > Dockerfile
+    - ./mk_dockerfile.sh
     - docker-compose build
 
 script:
     - docker-compose run $(bash <(curl -s https://codecov.io/env)) tests
 
+notifications:
+    email:
+        on_success: change
+        on_failure: always
+
 env:
-    - DOCKER_IMAGE=pathman/pg95_clang_check_code
-    - DOCKER_IMAGE=pathman/pg95_pathman_tests
-    - DOCKER_IMAGE=pathman/pg96_clang_check_code
-    - DOCKER_IMAGE=pathman/pg96_pathman_tests
-    - DOCKER_IMAGE=pathman/pg10_clang_check_code
-    - DOCKER_IMAGE=pathman/pg10_pathman_tests
-    - DOCKER_IMAGE=pathman/pg10_ca_clang_check_code
-    - DOCKER_IMAGE=pathman/pg10_ca_pathman_tests
+    - PG_VERSION=10 LEVEL=nightmare
+    - PG_VERSION=10 LEVEL=hardcore
+    - PG_VERSION=10
+    - PG_VERSION=9.6 LEVEL=hardcore
+    - PG_VERSION=9.6
+    - PG_VERSION=9.5 LEVEL=hardcore
+    - PG_VERSION=9.5
+
+matrix:
+    allow_failures:
+        - env: PG_VERSION=10 LEVEL=nightmare
