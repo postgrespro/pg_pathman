@@ -322,7 +322,6 @@ PartRelationInfo *
 get_pathman_relation_info(Oid relid)
 {
 	PartStatusInfo *psin;
-	bool			refresh;
 
 	/* Should always be called in transaction */
 	Assert(IsTransactionState());
@@ -331,24 +330,18 @@ get_pathman_relation_info(Oid relid)
 	if (relid < FirstNormalObjectId)
 		return NULL;
 
-	/* Create a new entry for this table if needed */
+	/* Do we know anything about this relation? */
 	psin = pathman_cache_search_relid(status_cache,
 									  relid, HASH_FIND,
 									  NULL);
 
-	/* Should we build a new PartRelationInfo? */
-	refresh = psin ?
-				(psin->prel &&
-				 !PrelIsFresh(psin->prel) &&
-				 PrelReferenceCount(psin->prel) == 0) :
-				true;
-
-	if (refresh)
+	if (!psin)
 	{
 		PartRelationInfo   *prel = NULL;
 		ItemPointerData		iptr;
 		Datum				values[Natts_pathman_config];
 		bool				isnull[Natts_pathman_config];
+		bool				found;
 
 		/* Check if PATHMAN_CONFIG table contains this relation */
 		if (pathman_config_contains_relation(relid, values, isnull, NULL, &iptr))
@@ -364,20 +357,18 @@ get_pathman_relation_info(Oid relid)
 			prel = build_pathman_relation_info(relid, values);
 		}
 
-		/* Create a new entry for this table if needed */
-		if (!psin)
-		{
-			bool found;
-
-			psin = pathman_cache_search_relid(status_cache,
-											  relid, HASH_ENTER,
-											  &found);
-			Assert(!found);
-		}
+		/* Create a new entry for this relation */
+		psin = pathman_cache_search_relid(status_cache,
+										  relid, HASH_ENTER,
+										  &found);
+		Assert(!found); /* it shouldn't just appear out of thin air */
 
 		/* Cache fresh entry */
 		psin->prel = prel;
 	}
+
+	/* Check invariants */
+	Assert(!psin->prel || PrelIsFresh(psin->prel));
 
 #ifdef USE_RELINFO_LOGGING
 	elog(DEBUG2,
