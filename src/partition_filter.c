@@ -1215,7 +1215,7 @@ fetch_estate_mod_data(EState *estate)
 		if (cb->func == pf_memcxt_callback)
 			return (estate_mod_data *) cb->arg;
 
-		cb = estate_mcxt->reset_cbs->next;
+		cb = cb->next;
 	}
 
 	/* Have to create a new one */
