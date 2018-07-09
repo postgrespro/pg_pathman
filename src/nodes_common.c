@@ -569,11 +569,9 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 		{
 			Plan		   *child_plan = (Plan *) lfirst(lc2);
 			RelOptInfo	   *child_rel = ((Path *) lfirst(lc1))->parent;
-#if PG_VERSION_NUM >= 110000
-			AppendRelInfo *appinfo = root->append_rel_array[child_rel->relid];
-#else
-			AppendRelInfo  *appinfo = find_childrel_appendrelinfo(root, child_rel);
-#endif
+			AppendRelInfo  *appinfo;
+
+			appinfo = find_childrel_appendrelinfo_compat(root, child_rel);
 
 			/* Replace rel's tlist with a matching one (for ExecQual()) */
 			if (!processed_rel_tlist)

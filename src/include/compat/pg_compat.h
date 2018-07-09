@@ -788,6 +788,45 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 #endif
 
 /*
+ * compute_parallel_worker
+ */
+#if PG_VERSION_NUM >= 110000
+#define compute_parallel_worker_compat(rel, heap_pages, index_pages) \
+	compute_parallel_worker((rel), (heap_pages), (index_pages), \
+							max_parallel_workers_per_gather)
+#elif PG_VERSION_NUM >= 100000
+#define compute_parallel_worker_compat(rel, heap_pages, index_pages) \
+	compute_parallel_worker((rel), (heap_pages), (index_pages))
+#endif
+
+
+/*
+ * generate_gather_paths
+ */
+#if PG_VERSION_NUM >= 110000
+#define generate_gather_paths_compat(root, rel) \
+	generate_gather_paths((root), (rel), false)
+#elif PG_VERSION_NUM >= 90600
+#define generate_gather_paths_compat(root, rel) \
+	generate_gather_paths((rel), (heap_pages), false)
+#else
+#define generate_gather_paths_compat(root, rel)
+#endif
+
+
+/*
+ * handling appendrelinfo array
+ */
+#if PG_VERSION_NUM >= 110000
+#define find_childrel_appendrelinfo_compat(root, rel) \
+	((root)->append_rel_array[(rel)->relid])
+#else
+#define find_childrel_appendrelinfo_compat(root, rel) \
+		find_childrel_appendrelinfo((root), (rel))
+#endif
+
+
+/*
  * -------------
  *  Common code
  * -------------

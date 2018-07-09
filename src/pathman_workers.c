@@ -483,7 +483,6 @@ bgw_main_concurrent_part(Datum main_arg)
 
 		Oid		types[2]	= { OIDOID,				INT4OID };
 		Datum	vals[2]		= { part_slot->relid,	part_slot->batch_size };
-		char	nulls[2]	= { false,				false };
 
 		bool	rel_locked = false;
 
@@ -557,7 +556,7 @@ bgw_main_concurrent_part(Datum main_arg)
 			}
 
 			/* Call concurrent partitioning function */
-			ret = SPI_execute_with_args(sql, 2, types, vals, nulls, false, 0);
+			ret = SPI_execute_with_args(sql, 2, types, vals, NULL, false, 0);
 			if (ret == SPI_OK_SELECT)
 			{
 				TupleDesc	tupdesc	= SPI_tuptable->tupdesc;

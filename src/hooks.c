@@ -477,6 +477,17 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		memset((void *) &root->simple_rte_array[current_len], 0,
 			   irange_len * sizeof(RangeTblEntry *));
 
+#if PG_VERSION_NUM >= 110000
+		/* Make sure append_rel_array is wide enough */
+		if (root->append_rel_array == NULL)
+			root->append_rel_array = (AppendRelInfo **) palloc0(0);
+		root->append_rel_array =  (AppendRelInfo **)
+			repalloc(root->append_rel_array,
+					 new_len * sizeof(AppendRelInfo *));
+		memset((void *) &root->append_rel_array[current_len], 0,
+			   irange_len * sizeof(AppendRelInfo *));
+#endif
+		
 		/* Don't forget to update array size! */
 		root->simple_rel_array_size = new_len;
 	}
@@ -485,7 +496,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 	parent_rel = heap_open(rte->relid, NoLock);
 
 	parent_rowmark = get_plan_rowmark(root->rowMarks, rti);
-
+	
 	/* Add parent if asked to */
 	if (prel->enable_parent)
 		append_child_relation(root, parent_rel, parent_rowmark,
@@ -514,21 +525,12 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 	rel->partial_pathlist = NIL;
 #endif
 
-/* Convert list to array for faster lookups */
-#if PG_VERSION_NUM >= 110000
-	setup_append_rel_array(root);
-#endif
-
 	/* Generate new paths using the rels we've just added */
 	set_append_rel_pathlist(root, rel, rti, pathkeyAsc, pathkeyDesc);
 	set_append_rel_size_compat(root, rel, rti);
 
-		/* consider gathering partial paths for the parent appendrel */
-#if PG_VERSION_NUM >= 110000
-		generate_gather_paths(root, rel, false);
-#elif PG_VERSION_NUM >= 90600
-		generate_gather_paths(root, rel);
-#endif
+	/* consider gathering partial paths for the parent appendrel */
+	generate_gather_paths_compat(root, rel);
 
 	/* Skip if both custom nodes are disabled */
 	if (!(pg_pathman_enable_runtimeappend ||
