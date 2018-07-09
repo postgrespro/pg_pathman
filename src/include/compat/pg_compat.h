@@ -808,7 +808,7 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 	generate_gather_paths((root), (rel), false)
 #elif PG_VERSION_NUM >= 90600
 #define generate_gather_paths_compat(root, rel) \
-	generate_gather_paths((rel), (heap_pages), false)
+	generate_gather_paths((root), (rel))
 #else
 #define generate_gather_paths_compat(root, rel)
 #endif
