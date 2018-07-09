@@ -106,7 +106,6 @@ if [ "$LEVEL" = "nightmare" ]; then
 		--trace-children=yes \
 		--gen-suppressions=all \
 		--suppressions=$CUSTOM_PG_SRC/src/tools/valgrind.supp \
-		--suppressions=$PWD/valgrind.supp \
 		--log-file=/tmp/valgrind-%p.log \
 		pg_ctl start -l /tmp/postgres.log -w || status=$?
 else

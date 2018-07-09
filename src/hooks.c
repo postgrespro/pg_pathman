@@ -826,6 +826,8 @@ pathman_relcache_hook(Datum arg, Oid relid)
 	if (relid == InvalidOid)
 	{
 		invalidate_pathman_status_info_cache();
+
+		/* FIXME: reset other caches as well */
 	}
 
 	/* Invalidation event for PATHMAN_CONFIG table (probably DROP) */
