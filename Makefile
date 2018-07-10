@@ -50,6 +50,7 @@ REGRESS = pathman_array_qual \
 		  pathman_only \
 		  pathman_param_upd_del \
 		  pathman_permissions \
+		  pathman_rebuild_deletes \
 		  pathman_rebuild_updates \
 		  pathman_rowmarks \
 		  pathman_runtime_nodes \
