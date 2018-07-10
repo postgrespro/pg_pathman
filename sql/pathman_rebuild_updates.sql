@@ -57,6 +57,21 @@ RETURNING test;
 DROP TABLE test_updates.test_dummy;
 
 
+/* cross-partition updates (& different tuple descs) */
+TRUNCATE test_updates.test;
+SET pg_pathman.enable_partitionrouter = ON;
+
+SELECT *, (select count(*) from pg_attribute where attrelid = partition) as columns
+FROM pathman_partition_list
+ORDER BY range_min::int, range_max::int;
+
+INSERT INTO test_updates.test VALUES (105, 105);
+UPDATE test_updates.test SET val = 106 WHERE val = 105 RETURNING *, tableoid::REGCLASS;
+UPDATE test_updates.test SET val = 115 WHERE val = 106 RETURNING *, tableoid::REGCLASS;
+UPDATE test_updates.test SET val =  95 WHERE val = 115 RETURNING *, tableoid::REGCLASS;
+UPDATE test_updates.test SET val =  -1 WHERE val =  95 RETURNING *, tableoid::REGCLASS;
+
+
 
 DROP SCHEMA test_updates CASCADE;
 DROP EXTENSION pg_pathman;

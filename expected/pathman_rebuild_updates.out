@@ -103,6 +103,52 @@ RETURNING test;
 (1 row)
 
 DROP TABLE test_updates.test_dummy;
+/* cross-partition updates (& different tuple descs) */
+TRUNCATE test_updates.test;
+SET pg_pathman.enable_partitionrouter = ON;
+SELECT *, (select count(*) from pg_attribute where attrelid = partition) as columns
+FROM pathman_partition_list
+ORDER BY range_min::int, range_max::int;
+      parent       |      partition       | parttype | expr | range_min | range_max | columns 
+-------------------+----------------------+----------+------+-----------+-----------+---------
+ test_updates.test | test_updates.test_1  |        2 | val  | 1         | 11        |       9
+ test_updates.test | test_updates.test_2  |        2 | val  | 11        | 21        |       9
+ test_updates.test | test_updates.test_3  |        2 | val  | 21        | 31        |       9
+ test_updates.test | test_updates.test_4  |        2 | val  | 31        | 41        |       9
+ test_updates.test | test_updates.test_5  |        2 | val  | 41        | 51        |       9
+ test_updates.test | test_updates.test_6  |        2 | val  | 51        | 61        |       9
+ test_updates.test | test_updates.test_7  |        2 | val  | 61        | 71        |       9
+ test_updates.test | test_updates.test_8  |        2 | val  | 71        | 81        |       9
+ test_updates.test | test_updates.test_9  |        2 | val  | 81        | 91        |       9
+ test_updates.test | test_updates.test_10 |        2 | val  | 91        | 101       |       9
+ test_updates.test | test_updates.test_11 |        2 | val  | 101       | 111       |       8
+(11 rows)
+
+INSERT INTO test_updates.test VALUES (105, 105);
+UPDATE test_updates.test SET val = 106 WHERE val = 105 RETURNING *, tableoid::REGCLASS;
+ val |  b  |       tableoid       
+-----+-----+----------------------
+ 106 | 105 | test_updates.test_11
+(1 row)
+
+UPDATE test_updates.test SET val = 115 WHERE val = 106 RETURNING *, tableoid::REGCLASS;
+ val |  b  |       tableoid       
+-----+-----+----------------------
+ 115 | 105 | test_updates.test_12
+(1 row)
+
+UPDATE test_updates.test SET val =  95 WHERE val = 115 RETURNING *, tableoid::REGCLASS;
+ val |  b  |       tableoid       
+-----+-----+----------------------
+  95 | 105 | test_updates.test_10
+(1 row)
+
+UPDATE test_updates.test SET val =  -1 WHERE val =  95 RETURNING *, tableoid::REGCLASS;
+ val |  b  |       tableoid       
+-----+-----+----------------------
+  -1 | 105 | test_updates.test_13
+(1 row)
+
 DROP SCHEMA test_updates CASCADE;
-NOTICE:  drop cascades to 13 other objects
+NOTICE:  drop cascades to 15 other objects
 DROP EXTENSION pg_pathman;
