@@ -1571,7 +1571,5 @@ finish_delayed_invalidation(void)
 				return;
 			}
 		}
-
-
 	}
 }

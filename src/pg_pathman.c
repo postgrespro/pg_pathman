@@ -22,8 +22,13 @@
 #include "runtime_merge_append.h"
 
 #include "postgres.h"
+#include "access/htup_details.h"
 #include "access/sysattr.h"
+#include "access/xact.h"
+#include "catalog/indexing.h"
 #include "catalog/pg_type.h"
+#include "catalog/pg_extension.h"
+#include "commands/extension.h"
 #include "foreign/fdwapi.h"
 #include "miscadmin.h"
 #include "optimizer/clauses.h"
@@ -31,6 +36,7 @@
 #include "optimizer/restrictinfo.h"
 #include "optimizer/cost.h"
 #include "utils/datum.h"
+#include "utils/fmgroids.h"
 #include "utils/rel.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
@@ -352,6 +358,51 @@ get_pathman_config_params_relid(bool invalid_is_ok)
 						  CppAsString(get_pathman_config_params_relid)));
 
 	return pathman_config_params_relid;
+}
+
+/*
+ * Return pg_pathman schema's Oid or InvalidOid if that's not possible.
+ */
+Oid
+get_pathman_schema(void)
+{
+	Oid				result;
+	Relation		rel;
+	SysScanDesc		scandesc;
+	HeapTuple		tuple;
+	ScanKeyData		entry[1];
+	Oid				ext_oid;
+
+	/* It's impossible to fetch pg_pathman's schema now */
+	if (!IsTransactionState())
+		return InvalidOid;
+
+	ext_oid = get_extension_oid("pg_pathman", true);
+	if (ext_oid == InvalidOid)
+		return InvalidOid; /* exit if pg_pathman does not exist */
+
+	ScanKeyInit(&entry[0],
+				ObjectIdAttributeNumber,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(ext_oid));
+
+	rel = heap_open(ExtensionRelationId, AccessShareLock);
+	scandesc = systable_beginscan(rel, ExtensionOidIndexId, true,
+								  NULL, 1, entry);
+
+	tuple = systable_getnext(scandesc);
+
+	/* We assume that there can be at most one matching tuple */
+	if (HeapTupleIsValid(tuple))
+		result = ((Form_pg_extension) GETSTRUCT(tuple))->extnamespace;
+	else
+		result = InvalidOid;
+
+	systable_endscan(scandesc);
+
+	heap_close(rel, AccessShareLock);
+
+	return result;
 }
 
 

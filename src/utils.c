@@ -16,18 +16,15 @@
 #include "access/htup_details.h"
 #include "access/nbtree.h"
 #include "access/sysattr.h"
-#include "access/xact.h"
-#include "catalog/indexing.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_class.h"
-#include "catalog/pg_extension.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_type.h"
-#include "commands/extension.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
 #include "parser/parse_coerce.h"
 #include "parser/parse_oper.h"
+#include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
@@ -135,51 +132,6 @@ match_expr_to_operand(const Node *expr, const Node *operand)
 	return equal(expr, operand);
 }
 
-
-/*
- * Return pg_pathman schema's Oid or InvalidOid if that's not possible.
- */
-Oid
-get_pathman_schema(void)
-{
-	Oid				result;
-	Relation		rel;
-	SysScanDesc		scandesc;
-	HeapTuple		tuple;
-	ScanKeyData		entry[1];
-	Oid				ext_oid;
-
-	/* It's impossible to fetch pg_pathman's schema now */
-	if (!IsTransactionState())
-		return InvalidOid;
-
-	ext_oid = get_extension_oid("pg_pathman", true);
-	if (ext_oid == InvalidOid)
-		return InvalidOid; /* exit if pg_pathman does not exist */
-
-	ScanKeyInit(&entry[0],
-				ObjectIdAttributeNumber,
-				BTEqualStrategyNumber, F_OIDEQ,
-				ObjectIdGetDatum(ext_oid));
-
-	rel = heap_open(ExtensionRelationId, AccessShareLock);
-	scandesc = systable_beginscan(rel, ExtensionOidIndexId, true,
-								  NULL, 1, entry);
-
-	tuple = systable_getnext(scandesc);
-
-	/* We assume that there can be at most one matching tuple */
-	if (HeapTupleIsValid(tuple))
-		result = ((Form_pg_extension) GETSTRUCT(tuple))->extnamespace;
-	else
-		result = InvalidOid;
-
-	systable_endscan(scandesc);
-
-	heap_close(rel, AccessShareLock);
-
-	return result;
-}
 
 List *
 list_reverse(List *l)

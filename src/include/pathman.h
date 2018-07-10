@@ -100,6 +100,7 @@ extern Oid	pathman_config_params_relid;
  */
 Oid get_pathman_config_relid(bool invalid_is_ok);
 Oid get_pathman_config_params_relid(bool invalid_is_ok);
+Oid get_pathman_schema(void);
 
 
 /*

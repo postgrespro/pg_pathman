@@ -28,7 +28,6 @@ bool match_expr_to_operand(const Node *expr, const Node *operand);
 /*
  * Misc.
  */
-Oid get_pathman_schema(void);
 List *list_reverse(List *l);
 
 /*
