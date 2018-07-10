@@ -20,9 +20,6 @@
 #include "catalog/catalog.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_constraint.h"
-#if PG_VERSION_NUM < 110000 && PG_VERSION_NUM >= 90600
-#include "catalog/pg_constraint_fn.h"
-#endif
 #include "catalog/pg_inherits.h"
 #include "catalog/pg_type.h"
 #include "miscadmin.h"
@@ -47,8 +44,7 @@
 #if PG_VERSION_NUM < 90600
 #include "optimizer/planmain.h"
 #endif
-
-#if PG_VERSION_NUM >= 90600 && PG_VERSION_NUM < 11000
+#if PG_VERSION_NUM < 110000 && PG_VERSION_NUM >= 90600
 #include "catalog/pg_constraint_fn.h"
 #endif
 

@@ -23,6 +23,7 @@ BEGIN
     SELECT create_range_partitions('permissions.user1_table', 'id', 1, 10, 2);
 EXCEPTION
     WHEN insufficient_privilege THEN
+        RAISE NOTICE 'Insufficient priviliges';
 END$$;
 
 /* Grant SELECT to user2 */
@@ -36,6 +37,7 @@ BEGIN
     SELECT create_range_partitions('permissions.user1_table', 'id', 1, 10, 2);
 EXCEPTION
     WHEN insufficient_privilege THEN
+        RAISE NOTICE 'Insufficient priviliges';
 END$$;
 
 /* Should be ok */
@@ -64,6 +66,7 @@ BEGIN
     INSERT INTO permissions.user1_table (id, a) VALUES (35, 0);
 EXCEPTION
     WHEN insufficient_privilege THEN
+        RAISE NOTICE 'Insufficient priviliges';
 END$$;
 
 /* No rights to create partitions (need INSERT privilege) */
@@ -101,6 +104,7 @@ BEGIN
     SELECT drop_range_partition('permissions.user1_table_4');
 EXCEPTION
     WHEN insufficient_privilege THEN
+        RAISE NOTICE 'Insufficient priviliges';
 END$$;
 
 /* Disable automatic partition creation */
