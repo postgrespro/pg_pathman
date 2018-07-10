@@ -1,10 +1,9 @@
 {
    "name": "pg_pathman",
-   "abstract": "Partitioning tool",
-   "description": "pg_pathman provides optimized partitioning mechanism and functions to manage partitions",
+   "abstract": "Fast partitioning tool for PostgreSQL",
+   "description": "pg_pathman provides optimized partitioning mechanism and functions to manage partitions.",
    "version": "1.5.0",
    "maintainer": [
-      "Ildar Musin <i.musin@postgrespro.ru>",
       "Dmitry Ivanov <d.ivanov@postgrespro.ru>",
       "Ildus Kurbangaliev <i.kurbangaliev@postgrespro.ru>"
    ],
@@ -19,7 +18,7 @@
         "type": "git"
       }
    },
-   "generated_by": "Ildar Musin",
+   "generated_by": "pgpro",
    "provides": {
        "pg_pathman": {
            "file": "pg_pathman--1.5.sql",
@@ -41,6 +40,8 @@
 	  "custom node",
 	  "runtime append",
 	  "background worker",
-	  "fdw"
+	  "fdw",
+	  "range",
+	  "hash"
    ]
 }

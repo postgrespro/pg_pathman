@@ -1,0 +1,99 @@
+\set VERBOSITY terse
+SET search_path = 'public';
+CREATE EXTENSION pg_pathman;
+CREATE SCHEMA test_deletes;
+/*
+ * Test DELETEs on a partition with different TupleDescriptor.
+ */
+/* create partitioned table */
+CREATE TABLE test_deletes.test(a FLOAT4, val INT4 NOT NULL, b FLOAT8);
+INSERT INTO test_deletes.test SELECT i, i, i FROM generate_series(1, 100) AS i;
+SELECT create_range_partitions('test_deletes.test', 'val', 1, 10);
+ create_range_partitions 
+-------------------------
+                      10
+(1 row)
+
+/* drop column 'a' */
+ALTER TABLE test_deletes.test DROP COLUMN a;
+/* append new partition */
+SELECT append_range_partition('test_deletes.test');
+ append_range_partition 
+------------------------
+ test_deletes.test_11
+(1 row)
+
+INSERT INTO test_deletes.test_11 (val, b) VALUES (101, 10);
+VACUUM ANALYZE;
+/* tuple descs are the same */
+EXPLAIN (COSTS OFF) DELETE FROM test_deletes.test WHERE val = 1;
+        QUERY PLAN         
+---------------------------
+ Delete on test_1
+   ->  Seq Scan on test_1
+         Filter: (val = 1)
+(3 rows)
+
+DELETE FROM test_deletes.test WHERE val = 1 RETURNING *, tableoid::REGCLASS;
+ val | b |      tableoid       
+-----+---+---------------------
+   1 | 1 | test_deletes.test_1
+(1 row)
+
+/* tuple descs are different */
+EXPLAIN (COSTS OFF) DELETE FROM test_deletes.test WHERE val = 101;
+         QUERY PLAN          
+-----------------------------
+ Delete on test_11
+   ->  Seq Scan on test_11
+         Filter: (val = 101)
+(3 rows)
+
+DELETE FROM test_deletes.test WHERE val = 101 RETURNING *, tableoid::REGCLASS;
+ val | b  |       tableoid       
+-----+----+----------------------
+ 101 | 10 | test_deletes.test_11
+(1 row)
+
+CREATE TABLE test_deletes.test_dummy (val INT4);
+EXPLAIN (COSTS OFF) DELETE FROM test_deletes.test
+WHERE val = 101 AND val = ANY (TABLE test_deletes.test_dummy)
+RETURNING *, tableoid::REGCLASS;
+             QUERY PLAN             
+------------------------------------
+ Delete on test_11
+   ->  Nested Loop Semi Join
+         ->  Seq Scan on test_11
+               Filter: (val = 101)
+         ->  Seq Scan on test_dummy
+               Filter: (val = 101)
+(6 rows)
+
+EXPLAIN (COSTS OFF) DELETE FROM test_deletes.test t1
+USING test_deletes.test_dummy t2
+WHERE t1.val = 101 AND t1.val = t2.val
+RETURNING t1.*, t1.tableoid::REGCLASS;
+              QUERY PLAN               
+---------------------------------------
+ Delete on test_11 t1
+   ->  Nested Loop
+         ->  Seq Scan on test_11 t1
+               Filter: (val = 101)
+         ->  Seq Scan on test_dummy t2
+               Filter: (val = 101)
+(6 rows)
+
+EXPLAIN (COSTS OFF) DELETE FROM test_deletes.test
+WHERE val = 101 AND test >= (100, 8)
+RETURNING *, tableoid::REGCLASS;
+                                    QUERY PLAN                                     
+-----------------------------------------------------------------------------------
+ Delete on test_11
+   ->  Seq Scan on test_11
+         Filter: (((test_11.*)::test_deletes.test >= ROW(100, 8)) AND (val = 101))
+(3 rows)
+
+DROP TABLE test_deletes.test_dummy;
+DROP SCHEMA test_deletes CASCADE;
+NOTICE:  drop cascades to 13 other objects
+DROP EXTENSION pg_pathman;
