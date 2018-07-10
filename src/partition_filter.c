@@ -381,7 +381,7 @@ scan_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid)
 }
 
 /* Refresh PartRelationInfo for the partition in storage */
-void
+PartRelationInfo *
 refresh_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid)
 {
 	if (partid == PrelParentRelid(parts_storage->prel))
@@ -389,6 +389,8 @@ refresh_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid)
 		close_pathman_relation_info(parts_storage->prel);
 		parts_storage->prel = get_pathman_relation_info(partid);
 		shout_if_prel_is_invalid(partid, parts_storage->prel, PT_ANY);
+
+		return parts_storage->prel;
 	}
 	else
 	{
@@ -398,12 +400,14 @@ refresh_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid)
 								 (const void *) &partid,
 								 HASH_FIND, NULL);
 
-		if (rri_holder && rri_holder->prel)
-		{
-			close_pathman_relation_info(rri_holder->prel);
-			rri_holder->prel = get_pathman_relation_info(partid);
-			shout_if_prel_is_invalid(partid, rri_holder->prel, PT_ANY);
-		}
+		/* We must have entry (since we got 'prel' from it) */
+		Assert(rri_holder && rri_holder->prel);
+
+		close_pathman_relation_info(rri_holder->prel);
+		rri_holder->prel = get_pathman_relation_info(partid);
+		shout_if_prel_is_invalid(partid, rri_holder->prel, PT_ANY);
+
+		return rri_holder->prel;
 	}
 }
 
@@ -543,7 +547,7 @@ select_partition_for_insert(ResultPartsStorage *parts_storage,
 		if ((nparts == 0 || result == NULL) && !PrelIsFresh(prel))
 		{
 			/* Try building a new 'prel' for this relation */
-			refresh_result_parts_storage(parts_storage, parent_relid);
+			prel = refresh_result_parts_storage(parts_storage, parent_relid);
 		}
 
 		/* This partition is a parent itself */
@@ -557,6 +561,8 @@ select_partition_for_insert(ResultPartsStorage *parts_storage,
 			/* Repeat with a new dispatch */
 			result = NULL;
 		}
+
+		Assert(prel);
 	}
 	/* Loop until we get some result */
 	while (result == NULL);

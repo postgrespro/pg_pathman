@@ -167,7 +167,7 @@ void fini_result_parts_storage(ResultPartsStorage *parts_storage);
 ResultRelInfoHolder * scan_result_parts_storage(ResultPartsStorage *storage, Oid partid);
 
 /* Refresh PartRelationInfo in storage */
-void refresh_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid);
+PartRelationInfo * refresh_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid);
 
 TupleConversionMap * build_part_tuple_map(Relation parent_rel, Relation child_rel);
 
