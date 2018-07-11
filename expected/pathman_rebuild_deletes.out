@@ -1,3 +1,9 @@
+/*
+ * -------------------------------------------
+ *  NOTE: This test behaves differenly on < 11 because planner now turns
+ *  Row(Const, Const) into just Const of record type, apparently since 3decd150
+ * -------------------------------------------
+ */
 \set VERBOSITY terse
 SET search_path = 'public';
 CREATE EXTENSION pg_pathman;
@@ -86,11 +92,11 @@ RETURNING t1.*, t1.tableoid::REGCLASS;
 EXPLAIN (COSTS OFF) DELETE FROM test_deletes.test
 WHERE val = 101 AND test >= (100, 8)
 RETURNING *, tableoid::REGCLASS;
-                                    QUERY PLAN                                     
------------------------------------------------------------------------------------
+                                       QUERY PLAN                                        
+-----------------------------------------------------------------------------------------
  Delete on test_11
    ->  Seq Scan on test_11
-         Filter: (((test_11.*)::test_deletes.test >= ROW(100, 8)) AND (val = 101))
+         Filter: (((test_11.*)::test_deletes.test >= '(100,8)'::record) AND (val = 101))
 (3 rows)
 
 DROP TABLE test_deletes.test_dummy;
