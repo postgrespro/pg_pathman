@@ -1173,6 +1173,7 @@ append_rri_to_estate(EState *estate, ResultRelInfo *rri)
 	{
 		ResultRelInfo *rri_array = estate->es_result_relations;
 
+		/* HACK: we can't repalloc or free previous array (there might be users) */
 		result_rels_allocated = result_rels_allocated * ALLOC_EXP + 1;
 		estate->es_result_relations = palloc(result_rels_allocated *
 												sizeof(ResultRelInfo));

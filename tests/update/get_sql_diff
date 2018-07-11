@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+
+PG_VER=$1
+WORK_DIR=/tmp/pg_pathman
+BRANCH_1=$2
+BRANCH_2=$3
+
+
+if [ -z "$PG_VER" ]; then
+	PG_VER=10
+fi
+
+if [ -z "$BRANCH_1" ]; then
+	BRANCH_1=master
+fi
+
+if [ -z "$BRANCH_1" ]; then
+	BRANCH_2=$(git tag | sort -V | tail -1)
+fi
+
+
+printf "PG:\\t$PG_VER\\n"
+printf "BRANCH_1:\\t$BRANCH_1\\n"
+printf "BRANCH_2:\\t$BRANCH_2\\n"
+
+
+cp -R "$(dirname $0)" "$WORK_DIR"
+
+git checkout "$BRANCH_1"
+
+norsu pgxs "$PG_VER" -- clean install
+norsu run "$PG_VER" --pgxs --psql < "$WORK_DIR"/dump_pathman_objects.sql > "$WORK_DIR"/dump_1
+
+git checkout "$BRANCH_2"
+
+norsu pgxs "$PG_VER" -- clean install
+norsu run "$PG_VER" --pgxs --psql < "$WORK_DIR"/dump_pathman_objects.sql > "$WORK_DIR"/dump_2
+
+diff -u "$WORK_DIR"/dump_1 "$WORK_DIR"/dump_2 > "$WORK_DIR"/diff

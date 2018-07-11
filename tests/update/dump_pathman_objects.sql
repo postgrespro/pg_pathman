@@ -1,17 +1,4 @@
-#!/usr/bin/bash
-
-
-rndstr=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 13 ; echo '')
-bindir=$($PG_CONFIG --bindir)
-dbname=$1
-flname=pathman_objects_$rndstr.txt
-
-# show file name
-echo $flname
-
-$bindir/psql $dbname << EOF
-
-\o $flname
+CREATE EXTENSION IF NOT EXISTS pg_pathman;
 
 SELECT pg_get_functiondef(objid)
 FROM pg_catalog.pg_depend JOIN pg_proc ON pg_proc.oid = pg_depend.objid
@@ -27,5 +14,3 @@ ORDER BY objid::regprocedure::TEXT ASC;
 \d+ pathman_partition_list
 \d+ pathman_cache_stats
 \d+ pathman_concurrent_part_tasks
-
-EOF
