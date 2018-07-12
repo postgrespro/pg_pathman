@@ -92,11 +92,11 @@ RETURNING t1.*, t1.tableoid::REGCLASS;
 EXPLAIN (COSTS OFF) UPDATE test_updates.test SET b = 0
 WHERE val = 101 AND test >= (100, 8)
 RETURNING *, tableoid::REGCLASS;
-                                       QUERY PLAN                                        
------------------------------------------------------------------------------------------
+                                    QUERY PLAN                                     
+-----------------------------------------------------------------------------------
  Update on test_11
    ->  Seq Scan on test_11
-         Filter: (((test_11.*)::test_updates.test >= '(100,8)'::record) AND (val = 101))
+         Filter: (((test_11.*)::test_updates.test >= ROW(100, 8)) AND (val = 101))
 (3 rows)
 
 /* execute this one */

@@ -332,8 +332,12 @@ scan_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid)
 		CopyToResultRelInfo(ri_WithCheckOptions);
 		CopyToResultRelInfo(ri_WithCheckOptionExprs);
 		CopyToResultRelInfo(ri_projectReturning);
+#if PG_VERSION_NUM >= 110000
+		CopyToResultRelInfo(ri_onConflict);
+#else
 		CopyToResultRelInfo(ri_onConflictSetProj);
 		CopyToResultRelInfo(ri_onConflictSetWhere);
+#endif
 
 		if (parts_storage->command_type != CMD_UPDATE)
 			CopyToResultRelInfo(ri_junkFilter);
@@ -776,7 +780,7 @@ partition_filter_exec(CustomScanState *node)
 
 			/* Allocate new slot if needed */
 			if (!state->tup_convert_slot)
-				state->tup_convert_slot = MakeTupleTableSlot();
+				state->tup_convert_slot = MakeTupleTableSlotCompat();
 
 			ExecSetSlotDescriptor(state->tup_convert_slot, RelationGetDescr(child_rel));
 			ExecStoreTuple(htup_new, state->tup_convert_slot, InvalidBuffer, true);
@@ -1055,7 +1059,9 @@ prepare_rri_fdw_for_insert(ResultRelInfoHolder *rri_holder,
 		mtstate.ps.state = estate;
 		mtstate.operation = CMD_INSERT;
 		mtstate.resultRelInfo = rri;
+#if PG_VERSION_NUM < 110000
 		mtstate.mt_onconflict = ONCONFLICT_NONE;
+#endif
 
 		/* Plan fake query in for FDW access to be planned as well */
 		elog(DEBUG1, "FDW(%u): plan fake query for fdw_private", partid);

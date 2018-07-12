@@ -18,7 +18,6 @@
 #include "access/xact.h"
 #include "catalog/heap.h"
 #include "catalog/namespace.h"
-#include "catalog/pg_inherits_fn.h"
 #include "catalog/pg_type.h"
 #include "commands/tablecmds.h"
 #include "executor/spi.h"
@@ -32,6 +31,10 @@
 #include "utils/ruleutils.h"
 #include "utils/syscache.h"
 #include "utils/snapmgr.h"
+
+#if PG_VERSION_NUM < 110000
+#include "catalog/pg_inherits_fn.h"
+#endif
 
 #if PG_VERSION_NUM >= 100000
 #include "utils/regproc.h"

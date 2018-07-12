@@ -1,3 +1,10 @@
+/*
+ * -------------------------------------------
+ *  NOTE: This test behaves differenly on < 11 because planner now turns
+ *  Row(Const, Const) into just Const of record type, apparently since 3decd150
+ * -------------------------------------------
+ */
+
 \set VERBOSITY terse
 
 SET search_path = 'public';

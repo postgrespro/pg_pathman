@@ -535,6 +535,10 @@ append_child_relation(PlannerInfo *root,
 
 	/* Now append 'appinfo' to 'root->append_rel_list' */
 	root->append_rel_list = lappend(root->append_rel_list, appinfo);
+	/* And to array in >= 11, it must be big enough */
+#if PG_VERSION_NUM >= 110000
+	root->append_rel_array[child_rti] = appinfo;
+#endif
 
 	/* Translate column privileges for this child */
 	if (parent_rte->relid != child_oid)

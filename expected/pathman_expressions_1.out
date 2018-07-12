@@ -166,38 +166,42 @@ SELECT *, tableoid::REGCLASS FROM test_exprs.composite;
 (3 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.composite WHERE (a, b)::test_exprs.composite < (21, 0)::test_exprs.composite;
-                                     QUERY PLAN                                     
-------------------------------------------------------------------------------------
+                                          QUERY PLAN                                          
+----------------------------------------------------------------------------------------------
  Append
    ->  Seq Scan on composite_1
    ->  Seq Scan on composite_2
    ->  Seq Scan on composite_3
-         Filter: (ROW(a, b)::test_exprs.composite < '(21,0)'::test_exprs.composite)
+         Filter: (ROW(a, b)::test_exprs.composite < ROW(21, '0'::text)::test_exprs.composite)
 (5 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.composite WHERE (a, b) < (21, 0)::test_exprs.composite;
-                          QUERY PLAN                          
---------------------------------------------------------------
+                               QUERY PLAN                               
+------------------------------------------------------------------------
  Append
    ->  Seq Scan on composite_1
-         Filter: (ROW(a, b) < '(21,0)'::test_exprs.composite)
+         Filter: (ROW(a, b) < ROW(21, '0'::text)::test_exprs.composite)
    ->  Seq Scan on composite_2
-         Filter: (ROW(a, b) < '(21,0)'::test_exprs.composite)
+         Filter: (ROW(a, b) < ROW(21, '0'::text)::test_exprs.composite)
    ->  Seq Scan on composite_3
-         Filter: (ROW(a, b) < '(21,0)'::test_exprs.composite)
+         Filter: (ROW(a, b) < ROW(21, '0'::text)::test_exprs.composite)
    ->  Seq Scan on composite_4
-         Filter: (ROW(a, b) < '(21,0)'::test_exprs.composite)
+         Filter: (ROW(a, b) < ROW(21, '0'::text)::test_exprs.composite)
 (9 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.composite WHERE (a, b)::test_exprs.composite < (21, 0);
-                              QUERY PLAN                              
-----------------------------------------------------------------------
+                           QUERY PLAN                           
+----------------------------------------------------------------
  Append
    ->  Seq Scan on composite_1
+         Filter: (ROW(a, b)::test_exprs.composite < ROW(21, 0))
    ->  Seq Scan on composite_2
+         Filter: (ROW(a, b)::test_exprs.composite < ROW(21, 0))
    ->  Seq Scan on composite_3
-         Filter: (ROW(a, b)::test_exprs.composite < '(21,0)'::record)
-(5 rows)
+         Filter: (ROW(a, b)::test_exprs.composite < ROW(21, 0))
+   ->  Seq Scan on composite_4
+         Filter: (ROW(a, b)::test_exprs.composite < ROW(21, 0))
+(9 rows)
 
 DROP TABLE test_exprs.composite CASCADE;
 NOTICE:  drop cascades to 5 other objects

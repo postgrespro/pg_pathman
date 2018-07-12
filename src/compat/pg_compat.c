@@ -48,7 +48,8 @@ create_plain_partial_paths(PlannerInfo *root, RelOptInfo *rel)
 {
 	int			parallel_workers;
 
-	parallel_workers = compute_parallel_worker(rel, rel->pages, -1);
+	/* no more than max_parallel_workers_per_gather since 11 */
+	parallel_workers = compute_parallel_worker_compat(rel, rel->pages, -1);
 
 	/* If any limit was set to zero, the user doesn't want a parallel scan. */
 	if (parallel_workers <= 0)
@@ -240,7 +241,11 @@ McxtStatsInternal(MemoryContext context, int level,
 	AssertArg(MemoryContextIsValid(context));
 
 	/* Examine the context itself */
+#if PG_VERSION_NUM >= 110000
+	(*context->methods->stats) (context, NULL, NULL, totals);
+#else
 	(*context->methods->stats) (context, level, false, totals);
+#endif
 
 	memset(&local_totals, 0, sizeof(local_totals));
 

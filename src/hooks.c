@@ -477,6 +477,17 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		memset((void *) &root->simple_rte_array[current_len], 0,
 			   irange_len * sizeof(RangeTblEntry *));
 
+#if PG_VERSION_NUM >= 110000
+		/* Make sure append_rel_array is wide enough */
+		if (root->append_rel_array == NULL)
+			root->append_rel_array = (AppendRelInfo **) palloc0(0);
+		root->append_rel_array =  (AppendRelInfo **)
+			repalloc(root->append_rel_array,
+					 new_len * sizeof(AppendRelInfo *));
+		memset((void *) &root->append_rel_array[current_len], 0,
+			   irange_len * sizeof(AppendRelInfo *));
+#endif
+
 		/* Don't forget to update array size! */
 		root->simple_rel_array_size = new_len;
 	}
@@ -518,10 +529,8 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 	set_append_rel_pathlist(root, rel, rti, pathkeyAsc, pathkeyDesc);
 	set_append_rel_size_compat(root, rel, rti);
 
-#if PG_VERSION_NUM >= 90600
 	/* consider gathering partial paths for the parent appendrel */
-	generate_gather_paths(root, rel);
-#endif
+	generate_gather_paths_compat(root, rel);
 
 	/* Skip if both custom nodes are disabled */
 	if (!(pg_pathman_enable_runtimeappend ||
@@ -925,7 +934,7 @@ pathman_process_utility_hook(Node *first_arg,
 						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 						 errmsg("cannot change type of column \"%s\""
 								" of table \"%s\" partitioned by HASH",
-								get_attname(relation_oid, attr_number),
+								get_attname_compat(relation_oid, attr_number),
 								get_rel_name(relation_oid))));
 
 			/* Don't forget to invalidate parsed partitioning expression */

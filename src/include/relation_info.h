@@ -11,10 +11,10 @@
 #ifndef RELATION_INFO_H
 #define RELATION_INFO_H
 
+#include "compat/pg_compat.h"
 
 #include "utils.h"
 
-#include "postgres.h"
 #include "access/attnum.h"
 #include "access/sysattr.h"
 #include "fmgr.h"
@@ -279,7 +279,7 @@ PrelExpressionColumnNames(const PartRelationInfo *prel)
 	while ((i = bms_next_member(prel->expr_atts, i)) >= 0)
 	{
 		AttrNumber	attnum = i + FirstLowInvalidHeapAttributeNumber;
-		char	   *attname = get_attname(PrelParentRelid(prel), attnum);
+		char	   *attname = get_attname_compat(PrelParentRelid(prel), attnum);
 
 		columns = lappend(columns, makeString(attname));
 	}

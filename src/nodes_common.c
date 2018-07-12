@@ -568,8 +568,10 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 		forboth (lc1, rpath->cpath.custom_paths, lc2, custom_plans)
 		{
 			Plan		   *child_plan = (Plan *) lfirst(lc2);
-			RelOptInfo 	   *child_rel = ((Path *) lfirst(lc1))->parent;
-			AppendRelInfo  *appinfo = find_childrel_appendrelinfo(root, child_rel);
+			RelOptInfo	   *child_rel = ((Path *) lfirst(lc1))->parent;
+			AppendRelInfo  *appinfo;
+
+			appinfo = find_childrel_appendrelinfo_compat(root, child_rel);
 
 			/* Replace rel's tlist with a matching one (for ExecQual()) */
 			if (!processed_rel_tlist)

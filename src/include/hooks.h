@@ -42,7 +42,7 @@ void pathman_rel_pathlist_hook(PlannerInfo *root,
 							   Index rti,
 							   RangeTblEntry *rte);
 
-void pathman_enable_assign_hook(char newval, void *extra);
+void pathman_enable_assign_hook(bool newval, void *extra);
 
 PlannedStmt * pathman_planner_hook(Query *parse,
 								   int cursorOptions,

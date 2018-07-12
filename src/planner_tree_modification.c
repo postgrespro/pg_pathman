@@ -851,7 +851,7 @@ eval_extern_params_mutator(Node *node, ParamListInfo params)
 			param->paramid > 0 &&
 			param->paramid <= params->numParams)
 		{
-			ParamExternData *prm = &params->params[param->paramid - 1];
+			ParamExternData *prm = CustomEvalParamExternCompat(param, params);
 
 			if (OidIsValid(prm->ptype))
 			{
