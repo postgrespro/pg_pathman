@@ -788,7 +788,7 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 #endif
 
 /*
- * compute_parallel_worker
+ * compute_parallel_worker()
  */
 #if PG_VERSION_NUM >= 110000
 #define compute_parallel_worker_compat(rel, heap_pages, index_pages) \
@@ -801,7 +801,7 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 
 
 /*
- * generate_gather_paths
+ * generate_gather_paths()
  */
 #if PG_VERSION_NUM >= 110000
 #define generate_gather_paths_compat(root, rel) \
@@ -815,7 +815,7 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 
 
 /*
- * handling appendrelinfo array
+ * find_childrel_appendrelinfo()
  */
 #if PG_VERSION_NUM >= 110000
 #define find_childrel_appendrelinfo_compat(root, rel) \
@@ -831,6 +831,29 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
  *  Common code
  * -------------
  */
+
+/* See ExecEvalParamExtern() */
+static inline ParamExternData *
+CustomEvalParamExternCompat(Param *param, ParamListInfo params)
+{
+	ParamExternData *prm;
+
+#if PG_VERSION_NUM >= 110000
+	ParamExternData prmdata;
+
+	if (params->paramFetch != NULL)
+		prm = params->paramFetch(params, param->paramid, false, &prmdata);
+	else
+		prm = &params->params[param->paramid - 1];
+#else
+	prm = &params->params[param->paramid - 1];
+
+	if (!OidIsValid(prm->ptype) && params->paramFetch != NULL)
+		params->paramFetch(params, param->paramid);
+#endif
+
+	return prm;
+}
 
 void set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel, Index rti);
 
