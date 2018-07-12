@@ -19,7 +19,6 @@ import functools
 
 from distutils.version import LooseVersion
 from testgres import get_new_node, get_pg_version
-from testgres.utils import pg_version_ge
 
 # set setup base logging config, it can be turned on by `use_logging`
 # parameter on node setup

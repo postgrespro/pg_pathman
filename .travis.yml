@@ -18,10 +18,8 @@ notifications:
         on_failure: always
 
 env:
-    - PG_VERSION=10 LEVEL=nightmare
     - PG_VERSION=10 LEVEL=hardcore
     - PG_VERSION=10
-    - PG_VERSION=9.6 LEVEL=nightmare
     - PG_VERSION=9.6 LEVEL=hardcore
     - PG_VERSION=9.6
     - PG_VERSION=9.5 LEVEL=hardcore
