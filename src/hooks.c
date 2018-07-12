@@ -487,7 +487,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		memset((void *) &root->append_rel_array[current_len], 0,
 			   irange_len * sizeof(AppendRelInfo *));
 #endif
-		
+
 		/* Don't forget to update array size! */
 		root->simple_rel_array_size = new_len;
 	}
@@ -496,7 +496,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 	parent_rel = heap_open(rte->relid, NoLock);
 
 	parent_rowmark = get_plan_rowmark(root->rowMarks, rti);
-	
+
 	/* Add parent if asked to */
 	if (prel->enable_parent)
 		append_child_relation(root, parent_rel, parent_rowmark,
