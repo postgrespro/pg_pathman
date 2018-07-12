@@ -827,6 +827,22 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 
 
 /*
+ * ExecBRDeleteTriggers
+ */
+#if PG_VERSION_NUM >= 110000
+#define ExecBRDeleteTriggersCompat(estate, epqstate, relinfo, tupleid, \
+								   fdw_trigtuple) \
+	ExecBRDeleteTriggers((estate), (epqstate), (relinfo), (tupleid), \
+						 (fdw_trigtuple), NULL)
+#else
+#define ExecBRDeleteTriggersCompat(estate, epqstate, relinfo, tupleid, \
+								   fdw_trigtuple) \
+	ExecBRDeleteTriggers((estate), (epqstate), (relinfo), (tupleid), \
+						 (fdw_trigtuple))
+#endif
+
+
+/*
  * -------------
  *  Common code
  * -------------

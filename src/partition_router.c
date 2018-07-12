@@ -266,8 +266,8 @@ ExecDeleteInternal(ItemPointer tupleid,
 	{
 		bool		dodelete;
 
-		dodelete = ExecBRDeleteTriggers(estate, epqstate, resultRelInfo,
-										tupleid, NULL);
+		dodelete = ExecBRDeleteTriggersCompat(estate, epqstate, resultRelInfo,
+											  tupleid, NULL);
 
 		if (!dodelete)
 			elog(ERROR, "the old row always should be deleted from child table");
