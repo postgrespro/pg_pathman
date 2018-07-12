@@ -374,8 +374,8 @@ static void
 handle_modification_query(Query *parse, transform_query_cxt *context)
 {
 	RangeTblEntry  *rte;
-	Expr		   *quals;
 	Oid				child;
+	Node		   *quals = parse->jointree->quals;
 	Index			result_rti = parse->resultRelation;
 	ParamListInfo	params = context->query_params;
 
@@ -390,14 +390,15 @@ handle_modification_query(Query *parse, transform_query_cxt *context)
 	if (!rte->inh)
 		return;
 
-	quals = (Expr *) eval_const_expressions(NULL, parse->jointree->quals);
-
 	/* Check if we can replace PARAMs with CONSTs */
-	if (params && clause_contains_params((Node *) quals))
-		quals = (Expr *) eval_extern_params_mutator((Node *) quals, params);
+	if (params && clause_contains_params(quals))
+		quals = eval_extern_params_mutator(quals, params);
+
+	/* Evaluate constaint expressions */
+	quals = eval_const_expressions(NULL, quals);
 
 	/* Parse syntax tree and extract deepest partition if possible */
-	child = find_deepest_partition(rte->relid, result_rti, quals);
+	child = find_deepest_partition(rte->relid, result_rti, (Expr *) quals);
 
 	/* Substitute parent table with partition */
 	if (OidIsValid(child))
