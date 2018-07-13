@@ -187,7 +187,7 @@ init_relation_info_static_data(void)
 
 /* Invalidate PartStatusInfo for 'relid' */
 void
-invalidate_pathman_status_info(Oid relid)
+forget_status_of_relation(Oid relid)
 {
 	PartStatusInfo *psin;
 	PartParentInfo *ppar;
@@ -225,7 +225,7 @@ invalidate_pathman_status_info(Oid relid)
 
 /* Invalidate all PartStatusInfo entries */
 void
-invalidate_pathman_status_info_cache(void)
+invalidate_status_cache(void)
 {
 	invalidate_psin_entries_using_relid(InvalidOid);
 }
@@ -241,14 +241,14 @@ invalidate_psin_entries_using_relid(Oid relid)
 
 	while ((psin = (PartStatusInfo *) hash_seq_search(&status)) != NULL)
 	{
-		if (relid == InvalidOid ||
+		if (!OidIsValid(relid) ||
 			psin->relid == relid ||
 			(psin->prel && PrelHasPartition(psin->prel, relid)))
 		{
 			/* Perform invalidation */
 			invalidate_psin_entry(psin);
 
-			/* Exit if found */
+			/* Exit if exact match */
 			if (OidIsValid(relid))
 			{
 				hash_seq_term(&status);
@@ -952,15 +952,10 @@ forget_bounds_of_partition(Oid partition)
 										   NULL) :
 				NULL; /* don't even bother */
 
-	/* Free this entry */
 	if (pbin)
 	{
-		/* Call pfree() if it's RANGE bounds */
-		if (pbin->parttype == PT_RANGE)
-		{
-			FreeBound(&pbin->range_min, pbin->byval);
-			FreeBound(&pbin->range_max, pbin->byval);
-		}
+		/* Free this entry */
+		FreePartBoundInfo(pbin);
 
 		/* Finally remove this entry from cache */
 		pathman_cache_search_relid(bounds_cache,
@@ -1025,6 +1020,26 @@ get_bounds_of_partition(Oid partition, const PartRelationInfo *prel)
 	}
 
 	return pbin;
+}
+
+void
+invalidate_bounds_cache(void)
+{
+	HASH_SEQ_STATUS		status;
+	PartBoundInfo	   *pbin;
+
+	Assert(offsetof(PartBoundInfo, child_relid) == 0);
+
+	hash_seq_init(&status, bounds_cache);
+
+	while ((pbin = hash_seq_search(&status)) != NULL)
+	{
+		FreePartBoundInfo(pbin);
+
+		pathman_cache_search_relid(bounds_cache,
+								   pbin->child_relid,
+								   HASH_REMOVE, NULL);
+	}
 }
 
 /*
@@ -1255,6 +1270,26 @@ get_parent_of_partition(Oid partition)
 		heap_close(relation, AccessShareLock);
 
 		return parent;
+	}
+}
+
+void
+invalidate_parents_cache(void)
+{
+	HASH_SEQ_STATUS		status;
+	PartParentInfo	   *ppar;
+
+	Assert(offsetof(PartParentInfo, child_relid) == 0);
+
+	hash_seq_init(&status, parents_cache);
+
+	while ((ppar = hash_seq_search(&status)) != NULL)
+	{
+		/* This is a plain structure, no need to pfree() */
+
+		pathman_cache_search_relid(parents_cache,
+								   ppar->child_relid,
+								   HASH_REMOVE, NULL);
 	}
 }
 

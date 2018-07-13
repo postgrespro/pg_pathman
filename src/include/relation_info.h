@@ -184,6 +184,16 @@ typedef struct PartBoundInfo
 	uint32			part_idx;
 } PartBoundInfo;
 
+static inline void
+FreePartBoundInfo(PartBoundInfo *pbin)
+{
+	if (pbin->parttype == PT_RANGE)
+	{
+		FreeBound(&pbin->range_min, pbin->byval);
+		FreeBound(&pbin->range_max, pbin->byval);
+	}
+}
+
 /*
  * PartRelationInfo
  *		Per-relation partitioning information.
@@ -341,8 +351,8 @@ PartTypeToCString(PartType parttype)
 
 
 /* Status chache */
-void invalidate_pathman_status_info(Oid relid);
-void invalidate_pathman_status_info_cache(void);
+void forget_status_of_relation(Oid relid);
+void invalidate_status_cache(void);
 
 /* Dispatch cache */
 bool has_pathman_relation_info(Oid relid);
@@ -359,11 +369,13 @@ void shout_if_prel_is_invalid(const Oid parent_oid,
 /* Bounds cache */
 void forget_bounds_of_partition(Oid partition);
 PartBoundInfo *get_bounds_of_partition(Oid partition, const PartRelationInfo *prel);
+void invalidate_bounds_cache(void);
 
 /* Parents cache */
 void cache_parent_of_partition(Oid partition, Oid parent);
 void forget_parent_of_partition(Oid partition);
 Oid get_parent_of_partition(Oid partition);
+void invalidate_parents_cache(void);
 
 /* Partitioning expression routines */
 Node *parse_partitioning_expression(const Oid relid,
