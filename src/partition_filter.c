@@ -1003,6 +1003,8 @@ prepare_rri_fdw_for_insert(ResultRelInfoHolder *rri_holder,
 		TupleDesc			tupdesc;
 		int					i,
 							target_attr;
+		PlanState		    plan_state;
+		PlanState		   *plan_state_ptr;
 
 		/* Fetch RangeTblEntry for partition */
 		rte = rt_fetch(rri->ri_RangeTableIndex, estate->es_range_table);
@@ -1066,6 +1068,14 @@ prepare_rri_fdw_for_insert(ResultRelInfoHolder *rri_holder,
 		/* Plan fake query in for FDW access to be planned as well */
 		elog(DEBUG1, "FDW(%u): plan fake query for fdw_private", partid);
 		plan = standard_planner(&query, 0, NULL);
+		/*
+		 * Add fake PlanState to mt_plans. Though no one will ever look at the
+		 * contents, postgresBeginForeignModify segfaults since 11 if it is
+		 * absent.
+		 */
+		memset(&plan_state, 0, sizeof(PlanState));
+		plan_state_ptr = &plan_state;
+		mtstate.mt_plans = &plan_state_ptr;
 
 		/* Extract fdw_private from useless plan */
 		elog(DEBUG1, "FDW(%u): extract fdw_private", partid);
