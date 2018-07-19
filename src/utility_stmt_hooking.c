@@ -630,9 +630,9 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 			/* Handle foreign tables */
 			else
 			{
-				child_result_rel->ri_FdwRoutine->ForeignNextCopyFrom(estate,
-																	 child_rri,
-																	 cstate);
+				child_rri->ri_FdwRoutine->ForeignNextCopyFrom(estate,
+															  child_rri,
+															  cstate);
 			}
 #endif
 
@@ -706,7 +706,7 @@ prepare_rri_for_copy(ResultRelInfoHolder *rri_holder,
 			FdwCopyFromIsSupported(fdw_routine))
 		{
 			CopyState		cstate = (CopyState) rps_storage->init_rri_holder_cb_arg;
-			ResultRelInfo	*parent_rri = rps_storage->saved_rel_info;
+			ResultRelInfo	*parent_rri = rps_storage->base_rri;
 			EState			*estate = rps_storage->estate;
 
 			fdw_routine->BeginForeignCopyFrom(estate, rri, cstate, parent_rri);
