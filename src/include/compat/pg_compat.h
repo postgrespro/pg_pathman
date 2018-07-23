@@ -827,6 +827,18 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 
 
 /*
+ * HeapTupleGetXmin()
+ * Vanilla PostgreSQL has HeaptTupleHeaderGetXmin, but for 64-bit xid
+ * we need access to entire tuple, not just its header.
+ */
+#ifdef XID_IS_64BIT
+# define HeapTupleGetXminCompat(htup) HeapTupleGetXmin(htup)
+#else
+# define HeapTupleGetXminCompat(htup) HeapTupleHeaderGetXmin((htup)->t_data)
+#endif
+
+
+/*
  * -------------
  *  Common code
  * -------------
