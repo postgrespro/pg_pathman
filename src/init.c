@@ -675,7 +675,7 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 
 		/* Set xmin if necessary */
 		if (xmin)
-			*xmin = HeapTupleHeaderGetXmin(htup->t_data);
+			*xmin = HeapTupleGetXminCompat(htup);
 
 		/* Set ItemPointer if necessary */
 		if (iptr)
