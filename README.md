@@ -63,13 +63,13 @@ More interesting features are yet to come. Stay tuned!
  * Effective query planning for partitioned tables (JOINs, subselects etc);
  * `RuntimeAppend` & `RuntimeMergeAppend` custom plan nodes to pick partitions at runtime;
  * `PartitionFilter`: an efficient drop-in replacement for INSERT triggers;
+ * `PartitionRouter` for cross-partition UPDATE queries (instead of triggers);
  * Automatic partition creation for new INSERTed data (only for RANGE partitioning);
  * Improved `COPY FROM` statement that is able to insert rows directly into partitions;
- * UPDATE triggers generation out of the box (will be replaced with custom nodes too);
  * User-defined callbacks for partition creation event handling;
  * Non-blocking concurrent table partitioning;
  * FDW support (foreign partitions);
- * Various GUC toggles and configurable settings.
+ * Various [GUC](#disabling-pg_pathman) toggles and configurable settings.
 
 ## Installation guide
 To install `pg_pathman`, execute this in the module's directory:
@@ -121,8 +121,8 @@ Although it's possible to get major and minor version numbers using `\dx pg_path
 
 ### Partition creation
 ```plpgsql
-create_hash_partitions(relation         REGCLASS,
-                       expr             TEXT,
+create_hash_partitions(parent_relid     REGCLASS,
+                       expression       TEXT,
                        partitions_count INTEGER,
                        partition_data   BOOLEAN DEFAULT TRUE,
                        partition_names  TEXT[] DEFAULT NULL,
@@ -131,21 +131,21 @@ create_hash_partitions(relation         REGCLASS,
 Performs HASH partitioning for `relation` by partitioning expression `expr`. The `partitions_count` parameter specifies the number of partitions to create; it cannot be changed afterwards. If `partition_data` is `true` then all the data will be automatically copied from the parent table to partitions. Note that data migration may took a while to finish and the table will be locked until transaction commits. See `partition_table_concurrently()` for a lock-free way to migrate data. Partition creation callback is invoked for each partition if set beforehand (see `set_init_callback()`).
 
 ```plpgsql
-create_range_partitions(relation        REGCLASS,
+create_range_partitions(parent_relid    REGCLASS,
                         expression      TEXT,
                         start_value     ANYELEMENT,
                         p_interval      ANYELEMENT,
                         p_count         INTEGER DEFAULT NULL
                         partition_data  BOOLEAN DEFAULT TRUE)
 
-create_range_partitions(relation        REGCLASS,
+create_range_partitions(parent_relid    REGCLASS,
                         expression      TEXT,
                         start_value     ANYELEMENT,
                         p_interval      INTERVAL,
                         p_count         INTEGER DEFAULT NULL,
                         partition_data  BOOLEAN DEFAULT TRUE)
 
-create_range_partitions(relation        REGCLASS,
+create_range_partitions(parent_relid    REGCLASS,
                         expression      TEXT,
                         bounds          ANYARRAY,
                         partition_names TEXT[] DEFAULT NULL,
@@ -181,10 +181,12 @@ stop_concurrent_part_task(relation REGCLASS)
 Stops a background worker performing a concurrent partitioning task. Note: worker will exit after it finishes relocating a current batch.
 
 ### Triggers
-```plpgsql
-create_update_triggers(parent REGCLASS)
-```
-Creates a for-each-row trigger to enable cross-partition UPDATE on a table partitioned by HASH/RANGE. The trigger is not created automatically because of the overhead caused by its function. You don't have to use this feature unless partitioning key might change during an UPDATE.
+
+Triggers are no longer required nor for INSERTs, neither for cross-partition UPDATEs. However, user-supplied triggers *are supported*.
+
+Each inserted row results in execution of BEFORE/AFTER INSERT trigger functions of a **corresponding partition**.
+Each updated row results in execution of BEFORE/AFTER UPDATE trigger functions of a **corresponding partition**.
+Each moved row (cross-partition update) results in execution of BEFORE UPDATE + BEFORE/AFTER DELETE + BEFORE/AFTER INSERT trigger functions of **corresponding partitions**.
 
 ### Post-creation partition management
 ```plpgsql
@@ -196,9 +198,10 @@ Replaces specified partition of HASH-partitioned table with another table. The `
 
 
 ```plpgsql
-split_range_partition(partition      REGCLASS,
-                      split_value    ANYELEMENT,
-                      partition_name TEXT DEFAULT NULL)
+split_range_partition(partition_relid REGCLASS,
+                      split_value     ANYELEMENT,
+                      partition_name  TEXT DEFAULT NULL,
+					  tablespace      TEXT DEFAULT NULL)
 ```
 Split RANGE `partition` in two by `split_value`. Partition creation callback is invoked for a new partition if available.
 
@@ -208,21 +211,21 @@ merge_range_partitions(variadic partitions REGCLASS[])
 Merge several adjacent RANGE partitions. Partitions are automatically ordered by increasing bounds; all the data will be accumulated in the first partition.
 
 ```plpgsql
-append_range_partition(parent         REGCLASS,
+append_range_partition(parent_relid   REGCLASS,
                        partition_name TEXT DEFAULT NULL,
                        tablespace     TEXT DEFAULT NULL)
 ```
 Append new RANGE partition with `pathman_config.range_interval` as interval.
 
 ```plpgsql
-prepend_range_partition(parent         REGCLASS,
+prepend_range_partition(parent_relid   REGCLASS,
                         partition_name TEXT DEFAULT NULL,
                         tablespace     TEXT DEFAULT NULL)
 ```
 Prepend new RANGE partition with `pathman_config.range_interval` as interval.
 
 ```plpgsql
-add_range_partition(relation       REGCLASS,
+add_range_partition(parent_relid   REGCLASS,
                     start_value    ANYELEMENT,
                     end_value      ANYELEMENT,
                     partition_name TEXT DEFAULT NULL,
@@ -236,26 +239,26 @@ drop_range_partition(partition TEXT, delete_data BOOLEAN DEFAULT TRUE)
 Drop RANGE partition and all of its data if `delete_data` is true.
 
 ```plpgsql
-attach_range_partition(relation    REGCLASS,
-                       partition   REGCLASS,
-                       start_value ANYELEMENT,
-                       end_value   ANYELEMENT)
+attach_range_partition(parent_relid    REGCLASS,
+                       partition_relid REGCLASS,
+                       start_value     ANYELEMENT,
+                       end_value       ANYELEMENT)
 ```
 Attach partition to the existing RANGE-partitioned relation. The attached table must have exactly the same structure as the parent table, including the dropped columns. Partition creation callback is invoked if set (see `pathman_config_params`).
 
 ```plpgsql
-detach_range_partition(partition REGCLASS)
+detach_range_partition(partition_relid REGCLASS)
 ```
 Detach partition from the existing RANGE-partitioned relation.
 
 ```plpgsql
-disable_pathman_for(relation TEXT)
+disable_pathman_for(parent_relid REGCLASS)
 ```
 Permanently disable `pg_pathman` partitioning mechanism for the specified parent table and remove the insert trigger if it exists. All partitions and data remain unchanged.
 
 ```plpgsql
-drop_partitions(parent      REGCLASS,
-                delete_data BOOLEAN DEFAULT FALSE)
+drop_partitions(parent_relid REGCLASS,
+                delete_data  BOOLEAN DEFAULT FALSE)
 ```
 Drop partitions of the `parent` table (both foreign and local relations). If `delete_data` is `false`, the data is copied to the parent table first. Default is `false`.
 
@@ -347,7 +350,7 @@ CREATE TABLE IF NOT EXISTS pathman_config_params (
     partrel         REGCLASS NOT NULL PRIMARY KEY,
     enable_parent   BOOLEAN NOT NULL DEFAULT TRUE,
     auto            BOOLEAN NOT NULL DEFAULT TRUE,
-    init_callback   REGPROCEDURE NOT NULL DEFAULT 0,
+    init_callback   TEXT DEFAULT NULL,
     spawn_using_bgw BOOLEAN NOT NULL DEFAULT FALSE);
 ```
 This table stores optional parameters which override standard behavior.
@@ -414,6 +417,7 @@ Shows memory consumption of various caches.
 - `RuntimeAppend` (overrides `Append` plan node)
 - `RuntimeMergeAppend` (overrides `MergeAppend` plan node)
 - `PartitionFilter` (drop-in replacement for INSERT triggers)
+- `PartitionRouter` (implements cross-partition UPDATEs)
 
 `PartitionFilter` acts as a *proxy node* for INSERT's child scan, which means it can redirect output tuples to the corresponding partition:
 
@@ -428,6 +432,22 @@ SELECT generate_series(1, 10), random();
          ->  Subquery Scan on "*SELECT*"
                ->  Result
 (4 rows)
+```
+
+`PartitionRouter` is another *proxy node* used in conjunction with `PartitionFilter` to enable cross-partition UPDATEs (i.e. when you update any column of a partitioning key). Since this node has a great deal of side effects (ordinary `UPDATE` becomes slower; cross-partition `UPDATE` is transformed into `DELETE + INSERT`), it is disabled by default. To enable it, refer to the list of [GUCs](#disabling-pg_pathman) below.
+
+```plpgsql
+EXPLAIN (COSTS OFF)
+UPDATE partitioned_table
+SET value = value + 1 WHERE value = 2;
+                    QUERY PLAN                     
+---------------------------------------------------
+ Update on partitioned_table_0
+   ->  Custom Scan (PartitionRouter)
+         ->  Custom Scan (PartitionFilter)
+               ->  Seq Scan on partitioned_table_0
+                     Filter: (value = 2)
+(5 rows)
 ```
 
 `RuntimeAppend` and `RuntimeMergeAppend` have much in common: they come in handy in a case when WHERE condition takes form of:
@@ -580,7 +600,7 @@ NOTICE:  100 rows copied from part_test_2
 (3 rows)
 ```
 
-- You can turn foreign tables into partitions using the `attach_range_partition()` function. Rows that were meant to be inserted into parent will be redirected to foreign partitions (as usual, PartitionFilter will be involved), though by default it is prohibited to insert rows into partitions provided not by `postgres_fdw`. Only superuser is allowed to set `pg_pathman.insert_into_fdw` GUC variable.
+- You can turn foreign tables into partitions using the `attach_range_partition()` function. Rows that were meant to be inserted into parent will be redirected to foreign partitions (as usual, PartitionFilter will be involved), though by default it is prohibited to insert rows into partitions provided not by `postgres_fdw`. Only superuser is allowed to set `pg_pathman.insert_into_fdw` [GUC](#disabling-pg_pathman) variable.
 
 ### HASH partitioning
 Consider an example of HASH partitioning. First create a table with some integer column:
@@ -710,7 +730,8 @@ There are several user-accessible [GUC](https://www.postgresql.org/docs/9.5/stat
  - `pg_pathman.enable` --- disable (or enable) `pg_pathman` **completely**
  - `pg_pathman.enable_runtimeappend` --- toggle `RuntimeAppend` custom node on\off
  - `pg_pathman.enable_runtimemergeappend` --- toggle `RuntimeMergeAppend` custom node on\off
- - `pg_pathman.enable_partitionfilter` --- toggle `PartitionFilter` custom node on\off
+ - `pg_pathman.enable_partitionfilter` --- toggle `PartitionFilter` custom node on\off (for INSERTs)
+ - `pg_pathman.enable_partitionrouter` --- toggle `PartitionRouter` custom node on\off (for cross-partition UPDATEs)
  - `pg_pathman.enable_auto_partition` --- toggle automatic partition creation on\off (per session)
  - `pg_pathman.enable_bounds_cache` --- toggle bounds cache on\off (faster updates of partitioning scheme)
  - `pg_pathman.insert_into_fdw` --- allow INSERTs into various FDWs `(disabled | postgres | any_fdw)`
