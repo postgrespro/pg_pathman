@@ -58,16 +58,16 @@ More interesting features are yet to come. Stay tuned!
 
  * HASH and RANGE partitioning schemes;
  * Partitioning by expression and composite key;
- * Both automatic and manual partition management;
+ * Both automatic and manual [partition management](#post-creation-partition-management);
  * Support for integer, floating point, date and other types, including domains;
  * Effective query planning for partitioned tables (JOINs, subselects etc);
  * `RuntimeAppend` & `RuntimeMergeAppend` custom plan nodes to pick partitions at runtime;
- * `PartitionFilter`: an efficient drop-in replacement for INSERT triggers;
- * `PartitionRouter` for cross-partition UPDATE queries (instead of triggers);
+ * [`PartitionFilter`](#custom-plan-nodes): an efficient drop-in replacement for INSERT triggers;
+ * [`PartitionRouter`](#custom-plan-nodes) for cross-partition UPDATE queries (instead of triggers);
  * Automatic partition creation for new INSERTed data (only for RANGE partitioning);
  * Improved `COPY FROM` statement that is able to insert rows directly into partitions;
- * User-defined callbacks for partition creation event handling;
- * Non-blocking concurrent table partitioning;
+ * [User-defined callbacks](#additional-parameters) for partition creation event handling;
+ * Non-blocking [concurrent table partitioning](#data-migration);
  * FDW support (foreign partitions);
  * Various [GUC](#disabling-pg_pathman) toggles and configurable settings.
 
@@ -182,17 +182,17 @@ Stops a background worker performing a concurrent partitioning task. Note: worke
 
 ### Triggers
 
-Triggers are no longer required nor for INSERTs, neither for cross-partition UPDATEs. However, user-supplied triggers *are supported*.
+Triggers are no longer required nor for INSERTs, neither for cross-partition UPDATEs. However, user-supplied triggers *are supported*:
 
-Each inserted row results in execution of BEFORE/AFTER INSERT trigger functions of a **corresponding partition**.
-Each updated row results in execution of BEFORE/AFTER UPDATE trigger functions of a **corresponding partition**.
-Each moved row (cross-partition update) results in execution of BEFORE UPDATE + BEFORE/AFTER DELETE + BEFORE/AFTER INSERT trigger functions of **corresponding partitions**.
+* Each **inserted row** results in execution of `BEFORE/AFTER INSERT` trigger functions of a *corresponding partition*.
+* Each **updated row** results in execution of `BEFORE/AFTER UPDATE` trigger functions of a *corresponding partition*.
+* Each **moved row** (cross-partition update) results in execution of `BEFORE UPDATE` + `BEFORE/AFTER DELETE` + `BEFORE/AFTER INSERT` trigger functions of *corresponding partitions*.
 
 ### Post-creation partition management
 ```plpgsql
 replace_hash_partition(old_partition REGCLASS,
                        new_partition REGCLASS,
-                       lock_parent   BOOL DEFAULT TRUE)
+                       lock_parent   BOOLEAN DEFAULT TRUE)
 ```
 Replaces specified partition of HASH-partitioned table with another table. The `lock_parent` parameter will prevent any INSERT/UPDATE/ALTER TABLE queries to parent table.
 
@@ -201,7 +201,7 @@ Replaces specified partition of HASH-partitioned table with another table. The `
 split_range_partition(partition_relid REGCLASS,
                       split_value     ANYELEMENT,
                       partition_name  TEXT DEFAULT NULL,
-					  tablespace      TEXT DEFAULT NULL)
+                      tablespace      TEXT DEFAULT NULL)
 ```
 Split RANGE `partition` in two by `split_value`. Partition creation callback is invoked for a new partition if available.
 
@@ -434,7 +434,7 @@ SELECT generate_series(1, 10), random();
 (4 rows)
 ```
 
-`PartitionRouter` is another *proxy node* used in conjunction with `PartitionFilter` to enable cross-partition UPDATEs (i.e. when you update any column of a partitioning key). Since this node has a great deal of side effects (ordinary `UPDATE` becomes slower; cross-partition `UPDATE` is transformed into `DELETE + INSERT`), it is disabled by default. To enable it, refer to the list of [GUCs](#disabling-pg_pathman) below.
+`PartitionRouter` is another *proxy node* used in conjunction with `PartitionFilter` to enable cross-partition UPDATEs (i.e. when update of partitioning key requires that we move row to another partition). Since this node has a great deal of side effects (ordinary `UPDATE` becomes slower; cross-partition `UPDATE` is transformed into `DELETE + INSERT`), it is disabled by default. To enable it, refer to the list of [GUCs](#disabling-pg_pathman) below.
 
 ```plpgsql
 EXPLAIN (COSTS OFF)
