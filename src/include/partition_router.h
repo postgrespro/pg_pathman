@@ -32,6 +32,8 @@ typedef struct PartitionRouterState
 
 	Oid					partitioned_table;
 	JunkFilter		   *junkfilter;
+	EPQState			epqstate;
+	int					epqparam;
 	Plan			   *subplan; /* proxy variable to store subplan */
 } PartitionRouterState;
 
@@ -64,6 +66,7 @@ void init_partition_router_static_data(void);
 Plan *make_partition_router(Plan *subplan,
 							Oid parent_relid,
 							Index parent_rti,
+							int epq_param,
 							List *returning_list);
 
 

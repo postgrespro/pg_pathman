@@ -666,15 +666,14 @@ partition_router_visitor(Plan *plan, void *context)
 
 	if (modifytable_contains_fdw(rtable, modify_table))
 	{
-		ereport(NOTICE,
-				(errcode(ERRCODE_STATEMENT_TOO_COMPLEX),
-				 errmsg("discovered mix of local and foreign tables, "
-						UPDATE_NODE_NAME " will be disabled")));
-		return;
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg(UPDATE_NODE_NAME " does not support foreign data wrappers")));
 	}
 
 	lc3 = list_head(modify_table->returningLists);
-	forboth (lc1, modify_table->plans, lc2, modify_table->resultRelations)
+	forboth (lc1, modify_table->plans,
+			 lc2, modify_table->resultRelations)
 	{
 		Index	rindex = lfirst_int(lc2);
 		Oid		relid = getrelid(rindex, rtable),
@@ -698,6 +697,7 @@ partition_router_visitor(Plan *plan, void *context)
 
 			lfirst(lc1) = make_partition_router((Plan *) lfirst(lc1), relid,
 												modify_table->nominalRelation,
+												modify_table->epqParam,
 												returning_list);
 		}
 	}

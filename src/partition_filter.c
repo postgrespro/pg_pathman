@@ -87,7 +87,7 @@ static Node *fix_returning_list_mutator(Node *node, void *state);
 static Index append_rte_to_estate(EState *estate, RangeTblEntry *rte);
 static int append_rri_to_estate(EState *estate, ResultRelInfo *rri);
 
-static List * pfilter_build_tlist(Relation parent_rel, Plan *subplan);
+static List *pfilter_build_tlist(Plan *subplan);
 
 static void pf_memcxt_callback(void *arg);
 static estate_mod_data * fetch_estate_mod_data(EState *estate);
@@ -637,7 +637,6 @@ make_partition_filter(Plan *subplan,
 					  CmdType command_type)
 {
 	CustomScan *cscan = makeNode(CustomScan);
-	Relation	parent_rel;
 
 	/* Currently we don't support ON CONFLICT clauses */
 	if (conflict_action != ONCONFLICT_NONE)
@@ -655,13 +654,11 @@ make_partition_filter(Plan *subplan,
 	cscan->methods = &partition_filter_plan_methods;
 	cscan->custom_plans = list_make1(subplan);
 
-	/* Build an appropriate target list using a cached Relation entry */
-	parent_rel = RelationIdGetRelation(parent_relid);
-	cscan->scan.plan.targetlist = pfilter_build_tlist(parent_rel, subplan);
-	RelationClose(parent_rel);
-
 	/* No physical relation will be scanned */
 	cscan->scan.scanrelid = 0;
+
+	/* Build an appropriate target list */
+	cscan->scan.plan.targetlist = pfilter_build_tlist(subplan);
 
 	/* Prepare 'custom_scan_tlist' for EXPLAIN (VERBOSE) */
 	cscan->custom_scan_tlist = copyObject(cscan->scan.plan.targetlist);
@@ -830,44 +827,37 @@ partition_filter_explain(CustomScanState *node, List *ancestors, ExplainState *e
  * Build partition filter's target list pointing to subplan tuple's elements.
  */
 static List *
-pfilter_build_tlist(Relation parent_rel, Plan *subplan)
+pfilter_build_tlist(Plan *subplan)
 {
 	List	   *result_tlist = NIL;
 	ListCell   *lc;
 
 	foreach (lc, subplan->targetlist)
 	{
-		TargetEntry		   *tle = (TargetEntry *) lfirst(lc),
-						   *newtle = NULL;
+		TargetEntry	   *tle = (TargetEntry *) lfirst(lc),
+					   *newtle = NULL;
 
 		if (IsA(tle->expr, Const))
-			newtle = makeTargetEntry(copyObject(tle->expr), tle->resno, tle->resname,
-											tle->resjunk);
-
+		{
+			/* TODO: maybe we should use copyObject(tle->expr)? */
+			newtle = makeTargetEntry(tle->expr,
+									 tle->resno,
+									 tle->resname,
+									 tle->resjunk);
+		}
 		else
 		{
-			if (tle->expr != NULL && IsA(tle->expr, Var))
-			{
-				Var *var = (Var *) palloc(sizeof(Var));
-				*var = *((Var *)(tle->expr));
-				var->varno = INDEX_VAR;
-				var->varattno = tle->resno;
+			Var *var = makeVar(INDEX_VAR,	/* point to subplan's elements */
+							   tle->resno,
+							   exprType((Node *) tle->expr),
+							   exprTypmod((Node *) tle->expr),
+							   exprCollation((Node *) tle->expr),
+							   0);
 
-				newtle = makeTargetEntry((Expr *) var, tle->resno, tle->resname,
-											tle->resjunk);
-			}
-			else
-			{
-				Var *var = makeVar(INDEX_VAR,	/* point to subplan's elements */
-								   tle->resno,
-								   exprType((Node *) tle->expr),
-								   exprTypmod((Node *) tle->expr),
-								   exprCollation((Node *) tle->expr),
-								   0);
-
-				newtle = makeTargetEntry((Expr *) var, tle->resno, tle->resname,
-											tle->resjunk);
-			}
+			newtle = makeTargetEntry((Expr *) var,
+									 tle->resno,
+									 tle->resname,
+									 tle->resjunk);
 		}
 
 		result_tlist = lappend(result_tlist, newtle);

@@ -28,9 +28,9 @@ bool				pg_pathman_enable_partition_router = true;
 CustomScanMethods	partition_router_plan_methods;
 CustomExecMethods	partition_router_exec_methods;
 
-static TupleTableSlot *ExecDeleteInternal(ItemPointer tupleid,
-										  EPQState *epqstate,
-										  EState *estate);
+static bool ExecDeleteInternal(ItemPointer tupleid,
+							   EPQState *epqstate,
+							   EState *estate);
 
 void
 init_partition_router_static_data(void)
@@ -65,6 +65,7 @@ Plan *
 make_partition_router(Plan *subplan,
 					  Oid parent_relid,
 					  Index parent_rti,
+					  int epq_param,
 					  List *returning_list)
 
 {
@@ -85,15 +86,16 @@ make_partition_router(Plan *subplan,
 	cscan->scan.plan.plan_rows		= subplan->plan_rows;
 	cscan->scan.plan.plan_width		= subplan->plan_width;
 
-	/* Setup methods and child plan */
+	/* Setup methods, child plan and param number for EPQ */
 	cscan->methods = &partition_router_plan_methods;
 	cscan->custom_plans = list_make1(pfilter);
-
-	/* Build an appropriate target list */
-	cscan->scan.plan.targetlist = pfilter->targetlist;
+	cscan->custom_private = list_make1(makeInteger(epq_param));
 
 	/* No physical relation will be scanned */
 	cscan->scan.scanrelid = 0;
+
+	/* Build an appropriate target list */
+	cscan->scan.plan.targetlist = pfilter->targetlist;
 
 	/* FIXME: should we use the same tlist? */
 	cscan->custom_scan_tlist = subplan->targetlist;
@@ -113,7 +115,9 @@ partition_router_create_scan_state(CustomScan *node)
 	state->css.methods = &partition_router_exec_methods;
 
 	/* Extract necessary variables */
+	state->epqparam = intVal(linitial(node->custom_private));
 	state->subplan = (Plan *) linitial(node->custom_plans);
+
 	return (Node *) state;
 }
 
@@ -121,6 +125,10 @@ void
 partition_router_begin(CustomScanState *node, EState *estate, int eflags)
 {
 	PartitionRouterState   *state = (PartitionRouterState *) node;
+
+	EvalPlanQualInit(&state->epqstate, estate,
+					 state->subplan, NIL,
+					 state->epqparam);
 
 	/* It's convenient to store PlanState in 'custom_ps' */
 	node->custom_ps = list_make1(ExecInitNode(state->subplan, estate, eflags));
@@ -134,6 +142,7 @@ partition_router_exec(CustomScanState *node)
 	TupleTableSlot			*slot;
 	PartitionRouterState	*state = (PartitionRouterState *) node;
 
+take_next_tuple:
 	/* execute PartitionFilter child node */
 	slot = ExecProcNode(child_ps);
 
@@ -141,7 +150,6 @@ partition_router_exec(CustomScanState *node)
 	{
 		ResultRelInfo		   *new_rri,	/* new tuple owner */
 							   *old_rri;	/* previous tuple owner */
-		EPQState				epqstate;
 		PartitionFilterState   *child_state;
 		char					relkind;
 		ItemPointerData			ctid;
@@ -203,8 +211,12 @@ partition_router_exec(CustomScanState *node)
 
 		/* Delete tuple from old partition */
 		Assert(ItemPointerIsValid(&ctid));
-		EvalPlanQualSetSlot(&epqstate, child_state->subplan_slot);
-		ExecDeleteInternal(&ctid, &epqstate, estate);
+		EvalPlanQualSetSlot(&state->epqstate, child_state->subplan_slot);
+		if (!ExecDeleteInternal(&ctid, &state->epqstate, estate))
+		{
+			elog(INFO, "oops, deleted, taking next tuple!");
+			goto take_next_tuple;
+		}
 
 		/* Magic: replace parent's ResultRelInfo with child's one (INSERT) */
 		estate->es_result_relation_info = new_rri;
@@ -244,40 +256,42 @@ partition_router_explain(CustomScanState *node, List *ancestors, ExplainState *e
  * ----------------------------------------------------------------
  */
 
-static TupleTableSlot *
+static bool
 ExecDeleteInternal(ItemPointer tupleid,
 				   EPQState *epqstate,
 				   EState *estate)
 {
-	ResultRelInfo			*resultRelInfo;
-	Relation				 resultRelationDesc;
+	ResultRelInfo			*rri;
+	Relation				 rel;
 	HTSU_Result				 result;
 	HeapUpdateFailureData	 hufd;
 
 	/*
 	 * get information on the (current) result relation
 	 */
-	resultRelInfo = estate->es_result_relation_info;
-	resultRelationDesc = resultRelInfo->ri_RelationDesc;
+	rri = estate->es_result_relation_info;
+	rel = rri->ri_RelationDesc;
 
-	/* BEFORE ROW DELETE Triggers */
-	if (resultRelInfo->ri_TrigDesc &&
-		resultRelInfo->ri_TrigDesc->trig_delete_before_row)
+	/* BEFORE ROW UPDATE triggers */
+	if (rri->ri_TrigDesc &&
+		rri->ri_TrigDesc->trig_update_before_row)
 	{
-		bool		dodelete;
+		elog(INFO, "kek!");
+	}
 
-		dodelete = ExecBRDeleteTriggers(estate, epqstate, resultRelInfo,
-										tupleid, NULL);
-
-		if (!dodelete)
-			elog(ERROR, "the old row always should be deleted from child table");
+	/* BEFORE ROW DELETE triggers */
+	if (rri->ri_TrigDesc &&
+		rri->ri_TrigDesc->trig_delete_before_row)
+	{
+		if (!ExecBRDeleteTriggers(estate, epqstate, rri, tupleid, NULL))
+			return false;
 	}
 
 	if (tupleid != NULL)
 	{
 		/* delete the tuple */
 ldelete:
-		result = heap_delete_compat(resultRelationDesc, tupleid,
+		result = heap_delete_compat(rel, tupleid,
 									estate->es_output_cid,
 									estate->es_crosscheck_snapshot,
 									true /* wait for commit */ ,
@@ -292,7 +306,7 @@ ldelete:
 							 errhint("Consider using an AFTER trigger instead of a BEFORE trigger to propagate changes to other rows.")));
 
 				/* Else, already deleted by self; nothing to do */
-				return NULL;
+				return false;
 
 			case HeapTupleMayBeUpdated:
 				break;
@@ -302,17 +316,19 @@ ldelete:
 					ereport(ERROR,
 							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
 							 errmsg("could not serialize access due to concurrent update")));
+
 				if (!ItemPointerEquals(tupleid, &hufd.ctid))
 				{
 					TupleTableSlot *epqslot;
 
 					epqslot = EvalPlanQual(estate,
 										   epqstate,
-										   resultRelationDesc,
-										   resultRelInfo->ri_RangeTableIndex,
+										   rel,
+										   rri->ri_RangeTableIndex,
 										   LockTupleExclusive,
 										   &hufd.ctid,
 										   hufd.xmax);
+
 					if (!TupIsNull(epqslot))
 					{
 						Assert(tupleid != NULL);
@@ -320,19 +336,19 @@ ldelete:
 						goto ldelete;
 					}
 				}
+
 				/* tuple already deleted; nothing to do */
-				return NULL;
+				return false;
 
 			default:
 				elog(ERROR, "unrecognized heap_delete status: %u", result);
-				return NULL;
 		}
 	}
 	else
 		elog(ERROR, "tupleid should be specified for deletion");
 
-	/* AFTER ROW DELETE Triggers */
-	ExecARDeleteTriggersCompat(estate, resultRelInfo, tupleid, NULL, NULL);
+	/* AFTER ROW DELETE triggers */
+	ExecARDeleteTriggersCompat(estate, rri, tupleid, NULL, NULL);
 
-	return NULL;
+	return true;
 }
