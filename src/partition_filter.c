@@ -16,6 +16,7 @@
 #include "partition_filter.h"
 #include "utils.h"
 
+#include "access/htup_details.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_type.h"
 #include "foreign/fdwapi.h"
@@ -86,8 +87,6 @@ static Node *fix_returning_list_mutator(Node *node, void *state);
 
 static Index append_rte_to_estate(EState *estate, RangeTblEntry *rte);
 static int append_rri_to_estate(EState *estate, ResultRelInfo *rri);
-
-static List *pfilter_build_tlist(Plan *subplan);
 
 static void pf_memcxt_callback(void *arg);
 static estate_mod_data * fetch_estate_mod_data(EState *estate);
@@ -633,8 +632,8 @@ make_partition_filter(Plan *subplan,
 					  Oid parent_relid,
 					  Index parent_rti,
 					  OnConflictAction conflict_action,
-					  List *returning_list,
-					  CmdType command_type)
+					  CmdType command_type,
+					  List *returning_list)
 {
 	CustomScan *cscan = makeNode(CustomScan);
 
@@ -723,9 +722,6 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 							  state->on_conflict_action != ONCONFLICT_NONE,
 							  RPS_RRI_CB(prepare_rri_for_insert, state),
 							  RPS_RRI_CB(NULL, NULL));
-
-	/* No warnings yet */
-	state->warning_triggered = false;
 }
 
 TupleTableSlot *
@@ -739,16 +735,12 @@ partition_filter_exec(CustomScanState *node)
 	TupleTableSlot		   *slot;
 
 	slot = ExecProcNode(child_ps);
-	state->subplan_slot = slot;
-
-	if (state->tup_convert_slot)
-		ExecClearTuple(state->tup_convert_slot);
 
 	if (!TupIsNull(slot))
 	{
 		MemoryContext			old_mcxt;
 		ResultRelInfoHolder	   *rri_holder;
-		ResultRelInfo		   *resultRelInfo;
+		ResultRelInfo		   *rri;
 
 		/* Switch to per-tuple context */
 		old_mcxt = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
@@ -760,30 +752,28 @@ partition_filter_exec(CustomScanState *node)
 		MemoryContextSwitchTo(old_mcxt);
 		ResetExprContext(econtext);
 
-		resultRelInfo = rri_holder->result_rel_info;
+		rri = rri_holder->result_rel_info;
 
 		/* Magic: replace parent's ResultRelInfo with ours */
-		estate->es_result_relation_info = resultRelInfo;
+		estate->es_result_relation_info = rri;
 
 		/* If there's a transform map, rebuild the tuple */
 		if (rri_holder->tuple_map)
 		{
 			HeapTuple	htup_old,
 						htup_new;
-			Relation	child_rel = resultRelInfo->ri_RelationDesc;
+			Relation	child_rel = rri->ri_RelationDesc;
 
 			htup_old = ExecMaterializeSlot(slot);
 			htup_new = do_convert_tuple(htup_old, rri_holder->tuple_map);
+			ExecClearTuple(slot);
 
 			/* Allocate new slot if needed */
 			if (!state->tup_convert_slot)
 				state->tup_convert_slot = MakeTupleTableSlotCompat();
 
 			ExecSetSlotDescriptor(state->tup_convert_slot, RelationGetDescr(child_rel));
-			ExecStoreTuple(htup_new, state->tup_convert_slot, InvalidBuffer, true);
-
-			/* Now replace the original slot */
-			slot = state->tup_convert_slot;
+			slot = ExecStoreTuple(htup_new, state->tup_convert_slot, InvalidBuffer, true);
 		}
 
 		return slot;
@@ -826,7 +816,7 @@ partition_filter_explain(CustomScanState *node, List *ancestors, ExplainState *e
 /*
  * Build partition filter's target list pointing to subplan tuple's elements.
  */
-static List *
+List *
 pfilter_build_tlist(Plan *subplan)
 {
 	List	   *result_tlist = NIL;

@@ -28,9 +28,10 @@ bool				pg_pathman_enable_partition_router = true;
 CustomScanMethods	partition_router_plan_methods;
 CustomExecMethods	partition_router_exec_methods;
 
-static bool ExecDeleteInternal(ItemPointer tupleid,
-							   EPQState *epqstate,
-							   EState *estate);
+static TupleTableSlot *ExecDeleteInternal(TupleTableSlot *slot,
+										  ItemPointer tupleid,
+										  EPQState *epqstate,
+										  EState *estate);
 
 void
 init_partition_router_static_data(void)
@@ -70,15 +71,6 @@ make_partition_router(Plan *subplan,
 
 {
 	CustomScan *cscan = makeNode(CustomScan);
-	Plan	   *pfilter;
-
-	/* Create child PartitionFilter node */
-	pfilter = make_partition_filter(subplan,
-									parent_relid,
-									parent_rti,
-									ONCONFLICT_NONE,
-									returning_list,
-									CMD_UPDATE);
 
 	/* Copy costs etc */
 	cscan->scan.plan.startup_cost	= subplan->startup_cost;
@@ -88,14 +80,14 @@ make_partition_router(Plan *subplan,
 
 	/* Setup methods, child plan and param number for EPQ */
 	cscan->methods = &partition_router_plan_methods;
-	cscan->custom_plans = list_make1(pfilter);
+	cscan->custom_plans = list_make1(subplan);
 	cscan->custom_private = list_make1(makeInteger(epq_param));
 
 	/* No physical relation will be scanned */
 	cscan->scan.scanrelid = 0;
 
 	/* Build an appropriate target list */
-	cscan->scan.plan.targetlist = pfilter->targetlist;
+	cscan->scan.plan.targetlist = pfilter_build_tlist(subplan);
 
 	/* FIXME: should we use the same tlist? */
 	cscan->custom_scan_tlist = subplan->targetlist;
@@ -126,6 +118,9 @@ partition_router_begin(CustomScanState *node, EState *estate, int eflags)
 {
 	PartitionRouterState   *state = (PartitionRouterState *) node;
 
+	/* Remember current relation we're going to delete from */
+	state->current_rri = estate->es_result_relation_info;
+
 	EvalPlanQualInit(&state->epqstate, estate,
 					 state->subplan, NIL,
 					 state->epqparam);
@@ -148,26 +143,18 @@ take_next_tuple:
 
 	if (!TupIsNull(slot))
 	{
-		ResultRelInfo		   *new_rri,	/* new tuple owner */
-							   *old_rri;	/* previous tuple owner */
-		PartitionFilterState   *child_state;
-		char					relkind;
-		ItemPointerData			ctid;
+		ResultRelInfo	   *current_rri = state->current_rri;
+		char				relkind;
+		ItemPointerData		ctid;
 
 		ItemPointerSetInvalid(&ctid);
-
-		child_state = (PartitionFilterState *) child_ps;
-		Assert(child_state->command_type == CMD_UPDATE);
-
-		old_rri = child_state->result_parts.base_rri;
-		new_rri = estate->es_result_relation_info;
 
 		/* Build new junkfilter if we have to */
 		if (state->junkfilter == NULL)
 		{
 			state->junkfilter =
 				ExecInitJunkFilter(state->subplan->targetlist,
-								   old_rri->ri_RelationDesc->rd_att->tdhasoid,
+								   current_rri->ri_RelationDesc->rd_att->tdhasoid,
 								   ExecInitExtraTupleSlotCompat(estate));
 
 			state->junkfilter->jf_junkAttNo =
@@ -177,13 +164,14 @@ take_next_tuple:
 				elog(ERROR, "could not find junk ctid column");
 		}
 
-		relkind = old_rri->ri_RelationDesc->rd_rel->relkind;
+		/* Additional checks based on 'relkind' */
+		relkind = current_rri->ri_RelationDesc->rd_rel->relkind;
 		if (relkind == RELKIND_RELATION)
 		{
 			Datum	ctid_datum;
 			bool	ctid_isnull;
 
-			ctid_datum = ExecGetJunkAttribute(child_state->subplan_slot,
+			ctid_datum = ExecGetJunkAttribute(slot,
 											  state->junkfilter->jf_junkAttNo,
 											  &ctid_isnull);
 
@@ -199,30 +187,26 @@ take_next_tuple:
 		else
 			elog(ERROR, UPDATE_NODE_NAME " cannot handle relkind %u", relkind);
 
-		/*
-		 * Clean from junk attributes before INSERT,
-		 * but only if slot wasn't transformed in PartitionFilter.
-		 */
-		if (TupIsNull(child_state->tup_convert_slot))
-			slot = ExecFilterJunk(state->junkfilter, slot);
+		elog(INFO, "deleting (%d, %d) from table: %s",
+			 ItemPointerGetBlockNumber(&ctid),
+			 ItemPointerGetOffsetNumber(&ctid),
+			 get_rel_name(RelationGetRelid(current_rri->ri_RelationDesc)));
 
-		/* Magic: replace current ResultRelInfo with parent's one (DELETE) */
-		estate->es_result_relation_info = old_rri;
+		/* Magic: replace parent's ResultRelInfo with ours */
+		estate->es_result_relation_info = current_rri;
 
 		/* Delete tuple from old partition */
 		Assert(ItemPointerIsValid(&ctid));
-		EvalPlanQualSetSlot(&state->epqstate, child_state->subplan_slot);
-		if (!ExecDeleteInternal(&ctid, &state->epqstate, estate))
+		slot = ExecDeleteInternal(slot, &ctid, &state->epqstate, estate);
+
+		if (TupIsNull(slot))
 		{
 			elog(INFO, "oops, deleted, taking next tuple!");
 			goto take_next_tuple;
 		}
 
-		/* Magic: replace parent's ResultRelInfo with child's one (INSERT) */
-		estate->es_result_relation_info = new_rri;
-
 		/* Tuple will be inserted by ModifyTable */
-		return slot;
+		return ExecFilterJunk(state->junkfilter, slot);
 	}
 
 	return NULL;
@@ -231,7 +215,10 @@ take_next_tuple:
 void
 partition_router_end(CustomScanState *node)
 {
+	PartitionRouterState *state = (PartitionRouterState *) node;
+
 	Assert(list_length(node->custom_ps) == 1);
+	EvalPlanQualEnd(&state->epqstate);
 	ExecEndNode((PlanState *) linitial(node->custom_ps));
 }
 
@@ -256,8 +243,9 @@ partition_router_explain(CustomScanState *node, List *ancestors, ExplainState *e
  * ----------------------------------------------------------------
  */
 
-static bool
-ExecDeleteInternal(ItemPointer tupleid,
+static TupleTableSlot *
+ExecDeleteInternal(TupleTableSlot *slot,
+				   ItemPointer tupleid,
 				   EPQState *epqstate,
 				   EState *estate)
 {
@@ -284,13 +272,15 @@ ExecDeleteInternal(ItemPointer tupleid,
 		rri->ri_TrigDesc->trig_delete_before_row)
 	{
 		if (!ExecBRDeleteTriggers(estate, epqstate, rri, tupleid, NULL))
-			return false;
+			return NULL;
 	}
 
 	if (tupleid != NULL)
 	{
-		/* delete the tuple */
+		EvalPlanQualSetSlot(epqstate, slot);
+
 ldelete:
+		/* delete the tuple */
 		result = heap_delete_compat(rel, tupleid,
 									estate->es_output_cid,
 									estate->es_crosscheck_snapshot,
@@ -305,8 +295,8 @@ ldelete:
 							 errmsg("tuple to be updated was already modified by an operation triggered by the current command"),
 							 errhint("Consider using an AFTER trigger instead of a BEFORE trigger to propagate changes to other rows.")));
 
-				/* Else, already deleted by self; nothing to do */
-				return false;
+				/* Already deleted by self; nothing to do */
+				return NULL;
 
 			case HeapTupleMayBeUpdated:
 				break;
@@ -333,12 +323,13 @@ ldelete:
 					{
 						Assert(tupleid != NULL);
 						*tupleid = hufd.ctid;
+						slot = epqslot;
 						goto ldelete;
 					}
 				}
 
-				/* tuple already deleted; nothing to do */
-				return false;
+				/* Tuple already deleted; nothing to do */
+				return NULL;
 
 			default:
 				elog(ERROR, "unrecognized heap_delete status: %u", result);
@@ -350,5 +341,5 @@ ldelete:
 	/* AFTER ROW DELETE triggers */
 	ExecARDeleteTriggersCompat(estate, rri, tupleid, NULL, NULL);
 
-	return true;
+	return slot;
 }

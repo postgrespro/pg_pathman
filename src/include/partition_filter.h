@@ -108,9 +108,6 @@ typedef struct
 	ResultPartsStorage	result_parts;			/* partition ResultRelInfo cache */
 	CmdType				command_type;
 
-	bool				warning_triggered;		/* warning message counter */
-
-	TupleTableSlot     *subplan_slot;			/* slot that was returned from subplan */
 	TupleTableSlot	   *tup_convert_slot;		/* slot for rebuilt tuples */
 } PartitionFilterState;
 
@@ -170,6 +167,8 @@ PartRelationInfo * refresh_result_parts_storage(ResultPartsStorage *parts_storag
 
 TupleConversionMap * build_part_tuple_map(Relation parent_rel, Relation child_rel);
 
+List * pfilter_build_tlist(Plan *subplan);
+
 
 /* Find suitable partition using 'value' */
 Oid * find_partitions_for_value(Datum value, Oid value_type,
@@ -183,8 +182,8 @@ Plan * make_partition_filter(Plan *subplan,
 							 Oid parent_relid,
 							 Index parent_rti,
 							 OnConflictAction conflict_action,
-							 List *returning_list,
-							 CmdType command_type);
+							 CmdType command_type,
+							 List *returning_list);
 
 
 Node * partition_filter_create_scan_state(CustomScan *node);

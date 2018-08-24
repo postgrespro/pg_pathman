@@ -31,10 +31,13 @@ typedef struct PartitionRouterState
 	CustomScanState		css;
 
 	Oid					partitioned_table;
-	JunkFilter		   *junkfilter;
+	Plan			   *subplan;	/* proxy variable to store subplan */
+	JunkFilter		   *junkfilter;	/* 'ctid' extraction facility */
+
 	EPQState			epqstate;
 	int					epqparam;
-	Plan			   *subplan; /* proxy variable to store subplan */
+
+	ResultRelInfo	   *current_rri;
 } PartitionRouterState;
 
 

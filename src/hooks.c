@@ -987,8 +987,9 @@ pathman_executor_hook(QueryDesc *queryDesc,
 		{
 			CustomScanState *pr_state = (CustomScanState *) mt_state->mt_plans[i];
 
-			/* Check if this is a PartitionRouter node */
-			if (IsPartitionRouterState(pr_state))
+			/* Check if this is a PartitionFilter + PartitionRouter combo */
+			if (IsPartitionFilterState(pr_state) &&
+				IsPartitionRouterState(linitial(pr_state->custom_ps)))
 			{
 				ResultRelInfo *rri = &mt_state->resultRelInfo[i];
 

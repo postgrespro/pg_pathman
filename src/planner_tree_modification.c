@@ -618,7 +618,8 @@ partition_filter_visitor(Plan *plan, void *context)
 	Assert(rtable && IsA(rtable, List));
 
 	lc3 = list_head(modify_table->returningLists);
-	forboth (lc1, modify_table->plans, lc2, modify_table->resultRelations)
+	forboth (lc1, modify_table->plans,
+			 lc2, modify_table->resultRelations)
 	{
 		Index	rindex = lfirst_int(lc2);
 		Oid		relid = getrelid(rindex, rtable);
@@ -638,8 +639,8 @@ partition_filter_visitor(Plan *plan, void *context)
 			lfirst(lc1) = make_partition_filter((Plan *) lfirst(lc1), relid,
 												modify_table->nominalRelation,
 												modify_table->onConflictAction,
-												returning_list,
-												CMD_INSERT);
+												modify_table->operation,
+												returning_list);
 		}
 	}
 }
@@ -686,7 +687,9 @@ partition_router_visitor(Plan *plan, void *context)
 		/* Check that table is partitioned */
 		if (has_pathman_relation_info(relid))
 		{
-			List *returning_list = NIL;
+			List   *returning_list = NIL;
+			Plan   *prouter,
+				   *pfilter;
 
 			/* Extract returning list if possible */
 			if (lc3)
@@ -695,10 +698,18 @@ partition_router_visitor(Plan *plan, void *context)
 				lc3 = lnext(lc3);
 			}
 
-			lfirst(lc1) = make_partition_router((Plan *) lfirst(lc1), relid,
-												modify_table->nominalRelation,
-												modify_table->epqParam,
-												returning_list);
+			prouter = make_partition_router((Plan *) lfirst(lc1), relid,
+											modify_table->nominalRelation,
+											modify_table->epqParam,
+											returning_list);
+
+			pfilter = make_partition_filter((Plan *) prouter, relid,
+											modify_table->nominalRelation,
+											ONCONFLICT_NONE,
+											CMD_UPDATE,
+											returning_list);
+
+			lfirst(lc1) = pfilter;
 		}
 	}
 }
