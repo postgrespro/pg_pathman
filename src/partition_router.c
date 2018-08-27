@@ -29,9 +29,9 @@ CustomScanMethods	partition_router_plan_methods;
 CustomExecMethods	partition_router_exec_methods;
 
 static TupleTableSlot *router_delete_tuple(TupleTableSlot *slot,
-										  ItemPointer tupleid,
-										  EPQState *epqstate,
-										  EState *estate);
+										   ItemPointer tupleid,
+										   EPQState *epqstate,
+										   EState *estate);
 
 void
 init_partition_router_static_data(void)
@@ -232,24 +232,24 @@ partition_router_explain(CustomScanState *node, List *ancestors, ExplainState *e
 /*
  * ----------------------------------------------------------------
  *  ExecDeleteInternal
- *		Basicly is a copy of ExecDelete from executor/nodeModifyTable.c
+ *		This is a modified copy of ExecDelete from executor/nodeModifyTable.c
  * ----------------------------------------------------------------
  */
 
 static TupleTableSlot *
 router_delete_tuple(TupleTableSlot *slot,
-				   ItemPointer tupleid,
-				   EPQState *epqstate,
-				   EState *estate)
+					ItemPointer tupleid,
+					EPQState *epqstate,
+					EState *estate)
 {
 	ResultRelInfo			*rri;
 	Relation				 rel;
 	HTSU_Result				 result;
 	HeapUpdateFailureData	 hufd;
 
-	/*
-	 * get information on the (current) result relation
-	 */
+	EvalPlanQualSetSlot(epqstate, slot);
+
+	/* Get information on the (current) result relation */
 	rri = estate->es_result_relation_info;
 	rel = rri->ri_RelationDesc;
 
@@ -257,7 +257,9 @@ router_delete_tuple(TupleTableSlot *slot,
 	if (rri->ri_TrigDesc &&
 		rri->ri_TrigDesc->trig_update_before_row)
 	{
-		elog(INFO, "kek!");
+		slot = ExecBRUpdateTriggers(estate, epqstate, rri, tupleid, NULL, slot);
+		if (TupIsNull(slot))
+			return NULL;
 	}
 
 	/* BEFORE ROW DELETE triggers */
@@ -270,10 +272,8 @@ router_delete_tuple(TupleTableSlot *slot,
 
 	if (tupleid != NULL)
 	{
-		EvalPlanQualSetSlot(epqstate, slot);
-
 ldelete:
-		/* delete the tuple */
+		/* Delete the tuple */
 		result = heap_delete_compat(rel, tupleid,
 									estate->es_output_cid,
 									estate->es_crosscheck_snapshot,
@@ -328,8 +328,7 @@ ldelete:
 				elog(ERROR, "unrecognized heap_delete status: %u", result);
 		}
 	}
-	else
-		elog(ERROR, "tupleid should be specified for deletion");
+	else elog(ERROR, "tupleid should be specified for deletion");
 
 	/* AFTER ROW DELETE triggers */
 	ExecARDeleteTriggersCompat(estate, rri, tupleid, NULL, NULL);
