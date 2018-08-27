@@ -28,7 +28,7 @@ bool				pg_pathman_enable_partition_router = true;
 CustomScanMethods	partition_router_plan_methods;
 CustomExecMethods	partition_router_exec_methods;
 
-static TupleTableSlot *ExecDeleteInternal(TupleTableSlot *slot,
+static TupleTableSlot *router_delete_tuple(TupleTableSlot *slot,
 										  ItemPointer tupleid,
 										  EPQState *epqstate,
 										  EState *estate);
@@ -187,23 +187,16 @@ take_next_tuple:
 		else
 			elog(ERROR, UPDATE_NODE_NAME " cannot handle relkind %u", relkind);
 
-		elog(INFO, "deleting (%d, %d) from table: %s",
-			 ItemPointerGetBlockNumber(&ctid),
-			 ItemPointerGetOffsetNumber(&ctid),
-			 get_rel_name(RelationGetRelid(current_rri->ri_RelationDesc)));
-
 		/* Magic: replace parent's ResultRelInfo with ours */
 		estate->es_result_relation_info = current_rri;
 
 		/* Delete tuple from old partition */
 		Assert(ItemPointerIsValid(&ctid));
-		slot = ExecDeleteInternal(slot, &ctid, &state->epqstate, estate);
+		slot = router_delete_tuple(slot, &ctid, &state->epqstate, estate);
 
+		/* We require a tuple */
 		if (TupIsNull(slot))
-		{
-			elog(INFO, "oops, deleted, taking next tuple!");
 			goto take_next_tuple;
-		}
 
 		/* Tuple will be inserted by ModifyTable */
 		return ExecFilterJunk(state->junkfilter, slot);
@@ -244,7 +237,7 @@ partition_router_explain(CustomScanState *node, List *ancestors, ExplainState *e
  */
 
 static TupleTableSlot *
-ExecDeleteInternal(TupleTableSlot *slot,
+router_delete_tuple(TupleTableSlot *slot,
 				   ItemPointer tupleid,
 				   EPQState *epqstate,
 				   EState *estate)

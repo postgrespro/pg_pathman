@@ -18,8 +18,8 @@ EXPLAIN (COSTS OFF) UPDATE test_update_node.test_range SET val = 5 WHERE val = 1
                             QUERY PLAN                             
 -------------------------------------------------------------------
  Update on test_range_2
-   ->  Custom Scan (PartitionRouter)
-         ->  Custom Scan (PartitionFilter)
+   ->  Custom Scan (PartitionFilter)
+         ->  Custom Scan (PartitionRouter)
                ->  Bitmap Heap Scan on test_range_2
                      Recheck Cond: (val = '15'::numeric)
                      ->  Bitmap Index Scan on test_range_2_val_idx
@@ -31,8 +31,8 @@ EXPLAIN (COSTS OFF) UPDATE test_update_node.test_range SET val = 14 WHERE val = 
                             QUERY PLAN                             
 -------------------------------------------------------------------
  Update on test_range_2
-   ->  Custom Scan (PartitionRouter)
-         ->  Custom Scan (PartitionFilter)
+   ->  Custom Scan (PartitionFilter)
+         ->  Custom Scan (PartitionRouter)
                ->  Bitmap Heap Scan on test_range_2
                      Recheck Cond: (val = '15'::numeric)
                      ->  Bitmap Index Scan on test_range_2_val_idx
