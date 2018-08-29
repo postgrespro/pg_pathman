@@ -266,7 +266,7 @@ router_delete_tuple(TupleTableSlot *slot,
 	if (rri->ri_TrigDesc &&
 		rri->ri_TrigDesc->trig_delete_before_row)
 	{
-		if (!ExecBRDeleteTriggers(estate, epqstate, rri, tupleid, NULL))
+		if (!ExecBRDeleteTriggersCompat(estate, epqstate, rri, tupleid, NULL, NULL))
 			return NULL;
 	}
 
