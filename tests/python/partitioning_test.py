@@ -1044,12 +1044,12 @@ class Tests(unittest.TestCase):
                             ],
                             "Node Type": "Custom Scan",
                             "Parent Relationship": "child",
-                            "Custom Plan Provider": "PartitionFilter"
+                            "Custom Plan Provider": "PartitionRouter"
                         }
                     ],
                     "Node Type": "Custom Scan",
                     "Parent Relationship": "Member",
-                    "Custom Plan Provider": "PartitionRouter"
+                    "Custom Plan Provider": "PartitionFilter"
                 }
             '''
 
