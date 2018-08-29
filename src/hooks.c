@@ -978,6 +978,7 @@ pathman_executor_hook(QueryDesc *queryDesc,
 
 	PlanState *state = (PlanState *) queryDesc->planstate;
 
+	/* FIXME: we should modify ALL ModifyTable nodes! They might be hidden deeper. */
 	if (IsA(state, ModifyTableState))
 	{
 		ModifyTableState   *mt_state = (ModifyTableState *) state;
