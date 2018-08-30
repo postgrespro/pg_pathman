@@ -976,13 +976,18 @@ prepare_rri_fdw_for_insert(ResultRelInfoHolder *rri_holder,
 	if (fdw_routine->PlanForeignModify)
 	{
 		RangeTblEntry	   *rte;
-		ModifyTableState	mtstate;
-		List			   *fdw_private;
 		Query				query;
+		PlanState			pstate,
+						   *pstate_ptr;
+		ModifyTableState	mtstate;
 		PlannedStmt		   *plan;
+
+		/* This is the value we'd like to get */
+		List			   *fdw_private;
+
 		TupleDesc			tupdesc;
-		int					i,
-							target_attr;
+		int					target_attr,
+							i;
 
 		/* Fetch RangeTblEntry for partition */
 		rte = rt_fetch(rri->ri_RangeTableIndex, estate->es_range_table);
@@ -1033,26 +1038,33 @@ prepare_rri_fdw_for_insert(ResultRelInfoHolder *rri_holder,
 			target_attr++;
 		}
 
-		/* Create fake ModifyTableState */
-		memset((void *) &mtstate, 0, sizeof(ModifyTableState));
+		/* HACK: plan a fake query for FDW access to be planned as well */
+		elog(DEBUG1, "FDW(%u): plan fake query for fdw_private", partid);
+		plan = standard_planner(&query, 0, NULL);
+
+		/* HACK: create a fake PlanState */
+		memset(&pstate, 0, sizeof(PlanState));
+		pstate.plan = plan->planTree;
+		pstate_ptr = &pstate;
+
+		/* HACK: create a fake ModifyTableState */
+		memset(&mtstate, 0, sizeof(ModifyTableState));
 		NodeSetTag(&mtstate, T_ModifyTableState);
 		mtstate.ps.state = estate;
 		mtstate.operation = CMD_INSERT;
+		mtstate.mt_plans = &pstate_ptr;
+		mtstate.mt_nplans = 1;
+		mtstate.mt_whichplan = 0;
 		mtstate.resultRelInfo = rri;
 #if PG_VERSION_NUM < 110000
 		mtstate.mt_onconflict = ONCONFLICT_NONE;
 #endif
 
-		/* Plan fake query in for FDW access to be planned as well */
-		elog(DEBUG1, "FDW(%u): plan fake query for fdw_private", partid);
-		plan = standard_planner(&query, 0, NULL);
-
 		/* Extract fdw_private from useless plan */
 		elog(DEBUG1, "FDW(%u): extract fdw_private", partid);
-		fdw_private = (List *)
-				linitial(((ModifyTable *) plan->planTree)->fdwPrivLists);
+		fdw_private = linitial(((ModifyTable *) plan->planTree)->fdwPrivLists);
 
-		/* call BeginForeignModify on 'rri' */
+		/* HACK: call BeginForeignModify on 'rri' */
 		elog(DEBUG1, "FDW(%u): call BeginForeignModify on a fake INSERT node", partid);
 		fdw_routine->BeginForeignModify(&mtstate, rri, fdw_private, 0, 0);
 
