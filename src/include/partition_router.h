@@ -72,6 +72,8 @@ Plan *make_partition_router(Plan *subplan,
 							int epq_param,
 							List *returning_list);
 
+void prepare_modify_table_for_partition_router(PlanState *state, void *context);
+
 
 Node *partition_router_create_scan_state(CustomScan *node);
 

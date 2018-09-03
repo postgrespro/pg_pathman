@@ -976,35 +976,10 @@ pathman_executor_hook(QueryDesc *queryDesc,
 #define EXECUTOR_RUN(q,d,c)			standard_ExecutorRun((q),(d),(c))
 #endif
 
-	PlanState *state = (PlanState *) queryDesc->planstate;
-
-	/* FIXME: we should modify ALL ModifyTable nodes! They might be hidden deeper. */
-	if (IsA(state, ModifyTableState))
-	{
-		ModifyTableState   *mt_state = (ModifyTableState *) state;
-		int					i;
-
-		for (i = 0; i < mt_state->mt_nplans; i++)
-		{
-			CustomScanState *pr_state = (CustomScanState *) mt_state->mt_plans[i];
-
-			/* Check if this is a PartitionFilter + PartitionRouter combo */
-			if (IsPartitionFilterState(pr_state) &&
-				IsPartitionRouterState(linitial(pr_state->custom_ps)))
-			{
-				ResultRelInfo *rri = &mt_state->resultRelInfo[i];
-
-				/*
-				 * HACK: We unset junkfilter to disable
-				 * junk cleaning in ExecModifyTable.
-				 */
-				rri->ri_junkFilter = NULL;
-
-				/* HACK: change UPDATE operation to INSERT */
-				mt_state->operation = CMD_INSERT;
-			}
-		}
-	}
+	/* Prepare ModifyTable nodes for PartitionRouter hackery */
+	state_tree_visitor((PlanState *) queryDesc->planstate,
+					   prepare_modify_table_for_partition_router,
+					   NULL);
 
 	/* Call hooks set by other extensions if needed */
 	if (EXECUTOR_HOOK)

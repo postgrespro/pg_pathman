@@ -25,9 +25,14 @@ void assign_query_id(Query *query);
 void reset_query_id_generator(void);
 
 /* Plan tree rewriting utility */
-void plan_tree_walker(Plan *plan,
-					  void (*visitor) (Plan *plan, void *context),
-					  void *context);
+void plan_tree_visitor(Plan *plan,
+					   void (*visitor) (Plan *plan, void *context),
+					   void *context);
+
+/* PlanState tree rewriting utility */
+void state_tree_visitor(PlanState *state,
+						void (*visitor) (PlanState *state, void *context),
+						void *context);
 
 /* Query tree rewriting utility */
 void pathman_transform_query(Query *parse, ParamListInfo params);

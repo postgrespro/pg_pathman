@@ -113,6 +113,9 @@ static void handle_modification_query(Query *parse, transform_query_cxt *context
 static void partition_filter_visitor(Plan *plan, void *context);
 static void partition_router_visitor(Plan *plan, void *context);
 
+static void state_visit_subplans(List *plans, void (*visitor) (), void *context);
+static void state_visit_members(PlanState **planstates, int nplans, void (*visitor) (), void *context);
+
 static Oid find_deepest_partition(Oid relid, Index rti, Expr *quals);
 static Node *eval_extern_params_mutator(Node *node, ParamListInfo params);
 static Node *adjust_appendrel_varnos(Node *node, adjust_appendrel_varnos_cxt *context);
@@ -152,9 +155,9 @@ reset_query_id_generator(void)
  * 'visitor' is applied right before return.
  */
 void
-plan_tree_walker(Plan *plan,
-				 void (*visitor) (Plan *plan, void *context),
-				 void *context)
+plan_tree_visitor(Plan *plan,
+				  void (*visitor) (Plan *plan, void *context),
+				  void *context)
 {
 	ListCell   *l;
 
@@ -167,48 +170,150 @@ plan_tree_walker(Plan *plan,
 	switch (nodeTag(plan))
 	{
 		case T_SubqueryScan:
-			plan_tree_walker(((SubqueryScan *) plan)->subplan, visitor, context);
+			plan_tree_visitor(((SubqueryScan *) plan)->subplan, visitor, context);
 			break;
 
 		case T_CustomScan:
-			foreach(l, ((CustomScan *) plan)->custom_plans)
-				plan_tree_walker((Plan *) lfirst(l), visitor, context);
+			foreach (l, ((CustomScan *) plan)->custom_plans)
+				plan_tree_visitor((Plan *) lfirst(l), visitor, context);
 			break;
 
 		case T_ModifyTable:
 			foreach (l, ((ModifyTable *) plan)->plans)
-				plan_tree_walker((Plan *) lfirst(l), visitor, context);
+				plan_tree_visitor((Plan *) lfirst(l), visitor, context);
 			break;
 
 		case T_Append:
-			foreach(l, ((Append *) plan)->appendplans)
-				plan_tree_walker((Plan *) lfirst(l), visitor, context);
+			foreach (l, ((Append *) plan)->appendplans)
+				plan_tree_visitor((Plan *) lfirst(l), visitor, context);
 			break;
 
 		case T_MergeAppend:
-			foreach(l, ((MergeAppend *) plan)->mergeplans)
-				plan_tree_walker((Plan *) lfirst(l), visitor, context);
+			foreach (l, ((MergeAppend *) plan)->mergeplans)
+				plan_tree_visitor((Plan *) lfirst(l), visitor, context);
 			break;
 
 		case T_BitmapAnd:
-			foreach(l, ((BitmapAnd *) plan)->bitmapplans)
-				plan_tree_walker((Plan *) lfirst(l), visitor, context);
+			foreach (l, ((BitmapAnd *) plan)->bitmapplans)
+				plan_tree_visitor((Plan *) lfirst(l), visitor, context);
 			break;
 
 		case T_BitmapOr:
-			foreach(l, ((BitmapOr *) plan)->bitmapplans)
-				plan_tree_walker((Plan *) lfirst(l), visitor, context);
+			foreach (l, ((BitmapOr *) plan)->bitmapplans)
+				plan_tree_visitor((Plan *) lfirst(l), visitor, context);
 			break;
 
 		default:
 			break;
 	}
 
-	plan_tree_walker(plan->lefttree, visitor, context);
-	plan_tree_walker(plan->righttree, visitor, context);
+	plan_tree_visitor(plan->lefttree, visitor, context);
+	plan_tree_visitor(plan->righttree, visitor, context);
 
 	/* Apply visitor to the current node */
 	visitor(plan, context);
+}
+
+void
+state_tree_visitor(PlanState *state,
+				   void (*visitor) (PlanState *plan, void *context),
+				   void *context)
+{
+	Plan	   *plan;
+	ListCell   *lc;
+
+	if (state == NULL)
+		return;
+
+	plan = state->plan;
+
+	check_stack_depth();
+
+	/* Plan-type-specific fixes */
+	switch (nodeTag(plan))
+	{
+		case T_SubqueryScan:
+			state_tree_visitor(((SubqueryScanState *) state)->subplan, visitor, context);
+			break;
+
+		case T_CustomScan:
+			foreach (lc, ((CustomScanState *) state)->custom_ps)
+				state_tree_visitor((PlanState *) lfirst(lc),visitor, context);
+			break;
+
+		case T_ModifyTable:
+			state_visit_members(((ModifyTableState *) state)->mt_plans,
+								((ModifyTableState *) state)->mt_nplans,
+								visitor, context);
+			break;
+
+		case T_Append:
+			state_visit_members(((AppendState *) state)->appendplans,
+								((AppendState *) state)->as_nplans,
+								visitor, context);
+			break;
+
+		case T_MergeAppend:
+			state_visit_members(((MergeAppendState *) state)->mergeplans,
+								((MergeAppendState *) state)->ms_nplans,
+								visitor, context);
+			break;
+
+		case T_BitmapAnd:
+			state_visit_members(((BitmapAndState *) state)->bitmapplans,
+								((BitmapAndState *) state)->nplans,
+								visitor, context);
+			break;
+
+		case T_BitmapOr:
+			state_visit_members(((BitmapOrState *) state)->bitmapplans,
+								((BitmapOrState *) state)->nplans,
+								visitor, context);
+			break;
+
+		default:
+			break;
+	}
+
+	state_visit_subplans(state->initPlan, visitor, context);
+	state_visit_subplans(state->subPlan, visitor, context);
+
+	state_tree_visitor(state->lefttree, visitor, context);
+	state_tree_visitor(state->righttree, visitor, context);
+
+	/* Apply visitor to the current node */
+	visitor(state, context);
+}
+
+/*
+ * Walk a list of SubPlans (or initPlans, which also use SubPlan nodes).
+ */
+static void
+state_visit_subplans(List *plans,
+					 void (*visitor) (),
+					 void *context)
+{
+	ListCell *lc;
+
+	foreach (lc, plans)
+	{
+		SubPlanState *sps = lfirst_node(SubPlanState, lc);
+		visitor(sps->planstate, context);
+	}
+}
+
+/*
+ * Walk the constituent plans of a ModifyTable, Append, MergeAppend,
+ * BitmapAnd, or BitmapOr node.
+ */
+static void
+state_visit_members(PlanState **planstates, int nplans,
+					void (*visitor) (), void *context)
+{
+	int i;
+
+	for (i = 0; i < nplans; i++)
+		visitor(planstates[i], context);
 }
 
 
@@ -586,7 +691,7 @@ void
 add_partition_filters(List *rtable, Plan *plan)
 {
 	if (pg_pathman_enable_partition_filter)
-		plan_tree_walker(plan, partition_filter_visitor, rtable);
+		plan_tree_visitor(plan, partition_filter_visitor, rtable);
 }
 
 /* Add PartitionRouter nodes to the plan tree */
@@ -594,7 +699,7 @@ void
 add_partition_routers(List *rtable, Plan *plan)
 {
 	if (pg_pathman_enable_partition_router)
-		plan_tree_walker(plan, partition_router_visitor, rtable);
+		plan_tree_visitor(plan, partition_router_visitor, rtable);
 }
 
 /*

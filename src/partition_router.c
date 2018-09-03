@@ -95,6 +95,38 @@ make_partition_router(Plan *subplan,
 	return &cscan->scan.plan;
 }
 
+void
+prepare_modify_table_for_partition_router(PlanState *state, void *context)
+{
+	if (IsA(state, ModifyTableState))
+	{
+		ModifyTableState   *mt_state = (ModifyTableState *) state;
+		int					i;
+
+		for (i = 0; i < mt_state->mt_nplans; i++)
+		{
+			CustomScanState *pr_state = (CustomScanState *) mt_state->mt_plans[i];
+
+			/* Check if this is a PartitionFilter + PartitionRouter combo */
+			if (IsPartitionFilterState(pr_state) &&
+				IsPartitionRouterState(linitial(pr_state->custom_ps)))
+			{
+				ResultRelInfo *rri = &mt_state->resultRelInfo[i];
+
+				/*
+				 * HACK: We unset junkfilter to disable
+				 * junk cleaning in ExecModifyTable.
+				 */
+				rri->ri_junkFilter = NULL;
+
+				/* HACK: change UPDATE operation to INSERT */
+				mt_state->operation = CMD_INSERT;
+			}
+		}
+	}
+}
+
+
 Node *
 partition_router_create_scan_state(CustomScan *node)
 {
