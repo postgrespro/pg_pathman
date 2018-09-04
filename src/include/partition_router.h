@@ -38,6 +38,7 @@ typedef struct PartitionRouterState
 	int					epqparam;
 
 	ModifyTableState   *mt_state;		/* need this for a GREAT deal of hackery */
+	TupleTableSlot	   *saved_slot;
 
 	ResultRelInfo	   *current_rri;
 } PartitionRouterState;

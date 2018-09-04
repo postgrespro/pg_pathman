@@ -24,11 +24,27 @@
 #include "utils/guc.h"
 #include "utils/rel.h"
 
+
+#define MTHackField(mt_state, field) ( (mt_state)->field )
+
+
 bool				pg_pathman_enable_partition_router = true;
 
 CustomScanMethods	partition_router_plan_methods;
 CustomExecMethods	partition_router_exec_methods;
 
+
+/* FIXME: replace this magic with a CustomScan */
+static ExecProcNodeMtd mt_method = NULL;
+
+
+static TupleTableSlot *router_run_modify_table(PlanState *state);
+
+static TupleTableSlot *router_set_slot(PartitionRouterState *state,
+									   TupleTableSlot *slot,
+									   CmdType operation);
+static TupleTableSlot *router_get_slot(PartitionRouterState *state,
+									   bool *should_process);
 
 static void router_lazy_init_junkfilter(PartitionRouterState *state, EState *estate);
 static void router_lazy_init_constraint(PartitionRouterState *state);
@@ -110,6 +126,7 @@ prepare_modify_table_for_partition_router(PlanState *state, void *context)
 	if (IsA(state, ModifyTableState))
 	{
 		ModifyTableState   *mt_state = (ModifyTableState *) state;
+		bool				changed_method = false;
 		int					i;
 
 		for (i = 0; i < mt_state->mt_nplans; i++)
@@ -121,8 +138,19 @@ prepare_modify_table_for_partition_router(PlanState *state, void *context)
 			if (IsPartitionFilterState(pf_state) &&
 				IsPartitionRouterState(pr_state = linitial(pf_state->custom_ps)))
 			{
-				/* HACK: PartitionRouter might change ModifyTable's state */
+				/* HACK: point to ModifyTable in PartitionRouter */
 				pr_state->mt_state = mt_state;
+
+				if (!changed_method)
+				{
+					if (!mt_method)
+						mt_method = state->ExecProcNodeReal;
+
+					/* HACK: replace ModifyTable's execution method */
+					ExecSetExecProcNode(state, router_run_modify_table);
+
+					changed_method = true;
+				}
 			}
 		}
 	}
@@ -166,17 +194,18 @@ partition_router_begin(CustomScanState *node, EState *estate, int eflags)
 TupleTableSlot *
 partition_router_exec(CustomScanState *node)
 {
-	EState					*estate = node->ss.ps.state;
-	PlanState				*child_ps = (PlanState *) linitial(node->custom_ps);
-	PartitionRouterState	*state = (PartitionRouterState *) node;
-	TupleTableSlot			*slot;
+	EState				   *estate = node->ss.ps.state;
+	PartitionRouterState   *state = (PartitionRouterState *) node;
+	TupleTableSlot		   *slot;
+	bool					should_process;
 
 take_next_tuple:
-	/* execute PartitionFilter child node */
-	slot = ExecProcNode(child_ps);
+	/* Get next tuple for processing */
+	slot = router_get_slot(state, &should_process);
 
-	if (!TupIsNull(slot))
+	if (should_process)
 	{
+		CmdType				new_cmd;
 		bool				deleted;
 		ItemPointerData		ctid;
 
@@ -203,13 +232,14 @@ take_next_tuple:
 		if (TupIsNull(slot))
 			goto take_next_tuple;
 
-		/* HACK: change command type in ModifyTable */
-		state->mt_state->operation = deleted ? CMD_INSERT : CMD_UPDATE;
+		/* Should we use UPDATE or DELETE + INSERT? */
+		new_cmd = deleted ? CMD_INSERT : CMD_UPDATE;
 
-		return slot;
+		/* Alter ModifyTable's state and return */
+		return router_set_slot(state, slot, new_cmd);
 	}
 
-	return NULL;
+	return slot;
 }
 
 void
@@ -218,15 +248,20 @@ partition_router_end(CustomScanState *node)
 	PartitionRouterState *state = (PartitionRouterState *) node;
 
 	Assert(list_length(node->custom_ps) == 1);
-	EvalPlanQualEnd(&state->epqstate);
 	ExecEndNode((PlanState *) linitial(node->custom_ps));
+
+	EvalPlanQualEnd(&state->epqstate);
 }
 
 void
 partition_router_rescan(CustomScanState *node)
 {
+	PartitionRouterState *state = (PartitionRouterState *) node;
+
 	Assert(list_length(node->custom_ps) == 1);
 	ExecReScan((PlanState *) linitial(node->custom_ps));
+
+	state->saved_slot = NULL;
 }
 
 void
@@ -235,6 +270,87 @@ partition_router_explain(CustomScanState *node, List *ancestors, ExplainState *e
 	/* Nothing to do here now */
 }
 
+
+static TupleTableSlot *
+router_run_modify_table(PlanState *state)
+{
+	ModifyTableState   *mt_state;
+	TupleTableSlot	   *slot;
+	int					mt_plans_old,
+						mt_plans_new;
+
+	mt_state = (ModifyTableState *) state;
+
+	mt_plans_old = MTHackField(mt_state, mt_nplans);
+
+	/* Fetch next tuple */
+	slot = mt_method(state);
+
+	mt_plans_new = MTHackField(mt_state, mt_nplans);
+
+	/* PartitionRouter asked us to restart */
+	if (mt_plans_new != mt_plans_old)
+	{
+		int state_idx = mt_state->mt_whichplan - 1;
+
+		/* HACK: partially restore ModifyTable's state */
+		MTHackField(mt_state, mt_done) = false;
+		MTHackField(mt_state, mt_nplans) = mt_plans_old;
+		MTHackField(mt_state, mt_whichplan) = state_idx;
+
+		/* Restart ModifyTable */
+		return mt_method(state);
+	}
+
+	return slot;
+}
+
+static TupleTableSlot *
+router_set_slot(PartitionRouterState *state,
+				TupleTableSlot *slot,
+				CmdType operation)
+{
+	ModifyTableState *mt_state = state->mt_state;
+
+	Assert(!TupIsNull(slot));
+
+	if (mt_state->operation == operation)
+		return slot;
+
+	/* HACK: alter ModifyTable's state */
+	MTHackField(mt_state, mt_nplans) = -mt_state->mt_whichplan;
+	MTHackField(mt_state, operation) = operation;
+
+	/* Set saved_slot and yield */
+	state->saved_slot = slot;
+	return NULL;
+}
+
+static TupleTableSlot *
+router_get_slot(PartitionRouterState *state,
+				bool *should_process)
+{
+	TupleTableSlot *slot;
+
+	if (!TupIsNull(state->saved_slot))
+	{
+		/* Reset saved_slot */
+		slot = state->saved_slot;
+		state->saved_slot = NULL;
+
+		/* We shouldn't process preserved slot... */
+		*should_process = false;
+	}
+	else
+	{
+		slot = ExecProcNode((PlanState *) linitial(state->css.custom_ps));
+
+		/* But we have to process non-empty slot */
+		*should_process = !TupIsNull(slot);
+	}
+
+	return slot;
+}
 
 static void
 router_lazy_init_junkfilter(PartitionRouterState *state, EState *estate)

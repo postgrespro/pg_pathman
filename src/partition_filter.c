@@ -771,6 +771,7 @@ partition_filter_exec(CustomScanState *node)
 			if (!state->tup_convert_slot)
 				state->tup_convert_slot = MakeTupleTableSlotCompat();
 
+			/* TODO: why should we *always* set a new slot descriptor? */
 			ExecSetSlotDescriptor(state->tup_convert_slot, RelationGetDescr(child_rel));
 			slot = ExecStoreTuple(htup_new, state->tup_convert_slot, InvalidBuffer, true);
 		}
