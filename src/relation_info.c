@@ -150,8 +150,6 @@ static void resonwner_prel_callback(ResourceReleasePhase phase,
 									bool isTopLevel,
 									void *arg);
 
-static Expr *get_partition_constraint_expr(Oid partition);
-
 static void fill_prel_with_partitions(PartRelationInfo *prel,
 									  const Oid *partitions,
 									  const uint32 parts_count);
@@ -1047,7 +1045,7 @@ invalidate_bounds_cache(void)
  *
  * build_check_constraint_name_internal() is used to build conname.
  */
-static Expr *
+Expr *
 get_partition_constraint_expr(Oid partition)
 {
 	Oid			conid;			/* constraint Oid */

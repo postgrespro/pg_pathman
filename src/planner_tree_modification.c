@@ -238,7 +238,7 @@ state_tree_visitor(PlanState *state,
 
 		case T_CustomScan:
 			foreach (lc, ((CustomScanState *) state)->custom_ps)
-				state_tree_visitor((PlanState *) lfirst(lc),visitor, context);
+				state_tree_visitor((PlanState *) lfirst(lc), visitor, context);
 			break;
 
 		case T_ModifyTable:

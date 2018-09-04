@@ -367,6 +367,7 @@ void shout_if_prel_is_invalid(const Oid parent_oid,
 							  const PartType expected_part_type);
 
 /* Bounds cache */
+Expr *get_partition_constraint_expr(Oid partition);
 void forget_bounds_of_partition(Oid partition);
 PartBoundInfo *get_bounds_of_partition(Oid partition, const PartRelationInfo *prel);
 void invalidate_bounds_cache(void);

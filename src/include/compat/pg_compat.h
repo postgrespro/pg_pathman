@@ -364,7 +364,6 @@ extern void create_plain_partial_paths(PlannerInfo *root,
 
 /*
  * ExecEvalExpr()
- * NOTE: 'errmsg' specifies error string when ExecEvalExpr returns multiple values.
  */
 #if PG_VERSION_NUM >= 100000
 #define ExecEvalExprCompat(expr, econtext, isNull) \
@@ -380,6 +379,33 @@ ExecEvalExprCompat(ExprState *expr, ExprContext *econtext, bool *isnull)
 		elog(ERROR, "expression should return single value");
 
 	return result;
+}
+#endif
+
+
+/*
+ * ExecCheck()
+ */
+#if PG_VERSION_NUM < 100000
+static inline bool
+ExecCheck(ExprState *state, ExprContext *econtext)
+{
+	Datum			ret;
+	bool			isnull;
+	MemoryContext	old_mcxt;
+
+	/* short-circuit (here and in ExecInitCheck) for empty restriction list */
+	if (state == NULL)
+		return true;
+
+	old_mcxt = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
+	ret = ExecEvalExprCompat(state, econtext, &isnull);
+	MemoryContextSwitchTo(old_mcxt);
+
+	if (isnull)
+		return true;
+
+	return DatumGetBool(ret);
 }
 #endif
 
@@ -790,11 +816,15 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
  * heap_delete()
  */
 #if PG_VERSION_NUM >= 110000
-#define heap_delete_compat(relation, tid, cid, crosscheck, wait, hufd) \
-	heap_delete((relation), (tid), (cid), (crosscheck), (wait), (hufd), false)
+#define heap_delete_compat(relation, tid, cid, crosscheck, \
+						   wait, hufd, changing_part) \
+	heap_delete((relation), (tid), (cid), (crosscheck), \
+				(wait), (hufd), (changing_part))
 #else
-#define heap_delete_compat(relation, tid, cid, crosscheck, wait, hufd) \
-	heap_delete((relation), (tid), (cid), (crosscheck), (wait), (hufd))
+#define heap_delete_compat(relation, tid, cid, crosscheck, \
+						   wait, hufd, changing_part) \
+	heap_delete((relation), (tid), (cid), (crosscheck), \
+				(wait), (hufd))
 #endif
 
 /*
