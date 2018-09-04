@@ -202,8 +202,7 @@ ExtractConst(Node *node, const WalkerContext *context)
 
 	/* Evaluate expression */
 	estate = ExecInitExpr((Expr *) node, NULL);
-	value = ExecEvalExprCompat(estate, econtext, &isnull,
-							   mult_result_handler);
+	value = ExecEvalExprCompat(estate, econtext, &isnull);
 
 #if PG_VERSION_NUM >= 100000
 	/* Free temp econtext if needed */

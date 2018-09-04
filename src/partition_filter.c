@@ -519,8 +519,7 @@ select_partition_for_insert(ResultPartsStorage *parts_storage,
 			expr_context->ecxt_scantuple = slot;
 
 			/* Execute expression */
-			value = ExecEvalExprCompat(expr_state, expr_context,
-									   &isnull, mult_result_handler);
+			value = ExecEvalExprCompat(expr_state, expr_context, &isnull);
 
 			if (isnull)
 				elog(ERROR, ERR_PART_ATTR_NULL);

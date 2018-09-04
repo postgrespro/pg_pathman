@@ -367,26 +367,20 @@ extern void create_plain_partial_paths(PlannerInfo *root,
  * NOTE: 'errmsg' specifies error string when ExecEvalExpr returns multiple values.
  */
 #if PG_VERSION_NUM >= 100000
-#define ExecEvalExprCompat(expr, econtext, isNull, errHandler) \
+#define ExecEvalExprCompat(expr, econtext, isNull) \
 	ExecEvalExpr((expr), (econtext), (isNull))
 #elif PG_VERSION_NUM >= 90500
-
-/* Variables for ExecEvalExprCompat() */
-extern Datum			exprResult;
-extern ExprDoneCond		isDone;
-
-/* Error handlers */
-static inline void mult_result_handler()
+static inline Datum
+ExecEvalExprCompat(ExprState *expr, ExprContext *econtext, bool *isnull)
 {
-	elog(ERROR, "partitioning expression should return single value");
-}
+	ExprDoneCond	isdone;
+	Datum			result = ExecEvalExpr(expr, econtext, isnull, &isdone);
 
-#define ExecEvalExprCompat(expr, econtext, isNull, errHandler) \
-( \
-	exprResult = ExecEvalExpr((expr), (econtext), (isNull), &isDone), \
-	(isDone != ExprSingleResult) ? (errHandler)() : (0), \
-	exprResult \
-)
+	if (isdone != ExprSingleResult)
+		elog(ERROR, "expression should return single value");
+
+	return result;
+}
 #endif
 
 
