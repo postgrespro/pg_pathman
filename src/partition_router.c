@@ -281,16 +281,20 @@ router_run_modify_table(PlanState *state)
 
 	mt_state = (ModifyTableState *) state;
 
+	/* Get initial signal */
 	mt_plans_old = MTHackField(mt_state, mt_nplans);
 
+restart:
 	/* Fetch next tuple */
 	slot = mt_method(state);
 
+	/* Get current signal */
 	mt_plans_new = MTHackField(mt_state, mt_nplans);
 
-	/* PartitionRouter asked us to restart */
+	/* Did PartitionRouter ask us to restart? */
 	if (mt_plans_new != mt_plans_old)
 	{
+		/* Signal points to current plan */
 		int state_idx = -mt_plans_new;
 
 		/* HACK: partially restore ModifyTable's state */
@@ -299,7 +303,7 @@ router_run_modify_table(PlanState *state)
 		MTHackField(mt_state, mt_whichplan) = state_idx;
 
 		/* Restart ModifyTable */
-		return mt_method(state);
+		goto restart;
 	}
 
 	return slot;

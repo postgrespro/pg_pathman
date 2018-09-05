@@ -374,6 +374,32 @@ SELECT create_hash_partitions('test_update_node.test_hash', 'val', 3);
                       3
 (1 row)
 
+/* Shuffle rows a few times */
+UPDATE test_update_node.test_hash SET val = val + 1;
+UPDATE test_update_node.test_hash SET val = val + 1;
+UPDATE test_update_node.test_hash SET val = val + 1;
+UPDATE test_update_node.test_hash SET val = val + 1;
+UPDATE test_update_node.test_hash SET val = val + 1;
+UPDATE test_update_node.test_hash SET val = val + 1;
+UPDATE test_update_node.test_hash SET val = val + 1;
+UPDATE test_update_node.test_hash SET val = val + 1;
+UPDATE test_update_node.test_hash SET val = val + 1;
+/* Check values #0 */
+SELECT tableoid::regclass, * FROM test_update_node.test_hash ORDER BY val;
+           tableoid           | val | comment 
+------------------------------+-----+---------
+ test_update_node.test_hash_2 |  10 | 1
+ test_update_node.test_hash_1 |  11 | 2
+ test_update_node.test_hash_1 |  12 | 3
+ test_update_node.test_hash_2 |  13 | 4
+ test_update_node.test_hash_1 |  14 | 5
+ test_update_node.test_hash_1 |  15 | 6
+ test_update_node.test_hash_2 |  16 | 7
+ test_update_node.test_hash_0 |  17 | 8
+ test_update_node.test_hash_1 |  18 | 9
+ test_update_node.test_hash_0 |  19 | 10
+(10 rows)
+
 /* Move all rows into single partition */
 UPDATE test_update_node.test_hash SET val = 1;
 /* Check values #1 */

@@ -174,6 +174,21 @@ INSERT INTO test_update_node.test_hash SELECT i, i FROM generate_series(1, 10) i
 SELECT create_hash_partitions('test_update_node.test_hash', 'val', 3);
 
 
+/* Shuffle rows a few times */
+UPDATE test_update_node.test_hash SET val = val + 1;
+UPDATE test_update_node.test_hash SET val = val + 1;
+UPDATE test_update_node.test_hash SET val = val + 1;
+UPDATE test_update_node.test_hash SET val = val + 1;
+UPDATE test_update_node.test_hash SET val = val + 1;
+UPDATE test_update_node.test_hash SET val = val + 1;
+UPDATE test_update_node.test_hash SET val = val + 1;
+UPDATE test_update_node.test_hash SET val = val + 1;
+UPDATE test_update_node.test_hash SET val = val + 1;
+
+/* Check values #0 */
+SELECT tableoid::regclass, * FROM test_update_node.test_hash ORDER BY val;
+
+
 /* Move all rows into single partition */
 UPDATE test_update_node.test_hash SET val = 1;
 
