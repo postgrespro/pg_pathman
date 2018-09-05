@@ -1000,7 +1000,7 @@ get_bounds_of_partition(Oid partition, const PartRelationInfo *prel)
 		pbin_local.byval = prel->ev_byval;
 
 		/* Try to build constraint's expression tree (may emit ERROR) */
-		con_expr = get_partition_constraint_expr(partition);
+		con_expr = get_partition_constraint_expr(partition, true);
 
 		/* Grab bounds/hash and fill in 'pbin_local' (may emit ERROR) */
 		fill_pbin_with_bounds(&pbin_local, prel, con_expr);
@@ -1046,7 +1046,7 @@ invalidate_bounds_cache(void)
  * build_check_constraint_name_internal() is used to build conname.
  */
 Expr *
-get_partition_constraint_expr(Oid partition)
+get_partition_constraint_expr(Oid partition, bool raise_error)
 {
 	Oid			conid;			/* constraint Oid */
 	char	   *conname;		/* constraint name */
@@ -1060,11 +1060,12 @@ get_partition_constraint_expr(Oid partition)
 
 	if (!OidIsValid(conid))
 	{
-		DisablePathman(); /* disable pg_pathman since config is broken */
+		if (!raise_error)
+			return NULL;
+
 		ereport(ERROR,
 				(errmsg("constraint \"%s\" of partition \"%s\" does not exist",
-						conname, get_rel_name_or_relid(partition)),
-				 errhint(INIT_ERROR_HINT)));
+						conname, get_rel_name_or_relid(partition))));
 	}
 
 	con_tuple = SearchSysCache1(CONSTROID, ObjectIdGetDatum(conid));
@@ -1073,11 +1074,12 @@ get_partition_constraint_expr(Oid partition)
 								   &conbin_isnull);
 	if (conbin_isnull)
 	{
-		DisablePathman(); /* disable pg_pathman since config is broken */
-		ereport(WARNING,
+		if (!raise_error)
+			return NULL;
+
+		ereport(ERROR,
 				(errmsg("constraint \"%s\" of partition \"%s\" has NULL conbin",
-						conname, get_rel_name_or_relid(partition)),
-				 errhint(INIT_ERROR_HINT)));
+						conname, get_rel_name_or_relid(partition))));
 		pfree(conname);
 
 		return NULL; /* could not parse */

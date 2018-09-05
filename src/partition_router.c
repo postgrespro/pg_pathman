@@ -20,6 +20,7 @@
 #include "commands/trigger.h"
 #include "executor/nodeModifyTable.h"
 #include "foreign/fdwapi.h"
+#include "optimizer/clauses.h"
 #include "storage/bufmgr.h"
 #include "utils/guc.h"
 #include "utils/rel.h"
@@ -378,12 +379,33 @@ router_lazy_init_junkfilter(PartitionRouterState *state, EState *estate)
 static void
 router_lazy_init_constraint(PartitionRouterState *state)
 {
-	Relation rel = state->current_rri->ri_RelationDesc;
-
 	if (state->constraint == NULL)
 	{
-		Expr *expr = get_partition_constraint_expr(RelationGetRelid(rel));
-		state->constraint = ExecInitExpr(expr, NULL);
+		Relation	rel = state->current_rri->ri_RelationDesc;
+		Oid			relid = RelationGetRelid(rel);
+		List	   *clauses = NIL;
+		Expr	   *expr;
+
+		while (OidIsValid(relid))
+		{
+			/* It's probably OK if expression is NULL */
+			expr = get_partition_constraint_expr(relid, false);
+			expr = expression_planner(expr);
+
+			if (!expr)
+				break;
+
+			/* Add this constraint to set */
+			clauses = lappend(clauses, expr);
+
+			/* Consider parent's check constraint as well */
+			relid = get_parent_of_partition(relid);
+		}
+
+		if (!clauses)
+			elog(ERROR, "no recheck constraint for relid %d", relid);
+
+		state->constraint = ExecInitExpr(make_ands_explicit(clauses), NULL);
 	}
 }
 
