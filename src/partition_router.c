@@ -223,12 +223,12 @@ take_next_tuple:
 		/* Magic: replace parent's ResultRelInfo with ours */
 		estate->es_result_relation_info = state->current_rri;
 
-		/* Delete tuple from old partition */
+		/* Lock or delete tuple from old partition */
 		Assert(ItemPointerIsValid(&ctid));
 		slot = router_lock_or_delete_tuple(state, slot, &ctid,
 										   &deleted, estate);
 
-		/* We require a tuple */
+		/* We require a tuple (previous one has vanished) */
 		if (TupIsNull(slot))
 			goto take_next_tuple;
 
@@ -265,12 +265,15 @@ partition_router_rescan(CustomScanState *node)
 }
 
 void
-partition_router_explain(CustomScanState *node, List *ancestors, ExplainState *es)
+partition_router_explain(CustomScanState *node,
+						 List *ancestors,
+						 ExplainState *es)
 {
 	/* Nothing to do here now */
 }
 
 
+/* Smart wrapper over ModifyTable */
 static TupleTableSlot *
 router_run_modify_table(PlanState *state)
 {
@@ -309,6 +312,7 @@ restart:
 	return slot;
 }
 
+/* Return tuple OR stash it and change ModifyTable's operation */
 static TupleTableSlot *
 router_set_slot(PartitionRouterState *state,
 				TupleTableSlot *slot,
@@ -337,6 +341,7 @@ router_set_slot(PartitionRouterState *state,
 	return NULL;
 }
 
+/* Fetch next tuple (either fresh or stashed) */
 static TupleTableSlot *
 router_get_slot(PartitionRouterState *state,
 				bool *should_process)
