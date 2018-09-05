@@ -52,10 +52,7 @@ NOTICE:  AFTER INSERT ROW (test_1)
 set pg_pathman.enable_partitionrouter = t;
 update test_update_triggers.test set val = val + 1 returning *, tableoid::regclass;
 NOTICE:  BEFORE UPDATE ROW (test_1)
-NOTICE:  BEFORE DELETE ROW (test_1)
-NOTICE:  BEFORE INSERT ROW (test_1)
-NOTICE:  AFTER DELETE ROW (test_1)
-NOTICE:  AFTER INSERT ROW (test_1)
+NOTICE:  AFTER UPDATE ROW (test_1)
  val |          tableoid           
 -----+-----------------------------
    2 | test_update_triggers.test_1
@@ -74,10 +71,7 @@ NOTICE:  AFTER INSERT ROW (test_2)
 
 update test_update_triggers.test set val = val + 1 returning *, tableoid::regclass;
 NOTICE:  BEFORE UPDATE ROW (test_2)
-NOTICE:  BEFORE DELETE ROW (test_2)
-NOTICE:  BEFORE INSERT ROW (test_2)
-NOTICE:  AFTER DELETE ROW (test_2)
-NOTICE:  AFTER INSERT ROW (test_2)
+NOTICE:  AFTER UPDATE ROW (test_2)
  val |          tableoid           
 -----+-----------------------------
    4 | test_update_triggers.test_2
@@ -96,10 +90,7 @@ NOTICE:  AFTER INSERT ROW (test_1)
 
 update test_update_triggers.test set val = val + 1 returning *, tableoid::regclass;
 NOTICE:  BEFORE UPDATE ROW (test_1)
-NOTICE:  BEFORE DELETE ROW (test_1)
-NOTICE:  BEFORE INSERT ROW (test_1)
-NOTICE:  AFTER DELETE ROW (test_1)
-NOTICE:  AFTER INSERT ROW (test_1)
+NOTICE:  AFTER UPDATE ROW (test_1)
  val |          tableoid           
 -----+-----------------------------
    6 | test_update_triggers.test_1
