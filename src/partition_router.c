@@ -291,7 +291,7 @@ router_run_modify_table(PlanState *state)
 	/* PartitionRouter asked us to restart */
 	if (mt_plans_new != mt_plans_old)
 	{
-		int state_idx = mt_state->mt_whichplan - 1;
+		int state_idx = -mt_plans_new;
 
 		/* HACK: partially restore ModifyTable's state */
 		MTHackField(mt_state, mt_done) = false;
@@ -312,7 +312,9 @@ router_set_slot(PartitionRouterState *state,
 {
 	ModifyTableState *mt_state = state->mt_state;
 
+	/* Check invariants */
 	Assert(!TupIsNull(slot));
+	Assert(state->junkfilter);
 
 	if (mt_state->operation == operation)
 		return slot;
@@ -320,6 +322,11 @@ router_set_slot(PartitionRouterState *state,
 	/* HACK: alter ModifyTable's state */
 	MTHackField(mt_state, mt_nplans) = -mt_state->mt_whichplan;
 	MTHackField(mt_state, operation) = operation;
+
+	/* HACK: conditionally disable junk filter in result relation */
+	state->current_rri->ri_junkFilter = (operation == CMD_UPDATE) ?
+											state->junkfilter :
+											NULL;
 
 	/* Set saved_slot and yield */
 	state->saved_slot = slot;
@@ -355,21 +362,8 @@ router_get_slot(PartitionRouterState *state,
 static void
 router_lazy_init_junkfilter(PartitionRouterState *state, EState *estate)
 {
-	Relation rel = state->current_rri->ri_RelationDesc;
-
 	if (state->junkfilter == NULL)
-	{
-		state->junkfilter =
-			ExecInitJunkFilter(state->subplan->targetlist,
-							   RelationGetDescr(rel)->tdhasoid,
-							   ExecInitExtraTupleSlotCompat(estate));
-
-		state->junkfilter->jf_junkAttNo =
-			ExecFindJunkAttribute(state->junkfilter, "ctid");
-
-		if (!AttributeNumberIsValid(state->junkfilter->jf_junkAttNo))
-			elog(ERROR, "could not find junk ctid column");
-	}
+		state->junkfilter = state->current_rri->ri_junkFilter;
 }
 
 static void

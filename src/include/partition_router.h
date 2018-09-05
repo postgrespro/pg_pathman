@@ -31,16 +31,15 @@ typedef struct PartitionRouterState
 	CustomScanState		css;
 
 	Plan			   *subplan;		/* proxy variable to store subplan */
-	JunkFilter		   *junkfilter;		/* 'ctid' extraction facility */
 	ExprState		   *constraint;		/* should tuple remain in partition? */
+	JunkFilter		   *junkfilter;		/* 'ctid' extraction facility */
+	ResultRelInfo	   *current_rri;
 
 	EPQState			epqstate;
 	int					epqparam;
 
 	ModifyTableState   *mt_state;		/* need this for a GREAT deal of hackery */
 	TupleTableSlot	   *saved_slot;
-
-	ResultRelInfo	   *current_rri;
 } PartitionRouterState;
 
 
