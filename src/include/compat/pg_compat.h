@@ -239,7 +239,9 @@
 	create_append_path(NULL, (rel), (subpaths), NIL, (required_outer), \
 					   (parallel_workers), false, NIL, -1)
 #else
-/* TODO */
+#define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
+	create_append_path(NULL, (rel), (subpaths), NIL, (required_outer), \
+					   (parallel_workers), false, NIL, -1, false, NIL)
 #endif /* PGPRO_VERSION */
 
 #elif PG_VERSION_NUM >= 100000
