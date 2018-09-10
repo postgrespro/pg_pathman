@@ -159,6 +159,7 @@ build_parent_tlist(List *tlist, AppendRelInfo *appinfo)
 			{
 				tlist_var->varattno = attnum;
 				found_column = true; /* successful mapping */
+				break;
 			}
 		}
 
