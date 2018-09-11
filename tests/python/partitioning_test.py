@@ -76,10 +76,7 @@ def is_postgres_fdw_ready():
             select count(*) from pg_available_extensions where name = 'postgres_fdw'
         """)
 
-        if result[0][0] > 0:
-            return True
-
-        return False
+        return result[0][0] > 0
 
 
 class Tests(unittest.TestCase):
@@ -334,7 +331,7 @@ class Tests(unittest.TestCase):
             self.assertTrue(check_tablespace(node, 'abc_added_2',     'pg_default'))
             self.assertTrue(check_tablespace(node, 'abc_splitted_2',  'pg_default'))
 
-    @unittest.skipUnless(is_postgres_fdw_ready(), 'might be missing')
+    @unittest.skipUnless(is_postgres_fdw_ready(), 'FDW might be missing')
     def test_foreign_table(self):
         """ Test foreign tables """
 
@@ -427,7 +424,7 @@ class Tests(unittest.TestCase):
                 b'1|\n2|\n5|\n6|\n8|\n9|\n3|\n4|\n7|\n10|\n')
             master.safe_psql("select drop_partitions('hash_test')")
 
-    @unittest.skipUnless(is_postgres_fdw_ready(), 'might be missing')
+    @unittest.skipUnless(is_postgres_fdw_ready(), 'FDW might be missing')
     def test_parallel_nodes(self):
         """ Test parallel queries under partitions """
 

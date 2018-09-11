@@ -45,12 +45,17 @@ if [ "$LEVEL" = "hardcore" ] || \
 
 	# enable additional options
 	./configure \
-		CFLAGS='-O0 -ggdb3 -fno-omit-frame-pointer' \
+		CFLAGS='-Og -ggdb3 -fno-omit-frame-pointer' \
 		--enable-cassert \
 		--prefix=$CUSTOM_PG_BIN \
 		--quiet
 
+	# build & install PG
 	time make -s -j$(nproc) && make -s install
+
+	# build & install FDW
+	time make -s -C contrib/postgres_fdw -j$(nproc) && \
+		 make -s -C contrib/postgres_fdw install
 
 	# override default PostgreSQL instance
 	export PATH=$CUSTOM_PG_BIN/bin:$PATH
