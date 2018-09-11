@@ -885,7 +885,8 @@ modifytable_contains_fdw(List *rtable, ModifyTable *node)
 
 /*
  * Find a single deepest subpartition using quals.
- * Return InvalidOid if it's not possible.
+ * It's always better to narrow down the set of tables to be scanned.
+ * Return InvalidOid if it's not possible (e.g. table is not partitioned).
  */
 static Oid
 find_deepest_partition(Oid relid, Index rti, Expr *quals)
@@ -931,8 +932,13 @@ find_deepest_partition(Oid relid, Index rti, Expr *quals)
 					Oid		   *children = PrelGetChildrenArray(prel),
 								child = children[irange_lower(irange)];
 
+					/* Scan this partition */
+					result = child;
+
 					/* Try to go deeper and see if there are subpartitions */
-					result = find_deepest_partition(child, rti, quals);
+					child = find_deepest_partition(child, rti, quals);
+					if (OidIsValid(child))
+						result = child;
 				}
 				break;
 
@@ -943,8 +949,6 @@ find_deepest_partition(Oid relid, Index rti, Expr *quals)
 		/* Don't forget to close 'prel'! */
 		close_pathman_relation_info(prel);
 	}
-	/* Otherwise, return this table */
-	else result = relid;
 
 	return result;
 }
@@ -967,7 +971,10 @@ eval_extern_params_mutator(Node *node, ParamListInfo params)
 			param->paramid > 0 &&
 			param->paramid <= params->numParams)
 		{
-			ParamExternData *prm = CustomEvalParamExternCompat(param, params);
+			ParamExternData		prmdata; /* storage for 'prm' (PG 11) */
+			ParamExternData	   *prm = CustomEvalParamExternCompat(param,
+																  params,
+																  &prmdata);
 
 			if (OidIsValid(prm->ptype))
 			{

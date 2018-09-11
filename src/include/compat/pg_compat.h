@@ -888,15 +888,15 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 
 /* See ExecEvalParamExtern() */
 static inline ParamExternData *
-CustomEvalParamExternCompat(Param *param, ParamListInfo params)
+CustomEvalParamExternCompat(Param *param,
+							ParamListInfo params,
+							ParamExternData *prmdata)
 {
 	ParamExternData *prm;
 
 #if PG_VERSION_NUM >= 110000
-	ParamExternData prmdata;
-
 	if (params->paramFetch != NULL)
-		prm = params->paramFetch(params, param->paramid, false, &prmdata);
+		prm = params->paramFetch(params, param->paramid, false, prmdata);
 	else
 		prm = &params->params[param->paramid - 1];
 #else
