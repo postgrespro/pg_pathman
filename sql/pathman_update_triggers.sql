@@ -25,6 +25,79 @@ begin
 $$ language plpgsql;
 
 
+/* Enable our precious custom node */
+set pg_pathman.enable_partitionrouter = t;
+
+
+/*
+ * Statement level triggers
+ */
+
+create trigger bus before update ON test_update_triggers.test
+	execute procedure test_update_triggers.test_trigger ();
+create trigger bds before delete ON test_update_triggers.test
+	execute procedure test_update_triggers.test_trigger ();
+create trigger bis before insert ON test_update_triggers.test
+	execute procedure test_update_triggers.test_trigger ();
+
+
+create trigger aus after update ON test_update_triggers.test
+	execute procedure test_update_triggers.test_trigger ();
+create trigger ads after delete ON test_update_triggers.test
+	execute procedure test_update_triggers.test_trigger ();
+create trigger ais after insert ON test_update_triggers.test
+	execute procedure test_update_triggers.test_trigger ();
+
+
+create trigger bus before update ON test_update_triggers.test_1
+	execute procedure test_update_triggers.test_trigger ();
+create trigger bds before delete ON test_update_triggers.test_1
+	execute procedure test_update_triggers.test_trigger ();
+create trigger bis before insert ON test_update_triggers.test_1
+	execute procedure test_update_triggers.test_trigger ();
+
+create trigger aus after update ON test_update_triggers.test_1
+	execute procedure test_update_triggers.test_trigger ();
+create trigger ads after delete ON test_update_triggers.test_1
+	execute procedure test_update_triggers.test_trigger ();
+create trigger ais after insert ON test_update_triggers.test_1
+	execute procedure test_update_triggers.test_trigger ();
+
+
+create trigger bus before update ON test_update_triggers.test_2
+	execute procedure test_update_triggers.test_trigger ();
+create trigger bds before delete ON test_update_triggers.test_2
+	execute procedure test_update_triggers.test_trigger ();
+create trigger bis before insert ON test_update_triggers.test_2
+	execute procedure test_update_triggers.test_trigger ();
+
+create trigger aus after update ON test_update_triggers.test_2
+	execute procedure test_update_triggers.test_trigger ();
+create trigger ads after delete ON test_update_triggers.test_2
+	execute procedure test_update_triggers.test_trigger ();
+create trigger ais after insert ON test_update_triggers.test_2
+	execute procedure test_update_triggers.test_trigger ();
+
+
+/* multiple values */
+insert into test_update_triggers.test select generate_series(1, 200);
+
+update test_update_triggers.test set val = val + 1;
+update test_update_triggers.test set val = val + 1;
+update test_update_triggers.test set val = val + 1;
+update test_update_triggers.test set val = val + 1;
+update test_update_triggers.test set val = val + 1;
+
+select count(distinct val) from test_update_triggers.test;
+
+
+truncate test_update_triggers.test;
+
+
+/*
+ * Row level triggers
+ */
+
 create trigger bu before update ON test_update_triggers.test_1
 	for each row execute procedure test_update_triggers.test_trigger ();
 create trigger bd before delete ON test_update_triggers.test_1
@@ -55,15 +128,16 @@ create trigger ai after insert ON test_update_triggers.test_2
 	for each row execute procedure test_update_triggers.test_trigger ();
 
 
+/* single value */
 insert into test_update_triggers.test values (1);
 
-set pg_pathman.enable_partitionrouter = t;
 update test_update_triggers.test set val = val + 1 returning *, tableoid::regclass;
 update test_update_triggers.test set val = val + 1 returning *, tableoid::regclass;
 update test_update_triggers.test set val = val + 1 returning *, tableoid::regclass;
 update test_update_triggers.test set val = val + 1 returning *, tableoid::regclass;
 update test_update_triggers.test set val = val + 1 returning *, tableoid::regclass;
 
+select count(distinct val) from test_update_triggers.test;
 
 
 DROP SCHEMA test_update_triggers CASCADE;

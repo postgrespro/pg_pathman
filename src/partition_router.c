@@ -26,7 +26,37 @@
 #include "utils/rel.h"
 
 
+/* Highlight hacks with ModifyTable's fields */
 #define MTHackField(mt_state, field) ( (mt_state)->field )
+
+/* Is current plan the last one? */
+#define MTIsLastPlan(mt_state) ( (mt_state)->mt_whichplan == (mt_state)->mt_nplans - 1 )
+
+
+#define MTDisableStmtTriggers(mt_state, pr_state) \
+	do { \
+		TriggerDesc *triggers = (mt_state)->resultRelInfo->ri_TrigDesc; \
+		\
+		if (triggers) \
+		{ \
+			(pr_state)->insert_stmt_triggers |= triggers->trig_insert_after_statement; \
+			(pr_state)->update_stmt_triggers |= triggers->trig_update_after_statement; \
+			triggers->trig_insert_after_statement = false; \
+			triggers->trig_update_after_statement = false; \
+		} \
+	} while (0)
+
+#define MTEnableStmtTriggers(mt_state, pr_state) \
+	do { \
+		TriggerDesc *triggers = (mt_state)->resultRelInfo->ri_TrigDesc; \
+		\
+		if (triggers) \
+		{ \
+			triggers->trig_insert_after_statement = (pr_state)->insert_stmt_triggers; \
+			triggers->trig_update_after_statement = (pr_state)->update_stmt_triggers; \
+		} \
+	} while (0)
+
 
 
 bool				pg_pathman_enable_partition_router = true;
@@ -47,7 +77,7 @@ static TupleTableSlot *router_set_slot(PartitionRouterState *state,
 static TupleTableSlot *router_get_slot(PartitionRouterState *state,
 									   bool *should_process);
 
-static void router_lazy_init_junkfilter(PartitionRouterState *state, EState *estate);
+static void router_lazy_init_junkfilter(PartitionRouterState *state);
 static void router_lazy_init_constraint(PartitionRouterState *state);
 
 static ItemPointerData router_extract_ctid(PartitionRouterState *state,
@@ -56,8 +86,7 @@ static ItemPointerData router_extract_ctid(PartitionRouterState *state,
 static TupleTableSlot *router_lock_or_delete_tuple(PartitionRouterState *state,
 												   TupleTableSlot *slot,
 												   ItemPointer tupleid,
-												   bool *deleted,
-												   EState *estate);
+												   bool *deleted);
 
 void
 init_partition_router_static_data(void)
@@ -213,7 +242,7 @@ take_next_tuple:
 		ItemPointerSetInvalid(&ctid);
 
 		/* Build new junkfilter lazily */
-		router_lazy_init_junkfilter(state, estate);
+		router_lazy_init_junkfilter(state);
 
 		/* Build recheck constraint state lazily */
 		router_lazy_init_constraint(state);
@@ -226,8 +255,8 @@ take_next_tuple:
 
 		/* Lock or delete tuple from old partition */
 		Assert(ItemPointerIsValid(&ctid));
-		slot = router_lock_or_delete_tuple(state, slot, &ctid,
-										   &deleted, estate);
+		slot = router_lock_or_delete_tuple(state, slot,
+										   &ctid, &deleted);
 
 		/* We require a tuple (previous one has vanished) */
 		if (TupIsNull(slot))
@@ -257,12 +286,7 @@ partition_router_end(CustomScanState *node)
 void
 partition_router_rescan(CustomScanState *node)
 {
-	PartitionRouterState *state = (PartitionRouterState *) node;
-
-	Assert(list_length(node->custom_ps) == 1);
-	ExecReScan((PlanState *) linitial(node->custom_ps));
-
-	state->saved_slot = NULL;
+	elog(ERROR, "partition_router_rescan is not implemented");
 }
 
 void
@@ -313,18 +337,15 @@ restart:
 	return slot;
 }
 
-/* Return tuple OR stash it and change ModifyTable's operation */
+/* Return tuple OR yield it and change ModifyTable's operation */
 static TupleTableSlot *
 router_set_slot(PartitionRouterState *state,
 				TupleTableSlot *slot,
 				CmdType operation)
 {
-	ModifyTableState *mt_state = state->mt_state;
+	ModifyTableState   *mt_state = state->mt_state;
 
-	/* Check invariants */
-	Assert(!TupIsNull(slot));
-	Assert(state->junkfilter);
-
+	/* Fast path for correct operation type */
 	if (mt_state->operation == operation)
 		return slot;
 
@@ -332,35 +353,57 @@ router_set_slot(PartitionRouterState *state,
 	MTHackField(mt_state, mt_nplans) = -mt_state->mt_whichplan;
 	MTHackField(mt_state, operation) = operation;
 
-	/* HACK: conditionally disable junk filter in result relation */
-	state->current_rri->ri_junkFilter = (operation == CMD_UPDATE) ?
-											state->junkfilter :
-											NULL;
+	/* HACK: disable AFTER STATEMENT triggers */
+	MTDisableStmtTriggers(mt_state, state);
 
-	/* Set saved_slot and yield */
-	state->saved_slot = slot;
+	if (!TupIsNull(slot))
+	{
+		/* We should've cached junk filter already */
+		Assert(state->junkfilter);
+
+		/* HACK: conditionally disable junk filter in result relation */
+		state->current_rri->ri_junkFilter = (operation == CMD_UPDATE) ?
+												state->junkfilter :
+												NULL;
+
+		/* Don't forget to set saved_slot! */
+		state->yielded_slot = slot;
+	}
+
+	/* Yield */
+	state->yielded = true;
 	return NULL;
 }
 
-/* Fetch next tuple (either fresh or stashed) */
+/* Fetch next tuple (either fresh or yielded) */
 static TupleTableSlot *
 router_get_slot(PartitionRouterState *state,
 				bool *should_process)
 {
 	TupleTableSlot *slot;
 
-	if (!TupIsNull(state->saved_slot))
+	/* Do we have a preserved slot? */
+	if (state->yielded)
 	{
-		/* Reset saved_slot */
-		slot = state->saved_slot;
-		state->saved_slot = NULL;
+		/* HACK: enable AFTER STATEMENT triggers */
+		MTEnableStmtTriggers(state->mt_state, state);
+
+		/* Reset saved slot */
+		slot = state->yielded_slot;
+		state->yielded_slot = NULL;
+		state->yielded = false;
 
 		/* We shouldn't process preserved slot... */
 		*should_process = false;
 	}
 	else
 	{
+		/* Fetch next tuple */
 		slot = ExecProcNode((PlanState *) linitial(state->css.custom_ps));
+
+		/* Restore operation type for AFTER STATEMENT triggers */
+		if (TupIsNull(slot) && MTIsLastPlan(state->mt_state))
+			slot = router_set_slot(state, NULL, CMD_UPDATE);
 
 		/* But we have to process non-empty slot */
 		*should_process = !TupIsNull(slot);
@@ -370,7 +413,7 @@ router_get_slot(PartitionRouterState *state,
 }
 
 static void
-router_lazy_init_junkfilter(PartitionRouterState *state, EState *estate)
+router_lazy_init_junkfilter(PartitionRouterState *state)
 {
 	if (state->junkfilter == NULL)
 		state->junkfilter = state->current_rri->ri_junkFilter;
@@ -443,12 +486,12 @@ static TupleTableSlot *
 router_lock_or_delete_tuple(PartitionRouterState *state,
 							TupleTableSlot *slot,
 							ItemPointer tupleid,
-							bool *deleted,	/* return value #1 */
-							EState *estate)
+							bool *deleted	/* return value #1 */)
 {
 	ResultRelInfo		   *rri;
 	Relation				rel;
 
+	EState				   *estate = state->css.ss.ps.state;
 	ExprContext			   *econtext = GetPerTupleExprContext(estate);
 	ExprState			   *constraint = state->constraint;
 

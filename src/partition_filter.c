@@ -801,8 +801,7 @@ partition_filter_end(CustomScanState *node)
 void
 partition_filter_rescan(CustomScanState *node)
 {
-	Assert(list_length(node->custom_ps) == 1);
-	ExecReScan((PlanState *) linitial(node->custom_ps));
+	elog(ERROR, "partition_filter_rescan is not implemented");
 }
 
 void

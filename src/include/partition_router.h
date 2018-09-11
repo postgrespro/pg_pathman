@@ -35,11 +35,18 @@ typedef struct PartitionRouterState
 	JunkFilter		   *junkfilter;		/* 'ctid' extraction facility */
 	ResultRelInfo	   *current_rri;
 
+	/* Machinery required for EvalPlanQual */
 	EPQState			epqstate;
 	int					epqparam;
 
-	ModifyTableState   *mt_state;		/* need this for a GREAT deal of hackery */
-	TupleTableSlot	   *saved_slot;
+	/* Preserved slot from last call */
+	bool				yielded;
+	TupleTableSlot	   *yielded_slot;
+
+	/* Need these for a GREAT deal of hackery */
+	ModifyTableState   *mt_state;
+	bool				update_stmt_triggers,
+						insert_stmt_triggers;
 } PartitionRouterState;
 
 
