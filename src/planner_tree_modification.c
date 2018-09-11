@@ -971,7 +971,10 @@ eval_extern_params_mutator(Node *node, ParamListInfo params)
 			param->paramid > 0 &&
 			param->paramid <= params->numParams)
 		{
-			ParamExternData *prm = CustomEvalParamExternCompat(param, params);
+			ParamExternData		prmdata; /* storage for 'prm' (PG 11) */
+			ParamExternData	   *prm = CustomEvalParamExternCompat(param,
+																  params,
+																  &prmdata);
 
 			if (OidIsValid(prm->ptype))
 			{
