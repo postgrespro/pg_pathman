@@ -80,5 +80,131 @@ select pg_get_constraintdef(oid, true) from pg_constraint where conname = 'pathm
 
 drop table test_hash cascade;
 NOTICE:  drop cascades to 3 other objects
+-- Yury Smirnov case
+CREATE TABLE root_dict (
+  id         BIGSERIAL PRIMARY KEY NOT NULL,
+  root_id    BIGINT                NOT NULL,
+  start_date DATE,
+  num        TEXT,
+  main       TEXT,
+  dict_code  TEXT,
+  dict_name  TEXT,
+  edit_num   TEXT,
+  edit_date  DATE,
+  sign       CHAR(4)
+);
+CREATE INDEX "root_dict_root_id_idx" ON "root_dict" ("root_id");
+DO
+$$
+DECLARE
+  r RECORD;
+BEGIN
+  FOR r IN SELECT * FROM generate_series(1, 3) r
+  LOOP
+    FOR d IN 1..2 LOOP
+      INSERT INTO root_dict (root_id, start_date, num, main, dict_code, dict_name, edit_num, edit_date, sign) VALUES
+        (r.r, now(), 'num_' || d, (d % 2) + 1, 'code_' || d, 'name_' || d, NULL, NULL, '2014');
+    END LOOP;
+  END LOOP;
+END
+$$;
+ALTER TABLE root_dict ADD COLUMN dict_id BIGINT DEFAULT 3;
+ALTER TABLE root_dict DROP COLUMN dict_code,
+					  DROP COLUMN dict_name,
+					  DROP COLUMN sign;
+CREATE EXTENSION pg_pathman;
+ERROR:  extension "pg_pathman" already exists
+SELECT create_hash_partitions('root_dict' :: REGCLASS,
+                              'root_id',
+                              3,
+                              true);
+ create_hash_partitions 
+------------------------
+                      3
+(1 row)
+
+VACUUM FULL ANALYZE "root_dict";
+SELECT set_enable_parent('root_dict' :: REGCLASS, FALSE);
+ set_enable_parent 
+-------------------
+ 
+(1 row)
+
+PREPARE getbyroot AS
+SELECT
+	id, root_id, start_date, num, main, edit_num, edit_date, dict_id
+FROM root_dict
+WHERE root_id = $1;
+EXECUTE getbyroot(2);
+ id | root_id | start_date |  num  | main | edit_num | edit_date | dict_id 
+----+---------+------------+-------+------+----------+-----------+---------
+  3 |       2 | 09-12-2018 | num_1 | 2    |          |           |       3
+  4 |       2 | 09-12-2018 | num_2 | 1    |          |           |       3
+(2 rows)
+
+EXECUTE getbyroot(2);
+ id | root_id | start_date |  num  | main | edit_num | edit_date | dict_id 
+----+---------+------------+-------+------+----------+-----------+---------
+  3 |       2 | 09-12-2018 | num_1 | 2    |          |           |       3
+  4 |       2 | 09-12-2018 | num_2 | 1    |          |           |       3
+(2 rows)
+
+EXECUTE getbyroot(2);
+ id | root_id | start_date |  num  | main | edit_num | edit_date | dict_id 
+----+---------+------------+-------+------+----------+-----------+---------
+  3 |       2 | 09-12-2018 | num_1 | 2    |          |           |       3
+  4 |       2 | 09-12-2018 | num_2 | 1    |          |           |       3
+(2 rows)
+
+EXECUTE getbyroot(2);
+ id | root_id | start_date |  num  | main | edit_num | edit_date | dict_id 
+----+---------+------------+-------+------+----------+-----------+---------
+  3 |       2 | 09-12-2018 | num_1 | 2    |          |           |       3
+  4 |       2 | 09-12-2018 | num_2 | 1    |          |           |       3
+(2 rows)
+
+EXECUTE getbyroot(2);
+ id | root_id | start_date |  num  | main | edit_num | edit_date | dict_id 
+----+---------+------------+-------+------+----------+-----------+---------
+  3 |       2 | 09-12-2018 | num_1 | 2    |          |           |       3
+  4 |       2 | 09-12-2018 | num_2 | 1    |          |           |       3
+(2 rows)
+
+-- errors usually start here
+EXECUTE getbyroot(2);
+ id | root_id | start_date |  num  | main | edit_num | edit_date | dict_id 
+----+---------+------------+-------+------+----------+-----------+---------
+  3 |       2 | 09-12-2018 | num_1 | 2    |          |           |       3
+  4 |       2 | 09-12-2018 | num_2 | 1    |          |           |       3
+(2 rows)
+
+EXECUTE getbyroot(2);
+ id | root_id | start_date |  num  | main | edit_num | edit_date | dict_id 
+----+---------+------------+-------+------+----------+-----------+---------
+  3 |       2 | 09-12-2018 | num_1 | 2    |          |           |       3
+  4 |       2 | 09-12-2018 | num_2 | 1    |          |           |       3
+(2 rows)
+
+EXPLAIN EXECUTE getbyroot(2);
+                                         QUERY PLAN                                         
+--------------------------------------------------------------------------------------------
+ Custom Scan (RuntimeAppend)  (cost=4.17..11.28 rows=3 width=128)
+   Prune by: (root_dict.root_id = $1)
+   ->  Bitmap Heap Scan on root_dict_0 root_dict  (cost=4.17..11.28 rows=3 width=128)
+         Recheck Cond: (root_id = $1)
+         ->  Bitmap Index Scan on root_dict_0_root_id_idx  (cost=0.00..4.17 rows=3 width=0)
+               Index Cond: (root_id = $1)
+   ->  Bitmap Heap Scan on root_dict_1 root_dict  (cost=4.17..11.28 rows=3 width=128)
+         Recheck Cond: (root_id = $1)
+         ->  Bitmap Index Scan on root_dict_1_root_id_idx  (cost=0.00..4.17 rows=3 width=0)
+               Index Cond: (root_id = $1)
+   ->  Bitmap Heap Scan on root_dict_2 root_dict  (cost=4.17..11.28 rows=3 width=128)
+         Recheck Cond: (root_id = $1)
+         ->  Bitmap Index Scan on root_dict_2_root_id_idx  (cost=0.00..4.17 rows=3 width=0)
+               Index Cond: (root_id = $1)
+(14 rows)
+
+DROP TABLE root_dict CASCADE;
+NOTICE:  drop cascades to 3 other objects
 DROP SCHEMA dropped_cols CASCADE;
 DROP EXTENSION pg_pathman;

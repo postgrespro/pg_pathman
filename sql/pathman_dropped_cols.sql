@@ -38,6 +38,67 @@ select pg_get_constraintdef(oid, true) from pg_constraint where conname = 'pathm
 select pg_get_constraintdef(oid, true) from pg_constraint where conname = 'pathman_test_dummy_check';
 drop table test_hash cascade;
 
+-- Yury Smirnov case
+CREATE TABLE root_dict (
+  id         BIGSERIAL PRIMARY KEY NOT NULL,
+  root_id    BIGINT                NOT NULL,
+  start_date DATE,
+  num        TEXT,
+  main       TEXT,
+  dict_code  TEXT,
+  dict_name  TEXT,
+  edit_num   TEXT,
+  edit_date  DATE,
+  sign       CHAR(4)
+);
 
+CREATE INDEX "root_dict_root_id_idx" ON "root_dict" ("root_id");
+
+DO
+$$
+DECLARE
+  r RECORD;
+BEGIN
+  FOR r IN SELECT * FROM generate_series(1, 3) r
+  LOOP
+    FOR d IN 1..2 LOOP
+      INSERT INTO root_dict (root_id, start_date, num, main, dict_code, dict_name, edit_num, edit_date, sign) VALUES
+        (r.r, now(), 'num_' || d, (d % 2) + 1, 'code_' || d, 'name_' || d, NULL, NULL, '2014');
+    END LOOP;
+  END LOOP;
+END
+$$;
+
+ALTER TABLE root_dict ADD COLUMN dict_id BIGINT DEFAULT 3;
+ALTER TABLE root_dict DROP COLUMN dict_code,
+					  DROP COLUMN dict_name,
+					  DROP COLUMN sign;
+
+CREATE EXTENSION pg_pathman;
+SELECT create_hash_partitions('root_dict' :: REGCLASS,
+                              'root_id',
+                              3,
+                              true);
+VACUUM FULL ANALYZE "root_dict";
+SELECT set_enable_parent('root_dict' :: REGCLASS, FALSE);
+
+PREPARE getbyroot AS
+SELECT
+	id, root_id, start_date, num, main, edit_num, edit_date, dict_id
+FROM root_dict
+WHERE root_id = $1;
+
+EXECUTE getbyroot(2);
+EXECUTE getbyroot(2);
+EXECUTE getbyroot(2);
+EXECUTE getbyroot(2);
+EXECUTE getbyroot(2);
+
+-- errors usually start here
+EXECUTE getbyroot(2);
+EXECUTE getbyroot(2);
+EXPLAIN EXECUTE getbyroot(2);
+
+DROP TABLE root_dict CASCADE;
 DROP SCHEMA dropped_cols CASCADE;
 DROP EXTENSION pg_pathman;
