@@ -29,9 +29,6 @@
 /* Highlight hacks with ModifyTable's fields */
 #define MTHackField(mt_state, field) ( (mt_state)->field )
 
-/* Is current plan the last one? */
-#define MTIsLastPlan(mt_state) ( (mt_state)->mt_whichplan == (mt_state)->mt_nplans - 1 )
-
 
 #define MTDisableStmtTriggers(mt_state, pr_state) \
 	do { \
@@ -402,7 +399,7 @@ router_get_slot(PartitionRouterState *state,
 		slot = ExecProcNode((PlanState *) linitial(state->css.custom_ps));
 
 		/* Restore operation type for AFTER STATEMENT triggers */
-		if (TupIsNull(slot) && MTIsLastPlan(state->mt_state))
+		if (TupIsNull(slot))
 			slot = router_set_slot(state, NULL, CMD_UPDATE);
 
 		/* But we have to process non-empty slot */
