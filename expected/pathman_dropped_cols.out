@@ -112,8 +112,6 @@ ALTER TABLE root_dict ADD COLUMN dict_id BIGINT DEFAULT 3;
 ALTER TABLE root_dict DROP COLUMN dict_code,
 					  DROP COLUMN dict_name,
 					  DROP COLUMN sign;
-CREATE EXTENSION pg_pathman;
-ERROR:  extension "pg_pathman" already exists
 SELECT create_hash_partitions('root_dict' :: REGCLASS,
                               'root_id',
                               3,
@@ -204,6 +202,7 @@ EXPLAIN EXECUTE getbyroot(2);
                Index Cond: (root_id = $1)
 (14 rows)
 
+DEALLOCATE getbyroot;
 DROP TABLE root_dict CASCADE;
 NOTICE:  drop cascades to 3 other objects
 DROP SCHEMA dropped_cols CASCADE;

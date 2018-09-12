@@ -74,7 +74,6 @@ ALTER TABLE root_dict DROP COLUMN dict_code,
 					  DROP COLUMN dict_name,
 					  DROP COLUMN sign;
 
-CREATE EXTENSION pg_pathman;
 SELECT create_hash_partitions('root_dict' :: REGCLASS,
                               'root_id',
                               3,
@@ -99,6 +98,7 @@ EXECUTE getbyroot(2);
 EXECUTE getbyroot(2);
 EXPLAIN EXECUTE getbyroot(2);
 
+DEALLOCATE getbyroot;
 DROP TABLE root_dict CASCADE;
 DROP SCHEMA dropped_cols CASCADE;
 DROP EXTENSION pg_pathman;
