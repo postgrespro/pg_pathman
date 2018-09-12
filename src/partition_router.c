@@ -575,6 +575,10 @@ recheck:
 				ereport(ERROR,
 						(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
 						 errmsg("could not serialize access due to concurrent update")));
+			if (ItemPointerIndicatesMovedPartitions(&hufd.ctid))
+				ereport(ERROR,
+						(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+						 errmsg("tuple to be updated was already moved to another partition due to concurrent update")));
 
 			if (!ItemPointerEquals(tupleid, &hufd.ctid))
 			{

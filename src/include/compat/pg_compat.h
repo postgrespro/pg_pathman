@@ -530,6 +530,16 @@ char get_rel_persistence(Oid relid);
 
 
 /*
+ * ItemPointerIndicatesMovedPartitions()
+ *
+ * supported since v11, provide a stub for previous versions.
+ */
+#if PG_VERSION_NUM < 110000
+#define ItemPointerIndicatesMovedPartitions(ctid) ( false )
+#endif
+
+
+/*
  * make_restrictinfo()
  */
 #if PG_VERSION_NUM >= 100000
