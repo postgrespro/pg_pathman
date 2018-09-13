@@ -170,11 +170,20 @@ prepare_modify_table_for_partition_router(PlanState *state, void *context)
 
 				if (!changed_method)
 				{
+					/* HACK: replace ModifyTable's execution method */
+#if PG_VERSION_NUM >= 110000
 					if (!mt_method)
 						mt_method = state->ExecProcNodeReal;
 
-					/* HACK: replace ModifyTable's execution method */
 					ExecSetExecProcNode(state, router_run_modify_table);
+#elif PG_VERSION_NUM >= 100000
+					if (!mt_method)
+						mt_method = state->ExecProcNode;
+
+					state->ExecProcNode = router_run_modify_table;
+#else
+#error "doesn't supported yet"
+#endif
 
 					changed_method = true;
 				}

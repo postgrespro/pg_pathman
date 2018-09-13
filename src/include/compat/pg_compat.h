@@ -415,7 +415,7 @@ ExecCheck(ExprState *state, ExprContext *econtext)
 /*
  * extract_actual_join_clauses()
  */
-#if (PG_VERSION_NUM >= 100004) || \
+#if (PG_VERSION_NUM >= 100003) || \
 	(PG_VERSION_NUM <  100000 && PG_VERSION_NUM >= 90609) || \
 	(PG_VERSION_NUM <   90600 && PG_VERSION_NUM >= 90513)
 #define extract_actual_join_clauses_compat(restrictinfo_list, \

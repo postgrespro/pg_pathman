@@ -63,7 +63,7 @@ BEGIN
   LOOP
     FOR d IN 1..2 LOOP
       INSERT INTO root_dict (root_id, start_date, num, main, dict_code, dict_name, edit_num, edit_date, sign) VALUES
-        (r.r, now(), 'num_' || d, (d % 2) + 1, 'code_' || d, 'name_' || d, NULL, NULL, '2014');
+        (r.r, '2010-10-10'::date, 'num_' || d, (d % 2) + 1, 'code_' || d, 'name_' || d, NULL, NULL, '2014');
     END LOOP;
   END LOOP;
 END

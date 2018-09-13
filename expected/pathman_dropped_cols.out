@@ -103,7 +103,7 @@ BEGIN
   LOOP
     FOR d IN 1..2 LOOP
       INSERT INTO root_dict (root_id, start_date, num, main, dict_code, dict_name, edit_num, edit_date, sign) VALUES
-        (r.r, now(), 'num_' || d, (d % 2) + 1, 'code_' || d, 'name_' || d, NULL, NULL, '2014');
+        (r.r, '2010-10-10'::date, 'num_' || d, (d % 2) + 1, 'code_' || d, 'name_' || d, NULL, NULL, '2014');
     END LOOP;
   END LOOP;
 END
@@ -136,51 +136,51 @@ WHERE root_id = $1;
 EXECUTE getbyroot(2);
  id | root_id | start_date |  num  | main | edit_num | edit_date | dict_id 
 ----+---------+------------+-------+------+----------+-----------+---------
-  3 |       2 | 09-12-2018 | num_1 | 2    |          |           |       3
-  4 |       2 | 09-12-2018 | num_2 | 1    |          |           |       3
+  3 |       2 | 10-10-2010 | num_1 | 2    |          |           |       3
+  4 |       2 | 10-10-2010 | num_2 | 1    |          |           |       3
 (2 rows)
 
 EXECUTE getbyroot(2);
  id | root_id | start_date |  num  | main | edit_num | edit_date | dict_id 
 ----+---------+------------+-------+------+----------+-----------+---------
-  3 |       2 | 09-12-2018 | num_1 | 2    |          |           |       3
-  4 |       2 | 09-12-2018 | num_2 | 1    |          |           |       3
+  3 |       2 | 10-10-2010 | num_1 | 2    |          |           |       3
+  4 |       2 | 10-10-2010 | num_2 | 1    |          |           |       3
 (2 rows)
 
 EXECUTE getbyroot(2);
  id | root_id | start_date |  num  | main | edit_num | edit_date | dict_id 
 ----+---------+------------+-------+------+----------+-----------+---------
-  3 |       2 | 09-12-2018 | num_1 | 2    |          |           |       3
-  4 |       2 | 09-12-2018 | num_2 | 1    |          |           |       3
+  3 |       2 | 10-10-2010 | num_1 | 2    |          |           |       3
+  4 |       2 | 10-10-2010 | num_2 | 1    |          |           |       3
 (2 rows)
 
 EXECUTE getbyroot(2);
  id | root_id | start_date |  num  | main | edit_num | edit_date | dict_id 
 ----+---------+------------+-------+------+----------+-----------+---------
-  3 |       2 | 09-12-2018 | num_1 | 2    |          |           |       3
-  4 |       2 | 09-12-2018 | num_2 | 1    |          |           |       3
+  3 |       2 | 10-10-2010 | num_1 | 2    |          |           |       3
+  4 |       2 | 10-10-2010 | num_2 | 1    |          |           |       3
 (2 rows)
 
 EXECUTE getbyroot(2);
  id | root_id | start_date |  num  | main | edit_num | edit_date | dict_id 
 ----+---------+------------+-------+------+----------+-----------+---------
-  3 |       2 | 09-12-2018 | num_1 | 2    |          |           |       3
-  4 |       2 | 09-12-2018 | num_2 | 1    |          |           |       3
+  3 |       2 | 10-10-2010 | num_1 | 2    |          |           |       3
+  4 |       2 | 10-10-2010 | num_2 | 1    |          |           |       3
 (2 rows)
 
 -- errors usually start here
 EXECUTE getbyroot(2);
  id | root_id | start_date |  num  | main | edit_num | edit_date | dict_id 
 ----+---------+------------+-------+------+----------+-----------+---------
-  3 |       2 | 09-12-2018 | num_1 | 2    |          |           |       3
-  4 |       2 | 09-12-2018 | num_2 | 1    |          |           |       3
+  3 |       2 | 10-10-2010 | num_1 | 2    |          |           |       3
+  4 |       2 | 10-10-2010 | num_2 | 1    |          |           |       3
 (2 rows)
 
 EXECUTE getbyroot(2);
  id | root_id | start_date |  num  | main | edit_num | edit_date | dict_id 
 ----+---------+------------+-------+------+----------+-----------+---------
-  3 |       2 | 09-12-2018 | num_1 | 2    |          |           |       3
-  4 |       2 | 09-12-2018 | num_2 | 1    |          |           |       3
+  3 |       2 | 10-10-2010 | num_1 | 2    |          |           |       3
+  4 |       2 | 10-10-2010 | num_2 | 1    |          |           |       3
 (2 rows)
 
 EXPLAIN EXECUTE getbyroot(2);
