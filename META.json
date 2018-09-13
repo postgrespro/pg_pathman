@@ -23,7 +23,7 @@
        "pg_pathman": {
            "file": "pg_pathman--1.4.sql",
            "docfile": "README.md",
-           "version": "1.4.13",
+           "version": "1.4.14",
            "abstract": "Partitioning tool"
       }
    },
