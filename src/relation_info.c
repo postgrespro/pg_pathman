@@ -991,7 +991,6 @@ finish_delayed_invalidation(void)
 	{
 		Oid		   *parents = NULL;
 		int			parents_count = 0;
-		bool		parents_fetched = false;
 		ListCell   *lc;
 
 		AcceptInvalidationMessages();
@@ -1017,25 +1016,18 @@ finish_delayed_invalidation(void)
 
 				/* Disregard all remaining invalidation jobs */
 				delayed_invalidation_whole_cache = false;
-				free_invalidation_lists();
 
-				/* No need to continue, exit */
-				return;
+				goto end;
 			}
 		}
+
+		parents = read_parent_oids(&parents_count);
 
 		/* We might be asked to perform a complete cache invalidation */
 		if (delayed_invalidation_whole_cache)
 		{
 			/* Unset 'invalidation_whole_cache' flag */
 			delayed_invalidation_whole_cache = false;
-
-			/* Fetch all partitioned tables */
-			if (!parents_fetched)
-			{
-				parents = read_parent_oids(&parents_count);
-				parents_fetched = true;
-			}
 
 			/* Invalidate live entries and remove dead ones */
 			invalidate_pathman_relation_info_cache(parents, parents_count);
@@ -1049,13 +1041,6 @@ finish_delayed_invalidation(void)
 			/* Skip if it's a TOAST table */
 			if (IsToastNamespace(get_rel_namespace(parent)))
 				continue;
-
-			/* Fetch all partitioned tables */
-			if (!parents_fetched)
-			{
-				parents = read_parent_oids(&parents_count);
-				parents_fetched = true;
-			}
 
 			/* Check if parent still exists */
 			if (bsearch_oid(parent, parents, parents_count))
@@ -1073,13 +1058,6 @@ finish_delayed_invalidation(void)
 			/* Skip if it's a TOAST table */
 			if (IsToastNamespace(get_rel_namespace(vague_rel)))
 				continue;
-
-			/* Fetch all partitioned tables */
-			if (!parents_fetched)
-			{
-				parents = read_parent_oids(&parents_count);
-				parents_fetched = true;
-			}
 
 			/* It might be a partitioned table or a partition */
 			if (!try_invalidate_parent(vague_rel, parents, parents_count))
@@ -1117,6 +1095,7 @@ finish_delayed_invalidation(void)
 			}
 		}
 
+end:
 		/* Finally, free invalidation jobs lists */
 		free_invalidation_lists();
 
