@@ -17,6 +17,7 @@
 #include "pathman.h"
 #include "partition_filter.h"
 #include "partition_router.h"
+#include "partition_overseer.h"
 #include "planner_tree_modification.h"
 #include "runtime_append.h"
 #include "runtime_merge_append.h"
@@ -317,8 +318,6 @@ _PG_init(void)
 	planner_hook							= pathman_planner_hook;
 	pathman_process_utility_hook_next		= ProcessUtility_hook;
 	ProcessUtility_hook						= pathman_process_utility_hook;
-	pathman_executor_run_hook_next			= ExecutorRun_hook;
-	ExecutorRun_hook						= pathman_executor_hook;
 
 	/* Initialize static data for all subsystems */
 	init_main_pathman_toggles();
@@ -327,6 +326,7 @@ _PG_init(void)
 	init_runtime_merge_append_static_data();
 	init_partition_filter_static_data();
 	init_partition_router_static_data();
+	init_partition_overseer_static_data();
 }
 
 /* Get cached PATHMAN_CONFIG relation Oid */

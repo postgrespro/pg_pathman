@@ -74,12 +74,7 @@ extern CustomExecMethods	partition_router_exec_methods;
 
 void init_partition_router_static_data(void);
 
-
-Plan *make_partition_router(Plan *subplan,
-							Oid parent_relid,
-							Index parent_rti,
-							int epq_param,
-							List *returning_list);
+Plan *make_partition_router(Plan *subplan, int epq_param);
 
 void prepare_modify_table_for_partition_router(PlanState *state, void *context);
 
@@ -98,5 +93,6 @@ void partition_router_explain(CustomScanState *node,
 							  List *ancestors,
 							  ExplainState *es);
 
+TupleTableSlot *partition_router_run_modify_table(PlanState *state);
 
 #endif /* PARTITION_UPDATE_H */

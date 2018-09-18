@@ -68,7 +68,6 @@ planner_hook_type				pathman_planner_hook_next				= NULL;
 post_parse_analyze_hook_type	pathman_post_parse_analyze_hook_next	= NULL;
 shmem_startup_hook_type			pathman_shmem_startup_hook_next			= NULL;
 ProcessUtility_hook_type		pathman_process_utility_hook_next		= NULL;
-ExecutorRun_hook_type			pathman_executor_run_hook_next			= NULL;
 
 
 /* Take care of joins */
@@ -616,6 +615,29 @@ pathman_enable_assign_hook(bool newval, void *extra)
 		 newval ? "enabled" : "disabled");
 }
 
+static void
+execute_for_plantree(PlannedStmt *planned_stmt,
+					 Plan *(*proc) (List *rtable, Plan *plan))
+{
+	List		*subplans = NIL;
+	ListCell	*lc;
+	Plan		*resplan = proc(planned_stmt->rtable, planned_stmt->planTree);
+
+	if (resplan)
+		planned_stmt->planTree = resplan;
+
+	foreach (lc, planned_stmt->subplans)
+	{
+		Plan	*subplan = lfirst(lc);
+		resplan = proc(planned_stmt->rtable, (Plan *) lfirst(lc));
+		if (resplan)
+			subplans = lappend(subplans, resplan);
+		else
+			subplans = lappend(subplans, subplan);
+	}
+	planned_stmt->subplans = subplans;
+}
+
 /*
  * Planner hook. It disables inheritance for tables that have been partitioned
  * by pathman to prevent standart PostgreSQL partitioning mechanism from
@@ -624,14 +646,6 @@ pathman_enable_assign_hook(bool newval, void *extra)
 PlannedStmt *
 pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 {
-#define ExecuteForPlanTree(planned_stmt, proc) \
-	do { \
-		ListCell *lc; \
-		proc((planned_stmt)->rtable, (planned_stmt)->planTree); \
-		foreach (lc, (planned_stmt)->subplans) \
-			proc((planned_stmt)->rtable, (Plan *) lfirst(lc)); \
-	} while (0)
-
 	PlannedStmt	   *result;
 	uint32			query_id = parse->queryId;
 
@@ -658,10 +672,10 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 		if (pathman_ready)
 		{
 			/* Add PartitionFilter node for INSERT queries */
-			ExecuteForPlanTree(result, add_partition_filters);
+			execute_for_plantree(result, add_partition_filters);
 
 			/* Add PartitionRouter node for UPDATE queries */
-			ExecuteForPlanTree(result, add_partition_routers);
+			execute_for_plantree(result, add_partition_routers);
 
 			/* Decrement planner() calls count */
 			decr_planner_calls_count();
@@ -686,7 +700,6 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 
 	/* Finally return the Plan */
 	return result;
-#undef ExecuteForPlanTree
 }
 
 /*
@@ -949,41 +962,4 @@ pathman_process_utility_hook(Node *first_arg,
 								first_arg, queryString,
 								context, params, queryEnv,
 								dest, completionTag);
-}
-
-/*
- * Executor hook (for PartitionRouter).
- */
-#if PG_VERSION_NUM >= 100000
-void
-pathman_executor_hook(QueryDesc *queryDesc,
-					  ScanDirection direction,
-					  ExecutorRun_CountArgType count,
-					  bool execute_once)
-#else
-void
-pathman_executor_hook(QueryDesc *queryDesc,
-					  ScanDirection direction,
-					  ExecutorRun_CountArgType count)
-#endif
-{
-#define EXECUTOR_HOOK				pathman_executor_run_hook_next
-#if PG_VERSION_NUM >= 100000
-#define EXECUTOR_HOOK_NEXT(q,d,c)	EXECUTOR_HOOK((q),(d),(c), execute_once)
-#define EXECUTOR_RUN(q,d,c)			standard_ExecutorRun((q),(d),(c), execute_once)
-#else
-#define EXECUTOR_HOOK_NEXT(q,d,c)	EXECUTOR_HOOK((q),(d),(c))
-#define EXECUTOR_RUN(q,d,c)			standard_ExecutorRun((q),(d),(c))
-#endif
-
-	/* Prepare ModifyTable nodes for PartitionRouter hackery */
-	state_tree_visitor((PlanState *) queryDesc->planstate,
-					   prepare_modify_table_for_partition_router,
-					   NULL);
-
-	/* Call hooks set by other extensions if needed */
-	if (EXECUTOR_HOOK)
-		EXECUTOR_HOOK_NEXT(queryDesc, direction, count);
-	/* Else call internal implementation */
-	else EXECUTOR_RUN(queryDesc, direction, count);
 }

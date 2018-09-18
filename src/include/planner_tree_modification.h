@@ -25,8 +25,8 @@ void assign_query_id(Query *query);
 void reset_query_id_generator(void);
 
 /* Plan tree rewriting utility */
-void plan_tree_visitor(Plan *plan,
-					   void (*visitor) (Plan *plan, void *context),
+Plan * plan_tree_visitor(Plan *plan,
+					   Plan *(*visitor) (Plan *plan, void *context),
 					   void *context);
 
 /* PlanState tree rewriting utility */
@@ -38,8 +38,8 @@ void state_tree_visitor(PlanState *state,
 void pathman_transform_query(Query *parse, ParamListInfo params);
 
 /* These functions scribble on Plan tree */
-void add_partition_filters(List *rtable, Plan *plan);
-void add_partition_routers(List *rtable, Plan *plan);
+Plan *add_partition_filters(List *rtable, Plan *plan);
+Plan *add_partition_routers(List *rtable, Plan *plan);
 
 
 /* used by assign_rel_parenthood_status() etc */

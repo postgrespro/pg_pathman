@@ -14,6 +14,7 @@
 
 #include "partition_filter.h"
 #include "partition_router.h"
+#include "partition_overseer.h"
 #include "planner_tree_modification.h"
 #include "relation_info.h"
 #include "rewrite/rewriteManip.h"
@@ -110,8 +111,8 @@ static bool pathman_transform_query_walker(Node *node, void *context);
 static void disable_standard_inheritance(Query *parse, transform_query_cxt *context);
 static void handle_modification_query(Query *parse, transform_query_cxt *context);
 
-static void partition_filter_visitor(Plan *plan, void *context);
-static void partition_router_visitor(Plan *plan, void *context);
+static Plan *partition_filter_visitor(Plan *plan, void *context);
+static Plan *partition_router_visitor(Plan *plan, void *context);
 
 static void state_visit_subplans(List *plans, void (*visitor) (), void *context);
 static void state_visit_members(PlanState **planstates, int nplans, void (*visitor) (), void *context);
@@ -154,15 +155,15 @@ reset_query_id_generator(void)
  *
  * 'visitor' is applied right before return.
  */
-void
+Plan *
 plan_tree_visitor(Plan *plan,
-				  void (*visitor) (Plan *plan, void *context),
+				  Plan *(*visitor) (Plan *plan, void *context),
 				  void *context)
 {
 	ListCell   *l;
 
 	if (plan == NULL)
-		return;
+		return NULL;
 
 	check_stack_depth();
 
@@ -211,7 +212,7 @@ plan_tree_visitor(Plan *plan,
 	plan_tree_visitor(plan->righttree, visitor, context);
 
 	/* Apply visitor to the current node */
-	visitor(plan, context);
+	return visitor(plan, context);
 }
 
 void
@@ -687,19 +688,23 @@ adjust_appendrel_varnos(Node *node, adjust_appendrel_varnos_cxt *context)
  */
 
 /* Add PartitionFilter nodes to the plan tree */
-void
+Plan *
 add_partition_filters(List *rtable, Plan *plan)
 {
 	if (pg_pathman_enable_partition_filter)
-		plan_tree_visitor(plan, partition_filter_visitor, rtable);
+		return plan_tree_visitor(plan, partition_filter_visitor, rtable);
+
+	return NULL;
 }
 
 /* Add PartitionRouter nodes to the plan tree */
-void
+Plan *
 add_partition_routers(List *rtable, Plan *plan)
 {
 	if (pg_pathman_enable_partition_router)
-		plan_tree_visitor(plan, partition_router_visitor, rtable);
+		return plan_tree_visitor(plan, partition_router_visitor, rtable);
+
+	return NULL;
 }
 
 /*
@@ -707,7 +712,7 @@ add_partition_routers(List *rtable, Plan *plan)
  *
  * 'context' should point to the PlannedStmt->rtable.
  */
-static void
+static Plan *
 partition_filter_visitor(Plan *plan, void *context)
 {
 	List		   *rtable = (List *) context;
@@ -718,7 +723,7 @@ partition_filter_visitor(Plan *plan, void *context)
 
 	/* Skip if not ModifyTable with 'INSERT' command */
 	if (!IsA(modify_table, ModifyTable) || modify_table->operation != CMD_INSERT)
-		return;
+		return NULL;
 
 	Assert(rtable && IsA(rtable, List));
 
@@ -748,6 +753,8 @@ partition_filter_visitor(Plan *plan, void *context)
 												returning_list);
 		}
 	}
+
+	return NULL;
 }
 
 /*
@@ -755,7 +762,7 @@ partition_filter_visitor(Plan *plan, void *context)
  *
  * 'context' should point to the PlannedStmt->rtable.
  */
-static void
+static Plan *
 partition_router_visitor(Plan *plan, void *context)
 {
 	List			*rtable = (List *) context;
@@ -766,15 +773,16 @@ partition_router_visitor(Plan *plan, void *context)
 
 	/* Skip if not ModifyTable with 'UPDATE' command */
 	if (!IsA(modify_table, ModifyTable) || modify_table->operation != CMD_UPDATE)
-		return;
+		return NULL;
 
 	Assert(rtable && IsA(rtable, List));
 
 	if (modifytable_contains_fdw(rtable, modify_table))
 	{
-		ereport(ERROR,
+		ereport(WARNING,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg(UPDATE_NODE_NAME " does not support foreign data wrappers")));
+		return NULL;
 	}
 
 	lc3 = list_head(modify_table->returningLists);
@@ -803,10 +811,8 @@ partition_router_visitor(Plan *plan, void *context)
 				lc3 = lnext(lc3);
 			}
 
-			prouter = make_partition_router((Plan *) lfirst(lc1), relid,
-											modify_table->nominalRelation,
-											modify_table->epqParam,
-											returning_list);
+			prouter = make_partition_router((Plan *) lfirst(lc1),
+											modify_table->epqParam);
 
 			pfilter = make_partition_filter((Plan *) prouter, relid,
 											modify_table->nominalRelation,
@@ -817,6 +823,8 @@ partition_router_visitor(Plan *plan, void *context)
 			lfirst(lc1) = pfilter;
 		}
 	}
+
+	return make_partition_overseer(plan);
 }
 
 

@@ -61,13 +61,6 @@ bool				pg_pathman_enable_partition_router = true;
 CustomScanMethods	partition_router_plan_methods;
 CustomExecMethods	partition_router_exec_methods;
 
-
-/* FIXME: replace this magic with a CustomScan */
-static ExecProcNodeMtd mt_method = NULL;
-
-
-static TupleTableSlot *router_run_modify_table(PlanState *state);
-
 static TupleTableSlot *router_set_slot(PartitionRouterState *state,
 									   TupleTableSlot *slot,
 									   CmdType operation);
@@ -115,12 +108,7 @@ init_partition_router_static_data(void)
 }
 
 Plan *
-make_partition_router(Plan *subplan,
-					  Oid parent_relid,
-					  Index parent_rti,
-					  int epq_param,
-					  List *returning_list)
-
+make_partition_router(Plan *subplan, int epq_param)
 {
 	CustomScan *cscan = makeNode(CustomScan);
 
@@ -147,49 +135,6 @@ make_partition_router(Plan *subplan,
 	return &cscan->scan.plan;
 }
 
-void
-prepare_modify_table_for_partition_router(PlanState *state, void *context)
-{
-	if (IsA(state, ModifyTableState))
-	{
-		ModifyTableState   *mt_state = (ModifyTableState *) state;
-		bool				changed_method = false;
-		int					i;
-
-		for (i = 0; i < mt_state->mt_nplans; i++)
-		{
-			CustomScanState		   *pf_state = (CustomScanState *) mt_state->mt_plans[i];
-			PartitionRouterState   *pr_state;
-
-			/* Check if this is a PartitionFilter + PartitionRouter combo */
-			if (IsPartitionFilterState(pf_state) &&
-				IsPartitionRouterState(pr_state = linitial(pf_state->custom_ps)))
-			{
-				/* HACK: point to ModifyTable in PartitionRouter */
-				pr_state->mt_state = mt_state;
-
-				if (!changed_method)
-				{
-					/* HACK: replace ModifyTable's execution method */
-					if (!mt_method)
-						mt_method = state->ExecProcNodeReal;
-
-#if PG_VERSION_NUM >= 110000
-					ExecSetExecProcNode(state, router_run_modify_table);
-#elif PG_VERSION_NUM >= 100000
-					state->ExecProcNode = router_run_modify_table;
-#else
-#error "doesn't supported yet"
-#endif
-
-					changed_method = true;
-				}
-			}
-		}
-	}
-}
-
-
 Node *
 partition_router_create_scan_state(CustomScan *node)
 {
@@ -198,6 +143,7 @@ partition_router_create_scan_state(CustomScan *node)
 	state = (PartitionRouterState *) palloc0(sizeof(PartitionRouterState));
 	NodeSetTag(state, T_CustomScanState);
 
+	state = (PartitionRouterState *) makeNode(CustomScanState);
 	state->css.flags = node->flags;
 	state->css.methods = &partition_router_exec_methods;
 
@@ -302,8 +248,8 @@ partition_router_explain(CustomScanState *node,
 
 
 /* Smart wrapper over ModifyTable */
-static TupleTableSlot *
-router_run_modify_table(PlanState *state)
+TupleTableSlot *
+partition_router_run_modify_table(PlanState *state)
 {
 	ModifyTableState   *mt_state;
 	TupleTableSlot	   *slot;
@@ -317,7 +263,7 @@ router_run_modify_table(PlanState *state)
 
 restart:
 	/* Fetch next tuple */
-	slot = mt_method(state);
+	slot = ExecProcNode(state);
 
 	/* Get current signal */
 	mt_plans_new = MTHackField(mt_state, mt_nplans);
