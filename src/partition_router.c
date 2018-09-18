@@ -171,15 +171,12 @@ prepare_modify_table_for_partition_router(PlanState *state, void *context)
 				if (!changed_method)
 				{
 					/* HACK: replace ModifyTable's execution method */
-#if PG_VERSION_NUM >= 110000
 					if (!mt_method)
 						mt_method = state->ExecProcNodeReal;
 
+#if PG_VERSION_NUM >= 110000
 					ExecSetExecProcNode(state, router_run_modify_table);
 #elif PG_VERSION_NUM >= 100000
-					if (!mt_method)
-						mt_method = state->ExecProcNode;
-
 					state->ExecProcNode = router_run_modify_table;
 #else
 #error "doesn't supported yet"
@@ -316,7 +313,7 @@ router_run_modify_table(PlanState *state)
 	mt_state = (ModifyTableState *) state;
 
 	/* Get initial signal */
-	mt_plans_old = MTHackField(mt_state, mt_nplans);
+	mt_plans_old = mt_state->mt_nplans;
 
 restart:
 	/* Fetch next tuple */
@@ -359,13 +356,14 @@ router_set_slot(PartitionRouterState *state,
 	MTHackField(mt_state, mt_nplans) = -mt_state->mt_whichplan;
 	MTHackField(mt_state, operation) = operation;
 
-	/* HACK: disable AFTER STATEMENT triggers */
-	MTDisableStmtTriggers(mt_state, state);
-
 	if (!TupIsNull(slot))
 	{
 		/* We should've cached junk filter already */
 		Assert(state->junkfilter);
+
+		/* HACK: disable AFTER STATEMENT triggers */
+		MTDisableStmtTriggers(mt_state, state);
+
 
 		/* HACK: conditionally disable junk filter in result relation */
 		state->current_rri->ri_junkFilter = (operation == CMD_UPDATE) ?
@@ -373,7 +371,14 @@ router_set_slot(PartitionRouterState *state,
 												NULL;
 
 		/* Don't forget to set saved_slot! */
-		state->yielded_slot = slot;
+		state->yielded_slot = ExecInitExtraTupleSlotCompat(mt_state->ps.state,
+			slot->tts_tupleDescriptor);
+		ExecCopySlot(state->yielded_slot, slot);
+	}
+	else
+	{
+		/* HACK: enable AFTER STATEMENT triggers */
+		MTEnableStmtTriggers(mt_state, state);
 	}
 
 	/* Yield */

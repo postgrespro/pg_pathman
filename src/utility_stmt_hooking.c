@@ -514,10 +514,9 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 							  RPS_RRI_CB(finish_rri_for_copy, NULL));
 
 	/* Set up a tuple slot too */
-	myslot = ExecInitExtraTupleSlotCompat(estate);
-	ExecSetSlotDescriptor(myslot, tupDesc);
+	myslot = ExecInitExtraTupleSlotCompat(estate, NULL);
 	/* Triggers might need a slot as well */
-	estate->es_trig_tuple_slot = ExecInitExtraTupleSlotCompat(estate);
+	estate->es_trig_tuple_slot = ExecInitExtraTupleSlotCompat(estate, tupDesc);
 
 	/* Prepare to catch AFTER triggers. */
 	AfterTriggerBeginQuery();

@@ -803,17 +803,6 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 #endif
 
 /*
- * ExecInitExtraTupleSlot()
- */
-#if PG_VERSION_NUM >= 110000
-#define ExecInitExtraTupleSlotCompat(estate) \
-	ExecInitExtraTupleSlot((estate), NULL)
-#else
-#define ExecInitExtraTupleSlotCompat(estate) \
-	ExecInitExtraTupleSlot(estate)
-#endif
-
-/*
  * BackgroundWorkerInitializeConnectionByOid()
  */
 #if PG_VERSION_NUM >= 110000
@@ -877,7 +866,6 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 		find_childrel_appendrelinfo((root), (rel))
 #endif
 
-
 /*
  * HeapTupleGetXmin()
  * Vanilla PostgreSQL has HeaptTupleHeaderGetXmin, but for 64-bit xid
@@ -895,6 +883,19 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
  *  Common code
  * -------------
  */
+static inline TupleTableSlot *
+ExecInitExtraTupleSlotCompat(EState *s, TupleDesc t)
+{
+#if PG_VERSION_NUM >= 110000
+	return ExecInitExtraTupleSlot(s,t);
+#else
+	TupleTableSlot	*res = ExecInitExtraTupleSlot(s);
+	if (t)
+		ExecSetSlotDescriptor(res, t);
+
+	return res;
+#endif
+}
 
 /* See ExecEvalParamExtern() */
 static inline ParamExternData *
