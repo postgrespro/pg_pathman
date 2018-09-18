@@ -765,11 +765,12 @@ partition_filter_visitor(Plan *plan, void *context)
 static Plan *
 partition_router_visitor(Plan *plan, void *context)
 {
-	List			*rtable = (List *) context;
-	ModifyTable		*modify_table = (ModifyTable *) plan;
-	ListCell		*lc1,
-					*lc2,
-					*lc3;
+	List		   *rtable = (List *) context;
+	ModifyTable	   *modify_table = (ModifyTable *) plan;
+	ListCell	   *lc1,
+				   *lc2,
+				   *lc3;
+	bool			changed = false;
 
 	/* Skip if not ModifyTable with 'UPDATE' command */
 	if (!IsA(modify_table, ModifyTable) || modify_table->operation != CMD_UPDATE)
@@ -821,10 +822,14 @@ partition_router_visitor(Plan *plan, void *context)
 											returning_list);
 
 			lfirst(lc1) = pfilter;
+			changed = true;
 		}
 	}
 
-	return make_partition_overseer(plan);
+	if (changed)
+		return make_partition_overseer(plan);
+
+	return NULL;
 }
 
 

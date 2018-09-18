@@ -1,8 +1,9 @@
 #include "postgres.h"
 
-#include "partition_overseer.h"
 #include "partition_filter.h"
+#include "partition_overseer.h"
 #include "partition_router.h"
+#include "planner_tree_modification.h"
 
 CustomScanMethods	partition_overseer_plan_methods;
 CustomExecMethods	partition_overseer_exec_methods;
@@ -64,6 +65,30 @@ partition_overseer_create_scan_state(CustomScan *node)
 	return (Node *) state;
 }
 
+static void
+set_mt_state_for_router(PlanState *state, void *context)
+{
+    if (IsA(state, ModifyTableState))
+    {
+        ModifyTableState   *mt_state = (ModifyTableState *) state;
+        int                 i;
+
+        for (i = 0; i < mt_state->mt_nplans; i++)
+        {
+            CustomScanState        *pf_state = (CustomScanState *) mt_state->mt_plans[i];
+            PartitionRouterState   *pr_state;
+
+            /* Check if this is a PartitionFilter + PartitionRouter combo */
+            if (IsPartitionFilterState(pf_state) &&
+                IsPartitionRouterState(pr_state = linitial(pf_state->custom_ps)))
+            {
+                /* HACK: point to ModifyTable in PartitionRouter */
+                pr_state->mt_state = mt_state;
+            }
+        }
+    }
+}
+
 void
 partition_overseer_begin(CustomScanState *node,
 						 EState *estate,
@@ -74,13 +99,48 @@ partition_overseer_begin(CustomScanState *node,
 
 	/* It's convenient to store PlanState in 'custom_ps' */
 	node->custom_ps = list_make1(ExecInitNode(plan, estate, eflags));
+
+	/* Save ModifyTableState in PartitionRouterState structs */
+	state_tree_visitor((PlanState *) linitial(node->custom_ps),
+						set_mt_state_for_router,
+						NULL);
 }
 
 TupleTableSlot *
 partition_overseer_exec(CustomScanState *node)
 {
-	PlanState *state = linitial(node->custom_ps);
-	return partition_router_run_modify_table(state);
+	ModifyTableState *mt_state = linitial(node->custom_ps);
+
+	TupleTableSlot	   *slot;
+	int					mt_plans_old,
+						mt_plans_new;
+
+	/* Get initial signal */
+	mt_plans_old = mt_state->mt_nplans;
+
+restart:
+	/* Fetch next tuple */
+	slot = ExecProcNode((PlanState *) mt_state);
+
+	/* Get current signal */
+	mt_plans_new = MTHackField(mt_state, mt_nplans);
+
+	/* Did PartitionRouter ask us to restart? */
+	if (mt_plans_new != mt_plans_old)
+	{
+		/* Signal points to current plan */
+		int state_idx = -mt_plans_new;
+
+		/* HACK: partially restore ModifyTable's state */
+		MTHackField(mt_state, mt_done) = false;
+		MTHackField(mt_state, mt_nplans) = mt_plans_old;
+		MTHackField(mt_state, mt_whichplan) = state_idx;
+
+		/* Restart ModifyTable */
+		goto restart;
+	}
+
+	return slot;
 }
 
 void
@@ -101,5 +161,5 @@ partition_overseer_explain(CustomScanState *node,
 						   List *ancestors,
 						   ExplainState *es)
 {
-	/* nothing to do */
+	/* Nothing to do here now */
 }

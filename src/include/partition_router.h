@@ -56,43 +56,27 @@ extern CustomScanMethods	partition_router_plan_methods;
 extern CustomExecMethods	partition_router_exec_methods;
 
 
-#define IsPartitionRouterPlan(node) \
-	( \
-		IsA((node), CustomScan) && \
-		(((CustomScan *) (node))->methods == &partition_router_plan_methods) \
-	)
-
 #define IsPartitionRouterState(node) \
 	( \
 		IsA((node), CustomScanState) && \
 		(((CustomScanState *) (node))->methods == &partition_router_exec_methods) \
 	)
 
-#define IsPartitionRouter(node) \
-	( IsPartitionRouterPlan(node) || IsPartitionRouterState(node) )
-
+/* Highlight hacks with ModifyTable's fields */
+#define MTHackField(mt_state, field) ( (mt_state)->field )
 
 void init_partition_router_static_data(void);
-
-Plan *make_partition_router(Plan *subplan, int epq_param);
-
-void prepare_modify_table_for_partition_router(PlanState *state, void *context);
-
-
-Node *partition_router_create_scan_state(CustomScan *node);
-
+void prepare_modify_table_for_partition_router(PlanState *state,
+											   void *context);
 void partition_router_begin(CustomScanState *node, EState *estate, int eflags);
-
-TupleTableSlot *partition_router_exec(CustomScanState *node);
-
 void partition_router_end(CustomScanState *node);
-
 void partition_router_rescan(CustomScanState *node);
-
 void partition_router_explain(CustomScanState *node,
 							  List *ancestors,
 							  ExplainState *es);
 
-TupleTableSlot *partition_router_run_modify_table(PlanState *state);
+Plan *make_partition_router(Plan *subplan, int epq_param);
+Node *partition_router_create_scan_state(CustomScan *node);
+TupleTableSlot *partition_router_exec(CustomScanState *node);
 
 #endif /* PARTITION_UPDATE_H */

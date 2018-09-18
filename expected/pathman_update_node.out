@@ -15,29 +15,31 @@ SELECT create_range_partitions('test_update_node.test_range', 'val', 1, 10);
 
 /* Moving from 2st to 1st partition */
 EXPLAIN (COSTS OFF) UPDATE test_update_node.test_range SET val = 5 WHERE val = 15;
-                            QUERY PLAN                             
--------------------------------------------------------------------
- Update on test_range_2
-   ->  Custom Scan (PartitionFilter)
-         ->  Custom Scan (PartitionRouter)
-               ->  Bitmap Heap Scan on test_range_2
-                     Recheck Cond: (val = '15'::numeric)
-                     ->  Bitmap Index Scan on test_range_2_val_idx
-                           Index Cond: (val = '15'::numeric)
-(7 rows)
+                               QUERY PLAN                                
+-------------------------------------------------------------------------
+ Custom Scan (PartitionOverseer)
+   ->  Update on test_range_2
+         ->  Custom Scan (PartitionFilter)
+               ->  Custom Scan (PartitionRouter)
+                     ->  Bitmap Heap Scan on test_range_2
+                           Recheck Cond: (val = '15'::numeric)
+                           ->  Bitmap Index Scan on test_range_2_val_idx
+                                 Index Cond: (val = '15'::numeric)
+(8 rows)
 
 /* Keep same partition */
 EXPLAIN (COSTS OFF) UPDATE test_update_node.test_range SET val = 14 WHERE val = 15;
-                            QUERY PLAN                             
--------------------------------------------------------------------
- Update on test_range_2
-   ->  Custom Scan (PartitionFilter)
-         ->  Custom Scan (PartitionRouter)
-               ->  Bitmap Heap Scan on test_range_2
-                     Recheck Cond: (val = '15'::numeric)
-                     ->  Bitmap Index Scan on test_range_2_val_idx
-                           Index Cond: (val = '15'::numeric)
-(7 rows)
+                               QUERY PLAN                                
+-------------------------------------------------------------------------
+ Custom Scan (PartitionOverseer)
+   ->  Update on test_range_2
+         ->  Custom Scan (PartitionFilter)
+               ->  Custom Scan (PartitionRouter)
+                     ->  Bitmap Heap Scan on test_range_2
+                           Recheck Cond: (val = '15'::numeric)
+                           ->  Bitmap Index Scan on test_range_2_val_idx
+                                 Index Cond: (val = '15'::numeric)
+(8 rows)
 
 /* Update values in 1st partition (rows remain there) */
 UPDATE test_update_node.test_range SET val = 5 WHERE val <= 10;

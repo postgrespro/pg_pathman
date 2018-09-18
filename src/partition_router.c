@@ -26,10 +26,6 @@
 #include "utils/rel.h"
 
 
-/* Highlight hacks with ModifyTable's fields */
-#define MTHackField(mt_state, field) ( (mt_state)->field )
-
-
 #define MTDisableStmtTriggers(mt_state, pr_state) \
 	do { \
 		TriggerDesc *triggers = (mt_state)->resultRelInfo->ri_TrigDesc; \
@@ -143,7 +139,6 @@ partition_router_create_scan_state(CustomScan *node)
 	state = (PartitionRouterState *) palloc0(sizeof(PartitionRouterState));
 	NodeSetTag(state, T_CustomScanState);
 
-	state = (PartitionRouterState *) makeNode(CustomScanState);
 	state->css.flags = node->flags;
 	state->css.methods = &partition_router_exec_methods;
 
@@ -244,46 +239,6 @@ partition_router_explain(CustomScanState *node,
 						 ExplainState *es)
 {
 	/* Nothing to do here now */
-}
-
-
-/* Smart wrapper over ModifyTable */
-TupleTableSlot *
-partition_router_run_modify_table(PlanState *state)
-{
-	ModifyTableState   *mt_state;
-	TupleTableSlot	   *slot;
-	int					mt_plans_old,
-						mt_plans_new;
-
-	mt_state = (ModifyTableState *) state;
-
-	/* Get initial signal */
-	mt_plans_old = mt_state->mt_nplans;
-
-restart:
-	/* Fetch next tuple */
-	slot = ExecProcNode(state);
-
-	/* Get current signal */
-	mt_plans_new = MTHackField(mt_state, mt_nplans);
-
-	/* Did PartitionRouter ask us to restart? */
-	if (mt_plans_new != mt_plans_old)
-	{
-		/* Signal points to current plan */
-		int state_idx = -mt_plans_new;
-
-		/* HACK: partially restore ModifyTable's state */
-		MTHackField(mt_state, mt_done) = false;
-		MTHackField(mt_state, mt_nplans) = mt_plans_old;
-		MTHackField(mt_state, mt_whichplan) = state_idx;
-
-		/* Restart ModifyTable */
-		goto restart;
-	}
-
-	return slot;
 }
 
 /* Return tuple OR yield it and change ModifyTable's operation */
