@@ -847,3 +847,8 @@ LANGUAGE C STRICT;
 CREATE OR REPLACE FUNCTION @extschema@.pathman_version()
 RETURNS CSTRING AS 'pg_pathman', 'pathman_version'
 LANGUAGE C STRICT;
+
+-- deprecated
+CREATE OR REPLACE FUNCTION public.get_pathman_lib_version()
+RETURNS CSTRING AS 'pg_pathman', 'pathman_version'
+LANGUAGE C STRICT;
