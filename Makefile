@@ -25,7 +25,8 @@ DATA_built = pg_pathman--$(EXTVERSION).sql
 DATA = pg_pathman--1.0--1.1.sql \
 	   pg_pathman--1.1--1.2.sql \
 	   pg_pathman--1.2--1.3.sql \
-	   pg_pathman--1.3--1.4.sql
+	   pg_pathman--1.3--1.4.sql \
+	   pg_pathman--1.4--1.5.sql
 
 PGFILEDESC = "pg_pathman - partitioning tool for PostgreSQL"
 

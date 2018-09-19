@@ -1,48 +1,4 @@
 /*
- * Drop triggers
- */
-CREATE OR REPLACE FUNCTION @extschema@.drop_triggers(
-	parent_relid	REGCLASS)
-RETURNS VOID AS $$
-DECLARE
-	triggername		TEXT;
-	relation		OID;
-
-BEGIN
-	triggername := concat(parent_relid::text, '_upd_trig');
-
-	/* Drop trigger for each partition if exists */
-	FOR relation IN (SELECT pg_catalog.pg_inherits.inhrelid
-					 FROM pg_catalog.pg_inherits
-					 JOIN pg_catalog.pg_trigger ON inhrelid = tgrelid
-					 WHERE inhparent = parent_relid AND tgname = triggername)
-	LOOP
-		EXECUTE format('DROP TRIGGER IF EXISTS %s ON %s',
-					   triggername,
-					   relation::REGCLASS);
-	END LOOP;
-
-	/* Drop trigger on parent */
-	IF EXISTS (SELECT * FROM pg_catalog.pg_trigger
-			   WHERE tgname = triggername AND tgrelid = parent_relid)
-	THEN
-		EXECUTE format('DROP TRIGGER IF EXISTS %s ON %s',
-					   triggername,
-					   parent_relid::TEXT);
-	END IF;
-END
-$$ LANGUAGE plpgsql STRICT;
-
-DO $$
-DECLARE r record;
-BEGIN
-    FOR r IN SELECT parent_relid FROM @extschema@.pathman_config
-    LOOP
-		PERFORM @extschema@.drop_triggers(r.parent_relid);                                                                                                                                                                                                  +
-    END LOOP;
-END$$;
-
-/*
  * Add new partition
  */
 CREATE OR REPLACE FUNCTION @extschema@.add_range_partition(
@@ -685,8 +641,7 @@ END
 $$ LANGUAGE plpgsql
 SET pg_pathman.enable_partitionfilter = off; /* ensures that PartitionFilter is OFF */
 
--- deprecated
-CREATE OR REPLACE FUNCTION public.get_pathman_lib_version()
+CREATE FUNCTION @extschema@.pathman_version()
 RETURNS CSTRING AS 'pg_pathman', 'pathman_version'
 LANGUAGE C STRICT;
 
@@ -706,7 +661,8 @@ LANGUAGE sql STRICT;
 /*
  * Get partitioning key.
  */
-CREATE OR REPLACE FUNCTION @extschema@.get_partition_key(
+DROP FUNCTION @extschema@.get_partition_key(REGCLASS);
+CREATE FUNCTION @extschema@.get_partition_key(
 	parent_relid	REGCLASS)
 RETURNS TEXT AS
 $$
@@ -719,7 +675,8 @@ LANGUAGE sql STRICT;
 /*
  * Get partitioning key type.
  */
-CREATE OR REPLACE FUNCTION @extschema@.get_partition_key_type(
+DROP FUNCTION @extschema@.get_partition_key_type(REGCLASS);
+CREATE FUNCTION @extschema@.get_partition_key_type(
 	parent_relid	REGCLASS)
 RETURNS REGTYPE AS 'pg_pathman', 'get_partition_key_type_pl'
 LANGUAGE C STRICT;
@@ -727,6 +684,7 @@ LANGUAGE C STRICT;
 /*
  * Get partitioning type.
  */
+DROP FUNCTION @extschema@.get_partition_type(REGCLASS);
 CREATE OR REPLACE FUNCTION @extschema@.get_partition_type(
 	parent_relid	REGCLASS)
 RETURNS INT4 AS
@@ -798,7 +756,9 @@ $$ LANGUAGE plpgsql;
 /*
  * Show all existing concurrent partitioning tasks.
  */
-CREATE OR REPLACE FUNCTION @extschema@.show_concurrent_part_tasks()
+DROP VIEW @extschema@.pathman_concurrent_part_tasks;
+DROP FUNCTION @extschema@.show_concurrent_part_tasks();
+CREATE FUNCTION @extschema@.show_concurrent_part_tasks()
 RETURNS TABLE (
 	userid		REGROLE,
 	pid			INT,
@@ -808,6 +768,10 @@ RETURNS TABLE (
 	status		TEXT)
 AS 'pg_pathman', 'show_concurrent_part_tasks_internal'
 LANGUAGE C STRICT;
+
+CREATE VIEW @extschema@.pathman_concurrent_part_tasks
+AS SELECT * FROM @extschema@.show_concurrent_part_tasks();
+GRANT SELECT ON @extschema@.pathman_concurrent_part_tasks TO PUBLIC;
 
 /*
  * Split RANGE partition in two using a pivot.
@@ -821,13 +785,11 @@ CREATE OR REPLACE FUNCTION @extschema@.split_range_partition(
 RETURNS REGCLASS AS 'pg_pathman', 'split_range_partition'
 LANGUAGE C;
 
-ALTER TABLE public.pathman_concurrent_part_tasks
-	ALTER COLUMN processed SET TYPE bigint;
-
 DROP FUNCTION @extschema@.build_update_trigger_func_name(regclass);
 DROP FUNCTION @extschema@.build_update_trigger_name(regclass);
 DROP FUNCTION @extschema@.create_single_update_trigger(regclass, regclass);
 DROP FUNCTION @extschema@.create_update_triggers(regclass);
 DROP FUNCTION @extschema@.drop_triggers(regclass);
 DROP FUNCTION @extschema@.has_update_trigger(regclass);
-DROP FUNCTION @extschema@.pathman_update_trigger_func();
+DROP FUNCTION @extschema@.pathman_update_trigger_func() CASCADE;
+DROP FUNCTION @extschema@.get_pathman_lib_version();
