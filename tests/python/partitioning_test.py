@@ -1022,6 +1022,12 @@ class Tests(unittest.TestCase):
                 plan = con.execute('SELECT query_plan(\'%s\')' % test_query)[0][0]
                 plan = plan[0]["Plan"]
 
+                # PartitionOverseer
+                self.assertEqual(plan["Node Type"], "Custom Scan")
+                self.assertEqual(plan["Custom Plan Provider"], 'PartitionOverseer')
+
+                # ModifyTable
+                plan = plan["Plans"][0]
                 self.assertEqual(plan["Node Type"], "ModifyTable")
                 self.assertEqual(plan["Operation"], "Update")
                 self.assertEqual(plan["Relation Name"], "test_range")
