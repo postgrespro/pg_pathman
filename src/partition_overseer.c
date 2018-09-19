@@ -68,25 +68,24 @@ partition_overseer_create_scan_state(CustomScan *node)
 static void
 set_mt_state_for_router(PlanState *state, void *context)
 {
-    if (IsA(state, ModifyTableState))
-    {
-        ModifyTableState   *mt_state = (ModifyTableState *) state;
-        int                 i;
+    ModifyTableState   *mt_state = (ModifyTableState *) state;
 
-        for (i = 0; i < mt_state->mt_nplans; i++)
-        {
-            CustomScanState        *pf_state = (CustomScanState *) mt_state->mt_plans[i];
-            PartitionRouterState   *pr_state;
+    if (!IsA(state, ModifyTableState))
+		return;
 
-            /* Check if this is a PartitionFilter + PartitionRouter combo */
-            if (IsPartitionFilterState(pf_state) &&
-                IsPartitionRouterState(pr_state = linitial(pf_state->custom_ps)))
-            {
-                /* HACK: point to ModifyTable in PartitionRouter */
-                pr_state->mt_state = mt_state;
-            }
-        }
-    }
+	for (int i = 0; i < mt_state->mt_nplans; i++)
+	{
+		CustomScanState        *pf_state = (CustomScanState *) mt_state->mt_plans[i];
+		PartitionRouterState   *pr_state;
+
+		/* Check if this is a PartitionFilter + PartitionRouter combo */
+		if (IsPartitionFilterState(pf_state) &&
+			IsPartitionRouterState(pr_state = linitial(pf_state->custom_ps)))
+		{
+			/* HACK: point to ModifyTable in PartitionRouter */
+			pr_state->mt_state = mt_state;
+		}
+	}
 }
 
 void
@@ -119,7 +118,7 @@ partition_overseer_exec(CustomScanState *node)
 	mt_plans_old = mt_state->mt_nplans;
 
 restart:
-	/* Fetch next tuple */
+	/* Run ModifyTable */
 	slot = ExecProcNode((PlanState *) mt_state);
 
 	/* Get current signal */
@@ -136,7 +135,7 @@ restart:
 		MTHackField(mt_state, mt_nplans) = mt_plans_old;
 		MTHackField(mt_state, mt_whichplan) = state_idx;
 
-		/* Restart ModifyTable */
+		/* Rerun ModifyTable */
 		goto restart;
 	}
 

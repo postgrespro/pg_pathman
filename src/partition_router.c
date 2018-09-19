@@ -63,7 +63,6 @@ static TupleTableSlot *router_set_slot(PartitionRouterState *state,
 static TupleTableSlot *router_get_slot(PartitionRouterState *state,
 									   bool *should_process);
 
-static void router_lazy_init_junkfilter(PartitionRouterState *state);
 static void router_lazy_init_constraint(PartitionRouterState *state);
 
 static ItemPointerData router_extract_ctid(PartitionRouterState *state,
@@ -185,8 +184,9 @@ take_next_tuple:
 
 		ItemPointerSetInvalid(&ctid);
 
-		/* Build new junkfilter lazily */
-		router_lazy_init_junkfilter(state);
+		/* Build new junkfilter if needed */
+		if (state->junkfilter == NULL)
+			state->junkfilter = state->current_rri->ri_junkFilter;
 
 		/* Build recheck constraint state lazily */
 		router_lazy_init_constraint(state);
@@ -257,14 +257,13 @@ router_set_slot(PartitionRouterState *state,
 	MTHackField(mt_state, mt_nplans) = -mt_state->mt_whichplan;
 	MTHackField(mt_state, operation) = operation;
 
+	/* HACK: disable AFTER STATEMENT triggers */
+	MTDisableStmtTriggers(mt_state, state);
+
 	if (!TupIsNull(slot))
 	{
 		/* We should've cached junk filter already */
 		Assert(state->junkfilter);
-
-		/* HACK: disable AFTER STATEMENT triggers */
-		MTDisableStmtTriggers(mt_state, state);
-
 
 		/* HACK: conditionally disable junk filter in result relation */
 		state->current_rri->ri_junkFilter = (operation == CMD_UPDATE) ?
@@ -275,11 +274,6 @@ router_set_slot(PartitionRouterState *state,
 		state->yielded_slot = ExecInitExtraTupleSlotCompat(mt_state->ps.state,
 			slot->tts_tupleDescriptor);
 		ExecCopySlot(state->yielded_slot, slot);
-	}
-	else
-	{
-		/* HACK: enable AFTER STATEMENT triggers */
-		MTEnableStmtTriggers(mt_state, state);
 	}
 
 	/* Yield */
@@ -322,13 +316,6 @@ router_get_slot(PartitionRouterState *state,
 	}
 
 	return slot;
-}
-
-static void
-router_lazy_init_junkfilter(PartitionRouterState *state)
-{
-	if (state->junkfilter == NULL)
-		state->junkfilter = state->current_rri->ri_junkFilter;
 }
 
 static void
