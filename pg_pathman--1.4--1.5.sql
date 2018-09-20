@@ -698,8 +698,8 @@ LANGUAGE sql STRICT;
 /*
  * Merge RANGE partitions.
  */
-DROP FUNCTION public.merge_range_partitions(regclass[]);
-DROP FUNCTION public.merge_range_partitions(regclass, regclass);
+DROP FUNCTION @extschema@.merge_range_partitions(regclass[]);
+DROP FUNCTION @extschema@.merge_range_partitions(regclass, regclass);
 
 CREATE OR REPLACE FUNCTION @extschema@.merge_range_partitions(
 	variadic partitions		REGCLASS[])
@@ -776,7 +776,7 @@ GRANT SELECT ON @extschema@.pathman_concurrent_part_tasks TO PUBLIC;
 /*
  * Split RANGE partition in two using a pivot.
  */
-DROP FUNCTION public.split_range_partition(regclass, anyelement, text, text, OUT anyarray);
+DROP FUNCTION @extschema@.split_range_partition(regclass, anyelement, text, text, OUT anyarray);
 CREATE OR REPLACE FUNCTION @extschema@.split_range_partition(
 	partition_relid	REGCLASS,
 	split_value		ANYELEMENT,
