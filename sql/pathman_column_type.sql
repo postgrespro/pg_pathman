@@ -18,16 +18,16 @@ SELECT * FROM test_column_type.test;
 SELECT context, entries FROM pathman_cache_stats ORDER BY context;
 
 /* change column's type (should flush caches) */
+SELECT get_partition_cooked_key('test_column_type.test'::REGCLASS);
+SELECT get_partition_key_type('test_column_type.test'::REGCLASS);
 ALTER TABLE test_column_type.test ALTER val TYPE NUMERIC;
 
-/* check that parsed expression was cleared */
-SELECT partrel, cooked_expr FROM pathman_config;
+/* check that expression has been built */
+SELECT get_partition_key_type('test_column_type.test'::REGCLASS);
+SELECT get_partition_cooked_key('test_column_type.test'::REGCLASS);
 
 /* make sure that everything works properly */
 SELECT * FROM test_column_type.test;
-
-/* check that expression has been built */
-SELECT partrel, cooked_expr FROM pathman_config;
 
 SELECT context, entries FROM pathman_cache_stats ORDER BY context;
 

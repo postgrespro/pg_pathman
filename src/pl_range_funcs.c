@@ -400,7 +400,6 @@ validate_interval_value(PG_FUNCTION_ARGS)
 #define ARG_EXPRESSION		1
 #define ARG_PARTTYPE		2
 #define ARG_RANGE_INTERVAL	3
-#define ARG_EXPRESSION_P	4
 
 	Oid			partrel;
 	PartType	parttype;
@@ -433,35 +432,9 @@ validate_interval_value(PG_FUNCTION_ARGS)
 	else parttype = DatumGetPartType(PG_GETARG_DATUM(ARG_PARTTYPE));
 
 	/*
-	 * Fetch partitioning expression's type using
-	 * either user's expression or parsed expression.
-	 *
-	 * NOTE: we check number of function's arguments
-	 * in case of late updates (e.g. 1.1 => 1.4).
+	 * Try to parse partitioning expression, could fail with ERROR.
 	 */
-	if (PG_ARGISNULL(ARG_EXPRESSION_P) || PG_NARGS() <= ARG_EXPRESSION_P)
-	{
-		Datum expr_datum;
-
-		/* We'll have to parse expression with our own hands */
-		expr_datum = cook_partitioning_expression(partrel, expr_cstr, &expr_type);
-
-		/* Free both expressions */
-		pfree(DatumGetPointer(expr_datum));
-		pfree(expr_cstr);
-	}
-	else
-	{
-		char *expr_p_cstr;
-
-		/* Good, let's use a cached parsed expression */
-		expr_p_cstr = TextDatumGetCString(PG_GETARG_TEXT_P(ARG_EXPRESSION_P));
-		expr_type = exprType(stringToNode(expr_p_cstr));
-
-		/* Free both expressions */
-		pfree(expr_p_cstr);
-		pfree(expr_cstr);
-	}
+	cook_partitioning_expression(partrel, expr_cstr, &expr_type);
 
 	/*
 	 * NULL interval is fine for both HASH and RANGE.

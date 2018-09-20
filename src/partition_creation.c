@@ -1854,20 +1854,15 @@ build_partitioning_expression(Oid parent_relid,
 
 	expr_cstr = TextDatumGetCString(values[Anum_pathman_config_expr - 1]);
 	expr = parse_partitioning_expression(parent_relid, expr_cstr, NULL, NULL);
-	pfree(expr_cstr);
 
 	/* We need expression type for hash functions */
 	if (expr_type)
 	{
-		char *expr_p_cstr;
-
-		/* We can safely assume that this field will always remain not null */
-		Assert(!isnull[Anum_pathman_config_cooked_expr - 1]);
-		expr_p_cstr =
-				TextDatumGetCString(values[Anum_pathman_config_cooked_expr - 1]);
+		Node	*expr;
+		expr = cook_partitioning_expression(parent_relid, expr_cstr, NULL);
 
 		/* Finally return expression type */
-		*expr_type = exprType(stringToNode(expr_p_cstr));
+		*expr_type = exprType(expr);
 	}
 
 	if (columns)
@@ -1877,5 +1872,6 @@ build_partitioning_expression(Oid parent_relid,
 		extract_column_names(expr, columns);
 	}
 
+	pfree(expr_cstr);
 	return expr;
 }

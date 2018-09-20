@@ -44,9 +44,9 @@ SELECT create_range_partitions('permissions.user1_table', 'id', 1, 10, 2);
 /* Should be able to see */
 SET ROLE user2;
 SELECT * FROM pathman_config;
-         partrel         | expr | parttype | range_interval |                                                      cooked_expr                                                      
--------------------------+------+----------+----------------+-----------------------------------------------------------------------------------------------------------------------
- permissions.user1_table | id   |        2 | 10             | {VAR :varno 1 :varattno 1 :vartype 23 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 1 :location 8}
+         partrel         | expr | parttype | range_interval 
+-------------------------+------+----------+----------------
+ permissions.user1_table | id   |        2 | 10
 (1 row)
 
 SELECT * FROM pathman_config_params;

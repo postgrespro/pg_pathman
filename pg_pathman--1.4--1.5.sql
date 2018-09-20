@@ -1,3 +1,30 @@
+ALTER TABLE @extschema@.pathman_config DROP CONSTRAINT pathman_config_interval_check;
+
+DROP FUNCTION @extschema@.validate_interval_value(REGCLASS, TEXT, INTEGER,
+	TEXT, TEXT);
+CREATE OR REPLACE FUNCTION @extschema@.validate_interval_value(
+	partrel			REGCLASS,
+	expr			TEXT,
+	parttype		INTEGER,
+	range_interval	TEXT)
+RETURNS BOOL AS 'pg_pathman', 'validate_interval_value'
+LANGUAGE C;
+
+ALTER TABLE @extschema@.pathman_config DROP COLUMN cooked_expr;
+ALTER TABLE @extschema@.pathman_config ADD CONSTRAINT pathman_config_interval_check
+	CHECK (@extschema@.validate_interval_value(partrel,
+											   expr,
+											   parttype,
+											   range_interval));
+
+/*
+ * Get parsed and analyzed expression.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_partition_cooked_key(
+	parent_relid	REGCLASS)
+RETURNS TEXT AS 'pg_pathman', 'get_partition_cooked_key_pl'
+LANGUAGE C STRICT;
+
 /*
  * Add new partition
  */

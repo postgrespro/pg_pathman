@@ -675,66 +675,6 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 	return contains_rel;
 }
 
-/* Invalidate parsed partitioning expression in PATHMAN_CONFIG */
-void
-pathman_config_invalidate_parsed_expression(Oid relid)
-{
-	ItemPointerData		iptr; /* pointer to tuple */
-	Datum				values[Natts_pathman_config];
-	bool				nulls[Natts_pathman_config];
-
-	/* Check that PATHMAN_CONFIG table contains this relation */
-	if (pathman_config_contains_relation(relid, values, nulls, NULL, &iptr))
-	{
-		Relation	rel;
-		HeapTuple	new_htup;
-
-		/* Reset parsed expression */
-		values[Anum_pathman_config_cooked_expr - 1] = (Datum) 0;
-		nulls[Anum_pathman_config_cooked_expr - 1]  = true;
-
-		rel = heap_open(get_pathman_config_relid(false), RowExclusiveLock);
-
-		/* Form new tuple and perform an update */
-		new_htup = heap_form_tuple(RelationGetDescr(rel), values, nulls);
-		CatalogTupleUpdate(rel, &iptr, new_htup);
-		heap_freetuple(new_htup);
-
-		heap_close(rel, RowExclusiveLock);
-	}
-}
-
-/* Refresh parsed partitioning expression in PATHMAN_CONFIG */
-void
-pathman_config_refresh_parsed_expression(Oid relid,
-										 Datum *values,
-										 bool *isnull,
-										 ItemPointer iptr)
-{
-	char				   *expr_cstr;
-	Datum					expr_datum;
-
-	Relation				rel;
-	HeapTuple				htup_new;
-
-	/* get and parse expression */
-	expr_cstr = TextDatumGetCString(values[Anum_pathman_config_expr - 1]);
-	expr_datum = cook_partitioning_expression(relid, expr_cstr, NULL);
-	pfree(expr_cstr);
-
-	/* prepare tuple values */
-	values[Anum_pathman_config_cooked_expr - 1] = expr_datum;
-	isnull[Anum_pathman_config_cooked_expr - 1] = false;
-
-	rel = heap_open(get_pathman_config_relid(false), RowExclusiveLock);
-
-	htup_new = heap_form_tuple(RelationGetDescr(rel), values, isnull);
-	CatalogTupleUpdate(rel, iptr, htup_new);
-
-	heap_close(rel, RowExclusiveLock);
-}
-
-
 /*
  * Loads additional pathman parameters like 'enable_parent'
  * or 'auto' from PATHMAN_CONFIG_PARAMS.

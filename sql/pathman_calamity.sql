@@ -132,14 +132,14 @@ SELECT build_range_condition('calamity.part_test', 'val', 10, NULL);	/* OK */
 SELECT build_range_condition('calamity.part_test', 'val', NULL, 10);	/* OK */
 
 /* check function validate_interval_value() */
-SELECT validate_interval_value(1::REGCLASS, 'expr', 2, '1 mon', 'cooked_expr');			/* not ok */
-SELECT validate_interval_value(NULL, 'expr', 2, '1 mon', 'cooked_expr');				/* not ok */
-SELECT validate_interval_value('pg_class', NULL, 2, '1 mon', 'cooked_expr');			/* not ok */
-SELECT validate_interval_value('pg_class', 'relname', NULL, '1 mon', 'cooked_expr');	/* not ok */
-SELECT validate_interval_value('pg_class', 'relname', 1, 'HASH', NULL);					/* not ok */
-SELECT validate_interval_value('pg_class', 'expr', 2, '1 mon', NULL);					/* not ok */
-SELECT validate_interval_value('pg_class', 'expr', 2, NULL, 'cooked_expr');				/* not ok */
-SELECT validate_interval_value('pg_class', 'EXPR', 1, 'HASH', NULL);					/* not ok */
+SELECT validate_interval_value(1::REGCLASS, 'expr', 2, '1 mon');		/* not ok */
+SELECT validate_interval_value(NULL, 'expr', 2, '1 mon');				/* not ok */
+SELECT validate_interval_value('pg_class', NULL, 2, '1 mon');			/* not ok */
+SELECT validate_interval_value('pg_class', 'relname', NULL, '1 mon');	/* not ok */
+SELECT validate_interval_value('pg_class', 'relname', 1, 'HASH');		/* not ok */
+SELECT validate_interval_value('pg_class', 'expr', 2, '1 mon');			/* not ok */
+SELECT validate_interval_value('pg_class', 'expr', 2, NULL);			/* not ok */
+SELECT validate_interval_value('pg_class', 'EXPR', 1, 'HASH');			/* not ok */
 
 /* check function validate_relname() */
 SELECT validate_relname('calamity.part_test');

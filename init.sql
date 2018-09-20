@@ -18,8 +18,7 @@ CREATE OR REPLACE FUNCTION @extschema@.validate_interval_value(
 	partrel			REGCLASS,
 	expr			TEXT,
 	parttype		INTEGER,
-	range_interval	TEXT,
-	cooked_expr		TEXT)
+	range_interval	TEXT)
 RETURNS BOOL AS 'pg_pathman', 'validate_interval_value'
 LANGUAGE C;
 
@@ -37,7 +36,6 @@ CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
 	expr			TEXT NOT NULL,
 	parttype		INTEGER NOT NULL,
 	range_interval	TEXT DEFAULT NULL,
-	cooked_expr		TEXT DEFAULT NULL,
 
 	/* check for allowed part types */
 	CONSTRAINT pathman_config_parttype_check CHECK (parttype IN (1, 2)),
@@ -47,8 +45,7 @@ CREATE TABLE IF NOT EXISTS @extschema@.pathman_config (
 	CHECK (@extschema@.validate_interval_value(partrel,
 											   expr,
 											   parttype,
-											   range_interval,
-											   cooked_expr))
+											   range_interval))
 );
 
 
@@ -672,6 +669,14 @@ LANGUAGE sql STRICT;
 CREATE OR REPLACE FUNCTION @extschema@.get_partition_key_type(
 	parent_relid	REGCLASS)
 RETURNS REGTYPE AS 'pg_pathman', 'get_partition_key_type_pl'
+LANGUAGE C STRICT;
+
+/*
+ * Get parsed and analyzed expression.
+ */
+CREATE OR REPLACE FUNCTION @extschema@.get_partition_cooked_key(
+	parent_relid	REGCLASS)
+RETURNS TEXT AS 'pg_pathman', 'get_partition_cooked_key_pl'
 LANGUAGE C STRICT;
 
 /*

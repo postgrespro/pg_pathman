@@ -949,9 +949,6 @@ pathman_process_utility_hook(Node *first_arg,
 								" of table \"%s\" partitioned by HASH",
 								get_attname_compat(relation_oid, attr_number),
 								get_rel_name(relation_oid))));
-
-			/* Don't forget to invalidate parsed partitioning expression */
-			pathman_config_invalidate_parsed_expression(relation_oid);
 		}
 	}
 

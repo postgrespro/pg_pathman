@@ -340,19 +340,12 @@ get_pathman_relation_info(Oid relid)
 		bool				isnull[Natts_pathman_config];
 		bool				found;
 
-		/* Check if PATHMAN_CONFIG table contains this relation */
+		/*
+		 * Check if PATHMAN_CONFIG table contains this relation and
+		 * build a partitioned table cache entry (might emit ERROR).
+		 */
 		if (pathman_config_contains_relation(relid, values, isnull, NULL, &iptr))
-		{
-			bool upd_expr = isnull[Anum_pathman_config_cooked_expr - 1];
-
-			/* Update pending partitioning expression */
-			if (upd_expr)
-				pathman_config_refresh_parsed_expression(relid, values,
-														 isnull, &iptr);
-
-			/* Build a partitioned table cache entry (might emit ERROR) */
 			prel = build_pathman_relation_info(relid, values);
-		}
 
 		/* Create a new entry for this relation */
 		psin = pathman_cache_search_relid(status_cache,
@@ -414,7 +407,6 @@ build_pathman_relation_info(Oid relid, Datum *values)
 	{
 		MemoryContext			old_mcxt;
 		const TypeCacheEntry   *typcache;
-		char				   *expr;
 		Datum					param_values[Natts_pathman_config_params];
 		bool					param_isnull[Natts_pathman_config_params];
 		Oid					   *prel_children;
@@ -428,15 +420,12 @@ build_pathman_relation_info(Oid relid, Datum *values)
 		/* Set partitioning type */
 		prel->parttype	= DatumGetPartType(values[Anum_pathman_config_parttype - 1]);
 
-		/* Fetch cooked partitioning expression */
-		expr = TextDatumGetCString(values[Anum_pathman_config_cooked_expr - 1]);
-
 		/* Switch to persistent memory context */
 		old_mcxt = MemoryContextSwitchTo(prel->mcxt);
 
 		/* Build partitioning expression tree */
 		prel->expr_cstr = TextDatumGetCString(values[Anum_pathman_config_expr - 1]);
-		prel->expr = (Node *) stringToNode(expr);
+		prel->expr = cook_partitioning_expression(relid, prel->expr_cstr, NULL);
 		fix_opfuncids(prel->expr);
 
 		/* Extract Vars and varattnos of partitioning expression */
@@ -1361,18 +1350,16 @@ parse_partitioning_expression(const Oid relid,
 }
 
 /* Parse partitioning expression and return its type and nodeToString() as TEXT */
-Datum
+Node *
 cook_partitioning_expression(const Oid relid,
 							 const char *expr_cstr,
 							 Oid *expr_type_out) /* ret value #1 */
 {
+	Node		   *expr;
 	Node		   *parse_tree;
 	List		   *query_tree_list;
 
-	char		   *query_string,
-				   *expr_serialized = ""; /* keep compiler happy */
-
-	Datum			expr_datum;
+	char		   *query_string;
 
 	MemoryContext	parse_mcxt,
 					old_mcxt;
@@ -1400,7 +1387,6 @@ cook_partitioning_expression(const Oid relid,
 	PG_TRY();
 	{
 		Query	   *query;
-		Node	   *expr;
 		int			expr_attr;
 		Relids		expr_varnos;
 		Bitmapset  *expr_varattnos = NULL;
@@ -1478,7 +1464,6 @@ cook_partitioning_expression(const Oid relid,
 		bms_free(expr_varattnos);
 
 		Assert(expr);
-		expr_serialized = nodeToString(expr);
 
 		/* Set 'expr_type_out' if needed */
 		if (expr_type_out)
@@ -1514,12 +1499,12 @@ cook_partitioning_expression(const Oid relid,
 	MemoryContextSwitchTo(old_mcxt);
 
 	/* Get Datum of serialized expression (right mcxt) */
-	expr_datum = CStringGetTextDatum(expr_serialized);
+	expr = copyObject(expr);
 
 	/* Free memory */
 	MemoryContextDelete(parse_mcxt);
 
-	return expr_datum;
+	return expr;
 }
 
 /* Canonicalize user's expression (trim whitespaces etc) */

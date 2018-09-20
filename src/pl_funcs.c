@@ -47,6 +47,7 @@
 
 PG_FUNCTION_INFO_V1( get_number_of_partitions_pl );
 PG_FUNCTION_INFO_V1( get_partition_key_type_pl );
+PG_FUNCTION_INFO_V1( get_partition_cooked_key_pl );
 PG_FUNCTION_INFO_V1( get_parent_of_partition_pl );
 PG_FUNCTION_INFO_V1( get_base_type_pl );
 PG_FUNCTION_INFO_V1( get_tablespace_pl );
@@ -138,6 +139,25 @@ get_partition_key_type_pl(PG_FUNCTION_ARGS)
 	close_pathman_relation_info(prel);
 
 	PG_RETURN_OID(typid);
+}
+
+/*
+ * Return partition key type.
+ */
+Datum
+get_partition_cooked_key_pl(PG_FUNCTION_ARGS)
+{
+	Oid					relid = PG_GETARG_OID(0);
+	PartRelationInfo   *prel;
+	Datum				res;
+
+	prel = get_pathman_relation_info(relid);
+	shout_if_prel_is_invalid(relid, prel, PT_ANY);
+
+	res = CStringGetTextDatum(nodeToString(prel->expr));
+	close_pathman_relation_info(prel);
+
+	PG_RETURN_TEXT_P(res);
 }
 
 /*
@@ -685,7 +705,6 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	HeapTuple			htup;
 
 	Oid					expr_type;
-	Datum				expr_datum;
 
 	PathmanInitState	init_state;
 
@@ -750,7 +769,7 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	}
 
 	/* Parse and check expression */
-	expr_datum = cook_partitioning_expression(relid, expression, &expr_type);
+	cook_partitioning_expression(relid, expression, &expr_type);
 
 	/* Canonicalize user's expression (trim whitespaces etc) */
 	expression = canonicalize_partitioning_expression(relid, expression);
@@ -777,9 +796,6 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 
 	values[Anum_pathman_config_expr - 1]		= CStringGetTextDatum(expression);
 	isnull[Anum_pathman_config_expr - 1]		= false;
-
-	values[Anum_pathman_config_cooked_expr - 1]	= expr_datum;
-	isnull[Anum_pathman_config_cooked_expr - 1]	= false;
 
 	/* Insert new row into PATHMAN_CONFIG */
 	pathman_config = heap_open(get_pathman_config_relid(false), RowExclusiveLock);

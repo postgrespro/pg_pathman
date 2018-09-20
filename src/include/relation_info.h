@@ -384,26 +384,12 @@ Node *parse_partitioning_expression(const Oid relid,
 									char **query_string_out,
 									Node **parsetree_out);
 
-Datum cook_partitioning_expression(const Oid relid,
+Node *cook_partitioning_expression(const Oid relid,
 								   const char *expr_cstr,
 								   Oid *expr_type);
 
 char *canonicalize_partitioning_expression(const Oid relid,
 										   const char *expr_cstr);
-
-/* Partitioning expression routines */
-Node *parse_partitioning_expression(const Oid relid,
-									const char *expr_cstr,
-									char **query_string_out,
-									Node **parsetree_out);
-
-Datum cook_partitioning_expression(const Oid relid,
-								   const char *expr_cstr,
-								   Oid *expr_type);
-
-char *canonicalize_partitioning_expression(const Oid relid,
-										   const char *expr_cstr);
-
 
 /* Global invalidation routines */
 void delay_pathman_shutdown(void);
