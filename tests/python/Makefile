@@ -1,2 +1,6 @@
 partitioning_tests:
-	python -m unittest --verbose --failfast partitioning_test.py
+ifneq ($(CASE),)
+	python partitioning_test.py Tests.$(CASE)
+else
+	python partitioning_test.py
+endif

@@ -7,15 +7,18 @@ partitioning_test.py
         Copyright (c) 2015-2017, Postgres Professional
 """
 
+import functools
 import json
 import math
+import multiprocessing
 import os
+import random
 import re
 import subprocess
+import sys
 import threading
 import time
 import unittest
-import functools
 
 from distutils.version import LooseVersion
 from testgres import get_new_node, get_pg_version
@@ -85,10 +88,17 @@ class Tests(unittest.TestCase):
         p = subprocess.Popen([command], stdin=subprocess.PIPE)
         p.communicate(str(pid).encode())
 
-    def start_new_pathman_cluster(self, allow_streaming=False, test_data=False):
+    def start_new_pathman_cluster(self,
+                                  allow_streaming=False,
+                                  test_data=False,
+                                  enable_partitionrouter=False):
+
         node = get_new_node()
         node.init(allow_streaming=allow_streaming)
         node.append_conf("shared_preload_libraries='pg_pathman'\n")
+        if enable_partitionrouter:
+            node.append_conf("pg_pathman.enable_partitionrouter=on\n")
+
         node.start()
         node.psql('create extension pg_pathman')
 
@@ -1065,6 +1075,57 @@ class Tests(unittest.TestCase):
             node.psql('postgres', 'DROP SCHEMA test_update_node CASCADE;')
             node.psql('postgres', 'DROP EXTENSION pg_pathman CASCADE;')
 
+    def test_concurrent_updates(self):
+        '''
+        Test whether conncurrent updates work correctly between
+        partitions.
+        '''
+
+        create_sql = '''
+        CREATE TABLE test1(id INT, b INT NOT NULL);
+        INSERT INTO test1
+            SELECT i, i FROM generate_series(1, 100) i;
+        SELECT create_range_partitions('test1', 'b', 1, 5);
+        '''
+
+        with self.start_new_pathman_cluster(enable_partitionrouter=True) as node:
+            node.safe_psql(create_sql)
+
+            pool = multiprocessing.Pool(processes=4)
+            for count in range(1, 200):
+                pool.apply_async(make_updates, (node, count, ))
+
+            pool.close()
+            pool.join()
+
+            # check all data is there and not duplicated
+            with node.connect() as con:
+                for i in range(1, 100):
+                    row = con.execute("select count(*) from test1 where id = %d" % i)[0]
+                    self.assertEqual(row[0], 1)
+
+                self.assertEqual(node.execute("select count(*) from test1")[0][0], 100)
+
+
+def make_updates(node, count):
+    update_sql = '''
+    BEGIN;
+    UPDATE test1 SET b = trunc(random() * 100 + 1) WHERE id in (%s);
+    COMMIT;
+    '''
+
+    with node.connect() as con:
+        for i in range(count):
+            rows_to_update = random.randint(20, 50)
+            ids = set([str(random.randint(1, 100)) for i in range(rows_to_update)])
+            con.execute(update_sql % ','.join(ids))
+
 
 if __name__ == "__main__":
-    unittest.main()
+    if len(sys.argv) > 1:
+        suite = unittest.TestLoader().loadTestsFromName(sys.argv[1],
+                                            module=sys.modules[__name__])
+    else:
+        suite = unittest.TestLoader().loadTestsFromTestCase(Tests)
+
+    unittest.TextTestRunner(verbosity=2, failfast=True).run(suite)

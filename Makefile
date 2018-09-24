@@ -93,7 +93,7 @@ isolationcheck: | submake-isolation
 		$(ISOLATIONCHECKS)
 
 python_tests:
-	$(MAKE) -C tests/python partitioning_tests
+	$(MAKE) -C tests/python partitioning_tests CASE=$(CASE)
 
 cmocka_tests:
 	$(MAKE) -C tests/cmocka check
