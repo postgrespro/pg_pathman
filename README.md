@@ -9,7 +9,7 @@ The `pg_pathman` module provides optimized partitioning mechanism and functions 
 
 The extension is compatible with:
 
- * PostgreSQL 9.5, 9.6, 10;
+ * PostgreSQL 9.5, 9.6, 10, 11;
  * Postgres Pro Standard 9.5, 9.6;
  * Postgres Pro Enterprise;
 
@@ -63,7 +63,7 @@ More interesting features are yet to come. Stay tuned!
  * Effective query planning for partitioned tables (JOINs, subselects etc);
  * `RuntimeAppend` & `RuntimeMergeAppend` custom plan nodes to pick partitions at runtime;
  * [`PartitionFilter`](#custom-plan-nodes): an efficient drop-in replacement for INSERT triggers;
- * [`PartitionRouter`](#custom-plan-nodes) for cross-partition UPDATE queries (instead of triggers);
+ * [`PartitionRouter`](#custom-plan-nodes) and [`PartitionOverseer`](#custom-plan-nodes) for cross-partition UPDATE queries (instead of triggers);
  * Automatic partition creation for new INSERTed data (only for RANGE partitioning);
  * Improved `COPY FROM` statement that is able to insert rows directly into partitions;
  * [User-defined callbacks](#additional-parameters) for partition creation event handling;
@@ -105,7 +105,7 @@ In order to update pg_pathman:
 3. Execute the following queries:
 
 ```plpgsql
-/* only required for major releases, e.g. 1.3 -> 1.4 */
+/* only required for major releases, e.g. 1.4 -> 1.5 */
 ALTER EXTENSION pg_pathman UPDATE;
 SET pg_pathman.enable = t;
 ```
@@ -417,6 +417,7 @@ Shows memory consumption of various caches.
 - `RuntimeAppend` (overrides `Append` plan node)
 - `RuntimeMergeAppend` (overrides `MergeAppend` plan node)
 - `PartitionFilter` (drop-in replacement for INSERT triggers)
+- `PartitionOverseer` (implements cross-partition UPDATEs)
 - `PartitionRouter` (implements cross-partition UPDATEs)
 
 `PartitionFilter` acts as a *proxy node* for INSERT's child scan, which means it can redirect output tuples to the corresponding partition:
@@ -434,20 +435,27 @@ SELECT generate_series(1, 10), random();
 (4 rows)
 ```
 
-`PartitionRouter` is another *proxy node* used in conjunction with `PartitionFilter` to enable cross-partition UPDATEs (i.e. when update of partitioning key requires that we move row to another partition). Since this node has a great deal of side effects (ordinary `UPDATE` becomes slower; cross-partition `UPDATE` is transformed into `DELETE + INSERT`), it is disabled by default. To enable it, refer to the list of [GUCs](#disabling-pg_pathman) below.
+`PartitionOverseer` and `PartitionRouter` are another *proxy nodes* used
+in conjunction with `PartitionFilter` to enable cross-partition UPDATEs
+(i.e. when update of partitioning key requires that we move row to another
+partition). Since this node has a great deal of side effects (ordinary `UPDATE` becomes slower;
+cross-partition `UPDATE` is transformed into `DELETE + INSERT`),
+it is disabled by default.
+To enable it, refer to the list of [GUCs](#disabling-pg_pathman) below.
 
 ```plpgsql
 EXPLAIN (COSTS OFF)
 UPDATE partitioned_table
 SET value = value + 1 WHERE value = 2;
-                    QUERY PLAN                     
----------------------------------------------------
- Update on partitioned_table_0
-   ->  Custom Scan (PartitionRouter)
+                       QUERY PLAN
+---------------------------------------------------------
+ Custom Scan (PartitionOverseer)
+   ->  Update on partitioned_table_2
          ->  Custom Scan (PartitionFilter)
-               ->  Seq Scan on partitioned_table_0
-                     Filter: (value = 2)
-(5 rows)
+               ->  Custom Scan (PartitionRouter)
+                     ->  Seq Scan on partitioned_table_2
+                           Filter: (value = 2)
+(6 rows)
 ```
 
 `RuntimeAppend` and `RuntimeMergeAppend` have much in common: they come in handy in a case when WHERE condition takes form of:
