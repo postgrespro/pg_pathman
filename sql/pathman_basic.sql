@@ -216,18 +216,6 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt < '2015-03-01' ORDER B
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel_1 UNION ALL SELECT * FROM test.range_rel_2 ORDER BY dt;
 
 /*
- * Join
- */
-set enable_nestloop = OFF;
-SET enable_hashjoin = ON;
-SET enable_mergejoin = OFF;
-EXPLAIN (COSTS OFF)
-SELECT * FROM test.range_rel j1
-JOIN test.range_rel j2 on j2.id = j1.id
-JOIN test.num_range_rel j3 on j3.id = j1.id
-WHERE j1.dt < '2015-03-01' AND j2.dt >= '2015-02-01' ORDER BY j2.dt;
-
-/*
  * Test inlined SQL functions
  */
 CREATE TABLE test.sql_inline (id INT NOT NULL);

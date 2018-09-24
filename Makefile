@@ -46,6 +46,7 @@ REGRESS = pathman_array_qual \
 		  pathman_interval \
 		  pathman_join_clause \
 		  pathman_lateral \
+		  pathman_hashjoin \
 		  pathman_mergejoin \
 		  pathman_only \
 		  pathman_param_upd_del \
