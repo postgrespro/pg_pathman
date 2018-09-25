@@ -2,7 +2,7 @@
    "name": "pg_pathman",
    "abstract": "Fast partitioning tool for PostgreSQL",
    "description": "pg_pathman provides optimized partitioning mechanism and functions to manage partitions.",
-   "version": "1.5.0",
+   "version": "1.5.1",
    "maintainer": [
       "Dmitry Ivanov <d.ivanov@postgrespro.ru>",
       "Ildus Kurbangaliev <i.kurbangaliev@postgrespro.ru>"
@@ -23,7 +23,7 @@
        "pg_pathman": {
            "file": "pg_pathman--1.5.sql",
            "docfile": "README.md",
-           "version": "1.5.0",
+           "version": "1.5.1",
            "abstract": "Effective partitioning tool for PostgreSQL 9.5 and higher"
       }
    },
