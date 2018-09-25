@@ -68,12 +68,13 @@ partition_overseer_create_scan_state(CustomScan *node)
 static void
 set_mt_state_for_router(PlanState *state, void *context)
 {
+	int					i;
     ModifyTableState   *mt_state = (ModifyTableState *) state;
 
     if (!IsA(state, ModifyTableState))
 		return;
 
-	for (int i = 0; i < mt_state->mt_nplans; i++)
+	for (i = 0; i < mt_state->mt_nplans; i++)
 	{
 		CustomScanState        *pf_state = (CustomScanState *) mt_state->mt_plans[i];
 		PartitionRouterState   *pr_state;
