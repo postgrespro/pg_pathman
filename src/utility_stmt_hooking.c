@@ -35,7 +35,7 @@
 
 /* we avoid includig libpq.h because it requires openssl.h */
 #include "libpq/pqcomm.h"
-extern ProtocolVersion FrontendProtocol;
+extern PGDLLIMPORT ProtocolVersion FrontendProtocol;
 extern void pq_endmsgread(void);
 
 /* Determine whether we should enable COPY or not (PostgresPro has a fix) */
