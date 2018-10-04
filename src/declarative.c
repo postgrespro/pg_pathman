@@ -1,19 +1,22 @@
+#include "pathman.h"
 #include "declarative.h"
 #include "utils.h"
 #include "partition_creation.h"
 
-#include "fmgr.h"
 #include "access/htup_details.h"
 #include "catalog/namespace.h"
-#include "catalog/pg_type.h"
 #include "catalog/pg_proc.h"
+#include "catalog/pg_type.h"
+#include "fmgr.h"
+#include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
-#include "parser/parse_func.h"
+#include "optimizer/planner.h"
 #include "parser/parse_coerce.h"
-#include "utils/int8.h"
-#include "utils/lsyscache.h"
+#include "parser/parse_func.h"
 #include "utils/builtins.h"
 #include "utils/int8.h"
+#include "utils/int8.h"
+#include "utils/lsyscache.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 #include "utils/varbit.h"
@@ -33,13 +36,16 @@ modify_declative_partitioning_query(Query *query)
 
 	if (IsA(query->utilityStmt, AlterTableStmt))
 	{
+		PartRelationInfo	*prel;
 		ListCell   *lcmd;
 		Oid			relid;
 
 		AlterTableStmt *stmt = (AlterTableStmt *) query->utilityStmt;
 		relid = RangeVarGetRelid(stmt->relation, NoLock, true);
-		if (get_pathman_relation_info(relid) != NULL)
+		if ((prel = get_pathman_relation_info(relid)) != NULL)
 		{
+			close_pathman_relation_info(prel);
+
 			foreach(lcmd, stmt->cmds)
 			{
 				AlterTableCmd *cmd = (AlterTableCmd *) lfirst(lcmd);
@@ -61,6 +67,8 @@ modify_declative_partitioning_query(Query *query)
 bool
 is_pathman_related_partitioning_cmd(Node *parsetree, Oid *parent_relid)
 {
+	PartRelationInfo	*prel;
+
 	if (IsA(parsetree, AlterTableStmt))
 	{
 		ListCell	   *lc;
@@ -68,8 +76,10 @@ is_pathman_related_partitioning_cmd(Node *parsetree, Oid *parent_relid)
 		int				cnt = 0;
 
 		*parent_relid = RangeVarGetRelid(stmt->relation, NoLock, false);
-		if (get_pathman_relation_info(*parent_relid) == NULL)
+		if ((prel = get_pathman_relation_info(*parent_relid)) == NULL)
 			return false;
+
+		close_pathman_relation_info(prel);
 
 		/*
 		 * Since cmds can contain multiple commmands but we can handle only
@@ -106,9 +116,10 @@ is_pathman_related_partitioning_cmd(Node *parsetree, Oid *parent_relid)
 		{
 			RangeVar *rv = castNode(RangeVar, linitial(stmt->inhRelations));
 			*parent_relid = RangeVarGetRelid(rv, NoLock, false);
-			if (get_pathman_relation_info(*parent_relid) == NULL)
+			if ((prel = get_pathman_relation_info(*parent_relid)) == NULL)
 				return false;
 
+			close_pathman_relation_info(prel);
 			if (stmt->tableElts != NIL)
 				elog(ERROR, "pg_pathman doesn't support column definitions "
 						"in declarative syntax yet");
@@ -202,7 +213,7 @@ handle_attach_partition(Oid parent_relid, AlterTableCmd *cmd)
 	A_Const				   *con;
 	List				   *fn_args;
 	ParseState			   *pstate = make_parsestate(NULL);
-	const PartRelationInfo *prel;
+	PartRelationInfo	   *prel;
 
 	PartitionCmd		*pcmd	= (PartitionCmd *) cmd->def;
 
@@ -238,6 +249,7 @@ handle_attach_partition(Oid parent_relid, AlterTableCmd *cmd)
 	rdatum = (PartitionRangeDatum *) linitial(bound->upperdatums);
 	con = castNode(A_Const, rdatum->value);
 	rval = transform_bound_value(pstate, con, prel->ev_type, prel->ev_typmod);
+	close_pathman_relation_info(prel);
 
 	/* Lookup function's Oid and get FmgrInfo */
 	fmgr_info(LookupFuncName(proc_name, 4, proc_args, false), &proc_flinfo);
@@ -255,9 +267,9 @@ handle_attach_partition(Oid parent_relid, AlterTableCmd *cmd)
 		(Node *) make_fn_expr(proc_fcinfo.flinfo->fn_oid, fn_args);
 
 	proc_fcinfo.arg[2] = lval->constvalue;
-	proc_fcinfo.argnull[2] = ldatum->infinite || lval->constisnull;
+	proc_fcinfo.argnull[2] = lval->constisnull;
 	proc_fcinfo.arg[3] = rval->constvalue;
-	proc_fcinfo.argnull[3] = rdatum->infinite || rval->constisnull;
+	proc_fcinfo.argnull[3] = rval->constisnull;
 
 	/* Invoke the callback */
 	FunctionCallInvoke(&proc_fcinfo);
@@ -303,7 +315,7 @@ handle_create_partition_of(Oid parent_relid, CreateStmt *stmt)
 {
 	Bound					start,
 							end;
-	const PartRelationInfo *prel;
+	PartRelationInfo	   *prel;
 	ParseState			   *pstate = make_parsestate(NULL);
 	PartitionRangeDatum	   *ldatum,
 						   *rdatum;
@@ -339,6 +351,7 @@ handle_create_partition_of(Oid parent_relid, CreateStmt *stmt)
 	rdatum = (PartitionRangeDatum *) linitial(bound->upperdatums);
 	con = castNode(A_Const, rdatum->value);
 	rval = transform_bound_value(pstate, con, prel->ev_type, prel->ev_typmod);
+	close_pathman_relation_info(prel);
 
 	start = lval->constisnull?
 		MakeBoundInf(MINUS_INFINITY) :

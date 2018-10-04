@@ -58,7 +58,6 @@ Check constraints:
 Inherits: test.range_rel
 
 ALTER TABLE test.range_rel DETACH PARTITION test.r2;
-NOTICE:  trigger "range_rel_upd_trig" for relation "test.r2" does not exist, skipping
 SELECT * FROM pathman.pathman_partition_list;
      parent     |    partition     | parttype | expr | range_min  | range_max  
 ----------------+------------------+----------+------+------------+------------

@@ -2,13 +2,10 @@
 
 MODULE_big = pg_pathman
 
-# versions of postgresql with declarative partitioning
-DECL_CHECK_VERSIONS = 10 11
-
 ifdef USE_PGXS
 PG_CONFIG = pg_config
 VNUM := $(shell $(PG_CONFIG) --version | awk '{print $$2}')
-ifeq ($(VNUM),$(filter $(VNUM), $(DECL_CHECK_VERSIONS)))
+ifeq ($(VNUM),$(filter 10% 11%,$(VNUM)))
 	EXTRA_REGRESS = pathman_declarative
 	EXTRA_OBJS = src/declarative.o
 endif
@@ -21,7 +18,7 @@ OBJS = src/init.o src/relation_info.o src/utils.o src/partition_filter.o \
 	src/hooks.o src/nodes_common.o src/xact_handling.o src/utility_stmt_hooking.o \
 	src/planner_tree_modification.o src/debug_print.o src/partition_creation.o \
 	src/compat/pg_compat.o src/compat/rowmarks_fix.o src/partition_router.o \
-	src/partition_overseer.o $(WIN32RES)
+	src/partition_overseer.o $(EXTRA_OBJS) $(WIN32RES)
 
 ifdef USE_PGXS
 override PG_CPPFLAGS += -I$(CURDIR)/src/include
@@ -73,7 +70,8 @@ REGRESS = pathman_array_qual \
 		  pathman_update_triggers \
 		  pathman_upd_del \
 		  pathman_utility_stmt \
-		  pathman_views ${EXTRA_REGRESS}
+		  pathman_views $(EXTRA_REGRESS)
+
 
 EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add
 
