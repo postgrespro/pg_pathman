@@ -70,6 +70,7 @@ More interesting features are yet to come. Stay tuned!
  * Non-blocking [concurrent table partitioning](#data-migration);
  * FDW support (foreign partitions);
  * Various [GUC](#disabling-pg_pathman) toggles and configurable settings.
+ * Partial support of [`declarative partitioning`](#declarative-partitioning) (from PostgreSQL 10).
 
 ## Installation guide
 To install `pg_pathman`, execute this in the module's directory:
@@ -410,6 +411,26 @@ AS SELECT * FROM @extschema@.show_cache_stats();
 ```
 Shows memory consumption of various caches.
 
+## Declarative partitioning
+
+From PostgreSQL 10 `ATTACH PARTITION`, `DETACH PARTITION`
+and `CREATE TABLE .. PARTITION OF` commands could be with with tables
+partitioned by `pg_pathman`:
+
+```plpgsql
+CREATE TABLE child1 (LIKE partitioned_table);
+
+--- attach new partition
+ALTER TABLE partitioned_table ATTACH PARTITION child1
+	FOR VALUES FROM ('2015-05-01') TO ('2015-06-01');
+
+--- detach the partition
+ALTER TABLE partitioned_table DETACH PARTITION child1;
+
+-- create a partition
+CREATE TABLE child2 PARTITION OF partitioned_table
+	FOR VALUES IN ('2015-05-01', '2015-06-01');
+```
 
 ## Custom plan nodes
 `pg_pathman` provides a couple of [custom plan nodes](https://wiki.postgresql.org/wiki/CustomScanAPI) which aim to reduce execution time, namely:
