@@ -142,22 +142,33 @@ get_partition_key_type_pl(PG_FUNCTION_ARGS)
 }
 
 /*
- * Return partition key type.
+ * Return cooked partition key.
  */
 Datum
 get_partition_cooked_key_pl(PG_FUNCTION_ARGS)
 {
-	Oid					relid = PG_GETARG_OID(0);
-	PartRelationInfo   *prel;
-	Datum				res;
+	/* Values extracted from PATHMAN_CONFIG */
+	Datum		values[Natts_pathman_config];
+	bool		isnull[Natts_pathman_config];
 
-	prel = get_pathman_relation_info(relid);
-	shout_if_prel_is_invalid(relid, prel, PT_ANY);
+	Oid	relid = PG_GETARG_OID(0);
+	char	   *expr_cstr;
+	Node	   *expr;
+	char	   *cooked_cstr;
 
-	res = CStringGetTextDatum(nodeToString(prel->expr));
-	close_pathman_relation_info(prel);
+	/* Check that table is registered in PATHMAN_CONFIG */
+	if (!pathman_config_contains_relation(relid, values, isnull, NULL, NULL))
+		elog(ERROR, "table \"%s\" is not partitioned",
+			 get_rel_name_or_relid(relid));
 
-	PG_RETURN_TEXT_P(res);
+	expr_cstr = TextDatumGetCString(values[Anum_pathman_config_expr - 1]);
+	expr = cook_partitioning_expression(relid, expr_cstr, NULL);
+	cooked_cstr = nodeToString(expr);
+
+	pfree(expr_cstr);
+	pfree(expr);
+
+	PG_RETURN_TEXT_P(CStringGetTextDatum(cooked_cstr));
 }
 
 /*
