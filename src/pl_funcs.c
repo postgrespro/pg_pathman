@@ -48,6 +48,7 @@
 PG_FUNCTION_INFO_V1( get_number_of_partitions_pl );
 PG_FUNCTION_INFO_V1( get_partition_key_type_pl );
 PG_FUNCTION_INFO_V1( get_partition_cooked_key_pl );
+PG_FUNCTION_INFO_V1( get_cached_partition_cooked_key_pl );
 PG_FUNCTION_INFO_V1( get_parent_of_partition_pl );
 PG_FUNCTION_INFO_V1( get_base_type_pl );
 PG_FUNCTION_INFO_V1( get_tablespace_pl );
@@ -169,6 +170,26 @@ get_partition_cooked_key_pl(PG_FUNCTION_ARGS)
 	pfree(expr);
 
 	PG_RETURN_TEXT_P(CStringGetTextDatum(cooked_cstr));
+}
+
+/*
+ * Return cached cooked partition key.
+ *
+ * Used in tests for invalidation.
+ */
+Datum
+get_cached_partition_cooked_key_pl(PG_FUNCTION_ARGS)
+{
+	Oid                 relid = PG_GETARG_OID(0);
+	PartRelationInfo   *prel;
+	Datum               res;
+
+	prel = get_pathman_relation_info(relid);
+	shout_if_prel_is_invalid(relid, prel, PT_ANY);
+	res = CStringGetTextDatum(nodeToString(prel->expr));
+	close_pathman_relation_info(prel);
+
+	PG_RETURN_TEXT_P(res);
 }
 
 /*

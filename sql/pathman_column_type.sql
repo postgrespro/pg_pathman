@@ -17,14 +17,25 @@ SELECT create_range_partitions('test_column_type.test', 'val', 1, 10, 10);
 SELECT * FROM test_column_type.test;
 SELECT context, entries FROM pathman_cache_stats ORDER BY context;
 
-/* change column's type (should flush caches) */
+/*
+ * Get parsed and analyzed expression.
+ */
+CREATE FUNCTION get_cached_partition_cooked_key(REGCLASS)
+RETURNS TEXT AS 'pg_pathman', 'get_cached_partition_cooked_key_pl'
+LANGUAGE C STRICT;
+
 SELECT get_partition_cooked_key('test_column_type.test'::REGCLASS);
+SELECT get_cached_partition_cooked_key('test_column_type.test'::REGCLASS);
 SELECT get_partition_key_type('test_column_type.test'::REGCLASS);
+
+/* change column's type (should also flush caches) */
 ALTER TABLE test_column_type.test ALTER val TYPE NUMERIC;
 
-/* check that expression has been built */
+/* check that correct expression has been built */
 SELECT get_partition_key_type('test_column_type.test'::REGCLASS);
 SELECT get_partition_cooked_key('test_column_type.test'::REGCLASS);
+SELECT get_cached_partition_cooked_key('test_column_type.test'::REGCLASS);
+DROP FUNCTION get_cached_partition_cooked_key(REGCLASS);
 
 /* make sure that everything works properly */
 SELECT * FROM test_column_type.test;
