@@ -414,7 +414,7 @@ Shows memory consumption of various caches.
 ## Declarative partitioning
 
 From PostgreSQL 10 `ATTACH PARTITION`, `DETACH PARTITION`
-and `CREATE TABLE .. PARTITION OF` commands could be with with tables
+and `CREATE TABLE .. PARTITION OF` commands could be used with tables
 partitioned by `pg_pathman`:
 
 ```plpgsql
