@@ -5,7 +5,7 @@
 #include "nodes/nodes.h"
 #include "nodes/parsenodes.h"
 
-void modify_declative_partitioning_query(Query *query);
+void modify_declarative_partitioning_query(Query *query);
 bool is_pathman_related_partitioning_cmd(Node *parsetree, Oid *parent_relid);
 
 /* actual actions */

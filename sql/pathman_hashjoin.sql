@@ -33,6 +33,7 @@ SET enable_seqscan = OFF;
 SET enable_nestloop = OFF;
 SET enable_hashjoin = ON;
 SET enable_mergejoin = OFF;
+
 EXPLAIN (COSTS OFF)
 SELECT * FROM test.range_rel j1
 JOIN test.range_rel j2 on j2.id = j1.id

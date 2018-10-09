@@ -2,23 +2,13 @@
 
 MODULE_big = pg_pathman
 
-ifdef USE_PGXS
-PG_CONFIG = pg_config
-VNUM := $(shell $(PG_CONFIG) --version | awk '{print $$2}')
-ifeq ($(VNUM),$(filter 10% 11%,$(VNUM)))
-	EXTRA_REGRESS = pathman_declarative
-	EXTRA_OBJS = src/declarative.o
-endif
-endif
-include $(PGXS)
-
 OBJS = src/init.o src/relation_info.o src/utils.o src/partition_filter.o \
 	src/runtime_append.o src/runtime_merge_append.o src/pg_pathman.o src/rangeset.o \
 	src/pl_funcs.o src/pl_range_funcs.o src/pl_hash_funcs.o src/pathman_workers.o \
 	src/hooks.o src/nodes_common.o src/xact_handling.o src/utility_stmt_hooking.o \
 	src/planner_tree_modification.o src/debug_print.o src/partition_creation.o \
 	src/compat/pg_compat.o src/compat/rowmarks_fix.o src/partition_router.o \
-	src/partition_overseer.o $(EXTRA_OBJS) $(WIN32RES)
+	src/partition_overseer.o $(WIN32RES)
 
 ifdef USE_PGXS
 override PG_CPPFLAGS += -I$(CURDIR)/src/include
@@ -70,7 +60,7 @@ REGRESS = pathman_array_qual \
 		  pathman_update_triggers \
 		  pathman_upd_del \
 		  pathman_utility_stmt \
-		  pathman_views $(EXTRA_REGRESS)
+		  pathman_views
 
 
 EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add
@@ -78,15 +68,36 @@ EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add
 EXTRA_CLEAN = pg_pathman--$(EXTVERSION).sql ./isolation_output
 
 ifdef USE_PGXS
-PG_CONFIG = pg_config
+PG_CONFIG=pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
-include $(PGXS)
+VNUM := $(shell $(PG_CONFIG) --version | awk '{print $$2}')
 else
 subdir = contrib/pg_pathman
 top_builddir = ../..
 include $(top_builddir)/src/Makefile.global
+endif
+
+# our standard version could also use declarative syntax
+ifdef PGPRO_EDITION
+ifeq ($(PGPRO_EDITION),standard)
+VNUM := $(VERSION)
+endif
+endif
+
+ifdef VNUM
+ifeq ($(VNUM),$(filter 10% 11%,$(VNUM)))
+REGRESS += pathman_declarative
+OBJS += src/declarative.o
+override PG_CPPFLAGS += -DENABLE_DECLARATIVE
+endif
+endif
+
+ifdef USE_PGXS
+include $(PGXS)
+else
 include $(top_srcdir)/contrib/contrib-global.mk
 endif
+
 
 $(EXTENSION)--$(EXTVERSION).sql: init.sql hash.sql range.sql
 	cat $^ > $@

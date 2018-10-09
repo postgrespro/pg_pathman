@@ -29,7 +29,7 @@
  * we set it back (look `is_pathman_related_partitioning_cmd`)
  */
 void
-modify_declative_partitioning_query(Query *query)
+modify_declarative_partitioning_query(Query *query)
 {
 	if (query->commandType != CMD_UTILITY)
 		return;

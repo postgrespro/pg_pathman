@@ -44,7 +44,6 @@ WHERE j1.dt < '2015-03-01' AND j2.dt >= '2015-02-01' ORDER BY j2.dt;
 SET enable_hashjoin = ON;
 SET enable_nestloop = ON;
 
-
 DROP SCHEMA test CASCADE;
 DROP EXTENSION pg_pathman;
 DROP SCHEMA pathman CASCADE;

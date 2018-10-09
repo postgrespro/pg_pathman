@@ -962,7 +962,7 @@ pathman_process_utility_hook(Node *first_arg,
 								get_attname_compat(relation_oid, attr_number),
 								get_rel_name(relation_oid))));
 		}
-#if PG_VERSION_NUM >= 100000
+#ifdef ENABLE_DECLARATIVE
 		else if (is_pathman_related_partitioning_cmd(parsetree, &relation_oid))
 		{
 			/* we can handle all the partitioning commands in ALTER .. TABLE */

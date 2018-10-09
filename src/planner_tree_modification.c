@@ -429,8 +429,8 @@ pathman_post_analyze_query_walker(Node *node, void *context)
 		Query *query = (Query *) node;
 
 		/* Make changes for declarative syntax */
-#if PG_VERSION_NUM >= 100000
-		modify_declative_partitioning_query(query);
+#ifdef ENABLE_DECLARATIVE
+		modify_declarative_partitioning_query(query);
 #endif
 
 		/* Handle Query node */
