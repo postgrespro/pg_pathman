@@ -71,33 +71,21 @@ ifdef USE_PGXS
 PG_CONFIG=pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 VNUM := $(shell $(PG_CONFIG) --version | awk '{print $$2}')
-else
-subdir = contrib/pg_pathman
-top_builddir = ../..
-include $(top_builddir)/src/Makefile.global
-endif
 
-# our standard version could also use declarative syntax
-ifdef PGPRO_EDITION
-ifeq ($(PGPRO_EDITION),standard)
-VNUM := $(VERSION)
-endif
-endif
-
-ifdef VNUM
+# check for declarative syntax
 ifeq ($(VNUM),$(filter 10% 11%,$(VNUM)))
 REGRESS += pathman_declarative
 OBJS += src/declarative.o
 override PG_CPPFLAGS += -DENABLE_DECLARATIVE
 endif
-endif
 
-ifdef USE_PGXS
 include $(PGXS)
 else
+subdir = contrib/pg_pathman
+top_builddir = ../..
+include $(top_builddir)/src/Makefile.global
 include $(top_srcdir)/contrib/contrib-global.mk
 endif
-
 
 $(EXTENSION)--$(EXTVERSION).sql: init.sql hash.sql range.sql
 	cat $^ > $@
