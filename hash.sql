@@ -108,7 +108,7 @@ BEGIN
 
 	/* Fetch definition of old_partition's HASH constraint */
 	SELECT pg_catalog.pg_get_constraintdef(oid) FROM pg_catalog.pg_constraint
-	WHERE conrelid = old_partition AND conname = old_constr_name
+	WHERE conrelid = old_partition AND quote_ident(conname) = old_constr_name
 	INTO old_constr_def;
 
 	/* Detach old partition */
