@@ -740,6 +740,9 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 
 	PathmanInitState	init_state;
 
+	if (!IsPathmanReady())
+		elog(ERROR, "pg_pathman is disabled");
+
 	if (!PG_ARGISNULL(0))
 	{
 		relid = PG_GETARG_OID(0);

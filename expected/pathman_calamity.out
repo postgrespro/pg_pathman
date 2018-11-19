@@ -1005,7 +1005,7 @@ SHOW pg_pathman.enable;
 (1 row)
 
 SELECT add_to_pathman_config('calamity.survivor', 'val', '10');	/* not ok */
-ERROR:  pg_pathman is not initialized yet
+ERROR:  pg_pathman is disabled
 SELECT * FROM pathman_partition_list;							/* not ok */
 ERROR:  pg_pathman is not initialized yet
 SELECT get_part_range('calamity.survivor', 0, NULL::INT);		/* not ok */
