@@ -489,6 +489,9 @@ split_range_partition(PG_FUNCTION_ARGS)
 	char			   *query;
 	int					i;
 
+	if (!IsPathmanReady())
+		elog(ERROR, "pg_pathman is disabled");
+
 	if (!PG_ARGISNULL(0))
 	{
 		partition1 = PG_GETARG_OID(0);
@@ -651,6 +654,9 @@ merge_range_partitions(PG_FUNCTION_ARGS)
 	Snapshot			fresh_snapshot;
 	FmgrInfo			finfo;
 	int					i;
+
+	if (!IsPathmanReady())
+		elog(ERROR, "pg_pathman is disabled");
 
 	/* Validate array type */
 	Assert(ARR_ELEMTYPE(arr) == REGCLASSOID);
