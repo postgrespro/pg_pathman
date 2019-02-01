@@ -320,6 +320,9 @@ get_pathman_relation_info(Oid relid)
 {
 	PartStatusInfo *psin;
 
+	if (!IsPathmanReady())
+		elog(ERROR, "pg_pathman is disabled");
+
 	/* Should always be called in transaction */
 	Assert(IsTransactionState());
 

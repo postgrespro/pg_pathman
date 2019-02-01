@@ -1009,7 +1009,7 @@ ERROR:  pg_pathman is disabled
 SELECT * FROM pathman_partition_list;							/* not ok */
 ERROR:  pg_pathman is not initialized yet
 SELECT get_part_range('calamity.survivor', 0, NULL::INT);		/* not ok */
-ERROR:  pg_pathman is not initialized yet
+ERROR:  pg_pathman is disabled
 EXPLAIN (COSTS OFF) SELECT * FROM calamity.survivor;			/* OK */
           QUERY PLAN          
 ------------------------------
