@@ -8,16 +8,11 @@ import sys
 import argparse
 import testgres
 import subprocess
-import difflib
+import time
 
 my_dir = os.path.dirname(os.path.abspath(__file__))
 repo_dir = os.path.abspath(os.path.join(my_dir, '../../'))
 print(repo_dir)
-
-compilation = '''
-make USE_PGXS=1 clean
-make USE_PGXS=1 install
-'''
 
 # just bunch of tables to create
 run_sql = '''
@@ -132,95 +127,161 @@ INSERT INTO hash_rel_next1 (value) SELECT g FROM generate_series(1, 10000) as g;
 SELECT create_hash_partitions('hash_rel_next1', 'value', 3);
 '''
 
-@contextlib.contextmanager
-def cwd(path):
-    print("cwd: ", path)
-    curdir = os.getcwd()
-    os.chdir(path)
-
-    try:
-        yield
-    finally:
-        print("cwd:", curdir)
-        os.chdir(curdir)
-
 def shell(cmd):
     print(cmd)
-    subprocess.check_output(cmd, shell=True)
+    cp = subprocess.run(cmd, shell=True)
+    if cp.returncode != 0:
+        raise subprocess.CalledProcessError(cp.returncode, cmd)
+    # print(subprocess.check_output(cmd, shell=True).decode("utf-8"))
 
-dump1_file = '/tmp/dump1.sql'
-dump2_file = '/tmp/dump2.sql'
+def shell_call(cmd):
+    print(cmd)
+    return subprocess.run(cmd, shell=True)
+
+def reinstall_pathman(tmp_pathman_path, revision):
+        if revision == 'worktree':
+            shutil.rmtree(tmp_pathman_path)
+            shutil.copytree(repo_dir, tmp_pathman_path)
+            os.chdir(tmp_pathman_path)
+        else:
+            os.chdir(tmp_pathman_path)
+            shell("git clean -fdx")
+            shell("git reset --hard")
+            shell("git checkout %s" % revision)
+        shell('make USE_PGXS=1 clean && make USE_PGXS=1 install -j4')
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='pg_pathman update checker')
+    parser = argparse.ArgumentParser(description='''
+    pg_pathman update checker. Testgres is used. Junks into /tmp/pathman_check_update.
+    First do some partitioned stuff on new version. Save full database dump to
+    dump_new.sql and pathman object definitions to pathman_objects_new.sql.
+    Then run old version, do the same stuff. Upgrade and make dumps. Ensure
+    dumps are the same. Finally, run regressions tests on upgraded version.
+    ''')
     parser.add_argument('branches', nargs=2,
-                        help='specify branches ("main rel_1.5")')
-
+                        help='specify branches <old> <new>, e.g. "d34a77e master". Special value "worktree" means, well, working tree.')
     args = parser.parse_args()
+    old_branch, new_branch = args.branches[0], args.branches[1]
 
-    with open(os.path.join(my_dir, 'dump_pathman_objects.sql'), 'r') as f:
-        dump_sql = f.read()
+    pathman_objs_script = os.path.join(my_dir, 'dump_pathman_objects.sql')
 
-    shutil.rmtree('/tmp/pg_pathman')
-    shutil.copytree(repo_dir, '/tmp/pg_pathman')
+    data_prefix = "/tmp/pathman_check_update"
+    if os.path.isdir(data_prefix):
+        shutil.rmtree(data_prefix)
+    dump_new_path = os.path.join(data_prefix, 'dump_new.sql')
+    dump_updated_path = os.path.join(data_prefix, 'dump_updated.sql')
+    dump_diff_path = os.path.join(data_prefix, 'dump.diff')
+    pathman_objs_new_path = os.path.join(data_prefix, 'pathman_objects_new.sql')
+    pathman_objs_updated_path = os.path.join(data_prefix, 'pathman_objects_updated.sql')
+    pathman_objs_diff_path = os.path.join(data_prefix, 'pathman_objs.diff')
+    tmp_pathman_path = os.path.join(data_prefix, "pg_pathman")
 
-    with cwd('/tmp/pg_pathman'):
-        shell("git clean -fdx")
-        shell("git reset --hard")
-        shell("git checkout %s" % args.branches[0])
-        shell(compilation)
+    shutil.copytree(repo_dir, tmp_pathman_path)
 
-        with testgres.get_new_node('updated') as node:
-            node.init()
-            node.append_conf("shared_preload_libraries='pg_pathman'\n")
+    reinstall_pathman(tmp_pathman_path, new_branch)
+    with testgres.get_new_node('brand_new') as node:
+        node.init()
+        node.append_conf("shared_preload_libraries='pg_pathman'\n")
+        node.start()
+        node.safe_psql('postgres', run_sql)
+        node.dump(dump_new_path, 'postgres')
+        # default user is current OS one
+        shell("psql -p {} -h {} -f {} -X -q -a -At > {} 2>&1".format(node.port, node.host, pathman_objs_script, pathman_objs_new_path))
+        node.stop()
 
-            node.start()
-            node.safe_psql('postgres', run_sql)
-            node.dump(dump1_file, 'postgres')
-            node.stop()
+    # now install old version...
+    reinstall_pathman(tmp_pathman_path, old_branch)
+    with testgres.get_new_node('updated') as node:
+        node.init()
+        node.append_conf("shared_preload_libraries='pg_pathman'\n")
 
-            shell("git clean -fdx")
-            shell("git checkout %s" % args.branches[1])
-            shell(compilation)
+        node.start()
+        # do the same stuff...
+        node.safe_psql('postgres', run_sql)
+        # and prepare regression db, see below
+        node.safe_psql('postgres', 'create database contrib_regression')
+        node.safe_psql('contrib_regression', 'create extension pg_pathman')
 
-            version = None
-            with open('pg_pathman.control') as f:
-                for line in f.readlines():
-                    if line.startswith('default_version'):
-                        version = line.split('=')[1].strip()
+        # and upgrade pathman
+        node.stop()
+        reinstall_pathman(tmp_pathman_path, new_branch)
+        node.start()
+        print("Running updated db on port {}, datadir {}".format(node.port, node.base_dir))
+        node.safe_psql('postgres', "alter extension pg_pathman update")
+        node.safe_psql('postgres', "set pg_pathman.enable = t;")
 
-            if version is None:
-                print("cound not find version in second branch")
-                exit(1)
+        # regression tests db, see below
+        node.safe_psql('contrib_regression', "alter extension pg_pathman update")
+        node.safe_psql('contrib_regression', "set pg_pathman.enable = t;")
 
-            node.start()
-            p = subprocess.Popen(["psql", "postgres"], stdin=subprocess.PIPE,
-                                    stdout=subprocess.PIPE)
-            dumped_objects_old = p.communicate(input=dump_sql.encode())[0].decode()
-            node.stop()
+        node.dump(dump_updated_path, 'postgres')
+        # time.sleep(432432)
+        # default user is current OS one
+        shell("psql -p {} -h {} -f {} -X -q -a -At > {} 2>&1".format(node.port, node.host, pathman_objs_script, pathman_objs_updated_path))
 
-        # now make clean install
-        with testgres.get_new_node('from_scratch') as node:
-            node.init()
-            node.append_conf("shared_preload_libraries='pg_pathman'\n")
-            node.start()
-            node.safe_psql('postgres', run_sql)
-            p = subprocess.Popen(["psql", "postgres"], stdin=subprocess.PIPE,
-                                    stdout=subprocess.PIPE)
-            dumped_objects_new = p.communicate(input=dump_sql.encode())[0].decode()
-            node.dump(dump2_file, 'postgres')
+        # check diffs
+        shell_call("diff -U3 {} {} > {} 2>&1".format(dump_updated_path, dump_new_path, dump_diff_path))
+        if os.stat(dump_diff_path).st_size != 0:
+            msg = "DB dumps are not equal, check out the diff at {}\nProbably that's actually ok, please eyeball the diff manually and say, continue?".format(dump_diff_path)
+            if input("%s (y/N) " % msg).lower() != 'y':
+                sys.exit(1)
+        shell_call("diff -U3 {} {} > {} 2>&1".format(pathman_objs_updated_path, pathman_objs_new_path, pathman_objs_diff_path))
+        if os.stat(pathman_objs_diff_path).st_size != 0:
+            print("pathman objects dumps are not equal, check out the diff at {}".format(pathman_objs_diff_path))
+            # sys.exit(1)
 
-            # check dumps
-            node.safe_psql('postgres', 'create database d1')
-            node.restore(dump1_file, 'd1')
+        print("just in case, checking that dump can be restored...")
+        node.safe_psql('postgres', 'create database tmp')
+        node.restore(dump_updated_path, 'tmp')
 
-            node.safe_psql('postgres', 'create database d2')
-            node.restore(dump2_file, 'd2')
-            node.stop()
+        print("finally, run (some) pathman regression tests")
+        # This is a bit tricky because we want to run tests on exactly this
+        # installation of extension. It means we must create db beforehand,
+        # tell pg_regress not create it and discard all create/drop extension
+        # from tests.
+        # Not all tests can be thus adapted instantly, so I think that's enough
+        # for now.
+        # generated with smth like  ls ~/postgres/pg_pathman/sql/ | sort | sed 's/.sql//' | xargs -n 1 printf "'%s',\n"
+        os.chdir(tmp_pathman_path)
+        REGRESS = ['pathman_array_qual',
+                   'pathman_bgw',
+                   'pathman_callbacks',
+                   'pathman_column_type',
+                   'pathman_cte',
+                   'pathman_domains',
+                   'pathman_dropped_cols',
+                   'pathman_expressions',
+                   'pathman_foreign_keys',
+                   'pathman_gaps',
+                   'pathman_inserts',
+                   'pathman_interval',
+                   'pathman_lateral',
+                   'pathman_only',
+                   'pathman_param_upd_del',
+                   'pathman_permissions',
+                   'pathman_rebuild_deletes',
+                   'pathman_rebuild_updates',
+                   'pathman_rowmarks',
+                   'pathman_subpartitions',
+                   'pathman_update_node',
+                   'pathman_update_triggers',
+                   'pathman_utility_stmt',
+                   'pathman_views'
+        ]
+        outfiles = os.listdir(os.path.join(tmp_pathman_path, 'expected'))
+        for tname in REGRESS:
+            shell("sed -i '/CREATE EXTENSION pg_pathman;/d' sql/{}.sql".format(tname))
+            # CASCADE also removed
+            shell("sed -i '/DROP EXTENSION pg_pathman/d' sql/{}.sql".format(tname))
+            # there might be more then one .out file
+            for outfile in outfiles:
+                if outfile.startswith(tname):
+                    shell("sed -i '/CREATE EXTENSION pg_pathman;/d' expected/{}".format(outfile))
+                    shell("sed -i '/DROP EXTENSION pg_pathman/d' expected/{}".format(outfile))
 
-    if dumped_objects_old != dumped_objects_new:
-        print("\nDIFF:")
-        for line in difflib.context_diff(dumped_objects_old.split('\n'), dumped_objects_new.split('\n')):
-            print(line)
-    else:
-        print("\nUPDATE CHECK: ALL GOOD")
+        # time.sleep(43243242)
+        shell("make USE_PGXS=1 PGPORT={} EXTRA_REGRESS_OPTS=--use-existing REGRESS='{}' installcheck 2>&1".format(node.port, " ".join(REGRESS)))
+
+        node.stop()
+
+        print("It's Twelve O'clock and All's Well.")

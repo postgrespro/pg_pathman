@@ -9,3 +9,9 @@ PG_CONFIG=... ./dump_pathman_objects %DBNAME%
 
 diff file_1 file_2
 ```
+
+check_update.py script tries to verify that update is ok automatically. For
+instance,
+```bash
+tests/update/check_update.py d34a77e worktree
+```
