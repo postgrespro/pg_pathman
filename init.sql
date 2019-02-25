@@ -111,7 +111,7 @@ ALTER TABLE @extschema@.pathman_config ENABLE ROW LEVEL SECURITY;
 ALTER TABLE @extschema@.pathman_config_params ENABLE ROW LEVEL SECURITY;
 
 /*
- * Invalidate relcache every time someone changes parameters config.
+ * Invalidate relcache every time someone changes parameters config or pathman_config
  */
 CREATE OR REPLACE FUNCTION @extschema@.pathman_config_params_trigger_func()
 RETURNS TRIGGER AS 'pg_pathman', 'pathman_config_params_trigger_func'
@@ -119,6 +119,10 @@ LANGUAGE C;
 
 CREATE TRIGGER pathman_config_params_trigger
 AFTER INSERT OR UPDATE OR DELETE ON @extschema@.pathman_config_params
+FOR EACH ROW EXECUTE PROCEDURE @extschema@.pathman_config_params_trigger_func();
+
+CREATE TRIGGER pathman_config_trigger
+AFTER INSERT OR UPDATE OR DELETE ON @extschema@.pathman_config
 FOR EACH ROW EXECUTE PROCEDURE @extschema@.pathman_config_params_trigger_func();
 
 /*

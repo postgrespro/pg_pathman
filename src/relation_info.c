@@ -160,6 +160,8 @@ static void fill_pbin_with_bounds(PartBoundInfo *pbin,
 
 static int cmp_range_entries(const void *p1, const void *p2, void *arg);
 
+static void forget_bounds_of_partition(Oid partition);
+
 static bool query_contains_subqueries(Node *node, void *context);
 
 
@@ -929,7 +931,7 @@ PrelExpressionAttributesMap(const PartRelationInfo *prel,
  */
 
 /* Remove partition's constraint from cache */
-void
+static void
 forget_bounds_of_partition(Oid partition)
 {
 	PartBoundInfo *pbin;
@@ -952,6 +954,42 @@ forget_bounds_of_partition(Oid partition)
 								   partition,
 								   HASH_REMOVE,
 								   NULL);
+	}
+
+}
+
+/*
+ * Remove rel's constraint from cache, if relid is partition;
+ * Remove all children constraints, if it is parent.
+ */
+void
+forget_bounds_of_rel(Oid relid)
+{
+	PartStatusInfo *psin;
+
+	forget_bounds_of_partition(relid);
+
+	/*
+	 * If it was the parent who got invalidated, purge children's bounds.
+	 * We assume here that if bounds_cache has something, parent must be also
+	 * in status_cache. Fragile, but seems better then blowing out full bounds
+	 * cache or digging pathman_config on each relcache invalidation.
+	 */
+
+	/* Find status cache entry for this relation */
+	psin = pathman_cache_search_relid(status_cache,
+									  relid, HASH_FIND,
+									  NULL);
+	if (psin != NULL && psin->prel != NULL)
+	{
+		uint32 i;
+		PartRelationInfo *prel = psin->prel;
+		Oid	   *children = PrelGetChildrenArray(prel);
+
+		for	(i = 0; i < PrelChildrenCount(prel); i++)
+		{
+			forget_bounds_of_partition(children[i]);
+		}
 	}
 }
 

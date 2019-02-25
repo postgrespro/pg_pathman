@@ -874,7 +874,7 @@ pathman_relcache_hook(Datum arg, Oid relid)
 	else if (relid >= FirstNormalObjectId)
 	{
 		/* Invalidate PartBoundInfo entry if needed */
-		forget_bounds_of_partition(relid);
+		forget_bounds_of_rel(relid);
 
 		/* Invalidate PartParentInfo entry if needed */
 		forget_parent_of_partition(relid);

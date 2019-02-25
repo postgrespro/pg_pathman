@@ -52,6 +52,10 @@ ALTER TABLE @extschema@.pathman_config ADD CONSTRAINT pathman_config_interval_ch
 											   parttype,
 											   range_interval));
 
+CREATE TRIGGER pathman_config_trigger
+AFTER INSERT OR UPDATE OR DELETE ON @extschema@.pathman_config
+FOR EACH ROW EXECUTE PROCEDURE @extschema@.pathman_config_params_trigger_func();
+
 /*
  * Get parsed and analyzed expression.
  */

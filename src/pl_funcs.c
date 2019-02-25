@@ -904,14 +904,16 @@ pathman_config_params_trigger_func(PG_FUNCTION_ARGS)
 {
 	TriggerData	   *trigdata = (TriggerData *) fcinfo->context;
 	Oid				pathman_config_params;
+	Oid				pathman_config;
 	Oid				partrel;
 	Datum			partrel_datum;
 	bool			partrel_isnull;
 
 	/* Fetch Oid of PATHMAN_CONFIG_PARAMS */
 	pathman_config_params = get_pathman_config_params_relid(true);
+	pathman_config = get_pathman_config_relid(true);
 
-	/* Handle "pg_pathman.enabled = t" case */
+	/* Handle "pg_pathman.enabled = f" case */
 	if (!OidIsValid(pathman_config_params))
 		goto pathman_config_params_trigger_func_return;
 
@@ -925,12 +927,17 @@ pathman_config_params_trigger_func(PG_FUNCTION_ARGS)
 			 trigdata->tg_trigger->tgname);
 
 	/* Handle wrong relation */
-	if (RelationGetRelid(trigdata->tg_relation) != pathman_config_params)
-		elog(ERROR, "%s: must be fired for relation \"%s\"",
+	if (RelationGetRelid(trigdata->tg_relation) != pathman_config_params &&
+		RelationGetRelid(trigdata->tg_relation) != pathman_config)
+		elog(ERROR, "%s: must be fired for relation \"%s\" or \"%s\"",
 			 trigdata->tg_trigger->tgname,
-			 get_rel_name(pathman_config_params));
+			 get_rel_name(pathman_config_params),
+			 get_rel_name(pathman_config));
 
-	/* Extract partitioned relation's Oid */
+	/*
+	 * Extract partitioned relation's Oid.
+	 * Hacky: 1 is attrnum of relid for both pathman_config and pathman_config_params
+	 */
 	partrel_datum = heap_getattr(trigdata->tg_trigtuple,
 								 Anum_pathman_config_params_partrel,
 								 RelationGetDescr(trigdata->tg_relation),
