@@ -22,7 +22,7 @@
        "pg_pathman": {
            "file": "pg_pathman--1.5.sql",
            "docfile": "README.md",
-           "version": "1.5.4",
+           "version": "1.5.5",
            "abstract": "Effective partitioning tool for PostgreSQL 9.5 and higher"
       }
    },
