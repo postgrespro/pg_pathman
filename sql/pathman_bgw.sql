@@ -126,7 +126,7 @@ BEGIN
 			EXIT; -- exit loop
 		END IF;
 
-		IF i > 50 THEN
+		IF i > 500 THEN
 			RAISE WARNING 'looks like partitioning bgw is stuck!';
 			EXIT; -- exit loop
 		END IF;
