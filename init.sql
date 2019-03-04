@@ -455,6 +455,10 @@ BEGIN
 		RAISE EXCEPTION 'table "%" has already been partitioned', parent_relid;
 	END IF;
 
+	IF EXISTS (SELECT 1 FROM pg_inherits WHERE inhparent = parent_relid) THEN
+		RAISE EXCEPTION 'can''t partition table "%" with existing children', parent_relid;
+	END IF;
+
 	/* Check if there are foreign keys that reference the relation */
 	FOR constr_name IN (SELECT conname FROM pg_catalog.pg_constraint
 					WHERE confrelid = parent_relid::REGCLASS::OID)
