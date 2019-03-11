@@ -112,6 +112,23 @@ create_single_range_partition_internal(Oid parent_relid,
 	init_callback_params	callback_params;
 	List				   *trigger_columns = NIL;
 	Node				   *expr;
+	Datum		values[Natts_pathman_config];
+	bool		isnull[Natts_pathman_config];
+
+
+	/*
+	 * Sanity check. Probably needed only if some absurd init_callback
+	 * decides to drop the table while we are creating partitions.
+	 * It seems much better to use prel cache here, but this doesn't work
+	 * because it regards tables with no partitions as not partitioned at all
+	 * (build_pathman_relation_info returns NULL), and if I comment out that,
+	 * tests fail for not immediately obvious reasons. Don't want to dig
+	 * into this now.
+	 */
+	if (!pathman_config_contains_relation(parent_relid, values, isnull, NULL, NULL))
+	{
+		elog(ERROR, "Can't create range partition: relid %u doesn't exist or not partitioned", parent_relid);
+	}
 
 	/* Generate a name if asked to */
 	if (!partition_rv)

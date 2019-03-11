@@ -252,6 +252,11 @@ show_cache_stats_internal(PG_FUNCTION_ARGS)
 
 		funccxt = SRF_FIRSTCALL_INIT();
 
+		if (!TopPathmanContext)
+		{
+			elog(ERROR, "pg_pathman's memory contexts are not initialized yet");
+		}
+
 		old_mcxt = MemoryContextSwitchTo(funccxt->multi_call_memory_ctx);
 
 		usercxt = (show_cache_stats_cxt *) palloc(sizeof(show_cache_stats_cxt));
@@ -892,6 +897,8 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 			recordDependencyOn(&sequence, &parent, DEPENDENCY_NORMAL);
 		}
 	}
+
+	CacheInvalidateRelcacheByRelid(relid);
 
 	PG_RETURN_BOOL(true);
 }
