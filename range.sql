@@ -639,9 +639,11 @@ BEGIN
 	/* Check range overlap */
 	PERFORM @extschema@.check_range_available(parent_relid, start_value, end_value);
 
-	IF NOT @extschema@.is_tuple_convertible(parent_relid, partition_relid) THEN
+	BEGIN
+		PERFORM @extschema@.is_tuple_convertible(parent_relid, partition_relid);
+	EXCEPTION WHEN OTHERS THEN
 		RAISE EXCEPTION 'partition must have a compatible tuple format';
-	END IF;
+	END;
 
 	part_expr := @extschema@.get_partition_key(parent_relid);
 	part_type := @extschema@.get_partition_type(parent_relid);

@@ -94,9 +94,11 @@ BEGIN
 	END IF;
 
 	/* Check that new partition has an equal structure as parent does */
-	IF NOT @extschema@.is_tuple_convertible(parent_relid, new_partition) THEN
+	BEGIN
+		PERFORM @extschema@.is_tuple_convertible(parent_relid, new_partition);
+	EXCEPTION WHEN OTHERS THEN
 		RAISE EXCEPTION 'partition must have a compatible tuple format';
-	END IF;
+	END;
 
 	/* Check that table is partitioned */
 	IF @extschema@.get_partition_key(parent_relid) IS NULL THEN

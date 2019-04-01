@@ -661,38 +661,32 @@ is_date_type(PG_FUNCTION_ARGS)
 	PG_RETURN_BOOL(is_date_type_internal(PG_GETARG_OID(0)));
 }
 
+/*
+ * Bail out with ERROR if rel1 tuple can't be converted to rel2 tuple.
+ */
 Datum
 is_tuple_convertible(PG_FUNCTION_ARGS)
 {
 	Relation	rel1,
 				rel2;
-	bool		res = true;
+	void *map; /* we don't actually need it */
 
 	rel1 = heap_open(PG_GETARG_OID(0), AccessShareLock);
 	rel2 = heap_open(PG_GETARG_OID(1), AccessShareLock);
 
-	PG_TRY();
-	{
-		void *map; /* we don't actually need it */
+	/* Try to build a conversion map */
+	map = convert_tuples_by_name_map(RelationGetDescr(rel1),
+									 RelationGetDescr(rel2),
+									 ERR_PART_DESC_CONVERT);
 
-		/* Try to build a conversion map */
-		map = convert_tuples_by_name_map(RelationGetDescr(rel1),
-										 RelationGetDescr(rel2),
-										 ERR_PART_DESC_CONVERT);
-
-		/* Now free map */
-		pfree(map);
-	}
-	PG_CATCH();
-	{
-		res = false;
-	}
-	PG_END_TRY();
+	/* Now free map */
+	pfree(map);
 
 	heap_close(rel1, AccessShareLock);
 	heap_close(rel2, AccessShareLock);
 
-	PG_RETURN_BOOL(res);
+	/* still return true to avoid changing tests */
+	PG_RETURN_BOOL(true);
 }
 
 
