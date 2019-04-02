@@ -27,6 +27,7 @@
 #include "xact_handling.h"
 
 #include "access/transam.h"
+#include "access/xact.h"
 #include "catalog/pg_authid.h"
 #include "miscadmin.h"
 #include "optimizer/cost.h"
@@ -769,6 +770,11 @@ pathman_post_parse_analyze_hook(ParseState *pstate, Query *query)
 	}
 	if (!IsPathmanReady())
 		return;
+
+#if defined(PGPRO_EE)
+	if (getNestLevelATX() != 0)
+		elog(FATAL, "pg_pathman extension is not compatible with autonomous transactions and connection pooling");
+#endif /* PGPRO_EE */
 
 	/* Process inlined SQL functions (we've already entered planning stage) */
 	if (IsPathmanReady() && get_planner_calls_count() > 0)
