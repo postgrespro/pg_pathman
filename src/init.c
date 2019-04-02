@@ -389,6 +389,12 @@ fini_local_cache(void)
 	status_cache	= NULL;
 	bounds_cache	= NULL;
 
+	if (prel_resowner != NULL)
+	{
+		hash_destroy(prel_resowner);
+		prel_resowner = NULL;
+	}
+
 	/* Now we can clear allocations */
 	MemoryContextReset(PathmanParentsCacheContext);
 	MemoryContextReset(PathmanStatusCacheContext);

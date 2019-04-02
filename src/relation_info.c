@@ -129,8 +129,9 @@ static bool		delayed_shutdown = false; /* pathman was dropped */
 
 /*
  * PartRelationInfo is controlled by ResourceOwner;
+ * resowner -> List of controlled PartRelationInfos by this ResourceOwner
  */
-static HTAB	   *prel_resowner = NULL;
+HTAB	   *prel_resowner = NULL;
 
 
 /* Handy wrappers for Oids */

@@ -401,6 +401,7 @@ void init_relation_info_static_data(void);
 /* For pg_pathman.enable_bounds_cache GUC */
 extern bool			pg_pathman_enable_bounds_cache;
 
+extern HTAB	   *prel_resowner;
 
 /* This allows us to track leakers of PartRelationInfo */
 #ifdef USE_RELINFO_LEAK_TRACKER
@@ -419,7 +420,7 @@ extern int			prel_resowner_line;
 		close_pathman_relation_info(prel); \
 		prel = NULL; \
 	} while (0)
-#endif
+#endif /* USE_RELINFO_LEAK_TRACKER */
 
 
 #endif /* RELATION_INFO_H */
