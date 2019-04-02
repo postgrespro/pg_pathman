@@ -773,7 +773,7 @@ pathman_post_parse_analyze_hook(ParseState *pstate, Query *query)
 
 #if defined(PGPRO_EE)
 	if (getNestLevelATX() != 0)
-		elog(FATAL, "pg_pathman extension is not compatible with autonomous transactions and connection pooling");
+		elog(ERROR, "pg_pathman extension is not compatible with autonomous transactions");
 #endif /* PGPRO_EE */
 
 	/* Process inlined SQL functions (we've already entered planning stage) */
