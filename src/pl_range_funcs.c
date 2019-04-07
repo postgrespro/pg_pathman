@@ -15,6 +15,7 @@
 #include "utils.h"
 #include "xact_handling.h"
 
+#include "access/transam.h"
 #include "access/xact.h"
 #include "catalog/heap.h"
 #include "catalog/namespace.h"
@@ -1072,6 +1073,9 @@ build_range_condition(PG_FUNCTION_ARGS)
 	}
 	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("'partition_relid' should not be NULL")));
+	if (partition_relid < FirstNormalObjectId)
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("'partition_relid' must be normal object oid")));
 
 	if (!PG_ARGISNULL(1))
 	{
