@@ -734,12 +734,6 @@ partition_filter_exec(CustomScanState *node)
 	PlanState			   *child_ps = (PlanState *) linitial(node->custom_ps);
 	TupleTableSlot		   *slot;
 
-	/* If statement is prepared, parse_analyze hook won't catch this */
-#if defined(PGPRO_EE)
-	if (getNestLevelATX() != 0)
-		elog(ERROR, "pg_pathman extension is not compatible with autonomous transactions");
-#endif /* PGPRO_EE */
-
 	slot = ExecProcNode(child_ps);
 
 	if (!TupIsNull(slot))

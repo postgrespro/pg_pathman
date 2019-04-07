@@ -76,6 +76,7 @@ struct ResultPartsStorage
 	EState			   *estate;					/* pointer to executor's state */
 	CmdType				command_type;			/* INSERT | UPDATE */
 
+	/* partition relid -> ResultRelInfoHolder */
 	HTAB			   *result_rels_table;
 	HASHCTL				result_rels_table_config;
 
