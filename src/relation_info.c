@@ -408,7 +408,7 @@ build_pathman_relation_info(Oid relid, Datum *values)
 	prel->fresh		= true;
 	prel->mcxt		= prel_mcxt;
 
-	/* Memory leak protection */
+	/* Memory leak and cache protection */
 	PG_TRY();
 	{
 		MemoryContext			old_mcxt;
@@ -496,6 +496,32 @@ build_pathman_relation_info(Oid relid, Datum *values)
 	}
 	PG_CATCH();
 	{
+		/*
+		 * If we managed to create some children but failed later, bounds
+		 * cache now might have obsolete data for something that probably is
+		 * not a partitioned table at all. Remove it.
+		 */
+		if (prel->children != NULL)
+		{
+			uint32 i;
+
+			for (i = 0; i < PrelChildrenCount(prel); i++)
+			{
+				Oid child;
+
+				/*
+				 * We rely on children and ranges array allocated with 0s, not
+				 * random data
+				 */
+				if (prel->parttype == PT_HASH)
+					child = prel->children[i];
+				else if (prel->parttype == PT_RANGE)
+					child = prel->ranges[i].child_oid;
+
+				forget_bounds_of_partition(child);
+			}
+		}
+
 		/* Free this entry */
 		free_pathman_relation_info(prel);
 
