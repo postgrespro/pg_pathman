@@ -802,7 +802,6 @@ fill_prel_with_partitions(PartRelationInfo *prel,
 			prel->children[i] = prel->ranges[i].child_oid;
 	}
 
-#ifdef USE_ASSERT_CHECKING
 	/* Check that each partition Oid has been assigned properly */
 	if (prel->parttype == PT_HASH)
 		for (i = 0; i < PrelChildrenCount(prel); i++)
@@ -815,7 +814,6 @@ fill_prel_with_partitions(PartRelationInfo *prel,
 					 get_rel_name_or_relid(PrelParentRelid(prel)));
 			}
 		}
-#endif
 }
 
 /* qsort() comparison function for RangeEntries */

@@ -333,13 +333,17 @@ _PG_init(void)
 Oid
 get_pathman_config_relid(bool invalid_is_ok)
 {
+	if (!IsPathmanInitialized())
+	{
+		if (invalid_is_ok)
+			return InvalidOid;
+		elog(ERROR, "pg_pathman is not initialized yet");
+	}
+
 	/* Raise ERROR if Oid is invalid */
 	if (!OidIsValid(pathman_config_relid) && !invalid_is_ok)
-		elog(ERROR,
-			 (!IsPathmanInitialized() ?
-				"pg_pathman is not initialized yet" :
-				"unexpected error in function "
-						  CppAsString(get_pathman_config_relid)));
+		elog(ERROR, "unexpected error in function "
+			 CppAsString(get_pathman_config_relid));
 
 	return pathman_config_relid;
 }
@@ -348,13 +352,17 @@ get_pathman_config_relid(bool invalid_is_ok)
 Oid
 get_pathman_config_params_relid(bool invalid_is_ok)
 {
+	if (!IsPathmanInitialized())
+	{
+		if (invalid_is_ok)
+			return InvalidOid;
+		elog(ERROR, "pg_pathman is not initialized yet");
+	}
+
 	/* Raise ERROR if Oid is invalid */
 	if (!OidIsValid(pathman_config_relid) && !invalid_is_ok)
-		elog(ERROR,
-			 (!IsPathmanInitialized() ?
-				"pg_pathman is not initialized yet" :
-				"unexpected error in function "
-						  CppAsString(get_pathman_config_params_relid)));
+		elog(ERROR, "unexpected error in function "
+			 CppAsString(get_pathman_config_params_relid));
 
 	return pathman_config_params_relid;
 }
