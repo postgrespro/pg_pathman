@@ -809,9 +809,10 @@ fill_prel_with_partitions(PartRelationInfo *prel,
 			if (!OidIsValid(prel->children[i]))
 			{
 				DisablePathman(); /* disable pg_pathman since config is broken */
-				elog(ERROR, "pg_pathman's cache for relation \"%s\" "
-							"has not been properly initialized",
-					 get_rel_name_or_relid(PrelParentRelid(prel)));
+				ereport(ERROR, (errmsg("pg_pathman's cache for relation \"%s\" "
+									   "has not been properly initialized",
+									   get_rel_name_or_relid(PrelParentRelid(prel))),
+								errhint(INIT_ERROR_HINT)));
 			}
 		}
 }
