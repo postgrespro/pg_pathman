@@ -761,11 +761,14 @@ fill_prel_with_partitions(PartRelationInfo *prel,
 				 * bound cache still keeps entries with high indexes.
 				 */
 				if (pbin->part_idx >= PrelChildrenCount(prel))
+				{
+					DisablePathman(); /* disable pg_pathman since config is broken */
 					ereport(ERROR, (errmsg("pg_pathman's cache for relation \"%s\" "
 										   "has not been properly initialized. "
 										   "Looks like one of hash partitions was dropped.",
 										   get_rel_name_or_relid(PrelParentRelid(prel))),
 									errhint(INIT_ERROR_HINT)));
+				}
 
 				prel->children[pbin->part_idx] = pbin->child_relid;
 				break;
