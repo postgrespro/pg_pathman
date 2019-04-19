@@ -755,6 +755,18 @@ fill_prel_with_partitions(PartRelationInfo *prel,
 		switch (prel->parttype)
 		{
 			case PT_HASH:
+				/*
+				 * This might be the case if hash part was dropped, and thus
+				 * children array alloc'ed smaller than needed, but parts
+				 * bound cache still keeps entries with high indexes.
+				 */
+				if (pbin->part_idx >= PrelChildrenCount(prel))
+					ereport(ERROR, (errmsg("pg_pathman's cache for relation \"%s\" "
+										   "has not been properly initialized. "
+										   "Looks like one of hash partitions was dropped.",
+										   get_rel_name_or_relid(PrelParentRelid(prel))),
+									errhint(INIT_ERROR_HINT)));
+
 				prel->children[pbin->part_idx] = pbin->child_relid;
 				break;
 
