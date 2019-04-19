@@ -877,11 +877,11 @@ pathman_relcache_hook(Datum arg, Oid relid)
 		/* Invalidate PartBoundInfo entry if needed */
 		forget_bounds_of_rel(relid);
 
-		/* Invalidate PartParentInfo entry if needed */
-		forget_parent_of_partition(relid);
-
 		/* Invalidate PartStatusInfo entry if needed */
 		forget_status_of_relation(relid);
+
+		/* Invalidate PartParentInfo entry if needed */
+		forget_parent_of_partition(relid);
 	}
 }
 

@@ -215,7 +215,7 @@ forget_status_of_relation(Oid relid)
 	{
 		/* Find status cache entry for parent */
 		psin = pathman_cache_search_relid(status_cache,
-										  relid, HASH_FIND,
+										  ppar->parent_relid, HASH_FIND,
 										  NULL);
 		if (psin)
 			invalidate_psin_entry(psin);
