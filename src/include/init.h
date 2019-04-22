@@ -139,7 +139,7 @@ simplify_mcxt_name(MemoryContext mcxt)
 		pathman_init_state.pg_pathman_enable		= false; \
 		pathman_init_state.auto_partition			= false; \
 		pathman_init_state.override_copy			= false; \
-		pathman_init_state.initialization_needed	= true; \
+		unload_config(); \
 	} while (0)
 
 

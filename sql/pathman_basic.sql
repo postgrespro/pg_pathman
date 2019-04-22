@@ -546,37 +546,6 @@ ORDER BY partition;
 
 DROP TABLE test.provided_part_names CASCADE;
 
--- is pathman (caches, in particular) strong enough to carry out this?
-
--- 079797e0d5
-CREATE TABLE test.part_test(val serial);
-INSERT INTO test.part_test SELECT generate_series(1, 30);
-SELECT create_range_partitions('test.part_test', 'val', 1, 10);
-SELECT set_interval('test.part_test', 100);
-DELETE FROM pathman_config WHERE partrel = 'test.part_test'::REGCLASS;
-SELECT drop_partitions('test.part_test');
-SELECT disable_pathman_for('test.part_test');
-
-CREATE TABLE test.wrong_partition (LIKE test.part_test) INHERITS (test.part_test);
-SELECT add_to_pathman_config('test.part_test', 'val', '10');
-SELECT add_to_pathman_config('test.part_test', 'val');
-
-DROP TABLE test.part_test CASCADE;
---
-
--- 85fc5ccf121
-CREATE TABLE test.part_test(val serial);
-INSERT INTO test.part_test SELECT generate_series(1, 3000);
-SELECT create_range_partitions('test.part_test', 'val', 1, 10);
-SELECT append_range_partition('test.part_test');
-DELETE FROM test.part_test;
-SELECT create_single_range_partition('test.part_test', NULL::INT4, NULL);	/* not ok */
-DELETE FROM pathman_config WHERE partrel = 'test.part_test'::REGCLASS;
-SELECT create_hash_partitions('test.part_test', 'val', 2, partition_names := ARRAY[]::TEXT[]); /* not ok */
-
-DROP TABLE test.part_test CASCADE;
---
-
 DROP SCHEMA test CASCADE;
 DROP EXTENSION pg_pathman CASCADE;
 DROP SCHEMA pathman CASCADE;

@@ -501,6 +501,13 @@ build_pathman_relation_info(Oid relid, Datum *values)
 		 * cache now might have obsolete data for something that probably is
 		 * not a partitioned table at all. Remove it.
 		 */
+		if (!IsPathmanInitialized())
+			/*
+			 * ... unless failure was so hard that caches were already destoyed,
+			 * i.e. extension disabled
+			 */
+			PG_RE_THROW();
+
 		if (prel->children != NULL)
 		{
 			uint32 i;

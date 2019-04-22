@@ -859,7 +859,7 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 		}
 		PG_CATCH();
 		{
-			/* We have to restore all changed flags */
+			/* We have to restore changed flags */
 			restore_pathman_init_state(&init_state);
 
 			/* Rethrow ERROR */

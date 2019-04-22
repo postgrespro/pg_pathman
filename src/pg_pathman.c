@@ -284,8 +284,6 @@ estimate_paramsel_using_prel(const PartRelationInfo *prel, int strategy)
 void
 _PG_init(void)
 {
-	PathmanInitState temp_init_state;
-
 	if (!process_shared_preload_libraries_in_progress)
 	{
 		elog(ERROR, "pg_pathman module must be initialized by Postmaster. "
@@ -297,13 +295,10 @@ _PG_init(void)
 	RequestAddinShmemSpace(estimate_pathman_shmem_size());
 
 	/* Assign pg_pathman's initial state */
-	temp_init_state.pg_pathman_enable		= DEFAULT_PATHMAN_ENABLE;
-	temp_init_state.auto_partition			= DEFAULT_PATHMAN_AUTO;
-	temp_init_state.override_copy			= DEFAULT_PATHMAN_OVERRIDE_COPY;
-	temp_init_state.initialization_needed	= true; /* ofc it's needed! */
-
-	/* Apply initial state */
-	restore_pathman_init_state(&temp_init_state);
+	pathman_init_state.pg_pathman_enable		= DEFAULT_PATHMAN_ENABLE;
+	pathman_init_state.auto_partition			= DEFAULT_PATHMAN_AUTO;
+	pathman_init_state.override_copy			= DEFAULT_PATHMAN_OVERRIDE_COPY;
+	pathman_init_state.initialization_needed	= true; /* ofc it's needed! */
 
 	/* Set basic hooks */
 	pathman_set_rel_pathlist_hook_next		= set_rel_pathlist_hook;

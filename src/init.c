@@ -134,7 +134,14 @@ save_pathman_init_state(PathmanInitState *temp_init_state)
 void
 restore_pathman_init_state(const PathmanInitState *temp_init_state)
 {
-	pathman_init_state = *temp_init_state;
+ 	/*
+	 * initialization_needed is not restored: it is not just a setting but
+	 * internal thing, caches must be inited when it is set. Better would be
+	 * to separate it from this struct entirely.
+	 */
+	pathman_init_state.pg_pathman_enable = temp_init_state->pg_pathman_enable;
+	pathman_init_state.auto_partition = temp_init_state->auto_partition;
+	pathman_init_state.override_copy = temp_init_state->override_copy;
 }
 
 /*

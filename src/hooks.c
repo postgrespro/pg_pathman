@@ -615,6 +615,12 @@ pathman_enable_assign_hook(bool newval, void *extra)
 		 "RuntimeAppend, RuntimeMergeAppend and PartitionFilter nodes "
 		 "and some other options have been %s",
 		 newval ? "enabled" : "disabled");
+
+	/* Purge caches if pathman was disabled */
+	if (!newval)
+	{
+		unload_config();
+	}
 }
 
 static void
@@ -850,6 +856,8 @@ pathman_shmem_startup_hook(void)
 void
 pathman_relcache_hook(Datum arg, Oid relid)
 {
+	Oid pathman_config_relid;
+
 	/* See cook_partitioning_expression() */
 	if (!pathman_hooks_enabled)
 		return;
@@ -863,10 +871,18 @@ pathman_relcache_hook(Datum arg, Oid relid)
 		invalidate_bounds_cache();
 		invalidate_parents_cache();
 		invalidate_status_cache();
+		delay_pathman_shutdown();  /* see below */
 	}
 
-	/* Invalidation event for PATHMAN_CONFIG table (probably DROP) */
-	if (relid == get_pathman_config_relid(false))
+	/*
+	 * Invalidation event for PATHMAN_CONFIG table (probably DROP EXTENSION).
+	 * Digging catalogs here is expensive and probably illegal, so we take
+	 * cached relid. It is possible that we don't know it atm (e.g. pathman
+	 * was disabled). However, in this case caches must have been cleaned
+	 * on disable, and there is no DROP-specific additional actions.
+	 */
+	pathman_config_relid = get_pathman_config_relid(true);
+	if (relid == pathman_config_relid)
 	{
 		delay_pathman_shutdown();
 	}

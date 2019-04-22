@@ -33,6 +33,7 @@ PGFILEDESC = "pg_pathman - partitioning tool for PostgreSQL"
 REGRESS = pathman_array_qual \
 		  pathman_basic \
 		  pathman_bgw \
+		  pathman_cache_pranks \
 		  pathman_calamity \
 		  pathman_callbacks \
 		  pathman_column_type \
