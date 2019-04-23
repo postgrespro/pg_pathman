@@ -16,6 +16,10 @@ DROP EXTENSION pg_pathman;
 -- create it for further tests
 CREATE EXTENSION pg_pathman;
 
+-- make sure nothing breaks on disable/enable
+SET pg_pathman.enable = false;
+SET pg_pathman.enable = true;
+
 -- 079797e0d5
 CREATE TABLE part_test(val serial);
 INSERT INTO part_test SELECT generate_series(1, 30);

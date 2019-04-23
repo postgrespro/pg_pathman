@@ -403,9 +403,12 @@ fini_local_cache(void)
 	}
 
 	/* Now we can clear allocations */
-	MemoryContextReset(PathmanParentsCacheContext);
-	MemoryContextReset(PathmanStatusCacheContext);
-	MemoryContextReset(PathmanBoundsCacheContext);
+	if (TopPathmanContext)
+	{
+		MemoryContextReset(PathmanParentsCacheContext);
+		MemoryContextReset(PathmanStatusCacheContext);
+		MemoryContextReset(PathmanBoundsCacheContext);
+	}
 }
 
 
