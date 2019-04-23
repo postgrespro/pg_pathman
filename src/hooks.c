@@ -594,16 +594,6 @@ pathman_enable_assign_hook(bool newval, void *extra)
 	elog(DEBUG2, "pg_pathman_enable_assign_hook() [newval = %s] triggered",
 		  newval ? "true" : "false");
 
-	/* Return quickly if nothing has changed */
-	if (newval == (pathman_init_state.pg_pathman_enable &&
-				   pathman_init_state.auto_partition &&
-				   pathman_init_state.override_copy &&
-				   pg_pathman_enable_runtimeappend &&
-				   pg_pathman_enable_runtime_merge_append &&
-				   pg_pathman_enable_partition_filter &&
-				   pg_pathman_enable_bounds_cache))
-		return;
-
 	pathman_init_state.auto_partition		= newval;
 	pathman_init_state.override_copy		= newval;
 	pg_pathman_enable_runtimeappend			= newval;
