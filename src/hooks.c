@@ -594,17 +594,27 @@ pathman_enable_assign_hook(bool newval, void *extra)
 	elog(DEBUG2, "pg_pathman_enable_assign_hook() [newval = %s] triggered",
 		  newval ? "true" : "false");
 
+	if (!(newval == pathman_init_state.pg_pathman_enable &&
+		  newval == pathman_init_state.auto_partition &&
+		  newval == pathman_init_state.override_copy &&
+		  newval == pg_pathman_enable_runtimeappend &&
+		  newval == pg_pathman_enable_runtime_merge_append &&
+		  newval == pg_pathman_enable_partition_filter &&
+		  newval == pg_pathman_enable_bounds_cache))
+	{
+		elog(NOTICE,
+			 "RuntimeAppend, RuntimeMergeAppend and PartitionFilter nodes "
+			 "and some other options have been %s",
+			 newval ? "enabled" : "disabled");
+	}
+
+
 	pathman_init_state.auto_partition		= newval;
 	pathman_init_state.override_copy		= newval;
 	pg_pathman_enable_runtimeappend			= newval;
 	pg_pathman_enable_runtime_merge_append	= newval;
 	pg_pathman_enable_partition_filter		= newval;
 	pg_pathman_enable_bounds_cache			= newval;
-
-	elog(NOTICE,
-		 "RuntimeAppend, RuntimeMergeAppend and PartitionFilter nodes "
-		 "and some other options have been %s",
-		 newval ? "enabled" : "disabled");
 
 	/* Purge caches if pathman was disabled */
 	if (!newval)
