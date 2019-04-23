@@ -1,6 +1,11 @@
 \set VERBOSITY terse
 -- is pathman (caches, in particular) strong enough to carry out this?
 SET search_path = 'public';
+-- make sure nothing breaks on disable/enable when nothing was initialized yet
+SET pg_pathman.enable = false;
+NOTICE:  RuntimeAppend, RuntimeMergeAppend and PartitionFilter nodes and some other options have been disabled
+SET pg_pathman.enable = true;
+NOTICE:  RuntimeAppend, RuntimeMergeAppend and PartitionFilter nodes and some other options have been enabled
 -- wobble with create-drop ext: tests cached relids sanity
 CREATE EXTENSION pg_pathman;
 SET pg_pathman.enable = f;
@@ -14,11 +19,6 @@ CREATE EXTENSION pg_pathman;
 DROP EXTENSION pg_pathman;
 -- create it for further tests
 CREATE EXTENSION pg_pathman;
--- make sure nothing breaks on disable/enable
-SET pg_pathman.enable = false;
-NOTICE:  RuntimeAppend, RuntimeMergeAppend and PartitionFilter nodes and some other options have been disabled
-SET pg_pathman.enable = true;
-NOTICE:  RuntimeAppend, RuntimeMergeAppend and PartitionFilter nodes and some other options have been enabled
 -- 079797e0d5
 CREATE TABLE part_test(val serial);
 INSERT INTO part_test SELECT generate_series(1, 30);

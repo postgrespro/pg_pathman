@@ -3,6 +3,10 @@
 
 SET search_path = 'public';
 
+-- make sure nothing breaks on disable/enable when nothing was initialized yet
+SET pg_pathman.enable = false;
+SET pg_pathman.enable = true;
+
 -- wobble with create-drop ext: tests cached relids sanity
 CREATE EXTENSION pg_pathman;
 SET pg_pathman.enable = f;
@@ -15,10 +19,6 @@ DROP EXTENSION pg_pathman;
 
 -- create it for further tests
 CREATE EXTENSION pg_pathman;
-
--- make sure nothing breaks on disable/enable
-SET pg_pathman.enable = false;
-SET pg_pathman.enable = true;
 
 -- 079797e0d5
 CREATE TABLE part_test(val serial);
