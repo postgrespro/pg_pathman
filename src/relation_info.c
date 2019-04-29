@@ -769,11 +769,14 @@ fill_prel_with_partitions(PartRelationInfo *prel,
 				 */
 				if (pbin->part_idx >= PrelChildrenCount(prel))
 				{
+					/* purged caches will destoy prel, save oid for reporting */
+					Oid parent_relid = PrelParentRelid(prel);
+
 					DisablePathman(); /* disable pg_pathman since config is broken */
-					ereport(ERROR, (errmsg("pg_pathman's cache for relation \"%s\" "
+					ereport(ERROR, (errmsg("pg_pathman's cache for relation %d "
 										   "has not been properly initialized. "
 										   "Looks like one of hash partitions was dropped.",
-										   get_rel_name_or_relid(PrelParentRelid(prel))),
+										   parent_relid),
 									errhint(INIT_ERROR_HINT)));
 				}
 
