@@ -522,8 +522,11 @@ build_pathman_relation_info(Oid relid, Datum *values)
 				 */
 				if (prel->parttype == PT_HASH)
 					child = prel->children[i];
-				else if (prel->parttype == PT_RANGE)
+				else
+				{
+					Assert(prel->parttype == PT_RANGE)
 					child = prel->ranges[i].child_oid;
+				}
 
 				forget_bounds_of_partition(child);
 			}
