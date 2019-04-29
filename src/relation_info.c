@@ -524,7 +524,7 @@ build_pathman_relation_info(Oid relid, Datum *values)
 					child = prel->children[i];
 				else
 				{
-					Assert(prel->parttype == PT_RANGE)
+					Assert(prel->parttype == PT_RANGE);
 					child = prel->ranges[i].child_oid;
 				}
 
