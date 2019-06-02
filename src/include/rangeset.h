@@ -1,7 +1,6 @@
 /* ------------------------------------------------------------------------
  *
  * rangeset.h
- *		IndexRange functions
  *
  * Copyright (c) 2015-2016, Postgres Professional
  *
@@ -17,7 +16,10 @@
 
 
 /*
- * IndexRange contains a set of selected partitions.
+ * IndexRange is essentially a segment [lower; upper]. This module provides
+ * functions for efficient working (intersection, union) with Lists of
+ * IndexRange's; this is used for quick selection of partitions. Numbers are
+ * indexes of partitions in PartRelationInfo's children.
  */
 typedef struct {
 	/* lossy == should we use quals? */

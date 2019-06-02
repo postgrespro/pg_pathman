@@ -424,6 +424,39 @@ UPDATE subpartitions.abc SET id1 = -1, id2 = -1 RETURNING tableoid::regclass, *;
 
 DROP TABLE subpartitions.abc CASCADE;
 NOTICE:  drop cascades to 9 other objects
+--- basic check how rowmark plays along with subparts; PGPRO-2755
+CREATE TABLE subpartitions.a1(n1 integer);
+CREATE TABLE subpartitions.a2(n1 integer not null, n2 integer not null);
+SELECT create_range_partitions('subpartitions.a2', 'n1', 1, 2, 0);
+ create_range_partitions 
+-------------------------
+                       0
+(1 row)
+
+SELECT add_range_partition('subpartitions.a2', 10, 20, 'subpartitions.a2_1020');
+  add_range_partition  
+-----------------------
+ subpartitions.a2_1020
+(1 row)
+
+SELECT create_range_partitions('subpartitions.a2_1020'::regclass, 'n2'::text, array[30,40], array['subpartitions.a2_1020_3040']);
+ create_range_partitions 
+-------------------------
+                       1
+(1 row)
+
+INSERT INTO subpartitions.a2 VALUES (10, 30), (11, 31), (12, 32), (19, 39);
+INSERT INTO subpartitions.a1 VALUES (12), (19), (20);
+SELECT a2.* FROM subpartitions.a1 JOIN subpartitions.a2 ON a2.n1=a1.n1 FOR UPDATE;
+ n1 | n2 
+----+----
+ 12 | 32
+ 19 | 39
+(2 rows)
+
+DROP TABLE subpartitions.a2 CASCADE;
+NOTICE:  drop cascades to 4 other objects
+DROP TABLE subpartitions.a1;
 DROP SCHEMA subpartitions CASCADE;
 NOTICE:  drop cascades to function subpartitions.partitions_tree(regclass,text)
 DROP EXTENSION pg_pathman;

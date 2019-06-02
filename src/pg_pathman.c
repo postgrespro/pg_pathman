@@ -437,7 +437,7 @@ append_child_relation(PlannerInfo *root,
 	Relation		child_relation;
 	AppendRelInfo  *appinfo;
 	Index			child_rti;
-	PlanRowMark	   *child_rowmark;
+	PlanRowMark	   *child_rowmark = NULL;
 	Node		   *childqual;
 	List		   *childquals;
 	ListCell	   *lc1,
@@ -493,6 +493,10 @@ append_child_relation(PlannerInfo *root,
 
 
 	/* Create rowmarks required for child rels */
+	/*
+	 * XXX: vanilla recurses down with *top* rowmark, not immediate parent one.
+	 * Not sure about example where this matters though.
+	 */
 	if (parent_rowmark)
 	{
 		child_rowmark = makeNode(PlanRowMark);
@@ -511,6 +515,13 @@ append_child_relation(PlannerInfo *root,
 		root->rowMarks = lappend(root->rowMarks, child_rowmark);
 
 		/* Adjust tlist for RowMarks (see planner.c) */
+		/*
+		 * XXX Saner approach seems to
+		 *	1) Add tle to top parent and processed_tlist once in rel_pathlist_hook.
+		 *  2) Mark isParent = true
+		 *    *parent* knows it is parent, after all; why should child bother?
+		 *  3) Recursion (code executed in childs) starts at 2)
+		 */
 		if (!parent_rowmark->isParent && !root->parse->setOperations)
 		{
 			append_tle_for_rowmark(root, parent_rowmark);
@@ -636,6 +647,10 @@ append_child_relation(PlannerInfo *root,
 	if (parent_rte->relid != child_oid &&
 		child_relation->rd_rel->relhassubclass)
 	{
+		/* See XXX above */
+		if (child_rowmark)
+			child_rowmark->isParent = true;
+
 		pathman_rel_pathlist_hook(root,
 								  child_rel,
 								  child_rti,

@@ -139,8 +139,24 @@ SELECT tableoid::regclass, * FROM subpartitions.abc ORDER BY id1, id2, val;
 SET pg_pathman.enable_partitionrouter = ON;
 UPDATE subpartitions.abc SET id1 = -1, id2 = -1 RETURNING tableoid::regclass, *;
 
-
-
 DROP TABLE subpartitions.abc CASCADE;
+
+
+--- basic check how rowmark plays along with subparts; PGPRO-2755
+CREATE TABLE subpartitions.a1(n1 integer);
+CREATE TABLE subpartitions.a2(n1 integer not null, n2 integer not null);
+SELECT create_range_partitions('subpartitions.a2', 'n1', 1, 2, 0);
+
+SELECT add_range_partition('subpartitions.a2', 10, 20, 'subpartitions.a2_1020');
+SELECT create_range_partitions('subpartitions.a2_1020'::regclass, 'n2'::text, array[30,40], array['subpartitions.a2_1020_3040']);
+INSERT INTO subpartitions.a2 VALUES (10, 30), (11, 31), (12, 32), (19, 39);
+INSERT INTO subpartitions.a1 VALUES (12), (19), (20);
+
+SELECT a2.* FROM subpartitions.a1 JOIN subpartitions.a2 ON a2.n1=a1.n1 FOR UPDATE;
+
+DROP TABLE subpartitions.a2 CASCADE;
+DROP TABLE subpartitions.a1;
+
+
 DROP SCHEMA subpartitions CASCADE;
 DROP EXTENSION pg_pathman;
