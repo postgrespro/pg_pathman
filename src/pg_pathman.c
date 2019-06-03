@@ -1965,6 +1965,7 @@ make_inh_translation_list(Relation oldrelation, Relation newrelation,
 /*
  * set_append_rel_pathlist
  *	  Build access paths for an "append relation"
+ * Similar to PG function with the same name.
  *
  * NOTE: this function is 'public' (used in hooks.c)
  */

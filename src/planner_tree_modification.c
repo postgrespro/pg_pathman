@@ -516,7 +516,7 @@ handle_modification_query(Query *parse, transform_query_cxt *context)
 {
 	RangeTblEntry  *rte;
 	Oid				child;
-	Node		   *quals = parse->jointree->quals;
+	Node		   *quals;
 	Index			result_rti = parse->resultRelation;
 	ParamListInfo	params = context->query_params;
 
@@ -525,6 +525,8 @@ handle_modification_query(Query *parse, transform_query_cxt *context)
 							parse->commandType != CMD_DELETE))
 		return;
 
+	/* can't set earlier because CMD_UTILITY doesn't have jointree */
+	quals = parse->jointree->quals;
 	rte = rt_fetch(result_rti, parse->rtable);
 
 	/* Exit if it's ONLY table */
