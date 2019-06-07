@@ -352,6 +352,15 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 	if (root->parse->commandType != CMD_SELECT &&
 		root->parse->commandType != CMD_INSERT)
 		return;
+
+	/* SELECT FOR SHARE/UPDATE is not handled by above check */
+	foreach(lc, root->rowMarks)
+	{
+		PlanRowMark *rc = (PlanRowMark *) lfirst(lc);
+
+		if (rc->rti == rti)
+			return;
+	}
 #endif
 
 	/* Skip if this table is not allowed to act as parent (e.g. FROM ONLY) */
