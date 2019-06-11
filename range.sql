@@ -820,8 +820,7 @@ CREATE OR REPLACE FUNCTION @extschema@.create_single_range_partition(
 	partition_name	TEXT DEFAULT NULL,
 	tablespace		TEXT DEFAULT NULL)
 RETURNS REGCLASS AS 'pg_pathman', 'create_single_range_partition_pl'
-LANGUAGE C
-SET client_min_messages = WARNING;
+LANGUAGE C;
 
 /*
  * Construct CHECK constraint condition for a range partition.

@@ -32,6 +32,7 @@
 #include "commands/tablecmds.h"
 #include "commands/tablespace.h"
 #include "commands/trigger.h"
+#include "executor/spi.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
 #include "parser/parse_func.h"
@@ -595,6 +596,14 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 				check_lt(&cmp_value_bound_finfo, collid, value, cur_leading_bound))
 	{
 		Bound bounds[2];
+		int			rc;
+		bool		isnull;
+		char	   *create_sql;
+		HeapTuple	typeTuple;
+		char	   *typname;
+		Oid			parent_nsp = get_rel_namespace(parent_relid);
+		char	   *parent_nsp_name = get_namespace_name(parent_nsp);
+		char	   *partition_name = choose_range_partition_name(parent_relid, parent_nsp);
 
 		/* Assign the 'following' boundary to current 'leading' value */
 		cur_following_bound = cur_leading_bound;
@@ -607,10 +616,45 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 		bounds[0] = MakeBound(should_append ? cur_following_bound : cur_leading_bound);
 		bounds[1] = MakeBound(should_append ? cur_leading_bound : cur_following_bound);
 
-		last_partition = create_single_range_partition_internal(parent_relid,
-																&bounds[0], &bounds[1],
-																range_bound_type,
-																NULL, NULL);
+		/*
+		 * Instead of directly calling create_single_range_partition_internal()
+		 * we are going to call it through SPI, to make it possible for various
+		 * DDL-replicating extensions to catch that call and do something about
+		 * it. --sk
+		 */
+
+		/* Get typname of range_bound_type to perform cast */
+		typeTuple = SearchSysCache1(TYPEOID, ObjectIdGetDatum(range_bound_type));
+		Assert(HeapTupleIsValid(typeTuple));
+		typname = pstrdup(NameStr(((Form_pg_type) GETSTRUCT(typeTuple))->typname));
+		ReleaseSysCache(typeTuple);
+
+		/* Construct call to create_single_range_partition() */
+		create_sql = psprintf(
+			"select %s.create_single_range_partition('%s.%s', '%s'::%s, '%s'::%s, '%s.%s')",
+			get_namespace_name(get_pathman_schema()),
+			parent_nsp_name,
+			get_rel_name(parent_relid),
+			IsInfinite(&bounds[0]) ? "NULL" : datum_to_cstring(bounds[0].value, range_bound_type),
+			typname,
+			IsInfinite(&bounds[1]) ? "NULL" : datum_to_cstring(bounds[1].value, range_bound_type),
+			typname,
+			parent_nsp_name,
+			partition_name
+		);
+
+		/* ...and call it. */
+		SPI_connect();
+		PushActiveSnapshot(GetTransactionSnapshot());
+		rc = SPI_execute(create_sql, false, 0);
+		if (rc <= 0 || SPI_processed != 1)
+			elog(ERROR, "Failed to create range partition");
+		last_partition = DatumGetObjectId(SPI_getbinval(SPI_tuptable->vals[0],
+														SPI_tuptable->tupdesc,
+														1, &isnull));
+		Assert(!isnull);
+		SPI_finish();
+		PopActiveSnapshot();
 
 #ifdef USE_ASSERT_CHECKING
 		elog(DEBUG2, "%s partition with following='%s' & leading='%s' [%u]",
