@@ -84,6 +84,9 @@ static const char		   *spawn_partitions_bgw	= "SpawnPartitionsWorker";
 static const char		   *concurrent_part_bgw		= "ConcurrentPartWorker";
 
 
+/* Used for preventing spawn bgw recursion trouble */
+static bool am_spawn_bgw = false;
+
 /*
  * Estimate amount of shmem needed for concurrent partitioning.
  */
@@ -312,6 +315,11 @@ create_partitions_for_value_bg_worker(Oid relid, Datum value, Oid value_type)
 	SpawnPartitionArgs	   *bgw_args;
 	Oid						child_oid = InvalidOid;
 
+	if (am_spawn_bgw)
+		ereport(ERROR,
+				(errmsg("Attempt to spawn partition using bgw from bgw spawning partitions"),
+				 errhint("Probably init_callback has INSERT to its table?")));
+
 	/* Create a dsm segment for the worker to pass arguments */
 	segment = create_partitions_bg_worker_segment(relid, value, value_type);
 	segment_handle = dsm_segment_handle(segment);
@@ -362,6 +370,8 @@ bgw_main_spawn_partitions(Datum main_arg)
 
 	/* We're now ready to receive signals */
 	BackgroundWorkerUnblockSignals();
+
+	am_spawn_bgw = true;
 
 	/* Create resource owner */
 	CurrentResourceOwner = ResourceOwnerCreate(NULL, spawn_partitions_bgw);
