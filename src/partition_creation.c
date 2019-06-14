@@ -315,8 +315,7 @@ create_partitions_for_value(Oid relid, Datum value, Oid value_type)
 			elog(DEBUG2, "create_partitions(): chose backend [%u]", MyProcPid);
 			last_partition = create_partitions_for_value_internal(relid,
 																  value,
-																  value_type,
-																  false); /* backend */
+																  value_type);
 		}
 	}
 	else
@@ -348,147 +347,119 @@ create_partitions_for_value(Oid relid, Datum value, Oid value_type)
  * use create_partitions_for_value() instead.
  */
 Oid
-create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type,
-									 bool is_background_worker)
+create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type)
 {
 	MemoryContext	old_mcxt = CurrentMemoryContext;
 	Oid				partid = InvalidOid; /* last created partition (or InvalidOid) */
+	Datum				values[Natts_pathman_config];
+	bool				isnull[Natts_pathman_config];
 
-	PG_TRY();
+	/* Get both PartRelationInfo & PATHMAN_CONFIG contents for this relation */
+	if (pathman_config_contains_relation(relid, values, isnull, NULL, NULL))
 	{
-		Datum				values[Natts_pathman_config];
-		bool				isnull[Natts_pathman_config];
+		PartRelationInfo   *prel;
+		LockAcquireResult	lock_result;		/* could we lock the parent? */
+		Oid					base_bound_type;	/* base type of prel->ev_type */
+		Oid					base_value_type;	/* base type of value_type */
 
-		/* Get both PartRelationInfo & PATHMAN_CONFIG contents for this relation */
-		if (pathman_config_contains_relation(relid, values, isnull, NULL, NULL))
+		/* Prevent modifications of partitioning scheme */
+		lock_result = xact_lock_rel(relid, ShareUpdateExclusiveLock, false);
+
+		/* Fetch PartRelationInfo by 'relid' */
+		prel = get_pathman_relation_info(relid);
+		shout_if_prel_is_invalid(relid, prel, PT_RANGE);
+
+		/* Fetch base types of prel->ev_type & value_type */
+		base_bound_type = getBaseType(prel->ev_type);
+		base_value_type = getBaseType(value_type);
+
+		/*
+		 * Search for a suitable partition if we didn't hold it,
+		 * since somebody might have just created it for us.
+		 *
+		 * If the table is locked, it means that we've
+		 * already failed to find a suitable partition
+		 * and called this function to do the job.
+		 */
+		Assert(lock_result != LOCKACQUIRE_NOT_AVAIL);
+		if (lock_result == LOCKACQUIRE_OK)
 		{
-			PartRelationInfo   *prel;
-			LockAcquireResult	lock_result;		/* could we lock the parent? */
-			Oid					base_bound_type;	/* base type of prel->ev_type */
-			Oid					base_value_type;	/* base type of value_type */
+			Oid	   *parts;
+			int		nparts;
 
-			/* Prevent modifications of partitioning scheme */
-			lock_result = xact_lock_rel(relid, ShareUpdateExclusiveLock, false);
+			/* Search for matching partitions */
+			parts = find_partitions_for_value(value, value_type, prel, &nparts);
 
-			/* Fetch PartRelationInfo by 'relid' */
-			prel = get_pathman_relation_info(relid);
-			shout_if_prel_is_invalid(relid, prel, PT_RANGE);
+			/* Shout if there's more than one */
+			if (nparts > 1)
+				elog(ERROR, ERR_PART_ATTR_MULTIPLE);
 
-			/* Fetch base types of prel->ev_type & value_type */
-			base_bound_type = getBaseType(prel->ev_type);
-			base_value_type = getBaseType(value_type);
-
-			/*
-			 * Search for a suitable partition if we didn't hold it,
-			 * since somebody might have just created it for us.
-			 *
-			 * If the table is locked, it means that we've
-			 * already failed to find a suitable partition
-			 * and called this function to do the job.
-			 */
-			Assert(lock_result != LOCKACQUIRE_NOT_AVAIL);
-			if (lock_result == LOCKACQUIRE_OK)
+			/* It seems that we got a partition! */
+			else if (nparts == 1)
 			{
-				Oid	   *parts;
-				int		nparts;
+				/* Unlock the parent (we're not going to spawn) */
+				UnlockRelationOid(relid, ShareUpdateExclusiveLock);
 
-				/* Search for matching partitions */
-				parts = find_partitions_for_value(value, value_type, prel, &nparts);
-
-				/* Shout if there's more than one */
-				if (nparts > 1)
-					elog(ERROR, ERR_PART_ATTR_MULTIPLE);
-
-				/* It seems that we got a partition! */
-				else if (nparts == 1)
-				{
-					/* Unlock the parent (we're not going to spawn) */
-					UnlockRelationOid(relid, ShareUpdateExclusiveLock);
-
-					/* Simply return the suitable partition */
-					partid = parts[0];
-				}
-
-				/* Don't forget to free */
-				pfree(parts);
+				/* Simply return the suitable partition */
+				partid = parts[0];
 			}
 
-			/* Else spawn a new one (we hold a lock on the parent) */
-			if (partid == InvalidOid)
-			{
-				RangeEntry *ranges = PrelGetRangesArray(prel);
-				Bound		bound_min,			/* absolute MIN */
-							bound_max;			/* absolute MAX */
-
-				Oid			interval_type = InvalidOid;
-				Datum		interval_binary, /* assigned 'width' of one partition */
-							interval_text;
-
-				/* Copy datums in order to protect them from cache invalidation */
-				bound_min = CopyBound(&ranges[0].min,
-									  prel->ev_byval,
-									  prel->ev_len);
-
-				bound_max = CopyBound(&ranges[PrelLastChild(prel)].max,
-									  prel->ev_byval,
-									  prel->ev_len);
-
-				/* Check if interval is set */
-				if (isnull[Anum_pathman_config_range_interval - 1])
-				{
-					ereport(ERROR,
-							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							 errmsg("cannot spawn new partition for key '%s'",
-									datum_to_cstring(value, value_type)),
-							 errdetail("default range interval is NULL")));
-				}
-
-				/* Retrieve interval as TEXT from tuple */
-				interval_text = values[Anum_pathman_config_range_interval - 1];
-
-				/* Convert interval to binary representation */
-				interval_binary = extract_binary_interval_from_text(interval_text,
-																	base_bound_type,
-																	&interval_type);
-
-				/* At last, spawn partitions to store the value */
-				partid = spawn_partitions_val(PrelParentRelid(prel),
-											  &bound_min, &bound_max, base_bound_type,
-											  interval_binary, interval_type,
-											  value, base_value_type,
-											  prel->ev_collid);
-			}
-
-			/* Don't forget to close 'prel'! */
-			close_pathman_relation_info(prel);
+			/* Don't forget to free */
+			pfree(parts);
 		}
-		else
-			elog(ERROR, "table \"%s\" is not partitioned",
-				 get_rel_name_or_relid(relid));
+
+		/* Else spawn a new one (we hold a lock on the parent) */
+		if (partid == InvalidOid)
+		{
+			RangeEntry *ranges = PrelGetRangesArray(prel);
+			Bound		bound_min,			/* absolute MIN */
+				bound_max;			/* absolute MAX */
+
+			Oid			interval_type = InvalidOid;
+			Datum		interval_binary, /* assigned 'width' of one partition */
+				interval_text;
+
+			/* Copy datums in order to protect them from cache invalidation */
+			bound_min = CopyBound(&ranges[0].min,
+								  prel->ev_byval,
+								  prel->ev_len);
+
+			bound_max = CopyBound(&ranges[PrelLastChild(prel)].max,
+								  prel->ev_byval,
+								  prel->ev_len);
+
+			/* Check if interval is set */
+			if (isnull[Anum_pathman_config_range_interval - 1])
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("cannot spawn new partition for key '%s'",
+								datum_to_cstring(value, value_type)),
+						 errdetail("default range interval is NULL")));
+			}
+
+			/* Retrieve interval as TEXT from tuple */
+			interval_text = values[Anum_pathman_config_range_interval - 1];
+
+			/* Convert interval to binary representation */
+			interval_binary = extract_binary_interval_from_text(interval_text,
+																base_bound_type,
+																&interval_type);
+
+			/* At last, spawn partitions to store the value */
+			partid = spawn_partitions_val(PrelParentRelid(prel),
+										  &bound_min, &bound_max, base_bound_type,
+										  interval_binary, interval_type,
+										  value, base_value_type,
+										  prel->ev_collid);
+		}
+
+		/* Don't forget to close 'prel'! */
+		close_pathman_relation_info(prel);
 	}
-	PG_CATCH();
-	{
-		ErrorData *error;
-
-		/* Simply rethrow ERROR if we're in backend */
-		if (!is_background_worker)
-			PG_RE_THROW();
-
-		/* Switch to the original context & copy edata */
-		MemoryContextSwitchTo(old_mcxt);
-		error = CopyErrorData();
-		FlushErrorState();
-
-		/* Produce log message if we're in BGW */
-		elog(LOG,
-			 CppAsString(create_partitions_for_value_internal) ": %s [%u]",
-			 error->message,
-			 MyProcPid);
-
-		/* Reset 'partid' in case of error */
-		partid = InvalidOid;
-	}
-	PG_END_TRY();
+	else
+		elog(ERROR, "table \"%s\" is not partitioned",
+			 get_rel_name_or_relid(relid));
 
 	return partid;
 }

@@ -364,6 +364,7 @@ bgw_main_spawn_partitions(Datum main_arg)
 	dsm_segment			   *segment;
 	SpawnPartitionArgs	   *args;
 	Datum					value;
+	Oid						result;
 
 	/* Establish signal handlers before unblocking signals. */
 	pqsignal(SIGTERM, handle_sigterm);
@@ -415,18 +416,17 @@ bgw_main_spawn_partitions(Datum main_arg)
 		 DebugPrintDatum(value, args->value_type), MyProcPid);
 #endif
 
-	/* Create partitions and save the Oid of the last one */
-	args->result = create_partitions_for_value_internal(args->partitioned_table,
-														value, /* unpacked Datum */
-														args->value_type,
-														true); /* background woker */
+	/*
+	 * Create partitions and save the Oid of the last one.
+	 * If we fail here, args->result is 0 since it is zeroed on initialization.
+	 */
+	result = create_partitions_for_value_internal(args->partitioned_table,
+												  value, /* unpacked Datum */
+												  args->value_type);
 
 	/* Finish transaction in an appropriate way */
-	if (args->result == InvalidOid)
-		AbortCurrentTransaction();
-	else
-		CommitTransactionCommand();
-
+	CommitTransactionCommand();
+	args->result = result;
 	dsm_detach(segment);
 }
 
