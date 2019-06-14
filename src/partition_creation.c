@@ -349,7 +349,6 @@ create_partitions_for_value(Oid relid, Datum value, Oid value_type)
 Oid
 create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type)
 {
-	MemoryContext	old_mcxt = CurrentMemoryContext;
 	Oid				partid = InvalidOid; /* last created partition (or InvalidOid) */
 	Datum				values[Natts_pathman_config];
 	bool				isnull[Natts_pathman_config];
