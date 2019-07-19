@@ -380,7 +380,7 @@ DROP TABLE test.num_range_rel CASCADE;
 DROP TABLE test.range_rel CASCADE;
 
 /* Test attributes copying */
-CREATE UNLOGGED TABLE test.range_rel (
+CREATE TABLE test.range_rel (
 	id	SERIAL PRIMARY KEY,
 	dt	DATE NOT NULL)
 WITH (fillfactor = 70);

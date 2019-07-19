@@ -1312,7 +1312,7 @@ DROP TABLE test.num_range_rel CASCADE;
 DROP TABLE test.range_rel CASCADE;
 NOTICE:  drop cascades to 10 other objects
 /* Test attributes copying */
-CREATE UNLOGGED TABLE test.range_rel (
+CREATE TABLE test.range_rel (
 	id	SERIAL PRIMARY KEY,
 	dt	DATE NOT NULL)
 WITH (fillfactor = 70);
@@ -1328,13 +1328,13 @@ SELECT pathman.create_range_partitions('test.range_rel', 'dt',
 SELECT reloptions, relpersistence FROM pg_class WHERE oid='test.range_rel'::REGCLASS;
    reloptions    | relpersistence 
 -----------------+----------------
- {fillfactor=70} | u
+ {fillfactor=70} | p
 (1 row)
 
 SELECT reloptions, relpersistence FROM pg_class WHERE oid='test.range_rel_1'::REGCLASS;
    reloptions    | relpersistence 
 -----------------+----------------
- {fillfactor=70} | u
+ {fillfactor=70} | p
 (1 row)
 
 DROP TABLE test.range_rel CASCADE;
