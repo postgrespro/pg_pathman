@@ -1804,7 +1804,25 @@ ORDER BY partition;
 
 DROP TABLE test.provided_part_names CASCADE;
 NOTICE:  drop cascades to 2 other objects
+/* test preventing of double expand of inherited tables */
+CREATE TABLE test.mixinh_parent (id INT PRIMARY KEY);
+CREATE TABLE test.mixinh_child1 () INHERITS (test.mixinh_parent);
+SELECT create_range_partitions('test.mixinh_child1', 'id', 1, 10, 1);
+ create_range_partitions 
+-------------------------
+                       1
+(1 row)
+
+INSERT  INTO test.mixinh_child1 VALUES (1);
+SELECT * FROM test.mixinh_child1;
+ id 
+----
+  1
+(1 row)
+
+SELECT * FROM test.mixinh_parent;
+ERROR:  could not expand partitioned table "mixinh_child1"
 DROP SCHEMA test CASCADE;
-NOTICE:  drop cascades to 28 other objects
+NOTICE:  drop cascades to 32 other objects
 DROP EXTENSION pg_pathman CASCADE;
 DROP SCHEMA pathman CASCADE;

@@ -546,6 +546,14 @@ ORDER BY partition;
 
 DROP TABLE test.provided_part_names CASCADE;
 
+/* test preventing of double expand of inherited tables */
+CREATE TABLE test.mixinh_parent (id INT PRIMARY KEY);
+CREATE TABLE test.mixinh_child1 () INHERITS (test.mixinh_parent);
+SELECT create_range_partitions('test.mixinh_child1', 'id', 1, 10, 1);
+INSERT  INTO test.mixinh_child1 VALUES (1);
+SELECT * FROM test.mixinh_child1;
+SELECT * FROM test.mixinh_parent;
+
 DROP SCHEMA test CASCADE;
 DROP EXTENSION pg_pathman CASCADE;
 DROP SCHEMA pathman CASCADE;

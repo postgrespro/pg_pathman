@@ -406,10 +406,16 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			 * and added its children to the plan.
 			 */
 			if (appinfo->child_relid == rti &&
-				child_oid == parent_oid &&
 				OidIsValid(appinfo->parent_reloid))
 			{
-				goto cleanup;
+				if (child_oid == parent_oid)
+					goto cleanup;
+				else if (!has_pathman_relation_info(parent_oid))
+					ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							 errmsg("could not expand partitioned table \"%s\"",
+									get_rel_name(child_oid)),
+							 errhint("Do not use inheritance and pg_pathman partitions together")));
 			}
 		}
 	}
