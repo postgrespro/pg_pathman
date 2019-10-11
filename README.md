@@ -776,8 +776,8 @@ All sections and data will remain unchanged and will be handled by the standard 
 Do not hesitate to post your issues, questions and new ideas at the [issues](https://github.com/postgrespro/pg_pathman/issues) page.
 
 ## Authors
-Ildar Musin <i.musin(at)postgrespro.ru> Postgres Professional Ltd., Russia  
+[Ildar Musin](https://github.com/zilder)  
 Alexander Korotkov <a.korotkov(at)postgrespro.ru> Postgres Professional Ltd., Russia  
-Dmitry Ivanov <d.ivanov(at)postgrespro.ru> Postgres Professional Ltd., Russia  
+[Dmitry Ivanov](https://github.com/funbringer)  
 Maksim Milyutin <m.milyutin(at)postgrespro.ru> Postgres Professional Ltd., Russia  
-Ildus Kurbangaliev <i.kurbangaliev(at)postgrespro.ru> Postgres Professional Ltd., Russia  
+[Ildus Kurbangaliev](https://github.com/ildus)
