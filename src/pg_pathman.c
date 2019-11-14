@@ -23,15 +23,23 @@
 #include "runtime_merge_append.h"
 
 #include "postgres.h"
+#include "access/genam.h"
 #include "access/htup_details.h"
 #include "access/sysattr.h"
+#if PG_VERSION_NUM >= 120000
+#include "access/table.h"
+#endif
 #include "access/xact.h"
+#include "catalog/pg_collation.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_type.h"
 #include "catalog/pg_extension.h"
 #include "commands/extension.h"
 #include "foreign/fdwapi.h"
 #include "miscadmin.h"
+#if PG_VERSION_NUM >= 120000
+#include "optimizer/optimizer.h"
+#endif
 #include "optimizer/clauses.h"
 #include "optimizer/plancat.h"
 #include "optimizer/restrictinfo.h"
@@ -384,7 +392,11 @@ get_pathman_schema(void)
 		return InvalidOid; /* exit if pg_pathman does not exist */
 
 	ScanKeyInit(&entry[0],
+#if PG_VERSION_NUM >= 120000
+				Anum_pg_extension_oid,
+#else
 				ObjectIdAttributeNumber,
+#endif
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(ext_oid));
 
@@ -485,6 +497,26 @@ append_child_relation(PlannerInfo *root,
 	child_rti = list_length(root->parse->rtable);
 	root->simple_rte_array[child_rti] = child_rte;
 
+	/* Build an AppendRelInfo for this child */
+	appinfo = makeNode(AppendRelInfo);
+	appinfo->parent_relid	= parent_rti;
+	appinfo->child_relid	= child_rti;
+	appinfo->parent_reloid	= parent_rte->relid;
+
+	/* Store table row types for wholerow references */
+	appinfo->parent_reltype = RelationGetDescr(parent_relation)->tdtypeid;
+	appinfo->child_reltype  = RelationGetDescr(child_relation)->tdtypeid;
+
+	make_inh_translation_list(parent_relation, child_relation, child_rti,
+							  &appinfo->translated_vars);
+
+	/* Now append 'appinfo' to 'root->append_rel_list' */
+	root->append_rel_list = lappend(root->append_rel_list, appinfo);
+	/* And to array in >= 11, it must be big enough */
+#if PG_VERSION_NUM >= 110000
+	root->append_rel_array[child_rti] = appinfo;
+#endif
+
 	/* Create RelOptInfo for this child (and make some estimates as well) */
 	child_rel = build_simple_rel_compat(root, child_rti, parent_rel);
 
@@ -532,26 +564,6 @@ append_child_relation(PlannerInfo *root,
 		parent_rowmark->isParent = true;
 	}
 
-
-	/* Build an AppendRelInfo for this child */
-	appinfo = makeNode(AppendRelInfo);
-	appinfo->parent_relid	= parent_rti;
-	appinfo->child_relid	= child_rti;
-	appinfo->parent_reloid	= parent_rte->relid;
-
-	/* Store table row types for wholerow references */
-	appinfo->parent_reltype = RelationGetDescr(parent_relation)->tdtypeid;
-	appinfo->child_reltype  = RelationGetDescr(child_relation)->tdtypeid;
-
-	make_inh_translation_list(parent_relation, child_relation, child_rti,
-							  &appinfo->translated_vars);
-
-	/* Now append 'appinfo' to 'root->append_rel_list' */
-	root->append_rel_list = lappend(root->append_rel_list, appinfo);
-	/* And to array in >= 11, it must be big enough */
-#if PG_VERSION_NUM >= 110000
-	root->append_rel_array[child_rti] = appinfo;
-#endif
 
 	/* Translate column privileges for this child */
 	if (parent_rte->relid != child_oid)
@@ -618,7 +630,11 @@ append_child_relation(PlannerInfo *root,
 		 * Restriction reduces to constant FALSE or constant NULL after
 		 * substitution, so this child need not be scanned.
 		 */
+#if PG_VERSION_NUM >= 120000
+		mark_dummy_rel(child_rel);
+#else
 		set_dummy_rel_pathlist(child_rel);
+#endif
 	}
 	childquals = make_ands_implicit((Expr *) childqual);
 	childquals = make_restrictinfos_from_actual_clauses(root, childquals);
@@ -632,7 +648,11 @@ append_child_relation(PlannerInfo *root,
 		 * This child need not be scanned, so we can omit it from the
 		 * appendrel.
 		 */
+#if PG_VERSION_NUM >= 120000
+		mark_dummy_rel(child_rel);
+#else
 		set_dummy_rel_pathlist(child_rel);
+#endif
 	}
 
 	/*
@@ -1065,9 +1085,14 @@ handle_const(const Const *c,
 				}
 				/* Else use the Const's value */
 				else value = c->constvalue;
-
-				/* Calculate 32-bit hash of 'value' and corresponding index */
-				hash = OidFunctionCall1(prel->hash_proc, value);
+				/*
+				 * Calculate 32-bit hash of 'value' and corresponding index.
+				 * Since 12, hashtext requires valid collation. Since we never
+				 * supported this, passing db default one will do.
+				 */
+				hash = OidFunctionCall1Coll(prel->hash_proc,
+											DEFAULT_COLLATION_OID,
+											value);
 				idx = hash_to_part_index(DatumGetInt32(hash),
 										 PrelChildrenCount(prel));
 

@@ -2,6 +2,11 @@
  * ---------------------------------------------
  *  NOTE: This test behaves differenly on PgPro
  * ---------------------------------------------
+ *
+ * Since 12 (608b167f9f), CTEs which are scanned once are no longer an
+ * optimization fence, which changes practically all plans here. There is
+ * an option to forcibly make them MATERIALIZED, but we also need to run tests
+ * on older versions, so create pathman_only_1.out instead.
  */
 
 \set VERBOSITY terse

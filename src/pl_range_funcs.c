@@ -15,6 +15,9 @@
 #include "utils.h"
 #include "xact_handling.h"
 
+#if PG_VERSION_NUM >= 120000
+#include "access/table.h"
+#endif
 #include "access/transam.h"
 #include "access/xact.h"
 #include "catalog/heap.h"
@@ -26,6 +29,9 @@
 #include "parser/parse_relation.h"
 #include "parser/parse_expr.h"
 #include "utils/array.h"
+#if PG_VERSION_NUM >= 120000
+#include "utils/float.h"
+#endif
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/numeric.h"
@@ -1084,6 +1090,8 @@ build_range_condition(PG_FUNCTION_ARGS)
 	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("'expression' should not be NULL")));;
 
+	/* lock the partition */
+	LockRelationOid(partition_relid, ShareUpdateExclusiveLock);
 	min = PG_ARGISNULL(2) ?
 				MakeBoundInf(MINUS_INFINITY) :
 				MakeBound(PG_GETARG_DATUM(2));
@@ -1329,7 +1337,7 @@ deparse_constraint(Oid relid, Node *expr)
 
 	/* Initialize parse state */
 	pstate = make_parsestate(NULL);
-	rte = addRangeTableEntryForRelation(pstate, rel, NULL, false, true);
+	rte = addRangeTableEntryForRelationCompat(pstate, rel, AccessShareLock, NULL, false, true);
 	addRTEtoQuery(pstate, rte, true, true, true);
 
 	/* Transform constraint into executable expression (i.e. cook it) */

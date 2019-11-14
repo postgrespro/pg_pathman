@@ -47,11 +47,10 @@ ANALYZE;
  */
 /* matching collations */
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE val < ANY (array['a', 'b']);
-        QUERY PLAN        
---------------------------
- Append
-   ->  Seq Scan on test_1
-(2 rows)
+     QUERY PLAN     
+--------------------
+ Seq Scan on test_1
+(1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE val < ANY (array['a', 'z']);
         QUERY PLAN        
@@ -136,12 +135,11 @@ ANALYZE;
  */
 /* a IN (...) - pruning should work */
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a IN (1, 2, 3, 4);
-                     QUERY PLAN                     
-----------------------------------------------------
- Append
-   ->  Seq Scan on test_1
-         Filter: (a = ANY ('{1,2,3,4}'::integer[]))
-(3 rows)
+                  QUERY PLAN                  
+----------------------------------------------
+ Seq Scan on test_1
+   Filter: (a = ANY ('{1,2,3,4}'::integer[]))
+(2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a IN (100, 200, 300, 400);
                          QUERY PLAN                         
@@ -158,12 +156,11 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a IN (100, 200, 300, 400
 (9 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a IN (-100, 100);
-                     QUERY PLAN                      
------------------------------------------------------
- Append
-   ->  Seq Scan on test_1
-         Filter: (a = ANY ('{-100,100}'::integer[]))
-(3 rows)
+                  QUERY PLAN                   
+-----------------------------------------------
+ Seq Scan on test_1
+   Filter: (a = ANY ('{-100,100}'::integer[]))
+(2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a IN (-100, -200, -300);
         QUERY PLAN        
@@ -362,12 +359,11 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ANY (array[]::int4[]
 (2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ANY (array[100, 100]);
-                     QUERY PLAN                     
-----------------------------------------------------
- Append
-   ->  Seq Scan on test_1
-         Filter: (a = ANY ('{100,100}'::integer[]))
-(3 rows)
+                  QUERY PLAN                  
+----------------------------------------------
+ Seq Scan on test_1
+   Filter: (a = ANY ('{100,100}'::integer[]))
+(2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ANY (array[100, 200, 300, 400]);
                          QUERY PLAN                         
@@ -468,12 +464,11 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ALL (array[]::int4[]
 (21 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ALL (array[100, 100]);
-                     QUERY PLAN                     
-----------------------------------------------------
- Append
-   ->  Seq Scan on test_1
-         Filter: (a = ALL ('{100,100}'::integer[]))
-(3 rows)
+                  QUERY PLAN                  
+----------------------------------------------
+ Seq Scan on test_1
+   Filter: (a = ALL ('{100,100}'::integer[]))
+(2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ALL (array[100, 200, 300, 400]);
         QUERY PLAN        
@@ -529,19 +524,17 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[]::int4[]
 (2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[100, 100]);
-        QUERY PLAN         
----------------------------
- Append
-   ->  Seq Scan on test_1
-         Filter: (a < 100)
-(3 rows)
+     QUERY PLAN      
+---------------------
+ Seq Scan on test_1
+   Filter: (a < 100)
+(2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[99, 100, 101]);
-        QUERY PLAN        
---------------------------
- Append
-   ->  Seq Scan on test_1
-(2 rows)
+     QUERY PLAN     
+--------------------
+ Seq Scan on test_1
+(1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[500, 550]);
         QUERY PLAN         
@@ -645,20 +638,18 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[]::int4[]
 (21 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[100, 100]);
-        QUERY PLAN         
----------------------------
- Append
-   ->  Seq Scan on test_1
-         Filter: (a < 100)
-(3 rows)
+     QUERY PLAN      
+---------------------
+ Seq Scan on test_1
+   Filter: (a < 100)
+(2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[99, 100, 101]);
-        QUERY PLAN        
---------------------------
- Append
-   ->  Seq Scan on test_1
-         Filter: (a < 99)
-(3 rows)
+     QUERY PLAN     
+--------------------
+ Seq Scan on test_1
+   Filter: (a < 99)
+(2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[500, 550]);
         QUERY PLAN         
@@ -673,12 +664,11 @@ EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[500, 550]
 (7 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[100, 700]);
-        QUERY PLAN         
----------------------------
- Append
-   ->  Seq Scan on test_1
-         Filter: (a < 100)
-(3 rows)
+     QUERY PLAN      
+---------------------
+ Seq Scan on test_1
+   Filter: (a < 100)
+(2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[NULL, 700]);
         QUERY PLAN        

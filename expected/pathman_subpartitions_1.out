@@ -114,31 +114,25 @@ EXPLAIN (COSTS OFF) SELECT * FROM subpartitions.abc WHERE b  = 215;
                Filter: (b = 215)
          ->  Seq Scan on abc_1_2
                Filter: (b = 215)
-   ->  Append
-         ->  Seq Scan on abc_2_1
-               Filter: (b = 215)
-   ->  Append
-         ->  Seq Scan on abc_3_2
-               Filter: (b = 215)
-(14 rows)
+   ->  Seq Scan on abc_2_1
+         Filter: (b = 215)
+   ->  Seq Scan on abc_3_2
+         Filter: (b = 215)
+(12 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM subpartitions.abc WHERE a  = 215 AND b  = 215;
-                   QUERY PLAN                    
--------------------------------------------------
- Append
-   ->  Append
-         ->  Seq Scan on abc_3_2
-               Filter: ((a = 215) AND (b = 215))
-(4 rows)
+             QUERY PLAN              
+-------------------------------------
+ Seq Scan on abc_3_2
+   Filter: ((a = 215) AND (b = 215))
+(2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM subpartitions.abc WHERE a >= 210 AND b >= 210;
-            QUERY PLAN            
-----------------------------------
- Append
-   ->  Append
-         ->  Seq Scan on abc_3_2
-               Filter: (a >= 210)
-(4 rows)
+      QUERY PLAN      
+----------------------
+ Seq Scan on abc_3_2
+   Filter: (a >= 210)
+(2 rows)
 
 CREATE OR REPLACE FUNCTION check_multilevel_queries()
 RETURNS VOID AS

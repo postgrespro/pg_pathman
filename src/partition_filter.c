@@ -17,6 +17,9 @@
 #include "utils.h"
 
 #include "access/htup_details.h"
+#if PG_VERSION_NUM >= 120000
+#include "access/table.h"
+#endif
 #include "access/xact.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_type.h"
@@ -86,7 +89,7 @@ static void prepare_rri_fdw_for_insert(ResultRelInfoHolder *rri_holder,
 
 static Node *fix_returning_list_mutator(Node *node, void *state);
 
-static Index append_rte_to_estate(EState *estate, RangeTblEntry *rte);
+static Index append_rte_to_estate(EState *estate, RangeTblEntry *rte, Relation child_rel);
 static int append_rri_to_estate(EState *estate, ResultRelInfo *rri);
 
 static void pf_memcxt_callback(void *arg);
@@ -182,10 +185,12 @@ init_result_parts_storage(ResultPartsStorage *parts_storage,
 	parts_storage->command_type = cmd_type;
 	parts_storage->speculative_inserts = speculative_inserts;
 
-	/* Should partitions be locked till transaction's end? */
+	/*
+	 * Should ResultPartsStorage do ExecCloseIndices and heap_close on
+	 * finalization?
+	 */
 	parts_storage->close_relations = close_relations;
 	parts_storage->head_open_lock_mode  = RowExclusiveLock;
-	parts_storage->heap_close_lock_mode = NoLock;
 
 	/* Fetch PartRelationInfo for this partitioned relation */
 	parts_storage->prel = get_pathman_relation_info(parent_relid);
@@ -214,13 +219,22 @@ fini_result_parts_storage(ResultPartsStorage *parts_storage)
 		if (parts_storage->fini_rri_holder_cb)
 			parts_storage->fini_rri_holder_cb(rri_holder, parts_storage);
 
-		/* Close partitions and indices */
+		/*
+		 * Close indices, unless ExecEndPlan won't do that for us (this is
+		 * is CopyFrom which misses it, not usual executor run, essentially).
+		 * Otherwise, it is always automaticaly closed; in <= 11, relcache
+		 * refs of rris managed heap_open/close on their own, and ExecEndPlan
+		 * closed them directly. Since 9ddef3, relcache management
+		 * of executor was centralized; now rri refs are copies of ones in
+		 * estate->es_relations, which are closed in ExecEndPlan.
+		 * So we push our rel there, and it is also automatically closed.
+		 */
 		if (parts_storage->close_relations)
 		{
 			ExecCloseIndices(rri_holder->result_rel_info);
-
+			/* And relation itself */
 			heap_close(rri_holder->result_rel_info->ri_RelationDesc,
-					   parts_storage->heap_close_lock_mode);
+				   NoLock);
 		}
 
 		/* Free conversion-related stuff */
@@ -315,7 +329,7 @@ scan_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid)
 		ExecCheckRTPerms(list_make1(child_rte), true);
 
 		/* Append RangeTblEntry to estate->es_range_table */
-		child_rte_idx = append_rte_to_estate(parts_storage->estate, child_rte);
+		child_rte_idx = append_rte_to_estate(parts_storage->estate, child_rte, child_rel);
 
 		/* Create ResultRelInfo for partition */
 		child_result_rel_info = makeNode(ResultRelInfo);
@@ -355,7 +369,12 @@ scan_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid)
 		rri_holder->partid = partid;
 		rri_holder->result_rel_info = child_result_rel_info;
 
-		/* Generate tuple transformation map and some other stuff */
+		/*
+		 * Generate parent->child tuple transformation map. We need to
+		 * convert tuples because e.g. parent's TupleDesc might have dropped
+		 * columns which child doesn't have at all because it was created after
+		 * the drop.
+		 */
 		rri_holder->tuple_map = build_part_tuple_map(base_rel, child_rel);
 
 		/* Default values */
@@ -760,21 +779,35 @@ partition_filter_exec(CustomScanState *node)
 		/* If there's a transform map, rebuild the tuple */
 		if (rri_holder->tuple_map)
 		{
+			Relation	child_rel = rri->ri_RelationDesc;
+
+			/* xxx why old code decided to materialize it? */
+#if PG_VERSION_NUM < 120000
 			HeapTuple	htup_old,
 						htup_new;
-			Relation	child_rel = rri->ri_RelationDesc;
 
 			htup_old = ExecMaterializeSlot(slot);
 			htup_new = do_convert_tuple(htup_old, rri_holder->tuple_map);
 			ExecClearTuple(slot);
+#endif
 
-			/* Allocate new slot if needed */
+			/*
+			 * Allocate new slot if needed.
+			 * For 12, it is sort of important to create BufferHeapTuple,
+			 * though we will store virtual one there. Otherwise, ModifyTable
+			 * decides to copy it to mt_scans slot which has tupledesc of
+			 * parent.
+			 */
 			if (!state->tup_convert_slot)
-				state->tup_convert_slot = MakeTupleTableSlotCompat();
+				state->tup_convert_slot = MakeTupleTableSlotCompat(&TTSOpsBufferHeapTuple);
 
 			/* TODO: why should we *always* set a new slot descriptor? */
 			ExecSetSlotDescriptor(state->tup_convert_slot, RelationGetDescr(child_rel));
+#if PG_VERSION_NUM >= 120000
+			slot = execute_attr_map_slot(rri_holder->tuple_map->attrMap, slot, state->tup_convert_slot);
+#else
 			slot = ExecStoreTuple(htup_new, state->tup_convert_slot, InvalidBuffer, true);
+#endif
 		}
 
 		return slot;
@@ -1143,7 +1176,7 @@ fix_returning_list_mutator(Node *node, void *state)
 
 /* Append RangeTblEntry 'rte' to estate->es_range_table */
 static Index
-append_rte_to_estate(EState *estate, RangeTblEntry *rte)
+append_rte_to_estate(EState *estate, RangeTblEntry *rte, Relation child_rel)
 {
 	estate_mod_data	   *emd_struct = fetch_estate_mod_data(estate);
 
@@ -1155,6 +1188,28 @@ append_rte_to_estate(EState *estate, RangeTblEntry *rte)
 
 	/* Update estate_mod_data */
 	emd_struct->estate_not_modified = false;
+
+	/*
+	 * On PG >= 12, also add rte to es_range_table_array. This is horribly
+	 * inefficient, yes.
+	 * At least in 12 es_range_table_array ptr is not saved anywhere in
+	 * core, so it is safe to repalloc.
+	 */
+#if PG_VERSION_NUM >= 120000
+	estate->es_range_table_size = list_length(estate->es_range_table);
+	estate->es_range_table_array = (RangeTblEntry **)
+		repalloc(estate->es_range_table_array,
+				 estate->es_range_table_size * sizeof(RangeTblEntry *));
+	estate->es_range_table_array[estate->es_range_table_size - 1] = rte;
+
+	/*
+	 * Also reallocate es_relations, because es_range_table_size defines its
+	 * len. This also ensures ExecEndPlan will close the rel.
+	 */
+	estate->es_relations = (Relation *)
+		repalloc(estate->es_relations, estate->es_range_table_size * sizeof(Relation));
+	estate->es_relations[estate->es_range_table_size - 1] = child_rel;
+#endif
 
 	return list_length(estate->es_range_table);
 }

@@ -839,7 +839,7 @@ show_concurrent_part_tasks_internal(PG_FUNCTION_ARGS)
 		userctx->cur_idx = 0;
 
 		/* Create tuple descriptor */
-		tupdesc = CreateTemplateTupleDesc(Natts_pathman_cp_tasks, false);
+		tupdesc = CreateTemplateTupleDescCompat(Natts_pathman_cp_tasks, false);
 
 		TupleDescInitEntry(tupdesc, Anum_pathman_cp_tasks_userid,
 						   "userid", REGROLEOID, -1, 0);

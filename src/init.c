@@ -21,12 +21,20 @@
 #include "utils.h"
 
 #include "access/htup_details.h"
+#include "access/heapam.h"
+#include "access/genam.h"
 #include "access/sysattr.h"
+#if PG_VERSION_NUM >= 120000
+#include "access/table.h"
+#endif
 #include "catalog/indexing.h"
 #include "catalog/pg_extension.h"
 #include "catalog/pg_inherits.h"
 #include "catalog/pg_type.h"
 #include "miscadmin.h"
+#if PG_VERSION_NUM >= 120000
+#include "nodes/nodeFuncs.h"
+#endif
 #include "optimizer/clauses.h"
 #include "utils/inval.h"
 #include "utils/builtins.h"
@@ -631,7 +639,11 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 								 TransactionId *xmin, ItemPointerData* iptr)
 {
 	Relation		rel;
+#if PG_VERSION_NUM >= 120000
+	TableScanDesc	scan;
+#else
 	HeapScanDesc	scan;
+#endif
 	ScanKeyData		key[1];
 	Snapshot		snapshot;
 	HeapTuple		htup;
@@ -653,7 +665,11 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 	Assert(RelationGetDescr(rel)->natts == Natts_pathman_config);
 
 	snapshot = RegisterSnapshot(GetLatestSnapshot());
+#if PG_VERSION_NUM >= 120000
+	scan = table_beginscan(rel, snapshot, 1, key);
+#else
 	scan = heap_beginscan(rel, snapshot, 1, key);
+#endif
 
 	while ((htup = heap_getnext(scan, ForwardScanDirection)) != NULL)
 	{
@@ -681,7 +697,11 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 	}
 
 	/* Clean resources */
+#if PG_VERSION_NUM >= 120000
+	table_endscan(scan);
+#else
 	heap_endscan(scan);
+#endif
 	UnregisterSnapshot(snapshot);
 	heap_close(rel, AccessShareLock);
 
@@ -699,7 +719,11 @@ bool
 read_pathman_params(Oid relid, Datum *values, bool *isnull)
 {
 	Relation		rel;
+#if PG_VERSION_NUM >= 120000
+	TableScanDesc	scan;
+#else
 	HeapScanDesc	scan;
+#endif
 	ScanKeyData		key[1];
 	Snapshot		snapshot;
 	HeapTuple		htup;
@@ -712,7 +736,11 @@ read_pathman_params(Oid relid, Datum *values, bool *isnull)
 
 	rel = heap_open(get_pathman_config_params_relid(false), AccessShareLock);
 	snapshot = RegisterSnapshot(GetLatestSnapshot());
+#if PG_VERSION_NUM >= 120000
+	scan = table_beginscan(rel, snapshot, 1, key);
+#else
 	scan = heap_beginscan(rel, snapshot, 1, key);
+#endif
 
 	/* There should be just 1 row */
 	if ((htup = heap_getnext(scan, ForwardScanDirection)) != NULL)
@@ -730,7 +758,11 @@ read_pathman_params(Oid relid, Datum *values, bool *isnull)
 	}
 
 	/* Clean resources */
+#if PG_VERSION_NUM >= 120000
+	table_endscan(scan);
+#else
 	heap_endscan(scan);
+#endif
 	UnregisterSnapshot(snapshot);
 	heap_close(rel, AccessShareLock);
 
@@ -764,7 +796,7 @@ validate_range_constraint(const Expr *expr,
 	tce = lookup_type_cache(prel->ev_type, TYPECACHE_BTREE_OPFAMILY);
 
 	/* Is it an AND clause? */
-	if (and_clause((Node *) expr))
+	if (is_andclause_compat((Node *) expr))
 	{
 		const BoolExpr *boolexpr = (const BoolExpr *) expr;
 		ListCell	   *lc;

@@ -175,62 +175,65 @@ EXPLAIN (COSTS OFF)
 WITH q1 AS (SELECT * FROM test_only.from_only_test),
 	 q2 AS (SELECT * FROM ONLY test_only.from_only_test)
 SELECT * FROM q1 JOIN q2 USING(val);
-                 QUERY PLAN                  
----------------------------------------------
- Hash Join
-   Hash Cond: (q1.val = q2.val)
-   CTE q1
-     ->  Append
-           ->  Seq Scan on from_only_test_1
-           ->  Seq Scan on from_only_test_2
-           ->  Seq Scan on from_only_test_3
-           ->  Seq Scan on from_only_test_4
-           ->  Seq Scan on from_only_test_5
-           ->  Seq Scan on from_only_test_6
-           ->  Seq Scan on from_only_test_7
-           ->  Seq Scan on from_only_test_8
-           ->  Seq Scan on from_only_test_9
-           ->  Seq Scan on from_only_test_10
-   CTE q2
-     ->  Seq Scan on from_only_test
-   ->  CTE Scan on q1
-   ->  Hash
-         ->  CTE Scan on q2
-(19 rows)
+                          QUERY PLAN                           
+---------------------------------------------------------------
+ Nested Loop
+   ->  Seq Scan on from_only_test from_only_test_1
+   ->  Custom Scan (RuntimeAppend)
+         Prune by: (from_only_test_1.val = from_only_test.val)
+         ->  Seq Scan on from_only_test_1 from_only_test
+               Filter: (from_only_test_1.val = val)
+         ->  Seq Scan on from_only_test_2 from_only_test
+               Filter: (from_only_test_1.val = val)
+         ->  Seq Scan on from_only_test_3 from_only_test
+               Filter: (from_only_test_1.val = val)
+         ->  Seq Scan on from_only_test_4 from_only_test
+               Filter: (from_only_test_1.val = val)
+         ->  Seq Scan on from_only_test_5 from_only_test
+               Filter: (from_only_test_1.val = val)
+         ->  Seq Scan on from_only_test_6 from_only_test
+               Filter: (from_only_test_1.val = val)
+         ->  Seq Scan on from_only_test_7 from_only_test
+               Filter: (from_only_test_1.val = val)
+         ->  Seq Scan on from_only_test_8 from_only_test
+               Filter: (from_only_test_1.val = val)
+         ->  Seq Scan on from_only_test_9 from_only_test
+               Filter: (from_only_test_1.val = val)
+         ->  Seq Scan on from_only_test_10 from_only_test
+               Filter: (from_only_test_1.val = val)
+(24 rows)
 
 /* should be OK */
 EXPLAIN (COSTS OFF)
 WITH q1 AS (SELECT * FROM ONLY test_only.from_only_test)
 SELECT * FROM test_only.from_only_test JOIN q1 USING(val);
-                        QUERY PLAN                        
-----------------------------------------------------------
+                          QUERY PLAN                           
+---------------------------------------------------------------
  Nested Loop
-   CTE q1
-     ->  Seq Scan on from_only_test from_only_test_1
-   ->  CTE Scan on q1
+   ->  Seq Scan on from_only_test from_only_test_1
    ->  Custom Scan (RuntimeAppend)
-         Prune by: (q1.val = from_only_test.val)
+         Prune by: (from_only_test_1.val = from_only_test.val)
          ->  Seq Scan on from_only_test_1 from_only_test
-               Filter: (q1.val = val)
+               Filter: (from_only_test_1.val = val)
          ->  Seq Scan on from_only_test_2 from_only_test
-               Filter: (q1.val = val)
+               Filter: (from_only_test_1.val = val)
          ->  Seq Scan on from_only_test_3 from_only_test
-               Filter: (q1.val = val)
+               Filter: (from_only_test_1.val = val)
          ->  Seq Scan on from_only_test_4 from_only_test
-               Filter: (q1.val = val)
+               Filter: (from_only_test_1.val = val)
          ->  Seq Scan on from_only_test_5 from_only_test
-               Filter: (q1.val = val)
+               Filter: (from_only_test_1.val = val)
          ->  Seq Scan on from_only_test_6 from_only_test
-               Filter: (q1.val = val)
+               Filter: (from_only_test_1.val = val)
          ->  Seq Scan on from_only_test_7 from_only_test
-               Filter: (q1.val = val)
+               Filter: (from_only_test_1.val = val)
          ->  Seq Scan on from_only_test_8 from_only_test
-               Filter: (q1.val = val)
+               Filter: (from_only_test_1.val = val)
          ->  Seq Scan on from_only_test_9 from_only_test
-               Filter: (q1.val = val)
+               Filter: (from_only_test_1.val = val)
          ->  Seq Scan on from_only_test_10 from_only_test
-               Filter: (q1.val = val)
-(26 rows)
+               Filter: (from_only_test_1.val = val)
+(24 rows)
 
 /* should be OK */
 EXPLAIN (COSTS OFF)

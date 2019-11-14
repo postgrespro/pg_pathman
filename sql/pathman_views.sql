@@ -2,6 +2,9 @@
  * -------------------------------------------
  *  NOTE: This test behaves differenly on 9.5
  * -------------------------------------------
+ *
+ * Also since 8edd0e794 (>= 12) Append nodes with single subplan are eliminated,
+ * causing different output; pathman_views_2.out is the updated version.
  */
 
 \set VERBOSITY terse

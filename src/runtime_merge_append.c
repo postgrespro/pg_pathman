@@ -19,10 +19,14 @@
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
 #include "nodes/plannodes.h"
+#if PG_VERSION_NUM >= 120000
+#include "optimizer/optimizer.h"
+#else
 #include "optimizer/cost.h"
+#include "optimizer/var.h"
+#endif
 #include "optimizer/planmain.h"
 #include "optimizer/tlist.h"
-#include "optimizer/var.h"
 #include "utils/builtins.h"
 #include "utils/guc.h"
 #include "utils/lsyscache.h"

@@ -20,6 +20,9 @@
 #include "relation_info.h"
 #include "rewrite/rewriteManip.h"
 
+#if PG_VERSION_NUM >= 120000
+#include "access/table.h"
+#endif
 #include "access/htup_details.h"
 #include "foreign/fdwapi.h"
 #include "miscadmin.h"

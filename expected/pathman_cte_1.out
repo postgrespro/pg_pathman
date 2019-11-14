@@ -5,32 +5,37 @@
  * an option to forcibly make them MATERIALIZED, but we also need to run tests
  * on older versions, so create pathman_cte_1.out instead.
  */
-
 \set VERBOSITY terse
-
 SET search_path = 'public';
 CREATE EXTENSION pg_pathman;
 CREATE SCHEMA test_cte;
-
 CREATE TABLE test_cte.range_rel (
 	id	INT4,
 	dt	TIMESTAMP NOT NULL,
 	txt	TEXT);
-
 INSERT INTO test_cte.range_rel (dt, txt)
 SELECT g, md5(g::TEXT)
 FROM generate_series('2015-01-01', '2015-04-30', '1 day'::interval) AS g;
-
 SELECT create_range_partitions('test_cte.range_rel', 'DT', '2015-01-01'::DATE, '1 month'::INTERVAL);
+ create_range_partitions 
+-------------------------
+                       4
+(1 row)
 
 /* perform a query */
 EXPLAIN (COSTS OFF)
 	WITH ttt AS (SELECT * FROM test_cte.range_rel WHERE dt >= '2015-02-01' AND dt < '2015-03-15')
 SELECT * FROM ttt;
+                                   QUERY PLAN                                   
+--------------------------------------------------------------------------------
+ Append
+   ->  Seq Scan on range_rel_2
+   ->  Seq Scan on range_rel_3
+         Filter: (dt < 'Sun Mar 15 00:00:00 2015'::timestamp without time zone)
+(4 rows)
 
 DROP TABLE test_cte.range_rel CASCADE;
-
-
+NOTICE:  drop cascades to 5 other objects
 CREATE TABLE test_cte.hash_rel (
 	id		INT4,
 	value	INTEGER NOT NULL);
@@ -38,25 +43,30 @@ INSERT INTO test_cte.hash_rel VALUES (1, 1);
 INSERT INTO test_cte.hash_rel VALUES (2, 2);
 INSERT INTO test_cte.hash_rel VALUES (3, 3);
 SELECT create_hash_partitions('test_cte.hash_rel', 'value', 3);
+ create_hash_partitions 
+------------------------
+                      3
+(1 row)
 
 /* perform a query */
 EXPLAIN (COSTS OFF)
 	WITH ttt AS (SELECT * FROM test_cte.hash_rel WHERE value = 2)
 SELECT * FROM ttt;
+       QUERY PLAN       
+------------------------
+ Seq Scan on hash_rel_1
+   Filter: (value = 2)
+(2 rows)
 
 DROP TABLE test_cte.hash_rel CASCADE;
-
-
-
+NOTICE:  drop cascades to 3 other objects
 /*
  * Test CTE query - by @parihaaraka (add varno to WalkerContext)
  */
 CREATE TABLE test_cte.cte_del_xacts (id BIGSERIAL PRIMARY KEY, pdate DATE NOT NULL);
-
 INSERT INTO test_cte.cte_del_xacts (pdate)
 SELECT gen_date
 FROM generate_series('2016-01-01'::date, '2016-04-9'::date, '1 day') AS gen_date;
-
 CREATE TABLE test_cte.cte_del_xacts_specdata
 (
 	tid BIGINT PRIMARY KEY,
@@ -64,12 +74,14 @@ CREATE TABLE test_cte.cte_del_xacts_specdata
 	state_code SMALLINT NOT NULL DEFAULT 8,
 	regtime TIMESTAMP WITHOUT TIME ZONE NOT NULL
 );
-
 INSERT INTO test_cte.cte_del_xacts_specdata VALUES (1, 1, 1, current_timestamp); /* for subquery test */
-
 /* create 2 partitions */
 SELECT create_range_partitions('test_cte.cte_del_xacts'::regclass, 'pdate',
 							   '2016-01-01'::date, '50 days'::interval);
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
 
 EXPLAIN (COSTS OFF)
 WITH tmp AS (
@@ -77,30 +89,103 @@ WITH tmp AS (
 	FROM test_cte.cte_del_xacts_specdata)
 DELETE FROM test_cte.cte_del_xacts t USING tmp
 WHERE t.id = tmp.tid AND t.pdate = tmp.pdate AND tmp.test_mode > 0;
+                                                     QUERY PLAN                                                      
+---------------------------------------------------------------------------------------------------------------------
+ Delete on cte_del_xacts t
+   Delete on cte_del_xacts t
+   Delete on cte_del_xacts_1 t_1
+   Delete on cte_del_xacts_2 t_2
+   ->  Hash Join
+         Hash Cond: ((cte_del_xacts_specdata.tid = t.id) AND ((cte_del_xacts_specdata.regtime)::date = t.pdate))
+         ->  Seq Scan on cte_del_xacts_specdata
+               Filter: (test_mode > 0)
+         ->  Hash
+               ->  Seq Scan on cte_del_xacts t
+   ->  Hash Join
+         Hash Cond: ((t_1.id = cte_del_xacts_specdata.tid) AND (t_1.pdate = (cte_del_xacts_specdata.regtime)::date))
+         ->  Seq Scan on cte_del_xacts_1 t_1
+         ->  Hash
+               ->  Seq Scan on cte_del_xacts_specdata
+                     Filter: (test_mode > 0)
+   ->  Hash Join
+         Hash Cond: ((t_2.id = cte_del_xacts_specdata.tid) AND (t_2.pdate = (cte_del_xacts_specdata.regtime)::date))
+         ->  Seq Scan on cte_del_xacts_2 t_2
+         ->  Hash
+               ->  Seq Scan on cte_del_xacts_specdata
+                     Filter: (test_mode > 0)
+(22 rows)
 
 SELECT drop_partitions('test_cte.cte_del_xacts'); /* now drop partitions */
+NOTICE:  50 rows copied from test_cte.cte_del_xacts_1
+NOTICE:  50 rows copied from test_cte.cte_del_xacts_2
+ drop_partitions 
+-----------------
+               2
+(1 row)
 
 /* create 1 partition */
 SELECT create_range_partitions('test_cte.cte_del_xacts'::regclass, 'pdate',
 							   '2016-01-01'::date, '1 year'::interval);
+ create_range_partitions 
+-------------------------
+                       1
+(1 row)
 
 /* parent enabled! */
 SELECT set_enable_parent('test_cte.cte_del_xacts', true);
+ set_enable_parent 
+-------------------
+ 
+(1 row)
+
 EXPLAIN (COSTS OFF)
 WITH tmp AS (
 	SELECT tid, test_mode, regtime::DATE AS pdate, state_code
 	FROM test_cte.cte_del_xacts_specdata)
 DELETE FROM test_cte.cte_del_xacts t USING tmp
 WHERE t.id = tmp.tid AND t.pdate = tmp.pdate AND tmp.test_mode > 0;
+                                                     QUERY PLAN                                                      
+---------------------------------------------------------------------------------------------------------------------
+ Delete on cte_del_xacts t
+   Delete on cte_del_xacts t
+   Delete on cte_del_xacts_1 t_1
+   ->  Hash Join
+         Hash Cond: ((cte_del_xacts_specdata.tid = t.id) AND ((cte_del_xacts_specdata.regtime)::date = t.pdate))
+         ->  Seq Scan on cte_del_xacts_specdata
+               Filter: (test_mode > 0)
+         ->  Hash
+               ->  Seq Scan on cte_del_xacts t
+   ->  Hash Join
+         Hash Cond: ((t_1.id = cte_del_xacts_specdata.tid) AND (t_1.pdate = (cte_del_xacts_specdata.regtime)::date))
+         ->  Seq Scan on cte_del_xacts_1 t_1
+         ->  Hash
+               ->  Seq Scan on cte_del_xacts_specdata
+                     Filter: (test_mode > 0)
+(15 rows)
 
 /* parent disabled! */
 SELECT set_enable_parent('test_cte.cte_del_xacts', false);
+ set_enable_parent 
+-------------------
+ 
+(1 row)
+
 EXPLAIN (COSTS OFF)
 WITH tmp AS (
 	SELECT tid, test_mode, regtime::DATE AS pdate, state_code
 	FROM test_cte.cte_del_xacts_specdata)
 DELETE FROM test_cte.cte_del_xacts t USING tmp
 WHERE t.id = tmp.tid AND t.pdate = tmp.pdate AND tmp.test_mode > 0;
+                                                   QUERY PLAN                                                    
+-----------------------------------------------------------------------------------------------------------------
+ Delete on cte_del_xacts_1 t
+   ->  Hash Join
+         Hash Cond: ((t.id = cte_del_xacts_specdata.tid) AND (t.pdate = (cte_del_xacts_specdata.regtime)::date))
+         ->  Seq Scan on cte_del_xacts_1 t
+         ->  Hash
+               ->  Seq Scan on cte_del_xacts_specdata
+                     Filter: (test_mode > 0)
+(7 rows)
 
 /* create stub pl/PgSQL function */
 CREATE OR REPLACE FUNCTION test_cte.cte_del_xacts_stab(name TEXT)
@@ -111,37 +196,50 @@ begin
 end
 $$
 LANGUAGE plpgsql STABLE;
-
 /* test subquery planning */
 WITH tmp AS (
 	SELECT tid FROM test_cte.cte_del_xacts_specdata
 	WHERE state_code != test_cte.cte_del_xacts_stab('test'))
 SELECT * FROM test_cte.cte_del_xacts t JOIN tmp ON t.id = tmp.tid;
+ id |   pdate    | tid 
+----+------------+-----
+  1 | 01-01-2016 |   1
+(1 row)
 
 /* test subquery planning (one more time) */
 WITH tmp AS (
 	SELECT tid FROM test_cte.cte_del_xacts_specdata
 	WHERE state_code != test_cte.cte_del_xacts_stab('test'))
 SELECT * FROM test_cte.cte_del_xacts t JOIN tmp ON t.id = tmp.tid;
+ id |   pdate    | tid 
+----+------------+-----
+  1 | 01-01-2016 |   1
+(1 row)
 
 DROP FUNCTION test_cte.cte_del_xacts_stab(TEXT);
 DROP TABLE test_cte.cte_del_xacts, test_cte.cte_del_xacts_specdata CASCADE;
-
-
+NOTICE:  drop cascades to 2 other objects
 /* Test recursive CTE */
 CREATE TABLE test_cte.recursive_cte_test_tbl(id INT NOT NULL, name TEXT NOT NULL);
 SELECT create_hash_partitions('test_cte.recursive_cte_test_tbl', 'id', 2);
+ create_hash_partitions 
+------------------------
+                      2
+(1 row)
 
 INSERT INTO test_cte.recursive_cte_test_tbl (id, name)
 SELECT id, 'name'||id FROM generate_series(1,100) f(id);
-
 INSERT INTO test_cte.recursive_cte_test_tbl (id, name)
 SELECT id, 'name'||(id + 1) FROM generate_series(1,100) f(id);
-
 INSERT INTO test_cte.recursive_cte_test_tbl (id, name)
 SELECT id, 'name'||(id + 2) FROM generate_series(1,100) f(id);
-
 SELECT * FROM test_cte.recursive_cte_test_tbl WHERE id = 5;
+ id | name  
+----+-------
+  5 | name5
+  5 | name6
+  5 | name7
+(3 rows)
 
 WITH RECURSIVE test AS (
 	SELECT min(name) AS name
@@ -154,8 +252,14 @@ WITH RECURSIVE test AS (
 	FROM test
 	WHERE name IS NOT NULL)
 SELECT * FROM test;
-
-
+ name  
+-------
+ name5
+ name6
+ name7
+ 
+(4 rows)
 
 DROP SCHEMA test_cte CASCADE;
+NOTICE:  drop cascades to 3 other objects
 DROP EXTENSION pg_pathman;

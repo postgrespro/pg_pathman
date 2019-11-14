@@ -83,47 +83,41 @@ EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_1 WHERE val =  16;
 (2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_1 WHERE val =  21;
-         QUERY PLAN         
-----------------------------
- Append
-   ->  Seq Scan on test_1_3
-         Filter: (val = 21)
-(3 rows)
+      QUERY PLAN      
+----------------------
+ Seq Scan on test_1_3
+   Filter: (val = 21)
+(2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_1 WHERE val <  11;
-         QUERY PLAN         
-----------------------------
- Append
-   ->  Seq Scan on test_1_1
-(2 rows)
+      QUERY PLAN      
+----------------------
+ Seq Scan on test_1_1
+(1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_1 WHERE val <= 11;
-         QUERY PLAN         
-----------------------------
- Append
-   ->  Seq Scan on test_1_1
-(2 rows)
+      QUERY PLAN      
+----------------------
+ Seq Scan on test_1_1
+(1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_1 WHERE val <  16;
-         QUERY PLAN         
-----------------------------
- Append
-   ->  Seq Scan on test_1_1
-(2 rows)
+      QUERY PLAN      
+----------------------
+ Seq Scan on test_1_1
+(1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_1 WHERE val <= 16;
-         QUERY PLAN         
-----------------------------
- Append
-   ->  Seq Scan on test_1_1
-(2 rows)
+      QUERY PLAN      
+----------------------
+ Seq Scan on test_1_1
+(1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_1 WHERE val <  21;
-         QUERY PLAN         
-----------------------------
- Append
-   ->  Seq Scan on test_1_1
-(2 rows)
+      QUERY PLAN      
+----------------------
+ Seq Scan on test_1_1
+(1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_1 WHERE val <= 21;
          QUERY PLAN          
@@ -135,47 +129,41 @@ EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_1 WHERE val <= 21;
 (4 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_1 WHERE val >  11;
-         QUERY PLAN         
-----------------------------
- Append
-   ->  Seq Scan on test_1_3
-(2 rows)
+      QUERY PLAN      
+----------------------
+ Seq Scan on test_1_3
+(1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_1 WHERE val >= 11;
-         QUERY PLAN         
-----------------------------
- Append
-   ->  Seq Scan on test_1_3
-(2 rows)
+      QUERY PLAN      
+----------------------
+ Seq Scan on test_1_3
+(1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_1 WHERE val >  16;
-         QUERY PLAN         
-----------------------------
- Append
-   ->  Seq Scan on test_1_3
-(2 rows)
+      QUERY PLAN      
+----------------------
+ Seq Scan on test_1_3
+(1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_1 WHERE val >= 16;
-         QUERY PLAN         
-----------------------------
- Append
-   ->  Seq Scan on test_1_3
-(2 rows)
+      QUERY PLAN      
+----------------------
+ Seq Scan on test_1_3
+(1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_1 WHERE val >  21;
-         QUERY PLAN         
-----------------------------
- Append
-   ->  Seq Scan on test_1_3
-         Filter: (val > 21)
-(3 rows)
+      QUERY PLAN      
+----------------------
+ Seq Scan on test_1_3
+   Filter: (val > 21)
+(2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_1 WHERE val >= 21;
-         QUERY PLAN         
-----------------------------
- Append
-   ->  Seq Scan on test_1_3
-(2 rows)
+      QUERY PLAN      
+----------------------
+ Seq Scan on test_1_3
+(1 row)
 
 /* Pivot values */
 EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_2 WHERE val =  21;
@@ -193,12 +181,11 @@ EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_2 WHERE val =  26;
 (2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_2 WHERE val =  31;
-         QUERY PLAN         
-----------------------------
- Append
-   ->  Seq Scan on test_2_4
-         Filter: (val = 31)
-(3 rows)
+      QUERY PLAN      
+----------------------
+ Seq Scan on test_2_4
+   Filter: (val = 31)
+(2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_2 WHERE val <  21;
          QUERY PLAN         
@@ -354,12 +341,11 @@ EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_3 WHERE val =  36;
 (2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_3 WHERE val =  41;
-         QUERY PLAN         
-----------------------------
- Append
-   ->  Seq Scan on test_3_5
-         Filter: (val = 41)
-(3 rows)
+      QUERY PLAN      
+----------------------
+ Seq Scan on test_3_5
+   Filter: (val = 41)
+(2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_3 WHERE val <  31;
          QUERY PLAN         
@@ -553,12 +539,11 @@ EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val =  46;
 (2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val =  51;
-         QUERY PLAN         
-----------------------------
- Append
-   ->  Seq Scan on test_4_6
-         Filter: (val = 51)
-(3 rows)
+      QUERY PLAN      
+----------------------
+ Seq Scan on test_4_6
+   Filter: (val = 51)
+(2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val <  31;
          QUERY PLAN         

@@ -82,11 +82,10 @@ SELECT *, tableoid::REGCLASS FROM test_exprs.canon;
 (1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.canon WHERE val COLLATE "C" < ALL (array['b', 'c']);
-        QUERY PLAN         
----------------------------
- Append
-   ->  Seq Scan on canon_1
-(2 rows)
+     QUERY PLAN      
+---------------------
+ Seq Scan on canon_1
+(1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.canon WHERE val COLLATE "POSIX" < ALL (array['b', 'c']);
                         QUERY PLAN                         
@@ -169,42 +168,38 @@ SELECT *, tableoid::REGCLASS FROM test_exprs.composite;
 (3 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.composite WHERE (a, b)::test_exprs.composite < (21, 0)::test_exprs.composite;
-                                          QUERY PLAN                                          
-----------------------------------------------------------------------------------------------
+                                     QUERY PLAN                                     
+------------------------------------------------------------------------------------
  Append
    ->  Seq Scan on composite_1
    ->  Seq Scan on composite_2
    ->  Seq Scan on composite_3
-         Filter: (ROW(a, b)::test_exprs.composite < ROW(21, '0'::text)::test_exprs.composite)
+         Filter: (ROW(a, b)::test_exprs.composite < '(21,0)'::test_exprs.composite)
 (5 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.composite WHERE (a, b) < (21, 0)::test_exprs.composite;
-                               QUERY PLAN                               
-------------------------------------------------------------------------
+                          QUERY PLAN                          
+--------------------------------------------------------------
  Append
    ->  Seq Scan on composite_1
-         Filter: (ROW(a, b) < ROW(21, '0'::text)::test_exprs.composite)
+         Filter: (ROW(a, b) < '(21,0)'::test_exprs.composite)
    ->  Seq Scan on composite_2
-         Filter: (ROW(a, b) < ROW(21, '0'::text)::test_exprs.composite)
+         Filter: (ROW(a, b) < '(21,0)'::test_exprs.composite)
    ->  Seq Scan on composite_3
-         Filter: (ROW(a, b) < ROW(21, '0'::text)::test_exprs.composite)
+         Filter: (ROW(a, b) < '(21,0)'::test_exprs.composite)
    ->  Seq Scan on composite_4
-         Filter: (ROW(a, b) < ROW(21, '0'::text)::test_exprs.composite)
+         Filter: (ROW(a, b) < '(21,0)'::test_exprs.composite)
 (9 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.composite WHERE (a, b)::test_exprs.composite < (21, 0);
-                           QUERY PLAN                           
-----------------------------------------------------------------
+                              QUERY PLAN                              
+----------------------------------------------------------------------
  Append
    ->  Seq Scan on composite_1
-         Filter: (ROW(a, b)::test_exprs.composite < ROW(21, 0))
    ->  Seq Scan on composite_2
-         Filter: (ROW(a, b)::test_exprs.composite < ROW(21, 0))
    ->  Seq Scan on composite_3
-         Filter: (ROW(a, b)::test_exprs.composite < ROW(21, 0))
-   ->  Seq Scan on composite_4
-         Filter: (ROW(a, b)::test_exprs.composite < ROW(21, 0))
-(9 rows)
+         Filter: (ROW(a, b)::test_exprs.composite < '(21,0)'::record)
+(5 rows)
 
 DROP TABLE test_exprs.composite CASCADE;
 NOTICE:  drop cascades to 5 other objects
@@ -300,13 +295,12 @@ PL/pgSQL function create_hash_partitions(regclass,text,integer,boolean,text[],te
 /* Check that 'pathman_hooks_enabled' is true (1 partition in plan) */
 EXPLAIN (COSTS OFF) INSERT INTO test_exprs.canary_copy
 SELECT * FROM test_exprs.canary WHERE val = 1;
-            QUERY PLAN            
-----------------------------------
+         QUERY PLAN         
+----------------------------
  Insert on canary_copy
-   ->  Append
-         ->  Seq Scan on canary_0
-               Filter: (val = 1)
-(4 rows)
+   ->  Seq Scan on canary_0
+         Filter: (val = 1)
+(3 rows)
 
 \set VERBOSITY terse
 SELECT create_hash_partitions('test_exprs.hash_rel', 'value * value2', 4);
@@ -356,12 +350,11 @@ EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.hash_rel WHERE value = 5;
 (9 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.hash_rel WHERE (value * value2) = 5;
-               QUERY PLAN               
-----------------------------------------
- Append
-   ->  Seq Scan on hash_rel_0
-         Filter: ((value * value2) = 5)
-(3 rows)
+            QUERY PLAN            
+----------------------------------
+ Seq Scan on hash_rel_0
+   Filter: ((value * value2) = 5)
+(2 rows)
 
 /*
  * Test RANGE
@@ -395,13 +388,12 @@ PL/pgSQL function create_range_partitions(regclass,text,anyelement,interval,inte
 /* Check that 'pathman_hooks_enabled' is true (1 partition in plan) */
 EXPLAIN (COSTS OFF) INSERT INTO test_exprs.canary_copy
 SELECT * FROM test_exprs.canary WHERE val = 1;
-            QUERY PLAN            
-----------------------------------
+         QUERY PLAN         
+----------------------------
  Insert on canary_copy
-   ->  Append
-         ->  Seq Scan on canary_0
-               Filter: (val = 1)
-(4 rows)
+   ->  Seq Scan on canary_0
+         Filter: (val = 1)
+(3 rows)
 
 \set VERBOSITY terse
 SELECT create_range_partitions('test_exprs.range_rel', 'AGE(dt, ''2000-01-01''::DATE)',
@@ -427,12 +419,11 @@ SELECT COUNT(*) FROM test_exprs.range_rel_6;
 (1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.range_rel WHERE (AGE(dt, '2000-01-01'::DATE)) = '18 years'::interval;
-                                                 QUERY PLAN                                                  
--------------------------------------------------------------------------------------------------------------
- Append
-   ->  Seq Scan on range_rel_4
-         Filter: (age(dt, 'Sat Jan 01 00:00:00 2000'::timestamp without time zone) = '@ 18 years'::interval)
-(3 rows)
+                                              QUERY PLAN                                               
+-------------------------------------------------------------------------------------------------------
+ Seq Scan on range_rel_4
+   Filter: (age(dt, 'Sat Jan 01 00:00:00 2000'::timestamp without time zone) = '@ 18 years'::interval)
+(2 rows)
 
 DROP SCHEMA test_exprs CASCADE;
 NOTICE:  drop cascades to 24 other objects

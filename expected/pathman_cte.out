@@ -1,10 +1,14 @@
+/*
+ * Test simple CTE queries.
+ * Since 12 (608b167f9f), CTEs which are scanned once are no longer an
+ * optimization fence, which changes practically all plans here. There is
+ * an option to forcibly make them MATERIALIZED, but we also need to run tests
+ * on older versions, so create pathman_cte_1.out instead.
+ */
 \set VERBOSITY terse
 SET search_path = 'public';
 CREATE EXTENSION pg_pathman;
 CREATE SCHEMA test_cte;
-/*
- * Test simple CTE queries
- */
 CREATE TABLE test_cte.range_rel (
 	id	INT4,
 	dt	TIMESTAMP NOT NULL,

@@ -229,9 +229,9 @@ SELECT set_interval('calamity.part_test', 100);				/* ok */
 (1 row)
 
 SELECT set_interval('calamity.part_test', 15.6);			/* not ok */
-ERROR:  invalid input syntax for integer: "15.6"
+ERROR:  invalid input syntax for type integer: "15.6"
 SELECT set_interval('calamity.part_test', 'abc'::text);		/* not ok */
-ERROR:  invalid input syntax for integer: "abc"
+ERROR:  invalid input syntax for type integer: "abc"
 SELECT drop_partitions('calamity.part_test', true);
  drop_partitions 
 -----------------

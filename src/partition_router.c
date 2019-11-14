@@ -14,12 +14,23 @@
 #include "partition_router.h"
 #include "compat/pg_compat.h"
 
+#if PG_VERSION_NUM >= 120000
+#include "access/table.h"
+#include "access/tableam.h"
+#endif
 #include "access/xact.h"
+#if PG_VERSION_NUM >= 120000
+#include "access/heapam.h" /* direct heap_delete, no-no */
+#endif
 #include "access/htup_details.h"
 #include "catalog/pg_class.h"
 #include "commands/trigger.h"
 #include "executor/nodeModifyTable.h"
 #include "foreign/fdwapi.h"
+#if PG_VERSION_NUM >= 120000
+#include "nodes/makefuncs.h" /* make_ands_explicit */
+#include "optimizer/optimizer.h"
+#endif
 #include "optimizer/clauses.h"
 #include "storage/bufmgr.h"
 #include "utils/guc.h"
@@ -272,7 +283,8 @@ router_set_slot(PartitionRouterState *state,
 
 		/* Don't forget to set saved_slot! */
 		state->yielded_slot = ExecInitExtraTupleSlotCompat(mt_state->ps.state,
-			slot->tts_tupleDescriptor);
+														   slot->tts_tupleDescriptor,
+														   &TTSOpsHeapTuple);
 		ExecCopySlot(state->yielded_slot, slot);
 	}
 
@@ -394,8 +406,15 @@ router_lock_or_delete_tuple(PartitionRouterState *state,
 	ExprContext			   *econtext = GetPerTupleExprContext(estate);
 	ExprState			   *constraint = state->constraint;
 
-	HeapUpdateFailureData	hufd;
+	/* Maintaining both >= 12 and earlier is quite horrible there, you know */
+#if PG_VERSION_NUM >= 120000
+	TM_FailureData	tmfd;
+	TM_Result		result;
+#else
+	HeapUpdateFailureData	tmfd;
 	HTSU_Result				result;
+#endif
+
 	EPQState			   *epqstate = &state->epqstate;
 
 	LOCKMODE				lockmode;
@@ -422,9 +441,14 @@ recheck:
 		if (rri->ri_TrigDesc &&
 			rri->ri_TrigDesc->trig_update_before_row)
 		{
+#if PG_VERSION_NUM >= 120000
+			if (!ExecBRUpdateTriggers(estate, epqstate, rri, tupleid, NULL, slot))
+				return NULL;
+#else
 			slot = ExecBRUpdateTriggers(estate, epqstate, rri, tupleid, NULL, slot);
 			if (TupIsNull(slot))
 				return NULL;
+#endif
 		}
 
 		/* BEFORE ROW DELETE triggers */
@@ -439,7 +463,7 @@ recheck:
 		result = heap_delete_compat(rel, tupleid,
 									estate->es_output_cid,
 									estate->es_crosscheck_snapshot,
-									true /* wait for commit */, &hufd,
+									true /* wait for commit */, &tmfd,
 									true /* changing partition */);
 	}
 	else
@@ -448,10 +472,11 @@ recheck:
 		Buffer			buffer;
 
 		tuple.t_self = *tupleid;
+		/* xxx why we ever need this? */
 		result = heap_lock_tuple(rel, &tuple,
 								 estate->es_output_cid,
 								 lockmode, LockWaitBlock,
-								 false, &buffer, &hufd);
+								 false, &buffer, &tmfd);
 
 		ReleaseBuffer(buffer);
 	}
@@ -459,8 +484,12 @@ recheck:
 	/* Check lock/delete status */
 	switch (result)
 	{
+#if PG_VERSION_NUM >= 120000
+		case TM_SelfModified:
+#else
 		case HeapTupleSelfUpdated:
-			if (hufd.cmax != estate->es_output_cid)
+#endif
+			if (tmfd.cmax != estate->es_output_cid)
 				ereport(ERROR,
 						(errcode(ERRCODE_TRIGGERED_DATA_CHANGE_VIOLATION),
 						 errmsg("tuple to be updated was already modified by an operation triggered by the current command"),
@@ -469,20 +498,121 @@ recheck:
 			/* Already deleted by self; nothing to do */
 			return NULL;
 
+#if PG_VERSION_NUM >= 120000
+		case TM_Ok:
+#else
 		case HeapTupleMayBeUpdated:
+#endif
 			break;
 
+#if PG_VERSION_NUM >= 120000  /* TM_Deleted/TM_Updated */
+		case TM_Updated:
+			{
+				/* not sure this stuff is correct at all */
+				TupleTableSlot *inputslot;
+				TupleTableSlot *epqslot;
+
+				if (IsolationUsesXactSnapshot())
+					ereport(ERROR,
+							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+							 errmsg("could not serialize access due to concurrent update")));
+
+				/*
+				 * Already know that we're going to need to do EPQ, so
+				 * fetch tuple directly into the right slot.
+				 */
+				inputslot = EvalPlanQualSlot(epqstate, rel, rri->ri_RangeTableIndex);
+
+				result = table_tuple_lock(rel, tupleid,
+										  estate->es_snapshot,
+										  inputslot, estate->es_output_cid,
+										  LockTupleExclusive, LockWaitBlock,
+										  TUPLE_LOCK_FLAG_FIND_LAST_VERSION,
+										  &tmfd);
+
+				switch (result)
+				{
+					case TM_Ok:
+						Assert(tmfd.traversed);
+						epqslot = EvalPlanQual(epqstate,
+											   rel,
+											   rri->ri_RangeTableIndex,
+											   inputslot);
+						if (TupIsNull(epqslot))
+							/* Tuple not passing quals anymore, exiting... */
+							return NULL;
+
+						/* just copied from below, ha */
+						*tupleid = tmfd.ctid;
+						slot = epqslot;
+						goto recheck;
+
+					case TM_SelfModified:
+
+						/*
+						 * This can be reached when following an update
+						 * chain from a tuple updated by another session,
+						 * reaching a tuple that was already updated in
+						 * this transaction. If previously updated by this
+						 * command, ignore the delete, otherwise error
+						 * out.
+						 *
+						 * See also TM_SelfModified response to
+						 * table_tuple_delete() above.
+						 */
+						if (tmfd.cmax != estate->es_output_cid)
+							ereport(ERROR,
+									(errcode(ERRCODE_TRIGGERED_DATA_CHANGE_VIOLATION),
+									 errmsg("tuple to be deleted was already modified by an operation triggered by the current command"),
+									 errhint("Consider using an AFTER trigger instead of a BEFORE trigger to propagate changes to other rows.")));
+						return NULL;
+
+					case TM_Deleted:
+						/* tuple already deleted; nothing to do */
+						return NULL;
+
+					default:
+
+						/*
+						 * TM_Invisible should be impossible because we're
+						 * waiting for updated row versions, and would
+						 * already have errored out if the first version
+						 * is invisible.
+						 *
+						 * TM_Updated should be impossible, because we're
+						 * locking the latest version via
+						 * TUPLE_LOCK_FLAG_FIND_LAST_VERSION.
+						 */
+						elog(ERROR, "unexpected table_tuple_lock status: %u",
+							 result);
+						return NULL;
+				}
+
+				Assert(false);
+				break;
+			}
+
+
+		case TM_Deleted:
+			if (IsolationUsesXactSnapshot())
+				ereport(ERROR,
+						(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+						 errmsg("could not serialize access due to concurrent delete")));
+			/* tuple already deleted; nothing to do */
+			return NULL;
+
+#else
 		case HeapTupleUpdated:
 			if (IsolationUsesXactSnapshot())
 				ereport(ERROR,
 						(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
 						 errmsg("could not serialize access due to concurrent update")));
-			if (ItemPointerIndicatesMovedPartitions(&hufd.ctid))
+			if (ItemPointerIndicatesMovedPartitions(&tmfd.ctid))
 				ereport(ERROR,
 						(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
 						 errmsg("tuple to be updated was already moved to another partition due to concurrent update")));
 
-			if (!ItemPointerEquals(tupleid, &hufd.ctid))
+			if (!ItemPointerEquals(tupleid, &tmfd.ctid))
 			{
 				TupleTableSlot *epqslot;
 
@@ -491,13 +621,13 @@ recheck:
 									   rel,
 									   rri->ri_RangeTableIndex,
 									   LockTupleExclusive,
-									   &hufd.ctid,
-									   hufd.xmax);
+									   &tmfd.ctid,
+									   tmfd.xmax);
 
 				if (!TupIsNull(epqslot))
 				{
 					Assert(tupleid != NULL);
-					*tupleid = hufd.ctid;
+					*tupleid = tmfd.ctid;
 					slot = epqslot;
 					goto recheck;
 				}
@@ -505,8 +635,13 @@ recheck:
 
 			/* Tuple already deleted; nothing to do */
 			return NULL;
+#endif  /* TM_Deleted/TM_Updated */
 
+#if PG_VERSION_NUM >= 120000
+		case TM_Invisible:
+#else
 		case HeapTupleInvisible:
+#endif
 			elog(ERROR, "attempted to lock invisible tuple");
 			break;
 

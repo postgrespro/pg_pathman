@@ -138,16 +138,15 @@ ROLLBACK;
 EXPLAIN (COSTS OFF)
 UPDATE test.tmp t SET value = r.value
 FROM test.range_rel r WHERE r.dt = '2010-01-01' AND r.id = t.id;
-                                         QUERY PLAN                                         
---------------------------------------------------------------------------------------------
+                                      QUERY PLAN                                      
+--------------------------------------------------------------------------------------
  Update on tmp t
    ->  Nested Loop
          ->  Seq Scan on tmp t
-         ->  Append
-               ->  Index Scan using range_rel_1_pkey on range_rel_1 r
-                     Index Cond: (id = t.id)
-                     Filter: (dt = 'Fri Jan 01 00:00:00 2010'::timestamp without time zone)
-(7 rows)
+         ->  Index Scan using range_rel_1_pkey on range_rel_1 r
+               Index Cond: (id = t.id)
+               Filter: (dt = 'Fri Jan 01 00:00:00 2010'::timestamp without time zone)
+(6 rows)
 
 BEGIN;
 UPDATE test.tmp t SET value = r.value
@@ -175,16 +174,15 @@ ROLLBACK;
 EXPLAIN (COSTS OFF)
 DELETE FROM test.tmp t USING test.range_rel r
 WHERE r.dt = '2010-01-02' AND r.id = t.id;
-                                         QUERY PLAN                                         
---------------------------------------------------------------------------------------------
+                                      QUERY PLAN                                      
+--------------------------------------------------------------------------------------
  Delete on tmp t
    ->  Nested Loop
          ->  Seq Scan on tmp t
-         ->  Append
-               ->  Index Scan using range_rel_1_pkey on range_rel_1 r
-                     Index Cond: (id = t.id)
-                     Filter: (dt = 'Sat Jan 02 00:00:00 2010'::timestamp without time zone)
-(7 rows)
+         ->  Index Scan using range_rel_1_pkey on range_rel_1 r
+               Index Cond: (id = t.id)
+               Filter: (dt = 'Sat Jan 02 00:00:00 2010'::timestamp without time zone)
+(6 rows)
 
 BEGIN;
 DELETE FROM test.tmp t USING test.range_rel r
@@ -340,17 +338,15 @@ EXPLAIN (COSTS OFF)
 WITH q AS (SELECT * FROM test.range_rel r
 		   WHERE r.dt = '2010-01-02')
 DELETE FROM test.tmp USING q;
-                                       QUERY PLAN                                       
-----------------------------------------------------------------------------------------
+                                         QUERY PLAN                                         
+--------------------------------------------------------------------------------------------
  Delete on tmp
-   CTE q
-     ->  Append
-           ->  Seq Scan on range_rel_1 r
-                 Filter: (dt = 'Sat Jan 02 00:00:00 2010'::timestamp without time zone)
    ->  Nested Loop
          ->  Seq Scan on tmp
-         ->  CTE Scan on q
-(8 rows)
+         ->  Materialize
+               ->  Seq Scan on range_rel_1 r
+                     Filter: (dt = 'Sat Jan 02 00:00:00 2010'::timestamp without time zone)
+(6 rows)
 
 BEGIN;
 WITH q AS (SELECT * FROM test.range_rel r
@@ -388,21 +384,20 @@ WITH q AS (DELETE FROM test.tmp t
 		   WHERE r.dt = '2010-01-02' AND r.id = t.id
 		   RETURNING *)
 DELETE FROM test.tmp USING q;
-                                             QUERY PLAN                                             
-----------------------------------------------------------------------------------------------------
+                                          QUERY PLAN                                          
+----------------------------------------------------------------------------------------------
  Delete on tmp
    CTE q
      ->  Delete on tmp t
            ->  Nested Loop
                  ->  Seq Scan on tmp t
-                 ->  Append
-                       ->  Index Scan using range_rel_1_pkey on range_rel_1 r
-                             Index Cond: (id = t.id)
-                             Filter: (dt = 'Sat Jan 02 00:00:00 2010'::timestamp without time zone)
+                 ->  Index Scan using range_rel_1_pkey on range_rel_1 r
+                       Index Cond: (id = t.id)
+                       Filter: (dt = 'Sat Jan 02 00:00:00 2010'::timestamp without time zone)
    ->  Nested Loop
          ->  Seq Scan on tmp
          ->  CTE Scan on q
-(12 rows)
+(11 rows)
 
 BEGIN;
 WITH q AS (DELETE FROM test.tmp t
@@ -419,40 +414,37 @@ WITH q AS (WITH n AS (SELECT id FROM test.tmp2 WHERE id = 2)
 		   WHERE t.id = n.id
 		   RETURNING *)
 DELETE FROM test.tmp USING q;
-                 QUERY PLAN                 
---------------------------------------------
+               QUERY PLAN               
+----------------------------------------
  Delete on tmp
    CTE q
      ->  Delete on tmp t
-           CTE n
-             ->  Append
-                   ->  Seq Scan on tmp2_2
-                         Filter: (id = 2)
            ->  Nested Loop
-                 Join Filter: (t.id = n.id)
                  ->  Seq Scan on tmp t
-                 ->  CTE Scan on n
+                       Filter: (id = 2)
+                 ->  Seq Scan on tmp2_2
+                       Filter: (id = 2)
    ->  Nested Loop
          ->  Seq Scan on tmp
          ->  CTE Scan on q
-(14 rows)
+(11 rows)
 
 /* Test special rule for CTE; CTE in quals (PostgreSQL 9.5) */
 EXPLAIN (COSTS OFF)
 WITH q AS (SELECT id FROM test.tmp2
 		   WHERE id < 3)
 DELETE FROM test.tmp t WHERE t.id in (SELECT id FROM q);
-             QUERY PLAN             
-------------------------------------
+                          QUERY PLAN                          
+--------------------------------------------------------------
  Delete on tmp t
-   CTE q
-     ->  Append
-           ->  Seq Scan on tmp2_1
-           ->  Seq Scan on tmp2_2
    ->  Nested Loop Semi Join
-         Join Filter: (t.id = q.id)
          ->  Seq Scan on tmp t
-         ->  CTE Scan on q
+         ->  Custom Scan (RuntimeAppend)
+               Prune by: ((tmp2.id < 3) AND (t.id = tmp2.id))
+               ->  Seq Scan on tmp2_1 tmp2
+                     Filter: (t.id = id)
+               ->  Seq Scan on tmp2_2 tmp2
+                     Filter: (t.id = id)
 (9 rows)
 
 BEGIN;

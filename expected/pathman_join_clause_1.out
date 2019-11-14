@@ -156,10 +156,9 @@ WHERE test.parent.owner_id = 3 and test.parent.id IN (3, 4);
    Join Filter: (child_1.parent_id = parent.id)
    ->  Seq Scan on parent
          Filter: ((id = ANY ('{3,4}'::integer[])) AND (owner_id = 3))
-   ->  Append
-         ->  Seq Scan on child_1
-               Filter: (owner_id = 3)
-(7 rows)
+   ->  Seq Scan on child_1
+         Filter: (owner_id = 3)
+(6 rows)
 
 SELECT * FROM test.parent
 LEFT JOIN test.child ON test.child.parent_id = test.parent.id AND

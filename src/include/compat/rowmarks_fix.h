@@ -17,7 +17,11 @@
 #include "postgres.h"
 #include "nodes/parsenodes.h"
 #include "nodes/plannodes.h"
+#if PG_VERSION_NUM < 120000
 #include "nodes/relation.h"
+#else
+#include "optimizer/optimizer.h"
+#endif
 
 
 #if PG_VERSION_NUM >= 90600

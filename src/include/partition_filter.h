@@ -90,7 +90,6 @@ struct ResultPartsStorage
 
 	bool				close_relations;
 	LOCKMODE			head_open_lock_mode;
-	LOCKMODE			heap_close_lock_mode;
 
 	PartRelationInfo   *prel;
 	ExprState		   *prel_expr_state;

@@ -18,6 +18,10 @@
 #include "partition_filter.h"
 
 #include "access/htup_details.h"
+#if PG_VERSION_NUM >= 120000
+#include "access/heapam.h"
+#include "access/table.h"
+#endif
 #include "access/sysattr.h"
 #include "access/xact.h"
 #include "catalog/namespace.h"
@@ -501,7 +505,11 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	estate->es_result_relations = parent_rri;
 	estate->es_num_result_relations = 1;
 	estate->es_result_relation_info = parent_rri;
+#if PG_VERSION_NUM >= 120000
+	ExecInitRangeTable(estate, range_table);
+#else
 	estate->es_range_table = range_table;
+#endif
 
 	/* Initialize ResultPartsStorage */
 	init_result_parts_storage(&parts_storage,
@@ -513,9 +521,11 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 							  RPS_RRI_CB(finish_rri_for_copy, NULL));
 
 	/* Set up a tuple slot too */
-	myslot = ExecInitExtraTupleSlotCompat(estate, NULL);
+	myslot = ExecInitExtraTupleSlotCompat(estate, NULL, &TTSOpsHeapTuple);
 	/* Triggers might need a slot as well */
-	estate->es_trig_tuple_slot = ExecInitExtraTupleSlotCompat(estate, tupDesc);
+#if PG_VERSION_NUM < 120000
+	estate->es_trig_tuple_slot = ExecInitExtraTupleSlotCompat(estate, tupDesc, nothing_here);
+#endif
 
 	/* Prepare to catch AFTER triggers. */
 	AfterTriggerBeginQuery();
@@ -535,7 +545,9 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 	{
 		TupleTableSlot		   *slot;
 		bool					skip_tuple = false;
+#if PG_VERSION_NUM < 120000
 		Oid						tuple_oid = InvalidOid;
+#endif
 		ExprContext		 	   *econtext = GetPerTupleExprContext(estate);
 
 		ResultRelInfoHolder	   *rri_holder;
@@ -548,19 +560,25 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 		/* Switch into per tuple memory context */
 		MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 
-		if (!NextCopyFrom(cstate, econtext, values, nulls, &tuple_oid))
+		if (!NextCopyFromCompat(cstate, econtext, values, nulls, &tuple_oid))
 			break;
 
 		/* We can form the input tuple */
 		tuple = heap_form_tuple(tupDesc, values, nulls);
 
+#if PG_VERSION_NUM < 120000
 		if (tuple_oid != InvalidOid)
 			HeapTupleSetOid(tuple, tuple_oid);
+#endif
 
 		/* Place tuple in tuple slot --- but slot shouldn't free it */
 		slot = myslot;
 		ExecSetSlotDescriptor(slot, tupDesc);
+#if PG_VERSION_NUM >= 120000
+		ExecStoreHeapTuple(tuple, slot, false);
+#else
 		ExecStoreTuple(tuple, slot, InvalidBuffer, false);
+#endif
 
 		/* Search for a matching partition */
 		rri_holder = select_partition_for_insert(&parts_storage, slot);
@@ -581,13 +599,21 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 			HeapTuple tuple_old;
 
 			tuple_old = tuple;
+#if PG_VERSION_NUM >= 120000
+			tuple = execute_attr_map_tuple(tuple, rri_holder->tuple_map);
+#else
 			tuple = do_convert_tuple(tuple, rri_holder->tuple_map);
+#endif
 			heap_freetuple(tuple_old);
 		}
 
 		/* Now we can set proper tuple descriptor according to child relation */
 		ExecSetSlotDescriptor(slot, RelationGetDescr(child_rri->ri_RelationDesc));
+#if PG_VERSION_NUM >= 120000
+		ExecStoreHeapTuple(tuple, slot, false);
+#else
 		ExecStoreTuple(tuple, slot, InvalidBuffer, false);
+#endif
 
 		/* Triggers and stuff need to be invoked in query context. */
 		MemoryContextSwitchTo(query_mcxt);
@@ -596,12 +622,21 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 		if (child_rri->ri_TrigDesc &&
 			child_rri->ri_TrigDesc->trig_insert_before_row)
 		{
+#if PG_VERSION_NUM >= 120000
+			if (!ExecBRInsertTriggers(estate, child_rri, slot))
+				skip_tuple = true;
+			else	/* trigger might have changed tuple */
+				tuple = ExecFetchSlotHeapTuple(slot, false, NULL);
+#else
 			slot = ExecBRInsertTriggers(estate, child_rri, slot);
 
 			if (slot == NULL)	/* "do nothing" */
 				skip_tuple = true;
 			else	/* trigger might have changed tuple */
+			{
 				tuple = ExecMaterializeSlot(slot);
+			}
+#endif
 		}
 
 		/* Proceed if we still have a tuple */
@@ -618,11 +653,16 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 			{
 				/* OK, now store the tuple... */
 				simple_heap_insert(child_rri->ri_RelationDesc, tuple);
+#if PG_VERSION_NUM >= 120000 /* since 12, tid lives directly in slot */
+				ItemPointerCopy(&tuple->t_self, &slot->tts_tid);
+				/* and we must stamp tableOid as we go around table_tuple_insert */
+				slot->tts_tableOid = RelationGetRelid(child_rri->ri_RelationDesc);
+#endif
 
 				/* ... and create index entries for it */
 				if (child_rri->ri_NumIndices > 0)
-					recheckIndexes = ExecInsertIndexTuples(slot, &(tuple->t_self),
-														   estate, false, NULL, NIL);
+					recheckIndexes = ExecInsertIndexTuplesCompat(slot, &(tuple->t_self),
+																 estate, false, NULL, NIL);
 			}
 #ifdef PG_SHARDMAN
 			/* Handle foreign tables */
@@ -635,8 +675,13 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 #endif
 
 			/* AFTER ROW INSERT Triggers (FIXME: NULL transition) */
+#if PG_VERSION_NUM >= 120000
+			ExecARInsertTriggersCompat(estate, child_rri, slot,
+									   recheckIndexes, NULL);
+#else
 			ExecARInsertTriggersCompat(estate, child_rri, tuple,
 									   recheckIndexes, NULL);
+#endif
 
 			list_free(recheckIndexes);
 
@@ -798,7 +843,7 @@ PathmanRenameSequence(Oid parent_relid,					/* parent Oid */
 		return;
 
 	/* Finally, rename auto naming sequence */
-	RenameRelationInternal(seq_relid, new_seq_name, false);
+	RenameRelationInternalCompat(seq_relid, new_seq_name, false, false);
 
 	pfree(seq_nsp_name);
 	pfree(old_seq_name);

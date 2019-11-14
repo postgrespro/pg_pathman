@@ -1,3 +1,8 @@
+/*
+ * Since 8edd0e794 (>= 12) Append nodes with single subplan are eliminated,
+ * causing different output.
+ */
+
 \set VERBOSITY terse
 
 SET search_path = 'public';

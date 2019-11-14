@@ -1,3 +1,7 @@
+/*
+ * Since 8edd0e794 (>= 12) Append nodes with single subplan are eliminated,
+ * causing different output; pathman_gaps_1.out is the updated version.
+ */
 \set VERBOSITY terse
 SET search_path = 'public';
 CREATE SCHEMA pathman;
@@ -105,4 +109,3 @@ WHERE test.parent.owner_id = 3 and test.parent.id IN (3, 4);
 DROP SCHEMA test CASCADE;
 DROP EXTENSION pg_pathman CASCADE;
 DROP SCHEMA pathman CASCADE;
-

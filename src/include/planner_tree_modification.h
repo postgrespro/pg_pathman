@@ -16,7 +16,7 @@
 
 #include "postgres.h"
 #include "utils/rel.h"
-#include "nodes/relation.h"
+/* #include "nodes/relation.h" */
 #include "nodes/nodeFuncs.h"
 
 

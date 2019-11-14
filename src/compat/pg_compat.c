@@ -145,8 +145,13 @@ get_all_actual_clauses(List *restrictinfo_list)
  * make_restrictinfos_from_actual_clauses
  */
 #if PG_VERSION_NUM >= 100000
+#if PG_VERSION_NUM >= 120000
+#include "optimizer/optimizer.h"
+#include "optimizer/restrictinfo.h"
+#else
 #include "optimizer/restrictinfo.h"
 #include "optimizer/var.h"
+#endif /* 12 */
 
 List *
 make_restrictinfos_from_actual_clauses(PlannerInfo *root,
@@ -462,6 +467,13 @@ set_rel_consider_parallel(PlannerInfo *root, RelOptInfo *rel,
 			 */
 			return;
 #endif
+
+#if PG_VERSION_NUM >= 120000
+		case RTE_RESULT:
+			/* RESULT RTEs, in themselves, are no problem. */
+			break;
+#endif /* 12 */
+
 	}
 
 	/*

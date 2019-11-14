@@ -16,6 +16,10 @@
 #include "xact_handling.h"
 
 #include "access/htup_details.h"
+#if PG_VERSION_NUM >= 120000
+#include "access/genam.h"
+#include "access/table.h"
+#endif
 #include "access/xact.h"
 #include "catalog/catalog.h"
 #include "catalog/indexing.h"
@@ -24,8 +28,12 @@
 #include "catalog/pg_type.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
+#if PG_VERSION_NUM >= 120000
+#include "optimizer/optimizer.h"
+#else
 #include "optimizer/clauses.h"
 #include "optimizer/var.h"
+#endif
 #include "parser/analyze.h"
 #include "parser/parser.h"
 #include "storage/lmgr.h"

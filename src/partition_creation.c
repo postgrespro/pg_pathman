@@ -19,6 +19,9 @@
 #include "access/htup_details.h"
 #include "access/reloptions.h"
 #include "access/sysattr.h"
+#if PG_VERSION_NUM >= 120000
+#include "access/table.h"
+#endif
 #include "access/xact.h"
 #include "catalog/heap.h"
 #include "catalog/pg_authid.h"
@@ -245,9 +248,9 @@ create_single_partition_common(Oid parent_relid,
 
 	/* Open the relation and add new check constraint & fkeys */
 	child_relation = heap_open(partition_relid, AccessExclusiveLock);
-	AddRelationNewConstraints(child_relation, NIL,
-							  list_make1(check_constraint),
-							  false, true, true);
+	AddRelationNewConstraintsCompat(child_relation, NIL,
+									list_make1(check_constraint),
+									false, true, true);
 	heap_close(child_relation, NoLock);
 
 	/* Make constraint visible */
@@ -809,6 +812,9 @@ create_single_partition_internal(Oid parent_relid,
 #if defined(PGPRO_EE) && PG_VERSION_NUM < 100000
 	create_stmt.partition_info	= NULL;
 #endif
+#if PG_VERSION_NUM >= 120000
+	create_stmt.accessMethod	= NULL;
+#endif
 
 	/* Obtain the sequence of Stmts to create partition and link it to parent */
 	create_stmts = transformCreateStmt(&create_stmt, NULL);
@@ -986,7 +992,11 @@ postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid)
 
 	/* Search for 'partition_relid' */
 	ScanKeyInit(&skey[0],
+#if PG_VERSION_NUM >= 120000
+				Anum_pg_class_oid,
+#else
 				ObjectIdAttributeNumber,
+#endif
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(partition_relid));
 
@@ -1135,7 +1145,12 @@ copy_foreign_keys(Oid parent_relid, Oid partition_oid)
 	Oid						copy_fkeys_proc_args[] = { REGCLASSOID, REGCLASSOID };
 	List				   *copy_fkeys_proc_name;
 	FmgrInfo				copy_fkeys_proc_flinfo;
-	FunctionCallInfoData	copy_fkeys_proc_fcinfo;
+#if PG_VERSION_NUM >= 120000
+	LOCAL_FCINFO(copy_fkeys_proc_fcinfo, 2);
+#else
+	FunctionCallInfoData	copy_fkeys_proc_fcinfo_data;
+	FunctionCallInfo		copy_fkeys_proc_fcinfo = &copy_fkeys_proc_fcinfo_data;
+#endif
 	char					*pathman_schema;
 
 	/* Fetch pg_pathman's schema */
@@ -1150,15 +1165,22 @@ copy_foreign_keys(Oid parent_relid, Oid partition_oid)
 							 copy_fkeys_proc_args, false),
 			  &copy_fkeys_proc_flinfo);
 
-	InitFunctionCallInfoData(copy_fkeys_proc_fcinfo, &copy_fkeys_proc_flinfo,
+	InitFunctionCallInfoData(*copy_fkeys_proc_fcinfo, &copy_fkeys_proc_flinfo,
 							 2, InvalidOid, NULL, NULL);
-	copy_fkeys_proc_fcinfo.arg[0] = ObjectIdGetDatum(parent_relid);
-	copy_fkeys_proc_fcinfo.argnull[0] = false;
-	copy_fkeys_proc_fcinfo.arg[1] = ObjectIdGetDatum(partition_oid);
-	copy_fkeys_proc_fcinfo.argnull[1] = false;
+#if PG_VERSION_NUM >= 120000
+	copy_fkeys_proc_fcinfo->args[0].value = ObjectIdGetDatum(parent_relid);
+	copy_fkeys_proc_fcinfo->args[0].isnull = false;
+	copy_fkeys_proc_fcinfo->args[1].value = ObjectIdGetDatum(partition_oid);
+	copy_fkeys_proc_fcinfo->args[1].isnull = false;
+#else
+	copy_fkeys_proc_fcinfo->arg[0] = ObjectIdGetDatum(parent_relid);
+	copy_fkeys_proc_fcinfo->argnull[0] = false;
+	copy_fkeys_proc_fcinfo->arg[1] = ObjectIdGetDatum(partition_oid);
+	copy_fkeys_proc_fcinfo->argnull[1] = false;
+#endif
 
 	/* Invoke the callback */
-	FunctionCallInvoke(&copy_fkeys_proc_fcinfo);
+	FunctionCallInvoke(copy_fkeys_proc_fcinfo);
 
 	/* Make changes visible */
 	CommandCounterIncrement();
@@ -1266,9 +1288,9 @@ add_pathman_check_constraint(Oid relid, Constraint *constraint)
 {
 	Relation part_rel = heap_open(relid, AccessExclusiveLock);
 
-	AddRelationNewConstraints(part_rel, NIL,
-							  list_make1(constraint),
-							  false, true, true);
+	AddRelationNewConstraintsCompat(part_rel, NIL,
+									list_make1(constraint),
+									false, true, true);
 
 	heap_close(part_rel, NoLock);
 }
@@ -1629,7 +1651,12 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 	Oid						partition_oid = cb_params->partition_relid;
 
 	FmgrInfo				cb_flinfo;
-	FunctionCallInfoData	cb_fcinfo;
+#if PG_VERSION_NUM >= 120000
+	LOCAL_FCINFO(cb_fcinfo, 1);
+#else
+	FunctionCallInfoData	cb_fcinfo_data;
+	FunctionCallInfo		cb_fcinfo = &cb_fcinfo_data;
+#endif
 
 	JsonbParseState		   *jsonb_state = NULL;
 	JsonbValue			   *result,
@@ -1761,12 +1788,17 @@ invoke_init_callback_internal(init_callback_params *cb_params)
 	/* Fetch function call data */
 	fmgr_info(cb_params->callback, &cb_flinfo);
 
-	InitFunctionCallInfoData(cb_fcinfo, &cb_flinfo, 1, InvalidOid, NULL, NULL);
-	cb_fcinfo.arg[0] = PointerGetDatum(JsonbValueToJsonb(result));
-	cb_fcinfo.argnull[0] = false;
+	InitFunctionCallInfoData(*cb_fcinfo, &cb_flinfo, 1, InvalidOid, NULL, NULL);
+#if PG_VERSION_NUM >= 120000
+	cb_fcinfo->args[0].value = PointerGetDatum(JsonbValueToJsonb(result));
+	cb_fcinfo->args[0].isnull = false;
+#else
+	cb_fcinfo->arg[0] = PointerGetDatum(JsonbValueToJsonb(result));
+	cb_fcinfo->argnull[0] = false;
+#endif
 
 	/* Invoke the callback */
-	FunctionCallInvoke(&cb_fcinfo);
+	FunctionCallInvoke(cb_fcinfo);
 }
 
 /* Invoke a callback of a specified type */
@@ -1830,19 +1862,28 @@ validate_part_callback(Oid procid, bool emit_error)
 static Oid
 text_to_regprocedure(text *proc_signature)
 {
-	FunctionCallInfoData	fcinfo;
+#if PG_VERSION_NUM >= 120000
+	LOCAL_FCINFO(fcinfo, 1);
+#else
+	FunctionCallInfoData	fcinfo_data;
+	FunctionCallInfo		fcinfo = &fcinfo_data;
+#endif
 	Datum					result;
 
-	InitFunctionCallInfoData(fcinfo, NULL, 1, InvalidOid, NULL, NULL);
+	InitFunctionCallInfoData(*fcinfo, NULL, 1, InvalidOid, NULL, NULL);
 
-#if PG_VERSION_NUM >= 90600
-	fcinfo.arg[0] = PointerGetDatum(proc_signature);
+#if PG_VERSION_NUM >= 120000
+	fcinfo->args[0].value = PointerGetDatum(proc_signature);
+	fcinfo->args[0].isnull = false;
+#elif PG_VERSION_NUM >= 90600
+	fcinfo->arg[0] = PointerGetDatum(proc_signature);
+	fcinfo->argnull[0] = false;
 #else
-	fcinfo.arg[0] = CStringGetDatum(text_to_cstring(proc_signature));
+	fcinfo->arg[0] = CStringGetDatum(text_to_cstring(proc_signature));
+	fcinfo->argnull[0] = false;
 #endif
-	fcinfo.argnull[0] = false;
 
-	result = to_regprocedure(&fcinfo);
+	result = to_regprocedure(fcinfo);
 
 	return DatumGetObjectId(result);
 }

@@ -2,6 +2,13 @@
  * -------------------------------------------
  *  NOTE: This test behaves differenly on 9.5
  * -------------------------------------------
+ *
+ * Also since 8edd0e794 (>= 12) Append nodes with single subplan are eliminated,
+ * causing different output. Moreover, again since 12 (608b167f9f), CTEs which are
+ * scanned once are no longer an optimization fence, changing a good deal of
+ * plans here. There is an option to forcibly make them MATERIALIZED, but we
+ * also need to run tests on older versions, so put updated plans in
+ * pathman_upd_del_2.out instead.
  */
 \set VERBOSITY terse
 SET search_path = 'public';

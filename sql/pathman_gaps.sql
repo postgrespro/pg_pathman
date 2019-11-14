@@ -1,3 +1,7 @@
+/*
+ * Since 8edd0e794 (>= 12) Append nodes with single subplan are eliminated,
+ * causing different output; pathman_gaps_1.out is the updated version.
+ */
 \set VERBOSITY terse
 
 SET search_path = 'public';

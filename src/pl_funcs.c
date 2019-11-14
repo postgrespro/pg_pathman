@@ -19,6 +19,12 @@
 #include "utils.h"
 
 #include "access/htup_details.h"
+#if PG_VERSION_NUM >= 120000
+#include "access/heapam.h"
+#include "access/relscan.h"
+#include "access/table.h"
+#include "access/tableam.h"
+#endif
 #include "access/xact.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
@@ -82,7 +88,11 @@ PG_FUNCTION_INFO_V1( pathman_version );
 typedef struct
 {
 	Relation			pathman_config;
+#if PG_VERSION_NUM >= 120000
+	TableScanDesc		pathman_config_scan;
+#else
 	HeapScanDesc		pathman_config_scan;
+#endif
 	Snapshot			snapshot;
 
 	PartRelationInfo   *current_prel;	/* selected PartRelationInfo */
@@ -202,7 +212,8 @@ get_base_type_pl(PG_FUNCTION_ARGS)
 }
 
 /*
- * Return tablespace name of a specified relation.
+ * Return tablespace name of a specified relation which must not be
+ * natively partitioned.
  */
 Datum
 get_tablespace_pl(PG_FUNCTION_ARGS)
@@ -216,7 +227,7 @@ get_tablespace_pl(PG_FUNCTION_ARGS)
 	/* If tablespace id is InvalidOid then use the default tablespace */
 	if (!OidIsValid(tablespace_id))
 	{
-		tablespace_id = GetDefaultTablespace(get_rel_persistence(relid));
+		tablespace_id = GetDefaultTablespaceCompat(get_rel_persistence(relid), false);
 
 		/* If tablespace is still invalid then use database's default */
 		if (!OidIsValid(tablespace_id))
@@ -274,7 +285,7 @@ show_cache_stats_internal(PG_FUNCTION_ARGS)
 		usercxt->current_item = 0;
 
 		/* Create tuple descriptor */
-		tupdesc = CreateTemplateTupleDesc(Natts_pathman_cache_stats, false);
+		tupdesc = CreateTemplateTupleDescCompat(Natts_pathman_cache_stats, false);
 
 		TupleDescInitEntry(tupdesc, Anum_pathman_cs_context,
 						   "context", TEXTOID, -1, 0);
@@ -381,13 +392,18 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 		usercxt->pathman_config = heap_open(get_pathman_config_relid(false),
 											AccessShareLock);
 		usercxt->snapshot = RegisterSnapshot(GetLatestSnapshot());
+#if PG_VERSION_NUM >= 120000
+		usercxt->pathman_config_scan = table_beginscan(usercxt->pathman_config,
+													  usercxt->snapshot, 0, NULL);
+#else
 		usercxt->pathman_config_scan = heap_beginscan(usercxt->pathman_config,
 													  usercxt->snapshot, 0, NULL);
+#endif
 
 		usercxt->current_prel = NULL;
 
 		/* Create tuple descriptor */
-		tupdesc = CreateTemplateTupleDesc(Natts_pathman_partition_list, false);
+		tupdesc = CreateTemplateTupleDescCompat(Natts_pathman_partition_list, false);
 
 		TupleDescInitEntry(tupdesc, Anum_pathman_pl_parent,
 						   "parent", REGCLASSOID, -1, 0);
@@ -555,7 +571,11 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 		}
 
 		/* Clean resources */
+#if PG_VERSION_NUM >= 120000
+		table_endscan(usercxt->pathman_config_scan);
+#else
 		heap_endscan(usercxt->pathman_config_scan);
+#endif
 		UnregisterSnapshot(usercxt->snapshot);
 		heap_close(usercxt->pathman_config, AccessShareLock);
 

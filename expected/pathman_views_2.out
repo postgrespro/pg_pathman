@@ -55,21 +55,19 @@ explain (costs off) select * from views.abc;
 (11 rows)
 
 explain (costs off) select * from views.abc where id = 1;
+     QUERY PLAN     
+--------------------
+ Seq Scan on _abc_0
+   Filter: (id = 1)
+(2 rows)
+
+explain (costs off) select * from views.abc where id = 1 for update;
         QUERY PLAN        
 --------------------------
- Append
+ LockRows
    ->  Seq Scan on _abc_0
          Filter: (id = 1)
 (3 rows)
-
-explain (costs off) select * from views.abc where id = 1 for update;
-           QUERY PLAN           
---------------------------------
- LockRows
-   ->  Append
-         ->  Seq Scan on _abc_0
-               Filter: (id = 1)
-(4 rows)
 
 select * from views.abc where id = 1 for update;
  id 
@@ -147,17 +145,16 @@ explain (costs off) table views.abc_union;
 (15 rows)
 
 explain (costs off) select * from views.abc_union where id = 5;
-              QUERY PLAN              
---------------------------------------
+            QUERY PLAN            
+----------------------------------
  HashAggregate
    Group Key: _abc_8.id
    ->  Append
-         ->  Append
-               ->  Seq Scan on _abc_8
-                     Filter: (id = 5)
+         ->  Seq Scan on _abc_8
+               Filter: (id = 5)
          ->  Seq Scan on _abc_add
                Filter: (id = 5)
-(8 rows)
+(7 rows)
 
 explain (costs off) table views.abc_union_all;
          QUERY PLAN         

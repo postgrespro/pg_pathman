@@ -241,16 +241,15 @@ SET enable_mergejoin = f;	/* Merge Semi Join on 10 vs Merge Join on 9.6 */
 EXPLAIN (COSTS OFF)
 UPDATE rowmarks.second SET id = 2
 WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id = 1);
-              QUERY PLAN               
----------------------------------------
+           QUERY PLAN            
+---------------------------------
  Update on second
    ->  Nested Loop Semi Join
          ->  Seq Scan on second
                Filter: (id = 1)
-         ->  Append
-               ->  Seq Scan on first_0
-                     Filter: (id = 1)
-(7 rows)
+         ->  Seq Scan on first_0
+               Filter: (id = 1)
+(6 rows)
 
 EXPLAIN (COSTS OFF)
 UPDATE rowmarks.second SET id = 2
@@ -296,16 +295,15 @@ EXPLAIN (COSTS OFF)
 UPDATE rowmarks.second SET id = 2
 WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id = 1)
 RETURNING *, tableoid::regclass;
-              QUERY PLAN               
----------------------------------------
+           QUERY PLAN            
+---------------------------------
  Update on second
    ->  Nested Loop Semi Join
          ->  Seq Scan on second
                Filter: (id = 1)
-         ->  Append
-               ->  Seq Scan on first_0
-                     Filter: (id = 1)
-(7 rows)
+         ->  Seq Scan on first_0
+               Filter: (id = 1)
+(6 rows)
 
 SET enable_hashjoin = t;
 SET enable_mergejoin = t;
@@ -325,16 +323,15 @@ SET enable_mergejoin = f;	/* Merge Semi Join on 10 vs Merge Join on 9.6 */
 EXPLAIN (COSTS OFF)
 DELETE FROM rowmarks.second
 WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id = 1);
-              QUERY PLAN               
----------------------------------------
+           QUERY PLAN            
+---------------------------------
  Delete on second
    ->  Nested Loop Semi Join
          ->  Seq Scan on second
                Filter: (id = 1)
-         ->  Append
-               ->  Seq Scan on first_0
-                     Filter: (id = 1)
-(7 rows)
+         ->  Seq Scan on first_0
+               Filter: (id = 1)
+(6 rows)
 
 EXPLAIN (COSTS OFF)
 DELETE FROM rowmarks.second

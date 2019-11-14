@@ -1,3 +1,11 @@
+/*
+ * pathman_calamity.out and pathman_calamity_1.out differ only in that since
+ * 12 we get
+ *   ERROR:  invalid input syntax for type integer: "abc"
+ * instead of
+ *   ERROR:  invalid input syntax for integer: "15.6"
+ */
+
 \set VERBOSITY terse
 SET search_path = 'public';
 CREATE EXTENSION pg_pathman;

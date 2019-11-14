@@ -15,9 +15,13 @@
 #include "utils.h"
 
 #include "nodes/nodeFuncs.h"
+#if PG_VERSION_NUM >= 120000
+#include "optimizer/optimizer.h"
+#else
 #include "optimizer/clauses.h"
-#include "optimizer/tlist.h"
 #include "optimizer/var.h"
+#endif
+#include "optimizer/tlist.h"
 #include "rewrite/rewriteManip.h"
 #include "utils/memutils.h"
 #include "utils/ruleutils.h"
@@ -689,11 +693,25 @@ exec_append_common(CustomScanState *node,
 		return NULL;
 
 	if (!node->ss.ps.ps_ProjInfo)
+	{
+		/*
+		 * ExecInitCustomScan carelessly promises that it will always (resultopsfixed)
+		 * return TTSOpsVirtual slot. To keep the promise, convert raw
+		 * BufferHeapTupleSlot to virtual even if we don't have any projection.
+		 *
+		 * BTW, why original code decided to invent its own scan_state->slot
+		 * instead of using ss.ss_ScanTupleSlot?
+		 */
+#if PG_VERSION_NUM >= 120000
+		return ExecCopySlot(node->ss.ps.ps_ResultTupleSlot, scan_state->slot);
+#else
 		return scan_state->slot;
+#endif
+	}
 
 	/*
 	 * Assuming that current projection doesn't involve SRF.
-	 * NOTE: Any SFR functions are evaluated in ProjectSet node.
+	 * NOTE: Any SFR functions since 69f4b9c are evaluated in ProjectSet node.
 	 */
 	ResetExprContext(node->ss.ps.ps_ExprContext);
 	node->ss.ps.ps_ProjInfo->pi_exprContext->ecxt_scantuple = scan_state->slot;
