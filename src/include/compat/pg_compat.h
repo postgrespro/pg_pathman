@@ -246,10 +246,10 @@
 	create_append_path(NULL, (rel), (subpaths), NIL, NIL, (required_outer), \
 					   (parallel_workers), false, NIL, -1)
 #else
-/* TODO pgpro version */
+/* TODO pgpro version? Looks like something is not ported yet */
 #define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
-	create_append_path(NULL, (rel), (subpaths), NIL, (required_outer), \
-					   (parallel_workers), false, NIL, -1, false, NIL)
+	create_append_path(NULL, (rel), (subpaths), NIL, NIL, (required_outer), \
+					   (parallel_workers), false, NIL, -1, false)
 #endif /* PGPRO_VERSION */
 
 #elif PG_VERSION_NUM >= 110000

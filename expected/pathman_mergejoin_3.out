@@ -51,16 +51,14 @@ WHERE j1.dt < '2015-03-01' AND j2.dt >= '2015-02-01' ORDER BY j2.dt;
    Sort Key: j2.dt
    ->  Merge Join
          Merge Cond: (j2.id = j3.id)
-         ->  Merge Append
-               Sort Key: j2.id
-               ->  Index Scan using range_rel_2_pkey on range_rel_2 j2
-                     Index Cond: (id IS NOT NULL)
+         ->  Index Scan using range_rel_2_pkey on range_rel_2 j2
+               Index Cond: (id IS NOT NULL)
          ->  Append
                ->  Index Scan using num_range_rel_1_pkey on num_range_rel_1 j3
                ->  Index Scan using num_range_rel_2_pkey on num_range_rel_2 j3_1
                ->  Index Scan using num_range_rel_3_pkey on num_range_rel_3 j3_2
                ->  Index Scan using num_range_rel_4_pkey on num_range_rel_4 j3_3
-(13 rows)
+(11 rows)
 
 SET enable_hashjoin = ON;
 SET enable_nestloop = ON;

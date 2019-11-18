@@ -1,3 +1,9 @@
+/*
+ * pathman_hashjoin_1.out and pathman_hashjoin_2.out seem to deal with pgpro's
+ * different behaviour. 8edd0e794 (>= 12) Append nodes with single subplan
+ * are eliminated, hence pathman_hashjoin_3.out
+ */
+
 \set VERBOSITY terse
 
 SET search_path = 'public';
