@@ -3,14 +3,18 @@
 [![codecov](https://codecov.io/gh/postgrespro/pg_pathman/branch/master/graph/badge.svg)](https://codecov.io/gh/postgrespro/pg_pathman)
 [![GitHub license](https://img.shields.io/badge/license-PostgreSQL-blue.svg)](https://raw.githubusercontent.com/postgrespro/pg_pathman/master/LICENSE)
 
+### NOTE: this project is not under development anymore
+
+`pg_pathman` supports Postgres versions [9.5..12], but most probably it won't be ported to 13 and later releases. [Native partitioning](https://www.postgresql.org/docs/current/ddl-partitioning.html) is pretty mature now and has almost everything implemented in `pg_pathman`'; we encourage users switching to it. We are still maintaining the project (fixing bugs in supported versions), but no new development is going to happen here.
+
 # pg_pathman
 
 The `pg_pathman` module provides optimized partitioning mechanism and functions to manage partitions.
 
 The extension is compatible with:
 
- * PostgreSQL 9.5, 9.6, 10, 11;
- * Postgres Pro Standard 9.5, 9.6, 10;
+ * PostgreSQL 9.5, 9.6, 10, 11, 12;
+ * Postgres Pro Standard 9.5, 9.6, 10, 11, 12;
  * Postgres Pro Enterprise;
 
 Take a look at our Wiki [out there](https://github.com/postgrespro/pg_pathman/wiki).
