@@ -1,6 +1,7 @@
 #include <stdio.h>
 
 #include "postgres.h"
+#include "undef_printf.h"
 
 
 void *

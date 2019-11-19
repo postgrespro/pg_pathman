@@ -1,4 +1,5 @@
 #include "postgres.h"
+#include "undef_printf.h"
 #include "nodes/bitmapset.h"
 
 

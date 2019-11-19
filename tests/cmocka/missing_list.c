@@ -13,6 +13,7 @@
  *
  *-------------------------------------------------------------------------
  */
+#define _GNU_SOURCE
 #include "postgres.h"
 #include "nodes/pg_list.h"
 

@@ -14,6 +14,7 @@
  *-------------------------------------------------------------------------
  */
 #include "postgres.h"
+#include "undef_printf.h"
 
 #include "lib/stringinfo.h"
 #include "utils/memutils.h"
