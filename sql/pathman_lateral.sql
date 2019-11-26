@@ -1,3 +1,6 @@
+-- Sometimes join selectivity improvements patches in pgpro force nested loop
+-- members swap -- in pathman_lateral_1.out
+
 \set VERBOSITY terse
 
 SET search_path = 'public';
