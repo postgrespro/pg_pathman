@@ -605,15 +605,15 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 		/* Construct call to create_single_range_partition() */
 		create_sql = psprintf(
 			"select %s.create_single_range_partition('%s.%s', '%s'::%s, '%s'::%s, '%s.%s')",
-			get_namespace_name(get_pathman_schema()),
-			parent_nsp_name,
-			get_rel_name(parent_relid),
+			quote_identifier(get_namespace_name(get_pathman_schema())),
+			quote_identifier(parent_nsp_name),
+			quote_identifier(get_rel_name(parent_relid)),
 			IsInfinite(&bounds[0]) ? "NULL" : datum_to_cstring(bounds[0].value, range_bound_type),
 			typname,
 			IsInfinite(&bounds[1]) ? "NULL" : datum_to_cstring(bounds[1].value, range_bound_type),
 			typname,
-			parent_nsp_name,
-			partition_name
+			quote_identifier(parent_nsp_name),
+			quote_identifier(partition_name)
 		);
 
 		/* ...and call it. */
