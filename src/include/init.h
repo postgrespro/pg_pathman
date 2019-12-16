@@ -92,6 +92,8 @@ simplify_mcxt_name(MemoryContext mcxt)
 		return PATHMAN_BOUNDS_CACHE;
 
 	else elog(ERROR, "unknown memory context");
+
+	return NULL;  /* keep compiler quiet */
 }
 
 

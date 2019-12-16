@@ -390,6 +390,7 @@ router_extract_ctid(PartitionRouterState *state, TupleTableSlot *slot)
 		elog(ERROR, UPDATE_NODE_NAME " does not support foreign tables");
 	else
 		elog(ERROR, UPDATE_NODE_NAME " cannot handle relkind %u", relkind);
+	return *(ItemPointer) NULL;	/* keep compiler quiet, lol */
 }
 
 /* This is a heavily modified copy of ExecDelete from nodeModifyTable.c */
