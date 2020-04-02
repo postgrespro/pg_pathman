@@ -498,9 +498,13 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 			   irange_len * sizeof(RangeTblEntry *));
 
 #if PG_VERSION_NUM >= 110000
-		/* Make sure append_rel_array is wide enough */
+		/*
+		 * Make sure append_rel_array is wide enough; if it hasn't been
+		 * allocated previously, care to zero out [0; current_len) part.
+		 */
 		if (root->append_rel_array == NULL)
-			root->append_rel_array = (AppendRelInfo **) palloc0(0);
+			root->append_rel_array = (AppendRelInfo **)
+				palloc0(current_len * sizeof(AppendRelInfo *));
 		root->append_rel_array =  (AppendRelInfo **)
 			repalloc(root->append_rel_array,
 					 new_len * sizeof(AppendRelInfo *));
