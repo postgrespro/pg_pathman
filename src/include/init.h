@@ -160,7 +160,7 @@ simplify_mcxt_name(MemoryContext mcxt)
 #define LOWEST_COMPATIBLE_FRONT		"1.5.0"
 
 /* Current version of native C library */
-#define CURRENT_LIB_VERSION			"1.5.10"
+#define CURRENT_LIB_VERSION			"1.5.11"
 
 
 void *pathman_cache_search_relid(HTAB *cache_table,
