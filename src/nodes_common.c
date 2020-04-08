@@ -373,7 +373,7 @@ canonicalize_custom_exprs_mutator(Node *node, void *cxt)
 		return (Node *) var;
 	}
 
-	return expression_tree_mutator(node, canonicalize_custom_exprs_mutator, NULL);
+	return expression_tree_mutator_compat(node, canonicalize_custom_exprs_mutator, NULL);
 }
 
 static List *

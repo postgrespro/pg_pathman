@@ -709,15 +709,15 @@ adjust_appendrel_varnos(Node *node, adjust_appendrel_varnos_cxt *context)
 		SubLink *sl = (SubLink *) node;
 
 		/* Examine its expression */
-		sl->testexpr = expression_tree_mutator(sl->testexpr,
-											   adjust_appendrel_varnos,
-											   context);
+		sl->testexpr = expression_tree_mutator_compat(sl->testexpr,
+													  adjust_appendrel_varnos,
+													  context);
 		return (Node *) sl;
 	}
 
-	return expression_tree_mutator(node,
-								   adjust_appendrel_varnos,
-								   context);
+	return expression_tree_mutator_compat(node,
+										  adjust_appendrel_varnos,
+										  context);
 }
 
 
@@ -1063,8 +1063,8 @@ eval_extern_params_mutator(Node *node, ParamListInfo params)
 		}
 	}
 
-	return expression_tree_mutator(node, eval_extern_params_mutator,
-								   (void *) params);
+	return expression_tree_mutator_compat(node, eval_extern_params_mutator,
+										  (void *) params);
 }
 
 /* Check whether Var translation list is trivial (no shuffle) */

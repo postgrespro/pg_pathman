@@ -1164,7 +1164,7 @@ fix_returning_list_mutator(Node *node, void *state)
 		return (Node *) var;
 	}
 
-	return expression_tree_mutator(node, fix_returning_list_mutator, state);
+	return expression_tree_mutator_compat(node, fix_returning_list_mutator, state);
 }
 
 

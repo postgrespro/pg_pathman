@@ -992,7 +992,19 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 	AddRelationNewConstraints((rel), (newColDefaults), (newConstrains), (allow_merge), (is_local), (is_internal))
 #endif
 
-
+/*
+ * [PGPRO-3725] Since 11.7 and 12.1 in pgpro standard and ee PGPRO-2843
+ * appeared, changing the signature, wow. It is not present in pgpro 1c
+ * though; PG_VERSION_STR is defined in std and ee but not in 1c, so it is
+ * hackishly used for distinguishing them.
+ */
+#if defined(PGPRO_VERSION_STR) && (PG_VERSION_NUM >= 110006)
+#define expression_tree_mutator_compat(node, mutator, context) \
+	expression_tree_mutator((node), (mutator), (context), 0)
+#else
+#define expression_tree_mutator_compat(node, mutator, context) \
+	expression_tree_mutator((node), (mutator), (context))
+#endif
 
 /*
  * -------------
