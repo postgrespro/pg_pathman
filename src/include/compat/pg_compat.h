@@ -26,6 +26,7 @@
 #include "commands/trigger.h"
 #include "executor/executor.h"
 #include "nodes/memnodes.h"
+#include "nodes/nodeFuncs.h"
 #if PG_VERSION_NUM >= 120000
 #include "nodes/pathnodes.h"
 #else
@@ -994,11 +995,11 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 
 /*
  * [PGPRO-3725] Since 11.7 and 12.1 in pgpro standard and ee PGPRO-2843
- * appeared, changing the signature, wow. It is not present in pgpro 1c
- * though; PG_VERSION_STR is defined in std and ee but not in 1c, so it is
- * hackishly used for distinguishing them.
+ * appeared, changing the signature, wow. There is no numeric pgpro edition
+ * macro (and never will be, for old versions), so distinguish via macro added
+ * by the commit.
  */
-#if defined(PGPRO_VERSION_STR) && (PG_VERSION_NUM >= 110006)
+#ifdef QTW_DONT_COPY_DEFAULT
 #define expression_tree_mutator_compat(node, mutator, context) \
 	expression_tree_mutator((node), (mutator), (context), 0)
 #else
