@@ -751,8 +751,8 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	uint32				children_count;
 
 	Relation			pathman_config;
-	Datum				values[Natts_pathman_config];
-	bool				isnull[Natts_pathman_config];
+	Datum				values[Natts_pathman_config_historic];
+	bool				isnull[Natts_pathman_config_historic];
 	HeapTuple			htup;
 
 	Oid					expr_type;
@@ -850,6 +850,14 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 
 	values[Anum_pathman_config_expr - 1]		= CStringGetTextDatum(expression);
 	isnull[Anum_pathman_config_expr - 1]		= false;
+
+	/*
+	 * In case of 1.5 update before 10e6c71 there is acutlly 5 attributes in
+	 * pathman_config description (inclusing cooked expression). To avoid
+	 * potential problems we allocate 5th attribute and initialize it with null.
+	 */
+	values[Natts_pathman_config_historic - 1]	= (Datum) 0;
+	isnull[Natts_pathman_config_historic - 1]	= true;
 
 	/* Insert new row into PATHMAN_CONFIG */
 	pathman_config = heap_open(get_pathman_config_relid(false), RowExclusiveLock);
