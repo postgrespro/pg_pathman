@@ -854,6 +854,37 @@ create_single_partition_internal(Oid parent_relid,
 		{
 			elog(ERROR, "FDW partition creation is not implemented yet");
 		}
+		/*
+		 * 3737965249cd fix (since 12.5, 11.10, etc) reworked LIKE handling
+		 * to process it after DefineRelation.
+		 */
+#if (PG_VERSION_NUM >= 130000) || \
+	((PG_VERSION_NUM < 130000) && (PG_VERSION_NUM >= 120005)) || \
+	((PG_VERSION_NUM < 120000) && (PG_VERSION_NUM >= 110010)) || \
+	((PG_VERSION_NUM < 110000) && (PG_VERSION_NUM >= 100015)) || \
+	((PG_VERSION_NUM < 100000) && (PG_VERSION_NUM >= 90620)) || \
+	((PG_VERSION_NUM < 90600) && (PG_VERSION_NUM >= 90524))
+		else if (IsA(cur_stmt, TableLikeClause))
+		{
+			/*
+			 * Do delayed processing of LIKE options.  This
+			 * will result in additional sub-statements for us
+			 * to process.	We can just tack those onto the
+			 * to-do list.
+			 */
+			TableLikeClause *like = (TableLikeClause *) cur_stmt;
+			RangeVar   *rv = create_stmt.relation;
+			List	   *morestmts;
+
+			morestmts = expandTableLikeClause(rv, like);
+			create_stmts = list_concat(create_stmts, morestmts);
+
+			/*
+			 * We don't need a CCI now
+			 */
+			continue;
+		}
+#endif
 		else
 		{
 			/*
