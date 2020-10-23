@@ -51,21 +51,29 @@ SELECT * FROM test.range_rel j1
 JOIN test.range_rel j2 on j2.id = j1.id
 JOIN test.num_range_rel j3 on j3.id = j1.id
 WHERE j1.dt < '2015-03-01' AND j2.dt >= '2015-02-01' ORDER BY j2.dt;
-                                   QUERY PLAN                                    
----------------------------------------------------------------------------------
+                                      QUERY PLAN                                       
+---------------------------------------------------------------------------------------
  Sort
-   Sort Key: j2.dt
+   Sort Key: j2_1.dt
    ->  Hash Join
-         Hash Cond: (j3.id = j2.id)
-         ->  Append
-               ->  Index Scan using num_range_rel_1_pkey on num_range_rel_1 j3
-               ->  Index Scan using num_range_rel_2_pkey on num_range_rel_2 j3_1
-               ->  Index Scan using num_range_rel_3_pkey on num_range_rel_3 j3_2
-               ->  Index Scan using num_range_rel_4_pkey on num_range_rel_4 j3_3
+         Hash Cond: (j1_1.id = j2_1.id)
+         ->  Hash Join
+               Hash Cond: (j3_1.id = j1_1.id)
+               ->  Append
+                     ->  Index Scan using num_range_rel_1_pkey on num_range_rel_1 j3_1
+                     ->  Index Scan using num_range_rel_2_pkey on num_range_rel_2 j3_2
+                     ->  Index Scan using num_range_rel_3_pkey on num_range_rel_3 j3_3
+                     ->  Index Scan using num_range_rel_4_pkey on num_range_rel_4 j3_4
+               ->  Hash
+                     ->  Append
+                           ->  Index Scan using range_rel_1_pkey on range_rel_1 j1_1
+                           ->  Index Scan using range_rel_2_pkey on range_rel_2 j1_2
          ->  Hash
-               ->  Index Scan using range_rel_2_dt_idx on range_rel_2 j2
-                     Filter: (id IS NOT NULL)
-(12 rows)
+               ->  Append
+                     ->  Index Scan using range_rel_2_dt_idx on range_rel_2 j2_1
+                     ->  Index Scan using range_rel_3_dt_idx on range_rel_3 j2_2
+                     ->  Index Scan using range_rel_4_dt_idx on range_rel_4 j2_3
+(20 rows)
 
 DROP SCHEMA test CASCADE;
 NOTICE:  drop cascades to 12 other objects

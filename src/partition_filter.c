@@ -3,7 +3,7 @@
  * partition_filter.c
  *		Select partition for INSERT operation
  *
- * Copyright (c) 2016, Postgres Professional
+ * Copyright (c) 2016-2020, Postgres Professional
  *
  * ------------------------------------------------------------------------
  */
@@ -233,7 +233,7 @@ fini_result_parts_storage(ResultPartsStorage *parts_storage)
 		{
 			ExecCloseIndices(rri_holder->result_rel_info);
 			/* And relation itself */
-			heap_close(rri_holder->result_rel_info->ri_RelationDesc,
+			heap_close_compat(rri_holder->result_rel_info->ri_RelationDesc,
 				   NoLock);
 		}
 
@@ -307,7 +307,7 @@ scan_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid)
 		base_rel = parts_storage->base_rri->ri_RelationDesc;
 
 		/* Open child relation and check if it is a valid target */
-		child_rel = heap_open(partid, NoLock);
+		child_rel = heap_open_compat(partid, NoLock);
 
 		/* Build Var translation list for 'inserted_cols' */
 		make_inh_translation_list(base_rel, child_rel, 0, &translated_vars);
@@ -450,7 +450,7 @@ build_part_tuple_map(Relation base_rel, Relation child_rel)
 	parent_tupdesc->tdtypeid = InvalidOid;
 
 	/* Generate tuple transformation map and some other stuff */
-	tuple_map = convert_tuples_by_name(parent_tupdesc,
+	tuple_map = convert_tuples_by_name_compat(parent_tupdesc,
 									   child_tupdesc,
 									   ERR_PART_DESC_CONVERT);
 
@@ -592,6 +592,10 @@ select_partition_for_insert(ResultPartsStorage *parts_storage,
 	return result;
 }
 
+/*
+ * Since 13 (e1551f96e64) AttrNumber[] and map_length was combined
+ * into one struct AttrMap
+ */
 static ExprState *
 prepare_expr_state(const PartRelationInfo *prel,
 				   Relation source_rel,
@@ -610,26 +614,44 @@ prepare_expr_state(const PartRelationInfo *prel,
 	/* Should we try using map? */
 	if (PrelParentRelid(prel) != RelationGetRelid(source_rel))
 	{
+#if PG_VERSION_NUM >= 130000
+		AttrMap	   *map;
+#else
 		AttrNumber	   *map;
 		int				map_length;
+#endif
 		TupleDesc		source_tupdesc = RelationGetDescr(source_rel);
 
 		/* Remap expression attributes for source relation */
+#if PG_VERSION_NUM >= 130000
+		map = PrelExpressionAttributesMap(prel, source_tupdesc);
+#else
 		map = PrelExpressionAttributesMap(prel, source_tupdesc, &map_length);
+#endif
 
 		if (map)
 		{
 			bool found_whole_row;
 
+#if PG_VERSION_NUM >= 130000
+			expr = map_variable_attnos(expr, PART_EXPR_VARNO, 0, map,
+											  InvalidOid,
+											  &found_whole_row);
+#else
 			expr = map_variable_attnos_compat(expr, PART_EXPR_VARNO, 0, map,
 											  map_length, InvalidOid,
 											  &found_whole_row);
+#endif
 
 			if (found_whole_row)
 				elog(ERROR, "unexpected whole-row reference"
 							" found in partition key");
 
+#if PG_VERSION_NUM >= 130000
+			free_attrmap(map);
+#else
 			pfree(map);
+#endif
 		}
 	}
 
@@ -1073,7 +1095,11 @@ prepare_rri_fdw_for_insert(ResultRelInfoHolder *rri_holder,
 
 		/* HACK: plan a fake query for FDW access to be planned as well */
 		elog(DEBUG1, "FDW(%u): plan fake query for fdw_private", partid);
+#if PG_VERSION_NUM >= 130000
+		plan = standard_planner(&query, NULL, 0, NULL);
+#else
 		plan = standard_planner(&query, 0, NULL);
+#endif
 
 		/* HACK: create a fake PlanState */
 		memset(&pstate, 0, sizeof(PlanState));
@@ -1147,7 +1173,11 @@ fix_returning_list_mutator(Node *node, void *state)
 			for (i = 0; i < rri_holder->tuple_map->outdesc->natts; i++)
 			{
 				/* Good, 'varattno' of parent is child's 'i+1' */
+#if PG_VERSION_NUM >= 130000
+				if (var->varattno == rri_holder->tuple_map->attrMap->attnums[i])
+#else
 				if (var->varattno == rri_holder->tuple_map->attrMap[i])
+#endif
 				{
 					var->varattno = i + 1; /* attnos begin with 1 */
 					found_mapping = true;
@@ -1189,19 +1219,25 @@ append_rte_to_estate(EState *estate, RangeTblEntry *rte, Relation child_rel)
 	/* Update estate_mod_data */
 	emd_struct->estate_not_modified = false;
 
-	/*
-	 * On PG >= 12, also add rte to es_range_table_array. This is horribly
-	 * inefficient, yes.
-	 * At least in 12 es_range_table_array ptr is not saved anywhere in
-	 * core, so it is safe to repalloc.
-	 */
 #if PG_VERSION_NUM >= 120000
 	estate->es_range_table_size = list_length(estate->es_range_table);
+#endif
+#if PG_VERSION_NUM >= 120000 && PG_VERSION_NUM < 130000
+	/*
+	 * On PG = 12, also add rte to es_range_table_array. This is horribly
+	 * inefficient, yes.
+	 * In 12 es_range_table_array ptr is not saved anywhere in
+	 * core, so it is safe to repalloc.
+	 *
+	 * In >= 13 (3c92658) es_range_table_array was removed
+	 */
 	estate->es_range_table_array = (RangeTblEntry **)
 		repalloc(estate->es_range_table_array,
 				 estate->es_range_table_size * sizeof(RangeTblEntry *));
 	estate->es_range_table_array[estate->es_range_table_size - 1] = rte;
+#endif
 
+#if PG_VERSION_NUM >= 120000
 	/*
 	 * Also reallocate es_relations, because es_range_table_size defines its
 	 * len. This also ensures ExecEndPlan will close the rel.

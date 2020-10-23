@@ -400,7 +400,7 @@ get_pathman_schema(void)
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(ext_oid));
 
-	rel = heap_open(ExtensionRelationId, AccessShareLock);
+	rel = heap_open_compat(ExtensionRelationId, AccessShareLock);
 	scandesc = systable_beginscan(rel, ExtensionOidIndexId, true,
 								  NULL, 1, entry);
 
@@ -414,7 +414,7 @@ get_pathman_schema(void)
 
 	systable_endscan(scandesc);
 
-	heap_close(rel, AccessShareLock);
+	heap_close_compat(rel, AccessShareLock);
 
 	return result;
 }
@@ -483,7 +483,7 @@ append_child_relation(PlannerInfo *root,
 	parent_rte = root->simple_rte_array[parent_rti];
 
 	/* Open child relation (we've just locked it) */
-	child_relation = heap_open(child_oid, NoLock);
+	child_relation = heap_open_compat(child_oid, NoLock);
 
 	/* Create RangeTblEntry for child relation */
 	child_rte = copyObject(parent_rte);
@@ -678,7 +678,7 @@ append_child_relation(PlannerInfo *root,
 	}
 
 	/* Close child relations, but keep locks */
-	heap_close(child_relation, NoLock);
+	heap_close_compat(child_relation, NoLock);
 
 	return child_rti;
 }

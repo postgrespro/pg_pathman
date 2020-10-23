@@ -1,3 +1,7 @@
+/*
+ * Since 55a1954da16 and 6ef77cf46e8 (>= 13) output of EXPLAIN was changed,
+ * now it includes aliases for inherited tables.
+ */
 \set VERBOSITY terse
 SET search_path = 'public';
 CREATE EXTENSION pg_pathman;

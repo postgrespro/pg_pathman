@@ -66,7 +66,8 @@ REGRESS = pathman_array_qual \
 
 EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add
 
-EXTRA_CLEAN = pg_pathman--$(EXTVERSION).sql ./isolation_output
+CMOCKA_EXTRA_CLEAN = missing_basic.o missing_list.o missing_stringinfo.o missing_bitmapset.o rangeset_tests.o rangeset_tests
+EXTRA_CLEAN = ./isolation_output $(patsubst %,tests/cmocka/%, $(CMOCKA_EXTRA_CLEAN))
 
 ifdef USE_PGXS
 PG_CONFIG=pg_config
@@ -74,6 +75,7 @@ PGXS := $(shell $(PG_CONFIG) --pgxs)
 VNUM := $(shell $(PG_CONFIG) --version | awk '{print $$2}')
 
 # check for declarative syntax
+# this feature will not be ported to >=12
 ifeq ($(VNUM),$(filter 10% 11%,$(VNUM)))
 REGRESS += pathman_declarative
 OBJS += src/declarative.o

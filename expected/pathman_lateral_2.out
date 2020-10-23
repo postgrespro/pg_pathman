@@ -32,92 +32,92 @@ select * from
 				  t1.id > t2.id and
 				  exists(select * from test_lateral.data t
 						 where t1.id = t2.id and t.id = t3.id);
-                                         QUERY PLAN                                         
---------------------------------------------------------------------------------------------
+                                               QUERY PLAN                                               
+--------------------------------------------------------------------------------------------------------
  Nested Loop
    ->  Nested Loop
-         Join Filter: ((t2.id + t1.id) = t.id)
+         Join Filter: ((t2_1.id + t1_1.id) = t_1.id)
          ->  HashAggregate
-               Group Key: t.id
+               Group Key: t_1.id
                ->  Append
-                     ->  Seq Scan on data_0 t
-                     ->  Seq Scan on data_1 t_1
-                     ->  Seq Scan on data_2 t_2
-                     ->  Seq Scan on data_3 t_3
-                     ->  Seq Scan on data_4 t_4
-                     ->  Seq Scan on data_5 t_5
-                     ->  Seq Scan on data_6 t_6
-                     ->  Seq Scan on data_7 t_7
-                     ->  Seq Scan on data_8 t_8
-                     ->  Seq Scan on data_9 t_9
+                     ->  Seq Scan on data_0 t_1
+                     ->  Seq Scan on data_1 t_2
+                     ->  Seq Scan on data_2 t_3
+                     ->  Seq Scan on data_3 t_4
+                     ->  Seq Scan on data_4 t_5
+                     ->  Seq Scan on data_5 t_6
+                     ->  Seq Scan on data_6 t_7
+                     ->  Seq Scan on data_7 t_8
+                     ->  Seq Scan on data_8 t_9
+                     ->  Seq Scan on data_9 t_10
          ->  Materialize
                ->  Nested Loop
-                     Join Filter: ((t2.id > t1.id) AND (t1.id > t2.id) AND (t1.id = t2.id))
+                     Join Filter: ((t2_1.id > t1_1.id) AND (t1_1.id > t2_1.id) AND (t1_1.id = t2_1.id))
                      ->  Append
-                           ->  Seq Scan on data_0 t2
+                           ->  Seq Scan on data_0 t2_1
                                  Filter: ((id >= 2) AND (id <= 299))
-                           ->  Seq Scan on data_1 t2_1
+                           ->  Seq Scan on data_1 t2_2
                                  Filter: ((id >= 2) AND (id <= 299))
-                           ->  Seq Scan on data_2 t2_2
+                           ->  Seq Scan on data_2 t2_3
                                  Filter: ((id >= 2) AND (id <= 299))
-                           ->  Seq Scan on data_3 t2_3
+                           ->  Seq Scan on data_3 t2_4
                                  Filter: ((id >= 2) AND (id <= 299))
-                           ->  Seq Scan on data_4 t2_4
+                           ->  Seq Scan on data_4 t2_5
                                  Filter: ((id >= 2) AND (id <= 299))
-                           ->  Seq Scan on data_5 t2_5
+                           ->  Seq Scan on data_5 t2_6
                                  Filter: ((id >= 2) AND (id <= 299))
-                           ->  Seq Scan on data_6 t2_6
+                           ->  Seq Scan on data_6 t2_7
                                  Filter: ((id >= 2) AND (id <= 299))
-                           ->  Seq Scan on data_7 t2_7
+                           ->  Seq Scan on data_7 t2_8
                                  Filter: ((id >= 2) AND (id <= 299))
-                           ->  Seq Scan on data_8 t2_8
+                           ->  Seq Scan on data_8 t2_9
                                  Filter: ((id >= 2) AND (id <= 299))
-                           ->  Seq Scan on data_9 t2_9
+                           ->  Seq Scan on data_9 t2_10
                                  Filter: ((id >= 2) AND (id <= 299))
                      ->  Materialize
                            ->  Append
-                                 ->  Seq Scan on data_0 t1
+                                 ->  Seq Scan on data_0 t1_1
                                        Filter: ((id >= 1) AND (id <= 100))
-                                 ->  Seq Scan on data_1 t1_1
+                                 ->  Seq Scan on data_1 t1_2
                                        Filter: ((id >= 1) AND (id <= 100))
-                                 ->  Seq Scan on data_2 t1_2
+                                 ->  Seq Scan on data_2 t1_3
                                        Filter: ((id >= 1) AND (id <= 100))
-                                 ->  Seq Scan on data_3 t1_3
+                                 ->  Seq Scan on data_3 t1_4
                                        Filter: ((id >= 1) AND (id <= 100))
-                                 ->  Seq Scan on data_4 t1_4
+                                 ->  Seq Scan on data_4 t1_5
                                        Filter: ((id >= 1) AND (id <= 100))
-                                 ->  Seq Scan on data_5 t1_5
+                                 ->  Seq Scan on data_5 t1_6
                                        Filter: ((id >= 1) AND (id <= 100))
-                                 ->  Seq Scan on data_6 t1_6
+                                 ->  Seq Scan on data_6 t1_7
                                        Filter: ((id >= 1) AND (id <= 100))
-                                 ->  Seq Scan on data_7 t1_7
+                                 ->  Seq Scan on data_7 t1_8
                                        Filter: ((id >= 1) AND (id <= 100))
-                                 ->  Seq Scan on data_8 t1_8
+                                 ->  Seq Scan on data_8 t1_9
                                        Filter: ((id >= 1) AND (id <= 100))
-                                 ->  Seq Scan on data_9 t1_9
+                                 ->  Seq Scan on data_9 t1_10
                                        Filter: ((id >= 1) AND (id <= 100))
    ->  Custom Scan (RuntimeAppend)
-         Prune by: (t.id = t3.id)
+         Prune by: (t_1.id = t3.id)
          ->  Seq Scan on data_0 t3
-               Filter: (t.id = id)
+               Filter: (t_1.id = id)
          ->  Seq Scan on data_1 t3
-               Filter: (t.id = id)
+               Filter: (t_1.id = id)
          ->  Seq Scan on data_2 t3
-               Filter: (t.id = id)
+               Filter: (t_1.id = id)
          ->  Seq Scan on data_3 t3
-               Filter: (t.id = id)
+               Filter: (t_1.id = id)
          ->  Seq Scan on data_4 t3
-               Filter: (t.id = id)
+               Filter: (t_1.id = id)
          ->  Seq Scan on data_5 t3
-               Filter: (t.id = id)
+               Filter: (t_1.id = id)
          ->  Seq Scan on data_6 t3
-               Filter: (t.id = id)
+               Filter: (t_1.id = id)
          ->  Seq Scan on data_7 t3
-               Filter: (t.id = id)
+               Filter: (t_1.id = id)
          ->  Seq Scan on data_8 t3
-               Filter: (t.id = id)
+               Filter: (t_1.id = id)
          ->  Seq Scan on data_9 t3
-               Filter: (t.id = id)
+               Filter: (t_1.id = id)
 (84 rows)
 
 set enable_hashjoin = on;

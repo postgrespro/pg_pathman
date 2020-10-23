@@ -3,7 +3,7 @@
  * init.c
  *		Initialization functions
  *
- * Copyright (c) 2015-2016, Postgres Professional
+ * Copyright (c) 2015-2020, Postgres Professional
  *
  * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -470,7 +470,7 @@ find_inheritance_children_array(Oid parent_relid,
 	 */
 	ArrayAlloc(oidarr, maxoids, numoids, 32);
 
-	relation = heap_open(InheritsRelationId, AccessShareLock);
+	relation = heap_open_compat(InheritsRelationId, AccessShareLock);
 
 	ScanKeyInit(&key[0],
 				Anum_pg_inherits_inhparent,
@@ -490,7 +490,7 @@ find_inheritance_children_array(Oid parent_relid,
 
 	systable_endscan(scan);
 
-	heap_close(relation, AccessShareLock);
+	heap_close_compat(relation, AccessShareLock);
 
 	/*
 	 * If we found more than one child, sort them by OID.  This ensures
@@ -655,7 +655,7 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 				ObjectIdGetDatum(relid));
 
 	/* Open PATHMAN_CONFIG with latest snapshot available */
-	rel = heap_open(get_pathman_config_relid(false), AccessShareLock);
+	rel = heap_open_compat(get_pathman_config_relid(false), AccessShareLock);
 
 	/* Check that 'partrel' column is of regclass type */
 	Assert(TupleDescAttr(RelationGetDescr(rel),
@@ -703,7 +703,7 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 	heap_endscan(scan);
 #endif
 	UnregisterSnapshot(snapshot);
-	heap_close(rel, AccessShareLock);
+	heap_close_compat(rel, AccessShareLock);
 
 	elog(DEBUG2, "PATHMAN_CONFIG %s relation %u",
 		 (contains_rel ? "contains" : "doesn't contain"), relid);
@@ -734,7 +734,7 @@ read_pathman_params(Oid relid, Datum *values, bool *isnull)
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(relid));
 
-	rel = heap_open(get_pathman_config_params_relid(false), AccessShareLock);
+	rel = heap_open_compat(get_pathman_config_params_relid(false), AccessShareLock);
 	snapshot = RegisterSnapshot(GetLatestSnapshot());
 #if PG_VERSION_NUM >= 120000
 	scan = table_beginscan(rel, snapshot, 1, key);
@@ -764,7 +764,7 @@ read_pathman_params(Oid relid, Datum *values, bool *isnull)
 	heap_endscan(scan);
 #endif
 	UnregisterSnapshot(snapshot);
-	heap_close(rel, AccessShareLock);
+	heap_close_compat(rel, AccessShareLock);
 
 	return row_found;
 }
@@ -1118,7 +1118,7 @@ get_plpgsql_frontend_version(void)
 	char		   *version_cstr;
 
 	/* Look up the extension */
-	pg_extension_rel = heap_open(ExtensionRelationId, AccessShareLock);
+	pg_extension_rel = heap_open_compat(ExtensionRelationId, AccessShareLock);
 
 	ScanKeyInit(&skey,
 				Anum_pg_extension_extname,
@@ -1143,7 +1143,7 @@ get_plpgsql_frontend_version(void)
 	version_cstr = text_to_cstring(DatumGetTextPP(datum));
 
 	systable_endscan(scan);
-	heap_close(pg_extension_rel, AccessShareLock);
+	heap_close_compat(pg_extension_rel, AccessShareLock);
 
 	return build_semver_uint32(version_cstr);
 }

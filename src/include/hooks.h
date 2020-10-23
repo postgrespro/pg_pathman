@@ -3,7 +3,7 @@
  * hooks.h
  *		prototypes of rel_pathlist and join_pathlist hooks
  *
- * Copyright (c) 2016, Postgres Professional
+ * Copyright (c) 2016-2020, Postgres Professional
  *
  * ------------------------------------------------------------------------
  */
@@ -45,6 +45,9 @@ void pathman_rel_pathlist_hook(PlannerInfo *root,
 void pathman_enable_assign_hook(bool newval, void *extra);
 
 PlannedStmt * pathman_planner_hook(Query *parse,
+#if PG_VERSION_NUM >= 130000
+								   const char *query_string,
+#endif
 								   int cursorOptions,
 								   ParamListInfo boundParams);
 
@@ -55,7 +58,15 @@ void pathman_shmem_startup_hook(void);
 
 void pathman_relcache_hook(Datum arg, Oid relid);
 
-#if PG_VERSION_NUM >= 100000
+#if PG_VERSION_NUM >= 130000
+void pathman_process_utility_hook(PlannedStmt *pstmt,
+								  const char *queryString,
+								  ProcessUtilityContext context,
+								  ParamListInfo params,
+								  QueryEnvironment *queryEnv,
+								  DestReceiver *dest,
+								  QueryCompletion *qc);
+#elif PG_VERSION_NUM >= 100000
 void pathman_process_utility_hook(PlannedStmt *pstmt,
 								  const char *queryString,
 								  ProcessUtilityContext context,

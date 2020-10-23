@@ -3,7 +3,7 @@
  * relation_info.h
  *		Data structures describing partitioned relations
  *
- * Copyright (c) 2016, Postgres Professional
+ * Copyright (c) 2016-2020, Postgres Professional
  *
  * ------------------------------------------------------------------------
  */
@@ -309,9 +309,14 @@ PrelExpressionForRelid(const PartRelationInfo *prel, Index rti)
 	return expr;
 }
 
+#if PG_VERSION_NUM >= 130000
+AttrMap *PrelExpressionAttributesMap(const PartRelationInfo *prel,
+										TupleDesc source_tupdesc);
+#else
 AttrNumber *PrelExpressionAttributesMap(const PartRelationInfo *prel,
 										TupleDesc source_tupdesc,
 										int *map_length);
+#endif
 
 
 /* PartType wrappers */

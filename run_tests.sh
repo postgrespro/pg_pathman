@@ -134,6 +134,8 @@ make USE_PGXS=1 python_tests || status=$?
 deactivate
 set -x
 
+if [ $status -ne 0 ]; then tail -n 2000 tests/python/tests.log; fi
+
 # show Valgrind logs if necessary
 if [ "$LEVEL" = "nightmare" ]; then
 	for f in $(find /tmp -name valgrind-*.log); do

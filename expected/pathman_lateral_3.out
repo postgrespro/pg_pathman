@@ -1,0 +1,126 @@
+/*
+ * Sometimes join selectivity improvements patches in pgpro force nested loop
+ * members swap -- in pathman_lateral_1.out and pathman_lateral_3.out
+ *
+ * Since 55a1954da16 and 6ef77cf46e8 (>= 13) output of EXPLAIN was changed,
+ * now it includes aliases for inherited tables.
+ */
+\set VERBOSITY terse
+SET search_path = 'public';
+CREATE EXTENSION pg_pathman;
+CREATE SCHEMA test_lateral;
+/* create table partitioned by HASH */
+create table test_lateral.data(id int8 not null);
+select create_hash_partitions('test_lateral.data', 'id', 10);
+ create_hash_partitions 
+------------------------
+                     10
+(1 row)
+
+insert into test_lateral.data select generate_series(1, 10000);
+VACUUM ANALYZE;
+set enable_hashjoin = off;
+set enable_mergejoin = off;
+/* all credits go to Ivan Frolkov */
+explain (costs off)
+select * from
+	test_lateral.data as t1,
+	lateral(select * from test_lateral.data as t2 where t2.id > t1.id) t2,
+	lateral(select * from test_lateral.data as t3 where t3.id = t2.id + t1.id) t3
+			where t1.id between 1 and 100 and
+				  t2.id between 2 and 299 and
+				  t1.id > t2.id and
+				  exists(select * from test_lateral.data t
+						 where t1.id = t2.id and t.id = t3.id);
+                                            QUERY PLAN                                            
+--------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Nested Loop
+         Join Filter: ((t2_1.id + t1_1.id) = t_1.id)
+         ->  Nested Loop
+               Join Filter: ((t2_1.id > t1_1.id) AND (t1_1.id > t2_1.id) AND (t1_1.id = t2_1.id))
+               ->  Append
+                     ->  Seq Scan on data_0 t2_1
+                           Filter: ((id >= 2) AND (id <= 299))
+                     ->  Seq Scan on data_1 t2_2
+                           Filter: ((id >= 2) AND (id <= 299))
+                     ->  Seq Scan on data_2 t2_3
+                           Filter: ((id >= 2) AND (id <= 299))
+                     ->  Seq Scan on data_3 t2_4
+                           Filter: ((id >= 2) AND (id <= 299))
+                     ->  Seq Scan on data_4 t2_5
+                           Filter: ((id >= 2) AND (id <= 299))
+                     ->  Seq Scan on data_5 t2_6
+                           Filter: ((id >= 2) AND (id <= 299))
+                     ->  Seq Scan on data_6 t2_7
+                           Filter: ((id >= 2) AND (id <= 299))
+                     ->  Seq Scan on data_7 t2_8
+                           Filter: ((id >= 2) AND (id <= 299))
+                     ->  Seq Scan on data_8 t2_9
+                           Filter: ((id >= 2) AND (id <= 299))
+                     ->  Seq Scan on data_9 t2_10
+                           Filter: ((id >= 2) AND (id <= 299))
+               ->  Materialize
+                     ->  Append
+                           ->  Seq Scan on data_0 t1_1
+                                 Filter: ((id >= 1) AND (id <= 100))
+                           ->  Seq Scan on data_1 t1_2
+                                 Filter: ((id >= 1) AND (id <= 100))
+                           ->  Seq Scan on data_2 t1_3
+                                 Filter: ((id >= 1) AND (id <= 100))
+                           ->  Seq Scan on data_3 t1_4
+                                 Filter: ((id >= 1) AND (id <= 100))
+                           ->  Seq Scan on data_4 t1_5
+                                 Filter: ((id >= 1) AND (id <= 100))
+                           ->  Seq Scan on data_5 t1_6
+                                 Filter: ((id >= 1) AND (id <= 100))
+                           ->  Seq Scan on data_6 t1_7
+                                 Filter: ((id >= 1) AND (id <= 100))
+                           ->  Seq Scan on data_7 t1_8
+                                 Filter: ((id >= 1) AND (id <= 100))
+                           ->  Seq Scan on data_8 t1_9
+                                 Filter: ((id >= 1) AND (id <= 100))
+                           ->  Seq Scan on data_9 t1_10
+                                 Filter: ((id >= 1) AND (id <= 100))
+         ->  HashAggregate
+               Group Key: t_1.id
+               ->  Append
+                     ->  Seq Scan on data_0 t_1
+                     ->  Seq Scan on data_1 t_2
+                     ->  Seq Scan on data_2 t_3
+                     ->  Seq Scan on data_3 t_4
+                     ->  Seq Scan on data_4 t_5
+                     ->  Seq Scan on data_5 t_6
+                     ->  Seq Scan on data_6 t_7
+                     ->  Seq Scan on data_7 t_8
+                     ->  Seq Scan on data_8 t_9
+                     ->  Seq Scan on data_9 t_10
+   ->  Custom Scan (RuntimeAppend)
+         Prune by: (t_1.id = t3.id)
+         ->  Seq Scan on data_0 t3
+               Filter: (t_1.id = id)
+         ->  Seq Scan on data_1 t3
+               Filter: (t_1.id = id)
+         ->  Seq Scan on data_2 t3
+               Filter: (t_1.id = id)
+         ->  Seq Scan on data_3 t3
+               Filter: (t_1.id = id)
+         ->  Seq Scan on data_4 t3
+               Filter: (t_1.id = id)
+         ->  Seq Scan on data_5 t3
+               Filter: (t_1.id = id)
+         ->  Seq Scan on data_6 t3
+               Filter: (t_1.id = id)
+         ->  Seq Scan on data_7 t3
+               Filter: (t_1.id = id)
+         ->  Seq Scan on data_8 t3
+               Filter: (t_1.id = id)
+         ->  Seq Scan on data_9 t3
+               Filter: (t_1.id = id)
+(83 rows)
+
+set enable_hashjoin = on;
+set enable_mergejoin = on;
+DROP SCHEMA test_lateral CASCADE;
+NOTICE:  drop cascades to 11 other objects
+DROP EXTENSION pg_pathman;

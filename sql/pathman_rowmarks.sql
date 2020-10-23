@@ -5,6 +5,9 @@
  *
  * Also since 8edd0e794 (>= 12) Append nodes with single subplan are eliminated,
  * causing different output; pathman_rowmarks_2.out is the updated version.
+ *
+ * Since 55a1954da16 and 6ef77cf46e8 (>= 13) output of EXPLAIN was changed,
+ * now it includes aliases for inherited tables.
  */
 SET search_path = 'public';
 CREATE EXTENSION pg_pathman;

@@ -3,7 +3,7 @@
  * partition_creation.c
  *		Various functions for partition creation.
  *
- * Copyright (c) 2016, Postgres Professional
+ * Copyright (c) 2016-2020, Postgres Professional
  *
  *-------------------------------------------------------------------------
  */
@@ -42,6 +42,9 @@
 #include "parser/parse_utilcmd.h"
 #include "parser/parse_relation.h"
 #include "tcop/utility.h"
+#if PG_VERSION_NUM >= 130000
+#include "utils/acl.h"
+#endif
 #include "utils/builtins.h"
 #include "utils/datum.h"
 #include "utils/fmgroids.h"
@@ -247,11 +250,11 @@ create_single_partition_common(Oid parent_relid,
 	Relation	 child_relation;
 
 	/* Open the relation and add new check constraint & fkeys */
-	child_relation = heap_open(partition_relid, AccessExclusiveLock);
+	child_relation = heap_open_compat(partition_relid, AccessExclusiveLock);
 	AddRelationNewConstraintsCompat(child_relation, NIL,
 									list_make1(check_constraint),
 									false, true, true);
-	heap_close(child_relation, NoLock);
+	heap_close_compat(child_relation, NoLock);
 
 	/* Make constraint visible */
 	CommandCounterIncrement();
@@ -984,17 +987,17 @@ postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid)
 	Snapshot		snapshot;
 
 	/* Both parent & partition have already been locked */
-	parent_rel = heap_open(parent_relid, NoLock);
-	partition_rel = heap_open(partition_relid, NoLock);
+	parent_rel = heap_open_compat(parent_relid, NoLock);
+	partition_rel = heap_open_compat(partition_relid, NoLock);
 
 	make_inh_translation_list(parent_rel, partition_rel, 0, &translated_vars);
 
-	heap_close(parent_rel, NoLock);
-	heap_close(partition_rel, NoLock);
+	heap_close_compat(parent_rel, NoLock);
+	heap_close_compat(partition_rel, NoLock);
 
 	/* Open catalog's relations */
-	pg_class_rel = heap_open(RelationRelationId, RowExclusiveLock);
-	pg_attribute_rel = heap_open(AttributeRelationId, RowExclusiveLock);
+	pg_class_rel = heap_open_compat(RelationRelationId, RowExclusiveLock);
+	pg_attribute_rel = heap_open_compat(AttributeRelationId, RowExclusiveLock);
 
 	/* Get most recent snapshot */
 	snapshot = RegisterSnapshot(GetLatestSnapshot());
@@ -1165,8 +1168,8 @@ postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid)
 	/* Don't forget to free snapshot */
 	UnregisterSnapshot(snapshot);
 
-	heap_close(pg_class_rel, RowExclusiveLock);
-	heap_close(pg_attribute_rel, RowExclusiveLock);
+	heap_close_compat(pg_class_rel, RowExclusiveLock);
+	heap_close_compat(pg_attribute_rel, RowExclusiveLock);
 }
 
 /* Copy foreign keys of parent table (updates pg_class) */
@@ -1235,7 +1238,7 @@ copy_rel_options(Oid parent_relid, Oid partition_relid)
 	bool		isnull[Natts_pg_class],
 				replace[Natts_pg_class] = { false };
 
-	pg_class_rel = heap_open(RelationRelationId, RowExclusiveLock);
+	pg_class_rel = heap_open_compat(RelationRelationId, RowExclusiveLock);
 
 	parent_htup		= SearchSysCache1(RELOID, ObjectIdGetDatum(parent_relid));
 	partition_htup	= SearchSysCache1(RELOID, ObjectIdGetDatum(partition_relid));
@@ -1273,7 +1276,7 @@ copy_rel_options(Oid parent_relid, Oid partition_relid)
 	ReleaseSysCache(parent_htup);
 	ReleaseSysCache(partition_htup);
 
-	heap_close(pg_class_rel, RowExclusiveLock);
+	heap_close_compat(pg_class_rel, RowExclusiveLock);
 
 	/* Make changes visible */
 	CommandCounterIncrement();
@@ -1291,15 +1294,21 @@ void
 drop_pathman_check_constraint(Oid relid)
 {
 	char		   *constr_name;
+#if PG_VERSION_NUM >= 130000
+	List		*cmds;
+#else
 	AlterTableStmt *stmt;
+#endif
 	AlterTableCmd  *cmd;
 
 	/* Build a correct name for this constraint */
 	constr_name = build_check_constraint_name_relid_internal(relid);
 
+#if PG_VERSION_NUM < 130000
 	stmt = makeNode(AlterTableStmt);
 	stmt->relation	= makeRangeVarFromRelid(relid);
 	stmt->relkind	= OBJECT_TABLE;
+#endif
 
 	cmd = makeNode(AlterTableCmd);
 	cmd->subtype	= AT_DropConstraint;
@@ -1307,23 +1316,35 @@ drop_pathman_check_constraint(Oid relid)
 	cmd->behavior	= DROP_RESTRICT;
 	cmd->missing_ok	= true;
 
+#if PG_VERSION_NUM >= 130000
+	cmds = list_make1(cmd);
+
+	/*
+         * Since 1281a5c907b AlterTable() was changed.
+         * recurse = true (see stmt->relation->inh makeRangeVarFromRelid() makeRangeVar())
+		 * Dropping constraint won't do parse analyze, so AlterTableInternal
+		 * is enough.
+         */
+	AlterTableInternal(relid, cmds, true);
+#else
 	stmt->cmds = list_make1(cmd);
 
 	/* See function AlterTableGetLockLevel() */
 	AlterTable(relid, AccessExclusiveLock, stmt);
+#endif
 }
 
 /* Add pg_pathman's check constraint using 'relid' */
 void
 add_pathman_check_constraint(Oid relid, Constraint *constraint)
 {
-	Relation part_rel = heap_open(relid, AccessExclusiveLock);
+	Relation part_rel = heap_open_compat(relid, AccessExclusiveLock);
 
 	AddRelationNewConstraintsCompat(part_rel, NIL,
 									list_make1(constraint),
 									false, true, true);
 
-	heap_close(part_rel, NoLock);
+	heap_close_compat(part_rel, NoLock);
 }
 
 

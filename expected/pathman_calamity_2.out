@@ -1021,12 +1021,12 @@ ERROR:  pg_pathman is not initialized yet
 SELECT get_part_range('calamity.survivor', 0, NULL::INT);		/* not ok */
 ERROR:  pg_pathman is disabled
 EXPLAIN (COSTS OFF) SELECT * FROM calamity.survivor;			/* OK */
-          QUERY PLAN          
-------------------------------
+               QUERY PLAN                
+-----------------------------------------
  Append
-   ->  Seq Scan on survivor
-   ->  Seq Scan on survivor_1
-   ->  Seq Scan on survivor_2
+   ->  Seq Scan on survivor survivor_1
+   ->  Seq Scan on survivor_1 survivor_2
+   ->  Seq Scan on survivor_2 survivor_3
 (4 rows)
 
 SET pg_pathman.enable = t; /* LOAD CONFIG */

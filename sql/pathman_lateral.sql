@@ -1,5 +1,11 @@
--- Sometimes join selectivity improvements patches in pgpro force nested loop
--- members swap -- in pathman_lateral_1.out
+/*
+ * Sometimes join selectivity improvements patches in pgpro force nested loop
+ * members swap -- in pathman_lateral_1.out and pathman_lateral_3.out
+ *
+ * Since 55a1954da16 and 6ef77cf46e8 (>= 13) output of EXPLAIN was changed,
+ * now it includes aliases for inherited tables.
+ */
+
 
 \set VERBOSITY terse
 

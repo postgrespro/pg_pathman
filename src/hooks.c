@@ -3,7 +3,7 @@
  * hooks.c
  *		definitions of rel_pathlist and join_pathlist hooks
  *
- * Copyright (c) 2016, Postgres Professional
+ * Copyright (c) 2016-2020, Postgres Professional
  * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -517,7 +517,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 	}
 
 	/* Parent has already been locked by rewriter */
-	parent_rel = heap_open(rte->relid, NoLock);
+	parent_rel = heap_open_compat(rte->relid, NoLock);
 
 	parent_rowmark = get_plan_rowmark(root->rowMarks, rti);
 
@@ -537,7 +537,7 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 	}
 
 	/* Now close parent relation */
-	heap_close(parent_rel, NoLock);
+	heap_close_compat(parent_rel, NoLock);
 
 	/* Clear path list and make it point to NIL */
 	list_free_deep(rel->pathlist);
@@ -673,9 +673,15 @@ execute_for_plantree(PlannedStmt *planned_stmt,
  * Planner hook. It disables inheritance for tables that have been partitioned
  * by pathman to prevent standart PostgreSQL partitioning mechanism from
  * handling those tables.
+ *
+ * Since >= 13 (6aba63ef3e6) query_string parameter was added.
  */
 PlannedStmt *
+#if PG_VERSION_NUM >= 130000
+pathman_planner_hook(Query *parse, const char *query_string, int cursorOptions, ParamListInfo boundParams)
+#else
 pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
+#endif
 {
 	PlannedStmt	   *result;
 	uint32			query_id = parse->queryId;
@@ -696,9 +702,17 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 
 		/* Invoke original hook if needed */
 		if (pathman_planner_hook_next)
+#if PG_VERSION_NUM >= 130000
+			result = pathman_planner_hook_next(parse, query_string, cursorOptions, boundParams);
+#else
 			result = pathman_planner_hook_next(parse, cursorOptions, boundParams);
+#endif
 		else
+#if PG_VERSION_NUM >= 130000
+			result = standard_planner(parse, query_string, cursorOptions, boundParams);
+#else
 			result = standard_planner(parse, cursorOptions, boundParams);
+#endif
 
 		if (pathman_ready)
 		{
@@ -927,9 +941,21 @@ pathman_relcache_hook(Datum arg, Oid relid)
 /*
  * Utility function invoker hook.
  * NOTE: 'first_arg' is (PlannedStmt *) in PG 10, or (Node *) in PG <= 9.6.
+ * In PG 13 (2f9661311b8) command completion tags was reworked (added QueryCompletion struct)
  */
 void
-#if PG_VERSION_NUM >= 100000
+#if PG_VERSION_NUM >= 130000
+pathman_process_utility_hook(PlannedStmt *first_arg,
+							 const char *queryString,
+							 ProcessUtilityContext context,
+							 ParamListInfo params,
+							 QueryEnvironment *queryEnv,
+							 DestReceiver *dest, QueryCompletion *queryCompletion)
+{
+	Node   *parsetree		= first_arg->utilityStmt;
+	int		stmt_location	= first_arg->stmt_location,
+			stmt_len		= first_arg->stmt_len;
+#elif PG_VERSION_NUM >= 100000
 pathman_process_utility_hook(PlannedStmt *first_arg,
 							 const char *queryString,
 							 ProcessUtilityContext context,
@@ -968,9 +994,14 @@ pathman_process_utility_hook(Node *first_arg,
 			/* Handle our COPY case (and show a special cmd name) */
 			PathmanDoCopy((CopyStmt *) parsetree, queryString,
 						  stmt_location, stmt_len, &processed);
+#if PG_VERSION_NUM >= 130000
+			if (queryCompletion)
+				SetQueryCompletion(queryCompletion, CMDTAG_COPY, processed);
+#else
 			if (completionTag)
 				snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
 						 "COPY " UINT64_FORMAT, processed);
+#endif
 
 			return; /* don't call standard_ProcessUtility() or hooks */
 		}
@@ -1037,10 +1068,19 @@ pathman_process_utility_hook(Node *first_arg,
 	}
 
 	/* Finally call process_utility_hook_next or standard_ProcessUtility */
+#if PG_VERSION_NUM >= 130000
+	call_process_utility_compat((pathman_process_utility_hook_next ?
+										pathman_process_utility_hook_next :
+										standard_ProcessUtility),
+								first_arg, queryString,
+								context, params, queryEnv,
+								dest, queryCompletion);
+#else
 	call_process_utility_compat((pathman_process_utility_hook_next ?
 										pathman_process_utility_hook_next :
 										standard_ProcessUtility),
 								first_arg, queryString,
 								context, params, queryEnv,
 								dest, completionTag);
+#endif
 }

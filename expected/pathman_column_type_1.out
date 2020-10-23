@@ -39,15 +39,15 @@ CREATE FUNCTION get_cached_partition_cooked_key(REGCLASS)
 RETURNS TEXT AS 'pg_pathman', 'get_cached_partition_cooked_key_pl'
 LANGUAGE C STRICT;
 SELECT get_partition_cooked_key('test_column_type.test'::REGCLASS);
-                                               get_partition_cooked_key                                                
------------------------------------------------------------------------------------------------------------------------
- {VAR :varno 1 :varattno 1 :vartype 23 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 1 :location 8}
+                                                get_partition_cooked_key                                                 
+-------------------------------------------------------------------------------------------------------------------------
+ {VAR :varno 1 :varattno 1 :vartype 23 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnosyn 1 :varattnosyn 1 :location 8}
 (1 row)
 
 SELECT get_cached_partition_cooked_key('test_column_type.test'::REGCLASS);
-                                            get_cached_partition_cooked_key                                            
------------------------------------------------------------------------------------------------------------------------
- {VAR :varno 1 :varattno 1 :vartype 23 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 1 :location 8}
+                                             get_cached_partition_cooked_key                                             
+-------------------------------------------------------------------------------------------------------------------------
+ {VAR :varno 1 :varattno 1 :vartype 23 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnosyn 1 :varattnosyn 1 :location 8}
 (1 row)
 
 SELECT get_partition_key_type('test_column_type.test'::REGCLASS);
@@ -66,15 +66,15 @@ SELECT get_partition_key_type('test_column_type.test'::REGCLASS);
 (1 row)
 
 SELECT get_partition_cooked_key('test_column_type.test'::REGCLASS);
-                                                get_partition_cooked_key                                                 
--------------------------------------------------------------------------------------------------------------------------
- {VAR :varno 1 :varattno 1 :vartype 1700 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 1 :location 8}
+                                                 get_partition_cooked_key                                                  
+---------------------------------------------------------------------------------------------------------------------------
+ {VAR :varno 1 :varattno 1 :vartype 1700 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnosyn 1 :varattnosyn 1 :location 8}
 (1 row)
 
 SELECT get_cached_partition_cooked_key('test_column_type.test'::REGCLASS);
-                                             get_cached_partition_cooked_key                                             
--------------------------------------------------------------------------------------------------------------------------
- {VAR :varno 1 :varattno 1 :vartype 1700 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnoold 1 :varoattno 1 :location 8}
+                                              get_cached_partition_cooked_key                                              
+---------------------------------------------------------------------------------------------------------------------------
+ {VAR :varno 1 :varattno 1 :vartype 1700 :vartypmod -1 :varcollid 0 :varlevelsup 0 :varnosyn 1 :varattnosyn 1 :location 8}
 (1 row)
 
 DROP FUNCTION get_cached_partition_cooked_key(REGCLASS);
