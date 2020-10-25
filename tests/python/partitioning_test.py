@@ -1128,4 +1128,6 @@ if __name__ == "__main__":
     else:
         suite = unittest.TestLoader().loadTestsFromTestCase(Tests)
 
-    unittest.TextTestRunner(verbosity=2, failfast=True).run(suite)
+    result = unittest.TextTestRunner(verbosity=2, failfast=True).run(suite)
+    if result.failures != 0 or result.errors != 0:
+        sys.exit(1)
