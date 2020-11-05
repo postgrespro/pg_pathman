@@ -84,6 +84,7 @@ make install USE_PGXS=1
 ```
 
 > **Important:** Don't forget to set the `PG_CONFIG` variable (`make PG_CONFIG=...`) in case you want to test `pg_pathman` on a non-default or custom build of PostgreSQL. Read more [here](https://wiki.postgresql.org/wiki/Building_and_Installing_PostgreSQL_Extension_Modules).
+- for ubuntu os chech that  postgresql-server-dev-12 package installed
 
 Modify the **`shared_preload_libraries`** parameter in `postgresql.conf` as following:
 
