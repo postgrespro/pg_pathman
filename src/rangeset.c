@@ -3,11 +3,12 @@
  * rangeset.c
  *		IndexRange functions
  *
- * Copyright (c) 2015-2016, Postgres Professional
+ * Copyright (c) 2015-2020, Postgres Professional
  *
  * ------------------------------------------------------------------------
  */
 
+#include "compat/pg_compat.h"
 #include "rangeset.h"
 
 
@@ -238,25 +239,25 @@ irange_list_union(List *a, List *b)
 			if (irange_lower(lfirst_irange(ca)) <= irange_lower(lfirst_irange(cb)))
 			{
 				next = lfirst_irange(ca);
-				ca = lnext(ca); /* move to next cell */
+				ca = lnext_compat(a, ca); /* move to next cell */
 			}
 			else
 			{
 				next = lfirst_irange(cb);
-				cb = lnext(cb); /* move to next cell */
+				cb = lnext_compat(b, cb); /* move to next cell */
 			}
 		}
 		/* Fetch next irange from A */
 		else if (ca)
 		{
 			next = lfirst_irange(ca);
-			ca = lnext(ca); /* move to next cell */
+			ca = lnext_compat(a, ca); /* move to next cell */
 		}
 		/* Fetch next irange from B */
 		else if (cb)
 		{
 			next = lfirst_irange(cb);
-			cb = lnext(cb); /* move to next cell */
+			cb = lnext_compat(b, cb); /* move to next cell */
 		}
 
 		/* Put this irange to 'cur' if don't have it yet */
@@ -339,9 +340,9 @@ irange_list_intersection(List *a, List *b)
 		 * irange is greater (or equal) to upper bound of current.
 		 */
 		if (irange_upper(ra) <= irange_upper(rb))
-			ca = lnext(ca);
+			ca = lnext_compat(a, ca);
 		if (irange_upper(ra) >= irange_upper(rb))
-			cb = lnext(cb);
+			cb = lnext_compat(b, cb);
 	}
 	return result;
 }

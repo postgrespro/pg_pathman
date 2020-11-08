@@ -4,7 +4,7 @@
 partitioning_test.py
         Various stuff that looks out of place in regression tests
 
-        Copyright (c) 2015-2017, Postgres Professional
+        Copyright (c) 2015-2020, Postgres Professional
 """
 
 import functools
@@ -21,10 +21,11 @@ import time
 import unittest
 
 from distutils.version import LooseVersion
-from testgres import get_new_node, get_pg_version
+from testgres import get_new_node, get_pg_version, configure_testgres
 
-# set setup base logging config, it can be turned on by `use_logging`
+# set setup base logging config, it can be turned on by `use_python_logging`
 # parameter on node setup
+# configure_testgres(use_python_logging=True)
 
 import logging
 import logging.config
@@ -548,7 +549,7 @@ class Tests(unittest.TestCase):
                             }
                         ]
                 """)
-                self.assertEqual(ordered(plan), ordered(expected))
+                self.assertEqual(ordered(plan, skip_keys=['Subplans Removed']), ordered(expected))
 
                 # Check count of returned tuples
                 count = con.execute(
@@ -601,7 +602,7 @@ class Tests(unittest.TestCase):
                               }
                             ]
                 """)
-                self.assertEqual(ordered(plan), ordered(expected))
+                self.assertEqual(ordered(plan, skip_keys=['Subplans Removed']), ordered(expected))
 
                 # Check tuples returned by query above
                 res_tuples = con.execute(
@@ -1128,4 +1129,8 @@ if __name__ == "__main__":
     else:
         suite = unittest.TestLoader().loadTestsFromTestCase(Tests)
 
-    unittest.TextTestRunner(verbosity=2, failfast=True).run(suite)
+    configure_testgres(use_python_logging=True)
+
+    result = unittest.TextTestRunner(verbosity=2, failfast=True).run(suite)
+    if not result.wasSuccessful():
+        sys.exit(1)

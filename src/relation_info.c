@@ -3,7 +3,7 @@
  * relation_info.c
  *		Data structures describing partitioned relations
  *
- * Copyright (c) 2016, Postgres Professional
+ * Copyright (c) 2016-2020, Postgres Professional
  *
  * ------------------------------------------------------------------------
  */
@@ -925,16 +925,26 @@ shout_if_prel_is_invalid(const Oid parent_oid,
  * This is a simplified version of functions that return TupleConversionMap.
  * It should be faster if expression uses a few fields of relation.
  */
+#if PG_VERSION_NUM >= 130000
+AttrMap *
+PrelExpressionAttributesMap(const PartRelationInfo *prel,
+							TupleDesc source_tupdesc)
+#else
 AttrNumber *
 PrelExpressionAttributesMap(const PartRelationInfo *prel,
 							TupleDesc source_tupdesc,
 							int *map_length)
+#endif
 {
 	Oid			parent_relid = PrelParentRelid(prel);
 	int			source_natts = source_tupdesc->natts,
 				expr_natts = 0;
-	AttrNumber *result,
-				i;
+#if PG_VERSION_NUM >= 130000
+	AttrMap *result;
+#else
+	AttrNumber	*result;
+#endif
+	AttrNumber	i;
 	bool		is_trivial = true;
 
 	/* Get largest attribute number used in expression */
@@ -942,8 +952,12 @@ PrelExpressionAttributesMap(const PartRelationInfo *prel,
 	while ((i = bms_next_member(prel->expr_atts, i)) >= 0)
 		expr_natts = i;
 
+#if PG_VERSION_NUM >= 130000
+	result = make_attrmap(expr_natts);
+#else
 	/* Allocate array for map */
 	result = (AttrNumber *) palloc0(expr_natts * sizeof(AttrNumber));
+#endif
 
 	/* Find a match for each attribute */
 	i = -1;
@@ -964,26 +978,44 @@ PrelExpressionAttributesMap(const PartRelationInfo *prel,
 
 			if (strcmp(NameStr(att->attname), attname) == 0)
 			{
+#if PG_VERSION_NUM >= 130000
+				result->attnums[attnum - 1] = (AttrNumber) (j + 1);
+#else
 				result[attnum - 1] = (AttrNumber) (j + 1);
+#endif
 				break;
 			}
 		}
 
+#if PG_VERSION_NUM >= 130000
+		if (result->attnums[attnum - 1] == 0)
+#else
 		if (result[attnum - 1] == 0)
+#endif
 			elog(ERROR, "cannot find column \"%s\" in child relation", attname);
 
+#if PG_VERSION_NUM >= 130000
+		if (result->attnums[attnum - 1] != attnum)
+#else
 		if (result[attnum - 1] != attnum)
+#endif
 			is_trivial = false;
 	}
 
 	/* Check if map is trivial */
 	if (is_trivial)
 	{
+#if PG_VERSION_NUM >= 130000
+		free_attrmap(result);
+#else
 		pfree(result);
+#endif
 		return NULL;
 	}
 
+#if PG_VERSION_NUM < 130000
 	*map_length = expr_natts;
+#endif
 	return result;
 }
 
@@ -1330,7 +1362,7 @@ get_parent_of_partition(Oid partition)
 		HeapTuple		htup;
 		Oid				parent = InvalidOid;
 
-		relation = heap_open(InheritsRelationId, AccessShareLock);
+		relation = heap_open_compat(InheritsRelationId, AccessShareLock);
 
 		ScanKeyInit(&key[0],
 					Anum_pg_inherits_inhrelid,
@@ -1359,7 +1391,7 @@ get_parent_of_partition(Oid partition)
 		}
 
 		systable_endscan(scan);
-		heap_close(relation, AccessShareLock);
+		heap_close_compat(relation, AccessShareLock);
 
 		return parent;
 	}

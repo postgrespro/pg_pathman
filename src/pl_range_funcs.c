@@ -3,7 +3,7 @@
  * pl_range_funcs.c
  *		Utility C functions for stored RANGE procedures
  *
- * Copyright (c) 2016, Postgres Professional
+ * Copyright (c) 2016-2020, Postgres Professional
  *
  * ------------------------------------------------------------------------
  */
@@ -1320,12 +1320,18 @@ modify_range_constraint(Oid partition_relid,
 
 /*
  * Transform constraint into cstring
+ *
+ * In >=13 (5815696bc66) result type of addRangeTableEntryForRelationCompat() was changed
  */
 static char *
 deparse_constraint(Oid relid, Node *expr)
 {
 	Relation		rel;
+#if PG_VERSION_NUM >= 130000
+	ParseNamespaceItem *nsitem;
+#else
 	RangeTblEntry  *rte;
+#endif
 	Node		   *cooked_expr;
 	ParseState	   *pstate;
 	List		   *context;
@@ -1333,12 +1339,17 @@ deparse_constraint(Oid relid, Node *expr)
 
 	context = deparse_context_for(get_rel_name(relid), relid);
 
-	rel = heap_open(relid, NoLock);
+	rel = heap_open_compat(relid, NoLock);
 
 	/* Initialize parse state */
 	pstate = make_parsestate(NULL);
+#if PG_VERSION_NUM >= 130000
+	nsitem = addRangeTableEntryForRelationCompat(pstate, rel, AccessShareLock, NULL, false, true);
+	addNSItemToQuery(pstate, nsitem, true, true, true);
+#else
 	rte = addRangeTableEntryForRelationCompat(pstate, rel, AccessShareLock, NULL, false, true);
 	addRTEtoQuery(pstate, rte, true, true, true);
+#endif
 
 	/* Transform constraint into executable expression (i.e. cook it) */
 	cooked_expr = transformExpr(pstate, expr, EXPR_KIND_CHECK_CONSTRAINT);
@@ -1346,7 +1357,7 @@ deparse_constraint(Oid relid, Node *expr)
 	/* Transform expression into string */
 	result = deparse_expression(cooked_expr, context, false, false);
 
-	heap_close(rel, NoLock);
+	heap_close_compat(rel, NoLock);
 
 	return result;
 }

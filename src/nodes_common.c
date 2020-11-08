@@ -3,7 +3,7 @@
  * nodes_common.c
  *		Common code for custom nodes
  *
- * Copyright (c) 2016, Postgres Professional
+ * Copyright (c) 2016-2020, Postgres Professional
  *
  * ------------------------------------------------------------------------
  */
@@ -364,11 +364,19 @@ canonicalize_custom_exprs_mutator(Node *node, void *cxt)
 		Var *var = palloc(sizeof(Var));
 		*var = *(Var *) node;
 
+#if PG_VERSION_NUM >= 130000
+/*
+ * In >=13 (9ce77d75c5) varnoold and varoattno were changed to varnosyn and
+ * varattnosyn, and they are not consulted in _equalVar anymore.
+ */
+		var->varattno = var->varattnosyn;
+#else
 		/* Replace original 'varnoold' */
 		var->varnoold = INDEX_VAR;
 
 		/* Restore original 'varattno' */
 		var->varattno = var->varoattno;
+#endif
 
 		return (Node *) var;
 	}
@@ -822,9 +830,18 @@ explain_append_common(CustomScanState *node,
 	char *exprstr;
 
 	/* Set up deparsing context */
+#if PG_VERSION_NUM >= 130000
+/*
+ * Since 6ef77cf46e8
+ */
+	deparse_context = set_deparse_context_plan(es->deparse_cxt,
+													node->ss.ps.plan,
+													ancestors);
+#else
 	deparse_context = set_deparse_context_planstate(es->deparse_cxt,
 													(Node *) node,
 													ancestors);
+#endif
 
 	/* Deparse the expression */
 	exprstr = deparse_expression((Node *) make_ands_explicit(custom_exprs),

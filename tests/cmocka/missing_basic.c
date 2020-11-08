@@ -16,6 +16,11 @@ repalloc(void *pointer, Size size)
 	return realloc(pointer, size);
 }
 
+void
+pfree(void *pointer)
+{
+	free(pointer);
+}
 
 void
 ExceptionalCondition(const char *conditionName,

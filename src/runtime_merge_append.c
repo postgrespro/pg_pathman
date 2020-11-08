@@ -3,7 +3,7 @@
  * runtime_merge_append.c
  *		RuntimeMergeAppend node's function definitions and global variables
  *
- * Copyright (c) 2016, Postgres Professional
+ * Copyright (c) 2016-2020, Postgres Professional
  * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -898,9 +898,15 @@ show_sort_group_keys(PlanState *planstate, const char *qlabel,
 	initStringInfo(&sortkeybuf);
 
 	/* Set up deparsing context */
+#if PG_VERSION_NUM >= 130000
+	context = set_deparse_context_plan(es->deparse_cxt,
+											plan,
+											ancestors);
+#else
 	context = set_deparse_context_planstate(es->deparse_cxt,
 											(Node *) planstate,
 											ancestors);
+#endif
 	useprefix = (list_length(es->rtable) > 1 || es->verbose);
 
 	for (keyno = 0; keyno < nkeys; keyno++)

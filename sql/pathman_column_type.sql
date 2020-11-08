@@ -1,3 +1,8 @@
+/*
+ * In 9ce77d75c5a (>= 13) struct Var was changed, which caused the output
+ * of get_partition_cooked_key to change.
+ */
+
 \set VERBOSITY terse
 
 SET search_path = 'public';

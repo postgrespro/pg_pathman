@@ -4,7 +4,7 @@
  *		Override COPY TO/FROM and ALTER TABLE ... RENAME statements
  *		for partitioned tables
  *
- * Copyright (c) 2016, Postgres Professional
+ * Copyright (c) 2016-2020, Postgres Professional
  * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -401,7 +401,7 @@ PathmanDoCopy(const CopyStmt *stmt,
 		Assert(!stmt->query);
 
 		/* Open the relation (we've locked it in is_pathman_related_copy()) */
-		rel = heap_openrv(stmt->relation, NoLock);
+		rel = heap_openrv_compat(stmt->relation, NoLock);
 
 		rte = makeNode(RangeTblEntry);
 		rte->rtekind = RTE_RELATION;
@@ -468,7 +468,7 @@ PathmanDoCopy(const CopyStmt *stmt,
 	}
 
 	/* Close the relation, but keep it locked */
-	heap_close(rel, (is_from ? NoLock : PATHMAN_COPY_READ_LOCK));
+	heap_close_compat(rel, (is_from ? NoLock : PATHMAN_COPY_READ_LOCK));
 }
 
 /*

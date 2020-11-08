@@ -912,8 +912,8 @@ FROM test_inserts.storage;
                ->  Append
                      ->  Seq Scan on test_inserts.storage_11
                            Output: storage_11.b, storage_11.d, storage_11.e
-                     ->  Seq Scan on test_inserts.storage_1
-                           Output: storage_1.b, storage_1.d, storage_1.e
+                     ->  Seq Scan on test_inserts.storage_1 storage_1_1
+                           Output: storage_1_1.b, storage_1_1.d, storage_1_1.e
                      ->  Seq Scan on test_inserts.storage_2
                            Output: storage_2.b, storage_2.d, storage_2.e
                      ->  Seq Scan on test_inserts.storage_3
@@ -953,8 +953,8 @@ FROM test_inserts.storage;
                ->  Append
                      ->  Seq Scan on test_inserts.storage_11
                            Output: storage_11.b, storage_11.d
-                     ->  Seq Scan on test_inserts.storage_1
-                           Output: storage_1.b, storage_1.d
+                     ->  Seq Scan on test_inserts.storage_1 storage_1_1
+                           Output: storage_1_1.b, storage_1_1.d
                      ->  Seq Scan on test_inserts.storage_2
                            Output: storage_2.b, storage_2.d
                      ->  Seq Scan on test_inserts.storage_3
@@ -994,8 +994,8 @@ FROM test_inserts.storage;
                ->  Append
                      ->  Seq Scan on test_inserts.storage_11
                            Output: storage_11.b
-                     ->  Seq Scan on test_inserts.storage_1
-                           Output: storage_1.b
+                     ->  Seq Scan on test_inserts.storage_1 storage_1_1
+                           Output: storage_1_1.b
                      ->  Seq Scan on test_inserts.storage_2
                            Output: storage_2.b
                      ->  Seq Scan on test_inserts.storage_3

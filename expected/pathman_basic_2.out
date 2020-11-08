@@ -36,12 +36,12 @@ SELECT pathman.create_hash_partitions('test.hash_rel', 'value', 3, partition_dat
 (1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
-          QUERY PLAN          
-------------------------------
+                QUERY PLAN                 
+-------------------------------------------
  Append
-   ->  Seq Scan on hash_rel
+   ->  Seq Scan on hash_rel hash_rel_1
    ->  Seq Scan on hash_rel_0
-   ->  Seq Scan on hash_rel_1
+   ->  Seq Scan on hash_rel_1 hash_rel_1_1
    ->  Seq Scan on hash_rel_2
 (5 rows)
 
@@ -80,12 +80,12 @@ SELECT pathman.set_enable_parent('test.hash_rel', true);
 (1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel;
-          QUERY PLAN          
-------------------------------
+                QUERY PLAN                 
+-------------------------------------------
  Append
-   ->  Seq Scan on hash_rel
+   ->  Seq Scan on hash_rel hash_rel_1
    ->  Seq Scan on hash_rel_0
-   ->  Seq Scan on hash_rel_1
+   ->  Seq Scan on hash_rel_1 hash_rel_1_1
    ->  Seq Scan on hash_rel_2
 (5 rows)
 
@@ -243,9 +243,9 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.improved_dummy WHERE id = 101 OR id = 5 A
                              QUERY PLAN                             
 --------------------------------------------------------------------
  Append
-   ->  Seq Scan on improved_dummy
+   ->  Seq Scan on improved_dummy improved_dummy_1
          Filter: ((id = 101) OR ((id = 5) AND (name = 'ib'::text)))
-   ->  Seq Scan on improved_dummy_1
+   ->  Seq Scan on improved_dummy_1 improved_dummy_1_1
          Filter: ((id = 5) AND (name = 'ib'::text))
    ->  Seq Scan on improved_dummy_11
          Filter: (id = 101)
@@ -259,12 +259,11 @@ SELECT pathman.set_enable_parent('test.improved_dummy', false); /* disable paren
 
 ALTER TABLE test.improved_dummy_1 ADD CHECK (name != 'ib'); /* make test.improved_dummy_1 disappear */
 EXPLAIN (COSTS OFF) SELECT * FROM test.improved_dummy WHERE id = 101 OR id = 5 AND name = 'ib';
-             QUERY PLAN              
--------------------------------------
- Append
-   ->  Seq Scan on improved_dummy_11
-         Filter: (id = 101)
-(3 rows)
+          QUERY PLAN           
+-------------------------------
+ Seq Scan on improved_dummy_11
+   Filter: (id = 101)
+(2 rows)
 
 SELECT pathman.set_enable_parent('test.improved_dummy', true); /* enable parent */
  set_enable_parent 
@@ -276,7 +275,7 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.improved_dummy WHERE id = 101 OR id = 5 A
                              QUERY PLAN                             
 --------------------------------------------------------------------
  Append
-   ->  Seq Scan on improved_dummy
+   ->  Seq Scan on improved_dummy improved_dummy_1
          Filter: ((id = 101) OR ((id = 5) AND (name = 'ib'::text)))
    ->  Seq Scan on improved_dummy_11
          Filter: (id = 101)
@@ -390,13 +389,13 @@ EXPLAIN (COSTS OFF)
 INSERT INTO test.insert_into_select_copy
 SELECT * FROM test.insert_into_select
 WHERE val <= 80;
-                  QUERY PLAN                  
-----------------------------------------------
+                             QUERY PLAN                              
+---------------------------------------------------------------------
  Insert on insert_into_select_copy
    ->  Append
-         ->  Seq Scan on insert_into_select
+         ->  Seq Scan on insert_into_select insert_into_select_1
                Filter: (val <= 80)
-         ->  Seq Scan on insert_into_select_1
+         ->  Seq Scan on insert_into_select_1 insert_into_select_1_1
          ->  Seq Scan on insert_into_select_2
          ->  Seq Scan on insert_into_select_3
          ->  Seq Scan on insert_into_select_4
@@ -442,20 +441,18 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = NULL;
 (2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2;
-          QUERY PLAN          
-------------------------------
- Append
-   ->  Seq Scan on hash_rel_1
-         Filter: (value = 2)
-(3 rows)
+       QUERY PLAN       
+------------------------
+ Seq Scan on hash_rel_1
+   Filter: (value = 2)
+(2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE 2 = value; /* test commutator */
-          QUERY PLAN          
-------------------------------
- Append
-   ->  Seq Scan on hash_rel_1
-         Filter: (2 = value)
-(3 rows)
+       QUERY PLAN       
+------------------------
+ Seq Scan on hash_rel_1
+   Filter: (2 = value)
+(2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2 OR value = 1;
           QUERY PLAN          
@@ -468,12 +465,11 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2 OR value = 1;
 (5 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE 2500 = id; /* test commutator */
-            QUERY PLAN             
------------------------------------
- Append
-   ->  Seq Scan on num_range_rel_3
-         Filter: (2500 = id)
-(3 rows)
+         QUERY PLAN          
+-----------------------------
+ Seq Scan on num_range_rel_3
+   Filter: (2500 = id)
+(2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE 2500 < id; /* test commutator */
             QUERY PLAN             
@@ -545,11 +541,10 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE '2015-02-15' < dt; /* tes
 (5 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-02-01' AND dt < '2015-03-01';
-          QUERY PLAN           
--------------------------------
- Append
-   ->  Seq Scan on range_rel_2
-(2 rows)
+       QUERY PLAN        
+-------------------------
+ Seq Scan on range_rel_2
+(1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-02-15' AND dt < '2015-03-15';
                                    QUERY PLAN                                    
@@ -601,20 +596,18 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = NULL;
 (2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2;
-          QUERY PLAN          
-------------------------------
- Append
-   ->  Seq Scan on hash_rel_1
-         Filter: (value = 2)
-(3 rows)
+       QUERY PLAN       
+------------------------
+ Seq Scan on hash_rel_1
+   Filter: (value = 2)
+(2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE 2 = value; /* test commutator */
-          QUERY PLAN          
-------------------------------
- Append
-   ->  Seq Scan on hash_rel_1
-         Filter: (2 = value)
-(3 rows)
+       QUERY PLAN       
+------------------------
+ Seq Scan on hash_rel_1
+   Filter: (2 = value)
+(2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2 OR value = 1;
           QUERY PLAN          
@@ -627,19 +620,18 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.hash_rel WHERE value = 2 OR value = 1;
 (5 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE 2500 = id; /* test commutator */
-                           QUERY PLAN                           
-----------------------------------------------------------------
- Append
-   ->  Index Scan using num_range_rel_3_pkey on num_range_rel_3
-         Index Cond: (2500 = id)
-(3 rows)
+                        QUERY PLAN                        
+----------------------------------------------------------
+ Index Scan using num_range_rel_3_pkey on num_range_rel_3
+   Index Cond: (id = 2500)
+(2 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE 2500 < id; /* test commutator */
                            QUERY PLAN                           
 ----------------------------------------------------------------
  Append
    ->  Index Scan using num_range_rel_3_pkey on num_range_rel_3
-         Index Cond: (2500 < id)
+         Index Cond: (id > 2500)
    ->  Seq Scan on num_range_rel_4
 (4 rows)
 
@@ -718,17 +710,16 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE '2015-02-15' < dt; /* tes
 ------------------------------------------------------------------------------------
  Append
    ->  Index Scan using range_rel_2_dt_idx on range_rel_2
-         Index Cond: ('Sun Feb 15 00:00:00 2015'::timestamp without time zone < dt)
+         Index Cond: (dt > 'Sun Feb 15 00:00:00 2015'::timestamp without time zone)
    ->  Seq Scan on range_rel_3
    ->  Seq Scan on range_rel_4
 (5 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-02-01' AND dt < '2015-03-01';
-          QUERY PLAN           
--------------------------------
- Append
-   ->  Seq Scan on range_rel_2
-(2 rows)
+       QUERY PLAN        
+-------------------------
+ Seq Scan on range_rel_2
+(1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt >= '2015-02-15' AND dt < '2015-03-15';
                                      QUERY PLAN                                      
@@ -832,22 +823,20 @@ CREATE OR REPLACE FUNCTION test.sql_inline_func(i_id int) RETURNS SETOF INT AS $
 	select * from test.sql_inline where id = i_id limit 1;
 $$ LANGUAGE sql STABLE;
 EXPLAIN (COSTS OFF) SELECT * FROM test.sql_inline_func(5);
-              QUERY PLAN              
---------------------------------------
+           QUERY PLAN           
+--------------------------------
  Limit
-   ->  Append
-         ->  Seq Scan on sql_inline_0
-               Filter: (id = 5)
-(4 rows)
+   ->  Seq Scan on sql_inline_0
+         Filter: (id = 5)
+(3 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.sql_inline_func(1);
-              QUERY PLAN              
---------------------------------------
+           QUERY PLAN           
+--------------------------------
  Limit
-   ->  Append
-         ->  Seq Scan on sql_inline_2
-               Filter: (id = 1)
-(4 rows)
+   ->  Seq Scan on sql_inline_2
+         Filter: (id = 1)
+(3 rows)
 
 DROP FUNCTION test.sql_inline_func(int);
 DROP TABLE test.sql_inline CASCADE;
@@ -918,12 +907,11 @@ SELECT pathman.merge_range_partitions('test.num_range_rel_1', 'test.num_range_re
 (1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id BETWEEN 100 AND 700;
-                           QUERY PLAN                           
-----------------------------------------------------------------
- Append
-   ->  Index Scan using num_range_rel_1_pkey on num_range_rel_1
-         Index Cond: ((id >= 100) AND (id <= 700))
-(3 rows)
+                        QUERY PLAN                        
+----------------------------------------------------------
+ Index Scan using num_range_rel_1_pkey on num_range_rel_1
+   Index Cond: ((id >= 100) AND (id <= 700))
+(2 rows)
 
 SELECT pathman.merge_range_partitions('test.range_rel_1', 'test.range_rel_' || currval('test.range_rel_seq'));
  merge_range_partitions 
@@ -939,11 +927,10 @@ SELECT pathman.append_range_partition('test.num_range_rel');
 (1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id >= 4000;
-            QUERY PLAN             
------------------------------------
- Append
-   ->  Seq Scan on num_range_rel_6
-(2 rows)
+         QUERY PLAN          
+-----------------------------
+ Seq Scan on num_range_rel_6
+(1 row)
 
 SELECT pathman.prepend_range_partition('test.num_range_rel');
  prepend_range_partition 
@@ -952,11 +939,10 @@ SELECT pathman.prepend_range_partition('test.num_range_rel');
 (1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.num_range_rel WHERE id < 0;
-            QUERY PLAN             
------------------------------------
- Append
-   ->  Seq Scan on num_range_rel_7
-(2 rows)
+         QUERY PLAN          
+-----------------------------
+ Seq Scan on num_range_rel_7
+(1 row)
 
 SELECT pathman.drop_range_partition('test.num_range_rel_7');
  drop_range_partition 
@@ -1022,12 +1008,11 @@ SELECT pathman.drop_range_partition('test.range_rel_7');
 (1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt BETWEEN '2014-12-15' AND '2015-01-15';
-                                     QUERY PLAN                                      
--------------------------------------------------------------------------------------
- Append
-   ->  Index Scan using range_rel_1_dt_idx on range_rel_1
-         Index Cond: (dt <= 'Thu Jan 15 00:00:00 2015'::timestamp without time zone)
-(3 rows)
+                                  QUERY PLAN                                   
+-------------------------------------------------------------------------------
+ Index Scan using range_rel_1_dt_idx on range_rel_1
+   Index Cond: (dt <= 'Thu Jan 15 00:00:00 2015'::timestamp without time zone)
+(2 rows)
 
 SELECT pathman.add_range_partition('test.range_rel', '2014-12-01'::DATE, '2015-01-02'::DATE);
 ERROR:  specified range [12-01-2014, 01-02-2015) overlaps with existing partitions
@@ -1363,12 +1348,11 @@ SELECT generate_series('2015-01-01', '2015-04-30', '1 day'::interval);
 INSERT INTO test.range_rel (dt)
 SELECT generate_series('2014-12-31', '2014-12-01', '-1 day'::interval);
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt = '2014-12-15';
-                                   QUERY PLAN                                   
---------------------------------------------------------------------------------
- Append
-   ->  Seq Scan on range_rel_14
-         Filter: (dt = 'Mon Dec 15 00:00:00 2014'::timestamp without time zone)
-(3 rows)
+                                QUERY PLAN                                
+--------------------------------------------------------------------------
+ Seq Scan on range_rel_14
+   Filter: (dt = 'Mon Dec 15 00:00:00 2014'::timestamp without time zone)
+(2 rows)
 
 SELECT * FROM test.range_rel WHERE dt = '2014-12-15';
  id  |            dt            | data 
@@ -1377,12 +1361,11 @@ SELECT * FROM test.range_rel WHERE dt = '2014-12-15';
 (1 row)
 
 EXPLAIN (COSTS OFF) SELECT * FROM test.range_rel WHERE dt = '2015-03-15';
-                                   QUERY PLAN                                   
---------------------------------------------------------------------------------
- Append
-   ->  Seq Scan on range_rel_8
-         Filter: (dt = 'Sun Mar 15 00:00:00 2015'::timestamp without time zone)
-(3 rows)
+                                QUERY PLAN                                
+--------------------------------------------------------------------------
+ Seq Scan on range_rel_8
+   Filter: (dt = 'Sun Mar 15 00:00:00 2015'::timestamp without time zone)
+(2 rows)
 
 SELECT * FROM test.range_rel WHERE dt = '2015-03-15';
  id |            dt            | data 
@@ -1702,9 +1685,9 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.special_case_1_ind_o_s WHERE val < 75 AND
                                             QUERY PLAN                                            
 --------------------------------------------------------------------------------------------------
  Append
-   ->  Seq Scan on special_case_1_ind_o_s
+   ->  Seq Scan on special_case_1_ind_o_s special_case_1_ind_o_s_1
          Filter: ((val < 75) AND (comment = 'a'::text))
-   ->  Seq Scan on special_case_1_ind_o_s_1
+   ->  Seq Scan on special_case_1_ind_o_s_1 special_case_1_ind_o_s_1_1
          Filter: (comment = 'a'::text)
    ->  Index Only Scan using special_case_1_ind_o_s_2_val_comment_idx on special_case_1_ind_o_s_2
          Index Cond: ((val < 75) AND (comment = 'a'::text))
@@ -1774,10 +1757,10 @@ SELECT set_enable_parent('test.index_on_childs', true);
 
 VACUUM ANALYZE test.index_on_childs;
 EXPLAIN (COSTS OFF) SELECT * FROM test.index_on_childs WHERE c1 > 100 AND c1 < 2500 AND c2 = 500;
-                                  QUERY PLAN                                  
-------------------------------------------------------------------------------
+                                     QUERY PLAN                                     
+------------------------------------------------------------------------------------
  Append
-   ->  Index Scan using index_on_childs_c2_idx on index_on_childs
+   ->  Index Scan using index_on_childs_c2_idx on index_on_childs index_on_childs_1
          Index Cond: (c2 = 500)
          Filter: ((c1 > 100) AND (c1 < 2500))
    ->  Index Scan using index_on_childs_1_1k_c2_idx on index_on_childs_1_1k

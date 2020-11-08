@@ -98,8 +98,8 @@ WHERE id = (SELECT id FROM rowmarks.first
 			OFFSET 10 LIMIT 1
 			FOR UPDATE)
 FOR SHARE;
-                     QUERY PLAN                      
------------------------------------------------------
+                          QUERY PLAN                           
+---------------------------------------------------------------
  LockRows
    InitPlan 1 (returns $1)
      ->  Limit
@@ -108,7 +108,7 @@ FOR SHARE;
                        Sort Key: first_0.id
                        ->  Append
                              ->  Seq Scan on first_0
-                             ->  Seq Scan on first_1
+                             ->  Seq Scan on first_1 first_1_1
                              ->  Seq Scan on first_2
                              ->  Seq Scan on first_3
                              ->  Seq Scan on first_4

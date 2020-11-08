@@ -7,6 +7,9 @@
  * optimization fence, which changes practically all plans here. There is
  * an option to forcibly make them MATERIALIZED, but we also need to run tests
  * on older versions, so create pathman_only_1.out instead.
+ *
+ * Since 55a1954da16 and 6ef77cf46e8 (>= 13) output of EXPLAIN was changed,
+ * now it includes aliases for inherited tables.
  */
 \set VERBOSITY terse
 SET search_path = 'public';

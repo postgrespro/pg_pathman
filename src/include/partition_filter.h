@@ -3,7 +3,7 @@
  * partition_filter.h
  *		Select partition for INSERT operation
  *
- * Copyright (c) 2016, Postgres Professional
+ * Copyright (c) 2016-2020, Postgres Professional
  *
  * ------------------------------------------------------------------------
  */
@@ -31,7 +31,13 @@
 #define ERR_PART_ATTR_NULL				"partitioning expression's value should not be NULL"
 #define ERR_PART_ATTR_NO_PART			"no suitable partition for key '%s'"
 #define ERR_PART_ATTR_MULTIPLE			INSERT_NODE_NAME " selected more than one partition"
+#if PG_VERSION_NUM < 130000
+/*
+ * In >=13 msg parameter in convert_tuples_by_name function was removed (fe66125974c)
+ * and ERR_PART_DESC_CONVERT become unusable
+ */
 #define ERR_PART_DESC_CONVERT			"could not convert row type for partition"
+#endif
 
 
 /*

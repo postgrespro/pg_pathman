@@ -3,7 +3,7 @@
  * planner_tree_modification.c
  *		Functions for query- and plan- tree modification
  *
- * Copyright (c) 2016, Postgres Professional
+ * Copyright (c) 2016-2020, Postgres Professional
  * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -588,8 +588,8 @@ handle_modification_query(Query *parse, transform_query_cxt *context)
 		rte->inh = false;
 
 		/* Both tables are already locked */
-		child_rel  = heap_open(child,  NoLock);
-		parent_rel = heap_open(parent, NoLock);
+		child_rel  = heap_open_compat(child,  NoLock);
+		parent_rel = heap_open_compat(parent, NoLock);
 
 		make_inh_translation_list(parent_rel, child_rel, 0, &translated_vars);
 
@@ -611,8 +611,8 @@ handle_modification_query(Query *parse, transform_query_cxt *context)
 		}
 
 		/* Close relations (should remain locked, though) */
-		heap_close(child_rel,  NoLock);
-		heap_close(parent_rel, NoLock);
+		heap_close_compat(child_rel,  NoLock);
+		heap_close_compat(parent_rel, NoLock);
 	}
 }
 
@@ -783,7 +783,7 @@ partition_filter_visitor(Plan *plan, void *context)
 			if (lc3)
 			{
 				returning_list = lfirst(lc3);
-				lc3 = lnext(lc3);
+				lc3 = lnext_compat(modify_table->returningLists, lc3);
 			}
 
 			lfirst(lc1) = make_partition_filter((Plan *) lfirst(lc1), relid,
@@ -849,7 +849,7 @@ partition_router_visitor(Plan *plan, void *context)
 			if (lc3)
 			{
 				returning_list = lfirst(lc3);
-				lc3 = lnext(lc3);
+				lc3 = lnext_compat(modify_table->returningLists, lc3);
 			}
 
 			prouter = make_partition_router((Plan *) lfirst(lc1),

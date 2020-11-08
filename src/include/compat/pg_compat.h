@@ -3,7 +3,7 @@
  * pg_compat.h
  *		Compatibility tools for PostgreSQL API
  *
- * Copyright (c) 2016, Postgres Professional
+ * Copyright (c) 2016-2020, Postgres Professional
  *
  * ------------------------------------------------------------------------
  */
@@ -240,7 +240,14 @@
 /*
  * create_append_path()
  */
-#if PG_VERSION_NUM >= 120000
+#if PG_VERSION_NUM >= 130000
+/*
+ * PGPRO-3938 made create_append_path compatible with vanilla again
+ */
+#define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
+	create_append_path(NULL, (rel), (subpaths), NIL, NIL, (required_outer), \
+					   (parallel_workers), false, NIL, -1)
+#elif PG_VERSION_NUM >= 120000
 
 #ifndef PGPRO_VERSION
 #define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
@@ -1058,5 +1065,40 @@ CustomEvalParamExternCompat(Param *param,
 
 void set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel, Index rti);
 
+/*
+ * lnext()
+ * In >=13 list implementation was reworked (1cff1b95ab6)
+ */
+#if PG_VERSION_NUM >= 130000
+#define lnext_compat(l, lc)                                    lnext((l), (lc))
+#else
+#define lnext_compat(l, lc)                                    lnext((lc))
+#endif
+
+/*
+ * heap_open()
+ * heap_openrv()
+ * heap_close()
+ * In >=13 heap_* was replaced with table_* (e0c4ec07284)
+ */
+#if PG_VERSION_NUM >= 130000
+#define heap_open_compat(r, l)                                 table_open((r), (l))
+#define heap_openrv_compat(r, l)                               table_openrv((r), (l))
+#define heap_close_compat(r, l)                                table_close((r), (l))
+#else
+#define heap_open_compat(r, l)                                 heap_open((r), (l))
+#define heap_openrv_compat(r, l)                               heap_openrv((r), (l))
+#define heap_close_compat(r, l)                                heap_close((r), (l))
+#endif
+
+/*
+ * convert_tuples_by_name()
+ * In >=13 msg parameter in convert_tuples_by_name function was removed (fe66125974c)
+ */
+#if PG_VERSION_NUM >= 130000
+#define convert_tuples_by_name_compat(i, o, m)                 convert_tuples_by_name((i), (o))
+#else
+#define convert_tuples_by_name_compat(i, o, m)                 convert_tuples_by_name((i), (o), (m))
+#endif
 
 #endif /* PG_COMPAT_H */
