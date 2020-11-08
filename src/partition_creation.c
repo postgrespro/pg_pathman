@@ -607,7 +607,7 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 
 		/* Construct call to create_single_range_partition() */
 		create_sql = psprintf(
-			"select %s.create_single_range_partition('%s.%s', '%s'::%s, '%s'::%s, '%s.%s')",
+			"select %s.create_single_range_partition('%s.%s'::regclass, '%s'::%s, '%s'::%s, '%s.%s', NULL::text)",
 			quote_identifier(get_namespace_name(get_pathman_schema())),
 			quote_identifier(parent_nsp_name),
 			quote_identifier(get_rel_name(parent_relid)),
