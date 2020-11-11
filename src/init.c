@@ -930,7 +930,7 @@ read_opexpr_const(const OpExpr *opexpr,
 				/* Update RIGHT */
 				right = (Node *) constant;
 			}
-			/* FALL THROUGH (no break) */
+			/* FALLTHROUGH */
 
 		case T_Const:
 			{

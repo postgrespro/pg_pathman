@@ -1016,6 +1016,7 @@ prepare_rri_fdw_for_insert(ResultRelInfoHolder *rri_holder,
 							elog(ERROR,
 								 "FDWs other than postgres_fdw are restricted");
 
+							break;
 						case PF_FDW_INSERT_ANY_FDW:
 							elog(WARNING,
 								 "unrestricted FDW mode may lead to crashes");
