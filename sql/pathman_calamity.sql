@@ -383,9 +383,11 @@ CREATE EXTENSION pg_pathman;
 /* check that cache loading is lazy */
 CREATE TABLE calamity.test_pathman_cache_stats(val NUMERIC NOT NULL);
 SELECT create_range_partitions('calamity.test_pathman_cache_stats', 'val', 1, 10, 10);
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
 DROP TABLE calamity.test_pathman_cache_stats CASCADE;
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
 
 /* Change this setting for code coverage */
 SET pg_pathman.enable_bounds_cache = false;
@@ -394,9 +396,11 @@ SET pg_pathman.enable_bounds_cache = false;
 CREATE TABLE calamity.test_pathman_cache_stats(val NUMERIC NOT NULL);
 SELECT create_range_partitions('calamity.test_pathman_cache_stats', 'val', 1, 10, 10);
 EXPLAIN (COSTS OFF) SELECT * FROM calamity.test_pathman_cache_stats;
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
 DROP TABLE calamity.test_pathman_cache_stats CASCADE;
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
 
 /* Restore this GUC */
 SET pg_pathman.enable_bounds_cache = true;
@@ -405,19 +409,24 @@ SET pg_pathman.enable_bounds_cache = true;
 CREATE TABLE calamity.test_pathman_cache_stats(val NUMERIC NOT NULL);
 SELECT create_range_partitions('calamity.test_pathman_cache_stats', 'val', 1, 10, 10);
 EXPLAIN (COSTS OFF) SELECT * FROM calamity.test_pathman_cache_stats;
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
 DROP TABLE calamity.test_pathman_cache_stats CASCADE;
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
 
 /* check that parents cache has been flushed after partition was dropped */
 CREATE TABLE calamity.test_pathman_cache_stats(val NUMERIC NOT NULL);
 SELECT create_range_partitions('calamity.test_pathman_cache_stats', 'val', 1, 10, 10);
 EXPLAIN (COSTS OFF) SELECT * FROM calamity.test_pathman_cache_stats;
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
 SELECT drop_range_partition('calamity.test_pathman_cache_stats_1');
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
 DROP TABLE calamity.test_pathman_cache_stats CASCADE;
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
 
 DROP SCHEMA calamity CASCADE;
 DROP EXTENSION pg_pathman;

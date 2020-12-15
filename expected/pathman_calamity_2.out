@@ -816,25 +816,25 @@ SELECT create_range_partitions('calamity.test_pathman_cache_stats', 'val', 1, 10
                       10
 (1 row)
 
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
          context         | entries 
 -------------------------+---------
  maintenance             |       0
  partition bounds cache  |       0
  partition parents cache |       0
- partition status cache  |       2
-(4 rows)
+(3 rows)
 
 DROP TABLE calamity.test_pathman_cache_stats CASCADE;
 NOTICE:  drop cascades to 11 other objects
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
          context         | entries 
 -------------------------+---------
  maintenance             |       0
  partition bounds cache  |       0
  partition parents cache |       0
- partition status cache  |       2
-(4 rows)
+(3 rows)
 
 /* Change this setting for code coverage */
 SET pg_pathman.enable_bounds_cache = false;
@@ -862,25 +862,25 @@ EXPLAIN (COSTS OFF) SELECT * FROM calamity.test_pathman_cache_stats;
    ->  Seq Scan on test_pathman_cache_stats_10
 (11 rows)
 
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
          context         | entries 
 -------------------------+---------
  maintenance             |       0
  partition bounds cache  |       0
  partition parents cache |      10
- partition status cache  |       3
-(4 rows)
+(3 rows)
 
 DROP TABLE calamity.test_pathman_cache_stats CASCADE;
 NOTICE:  drop cascades to 11 other objects
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
          context         | entries 
 -------------------------+---------
  maintenance             |       0
  partition bounds cache  |       0
  partition parents cache |       0
- partition status cache  |       2
-(4 rows)
+(3 rows)
 
 /* Restore this GUC */
 SET pg_pathman.enable_bounds_cache = true;
@@ -908,25 +908,25 @@ EXPLAIN (COSTS OFF) SELECT * FROM calamity.test_pathman_cache_stats;
    ->  Seq Scan on test_pathman_cache_stats_10
 (11 rows)
 
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
          context         | entries 
 -------------------------+---------
  maintenance             |       0
  partition bounds cache  |      10
  partition parents cache |      10
- partition status cache  |       3
-(4 rows)
+(3 rows)
 
 DROP TABLE calamity.test_pathman_cache_stats CASCADE;
 NOTICE:  drop cascades to 11 other objects
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
          context         | entries 
 -------------------------+---------
  maintenance             |       0
  partition bounds cache  |       0
  partition parents cache |       0
- partition status cache  |       2
-(4 rows)
+(3 rows)
 
 /* check that parents cache has been flushed after partition was dropped */
 CREATE TABLE calamity.test_pathman_cache_stats(val NUMERIC NOT NULL);
@@ -952,14 +952,14 @@ EXPLAIN (COSTS OFF) SELECT * FROM calamity.test_pathman_cache_stats;
    ->  Seq Scan on test_pathman_cache_stats_10
 (11 rows)
 
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
          context         | entries 
 -------------------------+---------
  maintenance             |       0
  partition bounds cache  |      10
  partition parents cache |      10
- partition status cache  |       3
-(4 rows)
+(3 rows)
 
 SELECT drop_range_partition('calamity.test_pathman_cache_stats_1');
         drop_range_partition         
@@ -967,25 +967,25 @@ SELECT drop_range_partition('calamity.test_pathman_cache_stats_1');
  calamity.test_pathman_cache_stats_1
 (1 row)
 
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
          context         | entries 
 -------------------------+---------
  maintenance             |       0
  partition bounds cache  |       9
  partition parents cache |       9
- partition status cache  |       2
-(4 rows)
+(3 rows)
 
 DROP TABLE calamity.test_pathman_cache_stats CASCADE;
 NOTICE:  drop cascades to 10 other objects
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
          context         | entries 
 -------------------------+---------
  maintenance             |       0
  partition bounds cache  |       0
  partition parents cache |       0
- partition status cache  |       2
-(4 rows)
+(3 rows)
 
 DROP SCHEMA calamity CASCADE;
 DROP EXTENSION pg_pathman;
