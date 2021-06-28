@@ -18,6 +18,7 @@ export PGPORT=55435
 export VIRTUAL_ENV_DISABLE_PROMPT=1
 id
 ls -l $(which make pg_config) /bin/sh
+make --version
 
 # rebuild PostgreSQL with cassert + valgrind support
 if [ "$LEVEL" = "hardcore" ] || \
@@ -80,7 +81,7 @@ if [ "$LEVEL" = "scan-build" ] || \
    [ "$LEVEL" = "nightmare" ]; then
 
 	# perform static analyzis
-	scan-build --status-bugs make USE_PGXS=1 || status=$?
+	scan-build --status-bugs make --trace USE_PGXS=1 || status=$?
 
 	# something's wrong, exit now!
 	if [ $status -ne 0 ]; then exit 1; fi
