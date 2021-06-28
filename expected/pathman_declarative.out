@@ -94,6 +94,10 @@ Check constraints:
     "pathman_r4_check" CHECK (dt >= '06-01-2015'::date AND dt < '01-01-2016'::date)
 Inherits: test.range_rel
 
+ALTER TABLE IF EXISTS test.nonexistent_table ATTACH PARTITION baz DEFAULT;
+NOTICE:  relation "nonexistent_table" does not exist, skipping
+ALTER TABLE IF EXISTS test.nonexistent_table DETACH PARTITION baz;
+NOTICE:  relation "nonexistent_table" does not exist, skipping
 DROP SCHEMA test CASCADE;
 NOTICE:  drop cascades to 8 other objects
 DROP EXTENSION pg_pathman CASCADE;

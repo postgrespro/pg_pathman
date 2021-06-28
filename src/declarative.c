@@ -75,7 +75,11 @@ is_pathman_related_partitioning_cmd(Node *parsetree, Oid *parent_relid)
 		AlterTableStmt *stmt = (AlterTableStmt *) parsetree;
 		int				cnt = 0;
 
-		*parent_relid = RangeVarGetRelid(stmt->relation, NoLock, false);
+		*parent_relid = RangeVarGetRelid(stmt->relation, NoLock, stmt->missing_ok);
+
+		if (stmt->missing_ok && *parent_relid == InvalidOid)
+			return false;
+
 		if ((prel = get_pathman_relation_info(*parent_relid)) == NULL)
 			return false;
 

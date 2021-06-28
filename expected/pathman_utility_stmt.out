@@ -371,10 +371,69 @@ DROP INDEX CONCURRENTLY drop_index.test_0_val_idx;
 DROP SCHEMA drop_index CASCADE;
 NOTICE:  drop cascades to 3 other objects
 /*
- * Test, that ALTER TABLE IF EXISTS ... RENAME TO of not existed table generate NOTICE instead of ERROR
+ * Checking that ALTER TABLE IF EXISTS with loaded (and created) pg_pathman extension works the same as in vanilla
  */
-CREATE SCHEMA rename_nonexistent;
-ALTER TABLE IF EXISTS rename_nonexistent.nonexistent_table RENAME TO other_table_name;
+CREATE SCHEMA test_nonexistance;
+ALTER TABLE IF EXISTS test_nonexistance.nonexistent_table RENAME TO other_table_name;
 NOTICE:  relation "nonexistent_table" does not exist, skipping
-DROP SCHEMA rename_nonexistent CASCADE;
+/* renaming existent tables already tested earlier (see rename.plain_test) */
+ALTER TABLE IF EXISTS test_nonexistance.nonexistent_table ADD COLUMN IF NOT EXISTS j INT4;
+NOTICE:  relation "nonexistent_table" does not exist, skipping
+CREATE TABLE test_nonexistance.existent_table(i INT4);
+ALTER TABLE IF EXISTS test_nonexistance.existent_table ADD COLUMN IF NOT EXISTS i INT4;
+NOTICE:  column "i" of relation "existent_table" already exists, skipping
+ALTER TABLE IF EXISTS test_nonexistance.existent_table ADD COLUMN IF NOT EXISTS j INT4;
+SELECT attname FROM pg_attribute WHERE attnum > 0 AND attrelid = 'test_nonexistance.existent_table'::REGCLASS;
+ attname 
+---------
+ i
+ j
+(2 rows)
+
+DROP TABLE test_nonexistance.existent_table;
+ALTER TABLE IF EXISTS test_nonexistance.nonexistent_table DROP COLUMN IF EXISTS i;
+NOTICE:  relation "nonexistent_table" does not exist, skipping
+CREATE TABLE test_nonexistance.existent_table(i INT4);
+ALTER TABLE IF EXISTS test_nonexistance.existent_table DROP COLUMN IF EXISTS i;
+ALTER TABLE IF EXISTS test_nonexistance.existent_table DROP COLUMN IF EXISTS nonexistent_column;
+NOTICE:  column "nonexistent_column" of relation "existent_table" does not exist, skipping
+SELECT attname FROM pg_attribute WHERE attnum > 0 AND attrelid = 'test_nonexistance.existent_table'::REGCLASS;
+           attname            
+------------------------------
+ ........pg.dropped.1........
+(1 row)
+
+DROP TABLE test_nonexistance.existent_table;
+ALTER TABLE IF EXISTS test_nonexistance.nonexistent_table RENAME COLUMN i TO j;
+NOTICE:  relation "nonexistent_table" does not exist, skipping
+CREATE TABLE test_nonexistance.existent_table(i INT4);
+ALTER TABLE IF EXISTS test_nonexistance.existent_table RENAME COLUMN i TO j;
+SELECT attname FROM pg_attribute WHERE attnum > 0 AND attrelid = 'test_nonexistance.existent_table'::REGCLASS;
+ attname 
+---------
+ j
+(1 row)
+
+DROP TABLE test_nonexistance.existent_table;
+ALTER TABLE IF EXISTS test_nonexistance.nonexistent_table RENAME CONSTRAINT baz TO bar;
+NOTICE:  relation "nonexistent_table" does not exist, skipping
+CREATE TABLE test_nonexistance.existent_table(i INT4 CONSTRAINT existent_table_i_check CHECK (i < 100));
+ALTER TABLE IF EXISTS test_nonexistance.existent_table RENAME CONSTRAINT existent_table_i_check TO existent_table_i_other_check;
+DROP TABLE test_nonexistance.existent_table;
+ALTER TABLE IF EXISTS test_nonexistance.nonexistent_table SET SCHEMA nonexistent_schema;
+NOTICE:  relation "nonexistent_table" does not exist, skipping
+CREATE TABLE test_nonexistance.existent_table(i INT4);
+ALTER TABLE IF EXISTS test_nonexistance.existent_table SET SCHEMA nonexistent_schema;
+ERROR:  schema "nonexistent_schema" does not exist
+CREATE SCHEMA test_nonexistance2;
+ALTER TABLE IF EXISTS test_nonexistance.existent_table SET SCHEMA test_nonexistance2;
+DROP TABLE test_nonexistance2.existent_table;
+DROP SCHEMA test_nonexistance2 CASCADE;
+ALTER TABLE IF EXISTS test_nonexistance.nonexistent_table SET TABLESPACE nonexistent_tablespace;
+NOTICE:  relation "nonexistent_table" does not exist, skipping
+CREATE TABLE test_nonexistance.existent_table(i INT4);
+ALTER TABLE IF EXISTS test_nonexistance.existent_table SET TABLESPACE nonexistent_tablespace;
+ERROR:  tablespace "nonexistent_tablespace" does not exist
+DROP TABLE test_nonexistance.existent_table;
+DROP SCHEMA test_nonexistance CASCADE;
 DROP EXTENSION pg_pathman;
