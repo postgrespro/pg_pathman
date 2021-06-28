@@ -370,4 +370,11 @@ SELECT create_hash_partitions('drop_index.test', 'val', 2);
 DROP INDEX CONCURRENTLY drop_index.test_0_val_idx;
 DROP SCHEMA drop_index CASCADE;
 NOTICE:  drop cascades to 3 other objects
+/*
+ * Test, that ALTER TABLE IF EXISTS ... RENAME TO of not existed table generate NOTICE instead of ERROR
+ */
+CREATE SCHEMA rename_nonexistent;
+ALTER TABLE IF EXISTS rename_nonexistent.nonexistent_table RENAME TO other_table_name;
+NOTICE:  relation "nonexistent_table" does not exist, skipping
+DROP SCHEMA rename_nonexistent CASCADE;
 DROP EXTENSION pg_pathman;

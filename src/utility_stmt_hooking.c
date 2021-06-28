@@ -175,7 +175,10 @@ is_pathman_related_table_rename(Node *parsetree,
 	/* Fetch Oid of this relation */
 	relation_oid = RangeVarGetRelid(rename_stmt->relation,
 									AccessShareLock,
-									false);
+									rename_stmt->missing_ok);
+	/* PGPRO-5255: check ALTER TABLE IF EXISTS of non existent table */
+	if (rename_stmt->missing_ok && relation_oid == InvalidOid)
+		return false;
 
 	/* Assume it's a parent */
 	if (has_pathman_relation_info(relation_oid))

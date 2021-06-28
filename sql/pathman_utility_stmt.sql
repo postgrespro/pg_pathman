@@ -250,6 +250,12 @@ DROP INDEX CONCURRENTLY drop_index.test_0_val_idx;
 
 DROP SCHEMA drop_index CASCADE;
 
+/*
+ * Test, that ALTER TABLE IF EXISTS ... RENAME TO of not existed table generate NOTICE instead of ERROR
+ */
+CREATE SCHEMA rename_nonexistent;
+ALTER TABLE IF EXISTS rename_nonexistent.nonexistent_table RENAME TO other_table_name;
+DROP SCHEMA rename_nonexistent CASCADE;
 
 
 DROP EXTENSION pg_pathman;
