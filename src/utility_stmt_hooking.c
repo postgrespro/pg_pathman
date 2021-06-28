@@ -175,7 +175,11 @@ is_pathman_related_table_rename(Node *parsetree,
 	/* Fetch Oid of this relation */
 	relation_oid = RangeVarGetRelid(rename_stmt->relation,
 									AccessShareLock,
-									false);
+									rename_stmt->missing_ok);
+
+	/* Check ALTER TABLE ... IF EXISTS of nonexistent table */
+	if (rename_stmt->missing_ok && relation_oid == InvalidOid)
+		return false;
 
 	/* Assume it's a parent */
 	if (has_pathman_relation_info(relation_oid))
@@ -232,7 +236,11 @@ is_pathman_related_alter_column_type(Node *parsetree,
 	/* Assume it's a parent, fetch its Oid */
 	parent_relid = RangeVarGetRelid(alter_table_stmt->relation,
 									AccessShareLock,
-									false);
+									alter_table_stmt->missing_ok);
+
+	/* Check ALTER TABLE ... IF EXISTS of nonexistent table */
+	if (alter_table_stmt->missing_ok && parent_relid == InvalidOid)
+		return false;
 
 	/* Is parent partitioned? */
 	if ((prel = get_pathman_relation_info(parent_relid)) != NULL)
