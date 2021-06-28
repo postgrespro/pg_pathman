@@ -16,6 +16,8 @@ status=0
 # global exports
 export PGPORT=55435
 export VIRTUAL_ENV_DISABLE_PROMPT=1
+id
+ls -l $(which make pg_config) /bin/sh
 
 # rebuild PostgreSQL with cassert + valgrind support
 if [ "$LEVEL" = "hardcore" ] || \
