@@ -29,8 +29,8 @@ ADD . /pg/testdir
 # Grant privileges
 RUN	chown -R postgres:postgres ${PGDATA} && \
 	chown -R postgres:postgres /pg/testdir && \
-	chmod a+rwx /usr/local/lib/postgresql && \
-	chmod a+rwx /usr/local/share/postgresql/extension
+	chmod a+rwx /usr/local/share/postgresql/extension && \
+	find /usr/local/lib/postgresql -type d -print0 | xargs -0 chmod a+rwx
 
 COPY run_tests.sh /run.sh
 RUN chmod 755 /run.sh
