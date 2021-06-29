@@ -258,10 +258,9 @@ CREATE SCHEMA test_nonexistance;
 ALTER TABLE IF EXISTS test_nonexistance.nonexistent_table RENAME TO other_table_name;
 /* renaming existent tables already tested earlier (see rename.plain_test) */
 
-ALTER TABLE IF EXISTS test_nonexistance.nonexistent_table ADD COLUMN IF NOT EXISTS j INT4;
+ALTER TABLE IF EXISTS test_nonexistance.nonexistent_table ADD COLUMN j INT4;
 CREATE TABLE test_nonexistance.existent_table(i INT4);
-ALTER TABLE IF EXISTS test_nonexistance.existent_table ADD COLUMN IF NOT EXISTS i INT4;
-ALTER TABLE IF EXISTS test_nonexistance.existent_table ADD COLUMN IF NOT EXISTS j INT4;
+ALTER TABLE IF EXISTS test_nonexistance.existent_table ADD COLUMN j INT4;
 SELECT attname FROM pg_attribute WHERE attnum > 0 AND attrelid = 'test_nonexistance.existent_table'::REGCLASS;
 DROP TABLE test_nonexistance.existent_table;
 

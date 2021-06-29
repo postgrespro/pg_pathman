@@ -94,7 +94,8 @@ Check constraints:
     "pathman_r4_check" CHECK (dt >= '06-01-2015'::date AND dt < '01-01-2016'::date)
 Inherits: test.range_rel
 
-ALTER TABLE IF EXISTS test.nonexistent_table ATTACH PARTITION baz DEFAULT;
+/* Note: PG-10 doesn't support ATTACH PARTITION ... DEFAULT */
+ALTER TABLE IF EXISTS test.nonexistent_table ATTACH PARTITION baz FOR VALUES IN (42);
 NOTICE:  relation "nonexistent_table" does not exist, skipping
 ALTER TABLE IF EXISTS test.nonexistent_table DETACH PARTITION baz;
 NOTICE:  relation "nonexistent_table" does not exist, skipping
