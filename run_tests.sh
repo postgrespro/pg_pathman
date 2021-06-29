@@ -16,9 +16,6 @@ status=0
 # global exports
 export PGPORT=55435
 export VIRTUAL_ENV_DISABLE_PROMPT=1
-id
-ls -l $(which make pg_config) /bin/sh
-make --version
 
 # rebuild PostgreSQL with cassert + valgrind support
 if [ "$LEVEL" = "hardcore" ] || \
@@ -90,6 +87,10 @@ if [ "$LEVEL" = "scan-build" ] || \
 	make USE_PGXS=1 clean
 fi
 
+id
+ls -l $(which make pg_config) /bin/sh
+make --version
+ls -la `pwd`
 
 # build and install extension (using PG_CPPFLAGS and SHLIB_LINK for gcov)
 make USE_PGXS=1 PG_CPPFLAGS="-coverage" SHLIB_LINK="-coverage"
