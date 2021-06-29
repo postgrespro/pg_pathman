@@ -1,4 +1,4 @@
-[![Build Status](https://travis-ci.org/postgrespro/pg_pathman.svg?branch=master)](https://travis-ci.org/postgrespro/pg_pathman)
+[![Build Status](https://travis-ci.com/postgrespro/pg_pathman.svg?branch=master)](https://travis-ci.com/postgrespro/pg_pathman)
 [![PGXN version](https://badge.fury.io/pg/pg_pathman.svg)](https://badge.fury.io/pg/pg_pathman)
 [![codecov](https://codecov.io/gh/postgrespro/pg_pathman/branch/master/graph/badge.svg)](https://codecov.io/gh/postgrespro/pg_pathman)
 [![GitHub license](https://img.shields.io/badge/license-PostgreSQL-blue.svg)](https://raw.githubusercontent.com/postgrespro/pg_pathman/master/LICENSE)
