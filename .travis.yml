@@ -12,27 +12,26 @@ install:
     - docker-compose build
 
 script:
-    - docker-compose run tests
-#    - docker-compose run $(bash <(curl -s https://codecov.io/env)) tests
+    - docker-compose run $(bash <(curl -s https://codecov.io/env)) tests
 
 notifications:
     email:
         on_success: change
-        on_failure: change
+        on_failure: always
 
 env:
-#    - PG_VERSION=13 LEVEL=hardcore
+    - PG_VERSION=13 LEVEL=hardcore
     - PG_VERSION=13
-#    - PG_VERSION=12 LEVEL=hardcore
-#    - PG_VERSION=12
-#    - PG_VERSION=11 LEVEL=hardcore
-#    - PG_VERSION=11
-#    - PG_VERSION=10 LEVEL=hardcore
-#    - PG_VERSION=10
-#    - PG_VERSION=9.6 LEVEL=hardcore
-#    - PG_VERSION=9.6
-#    - PG_VERSION=9.5 LEVEL=hardcore
-#    - PG_VERSION=9.5
+    - PG_VERSION=12 LEVEL=hardcore
+    - PG_VERSION=12
+    - PG_VERSION=11 LEVEL=hardcore
+    - PG_VERSION=11
+    - PG_VERSION=10 LEVEL=hardcore
+    - PG_VERSION=10
+    - PG_VERSION=9.6 LEVEL=hardcore
+    - PG_VERSION=9.6
+    - PG_VERSION=9.5 LEVEL=hardcore
+    - PG_VERSION=9.5
 
 jobs:
     allow_failures:

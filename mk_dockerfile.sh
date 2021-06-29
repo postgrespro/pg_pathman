@@ -4,7 +4,7 @@ if [ -z ${PG_VERSION+x} ]; then
 fi
 
 if [ -z ${LEVEL+x} ]; then
-	LEVEL=standard
+	LEVEL=scan-build
 fi
 
 echo PG_VERSION=${PG_VERSION}
