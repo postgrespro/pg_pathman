@@ -1159,8 +1159,14 @@ handle_array(ArrayType *array,
 	bool		elem_byval;
 	char		elem_align;
 
-	/* Check if we can work with this strategy */
-	if (strategy == 0)
+	/*
+	 * Check if we can work with this strategy
+	 * We can work only with BTLessStrategyNumber, BTLessEqualStrategyNumber,
+	 * BTEqualStrategyNumber, BTGreaterEqualStrategyNumber and BTGreaterStrategyNumber.
+	 * If new search strategies appear in the future, then access optimizations from
+	 * this function will not work, and the default behavior (handle_array_return:) will work.
+	 */
+	if (strategy == InvalidStrategy || strategy > BTGreaterStrategyNumber)
 		goto handle_array_return;
 
 	/* Get element's properties */
@@ -1177,8 +1183,12 @@ handle_array(ArrayType *array,
 		List   *ranges;
 		int		i;
 
-		/* This is only for paranoia's sake */
-		Assert(BTMaxStrategyNumber == 5 && BTEqualStrategyNumber == 3);
+		/* This is only for paranoia's sake (checking correctness of following take_min calculation) */
+		Assert(BTEqualStrategyNumber == 3
+			&& BTLessStrategyNumber < BTEqualStrategyNumber
+			&& BTLessEqualStrategyNumber < BTEqualStrategyNumber
+			&& BTGreaterEqualStrategyNumber > BTEqualStrategyNumber
+			&& BTGreaterStrategyNumber > BTEqualStrategyNumber);
 
 		/* Optimizations for <, <=, >=, > */
 		if (strategy != BTEqualStrategyNumber)
