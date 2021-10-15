@@ -4,7 +4,7 @@
  *		This module sets planner hooks, handles SELECT queries and produces
  *		paths for partitioned tables
  *
- * Copyright (c) 2015-2016, Postgres Professional
+ * Copyright (c) 2015-2021, Postgres Professional
  *
  * ------------------------------------------------------------------------
  */
@@ -281,6 +281,32 @@ estimate_paramsel_using_prel(const PartRelationInfo *prel, int strategy)
 	else return 1.0;
 }
 
+#if defined(PGPRO_EE) && PG_VERSION_NUM >= 130000
+/*
+ * Reset cache at start and at finish ATX transaction
+ */
+static void
+pathman_xact_cb(XactEvent event, void *arg)
+{
+	if (getNestLevelATX() > 0)
+	{
+		/*
+		 * For each ATX transaction start/finish: need to reset pg_pathman
+		 * cache because we shouldn't see uncommitted data in autonomous
+		 * transaction and data of autonomous transaction in main transaction
+		 */
+		if ((event == XACT_EVENT_START /* start */) ||
+			(event == XACT_EVENT_ABORT ||
+			 event == XACT_EVENT_PARALLEL_ABORT ||
+			 event == XACT_EVENT_COMMIT ||
+			 event == XACT_EVENT_PARALLEL_COMMIT ||
+			 event == XACT_EVENT_PREPARE /* finish */))
+		{
+			pathman_relcache_hook(PointerGetDatum(NULL), InvalidOid);
+		}
+	}
+}
+#endif
 
 /*
  * -------------------
@@ -330,6 +356,11 @@ _PG_init(void)
 	init_partition_filter_static_data();
 	init_partition_router_static_data();
 	init_partition_overseer_static_data();
+
+#if defined(PGPRO_EE) && PG_VERSION_NUM >= 130000
+	/* Callbacks for reload relcache for ATX transactions */
+	RegisterXactCallback(pathman_xact_cb, NULL);
+#endif
 }
 
 /* Get cached PATHMAN_CONFIG relation Oid */
