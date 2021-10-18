@@ -48,6 +48,7 @@ typedef struct
 	Oid					partid;					/* partition's relid */
 	ResultRelInfo	   *result_rel_info;		/* cached ResultRelInfo */
 	TupleConversionMap *tuple_map;				/* tuple mapping (parent => child) */
+	TupleConversionMap *tuple_map_child;		/* tuple mapping (child => child), for exclude 'ctid' */
 
 	PartRelationInfo   *prel;					/* this child might be a parent... */
 	ExprState		   *prel_expr_state;		/* and have its own part. expression */
@@ -172,6 +173,10 @@ ResultRelInfoHolder * scan_result_parts_storage(ResultPartsStorage *storage, Oid
 PartRelationInfo * refresh_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid);
 
 TupleConversionMap * build_part_tuple_map(Relation parent_rel, Relation child_rel);
+
+TupleConversionMap * build_part_tuple_map_child(Relation child_rel);
+
+void destroy_tuple_map(TupleConversionMap *tuple_map);
 
 List * pfilter_build_tlist(Plan *subplan);
 

@@ -155,6 +155,45 @@ UPDATE test_updates.test SET val =  -1 WHERE val =  95 RETURNING *, tableoid::RE
   -1 | 105 | test_updates.test_13
 (1 row)
 
+/* basic check for 'ALTER TABLE ... ADD COLUMN'; PGPRO-5113 */
+create table test_updates.test_5113(val int4 not null);
+insert into test_updates.test_5113 values (1);
+select create_range_partitions('test_updates.test_5113', 'val', 1, 10);
+ create_range_partitions 
+-------------------------
+                       1
+(1 row)
+
+update test_updates.test_5113 set val = 11 where val = 1;
+alter table test_updates.test_5113 add column x varchar;
+/* no error here: */
+select * from test_updates.test_5113 where val = 11;
+ val | x 
+-----+---
+  11 | 
+(1 row)
+
+drop table test_updates.test_5113 cascade;
+NOTICE:  drop cascades to 3 other objects
+create table test_updates.test_5113(val int4 not null);
+insert into test_updates.test_5113 values (1);
+select create_range_partitions('test_updates.test_5113', 'val', 1, 10);
+ create_range_partitions 
+-------------------------
+                       1
+(1 row)
+
+update test_updates.test_5113 set val = 11 where val = 1;
+alter table test_updates.test_5113 add column x int8;
+/* no extra data in column 'x' here: */
+select * from test_updates.test_5113 where val = 11;
+ val | x 
+-----+---
+  11 |  
+(1 row)
+
+drop table test_updates.test_5113 cascade;
+NOTICE:  drop cascades to 3 other objects
 DROP SCHEMA test_updates CASCADE;
 NOTICE:  drop cascades to 15 other objects
 DROP EXTENSION pg_pathman;
