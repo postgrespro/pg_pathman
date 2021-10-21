@@ -72,9 +72,10 @@ static TupleTableSlot *router_set_slot(PartitionRouterState *state,
 									   TupleTableSlot *slot,
 									   CmdType operation);
 static TupleTableSlot *router_get_slot(PartitionRouterState *state,
+									   EState *estate,
 									   bool *should_process);
 
-static void router_lazy_init_constraint(PartitionRouterState *state);
+static void router_lazy_init_constraint(PartitionRouterState *state, bool recreate);
 
 static ItemPointerData router_extract_ctid(PartitionRouterState *state,
 										   TupleTableSlot *slot);
@@ -185,43 +186,97 @@ partition_router_exec(CustomScanState *node)
 
 take_next_tuple:
 	/* Get next tuple for processing */
-	slot = router_get_slot(state, &should_process);
+	slot = router_get_slot(state, estate, &should_process);
 
 	if (should_process)
 	{
 		CmdType				new_cmd;
 		bool				deleted;
 		ItemPointerData		ctid;
+		/* Variables for prepare a full "new" tuple, after 86dc90056dfd */
+#if PG_VERSION_NUM >= 140000
+		TupleTableSlot	   *old_slot;
+		ResultRelInfo	   *rri;
+#endif
+		TupleTableSlot	   *full_slot = slot;
+		bool				partition_changed = false;
 
 		ItemPointerSetInvalid(&ctid);
 
+#if PG_VERSION_NUM < 140000
 		/* Build new junkfilter if needed */
 		if (state->junkfilter == NULL)
 			state->junkfilter = state->current_rri->ri_junkFilter;
+#else
+		if (slot->tts_tableOid == InvalidOid)
+			elog(ERROR, "invalid table OID in returned tuple");
 
-		/* Build recheck constraint state lazily */
-		router_lazy_init_constraint(state);
+		/*
+		 * For 14: in case UPDATE command we can scanning several partitions
+		 * in one plan. Need to switch context each time partition is switched.
+		 */
+		if (RelationGetRelid(state->current_rri->ri_RelationDesc) != slot->tts_tableOid)
+		{
+			/*
+			 * Function router_get_slot() switched to new partition: need to
+			 * reinitialize some PartitionRouterState variables
+			 */
+			state->current_rri = ExecLookupResultRelByOid(state->mt_state,
+														  slot->tts_tableOid, false, false);
+			partition_changed = true;
+		}
+#endif
+
+		/* Build recheck constraint state lazily (and re-create constraint
+		 * in case we start scan another relation) */
+		router_lazy_init_constraint(state, partition_changed);
 
 		/* Extract item pointer from current tuple */
 		ctid = router_extract_ctid(state, slot);
+		Assert(ItemPointerIsValid(&ctid));
 
 		/* Magic: replace parent's ResultRelInfo with ours */
 		estate->es_result_relation_info = state->current_rri;
 
+#if PG_VERSION_NUM >= 140000 /* after 86dc90056dfd */
+		/* Store original slot */
+		estate->es_original_tuple = slot;
+		/*
+		 * "slot" contains new values of the changed columns plus row
+		 * identity information such as CTID.
+		 * Need to prepare a "newSlot" with full tuple for triggers in
+		 * router_lock_or_delete_tuple(). But we should return old slot
+		 * with CTID because this CTID is used in ExecModifyTable().
+		 */
+		rri = state->current_rri;
+
+		/* Initialize projection info if first time for this table. */
+		if (unlikely(!rri->ri_projectNewInfoValid))
+			ExecInitUpdateProjection(state->mt_state, rri);
+
+		old_slot = rri->ri_oldTupleSlot;
+		/* Fetch the most recent version of old tuple. */
+		if (!table_tuple_fetch_row_version(rri->ri_RelationDesc,
+										   &ctid, SnapshotAny, old_slot))
+			elog(ERROR, "failed to fetch partition tuple being updated");
+
+		/* Build full tuple (using "old_slot" + changed from "slot"): */
+		full_slot = ExecGetUpdateNewTuple(rri, slot, old_slot);
+#endif
+
 		/* Lock or delete tuple from old partition */
-		Assert(ItemPointerIsValid(&ctid));
-		slot = router_lock_or_delete_tuple(state, slot,
-										   &ctid, &deleted);
+		full_slot = router_lock_or_delete_tuple(state, full_slot,
+											  &ctid, &deleted);
 
 		/* We require a tuple (previous one has vanished) */
-		if (TupIsNull(slot))
+		if (TupIsNull(full_slot))
 			goto take_next_tuple;
 
 		/* Should we use UPDATE or DELETE + INSERT? */
 		new_cmd = deleted ? CMD_INSERT : CMD_UPDATE;
 
 		/* Alter ModifyTable's state and return */
-		return router_set_slot(state, slot, new_cmd);
+		return router_set_slot(state, full_slot, new_cmd);
 	}
 
 	return slot;
@@ -265,7 +320,12 @@ router_set_slot(PartitionRouterState *state,
 		return slot;
 
 	/* HACK: alter ModifyTable's state */
+#if PG_VERSION_NUM >= 140000
+	/* Fields "mt_nplans", "mt_whichplan" removed in 86dc90056dfd */
+	MTHackField(mt_state, mt_nrels) = -mt_state->mt_nrels;
+#else
 	MTHackField(mt_state, mt_nplans) = -mt_state->mt_whichplan;
+#endif
 	MTHackField(mt_state, operation) = operation;
 
 	/* HACK: disable AFTER STATEMENT triggers */
@@ -273,6 +333,9 @@ router_set_slot(PartitionRouterState *state,
 
 	if (!TupIsNull(slot))
 	{
+		EState *estate = mt_state->ps.state;
+
+#if PG_VERSION_NUM < 140000 /* field "ri_junkFilter" removed in 86dc90056dfd */
 		/* We should've cached junk filter already */
 		Assert(state->junkfilter);
 
@@ -280,12 +343,20 @@ router_set_slot(PartitionRouterState *state,
 		state->current_rri->ri_junkFilter = (operation == CMD_UPDATE) ?
 												state->junkfilter :
 												NULL;
+#endif
 
 		/* Don't forget to set saved_slot! */
-		state->yielded_slot = ExecInitExtraTupleSlotCompat(mt_state->ps.state,
+		state->yielded_slot = ExecInitExtraTupleSlotCompat(estate,
 														   slot->tts_tupleDescriptor,
 														   &TTSOpsHeapTuple);
 		ExecCopySlot(state->yielded_slot, slot);
+#if PG_VERSION_NUM >= 140000
+		Assert(estate->es_original_tuple != NULL);
+		state->yielded_original_slot = ExecInitExtraTupleSlotCompat(estate,
+																	estate->es_original_tuple->tts_tupleDescriptor,
+																	&TTSOpsHeapTuple);
+		ExecCopySlot(state->yielded_original_slot, estate->es_original_tuple);
+#endif
 	}
 
 	/* Yield */
@@ -296,6 +367,7 @@ router_set_slot(PartitionRouterState *state,
 /* Fetch next tuple (either fresh or yielded) */
 static TupleTableSlot *
 router_get_slot(PartitionRouterState *state,
+				EState *estate,
 				bool *should_process)
 {
 	TupleTableSlot *slot;
@@ -309,6 +381,10 @@ router_get_slot(PartitionRouterState *state,
 		/* Reset saved slot */
 		slot = state->yielded_slot;
 		state->yielded_slot = NULL;
+#if PG_VERSION_NUM >= 140000
+		estate->es_original_tuple = state->yielded_original_slot;
+		state->yielded_original_slot = NULL;
+#endif
 		state->yielded = false;
 
 		/* We shouldn't process preserved slot... */
@@ -331,9 +407,9 @@ router_get_slot(PartitionRouterState *state,
 }
 
 static void
-router_lazy_init_constraint(PartitionRouterState *state)
+router_lazy_init_constraint(PartitionRouterState *state, bool reinit)
 {
-	if (state->constraint == NULL)
+	if (state->constraint == NULL || reinit)
 	{
 		Relation	rel = state->current_rri->ri_RelationDesc;
 		Oid			relid = RelationGetRelid(rel);
@@ -376,7 +452,11 @@ router_extract_ctid(PartitionRouterState *state, TupleTableSlot *slot)
 		bool	ctid_isnull;
 
 		ctid_datum = ExecGetJunkAttribute(slot,
+#if PG_VERSION_NUM >= 140000 /* field "junkfilter" removed in 86dc90056dfd */
+										  state->current_rri->ri_RowIdAttNo,
+#else
 										  state->junkfilter->jf_junkAttNo,
+#endif
 										  &ctid_isnull);
 
 		/* shouldn't ever get a null result... */

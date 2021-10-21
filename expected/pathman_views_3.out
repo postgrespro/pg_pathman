@@ -1,0 +1,189 @@
+/*
+ * -------------------------------------------
+ *  NOTE: This test behaves differenly on 9.5
+ * -------------------------------------------
+ *
+ * Also since 8edd0e794 (>= 12) Append nodes with single subplan are eliminated,
+ * causing different output; pathman_views_2.out is the updated version.
+ */
+\set VERBOSITY terse
+SET search_path = 'public';
+CREATE EXTENSION pg_pathman;
+CREATE SCHEMA views;
+/* create a partitioned table */
+create table views._abc(id int4 not null);
+select create_hash_partitions('views._abc', 'id', 10);
+ create_hash_partitions 
+------------------------
+                     10
+(1 row)
+
+insert into views._abc select generate_series(1, 100);
+/* create a dummy table */
+create table views._abc_add (like views._abc);
+vacuum analyze;
+/* create a facade view */
+create view views.abc as select * from views._abc;
+create or replace function views.disable_modification()
+returns trigger as
+$$
+BEGIN
+  RAISE EXCEPTION '%', TG_OP;
+  RETURN NULL;
+END;
+$$
+language 'plpgsql';
+create trigger abc_mod_tr
+instead of insert or update or delete
+on views.abc for each row
+execute procedure views.disable_modification();
+/* Test SELECT */
+explain (costs off) select * from views.abc;
+        QUERY PLAN        
+--------------------------
+ Append
+   ->  Seq Scan on _abc_0
+   ->  Seq Scan on _abc_1
+   ->  Seq Scan on _abc_2
+   ->  Seq Scan on _abc_3
+   ->  Seq Scan on _abc_4
+   ->  Seq Scan on _abc_5
+   ->  Seq Scan on _abc_6
+   ->  Seq Scan on _abc_7
+   ->  Seq Scan on _abc_8
+   ->  Seq Scan on _abc_9
+(11 rows)
+
+explain (costs off) select * from views.abc where id = 1;
+     QUERY PLAN     
+--------------------
+ Seq Scan on _abc_0
+   Filter: (id = 1)
+(2 rows)
+
+explain (costs off) select * from views.abc where id = 1 for update;
+        QUERY PLAN        
+--------------------------
+ LockRows
+   ->  Seq Scan on _abc_0
+         Filter: (id = 1)
+(3 rows)
+
+select * from views.abc where id = 1 for update;
+ id 
+----
+  1
+(1 row)
+
+select count (*) from views.abc;
+ count 
+-------
+   100
+(1 row)
+
+/* Test INSERT */
+explain (costs off) insert into views.abc values (1);
+  QUERY PLAN   
+---------------
+ Insert on abc
+   ->  Result
+(2 rows)
+
+insert into views.abc values (1);
+ERROR:  INSERT
+/* Test UPDATE */
+explain (costs off) update views.abc set id = 2 where id = 1 or id = 2;
+              QUERY PLAN              
+--------------------------------------
+ Update on abc
+   ->  Result
+         ->  Append
+               ->  Seq Scan on _abc_0
+                     Filter: (id = 1)
+               ->  Seq Scan on _abc_6
+                     Filter: (id = 2)
+(7 rows)
+
+update views.abc set id = 2 where id = 1 or id = 2;
+ERROR:  UPDATE
+/* Test DELETE */
+explain (costs off) delete from views.abc where id = 1 or id = 2;
+              QUERY PLAN              
+--------------------------------------
+ Delete on abc
+   ->  Result
+         ->  Append
+               ->  Seq Scan on _abc_0
+                     Filter: (id = 1)
+               ->  Seq Scan on _abc_6
+                     Filter: (id = 2)
+(7 rows)
+
+delete from views.abc where id = 1 or id = 2;
+ERROR:  DELETE
+/* Test SELECT with UNION */
+create view views.abc_union as table views._abc union table views._abc_add;
+create view views.abc_union_all as table views._abc union all table views._abc_add;
+explain (costs off) table views.abc_union;
+              QUERY PLAN              
+--------------------------------------
+ HashAggregate
+   Group Key: _abc_0.id
+   ->  Append
+         ->  Append
+               ->  Seq Scan on _abc_0
+               ->  Seq Scan on _abc_1
+               ->  Seq Scan on _abc_2
+               ->  Seq Scan on _abc_3
+               ->  Seq Scan on _abc_4
+               ->  Seq Scan on _abc_5
+               ->  Seq Scan on _abc_6
+               ->  Seq Scan on _abc_7
+               ->  Seq Scan on _abc_8
+               ->  Seq Scan on _abc_9
+         ->  Seq Scan on _abc_add
+(15 rows)
+
+explain (costs off) select * from views.abc_union where id = 5;
+               QUERY PLAN               
+----------------------------------------
+ Unique
+   ->  Sort
+         Sort Key: _abc_8.id
+         ->  Append
+               ->  Seq Scan on _abc_8
+                     Filter: (id = 5)
+               ->  Seq Scan on _abc_add
+                     Filter: (id = 5)
+(8 rows)
+
+explain (costs off) table views.abc_union_all;
+         QUERY PLAN         
+----------------------------
+ Append
+   ->  Seq Scan on _abc_0
+   ->  Seq Scan on _abc_1
+   ->  Seq Scan on _abc_2
+   ->  Seq Scan on _abc_3
+   ->  Seq Scan on _abc_4
+   ->  Seq Scan on _abc_5
+   ->  Seq Scan on _abc_6
+   ->  Seq Scan on _abc_7
+   ->  Seq Scan on _abc_8
+   ->  Seq Scan on _abc_9
+   ->  Seq Scan on _abc_add
+(12 rows)
+
+explain (costs off) select * from views.abc_union_all where id = 5;
+         QUERY PLAN         
+----------------------------
+ Append
+   ->  Seq Scan on _abc_8
+         Filter: (id = 5)
+   ->  Seq Scan on _abc_add
+         Filter: (id = 5)
+(5 rows)
+
+DROP SCHEMA views CASCADE;
+NOTICE:  drop cascades to 16 other objects
+DROP EXTENSION pg_pathman;

@@ -14,6 +14,7 @@
 #include "pathman.h"
 #include "partition_creation.h"
 #include "partition_filter.h"
+#include "partition_router.h"
 #include "utils.h"
 
 #include "access/htup_details.h"
@@ -353,10 +354,13 @@ scan_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid)
 		CopyToResultRelInfo(ri_onConflictSetWhere);
 #endif
 
+#if PG_VERSION_NUM < 140000
+		/* field "ri_junkFilter" removed in 86dc90056dfd */
 		if (parts_storage->command_type != CMD_UPDATE)
 			CopyToResultRelInfo(ri_junkFilter);
 		else
 			child_result_rel_info->ri_junkFilter = NULL;
+#endif
 
 		/* ri_ConstraintExprs will be initialized by ExecRelCheck() */
 		child_result_rel_info->ri_ConstraintExprs = NULL;
@@ -765,6 +769,32 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 							  RPS_RRI_CB(NULL, NULL));
 }
 
+#if PG_VERSION_NUM >= 140000
+/*
+ * Re-initialization of PartitionFilterState for using new partition with new
+ * "current_rri"
+ */
+static void
+reint_partition_filter_state(PartitionFilterState *state, ResultRelInfo *current_rri)
+{
+	Oid     parent_relid = state->partitioned_table;
+	EState *estate = state->result_parts.estate;
+
+	fini_result_parts_storage(&state->result_parts);
+
+	state->returning_list = current_rri->ri_returningList;
+
+	/* Init ResultRelInfo cache */
+	init_result_parts_storage(&state->result_parts,
+							  parent_relid, current_rri,
+							  estate, state->command_type,
+							  RPS_SKIP_RELATIONS,
+							  state->on_conflict_action != ONCONFLICT_NONE,
+							  RPS_RRI_CB(prepare_rri_for_insert, state),
+							  RPS_RRI_CB(NULL, NULL));
+}
+#endif
+
 TupleTableSlot *
 partition_filter_exec(CustomScanState *node)
 {
@@ -782,6 +812,22 @@ partition_filter_exec(CustomScanState *node)
 		MemoryContext			old_mcxt;
 		ResultRelInfoHolder	   *rri_holder;
 		ResultRelInfo		   *rri;
+#if PG_VERSION_NUM >= 140000
+		PartitionRouterState   *pr_state = linitial(node->custom_ps);
+
+		/*
+		 * For 14: in case UPDATE command, we can scanning several partitions
+		 * in one plan. Need to switch context each time partition is switched.
+		 */
+		if (IsPartitionRouterState(pr_state) &&
+			state->result_parts.base_rri != pr_state->current_rri)
+		{	/*
+			 * Slot switched to new partition: need to
+			 * reinitialize some PartitionFilterState variables
+			 */
+			reint_partition_filter_state(state, pr_state->current_rri);
+		}
+#endif
 
 		/* Switch to per-tuple context */
 		old_mcxt = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
@@ -1112,9 +1158,18 @@ prepare_rri_fdw_for_insert(ResultRelInfoHolder *rri_holder,
 		NodeSetTag(&mtstate, T_ModifyTableState);
 		mtstate.ps.state = estate;
 		mtstate.operation = CMD_INSERT;
+#if PG_VERSION_NUM >= 140000
+		/*
+		 * Some fields ("mt_plans", "mt_nplans", "mt_whichplan") removed
+		 * in 86dc90056dfd
+		 */
+		outerPlanState(&mtstate.ps) = pstate_ptr;
+		mtstate.mt_nrels = 1;
+#else
 		mtstate.mt_plans = &pstate_ptr;
 		mtstate.mt_nplans = 1;
 		mtstate.mt_whichplan = 0;
+#endif
 		mtstate.resultRelInfo = rri;
 #if PG_VERSION_NUM < 110000
 		mtstate.mt_onconflict = ONCONFLICT_NONE;
@@ -1255,9 +1310,40 @@ append_rte_to_estate(EState *estate, RangeTblEntry *rte, Relation child_rel)
 static int
 append_rri_to_estate(EState *estate, ResultRelInfo *rri)
 {
-	estate_mod_data	   *emd_struct = fetch_estate_mod_data(estate);
-	int					result_rels_allocated = emd_struct->estate_alloc_result_rels;
+	estate_mod_data *emd_struct = fetch_estate_mod_data(estate);
+	int	result_rels_allocated = emd_struct->estate_alloc_result_rels;
+#if PG_VERSION_NUM >= 140000 /* reworked in commit a04daa97a433 */
+	ResultRelInfo **rri_array = estate->es_result_relations;
 
+	/*
+	 * We already increased variable "estate->es_range_table_size" in previous
+	 * call append_rte_to_estate(): see
+	 * "estate->es_range_table_size = list_length(estate->es_range_table)"
+	 * after "lappend(estate->es_range_table, rte)". So we should append
+	 * new value in "estate->es_result_relations" only.
+	 */
+
+	/* Reallocate estate->es_result_relations if needed */
+	if (result_rels_allocated < estate->es_range_table_size)
+	{
+		result_rels_allocated = result_rels_allocated * ALLOC_EXP + 1;
+		estate->es_result_relations = palloc(result_rels_allocated *
+											 sizeof(ResultRelInfo *));
+		memcpy(estate->es_result_relations,
+			   rri_array,
+			   (estate->es_range_table_size - 1) * sizeof(ResultRelInfo *));
+	}
+
+	estate->es_result_relations[estate->es_range_table_size - 1] = rri;
+
+	estate->es_opened_result_relations = lappend(estate->es_opened_result_relations, rri);
+
+	/* Update estate_mod_data */
+	emd_struct->estate_alloc_result_rels = result_rels_allocated;
+	emd_struct->estate_not_modified = false;
+
+	return estate->es_range_table_size;
+#else
 	/* Reallocate estate->es_result_relations if needed */
 	if (result_rels_allocated <= estate->es_num_result_relations)
 	{
@@ -1284,6 +1370,7 @@ append_rri_to_estate(EState *estate, ResultRelInfo *rri)
 	emd_struct->estate_not_modified = false;
 
 	return estate->es_num_result_relations++;
+#endif
 }
 
 
@@ -1318,7 +1405,15 @@ fetch_estate_mod_data(EState *estate)
 	/* Have to create a new one */
 	emd_struct = MemoryContextAlloc(estate_mcxt, sizeof(estate_mod_data));
 	emd_struct->estate_not_modified = true;
+#if PG_VERSION_NUM >= 140000
+	/*
+	 * Reworked in commit a04daa97a433: field "es_num_result_relations"
+	 * removed
+	 */
+	emd_struct->estate_alloc_result_rels = estate->es_range_table_size;
+#else
 	emd_struct->estate_alloc_result_rels = estate->es_num_result_relations;
+#endif
 
 	cb = MemoryContextAlloc(estate_mcxt, sizeof(MemoryContextCallback));
 	cb->func = pf_memcxt_callback;

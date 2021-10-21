@@ -411,7 +411,8 @@ SELECT tableoid::regclass, * FROM subpartitions.abc ORDER BY id1, id2, val;
 (4 rows)
 
 SET pg_pathman.enable_partitionrouter = ON;
-UPDATE subpartitions.abc SET id1 = -1, id2 = -1 RETURNING tableoid::regclass, *;
+WITH updated AS (UPDATE subpartitions.abc SET id1 = -1, id2 = -1 RETURNING tableoid::regclass, *)
+SELECT * FROM updated ORDER BY val ASC;
        tableoid        | id1 | id2 | val 
 -----------------------+-----+-----+-----
  subpartitions.abc_3_4 |  -1 |  -1 |   1

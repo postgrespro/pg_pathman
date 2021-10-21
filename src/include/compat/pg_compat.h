@@ -130,7 +130,12 @@
 /*
  * BeginCopyFrom()
  */
-#if PG_VERSION_NUM >= 100000
+#if PG_VERSION_NUM >= 140000
+#define BeginCopyFromCompat(pstate, rel, filename, is_program, data_source_cb, \
+							attnamelist, options) \
+		BeginCopyFrom((pstate), (rel), NULL, (filename), (is_program), \
+					  (data_source_cb), (attnamelist), (options))
+#elif PG_VERSION_NUM >= 100000
 #define BeginCopyFromCompat(pstate, rel, filename, is_program, data_source_cb, \
 							attnamelist, options) \
 		BeginCopyFrom((pstate), (rel), (filename), (is_program), \
@@ -174,7 +179,14 @@
  * 	- in pg 10 PlannedStmt object
  * 	- in pg 9.6 and lower Node parsetree
  */
-#if PG_VERSION_NUM >= 100000
+#if PG_VERSION_NUM >= 140000
+#define call_process_utility_compat(process_utility, first_arg, query_string, \
+									readOnlyTree, context, params, query_env, \
+									dest, completion_tag) \
+		(process_utility)((first_arg), (query_string), readOnlyTree, \
+						  (context), (params), \
+						  (query_env), (dest), (completion_tag))
+#elif PG_VERSION_NUM >= 100000
 #define call_process_utility_compat(process_utility, first_arg, query_string, \
 									context, params, query_env, dest, \
 									completion_tag) \
@@ -240,7 +252,11 @@
 /*
  * create_append_path()
  */
-#if PG_VERSION_NUM >= 130000
+#if PG_VERSION_NUM >= 140000
+#define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
+	create_append_path(NULL, (rel), (subpaths), NIL, NIL, (required_outer), \
+					   (parallel_workers), false, -1)
+#elif PG_VERSION_NUM >= 130000
 /*
  * PGPRO-3938 made create_append_path compatible with vanilla again
  */
@@ -303,7 +319,12 @@
 /*
  * create_merge_append_path()
  */
-#if PG_VERSION_NUM >= 100000
+#if PG_VERSION_NUM >= 140000
+#define create_merge_append_path_compat(root, rel, subpaths, pathkeys, \
+										required_outer) \
+		create_merge_append_path((root), (rel), (subpaths), (pathkeys), \
+								 (required_outer))
+#elif PG_VERSION_NUM >= 100000
 #define create_merge_append_path_compat(root, rel, subpaths, pathkeys, \
 										required_outer) \
 		create_merge_append_path((root), (rel), (subpaths), (pathkeys), \
@@ -650,7 +671,20 @@ extern int oid_cmp(const void *p1, const void *p2);
  *
  * for v10 set NULL into 'queryEnv' argument
  */
-#if PG_VERSION_NUM >= 100000
+#if PG_VERSION_NUM >= 140000
+#define ProcessUtilityCompat(parsetree, queryString, context, params, dest, \
+							 completionTag) \
+		do { \
+			PlannedStmt *stmt = makeNode(PlannedStmt); \
+			stmt->commandType	= CMD_UTILITY; \
+			stmt->canSetTag		= true; \
+			stmt->utilityStmt	= (parsetree); \
+			stmt->stmt_location	= -1; \
+			stmt->stmt_len		= 0; \
+			ProcessUtility(stmt, (queryString), false, (context), (params), NULL, \
+						   (dest), (completionTag)); \
+		} while (0)
+#elif PG_VERSION_NUM >= 100000
 #define ProcessUtilityCompat(parsetree, queryString, context, params, dest, \
 							 completionTag) \
 		do { \
@@ -709,6 +743,9 @@ extern void set_rel_consider_parallel(PlannerInfo *root,
  * in compat version the type of first argument is (Expr *)
  */
 #if PG_VERSION_NUM >= 100000
+#if PG_VERSION_NUM >= 140000 /* function removed in 375398244168add84a884347625d14581a421e71 */
+extern TargetEntry *tlist_member_ignore_relabel(Expr * node, List * targetlist);
+#endif
 #define tlist_member_ignore_relabel_compat(expr, targetlist) \
 		tlist_member_ignore_relabel((expr), (targetlist))
 #elif PG_VERSION_NUM >= 90500
@@ -961,12 +998,16 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 
 /*
  * ExecInsertIndexTuples. Since 12 slot contains tupleid.
+ * Since 14: new fields "resultRelInfo", "update".
  */
-#if PG_VERSION_NUM >= 120000
-#define ExecInsertIndexTuplesCompat(slot, tupleid, estate, noDupError, specConflict, arbiterIndexes) \
+#if PG_VERSION_NUM >= 140000
+#define ExecInsertIndexTuplesCompat(resultRelInfo, slot, tupleid, estate, update, noDupError, specConflict, arbiterIndexes) \
+	ExecInsertIndexTuples((resultRelInfo), (slot), (estate), (update), (noDupError), (specConflict), (arbiterIndexes))
+#elif PG_VERSION_NUM >= 120000
+#define ExecInsertIndexTuplesCompat(resultRelInfo, slot, tupleid, estate, update, noDupError, specConflict, arbiterIndexes) \
 	ExecInsertIndexTuples((slot), (estate), (noDupError), (specConflict), (arbiterIndexes))
 #else
-#define ExecInsertIndexTuplesCompat(slot, tupleid, estate, noDupError, specConflict, arbiterIndexes) \
+#define ExecInsertIndexTuplesCompat(resultRelInfo, slot, tupleid, estate, update, noDupError, specConflict, arbiterIndexes) \
 	ExecInsertIndexTuples((slot), (tupleid), (estate), (noDupError), (specConflict), (arbiterIndexes))
 #endif
 
@@ -1006,7 +1047,7 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
  * macro (and never will be, for old versions), so distinguish via macro added
  * by the commit.
  */
-#ifdef QTW_DONT_COPY_DEFAULT
+#if defined(QTW_DONT_COPY_DEFAULT) && (PG_VERSION_NUM < 140000)
 #define expression_tree_mutator_compat(node, mutator, context) \
 	expression_tree_mutator((node), (mutator), (context), 0)
 #else
@@ -1099,6 +1140,36 @@ void set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel, Index rti);
 #define convert_tuples_by_name_compat(i, o, m)                 convert_tuples_by_name((i), (o))
 #else
 #define convert_tuples_by_name_compat(i, o, m)                 convert_tuples_by_name((i), (o), (m))
+#endif
+
+/*
+ * raw_parser()
+ * In 14 new argument was added (844fe9f159a)
+ */
+#if PG_VERSION_NUM >= 140000
+#define raw_parser_compat(s)                                   raw_parser((s), RAW_PARSE_DEFAULT)
+#else
+#define raw_parser_compat(s)                                   raw_parser(s)
+#endif
+
+/*
+ * make_restrictinfo()
+ * In >=14 new argument was added (55dc86eca70)
+ */
+#if PG_VERSION_NUM >= 140000
+#define make_restrictinfo_compat(r, c, ipd, od, p, sl, rr, or, nr)  make_restrictinfo((r), (c), (ipd), (od), (p), (sl), (rr), (or), (nr))
+#else
+#define make_restrictinfo_compat(r, c, ipd, od, p, sl, rr, or, nr)  make_restrictinfo((c), (ipd), (od), (p), (sl), (rr), (or), (nr))
+#endif
+
+/*
+ * pull_varnos()
+ * In >=14 new argument was added (55dc86eca70)
+ */
+#if PG_VERSION_NUM >= 140000
+#define pull_varnos_compat(r, n)                               pull_varnos((r), (n))
+#else
+#define pull_varnos_compat(r, n)                               pull_varnos(n)
 #endif
 
 #endif /* PG_COMPAT_H */

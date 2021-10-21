@@ -184,6 +184,42 @@ build_parent_tlist(List *tlist, AppendRelInfo *appinfo)
 	return temp_tlist;
 }
 
+#if PG_VERSION_NUM >= 140000
+/*
+ * Function "tlist_member_ignore_relabel" was removed in vanilla (375398244168)
+ * Function moved to pg_pathman.
+ */
+/*
+ * tlist_member_ignore_relabel
+ *	  Finds the (first) member of the given tlist whose expression is
+ *	  equal() to the given expression.  Result is NULL if no such member.
+ *	  We ignore top-level RelabelType nodes
+ *	  while checking for a match.  This is needed for some scenarios
+ *	  involving binary-compatible sort operations.
+ */
+TargetEntry *
+tlist_member_ignore_relabel(Expr *node, List *targetlist)
+{
+	ListCell   *temp;
+
+	while (node && IsA(node, RelabelType))
+		node = ((RelabelType *) node)->arg;
+
+	foreach(temp, targetlist)
+	{
+		TargetEntry *tlentry = (TargetEntry *) lfirst(temp);
+		Expr	   *tlexpr = tlentry->expr;
+
+		while (tlexpr && IsA(tlexpr, RelabelType))
+			tlexpr = ((RelabelType *) tlexpr)->arg;
+
+		if (equal(node, tlexpr))
+			return tlentry;
+	}
+	return NULL;
+}
+#endif
+
 /* Is tlist 'a' subset of tlist 'b'? (in terms of Vars) */
 static bool
 tlist_is_var_subset(List *a, List *b)

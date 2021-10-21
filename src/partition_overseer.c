@@ -68,23 +68,32 @@ partition_overseer_create_scan_state(CustomScan *node)
 static void
 set_mt_state_for_router(PlanState *state, void *context)
 {
+#if PG_VERSION_NUM < 140000
 	int					i;
-    ModifyTableState   *mt_state = (ModifyTableState *) state;
+#endif
+	ModifyTableState   *mt_state = (ModifyTableState *) state;
 
-    if (!IsA(state, ModifyTableState))
+	if (!IsA(state, ModifyTableState))
 		return;
 
+#if PG_VERSION_NUM >= 140000
+	/* Fields "mt_plans", "mt_nplans" removed in 86dc90056dfd */
+	{
+		CustomScanState *pf_state = (CustomScanState *) outerPlanState(mt_state);
+#else
 	for (i = 0; i < mt_state->mt_nplans; i++)
 	{
-		CustomScanState        *pf_state = (CustomScanState *) mt_state->mt_plans[i];
-		PartitionRouterState   *pr_state;
-
+		CustomScanState *pf_state = (CustomScanState *) mt_state->mt_plans[i];
+#endif
 		/* Check if this is a PartitionFilter + PartitionRouter combo */
-		if (IsPartitionFilterState(pf_state) &&
-			IsPartitionRouterState(pr_state = linitial(pf_state->custom_ps)))
+		if (IsPartitionFilterState(pf_state))
 		{
-			/* HACK: point to ModifyTable in PartitionRouter */
-			pr_state->mt_state = mt_state;
+			PartitionRouterState *pr_state = linitial(pf_state->custom_ps);
+			if (IsPartitionRouterState(pr_state))
+			{
+				/* HACK: point to ModifyTable in PartitionRouter */
+				pr_state->mt_state = mt_state;
+			}
 		}
 	}
 }
@@ -116,25 +125,40 @@ partition_overseer_exec(CustomScanState *node)
 						mt_plans_new;
 
 	/* Get initial signal */
+#if PG_VERSION_NUM >= 140000 /* field "mt_nplans" removed in 86dc90056dfd */
+	mt_plans_old = mt_state->mt_nrels;
+#else
 	mt_plans_old = mt_state->mt_nplans;
+#endif
 
 restart:
 	/* Run ModifyTable */
 	slot = ExecProcNode((PlanState *) mt_state);
 
 	/* Get current signal */
+#if PG_VERSION_NUM >= 140000 /* field "mt_nplans" removed in 86dc90056dfd */
+	mt_plans_new = MTHackField(mt_state, mt_nrels);
+#else
 	mt_plans_new = MTHackField(mt_state, mt_nplans);
+#endif
 
 	/* Did PartitionRouter ask us to restart? */
 	if (mt_plans_new != mt_plans_old)
 	{
 		/* Signal points to current plan */
+#if PG_VERSION_NUM < 140000
 		int state_idx = -mt_plans_new;
+#endif
 
 		/* HACK: partially restore ModifyTable's state */
 		MTHackField(mt_state, mt_done) = false;
+#if PG_VERSION_NUM >= 140000
+		/* Fields "mt_nplans", "mt_whichplan" removed in 86dc90056dfd */
+		MTHackField(mt_state, mt_nrels) = mt_plans_old;
+#else
 		MTHackField(mt_state, mt_nplans) = mt_plans_old;
 		MTHackField(mt_state, mt_whichplan) = state_idx;
+#endif
 
 		/* Rerun ModifyTable */
 		goto restart;

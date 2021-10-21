@@ -185,8 +185,12 @@ plan_tree_visitor(Plan *plan,
 			break;
 
 		case T_ModifyTable:
+#if PG_VERSION_NUM >= 140000 /* reworked in commit 86dc90056dfd */
+			plan_tree_visitor(outerPlan(plan), visitor, context);
+#else
 			foreach (l, ((ModifyTable *) plan)->plans)
 				plan_tree_visitor((Plan *) lfirst(l), visitor, context);
+#endif
 			break;
 
 		case T_Append:
@@ -248,9 +252,13 @@ state_tree_visitor(PlanState *state,
 			break;
 
 		case T_ModifyTable:
+#if PG_VERSION_NUM >= 140000 /* reworked in commit 86dc90056dfd */
+			visitor(outerPlanState(state), context);
+#else
 			state_visit_members(((ModifyTableState *) state)->mt_plans,
 								((ModifyTableState *) state)->mt_nplans,
 								visitor, context);
+#endif
 			break;
 
 		case T_Append:
@@ -757,9 +765,19 @@ partition_filter_visitor(Plan *plan, void *context)
 {
 	List		   *rtable = (List *) context;
 	ModifyTable	   *modify_table = (ModifyTable *) plan;
+#if PG_VERSION_NUM >= 140000 /* for changes 86dc90056dfd */
+	/*
+	 * We have only one subplan for 14: need to modify it without
+	 * using any cycle
+	 */
+	Plan		   *subplan = outerPlan(modify_table);
+	ListCell	   *lc2,
+				   *lc3;
+#else
 	ListCell	   *lc1,
 				   *lc2,
 				   *lc3;
+#endif
 
 	/* Skip if not ModifyTable with 'INSERT' command */
 	if (!IsA(modify_table, ModifyTable) || modify_table->operation != CMD_INSERT)
@@ -768,8 +786,12 @@ partition_filter_visitor(Plan *plan, void *context)
 	Assert(rtable && IsA(rtable, List));
 
 	lc3 = list_head(modify_table->returningLists);
+#if PG_VERSION_NUM >= 140000 /* for changes 86dc90056dfd */
+	lc2 = list_head(modify_table->resultRelations);
+#else
 	forboth (lc1, modify_table->plans,
 			 lc2, modify_table->resultRelations)
+#endif
 	{
 		Index	rindex = lfirst_int(lc2);
 		Oid		relid = getrelid(rindex, rtable);
@@ -786,11 +808,19 @@ partition_filter_visitor(Plan *plan, void *context)
 				lc3 = lnext_compat(modify_table->returningLists, lc3);
 			}
 
+#if PG_VERSION_NUM >= 140000 /* for changes 86dc90056dfd */
+			outerPlan(modify_table) = make_partition_filter(subplan, relid,
+															modify_table->nominalRelation,
+															modify_table->onConflictAction,
+															modify_table->operation,
+															returning_list);
+#else
 			lfirst(lc1) = make_partition_filter((Plan *) lfirst(lc1), relid,
 												modify_table->nominalRelation,
 												modify_table->onConflictAction,
 												modify_table->operation,
 												returning_list);
+#endif
 		}
 	}
 
@@ -807,9 +837,19 @@ partition_router_visitor(Plan *plan, void *context)
 {
 	List		   *rtable = (List *) context;
 	ModifyTable	   *modify_table = (ModifyTable *) plan;
+#if PG_VERSION_NUM >= 140000 /* for changes 86dc90056dfd */
+	/*
+	 * We have only one subplan for 14: need to modify it without
+	 * using any cycle
+	 */
+	Plan		   *subplan = outerPlan(modify_table);
+	ListCell	   *lc2,
+				   *lc3;
+#else
 	ListCell	   *lc1,
 				   *lc2,
 				   *lc3;
+#endif
 	bool			changed = false;
 
 	/* Skip if not ModifyTable with 'UPDATE' command */
@@ -827,8 +867,12 @@ partition_router_visitor(Plan *plan, void *context)
 	}
 
 	lc3 = list_head(modify_table->returningLists);
+#if PG_VERSION_NUM >= 140000 /* for changes 86dc90056dfd */
+	lc2 = list_head(modify_table->resultRelations);
+#else
 	forboth (lc1, modify_table->plans,
 			 lc2, modify_table->resultRelations)
+#endif
 	{
 		Index	rindex = lfirst_int(lc2);
 		Oid		relid = getrelid(rindex, rtable),
@@ -852,8 +896,13 @@ partition_router_visitor(Plan *plan, void *context)
 				lc3 = lnext_compat(modify_table->returningLists, lc3);
 			}
 
+#if PG_VERSION_NUM >= 140000 /* for changes 86dc90056dfd */
+			prouter = make_partition_router(subplan,
+											modify_table->epqParam);
+#else
 			prouter = make_partition_router((Plan *) lfirst(lc1),
 											modify_table->epqParam);
+#endif
 
 			pfilter = make_partition_filter((Plan *) prouter, relid,
 											modify_table->nominalRelation,
@@ -861,7 +910,11 @@ partition_router_visitor(Plan *plan, void *context)
 											CMD_UPDATE,
 											returning_list);
 
+#if PG_VERSION_NUM >= 140000 /* for changes in 86dc90056dfd */
+			outerPlan(modify_table) = pfilter;
+#else
 			lfirst(lc1) = pfilter;
+#endif
 			changed = true;
 		}
 	}
