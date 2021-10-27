@@ -195,6 +195,9 @@ start_bgworker(const char *bgworker_name,
 	snprintf(worker.bgw_library_name, BGW_MAXLEN, "pg_pathman");
 
 	worker.bgw_flags			= BGWORKER_SHMEM_ACCESS |
+#if defined(PGPRO_EE) && PG_VERSION_NUM == 130000 /* FIXME: need to replace "==" to ">=" in future */
+									BGWORKER_CLASS_PERSISTENT |
+#endif
 									BGWORKER_BACKEND_DATABASE_CONNECTION;
 	worker.bgw_start_time		= BgWorkerStart_RecoveryFinished;
 	worker.bgw_restart_time		= BGW_NEVER_RESTART;
