@@ -145,5 +145,5 @@ DROP TABLE test_bgw.conc_part CASCADE;
 
 
 
-DROP SCHEMA test_bgw CASCADE;
+DROP SCHEMA test_bgw;
 DROP EXTENSION pg_pathman;

@@ -378,13 +378,13 @@ WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id = 1 OR id = 
 
 SET enable_hashjoin = t;
 SET enable_mergejoin = t;
-DROP SCHEMA rowmarks CASCADE;
-NOTICE:  drop cascades to 7 other objects
-DETAIL:  drop cascades to table rowmarks.first
-drop cascades to table rowmarks.second
-drop cascades to table rowmarks.first_0
+DROP TABLE rowmarks.first CASCADE;
+NOTICE:  drop cascades to 5 other objects
+DETAIL:  drop cascades to table rowmarks.first_0
 drop cascades to table rowmarks.first_1
 drop cascades to table rowmarks.first_2
 drop cascades to table rowmarks.first_3
 drop cascades to table rowmarks.first_4
+DROP TABLE rowmarks.second CASCADE;
+DROP SCHEMA rowmarks;
 DROP EXTENSION pg_pathman;

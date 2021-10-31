@@ -45,5 +45,6 @@ EXPLAIN (COSTS OFF) EXECUTE del(11);
 DEALLOCATE del;
 
 
-DROP SCHEMA param_upd_del CASCADE;
+DROP TABLE param_upd_del.test CASCADE;
+DROP SCHEMA param_upd_del;
 DROP EXTENSION pg_pathman;

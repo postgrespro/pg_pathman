@@ -460,7 +460,11 @@ WITH q AS (SELECT id FROM test.tmp2
 		   WHERE id < 3)
 DELETE FROM test.tmp t WHERE t.id in (SELECT id FROM q);
 ROLLBACK;
-DROP SCHEMA test CASCADE;
-NOTICE:  drop cascades to 27 other objects
+DROP TABLE test.tmp CASCADE;
+DROP TABLE test.tmp2 CASCADE;
+NOTICE:  drop cascades to 11 other objects
+DROP TABLE test.range_rel CASCADE;
+NOTICE:  drop cascades to 13 other objects
+DROP SCHEMA test;
 DROP EXTENSION pg_pathman CASCADE;
-DROP SCHEMA pathman CASCADE;
+DROP SCHEMA pathman;

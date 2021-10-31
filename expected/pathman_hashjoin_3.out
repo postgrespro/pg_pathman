@@ -67,7 +67,10 @@ WHERE j1.dt < '2015-03-01' AND j2.dt >= '2015-02-01' ORDER BY j2.dt;
                      Filter: (id IS NOT NULL)
 (12 rows)
 
-DROP SCHEMA test CASCADE;
-NOTICE:  drop cascades to 12 other objects
+DROP TABLE test.num_range_rel CASCADE;
+NOTICE:  drop cascades to 5 other objects
+DROP TABLE test.range_rel CASCADE;
+NOTICE:  drop cascades to 5 other objects
+DROP SCHEMA test;
 DROP EXTENSION pg_pathman CASCADE;
-DROP SCHEMA pathman CASCADE;
+DROP SCHEMA pathman;

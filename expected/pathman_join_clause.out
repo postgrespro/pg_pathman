@@ -171,7 +171,13 @@ WHERE test.parent.owner_id = 3 and test.parent.id IN (3, 4);
   4 |        3 |           |         
 (2 rows)
 
-DROP SCHEMA test CASCADE;
-NOTICE:  drop cascades to 15 other objects
+DROP TABLE test.child CASCADE;
+NOTICE:  drop cascades to 2 other objects
+DROP TABLE test.child_nopart CASCADE;
+DROP TABLE test.mytbl CASCADE;
+NOTICE:  drop cascades to 8 other objects
+DROP TABLE test.fk CASCADE;
+DROP TABLE test.parent CASCADE;
+DROP SCHEMA test;
 DROP EXTENSION pg_pathman CASCADE;
-DROP SCHEMA pathman CASCADE;
+DROP SCHEMA pathman;

@@ -259,5 +259,5 @@ DROP OWNED BY user1;
 DROP OWNED BY user2;
 DROP USER user1;
 DROP USER user2;
-DROP SCHEMA permissions CASCADE;
+DROP SCHEMA permissions;
 DROP EXTENSION pg_pathman;

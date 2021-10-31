@@ -100,6 +100,7 @@ RETURNING *, tableoid::REGCLASS;
 (3 rows)
 
 DROP TABLE test_deletes.test_dummy;
-DROP SCHEMA test_deletes CASCADE;
-NOTICE:  drop cascades to 13 other objects
+DROP TABLE test_deletes.test CASCADE;
+NOTICE:  drop cascades to 12 other objects
+DROP SCHEMA test_deletes;
 DROP EXTENSION pg_pathman;

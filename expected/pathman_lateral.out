@@ -122,6 +122,7 @@ select * from
 
 set enable_hashjoin = on;
 set enable_mergejoin = on;
-DROP SCHEMA test_lateral CASCADE;
-NOTICE:  drop cascades to 11 other objects
+DROP TABLE test_lateral.data CASCADE;
+NOTICE:  drop cascades to 10 other objects
+DROP SCHEMA test_lateral;
 DROP EXTENSION pg_pathman;

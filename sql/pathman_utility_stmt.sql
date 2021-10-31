@@ -154,7 +154,9 @@ COPY copy_stmt_hooking.test2(t) FROM stdin;
 \.
 SELECT COUNT(*) FROM copy_stmt_hooking.test2;
 
-DROP SCHEMA copy_stmt_hooking CASCADE;
+DROP TABLE copy_stmt_hooking.test CASCADE;
+DROP TABLE copy_stmt_hooking.test2 CASCADE;
+DROP SCHEMA copy_stmt_hooking;
 
 
 
@@ -234,7 +236,12 @@ FROM pg_constraint r
 WHERE r.conrelid = 'rename.plain_test'::regclass AND r.contype = 'c';
 
 
-DROP SCHEMA rename CASCADE;
+DROP TABLE rename.plain_test CASCADE;
+DROP TABLE rename.test_inh CASCADE;
+DROP TABLE rename.parent CASCADE;
+DROP TABLE rename.test CASCADE;
+DROP FUNCTION add_constraint(regclass);
+DROP SCHEMA rename;
 
 
 
@@ -248,7 +255,8 @@ CREATE INDEX ON drop_index.test (val);
 SELECT create_hash_partitions('drop_index.test', 'val', 2);
 DROP INDEX CONCURRENTLY drop_index.test_0_val_idx;
 
-DROP SCHEMA drop_index CASCADE;
+DROP TABLE drop_index.test CASCADE;
+DROP SCHEMA drop_index;
 
 /*
  * Checking that ALTER TABLE IF EXISTS with loaded (and created) pg_pathman extension works the same as in vanilla
@@ -288,14 +296,14 @@ ALTER TABLE IF EXISTS test_nonexistance.existent_table SET SCHEMA nonexistent_sc
 CREATE SCHEMA test_nonexistance2;
 ALTER TABLE IF EXISTS test_nonexistance.existent_table SET SCHEMA test_nonexistance2;
 DROP TABLE test_nonexistance2.existent_table;
-DROP SCHEMA test_nonexistance2 CASCADE;
+DROP SCHEMA test_nonexistance2;
 
 ALTER TABLE IF EXISTS test_nonexistance.nonexistent_table SET TABLESPACE nonexistent_tablespace;
 CREATE TABLE test_nonexistance.existent_table(i INT4);
 ALTER TABLE IF EXISTS test_nonexistance.existent_table SET TABLESPACE nonexistent_tablespace;
 DROP TABLE test_nonexistance.existent_table;
 
-DROP SCHEMA test_nonexistance CASCADE;
+DROP SCHEMA test_nonexistance;
 
 
 DROP EXTENSION pg_pathman;

@@ -79,5 +79,8 @@ explain (costs off) select * from views.abc_union_all where id = 5;
 
 
 
-DROP SCHEMA views CASCADE;
+DROP TABLE views._abc CASCADE;
+DROP TABLE views._abc_add CASCADE;
+DROP FUNCTION views.disable_modification();
+DROP SCHEMA views;
 DROP EXTENSION pg_pathman;

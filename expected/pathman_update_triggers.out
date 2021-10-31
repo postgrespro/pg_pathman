@@ -184,6 +184,8 @@ select count(distinct val) from test_update_triggers.test;
      1
 (1 row)
 
-DROP SCHEMA test_update_triggers CASCADE;
-NOTICE:  drop cascades to 4 other objects
+DROP TABLE test_update_triggers.test CASCADE;
+NOTICE:  drop cascades to 2 other objects
+DROP FUNCTION test_update_triggers.test_trigger();
+DROP SCHEMA test_update_triggers;
 DROP EXTENSION pg_pathman CASCADE;

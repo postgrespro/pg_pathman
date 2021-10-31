@@ -52,5 +52,7 @@ DROP TABLE fkeys.messages, fkeys.replies CASCADE;
 
 
 
-DROP SCHEMA fkeys CASCADE;
+DROP TABLE fkeys.test_fkey CASCADE;
+DROP TABLE fkeys.test_ref CASCADE;
+DROP SCHEMA fkeys;
 DROP EXTENSION pg_pathman CASCADE;

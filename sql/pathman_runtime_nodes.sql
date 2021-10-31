@@ -331,7 +331,22 @@ set enable_hashjoin = on;
 set enable_mergejoin = on;
 
 
-DROP SCHEMA test CASCADE;
+DROP TABLE test.vals CASCADE;
+DROP TABLE test.category CASCADE;
+DROP TABLE test.run_values CASCADE;
+DROP TABLE test.runtime_test_1 CASCADE;
+DROP TABLE test.runtime_test_2 CASCADE;
+DROP TABLE test.runtime_test_3 CASCADE;
+DROP TABLE test.runtime_test_4 CASCADE;
+DROP FUNCTION test.pathman_assert(bool, text);
+DROP FUNCTION test.pathman_equal(text, text, text);
+DROP FUNCTION test.pathman_test(text);
+DROP FUNCTION test.pathman_test_1();
+DROP FUNCTION test.pathman_test_2();
+DROP FUNCTION test.pathman_test_3();
+DROP FUNCTION test.pathman_test_4();
+DROP FUNCTION test.pathman_test_5();
+DROP SCHEMA test;
 DROP EXTENSION pg_pathman CASCADE;
-DROP SCHEMA pathman CASCADE;
+DROP SCHEMA pathman;
 

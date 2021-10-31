@@ -178,5 +178,9 @@ INSERT INTO test_exprs.range_rel_6 (dt, txt) VALUES ('2020-01-01'::DATE, md5('as
 SELECT COUNT(*) FROM test_exprs.range_rel_6;
 EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.range_rel WHERE (AGE(dt, '2000-01-01'::DATE)) = '18 years'::interval;
 
-DROP SCHEMA test_exprs CASCADE;
+DROP TABLE test_exprs.canary CASCADE;
+DROP TABLE test_exprs.canary_copy CASCADE;
+DROP TABLE test_exprs.range_rel CASCADE;
+DROP TABLE test_exprs.hash_rel CASCADE;
+DROP SCHEMA test_exprs;
 DROP EXTENSION pg_pathman;

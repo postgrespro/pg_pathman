@@ -185,6 +185,7 @@ EXPLAIN (COSTS OFF) EXECUTE del(11);
 (3 rows)
 
 DEALLOCATE del;
-DROP SCHEMA param_upd_del CASCADE;
-NOTICE:  drop cascades to 11 other objects
+DROP TABLE param_upd_del.test CASCADE;
+NOTICE:  drop cascades to 10 other objects
+DROP SCHEMA param_upd_del;
 DROP EXTENSION pg_pathman;

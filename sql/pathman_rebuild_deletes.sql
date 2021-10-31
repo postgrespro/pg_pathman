@@ -60,5 +60,6 @@ DROP TABLE test_deletes.test_dummy;
 
 
 
-DROP SCHEMA test_deletes CASCADE;
+DROP TABLE test_deletes.test CASCADE;
+DROP SCHEMA test_deletes;
 DROP EXTENSION pg_pathman;

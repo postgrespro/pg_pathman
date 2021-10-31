@@ -822,6 +822,13 @@ EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val >= 51;
    ->  Seq Scan on test_4_11
 (7 rows)
 
-DROP SCHEMA gaps CASCADE;
-NOTICE:  drop cascades to 30 other objects
+DROP TABLE gaps.test_1 CASCADE;
+NOTICE:  drop cascades to 3 other objects
+DROP TABLE gaps.test_2 CASCADE;
+NOTICE:  drop cascades to 5 other objects
+DROP TABLE gaps.test_3 CASCADE;
+NOTICE:  drop cascades to 8 other objects
+DROP TABLE gaps.test_4 CASCADE;
+NOTICE:  drop cascades to 10 other objects
+DROP SCHEMA gaps;
 DROP EXTENSION pg_pathman;

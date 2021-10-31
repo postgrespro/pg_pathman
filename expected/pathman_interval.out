@@ -271,5 +271,5 @@ SELECT set_interval('test_interval.abc', NULL::INTEGER);
 ERROR:  table "test_interval.abc" is not partitioned by RANGE
 DROP TABLE test_interval.abc CASCADE;
 NOTICE:  drop cascades to 3 other objects
-DROP SCHEMA test_interval CASCADE;
+DROP SCHEMA test_interval;
 DROP EXTENSION pg_pathman;
