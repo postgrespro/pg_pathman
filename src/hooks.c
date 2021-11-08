@@ -293,7 +293,11 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		 * Currently we use get_parameterized_joinrel_size() since
 		 * it works just fine, but this might change some day.
 		 */
+#if PG_VERSION_NUM >= 150000 /* reason: commit 18fea737b5e4 */
+		nest_path->jpath.path.rows =
+#else
 		nest_path->path.rows =
+#endif
 				get_parameterized_joinrel_size_compat(root, joinrel,
 													  outer, inner,
 													  extra->sjinfo,

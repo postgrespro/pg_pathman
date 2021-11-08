@@ -92,8 +92,13 @@ static void postprocess_child_table_and_atts(Oid parent_relid, Oid partition_rel
 static Oid text_to_regprocedure(text *proname_args);
 
 static Constraint *make_constraint_common(char *name, Node *raw_expr);
-static Value make_string_value_struct(char *str);
+#if PG_VERSION_NUM >= 150000 /* reason: commit 639a86e36aae */
+static String make_string_value_struct(char *str);
+static Integer make_int_value_struct(int int_val);
+#else
+static Value make_string_value_struct(char* str);
 static Value make_int_value_struct(int int_val);
+#endif
 
 static Node *build_partitioning_expression(Oid parent_relid,
 										   Oid *expr_type,
@@ -1356,12 +1361,21 @@ build_raw_range_check_tree(Node *raw_expression,
 						   const Bound *end_value,
 						   Oid value_type)
 {
+#if PG_VERSION_NUM >= 150000 /* reason: commit 639a86e36aae */
+#define BuildConstExpr(node, value, value_type) \
+	do { \
+		(node)->val.sval = make_string_value_struct( \
+							datum_to_cstring((value), (value_type))); \
+		(node)->location = -1; \
+	} while (0)
+#else
 #define BuildConstExpr(node, value, value_type) \
 	do { \
 		(node)->val = make_string_value_struct( \
 							datum_to_cstring((value), (value_type))); \
 		(node)->location = -1; \
 	} while (0)
+#endif
 
 #define BuildCmpExpr(node, opname, expr, c) \
 	do { \
@@ -1554,11 +1568,19 @@ build_raw_hash_check_tree(Node *raw_expression,
 	hash_proc = tce->hash_proc;
 
 	/* Total amount of partitions */
+#if PG_VERSION_NUM >= 150000 /* reason: commit 639a86e36aae */
+	part_count_c->val.ival = make_int_value_struct(part_count);
+#else
 	part_count_c->val = make_int_value_struct(part_count);
+#endif
 	part_count_c->location = -1;
 
 	/* Index of this partition (hash % total amount) */
+#if PG_VERSION_NUM >= 150000 /* reason: commit 639a86e36aae */
+	part_idx_c->val.ival = make_int_value_struct(part_idx);
+#else
 	part_idx_c->val = make_int_value_struct(part_idx);
+#endif
 	part_idx_c->location = -1;
 
 	/* Call hash_proc() */
@@ -1649,6 +1671,29 @@ make_constraint_common(char *name, Node *raw_expr)
 	return constraint;
 }
 
+#if PG_VERSION_NUM >= 150000 /* reason: commit 639a86e36aae */
+static String
+make_string_value_struct(char* str)
+{
+	String val;
+
+	val.type = T_String;
+	val.val = str;
+
+	return val;
+}
+
+static Integer
+make_int_value_struct(int int_val)
+{
+	Integer val;
+
+	val.type = T_Integer;
+	val.val = int_val;
+
+	return val;
+}
+#else
 static Value
 make_string_value_struct(char *str)
 {
@@ -1670,7 +1715,7 @@ make_int_value_struct(int int_val)
 
 	return val;
 }
-
+#endif /* PG_VERSION_NUM >= 150000 */
 
 /*
  * ---------------------
