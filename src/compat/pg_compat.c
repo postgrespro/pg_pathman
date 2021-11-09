@@ -181,7 +181,9 @@ make_restrictinfos_from_actual_clauses(PlannerInfo *root,
 			root->hasPseudoConstantQuals = true;
 		}
 
-		rinfo = make_restrictinfo(clause,
+		rinfo = make_restrictinfo_compat(
+								  root,
+								  clause,
 								  true,
 								  false,
 								  pseudoconstant,
@@ -235,7 +237,9 @@ McxtStatsInternal(MemoryContext context, int level,
 	AssertArg(MemoryContextIsValid(context));
 
 	/* Examine the context itself */
-#if PG_VERSION_NUM >= 110000
+#if PG_VERSION_NUM >= 140000
+	(*context->methods->stats) (context, NULL, NULL, totals, true);
+#elif PG_VERSION_NUM >= 110000
 	(*context->methods->stats) (context, NULL, NULL, totals);
 #else
 	(*context->methods->stats) (context, level, false, totals);

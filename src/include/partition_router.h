@@ -32,7 +32,9 @@ typedef struct PartitionRouterState
 
 	Plan			   *subplan;		/* proxy variable to store subplan */
 	ExprState		   *constraint;		/* should tuple remain in partition? */
+#if PG_VERSION_NUM < 140000 /* field removed in 86dc90056dfd */
 	JunkFilter		   *junkfilter;		/* 'ctid' extraction facility */
+#endif
 	ResultRelInfo	   *current_rri;
 
 	/* Machinery required for EvalPlanQual */
@@ -42,6 +44,9 @@ typedef struct PartitionRouterState
 	/* Preserved slot from last call */
 	bool				yielded;
 	TupleTableSlot	   *yielded_slot;
+#if PG_VERSION_NUM >= 140000
+	TupleTableSlot	   *yielded_original_slot;
+#endif
 
 	/* Need these for a GREAT deal of hackery */
 	ModifyTableState   *mt_state;
@@ -66,8 +71,6 @@ extern CustomExecMethods	partition_router_exec_methods;
 #define MTHackField(mt_state, field) ( (mt_state)->field )
 
 void init_partition_router_static_data(void);
-void prepare_modify_table_for_partition_router(PlanState *state,
-											   void *context);
 void partition_router_begin(CustomScanState *node, EState *estate, int eflags);
 void partition_router_end(CustomScanState *node);
 void partition_router_rescan(CustomScanState *node);

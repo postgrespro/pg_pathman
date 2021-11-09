@@ -293,7 +293,11 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		 * Currently we use get_parameterized_joinrel_size() since
 		 * it works just fine, but this might change some day.
 		 */
+#if PG_VERSION_NUM >= 150000 /* reason: commit 18fea737b5e4 */
+		nest_path->jpath.path.rows =
+#else
 		nest_path->path.rows =
+#endif
 				get_parameterized_joinrel_size_compat(root, joinrel,
 													  outer, inner,
 													  extra->sjinfo,
@@ -751,12 +755,25 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
  * Post parse analysis hook. It makes sure the config is loaded before executing
  * any statement, including utility commands.
  */
+#if PG_VERSION_NUM >= 140000
+/*
+ * pathman_post_parse_analyze_hook(), pathman_post_parse_analyze_hook_next():
+ * in 14 new argument was added (5fd9dfa5f50)
+ */
+void
+pathman_post_parse_analyze_hook(ParseState *pstate, Query *query, JumbleState *jstate)
+{
+	/* Invoke original hook if needed */
+	if (pathman_post_parse_analyze_hook_next)
+		pathman_post_parse_analyze_hook_next(pstate, query, jstate);
+#else
 void
 pathman_post_parse_analyze_hook(ParseState *pstate, Query *query)
 {
 	/* Invoke original hook if needed */
 	if (pathman_post_parse_analyze_hook_next)
 		pathman_post_parse_analyze_hook_next(pstate, query);
+#endif
 
 	/* See cook_partitioning_expression() */
 	if (!pathman_hooks_enabled)
@@ -944,7 +961,23 @@ pathman_relcache_hook(Datum arg, Oid relid)
  * In PG 13 (2f9661311b8) command completion tags was reworked (added QueryCompletion struct)
  */
 void
-#if PG_VERSION_NUM >= 130000
+#if PG_VERSION_NUM >= 140000
+/*
+ * pathman_post_parse_analyze_hook(), pathman_post_parse_analyze_hook_next():
+ * in 14 new argument was added (5fd9dfa5f50)
+ */
+pathman_process_utility_hook(PlannedStmt *first_arg,
+							 const char *queryString,
+							 bool readOnlyTree,
+							 ProcessUtilityContext context,
+							 ParamListInfo params,
+							 QueryEnvironment *queryEnv,
+							 DestReceiver *dest, QueryCompletion *queryCompletion)
+{
+	Node   *parsetree = first_arg->utilityStmt;
+	int		stmt_location = first_arg->stmt_location,
+	        stmt_len = first_arg->stmt_len;
+#elif PG_VERSION_NUM >= 130000
 pathman_process_utility_hook(PlannedStmt *first_arg,
 							 const char *queryString,
 							 ProcessUtilityContext context,
@@ -1068,7 +1101,15 @@ pathman_process_utility_hook(Node *first_arg,
 	}
 
 	/* Finally call process_utility_hook_next or standard_ProcessUtility */
-#if PG_VERSION_NUM >= 130000
+#if PG_VERSION_NUM >= 140000
+	call_process_utility_compat((pathman_process_utility_hook_next ?
+										pathman_process_utility_hook_next :
+										standard_ProcessUtility),
+								first_arg, queryString,
+								readOnlyTree,
+								context, params, queryEnv,
+								dest, queryCompletion);
+#elif PG_VERSION_NUM >= 130000
 	call_process_utility_compat((pathman_process_utility_hook_next ?
 										pathman_process_utility_hook_next :
 										standard_ProcessUtility),

@@ -67,7 +67,12 @@ ProtocolVersion		FrontendProtocol = (ProtocolVersion) 0;
 #define PATHMAN_COPY_WRITE_LOCK		RowExclusiveLock
 
 
-static uint64 PathmanCopyFrom(CopyState cstate,
+static uint64 PathmanCopyFrom(
+#if PG_VERSION_NUM >= 140000 /* Structure changed in c532d15dddff */
+							  CopyFromState cstate,
+#else
+							  CopyState cstate,
+#endif
 							  Relation parent_rel,
 							  List *range_table,
 							  bool old_protocol);
@@ -230,7 +235,11 @@ is_pathman_related_alter_column_type(Node *parsetree,
 		return false;
 
 	/* Are we going to modify some table? */
+#if PG_VERSION_NUM >= 140000
+	if (alter_table_stmt->objtype != OBJECT_TABLE)
+#else
 	if (alter_table_stmt->relkind != OBJECT_TABLE)
+#endif
 		return false;
 
 	/* Assume it's a parent, fetch its Oid */
@@ -284,7 +293,7 @@ is_pathman_related_alter_column_type(Node *parsetree,
 }
 
 /*
- * CopyGetAttnums - build an integer list of attnums to be copied
+ * PathmanCopyGetAttnums - build an integer list of attnums to be copied
  *
  * The input attnamelist is either the user-specified column list,
  * or NIL if there was none (in which case we want all the non-dropped
@@ -293,7 +302,7 @@ is_pathman_related_alter_column_type(Node *parsetree,
  * rel can be NULL ... it's only used for error reports.
  */
 static List *
-CopyGetAttnums(TupleDesc tupDesc, Relation rel, List *attnamelist)
+PathmanCopyGetAttnums(TupleDesc tupDesc, Relation rel, List *attnamelist)
 {
 	List	   *attnums = NIL;
 
@@ -372,7 +381,11 @@ PathmanDoCopy(const CopyStmt *stmt,
 			  int stmt_len,
 			  uint64 *processed)
 {
+#if PG_VERSION_NUM >= 140000 /* Structure changed in c532d15dddff */
+	CopyFromState cstate;
+#else
 	CopyState	cstate;
+#endif
 	ParseState *pstate;
 	Relation	rel;
 	List	   *range_table = NIL;
@@ -419,7 +432,7 @@ PathmanDoCopy(const CopyStmt *stmt,
 		range_table = list_make1(rte);
 
 		tupDesc = RelationGetDescr(rel);
-		attnums = CopyGetAttnums(tupDesc, rel, stmt->attlist);
+		attnums = PathmanCopyGetAttnums(tupDesc, rel, stmt->attlist);
 		foreach(cur, attnums)
 		{
 			int attnum = lfirst_int(cur) - FirstLowInvalidHeapAttributeNumber;
@@ -483,7 +496,13 @@ PathmanDoCopy(const CopyStmt *stmt,
  * Copy FROM file to relation.
  */
 static uint64
-PathmanCopyFrom(CopyState cstate, Relation parent_rel,
+PathmanCopyFrom(
+#if PG_VERSION_NUM >= 140000 /* Structure changed in c532d15dddff */
+				CopyFromState cstate,
+#else
+				CopyState cstate,
+#endif
+				Relation parent_rel,
 				List *range_table, bool old_protocol)
 {
 	HeapTuple			tuple;
@@ -510,6 +529,23 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 							0);
 	ExecOpenIndices(parent_rri, false);
 
+#if PG_VERSION_NUM >= 140000  /* reworked in 1375422c7826 */
+	/*
+	 * Call ExecInitRangeTable() should be first because in 14 it initializes
+	 * field "estate->es_result_relations":
+	 */
+	ExecInitRangeTable(estate, range_table);
+	estate->es_result_relations =
+		(ResultRelInfo **) palloc0(list_length(range_table) * sizeof(ResultRelInfo *));
+	estate->es_result_relations[0] = parent_rri;
+	/*
+	 * Saving in the list allows to avoid needlessly traversing the whole
+	 * array when only a few of its entries are possibly non-NULL.
+	 */
+	estate->es_opened_result_relations =
+		lappend(estate->es_opened_result_relations, parent_rri);
+	estate->es_result_relation_info = parent_rri;
+#else
 	estate->es_result_relations = parent_rri;
 	estate->es_num_result_relations = 1;
 	estate->es_result_relation_info = parent_rri;
@@ -518,7 +554,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 #else
 	estate->es_range_table = range_table;
 #endif
-
+#endif
 	/* Initialize ResultPartsStorage */
 	init_result_parts_storage(&parts_storage,
 							  parent_relid, parent_rri,
@@ -669,8 +705,8 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 
 				/* ... and create index entries for it */
 				if (child_rri->ri_NumIndices > 0)
-					recheckIndexes = ExecInsertIndexTuplesCompat(slot, &(tuple->t_self),
-																 estate, false, NULL, NIL);
+					recheckIndexes = ExecInsertIndexTuplesCompat(estate->es_result_relation_info,
+										slot, &(tuple->t_self), estate, false, false, NULL, NIL);
 			}
 #ifdef PG_SHARDMAN
 			/* Handle foreign tables */

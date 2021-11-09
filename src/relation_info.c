@@ -1444,7 +1444,7 @@ parse_partitioning_expression(const Oid relid,
 
 	PG_TRY();
 	{
-		parsetree_list = raw_parser(query_string);
+		parsetree_list = raw_parser_compat(query_string);
 	}
 	PG_CATCH();
 	{
@@ -1555,7 +1555,7 @@ cook_partitioning_expression(const Oid relid,
 							" must be marked IMMUTABLE")));
 
 		/* Sanity check #5 */
-		expr_varnos = pull_varnos(expr);
+		expr_varnos = pull_varnos_compat(NULL, expr);
 		if (bms_num_members(expr_varnos) != 1 ||
 			relid != ((RangeTblEntry *) linitial(query->rtable))->relid)
 		{

@@ -51,14 +51,29 @@ PlannedStmt * pathman_planner_hook(Query *parse,
 								   int cursorOptions,
 								   ParamListInfo boundParams);
 
+#if PG_VERSION_NUM >= 140000
+void pathman_post_parse_analyze_hook(ParseState *pstate,
+									  Query *query,
+									  JumbleState *jstate);
+#else
 void pathman_post_parse_analyze_hook(ParseState *pstate,
 									  Query *query);
+#endif
 
 void pathman_shmem_startup_hook(void);
 
 void pathman_relcache_hook(Datum arg, Oid relid);
 
-#if PG_VERSION_NUM >= 130000
+#if PG_VERSION_NUM >= 140000
+void pathman_process_utility_hook(PlannedStmt *pstmt,
+								  const char *queryString,
+								  bool readOnlyTree,
+								  ProcessUtilityContext context,
+								  ParamListInfo params,
+								  QueryEnvironment *queryEnv,
+								  DestReceiver *dest,
+								  QueryCompletion *qc);
+#elif PG_VERSION_NUM >= 130000
 void pathman_process_utility_hook(PlannedStmt *pstmt,
 								  const char *queryString,
 								  ProcessUtilityContext context,

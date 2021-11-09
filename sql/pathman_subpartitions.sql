@@ -142,7 +142,8 @@ INSERT INTO subpartitions.abc VALUES (10, 0), (110, 0), (-1, 0), (-1, -1);
 SELECT tableoid::regclass, * FROM subpartitions.abc ORDER BY id1, id2, val;
 
 SET pg_pathman.enable_partitionrouter = ON;
-UPDATE subpartitions.abc SET id1 = -1, id2 = -1 RETURNING tableoid::regclass, *;
+WITH updated AS (UPDATE subpartitions.abc SET id1 = -1, id2 = -1 RETURNING tableoid::regclass, *)
+SELECT * FROM updated ORDER BY val ASC;
 
 DROP TABLE subpartitions.abc CASCADE;
 
