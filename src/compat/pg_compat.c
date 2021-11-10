@@ -11,9 +11,9 @@
  * ------------------------------------------------------------------------
  */
 
-#include "compat/pg_compat.h"
+#include "../include/compat/pg_compat.h"
 
-#include "utils.h"
+#include "../include/utils.h"
 
 #include "access/htup_details.h"
 #include "catalog/pg_class.h"

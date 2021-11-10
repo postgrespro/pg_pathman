@@ -8,10 +8,10 @@
  * ------------------------------------------------------------------------
  */
 
-#include "pathman.h"
-#include "partition_creation.h"
-#include "relation_info.h"
-#include "utils.h"
+#include "include/pathman.h"
+#include "include/partition_creation.h"
+#include "include/relation_info.h"
+#include "include/utils.h"
 
 #include "utils/builtins.h"
 #include "utils/typcache.h"

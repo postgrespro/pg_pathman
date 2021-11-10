@@ -1,7 +1,7 @@
-#include "pathman.h"
-#include "declarative.h"
-#include "utils.h"
-#include "partition_creation.h"
+#include "include/pathman.h"
+#include "include/declarative.h"
+#include "include/utils.h"
+#include "include/partition_creation.h"
 
 #include "access/htup_details.h"
 #include "catalog/namespace.h"

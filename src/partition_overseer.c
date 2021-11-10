@@ -1,9 +1,9 @@
 #include "postgres.h"
 
-#include "partition_filter.h"
-#include "partition_overseer.h"
-#include "partition_router.h"
-#include "planner_tree_modification.h"
+#include "include/partition_filter.h"
+#include "include/partition_overseer.h"
+#include "include/partition_router.h"
+#include "include/planner_tree_modification.h"
 
 CustomScanMethods	partition_overseer_plan_methods;
 CustomExecMethods	partition_overseer_exec_methods;

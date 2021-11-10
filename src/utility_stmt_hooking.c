@@ -11,11 +11,11 @@
  * ------------------------------------------------------------------------
  */
 
-#include "compat/debug_compat_features.h"
-#include "compat/pg_compat.h"
-#include "init.h"
-#include "utility_stmt_hooking.h"
-#include "partition_filter.h"
+#include "include/compat/debug_compat_features.h"
+#include "include/compat/pg_compat.h"
+#include "include/init.h"
+#include "include/utility_stmt_hooking.h"
+#include "include/partition_filter.h"
 
 #include "access/htup_details.h"
 #if PG_VERSION_NUM >= 120000

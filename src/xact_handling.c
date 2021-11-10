@@ -8,8 +8,8 @@
  * ------------------------------------------------------------------------
  */
 
-#include "xact_handling.h"
-#include "utils.h"
+#include "include/xact_handling.h"
+#include "include/utils.h"
 
 #include "postgres.h"
 #include "access/transam.h"

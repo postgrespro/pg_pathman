@@ -9,18 +9,18 @@
  * ------------------------------------------------------------------------
  */
 
-#include "compat/pg_compat.h"
-#include "compat/rowmarks_fix.h"
+#include "include/compat/pg_compat.h"
+#include "include/compat/rowmarks_fix.h"
 
-#include "init.h"
-#include "hooks.h"
-#include "pathman.h"
-#include "partition_filter.h"
-#include "partition_router.h"
-#include "partition_overseer.h"
-#include "planner_tree_modification.h"
-#include "runtime_append.h"
-#include "runtime_merge_append.h"
+#include "include/init.h"
+#include "include/hooks.h"
+#include "include/pathman.h"
+#include "include/partition_filter.h"
+#include "include/partition_router.h"
+#include "include/partition_overseer.h"
+#include "include/planner_tree_modification.h"
+#include "include/runtime_append.h"
+#include "include/runtime_merge_append.h"
 
 #include "postgres.h"
 #include "access/genam.h"

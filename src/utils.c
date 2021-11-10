@@ -10,8 +10,8 @@
  * ------------------------------------------------------------------------
  */
 
-#include "pathman.h"
-#include "utils.h"
+#include "include/pathman.h"
+#include "include/utils.h"
 
 #include "access/htup_details.h"
 #include "access/nbtree.h"

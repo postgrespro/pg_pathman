@@ -8,14 +8,14 @@
  * ------------------------------------------------------------------------
  */
 
-#include "compat/pg_compat.h"
-#include "init.h"
-#include "nodes_common.h"
-#include "pathman.h"
-#include "partition_creation.h"
-#include "partition_filter.h"
-#include "partition_router.h"
-#include "utils.h"
+#include "include/compat/pg_compat.h"
+#include "include/init.h"
+#include "include/nodes_common.h"
+#include "include/pathman.h"
+#include "include/partition_creation.h"
+#include "include/partition_filter.h"
+#include "include/partition_router.h"
+#include "include/utils.h"
 
 #include "access/htup_details.h"
 #if PG_VERSION_NUM >= 120000

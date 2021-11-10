@@ -8,13 +8,13 @@
  *-------------------------------------------------------------------------
  */
 
-#include "init.h"
-#include "partition_creation.h"
-#include "partition_filter.h"
-#include "pathman.h"
-#include "pathman_workers.h"
-#include "compat/pg_compat.h"
-#include "xact_handling.h"
+#include "include/init.h"
+#include "include/partition_creation.h"
+#include "include/partition_filter.h"
+#include "include/pathman.h"
+#include "include/pathman_workers.h"
+#include "include/compat/pg_compat.h"
+#include "include/xact_handling.h"
 
 #include "access/htup_details.h"
 #include "access/reloptions.h"

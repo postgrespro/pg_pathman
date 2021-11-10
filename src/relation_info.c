@@ -8,12 +8,12 @@
  * ------------------------------------------------------------------------
  */
 
-#include "compat/pg_compat.h"
+#include "include/compat/pg_compat.h"
 
-#include "relation_info.h"
-#include "init.h"
-#include "utils.h"
-#include "xact_handling.h"
+#include "include/relation_info.h"
+#include "include/init.h"
+#include "include/utils.h"
+#include "include/xact_handling.h"
 
 #include "access/htup_details.h"
 #if PG_VERSION_NUM >= 120000

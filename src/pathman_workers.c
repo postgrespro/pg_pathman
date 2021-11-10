@@ -14,12 +14,12 @@
  *-------------------------------------------------------------------------
  */
 
-#include "init.h"
-#include "partition_creation.h"
-#include "pathman_workers.h"
-#include "relation_info.h"
-#include "utils.h"
-#include "xact_handling.h"
+#include "include/init.h"
+#include "include/partition_creation.h"
+#include "include/pathman_workers.h"
+#include "include/relation_info.h"
+#include "include/utils.h"
+#include "include/xact_handling.h"
 
 #include "access/htup_details.h"
 #include "access/xact.h"

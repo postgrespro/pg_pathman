@@ -19,7 +19,7 @@
 	#warning "It is STRONGLY recommended to use pg_pathman with PostgreSQL 9.5.4 since it contains important fixes"
 #endif
 
-#include "compat/debug_compat_features.h"
+#include "debug_compat_features.h"
 
 #include "postgres.h"
 #include "access/tupdesc.h"

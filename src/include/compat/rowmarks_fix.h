@@ -12,7 +12,7 @@
 #ifndef ROWMARKS_FIX_H
 #define ROWMARKS_FIX_H
 
-#include "compat/debug_compat_features.h"
+#include "debug_compat_features.h"
 
 #include "postgres.h"
 #include "nodes/parsenodes.h"

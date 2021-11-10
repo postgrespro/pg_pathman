@@ -9,8 +9,8 @@
  * ------------------------------------------------------------------------
  */
 
-#include "compat/rowmarks_fix.h"
-#include "planner_tree_modification.h"
+#include "../include/compat/rowmarks_fix.h"
+#include "../include/planner_tree_modification.h"
 
 #include "access/sysattr.h"
 #include "catalog/pg_type.h"

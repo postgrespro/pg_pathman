@@ -8,12 +8,12 @@
  * ------------------------------------------------------------------------
  */
 
-#include "init.h"
-#include "pathman.h"
-#include "partition_creation.h"
-#include "relation_info.h"
-#include "utils.h"
-#include "xact_handling.h"
+#include "include/init.h"
+#include "include/pathman.h"
+#include "include/partition_creation.h"
+#include "include/relation_info.h"
+#include "include/utils.h"
+#include "include/xact_handling.h"
 
 #if PG_VERSION_NUM >= 120000
 #include "access/table.h"

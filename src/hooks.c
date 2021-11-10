@@ -10,25 +10,25 @@
  * ------------------------------------------------------------------------
  */
 
-#include "compat/pg_compat.h"
-#include "compat/rowmarks_fix.h"
+#include "include/compat/pg_compat.h"
+#include "include/compat/rowmarks_fix.h"
 
 #if PG_VERSION_NUM >= 120000
 #include "access/table.h"
 #endif
 
-#include "declarative.h"
-#include "hooks.h"
-#include "init.h"
-#include "partition_filter.h"
-#include "partition_router.h"
-#include "pathman_workers.h"
-#include "planner_tree_modification.h"
-#include "runtime_append.h"
-#include "runtime_merge_append.h"
-#include "utility_stmt_hooking.h"
-#include "utils.h"
-#include "xact_handling.h"
+#include "include/declarative.h"
+#include "include/hooks.h"
+#include "include/init.h"
+#include "include/partition_filter.h"
+#include "include/partition_router.h"
+#include "include/pathman_workers.h"
+#include "include/planner_tree_modification.h"
+#include "include/runtime_append.h"
+#include "include/runtime_merge_append.h"
+#include "include/utility_stmt_hooking.h"
+#include "include/utils.h"
+#include "include/xact_handling.h"
 
 #include "access/transam.h"
 #include "access/xact.h"

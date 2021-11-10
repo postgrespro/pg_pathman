@@ -8,15 +8,15 @@
  * ------------------------------------------------------------------------
  */
 
-#include "compat/pg_compat.h"
+#include "include/compat/pg_compat.h"
 
-#include "init.h"
-#include "pathman.h"
-#include "partition_creation.h"
-#include "partition_filter.h"
-#include "relation_info.h"
-#include "xact_handling.h"
-#include "utils.h"
+#include "include/init.h"
+#include "include/pathman.h"
+#include "include/partition_creation.h"
+#include "include/partition_filter.h"
+#include "include/relation_info.h"
+#include "include/xact_handling.h"
+#include "include/utils.h"
 
 #include "access/htup_details.h"
 #if PG_VERSION_NUM >= 120000

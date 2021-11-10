@@ -10,9 +10,9 @@
  * ------------------------------------------------------------------------
  */
 
-#include "partition_filter.h"
-#include "partition_router.h"
-#include "compat/pg_compat.h"
+#include "include/partition_filter.h"
+#include "include/partition_router.h"
+#include "include/compat/pg_compat.h"
 
 #if PG_VERSION_NUM >= 120000
 #include "access/table.h"

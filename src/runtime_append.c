@@ -8,9 +8,9 @@
  * ------------------------------------------------------------------------
  */
 
-#include "compat/pg_compat.h"
+#include "include/compat/pg_compat.h"
 
-#include "runtime_append.h"
+#include "include/runtime_append.h"
 
 #include "utils/guc.h"
 

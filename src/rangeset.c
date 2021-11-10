@@ -8,8 +8,8 @@
  * ------------------------------------------------------------------------
  */
 
-#include "compat/pg_compat.h"
-#include "rangeset.h"
+#include "include/compat/pg_compat.h"
+#include "include/rangeset.h"
 
 
 static IndexRange irange_handle_cover_internal(IndexRange ir_covering,

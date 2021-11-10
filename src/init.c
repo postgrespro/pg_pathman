@@ -11,14 +11,14 @@
  * ------------------------------------------------------------------------
  */
 
-#include "compat/pg_compat.h"
+#include "include/compat/pg_compat.h"
 
-#include "hooks.h"
-#include "init.h"
-#include "pathman.h"
-#include "pathman_workers.h"
-#include "relation_info.h"
-#include "utils.h"
+#include "include/hooks.h"
+#include "include/init.h"
+#include "include/pathman.h"
+#include "include/pathman_workers.h"
+#include "include/relation_info.h"
+#include "include/utils.h"
 
 #include "access/htup_details.h"
 #include "access/heapam.h"

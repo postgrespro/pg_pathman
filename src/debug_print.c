@@ -9,7 +9,7 @@
  */
 
 #include <unistd.h>
-#include "rangeset.h"
+#include "include/rangeset.h"
 
 #include "postgres.h"
 #include "fmgr.h"

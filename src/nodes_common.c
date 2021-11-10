@@ -7,12 +7,12 @@
  *
  * ------------------------------------------------------------------------
  */
-#include "compat/pg_compat.h"
+#include "include/compat/pg_compat.h"
 
-#include "init.h"
-#include "nodes_common.h"
-#include "runtime_append.h"
-#include "utils.h"
+#include "include/init.h"
+#include "include/nodes_common.h"
+#include "include/runtime_append.h"
+#include "include/utils.h"
 
 #include "nodes/nodeFuncs.h"
 #if PG_VERSION_NUM >= 120000

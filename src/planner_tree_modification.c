@@ -10,16 +10,16 @@
  * ------------------------------------------------------------------------
  */
 
-#include "compat/rowmarks_fix.h"
+#include "include/compat/rowmarks_fix.h"
 
-#include "declarative.h"
-#include "partition_filter.h"
-#include "partition_router.h"
-#include "partition_overseer.h"
-#include "planner_tree_modification.h"
-#include "relation_info.h"
+#include "include/declarative.h"
+#include "include/partition_filter.h"
+#include "include/partition_router.h"
+#include "include/partition_overseer.h"
+#include "include/planner_tree_modification.h"
+#include "include/relation_info.h"
+
 #include "rewrite/rewriteManip.h"
-
 #if PG_VERSION_NUM >= 120000
 #include "access/table.h"
 #endif
