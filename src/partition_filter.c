@@ -929,7 +929,19 @@ partition_filter_exec(CustomScanState *node)
 		if (rri_holder->tuple_map ||
 			(!junkfilter &&
 			 (state->command_type == CMD_INSERT || state->command_type == CMD_UPDATE) &&
-			 (slot->tts_tupleDescriptor->natts > rri->ri_RelationDesc->rd_att->natts /* extra fields */)))
+			 (slot->tts_tupleDescriptor->natts > rri->ri_RelationDesc->rd_att->natts /* extra fields */
+#if PG_VERSION_NUM < 120000
+				/*
+				 * If we have a regular physical tuple 'slot->tts_tuple' and
+				 * it's locally palloc'd => we will use this tuple in
+				 * ExecMaterializeSlot() instead of materialize the slot, so
+				 * need to check number of attributes for this tuple:
+				 */
+				|| (slot->tts_tuple && slot->tts_shouldFree &&
+					HeapTupleHeaderGetNatts(slot->tts_tuple->t_data) >
+						rri->ri_RelationDesc->rd_att->natts /* extra fields */)
+#endif
+				 )))
 		{
 #if PG_VERSION_NUM < 120000
 			HeapTuple	htup_old,
