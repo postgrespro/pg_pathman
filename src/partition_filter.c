@@ -239,13 +239,9 @@ fini_result_parts_storage(ResultPartsStorage *parts_storage)
 		}
 
 		/* Free conversion-related stuff */
-		if (rri_holder->tuple_map)
-		{
-			FreeTupleDesc(rri_holder->tuple_map->indesc);
-			FreeTupleDesc(rri_holder->tuple_map->outdesc);
+		destroy_tuple_map(rri_holder->tuple_map);
 
-			free_conversion_map(rri_holder->tuple_map);
-		}
+		destroy_tuple_map(rri_holder->tuple_map_child);
 
 		/* Don't forget to close 'prel'! */
 		if (rri_holder->prel)
@@ -381,6 +377,13 @@ scan_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid)
 		 */
 		rri_holder->tuple_map = build_part_tuple_map(base_rel, child_rel);
 
+		/*
+		 * Field for child->child tuple transformation map. We need to
+		 * convert tuples because child TupleDesc might have extra
+		 * columns ('ctid' etc.) and need remove them.
+		 */
+		rri_holder->tuple_map_child = NULL;
+
 		/* Default values */
 		rri_holder->prel = NULL;
 		rri_holder->prel_expr_state = NULL;
@@ -468,6 +471,73 @@ build_part_tuple_map(Relation base_rel, Relation child_rel)
 	return tuple_map;
 }
 
+/*
+ * Build tuple conversion map (e.g. partition tuple has extra column(s)).
+ * We create a special tuple map (tuple_map_child), which, when applied to the
+ * tuple of partition, translates the tuple attributes into the tuple
+ * attributes of the same partition, discarding service attributes like "ctid"
+ * (i.e. working like junkFilter).
+ */
+TupleConversionMap *
+build_part_tuple_map_child(Relation child_rel)
+{
+	TupleConversionMap *tuple_map;
+	TupleDesc           child_tupdesc1;
+	TupleDesc           child_tupdesc2;
+	int                 n;
+#if PG_VERSION_NUM >= 130000
+	AttrMap            *attrMap;
+#else
+	AttrNumber         *attrMap;
+#endif
+
+	child_tupdesc1 = CreateTupleDescCopy(RelationGetDescr(child_rel));
+	child_tupdesc1->tdtypeid = InvalidOid;
+
+	child_tupdesc2 = CreateTupleDescCopy(RelationGetDescr(child_rel));
+	child_tupdesc2->tdtypeid = InvalidOid;
+
+	/* Generate tuple transformation map */
+#if PG_VERSION_NUM >= 130000
+	attrMap = build_attrmap_by_name(child_tupdesc1, child_tupdesc2);
+#else
+	attrMap = convert_tuples_by_name_map(child_tupdesc1, child_tupdesc2,
+										 ERR_PART_DESC_CONVERT);
+#endif
+
+	/* Prepare the map structure */
+	tuple_map = (TupleConversionMap *) palloc(sizeof(TupleConversionMap));
+	tuple_map->indesc = child_tupdesc1;
+	tuple_map->outdesc = child_tupdesc2;
+	tuple_map->attrMap = attrMap;
+
+	/* preallocate workspace for Datum arrays */
+	n = child_tupdesc1->natts;
+	tuple_map->outvalues = (Datum *) palloc(n * sizeof(Datum));
+	tuple_map->outisnull = (bool *) palloc(n * sizeof(bool));
+
+	n = child_tupdesc1->natts + 1; /* +1 for NULL */
+	tuple_map->invalues = (Datum *) palloc(n * sizeof(Datum));
+	tuple_map->inisnull = (bool *) palloc(n * sizeof(bool));
+
+	tuple_map->invalues[0] = (Datum) 0; /* set up the NULL entry */
+	tuple_map->inisnull[0] = true;
+
+	return tuple_map;
+}
+
+/* Destroy tuple conversion map */
+void
+destroy_tuple_map(TupleConversionMap *tuple_map)
+{
+	if (tuple_map)
+	{
+		FreeTupleDesc(tuple_map->indesc);
+		FreeTupleDesc(tuple_map->outdesc);
+
+		free_conversion_map(tuple_map);
+	}
+}
 
 /*
  * -----------------------------------
@@ -812,6 +882,7 @@ partition_filter_exec(CustomScanState *node)
 		MemoryContext			old_mcxt;
 		ResultRelInfoHolder	   *rri_holder;
 		ResultRelInfo		   *rri;
+		JunkFilter			   *junkfilter = NULL;
 #if PG_VERSION_NUM >= 140000
 		PartitionRouterState   *pr_state = linitial(node->custom_ps);
 
@@ -827,6 +898,8 @@ partition_filter_exec(CustomScanState *node)
 			 */
 			reint_partition_filter_state(state, pr_state->current_rri);
 		}
+#else
+		junkfilter = estate->es_result_relation_info->ri_junkFilter;
 #endif
 
 		/* Switch to per-tuple context */
@@ -844,18 +917,58 @@ partition_filter_exec(CustomScanState *node)
 		/* Magic: replace parent's ResultRelInfo with ours */
 		estate->es_result_relation_info = rri;
 
+		/*
+		 * Besides 'transform map' we should process two cases:
+		 * 1) CMD_UPDATE, row moved to other partition, junkfilter == NULL
+		 *    (filled in router_set_slot() for SELECT + INSERT);
+		 *    we should clear attribute 'ctid' (do not insert it into database);
+		 * 2) CMD_INSERT/CMD_UPDATE operations for partitions with deleted column(s),
+		 *    junkfilter == NULL.
+		 */
 		/* If there's a transform map, rebuild the tuple */
-		if (rri_holder->tuple_map)
+		if (rri_holder->tuple_map ||
+			(!junkfilter &&
+			 (state->command_type == CMD_INSERT || state->command_type == CMD_UPDATE) &&
+			 (slot->tts_tupleDescriptor->natts > rri->ri_RelationDesc->rd_att->natts /* extra fields */
+#if PG_VERSION_NUM < 120000
+				/*
+				 * If we have a regular physical tuple 'slot->tts_tuple' and
+				 * it's locally palloc'd => we will use this tuple in
+				 * ExecMaterializeSlot() instead of materialize the slot, so
+				 * need to check number of attributes for this tuple:
+				 */
+				|| (slot->tts_tuple && slot->tts_shouldFree &&
+					HeapTupleHeaderGetNatts(slot->tts_tuple->t_data) >
+						rri->ri_RelationDesc->rd_att->natts /* extra fields */)
+#endif
+				 )))
 		{
-			Relation	child_rel = rri->ri_RelationDesc;
-
-			/* xxx why old code decided to materialize it? */
 #if PG_VERSION_NUM < 120000
 			HeapTuple	htup_old,
 						htup_new;
+#endif
+			Relation	child_rel = rri->ri_RelationDesc;
+			TupleConversionMap *tuple_map;
 
+			if (rri_holder->tuple_map)
+				tuple_map = rri_holder->tuple_map;
+			else
+			{
+				if (!rri_holder->tuple_map_child)
+				{	/*
+					 * Generate child->child tuple transformation map. We need to
+					 * convert tuples because child TupleDesc has extra
+					 * columns ('ctid' etc.) and need remove them.
+					 */
+					rri_holder->tuple_map_child = build_part_tuple_map_child(child_rel);
+				}
+				tuple_map = rri_holder->tuple_map_child;
+			}
+
+			/* xxx why old code decided to materialize it? */
+#if PG_VERSION_NUM < 120000
 			htup_old = ExecMaterializeSlot(slot);
-			htup_new = do_convert_tuple(htup_old, rri_holder->tuple_map);
+			htup_new = do_convert_tuple(htup_old, tuple_map);
 			ExecClearTuple(slot);
 #endif
 
@@ -872,7 +985,7 @@ partition_filter_exec(CustomScanState *node)
 			/* TODO: why should we *always* set a new slot descriptor? */
 			ExecSetSlotDescriptor(state->tup_convert_slot, RelationGetDescr(child_rel));
 #if PG_VERSION_NUM >= 120000
-			slot = execute_attr_map_slot(rri_holder->tuple_map->attrMap, slot, state->tup_convert_slot);
+			slot = execute_attr_map_slot(tuple_map->attrMap, slot, state->tup_convert_slot);
 #else
 			slot = ExecStoreTuple(htup_new, state->tup_convert_slot, InvalidBuffer, true);
 #endif

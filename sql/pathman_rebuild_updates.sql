@@ -79,6 +79,25 @@ UPDATE test_updates.test SET val =  95 WHERE val = 115 RETURNING *, tableoid::RE
 UPDATE test_updates.test SET val =  -1 WHERE val =  95 RETURNING *, tableoid::REGCLASS;
 
 
+/* basic check for 'ALTER TABLE ... ADD COLUMN'; PGPRO-5113 */
+create table test_updates.test_5113(val int4 not null);
+insert into test_updates.test_5113 values (1);
+select create_range_partitions('test_updates.test_5113', 'val', 1, 10);
+update test_updates.test_5113 set val = 11 where val = 1;
+alter table test_updates.test_5113 add column x varchar;
+/* no error here: */
+select * from test_updates.test_5113 where val = 11;
+drop table test_updates.test_5113 cascade;
+
+create table test_updates.test_5113(val int4 not null);
+insert into test_updates.test_5113 values (1);
+select create_range_partitions('test_updates.test_5113', 'val', 1, 10);
+update test_updates.test_5113 set val = 11 where val = 1;
+alter table test_updates.test_5113 add column x int8;
+/* no extra data in column 'x' here: */
+select * from test_updates.test_5113 where val = 11;
+drop table test_updates.test_5113 cascade;
+
 
 DROP SCHEMA test_updates CASCADE;
 DROP EXTENSION pg_pathman;
