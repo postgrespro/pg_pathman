@@ -168,5 +168,5 @@ DROP TABLE test_interval.abc CASCADE;
 
 
 
-DROP SCHEMA test_interval CASCADE;
+DROP SCHEMA test_interval;
 DROP EXTENSION pg_pathman;

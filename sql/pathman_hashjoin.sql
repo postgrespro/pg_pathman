@@ -49,6 +49,8 @@ JOIN test.range_rel j2 on j2.id = j1.id
 JOIN test.num_range_rel j3 on j3.id = j1.id
 WHERE j1.dt < '2015-03-01' AND j2.dt >= '2015-02-01' ORDER BY j2.dt;
 
-DROP SCHEMA test CASCADE;
+DROP TABLE test.num_range_rel CASCADE;
+DROP TABLE test.range_rel CASCADE;
+DROP SCHEMA test;
 DROP EXTENSION pg_pathman CASCADE;
-DROP SCHEMA pathman CASCADE;
+DROP SCHEMA pathman;

@@ -140,5 +140,7 @@ update test_update_triggers.test set val = val + 1 returning *, tableoid::regcla
 select count(distinct val) from test_update_triggers.test;
 
 
-DROP SCHEMA test_update_triggers CASCADE;
+DROP TABLE test_update_triggers.test CASCADE;
+DROP FUNCTION test_update_triggers.test_trigger();
+DROP SCHEMA test_update_triggers;
 DROP EXTENSION pg_pathman CASCADE;

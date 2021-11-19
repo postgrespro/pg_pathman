@@ -124,6 +124,8 @@ ORDER BY "partition"::TEXT;
  domains.dom_table | domains.dom_table_4 |        1 | val  |           | 
 (5 rows)
 
-DROP SCHEMA domains CASCADE;
-NOTICE:  drop cascades to 7 other objects
+DROP TABLE domains.dom_table CASCADE;
+NOTICE:  drop cascades to 5 other objects
+DROP DOMAIN domains.dom_test CASCADE;
+DROP SCHEMA domains;
 DROP EXTENSION pg_pathman CASCADE;

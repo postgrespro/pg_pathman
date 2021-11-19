@@ -41,5 +41,7 @@ SELECT * FROM pathman_partition_list
 ORDER BY "partition"::TEXT;
 
 
-DROP SCHEMA domains CASCADE;
+DROP TABLE domains.dom_table CASCADE;
+DROP DOMAIN domains.dom_test CASCADE;
+DROP SCHEMA domains;
 DROP EXTENSION pg_pathman CASCADE;

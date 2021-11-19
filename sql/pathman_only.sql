@@ -74,5 +74,6 @@ WHERE val = (SELECT val FROM ONLY test_only.from_only_test
 
 
 
-DROP SCHEMA test_only CASCADE;
+DROP TABLE test_only.from_only_test CASCADE;
+DROP SCHEMA test_only;
 DROP EXTENSION pg_pathman;

@@ -1813,7 +1813,22 @@ SELECT * FROM test.mixinh_child1;
 
 SELECT * FROM test.mixinh_parent;
 ERROR:  could not expand partitioned table "mixinh_child1"
-DROP SCHEMA test CASCADE;
-NOTICE:  drop cascades to 32 other objects
+DROP TABLE test.hash_rel CASCADE;
+NOTICE:  drop cascades to 3 other objects
+DROP TABLE test.index_on_childs CASCADE;
+NOTICE:  drop cascades to 6 other objects
+DROP TABLE test.mixinh_child1 CASCADE;
+NOTICE:  drop cascades to 2 other objects
+DROP TABLE test.mixinh_parent CASCADE;
+DROP TABLE test.num_range_rel CASCADE;
+NOTICE:  drop cascades to 5 other objects
+DROP TABLE test.hash_rel_wrong CASCADE;
+DROP TABLE test.range_rel CASCADE;
+DROP TABLE test.range_rel_archive CASCADE;
+DROP TABLE test.special_case_1_ind_o_s CASCADE;
+NOTICE:  drop cascades to 5 other objects
+DROP TABLE test.range_rel_test1 CASCADE;
+DROP TABLE test.range_rel_test2 CASCADE;
+DROP SCHEMA test;
 DROP EXTENSION pg_pathman CASCADE;
-DROP SCHEMA pathman CASCADE;
+DROP SCHEMA pathman;

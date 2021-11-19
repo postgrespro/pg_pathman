@@ -23,14 +23,14 @@ SELECT * FROM test_column_type.test;
 -----
 (0 rows)
 
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;
          context         | entries 
 -------------------------+---------
  maintenance             |       0
  partition bounds cache  |      10
  partition parents cache |      10
- partition status cache  |       3
-(4 rows)
+(3 rows)
 
 /*
  * Get parsed and analyzed expression.
@@ -84,14 +84,14 @@ SELECT * FROM test_column_type.test;
 -----
 (0 rows)
 
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;
          context         | entries 
 -------------------------+---------
  maintenance             |       0
  partition bounds cache  |      10
  partition parents cache |      10
- partition status cache  |       3
-(4 rows)
+(3 rows)
 
 /* check insert dispatching */
 INSERT INTO test_column_type.test VALUES (1);
@@ -135,14 +135,14 @@ SELECT * FROM test_column_type.test;
 ----+-----
 (0 rows)
 
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;
          context         | entries 
 -------------------------+---------
  maintenance             |       0
  partition bounds cache  |       5
  partition parents cache |       5
- partition status cache  |       3
-(4 rows)
+(3 rows)
 
 /* change column's type (should NOT work) */
 ALTER TABLE test_column_type.test ALTER id TYPE NUMERIC;
@@ -153,14 +153,14 @@ SELECT * FROM test_column_type.test;
 ----+-----
 (0 rows)
 
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;
          context         | entries 
 -------------------------+---------
  maintenance             |       0
  partition bounds cache  |       5
  partition parents cache |       5
- partition status cache  |       3
-(4 rows)
+(3 rows)
 
 /* change column's type (should flush caches) */
 ALTER TABLE test_column_type.test ALTER val TYPE NUMERIC;
@@ -170,14 +170,14 @@ SELECT * FROM test_column_type.test;
 ----+-----
 (0 rows)
 
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;
          context         | entries 
 -------------------------+---------
  maintenance             |       0
  partition bounds cache  |       5
  partition parents cache |       5
- partition status cache  |       3
-(4 rows)
+(3 rows)
 
 /* check insert dispatching */
 INSERT INTO test_column_type.test VALUES (1);
@@ -199,5 +199,5 @@ NOTICE:  0 rows copied from test_column_type.test_4
 (1 row)
 
 DROP TABLE test_column_type.test CASCADE;
-DROP SCHEMA test_column_type CASCADE;
+DROP SCHEMA test_column_type;
 DROP EXTENSION pg_pathman;

@@ -194,6 +194,7 @@ select * from test_updates.test_5113 where val = 11;
 
 drop table test_updates.test_5113 cascade;
 NOTICE:  drop cascades to 3 other objects
-DROP SCHEMA test_updates CASCADE;
-NOTICE:  drop cascades to 15 other objects
+DROP TABLE test_updates.test CASCADE;
+NOTICE:  drop cascades to 14 other objects
+DROP SCHEMA test_updates;
 DROP EXTENSION pg_pathman;

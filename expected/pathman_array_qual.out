@@ -2402,6 +2402,7 @@ EXECUTE q(100);
 (1 row)
 
 DEALLOCATE q;
-DROP SCHEMA array_qual CASCADE;
-NOTICE:  drop cascades to 12 other objects
+DROP TABLE array_qual.test CASCADE;
+NOTICE:  drop cascades to 11 other objects
+DROP SCHEMA array_qual;
 DROP EXTENSION pg_pathman;

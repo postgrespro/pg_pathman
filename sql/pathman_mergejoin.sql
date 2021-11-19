@@ -48,6 +48,9 @@ SET enable_hashjoin = OFF;
 SET enable_nestloop = OFF;
 SET enable_mergejoin = ON;
 
+SET enable_indexscan = ON;
+SET enable_seqscan = OFF;
+
 EXPLAIN (COSTS OFF)
 SELECT * FROM test.range_rel j1
 JOIN test.range_rel j2 on j2.id = j1.id
@@ -56,7 +59,10 @@ WHERE j1.dt < '2015-03-01' AND j2.dt >= '2015-02-01' ORDER BY j2.dt;
 
 SET enable_hashjoin = ON;
 SET enable_nestloop = ON;
+SET enable_seqscan = ON;
 
-DROP SCHEMA test CASCADE;
+DROP TABLE test.num_range_rel CASCADE;
+DROP TABLE test.range_rel CASCADE;
+DROP SCHEMA test;
 DROP EXTENSION pg_pathman;
-DROP SCHEMA pathman CASCADE;
+DROP SCHEMA pathman;

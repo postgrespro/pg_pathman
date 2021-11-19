@@ -164,5 +164,6 @@ DROP TABLE subpartitions.a2 CASCADE;
 DROP TABLE subpartitions.a1;
 
 
-DROP SCHEMA subpartitions CASCADE;
+DROP FUNCTION subpartitions.partitions_tree(regclass, text);
+DROP SCHEMA subpartitions;
 DROP EXTENSION pg_pathman;

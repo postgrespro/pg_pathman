@@ -100,5 +100,5 @@ EXPLAIN (COSTS OFF) EXECUTE getbyroot(2);
 
 DEALLOCATE getbyroot;
 DROP TABLE root_dict CASCADE;
-DROP SCHEMA dropped_cols CASCADE;
+DROP SCHEMA dropped_cols;
 DROP EXTENSION pg_pathman;

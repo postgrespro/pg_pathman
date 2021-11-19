@@ -99,5 +99,6 @@ select * from test_updates.test_5113 where val = 11;
 drop table test_updates.test_5113 cascade;
 
 
-DROP SCHEMA test_updates CASCADE;
+DROP TABLE test_updates.test CASCADE;
+DROP SCHEMA test_updates;
 DROP EXTENSION pg_pathman;

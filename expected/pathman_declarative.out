@@ -99,7 +99,9 @@ ALTER TABLE IF EXISTS test.nonexistent_table ATTACH PARTITION baz FOR VALUES IN 
 NOTICE:  relation "nonexistent_table" does not exist, skipping
 ALTER TABLE IF EXISTS test.nonexistent_table DETACH PARTITION baz;
 NOTICE:  relation "nonexistent_table" does not exist, skipping
-DROP SCHEMA test CASCADE;
-NOTICE:  drop cascades to 8 other objects
+DROP TABLE test.r2 CASCADE;
+DROP TABLE test.range_rel CASCADE;
+NOTICE:  drop cascades to 6 other objects
+DROP SCHEMA test;
 DROP EXTENSION pg_pathman CASCADE;
-DROP SCHEMA pathman CASCADE;
+DROP SCHEMA pathman;

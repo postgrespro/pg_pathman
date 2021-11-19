@@ -174,5 +174,5 @@ DROP USER user1;
 DROP USER user2;
 
 
-DROP SCHEMA permissions CASCADE;
+DROP SCHEMA permissions;
 DROP EXTENSION pg_pathman;

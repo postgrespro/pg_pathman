@@ -135,5 +135,7 @@ SET enable_mergejoin = t;
 
 
 
-DROP SCHEMA rowmarks CASCADE;
+DROP TABLE rowmarks.first CASCADE;
+DROP TABLE rowmarks.second CASCADE;
+DROP SCHEMA rowmarks;
 DROP EXTENSION pg_pathman;

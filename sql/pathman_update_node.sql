@@ -214,5 +214,7 @@ SELECT count(*) FROM test_update_node.test_hash;
 
 
 
-DROP SCHEMA test_update_node CASCADE;
+DROP TABLE test_update_node.test_hash CASCADE;
+DROP TABLE test_update_node.test_range CASCADE;
+DROP SCHEMA test_update_node;
 DROP EXTENSION pg_pathman;

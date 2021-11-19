@@ -106,6 +106,11 @@ WHERE test.parent.owner_id = 3 and test.parent.id IN (3, 4);
 
 
 
-DROP SCHEMA test CASCADE;
+DROP TABLE test.child CASCADE;
+DROP TABLE test.child_nopart CASCADE;
+DROP TABLE test.mytbl CASCADE;
+DROP TABLE test.fk CASCADE;
+DROP TABLE test.parent CASCADE;
+DROP SCHEMA test;
 DROP EXTENSION pg_pathman CASCADE;
-DROP SCHEMA pathman CASCADE;
+DROP SCHEMA pathman;

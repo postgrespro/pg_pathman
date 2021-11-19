@@ -783,8 +783,16 @@ SELECT merge_range_partitions('calamity.merge_test_a_1',
 ERROR:  cannot merge partitions
 DROP TABLE calamity.merge_test_a,calamity.merge_test_b CASCADE;
 NOTICE:  drop cascades to 6 other objects
-DROP SCHEMA calamity CASCADE;
-NOTICE:  drop cascades to 15 other objects
+DROP DOMAIN calamity.test_domain;
+DROP TABLE calamity.part_test CASCADE;
+NOTICE:  drop cascades to table calamity.wrong_partition
+DROP TABLE calamity.part_ok CASCADE;
+NOTICE:  drop cascades to 4 other objects
+DROP TABLE calamity.hash_two_times CASCADE;
+NOTICE:  drop cascades to 2 other objects
+DROP TABLE calamity.to_be_disabled CASCADE;
+NOTICE:  drop cascades to 3 other objects
+DROP SCHEMA calamity;
 DROP EXTENSION pg_pathman;
 /*
  * -------------------------------
@@ -991,7 +999,7 @@ SELECT context, entries FROM pathman_cache_stats
  partition parents cache |       0
 (3 rows)
 
-DROP SCHEMA calamity CASCADE;
+DROP SCHEMA calamity;
 DROP EXTENSION pg_pathman;
 /*
  * ------------------------------------------
@@ -1064,5 +1072,5 @@ EXPLAIN (COSTS OFF) SELECT * FROM calamity.survivor;			/* OK */
 
 DROP TABLE calamity.survivor CASCADE;
 NOTICE:  drop cascades to 3 other objects
-DROP SCHEMA calamity CASCADE;
+DROP SCHEMA calamity;
 DROP EXTENSION pg_pathman;

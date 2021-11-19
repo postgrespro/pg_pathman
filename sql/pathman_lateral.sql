@@ -45,5 +45,6 @@ set enable_mergejoin = on;
 
 
 
-DROP SCHEMA test_lateral CASCADE;
+DROP TABLE test_lateral.data CASCADE;
+DROP SCHEMA test_lateral;
 DROP EXTENSION pg_pathman;

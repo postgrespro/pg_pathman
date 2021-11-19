@@ -144,5 +144,8 @@ ORDER BY range_min::INT4;
 
 
 DROP TABLE callbacks.abc CASCADE;
-DROP SCHEMA callbacks CASCADE;
+DROP FUNCTION callbacks.abc_on_part_created_callback(jsonb);
+DROP FUNCTION public.dummy_cb(jsonb);
+DROP FUNCTION callbacks.rotation_callback(jsonb);
+DROP SCHEMA callbacks;
 DROP EXTENSION pg_pathman CASCADE;

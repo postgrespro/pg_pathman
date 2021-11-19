@@ -272,6 +272,7 @@ WHERE val = (SELECT val FROM ONLY test_only.from_only_test
          Filter: (val = $0)
 (27 rows)
 
-DROP SCHEMA test_only CASCADE;
-NOTICE:  drop cascades to 12 other objects
+DROP TABLE test_only.from_only_test CASCADE;
+NOTICE:  drop cascades to 11 other objects
+DROP SCHEMA test_only;
 DROP EXTENSION pg_pathman;

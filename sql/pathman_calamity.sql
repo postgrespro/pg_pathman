@@ -345,7 +345,12 @@ SELECT merge_range_partitions('calamity.merge_test_a_1',
 
 DROP TABLE calamity.merge_test_a,calamity.merge_test_b CASCADE;
 
-DROP SCHEMA calamity CASCADE;
+DROP DOMAIN calamity.test_domain;
+DROP TABLE calamity.part_test CASCADE;
+DROP TABLE calamity.part_ok CASCADE;
+DROP TABLE calamity.hash_two_times CASCADE;
+DROP TABLE calamity.to_be_disabled CASCADE;
+DROP SCHEMA calamity;
 DROP EXTENSION pg_pathman;
 
 
@@ -428,7 +433,7 @@ DROP TABLE calamity.test_pathman_cache_stats CASCADE;
 SELECT context, entries FROM pathman_cache_stats
   WHERE context != 'partition status cache' ORDER BY context;	/* OK */
 
-DROP SCHEMA calamity CASCADE;
+DROP SCHEMA calamity;
 DROP EXTENSION pg_pathman;
 
 
@@ -467,5 +472,5 @@ EXPLAIN (COSTS OFF) SELECT * FROM calamity.survivor;			/* OK */
 DROP TABLE calamity.survivor CASCADE;
 
 
-DROP SCHEMA calamity CASCADE;
+DROP SCHEMA calamity;
 DROP EXTENSION pg_pathman;

@@ -444,7 +444,25 @@ where id = any (select generate_series(-10, -1)); /* should be empty */
 
 set enable_hashjoin = on;
 set enable_mergejoin = on;
-DROP SCHEMA test CASCADE;
-NOTICE:  drop cascades to 37 other objects
+DROP TABLE test.vals CASCADE;
+DROP TABLE test.category CASCADE;
+DROP TABLE test.run_values CASCADE;
+DROP TABLE test.runtime_test_1 CASCADE;
+NOTICE:  drop cascades to 6 other objects
+DROP TABLE test.runtime_test_2 CASCADE;
+NOTICE:  drop cascades to 6 other objects
+DROP TABLE test.runtime_test_3 CASCADE;
+NOTICE:  drop cascades to 4 other objects
+DROP TABLE test.runtime_test_4 CASCADE;
+NOTICE:  drop cascades to 6 other objects
+DROP FUNCTION test.pathman_assert(bool, text);
+DROP FUNCTION test.pathman_equal(text, text, text);
+DROP FUNCTION test.pathman_test(text);
+DROP FUNCTION test.pathman_test_1();
+DROP FUNCTION test.pathman_test_2();
+DROP FUNCTION test.pathman_test_3();
+DROP FUNCTION test.pathman_test_4();
+DROP FUNCTION test.pathman_test_5();
+DROP SCHEMA test;
 DROP EXTENSION pg_pathman CASCADE;
-DROP SCHEMA pathman CASCADE;
+DROP SCHEMA pathman;
