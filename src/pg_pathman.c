@@ -281,7 +281,7 @@ estimate_paramsel_using_prel(const PartRelationInfo *prel, int strategy)
 	else return 1.0;
 }
 
-#if defined(PGPRO_EE) && PG_VERSION_NUM >= 130000
+#if defined(PGPRO_EE) && PG_VERSION_NUM >= 100000
 /*
  * Reset cache at start and at finish ATX transaction
  */
@@ -357,7 +357,7 @@ _PG_init(void)
 	init_partition_router_static_data();
 	init_partition_overseer_static_data();
 
-#if defined(PGPRO_EE) && PG_VERSION_NUM >= 130000
+#if defined(PGPRO_EE) && PG_VERSION_NUM >= 100000
 	/* Callbacks for reload relcache for ATX transactions */
 	RegisterXactCallback(pathman_xact_cb, NULL);
 #endif
