@@ -114,7 +114,11 @@ is_pathman_related_copy(Node *parsetree)
 									(copy_stmt->is_from ?
 										PATHMAN_COPY_WRITE_LOCK :
 										PATHMAN_COPY_READ_LOCK),
-									false);
+									true);
+
+	/* Skip relation if it does not exist (for Citus compatibility) */
+	if (!OidIsValid(parent_relid))
+		return false;
 
 	/* Check that relation is partitioned */
 	if (has_pathman_relation_info(parent_relid))
