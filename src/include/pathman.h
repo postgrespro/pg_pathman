@@ -118,7 +118,8 @@ Index append_child_relation(PlannerInfo *root,
  * Copied from PostgreSQL (prepunion.c)
  */
 void make_inh_translation_list(Relation oldrelation, Relation newrelation,
-							   Index newvarno, List **translated_vars);
+							   Index newvarno, List **translated_vars,
+							   AppendRelInfo *appinfo);
 
 Bitmapset *translate_col_privs(const Bitmapset *parent_privs,
 							   List *translated_vars);

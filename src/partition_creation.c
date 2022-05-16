@@ -995,7 +995,7 @@ postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid)
 	parent_rel = heap_open_compat(parent_relid, NoLock);
 	partition_rel = heap_open_compat(partition_relid, NoLock);
 
-	make_inh_translation_list(parent_rel, partition_rel, 0, &translated_vars);
+	make_inh_translation_list(parent_rel, partition_rel, 0, &translated_vars, NULL);
 
 	heap_close_compat(parent_rel, NoLock);
 	heap_close_compat(partition_rel, NoLock);

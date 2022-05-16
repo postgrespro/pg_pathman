@@ -902,124 +902,124 @@ FROM generate_series(1, 10) i;
 EXPLAIN (VERBOSE, COSTS OFF)
 INSERT INTO test_inserts.storage (b, d, e) SELECT b, d, e
 FROM test_inserts.storage;
-                                          QUERY PLAN                                          
-----------------------------------------------------------------------------------------------
+                                        QUERY PLAN                                         
+-------------------------------------------------------------------------------------------
  Insert on test_inserts.storage
    ->  Custom Scan (PartitionFilter)
          Output: NULL::integer, storage.b, NULL::integer, storage.d, storage.e
          ->  Result
-               Output: NULL::integer, storage_11.b, NULL::integer, storage_11.d, storage_11.e
+               Output: NULL::integer, storage_1.b, NULL::integer, storage_1.d, storage_1.e
                ->  Append
-                     ->  Seq Scan on test_inserts.storage_11
-                           Output: storage_11.b, storage_11.d, storage_11.e
-                     ->  Seq Scan on test_inserts.storage_1 storage_1_1
-                           Output: storage_1_1.b, storage_1_1.d, storage_1_1.e
-                     ->  Seq Scan on test_inserts.storage_2
+                     ->  Seq Scan on test_inserts.storage_11 storage_2
                            Output: storage_2.b, storage_2.d, storage_2.e
-                     ->  Seq Scan on test_inserts.storage_3
+                     ->  Seq Scan on test_inserts.storage_1 storage_3
                            Output: storage_3.b, storage_3.d, storage_3.e
-                     ->  Seq Scan on test_inserts.storage_4
+                     ->  Seq Scan on test_inserts.storage_2 storage_4
                            Output: storage_4.b, storage_4.d, storage_4.e
-                     ->  Seq Scan on test_inserts.storage_5
+                     ->  Seq Scan on test_inserts.storage_3 storage_5
                            Output: storage_5.b, storage_5.d, storage_5.e
-                     ->  Seq Scan on test_inserts.storage_6
+                     ->  Seq Scan on test_inserts.storage_4 storage_6
                            Output: storage_6.b, storage_6.d, storage_6.e
-                     ->  Seq Scan on test_inserts.storage_7
+                     ->  Seq Scan on test_inserts.storage_5 storage_7
                            Output: storage_7.b, storage_7.d, storage_7.e
-                     ->  Seq Scan on test_inserts.storage_8
+                     ->  Seq Scan on test_inserts.storage_6 storage_8
                            Output: storage_8.b, storage_8.d, storage_8.e
-                     ->  Seq Scan on test_inserts.storage_9
+                     ->  Seq Scan on test_inserts.storage_7 storage_9
                            Output: storage_9.b, storage_9.d, storage_9.e
-                     ->  Seq Scan on test_inserts.storage_10
+                     ->  Seq Scan on test_inserts.storage_8 storage_10
                            Output: storage_10.b, storage_10.d, storage_10.e
-                     ->  Seq Scan on test_inserts.storage_12
+                     ->  Seq Scan on test_inserts.storage_9 storage_11
+                           Output: storage_11.b, storage_11.d, storage_11.e
+                     ->  Seq Scan on test_inserts.storage_10 storage_12
                            Output: storage_12.b, storage_12.d, storage_12.e
-                     ->  Seq Scan on test_inserts.storage_13
+                     ->  Seq Scan on test_inserts.storage_12 storage_13
                            Output: storage_13.b, storage_13.d, storage_13.e
-                     ->  Seq Scan on test_inserts.storage_14
+                     ->  Seq Scan on test_inserts.storage_13 storage_14
                            Output: storage_14.b, storage_14.d, storage_14.e
+                     ->  Seq Scan on test_inserts.storage_14 storage_15
+                           Output: storage_15.b, storage_15.d, storage_15.e
 (34 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
 INSERT INTO test_inserts.storage (b, d) SELECT b, d
 FROM test_inserts.storage;
-                                          QUERY PLAN                                          
-----------------------------------------------------------------------------------------------
+                                         QUERY PLAN                                         
+--------------------------------------------------------------------------------------------
  Insert on test_inserts.storage
    ->  Custom Scan (PartitionFilter)
          Output: NULL::integer, storage.b, NULL::integer, storage.d, NULL::bigint
          ->  Result
-               Output: NULL::integer, storage_11.b, NULL::integer, storage_11.d, NULL::bigint
+               Output: NULL::integer, storage_1.b, NULL::integer, storage_1.d, NULL::bigint
                ->  Append
-                     ->  Seq Scan on test_inserts.storage_11
-                           Output: storage_11.b, storage_11.d
-                     ->  Seq Scan on test_inserts.storage_1 storage_1_1
-                           Output: storage_1_1.b, storage_1_1.d
-                     ->  Seq Scan on test_inserts.storage_2
+                     ->  Seq Scan on test_inserts.storage_11 storage_2
                            Output: storage_2.b, storage_2.d
-                     ->  Seq Scan on test_inserts.storage_3
+                     ->  Seq Scan on test_inserts.storage_1 storage_3
                            Output: storage_3.b, storage_3.d
-                     ->  Seq Scan on test_inserts.storage_4
+                     ->  Seq Scan on test_inserts.storage_2 storage_4
                            Output: storage_4.b, storage_4.d
-                     ->  Seq Scan on test_inserts.storage_5
+                     ->  Seq Scan on test_inserts.storage_3 storage_5
                            Output: storage_5.b, storage_5.d
-                     ->  Seq Scan on test_inserts.storage_6
+                     ->  Seq Scan on test_inserts.storage_4 storage_6
                            Output: storage_6.b, storage_6.d
-                     ->  Seq Scan on test_inserts.storage_7
+                     ->  Seq Scan on test_inserts.storage_5 storage_7
                            Output: storage_7.b, storage_7.d
-                     ->  Seq Scan on test_inserts.storage_8
+                     ->  Seq Scan on test_inserts.storage_6 storage_8
                            Output: storage_8.b, storage_8.d
-                     ->  Seq Scan on test_inserts.storage_9
+                     ->  Seq Scan on test_inserts.storage_7 storage_9
                            Output: storage_9.b, storage_9.d
-                     ->  Seq Scan on test_inserts.storage_10
+                     ->  Seq Scan on test_inserts.storage_8 storage_10
                            Output: storage_10.b, storage_10.d
-                     ->  Seq Scan on test_inserts.storage_12
+                     ->  Seq Scan on test_inserts.storage_9 storage_11
+                           Output: storage_11.b, storage_11.d
+                     ->  Seq Scan on test_inserts.storage_10 storage_12
                            Output: storage_12.b, storage_12.d
-                     ->  Seq Scan on test_inserts.storage_13
+                     ->  Seq Scan on test_inserts.storage_12 storage_13
                            Output: storage_13.b, storage_13.d
-                     ->  Seq Scan on test_inserts.storage_14
+                     ->  Seq Scan on test_inserts.storage_13 storage_14
                            Output: storage_14.b, storage_14.d
+                     ->  Seq Scan on test_inserts.storage_14 storage_15
+                           Output: storage_15.b, storage_15.d
 (34 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
 INSERT INTO test_inserts.storage (b) SELECT b
 FROM test_inserts.storage;
-                                         QUERY PLAN                                         
---------------------------------------------------------------------------------------------
+                                        QUERY PLAN                                         
+-------------------------------------------------------------------------------------------
  Insert on test_inserts.storage
    ->  Custom Scan (PartitionFilter)
          Output: NULL::integer, storage.b, NULL::integer, NULL::text, NULL::bigint
          ->  Result
-               Output: NULL::integer, storage_11.b, NULL::integer, NULL::text, NULL::bigint
+               Output: NULL::integer, storage_1.b, NULL::integer, NULL::text, NULL::bigint
                ->  Append
-                     ->  Seq Scan on test_inserts.storage_11
-                           Output: storage_11.b
-                     ->  Seq Scan on test_inserts.storage_1 storage_1_1
-                           Output: storage_1_1.b
-                     ->  Seq Scan on test_inserts.storage_2
+                     ->  Seq Scan on test_inserts.storage_11 storage_2
                            Output: storage_2.b
-                     ->  Seq Scan on test_inserts.storage_3
+                     ->  Seq Scan on test_inserts.storage_1 storage_3
                            Output: storage_3.b
-                     ->  Seq Scan on test_inserts.storage_4
+                     ->  Seq Scan on test_inserts.storage_2 storage_4
                            Output: storage_4.b
-                     ->  Seq Scan on test_inserts.storage_5
+                     ->  Seq Scan on test_inserts.storage_3 storage_5
                            Output: storage_5.b
-                     ->  Seq Scan on test_inserts.storage_6
+                     ->  Seq Scan on test_inserts.storage_4 storage_6
                            Output: storage_6.b
-                     ->  Seq Scan on test_inserts.storage_7
+                     ->  Seq Scan on test_inserts.storage_5 storage_7
                            Output: storage_7.b
-                     ->  Seq Scan on test_inserts.storage_8
+                     ->  Seq Scan on test_inserts.storage_6 storage_8
                            Output: storage_8.b
-                     ->  Seq Scan on test_inserts.storage_9
+                     ->  Seq Scan on test_inserts.storage_7 storage_9
                            Output: storage_9.b
-                     ->  Seq Scan on test_inserts.storage_10
+                     ->  Seq Scan on test_inserts.storage_8 storage_10
                            Output: storage_10.b
-                     ->  Seq Scan on test_inserts.storage_12
+                     ->  Seq Scan on test_inserts.storage_9 storage_11
+                           Output: storage_11.b
+                     ->  Seq Scan on test_inserts.storage_10 storage_12
                            Output: storage_12.b
-                     ->  Seq Scan on test_inserts.storage_13
+                     ->  Seq Scan on test_inserts.storage_12 storage_13
                            Output: storage_13.b
-                     ->  Seq Scan on test_inserts.storage_14
+                     ->  Seq Scan on test_inserts.storage_13 storage_14
                            Output: storage_14.b
+                     ->  Seq Scan on test_inserts.storage_14 storage_15
+                           Output: storage_15.b
 (34 rows)
 
 /* test gap case (missing partition in between) */

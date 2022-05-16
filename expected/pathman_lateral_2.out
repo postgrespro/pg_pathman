@@ -32,13 +32,13 @@ select * from
 				  t1.id > t2.id and
 				  exists(select * from test_lateral.data t
 						 where t1.id = t2.id and t.id = t3.id);
-                                               QUERY PLAN                                               
---------------------------------------------------------------------------------------------------------
+                                         QUERY PLAN                                         
+--------------------------------------------------------------------------------------------
  Nested Loop
    ->  Nested Loop
-         Join Filter: ((t2_1.id + t1_1.id) = t_1.id)
+         Join Filter: ((t2.id + t1.id) = t.id)
          ->  HashAggregate
-               Group Key: t_1.id
+               Group Key: t.id
                ->  Append
                      ->  Seq Scan on data_0 t_1
                      ->  Seq Scan on data_1 t_2
@@ -52,7 +52,7 @@ select * from
                      ->  Seq Scan on data_9 t_10
          ->  Materialize
                ->  Nested Loop
-                     Join Filter: ((t2_1.id > t1_1.id) AND (t1_1.id > t2_1.id) AND (t1_1.id = t2_1.id))
+                     Join Filter: ((t2.id > t1.id) AND (t1.id > t2.id) AND (t1.id = t2.id))
                      ->  Append
                            ->  Seq Scan on data_0 t2_1
                                  Filter: ((id >= 2) AND (id <= 299))
@@ -97,27 +97,27 @@ select * from
                                  ->  Seq Scan on data_9 t1_10
                                        Filter: ((id >= 1) AND (id <= 100))
    ->  Custom Scan (RuntimeAppend)
-         Prune by: (t_1.id = t3.id)
+         Prune by: (t.id = t3.id)
          ->  Seq Scan on data_0 t3
-               Filter: (t_1.id = id)
+               Filter: (t.id = id)
          ->  Seq Scan on data_1 t3
-               Filter: (t_1.id = id)
+               Filter: (t.id = id)
          ->  Seq Scan on data_2 t3
-               Filter: (t_1.id = id)
+               Filter: (t.id = id)
          ->  Seq Scan on data_3 t3
-               Filter: (t_1.id = id)
+               Filter: (t.id = id)
          ->  Seq Scan on data_4 t3
-               Filter: (t_1.id = id)
+               Filter: (t.id = id)
          ->  Seq Scan on data_5 t3
-               Filter: (t_1.id = id)
+               Filter: (t.id = id)
          ->  Seq Scan on data_6 t3
-               Filter: (t_1.id = id)
+               Filter: (t.id = id)
          ->  Seq Scan on data_7 t3
-               Filter: (t_1.id = id)
+               Filter: (t.id = id)
          ->  Seq Scan on data_8 t3
-               Filter: (t_1.id = id)
+               Filter: (t.id = id)
          ->  Seq Scan on data_9 t3
-               Filter: (t_1.id = id)
+               Filter: (t.id = id)
 (84 rows)
 
 set enable_hashjoin = on;

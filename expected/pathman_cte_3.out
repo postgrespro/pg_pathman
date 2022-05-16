@@ -89,22 +89,31 @@ WITH tmp AS (
 	FROM test_cte.cte_del_xacts_specdata)
 DELETE FROM test_cte.cte_del_xacts t USING tmp
 WHERE t.id = tmp.tid AND t.pdate = tmp.pdate AND tmp.test_mode > 0;
-                                                   QUERY PLAN                                                    
------------------------------------------------------------------------------------------------------------------
+                                                     QUERY PLAN                                                      
+---------------------------------------------------------------------------------------------------------------------
  Delete on cte_del_xacts t
-   Delete on cte_del_xacts t_1
-   Delete on cte_del_xacts_1 t_2
-   Delete on cte_del_xacts_2 t_3
+   Delete on cte_del_xacts t
+   Delete on cte_del_xacts_1 t_1
+   Delete on cte_del_xacts_2 t_2
    ->  Hash Join
-         Hash Cond: ((t.id = cte_del_xacts_specdata.tid) AND (t.pdate = (cte_del_xacts_specdata.regtime)::date))
-         ->  Append
-               ->  Seq Scan on cte_del_xacts t_1
-               ->  Seq Scan on cte_del_xacts_1 t_2
-               ->  Seq Scan on cte_del_xacts_2 t_3
+         Hash Cond: ((cte_del_xacts_specdata.tid = t.id) AND ((cte_del_xacts_specdata.regtime)::date = t.pdate))
+         ->  Seq Scan on cte_del_xacts_specdata
+               Filter: (test_mode > 0)
+         ->  Hash
+               ->  Seq Scan on cte_del_xacts t
+   ->  Hash Join
+         Hash Cond: ((t_1.id = cte_del_xacts_specdata.tid) AND (t_1.pdate = (cte_del_xacts_specdata.regtime)::date))
+         ->  Seq Scan on cte_del_xacts_1 t_1
          ->  Hash
                ->  Seq Scan on cte_del_xacts_specdata
                      Filter: (test_mode > 0)
-(13 rows)
+   ->  Hash Join
+         Hash Cond: ((t_2.id = cte_del_xacts_specdata.tid) AND (t_2.pdate = (cte_del_xacts_specdata.regtime)::date))
+         ->  Seq Scan on cte_del_xacts_2 t_2
+         ->  Hash
+               ->  Seq Scan on cte_del_xacts_specdata
+                     Filter: (test_mode > 0)
+(22 rows)
 
 SELECT drop_partitions('test_cte.cte_del_xacts'); /* now drop partitions */
 NOTICE:  50 rows copied from test_cte.cte_del_xacts_1
@@ -135,20 +144,24 @@ WITH tmp AS (
 	FROM test_cte.cte_del_xacts_specdata)
 DELETE FROM test_cte.cte_del_xacts t USING tmp
 WHERE t.id = tmp.tid AND t.pdate = tmp.pdate AND tmp.test_mode > 0;
-                                                   QUERY PLAN                                                    
------------------------------------------------------------------------------------------------------------------
+                                                     QUERY PLAN                                                      
+---------------------------------------------------------------------------------------------------------------------
  Delete on cte_del_xacts t
-   Delete on cte_del_xacts t_1
-   Delete on cte_del_xacts_1 t_2
+   Delete on cte_del_xacts t
+   Delete on cte_del_xacts_1 t_1
    ->  Hash Join
-         Hash Cond: ((t.id = cte_del_xacts_specdata.tid) AND (t.pdate = (cte_del_xacts_specdata.regtime)::date))
-         ->  Append
-               ->  Seq Scan on cte_del_xacts t_1
-               ->  Seq Scan on cte_del_xacts_1 t_2
+         Hash Cond: ((cte_del_xacts_specdata.tid = t.id) AND ((cte_del_xacts_specdata.regtime)::date = t.pdate))
+         ->  Seq Scan on cte_del_xacts_specdata
+               Filter: (test_mode > 0)
+         ->  Hash
+               ->  Seq Scan on cte_del_xacts t
+   ->  Hash Join
+         Hash Cond: ((t_1.id = cte_del_xacts_specdata.tid) AND (t_1.pdate = (cte_del_xacts_specdata.regtime)::date))
+         ->  Seq Scan on cte_del_xacts_1 t_1
          ->  Hash
                ->  Seq Scan on cte_del_xacts_specdata
                      Filter: (test_mode > 0)
-(11 rows)
+(15 rows)
 
 /* parent disabled! */
 SELECT set_enable_parent('test_cte.cte_del_xacts', false);

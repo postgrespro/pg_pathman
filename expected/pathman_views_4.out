@@ -145,17 +145,16 @@ explain (costs off) table views.abc_union;
 (15 rows)
 
 explain (costs off) select * from views.abc_union where id = 5;
-                QUERY PLAN                 
--------------------------------------------
- Unique
-   ->  Sort
-         Sort Key: _abc.id
-         ->  Append
-               ->  Seq Scan on _abc_8 _abc
-                     Filter: (id = 5)
-               ->  Seq Scan on _abc_add
-                     Filter: (id = 5)
-(8 rows)
+             QUERY PLAN              
+-------------------------------------
+ HashAggregate
+   Group Key: _abc.id
+   ->  Append
+         ->  Seq Scan on _abc_8 _abc
+               Filter: (id = 5)
+         ->  Seq Scan on _abc_add
+               Filter: (id = 5)
+(7 rows)
 
 explain (costs off) table views.abc_union_all;
           QUERY PLAN           
