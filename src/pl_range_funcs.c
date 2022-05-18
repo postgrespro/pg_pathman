@@ -683,9 +683,6 @@ merge_range_partitions(PG_FUNCTION_ARGS)
 		/* Extract partition Oids from array */
 		parts[i] = DatumGetObjectId(datums[i]);
 
-		/* Prevent modification of partitions */
-		LockRelationOid(parts[i], AccessExclusiveLock);
-
 		/* Check if all partitions are from the same parent */
 		cur_parent = get_parent_of_partition(parts[i]);
 
@@ -707,6 +704,10 @@ merge_range_partitions(PG_FUNCTION_ARGS)
 
 	/* Prevent changes in partitioning scheme */
 	LockRelationOid(parent, ShareUpdateExclusiveLock);
+
+	/* Prevent modification of partitions */
+	for (i = 0; i < nparts; i++)
+		LockRelationOid(parts[i], AccessExclusiveLock);
 
 	/* Emit an error if it is not partitioned by RANGE */
 	prel = get_pathman_relation_info(parent);
