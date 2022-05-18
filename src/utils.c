@@ -515,7 +515,7 @@ qualified_relnames_to_rangevars(char **relnames, size_t nrelnames)
 	/* Convert partition names into RangeVars */
 	if (relnames)
 	{
-		rangevars = palloc(sizeof(RangeVar) * nrelnames);
+		rangevars = palloc(sizeof(RangeVar *) * nrelnames);
 		for (i = 0; i < nrelnames; i++)
 		{
 			List *nl = stringToQualifiedNameList(relnames[i]);
