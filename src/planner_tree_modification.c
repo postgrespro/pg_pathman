@@ -495,7 +495,17 @@ disable_standard_inheritance(Query *parse, transform_query_cxt *context)
 		if (rte->rtekind != RTE_RELATION ||
 			rte->relkind != RELKIND_RELATION ||
 			parse->resultRelation == current_rti) /* is it a result relation? */
+		{
+#if PG_VERSION_NUM >= 150000 /* for commit 7103ebb7aae8 */
+			if (parse->commandType == CMD_MERGE &&
+				(rte->rtekind == RTE_RELATION ||
+				 rte->relkind == RELKIND_RELATION) &&
+				rte->inh && has_pathman_relation_info(rte->relid))
+				elog(ERROR, "pg_pathman doesn't support MERGE command yet");
+#endif
+
 			continue;
+		}
 
 		/* Table may be partitioned */
 		if (rte->inh)
@@ -805,7 +815,9 @@ partition_filter_visitor(Plan *plan, void *context)
 			if (lc3)
 			{
 				returning_list = lfirst(lc3);
+#if PG_VERSION_NUM < 140000
 				lc3 = lnext_compat(modify_table->returningLists, lc3);
+#endif
 			}
 
 #if PG_VERSION_NUM >= 140000 /* for changes 86dc90056dfd */
@@ -893,7 +905,9 @@ partition_router_visitor(Plan *plan, void *context)
 			if (lc3)
 			{
 				returning_list = lfirst(lc3);
+#if PG_VERSION_NUM < 140000
 				lc3 = lnext_compat(modify_table->returningLists, lc3);
+#endif
 			}
 
 #if PG_VERSION_NUM >= 140000 /* for changes 86dc90056dfd */

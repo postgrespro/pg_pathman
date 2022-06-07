@@ -314,7 +314,7 @@ pathman_xact_cb(XactEvent event, void *arg)
  * -------------------
  */
 
-#if PG_VERSION_NUM >= 150000
+#if PG_VERSION_NUM >= 150000 /* for commit 4f2400cb3f10 */
 static shmem_request_hook_type prev_shmem_request_hook = NULL;
 static void pg_pathman_shmem_request(void);
 #endif
@@ -331,7 +331,7 @@ _PG_init(void)
 	}
 
 	/* Request additional shared resources */
-#if PG_VERSION_NUM >= 150000
+#if PG_VERSION_NUM >= 150000 /* for commit 4f2400cb3f10 */
 	prev_shmem_request_hook = shmem_request_hook;
 	shmem_request_hook = pg_pathman_shmem_request;
 #else
@@ -373,7 +373,7 @@ _PG_init(void)
 #endif
 }
 
-#if PG_VERSION_NUM >= 150000
+#if PG_VERSION_NUM >= 150000 /* for commit 4f2400cb3f10 */
 static void
 pg_pathman_shmem_request(void)
 {

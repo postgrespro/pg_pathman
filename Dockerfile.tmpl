@@ -2,7 +2,7 @@ FROM postgres:${PG_VERSION}-alpine
 
 # Install dependencies
 RUN apk add --no-cache \
-	openssl curl \
+	openssl curl git patch \
 	cmocka-dev \
 	perl perl-ipc-run \
 	python3 python3-dev py3-virtualenv \

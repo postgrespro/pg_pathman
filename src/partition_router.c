@@ -198,12 +198,14 @@ take_next_tuple:
 		TupleTableSlot	   *old_slot;
 		ResultRelInfo	   *rri;
 #endif
-		TupleTableSlot	   *full_slot = slot;
+		TupleTableSlot	   *full_slot;
 		bool				partition_changed = false;
 
 		ItemPointerSetInvalid(&ctid);
 
 #if PG_VERSION_NUM < 140000
+		full_slot = slot;
+
 		/* Build new junkfilter if needed */
 		if (state->junkfilter == NULL)
 			state->junkfilter = state->current_rri->ri_junkFilter;

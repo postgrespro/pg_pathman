@@ -549,7 +549,7 @@ class Tests(unittest.TestCase):
                             }
                         ]
                 """)
-                self.assertEqual(ordered(plan, skip_keys=['Subplans Removed']), ordered(expected))
+                self.assertEqual(ordered(plan, skip_keys=['Subplans Removed', 'Async Capable']), ordered(expected))
 
                 # Check count of returned tuples
                 count = con.execute(
@@ -602,7 +602,7 @@ class Tests(unittest.TestCase):
                               }
                             ]
                 """)
-                self.assertEqual(ordered(plan, skip_keys=['Subplans Removed']), ordered(expected))
+                self.assertEqual(ordered(plan, skip_keys=['Subplans Removed', 'Async Capable']), ordered(expected))
 
                 # Check tuples returned by query above
                 res_tuples = con.execute(
@@ -625,7 +625,7 @@ class Tests(unittest.TestCase):
                         }
                     ]
                 """)
-                self.assertEqual(ordered(plan), ordered(expected))
+                self.assertEqual(ordered(plan, skip_keys=['Async Capable']), ordered(expected))
 
             # Remove all objects for testing
             node.psql('drop table range_partitioned cascade')
@@ -665,13 +665,13 @@ class Tests(unittest.TestCase):
                     res = con2.execute("""
                         explain (analyze, costs off, timing off)
                         select * from drop_test
-                        where val = any (select generate_series(1, 40, 34))
-                    """)  # query selects from drop_test_1 and drop_test_4
+                        where val = any (select generate_series(22, 40, 13))
+                    """)  # query selects from drop_test_3 and drop_test_4
 
                     con2.commit()
 
                     has_runtime_append = False
-                    has_drop_test_1 = False
+                    has_drop_test_3 = False
                     has_drop_test_4 = False
 
                     for row in res:
@@ -679,8 +679,8 @@ class Tests(unittest.TestCase):
                             has_runtime_append = True
                             continue
 
-                        if row[0].find('drop_test_1') >= 0:
-                            has_drop_test_1 = True
+                        if row[0].find('drop_test_3') >= 0:
+                            has_drop_test_3 = True
                             continue
 
                         if row[0].find('drop_test_4') >= 0:
@@ -688,7 +688,7 @@ class Tests(unittest.TestCase):
                             continue
 
                     # return all values in tuple
-                    queue.put((has_runtime_append, has_drop_test_1, has_drop_test_4))
+                    queue.put((has_runtime_append, has_drop_test_3, has_drop_test_4))
 
                 # Step 1: cache partitioned table in con1
                 con1.begin()
@@ -702,7 +702,7 @@ class Tests(unittest.TestCase):
 
                 # Step 3: drop first partition of 'drop_test'
                 con1.begin()
-                con1.execute('drop table drop_test_1')
+                con1.execute('drop table drop_test_3')
 
                 # Step 4: try executing select (RuntimeAppend)
                 t = threading.Thread(target=con2_thread)
@@ -734,9 +734,9 @@ class Tests(unittest.TestCase):
                 self.assertEqual(len(rows), 99)
 
                 # check RuntimeAppend + selected partitions
-                (has_runtime_append, has_drop_test_1, has_drop_test_4) = queue.get()
+                (has_runtime_append, has_drop_test_3, has_drop_test_4) = queue.get()
                 self.assertTrue(has_runtime_append)
-                self.assertFalse(has_drop_test_1)
+                self.assertFalse(has_drop_test_3)
                 self.assertTrue(has_drop_test_4)
 
     def test_conc_part_creation_insert(self):
@@ -1044,34 +1044,36 @@ class Tests(unittest.TestCase):
                 self.assertEqual(plan["Relation Name"], "test_range")
                 self.assertEqual(len(plan["Target Tables"]), 11)
 
-            expected_format = '''
-                {
-                    "Plans": [
-                        {
-                            "Plans": [
-                                {
-                                    "Filter": "(comment = '15'::text)",
-                                    "Node Type": "Seq Scan",
-                                    "Relation Name": "test_range%s",
-                                    "Parent Relationship": "child"
-                                }
-                            ],
-                            "Node Type": "Custom Scan",
-                            "Parent Relationship": "child",
-                            "Custom Plan Provider": "PartitionRouter"
-                        }
-                    ],
-                    "Node Type": "Custom Scan",
-                    "Parent Relationship": "Member",
-                    "Custom Plan Provider": "PartitionFilter"
-                }
-            '''
+            # Plan was seriously changed in vanilla since v14
+            if version < LooseVersion('14'):
+                expected_format = '''
+                    {
+                        "Plans": [
+                            {
+                                "Plans": [
+                                    {
+                                        "Filter": "(comment = '15'::text)",
+                                        "Node Type": "Seq Scan",
+                                        "Relation Name": "test_range%s",
+                                        "Parent Relationship": "child"
+                                    }
+                                ],
+                                "Node Type": "Custom Scan",
+                                "Parent Relationship": "child",
+                                "Custom Plan Provider": "PartitionRouter"
+                            }
+                        ],
+                        "Node Type": "Custom Scan",
+                        "Parent Relationship": "Member",
+                        "Custom Plan Provider": "PartitionFilter"
+                    }
+                '''
 
-            for i, f in enumerate([''] + list(map(str, range(1, 10)))):
-                num = '_' + f if f else ''
-                expected = json.loads(expected_format % num)
-                p = ordered(plan["Plans"][i], skip_keys=['Parallel Aware', 'Alias'])
-                self.assertEqual(p, ordered(expected))
+                for i, f in enumerate([''] + list(map(str, range(1, 10)))):
+                    num = '_' + f if f else ''
+                    expected = json.loads(expected_format % num)
+                    p = ordered(plan["Plans"][i], skip_keys=['Parallel Aware', 'Alias'])
+                    self.assertEqual(p, ordered(expected))
 
             node.psql('postgres', 'DROP SCHEMA test_update_node CASCADE;')
             node.psql('postgres', 'DROP EXTENSION pg_pathman CASCADE;')

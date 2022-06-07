@@ -17,9 +17,26 @@ status=0
 export PGPORT=55435
 export VIRTUAL_ENV_DISABLE_PROMPT=1
 
-# rebuild PostgreSQL with cassert + valgrind support
+PATHMAN_DIR=$PWD
+
+# indicator of using cassert + valgrind support
+USE_ASSERT_VALGRIND=false
 if [ "$LEVEL" = "hardcore" ] || \
    [ "$LEVEL" = "nightmare" ]; then
+	USE_ASSERT_VALGRIND=true
+fi
+
+# indicator of using special patch for vanilla
+if [ "$(printf '%s\n' "14" "$PG_VERSION" | sort -V | head -n1)" = "$PG_VERSION" ]; then
+	USE_PATH=false
+else
+	#patch version 14 and newer
+	USE_PATH=true
+fi
+
+# rebuild PostgreSQL with cassert + valgrind support
+if [ "$USE_ASSERT_VALGRIND" = true ] || \
+   [ "$USE_PATH" = true ]; then
 
 	set -e
 
@@ -40,15 +57,28 @@ if [ "$LEVEL" = "hardcore" ] || \
 
 	cd $CUSTOM_PG_SRC
 
-	# enable Valgrind support
-	sed -i.bak "s/\/* #define USE_VALGRIND *\//#define USE_VALGRIND/g" src/include/pg_config_manual.h
+	if [ "$USE_PATH" = true ]; then
+		# apply the patch
+		patch -p1 < $PATHMAN_DIR/patches/REL_${PG_VERSION%.*}_STABLE-pg_pathman-core.diff
+	fi
 
-	# enable additional options
-	./configure \
-		CFLAGS='-Og -ggdb3 -fno-omit-frame-pointer' \
-		--enable-cassert \
-		--prefix=$CUSTOM_PG_BIN \
-		--quiet
+	if [ "$USE_ASSERT_VALGRIND" = true ]; then
+		# enable Valgrind support
+		sed -i.bak "s/\/* #define USE_VALGRIND *\//#define USE_VALGRIND/g" src/include/pg_config_manual.h
+
+		# enable additional options
+		./configure \
+			CFLAGS='-Og -ggdb3 -fno-omit-frame-pointer' \
+			--enable-cassert \
+			--prefix=$CUSTOM_PG_BIN \
+			--quiet
+	else
+		# without additional options
+		./configure \
+			--enable-cassert \
+			--prefix=$CUSTOM_PG_BIN \
+			--quiet
+	fi
 
 	# build & install PG
 	time make -s -j$(nproc) && make -s install
