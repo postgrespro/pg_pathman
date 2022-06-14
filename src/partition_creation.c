@@ -1671,14 +1671,14 @@ make_constraint_common(char *name, Node *raw_expr)
 	return constraint;
 }
 
-#if PG_VERSION_NUM >= 150000 /* reason: commit 639a86e36aae */
+#if PG_VERSION_NUM >= 150000 /* for commits 639a86e36aae, c4cc2850f4d1 */
 static String
 make_string_value_struct(char* str)
 {
 	String val;
 
 	val.type = T_String;
-	val.val = str;
+	val.sval = str;
 
 	return val;
 }
@@ -1689,7 +1689,7 @@ make_int_value_struct(int int_val)
 	Integer val;
 
 	val.type = T_Integer;
-	val.val = int_val;
+	val.ival = int_val;
 
 	return val;
 }
