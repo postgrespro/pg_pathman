@@ -523,7 +523,7 @@ recheck:
 			rri->ri_TrigDesc->trig_update_before_row)
 		{
 #if PG_VERSION_NUM >= 120000
-			if (!ExecBRUpdateTriggers(estate, epqstate, rri, tupleid, NULL, slot))
+			if (!ExecBRUpdateTriggersCompat(estate, epqstate, rri, tupleid, NULL, slot))
 				return NULL;
 #else
 			slot = ExecBRUpdateTriggers(estate, epqstate, rri, tupleid, NULL, slot);
