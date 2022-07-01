@@ -635,7 +635,12 @@ extern int oid_cmp(const void *p1, const void *p2);
  *
  * for v10 cast first arg to RawStmt type
  */
-#if PG_VERSION_NUM >= 100000
+#if PG_VERSION_NUM >= 150000 /* for commit 791b1b71da35 */
+#define parse_analyze_compat(parse_tree, query_string, param_types, nparams, \
+							 query_env) \
+		parse_analyze_fixedparams((RawStmt *) (parse_tree), (query_string), (param_types), \
+					  (nparams), (query_env))
+#elif PG_VERSION_NUM >= 100000
 #define parse_analyze_compat(parse_tree, query_string, param_types, nparams, \
 							 query_env) \
 		parse_analyze((RawStmt *) (parse_tree), (query_string), (param_types), \
@@ -653,7 +658,12 @@ extern int oid_cmp(const void *p1, const void *p2);
  *
  * for v10 cast first arg to RawStmt type
  */
-#if PG_VERSION_NUM >= 100000
+#if PG_VERSION_NUM >= 150000 /* for commit 791b1b71da35 */
+#define pg_analyze_and_rewrite_compat(parsetree, query_string, param_types, \
+									  nparams, query_env) \
+		pg_analyze_and_rewrite_fixedparams((RawStmt *) (parsetree), (query_string), \
+							   (param_types), (nparams), (query_env))
+#elif PG_VERSION_NUM >= 100000
 #define pg_analyze_and_rewrite_compat(parsetree, query_string, param_types, \
 									  nparams, query_env) \
 		pg_analyze_and_rewrite((RawStmt *) (parsetree), (query_string), \
@@ -766,6 +776,20 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 #include "access/tupconvert.h"
 #endif
 
+/*
+ * ExecBRUpdateTriggers()
+ */
+#if PG_VERSION_NUM >= 150000 /* for commit 7103ebb7aae8 */
+#define ExecBRUpdateTriggersCompat(estate, epqstate, relinfo, \
+					 tupleid, fdw_trigtuple, newslot) \
+	ExecBRUpdateTriggers((estate), (epqstate), (relinfo), (tupleid), \
+						 (fdw_trigtuple), (newslot), NULL)
+#else
+#define ExecBRUpdateTriggersCompat(estate, epqstate, relinfo, \
+					 tupleid, fdw_trigtuple, newslot) \
+	ExecBRUpdateTriggers((estate), (epqstate), (relinfo), (tupleid), \
+						 (fdw_trigtuple), (newslot))
+#endif
 
 /*
  * ExecARInsertTriggers()
@@ -801,7 +825,12 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 /*
  * ExecARDeleteTriggers()
  */
-#if PG_VERSION_NUM >= 100000
+#if PG_VERSION_NUM >= 150000 /* for commit ba9a7e392171 */
+#define ExecARDeleteTriggersCompat(estate, relinfo, tupleid, \
+								   fdw_trigtuple, transition_capture) \
+	ExecARDeleteTriggers((estate), (relinfo), (tupleid), \
+						 (fdw_trigtuple), (transition_capture), false)
+#elif PG_VERSION_NUM >= 100000
 #define ExecARDeleteTriggersCompat(estate, relinfo, tupleid, \
 								   fdw_trigtuple, transition_capture) \
 	ExecARDeleteTriggers((estate), (relinfo), (tupleid), \
