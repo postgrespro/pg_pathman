@@ -458,8 +458,8 @@ bgw_main_concurrent_part(Datum main_arg)
 	ConcurrentPartSlot *part_slot;
 	char			   *sql = NULL;
 	int64				rows;
-	bool				failed;
-	int					failures_count = 0;
+	volatile bool		failed;
+	volatile int		failures_count = 0;
 	LOCKMODE			lockmode = RowExclusiveLock;
 
 	/* Update concurrent part slot */
@@ -497,7 +497,7 @@ bgw_main_concurrent_part(Datum main_arg)
 		Oid		types[2]	= { OIDOID,				INT4OID };
 		Datum	vals[2]		= { part_slot->relid,	part_slot->batch_size };
 
-		bool	rel_locked = false;
+		volatile bool	rel_locked = false;
 
 		/* Reset loop variables */
 		failed = false;
