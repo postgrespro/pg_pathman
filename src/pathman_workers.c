@@ -458,8 +458,8 @@ bgw_main_concurrent_part(Datum main_arg)
 	ConcurrentPartSlot *part_slot;
 	char			   *sql = NULL;
 	int64				rows;
-	bool				failed;
-	int					failures_count = 0;
+	volatile bool		failed;
+	volatile int		failures_count = 0;
 	LOCKMODE			lockmode = RowExclusiveLock;
 
 	/* Update concurrent part slot */
@@ -497,7 +497,7 @@ bgw_main_concurrent_part(Datum main_arg)
 		Oid		types[2]	= { OIDOID,				INT4OID };
 		Datum	vals[2]		= { part_slot->relid,	part_slot->batch_size };
 
-		bool	rel_locked = false;
+		volatile bool	rel_locked = false;
 
 		/* Reset loop variables */
 		failed = false;
@@ -545,14 +545,12 @@ bgw_main_concurrent_part(Datum main_arg)
 
 			/* Great, now relation is locked */
 			rel_locked = true;
-			(void) rel_locked; /* mute clang analyzer */
 
 			/* Make sure that relation exists */
 			if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(part_slot->relid)))
 			{
 				/* Exit after we raise ERROR */
 				failures_count = PART_WORKER_MAX_ATTEMPTS;
-				(void) failures_count; /* mute clang analyzer */
 
 				elog(ERROR, "relation %u does not exist", part_slot->relid);
 			}
@@ -562,7 +560,6 @@ bgw_main_concurrent_part(Datum main_arg)
 			{
 				/* Exit after we raise ERROR */
 				failures_count = PART_WORKER_MAX_ATTEMPTS;
-				(void) failures_count; /* mute clang analyzer */
 
 				elog(ERROR, "relation \"%s\" is not partitioned",
 					 get_rel_name(part_slot->relid));
