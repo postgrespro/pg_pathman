@@ -314,6 +314,11 @@ pathman_xact_cb(XactEvent event, void *arg)
  * -------------------
  */
 
+#if PG_VERSION_NUM >= 150000
+static shmem_request_hook_type prev_shmem_request_hook = NULL;
+static void pg_pathman_shmem_request(void);
+#endif
+
 /* Set initial values for all Postmaster's forks */
 void
 _PG_init(void)
@@ -326,7 +331,12 @@ _PG_init(void)
 	}
 
 	/* Request additional shared resources */
+#if PG_VERSION_NUM >= 150000
+	prev_shmem_request_hook = shmem_request_hook;
+	shmem_request_hook = pg_pathman_shmem_request;
+#else
 	RequestAddinShmemSpace(estimate_pathman_shmem_size());
+#endif
 
 	/* Assign pg_pathman's initial state */
 	pathman_init_state.pg_pathman_enable		= DEFAULT_PATHMAN_ENABLE;
@@ -362,6 +372,17 @@ _PG_init(void)
 	RegisterXactCallback(pathman_xact_cb, NULL);
 #endif
 }
+
+#if PG_VERSION_NUM >= 150000
+static void
+pg_pathman_shmem_request(void)
+{
+	if (prev_shmem_request_hook)
+		prev_shmem_request_hook();
+
+	RequestAddinShmemSpace(estimate_pathman_shmem_size());
+}
+#endif
 
 /* Get cached PATHMAN_CONFIG relation Oid */
 Oid
