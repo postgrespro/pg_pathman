@@ -47,7 +47,7 @@ append_tle_for_rowmark(PlannerInfo *root, PlanRowMark *rc)
 
 	root->processed_tlist = lappend(root->processed_tlist, tle);
 
-	add_vars_to_targetlist(root, list_make1(var), bms_make_singleton(0), true);
+	add_vars_to_targetlist_compat(root, list_make1(var), bms_make_singleton(0));
 }
 
 
