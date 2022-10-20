@@ -254,7 +254,11 @@ take_next_tuple:
 
 		/* Initialize projection info if first time for this table. */
 		if (unlikely(!rri->ri_projectNewInfoValid))
+#if PG_VERSION_NUM >= 150000	/* after PGPRO-7123 */
+			PgproExecInitUpdateProjection(state->mt_state, rri);
+#else
 			ExecInitUpdateProjection(state->mt_state, rri);
+#endif							/* PG_VERSION_NUM >= 150000 ... else */
 
 		old_slot = rri->ri_oldTupleSlot;
 		/* Fetch the most recent version of old tuple. */
@@ -264,7 +268,7 @@ take_next_tuple:
 
 		/* Build full tuple (using "old_slot" + changed from "slot"): */
 		full_slot = ExecGetUpdateNewTuple(rri, slot, old_slot);
-#endif
+#endif							/* PG_VERSION_NUM >= 140000 */
 
 		/* Lock or delete tuple from old partition */
 		full_slot = router_lock_or_delete_tuple(state, full_slot,
