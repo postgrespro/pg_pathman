@@ -254,11 +254,11 @@ take_next_tuple:
 
 		/* Initialize projection info if first time for this table. */
 		if (unlikely(!rri->ri_projectNewInfoValid))
-#if PG_VERSION_NUM >= 150000	/* after PGPRO-7123 */
+#ifdef PG_HAVE_PGPRO_EXEC_INIT_UPDATE_PROJECTION
 			PgproExecInitUpdateProjection(state->mt_state, rri);
 #else
 			ExecInitUpdateProjection(state->mt_state, rri);
-#endif							/* PG_VERSION_NUM >= 150000 ... else */
+#endif							/* !PG_HAVE_PGPRO_EXEC_INIT_UPDATE_PROJECTION */
 
 		old_slot = rri->ri_oldTupleSlot;
 		/* Fetch the most recent version of old tuple. */
