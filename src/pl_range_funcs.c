@@ -156,7 +156,7 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 	/* Fetch 'tablespace' */
 	if (!PG_ARGISNULL(4))
 	{
-		tablespace = TextDatumGetCString(PG_GETARG_TEXT_P(4));
+		tablespace = TextDatumGetCString(PG_GETARG_DATUM(4));
 	}
 	else tablespace = NULL; /* default */
 
@@ -429,7 +429,7 @@ validate_interval_value(PG_FUNCTION_ARGS)
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("'expression' should not be NULL")));
 	}
-	else expr_cstr = TextDatumGetCString(PG_GETARG_TEXT_P(ARG_EXPRESSION));
+	else expr_cstr = TextDatumGetCString(PG_GETARG_DATUM(ARG_EXPRESSION));
 
 	if (PG_ARGISNULL(ARG_PARTTYPE))
 	{
@@ -1086,7 +1086,7 @@ build_range_condition(PG_FUNCTION_ARGS)
 
 	if (!PG_ARGISNULL(1))
 	{
-		expression = TextDatumGetCString(PG_GETARG_TEXT_P(1));
+		expression = TextDatumGetCString(PG_GETARG_DATUM(1));
 	}
 	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("'expression' should not be NULL")));;

@@ -119,7 +119,7 @@ Datum
 build_hash_condition(PG_FUNCTION_ARGS)
 {
 	Oid				expr_type	= PG_GETARG_OID(0);
-	char		   *expr_cstr	= TextDatumGetCString(PG_GETARG_TEXT_P(1));
+	char		   *expr_cstr	= TextDatumGetCString(PG_GETARG_DATUM(1));
 	uint32			part_count	= PG_GETARG_UINT32(2),
 					part_idx	= PG_GETARG_UINT32(3);
 

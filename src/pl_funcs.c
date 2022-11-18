@@ -179,7 +179,7 @@ get_partition_cooked_key_pl(PG_FUNCTION_ARGS)
 	pfree(expr_cstr);
 	pfree(expr);
 
-	PG_RETURN_TEXT_P(CStringGetTextDatum(cooked_cstr));
+	PG_RETURN_DATUM(CStringGetTextDatum(cooked_cstr));
 }
 
 /*
@@ -199,7 +199,7 @@ get_cached_partition_cooked_key_pl(PG_FUNCTION_ARGS)
 	res = CStringGetTextDatum(nodeToString(prel->expr));
 	close_pathman_relation_info(prel);
 
-	PG_RETURN_TEXT_P(res);
+	PG_RETURN_DATUM(res);
 }
 
 /*
@@ -688,7 +688,7 @@ validate_expression(PG_FUNCTION_ARGS)
 
 	if (!PG_ARGISNULL(1))
 	{
-		expression = TextDatumGetCString(PG_GETARG_TEXT_P(1));
+		expression = TextDatumGetCString(PG_GETARG_DATUM(1));
 	}
 	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("'expression' should not be NULL")));
@@ -818,7 +818,7 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 
 	if (!PG_ARGISNULL(1))
 	{
-		expression = TextDatumGetCString(PG_GETARG_TEXT_P(1));
+		expression = TextDatumGetCString(PG_GETARG_DATUM(1));
 	}
 	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("'expression' should not be NULL")));
@@ -1203,7 +1203,7 @@ is_operator_supported(PG_FUNCTION_ARGS)
 {
 	Oid		opid,
 			typid	= PG_GETARG_OID(0);
-	char   *opname	= TextDatumGetCString(PG_GETARG_TEXT_P(1));
+	char   *opname	= TextDatumGetCString(PG_GETARG_DATUM(1));
 
 	opid = compatible_oper_opid(list_make1(makeString(opname)),
 								typid, typid, true);
