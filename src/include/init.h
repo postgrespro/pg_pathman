@@ -171,8 +171,8 @@ void *pathman_cache_search_relid(HTAB *cache_table,
 /*
  * Save and restore PathmanInitState.
  */
-void save_pathman_init_state(PathmanInitState *temp_init_state);
-void restore_pathman_init_state(const PathmanInitState *temp_init_state);
+void save_pathman_init_state(volatile PathmanInitState *temp_init_state);
+void restore_pathman_init_state(const volatile PathmanInitState *temp_init_state);
 
 /*
  * Create main GUC variables.

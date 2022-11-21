@@ -796,7 +796,7 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 
 	Oid					expr_type;
 
-	PathmanInitState	init_state;
+	volatile PathmanInitState	init_state;
 
 	if (!IsPathmanReady())
 		elog(ERROR, "pg_pathman is disabled");

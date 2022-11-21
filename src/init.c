@@ -134,13 +134,13 @@ pathman_cache_search_relid(HTAB *cache_table,
  */
 
 void
-save_pathman_init_state(PathmanInitState *temp_init_state)
+save_pathman_init_state(volatile PathmanInitState *temp_init_state)
 {
 	*temp_init_state = pathman_init_state;
 }
 
 void
-restore_pathman_init_state(const PathmanInitState *temp_init_state)
+restore_pathman_init_state(const volatile PathmanInitState *temp_init_state)
 {
  	/*
 	 * initialization_needed is not restored: it is not just a setting but
