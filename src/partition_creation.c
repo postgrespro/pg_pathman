@@ -2027,11 +2027,9 @@ build_partitioning_expression(Oid parent_relid,
 	/* We need expression type for hash functions */
 	if (expr_type)
 	{
-		Node	*expr;
-		expr = cook_partitioning_expression(parent_relid, expr_cstr, NULL);
-
 		/* Finally return expression type */
-		*expr_type = exprType(expr);
+		*expr_type = exprType(
+			cook_partitioning_expression(parent_relid, expr_cstr, NULL));
 	}
 
 	if (columns)
