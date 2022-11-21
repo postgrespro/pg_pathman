@@ -374,7 +374,8 @@ fetch_next_tuple(CustomScanState *node)
 		for (i = 0; i < scan_state->rstate.ncur_plans; i++)
 		{
 			ChildScanCommon		child = scan_state->rstate.cur_plans[i];
-			PlanState		   *ps = child->content.plan_state;
+
+			ps = child->content.plan_state;
 
 			Assert(child->content_type == CHILD_PLAN_STATE);
 
@@ -721,9 +722,10 @@ prepare_sort_from_pathkeys(PlannerInfo *root, Plan *lefttree, List *pathkeys,
 
 			foreach(j, ec->ec_members)
 			{
-				EquivalenceMember *em = (EquivalenceMember *) lfirst(j);
 				List	   *exprvars;
 				ListCell   *k;
+
+				em = (EquivalenceMember *) lfirst(j);
 
 				/*
 				 * We shouldn't be trying to sort by an equivalence class that

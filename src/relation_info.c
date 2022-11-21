@@ -71,34 +71,34 @@ int				prel_resowner_line = 0;
 
 #define LeakTrackerAdd(prel) \
 	do { \
-		MemoryContext old_mcxt = MemoryContextSwitchTo((prel)->mcxt); \
+		MemoryContext leak_tracker_add_old_mcxt = MemoryContextSwitchTo((prel)->mcxt); \
 		(prel)->owners = \
 				list_append_unique( \
 						(prel)->owners, \
 						list_make2(makeString((char *) prel_resowner_function), \
 								   makeInteger(prel_resowner_line))); \
-		MemoryContextSwitchTo(old_mcxt); \
+		MemoryContextSwitchTo(leak_tracker_add_old_mcxt); \
 		\
 		(prel)->access_total++; \
 	} while (0)
 
 #define LeakTrackerPrint(prel) \
 	do { \
-		ListCell *lc; \
-		foreach (lc, (prel)->owners) \
+		ListCell *leak_tracker_print_lc; \
+		foreach (leak_tracker_print_lc, (prel)->owners) \
 		{ \
-			char   *fun = strVal(linitial(lfirst(lc))); \
-			int		line = intVal(lsecond(lfirst(lc))); \
+			char   *fun = strVal(linitial(lfirst(leak_tracker_print_lc))); \
+			int		line = intVal(lsecond(lfirst(leak_tracker_print_lc))); \
 			elog(WARNING, "PartRelationInfo referenced in %s:%d", fun, line); \
 		} \
 	} while (0)
 
 #define LeakTrackerFree(prel) \
 	do { \
-		ListCell *lc; \
-		foreach (lc, (prel)->owners) \
+		ListCell *leak_tracker_free_lc; \
+		foreach (leak_tracker_free_lc, (prel)->owners) \
 		{ \
-			list_free_deep(lfirst(lc)); \
+			list_free_deep(lfirst(leak_tracker_free_lc)); \
 		} \
 		list_free((prel)->owners); \
 		(prel)->owners = NIL; \
