@@ -1,0 +1,281 @@
+/*
+ * ---------------------------------------------
+ *  NOTE: This test behaves differenly on PgPro
+ * ---------------------------------------------
+ *
+ * Since 12 (608b167f9f), CTEs which are scanned once are no longer an
+ * optimization fence, which changes practically all plans here. There is
+ * an option to forcibly make them MATERIALIZED, but we also need to run tests
+ * on older versions, so create pathman_only_1.out instead.
+ *
+ * Since 55a1954da16 and 6ef77cf46e8 (>= 13) output of EXPLAIN was changed,
+ * now it includes aliases for inherited tables.
+ */
+\set VERBOSITY terse
+SET search_path = 'public';
+CREATE EXTENSION pg_pathman;
+CREATE SCHEMA test_only;
+/* Test special case: ONLY statement with not-ONLY for partitioned table */
+CREATE TABLE test_only.from_only_test(val INT NOT NULL);
+INSERT INTO test_only.from_only_test SELECT generate_series(1, 20);
+SELECT create_range_partitions('test_only.from_only_test', 'val', 1, 2);
+ create_range_partitions 
+-------------------------
+                      10
+(1 row)
+
+VACUUM ANALYZE;
+/* should be OK */
+EXPLAIN (COSTS OFF)
+SELECT * FROM ONLY test_only.from_only_test
+UNION SELECT * FROM test_only.from_only_test;
+                            QUERY PLAN                             
+-------------------------------------------------------------------
+ HashAggregate
+   Group Key: from_only_test.val
+   ->  Append
+         ->  Seq Scan on from_only_test
+         ->  Append
+               ->  Seq Scan on from_only_test_1 from_only_test_2
+               ->  Seq Scan on from_only_test_2 from_only_test_3
+               ->  Seq Scan on from_only_test_3 from_only_test_4
+               ->  Seq Scan on from_only_test_4 from_only_test_5
+               ->  Seq Scan on from_only_test_5 from_only_test_6
+               ->  Seq Scan on from_only_test_6 from_only_test_7
+               ->  Seq Scan on from_only_test_7 from_only_test_8
+               ->  Seq Scan on from_only_test_8 from_only_test_9
+               ->  Seq Scan on from_only_test_9 from_only_test_10
+               ->  Seq Scan on from_only_test_10 from_only_test_11
+(15 rows)
+
+/* should be OK */
+EXPLAIN (COSTS OFF)
+SELECT * FROM test_only.from_only_test
+UNION SELECT * FROM ONLY test_only.from_only_test;
+                        QUERY PLAN                        
+----------------------------------------------------------
+ HashAggregate
+   Group Key: from_only_test.val
+   ->  Append
+         ->  Append
+               ->  Seq Scan on from_only_test_1
+               ->  Seq Scan on from_only_test_2
+               ->  Seq Scan on from_only_test_3
+               ->  Seq Scan on from_only_test_4
+               ->  Seq Scan on from_only_test_5
+               ->  Seq Scan on from_only_test_6
+               ->  Seq Scan on from_only_test_7
+               ->  Seq Scan on from_only_test_8
+               ->  Seq Scan on from_only_test_9
+               ->  Seq Scan on from_only_test_10
+         ->  Seq Scan on from_only_test from_only_test_11
+(15 rows)
+
+/* should be OK */
+EXPLAIN (COSTS OFF)
+SELECT * FROM test_only.from_only_test
+UNION SELECT * FROM test_only.from_only_test
+UNION SELECT * FROM ONLY test_only.from_only_test;
+                            QUERY PLAN                             
+-------------------------------------------------------------------
+ HashAggregate
+   Group Key: from_only_test.val
+   ->  Append
+         ->  Append
+               ->  Seq Scan on from_only_test_1
+               ->  Seq Scan on from_only_test_2
+               ->  Seq Scan on from_only_test_3
+               ->  Seq Scan on from_only_test_4
+               ->  Seq Scan on from_only_test_5
+               ->  Seq Scan on from_only_test_6
+               ->  Seq Scan on from_only_test_7
+               ->  Seq Scan on from_only_test_8
+               ->  Seq Scan on from_only_test_9
+               ->  Seq Scan on from_only_test_10
+         ->  Append
+               ->  Seq Scan on from_only_test_1 from_only_test_12
+               ->  Seq Scan on from_only_test_2 from_only_test_13
+               ->  Seq Scan on from_only_test_3 from_only_test_14
+               ->  Seq Scan on from_only_test_4 from_only_test_15
+               ->  Seq Scan on from_only_test_5 from_only_test_16
+               ->  Seq Scan on from_only_test_6 from_only_test_17
+               ->  Seq Scan on from_only_test_7 from_only_test_18
+               ->  Seq Scan on from_only_test_8 from_only_test_19
+               ->  Seq Scan on from_only_test_9 from_only_test_20
+               ->  Seq Scan on from_only_test_10 from_only_test_21
+         ->  Seq Scan on from_only_test from_only_test_22
+(26 rows)
+
+/* should be OK */
+EXPLAIN (COSTS OFF)
+SELECT * FROM ONLY test_only.from_only_test
+UNION SELECT * FROM test_only.from_only_test
+UNION SELECT * FROM test_only.from_only_test;
+                            QUERY PLAN                             
+-------------------------------------------------------------------
+ HashAggregate
+   Group Key: from_only_test.val
+   ->  Append
+         ->  Seq Scan on from_only_test
+         ->  Append
+               ->  Seq Scan on from_only_test_1 from_only_test_2
+               ->  Seq Scan on from_only_test_2 from_only_test_3
+               ->  Seq Scan on from_only_test_3 from_only_test_4
+               ->  Seq Scan on from_only_test_4 from_only_test_5
+               ->  Seq Scan on from_only_test_5 from_only_test_6
+               ->  Seq Scan on from_only_test_6 from_only_test_7
+               ->  Seq Scan on from_only_test_7 from_only_test_8
+               ->  Seq Scan on from_only_test_8 from_only_test_9
+               ->  Seq Scan on from_only_test_9 from_only_test_10
+               ->  Seq Scan on from_only_test_10 from_only_test_11
+         ->  Append
+               ->  Seq Scan on from_only_test_1 from_only_test_13
+               ->  Seq Scan on from_only_test_2 from_only_test_14
+               ->  Seq Scan on from_only_test_3 from_only_test_15
+               ->  Seq Scan on from_only_test_4 from_only_test_16
+               ->  Seq Scan on from_only_test_5 from_only_test_17
+               ->  Seq Scan on from_only_test_6 from_only_test_18
+               ->  Seq Scan on from_only_test_7 from_only_test_19
+               ->  Seq Scan on from_only_test_8 from_only_test_20
+               ->  Seq Scan on from_only_test_9 from_only_test_21
+               ->  Seq Scan on from_only_test_10 from_only_test_22
+(26 rows)
+
+/* not ok, ONLY|non-ONLY in one query (this is not the case for PgPro) */
+EXPLAIN (COSTS OFF)
+SELECT * FROM test_only.from_only_test a
+JOIN ONLY test_only.from_only_test b USING(val);
+                 QUERY PLAN                  
+---------------------------------------------
+ Nested Loop
+   ->  Seq Scan on from_only_test b
+   ->  Custom Scan (RuntimeAppend)
+         Prune by: (a.val = b.val)
+         ->  Seq Scan on from_only_test_1 a
+               Filter: (b.val = val)
+         ->  Seq Scan on from_only_test_2 a
+               Filter: (b.val = val)
+         ->  Seq Scan on from_only_test_3 a
+               Filter: (b.val = val)
+         ->  Seq Scan on from_only_test_4 a
+               Filter: (b.val = val)
+         ->  Seq Scan on from_only_test_5 a
+               Filter: (b.val = val)
+         ->  Seq Scan on from_only_test_6 a
+               Filter: (b.val = val)
+         ->  Seq Scan on from_only_test_7 a
+               Filter: (b.val = val)
+         ->  Seq Scan on from_only_test_8 a
+               Filter: (b.val = val)
+         ->  Seq Scan on from_only_test_9 a
+               Filter: (b.val = val)
+         ->  Seq Scan on from_only_test_10 a
+               Filter: (b.val = val)
+(24 rows)
+
+/* should be OK */
+EXPLAIN (COSTS OFF)
+WITH q1 AS (SELECT * FROM test_only.from_only_test),
+	 q2 AS (SELECT * FROM ONLY test_only.from_only_test)
+SELECT * FROM q1 JOIN q2 USING(val);
+                          QUERY PLAN                           
+---------------------------------------------------------------
+ Nested Loop
+   ->  Seq Scan on from_only_test from_only_test_1
+   ->  Custom Scan (RuntimeAppend)
+         Prune by: (from_only_test.val = from_only_test_1.val)
+         ->  Seq Scan on from_only_test_1 from_only_test
+               Filter: (from_only_test_1.val = val)
+         ->  Seq Scan on from_only_test_2 from_only_test
+               Filter: (from_only_test_1.val = val)
+         ->  Seq Scan on from_only_test_3 from_only_test
+               Filter: (from_only_test_1.val = val)
+         ->  Seq Scan on from_only_test_4 from_only_test
+               Filter: (from_only_test_1.val = val)
+         ->  Seq Scan on from_only_test_5 from_only_test
+               Filter: (from_only_test_1.val = val)
+         ->  Seq Scan on from_only_test_6 from_only_test
+               Filter: (from_only_test_1.val = val)
+         ->  Seq Scan on from_only_test_7 from_only_test
+               Filter: (from_only_test_1.val = val)
+         ->  Seq Scan on from_only_test_8 from_only_test
+               Filter: (from_only_test_1.val = val)
+         ->  Seq Scan on from_only_test_9 from_only_test
+               Filter: (from_only_test_1.val = val)
+         ->  Seq Scan on from_only_test_10 from_only_test
+               Filter: (from_only_test_1.val = val)
+(24 rows)
+
+/* should be OK */
+EXPLAIN (COSTS OFF)
+WITH q1 AS (SELECT * FROM ONLY test_only.from_only_test)
+SELECT * FROM test_only.from_only_test JOIN q1 USING(val);
+                          QUERY PLAN                           
+---------------------------------------------------------------
+ Nested Loop
+   ->  Seq Scan on from_only_test from_only_test_1
+   ->  Custom Scan (RuntimeAppend)
+         Prune by: (from_only_test.val = from_only_test_1.val)
+         ->  Seq Scan on from_only_test_1 from_only_test
+               Filter: (from_only_test_1.val = val)
+         ->  Seq Scan on from_only_test_2 from_only_test
+               Filter: (from_only_test_1.val = val)
+         ->  Seq Scan on from_only_test_3 from_only_test
+               Filter: (from_only_test_1.val = val)
+         ->  Seq Scan on from_only_test_4 from_only_test
+               Filter: (from_only_test_1.val = val)
+         ->  Seq Scan on from_only_test_5 from_only_test
+               Filter: (from_only_test_1.val = val)
+         ->  Seq Scan on from_only_test_6 from_only_test
+               Filter: (from_only_test_1.val = val)
+         ->  Seq Scan on from_only_test_7 from_only_test
+               Filter: (from_only_test_1.val = val)
+         ->  Seq Scan on from_only_test_8 from_only_test
+               Filter: (from_only_test_1.val = val)
+         ->  Seq Scan on from_only_test_9 from_only_test
+               Filter: (from_only_test_1.val = val)
+         ->  Seq Scan on from_only_test_10 from_only_test
+               Filter: (from_only_test_1.val = val)
+(24 rows)
+
+/* should be OK */
+EXPLAIN (COSTS OFF)
+SELECT * FROM test_only.from_only_test
+WHERE val = (SELECT val FROM ONLY test_only.from_only_test
+			 ORDER BY val ASC
+			 LIMIT 1);
+                           QUERY PLAN                            
+-----------------------------------------------------------------
+ Custom Scan (RuntimeAppend)
+   Prune by: (from_only_test.val = $0)
+   InitPlan 1 (returns $0)
+     ->  Limit
+           ->  Sort
+                 Sort Key: from_only_test_1.val
+                 ->  Seq Scan on from_only_test from_only_test_1
+   ->  Seq Scan on from_only_test_1 from_only_test
+         Filter: (val = $0)
+   ->  Seq Scan on from_only_test_2 from_only_test
+         Filter: (val = $0)
+   ->  Seq Scan on from_only_test_3 from_only_test
+         Filter: (val = $0)
+   ->  Seq Scan on from_only_test_4 from_only_test
+         Filter: (val = $0)
+   ->  Seq Scan on from_only_test_5 from_only_test
+         Filter: (val = $0)
+   ->  Seq Scan on from_only_test_6 from_only_test
+         Filter: (val = $0)
+   ->  Seq Scan on from_only_test_7 from_only_test
+         Filter: (val = $0)
+   ->  Seq Scan on from_only_test_8 from_only_test
+         Filter: (val = $0)
+   ->  Seq Scan on from_only_test_9 from_only_test
+         Filter: (val = $0)
+   ->  Seq Scan on from_only_test_10 from_only_test
+         Filter: (val = $0)
+(27 rows)
+
+DROP TABLE test_only.from_only_test CASCADE;
+NOTICE:  drop cascades to 11 other objects
+DROP SCHEMA test_only;
+DROP EXTENSION pg_pathman;
