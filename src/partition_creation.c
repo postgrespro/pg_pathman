@@ -2035,7 +2035,7 @@ build_partitioning_expression(Oid parent_relid,
 	if (columns)
 	{
 		/* Column list should be empty */
-		AssertArg(*columns == NIL);
+		Assert(*columns == NIL);
 		extract_column_names(expr, columns);
 	}
 

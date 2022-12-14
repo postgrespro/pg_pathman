@@ -304,7 +304,7 @@ invalidate_psin_entry(PartStatusInfo *psin)
 void
 close_pathman_relation_info(PartRelationInfo *prel)
 {
-	AssertArg(prel);
+	Assert(prel);
 
 	(void) resowner_prel_del(prel);
 }

@@ -59,7 +59,7 @@ transform_plans_into_states(RuntimeAppendState *scan_state,
 		ChildScanCommon		child;
 		PlanState		   *ps;
 
-		AssertArg(selected_plans);
+		Assert(selected_plans);
 		child = selected_plans[i];
 
 		/* Create new node since this plan hasn't been used yet */

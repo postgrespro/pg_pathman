@@ -234,7 +234,7 @@ McxtStatsInternal(MemoryContext context, int level,
 	MemoryContextCounters	local_totals;
 	MemoryContext			child;
 
-	AssertArg(MemoryContextIsValid(context));
+	Assert(MemoryContextIsValid(context));
 
 	/* Examine the context itself */
 #if PG_VERSION_NUM >= 140000

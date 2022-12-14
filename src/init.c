@@ -569,7 +569,7 @@ find_inheritance_children_array(Oid parent_relid,
 char *
 build_check_constraint_name_relid_internal(Oid relid)
 {
-	AssertArg(OidIsValid(relid));
+	Assert(OidIsValid(relid));
 	return build_check_constraint_name_relname_internal(get_rel_name(relid));
 }
 
@@ -580,7 +580,7 @@ build_check_constraint_name_relid_internal(Oid relid)
 char *
 build_check_constraint_name_relname_internal(const char *relname)
 {
-	AssertArg(relname != NULL);
+	Assert(relname != NULL);
 	return psprintf("pathman_%s_check", relname);
 }
 
@@ -591,7 +591,7 @@ build_check_constraint_name_relname_internal(const char *relname)
 char *
 build_sequence_name_relid_internal(Oid relid)
 {
-	AssertArg(OidIsValid(relid));
+	Assert(OidIsValid(relid));
 	return build_sequence_name_relname_internal(get_rel_name(relid));
 }
 
@@ -602,7 +602,7 @@ build_sequence_name_relid_internal(Oid relid)
 char *
 build_sequence_name_relname_internal(const char *relname)
 {
-	AssertArg(relname != NULL);
+	Assert(relname != NULL);
 	return psprintf("%s_seq", relname);
 }
 
@@ -613,7 +613,7 @@ build_sequence_name_relname_internal(const char *relname)
 char *
 build_update_trigger_name_internal(Oid relid)
 {
-	AssertArg(OidIsValid(relid));
+	Assert(OidIsValid(relid));
 	return psprintf("%s_upd_trig", get_rel_name(relid));
 }
 
@@ -624,7 +624,7 @@ build_update_trigger_name_internal(Oid relid)
 char *
 build_update_trigger_func_name_internal(Oid relid)
 {
-	AssertArg(OidIsValid(relid));
+	Assert(OidIsValid(relid));
 	return psprintf("%s_upd_trig_func", get_rel_name(relid));
 }
 
