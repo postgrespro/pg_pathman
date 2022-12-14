@@ -696,7 +696,7 @@ append_child_relation(PlannerInfo *root,
 #endif
 
 	/* Here and below we assume that parent RelOptInfo exists */
-	AssertState(parent_rel);
+	Assert(parent_rel);
 
 	/* Adjust join quals for this child */
 	child_rel->joininfo = (List *) adjust_appendrel_attrs_compat(root,
