@@ -63,7 +63,7 @@
 
 
 
-bool				pg_pathman_enable_partition_router = true;
+bool				pg_pathman_enable_partition_router = false;
 
 CustomScanMethods	partition_router_plan_methods;
 CustomExecMethods	partition_router_exec_methods;
