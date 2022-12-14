@@ -607,25 +607,25 @@ NOTICE:  merging column "val" with inherited definition
 SELECT add_to_pathman_config('calamity.part_test', 'val');
 ERROR:  constraint "pathman_wrong_partition_check" of partition "wrong_partition" does not exist
 EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_ok; /* check that pathman is enabled */
-         QUERY PLAN          
------------------------------
+              QUERY PLAN               
+---------------------------------------
  Append
-   ->  Seq Scan on part_ok_0
-   ->  Seq Scan on part_ok_1
-   ->  Seq Scan on part_ok_2
-   ->  Seq Scan on part_ok_3
+   ->  Seq Scan on part_ok_0 part_ok_1
+   ->  Seq Scan on part_ok_1 part_ok_2
+   ->  Seq Scan on part_ok_2 part_ok_3
+   ->  Seq Scan on part_ok_3 part_ok_4
 (5 rows)
 
 SELECT add_to_pathman_config('calamity.part_test', 'val', '10');
 ERROR:  constraint "pathman_wrong_partition_check" of partition "wrong_partition" does not exist
 EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_ok; /* check that pathman is enabled */
-         QUERY PLAN          
------------------------------
+              QUERY PLAN               
+---------------------------------------
  Append
-   ->  Seq Scan on part_ok_0
-   ->  Seq Scan on part_ok_1
-   ->  Seq Scan on part_ok_2
-   ->  Seq Scan on part_ok_3
+   ->  Seq Scan on part_ok_0 part_ok_1
+   ->  Seq Scan on part_ok_1 part_ok_2
+   ->  Seq Scan on part_ok_2 part_ok_3
+   ->  Seq Scan on part_ok_3 part_ok_4
 (5 rows)
 
 ALTER TABLE calamity.wrong_partition
@@ -634,13 +634,13 @@ CHECK (val = 1 OR val = 2); /* wrong constraint */
 SELECT add_to_pathman_config('calamity.part_test', 'val', '10');
 ERROR:  wrong constraint format for RANGE partition "wrong_partition"
 EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_ok; /* check that pathman is enabled */
-         QUERY PLAN          
------------------------------
+              QUERY PLAN               
+---------------------------------------
  Append
-   ->  Seq Scan on part_ok_0
-   ->  Seq Scan on part_ok_1
-   ->  Seq Scan on part_ok_2
-   ->  Seq Scan on part_ok_3
+   ->  Seq Scan on part_ok_0 part_ok_1
+   ->  Seq Scan on part_ok_1 part_ok_2
+   ->  Seq Scan on part_ok_2 part_ok_3
+   ->  Seq Scan on part_ok_3 part_ok_4
 (5 rows)
 
 ALTER TABLE calamity.wrong_partition DROP CONSTRAINT pathman_wrong_partition_check;
@@ -650,13 +650,13 @@ CHECK (val >= 10 AND val = 2); /* wrong constraint */
 SELECT add_to_pathman_config('calamity.part_test', 'val', '10');
 ERROR:  wrong constraint format for RANGE partition "wrong_partition"
 EXPLAIN (COSTS OFF) SELECT * FROM calamity.part_ok; /* check that pathman is enabled */
-         QUERY PLAN          
------------------------------
+              QUERY PLAN               
+---------------------------------------
  Append
-   ->  Seq Scan on part_ok_0
-   ->  Seq Scan on part_ok_1
-   ->  Seq Scan on part_ok_2
-   ->  Seq Scan on part_ok_3
+   ->  Seq Scan on part_ok_0 part_ok_1
+   ->  Seq Scan on part_ok_1 part_ok_2
+   ->  Seq Scan on part_ok_2 part_ok_3
+   ->  Seq Scan on part_ok_3 part_ok_4
 (5 rows)
 
 ALTER TABLE calamity.wrong_partition DROP CONSTRAINT pathman_wrong_partition_check;

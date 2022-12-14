@@ -307,7 +307,7 @@ scan_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid)
 		child_rel = heap_open_compat(partid, NoLock);
 
 		/* Build Var translation list for 'inserted_cols' */
-		make_inh_translation_list(base_rel, child_rel, 0, &translated_vars);
+		make_inh_translation_list(base_rel, child_rel, 0, &translated_vars, NULL);
 
 		/* Create RangeTblEntry for partition */
 		child_rte = makeNode(RangeTblEntry);

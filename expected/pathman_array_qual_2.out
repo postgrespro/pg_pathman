@@ -1,0 +1,2398 @@
+/*
+ * Since 8edd0e794 (>= 12) Append nodes with single subplan are eliminated,
+ * causing different output.
+ */
+\set VERBOSITY terse
+SET search_path = 'public';
+CREATE EXTENSION pg_pathman;
+CREATE SCHEMA array_qual;
+CREATE TABLE array_qual.test(val TEXT NOT NULL);
+CREATE SEQUENCE array_qual.test_seq;
+SELECT add_to_pathman_config('array_qual.test', 'val', NULL);
+ add_to_pathman_config 
+-----------------------
+ t
+(1 row)
+
+SELECT add_range_partition('array_qual.test', 'a'::TEXT, 'b');
+ add_range_partition 
+---------------------
+ array_qual.test_1
+(1 row)
+
+SELECT add_range_partition('array_qual.test', 'b'::TEXT, 'c');
+ add_range_partition 
+---------------------
+ array_qual.test_2
+(1 row)
+
+SELECT add_range_partition('array_qual.test', 'c'::TEXT, 'd');
+ add_range_partition 
+---------------------
+ array_qual.test_3
+(1 row)
+
+SELECT add_range_partition('array_qual.test', 'd'::TEXT, 'e');
+ add_range_partition 
+---------------------
+ array_qual.test_4
+(1 row)
+
+INSERT INTO array_qual.test VALUES ('aaaa');
+INSERT INTO array_qual.test VALUES ('bbbb');
+INSERT INTO array_qual.test VALUES ('cccc');
+ANALYZE;
+/*
+ * Test expr op ANY (...)
+ */
+/* matching collations */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE val < ANY (array['a', 'b']);
+       QUERY PLAN        
+-------------------------
+ Seq Scan on test_1 test
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE val < ANY (array['a', 'z']);
+        QUERY PLAN        
+--------------------------
+ Append
+   ->  Seq Scan on test_1
+   ->  Seq Scan on test_2
+   ->  Seq Scan on test_3
+   ->  Seq Scan on test_4
+(5 rows)
+
+/* different collations */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE val COLLATE "POSIX" < ANY (array['a', 'b']);
+                        QUERY PLAN                         
+-----------------------------------------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: ((val)::text < 'b'::text COLLATE "POSIX")
+   ->  Seq Scan on test_2
+         Filter: ((val)::text < 'b'::text COLLATE "POSIX")
+   ->  Seq Scan on test_3
+         Filter: ((val)::text < 'b'::text COLLATE "POSIX")
+   ->  Seq Scan on test_4
+         Filter: ((val)::text < 'b'::text COLLATE "POSIX")
+(9 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE val < ANY (array['a', 'b' COLLATE "POSIX"]);
+                    QUERY PLAN                     
+---------------------------------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (val < 'b'::text COLLATE "POSIX")
+   ->  Seq Scan on test_2
+         Filter: (val < 'b'::text COLLATE "POSIX")
+   ->  Seq Scan on test_3
+         Filter: (val < 'b'::text COLLATE "POSIX")
+   ->  Seq Scan on test_4
+         Filter: (val < 'b'::text COLLATE "POSIX")
+(9 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE val COLLATE "C" < ANY (array['a', 'b' COLLATE "POSIX"]);
+ERROR:  collation mismatch between explicit collations "C" and "POSIX" at character 95
+/* different collations (pruning should work) */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE val COLLATE "POSIX" = ANY (array['a', 'b']);
+                      QUERY PLAN                       
+-------------------------------------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: ((val)::text = ANY ('{a,b}'::text[]))
+   ->  Seq Scan on test_2
+         Filter: ((val)::text = ANY ('{a,b}'::text[]))
+(5 rows)
+
+/* non-btree operator */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE val ~~ ANY (array['a', 'b']);
+                   QUERY PLAN                   
+------------------------------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (val ~~ ANY ('{a,b}'::text[]))
+   ->  Seq Scan on test_2
+         Filter: (val ~~ ANY ('{a,b}'::text[]))
+   ->  Seq Scan on test_3
+         Filter: (val ~~ ANY ('{a,b}'::text[]))
+   ->  Seq Scan on test_4
+         Filter: (val ~~ ANY ('{a,b}'::text[]))
+(9 rows)
+
+DROP TABLE array_qual.test CASCADE;
+NOTICE:  drop cascades to 5 other objects
+CREATE TABLE array_qual.test(a INT4 NOT NULL, b INT4);
+SELECT create_range_partitions('array_qual.test', 'a', 1, 100, 10);
+ create_range_partitions 
+-------------------------
+                      10
+(1 row)
+
+INSERT INTO array_qual.test SELECT i, i FROM generate_series(1, 1000) g(i);
+ANALYZE;
+/*
+ * Test expr IN (...)
+ */
+/* a IN (...) - pruning should work */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a IN (1, 2, 3, 4);
+                  QUERY PLAN                  
+----------------------------------------------
+ Seq Scan on test_1 test
+   Filter: (a = ANY ('{1,2,3,4}'::integer[]))
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a IN (100, 200, 300, 400);
+                         QUERY PLAN                         
+------------------------------------------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (a = ANY ('{100,200,300,400}'::integer[]))
+   ->  Seq Scan on test_2
+         Filter: (a = ANY ('{100,200,300,400}'::integer[]))
+   ->  Seq Scan on test_3
+         Filter: (a = ANY ('{100,200,300,400}'::integer[]))
+   ->  Seq Scan on test_4
+         Filter: (a = ANY ('{100,200,300,400}'::integer[]))
+(9 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a IN (-100, 100);
+                  QUERY PLAN                   
+-----------------------------------------------
+ Seq Scan on test_1 test
+   Filter: (a = ANY ('{-100,100}'::integer[]))
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a IN (-100, -200, -300);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a IN (-100, -200, -300, NULL);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a IN (NULL, NULL, NULL, NULL);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+/* b IN (...) - pruning should not work */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE b IN (1, 2, 3, 4);
+                     QUERY PLAN                     
+----------------------------------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (b = ANY ('{1,2,3,4}'::integer[]))
+   ->  Seq Scan on test_2
+         Filter: (b = ANY ('{1,2,3,4}'::integer[]))
+   ->  Seq Scan on test_3
+         Filter: (b = ANY ('{1,2,3,4}'::integer[]))
+   ->  Seq Scan on test_4
+         Filter: (b = ANY ('{1,2,3,4}'::integer[]))
+   ->  Seq Scan on test_5
+         Filter: (b = ANY ('{1,2,3,4}'::integer[]))
+   ->  Seq Scan on test_6
+         Filter: (b = ANY ('{1,2,3,4}'::integer[]))
+   ->  Seq Scan on test_7
+         Filter: (b = ANY ('{1,2,3,4}'::integer[]))
+   ->  Seq Scan on test_8
+         Filter: (b = ANY ('{1,2,3,4}'::integer[]))
+   ->  Seq Scan on test_9
+         Filter: (b = ANY ('{1,2,3,4}'::integer[]))
+   ->  Seq Scan on test_10
+         Filter: (b = ANY ('{1,2,3,4}'::integer[]))
+(21 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE b IN (100, 200, 300, 400);
+                         QUERY PLAN                         
+------------------------------------------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (b = ANY ('{100,200,300,400}'::integer[]))
+   ->  Seq Scan on test_2
+         Filter: (b = ANY ('{100,200,300,400}'::integer[]))
+   ->  Seq Scan on test_3
+         Filter: (b = ANY ('{100,200,300,400}'::integer[]))
+   ->  Seq Scan on test_4
+         Filter: (b = ANY ('{100,200,300,400}'::integer[]))
+   ->  Seq Scan on test_5
+         Filter: (b = ANY ('{100,200,300,400}'::integer[]))
+   ->  Seq Scan on test_6
+         Filter: (b = ANY ('{100,200,300,400}'::integer[]))
+   ->  Seq Scan on test_7
+         Filter: (b = ANY ('{100,200,300,400}'::integer[]))
+   ->  Seq Scan on test_8
+         Filter: (b = ANY ('{100,200,300,400}'::integer[]))
+   ->  Seq Scan on test_9
+         Filter: (b = ANY ('{100,200,300,400}'::integer[]))
+   ->  Seq Scan on test_10
+         Filter: (b = ANY ('{100,200,300,400}'::integer[]))
+(21 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE b IN (-100, 100);
+                     QUERY PLAN                      
+-----------------------------------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (b = ANY ('{-100,100}'::integer[]))
+   ->  Seq Scan on test_2
+         Filter: (b = ANY ('{-100,100}'::integer[]))
+   ->  Seq Scan on test_3
+         Filter: (b = ANY ('{-100,100}'::integer[]))
+   ->  Seq Scan on test_4
+         Filter: (b = ANY ('{-100,100}'::integer[]))
+   ->  Seq Scan on test_5
+         Filter: (b = ANY ('{-100,100}'::integer[]))
+   ->  Seq Scan on test_6
+         Filter: (b = ANY ('{-100,100}'::integer[]))
+   ->  Seq Scan on test_7
+         Filter: (b = ANY ('{-100,100}'::integer[]))
+   ->  Seq Scan on test_8
+         Filter: (b = ANY ('{-100,100}'::integer[]))
+   ->  Seq Scan on test_9
+         Filter: (b = ANY ('{-100,100}'::integer[]))
+   ->  Seq Scan on test_10
+         Filter: (b = ANY ('{-100,100}'::integer[]))
+(21 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE b IN (-100, -200, -300);
+                        QUERY PLAN                         
+-----------------------------------------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (b = ANY ('{-100,-200,-300}'::integer[]))
+   ->  Seq Scan on test_2
+         Filter: (b = ANY ('{-100,-200,-300}'::integer[]))
+   ->  Seq Scan on test_3
+         Filter: (b = ANY ('{-100,-200,-300}'::integer[]))
+   ->  Seq Scan on test_4
+         Filter: (b = ANY ('{-100,-200,-300}'::integer[]))
+   ->  Seq Scan on test_5
+         Filter: (b = ANY ('{-100,-200,-300}'::integer[]))
+   ->  Seq Scan on test_6
+         Filter: (b = ANY ('{-100,-200,-300}'::integer[]))
+   ->  Seq Scan on test_7
+         Filter: (b = ANY ('{-100,-200,-300}'::integer[]))
+   ->  Seq Scan on test_8
+         Filter: (b = ANY ('{-100,-200,-300}'::integer[]))
+   ->  Seq Scan on test_9
+         Filter: (b = ANY ('{-100,-200,-300}'::integer[]))
+   ->  Seq Scan on test_10
+         Filter: (b = ANY ('{-100,-200,-300}'::integer[]))
+(21 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE b IN (-100, -200, -300, NULL);
+                           QUERY PLAN                           
+----------------------------------------------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (b = ANY ('{-100,-200,-300,NULL}'::integer[]))
+   ->  Seq Scan on test_2
+         Filter: (b = ANY ('{-100,-200,-300,NULL}'::integer[]))
+   ->  Seq Scan on test_3
+         Filter: (b = ANY ('{-100,-200,-300,NULL}'::integer[]))
+   ->  Seq Scan on test_4
+         Filter: (b = ANY ('{-100,-200,-300,NULL}'::integer[]))
+   ->  Seq Scan on test_5
+         Filter: (b = ANY ('{-100,-200,-300,NULL}'::integer[]))
+   ->  Seq Scan on test_6
+         Filter: (b = ANY ('{-100,-200,-300,NULL}'::integer[]))
+   ->  Seq Scan on test_7
+         Filter: (b = ANY ('{-100,-200,-300,NULL}'::integer[]))
+   ->  Seq Scan on test_8
+         Filter: (b = ANY ('{-100,-200,-300,NULL}'::integer[]))
+   ->  Seq Scan on test_9
+         Filter: (b = ANY ('{-100,-200,-300,NULL}'::integer[]))
+   ->  Seq Scan on test_10
+         Filter: (b = ANY ('{-100,-200,-300,NULL}'::integer[]))
+(21 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE b IN (NULL, NULL, NULL, NULL);
+                           QUERY PLAN                           
+----------------------------------------------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (b = ANY ('{NULL,NULL,NULL,NULL}'::integer[]))
+   ->  Seq Scan on test_2
+         Filter: (b = ANY ('{NULL,NULL,NULL,NULL}'::integer[]))
+   ->  Seq Scan on test_3
+         Filter: (b = ANY ('{NULL,NULL,NULL,NULL}'::integer[]))
+   ->  Seq Scan on test_4
+         Filter: (b = ANY ('{NULL,NULL,NULL,NULL}'::integer[]))
+   ->  Seq Scan on test_5
+         Filter: (b = ANY ('{NULL,NULL,NULL,NULL}'::integer[]))
+   ->  Seq Scan on test_6
+         Filter: (b = ANY ('{NULL,NULL,NULL,NULL}'::integer[]))
+   ->  Seq Scan on test_7
+         Filter: (b = ANY ('{NULL,NULL,NULL,NULL}'::integer[]))
+   ->  Seq Scan on test_8
+         Filter: (b = ANY ('{NULL,NULL,NULL,NULL}'::integer[]))
+   ->  Seq Scan on test_9
+         Filter: (b = ANY ('{NULL,NULL,NULL,NULL}'::integer[]))
+   ->  Seq Scan on test_10
+         Filter: (b = ANY ('{NULL,NULL,NULL,NULL}'::integer[]))
+(21 rows)
+
+/*
+ * Test expr = ANY (...)
+ */
+/* a = ANY (...) - pruning should work */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ANY (NULL);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ANY (array[]::int4[]);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ANY (array[100, 100]);
+                  QUERY PLAN                  
+----------------------------------------------
+ Seq Scan on test_1 test
+   Filter: (a = ANY ('{100,100}'::integer[]))
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ANY (array[100, 200, 300, 400]);
+                         QUERY PLAN                         
+------------------------------------------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (a = ANY ('{100,200,300,400}'::integer[]))
+   ->  Seq Scan on test_2
+         Filter: (a = ANY ('{100,200,300,400}'::integer[]))
+   ->  Seq Scan on test_3
+         Filter: (a = ANY ('{100,200,300,400}'::integer[]))
+   ->  Seq Scan on test_4
+         Filter: (a = ANY ('{100,200,300,400}'::integer[]))
+(9 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ANY (array[array[100, 200], array[300, 400]]);
+                           QUERY PLAN                           
+----------------------------------------------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (a = ANY ('{{100,200},{300,400}}'::integer[]))
+   ->  Seq Scan on test_2
+         Filter: (a = ANY ('{{100,200},{300,400}}'::integer[]))
+   ->  Seq Scan on test_3
+         Filter: (a = ANY ('{{100,200},{300,400}}'::integer[]))
+   ->  Seq Scan on test_4
+         Filter: (a = ANY ('{{100,200},{300,400}}'::integer[]))
+(9 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ANY (array[array[100, 200], array[300, 400], array[NULL, NULL]::int4[]]);
+                                 QUERY PLAN                                 
+----------------------------------------------------------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (a = ANY ('{{100,200},{300,400},{NULL,NULL}}'::integer[]))
+   ->  Seq Scan on test_2
+         Filter: (a = ANY ('{{100,200},{300,400},{NULL,NULL}}'::integer[]))
+   ->  Seq Scan on test_3
+         Filter: (a = ANY ('{{100,200},{300,400},{NULL,NULL}}'::integer[]))
+   ->  Seq Scan on test_4
+         Filter: (a = ANY ('{{100,200},{300,400},{NULL,NULL}}'::integer[]))
+(9 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ANY (array[array[100, 200], array[300, NULL]]);
+                           QUERY PLAN                            
+-----------------------------------------------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (a = ANY ('{{100,200},{300,NULL}}'::integer[]))
+   ->  Seq Scan on test_2
+         Filter: (a = ANY ('{{100,200},{300,NULL}}'::integer[]))
+   ->  Seq Scan on test_3
+         Filter: (a = ANY ('{{100,200},{300,NULL}}'::integer[]))
+(7 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ANY (array[NULL, NULL]::int4[]);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+/*
+ * Test expr = ALL (...)
+ */
+/* a = ALL (...) - pruning should work */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ALL (NULL);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ALL (array[]::int4[]);
+                 QUERY PLAN                  
+---------------------------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (a = ALL ('{}'::integer[]))
+   ->  Seq Scan on test_2
+         Filter: (a = ALL ('{}'::integer[]))
+   ->  Seq Scan on test_3
+         Filter: (a = ALL ('{}'::integer[]))
+   ->  Seq Scan on test_4
+         Filter: (a = ALL ('{}'::integer[]))
+   ->  Seq Scan on test_5
+         Filter: (a = ALL ('{}'::integer[]))
+   ->  Seq Scan on test_6
+         Filter: (a = ALL ('{}'::integer[]))
+   ->  Seq Scan on test_7
+         Filter: (a = ALL ('{}'::integer[]))
+   ->  Seq Scan on test_8
+         Filter: (a = ALL ('{}'::integer[]))
+   ->  Seq Scan on test_9
+         Filter: (a = ALL ('{}'::integer[]))
+   ->  Seq Scan on test_10
+         Filter: (a = ALL ('{}'::integer[]))
+(21 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ALL (array[100, 100]);
+                  QUERY PLAN                  
+----------------------------------------------
+ Seq Scan on test_1 test
+   Filter: (a = ALL ('{100,100}'::integer[]))
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ALL (array[100, 200, 300, 400]);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ALL (array[array[100, 200], array[300, 400]]);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ALL (array[array[100, 200], array[300, 400], array[NULL, NULL]::int4[]]);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ALL (array[array[100, 200], array[300, NULL]]);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a = ALL (array[NULL, NULL]::int4[]);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+/*
+ * Test expr < ANY (...)
+ */
+/* a < ANY (...) - pruning should work */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (NULL);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[]::int4[]);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[100, 100]);
+       QUERY PLAN        
+-------------------------
+ Seq Scan on test_1 test
+   Filter: (a < 100)
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[99, 100, 101]);
+       QUERY PLAN        
+-------------------------
+ Seq Scan on test_1 test
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[500, 550]);
+        QUERY PLAN         
+---------------------------
+ Append
+   ->  Seq Scan on test_1
+   ->  Seq Scan on test_2
+   ->  Seq Scan on test_3
+   ->  Seq Scan on test_4
+   ->  Seq Scan on test_5
+   ->  Seq Scan on test_6
+         Filter: (a < 550)
+(8 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[100, 700]);
+        QUERY PLAN         
+---------------------------
+ Append
+   ->  Seq Scan on test_1
+   ->  Seq Scan on test_2
+   ->  Seq Scan on test_3
+   ->  Seq Scan on test_4
+   ->  Seq Scan on test_5
+   ->  Seq Scan on test_6
+   ->  Seq Scan on test_7
+         Filter: (a < 700)
+(9 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[NULL, 700]);
+                     QUERY PLAN                      
+-----------------------------------------------------
+ Append
+   ->  Seq Scan on test_1
+   ->  Seq Scan on test_2
+   ->  Seq Scan on test_3
+   ->  Seq Scan on test_4
+   ->  Seq Scan on test_5
+   ->  Seq Scan on test_6
+   ->  Seq Scan on test_7
+         Filter: (a < ANY ('{NULL,700}'::integer[]))
+(9 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ANY (array[NULL, NULL]::int4[]);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+SET pg_pathman.enable = f;
+NOTICE:  RuntimeAppend, RuntimeMergeAppend and PartitionFilter nodes and some other options have been disabled
+SELECT count(*) FROM array_qual.test WHERE a < ANY (array[NULL, 700]);
+ count 
+-------
+   699
+(1 row)
+
+SET pg_pathman.enable = t;
+NOTICE:  RuntimeAppend, RuntimeMergeAppend and PartitionFilter nodes and some other options have been enabled
+SELECT count(*) FROM array_qual.test WHERE a < ANY (array[NULL, 700]);
+ count 
+-------
+   699
+(1 row)
+
+/*
+ * Test expr < ALL (...)
+ */
+/* a < ALL (...) - pruning should work */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (NULL);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[]::int4[]);
+                 QUERY PLAN                  
+---------------------------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (a < ALL ('{}'::integer[]))
+   ->  Seq Scan on test_2
+         Filter: (a < ALL ('{}'::integer[]))
+   ->  Seq Scan on test_3
+         Filter: (a < ALL ('{}'::integer[]))
+   ->  Seq Scan on test_4
+         Filter: (a < ALL ('{}'::integer[]))
+   ->  Seq Scan on test_5
+         Filter: (a < ALL ('{}'::integer[]))
+   ->  Seq Scan on test_6
+         Filter: (a < ALL ('{}'::integer[]))
+   ->  Seq Scan on test_7
+         Filter: (a < ALL ('{}'::integer[]))
+   ->  Seq Scan on test_8
+         Filter: (a < ALL ('{}'::integer[]))
+   ->  Seq Scan on test_9
+         Filter: (a < ALL ('{}'::integer[]))
+   ->  Seq Scan on test_10
+         Filter: (a < ALL ('{}'::integer[]))
+(21 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[100, 100]);
+       QUERY PLAN        
+-------------------------
+ Seq Scan on test_1 test
+   Filter: (a < 100)
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[99, 100, 101]);
+       QUERY PLAN        
+-------------------------
+ Seq Scan on test_1 test
+   Filter: (a < 99)
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[500, 550]);
+        QUERY PLAN         
+---------------------------
+ Append
+   ->  Seq Scan on test_1
+   ->  Seq Scan on test_2
+   ->  Seq Scan on test_3
+   ->  Seq Scan on test_4
+   ->  Seq Scan on test_5
+         Filter: (a < 500)
+(7 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[100, 700]);
+       QUERY PLAN        
+-------------------------
+ Seq Scan on test_1 test
+   Filter: (a < 100)
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[NULL, 700]);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a < ALL (array[NULL, NULL]::int4[]);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+SET pg_pathman.enable = f;
+NOTICE:  RuntimeAppend, RuntimeMergeAppend and PartitionFilter nodes and some other options have been disabled
+SELECT count(*) FROM array_qual.test WHERE a < ALL (array[NULL, 700]);
+ count 
+-------
+     0
+(1 row)
+
+SET pg_pathman.enable = t;
+NOTICE:  RuntimeAppend, RuntimeMergeAppend and PartitionFilter nodes and some other options have been enabled
+SELECT count(*) FROM array_qual.test WHERE a < ALL (array[NULL, 700]);
+ count 
+-------
+     0
+(1 row)
+
+/*
+ * Test expr > ANY (...)
+ */
+/* a > ANY (...) - pruning should work */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ANY (NULL);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ANY (array[]::int4[]);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ANY (array[100, 100]);
+        QUERY PLAN         
+---------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (a > 100)
+   ->  Seq Scan on test_2
+   ->  Seq Scan on test_3
+   ->  Seq Scan on test_4
+   ->  Seq Scan on test_5
+   ->  Seq Scan on test_6
+   ->  Seq Scan on test_7
+   ->  Seq Scan on test_8
+   ->  Seq Scan on test_9
+   ->  Seq Scan on test_10
+(12 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ANY (array[99, 100, 101]);
+        QUERY PLAN         
+---------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (a > 99)
+   ->  Seq Scan on test_2
+   ->  Seq Scan on test_3
+   ->  Seq Scan on test_4
+   ->  Seq Scan on test_5
+   ->  Seq Scan on test_6
+   ->  Seq Scan on test_7
+   ->  Seq Scan on test_8
+   ->  Seq Scan on test_9
+   ->  Seq Scan on test_10
+(12 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ANY (array[500, 550]);
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_5 test_1
+         Filter: (a > 500)
+   ->  Seq Scan on test_6 test_2
+   ->  Seq Scan on test_7 test_3
+   ->  Seq Scan on test_8 test_4
+   ->  Seq Scan on test_9 test_5
+   ->  Seq Scan on test_10 test_6
+(8 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ANY (array[100, 700]);
+        QUERY PLAN         
+---------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (a > 100)
+   ->  Seq Scan on test_2
+   ->  Seq Scan on test_3
+   ->  Seq Scan on test_4
+   ->  Seq Scan on test_5
+   ->  Seq Scan on test_6
+   ->  Seq Scan on test_7
+   ->  Seq Scan on test_8
+   ->  Seq Scan on test_9
+   ->  Seq Scan on test_10
+(12 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ANY (array[NULL, 700]);
+                     QUERY PLAN                      
+-----------------------------------------------------
+ Append
+   ->  Seq Scan on test_7 test_1
+         Filter: (a > ANY ('{NULL,700}'::integer[]))
+   ->  Seq Scan on test_8 test_2
+   ->  Seq Scan on test_9 test_3
+   ->  Seq Scan on test_10 test_4
+(6 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ANY (array[NULL, NULL]::int4[]);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+SET pg_pathman.enable = f;
+NOTICE:  RuntimeAppend, RuntimeMergeAppend and PartitionFilter nodes and some other options have been disabled
+SELECT count(*) FROM array_qual.test WHERE a > ANY (array[NULL, 700]);
+ count 
+-------
+   300
+(1 row)
+
+SET pg_pathman.enable = t;
+NOTICE:  RuntimeAppend, RuntimeMergeAppend and PartitionFilter nodes and some other options have been enabled
+SELECT count(*) FROM array_qual.test WHERE a > ANY (array[NULL, 700]);
+ count 
+-------
+   300
+(1 row)
+
+/*
+ * Test expr > ALL (...)
+ */
+/* a > ALL (...) - pruning should work */
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ALL (NULL);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ALL (array[]::int4[]);
+                 QUERY PLAN                  
+---------------------------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (a > ALL ('{}'::integer[]))
+   ->  Seq Scan on test_2
+         Filter: (a > ALL ('{}'::integer[]))
+   ->  Seq Scan on test_3
+         Filter: (a > ALL ('{}'::integer[]))
+   ->  Seq Scan on test_4
+         Filter: (a > ALL ('{}'::integer[]))
+   ->  Seq Scan on test_5
+         Filter: (a > ALL ('{}'::integer[]))
+   ->  Seq Scan on test_6
+         Filter: (a > ALL ('{}'::integer[]))
+   ->  Seq Scan on test_7
+         Filter: (a > ALL ('{}'::integer[]))
+   ->  Seq Scan on test_8
+         Filter: (a > ALL ('{}'::integer[]))
+   ->  Seq Scan on test_9
+         Filter: (a > ALL ('{}'::integer[]))
+   ->  Seq Scan on test_10
+         Filter: (a > ALL ('{}'::integer[]))
+(21 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ALL (array[100, 100]);
+        QUERY PLAN         
+---------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (a > 100)
+   ->  Seq Scan on test_2
+   ->  Seq Scan on test_3
+   ->  Seq Scan on test_4
+   ->  Seq Scan on test_5
+   ->  Seq Scan on test_6
+   ->  Seq Scan on test_7
+   ->  Seq Scan on test_8
+   ->  Seq Scan on test_9
+   ->  Seq Scan on test_10
+(12 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ALL (array[99, 100, 101]);
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_2 test_1
+         Filter: (a > 101)
+   ->  Seq Scan on test_3 test_2
+   ->  Seq Scan on test_4 test_3
+   ->  Seq Scan on test_5 test_4
+   ->  Seq Scan on test_6 test_5
+   ->  Seq Scan on test_7 test_6
+   ->  Seq Scan on test_8 test_7
+   ->  Seq Scan on test_9 test_8
+   ->  Seq Scan on test_10 test_9
+(11 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ALL (array[500, 550]);
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_6 test_1
+         Filter: (a > 550)
+   ->  Seq Scan on test_7 test_2
+   ->  Seq Scan on test_8 test_3
+   ->  Seq Scan on test_9 test_4
+   ->  Seq Scan on test_10 test_5
+(7 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ALL (array[100, 700]);
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_7 test_1
+         Filter: (a > 700)
+   ->  Seq Scan on test_8 test_2
+   ->  Seq Scan on test_9 test_3
+   ->  Seq Scan on test_10 test_4
+(6 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ALL (array[NULL, 700]);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM array_qual.test WHERE a > ALL (array[NULL, NULL]::int4[]);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+SET pg_pathman.enable = f;
+NOTICE:  RuntimeAppend, RuntimeMergeAppend and PartitionFilter nodes and some other options have been disabled
+SELECT count(*) FROM array_qual.test WHERE a > ALL (array[NULL, 700]);
+ count 
+-------
+     0
+(1 row)
+
+SET pg_pathman.enable = t;
+NOTICE:  RuntimeAppend, RuntimeMergeAppend and PartitionFilter nodes and some other options have been enabled
+SELECT count(*) FROM array_qual.test WHERE a > ALL (array[NULL, 700]);
+ count 
+-------
+     0
+(1 row)
+
+/*
+ * Test expr > ANY (... $1 ...)
+ */
+PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ANY (array[$1, 100, 600]);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN         
+---------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (a > 1)
+   ->  Seq Scan on test_2
+   ->  Seq Scan on test_3
+   ->  Seq Scan on test_4
+   ->  Seq Scan on test_5
+   ->  Seq Scan on test_6
+   ->  Seq Scan on test_7
+   ->  Seq Scan on test_8
+   ->  Seq Scan on test_9
+   ->  Seq Scan on test_10
+(12 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN         
+---------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (a > 1)
+   ->  Seq Scan on test_2
+   ->  Seq Scan on test_3
+   ->  Seq Scan on test_4
+   ->  Seq Scan on test_5
+   ->  Seq Scan on test_6
+   ->  Seq Scan on test_7
+   ->  Seq Scan on test_8
+   ->  Seq Scan on test_9
+   ->  Seq Scan on test_10
+(12 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN         
+---------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (a > 1)
+   ->  Seq Scan on test_2
+   ->  Seq Scan on test_3
+   ->  Seq Scan on test_4
+   ->  Seq Scan on test_5
+   ->  Seq Scan on test_6
+   ->  Seq Scan on test_7
+   ->  Seq Scan on test_8
+   ->  Seq Scan on test_9
+   ->  Seq Scan on test_10
+(12 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN         
+---------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (a > 1)
+   ->  Seq Scan on test_2
+   ->  Seq Scan on test_3
+   ->  Seq Scan on test_4
+   ->  Seq Scan on test_5
+   ->  Seq Scan on test_6
+   ->  Seq Scan on test_7
+   ->  Seq Scan on test_8
+   ->  Seq Scan on test_9
+   ->  Seq Scan on test_10
+(12 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN         
+---------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (a > 1)
+   ->  Seq Scan on test_2
+   ->  Seq Scan on test_3
+   ->  Seq Scan on test_4
+   ->  Seq Scan on test_5
+   ->  Seq Scan on test_6
+   ->  Seq Scan on test_7
+   ->  Seq Scan on test_8
+   ->  Seq Scan on test_9
+   ->  Seq Scan on test_10
+(12 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+                    QUERY PLAN                    
+--------------------------------------------------
+ Custom Scan (RuntimeAppend)
+   Prune by: (test.a > ANY (ARRAY[$1, 100, 600]))
+   ->  Seq Scan on test_1 test
+         Filter: (a > ANY (ARRAY[$1, 100, 600]))
+   ->  Seq Scan on test_2 test
+         Filter: (a > ANY (ARRAY[$1, 100, 600]))
+   ->  Seq Scan on test_3 test
+         Filter: (a > ANY (ARRAY[$1, 100, 600]))
+   ->  Seq Scan on test_4 test
+         Filter: (a > ANY (ARRAY[$1, 100, 600]))
+   ->  Seq Scan on test_5 test
+         Filter: (a > ANY (ARRAY[$1, 100, 600]))
+   ->  Seq Scan on test_6 test
+         Filter: (a > ANY (ARRAY[$1, 100, 600]))
+   ->  Seq Scan on test_7 test
+         Filter: (a > ANY (ARRAY[$1, 100, 600]))
+   ->  Seq Scan on test_8 test
+         Filter: (a > ANY (ARRAY[$1, 100, 600]))
+   ->  Seq Scan on test_9 test
+         Filter: (a > ANY (ARRAY[$1, 100, 600]))
+   ->  Seq Scan on test_10 test
+         Filter: (a > ANY (ARRAY[$1, 100, 600]))
+(22 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+                    QUERY PLAN                    
+--------------------------------------------------
+ Custom Scan (RuntimeAppend)
+   Prune by: (test.a > ANY (ARRAY[$1, 100, 600]))
+   ->  Seq Scan on test_1 test
+         Filter: (a > ANY (ARRAY[$1, 100, 600]))
+   ->  Seq Scan on test_2 test
+         Filter: (a > ANY (ARRAY[$1, 100, 600]))
+   ->  Seq Scan on test_3 test
+         Filter: (a > ANY (ARRAY[$1, 100, 600]))
+   ->  Seq Scan on test_4 test
+         Filter: (a > ANY (ARRAY[$1, 100, 600]))
+   ->  Seq Scan on test_5 test
+         Filter: (a > ANY (ARRAY[$1, 100, 600]))
+   ->  Seq Scan on test_6 test
+         Filter: (a > ANY (ARRAY[$1, 100, 600]))
+   ->  Seq Scan on test_7 test
+         Filter: (a > ANY (ARRAY[$1, 100, 600]))
+   ->  Seq Scan on test_8 test
+         Filter: (a > ANY (ARRAY[$1, 100, 600]))
+   ->  Seq Scan on test_9 test
+         Filter: (a > ANY (ARRAY[$1, 100, 600]))
+   ->  Seq Scan on test_10 test
+         Filter: (a > ANY (ARRAY[$1, 100, 600]))
+(22 rows)
+
+DEALLOCATE q;
+PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ANY (array[100, 600, $1]);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN         
+---------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (a > 1)
+   ->  Seq Scan on test_2
+   ->  Seq Scan on test_3
+   ->  Seq Scan on test_4
+   ->  Seq Scan on test_5
+   ->  Seq Scan on test_6
+   ->  Seq Scan on test_7
+   ->  Seq Scan on test_8
+   ->  Seq Scan on test_9
+   ->  Seq Scan on test_10
+(12 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN         
+---------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (a > 1)
+   ->  Seq Scan on test_2
+   ->  Seq Scan on test_3
+   ->  Seq Scan on test_4
+   ->  Seq Scan on test_5
+   ->  Seq Scan on test_6
+   ->  Seq Scan on test_7
+   ->  Seq Scan on test_8
+   ->  Seq Scan on test_9
+   ->  Seq Scan on test_10
+(12 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN         
+---------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (a > 1)
+   ->  Seq Scan on test_2
+   ->  Seq Scan on test_3
+   ->  Seq Scan on test_4
+   ->  Seq Scan on test_5
+   ->  Seq Scan on test_6
+   ->  Seq Scan on test_7
+   ->  Seq Scan on test_8
+   ->  Seq Scan on test_9
+   ->  Seq Scan on test_10
+(12 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN         
+---------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (a > 1)
+   ->  Seq Scan on test_2
+   ->  Seq Scan on test_3
+   ->  Seq Scan on test_4
+   ->  Seq Scan on test_5
+   ->  Seq Scan on test_6
+   ->  Seq Scan on test_7
+   ->  Seq Scan on test_8
+   ->  Seq Scan on test_9
+   ->  Seq Scan on test_10
+(12 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN         
+---------------------------
+ Append
+   ->  Seq Scan on test_1
+         Filter: (a > 1)
+   ->  Seq Scan on test_2
+   ->  Seq Scan on test_3
+   ->  Seq Scan on test_4
+   ->  Seq Scan on test_5
+   ->  Seq Scan on test_6
+   ->  Seq Scan on test_7
+   ->  Seq Scan on test_8
+   ->  Seq Scan on test_9
+   ->  Seq Scan on test_10
+(12 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+                    QUERY PLAN                    
+--------------------------------------------------
+ Custom Scan (RuntimeAppend)
+   Prune by: (test.a > ANY (ARRAY[100, 600, $1]))
+   ->  Seq Scan on test_1 test
+         Filter: (a > ANY (ARRAY[100, 600, $1]))
+   ->  Seq Scan on test_2 test
+         Filter: (a > ANY (ARRAY[100, 600, $1]))
+   ->  Seq Scan on test_3 test
+         Filter: (a > ANY (ARRAY[100, 600, $1]))
+   ->  Seq Scan on test_4 test
+         Filter: (a > ANY (ARRAY[100, 600, $1]))
+   ->  Seq Scan on test_5 test
+         Filter: (a > ANY (ARRAY[100, 600, $1]))
+   ->  Seq Scan on test_6 test
+         Filter: (a > ANY (ARRAY[100, 600, $1]))
+   ->  Seq Scan on test_7 test
+         Filter: (a > ANY (ARRAY[100, 600, $1]))
+   ->  Seq Scan on test_8 test
+         Filter: (a > ANY (ARRAY[100, 600, $1]))
+   ->  Seq Scan on test_9 test
+         Filter: (a > ANY (ARRAY[100, 600, $1]))
+   ->  Seq Scan on test_10 test
+         Filter: (a > ANY (ARRAY[100, 600, $1]))
+(22 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+                    QUERY PLAN                    
+--------------------------------------------------
+ Custom Scan (RuntimeAppend)
+   Prune by: (test.a > ANY (ARRAY[100, 600, $1]))
+   ->  Seq Scan on test_1 test
+         Filter: (a > ANY (ARRAY[100, 600, $1]))
+   ->  Seq Scan on test_2 test
+         Filter: (a > ANY (ARRAY[100, 600, $1]))
+   ->  Seq Scan on test_3 test
+         Filter: (a > ANY (ARRAY[100, 600, $1]))
+   ->  Seq Scan on test_4 test
+         Filter: (a > ANY (ARRAY[100, 600, $1]))
+   ->  Seq Scan on test_5 test
+         Filter: (a > ANY (ARRAY[100, 600, $1]))
+   ->  Seq Scan on test_6 test
+         Filter: (a > ANY (ARRAY[100, 600, $1]))
+   ->  Seq Scan on test_7 test
+         Filter: (a > ANY (ARRAY[100, 600, $1]))
+   ->  Seq Scan on test_8 test
+         Filter: (a > ANY (ARRAY[100, 600, $1]))
+   ->  Seq Scan on test_9 test
+         Filter: (a > ANY (ARRAY[100, 600, $1]))
+   ->  Seq Scan on test_10 test
+         Filter: (a > ANY (ARRAY[100, 600, $1]))
+(22 rows)
+
+DEALLOCATE q;
+PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ANY (array[NULL, $1]);
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+                     QUERY PLAN                      
+-----------------------------------------------------
+ Append
+   ->  Seq Scan on test_5 test_1
+         Filter: (a > ANY ('{NULL,500}'::integer[]))
+   ->  Seq Scan on test_6 test_2
+   ->  Seq Scan on test_7 test_3
+   ->  Seq Scan on test_8 test_4
+   ->  Seq Scan on test_9 test_5
+   ->  Seq Scan on test_10 test_6
+(8 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+                     QUERY PLAN                      
+-----------------------------------------------------
+ Append
+   ->  Seq Scan on test_5 test_1
+         Filter: (a > ANY ('{NULL,500}'::integer[]))
+   ->  Seq Scan on test_6 test_2
+   ->  Seq Scan on test_7 test_3
+   ->  Seq Scan on test_8 test_4
+   ->  Seq Scan on test_9 test_5
+   ->  Seq Scan on test_10 test_6
+(8 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+                     QUERY PLAN                      
+-----------------------------------------------------
+ Append
+   ->  Seq Scan on test_5 test_1
+         Filter: (a > ANY ('{NULL,500}'::integer[]))
+   ->  Seq Scan on test_6 test_2
+   ->  Seq Scan on test_7 test_3
+   ->  Seq Scan on test_8 test_4
+   ->  Seq Scan on test_9 test_5
+   ->  Seq Scan on test_10 test_6
+(8 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+                     QUERY PLAN                      
+-----------------------------------------------------
+ Append
+   ->  Seq Scan on test_5 test_1
+         Filter: (a > ANY ('{NULL,500}'::integer[]))
+   ->  Seq Scan on test_6 test_2
+   ->  Seq Scan on test_7 test_3
+   ->  Seq Scan on test_8 test_4
+   ->  Seq Scan on test_9 test_5
+   ->  Seq Scan on test_10 test_6
+(8 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+                     QUERY PLAN                      
+-----------------------------------------------------
+ Append
+   ->  Seq Scan on test_5 test_1
+         Filter: (a > ANY ('{NULL,500}'::integer[]))
+   ->  Seq Scan on test_6 test_2
+   ->  Seq Scan on test_7 test_3
+   ->  Seq Scan on test_8 test_4
+   ->  Seq Scan on test_9 test_5
+   ->  Seq Scan on test_10 test_6
+(8 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+                      QUERY PLAN                       
+-------------------------------------------------------
+ Custom Scan (RuntimeAppend)
+   Prune by: (test.a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_1 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_2 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_3 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_4 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_5 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_6 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_7 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_8 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_9 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_10 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+(22 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+                      QUERY PLAN                       
+-------------------------------------------------------
+ Custom Scan (RuntimeAppend)
+   Prune by: (test.a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_1 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_2 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_3 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_4 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_5 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_6 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_7 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_8 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_9 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+   ->  Seq Scan on test_10 test
+         Filter: (a > ANY (ARRAY[NULL::integer, $1]))
+(22 rows)
+
+EXECUTE q(NULL);
+ a | b 
+---+---
+(0 rows)
+
+DEALLOCATE q;
+/*
+ * Test expr > ALL (... $1 ...)
+ */
+PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ALL (array[$1, 1000000, 600]);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+DEALLOCATE q;
+PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ALL (array[$1, NULL, 600]);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+DEALLOCATE q;
+PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ALL (array[NULL, $1, NULL]);
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(500);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXECUTE q(NULL);
+ a | b 
+---+---
+(0 rows)
+
+DEALLOCATE q;
+PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ALL (array[$1, 100, 600]);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_6 test_1
+         Filter: (a > 600)
+   ->  Seq Scan on test_7 test_2
+   ->  Seq Scan on test_8 test_3
+   ->  Seq Scan on test_9 test_4
+   ->  Seq Scan on test_10 test_5
+(7 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_6 test_1
+         Filter: (a > 600)
+   ->  Seq Scan on test_7 test_2
+   ->  Seq Scan on test_8 test_3
+   ->  Seq Scan on test_9 test_4
+   ->  Seq Scan on test_10 test_5
+(7 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_6 test_1
+         Filter: (a > 600)
+   ->  Seq Scan on test_7 test_2
+   ->  Seq Scan on test_8 test_3
+   ->  Seq Scan on test_9 test_4
+   ->  Seq Scan on test_10 test_5
+(7 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_6 test_1
+         Filter: (a > 600)
+   ->  Seq Scan on test_7 test_2
+   ->  Seq Scan on test_8 test_3
+   ->  Seq Scan on test_9 test_4
+   ->  Seq Scan on test_10 test_5
+(7 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_6 test_1
+         Filter: (a > 600)
+   ->  Seq Scan on test_7 test_2
+   ->  Seq Scan on test_8 test_3
+   ->  Seq Scan on test_9 test_4
+   ->  Seq Scan on test_10 test_5
+(7 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+                    QUERY PLAN                    
+--------------------------------------------------
+ Custom Scan (RuntimeAppend)
+   Prune by: (test.a > ALL (ARRAY[$1, 100, 600]))
+   ->  Seq Scan on test_6 test
+         Filter: (a > ALL (ARRAY[$1, 100, 600]))
+   ->  Seq Scan on test_7 test
+         Filter: (a > ALL (ARRAY[$1, 100, 600]))
+   ->  Seq Scan on test_8 test
+         Filter: (a > ALL (ARRAY[$1, 100, 600]))
+   ->  Seq Scan on test_9 test
+         Filter: (a > ALL (ARRAY[$1, 100, 600]))
+   ->  Seq Scan on test_10 test
+         Filter: (a > ALL (ARRAY[$1, 100, 600]))
+(12 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+                    QUERY PLAN                    
+--------------------------------------------------
+ Custom Scan (RuntimeAppend)
+   Prune by: (test.a > ALL (ARRAY[$1, 100, 600]))
+   ->  Seq Scan on test_6 test
+         Filter: (a > ALL (ARRAY[$1, 100, 600]))
+   ->  Seq Scan on test_7 test
+         Filter: (a > ALL (ARRAY[$1, 100, 600]))
+   ->  Seq Scan on test_8 test
+         Filter: (a > ALL (ARRAY[$1, 100, 600]))
+   ->  Seq Scan on test_9 test
+         Filter: (a > ALL (ARRAY[$1, 100, 600]))
+   ->  Seq Scan on test_10 test
+         Filter: (a > ALL (ARRAY[$1, 100, 600]))
+(12 rows)
+
+DEALLOCATE q;
+PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ALL (array[100, $1, 600]);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_6 test_1
+         Filter: (a > 600)
+   ->  Seq Scan on test_7 test_2
+   ->  Seq Scan on test_8 test_3
+   ->  Seq Scan on test_9 test_4
+   ->  Seq Scan on test_10 test_5
+(7 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_6 test_1
+         Filter: (a > 600)
+   ->  Seq Scan on test_7 test_2
+   ->  Seq Scan on test_8 test_3
+   ->  Seq Scan on test_9 test_4
+   ->  Seq Scan on test_10 test_5
+(7 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_6 test_1
+         Filter: (a > 600)
+   ->  Seq Scan on test_7 test_2
+   ->  Seq Scan on test_8 test_3
+   ->  Seq Scan on test_9 test_4
+   ->  Seq Scan on test_10 test_5
+(7 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_6 test_1
+         Filter: (a > 600)
+   ->  Seq Scan on test_7 test_2
+   ->  Seq Scan on test_8 test_3
+   ->  Seq Scan on test_9 test_4
+   ->  Seq Scan on test_10 test_5
+(7 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_6 test_1
+         Filter: (a > 600)
+   ->  Seq Scan on test_7 test_2
+   ->  Seq Scan on test_8 test_3
+   ->  Seq Scan on test_9 test_4
+   ->  Seq Scan on test_10 test_5
+(7 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+                    QUERY PLAN                    
+--------------------------------------------------
+ Custom Scan (RuntimeAppend)
+   Prune by: (test.a > ALL (ARRAY[100, $1, 600]))
+   ->  Seq Scan on test_6 test
+         Filter: (a > ALL (ARRAY[100, $1, 600]))
+   ->  Seq Scan on test_7 test
+         Filter: (a > ALL (ARRAY[100, $1, 600]))
+   ->  Seq Scan on test_8 test
+         Filter: (a > ALL (ARRAY[100, $1, 600]))
+   ->  Seq Scan on test_9 test
+         Filter: (a > ALL (ARRAY[100, $1, 600]))
+   ->  Seq Scan on test_10 test
+         Filter: (a > ALL (ARRAY[100, $1, 600]))
+(12 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+                    QUERY PLAN                    
+--------------------------------------------------
+ Custom Scan (RuntimeAppend)
+   Prune by: (test.a > ALL (ARRAY[100, $1, 600]))
+   ->  Seq Scan on test_6 test
+         Filter: (a > ALL (ARRAY[100, $1, 600]))
+   ->  Seq Scan on test_7 test
+         Filter: (a > ALL (ARRAY[100, $1, 600]))
+   ->  Seq Scan on test_8 test
+         Filter: (a > ALL (ARRAY[100, $1, 600]))
+   ->  Seq Scan on test_9 test
+         Filter: (a > ALL (ARRAY[100, $1, 600]))
+   ->  Seq Scan on test_10 test
+         Filter: (a > ALL (ARRAY[100, $1, 600]))
+(12 rows)
+
+DEALLOCATE q;
+PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ALL (array[100, 600, $1]);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_6 test_1
+         Filter: (a > 600)
+   ->  Seq Scan on test_7 test_2
+   ->  Seq Scan on test_8 test_3
+   ->  Seq Scan on test_9 test_4
+   ->  Seq Scan on test_10 test_5
+(7 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_6 test_1
+         Filter: (a > 600)
+   ->  Seq Scan on test_7 test_2
+   ->  Seq Scan on test_8 test_3
+   ->  Seq Scan on test_9 test_4
+   ->  Seq Scan on test_10 test_5
+(7 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_6 test_1
+         Filter: (a > 600)
+   ->  Seq Scan on test_7 test_2
+   ->  Seq Scan on test_8 test_3
+   ->  Seq Scan on test_9 test_4
+   ->  Seq Scan on test_10 test_5
+(7 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_6 test_1
+         Filter: (a > 600)
+   ->  Seq Scan on test_7 test_2
+   ->  Seq Scan on test_8 test_3
+   ->  Seq Scan on test_9 test_4
+   ->  Seq Scan on test_10 test_5
+(7 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_6 test_1
+         Filter: (a > 600)
+   ->  Seq Scan on test_7 test_2
+   ->  Seq Scan on test_8 test_3
+   ->  Seq Scan on test_9 test_4
+   ->  Seq Scan on test_10 test_5
+(7 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+                    QUERY PLAN                    
+--------------------------------------------------
+ Custom Scan (RuntimeAppend)
+   Prune by: (test.a > ALL (ARRAY[100, 600, $1]))
+   ->  Seq Scan on test_6 test
+         Filter: (a > ALL (ARRAY[100, 600, $1]))
+   ->  Seq Scan on test_7 test
+         Filter: (a > ALL (ARRAY[100, 600, $1]))
+   ->  Seq Scan on test_8 test
+         Filter: (a > ALL (ARRAY[100, 600, $1]))
+   ->  Seq Scan on test_9 test
+         Filter: (a > ALL (ARRAY[100, 600, $1]))
+   ->  Seq Scan on test_10 test
+         Filter: (a > ALL (ARRAY[100, 600, $1]))
+(12 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+                    QUERY PLAN                    
+--------------------------------------------------
+ Custom Scan (RuntimeAppend)
+   Prune by: (test.a > ALL (ARRAY[100, 600, $1]))
+   ->  Seq Scan on test_6 test
+         Filter: (a > ALL (ARRAY[100, 600, $1]))
+   ->  Seq Scan on test_7 test
+         Filter: (a > ALL (ARRAY[100, 600, $1]))
+   ->  Seq Scan on test_8 test
+         Filter: (a > ALL (ARRAY[100, 600, $1]))
+   ->  Seq Scan on test_9 test
+         Filter: (a > ALL (ARRAY[100, 600, $1]))
+   ->  Seq Scan on test_10 test
+         Filter: (a > ALL (ARRAY[100, 600, $1]))
+(12 rows)
+
+DEALLOCATE q;
+PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ALL (array[array[100, NULL], array[1, $1]]);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+DEALLOCATE q;
+PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ALL (array[array[100, 600], array[1, $1]]);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_6 test_1
+         Filter: (a > 600)
+   ->  Seq Scan on test_7 test_2
+   ->  Seq Scan on test_8 test_3
+   ->  Seq Scan on test_9 test_4
+   ->  Seq Scan on test_10 test_5
+(7 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_6 test_1
+         Filter: (a > 600)
+   ->  Seq Scan on test_7 test_2
+   ->  Seq Scan on test_8 test_3
+   ->  Seq Scan on test_9 test_4
+   ->  Seq Scan on test_10 test_5
+(7 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_6 test_1
+         Filter: (a > 600)
+   ->  Seq Scan on test_7 test_2
+   ->  Seq Scan on test_8 test_3
+   ->  Seq Scan on test_9 test_4
+   ->  Seq Scan on test_10 test_5
+(7 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_6 test_1
+         Filter: (a > 600)
+   ->  Seq Scan on test_7 test_2
+   ->  Seq Scan on test_8 test_3
+   ->  Seq Scan on test_9 test_4
+   ->  Seq Scan on test_10 test_5
+(7 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_6 test_1
+         Filter: (a > 600)
+   ->  Seq Scan on test_7 test_2
+   ->  Seq Scan on test_8 test_3
+   ->  Seq Scan on test_9 test_4
+   ->  Seq Scan on test_10 test_5
+(7 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+                                QUERY PLAN                                
+--------------------------------------------------------------------------
+ Custom Scan (RuntimeAppend)
+   Prune by: (test.a > ALL (ARRAY['{100,600}'::integer[], ARRAY[1, $1]]))
+   ->  Seq Scan on test_6 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], ARRAY[1, $1]]))
+   ->  Seq Scan on test_7 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], ARRAY[1, $1]]))
+   ->  Seq Scan on test_8 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], ARRAY[1, $1]]))
+   ->  Seq Scan on test_9 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], ARRAY[1, $1]]))
+   ->  Seq Scan on test_10 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], ARRAY[1, $1]]))
+(12 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+                                QUERY PLAN                                
+--------------------------------------------------------------------------
+ Custom Scan (RuntimeAppend)
+   Prune by: (test.a > ALL (ARRAY['{100,600}'::integer[], ARRAY[1, $1]]))
+   ->  Seq Scan on test_6 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], ARRAY[1, $1]]))
+   ->  Seq Scan on test_7 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], ARRAY[1, $1]]))
+   ->  Seq Scan on test_8 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], ARRAY[1, $1]]))
+   ->  Seq Scan on test_9 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], ARRAY[1, $1]]))
+   ->  Seq Scan on test_10 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], ARRAY[1, $1]]))
+(12 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(999);
+                                QUERY PLAN                                
+--------------------------------------------------------------------------
+ Custom Scan (RuntimeAppend)
+   Prune by: (test.a > ALL (ARRAY['{100,600}'::integer[], ARRAY[1, $1]]))
+   ->  Seq Scan on test_6 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], ARRAY[1, $1]]))
+   ->  Seq Scan on test_7 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], ARRAY[1, $1]]))
+   ->  Seq Scan on test_8 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], ARRAY[1, $1]]))
+   ->  Seq Scan on test_9 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], ARRAY[1, $1]]))
+   ->  Seq Scan on test_10 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], ARRAY[1, $1]]))
+(12 rows)
+
+/* check query plan: EXECUTE q(999) */
+DO language plpgsql
+$$
+	DECLARE
+		query	text;
+		result	jsonb;
+		num		int;
+
+	BEGIN
+		query := 'EXECUTE q(999)';
+
+		EXECUTE format('EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, FORMAT JSON) %s', query)
+		INTO result;
+
+		SELECT count(*) FROM jsonb_array_elements_text(result->0->'Plan'->'Plans') INTO num;
+
+		RAISE notice '%: number of partitions: %', query, num;
+	END
+$$;
+NOTICE:  EXECUTE q(999): number of partitions: 5
+DEALLOCATE q;
+PREPARE q(int4[]) AS SELECT * FROM array_qual.test WHERE a > ALL (array[array[100, 600], $1]);
+EXPLAIN (COSTS OFF) EXECUTE q('{1, 1}');
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_6 test_1
+         Filter: (a > 600)
+   ->  Seq Scan on test_7 test_2
+   ->  Seq Scan on test_8 test_3
+   ->  Seq Scan on test_9 test_4
+   ->  Seq Scan on test_10 test_5
+(7 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q('{1, 1}');
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_6 test_1
+         Filter: (a > 600)
+   ->  Seq Scan on test_7 test_2
+   ->  Seq Scan on test_8 test_3
+   ->  Seq Scan on test_9 test_4
+   ->  Seq Scan on test_10 test_5
+(7 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q('{1, 1}');
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_6 test_1
+         Filter: (a > 600)
+   ->  Seq Scan on test_7 test_2
+   ->  Seq Scan on test_8 test_3
+   ->  Seq Scan on test_9 test_4
+   ->  Seq Scan on test_10 test_5
+(7 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q('{1, 1}');
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_6 test_1
+         Filter: (a > 600)
+   ->  Seq Scan on test_7 test_2
+   ->  Seq Scan on test_8 test_3
+   ->  Seq Scan on test_9 test_4
+   ->  Seq Scan on test_10 test_5
+(7 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q('{1, 1}');
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_6 test_1
+         Filter: (a > 600)
+   ->  Seq Scan on test_7 test_2
+   ->  Seq Scan on test_8 test_3
+   ->  Seq Scan on test_9 test_4
+   ->  Seq Scan on test_10 test_5
+(7 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q('{1, 1}');
+                           QUERY PLAN                           
+----------------------------------------------------------------
+ Custom Scan (RuntimeAppend)
+   Prune by: (test.a > ALL (ARRAY['{100,600}'::integer[], $1]))
+   ->  Seq Scan on test_6 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], $1]))
+   ->  Seq Scan on test_7 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], $1]))
+   ->  Seq Scan on test_8 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], $1]))
+   ->  Seq Scan on test_9 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], $1]))
+   ->  Seq Scan on test_10 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], $1]))
+(12 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q('{1, 1}');
+                           QUERY PLAN                           
+----------------------------------------------------------------
+ Custom Scan (RuntimeAppend)
+   Prune by: (test.a > ALL (ARRAY['{100,600}'::integer[], $1]))
+   ->  Seq Scan on test_6 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], $1]))
+   ->  Seq Scan on test_7 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], $1]))
+   ->  Seq Scan on test_8 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], $1]))
+   ->  Seq Scan on test_9 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], $1]))
+   ->  Seq Scan on test_10 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], $1]))
+(12 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q('{1, 999}');
+                           QUERY PLAN                           
+----------------------------------------------------------------
+ Custom Scan (RuntimeAppend)
+   Prune by: (test.a > ALL (ARRAY['{100,600}'::integer[], $1]))
+   ->  Seq Scan on test_6 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], $1]))
+   ->  Seq Scan on test_7 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], $1]))
+   ->  Seq Scan on test_8 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], $1]))
+   ->  Seq Scan on test_9 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], $1]))
+   ->  Seq Scan on test_10 test
+         Filter: (a > ALL (ARRAY['{100,600}'::integer[], $1]))
+(12 rows)
+
+/* check query plan: EXECUTE q('{1, 999}') */
+DO language plpgsql
+$$
+	DECLARE
+		query	text;
+		result	jsonb;
+		num		int;
+
+	BEGIN
+		query := 'EXECUTE q(''{1, 999}'')';
+
+		EXECUTE format('EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, FORMAT JSON) %s', query)
+		INTO result;
+
+		SELECT count(*) FROM jsonb_array_elements_text(result->0->'Plan'->'Plans') INTO num;
+
+		RAISE notice '%: number of partitions: %', query, num;
+	END
+$$;
+NOTICE:  EXECUTE q('{1, 999}'): number of partitions: 1
+DEALLOCATE q;
+PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a > ALL (array[$1, 898]);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_9 test_1
+         Filter: (a > 898)
+   ->  Seq Scan on test_10 test_2
+(4 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_9 test_1
+         Filter: (a > 898)
+   ->  Seq Scan on test_10 test_2
+(4 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_9 test_1
+         Filter: (a > 898)
+   ->  Seq Scan on test_10 test_2
+(4 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_9 test_1
+         Filter: (a > 898)
+   ->  Seq Scan on test_10 test_2
+(4 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+            QUERY PLAN            
+----------------------------------
+ Append
+   ->  Seq Scan on test_9 test_1
+         Filter: (a > 898)
+   ->  Seq Scan on test_10 test_2
+(4 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+                 QUERY PLAN                  
+---------------------------------------------
+ Custom Scan (RuntimeAppend)
+   Prune by: (test.a > ALL (ARRAY[$1, 898]))
+   ->  Seq Scan on test_9 test
+         Filter: (a > ALL (ARRAY[$1, 898]))
+   ->  Seq Scan on test_10 test
+         Filter: (a > ALL (ARRAY[$1, 898]))
+(6 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+                 QUERY PLAN                  
+---------------------------------------------
+ Custom Scan (RuntimeAppend)
+   Prune by: (test.a > ALL (ARRAY[$1, 898]))
+   ->  Seq Scan on test_9 test
+         Filter: (a > ALL (ARRAY[$1, 898]))
+   ->  Seq Scan on test_10 test
+         Filter: (a > ALL (ARRAY[$1, 898]))
+(6 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(900); /* check quals optimization */
+                 QUERY PLAN                  
+---------------------------------------------
+ Custom Scan (RuntimeAppend)
+   Prune by: (test.a > ALL (ARRAY[$1, 898]))
+   ->  Seq Scan on test_9 test
+         Filter: (a > ALL (ARRAY[$1, 898]))
+   ->  Seq Scan on test_10 test
+         Filter: (a > ALL (ARRAY[$1, 898]))
+(6 rows)
+
+EXECUTE q(1000);
+ a | b 
+---+---
+(0 rows)
+
+/* check query plan: EXECUTE q(999) */
+DO language plpgsql
+$$
+	DECLARE
+		query	text;
+		result	jsonb;
+		num		int;
+
+	BEGIN
+		query := 'EXECUTE q(999)';
+
+		EXECUTE format('EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, FORMAT JSON) %s', query)
+		INTO result;
+
+		SELECT count(*) FROM jsonb_array_elements_text(result->0->'Plan'->'Plans') INTO num;
+
+		RAISE notice '%: number of partitions: %', query, num;
+	END
+$$;
+NOTICE:  EXECUTE q(999): number of partitions: 1
+DEALLOCATE q;
+/*
+ * Test expr = ALL (... $1 ...)
+ */
+PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a = ALL (array[$1, 100, 600]);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+DEALLOCATE q;
+PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a = ALL (array[100, 600, $1]);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+DEALLOCATE q;
+PREPARE q(int4) AS SELECT * FROM array_qual.test WHERE a = ALL (array[100, $1]);
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+                 QUERY PLAN                  
+---------------------------------------------
+ Custom Scan (RuntimeAppend)
+   Prune by: (test.a = ALL (ARRAY[100, $1]))
+   ->  Seq Scan on test_1 test
+         Filter: (a = ALL (ARRAY[100, $1]))
+(4 rows)
+
+EXPLAIN (COSTS OFF) EXECUTE q(1);
+                 QUERY PLAN                  
+---------------------------------------------
+ Custom Scan (RuntimeAppend)
+   Prune by: (test.a = ALL (ARRAY[100, $1]))
+   ->  Seq Scan on test_1 test
+         Filter: (a = ALL (ARRAY[100, $1]))
+(4 rows)
+
+EXECUTE q(1);
+ a | b 
+---+---
+(0 rows)
+
+EXECUTE q(100);
+  a  |  b  
+-----+-----
+ 100 | 100
+(1 row)
+
+DEALLOCATE q;
+DROP TABLE array_qual.test CASCADE;
+NOTICE:  drop cascades to 11 other objects
+DROP SCHEMA array_qual;
+DROP EXTENSION pg_pathman;

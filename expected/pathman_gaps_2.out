@@ -1,0 +1,819 @@
+/*
+ * Since 8edd0e794 (>= 12) Append nodes with single subplan are eliminated,
+ * causing different output; pathman_gaps_1.out is the updated version.
+ */
+\set VERBOSITY terse
+SET search_path = 'public';
+CREATE EXTENSION pg_pathman;
+CREATE SCHEMA gaps;
+CREATE TABLE gaps.test_1(val INT8 NOT NULL);
+SELECT create_range_partitions('gaps.test_1', 'val', 1, 10, 3);
+ create_range_partitions 
+-------------------------
+                       3
+(1 row)
+
+DROP TABLE gaps.test_1_2;
+CREATE TABLE gaps.test_2(val INT8 NOT NULL);
+SELECT create_range_partitions('gaps.test_2', 'val', 1, 10, 5);
+ create_range_partitions 
+-------------------------
+                       5
+(1 row)
+
+DROP TABLE gaps.test_2_3;
+CREATE TABLE gaps.test_3(val INT8 NOT NULL);
+SELECT create_range_partitions('gaps.test_3', 'val', 1, 10, 8);
+ create_range_partitions 
+-------------------------
+                       8
+(1 row)
+
+DROP TABLE gaps.test_3_4;
+CREATE TABLE gaps.test_4(val INT8 NOT NULL);
+SELECT create_range_partitions('gaps.test_4', 'val', 1, 10, 11);
+ create_range_partitions 
+-------------------------
+                      11
+(1 row)
+
+DROP TABLE gaps.test_4_4;
+DROP TABLE gaps.test_4_5;
+/* Check existing partitions */
+SELECT * FROM pathman_partition_list ORDER BY parent, partition;
+   parent    |   partition    | parttype | expr | range_min | range_max 
+-------------+----------------+----------+------+-----------+-----------
+ gaps.test_1 | gaps.test_1_1  |        2 | val  | 1         | 11
+ gaps.test_1 | gaps.test_1_3  |        2 | val  | 21        | 31
+ gaps.test_2 | gaps.test_2_1  |        2 | val  | 1         | 11
+ gaps.test_2 | gaps.test_2_2  |        2 | val  | 11        | 21
+ gaps.test_2 | gaps.test_2_4  |        2 | val  | 31        | 41
+ gaps.test_2 | gaps.test_2_5  |        2 | val  | 41        | 51
+ gaps.test_3 | gaps.test_3_1  |        2 | val  | 1         | 11
+ gaps.test_3 | gaps.test_3_2  |        2 | val  | 11        | 21
+ gaps.test_3 | gaps.test_3_3  |        2 | val  | 21        | 31
+ gaps.test_3 | gaps.test_3_5  |        2 | val  | 41        | 51
+ gaps.test_3 | gaps.test_3_6  |        2 | val  | 51        | 61
+ gaps.test_3 | gaps.test_3_7  |        2 | val  | 61        | 71
+ gaps.test_3 | gaps.test_3_8  |        2 | val  | 71        | 81
+ gaps.test_4 | gaps.test_4_1  |        2 | val  | 1         | 11
+ gaps.test_4 | gaps.test_4_2  |        2 | val  | 11        | 21
+ gaps.test_4 | gaps.test_4_3  |        2 | val  | 21        | 31
+ gaps.test_4 | gaps.test_4_6  |        2 | val  | 51        | 61
+ gaps.test_4 | gaps.test_4_7  |        2 | val  | 61        | 71
+ gaps.test_4 | gaps.test_4_8  |        2 | val  | 71        | 81
+ gaps.test_4 | gaps.test_4_9  |        2 | val  | 81        | 91
+ gaps.test_4 | gaps.test_4_10 |        2 | val  | 91        | 101
+ gaps.test_4 | gaps.test_4_11 |        2 | val  | 101       | 111
+(22 rows)
+
+/* Pivot values */
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_1 WHERE val =  11;
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_1 WHERE val =  16;
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_1 WHERE val =  21;
+         QUERY PLAN          
+-----------------------------
+ Seq Scan on test_1_3 test_1
+   Filter: (val = 21)
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_1 WHERE val <  11;
+         QUERY PLAN          
+-----------------------------
+ Seq Scan on test_1_1 test_1
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_1 WHERE val <= 11;
+         QUERY PLAN          
+-----------------------------
+ Seq Scan on test_1_1 test_1
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_1 WHERE val <  16;
+         QUERY PLAN          
+-----------------------------
+ Seq Scan on test_1_1 test_1
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_1 WHERE val <= 16;
+         QUERY PLAN          
+-----------------------------
+ Seq Scan on test_1_1 test_1
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_1 WHERE val <  21;
+         QUERY PLAN          
+-----------------------------
+ Seq Scan on test_1_1 test_1
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_1 WHERE val <= 21;
+             QUERY PLAN              
+-------------------------------------
+ Append
+   ->  Seq Scan on test_1_1
+   ->  Seq Scan on test_1_3 test_1_2
+         Filter: (val <= 21)
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_1 WHERE val >  11;
+         QUERY PLAN          
+-----------------------------
+ Seq Scan on test_1_3 test_1
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_1 WHERE val >= 11;
+         QUERY PLAN          
+-----------------------------
+ Seq Scan on test_1_3 test_1
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_1 WHERE val >  16;
+         QUERY PLAN          
+-----------------------------
+ Seq Scan on test_1_3 test_1
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_1 WHERE val >= 16;
+         QUERY PLAN          
+-----------------------------
+ Seq Scan on test_1_3 test_1
+(1 row)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_1 WHERE val >  21;
+         QUERY PLAN          
+-----------------------------
+ Seq Scan on test_1_3 test_1
+   Filter: (val > 21)
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_1 WHERE val >= 21;
+         QUERY PLAN          
+-----------------------------
+ Seq Scan on test_1_3 test_1
+(1 row)
+
+/* Pivot values */
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_2 WHERE val =  21;
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_2 WHERE val =  26;
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_2 WHERE val =  31;
+         QUERY PLAN          
+-----------------------------
+ Seq Scan on test_2_4 test_2
+   Filter: (val = 31)
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_2 WHERE val <  21;
+         QUERY PLAN         
+----------------------------
+ Append
+   ->  Seq Scan on test_2_1
+   ->  Seq Scan on test_2_2
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_2 WHERE val <= 21;
+         QUERY PLAN         
+----------------------------
+ Append
+   ->  Seq Scan on test_2_1
+   ->  Seq Scan on test_2_2
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_2 WHERE val <  26;
+         QUERY PLAN         
+----------------------------
+ Append
+   ->  Seq Scan on test_2_1
+   ->  Seq Scan on test_2_2
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_2 WHERE val <= 26;
+         QUERY PLAN         
+----------------------------
+ Append
+   ->  Seq Scan on test_2_1
+   ->  Seq Scan on test_2_2
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_2 WHERE val <  31;
+         QUERY PLAN         
+----------------------------
+ Append
+   ->  Seq Scan on test_2_1
+   ->  Seq Scan on test_2_2
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_2 WHERE val <= 31;
+             QUERY PLAN              
+-------------------------------------
+ Append
+   ->  Seq Scan on test_2_1
+   ->  Seq Scan on test_2_2
+   ->  Seq Scan on test_2_4 test_2_3
+         Filter: (val <= 31)
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_2 WHERE val <  41;
+             QUERY PLAN              
+-------------------------------------
+ Append
+   ->  Seq Scan on test_2_1
+   ->  Seq Scan on test_2_2
+   ->  Seq Scan on test_2_4 test_2_3
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_2 WHERE val <= 41;
+             QUERY PLAN              
+-------------------------------------
+ Append
+   ->  Seq Scan on test_2_1
+   ->  Seq Scan on test_2_2
+   ->  Seq Scan on test_2_4 test_2_3
+   ->  Seq Scan on test_2_5 test_2_4
+         Filter: (val <= 41)
+(6 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_2 WHERE val >  11;
+             QUERY PLAN              
+-------------------------------------
+ Append
+   ->  Seq Scan on test_2_2 test_2_1
+         Filter: (val > 11)
+   ->  Seq Scan on test_2_4 test_2_2
+   ->  Seq Scan on test_2_5 test_2_3
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_2 WHERE val >= 11;
+             QUERY PLAN              
+-------------------------------------
+ Append
+   ->  Seq Scan on test_2_2 test_2_1
+   ->  Seq Scan on test_2_4 test_2_2
+   ->  Seq Scan on test_2_5 test_2_3
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_2 WHERE val >  21;
+             QUERY PLAN              
+-------------------------------------
+ Append
+   ->  Seq Scan on test_2_4 test_2_1
+   ->  Seq Scan on test_2_5 test_2_2
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_2 WHERE val >= 21;
+             QUERY PLAN              
+-------------------------------------
+ Append
+   ->  Seq Scan on test_2_4 test_2_1
+   ->  Seq Scan on test_2_5 test_2_2
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_2 WHERE val >  26;
+             QUERY PLAN              
+-------------------------------------
+ Append
+   ->  Seq Scan on test_2_4 test_2_1
+   ->  Seq Scan on test_2_5 test_2_2
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_2 WHERE val >= 26;
+             QUERY PLAN              
+-------------------------------------
+ Append
+   ->  Seq Scan on test_2_4 test_2_1
+   ->  Seq Scan on test_2_5 test_2_2
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_2 WHERE val >  31;
+             QUERY PLAN              
+-------------------------------------
+ Append
+   ->  Seq Scan on test_2_4 test_2_1
+         Filter: (val > 31)
+   ->  Seq Scan on test_2_5 test_2_2
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_2 WHERE val >= 31;
+             QUERY PLAN              
+-------------------------------------
+ Append
+   ->  Seq Scan on test_2_4 test_2_1
+   ->  Seq Scan on test_2_5 test_2_2
+(3 rows)
+
+/* Pivot values */
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_3 WHERE val =  31;
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_3 WHERE val =  36;
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_3 WHERE val =  41;
+         QUERY PLAN          
+-----------------------------
+ Seq Scan on test_3_5 test_3
+   Filter: (val = 41)
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_3 WHERE val <  31;
+         QUERY PLAN         
+----------------------------
+ Append
+   ->  Seq Scan on test_3_1
+   ->  Seq Scan on test_3_2
+   ->  Seq Scan on test_3_3
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_3 WHERE val <= 31;
+         QUERY PLAN         
+----------------------------
+ Append
+   ->  Seq Scan on test_3_1
+   ->  Seq Scan on test_3_2
+   ->  Seq Scan on test_3_3
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_3 WHERE val <  36;
+         QUERY PLAN         
+----------------------------
+ Append
+   ->  Seq Scan on test_3_1
+   ->  Seq Scan on test_3_2
+   ->  Seq Scan on test_3_3
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_3 WHERE val <= 36;
+         QUERY PLAN         
+----------------------------
+ Append
+   ->  Seq Scan on test_3_1
+   ->  Seq Scan on test_3_2
+   ->  Seq Scan on test_3_3
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_3 WHERE val <  41;
+         QUERY PLAN         
+----------------------------
+ Append
+   ->  Seq Scan on test_3_1
+   ->  Seq Scan on test_3_2
+   ->  Seq Scan on test_3_3
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_3 WHERE val <= 41;
+             QUERY PLAN              
+-------------------------------------
+ Append
+   ->  Seq Scan on test_3_1
+   ->  Seq Scan on test_3_2
+   ->  Seq Scan on test_3_3
+   ->  Seq Scan on test_3_5 test_3_4
+         Filter: (val <= 41)
+(6 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_3 WHERE val <  51;
+             QUERY PLAN              
+-------------------------------------
+ Append
+   ->  Seq Scan on test_3_1
+   ->  Seq Scan on test_3_2
+   ->  Seq Scan on test_3_3
+   ->  Seq Scan on test_3_5 test_3_4
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_3 WHERE val <= 51;
+             QUERY PLAN              
+-------------------------------------
+ Append
+   ->  Seq Scan on test_3_1
+   ->  Seq Scan on test_3_2
+   ->  Seq Scan on test_3_3
+   ->  Seq Scan on test_3_5 test_3_4
+   ->  Seq Scan on test_3_6 test_3_5
+         Filter: (val <= 51)
+(7 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_3 WHERE val >  21;
+             QUERY PLAN              
+-------------------------------------
+ Append
+   ->  Seq Scan on test_3_3 test_3_1
+         Filter: (val > 21)
+   ->  Seq Scan on test_3_5 test_3_2
+   ->  Seq Scan on test_3_6 test_3_3
+   ->  Seq Scan on test_3_7 test_3_4
+   ->  Seq Scan on test_3_8 test_3_5
+(7 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_3 WHERE val >= 21;
+             QUERY PLAN              
+-------------------------------------
+ Append
+   ->  Seq Scan on test_3_3 test_3_1
+   ->  Seq Scan on test_3_5 test_3_2
+   ->  Seq Scan on test_3_6 test_3_3
+   ->  Seq Scan on test_3_7 test_3_4
+   ->  Seq Scan on test_3_8 test_3_5
+(6 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_3 WHERE val >  31;
+             QUERY PLAN              
+-------------------------------------
+ Append
+   ->  Seq Scan on test_3_5 test_3_1
+   ->  Seq Scan on test_3_6 test_3_2
+   ->  Seq Scan on test_3_7 test_3_3
+   ->  Seq Scan on test_3_8 test_3_4
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_3 WHERE val >= 31;
+             QUERY PLAN              
+-------------------------------------
+ Append
+   ->  Seq Scan on test_3_5 test_3_1
+   ->  Seq Scan on test_3_6 test_3_2
+   ->  Seq Scan on test_3_7 test_3_3
+   ->  Seq Scan on test_3_8 test_3_4
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_3 WHERE val >  36;
+             QUERY PLAN              
+-------------------------------------
+ Append
+   ->  Seq Scan on test_3_5 test_3_1
+   ->  Seq Scan on test_3_6 test_3_2
+   ->  Seq Scan on test_3_7 test_3_3
+   ->  Seq Scan on test_3_8 test_3_4
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_3 WHERE val >= 36;
+             QUERY PLAN              
+-------------------------------------
+ Append
+   ->  Seq Scan on test_3_5 test_3_1
+   ->  Seq Scan on test_3_6 test_3_2
+   ->  Seq Scan on test_3_7 test_3_3
+   ->  Seq Scan on test_3_8 test_3_4
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_3 WHERE val >  41;
+             QUERY PLAN              
+-------------------------------------
+ Append
+   ->  Seq Scan on test_3_5 test_3_1
+         Filter: (val > 41)
+   ->  Seq Scan on test_3_6 test_3_2
+   ->  Seq Scan on test_3_7 test_3_3
+   ->  Seq Scan on test_3_8 test_3_4
+(6 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_3 WHERE val >= 41;
+             QUERY PLAN              
+-------------------------------------
+ Append
+   ->  Seq Scan on test_3_5 test_3_1
+   ->  Seq Scan on test_3_6 test_3_2
+   ->  Seq Scan on test_3_7 test_3_3
+   ->  Seq Scan on test_3_8 test_3_4
+(5 rows)
+
+/* Pivot values */
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val =  31;
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val =  36;
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val =  41;
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val =  46;
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val =  51;
+         QUERY PLAN          
+-----------------------------
+ Seq Scan on test_4_6 test_4
+   Filter: (val = 51)
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val <  31;
+         QUERY PLAN         
+----------------------------
+ Append
+   ->  Seq Scan on test_4_1
+   ->  Seq Scan on test_4_2
+   ->  Seq Scan on test_4_3
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val <= 31;
+         QUERY PLAN         
+----------------------------
+ Append
+   ->  Seq Scan on test_4_1
+   ->  Seq Scan on test_4_2
+   ->  Seq Scan on test_4_3
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val <  36;
+         QUERY PLAN         
+----------------------------
+ Append
+   ->  Seq Scan on test_4_1
+   ->  Seq Scan on test_4_2
+   ->  Seq Scan on test_4_3
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val <= 36;
+         QUERY PLAN         
+----------------------------
+ Append
+   ->  Seq Scan on test_4_1
+   ->  Seq Scan on test_4_2
+   ->  Seq Scan on test_4_3
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val <  41;
+         QUERY PLAN         
+----------------------------
+ Append
+   ->  Seq Scan on test_4_1
+   ->  Seq Scan on test_4_2
+   ->  Seq Scan on test_4_3
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val <= 41;
+         QUERY PLAN         
+----------------------------
+ Append
+   ->  Seq Scan on test_4_1
+   ->  Seq Scan on test_4_2
+   ->  Seq Scan on test_4_3
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val <  46;
+         QUERY PLAN         
+----------------------------
+ Append
+   ->  Seq Scan on test_4_1
+   ->  Seq Scan on test_4_2
+   ->  Seq Scan on test_4_3
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val <= 46;
+         QUERY PLAN         
+----------------------------
+ Append
+   ->  Seq Scan on test_4_1
+   ->  Seq Scan on test_4_2
+   ->  Seq Scan on test_4_3
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val <  51;
+         QUERY PLAN         
+----------------------------
+ Append
+   ->  Seq Scan on test_4_1
+   ->  Seq Scan on test_4_2
+   ->  Seq Scan on test_4_3
+(4 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val <= 51;
+             QUERY PLAN              
+-------------------------------------
+ Append
+   ->  Seq Scan on test_4_1
+   ->  Seq Scan on test_4_2
+   ->  Seq Scan on test_4_3
+   ->  Seq Scan on test_4_6 test_4_4
+         Filter: (val <= 51)
+(6 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val <  61;
+             QUERY PLAN              
+-------------------------------------
+ Append
+   ->  Seq Scan on test_4_1
+   ->  Seq Scan on test_4_2
+   ->  Seq Scan on test_4_3
+   ->  Seq Scan on test_4_6 test_4_4
+(5 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val <= 61;
+             QUERY PLAN              
+-------------------------------------
+ Append
+   ->  Seq Scan on test_4_1
+   ->  Seq Scan on test_4_2
+   ->  Seq Scan on test_4_3
+   ->  Seq Scan on test_4_6 test_4_4
+   ->  Seq Scan on test_4_7 test_4_5
+         Filter: (val <= 61)
+(7 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val >  21;
+              QUERY PLAN              
+--------------------------------------
+ Append
+   ->  Seq Scan on test_4_3 test_4_1
+         Filter: (val > 21)
+   ->  Seq Scan on test_4_6 test_4_2
+   ->  Seq Scan on test_4_7 test_4_3
+   ->  Seq Scan on test_4_8 test_4_4
+   ->  Seq Scan on test_4_9 test_4_5
+   ->  Seq Scan on test_4_10 test_4_6
+   ->  Seq Scan on test_4_11 test_4_7
+(9 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val >= 21;
+              QUERY PLAN              
+--------------------------------------
+ Append
+   ->  Seq Scan on test_4_3 test_4_1
+   ->  Seq Scan on test_4_6 test_4_2
+   ->  Seq Scan on test_4_7 test_4_3
+   ->  Seq Scan on test_4_8 test_4_4
+   ->  Seq Scan on test_4_9 test_4_5
+   ->  Seq Scan on test_4_10 test_4_6
+   ->  Seq Scan on test_4_11 test_4_7
+(8 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val >  31;
+              QUERY PLAN              
+--------------------------------------
+ Append
+   ->  Seq Scan on test_4_6 test_4_1
+   ->  Seq Scan on test_4_7 test_4_2
+   ->  Seq Scan on test_4_8 test_4_3
+   ->  Seq Scan on test_4_9 test_4_4
+   ->  Seq Scan on test_4_10 test_4_5
+   ->  Seq Scan on test_4_11 test_4_6
+(7 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val >= 31;
+              QUERY PLAN              
+--------------------------------------
+ Append
+   ->  Seq Scan on test_4_6 test_4_1
+   ->  Seq Scan on test_4_7 test_4_2
+   ->  Seq Scan on test_4_8 test_4_3
+   ->  Seq Scan on test_4_9 test_4_4
+   ->  Seq Scan on test_4_10 test_4_5
+   ->  Seq Scan on test_4_11 test_4_6
+(7 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val >  36;
+              QUERY PLAN              
+--------------------------------------
+ Append
+   ->  Seq Scan on test_4_6 test_4_1
+   ->  Seq Scan on test_4_7 test_4_2
+   ->  Seq Scan on test_4_8 test_4_3
+   ->  Seq Scan on test_4_9 test_4_4
+   ->  Seq Scan on test_4_10 test_4_5
+   ->  Seq Scan on test_4_11 test_4_6
+(7 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val >= 36;
+              QUERY PLAN              
+--------------------------------------
+ Append
+   ->  Seq Scan on test_4_6 test_4_1
+   ->  Seq Scan on test_4_7 test_4_2
+   ->  Seq Scan on test_4_8 test_4_3
+   ->  Seq Scan on test_4_9 test_4_4
+   ->  Seq Scan on test_4_10 test_4_5
+   ->  Seq Scan on test_4_11 test_4_6
+(7 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val >  41;
+              QUERY PLAN              
+--------------------------------------
+ Append
+   ->  Seq Scan on test_4_6 test_4_1
+   ->  Seq Scan on test_4_7 test_4_2
+   ->  Seq Scan on test_4_8 test_4_3
+   ->  Seq Scan on test_4_9 test_4_4
+   ->  Seq Scan on test_4_10 test_4_5
+   ->  Seq Scan on test_4_11 test_4_6
+(7 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val >= 41;
+              QUERY PLAN              
+--------------------------------------
+ Append
+   ->  Seq Scan on test_4_6 test_4_1
+   ->  Seq Scan on test_4_7 test_4_2
+   ->  Seq Scan on test_4_8 test_4_3
+   ->  Seq Scan on test_4_9 test_4_4
+   ->  Seq Scan on test_4_10 test_4_5
+   ->  Seq Scan on test_4_11 test_4_6
+(7 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val >  46;
+              QUERY PLAN              
+--------------------------------------
+ Append
+   ->  Seq Scan on test_4_6 test_4_1
+   ->  Seq Scan on test_4_7 test_4_2
+   ->  Seq Scan on test_4_8 test_4_3
+   ->  Seq Scan on test_4_9 test_4_4
+   ->  Seq Scan on test_4_10 test_4_5
+   ->  Seq Scan on test_4_11 test_4_6
+(7 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val >= 46;
+              QUERY PLAN              
+--------------------------------------
+ Append
+   ->  Seq Scan on test_4_6 test_4_1
+   ->  Seq Scan on test_4_7 test_4_2
+   ->  Seq Scan on test_4_8 test_4_3
+   ->  Seq Scan on test_4_9 test_4_4
+   ->  Seq Scan on test_4_10 test_4_5
+   ->  Seq Scan on test_4_11 test_4_6
+(7 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val >  51;
+              QUERY PLAN              
+--------------------------------------
+ Append
+   ->  Seq Scan on test_4_6 test_4_1
+         Filter: (val > 51)
+   ->  Seq Scan on test_4_7 test_4_2
+   ->  Seq Scan on test_4_8 test_4_3
+   ->  Seq Scan on test_4_9 test_4_4
+   ->  Seq Scan on test_4_10 test_4_5
+   ->  Seq Scan on test_4_11 test_4_6
+(8 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM gaps.test_4 WHERE val >= 51;
+              QUERY PLAN              
+--------------------------------------
+ Append
+   ->  Seq Scan on test_4_6 test_4_1
+   ->  Seq Scan on test_4_7 test_4_2
+   ->  Seq Scan on test_4_8 test_4_3
+   ->  Seq Scan on test_4_9 test_4_4
+   ->  Seq Scan on test_4_10 test_4_5
+   ->  Seq Scan on test_4_11 test_4_6
+(7 rows)
+
+DROP TABLE gaps.test_1 CASCADE;
+NOTICE:  drop cascades to 3 other objects
+DROP TABLE gaps.test_2 CASCADE;
+NOTICE:  drop cascades to 5 other objects
+DROP TABLE gaps.test_3 CASCADE;
+NOTICE:  drop cascades to 8 other objects
+DROP TABLE gaps.test_4 CASCADE;
+NOTICE:  drop cascades to 10 other objects
+DROP SCHEMA gaps;
+DROP EXTENSION pg_pathman;

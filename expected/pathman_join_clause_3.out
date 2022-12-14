@@ -45,23 +45,44 @@ WHERE NOT key <@ int4range(6, end_key);
    ->  Seq Scan on fk
    ->  Custom Scan (RuntimeAppend)
          Prune by: (fk.id1 = m.id1)
-         ->  Seq Scan on mytbl_0 m
-               Filter: ((fk.id1 = id1) AND (fk.id2 = id2) AND (NOT (key <@ int4range(6, fk.end_key))))
-         ->  Seq Scan on mytbl_1 m
-               Filter: ((fk.id1 = id1) AND (fk.id2 = id2) AND (NOT (key <@ int4range(6, fk.end_key))))
-         ->  Seq Scan on mytbl_2 m
-               Filter: ((fk.id1 = id1) AND (fk.id2 = id2) AND (NOT (key <@ int4range(6, fk.end_key))))
-         ->  Seq Scan on mytbl_3 m
-               Filter: ((fk.id1 = id1) AND (fk.id2 = id2) AND (NOT (key <@ int4range(6, fk.end_key))))
-         ->  Seq Scan on mytbl_4 m
-               Filter: ((fk.id1 = id1) AND (fk.id2 = id2) AND (NOT (key <@ int4range(6, fk.end_key))))
-         ->  Seq Scan on mytbl_5 m
-               Filter: ((fk.id1 = id1) AND (fk.id2 = id2) AND (NOT (key <@ int4range(6, fk.end_key))))
+         ->  Bitmap Heap Scan on mytbl_0 m
+               Recheck Cond: (id1 = fk.id1)
+               Filter: ((fk.id2 = id2) AND (NOT (key <@ int4range(6, fk.end_key))))
+               ->  Bitmap Index Scan on mytbl_0_pkey
+                     Index Cond: (id1 = fk.id1)
+         ->  Bitmap Heap Scan on mytbl_1 m
+               Recheck Cond: (id1 = fk.id1)
+               Filter: ((fk.id2 = id2) AND (NOT (key <@ int4range(6, fk.end_key))))
+               ->  Bitmap Index Scan on mytbl_1_pkey
+                     Index Cond: (id1 = fk.id1)
+         ->  Bitmap Heap Scan on mytbl_2 m
+               Recheck Cond: (id1 = fk.id1)
+               Filter: ((fk.id2 = id2) AND (NOT (key <@ int4range(6, fk.end_key))))
+               ->  Bitmap Index Scan on mytbl_2_pkey
+                     Index Cond: (id1 = fk.id1)
+         ->  Bitmap Heap Scan on mytbl_3 m
+               Recheck Cond: (id1 = fk.id1)
+               Filter: ((fk.id2 = id2) AND (NOT (key <@ int4range(6, fk.end_key))))
+               ->  Bitmap Index Scan on mytbl_3_pkey
+                     Index Cond: (id1 = fk.id1)
+         ->  Bitmap Heap Scan on mytbl_4 m
+               Recheck Cond: (id1 = fk.id1)
+               Filter: ((fk.id2 = id2) AND (NOT (key <@ int4range(6, fk.end_key))))
+               ->  Bitmap Index Scan on mytbl_4_pkey
+                     Index Cond: (id1 = fk.id1)
+         ->  Bitmap Heap Scan on mytbl_5 m
+               Recheck Cond: (id1 = fk.id1)
+               Filter: ((fk.id2 = id2) AND (NOT (key <@ int4range(6, fk.end_key))))
+               ->  Bitmap Index Scan on mytbl_5_pkey
+                     Index Cond: (id1 = fk.id1)
          ->  Seq Scan on mytbl_6 m
                Filter: ((fk.id1 = id1) AND (fk.id2 = id2) AND (NOT (key <@ int4range(6, fk.end_key))))
-         ->  Seq Scan on mytbl_7 m
-               Filter: ((fk.id1 = id1) AND (fk.id2 = id2) AND (NOT (key <@ int4range(6, fk.end_key))))
-(20 rows)
+         ->  Bitmap Heap Scan on mytbl_7 m
+               Recheck Cond: (id1 = fk.id1)
+               Filter: ((fk.id2 = id2) AND (NOT (key <@ int4range(6, fk.end_key))))
+               ->  Bitmap Index Scan on mytbl_7_pkey
+                     Index Cond: (id1 = fk.id1)
+(41 rows)
 
 /* test joint data */
 SELECT m.tableoid::regclass, id1, id2, key, start_key, end_key

@@ -59,7 +59,7 @@ WHERE j1.dt < '2015-03-01' AND j2.dt >= '2015-02-01' ORDER BY j2.dt;
  Sort
    Sort Key: j2.dt
    ->  Merge Join
-         Merge Cond: (j2.id = j3_1.id)
+         Merge Cond: (j2.id = j3.id)
          ->  Index Scan using range_rel_2_pkey on range_rel_2 j2
                Index Cond: (id IS NOT NULL)
          ->  Append

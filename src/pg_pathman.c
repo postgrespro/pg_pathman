@@ -507,6 +507,11 @@ append_child_relation(PlannerInfo *root,
 	ListCell	   *lc1,
 				   *lc2;
 	LOCKMODE		lockmode;
+#if PG_VERSION_NUM >= 130000 /* see commit 55a1954d */
+	TupleDesc		child_tupdesc;
+	List		   *parent_colnames;
+	List		   *child_colnames;
+#endif
 
 	/* Choose a correct lock mode */
 	if (parent_rti == root->parse->resultRelation)
@@ -538,7 +543,12 @@ append_child_relation(PlannerInfo *root,
 	child_relation = heap_open_compat(child_oid, NoLock);
 
 	/* Create RangeTblEntry for child relation */
+#if PG_VERSION_NUM >= 130000 /* see commit 55a1954d */
+	child_rte = makeNode(RangeTblEntry);
+	memcpy(child_rte, parent_rte, sizeof(RangeTblEntry));
+#else
 	child_rte = copyObject(parent_rte);
+#endif
 	child_rte->relid			= child_oid;
 	child_rte->relkind			= child_relation->rd_rel->relkind;
 	child_rte->requiredPerms	= 0; /* perform all checks on parent */
@@ -560,7 +570,56 @@ append_child_relation(PlannerInfo *root,
 	appinfo->child_reltype  = RelationGetDescr(child_relation)->tdtypeid;
 
 	make_inh_translation_list(parent_relation, child_relation, child_rti,
-							  &appinfo->translated_vars);
+							  &appinfo->translated_vars, appinfo);
+
+#if PG_VERSION_NUM >= 130000 /* see commit 55a1954d */
+	/* tablesample is probably null, but copy it */
+	child_rte->tablesample = copyObject(parent_rte->tablesample);
+
+	/*
+	 * Construct an alias clause for the child, which we can also use as eref.
+	 * This is important so that EXPLAIN will print the right column aliases
+	 * for child-table columns.  (Since ruleutils.c doesn't have any easy way
+	 * to reassociate parent and child columns, we must get the child column
+	 * aliases right to start with.  Note that setting childrte->alias forces
+	 * ruleutils.c to use these column names, which it otherwise would not.)
+	 */
+	child_tupdesc = RelationGetDescr(child_relation);
+	parent_colnames = parent_rte->eref->colnames;
+	child_colnames = NIL;
+	for (int cattno = 0; cattno < child_tupdesc->natts; cattno++)
+	{
+		Form_pg_attribute att = TupleDescAttr(child_tupdesc, cattno);
+		const char *attname;
+
+		if (att->attisdropped)
+		{
+			/* Always insert an empty string for a dropped column */
+			attname = "";
+		}
+		else if (appinfo->parent_colnos[cattno] > 0 &&
+				 appinfo->parent_colnos[cattno] <= list_length(parent_colnames))
+		{
+			/* Duplicate the query-assigned name for the parent column */
+			attname = strVal(list_nth(parent_colnames,
+									  appinfo->parent_colnos[cattno] - 1));
+		}
+		else
+		{
+			/* New column, just use its real name */
+			attname = NameStr(att->attname);
+		}
+		child_colnames = lappend(child_colnames, makeString(pstrdup(attname)));
+	}
+
+	/*
+	 * We just duplicate the parent's table alias name for each child.  If the
+	 * plan gets printed, ruleutils.c has to sort out unique table aliases to
+	 * use, which it can handle.
+	 */
+	child_rte->alias = child_rte->eref = makeAlias(parent_rte->eref->aliasname,
+												   child_colnames);
+#endif
 
 	/* Now append 'appinfo' to 'root->append_rel_list' */
 	root->append_rel_list = lappend(root->append_rel_list, appinfo);
@@ -627,6 +686,14 @@ append_child_relation(PlannerInfo *root,
 		child_rte->updatedCols = translate_col_privs(parent_rte->updatedCols,
 													 appinfo->translated_vars);
 	}
+#if PG_VERSION_NUM >= 130000 /* see commit 55a1954d */
+	else
+	{
+		child_rte->selectedCols = bms_copy(parent_rte->selectedCols);
+		child_rte->insertedCols = bms_copy(parent_rte->insertedCols);
+		child_rte->updatedCols = bms_copy(parent_rte->updatedCols);
+	}
+#endif
 
 	/* Here and below we assume that parent RelOptInfo exists */
 	AssertState(parent_rel);
@@ -1945,7 +2012,8 @@ translate_col_privs(const Bitmapset *parent_privs,
  */
 void
 make_inh_translation_list(Relation oldrelation, Relation newrelation,
-						  Index newvarno, List **translated_vars)
+						  Index newvarno, List **translated_vars,
+						  AppendRelInfo *appinfo)
 {
 	List	   *vars = NIL;
 	TupleDesc	old_tupdesc = RelationGetDescr(oldrelation);
@@ -1953,6 +2021,17 @@ make_inh_translation_list(Relation oldrelation, Relation newrelation,
 	int			oldnatts = old_tupdesc->natts;
 	int			newnatts = new_tupdesc->natts;
 	int			old_attno;
+#if PG_VERSION_NUM >= 130000 /* see commit ce76c0ba */
+	AttrNumber *pcolnos = NULL;
+
+	if (appinfo)
+	{
+		/* Initialize reverse-translation array with all entries zero */
+		appinfo->num_child_cols = newnatts;
+		appinfo->parent_colnos = pcolnos =
+			(AttrNumber *) palloc0(newnatts * sizeof(AttrNumber));
+	}
+#endif
 
 	for (old_attno = 0; old_attno < oldnatts; old_attno++)
 	{
@@ -1987,6 +2066,10 @@ make_inh_translation_list(Relation oldrelation, Relation newrelation,
 										 atttypmod,
 										 attcollation,
 										 0));
+#if PG_VERSION_NUM >= 130000
+			if (pcolnos)
+				pcolnos[old_attno] = old_attno + 1;
+#endif
 			continue;
 		}
 
@@ -2044,6 +2127,10 @@ make_inh_translation_list(Relation oldrelation, Relation newrelation,
 									 atttypmod,
 									 attcollation,
 									 0));
+#if PG_VERSION_NUM >= 130000
+		if (pcolnos)
+			pcolnos[new_attno] = old_attno + 1;
+#endif
 	}
 
 	*translated_vars = vars;

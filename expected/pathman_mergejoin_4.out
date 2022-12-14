@@ -57,17 +57,17 @@ WHERE j1.dt < '2015-03-01' AND j2.dt >= '2015-02-01' ORDER BY j2.dt;
                                    QUERY PLAN                                    
 ---------------------------------------------------------------------------------
  Sort
-   Sort Key: j2_1.dt
+   Sort Key: j2.dt
    ->  Merge Join
-         Merge Cond: (j2_1.id = j3_1.id)
+         Merge Cond: (j2.id = j3.id)
          ->  Merge Join
-               Merge Cond: (j1_1.id = j2_1.id)
+               Merge Cond: (j1.id = j2.id)
                ->  Merge Append
-                     Sort Key: j1_1.id
+                     Sort Key: j1.id
                      ->  Index Scan using range_rel_1_pkey on range_rel_1 j1_1
                      ->  Index Scan using range_rel_2_pkey on range_rel_2 j1_2
                ->  Merge Append
-                     Sort Key: j2_1.id
+                     Sort Key: j2.id
                      ->  Index Scan using range_rel_2_pkey on range_rel_2 j2_1
                      ->  Index Scan using range_rel_3_pkey on range_rel_3 j2_2
                      ->  Index Scan using range_rel_4_pkey on range_rel_4 j2_3

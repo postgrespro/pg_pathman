@@ -609,7 +609,7 @@ handle_modification_query(Query *parse, transform_query_cxt *context)
 		child_rel  = heap_open_compat(child,  NoLock);
 		parent_rel = heap_open_compat(parent, NoLock);
 
-		make_inh_translation_list(parent_rel, child_rel, 0, &translated_vars);
+		make_inh_translation_list(parent_rel, child_rel, 0, &translated_vars, NULL);
 
 		/* Perform some additional adjustments */
 		if (!inh_translation_list_is_trivial(translated_vars))
