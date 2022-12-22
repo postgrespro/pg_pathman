@@ -101,6 +101,9 @@ struct ResultPartsStorage
 	PartRelationInfo   *prel;
 	ExprState		   *prel_expr_state;
 	ExprContext		   *prel_econtext;
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+	ResultRelInfo	   *init_rri;				/* first initialized ResultRelInfo */
+#endif
 };
 
 typedef struct
@@ -167,7 +170,7 @@ void init_result_parts_storage(ResultPartsStorage *parts_storage,
 void fini_result_parts_storage(ResultPartsStorage *parts_storage);
 
 /* Find ResultRelInfo holder in storage */
-ResultRelInfoHolder * scan_result_parts_storage(ResultPartsStorage *storage, Oid partid);
+ResultRelInfoHolder * scan_result_parts_storage(EState *estate, ResultPartsStorage *storage, Oid partid);
 
 /* Refresh PartRelationInfo in storage */
 PartRelationInfo * refresh_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid);
@@ -186,7 +189,8 @@ Oid * find_partitions_for_value(Datum value, Oid value_type,
 								const PartRelationInfo *prel,
 								int *nparts);
 
-ResultRelInfoHolder *select_partition_for_insert(ResultPartsStorage *parts_storage,
+ResultRelInfoHolder *select_partition_for_insert(EState *estate,
+												 ResultPartsStorage *parts_storage,
 												 TupleTableSlot *slot);
 
 Plan * make_partition_filter(Plan *subplan,

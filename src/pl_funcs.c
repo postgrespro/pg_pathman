@@ -725,7 +725,10 @@ is_tuple_convertible(PG_FUNCTION_ARGS)
 	rel2 = heap_open_compat(PG_GETARG_OID(1), AccessShareLock);
 
 	/* Try to build a conversion map */
-#if PG_VERSION_NUM >= 130000
+#if PG_VERSION_NUM >= 160000 /* for commit ad86d159b6ab */
+	map = build_attrmap_by_name(RelationGetDescr(rel1),
+									 RelationGetDescr(rel2), false);
+#elif PG_VERSION_NUM >= 130000
 	map = build_attrmap_by_name(RelationGetDescr(rel1),
 									 RelationGetDescr(rel2));
 #else

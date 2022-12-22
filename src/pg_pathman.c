@@ -551,7 +551,12 @@ append_child_relation(PlannerInfo *root,
 #endif
 	child_rte->relid			= child_oid;
 	child_rte->relkind			= child_relation->rd_rel->relkind;
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+	/* No permission checking for the child RTE */
+	child_rte->perminfoindex = 0;
+#else
 	child_rte->requiredPerms	= 0; /* perform all checks on parent */
+#endif
 	child_rte->inh				= false;
 
 	/* Add 'child_rte' to rtable and 'root->simple_rte_array' */
@@ -676,6 +681,7 @@ append_child_relation(PlannerInfo *root,
 	}
 
 
+#if PG_VERSION_NUM < 160000 /* for commit a61b1f74823c */
 	/* Translate column privileges for this child */
 	if (parent_rte->relid != child_oid)
 	{
@@ -694,6 +700,7 @@ append_child_relation(PlannerInfo *root,
 		child_rte->updatedCols = bms_copy(parent_rte->updatedCols);
 	}
 #endif
+#endif /* PG_VERSION_NUM < 160000 */
 
 	/* Here and below we assume that parent RelOptInfo exists */
 	Assert(parent_rel);

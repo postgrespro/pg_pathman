@@ -27,6 +27,9 @@
 #include "foreign/fdwapi.h"
 #include "miscadmin.h"
 #include "optimizer/clauses.h"
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+#include "parser/parse_relation.h"
+#endif
 #include "storage/lmgr.h"
 #include "utils/syscache.h"
 
@@ -578,6 +581,10 @@ handle_modification_query(Query *parse, transform_query_cxt *context)
 
 		List	   *translated_vars;
 		adjust_appendrel_varnos_cxt aav_cxt;
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+		RTEPermissionInfo *parent_perminfo,
+						  *child_perminfo;
+#endif
 
 		/* Lock 'child' table */
 		LockRelationOid(child, lockmode);
@@ -598,9 +605,23 @@ handle_modification_query(Query *parse, transform_query_cxt *context)
 			return; /* nothing to do here */
 		}
 
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+		parent_perminfo = getRTEPermissionInfo(parse->rteperminfos, rte);
+#endif
 		/* Update RTE's relid and relkind (for FDW) */
 		rte->relid   = child;
 		rte->relkind = child_relkind;
+
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+		/* Copy parent RTEPermissionInfo. */
+		rte->perminfoindex = 0;	/* expected by addRTEPermissionInfo() */
+		child_perminfo = addRTEPermissionInfo(&parse->rteperminfos, rte);
+		memcpy(child_perminfo, parent_perminfo, sizeof(RTEPermissionInfo));
+
+		/* Correct RTEPermissionInfo for child. */
+		child_perminfo->relid = child;
+		child_perminfo->inh = false;
+#endif
 
 		/* HACK: unset the 'inh' flag (no children) */
 		rte->inh = false;
@@ -622,10 +643,16 @@ handle_modification_query(Query *parse, transform_query_cxt *context)
 			aav_cxt.translated_vars	= translated_vars;
 			adjust_appendrel_varnos((Node *) parse, &aav_cxt);
 
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+			child_perminfo->selectedCols = translate_col_privs(parent_perminfo->selectedCols, translated_vars);
+			child_perminfo->insertedCols = translate_col_privs(parent_perminfo->insertedCols, translated_vars);
+			child_perminfo->updatedCols = translate_col_privs(parent_perminfo->updatedCols, translated_vars);
+#else
 			/* Translate column privileges for this child */
 			rte->selectedCols = translate_col_privs(rte->selectedCols, translated_vars);
 			rte->insertedCols = translate_col_privs(rte->insertedCols, translated_vars);
 			rte->updatedCols = translate_col_privs(rte->updatedCols, translated_vars);
+#endif
 		}
 
 		/* Close relations (should remain locked, though) */
