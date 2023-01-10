@@ -1085,6 +1085,17 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 #endif
 
 /*
+ * stringToQualifiedNameList
+ */
+#if PG_VERSION_NUM >= 160000
+#define stringToQualifiedNameListCompat(string) \
+	stringToQualifiedNameList((string), NULL)
+#else
+#define stringToQualifiedNameListCompat(string) \
+	stringToQualifiedNameList((string))
+#endif
+
+/*
  * -------------
  *  Common code
  * -------------
