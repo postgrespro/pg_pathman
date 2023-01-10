@@ -126,11 +126,11 @@ WHERE oid = ANY (SELECT "partition" FROM pathman_partition_list
 				 ORDER BY range_max::int DESC /* append */
 				 LIMIT 3)
 ORDER BY relname; /* we also check ACL for "user1_table_2" */
-    relname    |                 relacl                 
----------------+----------------------------------------
- user1_table_2 | {user1=arwdDxtvz/user1,user2=r/user1}
- user1_table_5 | {user1=arwdDxtvz/user1,user2=ar/user1}
- user1_table_6 | {user1=arwdDxtvz/user1,user2=ar/user1}
+    relname    |                relacl                 
+---------------+---------------------------------------
+ user1_table_2 | {user1=arwdDxtm/user1,user2=r/user1}
+ user1_table_5 | {user1=arwdDxtm/user1,user2=ar/user1}
+ user1_table_6 | {user1=arwdDxtm/user1,user2=ar/user1}
 (3 rows)
 
 /* Try to drop partition, should fail */
