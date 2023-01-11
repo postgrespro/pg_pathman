@@ -518,7 +518,7 @@ qualified_relnames_to_rangevars(char **relnames, size_t nrelnames)
 		rangevars = palloc(sizeof(RangeVar *) * nrelnames);
 		for (i = 0; i < nrelnames; i++)
 		{
-			List *nl = stringToQualifiedNameList(relnames[i]);
+			List *nl = stringToQualifiedNameListCompat(relnames[i]);
 
 			rangevars[i] = makeRangeVarFromNameList(nl);
 		}

@@ -27,6 +27,9 @@
 #include "foreign/fdwapi.h"
 #include "foreign/foreign.h"
 #include "nodes/nodeFuncs.h"
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+#include "parser/parse_relation.h"
+#endif
 #include "rewrite/rewriteManip.h"
 #include "utils/guc.h"
 #include "utils/memutils.h"
@@ -257,7 +260,8 @@ fini_result_parts_storage(ResultPartsStorage *parts_storage)
 
 /* Find a ResultRelInfo for the partition using ResultPartsStorage */
 ResultRelInfoHolder *
-scan_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid)
+scan_result_parts_storage(EState *estate, ResultPartsStorage *parts_storage,
+						  Oid partid)
 {
 #define CopyToResultRelInfo(field_name) \
 	( child_result_rel_info->field_name = parts_storage->base_rri->field_name )
@@ -280,6 +284,12 @@ scan_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid)
 		ResultRelInfo  *child_result_rel_info;
 		List		   *translated_vars;
 		MemoryContext	old_mcxt;
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+		RTEPermissionInfo *parent_perminfo,
+						  *child_perminfo;
+		/* ResultRelInfo of partitioned table. */
+		RangeTblEntry  *init_rte;
+#endif
 
 		/* Lock partition and check if it exists */
 		LockRelationOid(partid, parts_storage->head_open_lock_mode);
@@ -306,15 +316,41 @@ scan_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid)
 		/* Open child relation and check if it is a valid target */
 		child_rel = heap_open_compat(partid, NoLock);
 
-		/* Build Var translation list for 'inserted_cols' */
-		make_inh_translation_list(base_rel, child_rel, 0, &translated_vars, NULL);
-
 		/* Create RangeTblEntry for partition */
 		child_rte = makeNode(RangeTblEntry);
 		child_rte->rtekind			= RTE_RELATION;
 		child_rte->relid			= partid;
 		child_rte->relkind			= child_rel->rd_rel->relkind;
 		child_rte->eref				= parent_rte->eref;
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+		/* Build Var translation list for 'inserted_cols' */
+		make_inh_translation_list(parts_storage->init_rri->ri_RelationDesc,
+								  child_rel, 0, &translated_vars, NULL);
+
+		/*
+		 * Need to use ResultRelInfo of partitioned table 'init_rri' because
+		 * 'base_rri' can be ResultRelInfo of partition without any
+		 * ResultRelInfo, see expand_single_inheritance_child().
+		 */
+		init_rte = rt_fetch(parts_storage->init_rri->ri_RangeTableIndex,
+							parts_storage->estate->es_range_table);
+		parent_perminfo = getRTEPermissionInfo(estate->es_rteperminfos, init_rte);
+
+		child_rte->perminfoindex = 0;	/* expected by addRTEPermissionInfo() */
+		child_perminfo = addRTEPermissionInfo(&estate->es_rteperminfos, child_rte);
+		child_perminfo->requiredPerms	= parent_perminfo->requiredPerms;
+		child_perminfo->checkAsUser		= parent_perminfo->checkAsUser;
+		child_perminfo->insertedCols	= translate_col_privs(parent_perminfo->insertedCols,
+															  translated_vars);
+		child_perminfo->updatedCols		= translate_col_privs(parent_perminfo->updatedCols,
+															  translated_vars);
+
+		/* Check permissions for partition */
+		ExecCheckPermissions(list_make1(child_rte), list_make1(child_perminfo), true);
+#else
+		/* Build Var translation list for 'inserted_cols' */
+		make_inh_translation_list(base_rel, child_rel, 0, &translated_vars, NULL);
+
 		child_rte->requiredPerms	= parent_rte->requiredPerms;
 		child_rte->checkAsUser		= parent_rte->checkAsUser;
 		child_rte->insertedCols		= translate_col_privs(parent_rte->insertedCols,
@@ -324,6 +360,7 @@ scan_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid)
 
 		/* Check permissions for partition */
 		ExecCheckRTPerms(list_make1(child_rte), true);
+#endif
 
 		/* Append RangeTblEntry to estate->es_range_table */
 		child_rte_idx = append_rte_to_estate(parts_storage->estate, child_rte, child_rel);
@@ -498,7 +535,9 @@ build_part_tuple_map_child(Relation child_rel)
 	child_tupdesc2->tdtypeid = InvalidOid;
 
 	/* Generate tuple transformation map */
-#if PG_VERSION_NUM >= 130000
+#if PG_VERSION_NUM >= 160000 /* for commit ad86d159b6ab */
+	attrMap = build_attrmap_by_name(child_tupdesc1, child_tupdesc2, false);
+#elif PG_VERSION_NUM >= 130000
 	attrMap = build_attrmap_by_name(child_tupdesc1, child_tupdesc2);
 #else
 	attrMap = convert_tuples_by_name_map(child_tupdesc1, child_tupdesc2,
@@ -586,7 +625,8 @@ find_partitions_for_value(Datum value, Oid value_type,
  * Smart wrapper for scan_result_parts_storage().
  */
 ResultRelInfoHolder *
-select_partition_for_insert(ResultPartsStorage *parts_storage,
+select_partition_for_insert(EState *estate,
+							ResultPartsStorage *parts_storage,
 							TupleTableSlot *slot)
 {
 	PartRelationInfo	   *prel = parts_storage->prel;
@@ -637,7 +677,7 @@ select_partition_for_insert(ResultPartsStorage *parts_storage,
 		else partition_relid = parts[0];
 
 		/* Get ResultRelationInfo holder for the selected partition */
-		result = scan_result_parts_storage(parts_storage, partition_relid);
+		result = scan_result_parts_storage(estate, parts_storage, partition_relid);
 
 		/* Somebody has dropped or created partitions */
 		if ((nparts == 0 || result == NULL) && !PrelIsFresh(prel))
@@ -837,6 +877,10 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 							  state->on_conflict_action != ONCONFLICT_NONE,
 							  RPS_RRI_CB(prepare_rri_for_insert, state),
 							  RPS_RRI_CB(NULL, NULL));
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+	/* ResultRelInfo of partitioned table. */
+	state->result_parts.init_rri = current_rri;
+#endif
 }
 
 #if PG_VERSION_NUM >= 140000
@@ -906,7 +950,7 @@ partition_filter_exec(CustomScanState *node)
 		old_mcxt = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 
 		/* Search for a matching partition */
-		rri_holder = select_partition_for_insert(&state->result_parts, slot);
+		rri_holder = select_partition_for_insert(estate, &state->result_parts, slot);
 
 		/* Switch back and clean up per-tuple context */
 		MemoryContextSwitchTo(old_mcxt);
@@ -1222,6 +1266,14 @@ prepare_rri_fdw_for_insert(ResultRelInfoHolder *rri_holder,
 
 		query.targetList		= NIL;
 		query.returningList		= NIL;
+
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+		/*
+		 * Copy the RTEPermissionInfos into query as well, so that
+		 * add_rte_to_flat_rtable() will work correctly.
+		 */
+		query.rteperminfos = estate->es_rteperminfos;
+#endif
 
 		/* Generate 'query.targetList' using 'tupdesc' */
 		target_attr = 1;

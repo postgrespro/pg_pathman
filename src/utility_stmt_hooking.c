@@ -26,12 +26,18 @@
 #include "access/xact.h"
 #include "catalog/namespace.h"
 #include "commands/copy.h"
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+#include "commands/copyfrom_internal.h"
+#endif
 #include "commands/defrem.h"
 #include "commands/trigger.h"
 #include "commands/tablecmds.h"
 #include "foreign/fdwapi.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+#include "parser/parse_relation.h"
+#endif
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
@@ -414,6 +420,9 @@ PathmanDoCopy(const CopyStmt *stmt,
 						   "psql's \\copy command also works for anyone.")));
 	}
 
+	pstate = make_parsestate(NULL);
+	pstate->p_sourcetext = queryString;
+
 	/* Check that we have a relation */
 	if (stmt->relation)
 	{
@@ -422,6 +431,9 @@ PathmanDoCopy(const CopyStmt *stmt,
 		List		   *attnums;
 		ListCell	   *cur;
 		RangeTblEntry  *rte;
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+		RTEPermissionInfo *perminfo;
+#endif
 
 		Assert(!stmt->query);
 
@@ -432,11 +444,30 @@ PathmanDoCopy(const CopyStmt *stmt,
 		rte->rtekind = RTE_RELATION;
 		rte->relid = RelationGetRelid(rel);
 		rte->relkind = rel->rd_rel->relkind;
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+		pstate->p_rtable = lappend(pstate->p_rtable, rte);
+		perminfo = addRTEPermissionInfo(&pstate->p_rteperminfos, rte);
+		perminfo->requiredPerms = required_access;
+#else
 		rte->requiredPerms = required_access;
+#endif
 		range_table = list_make1(rte);
 
 		tupDesc = RelationGetDescr(rel);
 		attnums = PathmanCopyGetAttnums(tupDesc, rel, stmt->attlist);
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+		foreach(cur, attnums)
+		{
+			int attno;
+			Bitmapset **bms;
+
+			attno = lfirst_int(cur) - FirstLowInvalidHeapAttributeNumber;
+			bms = is_from ? &perminfo->insertedCols : &perminfo->selectedCols;
+
+			*bms = bms_add_member(*bms, attno);
+		}
+		ExecCheckPermissions(pstate->p_rtable, list_make1(perminfo), true);
+#else
 		foreach(cur, attnums)
 		{
 			int attnum = lfirst_int(cur) - FirstLowInvalidHeapAttributeNumber;
@@ -447,6 +478,7 @@ PathmanDoCopy(const CopyStmt *stmt,
 				rte->selectedCols = bms_add_member(rte->selectedCols, attnum);
 		}
 		ExecCheckRTPerms(range_table, true);
+#endif
 
 		/* Disable COPY FROM if table has RLS */
 		if (is_from && check_enable_rls(rte->relid, InvalidOid, false) == RLS_ENABLED)
@@ -469,9 +501,6 @@ PathmanDoCopy(const CopyStmt *stmt,
 
 	/* This should never happen (see is_pathman_related_copy()) */
 	else elog(ERROR, "error in function " CppAsString(PathmanDoCopy));
-
-	pstate = make_parsestate(NULL);
-	pstate->p_sourcetext = queryString;
 
 	if (is_from)
 	{
@@ -567,6 +596,16 @@ PathmanCopyFrom(
 							  RPS_DEFAULT_SPECULATIVE,
 							  RPS_RRI_CB(prepare_rri_for_copy, cstate),
 							  RPS_RRI_CB(finish_rri_for_copy, NULL));
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+	/* ResultRelInfo of partitioned table. */
+	parts_storage.init_rri = parent_rri;
+
+	/*
+	 * Copy the RTEPermissionInfos into estate as well, so that
+	 * scan_result_parts_storage() et al will work correctly.
+	 */
+	estate->es_rteperminfos = cstate->rteperminfos;
+#endif
 
 	/* Set up a tuple slot too */
 	myslot = ExecInitExtraTupleSlotCompat(estate, NULL, &TTSOpsHeapTuple);
@@ -629,7 +668,7 @@ PathmanCopyFrom(
 #endif
 
 		/* Search for a matching partition */
-		rri_holder = select_partition_for_insert(&parts_storage, slot);
+		rri_holder = select_partition_for_insert(estate, &parts_storage, slot);
 		child_rri = rri_holder->result_rel_info;
 
 		/* Magic: replace parent's ResultRelInfo with ours */
