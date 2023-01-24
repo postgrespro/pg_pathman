@@ -5,7 +5,7 @@
 
 ### NOTE: this project is not under development anymore
 
-`pg_pathman` supports Postgres versions [9.5..13], but most probably it won't be ported to 14 and later releases. [Native partitioning](https://www.postgresql.org/docs/current/ddl-partitioning.html) is pretty mature now and has almost everything implemented in `pg_pathman`'; we encourage users switching to it. We are still maintaining the project (fixing bugs in supported versions), but no new development is going to happen here.
+`pg_pathman` supports Postgres versions [11..15], but most probably it won't be ported to later releases. [Native partitioning](https://www.postgresql.org/docs/current/ddl-partitioning.html) is pretty mature now and has almost everything implemented in `pg_pathman`'; we encourage users switching to it. We are still maintaining the project (fixing bugs in supported versions), but no new development is going to happen here.
 
 # pg_pathman
 
@@ -13,8 +13,9 @@ The `pg_pathman` module provides optimized partitioning mechanism and functions 
 
 The extension is compatible with:
 
- * PostgreSQL 9.5, 9.6, 10, 11, 12, 13;
- * Postgres Pro Standard 9.5, 9.6, 10, 11, 12;
+ * PostgreSQL 11, 12, 13;
+ * PostgreSQL with core-patch: 14, 15;
+ * Postgres Pro Standard 11, 12, 13, 14, 15;
  * Postgres Pro Enterprise;
 
 Take a look at our Wiki [out there](https://github.com/postgrespro/pg_pathman/wiki).
@@ -789,7 +790,7 @@ Do not hesitate to post your issues, questions and new ideas at the [issues](htt
 
 ## Authors
 [Ildar Musin](https://github.com/zilder)
-Alexander Korotkov <a.korotkov(at)postgrespro.ru> Postgres Professional Ltd., Russia
+[Alexander Korotkov](https://github.com/akorotkov)
 [Dmitry Ivanov](https://github.com/funbringer)
-Maksim Milyutin <m.milyutin(at)postgrespro.ru> Postgres Professional Ltd., Russia
+[Maksim Milyutin](https://github.com/maksm90)
 [Ildus Kurbangaliev](https://github.com/ildus)
