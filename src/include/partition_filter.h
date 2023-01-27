@@ -183,6 +183,7 @@ void destroy_tuple_map(TupleConversionMap *tuple_map);
 
 List * pfilter_build_tlist(Plan *subplan);
 
+void pfilter_tlist_fix_resjunk(CustomScan *subplan);
 
 /* Find suitable partition using 'value' */
 Oid * find_partitions_for_value(Datum value, Oid value_type,

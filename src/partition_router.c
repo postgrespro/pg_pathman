@@ -115,7 +115,7 @@ init_partition_router_static_data(void)
 }
 
 Plan *
-make_partition_router(Plan *subplan, int epq_param)
+make_partition_router(Plan *subplan, int epq_param, Index parent_rti)
 {
 	CustomScan *cscan = makeNode(CustomScan);
 
@@ -136,8 +136,10 @@ make_partition_router(Plan *subplan, int epq_param)
 	/* Build an appropriate target list */
 	cscan->scan.plan.targetlist = pfilter_build_tlist(subplan);
 
-	/* FIXME: should we use the same tlist? */
-	cscan->custom_scan_tlist = subplan->targetlist;
+	/* Fix 'custom_scan_tlist' for EXPLAIN (VERBOSE) */
+	cscan->custom_scan_tlist = copyObject(cscan->scan.plan.targetlist);
+	ChangeVarNodes((Node *) cscan->custom_scan_tlist, INDEX_VAR, parent_rti, 0);
+	pfilter_tlist_fix_resjunk(cscan);
 
 	return &cscan->scan.plan;
 }

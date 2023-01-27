@@ -122,8 +122,8 @@ static void handle_modification_query(Query *parse, transform_query_cxt *context
 static Plan *partition_filter_visitor(Plan *plan, void *context);
 static Plan *partition_router_visitor(Plan *plan, void *context);
 
-static void state_visit_subplans(List *plans, void (*visitor) (), void *context);
-static void state_visit_members(PlanState **planstates, int nplans, void (*visitor) (), void *context);
+static void state_visit_subplans(List *plans, void (*visitor) (PlanState *plan, void *context), void *context);
+static void state_visit_members(PlanState **planstates, int nplans, void (*visitor) (PlanState *plan, void *context), void *context);
 
 static Oid find_deepest_partition(Oid relid, Index rti, Expr *quals);
 static Node *eval_extern_params_mutator(Node *node, ParamListInfo params);
@@ -137,13 +137,13 @@ static bool modifytable_contains_fdw(List *rtable, ModifyTable *node);
  * id in order to recognize them properly.
  */
 #define QUERY_ID_INITIAL 0
-static uint32 latest_query_id = QUERY_ID_INITIAL;
+static uint64 latest_query_id = QUERY_ID_INITIAL;
 
 
 void
 assign_query_id(Query *query)
 {
-	uint32	prev_id = latest_query_id++;
+	uint64	prev_id = latest_query_id++;
 
 	if (prev_id > latest_query_id)
 		elog(WARNING, "assign_query_id(): queryId overflow");
@@ -187,14 +187,12 @@ plan_tree_visitor(Plan *plan,
 				plan_tree_visitor((Plan *) lfirst(l), visitor, context);
 			break;
 
+#if PG_VERSION_NUM < 140000 /* reworked in commit 86dc90056dfd */
 		case T_ModifyTable:
-#if PG_VERSION_NUM >= 140000 /* reworked in commit 86dc90056dfd */
-			plan_tree_visitor(outerPlan(plan), visitor, context);
-#else
 			foreach (l, ((ModifyTable *) plan)->plans)
 				plan_tree_visitor((Plan *) lfirst(l), visitor, context);
-#endif
 			break;
+#endif
 
 		case T_Append:
 			foreach (l, ((Append *) plan)->appendplans)
@@ -254,15 +252,13 @@ state_tree_visitor(PlanState *state,
 				state_tree_visitor((PlanState *) lfirst(lc), visitor, context);
 			break;
 
+#if PG_VERSION_NUM < 140000 /* reworked in commit 86dc90056dfd */
 		case T_ModifyTable:
-#if PG_VERSION_NUM >= 140000 /* reworked in commit 86dc90056dfd */
-			visitor(outerPlanState(state), context);
-#else
 			state_visit_members(((ModifyTableState *) state)->mt_plans,
 								((ModifyTableState *) state)->mt_nplans,
 								visitor, context);
-#endif
 			break;
+#endif
 
 		case T_Append:
 			state_visit_members(((AppendState *) state)->appendplans,
@@ -307,7 +303,7 @@ state_tree_visitor(PlanState *state,
  */
 static void
 state_visit_subplans(List *plans,
-					 void (*visitor) (),
+					 void (*visitor) (PlanState *plan, void *context),
 					 void *context)
 {
 	ListCell *lc;
@@ -315,7 +311,7 @@ state_visit_subplans(List *plans,
 	foreach (lc, plans)
 	{
 		SubPlanState *sps = lfirst_node(SubPlanState, lc);
-		visitor(sps->planstate, context);
+		state_tree_visitor(sps->planstate, visitor, context);
 	}
 }
 
@@ -325,12 +321,12 @@ state_visit_subplans(List *plans,
  */
 static void
 state_visit_members(PlanState **planstates, int nplans,
-					void (*visitor) (), void *context)
+					void (*visitor) (PlanState *plan, void *context), void *context)
 {
 	int i;
 
 	for (i = 0; i < nplans; i++)
-		visitor(planstates[i], context);
+		state_tree_visitor(planstates[i], visitor, context);
 }
 
 
@@ -939,10 +935,12 @@ partition_router_visitor(Plan *plan, void *context)
 
 #if PG_VERSION_NUM >= 140000 /* for changes 86dc90056dfd */
 			prouter = make_partition_router(subplan,
-											modify_table->epqParam);
+											modify_table->epqParam,
+											modify_table->nominalRelation);
 #else
 			prouter = make_partition_router((Plan *) lfirst(lc1),
-											modify_table->epqParam);
+											modify_table->epqParam,
+											modify_table->nominalRelation);
 #endif
 
 			pfilter = make_partition_filter((Plan *) prouter, relid,

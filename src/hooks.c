@@ -21,6 +21,7 @@
 #include "hooks.h"
 #include "init.h"
 #include "partition_filter.h"
+#include "partition_overseer.h"
 #include "partition_router.h"
 #include "pathman_workers.h"
 #include "planner_tree_modification.h"
@@ -74,6 +75,7 @@ planner_hook_type				pathman_planner_hook_next				= NULL;
 post_parse_analyze_hook_type	pathman_post_parse_analyze_hook_next	= NULL;
 shmem_startup_hook_type			pathman_shmem_startup_hook_next			= NULL;
 ProcessUtility_hook_type		pathman_process_utility_hook_next		= NULL;
+ExecutorStart_hook_type			pathman_executor_start_hook_prev		= NULL;
 
 
 /* Take care of joins */
@@ -674,6 +676,23 @@ execute_for_plantree(PlannedStmt *planned_stmt,
 }
 
 /*
+ * Truncated version of set_plan_refs.
+ * Pathman can add nodes to already completed and post-processed plan tree.
+ * reset_plan_node_ids fixes some presentation values for updated plan tree
+ * to avoid problems in further processing.
+ */
+static Plan *
+reset_plan_node_ids(Plan *plan, void *lastPlanNodeId)
+{
+	if (plan == NULL)
+		return NULL;
+
+	plan->plan_node_id = (*(int *) lastPlanNodeId)++;
+
+	return plan;
+}
+
+/*
  * Planner hook. It disables inheritance for tables that have been partitioned
  * by pathman to prevent standart PostgreSQL partitioning mechanism from
  * handling those tables.
@@ -688,7 +707,7 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 #endif
 {
 	PlannedStmt	   *result;
-	uint32			query_id = parse->queryId;
+	uint64			query_id = parse->queryId;
 
 	/* Save the result in case it changes */
 	bool			pathman_ready = IsPathmanReady();
@@ -720,6 +739,9 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 
 		if (pathman_ready)
 		{
+			int		lastPlanNodeId = 0;
+			ListCell *l;
+
 			/* Add PartitionFilter node for INSERT queries */
 			execute_for_plantree(result, add_partition_filters);
 
@@ -728,6 +750,13 @@ pathman_planner_hook(Query *parse, int cursorOptions, ParamListInfo boundParams)
 
 			/* Decrement planner() calls count */
 			decr_planner_calls_count();
+
+			/* remake parsed tree presentation fixes due to possible adding nodes */
+			result->planTree = plan_tree_visitor(result->planTree, reset_plan_node_ids, &lastPlanNodeId);
+			foreach(l, result->subplans)
+			{
+				lfirst(l) = plan_tree_visitor((Plan *) lfirst(l), reset_plan_node_ids, &lastPlanNodeId);
+			}
 
 			/* HACK: restore queryId set by pg_stat_statements */
 			result->queryId = query_id;
@@ -1124,4 +1153,54 @@ pathman_process_utility_hook(Node *first_arg,
 								context, params, queryEnv,
 								dest, completionTag);
 #endif
+}
+
+/*
+ * Planstate tree nodes could have been copied.
+ * It breaks references on correspoding
+ * ModifyTable node from PartitionRouter nodes.
+ */
+static void
+fix_mt_refs(PlanState *state, void *context)
+{
+	ModifyTableState		   *mt_state = (ModifyTableState *) state;
+	PartitionRouterState	   *pr_state;
+#if PG_VERSION_NUM < 140000
+	int							i;
+#endif
+
+	if (!IsA(state, ModifyTableState))
+		return;
+#if PG_VERSION_NUM >= 140000
+	{
+		CustomScanState *pf_state = (CustomScanState *) outerPlanState(mt_state);
+#else
+	for (i = 0; i < mt_state->mt_nplans; i++)
+	{
+		CustomScanState *pf_state = (CustomScanState *) mt_state->mt_plans[i];
+#endif
+		if (IsPartitionFilterState(pf_state))
+		{
+			pr_state = linitial(pf_state->custom_ps);
+			if (IsPartitionRouterState(pr_state))
+			{
+				pr_state->mt_state = mt_state;
+			}
+		}
+	}
+}
+
+void
+pathman_executor_start_hook(QueryDesc *queryDesc, int eflags)
+{
+	if (pathman_executor_start_hook_prev)
+		pathman_executor_start_hook_prev(queryDesc, eflags);
+	else
+		standard_ExecutorStart(queryDesc, eflags);
+
+	/*
+	 * HACK for compatibility with pgpro_stats.
+	 * Fix possibly broken planstate tree.
+	 */
+	state_tree_visitor(queryDesc->planstate, fix_mt_refs, NULL);
 }

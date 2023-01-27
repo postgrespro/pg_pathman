@@ -817,6 +817,7 @@ make_partition_filter(Plan *subplan,
 	/* Prepare 'custom_scan_tlist' for EXPLAIN (VERBOSE) */
 	cscan->custom_scan_tlist = copyObject(cscan->scan.plan.targetlist);
 	ChangeVarNodes((Node *) cscan->custom_scan_tlist, INDEX_VAR, parent_rti, 0);
+	pfilter_tlist_fix_resjunk(cscan);
 
 	/* Pack partitioned table's Oid and conflict_action */
 	cscan->custom_private = list_make4(makeInteger(parent_relid),
@@ -1112,6 +1113,34 @@ pfilter_build_tlist(Plan *subplan)
 	}
 
 	return result_tlist;
+}
+
+/*
+ * resjunk Vars had its varattnos being set on nonexisting relation columns.
+ * For future processing service attributes should be indicated correctly.
+ */
+void
+pfilter_tlist_fix_resjunk(CustomScan *css)
+{
+	ListCell *lc;
+
+	foreach(lc, css->custom_scan_tlist)
+	{
+		TargetEntry *tle = (TargetEntry *) lfirst(lc);
+
+		if (!IsA(tle->expr, Const))
+		{
+			Var *var = (Var *) tle->expr;
+
+			if (tle->resjunk)
+			{
+				/* To make Var recognizable as service attribute. */
+				var->varattno = -1;
+			}
+		}
+	}
+
+	return;
 }
 
 /*

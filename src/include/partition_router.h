@@ -78,7 +78,7 @@ void partition_router_explain(CustomScanState *node,
 							  List *ancestors,
 							  ExplainState *es);
 
-Plan *make_partition_router(Plan *subplan, int epq_param);
+Plan *make_partition_router(Plan *subplan, int epq_param, Index parent_rti);
 Node *partition_router_create_scan_state(CustomScan *node);
 TupleTableSlot *partition_router_exec(CustomScanState *node);
 

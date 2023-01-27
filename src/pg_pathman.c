@@ -357,6 +357,8 @@ _PG_init(void)
 	planner_hook							= pathman_planner_hook;
 	pathman_process_utility_hook_next		= ProcessUtility_hook;
 	ProcessUtility_hook						= pathman_process_utility_hook;
+	pathman_executor_start_hook_prev		= ExecutorStart_hook;
+	ExecutorStart_hook						= pathman_executor_start_hook;
 
 	/* Initialize static data for all subsystems */
 	init_main_pathman_toggles();

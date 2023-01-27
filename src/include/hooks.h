@@ -28,6 +28,7 @@ extern post_parse_analyze_hook_type		pathman_post_parse_analyze_hook_next;
 extern shmem_startup_hook_type			pathman_shmem_startup_hook_next;
 extern ProcessUtility_hook_type			pathman_process_utility_hook_next;
 extern ExecutorRun_hook_type			pathman_executor_run_hook_next;
+extern ExecutorStart_hook_type			pathman_executor_start_hook_prev;
 
 
 void pathman_join_pathlist_hook(PlannerInfo *root,
@@ -115,4 +116,6 @@ void pathman_executor_hook(QueryDesc *queryDesc,
 						   ExecutorRun_CountArgType count);
 #endif
 
+void pathman_executor_start_hook(QueryDesc *queryDescc,
+								 int eflags);
 #endif /* PATHMAN_HOOKS_H */
