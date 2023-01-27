@@ -368,8 +368,12 @@ _PG_init(void)
 	init_partition_overseer_static_data();
 
 #if defined(PGPRO_EE) && PG_VERSION_NUM >= 100000
+#if PG_VERSION_NUM >= 150000
 	/* Callbacks for reload relcache for ATX transactions */
+	PgproRegisterXactCallback(pathman_xact_cb, NULL, XACT_EVENT_KIND_VANILLA | XACT_EVENT_KIND_ATX);
+#else
 	RegisterXactCallback(pathman_xact_cb, NULL);
+#endif
 #endif
 }
 
