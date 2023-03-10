@@ -527,3 +527,14 @@ qualified_relnames_to_rangevars(char **relnames, size_t nrelnames)
 	return rangevars;
 }
 
+/*
+ * Checks that Oid is valid (it need to do before relation locking: locking of
+ * invalid Oid causes an error on replica).
+ */
+void
+check_relation_oid(Oid relid)
+{
+	if (relid < FirstNormalObjectId)
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("identifier \"%u\" must be normal Oid", relid)));
+}

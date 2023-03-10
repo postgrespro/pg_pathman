@@ -673,6 +673,7 @@ validate_expression(PG_FUNCTION_ARGS)
 	if (!PG_ARGISNULL(0))
 	{
 		relid = PG_GETARG_OID(0);
+		check_relation_oid(relid);
 	}
 	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("'relid' should not be NULL")));
@@ -807,6 +808,7 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	if (!PG_ARGISNULL(0))
 	{
 		relid = PG_GETARG_OID(0);
+		check_relation_oid(relid);
 	}
 	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("'parent_relid' should not be NULL")));
@@ -1037,6 +1039,8 @@ prevent_part_modification(PG_FUNCTION_ARGS)
 {
 	Oid relid = PG_GETARG_OID(0);
 
+	check_relation_oid(relid);
+
 	/* Lock partitioned relation till transaction's end */
 	LockRelationOid(relid, ShareUpdateExclusiveLock);
 
@@ -1050,6 +1054,8 @@ Datum
 prevent_data_modification(PG_FUNCTION_ARGS)
 {
 	Oid relid = PG_GETARG_OID(0);
+
+	check_relation_oid(relid);
 
 	/*
 	 * Check that isolation level is READ COMMITTED.

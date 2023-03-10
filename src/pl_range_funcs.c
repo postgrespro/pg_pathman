@@ -499,6 +499,7 @@ split_range_partition(PG_FUNCTION_ARGS)
 	if (!PG_ARGISNULL(0))
 	{
 		partition1 = PG_GETARG_OID(0);
+		check_relation_oid(partition1);
 	}
 	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("'partition1' should not be NULL")));
@@ -834,6 +835,8 @@ drop_range_partition_expand_next(PG_FUNCTION_ARGS)
 	ObjectAddress		object;
 	RangeEntry		   *ranges;
 	int					i;
+
+	check_relation_oid(partition);
 
 	/* Lock the partition we're going to drop */
 	LockRelationOid(partition, AccessExclusiveLock);

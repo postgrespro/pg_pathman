@@ -84,5 +84,6 @@ Datum extract_binary_interval_from_text(Datum interval_text,
 										Oid *interval_type);
 char **deconstruct_text_array(Datum array, int *array_size);
 RangeVar **qualified_relnames_to_rangevars(char **relnames, size_t nrelnames);
+void check_relation_oid(Oid relid);
 
 #endif /* PATHMAN_UTILS_H */
