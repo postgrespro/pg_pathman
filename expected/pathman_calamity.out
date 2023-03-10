@@ -320,7 +320,7 @@ SELECT validate_relname(NULL);
 ERROR:  relation should not be NULL
 /* check function validate_expression() */
 SELECT validate_expression(1::regclass, NULL);					/* not ok */
-ERROR:  relation "1" does not exist
+ERROR:  identifier "1" must be normal Oid
 SELECT validate_expression(NULL::regclass, NULL);				/* not ok */
 ERROR:  'relid' should not be NULL
 SELECT validate_expression('calamity.part_test', NULL);			/* not ok */
@@ -426,19 +426,19 @@ SELECT build_sequence_name(NULL) IS NULL;
 
 /* check function partition_table_concurrently() */
 SELECT partition_table_concurrently(1::REGCLASS);				/* not ok */
-ERROR:  relation "1" has no partitions
+ERROR:  identifier "1" must be normal Oid
 SELECT partition_table_concurrently('pg_class', 0);				/* not ok */
 ERROR:  'batch_size' should not be less than 1 or greater than 10000
 SELECT partition_table_concurrently('pg_class', 1, 1E-5);		/* not ok */
 ERROR:  'sleep_time' should not be less than 0.5
 SELECT partition_table_concurrently('pg_class');				/* not ok */
-ERROR:  relation "pg_class" has no partitions
+ERROR:  identifier "1259" must be normal Oid
 /* check function stop_concurrent_part_task() */
 SELECT stop_concurrent_part_task(1::REGCLASS);					/* not ok */
 ERROR:  cannot find worker for relation "1"
 /* check function drop_range_partition_expand_next() */
 SELECT drop_range_partition_expand_next('pg_class');			/* not ok */
-ERROR:  relation "pg_class" is not a partition
+ERROR:  identifier "1259" must be normal Oid
 SELECT drop_range_partition_expand_next(NULL) IS NULL;
  ?column? 
 ----------
@@ -560,7 +560,7 @@ DROP FUNCTION calamity.dummy_cb(arg jsonb);
 SELECT add_to_pathman_config(NULL, 'val');						/* no table */
 ERROR:  'parent_relid' should not be NULL
 SELECT add_to_pathman_config(0::REGCLASS, 'val');				/* no table (oid) */
-ERROR:  relation "0" does not exist
+ERROR:  identifier "0" must be normal Oid
 SELECT add_to_pathman_config('calamity.part_test', NULL);		/* no expr */
 ERROR:  'expression' should not be NULL
 SELECT add_to_pathman_config('calamity.part_test', 'V_A_L');	/* wrong expr */
