@@ -39,8 +39,9 @@
 #include "optimizer/prep.h"
 #include "optimizer/restrictinfo.h"
 #include "rewrite/rewriteManip.h"
-#include "utils/typcache.h"
 #include "utils/lsyscache.h"
+#include "utils/typcache.h"
+#include "utils/snapmgr.h"
 
 
 #ifdef USE_ASSERT_CHECKING
@@ -612,6 +613,27 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 cleanup:
 	/* Don't forget to close 'prel'! */
 	close_pathman_relation_info(prel);
+}
+
+/*
+ * 'pg_pathman.enable' GUC check.
+ */
+bool
+pathman_enable_check_hook(bool *newval, void **extra, GucSource source)
+{
+	if (FirstSnapshotSet ||
+		GetTopTransactionIdIfAny() != InvalidTransactionId ||
+#ifdef PGPRO_EE
+		getNestLevelATX() > 0 ||
+#endif
+		IsSubTransaction())
+	{
+		GUC_check_errcode(ERRCODE_ACTIVE_SQL_TRANSACTION);
+		GUC_check_errmsg("\"pg_pathman.enable\" must be called before any query");
+		return false;
+	}
+
+	return true;
 }
 
 /*

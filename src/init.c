@@ -166,7 +166,7 @@ init_main_pathman_toggles(void)
 							 DEFAULT_PATHMAN_ENABLE,
 							 PGC_SUSET,
 							 0,
-							 NULL,
+							 pathman_enable_check_hook,
 							 pathman_enable_assign_hook,
 							 NULL);
 

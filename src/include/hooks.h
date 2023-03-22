@@ -44,6 +44,7 @@ void pathman_rel_pathlist_hook(PlannerInfo *root,
 							   RangeTblEntry *rte);
 
 void pathman_enable_assign_hook(bool newval, void *extra);
+bool pathman_enable_check_hook(bool *newval, void **extra, GucSource source);
 
 PlannedStmt * pathman_planner_hook(Query *parse,
 #if PG_VERSION_NUM >= 130000
