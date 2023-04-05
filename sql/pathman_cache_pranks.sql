@@ -48,6 +48,75 @@ SELECT create_hash_partitions('part_test', 'val', 2, partition_names := ARRAY[]:
 
 DROP TABLE part_test CASCADE;
 --
+--
+-- PGPRO-7870
+-- Added error for case executing prepared query after DROP/CREATE EXTENSION.
+-- 
+-- DROP/CREATE extension
+CREATE TABLE part_test(a INT4 NOT NULL, b INT4);
+PREPARE q(int4) AS SELECT * FROM part_test WHERE a > ALL (array[$1, 898]);
+SELECT create_range_partitions('part_test', 'a', 1, 100, 10);
+
+EXECUTE q(1);
+EXECUTE q(1);
+EXECUTE q(1);
+EXECUTE q(1);
+EXECUTE q(1);
+EXECUTE q(1);
+
+DROP EXTENSION pg_pathman;
+CREATE EXTENSION pg_pathman;
+
+EXECUTE q(1);
+
+DEALLOCATE q;
+DROP TABLE part_test CASCADE;
+
+-- DROP/CREATE disabled extension
+CREATE TABLE part_test(a INT4 NOT NULL, b INT4);
+PREPARE q(int4) AS SELECT * FROM part_test WHERE a > ALL (array[$1, 898]);
+SELECT create_range_partitions('part_test', 'a', 1, 100, 10);
+
+EXECUTE q(1);
+EXECUTE q(1);
+EXECUTE q(1);
+EXECUTE q(1);
+EXECUTE q(1);
+EXECUTE q(1);
+
+SET pg_pathman.enable = f;
+DROP EXTENSION pg_pathman;
+CREATE EXTENSION pg_pathman;
+SET pg_pathman.enable = t;
+
+EXECUTE q(1);
+
+DEALLOCATE q;
+DROP TABLE part_test CASCADE;
+
+-- DROP/CREATE extension in autonomous transaction
+CREATE TABLE part_test(a INT4 NOT NULL, b INT4);
+PREPARE q(int4) AS SELECT * FROM part_test WHERE a > ALL (array[$1, 198]);
+SELECT create_range_partitions('part_test', 'a', 1, 100, 2);
+
+EXECUTE q(1);
+EXECUTE q(1);
+EXECUTE q(1);
+EXECUTE q(1);
+EXECUTE q(1);
+EXECUTE q(1);
+
+BEGIN;
+	BEGIN AUTONOMOUS;
+		DROP EXTENSION pg_pathman;
+		CREATE EXTENSION pg_pathman;
+	COMMIT;
+COMMIT;
+
+EXECUTE q(1);
+
+DEALLOCATE q;
+DROP TABLE part_test CASCADE;
 
 -- finalize
 DROP EXTENSION pg_pathman;

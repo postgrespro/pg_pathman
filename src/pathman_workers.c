@@ -712,6 +712,8 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("'sleep_time' should not be less than 0.5")));
 
+	check_relation_oid(relid);
+
 	/* Prevent concurrent function calls */
 	LockRelationOid(relid, lockmode);
 

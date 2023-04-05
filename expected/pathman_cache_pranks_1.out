@@ -217,12 +217,19 @@ EXECUTE q(1);
 
 BEGIN;
 	BEGIN AUTONOMOUS;
+ERROR:  syntax error at or near "AUTONOMOUS" at character 7
 		DROP EXTENSION pg_pathman;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 		CREATE EXTENSION pg_pathman;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 	COMMIT;
 COMMIT;
+WARNING:  there is no transaction in progress
 EXECUTE q(1);
-ERROR:  table "part_test" is not partitioned
+ a | b 
+---+---
+(0 rows)
+
 DEALLOCATE q;
 DROP TABLE part_test CASCADE;
 NOTICE:  drop cascades to 3 other objects

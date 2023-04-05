@@ -601,7 +601,10 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 	CustomScan		   *cscan;
 
 	prel = get_pathman_relation_info(rpath->relid);
-	Assert(prel);
+	if (!prel)
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("table \"%s\" is not partitioned",
+							   get_rel_name_or_relid(rpath->relid))));
 
 	cscan = makeNode(CustomScan);
 	cscan->custom_scan_tlist = NIL; /* initial value (empty list) */
@@ -709,7 +712,15 @@ begin_append_common(CustomScanState *node, EState *estate, int eflags)
 #endif
 
 	scan_state->prel = get_pathman_relation_info(scan_state->relid);
-	Assert(scan_state->prel);
+	/*
+	 * scan_state->prel can be NULL in case execution of prepared query that
+	 * was prepared before DROP/CREATE EXTENSION pg_pathman or after
+	 * pathman_config table truncation etc.
+	 */
+	if (!scan_state->prel)
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("table \"%s\" is not partitioned",
+							   get_rel_name_or_relid(scan_state->relid))));
 
 	/* Prepare expression according to set_set_customscan_references() */
 	scan_state->prel_expr = PrelExpressionForRelid(scan_state->prel, INDEX_VAR);
