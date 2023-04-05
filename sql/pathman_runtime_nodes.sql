@@ -63,7 +63,6 @@ begin
 	return 'ok';
 end;
 $$ language plpgsql
-set pg_pathman.enable = true
 set enable_mergejoin = off
 set enable_hashjoin = off;
 
@@ -106,7 +105,6 @@ begin
 	return 'ok';
 end;
 $$ language plpgsql
-set pg_pathman.enable = true
 set enable_mergejoin = off
 set enable_hashjoin = off;
 
@@ -140,7 +138,6 @@ begin
 	return 'ok';
 end;
 $$ language plpgsql
-set pg_pathman.enable = true
 set enable_mergejoin = off
 set enable_hashjoin = off;
 
@@ -180,7 +177,6 @@ begin
 	return 'ok';
 end;
 $$ language plpgsql
-set pg_pathman.enable = true
 set enable_mergejoin = off
 set enable_hashjoin = off;
 
@@ -242,7 +238,6 @@ begin
 	return 'ok';
 end;
 $$ language plpgsql
-set pg_pathman.enable = true
 set enable_hashjoin = off
 set enable_mergejoin = off;
 
@@ -347,6 +342,31 @@ DROP FUNCTION test.pathman_test_3();
 DROP FUNCTION test.pathman_test_4();
 DROP FUNCTION test.pathman_test_5();
 DROP SCHEMA test;
+--
+--
+-- PGPRO-7928
+-- Variable pg_pathman.enable must be called before any query.
+--
+CREATE TABLE part_test (val int NOT NULL);
+SELECT create_hash_partitions('part_test', 'val', 2, partition_names := array['part_test_1','pg_pathman']);
+CREATE OR REPLACE FUNCTION part_test_trigger() RETURNS TRIGGER AS $$
+BEGIN
+	RAISE NOTICE '%', format('%s %s %s (%s)', TG_WHEN, TG_OP, TG_LEVEL, TG_TABLE_NAME);
+	IF TG_OP::text = 'DELETE'::text then
+		SET pg_pathman.enable = f;
+		RETURN new;
+	END IF;
+END;
+$$ LANGUAGE PLPGSQL;
+SET pg_pathman.enable_partitionrouter = t;
+CREATE TRIGGER ad AFTER DELETE ON part_test_1 FOR EACH ROW EXECUTE PROCEDURE part_test_trigger ();
+INSERT INTO part_test VALUES (1);
+UPDATE part_test SET val = val + 1 RETURNING *, tableoid::regclass;
+UPDATE part_test SET val = val + 1 RETURNING *, tableoid::regclass;
+
+RESET pg_pathman.enable_partitionrouter;
+DROP TABLE part_test CASCADE;
+DROP FUNCTION part_test_trigger();
+
 DROP EXTENSION pg_pathman CASCADE;
 DROP SCHEMA pathman;
-
