@@ -353,6 +353,19 @@ index ee5ad3c058..dc474819d7 100644
  	PartitionDirectory es_partition_directory;	/* for PartitionDesc lookup */
  
  	/*
+diff --git a/src/include/utils/snapmgr.h b/src/include/utils/snapmgr.h
+index 33e6c14e81..abd9bba23e 100644
+--- a/src/include/utils/snapmgr.h
++++ b/src/include/utils/snapmgr.h
+@@ -53,7 +53,7 @@ extern TimestampTz GetSnapshotCurrentTimestamp(void);
+ extern TimestampTz GetOldSnapshotThresholdTimestamp(void);
+ extern void SnapshotTooOldMagicForTest(void);
+ 
+-extern bool FirstSnapshotSet;
++extern PGDLLIMPORT bool FirstSnapshotSet;
+ 
+ extern PGDLLIMPORT TransactionId TransactionXmin;
+ extern PGDLLIMPORT TransactionId RecentXmin;
 diff --git a/src/tools/msvc/Install.pm b/src/tools/msvc/Install.pm
 index de22c9ba2c..c8be5323b8 100644
 --- a/src/tools/msvc/Install.pm
