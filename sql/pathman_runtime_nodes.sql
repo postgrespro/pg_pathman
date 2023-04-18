@@ -348,7 +348,7 @@ DROP SCHEMA test;
 -- Variable pg_pathman.enable must be called before any query.
 --
 CREATE TABLE part_test (val int NOT NULL);
-SELECT create_hash_partitions('part_test', 'val', 2, partition_names := array['part_test_1','pg_pathman']);
+SELECT pathman.create_hash_partitions('part_test', 'val', 2, partition_names := array['part_test_1','pg_pathman']);
 CREATE OR REPLACE FUNCTION part_test_trigger() RETURNS TRIGGER AS $$
 BEGIN
 	RAISE NOTICE '%', format('%s %s %s (%s)', TG_WHEN, TG_OP, TG_LEVEL, TG_TABLE_NAME);

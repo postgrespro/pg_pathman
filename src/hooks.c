@@ -621,6 +621,15 @@ cleanup:
 bool
 pathman_enable_check_hook(bool *newval, void **extra, GucSource source)
 {
+	/* The top level statement requires immediate commit: accept GUC change */
+	if (MyXactFlags & XACT_FLAGS_NEEDIMMEDIATECOMMIT)
+		return true;
+
+	/* Ignore the case of re-setting the same value */
+	if (*newval == pathman_init_state.pg_pathman_enable)
+		return true;
+
+	/* Command must be at top level of a fresh transaction. */
 	if (FirstSnapshotSet ||
 		GetTopTransactionIdIfAny() != InvalidTransactionId ||
 #ifdef PGPRO_EE
@@ -628,9 +637,13 @@ pathman_enable_check_hook(bool *newval, void **extra, GucSource source)
 #endif
 		IsSubTransaction())
 	{
-		GUC_check_errcode(ERRCODE_ACTIVE_SQL_TRANSACTION);
-		GUC_check_errmsg("\"pg_pathman.enable\" must be called before any query");
-		return false;
+		/* Keep the old value. */
+		*newval = pathman_init_state.pg_pathman_enable;
+
+		ereport(WARNING,
+				(errcode(ERRCODE_ACTIVE_SQL_TRANSACTION),
+				 errmsg("\"SET pg_pathman.enable\" must be called before any query. "
+						"Command ignored.")));
 	}
 
 	return true;
