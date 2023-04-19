@@ -1212,4 +1212,14 @@ void set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel, Index rti);
 #define pull_varnos_compat(r, n)                               pull_varnos(n)
 #endif
 
+/*
+ * build_expression_pathkey()
+ * In >=16 argument was removed (b448f1c8d83)
+ */
+#if PG_VERSION_NUM >= 160000
+#define build_expression_pathkey_compat(root, expr, nullable_relids, opno, rel, create_it)   build_expression_pathkey(root, expr, opno, rel, create_it)
+#else
+#define build_expression_pathkey_compat(root, expr, nullable_relids, opno, rel, create_it)   build_expression_pathkey(root, expr, nullable_relids, opno, rel, create_it)
+#endif
+
 #endif /* PG_COMPAT_H */

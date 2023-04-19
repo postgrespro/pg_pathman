@@ -449,12 +449,12 @@ pathman_rel_pathlist_hook(PlannerInfo *root,
 		tce = lookup_type_cache(prel->ev_type, TYPECACHE_LT_OPR | TYPECACHE_GT_OPR);
 
 		/* Make pathkeys */
-		pathkeys = build_expression_pathkey(root, (Expr *) part_expr, NULL,
-											tce->lt_opr, NULL, false);
+		pathkeys = build_expression_pathkey_compat(root, (Expr *) part_expr, NULL,
+												   tce->lt_opr, NULL, false);
 		if (pathkeys)
 			pathkeyAsc = (PathKey *) linitial(pathkeys);
-		pathkeys = build_expression_pathkey(root, (Expr *) part_expr, NULL,
-											tce->gt_opr, NULL, false);
+		pathkeys = build_expression_pathkey_compat(root, (Expr *) part_expr, NULL,
+												   tce->gt_opr, NULL, false);
 		if (pathkeys)
 			pathkeyDesc = (PathKey *) linitial(pathkeys);
 	}
