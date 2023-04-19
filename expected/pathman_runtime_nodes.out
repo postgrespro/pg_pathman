@@ -491,7 +491,7 @@ UPDATE part_test SET val = val + 1 RETURNING *, tableoid::regclass;
 
 UPDATE part_test SET val = val + 1 RETURNING *, tableoid::regclass;
 NOTICE:  AFTER DELETE ROW (part_test_1)
-WARNING:  "SET pg_pathman.enable" must be called before any query. Command ignored.
+WARNING:  "pg_pathman.enable" must be called before any query, ignored
  val |  tableoid  
 -----+------------
    3 | pg_pathman

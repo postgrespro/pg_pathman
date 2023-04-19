@@ -637,13 +637,12 @@ pathman_enable_check_hook(bool *newval, void **extra, GucSource source)
 #endif
 		IsSubTransaction())
 	{
-		/* Keep the old value. */
-		*newval = pathman_init_state.pg_pathman_enable;
-
 		ereport(WARNING,
 				(errcode(ERRCODE_ACTIVE_SQL_TRANSACTION),
-				 errmsg("\"SET pg_pathman.enable\" must be called before any query. "
-						"Command ignored.")));
+				 errmsg("\"pg_pathman.enable\" must be called before any query, ignored")));
+
+		/* Keep the old value. */
+		*newval = pathman_init_state.pg_pathman_enable;
 	}
 
 	return true;
