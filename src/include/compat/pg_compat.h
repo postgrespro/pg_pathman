@@ -1194,13 +1194,18 @@ void set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel, Index rti);
 
 /*
  * make_restrictinfo()
+ * In >=16 3th and 9th arguments were removed (b448f1c8d83)
  * In >=14 new argument was added (55dc86eca70)
  */
+#if PG_VERSION_NUM >= 160000
+#define make_restrictinfo_compat(r, c, ipd, od, p, sl, rr, or, nr)  make_restrictinfo((r), (c), (ipd), (p), (sl), (rr), (or))
+#else
 #if PG_VERSION_NUM >= 140000
 #define make_restrictinfo_compat(r, c, ipd, od, p, sl, rr, or, nr)  make_restrictinfo((r), (c), (ipd), (od), (p), (sl), (rr), (or), (nr))
 #else
 #define make_restrictinfo_compat(r, c, ipd, od, p, sl, rr, or, nr)  make_restrictinfo((c), (ipd), (od), (p), (sl), (rr), (or), (nr))
-#endif
+#endif /* #if PG_VERSION_NUM >= 140000 */
+#endif /* #if PG_VERSION_NUM >= 160000 */
 
 /*
  * pull_varnos()
