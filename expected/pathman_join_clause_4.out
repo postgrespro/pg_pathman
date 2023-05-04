@@ -103,16 +103,15 @@ EXPLAIN (COSTS OFF) SELECT * FROM test.parent
 LEFT JOIN test.child ON test.child.parent_id = test.parent.id AND
 						test.child.owner_id = test.parent.owner_id
 WHERE test.parent.owner_id = 3 and test.parent.id IN (3, 4);
-                                             QUERY PLAN                                              
------------------------------------------------------------------------------------------------------
+                              QUERY PLAN                              
+----------------------------------------------------------------------
  Nested Loop Left Join
+   Join Filter: (child.parent_id = parent.id)
    ->  Seq Scan on parent
          Filter: ((id = ANY ('{3,4}'::integer[])) AND (owner_id = 3))
-   ->  Custom Scan (RuntimeAppend)
-         Prune by: ((child.owner_id = 3) AND (child.owner_id = parent.owner_id))
-         ->  Seq Scan on child_1 child
-               Filter: ((owner_id = 3) AND (owner_id = parent.owner_id) AND (parent_id = parent.id))
-(7 rows)
+   ->  Seq Scan on child_1 child
+         Filter: (owner_id = 3)
+(6 rows)
 
 SELECT * FROM test.parent
 LEFT JOIN test.child ON test.child.parent_id = test.parent.id AND
