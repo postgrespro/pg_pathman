@@ -564,10 +564,14 @@ PathmanCopyFrom(
 
 #if PG_VERSION_NUM >= 140000  /* reworked in 1375422c7826 */
 	/*
-	 * Call ExecInitRangeTable() should be first because in 14 it initializes
+	 * Call ExecInitRangeTable() should be first because in 14+ it initializes
 	 * field "estate->es_result_relations":
 	 */
+#if PG_VERSION_NUM >= 160000
+	ExecInitRangeTable(estate, range_table, cstate->rteperminfos);
+#else
 	ExecInitRangeTable(estate, range_table);
+#endif
 	estate->es_result_relations =
 		(ResultRelInfo **) palloc0(list_length(range_table) * sizeof(ResultRelInfo *));
 	estate->es_result_relations[0] = parent_rri;
@@ -749,7 +753,7 @@ PathmanCopyFrom(
 				/* ... and create index entries for it */
 				if (child_rri->ri_NumIndices > 0)
 					recheckIndexes = ExecInsertIndexTuplesCompat(estate->es_result_relation_info,
-										slot, &(tuple->t_self), estate, false, false, NULL, NIL);
+										slot, &(tuple->t_self), estate, false, false, NULL, NIL, false);
 			}
 #ifdef PG_SHARDMAN
 			/* Handle foreign tables */
