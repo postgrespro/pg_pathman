@@ -24,7 +24,7 @@ index d0e5bc26a7..5ca196518e 100644
  bool		DefaultXactDeferrable = false;
  bool		XactDeferrable;
 diff --git a/src/backend/executor/execExprInterp.c b/src/backend/executor/execExprInterp.c
-index ef0f9577ab..95858960d5 100644
+index d5e46098c2..d3c02c1def 100644
 --- a/src/backend/executor/execExprInterp.c
 +++ b/src/backend/executor/execExprInterp.c
 @@ -1801,6 +1801,16 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
@@ -77,10 +77,10 @@ index ef2fd46092..8551733c55 100644
  	 * ResultRelInfos needed by subplans are initialized from scratch when the
  	 * subplans themselves are initialized.
 diff --git a/src/backend/executor/nodeModifyTable.c b/src/backend/executor/nodeModifyTable.c
-index ad0aa8dd9d..a2715efa09 100644
+index 2f6e66b641..d4a1e48c20 100644
 --- a/src/backend/executor/nodeModifyTable.c
 +++ b/src/backend/executor/nodeModifyTable.c
-@@ -663,6 +663,13 @@ ExecInitUpdateProjection(ModifyTableState *mtstate,
+@@ -641,6 +641,13 @@ ExecInitUpdateProjection(ModifyTableState *mtstate,
  	resultRelInfo->ri_projectNewInfoValid = true;
  }
  
@@ -94,7 +94,7 @@ index ad0aa8dd9d..a2715efa09 100644
  /*
   * ExecGetInsertNewTuple
   *		This prepares a "new" tuple ready to be inserted into given result
-@@ -3581,6 +3588,7 @@ ExecModifyTable(PlanState *pstate)
+@@ -3524,6 +3531,7 @@ ExecModifyTable(PlanState *pstate)
  	HeapTupleData oldtupdata;
  	HeapTuple	oldtuple;
  	ItemPointer tupleid;
@@ -102,7 +102,7 @@ index ad0aa8dd9d..a2715efa09 100644
  
  	CHECK_FOR_INTERRUPTS();
  
-@@ -3622,6 +3630,8 @@ ExecModifyTable(PlanState *pstate)
+@@ -3565,6 +3573,8 @@ ExecModifyTable(PlanState *pstate)
  	context.mtstate = node;
  	context.epqstate = &node->mt_epqstate;
  	context.estate = estate;
@@ -111,7 +111,7 @@ index ad0aa8dd9d..a2715efa09 100644
  
  	/*
  	 * Fetch rows from subplan, and execute the required table modification
-@@ -3629,6 +3639,14 @@ ExecModifyTable(PlanState *pstate)
+@@ -3572,6 +3582,14 @@ ExecModifyTable(PlanState *pstate)
  	 */
  	for (;;)
  	{
@@ -126,7 +126,7 @@ index ad0aa8dd9d..a2715efa09 100644
  		/*
  		 * Reset the per-output-tuple exprcontext.  This is needed because
  		 * triggers expect to use that context as workspace.  It's a bit ugly
-@@ -3662,7 +3680,9 @@ ExecModifyTable(PlanState *pstate)
+@@ -3605,7 +3623,9 @@ ExecModifyTable(PlanState *pstate)
  			bool		isNull;
  			Oid			resultoid;
  
@@ -137,7 +137,7 @@ index ad0aa8dd9d..a2715efa09 100644
  										 &isNull);
  			if (isNull)
  			{
-@@ -3699,6 +3719,8 @@ ExecModifyTable(PlanState *pstate)
+@@ -3642,6 +3662,8 @@ ExecModifyTable(PlanState *pstate)
  		if (resultRelInfo->ri_usesFdwDirectModify)
  		{
  			Assert(resultRelInfo->ri_projectReturning);
@@ -146,7 +146,7 @@ index ad0aa8dd9d..a2715efa09 100644
  
  			/*
  			 * A scan slot containing the data that was actually inserted,
-@@ -3708,6 +3730,7 @@ ExecModifyTable(PlanState *pstate)
+@@ -3651,6 +3673,7 @@ ExecModifyTable(PlanState *pstate)
  			 */
  			slot = ExecProcessReturning(resultRelInfo, NULL, context.planSlot);
  
@@ -154,7 +154,7 @@ index ad0aa8dd9d..a2715efa09 100644
  			return slot;
  		}
  
-@@ -3738,7 +3761,8 @@ ExecModifyTable(PlanState *pstate)
+@@ -3681,7 +3704,8 @@ ExecModifyTable(PlanState *pstate)
  			{
  				/* ri_RowIdAttNo refers to a ctid attribute */
  				Assert(AttributeNumberIsValid(resultRelInfo->ri_RowIdAttNo));
@@ -164,7 +164,7 @@ index ad0aa8dd9d..a2715efa09 100644
  											 resultRelInfo->ri_RowIdAttNo,
  											 &isNull);
  
-@@ -3786,7 +3810,8 @@ ExecModifyTable(PlanState *pstate)
+@@ -3729,7 +3753,8 @@ ExecModifyTable(PlanState *pstate)
  			 */
  			else if (AttributeNumberIsValid(resultRelInfo->ri_RowIdAttNo))
  			{
@@ -174,7 +174,7 @@ index ad0aa8dd9d..a2715efa09 100644
  											 resultRelInfo->ri_RowIdAttNo,
  											 &isNull);
  				/* shouldn't ever get a null result... */
-@@ -3817,9 +3842,12 @@ ExecModifyTable(PlanState *pstate)
+@@ -3760,9 +3785,12 @@ ExecModifyTable(PlanState *pstate)
  				/* Initialize projection info if first time for this table */
  				if (unlikely(!resultRelInfo->ri_projectNewInfoValid))
  					ExecInitInsertProjection(node, resultRelInfo);
@@ -190,59 +190,25 @@ index ad0aa8dd9d..a2715efa09 100644
  				break;
  
  			case CMD_UPDATE:
-@@ -3827,38 +3855,46 @@ ExecModifyTable(PlanState *pstate)
+@@ -3770,6 +3798,13 @@ ExecModifyTable(PlanState *pstate)
  				if (unlikely(!resultRelInfo->ri_projectNewInfoValid))
  					ExecInitUpdateProjection(node, resultRelInfo);
  
--				/*
--				 * Make the new tuple by combining plan's output tuple with
--				 * the old tuple being updated.
--				 */
--				oldSlot = resultRelInfo->ri_oldTupleSlot;
--				if (oldtuple != NULL)
--				{
--					/* Use the wholerow junk attr as the old tuple. */
--					ExecForceStoreHeapTuple(oldtuple, oldSlot, false);
--				}
--				else
++				/*
++				 * Do not change the indentation for PostgreSQL code to make it
++				 * easier to merge new PostgreSQL changes.
++				 */
 +				/* Do nothing in case tuple was modified in pg_pathman: */
 +				if (!estate->es_original_tuple)
- 				{
--					/* Fetch the most recent version of old tuple. */
--					Relation	relation = resultRelInfo->ri_RelationDesc;
-+					/*
-+					 * Make the new tuple by combining plan's output tuple
-+					 * with the old tuple being updated.
-+					 */
-+					oldSlot = resultRelInfo->ri_oldTupleSlot;
-+					if (oldtuple != NULL)
-+					{
-+						/* Use the wholerow junk attr as the old tuple. */
-+						ExecForceStoreHeapTuple(oldtuple, oldSlot, false);
-+					}
-+					else
-+					{
-+						/* Fetch the most recent version of old tuple. */
-+						Relation	relation = resultRelInfo->ri_RelationDesc;
- 
--					if (!table_tuple_fetch_row_version(relation, tupleid,
--													   SnapshotAny,
--													   oldSlot))
--						elog(ERROR, "failed to fetch tuple being updated");
-+						if (!table_tuple_fetch_row_version(relation, tupleid,
-+														   SnapshotAny,
-+														   oldSlot))
-+							elog(ERROR, "failed to fetch tuple being updated");
-+					}
-+					slot = internalGetUpdateNewTuple(resultRelInfo, context.planSlot,
-+													 oldSlot, NULL);
-+					context.GetUpdateNewTuple = internalGetUpdateNewTuple;
-+					context.relaction = NULL;
- 				}
--				slot = internalGetUpdateNewTuple(resultRelInfo, context.planSlot,
--												 oldSlot, NULL);
--				context.GetUpdateNewTuple = internalGetUpdateNewTuple;
--				context.relaction = NULL;
++				{
+ 				/*
+ 				 * Make the new tuple by combining plan's output tuple with
+ 				 * the old tuple being updated.
+@@ -3793,14 +3828,19 @@ ExecModifyTable(PlanState *pstate)
+ 				slot = ExecGetUpdateNewTuple(resultRelInfo, context.planSlot,
+ 											 oldSlot);
+ 				context.relaction = NULL;
++				}
  
  				/* Now apply the update. */
 -				slot = ExecUpdate(&context, resultRelInfo, tupleid, oldtuple,
@@ -260,7 +226,7 @@ index ad0aa8dd9d..a2715efa09 100644
  								  true, false, node->canSetTag, NULL, NULL);
  				break;
  
-@@ -3876,7 +3912,10 @@ ExecModifyTable(PlanState *pstate)
+@@ -3818,7 +3858,10 @@ ExecModifyTable(PlanState *pstate)
  		 * the work on next call.
  		 */
  		if (slot)
@@ -271,7 +237,7 @@ index ad0aa8dd9d..a2715efa09 100644
  	}
  
  	/*
-@@ -3892,6 +3931,7 @@ ExecModifyTable(PlanState *pstate)
+@@ -3834,6 +3877,7 @@ ExecModifyTable(PlanState *pstate)
  
  	node->mt_done = true;
  
@@ -279,7 +245,7 @@ index ad0aa8dd9d..a2715efa09 100644
  	return NULL;
  }
  
-@@ -3966,6 +4006,7 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
+@@ -3908,6 +3952,7 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
  	ListCell   *l;
  	int			i;
  	Relation	rel;
@@ -287,7 +253,7 @@ index ad0aa8dd9d..a2715efa09 100644
  
  	/* check for unsupported flags */
  	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
-@@ -4066,6 +4107,13 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
+@@ -4008,6 +4053,13 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
  		i++;
  	}
  
@@ -301,7 +267,7 @@ index ad0aa8dd9d..a2715efa09 100644
  	/*
  	 * Now we may initialize the subplan.
  	 */
-@@ -4157,6 +4205,8 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
+@@ -4102,6 +4154,8 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
  			ExecInitStoredGenerated(resultRelInfo, estate, operation);
  	}
  

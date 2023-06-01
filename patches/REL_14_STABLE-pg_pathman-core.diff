@@ -24,7 +24,7 @@ index bf551b0395..10d2044ae6 100644
  bool		DefaultXactDeferrable = false;
  bool		XactDeferrable;
 diff --git a/src/backend/executor/execExprInterp.c b/src/backend/executor/execExprInterp.c
-index 6b63f93e6d..060146d127 100644
+index bdf59a10fc..972453d9a5 100644
 --- a/src/backend/executor/execExprInterp.c
 +++ b/src/backend/executor/execExprInterp.c
 @@ -1799,6 +1799,16 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
@@ -77,7 +77,7 @@ index b3ce4bae53..8f2bb12542 100644
  	 * ResultRelInfos needed by subplans are initialized from scratch when the
  	 * subplans themselves are initialized.
 diff --git a/src/backend/executor/nodeModifyTable.c b/src/backend/executor/nodeModifyTable.c
-index 0780554246..a90f3a495d 100644
+index 55c430c9ec..21d9e6304a 100644
 --- a/src/backend/executor/nodeModifyTable.c
 +++ b/src/backend/executor/nodeModifyTable.c
 @@ -510,7 +510,7 @@ ExecInitInsertProjection(ModifyTableState *mtstate,
@@ -89,7 +89,7 @@ index 0780554246..a90f3a495d 100644
  ExecInitUpdateProjection(ModifyTableState *mtstate,
  						 ResultRelInfo *resultRelInfo)
  {
-@@ -2487,6 +2487,7 @@ ExecModifyTable(PlanState *pstate)
+@@ -2486,6 +2486,7 @@ ExecModifyTable(PlanState *pstate)
  	ItemPointerData tuple_ctid;
  	HeapTupleData oldtupdata;
  	HeapTuple	oldtuple;
@@ -97,7 +97,7 @@ index 0780554246..a90f3a495d 100644
  
  	CHECK_FOR_INTERRUPTS();
  
-@@ -2524,12 +2525,23 @@ ExecModifyTable(PlanState *pstate)
+@@ -2523,12 +2524,23 @@ ExecModifyTable(PlanState *pstate)
  	resultRelInfo = node->resultRelInfo + node->mt_lastResultIndex;
  	subplanstate = outerPlanState(node);
  
@@ -121,7 +121,7 @@ index 0780554246..a90f3a495d 100644
  		/*
  		 * Reset the per-output-tuple exprcontext.  This is needed because
  		 * triggers expect to use that context as workspace.  It's a bit ugly
-@@ -2563,7 +2575,9 @@ ExecModifyTable(PlanState *pstate)
+@@ -2562,7 +2574,9 @@ ExecModifyTable(PlanState *pstate)
  			bool		isNull;
  			Oid			resultoid;
  
@@ -132,7 +132,7 @@ index 0780554246..a90f3a495d 100644
  										 &isNull);
  			if (isNull)
  				elog(ERROR, "tableoid is NULL");
-@@ -2582,6 +2596,8 @@ ExecModifyTable(PlanState *pstate)
+@@ -2581,6 +2595,8 @@ ExecModifyTable(PlanState *pstate)
  		if (resultRelInfo->ri_usesFdwDirectModify)
  		{
  			Assert(resultRelInfo->ri_projectReturning);
@@ -141,7 +141,7 @@ index 0780554246..a90f3a495d 100644
  
  			/*
  			 * A scan slot containing the data that was actually inserted,
-@@ -2591,6 +2607,7 @@ ExecModifyTable(PlanState *pstate)
+@@ -2590,6 +2606,7 @@ ExecModifyTable(PlanState *pstate)
  			 */
  			slot = ExecProcessReturning(resultRelInfo, NULL, planSlot);
  
@@ -149,7 +149,7 @@ index 0780554246..a90f3a495d 100644
  			return slot;
  		}
  
-@@ -2620,7 +2637,8 @@ ExecModifyTable(PlanState *pstate)
+@@ -2619,7 +2636,8 @@ ExecModifyTable(PlanState *pstate)
  			{
  				/* ri_RowIdAttNo refers to a ctid attribute */
  				Assert(AttributeNumberIsValid(resultRelInfo->ri_RowIdAttNo));
@@ -159,7 +159,7 @@ index 0780554246..a90f3a495d 100644
  											 resultRelInfo->ri_RowIdAttNo,
  											 &isNull);
  				/* shouldn't ever get a null result... */
-@@ -2650,7 +2668,8 @@ ExecModifyTable(PlanState *pstate)
+@@ -2649,7 +2667,8 @@ ExecModifyTable(PlanState *pstate)
  			 */
  			else if (AttributeNumberIsValid(resultRelInfo->ri_RowIdAttNo))
  			{
@@ -169,7 +169,7 @@ index 0780554246..a90f3a495d 100644
  											 resultRelInfo->ri_RowIdAttNo,
  											 &isNull);
  				/* shouldn't ever get a null result... */
-@@ -2681,8 +2700,12 @@ ExecModifyTable(PlanState *pstate)
+@@ -2680,8 +2699,12 @@ ExecModifyTable(PlanState *pstate)
  				/* Initialize projection info if first time for this table */
  				if (unlikely(!resultRelInfo->ri_projectNewInfoValid))
  					ExecInitInsertProjection(node, resultRelInfo);
@@ -184,58 +184,25 @@ index 0780554246..a90f3a495d 100644
  								  estate, node->canSetTag);
  				break;
  			case CMD_UPDATE:
-@@ -2690,37 +2713,45 @@ ExecModifyTable(PlanState *pstate)
+@@ -2689,6 +2712,13 @@ ExecModifyTable(PlanState *pstate)
  				if (unlikely(!resultRelInfo->ri_projectNewInfoValid))
  					ExecInitUpdateProjection(node, resultRelInfo);
  
--				/*
--				 * Make the new tuple by combining plan's output tuple with
--				 * the old tuple being updated.
--				 */
--				oldSlot = resultRelInfo->ri_oldTupleSlot;
--				if (oldtuple != NULL)
--				{
--					/* Use the wholerow junk attr as the old tuple. */
--					ExecForceStoreHeapTuple(oldtuple, oldSlot, false);
--				}
--				else
++				/*
++				 * Do not change the indentation for PostgreSQL code to make it
++				 * easier to merge new PostgreSQL changes.
++				 */
 +				/* Do nothing in case tuple was modified in pg_pathman: */
 +				if (!estate->es_original_tuple)
- 				{
--					/* Fetch the most recent version of old tuple. */
--					Relation	relation = resultRelInfo->ri_RelationDesc;
--
--					Assert(tupleid != NULL);
--					if (!table_tuple_fetch_row_version(relation, tupleid,
--													   SnapshotAny,
--													   oldSlot))
--						elog(ERROR, "failed to fetch tuple being updated");
-+					/*
-+					 * Make the new tuple by combining plan's output tuple
-+					 * with the old tuple being updated.
-+					 */
-+					oldSlot = resultRelInfo->ri_oldTupleSlot;
-+					if (oldtuple != NULL)
-+					{
-+						/* Use the wholerow junk attr as the old tuple. */
-+						ExecForceStoreHeapTuple(oldtuple, oldSlot, false);
-+					}
-+					else
-+					{
-+						/* Fetch the most recent version of old tuple. */
-+						Relation	relation = resultRelInfo->ri_RelationDesc;
-+
-+						Assert(tupleid != NULL);
-+						if (!table_tuple_fetch_row_version(relation, tupleid,
-+														   SnapshotAny,
-+														   oldSlot))
-+							elog(ERROR, "failed to fetch tuple being updated");
-+					}
-+					slot = ExecGetUpdateNewTuple(resultRelInfo, planSlot,
-+												 oldSlot);
++				{
+ 				/*
+ 				 * Make the new tuple by combining plan's output tuple with
+ 				 * the old tuple being updated.
+@@ -2712,14 +2742,19 @@ ExecModifyTable(PlanState *pstate)
  				}
--				slot = ExecGetUpdateNewTuple(resultRelInfo, planSlot,
--											 oldSlot);
+ 				slot = ExecGetUpdateNewTuple(resultRelInfo, planSlot,
+ 											 oldSlot);
++				}
  
  				/* Now apply the update. */
 -				slot = ExecUpdate(node, resultRelInfo, tupleid, oldtuple, slot,
@@ -253,7 +220,7 @@ index 0780554246..a90f3a495d 100644
  								  planSlot, &node->mt_epqstate, estate,
  								  true, /* processReturning */
  								  node->canSetTag,
-@@ -2737,7 +2768,10 @@ ExecModifyTable(PlanState *pstate)
+@@ -2736,7 +2771,10 @@ ExecModifyTable(PlanState *pstate)
  		 * the work on next call.
  		 */
  		if (slot)
@@ -264,7 +231,7 @@ index 0780554246..a90f3a495d 100644
  	}
  
  	/*
-@@ -2753,6 +2787,7 @@ ExecModifyTable(PlanState *pstate)
+@@ -2752,6 +2790,7 @@ ExecModifyTable(PlanState *pstate)
  
  	node->mt_done = true;
  
@@ -272,7 +239,7 @@ index 0780554246..a90f3a495d 100644
  	return NULL;
  }
  
-@@ -2827,6 +2862,7 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
+@@ -2826,6 +2865,7 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
  	ListCell   *l;
  	int			i;
  	Relation	rel;
@@ -280,7 +247,7 @@ index 0780554246..a90f3a495d 100644
  
  	/* check for unsupported flags */
  	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
-@@ -2923,6 +2959,13 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
+@@ -2922,6 +2962,13 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
  		i++;
  	}
  
@@ -294,7 +261,7 @@ index 0780554246..a90f3a495d 100644
  	/*
  	 * Now we may initialize the subplan.
  	 */
-@@ -3004,6 +3047,8 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
+@@ -3002,6 +3049,8 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
  			ExecInitStoredGenerated(resultRelInfo, estate, operation);
  	}
  
@@ -386,6 +353,19 @@ index ee5ad3c058..dc474819d7 100644
  	PartitionDirectory es_partition_directory;	/* for PartitionDesc lookup */
  
  	/*
+diff --git a/src/include/utils/snapmgr.h b/src/include/utils/snapmgr.h
+index 33e6c14e81..abd9bba23e 100644
+--- a/src/include/utils/snapmgr.h
++++ b/src/include/utils/snapmgr.h
+@@ -53,7 +53,7 @@ extern TimestampTz GetSnapshotCurrentTimestamp(void);
+ extern TimestampTz GetOldSnapshotThresholdTimestamp(void);
+ extern void SnapshotTooOldMagicForTest(void);
+ 
+-extern bool FirstSnapshotSet;
++extern PGDLLIMPORT bool FirstSnapshotSet;
+ 
+ extern PGDLLIMPORT TransactionId TransactionXmin;
+ extern PGDLLIMPORT TransactionId RecentXmin;
 diff --git a/src/tools/msvc/Install.pm b/src/tools/msvc/Install.pm
 index de22c9ba2c..c8be5323b8 100644
 --- a/src/tools/msvc/Install.pm
