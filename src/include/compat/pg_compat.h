@@ -779,7 +779,12 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 /*
  * ExecBRUpdateTriggers()
  */
-#if PG_VERSION_NUM >= 150000 /* for commit 7103ebb7aae8 */
+#if PG_VERSION_NUM >= 160000
+#define ExecBRUpdateTriggersCompat(estate, epqstate, relinfo, \
+					 tupleid, fdw_trigtuple, newslot) \
+	ExecBRUpdateTriggers((estate), (epqstate), (relinfo), (tupleid), \
+						 (fdw_trigtuple), (newslot), NULL, NULL)
+#elif PG_VERSION_NUM >= 150000 /* for commit 7103ebb7aae8 */
 #define ExecBRUpdateTriggersCompat(estate, epqstate, relinfo, \
 					 tupleid, fdw_trigtuple, newslot) \
 	ExecBRUpdateTriggers((estate), (epqstate), (relinfo), (tupleid), \
@@ -809,7 +814,12 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 /*
  * ExecBRDeleteTriggers()
  */
-#if PG_VERSION_NUM >= 110000
+#if PG_VERSION_NUM >= 160000
+#define ExecBRDeleteTriggersCompat(estate, epqstate, relinfo, tupleid, \
+								   fdw_trigtuple, epqslot) \
+	ExecBRDeleteTriggers((estate), (epqstate), (relinfo), (tupleid), \
+						 (fdw_trigtuple), (epqslot), NULL, NULL)
+#elif PG_VERSION_NUM >= 110000
 #define ExecBRDeleteTriggersCompat(estate, epqstate, relinfo, tupleid, \
 								   fdw_trigtuple, epqslot) \
 	ExecBRDeleteTriggers((estate), (epqstate), (relinfo), (tupleid), \
@@ -1028,15 +1038,19 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 /*
  * ExecInsertIndexTuples. Since 12 slot contains tupleid.
  * Since 14: new fields "resultRelInfo", "update".
+ * Since 16: new bool field "onlySummarizing".
  */
-#if PG_VERSION_NUM >= 140000
-#define ExecInsertIndexTuplesCompat(resultRelInfo, slot, tupleid, estate, update, noDupError, specConflict, arbiterIndexes) \
+#if PG_VERSION_NUM >= 160000
+#define ExecInsertIndexTuplesCompat(resultRelInfo, slot, tupleid, estate, update, noDupError, specConflict, arbiterIndexes, onlySummarizing) \
+	ExecInsertIndexTuples((resultRelInfo), (slot), (estate), (update), (noDupError), (specConflict), (arbiterIndexes), (onlySummarizing))
+#elif PG_VERSION_NUM >= 140000
+#define ExecInsertIndexTuplesCompat(resultRelInfo, slot, tupleid, estate, update, noDupError, specConflict, arbiterIndexes, onlySummarizing) \
 	ExecInsertIndexTuples((resultRelInfo), (slot), (estate), (update), (noDupError), (specConflict), (arbiterIndexes))
 #elif PG_VERSION_NUM >= 120000
-#define ExecInsertIndexTuplesCompat(resultRelInfo, slot, tupleid, estate, update, noDupError, specConflict, arbiterIndexes) \
+#define ExecInsertIndexTuplesCompat(resultRelInfo, slot, tupleid, estate, update, noDupError, specConflict, arbiterIndexes, onlySummarizing) \
 	ExecInsertIndexTuples((slot), (estate), (noDupError), (specConflict), (arbiterIndexes))
 #else
-#define ExecInsertIndexTuplesCompat(resultRelInfo, slot, tupleid, estate, update, noDupError, specConflict, arbiterIndexes) \
+#define ExecInsertIndexTuplesCompat(resultRelInfo, slot, tupleid, estate, update, noDupError, specConflict, arbiterIndexes, onlySummarizing) \
 	ExecInsertIndexTuples((slot), (tupleid), (estate), (noDupError), (specConflict), (arbiterIndexes))
 #endif
 
