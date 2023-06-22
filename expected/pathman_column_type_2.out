@@ -1,0 +1,203 @@
+/*
+ * In 9ce77d75c5a (>= 13) struct Var was changed, which caused the output
+ * of get_partition_cooked_key to change.
+ */
+\set VERBOSITY terse
+SET search_path = 'public';
+CREATE EXTENSION pg_pathman;
+CREATE SCHEMA test_column_type;
+/*
+ * RANGE partitioning.
+ */
+/* create new table (val int) */
+CREATE TABLE test_column_type.test(val INT4 NOT NULL);
+SELECT create_range_partitions('test_column_type.test', 'val', 1, 10, 10);
+ create_range_partitions 
+-------------------------
+                      10
+(1 row)
+
+/* make sure that bounds and dispatch info has been cached */
+SELECT * FROM test_column_type.test;
+ val 
+-----
+(0 rows)
+
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;
+         context         | entries 
+-------------------------+---------
+ maintenance             |       0
+ partition bounds cache  |      10
+ partition parents cache |      10
+(3 rows)
+
+/*
+ * Get parsed and analyzed expression.
+ */
+CREATE FUNCTION get_cached_partition_cooked_key(REGCLASS)
+RETURNS TEXT AS 'pg_pathman', 'get_cached_partition_cooked_key_pl'
+LANGUAGE C STRICT;
+SELECT get_partition_cooked_key('test_column_type.test'::REGCLASS);
+                                                          get_partition_cooked_key                                                           
+---------------------------------------------------------------------------------------------------------------------------------------------
+ {VAR :varno 1 :varattno 1 :vartype 23 :vartypmod -1 :varcollid 0 :varnullingrels (b) :varlevelsup 0 :varnosyn 1 :varattnosyn 1 :location 8}
+(1 row)
+
+SELECT get_cached_partition_cooked_key('test_column_type.test'::REGCLASS);
+                                                       get_cached_partition_cooked_key                                                       
+---------------------------------------------------------------------------------------------------------------------------------------------
+ {VAR :varno 1 :varattno 1 :vartype 23 :vartypmod -1 :varcollid 0 :varnullingrels (b) :varlevelsup 0 :varnosyn 1 :varattnosyn 1 :location 8}
+(1 row)
+
+SELECT get_partition_key_type('test_column_type.test'::REGCLASS);
+ get_partition_key_type 
+------------------------
+ integer
+(1 row)
+
+/* change column's type (should also flush caches) */
+ALTER TABLE test_column_type.test ALTER val TYPE NUMERIC;
+/* check that correct expression has been built */
+SELECT get_partition_key_type('test_column_type.test'::REGCLASS);
+ get_partition_key_type 
+------------------------
+ numeric
+(1 row)
+
+SELECT get_partition_cooked_key('test_column_type.test'::REGCLASS);
+                                                           get_partition_cooked_key                                                            
+-----------------------------------------------------------------------------------------------------------------------------------------------
+ {VAR :varno 1 :varattno 1 :vartype 1700 :vartypmod -1 :varcollid 0 :varnullingrels (b) :varlevelsup 0 :varnosyn 1 :varattnosyn 1 :location 8}
+(1 row)
+
+SELECT get_cached_partition_cooked_key('test_column_type.test'::REGCLASS);
+                                                        get_cached_partition_cooked_key                                                        
+-----------------------------------------------------------------------------------------------------------------------------------------------
+ {VAR :varno 1 :varattno 1 :vartype 1700 :vartypmod -1 :varcollid 0 :varnullingrels (b) :varlevelsup 0 :varnosyn 1 :varattnosyn 1 :location 8}
+(1 row)
+
+DROP FUNCTION get_cached_partition_cooked_key(REGCLASS);
+/* make sure that everything works properly */
+SELECT * FROM test_column_type.test;
+ val 
+-----
+(0 rows)
+
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;
+         context         | entries 
+-------------------------+---------
+ maintenance             |       0
+ partition bounds cache  |      10
+ partition parents cache |      10
+(3 rows)
+
+/* check insert dispatching */
+INSERT INTO test_column_type.test VALUES (1);
+SELECT tableoid::regclass, * FROM test_column_type.test;
+        tableoid         | val 
+-------------------------+-----
+ test_column_type.test_1 |   1
+(1 row)
+
+SELECT drop_partitions('test_column_type.test');
+NOTICE:  1 rows copied from test_column_type.test_1
+NOTICE:  0 rows copied from test_column_type.test_2
+NOTICE:  0 rows copied from test_column_type.test_3
+NOTICE:  0 rows copied from test_column_type.test_4
+NOTICE:  0 rows copied from test_column_type.test_5
+NOTICE:  0 rows copied from test_column_type.test_6
+NOTICE:  0 rows copied from test_column_type.test_7
+NOTICE:  0 rows copied from test_column_type.test_8
+NOTICE:  0 rows copied from test_column_type.test_9
+NOTICE:  0 rows copied from test_column_type.test_10
+ drop_partitions 
+-----------------
+              10
+(1 row)
+
+DROP TABLE test_column_type.test CASCADE;
+/*
+ * HASH partitioning.
+ */
+/* create new table (id int, val int) */
+CREATE TABLE test_column_type.test(id INT4 NOT NULL, val INT4);
+SELECT create_hash_partitions('test_column_type.test', 'id', 5);
+ create_hash_partitions 
+------------------------
+                      5
+(1 row)
+
+/* make sure that bounds and dispatch info has been cached */
+SELECT * FROM test_column_type.test;
+ id | val 
+----+-----
+(0 rows)
+
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;
+         context         | entries 
+-------------------------+---------
+ maintenance             |       0
+ partition bounds cache  |       5
+ partition parents cache |       5
+(3 rows)
+
+/* change column's type (should NOT work) */
+ALTER TABLE test_column_type.test ALTER id TYPE NUMERIC;
+ERROR:  cannot change type of column "id" of table "test" partitioned by HASH
+/* make sure that everything works properly */
+SELECT * FROM test_column_type.test;
+ id | val 
+----+-----
+(0 rows)
+
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;
+         context         | entries 
+-------------------------+---------
+ maintenance             |       0
+ partition bounds cache  |       5
+ partition parents cache |       5
+(3 rows)
+
+/* change column's type (should flush caches) */
+ALTER TABLE test_column_type.test ALTER val TYPE NUMERIC;
+/* make sure that everything works properly */
+SELECT * FROM test_column_type.test;
+ id | val 
+----+-----
+(0 rows)
+
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;
+         context         | entries 
+-------------------------+---------
+ maintenance             |       0
+ partition bounds cache  |       5
+ partition parents cache |       5
+(3 rows)
+
+/* check insert dispatching */
+INSERT INTO test_column_type.test VALUES (1);
+SELECT tableoid::regclass, * FROM test_column_type.test;
+        tableoid         | id | val 
+-------------------------+----+-----
+ test_column_type.test_0 |  1 |    
+(1 row)
+
+SELECT drop_partitions('test_column_type.test');
+NOTICE:  1 rows copied from test_column_type.test_0
+NOTICE:  0 rows copied from test_column_type.test_1
+NOTICE:  0 rows copied from test_column_type.test_2
+NOTICE:  0 rows copied from test_column_type.test_3
+NOTICE:  0 rows copied from test_column_type.test_4
+ drop_partitions 
+-----------------
+               5
+(1 row)
+
+DROP TABLE test_column_type.test CASCADE;
+DROP SCHEMA test_column_type;
+DROP EXTENSION pg_pathman;
