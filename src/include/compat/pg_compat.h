@@ -1208,13 +1208,18 @@ void set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel, Index rti);
 
 /*
  * make_restrictinfo()
+ * In >=16 3th and 9th arguments were removed (b448f1c8d83)
  * In >=14 new argument was added (55dc86eca70)
  */
+#if PG_VERSION_NUM >= 160000
+#define make_restrictinfo_compat(r, c, ipd, od, p, sl, rr, or, nr)  make_restrictinfo((r), (c), (ipd), (p), (sl), (rr), (or))
+#else
 #if PG_VERSION_NUM >= 140000
 #define make_restrictinfo_compat(r, c, ipd, od, p, sl, rr, or, nr)  make_restrictinfo((r), (c), (ipd), (od), (p), (sl), (rr), (or), (nr))
 #else
 #define make_restrictinfo_compat(r, c, ipd, od, p, sl, rr, or, nr)  make_restrictinfo((c), (ipd), (od), (p), (sl), (rr), (or), (nr))
-#endif
+#endif /* #if PG_VERSION_NUM >= 140000 */
+#endif /* #if PG_VERSION_NUM >= 160000 */
 
 /*
  * pull_varnos()
@@ -1224,6 +1229,16 @@ void set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel, Index rti);
 #define pull_varnos_compat(r, n)                               pull_varnos((r), (n))
 #else
 #define pull_varnos_compat(r, n)                               pull_varnos(n)
+#endif
+
+/*
+ * build_expression_pathkey()
+ * In >=16 argument was removed (b448f1c8d83)
+ */
+#if PG_VERSION_NUM >= 160000
+#define build_expression_pathkey_compat(root, expr, nullable_relids, opno, rel, create_it)   build_expression_pathkey(root, expr, opno, rel, create_it)
+#else
+#define build_expression_pathkey_compat(root, expr, nullable_relids, opno, rel, create_it)   build_expression_pathkey(root, expr, nullable_relids, opno, rel, create_it)
 #endif
 
 #endif /* PG_COMPAT_H */
