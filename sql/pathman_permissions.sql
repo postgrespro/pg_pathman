@@ -4,137 +4,137 @@ SET search_path = 'public';
 CREATE EXTENSION pg_pathman;
 CREATE SCHEMA permissions;
 
-CREATE ROLE user1 LOGIN;
-CREATE ROLE user2 LOGIN;
+CREATE ROLE pathman_user1 LOGIN;
+CREATE ROLE pathman_user2 LOGIN;
 
-GRANT USAGE, CREATE ON SCHEMA permissions TO user1;
-GRANT USAGE, CREATE ON SCHEMA permissions TO user2;
+GRANT USAGE, CREATE ON SCHEMA permissions TO pathman_user1;
+GRANT USAGE, CREATE ON SCHEMA permissions TO pathman_user2;
 
 
 /* Switch to #1 */
-SET ROLE user1;
-CREATE TABLE permissions.user1_table(id serial, a int);
-INSERT INTO permissions.user1_table SELECT g, g FROM generate_series(1, 20) as g;
+SET ROLE pathman_user1;
+CREATE TABLE permissions.pathman_user1_table(id serial, a int);
+INSERT INTO permissions.pathman_user1_table SELECT g, g FROM generate_series(1, 20) as g;
 
 /* Should fail (can't SELECT) */
-SET ROLE user2;
+SET ROLE pathman_user2;
 DO $$
 BEGIN
-    SELECT create_range_partitions('permissions.user1_table', 'id', 1, 10, 2);
+    SELECT create_range_partitions('permissions.pathman_user1_table', 'id', 1, 10, 2);
 EXCEPTION
     WHEN insufficient_privilege THEN
         RAISE NOTICE 'Insufficient priviliges';
 END$$;
 
-/* Grant SELECT to user2 */
-SET ROLE user1;
-GRANT SELECT ON permissions.user1_table TO user2;
+/* Grant SELECT to pathman_user2 */
+SET ROLE pathman_user1;
+GRANT SELECT ON permissions.pathman_user1_table TO pathman_user2;
 
 /* Should fail (don't own parent) */
-SET ROLE user2;
+SET ROLE pathman_user2;
 DO $$
 BEGIN
-    SELECT create_range_partitions('permissions.user1_table', 'id', 1, 10, 2);
+    SELECT create_range_partitions('permissions.pathman_user1_table', 'id', 1, 10, 2);
 EXCEPTION
     WHEN insufficient_privilege THEN
         RAISE NOTICE 'Insufficient priviliges';
 END$$;
 
 /* Should be ok */
-SET ROLE user1;
-SELECT create_range_partitions('permissions.user1_table', 'id', 1, 10, 2);
+SET ROLE pathman_user1;
+SELECT create_range_partitions('permissions.pathman_user1_table', 'id', 1, 10, 2);
 
 /* Should be able to see */
-SET ROLE user2;
+SET ROLE pathman_user2;
 SELECT * FROM pathman_config;
 SELECT * FROM pathman_config_params;
 
 /* Should fail */
-SET ROLE user2;
-SELECT set_enable_parent('permissions.user1_table', true);
-SELECT set_auto('permissions.user1_table', false);
+SET ROLE pathman_user2;
+SELECT set_enable_parent('permissions.pathman_user1_table', true);
+SELECT set_auto('permissions.pathman_user1_table', false);
 
 /* Should fail */
-SET ROLE user2;
+SET ROLE pathman_user2;
 DELETE FROM pathman_config
-WHERE partrel = 'permissions.user1_table'::regclass;
+WHERE partrel = 'permissions.pathman_user1_table'::regclass;
 
 /* No rights to insert, should fail */
-SET ROLE user2;
+SET ROLE pathman_user2;
 DO $$
 BEGIN
-    INSERT INTO permissions.user1_table (id, a) VALUES (35, 0);
+    INSERT INTO permissions.pathman_user1_table (id, a) VALUES (35, 0);
 EXCEPTION
     WHEN insufficient_privilege THEN
         RAISE NOTICE 'Insufficient priviliges';
 END$$;
 
 /* No rights to create partitions (need INSERT privilege) */
-SET ROLE user2;
-SELECT prepend_range_partition('permissions.user1_table');
+SET ROLE pathman_user2;
+SELECT prepend_range_partition('permissions.pathman_user1_table');
 
-/* Allow user2 to create partitions */
-SET ROLE user1;
-GRANT INSERT ON permissions.user1_table TO user2;
-GRANT UPDATE(a) ON permissions.user1_table TO user2; /* per-column ACL */
+/* Allow pathman_user2 to create partitions */
+SET ROLE pathman_user1;
+GRANT INSERT ON permissions.pathman_user1_table TO pathman_user2;
+GRANT UPDATE(a) ON permissions.pathman_user1_table TO pathman_user2; /* per-column ACL */
 
 /* Should be able to prepend a partition */
-SET ROLE user2;
-SELECT prepend_range_partition('permissions.user1_table');
+SET ROLE pathman_user2;
+SELECT prepend_range_partition('permissions.pathman_user1_table');
 SELECT attname, attacl FROM pg_attribute
 WHERE attrelid = (SELECT "partition" FROM pathman_partition_list
-				  WHERE parent = 'permissions.user1_table'::REGCLASS
+				  WHERE parent = 'permissions.pathman_user1_table'::REGCLASS
 				  ORDER BY range_min::int ASC /* prepend */
 				  LIMIT 1)
 ORDER BY attname; /* check ACL for each column */
 
 /* Have rights, should be ok (parent's ACL is shared by new children) */
-SET ROLE user2;
-INSERT INTO permissions.user1_table (id, a) VALUES (35, 0) RETURNING *;
+SET ROLE pathman_user2;
+INSERT INTO permissions.pathman_user1_table (id, a) VALUES (35, 0) RETURNING *;
 SELECT relname, relacl FROM pg_class
 WHERE oid = ANY (SELECT "partition" FROM pathman_partition_list
-				 WHERE parent = 'permissions.user1_table'::REGCLASS
+				 WHERE parent = 'permissions.pathman_user1_table'::REGCLASS
 				 ORDER BY range_max::int DESC /* append */
 				 LIMIT 3)
-ORDER BY relname; /* we also check ACL for "user1_table_2" */
+ORDER BY relname; /* we also check ACL for "pathman_user1_table_2" */
 
 /* Try to drop partition, should fail */
 DO $$
 BEGIN
-    SELECT drop_range_partition('permissions.user1_table_4');
+    SELECT drop_range_partition('permissions.pathman_user1_table_4');
 EXCEPTION
     WHEN insufficient_privilege THEN
         RAISE NOTICE 'Insufficient priviliges';
 END$$;
 
 /* Disable automatic partition creation */
-SET ROLE user1;
-SELECT set_auto('permissions.user1_table', false);
+SET ROLE pathman_user1;
+SELECT set_auto('permissions.pathman_user1_table', false);
 
 /* Partition creation, should fail */
-SET ROLE user2;
-INSERT INTO permissions.user1_table (id, a) VALUES (55, 0) RETURNING *;
+SET ROLE pathman_user2;
+INSERT INTO permissions.pathman_user1_table (id, a) VALUES (55, 0) RETURNING *;
 
 /* Finally drop partitions */
-SET ROLE user1;
-SELECT drop_partitions('permissions.user1_table');
+SET ROLE pathman_user1;
+SELECT drop_partitions('permissions.pathman_user1_table');
 
 
 /* Switch to #2 */
-SET ROLE user2;
+SET ROLE pathman_user2;
 /* Test ddl event trigger */
-CREATE TABLE permissions.user2_table(id serial);
-SELECT create_hash_partitions('permissions.user2_table', 'id', 3);
-INSERT INTO permissions.user2_table SELECT generate_series(1, 30);
-SELECT drop_partitions('permissions.user2_table');
+CREATE TABLE permissions.pathman_user2_table(id serial);
+SELECT create_hash_partitions('permissions.pathman_user2_table', 'id', 3);
+INSERT INTO permissions.pathman_user2_table SELECT generate_series(1, 30);
+SELECT drop_partitions('permissions.pathman_user2_table');
 
 
 /* Switch to #1 */
-SET ROLE user1;
+SET ROLE pathman_user1;
 CREATE TABLE permissions.dropped_column(a int, val int not null, b int, c int);
 INSERT INTO permissions.dropped_column SELECT i,i,i,i FROM generate_series(1, 30) i;
 
-GRANT SELECT(val), INSERT(val) ON permissions.dropped_column TO user2;
+GRANT SELECT(val), INSERT(val) ON permissions.dropped_column TO pathman_user2;
 
 SELECT create_range_partitions('permissions.dropped_column', 'val', 1, 10);
 
@@ -168,10 +168,10 @@ DROP TABLE permissions.dropped_column CASCADE;
 /* Finally reset user */
 RESET ROLE;
 
-DROP OWNED BY user1;
-DROP OWNED BY user2;
-DROP USER user1;
-DROP USER user2;
+DROP OWNED BY pathman_user1;
+DROP OWNED BY pathman_user2;
+DROP USER pathman_user1;
+DROP USER pathman_user2;
 
 
 DROP SCHEMA permissions;
