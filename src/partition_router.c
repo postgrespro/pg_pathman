@@ -170,9 +170,9 @@ partition_router_begin(CustomScanState *node, EState *estate, int eflags)
 	/* Remember current relation we're going to delete from */
 	state->current_rri = estate->es_result_relation_info;
 
-	EvalPlanQualInit(&state->epqstate, estate,
-					 state->subplan, NIL,
-					 state->epqparam);
+	EvalPlanQualInit_compat(&state->epqstate, estate,
+							state->subplan, NIL,
+							state->epqparam);
 
 	/* It's convenient to store PlanState in 'custom_ps' */
 	node->custom_ps = list_make1(ExecInitNode(state->subplan, estate, eflags));

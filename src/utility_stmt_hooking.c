@@ -517,6 +517,14 @@ PathmanDoCopy(const CopyStmt *stmt,
 	}
 	else
 	{
+#if PG_VERSION_NUM >= 160000 /* for commit f75cec4fff87 */
+		/*
+		 * Forget current RangeTblEntries and RTEPermissionInfos.
+		 * Standard DoCopy will create new ones.
+		 */
+		pstate->p_rtable = NULL;
+		pstate->p_rteperminfos = NULL;
+#endif
 		/* Call standard DoCopy using a new CopyStmt */
 		DoCopyCompat(pstate, stmt, stmt_location, stmt_len, processed);
 	}

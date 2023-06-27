@@ -1208,11 +1208,12 @@ void set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel, Index rti);
 
 /*
  * make_restrictinfo()
+ * In >=16 4th, 5th and 9th arguments were added (991a3df227e)
  * In >=16 3th and 9th arguments were removed (b448f1c8d83)
  * In >=14 new argument was added (55dc86eca70)
  */
 #if PG_VERSION_NUM >= 160000
-#define make_restrictinfo_compat(r, c, ipd, od, p, sl, rr, or, nr)  make_restrictinfo((r), (c), (ipd), (p), (sl), (rr), (or))
+#define make_restrictinfo_compat(r, c, ipd, od, p, sl, rr, or, nr)  make_restrictinfo((r), (c), (ipd), false, false, (p), (sl), (rr), NULL, (or))
 #else
 #if PG_VERSION_NUM >= 140000
 #define make_restrictinfo_compat(r, c, ipd, od, p, sl, rr, or, nr)  make_restrictinfo((r), (c), (ipd), (od), (p), (sl), (rr), (or), (nr))
@@ -1239,6 +1240,16 @@ void set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel, Index rti);
 #define build_expression_pathkey_compat(root, expr, nullable_relids, opno, rel, create_it)   build_expression_pathkey(root, expr, opno, rel, create_it)
 #else
 #define build_expression_pathkey_compat(root, expr, nullable_relids, opno, rel, create_it)   build_expression_pathkey(root, expr, nullable_relids, opno, rel, create_it)
+#endif
+
+/*
+ * EvalPlanQualInit()
+ * In >=16 argument was added (70b42f27902)
+ */
+#if PG_VERSION_NUM >= 160000
+#define EvalPlanQualInit_compat(epqstate, parentestate, subplan, auxrowmarks, epqParam)    EvalPlanQualInit(epqstate, parentestate, subplan, auxrowmarks, epqParam, NIL)
+#else
+#define EvalPlanQualInit_compat(epqstate, parentestate, subplan, auxrowmarks, epqParam)    EvalPlanQualInit(epqstate, parentestate, subplan, auxrowmarks, epqParam)
 #endif
 
 #endif /* PG_COMPAT_H */

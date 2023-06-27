@@ -345,8 +345,8 @@ scan_result_parts_storage(EState *estate, ResultPartsStorage *parts_storage,
 		child_perminfo->updatedCols		= translate_col_privs(parent_perminfo->updatedCols,
 															  translated_vars);
 
-		/* Check permissions for partition */
-		ExecCheckPermissions(list_make1(child_rte), list_make1(child_perminfo), true);
+		/* Check permissions for one partition */
+		ExecCheckOneRtePermissions(child_rte, child_perminfo, true);
 #else
 		/* Build Var translation list for 'inserted_cols' */
 		make_inh_translation_list(base_rel, child_rel, 0, &translated_vars, NULL);
