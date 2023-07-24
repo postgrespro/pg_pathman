@@ -46,7 +46,7 @@ make_partition_overseer(Plan *subplan)
 	cscan->scan.scanrelid = 0;
 
 	/* Build an appropriate target list */
-	cscan->scan.plan.targetlist = pfilter_build_tlist(subplan);
+	cscan->scan.plan.targetlist = pfilter_build_tlist(subplan, INDEX_VAR);
 	cscan->custom_scan_tlist = subplan->targetlist;
 
 	return &cscan->scan.plan;
