@@ -9,7 +9,7 @@ RUN apk add --no-cache \
 	coreutils linux-headers \
 	make musl-dev gcc bison flex \
 	zlib-dev libedit-dev \
-	clang clang15 clang-analyzer;
+	pkgconf icu-dev clang clang15 clang-analyzer;
 
 # Install fresh valgrind
 RUN apk add valgrind \
