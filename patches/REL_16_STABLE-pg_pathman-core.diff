@@ -1,0 +1,547 @@
+diff --git a/contrib/Makefile b/contrib/Makefile
+index bbf220407b..9a82a2db04 100644
+--- a/contrib/Makefile
++++ b/contrib/Makefile
+@@ -34,6 +34,7 @@ SUBDIRS = \
+ 		passwordcheck	\
+ 		pg_buffercache	\
+ 		pg_freespacemap \
++		pg_pathman \
+ 		pg_prewarm	\
+ 		pg_stat_statements \
+ 		pg_surgery	\
+diff --git a/src/backend/access/transam/xact.c b/src/backend/access/transam/xact.c
+index 37c5e34cce..d4bad64db1 100644
+--- a/src/backend/access/transam/xact.c
++++ b/src/backend/access/transam/xact.c
+@@ -79,7 +79,7 @@ int			DefaultXactIsoLevel = XACT_READ_COMMITTED;
+ int			XactIsoLevel = XACT_READ_COMMITTED;
+ 
+ bool		DefaultXactReadOnly = false;
+-bool		XactReadOnly;
++bool		XactReadOnly = false;
+ 
+ bool		DefaultXactDeferrable = false;
+ bool		XactDeferrable;
+diff --git a/src/backend/executor/execExprInterp.c b/src/backend/executor/execExprInterp.c
+index 851946a927..32758378c7 100644
+--- a/src/backend/executor/execExprInterp.c
++++ b/src/backend/executor/execExprInterp.c
+@@ -1845,6 +1845,16 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
+ 	}
+ 
+ out:
++
++	/*
++	 * pg_pathman: pass 'tts_tableOid' to result tuple to determine from
++	 * which partition the tuple was read
++	 */
++	if (resultslot)
++	{
++		resultslot->tts_tableOid = scanslot ? scanslot->tts_tableOid :
++			(innerslot ? innerslot->tts_tableOid : (outerslot ? outerslot->tts_tableOid : InvalidOid));
++	}
+ 	*isnull = state->resnull;
+ 	return state->resvalue;
+ }
+diff --git a/src/backend/executor/execMain.c b/src/backend/executor/execMain.c
+index 4c5a7bbf62..7d638aa22d 100644
+--- a/src/backend/executor/execMain.c
++++ b/src/backend/executor/execMain.c
+@@ -561,6 +561,39 @@ ExecutorRewind(QueryDesc *queryDesc)
+ }
+ 
+ 
++/*
++ * ExecCheckOneRtePermissions
++ *		Check access permissions for one RTE
++ *
++ * Returns true if permissions are adequate.  Otherwise, throws an appropriate
++ * error if ereport_on_violation is true, or simply returns false otherwise.
++ *
++ * This function uses pg_pathman due to commit f75cec4fff, see PGPRO-7792
++ */
++bool
++ExecCheckOneRtePermissions(RangeTblEntry *rte, RTEPermissionInfo *perminfo,
++						   bool ereport_on_violation)
++{
++	bool		result = true;
++
++	Assert(OidIsValid(perminfo->relid));
++	Assert(rte->relid == perminfo->relid);
++
++	result = ExecCheckOneRelPerms(perminfo);
++
++	if (!result)
++	{
++		if (ereport_on_violation)
++			aclcheck_error(ACLCHECK_NO_PRIV,
++						   get_relkind_objtype(get_rel_relkind(perminfo->relid)),
++						   get_rel_name(perminfo->relid));
++		return false;
++	}
++
++	return result;
++}
++
++
+ /*
+  * ExecCheckPermissions
+  *		Check access permissions of relations mentioned in a query
+@@ -856,6 +889,13 @@ InitPlan(QueryDesc *queryDesc, int eflags)
+ 
+ 	estate->es_plannedstmt = plannedstmt;
+ 
++	/*
++	 * Fields "es_result_relation_info", "es_original_tuple" are used for
++	 * pg_pathman only:
++	 */
++	estate->es_result_relation_info = NULL;
++	estate->es_original_tuple = NULL;
++
+ 	/*
+ 	 * Next, build the ExecRowMark array from the PlanRowMark(s), if any.
+ 	 */
+@@ -2873,6 +2913,13 @@ EvalPlanQualStart(EPQState *epqstate, Plan *planTree)
+ 	rcestate->es_output_cid = parentestate->es_output_cid;
+ 	rcestate->es_queryEnv = parentestate->es_queryEnv;
+ 
++	/*
++	 * Fields "es_result_relation_info", "es_original_tuple" are used for
++	 * pg_pathman only:
++	 */
++	rcestate->es_result_relation_info = NULL;
++	rcestate->es_original_tuple = NULL;
++
+ 	/*
+ 	 * ResultRelInfos needed by subplans are initialized from scratch when the
+ 	 * subplans themselves are initialized.
+diff --git a/src/backend/executor/nodeModifyTable.c b/src/backend/executor/nodeModifyTable.c
+index 5005d8c0d1..e664848393 100644
+--- a/src/backend/executor/nodeModifyTable.c
++++ b/src/backend/executor/nodeModifyTable.c
+@@ -660,6 +660,13 @@ ExecInitUpdateProjection(ModifyTableState *mtstate,
+ 	resultRelInfo->ri_projectNewInfoValid = true;
+ }
+ 
++void
++PgproExecInitUpdateProjection(ModifyTableState *mtstate,
++						 ResultRelInfo *resultRelInfo)
++{
++	ExecInitUpdateProjection(mtstate, resultRelInfo);
++}
++
+ /*
+  * ExecGetInsertNewTuple
+  *		This prepares a "new" tuple ready to be inserted into given result
+@@ -3550,6 +3557,7 @@ ExecModifyTable(PlanState *pstate)
+ 	HeapTupleData oldtupdata;
+ 	HeapTuple	oldtuple;
+ 	ItemPointer tupleid;
++	ResultRelInfo *saved_resultRelInfo;
+ 
+ 	CHECK_FOR_INTERRUPTS();
+ 
+@@ -3591,6 +3599,8 @@ ExecModifyTable(PlanState *pstate)
+ 	context.mtstate = node;
+ 	context.epqstate = &node->mt_epqstate;
+ 	context.estate = estate;
++	saved_resultRelInfo = estate->es_result_relation_info;
++	estate->es_result_relation_info = NULL;
+ 
+ 	/*
+ 	 * Fetch rows from subplan, and execute the required table modification
+@@ -3598,6 +3608,14 @@ ExecModifyTable(PlanState *pstate)
+ 	 */
+ 	for (;;)
+ 	{
++		/*
++		 * "es_original_tuple" should contain original modified tuple (new
++		 * values of the changed columns plus row identity information such as
++		 * CTID) in case tuple planSlot is replaced in pg_pathman to new value
++		 * in call "ExecProcNode(subplanstate)".
++		 */
++		estate->es_original_tuple = NULL;
++
+ 		/*
+ 		 * Reset the per-output-tuple exprcontext.  This is needed because
+ 		 * triggers expect to use that context as workspace.  It's a bit ugly
+@@ -3631,7 +3649,9 @@ ExecModifyTable(PlanState *pstate)
+ 			bool		isNull;
+ 			Oid			resultoid;
+ 
+-			datum = ExecGetJunkAttribute(context.planSlot, node->mt_resultOidAttno,
++			datum = ExecGetJunkAttribute(estate->es_original_tuple ?
++										 estate->es_original_tuple : context.planSlot,
++										 node->mt_resultOidAttno,
+ 										 &isNull);
+ 			if (isNull)
+ 			{
+@@ -3668,6 +3688,8 @@ ExecModifyTable(PlanState *pstate)
+ 		if (resultRelInfo->ri_usesFdwDirectModify)
+ 		{
+ 			Assert(resultRelInfo->ri_projectReturning);
++			/* PartitionRouter does not support foreign data wrappers: */
++			Assert(estate->es_original_tuple == NULL);
+ 
+ 			/*
+ 			 * A scan slot containing the data that was actually inserted,
+@@ -3677,6 +3699,7 @@ ExecModifyTable(PlanState *pstate)
+ 			 */
+ 			slot = ExecProcessReturning(resultRelInfo, NULL, context.planSlot);
+ 
++			estate->es_result_relation_info = saved_resultRelInfo;
+ 			return slot;
+ 		}
+ 
+@@ -3707,7 +3730,8 @@ ExecModifyTable(PlanState *pstate)
+ 			{
+ 				/* ri_RowIdAttNo refers to a ctid attribute */
+ 				Assert(AttributeNumberIsValid(resultRelInfo->ri_RowIdAttNo));
+-				datum = ExecGetJunkAttribute(slot,
++				datum = ExecGetJunkAttribute(estate->es_original_tuple
++											 ? estate->es_original_tuple : slot,
+ 											 resultRelInfo->ri_RowIdAttNo,
+ 											 &isNull);
+ 
+@@ -3755,7 +3779,8 @@ ExecModifyTable(PlanState *pstate)
+ 			 */
+ 			else if (AttributeNumberIsValid(resultRelInfo->ri_RowIdAttNo))
+ 			{
+-				datum = ExecGetJunkAttribute(slot,
++				datum = ExecGetJunkAttribute(estate->es_original_tuple
++											 ? estate->es_original_tuple : slot,
+ 											 resultRelInfo->ri_RowIdAttNo,
+ 											 &isNull);
+ 				/* shouldn't ever get a null result... */
+@@ -3786,9 +3811,12 @@ ExecModifyTable(PlanState *pstate)
+ 				/* Initialize projection info if first time for this table */
+ 				if (unlikely(!resultRelInfo->ri_projectNewInfoValid))
+ 					ExecInitInsertProjection(node, resultRelInfo);
+-				slot = ExecGetInsertNewTuple(resultRelInfo, context.planSlot);
+-				slot = ExecInsert(&context, resultRelInfo, slot,
+-								  node->canSetTag, NULL, NULL);
++				/* Do nothing in case tuple was modified in pg_pathman: */
++				if (!estate->es_original_tuple)
++					slot = ExecGetInsertNewTuple(resultRelInfo, context.planSlot);
++				slot = ExecInsert(&context, estate->es_result_relation_info ?
++									estate->es_result_relation_info : resultRelInfo,
++								  slot, node->canSetTag, NULL, NULL);
+ 				break;
+ 
+ 			case CMD_UPDATE:
+@@ -3796,6 +3824,13 @@ ExecModifyTable(PlanState *pstate)
+ 				if (unlikely(!resultRelInfo->ri_projectNewInfoValid))
+ 					ExecInitUpdateProjection(node, resultRelInfo);
+ 
++				/*
++				 * Do not change the indentation for PostgreSQL code to make it
++				 * easier to merge new PostgreSQL changes.
++				 */
++				/* Do nothing in case tuple was modified in pg_pathman: */
++				if (!estate->es_original_tuple)
++				{
+ 				/*
+ 				 * Make the new tuple by combining plan's output tuple with
+ 				 * the old tuple being updated.
+@@ -3819,14 +3854,19 @@ ExecModifyTable(PlanState *pstate)
+ 				slot = ExecGetUpdateNewTuple(resultRelInfo, context.planSlot,
+ 											 oldSlot);
+ 				context.relaction = NULL;
++				}
+ 
+ 				/* Now apply the update. */
+-				slot = ExecUpdate(&context, resultRelInfo, tupleid, oldtuple,
++				slot = ExecUpdate(&context, estate->es_result_relation_info ?
++									estate->es_result_relation_info : resultRelInfo,
++								  tupleid, oldtuple,
+ 								  slot, node->canSetTag);
+ 				break;
+ 
+ 			case CMD_DELETE:
+-				slot = ExecDelete(&context, resultRelInfo, tupleid, oldtuple,
++				slot = ExecDelete(&context, estate->es_result_relation_info ?
++									estate->es_result_relation_info : resultRelInfo,
++								  tupleid, oldtuple,
+ 								  true, false, node->canSetTag, NULL, NULL);
+ 				break;
+ 
+@@ -3844,7 +3884,10 @@ ExecModifyTable(PlanState *pstate)
+ 		 * the work on next call.
+ 		 */
+ 		if (slot)
++		{
++			estate->es_result_relation_info = saved_resultRelInfo;
+ 			return slot;
++		}
+ 	}
+ 
+ 	/*
+@@ -3860,6 +3903,7 @@ ExecModifyTable(PlanState *pstate)
+ 
+ 	node->mt_done = true;
+ 
++	estate->es_result_relation_info = saved_resultRelInfo;
+ 	return NULL;
+ }
+ 
+@@ -3934,6 +3978,7 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
+ 	ListCell   *l;
+ 	int			i;
+ 	Relation	rel;
++	ResultRelInfo *saved_resultRelInfo;
+ 
+ 	/* check for unsupported flags */
+ 	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
+@@ -4035,6 +4080,13 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
+ 		i++;
+ 	}
+ 
++	/*
++	 * pg_pathman: set "estate->es_result_relation_info" value for take it in
++	 * functions partition_filter_begin(), partition_router_begin()
++	 */
++	saved_resultRelInfo = estate->es_result_relation_info;
++	estate->es_result_relation_info = mtstate->resultRelInfo;
++
+ 	/*
+ 	 * Now we may initialize the subplan.
+ 	 */
+@@ -4117,6 +4169,8 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
+ 		}
+ 	}
+ 
++	estate->es_result_relation_info = saved_resultRelInfo;
++
+ 	/*
+ 	 * If this is an inherited update/delete/merge, there will be a junk
+ 	 * attribute named "tableoid" present in the subplan's targetlist.  It
+diff --git a/src/backend/utils/init/globals.c b/src/backend/utils/init/globals.c
+index 011ec18015..7b4fcb2807 100644
+--- a/src/backend/utils/init/globals.c
++++ b/src/backend/utils/init/globals.c
+@@ -25,7 +25,7 @@
+ #include "storage/backendid.h"
+ 
+ 
+-ProtocolVersion FrontendProtocol;
++ProtocolVersion FrontendProtocol = (ProtocolVersion) 0;
+ 
+ volatile sig_atomic_t InterruptPending = false;
+ volatile sig_atomic_t QueryCancelPending = false;
+diff --git a/src/include/access/xact.h b/src/include/access/xact.h
+index 7d3b9446e6..20030111f4 100644
+--- a/src/include/access/xact.h
++++ b/src/include/access/xact.h
+@@ -53,6 +53,8 @@ extern PGDLLIMPORT int XactIsoLevel;
+ 
+ /* Xact read-only state */
+ extern PGDLLIMPORT bool DefaultXactReadOnly;
++
++#define PGPRO_PATHMAN_AWARE_COPY
+ extern PGDLLIMPORT bool XactReadOnly;
+ 
+ /* flag for logging statements in this transaction */
+diff --git a/src/include/executor/executor.h b/src/include/executor/executor.h
+index ac02247947..c39ae13a8e 100644
+--- a/src/include/executor/executor.h
++++ b/src/include/executor/executor.h
+@@ -208,6 +208,9 @@ extern void standard_ExecutorFinish(QueryDesc *queryDesc);
+ extern void ExecutorEnd(QueryDesc *queryDesc);
+ extern void standard_ExecutorEnd(QueryDesc *queryDesc);
+ extern void ExecutorRewind(QueryDesc *queryDesc);
++extern bool ExecCheckOneRtePermissions(RangeTblEntry *rte,
++									   RTEPermissionInfo *perminfo,
++									   bool ereport_on_violation);
+ extern bool ExecCheckPermissions(List *rangeTable,
+ 								 List *rteperminfos, bool ereport_on_violation);
+ extern void CheckValidResultRel(ResultRelInfo *resultRelInfo, CmdType operation);
+@@ -676,5 +679,17 @@ extern ResultRelInfo *ExecLookupResultRelByOid(ModifyTableState *node,
+ 											   Oid resultoid,
+ 											   bool missing_ok,
+ 											   bool update_cache);
++#define PG_HAVE_PGPRO_EXEC_INIT_UPDATE_PROJECTION
++/*
++ * This function is static in vanilla, but pg_pathman wants it exported.
++ * We cannot make it extern with the same name to avoid compilation errors
++ * in timescaledb, which ships it's own static copy of the same function.
++ * So, export ExecInitUpdateProjection with Pgpro prefix.
++ *
++ * The define above helps pg_pathman to expect proper exported symbol
++ * from various versions of pgpro.
++ */
++extern void PgproExecInitUpdateProjection(ModifyTableState *mtstate,
++										  ResultRelInfo *resultRelInfo);
+ 
+ #endif							/* EXECUTOR_H  */
+diff --git a/src/include/nodes/execnodes.h b/src/include/nodes/execnodes.h
+index cb714f4a19..d34a103fc6 100644
+--- a/src/include/nodes/execnodes.h
++++ b/src/include/nodes/execnodes.h
+@@ -638,6 +638,12 @@ typedef struct EState
+ 											 * es_result_relations in no
+ 											 * specific order */
+ 
++	/* These fields was added for compatibility pg_pathman with 14: */
++	ResultRelInfo *es_result_relation_info; /* currently active array elt */
++	TupleTableSlot *es_original_tuple;	/* original modified tuple (new values
++										 * of the changed columns plus row
++										 * identity information such as CTID) */
++
+ 	PartitionDirectory es_partition_directory;	/* for PartitionDesc lookup */
+ 
+ 	/*
+diff --git a/src/tools/msvc/Install.pm b/src/tools/msvc/Install.pm
+index 05548d7c0a..37754370e0 100644
+--- a/src/tools/msvc/Install.pm
++++ b/src/tools/msvc/Install.pm
+@@ -30,6 +30,22 @@ my @client_program_files = (
+ 	'pg_receivewal', 'pg_recvlogical', 'pg_restore', 'psql',
+ 	'reindexdb', 'vacuumdb', @client_contribs);
+ 
++sub SubstituteMakefileVariables
++{
++	local $_ = shift; # Line to substitue
++	my $mf = shift; # Makefile text
++	while (/\$\((\w+)\)/)
++	{
++		my $varname = $1;
++		if ($mf =~ /^$varname\s*=\s*(.*)$/mg)
++		{
++		  my $varvalue=$1;
++		  s/\$\($varname\)/$varvalue/g;
++		}
++	}
++	return $_;
++}
++
+ sub lcopy
+ {
+ 	my $src = shift;
+@@ -580,7 +596,7 @@ sub ParseAndCleanRule
+ 			substr($flist, 0, index($flist, '$(addsuffix '))
+ 		  . substr($flist, $i + 1);
+ 	}
+-	return $flist;
++	return SubstituteMakefileVariables($flist, $mf);
+ }
+ 
+ sub CopyIncludeFiles
+diff --git a/src/tools/msvc/Mkvcbuild.pm b/src/tools/msvc/Mkvcbuild.pm
+index 9e05eb91b1..baedbb784a 100644
+--- a/src/tools/msvc/Mkvcbuild.pm
++++ b/src/tools/msvc/Mkvcbuild.pm
+@@ -40,7 +40,7 @@ my @contrib_uselibpq = ();
+ my @contrib_uselibpgport = ();
+ my @contrib_uselibpgcommon = ();
+ my $contrib_extralibs = { 'libpq_pipeline' => ['ws2_32.lib'] };
+-my $contrib_extraincludes = {};
++my $contrib_extraincludes = { 'pg_pathman' => ['contrib/pg_pathman/src/include'] };
+ my $contrib_extrasource = {};
+ my @contrib_excludes = (
+ 	'bool_plperl', 'commit_ts',
+@@ -979,6 +979,7 @@ sub AddContrib
+ 		my $dn = $1;
+ 		my $proj = $solution->AddProject($dn, 'dll', 'contrib', "$subdir/$n");
+ 		$proj->AddReference($postgres);
++		$proj->RemoveFile("$subdir/$n/src/declarative.c") if $n eq 'pg_pathman';
+ 		AdjustContribProj($proj);
+ 		push @projects, $proj;
+ 	}
+@@ -1082,6 +1083,22 @@ sub AddContrib
+ 	return;
+ }
+ 
++sub SubstituteMakefileVariables
++{
++	local $_ = shift; # Line to substitue
++	my $mf = shift; # Makefile text
++	while (/\$\((\w+)\)/)
++	{
++		my $varname = $1;
++		if ($mf =~ /^$varname\s*=\s*(.*)$/mg)
++		{
++			my $varvalue=$1;
++			s/\$\($varname\)/$varvalue/g;
++		}
++	}
++	return $_;
++}
++
+ sub GenerateContribSqlFiles
+ {
+ 	my $n = shift;
+@@ -1106,23 +1123,59 @@ sub GenerateContribSqlFiles
+ 			  substr($l, 0, index($l, '$(addsuffix ')) . substr($l, $i + 1);
+ 		}
+ 
++		$l = SubstituteMakefileVariables($l,$mf);
+ 		foreach my $d (split /\s+/, $l)
+ 		{
+-			my $in = "$d.in";
+-			my $out = "$d";
+-
+-			if (Solution::IsNewer("contrib/$n/$out", "contrib/$n/$in"))
++			if ( -f "contrib/$n/$d.in" )
++			{
++				my $in  = "$d.in";
++				my $out = "$d";
++				if (Solution::IsNewer("contrib/$n/$out", "contrib/$n/$in"))
++				{
++				    print "Building $out from $in (contrib/$n)...\n";
++					my $cont = Project::read_file("contrib/$n/$in");
++					my $dn   = $out;
++					$dn =~ s/\.sql$//;
++					$cont =~ s/MODULE_PATHNAME/\$libdir\/$dn/g;
++					my $o;
++					open($o, '>', "contrib/$n/$out")
++					|| croak "Could not write to contrib/$n/$d";
++					print $o $cont;
++					close($o);
++				}
++			}
++			else
+ 			{
+-				print "Building $out from $in (contrib/$n)...\n";
+-				my $cont = Project::read_file("contrib/$n/$in");
+-				my $dn = $out;
+-				$dn =~ s/\.sql$//;
+-				$cont =~ s/MODULE_PATHNAME/\$libdir\/$dn/g;
+-				my $o;
+-				open($o, '>', "contrib/$n/$out")
+-				  || croak "Could not write to contrib/$n/$d";
+-				print $o $cont;
+-				close($o);
++				# Search for makefile rule.
++				# For now we do not process rule command and assume
++				# that we should just concatenate all prerequisites
++				#
++				my @prereq = ();
++				my $target;
++				my @rules = $mf =~ /^(\S+)\s*:\s*([^=].*)$/mg;
++				RULE:
++				while (@rules)
++				{
++					$target = SubstituteMakefileVariables(shift @rules,$mf);
++						@prereq = split(/\s+/,SubstituteMakefileVariables(shift @rules,$mf));
++					last RULE if ($target eq $d);
++					@prereq = ();
++				}
++				croak "Don't know how to build contrib/$n/$d" unless @prereq;
++				if (grep(Solution::IsNewer("contrib/$n/$d","contrib/$n/$_"),
++						 @prereq))
++				{
++					print STDERR "building $d from @prereq by concatentation\n";
++					my $o;
++					open $o, ">contrib/$n/$d"
++						or croak("Couldn't write to contrib/$n/$d:$!");
++					for my $in (@prereq)
++					{
++						my $data = Project::read_file("contrib/$n/$in");
++						print $o $data;
++					}
++					close $o;
++				}
+ 			}
+ 		}
+ 	}
