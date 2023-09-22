@@ -206,7 +206,13 @@ appendStringInfoSpaces(StringInfo str, int count)
  * if necessary.
  */
 void
-appendBinaryStringInfo(StringInfo str, const char *data, int datalen)
+appendBinaryStringInfo(StringInfo str,
+#if PG_VERSION_NUM < 160000
+					   const char *data,
+#else
+					   const void *data,
+#endif
+					   int datalen)
 {
 	Assert(str != NULL);
 
