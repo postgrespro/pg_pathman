@@ -13,8 +13,8 @@ The `pg_pathman` module provides optimized partitioning mechanism and functions 
 
 The extension is compatible with:
 
- * PostgreSQL 11, 12, 13;
- * PostgreSQL with core-patch: 14, 15;
+ * PostgreSQL 12, 13;
+ * PostgreSQL with core-patch: 11, 14, 15;
  * Postgres Pro Standard 11, 12, 13, 14, 15;
  * Postgres Pro Enterprise;
 

@@ -812,12 +812,7 @@ make_partition_filter(Plan *subplan,
 	cscan->scan.scanrelid = 0;
 
 	/* Build an appropriate target list */
-	cscan->scan.plan.targetlist = pfilter_build_tlist(subplan);
-
-	/* Prepare 'custom_scan_tlist' for EXPLAIN (VERBOSE) */
-	cscan->custom_scan_tlist = copyObject(cscan->scan.plan.targetlist);
-	ChangeVarNodes((Node *) cscan->custom_scan_tlist, INDEX_VAR, parent_rti, 0);
-	pfilter_tlist_fix_resjunk(cscan);
+	cscan->scan.plan.targetlist = pfilter_build_tlist(subplan, parent_rti);
 
 	/* Pack partitioned table's Oid and conflict_action */
 	cscan->custom_private = list_make4(makeInteger(parent_relid),
@@ -1076,7 +1071,7 @@ partition_filter_explain(CustomScanState *node, List *ancestors, ExplainState *e
  * Build partition filter's target list pointing to subplan tuple's elements.
  */
 List *
-pfilter_build_tlist(Plan *subplan)
+pfilter_build_tlist(Plan *subplan, Index varno)
 {
 	List	   *result_tlist = NIL;
 	ListCell   *lc;
@@ -1096,7 +1091,7 @@ pfilter_build_tlist(Plan *subplan)
 		}
 		else
 		{
-			Var *var = makeVar(INDEX_VAR,	/* point to subplan's elements */
+			Var *var = makeVar(varno,	/* point to subplan's elements */
 							   tle->resno,
 							   exprType((Node *) tle->expr),
 							   exprTypmod((Node *) tle->expr),
@@ -1113,34 +1108,6 @@ pfilter_build_tlist(Plan *subplan)
 	}
 
 	return result_tlist;
-}
-
-/*
- * resjunk Vars had its varattnos being set on nonexisting relation columns.
- * For future processing service attributes should be indicated correctly.
- */
-void
-pfilter_tlist_fix_resjunk(CustomScan *css)
-{
-	ListCell *lc;
-
-	foreach(lc, css->custom_scan_tlist)
-	{
-		TargetEntry *tle = (TargetEntry *) lfirst(lc);
-
-		if (!IsA(tle->expr, Const))
-		{
-			Var *var = (Var *) tle->expr;
-
-			if (tle->resjunk)
-			{
-				/* To make Var recognizable as service attribute. */
-				var->varattno = -1;
-			}
-		}
-	}
-
-	return;
 }
 
 /*
