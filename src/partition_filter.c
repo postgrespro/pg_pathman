@@ -815,10 +815,18 @@ make_partition_filter(Plan *subplan,
 	cscan->scan.plan.targetlist = pfilter_build_tlist(subplan, parent_rti);
 
 	/* Pack partitioned table's Oid and conflict_action */
+#if PG_VERSION_NUM >= 160000 /* for commit 178ee1d858 */
+	cscan->custom_private = list_make5(makeInteger(parent_relid),
+									   makeInteger(conflict_action),
+									   returning_list,
+									   makeInteger(command_type),
+									   makeInteger(parent_rti));
+#else
 	cscan->custom_private = list_make4(makeInteger(parent_relid),
 									   makeInteger(conflict_action),
 									   returning_list,
 									   makeInteger(command_type));
+#endif
 
 	return &cscan->scan.plan;
 }
@@ -841,6 +849,9 @@ partition_filter_create_scan_state(CustomScan *node)
 	state->on_conflict_action	= intVal(lsecond(node->custom_private));
 	state->returning_list		= (List *) lthird(node->custom_private);
 	state->command_type			= (CmdType) intVal(lfourth(node->custom_private));
+#if PG_VERSION_NUM >= 160000 /* for commit 178ee1d858 */
+	state->parent_rti			= (Index) intVal(lfirst(list_nth_cell(node->custom_private, 4)));
+#endif
 
 	/* Check boundaries */
 	Assert(state->on_conflict_action >= ONCONFLICT_NONE ||
@@ -875,7 +886,24 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 							  RPS_RRI_CB(NULL, NULL));
 #if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
 	/* ResultRelInfo of partitioned table. */
-	state->result_parts.init_rri = current_rri;
+	{
+		RangeTblEntry *rte = rt_fetch(current_rri->ri_RangeTableIndex,	estate->es_range_table);
+
+		if (rte->perminfoindex > 0)
+			state->result_parts.init_rri = current_rri;
+		else
+		{
+			/*
+			 * Additional changes for 178ee1d858d: we cannot use current_rri
+			 * because RTE for this ResultRelInfo has perminfoindex = 0. Need
+			 * to use parent_rti (modify_table->nominalRelation) instead.
+			 */
+			Assert(state->parent_rti > 0);
+			state->result_parts.init_rri = estate->es_result_relations[state->parent_rti - 1];
+			if (!state->result_parts.init_rri)
+				elog(ERROR, "cannot determine result info for partitioned table");
+		}
+	}
 #endif
 }
 

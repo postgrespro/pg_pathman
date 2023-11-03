@@ -1,0 +1,198 @@
+\set VERBOSITY terse
+SET search_path = 'public';
+CREATE EXTENSION pg_pathman;
+CREATE SCHEMA test_update_triggers;
+create table test_update_triggers.test (val int not null);
+select create_hash_partitions('test_update_triggers.test', 'val', 2,
+							  partition_names := array[
+								'test_update_triggers.test_1',
+								'test_update_triggers.test_2']);
+ create_hash_partitions 
+------------------------
+                      2
+(1 row)
+
+create or replace function test_update_triggers.test_trigger() returns trigger as $$
+begin
+	raise notice '%', format('%s %s %s (%s)', TG_WHEN, TG_OP, TG_LEVEL, TG_TABLE_NAME);
+
+	if TG_OP::text = 'DELETE'::text then
+		return old;
+	else
+		return new;
+	end if; end;
+$$ language plpgsql;
+/* Enable our precious custom node */
+set pg_pathman.enable_partitionrouter = t;
+/*
+ * Statement level triggers
+ */
+create trigger bus before update ON test_update_triggers.test
+	execute procedure test_update_triggers.test_trigger ();
+create trigger bds before delete ON test_update_triggers.test
+	execute procedure test_update_triggers.test_trigger ();
+create trigger bis before insert ON test_update_triggers.test
+	execute procedure test_update_triggers.test_trigger ();
+create trigger aus after update ON test_update_triggers.test
+	execute procedure test_update_triggers.test_trigger ();
+create trigger ads after delete ON test_update_triggers.test
+	execute procedure test_update_triggers.test_trigger ();
+create trigger ais after insert ON test_update_triggers.test
+	execute procedure test_update_triggers.test_trigger ();
+create trigger bus before update ON test_update_triggers.test_1
+	execute procedure test_update_triggers.test_trigger ();
+create trigger bds before delete ON test_update_triggers.test_1
+	execute procedure test_update_triggers.test_trigger ();
+create trigger bis before insert ON test_update_triggers.test_1
+	execute procedure test_update_triggers.test_trigger ();
+create trigger aus after update ON test_update_triggers.test_1
+	execute procedure test_update_triggers.test_trigger ();
+create trigger ads after delete ON test_update_triggers.test_1
+	execute procedure test_update_triggers.test_trigger ();
+create trigger ais after insert ON test_update_triggers.test_1
+	execute procedure test_update_triggers.test_trigger ();
+create trigger bus before update ON test_update_triggers.test_2
+	execute procedure test_update_triggers.test_trigger ();
+create trigger bds before delete ON test_update_triggers.test_2
+	execute procedure test_update_triggers.test_trigger ();
+create trigger bis before insert ON test_update_triggers.test_2
+	execute procedure test_update_triggers.test_trigger ();
+create trigger aus after update ON test_update_triggers.test_2
+	execute procedure test_update_triggers.test_trigger ();
+create trigger ads after delete ON test_update_triggers.test_2
+	execute procedure test_update_triggers.test_trigger ();
+create trigger ais after insert ON test_update_triggers.test_2
+	execute procedure test_update_triggers.test_trigger ();
+/* multiple values */
+insert into test_update_triggers.test select generate_series(1, 200);
+NOTICE:  BEFORE INSERT STATEMENT (test)
+NOTICE:  AFTER INSERT STATEMENT (test)
+update test_update_triggers.test set val = val + 1;
+NOTICE:  BEFORE UPDATE STATEMENT (test)
+NOTICE:  AFTER INSERT STATEMENT (test)
+NOTICE:  AFTER UPDATE STATEMENT (test)
+update test_update_triggers.test set val = val + 1;
+NOTICE:  BEFORE UPDATE STATEMENT (test)
+NOTICE:  AFTER INSERT STATEMENT (test)
+NOTICE:  AFTER UPDATE STATEMENT (test)
+update test_update_triggers.test set val = val + 1;
+NOTICE:  BEFORE UPDATE STATEMENT (test)
+NOTICE:  AFTER INSERT STATEMENT (test)
+NOTICE:  AFTER UPDATE STATEMENT (test)
+update test_update_triggers.test set val = val + 1;
+NOTICE:  BEFORE UPDATE STATEMENT (test)
+NOTICE:  AFTER INSERT STATEMENT (test)
+NOTICE:  AFTER UPDATE STATEMENT (test)
+update test_update_triggers.test set val = val + 1;
+NOTICE:  BEFORE UPDATE STATEMENT (test)
+NOTICE:  AFTER INSERT STATEMENT (test)
+NOTICE:  AFTER UPDATE STATEMENT (test)
+select count(distinct val) from test_update_triggers.test;
+ count 
+-------
+   200
+(1 row)
+
+truncate test_update_triggers.test;
+/*
+ * Row level triggers
+ */
+create trigger bu before update ON test_update_triggers.test_1
+	for each row execute procedure test_update_triggers.test_trigger ();
+create trigger bd before delete ON test_update_triggers.test_1
+	for each row execute procedure test_update_triggers.test_trigger ();
+create trigger bi before insert ON test_update_triggers.test_1
+	for each row execute procedure test_update_triggers.test_trigger ();
+create trigger au after update ON test_update_triggers.test_1
+	for each row execute procedure test_update_triggers.test_trigger ();
+create trigger ad after delete ON test_update_triggers.test_1
+	for each row execute procedure test_update_triggers.test_trigger ();
+create trigger ai after insert ON test_update_triggers.test_1
+	for each row execute procedure test_update_triggers.test_trigger ();
+create trigger bu before update ON test_update_triggers.test_2
+	for each row execute procedure test_update_triggers.test_trigger ();
+create trigger bd before delete ON test_update_triggers.test_2
+	for each row execute procedure test_update_triggers.test_trigger ();
+create trigger bi before insert ON test_update_triggers.test_2
+	for each row execute procedure test_update_triggers.test_trigger ();
+create trigger au after update ON test_update_triggers.test_2
+	for each row execute procedure test_update_triggers.test_trigger ();
+create trigger ad after delete ON test_update_triggers.test_2
+	for each row execute procedure test_update_triggers.test_trigger ();
+create trigger ai after insert ON test_update_triggers.test_2
+	for each row execute procedure test_update_triggers.test_trigger ();
+/* single value */
+insert into test_update_triggers.test values (1);
+NOTICE:  BEFORE INSERT STATEMENT (test)
+NOTICE:  BEFORE INSERT ROW (test_1)
+NOTICE:  AFTER INSERT ROW (test_1)
+NOTICE:  AFTER INSERT STATEMENT (test)
+update test_update_triggers.test set val = val + 1 returning *, tableoid::regclass;
+NOTICE:  BEFORE UPDATE STATEMENT (test)
+NOTICE:  BEFORE UPDATE ROW (test_1)
+NOTICE:  AFTER UPDATE ROW (test_1)
+NOTICE:  AFTER UPDATE STATEMENT (test)
+ val |          tableoid           
+-----+-----------------------------
+   2 | test_update_triggers.test_1
+(1 row)
+
+update test_update_triggers.test set val = val + 1 returning *, tableoid::regclass;
+NOTICE:  BEFORE UPDATE STATEMENT (test)
+NOTICE:  BEFORE UPDATE ROW (test_1)
+NOTICE:  BEFORE DELETE ROW (test_1)
+NOTICE:  BEFORE INSERT ROW (test_2)
+NOTICE:  AFTER DELETE ROW (test_1)
+NOTICE:  AFTER INSERT STATEMENT (test)
+NOTICE:  AFTER INSERT ROW (test_2)
+NOTICE:  AFTER UPDATE STATEMENT (test)
+ val |          tableoid           
+-----+-----------------------------
+   3 | test_update_triggers.test_2
+(1 row)
+
+update test_update_triggers.test set val = val + 1 returning *, tableoid::regclass;
+NOTICE:  BEFORE UPDATE STATEMENT (test)
+NOTICE:  BEFORE UPDATE ROW (test_2)
+NOTICE:  AFTER UPDATE ROW (test_2)
+NOTICE:  AFTER UPDATE STATEMENT (test)
+ val |          tableoid           
+-----+-----------------------------
+   4 | test_update_triggers.test_2
+(1 row)
+
+update test_update_triggers.test set val = val + 1 returning *, tableoid::regclass;
+NOTICE:  BEFORE UPDATE STATEMENT (test)
+NOTICE:  BEFORE UPDATE ROW (test_2)
+NOTICE:  BEFORE DELETE ROW (test_2)
+NOTICE:  BEFORE INSERT ROW (test_1)
+NOTICE:  AFTER DELETE ROW (test_2)
+NOTICE:  AFTER INSERT STATEMENT (test)
+NOTICE:  AFTER INSERT ROW (test_1)
+NOTICE:  AFTER UPDATE STATEMENT (test)
+ val |          tableoid           
+-----+-----------------------------
+   5 | test_update_triggers.test_1
+(1 row)
+
+update test_update_triggers.test set val = val + 1 returning *, tableoid::regclass;
+NOTICE:  BEFORE UPDATE STATEMENT (test)
+NOTICE:  BEFORE UPDATE ROW (test_1)
+NOTICE:  AFTER UPDATE ROW (test_1)
+NOTICE:  AFTER UPDATE STATEMENT (test)
+ val |          tableoid           
+-----+-----------------------------
+   6 | test_update_triggers.test_1
+(1 row)
+
+select count(distinct val) from test_update_triggers.test;
+ count 
+-------
+     1
+(1 row)
+
+DROP TABLE test_update_triggers.test CASCADE;
+NOTICE:  drop cascades to 2 other objects
+DROP FUNCTION test_update_triggers.test_trigger();
+DROP SCHEMA test_update_triggers;
+DROP EXTENSION pg_pathman CASCADE;

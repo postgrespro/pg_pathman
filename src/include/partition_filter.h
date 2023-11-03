@@ -119,6 +119,11 @@ typedef struct
 	CmdType				command_type;
 
 	TupleTableSlot	   *tup_convert_slot;		/* slot for rebuilt tuples */
+
+#if PG_VERSION_NUM >= 160000 /* for commit 178ee1d858 */
+	Index				parent_rti;				/* Parent RT index for use of EXPLAIN,
+												   see "ModifyTable::nominalRelation" */
+#endif
 } PartitionFilterState;
 
 
