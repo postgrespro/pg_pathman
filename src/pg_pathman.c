@@ -561,6 +561,12 @@ append_child_relation(PlannerInfo *root,
 #endif
 	child_rte->inh				= false;
 
+#if PG_VERSION_NUM >= 140000 /* for commit 2a6fe80053 */
+	child_rte->eclass_derive_indexes = NULL;
+	child_rte->eclass_member_indexes = NULL;
+	child_rte->eclass_source_indexes = NULL;
+#endif
+
 	/* Add 'child_rte' to rtable and 'root->simple_rte_array' */
 	root->parse->rtable = lappend(root->parse->rtable, child_rte);
 	child_rti = list_length(root->parse->rtable);
