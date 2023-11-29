@@ -30,6 +30,7 @@ DATA = pg_pathman--1.0--1.1.sql \
 
 PGFILEDESC = "pg_pathman - partitioning tool for PostgreSQL"
 
+ifneq (pg_pathman,$(filter pg_pathman,$(PG_TEST_SKIP)))
 REGRESS = pathman_array_qual \
 		  pathman_basic \
 		  pathman_bgw \
@@ -63,7 +64,7 @@ REGRESS = pathman_array_qual \
 		  pathman_utility_stmt \
 		  pathman_views \
 		  pathman_CVE-2020-14350
-
+endif
 
 EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add
 
