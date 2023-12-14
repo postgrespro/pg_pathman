@@ -5,64 +5,72 @@ step begin: BEGIN;
 step insert_data: INSERT INTO range_rel SELECT generate_series(1, 10000);
 step create_partitions: SELECT create_range_partitions('range_rel', 'id', 1, 1000);
 create_range_partitions
+-----------------------
+                     10
+(1 row)
 
-10             
-step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
-QUERY PLAN     
+step show_rel: SELECT l.parent, l.partition FROM pathman_partition_list l WHERE l.parent = 'range_rel'::regclass;
+parent   |partition   
+---------+------------
+range_rel|range_rel_1 
+range_rel|range_rel_2 
+range_rel|range_rel_3 
+range_rel|range_rel_4 
+range_rel|range_rel_5 
+range_rel|range_rel_6 
+range_rel|range_rel_7 
+range_rel|range_rel_8 
+range_rel|range_rel_9 
+range_rel|range_rel_10
+(10 rows)
 
-Append         
-  ->  Seq Scan on range_rel_1
-  ->  Seq Scan on range_rel_2
-  ->  Seq Scan on range_rel_3
-  ->  Seq Scan on range_rel_4
-  ->  Seq Scan on range_rel_5
-  ->  Seq Scan on range_rel_6
-  ->  Seq Scan on range_rel_7
-  ->  Seq Scan on range_rel_8
-  ->  Seq Scan on range_rel_9
-  ->  Seq Scan on range_rel_10
 step rollback: ROLLBACK;
-step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
-QUERY PLAN     
+step show_rel: SELECT l.parent, l.partition FROM pathman_partition_list l WHERE l.parent = 'range_rel'::regclass;
+parent|partition
+------+---------
+(0 rows)
 
-Seq Scan on range_rel
 
 starting permutation: begin insert_data create_partitions show_rel commit show_rel
 step begin: BEGIN;
 step insert_data: INSERT INTO range_rel SELECT generate_series(1, 10000);
 step create_partitions: SELECT create_range_partitions('range_rel', 'id', 1, 1000);
 create_range_partitions
+-----------------------
+                     10
+(1 row)
 
-10             
-step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
-QUERY PLAN     
+step show_rel: SELECT l.parent, l.partition FROM pathman_partition_list l WHERE l.parent = 'range_rel'::regclass;
+parent   |partition   
+---------+------------
+range_rel|range_rel_1 
+range_rel|range_rel_2 
+range_rel|range_rel_3 
+range_rel|range_rel_4 
+range_rel|range_rel_5 
+range_rel|range_rel_6 
+range_rel|range_rel_7 
+range_rel|range_rel_8 
+range_rel|range_rel_9 
+range_rel|range_rel_10
+(10 rows)
 
-Append         
-  ->  Seq Scan on range_rel_1
-  ->  Seq Scan on range_rel_2
-  ->  Seq Scan on range_rel_3
-  ->  Seq Scan on range_rel_4
-  ->  Seq Scan on range_rel_5
-  ->  Seq Scan on range_rel_6
-  ->  Seq Scan on range_rel_7
-  ->  Seq Scan on range_rel_8
-  ->  Seq Scan on range_rel_9
-  ->  Seq Scan on range_rel_10
 step commit: COMMIT;
-step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
-QUERY PLAN     
+step show_rel: SELECT l.parent, l.partition FROM pathman_partition_list l WHERE l.parent = 'range_rel'::regclass;
+parent   |partition   
+---------+------------
+range_rel|range_rel_1 
+range_rel|range_rel_2 
+range_rel|range_rel_3 
+range_rel|range_rel_4 
+range_rel|range_rel_5 
+range_rel|range_rel_6 
+range_rel|range_rel_7 
+range_rel|range_rel_8 
+range_rel|range_rel_9 
+range_rel|range_rel_10
+(10 rows)
 
-Append         
-  ->  Seq Scan on range_rel_1
-  ->  Seq Scan on range_rel_2
-  ->  Seq Scan on range_rel_3
-  ->  Seq Scan on range_rel_4
-  ->  Seq Scan on range_rel_5
-  ->  Seq Scan on range_rel_6
-  ->  Seq Scan on range_rel_7
-  ->  Seq Scan on range_rel_8
-  ->  Seq Scan on range_rel_9
-  ->  Seq Scan on range_rel_10
 
 starting permutation: begin insert_data savepoint_a create_partitions savepoint_b drop_partitions show_rel savepoint_c rollback show_rel
 step begin: BEGIN;
@@ -70,23 +78,39 @@ step insert_data: INSERT INTO range_rel SELECT generate_series(1, 10000);
 step savepoint_a: SAVEPOINT a;
 step create_partitions: SELECT create_range_partitions('range_rel', 'id', 1, 1000);
 create_range_partitions
+-----------------------
+                     10
+(1 row)
 
-10             
 step savepoint_b: SAVEPOINT b;
+s1: NOTICE:  1000 rows copied from range_rel_1
+s1: NOTICE:  1000 rows copied from range_rel_2
+s1: NOTICE:  1000 rows copied from range_rel_3
+s1: NOTICE:  1000 rows copied from range_rel_4
+s1: NOTICE:  1000 rows copied from range_rel_5
+s1: NOTICE:  1000 rows copied from range_rel_6
+s1: NOTICE:  1000 rows copied from range_rel_7
+s1: NOTICE:  1000 rows copied from range_rel_8
+s1: NOTICE:  1000 rows copied from range_rel_9
+s1: NOTICE:  1000 rows copied from range_rel_10
 step drop_partitions: SELECT drop_partitions('range_rel');
 drop_partitions
+---------------
+             10
+(1 row)
 
-10             
-step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
-QUERY PLAN     
+step show_rel: SELECT l.parent, l.partition FROM pathman_partition_list l WHERE l.parent = 'range_rel'::regclass;
+parent|partition
+------+---------
+(0 rows)
 
-Seq Scan on range_rel
 step savepoint_c: SAVEPOINT c;
 step rollback: ROLLBACK;
-step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
-QUERY PLAN     
+step show_rel: SELECT l.parent, l.partition FROM pathman_partition_list l WHERE l.parent = 'range_rel'::regclass;
+parent|partition
+------+---------
+(0 rows)
 
-Seq Scan on range_rel
 
 starting permutation: begin insert_data savepoint_a create_partitions savepoint_b drop_partitions show_rel savepoint_c commit show_rel
 step begin: BEGIN;
@@ -94,23 +118,39 @@ step insert_data: INSERT INTO range_rel SELECT generate_series(1, 10000);
 step savepoint_a: SAVEPOINT a;
 step create_partitions: SELECT create_range_partitions('range_rel', 'id', 1, 1000);
 create_range_partitions
+-----------------------
+                     10
+(1 row)
 
-10             
 step savepoint_b: SAVEPOINT b;
+s1: NOTICE:  1000 rows copied from range_rel_1
+s1: NOTICE:  1000 rows copied from range_rel_2
+s1: NOTICE:  1000 rows copied from range_rel_3
+s1: NOTICE:  1000 rows copied from range_rel_4
+s1: NOTICE:  1000 rows copied from range_rel_5
+s1: NOTICE:  1000 rows copied from range_rel_6
+s1: NOTICE:  1000 rows copied from range_rel_7
+s1: NOTICE:  1000 rows copied from range_rel_8
+s1: NOTICE:  1000 rows copied from range_rel_9
+s1: NOTICE:  1000 rows copied from range_rel_10
 step drop_partitions: SELECT drop_partitions('range_rel');
 drop_partitions
+---------------
+             10
+(1 row)
 
-10             
-step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
-QUERY PLAN     
+step show_rel: SELECT l.parent, l.partition FROM pathman_partition_list l WHERE l.parent = 'range_rel'::regclass;
+parent|partition
+------+---------
+(0 rows)
 
-Seq Scan on range_rel
 step savepoint_c: SAVEPOINT c;
 step commit: COMMIT;
-step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
-QUERY PLAN     
+step show_rel: SELECT l.parent, l.partition FROM pathman_partition_list l WHERE l.parent = 'range_rel'::regclass;
+parent|partition
+------+---------
+(0 rows)
 
-Seq Scan on range_rel
 
 starting permutation: begin insert_data savepoint_a create_partitions savepoint_b drop_partitions savepoint_c rollback_b show_rel rollback show_rel
 step begin: BEGIN;
@@ -118,34 +158,50 @@ step insert_data: INSERT INTO range_rel SELECT generate_series(1, 10000);
 step savepoint_a: SAVEPOINT a;
 step create_partitions: SELECT create_range_partitions('range_rel', 'id', 1, 1000);
 create_range_partitions
+-----------------------
+                     10
+(1 row)
 
-10             
 step savepoint_b: SAVEPOINT b;
+s1: NOTICE:  1000 rows copied from range_rel_1
+s1: NOTICE:  1000 rows copied from range_rel_2
+s1: NOTICE:  1000 rows copied from range_rel_3
+s1: NOTICE:  1000 rows copied from range_rel_4
+s1: NOTICE:  1000 rows copied from range_rel_5
+s1: NOTICE:  1000 rows copied from range_rel_6
+s1: NOTICE:  1000 rows copied from range_rel_7
+s1: NOTICE:  1000 rows copied from range_rel_8
+s1: NOTICE:  1000 rows copied from range_rel_9
+s1: NOTICE:  1000 rows copied from range_rel_10
 step drop_partitions: SELECT drop_partitions('range_rel');
 drop_partitions
+---------------
+             10
+(1 row)
 
-10             
 step savepoint_c: SAVEPOINT c;
 step rollback_b: ROLLBACK TO SAVEPOINT b;
-step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
-QUERY PLAN     
+step show_rel: SELECT l.parent, l.partition FROM pathman_partition_list l WHERE l.parent = 'range_rel'::regclass;
+parent   |partition   
+---------+------------
+range_rel|range_rel_1 
+range_rel|range_rel_2 
+range_rel|range_rel_3 
+range_rel|range_rel_4 
+range_rel|range_rel_5 
+range_rel|range_rel_6 
+range_rel|range_rel_7 
+range_rel|range_rel_8 
+range_rel|range_rel_9 
+range_rel|range_rel_10
+(10 rows)
 
-Append         
-  ->  Seq Scan on range_rel_1
-  ->  Seq Scan on range_rel_2
-  ->  Seq Scan on range_rel_3
-  ->  Seq Scan on range_rel_4
-  ->  Seq Scan on range_rel_5
-  ->  Seq Scan on range_rel_6
-  ->  Seq Scan on range_rel_7
-  ->  Seq Scan on range_rel_8
-  ->  Seq Scan on range_rel_9
-  ->  Seq Scan on range_rel_10
 step rollback: ROLLBACK;
-step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
-QUERY PLAN     
+step show_rel: SELECT l.parent, l.partition FROM pathman_partition_list l WHERE l.parent = 'range_rel'::regclass;
+parent|partition
+------+---------
+(0 rows)
 
-Seq Scan on range_rel
 
 starting permutation: begin insert_data savepoint_a create_partitions savepoint_b drop_partitions savepoint_c rollback_b show_rel commit show_rel
 step begin: BEGIN;
@@ -153,44 +209,60 @@ step insert_data: INSERT INTO range_rel SELECT generate_series(1, 10000);
 step savepoint_a: SAVEPOINT a;
 step create_partitions: SELECT create_range_partitions('range_rel', 'id', 1, 1000);
 create_range_partitions
+-----------------------
+                     10
+(1 row)
 
-10             
 step savepoint_b: SAVEPOINT b;
+s1: NOTICE:  1000 rows copied from range_rel_1
+s1: NOTICE:  1000 rows copied from range_rel_2
+s1: NOTICE:  1000 rows copied from range_rel_3
+s1: NOTICE:  1000 rows copied from range_rel_4
+s1: NOTICE:  1000 rows copied from range_rel_5
+s1: NOTICE:  1000 rows copied from range_rel_6
+s1: NOTICE:  1000 rows copied from range_rel_7
+s1: NOTICE:  1000 rows copied from range_rel_8
+s1: NOTICE:  1000 rows copied from range_rel_9
+s1: NOTICE:  1000 rows copied from range_rel_10
 step drop_partitions: SELECT drop_partitions('range_rel');
 drop_partitions
+---------------
+             10
+(1 row)
 
-10             
 step savepoint_c: SAVEPOINT c;
 step rollback_b: ROLLBACK TO SAVEPOINT b;
-step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
-QUERY PLAN     
+step show_rel: SELECT l.parent, l.partition FROM pathman_partition_list l WHERE l.parent = 'range_rel'::regclass;
+parent   |partition   
+---------+------------
+range_rel|range_rel_1 
+range_rel|range_rel_2 
+range_rel|range_rel_3 
+range_rel|range_rel_4 
+range_rel|range_rel_5 
+range_rel|range_rel_6 
+range_rel|range_rel_7 
+range_rel|range_rel_8 
+range_rel|range_rel_9 
+range_rel|range_rel_10
+(10 rows)
 
-Append         
-  ->  Seq Scan on range_rel_1
-  ->  Seq Scan on range_rel_2
-  ->  Seq Scan on range_rel_3
-  ->  Seq Scan on range_rel_4
-  ->  Seq Scan on range_rel_5
-  ->  Seq Scan on range_rel_6
-  ->  Seq Scan on range_rel_7
-  ->  Seq Scan on range_rel_8
-  ->  Seq Scan on range_rel_9
-  ->  Seq Scan on range_rel_10
 step commit: COMMIT;
-step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
-QUERY PLAN     
+step show_rel: SELECT l.parent, l.partition FROM pathman_partition_list l WHERE l.parent = 'range_rel'::regclass;
+parent   |partition   
+---------+------------
+range_rel|range_rel_1 
+range_rel|range_rel_2 
+range_rel|range_rel_3 
+range_rel|range_rel_4 
+range_rel|range_rel_5 
+range_rel|range_rel_6 
+range_rel|range_rel_7 
+range_rel|range_rel_8 
+range_rel|range_rel_9 
+range_rel|range_rel_10
+(10 rows)
 
-Append         
-  ->  Seq Scan on range_rel_1
-  ->  Seq Scan on range_rel_2
-  ->  Seq Scan on range_rel_3
-  ->  Seq Scan on range_rel_4
-  ->  Seq Scan on range_rel_5
-  ->  Seq Scan on range_rel_6
-  ->  Seq Scan on range_rel_7
-  ->  Seq Scan on range_rel_8
-  ->  Seq Scan on range_rel_9
-  ->  Seq Scan on range_rel_10
 
 starting permutation: begin insert_data savepoint_a create_partitions savepoint_b drop_partitions show_rel savepoint_c rollback_a show_rel rollback show_rel
 step begin: BEGIN;
@@ -198,28 +270,45 @@ step insert_data: INSERT INTO range_rel SELECT generate_series(1, 10000);
 step savepoint_a: SAVEPOINT a;
 step create_partitions: SELECT create_range_partitions('range_rel', 'id', 1, 1000);
 create_range_partitions
+-----------------------
+                     10
+(1 row)
 
-10             
 step savepoint_b: SAVEPOINT b;
+s1: NOTICE:  1000 rows copied from range_rel_1
+s1: NOTICE:  1000 rows copied from range_rel_2
+s1: NOTICE:  1000 rows copied from range_rel_3
+s1: NOTICE:  1000 rows copied from range_rel_4
+s1: NOTICE:  1000 rows copied from range_rel_5
+s1: NOTICE:  1000 rows copied from range_rel_6
+s1: NOTICE:  1000 rows copied from range_rel_7
+s1: NOTICE:  1000 rows copied from range_rel_8
+s1: NOTICE:  1000 rows copied from range_rel_9
+s1: NOTICE:  1000 rows copied from range_rel_10
 step drop_partitions: SELECT drop_partitions('range_rel');
 drop_partitions
+---------------
+             10
+(1 row)
 
-10             
-step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
-QUERY PLAN     
+step show_rel: SELECT l.parent, l.partition FROM pathman_partition_list l WHERE l.parent = 'range_rel'::regclass;
+parent|partition
+------+---------
+(0 rows)
 
-Seq Scan on range_rel
 step savepoint_c: SAVEPOINT c;
 step rollback_a: ROLLBACK TO SAVEPOINT a;
-step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
-QUERY PLAN     
+step show_rel: SELECT l.parent, l.partition FROM pathman_partition_list l WHERE l.parent = 'range_rel'::regclass;
+parent|partition
+------+---------
+(0 rows)
 
-Seq Scan on range_rel
 step rollback: ROLLBACK;
-step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
-QUERY PLAN     
+step show_rel: SELECT l.parent, l.partition FROM pathman_partition_list l WHERE l.parent = 'range_rel'::regclass;
+parent|partition
+------+---------
+(0 rows)
 
-Seq Scan on range_rel
 
 starting permutation: begin insert_data savepoint_a create_partitions savepoint_b drop_partitions show_rel savepoint_c rollback_a show_rel commit show_rel
 step begin: BEGIN;
@@ -227,28 +316,45 @@ step insert_data: INSERT INTO range_rel SELECT generate_series(1, 10000);
 step savepoint_a: SAVEPOINT a;
 step create_partitions: SELECT create_range_partitions('range_rel', 'id', 1, 1000);
 create_range_partitions
+-----------------------
+                     10
+(1 row)
 
-10             
 step savepoint_b: SAVEPOINT b;
+s1: NOTICE:  1000 rows copied from range_rel_1
+s1: NOTICE:  1000 rows copied from range_rel_2
+s1: NOTICE:  1000 rows copied from range_rel_3
+s1: NOTICE:  1000 rows copied from range_rel_4
+s1: NOTICE:  1000 rows copied from range_rel_5
+s1: NOTICE:  1000 rows copied from range_rel_6
+s1: NOTICE:  1000 rows copied from range_rel_7
+s1: NOTICE:  1000 rows copied from range_rel_8
+s1: NOTICE:  1000 rows copied from range_rel_9
+s1: NOTICE:  1000 rows copied from range_rel_10
 step drop_partitions: SELECT drop_partitions('range_rel');
 drop_partitions
+---------------
+             10
+(1 row)
 
-10             
-step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
-QUERY PLAN     
+step show_rel: SELECT l.parent, l.partition FROM pathman_partition_list l WHERE l.parent = 'range_rel'::regclass;
+parent|partition
+------+---------
+(0 rows)
 
-Seq Scan on range_rel
 step savepoint_c: SAVEPOINT c;
 step rollback_a: ROLLBACK TO SAVEPOINT a;
-step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
-QUERY PLAN     
+step show_rel: SELECT l.parent, l.partition FROM pathman_partition_list l WHERE l.parent = 'range_rel'::regclass;
+parent|partition
+------+---------
+(0 rows)
 
-Seq Scan on range_rel
 step commit: COMMIT;
-step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
-QUERY PLAN     
+step show_rel: SELECT l.parent, l.partition FROM pathman_partition_list l WHERE l.parent = 'range_rel'::regclass;
+parent|partition
+------+---------
+(0 rows)
 
-Seq Scan on range_rel
 
 starting permutation: begin insert_data savepoint_a create_partitions savepoint_b drop_partitions show_rel savepoint_c rollback_b drop_partitions show_rel rollback show_rel
 step begin: BEGIN;
@@ -256,32 +362,61 @@ step insert_data: INSERT INTO range_rel SELECT generate_series(1, 10000);
 step savepoint_a: SAVEPOINT a;
 step create_partitions: SELECT create_range_partitions('range_rel', 'id', 1, 1000);
 create_range_partitions
+-----------------------
+                     10
+(1 row)
 
-10             
 step savepoint_b: SAVEPOINT b;
+s1: NOTICE:  1000 rows copied from range_rel_1
+s1: NOTICE:  1000 rows copied from range_rel_2
+s1: NOTICE:  1000 rows copied from range_rel_3
+s1: NOTICE:  1000 rows copied from range_rel_4
+s1: NOTICE:  1000 rows copied from range_rel_5
+s1: NOTICE:  1000 rows copied from range_rel_6
+s1: NOTICE:  1000 rows copied from range_rel_7
+s1: NOTICE:  1000 rows copied from range_rel_8
+s1: NOTICE:  1000 rows copied from range_rel_9
+s1: NOTICE:  1000 rows copied from range_rel_10
 step drop_partitions: SELECT drop_partitions('range_rel');
 drop_partitions
+---------------
+             10
+(1 row)
 
-10             
-step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
-QUERY PLAN     
+step show_rel: SELECT l.parent, l.partition FROM pathman_partition_list l WHERE l.parent = 'range_rel'::regclass;
+parent|partition
+------+---------
+(0 rows)
 
-Seq Scan on range_rel
 step savepoint_c: SAVEPOINT c;
 step rollback_b: ROLLBACK TO SAVEPOINT b;
+s1: NOTICE:  1000 rows copied from range_rel_1
+s1: NOTICE:  1000 rows copied from range_rel_2
+s1: NOTICE:  1000 rows copied from range_rel_3
+s1: NOTICE:  1000 rows copied from range_rel_4
+s1: NOTICE:  1000 rows copied from range_rel_5
+s1: NOTICE:  1000 rows copied from range_rel_6
+s1: NOTICE:  1000 rows copied from range_rel_7
+s1: NOTICE:  1000 rows copied from range_rel_8
+s1: NOTICE:  1000 rows copied from range_rel_9
+s1: NOTICE:  1000 rows copied from range_rel_10
 step drop_partitions: SELECT drop_partitions('range_rel');
 drop_partitions
+---------------
+             10
+(1 row)
 
-10             
-step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
-QUERY PLAN     
+step show_rel: SELECT l.parent, l.partition FROM pathman_partition_list l WHERE l.parent = 'range_rel'::regclass;
+parent|partition
+------+---------
+(0 rows)
 
-Seq Scan on range_rel
 step rollback: ROLLBACK;
-step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
-QUERY PLAN     
+step show_rel: SELECT l.parent, l.partition FROM pathman_partition_list l WHERE l.parent = 'range_rel'::regclass;
+parent|partition
+------+---------
+(0 rows)
 
-Seq Scan on range_rel
 
 starting permutation: begin insert_data savepoint_a create_partitions savepoint_b drop_partitions show_rel savepoint_c rollback_b drop_partitions show_rel commit show_rel
 step begin: BEGIN;
@@ -289,32 +424,61 @@ step insert_data: INSERT INTO range_rel SELECT generate_series(1, 10000);
 step savepoint_a: SAVEPOINT a;
 step create_partitions: SELECT create_range_partitions('range_rel', 'id', 1, 1000);
 create_range_partitions
+-----------------------
+                     10
+(1 row)
 
-10             
 step savepoint_b: SAVEPOINT b;
+s1: NOTICE:  1000 rows copied from range_rel_1
+s1: NOTICE:  1000 rows copied from range_rel_2
+s1: NOTICE:  1000 rows copied from range_rel_3
+s1: NOTICE:  1000 rows copied from range_rel_4
+s1: NOTICE:  1000 rows copied from range_rel_5
+s1: NOTICE:  1000 rows copied from range_rel_6
+s1: NOTICE:  1000 rows copied from range_rel_7
+s1: NOTICE:  1000 rows copied from range_rel_8
+s1: NOTICE:  1000 rows copied from range_rel_9
+s1: NOTICE:  1000 rows copied from range_rel_10
 step drop_partitions: SELECT drop_partitions('range_rel');
 drop_partitions
+---------------
+             10
+(1 row)
 
-10             
-step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
-QUERY PLAN     
+step show_rel: SELECT l.parent, l.partition FROM pathman_partition_list l WHERE l.parent = 'range_rel'::regclass;
+parent|partition
+------+---------
+(0 rows)
 
-Seq Scan on range_rel
 step savepoint_c: SAVEPOINT c;
 step rollback_b: ROLLBACK TO SAVEPOINT b;
+s1: NOTICE:  1000 rows copied from range_rel_1
+s1: NOTICE:  1000 rows copied from range_rel_2
+s1: NOTICE:  1000 rows copied from range_rel_3
+s1: NOTICE:  1000 rows copied from range_rel_4
+s1: NOTICE:  1000 rows copied from range_rel_5
+s1: NOTICE:  1000 rows copied from range_rel_6
+s1: NOTICE:  1000 rows copied from range_rel_7
+s1: NOTICE:  1000 rows copied from range_rel_8
+s1: NOTICE:  1000 rows copied from range_rel_9
+s1: NOTICE:  1000 rows copied from range_rel_10
 step drop_partitions: SELECT drop_partitions('range_rel');
 drop_partitions
+---------------
+             10
+(1 row)
 
-10             
-step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
-QUERY PLAN     
+step show_rel: SELECT l.parent, l.partition FROM pathman_partition_list l WHERE l.parent = 'range_rel'::regclass;
+parent|partition
+------+---------
+(0 rows)
 
-Seq Scan on range_rel
 step commit: COMMIT;
-step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
-QUERY PLAN     
+step show_rel: SELECT l.parent, l.partition FROM pathman_partition_list l WHERE l.parent = 'range_rel'::regclass;
+parent|partition
+------+---------
+(0 rows)
 
-Seq Scan on range_rel
 
 starting permutation: begin insert_data savepoint_a create_partitions savepoint_b drop_partitions rollback_a create_partitions show_rel rollback show_rel
 step begin: BEGIN;
@@ -322,37 +486,55 @@ step insert_data: INSERT INTO range_rel SELECT generate_series(1, 10000);
 step savepoint_a: SAVEPOINT a;
 step create_partitions: SELECT create_range_partitions('range_rel', 'id', 1, 1000);
 create_range_partitions
+-----------------------
+                     10
+(1 row)
 
-10             
 step savepoint_b: SAVEPOINT b;
+s1: NOTICE:  1000 rows copied from range_rel_1
+s1: NOTICE:  1000 rows copied from range_rel_2
+s1: NOTICE:  1000 rows copied from range_rel_3
+s1: NOTICE:  1000 rows copied from range_rel_4
+s1: NOTICE:  1000 rows copied from range_rel_5
+s1: NOTICE:  1000 rows copied from range_rel_6
+s1: NOTICE:  1000 rows copied from range_rel_7
+s1: NOTICE:  1000 rows copied from range_rel_8
+s1: NOTICE:  1000 rows copied from range_rel_9
+s1: NOTICE:  1000 rows copied from range_rel_10
 step drop_partitions: SELECT drop_partitions('range_rel');
 drop_partitions
+---------------
+             10
+(1 row)
 
-10             
 step rollback_a: ROLLBACK TO SAVEPOINT a;
 step create_partitions: SELECT create_range_partitions('range_rel', 'id', 1, 1000);
 create_range_partitions
+-----------------------
+                     10
+(1 row)
 
-10             
-step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
-QUERY PLAN     
+step show_rel: SELECT l.parent, l.partition FROM pathman_partition_list l WHERE l.parent = 'range_rel'::regclass;
+parent   |partition   
+---------+------------
+range_rel|range_rel_1 
+range_rel|range_rel_2 
+range_rel|range_rel_3 
+range_rel|range_rel_4 
+range_rel|range_rel_5 
+range_rel|range_rel_6 
+range_rel|range_rel_7 
+range_rel|range_rel_8 
+range_rel|range_rel_9 
+range_rel|range_rel_10
+(10 rows)
 
-Append         
-  ->  Seq Scan on range_rel_1
-  ->  Seq Scan on range_rel_2
-  ->  Seq Scan on range_rel_3
-  ->  Seq Scan on range_rel_4
-  ->  Seq Scan on range_rel_5
-  ->  Seq Scan on range_rel_6
-  ->  Seq Scan on range_rel_7
-  ->  Seq Scan on range_rel_8
-  ->  Seq Scan on range_rel_9
-  ->  Seq Scan on range_rel_10
 step rollback: ROLLBACK;
-step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
-QUERY PLAN     
+step show_rel: SELECT l.parent, l.partition FROM pathman_partition_list l WHERE l.parent = 'range_rel'::regclass;
+parent|partition
+------+---------
+(0 rows)
 
-Seq Scan on range_rel
 
 starting permutation: begin insert_data savepoint_a create_partitions savepoint_b drop_partitions rollback_a create_partitions show_rel commit show_rel
 step begin: BEGIN;
@@ -360,44 +542,62 @@ step insert_data: INSERT INTO range_rel SELECT generate_series(1, 10000);
 step savepoint_a: SAVEPOINT a;
 step create_partitions: SELECT create_range_partitions('range_rel', 'id', 1, 1000);
 create_range_partitions
+-----------------------
+                     10
+(1 row)
 
-10             
 step savepoint_b: SAVEPOINT b;
+s1: NOTICE:  1000 rows copied from range_rel_1
+s1: NOTICE:  1000 rows copied from range_rel_2
+s1: NOTICE:  1000 rows copied from range_rel_3
+s1: NOTICE:  1000 rows copied from range_rel_4
+s1: NOTICE:  1000 rows copied from range_rel_5
+s1: NOTICE:  1000 rows copied from range_rel_6
+s1: NOTICE:  1000 rows copied from range_rel_7
+s1: NOTICE:  1000 rows copied from range_rel_8
+s1: NOTICE:  1000 rows copied from range_rel_9
+s1: NOTICE:  1000 rows copied from range_rel_10
 step drop_partitions: SELECT drop_partitions('range_rel');
 drop_partitions
+---------------
+             10
+(1 row)
 
-10             
 step rollback_a: ROLLBACK TO SAVEPOINT a;
 step create_partitions: SELECT create_range_partitions('range_rel', 'id', 1, 1000);
 create_range_partitions
+-----------------------
+                     10
+(1 row)
 
-10             
-step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
-QUERY PLAN     
+step show_rel: SELECT l.parent, l.partition FROM pathman_partition_list l WHERE l.parent = 'range_rel'::regclass;
+parent   |partition   
+---------+------------
+range_rel|range_rel_1 
+range_rel|range_rel_2 
+range_rel|range_rel_3 
+range_rel|range_rel_4 
+range_rel|range_rel_5 
+range_rel|range_rel_6 
+range_rel|range_rel_7 
+range_rel|range_rel_8 
+range_rel|range_rel_9 
+range_rel|range_rel_10
+(10 rows)
 
-Append         
-  ->  Seq Scan on range_rel_1
-  ->  Seq Scan on range_rel_2
-  ->  Seq Scan on range_rel_3
-  ->  Seq Scan on range_rel_4
-  ->  Seq Scan on range_rel_5
-  ->  Seq Scan on range_rel_6
-  ->  Seq Scan on range_rel_7
-  ->  Seq Scan on range_rel_8
-  ->  Seq Scan on range_rel_9
-  ->  Seq Scan on range_rel_10
 step commit: COMMIT;
-step show_rel: EXPLAIN (COSTS OFF) SELECT * FROM range_rel;
-QUERY PLAN     
+step show_rel: SELECT l.parent, l.partition FROM pathman_partition_list l WHERE l.parent = 'range_rel'::regclass;
+parent   |partition   
+---------+------------
+range_rel|range_rel_1 
+range_rel|range_rel_2 
+range_rel|range_rel_3 
+range_rel|range_rel_4 
+range_rel|range_rel_5 
+range_rel|range_rel_6 
+range_rel|range_rel_7 
+range_rel|range_rel_8 
+range_rel|range_rel_9 
+range_rel|range_rel_10
+(10 rows)
 
-Append         
-  ->  Seq Scan on range_rel_1
-  ->  Seq Scan on range_rel_2
-  ->  Seq Scan on range_rel_3
-  ->  Seq Scan on range_rel_4
-  ->  Seq Scan on range_rel_5
-  ->  Seq Scan on range_rel_6
-  ->  Seq Scan on range_rel_7
-  ->  Seq Scan on range_rel_8
-  ->  Seq Scan on range_rel_9
-  ->  Seq Scan on range_rel_10

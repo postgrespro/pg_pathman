@@ -99,7 +99,7 @@ ISOLATIONCHECKS=insert_nodes for_update rollback_on_create_partitions
 submake-isolation:
 	$(MAKE) -C $(top_builddir)/src/test/isolation all
 
-isolationcheck: | submake-isolation
+isolationcheck: | submake-isolation temp-install
 	$(MKDIR_P) isolation_output
 	$(pg_isolation_regress_check) \
 		--temp-config=$(top_srcdir)/$(subdir)/conf.add \
