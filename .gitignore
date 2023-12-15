@@ -1,5 +1,4 @@
 .deps
-isolation_output
 results/*
 regression.diffs
 regression.out

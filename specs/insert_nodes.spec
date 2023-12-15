@@ -19,7 +19,7 @@ step "s1_insert_150"		{ INSERT INTO range_rel SELECT generate_series(1,   150); 
 step "s1_insert_300"		{ INSERT INTO range_rel SELECT generate_series(151, 300); }
 step "s1_show_partitions"	{ SELECT pg_get_constraintdef(c.oid) FROM pg_inherits i LEFT JOIN pg_constraint c
 							  ON c.conrelid = i.inhrelid
-							  WHERE i.inhparent = 'range_rel'::regclass
+							  WHERE i.inhparent = 'range_rel'::regclass AND c.contype = 'c'
 							  ORDER BY c.oid; }
 step "s1r"					{ ROLLBACK; }
 
@@ -29,7 +29,7 @@ step "s2_insert_150"		{ INSERT INTO range_rel SELECT generate_series(1,   150); 
 step "s2_insert_300"		{ INSERT INTO range_rel SELECT generate_series(151, 300); }
 step "s2_show_partitions"	{ SELECT pg_get_constraintdef(c.oid) FROM pg_inherits i LEFT JOIN pg_constraint c
 							  ON c.conrelid = i.inhrelid
-							  WHERE i.inhparent = 'range_rel'::regclass
+							  WHERE i.inhparent = 'range_rel'::regclass AND c.contype = 'c'
 							  ORDER BY c.oid; }
 step "s2r"					{ ROLLBACK; }
 step "s2c"					{ COMMIT; }

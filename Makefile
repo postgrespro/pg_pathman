@@ -64,11 +64,13 @@ REGRESS = pathman_array_qual \
 		  pathman_views \
 		  pathman_CVE-2020-14350
 
+ISOLATION = insert_nodes for_update rollback_on_create_partitions
 
-EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add
+REGRESS_OPTS = --temp-config $(top_srcdir)/$(subdir)/conf.add
+ISOLATION_OPTS = --temp-config $(top_srcdir)/$(subdir)/conf.add
 
 CMOCKA_EXTRA_CLEAN = missing_basic.o missing_list.o missing_stringinfo.o missing_bitmapset.o rangeset_tests.o rangeset_tests
-EXTRA_CLEAN = ./isolation_output $(patsubst %,tests/cmocka/%, $(CMOCKA_EXTRA_CLEAN))
+EXTRA_CLEAN = $(patsubst %,tests/cmocka/%, $(CMOCKA_EXTRA_CLEAN))
 
 ifdef USE_PGXS
 PG_CONFIG=pg_config
@@ -83,6 +85,14 @@ OBJS += src/declarative.o
 override PG_CPPFLAGS += -DENABLE_DECLARATIVE
 endif
 
+# We cannot run isolation test for versions 12,13 in PGXS case
+# because 'pg_isolation_regress' is not copied to install
+# directory, see src/test/isolation/Makefile
+ifeq ($(VNUM),$(filter 12% 13%,$(VNUM)))
+undefine ISOLATION
+undefine ISOLATION_OPTS
+endif
+
 include $(PGXS)
 else
 subdir = contrib/pg_pathman
@@ -93,18 +103,6 @@ endif
 
 $(EXTENSION)--$(EXTVERSION).sql: init.sql hash.sql range.sql
 	cat $^ > $@
-
-ISOLATIONCHECKS=insert_nodes for_update rollback_on_create_partitions
-
-submake-isolation:
-	$(MAKE) -C $(top_builddir)/src/test/isolation all
-
-isolationcheck: | submake-isolation temp-install
-	$(MKDIR_P) isolation_output
-	$(pg_isolation_regress_check) \
-		--temp-config=$(top_srcdir)/$(subdir)/conf.add \
-		--outputdir=./isolation_output \
-		$(ISOLATIONCHECKS)
 
 python_tests:
 	$(MAKE) -C tests/python partitioning_tests CASE=$(CASE)
