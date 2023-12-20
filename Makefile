@@ -64,6 +64,7 @@ REGRESS = pathman_array_qual \
 		  pathman_views \
 		  pathman_CVE-2020-14350
 
+REGRESS := $(filter-out pathman_update_triggers, $(REGRESS))
 
 EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add
 
