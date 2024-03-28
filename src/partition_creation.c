@@ -606,7 +606,8 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 
 		/* Get typname of range_bound_type to perform cast */
 		typeTuple = SearchSysCache1(TYPEOID, ObjectIdGetDatum(range_bound_type));
-		Assert(HeapTupleIsValid(typeTuple));
+		if (!HeapTupleIsValid(typeTuple))
+			elog(ERROR, "cache lookup failed for type %u", range_bound_type);
 		typname = pstrdup(NameStr(((Form_pg_type) GETSTRUCT(typeTuple))->typname));
 		ReleaseSysCache(typeTuple);
 
