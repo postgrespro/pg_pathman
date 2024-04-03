@@ -119,7 +119,10 @@
 /*
  * CheckValidResultRel()
  */
-#if PG_VERSION_NUM >= 100000
+#if PG_VERSION_NUM >= 170000
+#define CheckValidResultRelCompat(rri, cmd) \
+               CheckValidResultRel((rri), (cmd), NIL)
+#elif PG_VERSION_NUM >= 100000
 #define CheckValidResultRelCompat(rri, cmd) \
                CheckValidResultRel((rri), (cmd))
 #elif PG_VERSION_NUM >= 90500
@@ -234,18 +237,6 @@
 #elif PG_VERSION_NUM >= 90500
 #define check_index_predicates_compat(rool, rel) \
 		check_partial_indexes((root), (rel))
-#endif
-
-
-/*
- * CheckValidResultRel()
- */
-#if PG_VERSION_NUM >= 100000
-#define CheckValidResultRelCompat(rri, cmd) \
-		CheckValidResultRel((rri), (cmd))
-#elif PG_VERSION_NUM >= 90500
-#define CheckValidResultRelCompat(rri, cmd) \
-		CheckValidResultRel((rri)->ri_RelationDesc, (cmd))
 #endif
 
 
