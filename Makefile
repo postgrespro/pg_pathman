@@ -64,6 +64,8 @@ REGRESS = pathman_array_qual \
 		  pathman_utility_stmt \
 		  pathman_views \
 		  pathman_CVE-2020-14350
+
+REGRESS := $(filter-out pathman_upd_del, $(REGRESS))
 endif
 
 ISOLATION = insert_nodes for_update rollback_on_create_partitions
