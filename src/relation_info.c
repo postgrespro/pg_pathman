@@ -1167,7 +1167,7 @@ invalidate_bounds_cache(void)
 /*
  * Get constraint expression tree of a partition.
  *
- * build_check_constraint_name_internal() is used to build conname.
+ * build_check_constraint_name_relid_internal() is used to build conname.
  */
 Expr *
 get_partition_constraint_expr(Oid partition, bool raise_error)
@@ -1193,6 +1193,16 @@ get_partition_constraint_expr(Oid partition, bool raise_error)
 	}
 
 	con_tuple = SearchSysCache1(CONSTROID, ObjectIdGetDatum(conid));
+	if (!HeapTupleIsValid(con_tuple))
+	{
+		if (!raise_error)
+			return NULL;
+
+		ereport(ERROR,
+				(errmsg("cache lookup failed for constraint \"%s\" of partition \"%s\"",
+						conname, get_rel_name_or_relid(partition))));
+	}
+
 	conbin_datum = SysCacheGetAttr(CONSTROID, con_tuple,
 								   Anum_pg_constraint_conbin,
 								   &conbin_isnull);
@@ -1204,9 +1214,6 @@ get_partition_constraint_expr(Oid partition, bool raise_error)
 		ereport(ERROR,
 				(errmsg("constraint \"%s\" of partition \"%s\" has NULL conbin",
 						conname, get_rel_name_or_relid(partition))));
-		pfree(conname);
-
-		return NULL; /* could not parse */
 	}
 	pfree(conname);
 
