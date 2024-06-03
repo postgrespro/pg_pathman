@@ -273,7 +273,8 @@ static bool
 init_pathman_relation_oids(void)
 {
 	Oid schema = get_pathman_schema();
-	Assert(schema != InvalidOid);
+	if (schema == InvalidOid)
+		return false;		/* extension can be dropped by another backend */
 
 	/* Cache PATHMAN_CONFIG relation's Oid */
 	pathman_config_relid = get_relname_relid(PATHMAN_CONFIG, schema);

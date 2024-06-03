@@ -122,6 +122,7 @@ build_hash_condition(PG_FUNCTION_ARGS)
 	char		   *expr_cstr	= TextDatumGetCString(PG_GETARG_DATUM(1));
 	uint32			part_count	= PG_GETARG_UINT32(2),
 					part_idx	= PG_GETARG_UINT32(3);
+	char		   *pathman_schema;
 
 	TypeCacheEntry *tce;
 
@@ -141,9 +142,13 @@ build_hash_condition(PG_FUNCTION_ARGS)
 				 errmsg("no hash function for type %s",
 						format_type_be(expr_type))));
 
+	pathman_schema = get_namespace_name(get_pathman_schema());
+	if (pathman_schema == NULL)
+		elog(ERROR, "pg_pathman schema not initialized");
+
 	/* Create hash condition CSTRING */
 	result = psprintf("%s.get_hash_part_idx(%s(%s), %u) = %u",
-					  get_namespace_name(get_pathman_schema()),
+					  pathman_schema,
 					  get_func_name(tce->hash_proc),
 					  expr_cstr,
 					  part_count,

@@ -585,6 +585,7 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 		Oid			parent_nsp = get_rel_namespace(parent_relid);
 		char	   *parent_nsp_name = get_namespace_name(parent_nsp);
 		char	   *partition_name = choose_range_partition_name(parent_relid, parent_nsp);
+		char	   *pathman_schema;
 
 		/* Assign the 'following' boundary to current 'leading' value */
 		cur_following_bound = cur_leading_bound;
@@ -611,10 +612,14 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 		typname = pstrdup(NameStr(((Form_pg_type) GETSTRUCT(typeTuple))->typname));
 		ReleaseSysCache(typeTuple);
 
+		pathman_schema = get_namespace_name(get_pathman_schema());
+		if (pathman_schema == NULL)
+			elog(ERROR, "pg_pathman schema not initialized");
+
 		/* Construct call to create_single_range_partition() */
 		create_sql = psprintf(
 			"select %s.create_single_range_partition('%s.%s'::regclass, '%s'::%s, '%s'::%s, '%s.%s', NULL::text)",
-			quote_identifier(get_namespace_name(get_pathman_schema())),
+			quote_identifier(pathman_schema),
 			quote_identifier(parent_nsp_name),
 			quote_identifier(get_rel_name(parent_relid)),
 			IsInfinite(&bounds[0]) ? "NULL" : datum_to_cstring(bounds[0].value, range_bound_type),
@@ -1195,6 +1200,8 @@ copy_foreign_keys(Oid parent_relid, Oid partition_oid)
 
 	/* Fetch pg_pathman's schema */
 	pathman_schema = get_namespace_name(get_pathman_schema());
+	if (pathman_schema == NULL)
+		elog(ERROR, "pg_pathman schema not initialized");
 
 	/* Build function's name */
 	copy_fkeys_proc_name = list_make2(makeString(pathman_schema),
@@ -1564,6 +1571,7 @@ build_raw_hash_check_tree(Node *raw_expression,
 
 	Oid				hash_proc;
 	TypeCacheEntry *tce;
+	char		   *pathman_schema;
 
 	tce = lookup_type_cache(value_type, TYPECACHE_HASH_PROC);
 	hash_proc = tce->hash_proc;
@@ -1596,9 +1604,13 @@ build_raw_hash_check_tree(Node *raw_expression,
 	hash_call->over				= NULL;
 	hash_call->location			= -1;
 
+	pathman_schema = get_namespace_name(get_pathman_schema());
+	if (pathman_schema == NULL)
+		elog(ERROR, "pg_pathman schema not initialized");
+
 	/* Build schema-qualified name of function get_hash_part_idx() */
 	get_hash_part_idx_proc =
-			list_make2(makeString(get_namespace_name(get_pathman_schema())),
+			list_make2(makeString(pathman_schema),
 					   makeString("get_hash_part_idx"));
 
 	/* Call get_hash_part_idx() */

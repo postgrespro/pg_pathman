@@ -237,6 +237,8 @@ handle_attach_partition(Oid parent_relid, AlterTableCmd *cmd)
 
 	/* Fetch pg_pathman's schema */
 	pathman_schema = get_namespace_name(get_pathman_schema());
+	if (pathman_schema == NULL)
+		elog(ERROR, "pg_pathman schema not initialized");
 
 	/* Build function's name */
 	proc_name = list_make2(makeString(pathman_schema),
@@ -296,6 +298,8 @@ handle_detach_partition(AlterTableCmd *cmd)
 
 	/* Fetch pg_pathman's schema */
 	pathman_schema = get_namespace_name(get_pathman_schema());
+	if (pathman_schema == NULL)
+		elog(ERROR, "pg_pathman schema not initialized");
 
 	/* Build function's name */
 	proc_name = list_make2(makeString(pathman_schema),

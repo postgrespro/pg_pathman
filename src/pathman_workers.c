@@ -520,6 +520,11 @@ bgw_main_concurrent_part(Datum main_arg)
 		if (sql == NULL)
 		{
 			MemoryContext	current_mcxt;
+			char		   *pathman_schema;
+
+			pathman_schema = get_namespace_name(get_pathman_schema());
+			if (pathman_schema == NULL)
+				elog(ERROR, "pg_pathman schema not initialized");
 
 			/*
 			 * Allocate SQL query in TopPathmanContext because current
@@ -527,7 +532,7 @@ bgw_main_concurrent_part(Datum main_arg)
 			 */
 			current_mcxt = MemoryContextSwitchTo(TopPathmanContext);
 			sql = psprintf("SELECT %s._partition_data_concurrent($1::regclass, NULL::text, NULL::text, p_limit:=$2)",
-						   get_namespace_name(get_pathman_schema()));
+						   pathman_schema);
 			MemoryContextSwitchTo(current_mcxt);
 		}
 
@@ -700,6 +705,7 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 					i;
 	TransactionId	rel_xmin;
 	LOCKMODE		lockmode = ShareUpdateExclusiveLock;
+	char		   *pathman_schema;
 
 	/* Check batch_size */
 	if (batch_size < 1 || batch_size > 10000)
@@ -800,11 +806,15 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 		start_bgworker_errmsg(concurrent_part_bgw);
 	}
 
+	pathman_schema = get_namespace_name(get_pathman_schema());
+	if (pathman_schema == NULL)
+		elog(ERROR, "pg_pathman schema not initialized");
+
 	/* Tell user everything's fine */
 	elog(NOTICE,
 		 "worker started, you can stop it "
 		 "with the following command: select %s.%s('%s');",
-		 get_namespace_name(get_pathman_schema()),
+		 pathman_schema,
 		 CppAsString(stop_concurrent_part_task),
 		 get_rel_name(relid));
 
