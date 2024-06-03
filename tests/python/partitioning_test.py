@@ -20,7 +20,7 @@ import threading
 import time
 import unittest
 
-from distutils.version import LooseVersion
+from packaging.version import Version
 from testgres import get_new_node, get_pg_version, configure_testgres
 
 # set setup base logging config, it can be turned on by `use_python_logging`
@@ -58,7 +58,7 @@ LOG_CONFIG = {
 }
 
 logging.config.dictConfig(LOG_CONFIG)
-version = LooseVersion(get_pg_version())
+version = Version(get_pg_version())
 
 
 # Helper function for json equality
@@ -448,7 +448,7 @@ class Tests(unittest.TestCase):
 
             # Check version of postgres server
             # If version < 9.6 skip all tests for parallel queries
-            if version < LooseVersion('9.6.0'):
+            if version < Version('9.6.0'):
                 return
 
             # Prepare test database
@@ -485,7 +485,7 @@ class Tests(unittest.TestCase):
             # Test parallel select
             with node.connect() as con:
                 con.execute('set max_parallel_workers_per_gather = 2')
-                if version >= LooseVersion('10'):
+                if version >= Version('10'):
                     con.execute('set min_parallel_table_scan_size = 0')
                 else:
                     con.execute('set min_parallel_relation_size = 0')
@@ -1045,7 +1045,7 @@ class Tests(unittest.TestCase):
                 self.assertEqual(len(plan["Target Tables"]), 11)
 
             # Plan was seriously changed in vanilla since v14
-            if version < LooseVersion('14'):
+            if version < Version('14'):
                 expected_format = '''
                     {
                         "Plans": [
