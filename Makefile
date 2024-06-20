@@ -37,6 +37,7 @@ REGRESS = pathman_array_qual \
 		  pathman_cache_pranks \
 		  pathman_calamity \
 		  pathman_callbacks \
+		  pathman_column_type \
 		  pathman_cte \
 		  pathman_domains \
 		  pathman_dropped_cols \
