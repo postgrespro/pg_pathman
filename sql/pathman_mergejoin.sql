@@ -2,6 +2,13 @@
  * pathman_mergejoin_1.out and pathman_mergejoin_2.out seem to deal with pgpro's
  * different behaviour. 8edd0e794 (>= 12) Append nodes with single subplan
  * are eliminated, hence pathman_mergejoin_3.out
+ *
+ * Since 55a1954da16 and 6ef77cf46e8 (>= 13) output of EXPLAIN was changed,
+ * now it includes aliases for inherited tables.
+ *
+ * ---------------------------------------------
+ *  NOTE: This test behaves differenly on PgPro
+ * ---------------------------------------------
  */
 
 \set VERBOSITY terse
@@ -41,6 +48,9 @@ SET enable_hashjoin = OFF;
 SET enable_nestloop = OFF;
 SET enable_mergejoin = ON;
 
+SET enable_indexscan = ON;
+SET enable_seqscan = OFF;
+
 EXPLAIN (COSTS OFF)
 SELECT * FROM test.range_rel j1
 JOIN test.range_rel j2 on j2.id = j1.id
@@ -49,7 +59,10 @@ WHERE j1.dt < '2015-03-01' AND j2.dt >= '2015-02-01' ORDER BY j2.dt;
 
 SET enable_hashjoin = ON;
 SET enable_nestloop = ON;
+SET enable_seqscan = ON;
 
-DROP SCHEMA test CASCADE;
+DROP TABLE test.num_range_rel CASCADE;
+DROP TABLE test.range_rel CASCADE;
+DROP SCHEMA test;
 DROP EXTENSION pg_pathman;
-DROP SCHEMA pathman CASCADE;
+DROP SCHEMA pathman;

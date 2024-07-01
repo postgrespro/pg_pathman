@@ -30,6 +30,7 @@ DATA = pg_pathman--1.0--1.1.sql \
 
 PGFILEDESC = "pg_pathman - partitioning tool for PostgreSQL"
 
+ifneq (pg_pathman,$(filter pg_pathman,$(PG_TEST_SKIP)))
 REGRESS = pathman_array_qual \
 		  pathman_basic \
 		  pathman_bgw \
@@ -61,12 +62,19 @@ REGRESS = pathman_array_qual \
 		  pathman_update_triggers \
 		  pathman_upd_del \
 		  pathman_utility_stmt \
-		  pathman_views
+		  pathman_views \
+		  pathman_CVE-2020-14350
 
+REGRESS := $(filter-out pathman_upd_del, $(REGRESS))
+endif
 
-EXTRA_REGRESS_OPTS=--temp-config=$(top_srcdir)/$(subdir)/conf.add
+ISOLATION = insert_nodes for_update rollback_on_create_partitions
 
-EXTRA_CLEAN = pg_pathman--$(EXTVERSION).sql ./isolation_output
+REGRESS_OPTS = --temp-config $(top_srcdir)/$(subdir)/conf.add
+ISOLATION_OPTS = --temp-config $(top_srcdir)/$(subdir)/conf.add
+
+CMOCKA_EXTRA_CLEAN = missing_basic.o missing_list.o missing_stringinfo.o missing_bitmapset.o rangeset_tests.o rangeset_tests
+EXTRA_CLEAN = $(patsubst %,tests/cmocka/%, $(CMOCKA_EXTRA_CLEAN))
 
 ifdef USE_PGXS
 PG_CONFIG=pg_config
@@ -74,10 +82,19 @@ PGXS := $(shell $(PG_CONFIG) --pgxs)
 VNUM := $(shell $(PG_CONFIG) --version | awk '{print $$2}')
 
 # check for declarative syntax
+# this feature will not be ported to >=12
 ifeq ($(VNUM),$(filter 10% 11%,$(VNUM)))
 REGRESS += pathman_declarative
 OBJS += src/declarative.o
 override PG_CPPFLAGS += -DENABLE_DECLARATIVE
+endif
+
+# We cannot run isolation test for versions 12,13 in PGXS case
+# because 'pg_isolation_regress' is not copied to install
+# directory, see src/test/isolation/Makefile
+ifeq ($(VNUM),$(filter 12% 13%,$(VNUM)))
+undefine ISOLATION
+undefine ISOLATION_OPTS
 endif
 
 include $(PGXS)
@@ -90,18 +107,6 @@ endif
 
 $(EXTENSION)--$(EXTVERSION).sql: init.sql hash.sql range.sql
 	cat $^ > $@
-
-ISOLATIONCHECKS=insert_nodes for_update rollback_on_create_partitions
-
-submake-isolation:
-	$(MAKE) -C $(top_builddir)/src/test/isolation all
-
-isolationcheck: | submake-isolation
-	$(MKDIR_P) isolation_output
-	$(pg_isolation_regress_check) \
-		--temp-config=$(top_srcdir)/$(subdir)/conf.add \
-		--outputdir=./isolation_output \
-		$(ISOLATIONCHECKS)
 
 python_tests:
 	$(MAKE) -C tests/python partitioning_tests CASE=$(CASE)

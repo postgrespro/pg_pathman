@@ -427,5 +427,6 @@ DEALLOCATE q;
 
 
 
-DROP SCHEMA array_qual CASCADE;
+DROP TABLE array_qual.test CASCADE;
+DROP SCHEMA array_qual;
 DROP EXTENSION pg_pathman;

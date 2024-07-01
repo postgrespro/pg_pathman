@@ -183,27 +183,27 @@ EXECUTE getbyroot(2);
   4 |       2 | 10-10-2010 | num_2 | 1    |          |           |       3
 (2 rows)
 
-EXPLAIN EXECUTE getbyroot(2);
-                                         QUERY PLAN                                         
---------------------------------------------------------------------------------------------
- Custom Scan (RuntimeAppend)  (cost=4.17..11.28 rows=3 width=128)
+EXPLAIN (COSTS OFF) EXECUTE getbyroot(2);
+                        QUERY PLAN                        
+----------------------------------------------------------
+ Custom Scan (RuntimeAppend)
    Prune by: (root_dict.root_id = $1)
-   ->  Bitmap Heap Scan on root_dict_0 root_dict  (cost=4.17..11.28 rows=3 width=128)
+   ->  Bitmap Heap Scan on root_dict_0 root_dict
          Recheck Cond: (root_id = $1)
-         ->  Bitmap Index Scan on root_dict_0_root_id_idx  (cost=0.00..4.17 rows=3 width=0)
+         ->  Bitmap Index Scan on root_dict_0_root_id_idx
                Index Cond: (root_id = $1)
-   ->  Bitmap Heap Scan on root_dict_1 root_dict  (cost=4.17..11.28 rows=3 width=128)
+   ->  Bitmap Heap Scan on root_dict_1 root_dict
          Recheck Cond: (root_id = $1)
-         ->  Bitmap Index Scan on root_dict_1_root_id_idx  (cost=0.00..4.17 rows=3 width=0)
+         ->  Bitmap Index Scan on root_dict_1_root_id_idx
                Index Cond: (root_id = $1)
-   ->  Bitmap Heap Scan on root_dict_2 root_dict  (cost=4.17..11.28 rows=3 width=128)
+   ->  Bitmap Heap Scan on root_dict_2 root_dict
          Recheck Cond: (root_id = $1)
-         ->  Bitmap Index Scan on root_dict_2_root_id_idx  (cost=0.00..4.17 rows=3 width=0)
+         ->  Bitmap Index Scan on root_dict_2_root_id_idx
                Index Cond: (root_id = $1)
 (14 rows)
 
 DEALLOCATE getbyroot;
 DROP TABLE root_dict CASCADE;
 NOTICE:  drop cascades to 3 other objects
-DROP SCHEMA dropped_cols CASCADE;
+DROP SCHEMA dropped_cols;
 DROP EXTENSION pg_pathman;

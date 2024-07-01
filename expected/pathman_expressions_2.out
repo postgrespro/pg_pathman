@@ -425,6 +425,12 @@ EXPLAIN (COSTS OFF) SELECT * FROM test_exprs.range_rel WHERE (AGE(dt, '2000-01-0
    Filter: (age(dt, 'Sat Jan 01 00:00:00 2000'::timestamp without time zone) = '@ 18 years'::interval)
 (2 rows)
 
-DROP SCHEMA test_exprs CASCADE;
-NOTICE:  drop cascades to 24 other objects
+DROP TABLE test_exprs.canary CASCADE;
+NOTICE:  drop cascades to 5 other objects
+DROP TABLE test_exprs.canary_copy CASCADE;
+DROP TABLE test_exprs.range_rel CASCADE;
+NOTICE:  drop cascades to 11 other objects
+DROP TABLE test_exprs.hash_rel CASCADE;
+NOTICE:  drop cascades to 4 other objects
+DROP SCHEMA test_exprs;
 DROP EXTENSION pg_pathman;

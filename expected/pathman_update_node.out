@@ -446,6 +446,9 @@ SELECT count(*) FROM test_update_node.test_hash;
     10
 (1 row)
 
-DROP SCHEMA test_update_node CASCADE;
-NOTICE:  drop cascades to 17 other objects
+DROP TABLE test_update_node.test_hash CASCADE;
+NOTICE:  drop cascades to 3 other objects
+DROP TABLE test_update_node.test_range CASCADE;
+NOTICE:  drop cascades to 12 other objects
+DROP SCHEMA test_update_node;
 DROP EXTENSION pg_pathman;

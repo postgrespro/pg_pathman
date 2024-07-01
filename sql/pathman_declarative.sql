@@ -39,6 +39,12 @@ CREATE TABLE test.r4 PARTITION OF test.range_rel
 	FOR VALUES FROM ('2015-06-01') TO ('2016-01-01');
 \d+ test.r4;
 
-DROP SCHEMA test CASCADE;
+/* Note: PG-10 doesn't support ATTACH PARTITION ... DEFAULT */
+ALTER TABLE IF EXISTS test.nonexistent_table ATTACH PARTITION baz FOR VALUES IN (42);
+ALTER TABLE IF EXISTS test.nonexistent_table DETACH PARTITION baz;
+
+DROP TABLE test.r2 CASCADE;
+DROP TABLE test.range_rel CASCADE;
+DROP SCHEMA test;
 DROP EXTENSION pg_pathman CASCADE;
-DROP SCHEMA pathman CASCADE;
+DROP SCHEMA pathman;

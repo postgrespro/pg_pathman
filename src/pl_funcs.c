@@ -3,7 +3,7 @@
  * pl_funcs.c
  *		Utility C functions for stored procedures
  *
- * Copyright (c) 2015-2016, Postgres Professional
+ * Copyright (c) 2015-2020, Postgres Professional
  *
  * ------------------------------------------------------------------------
  */
@@ -179,7 +179,7 @@ get_partition_cooked_key_pl(PG_FUNCTION_ARGS)
 	pfree(expr_cstr);
 	pfree(expr);
 
-	PG_RETURN_TEXT_P(CStringGetTextDatum(cooked_cstr));
+	PG_RETURN_DATUM(CStringGetTextDatum(cooked_cstr));
 }
 
 /*
@@ -199,7 +199,7 @@ get_cached_partition_cooked_key_pl(PG_FUNCTION_ARGS)
 	res = CStringGetTextDatum(nodeToString(prel->expr));
 	close_pathman_relation_info(prel);
 
-	PG_RETURN_TEXT_P(res);
+	PG_RETURN_DATUM(res);
 }
 
 /*
@@ -367,6 +367,9 @@ show_cache_stats_internal(PG_FUNCTION_ARGS)
 
 /*
  * List all existing partitions and their parents.
+ *
+ * In >=13 (bc8393cf277) struct SPITupleTable was changed
+ * (free removed and numvals added)
  */
 Datum
 show_partition_list_internal(PG_FUNCTION_ARGS)
@@ -389,7 +392,7 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 		usercxt = (show_partition_list_cxt *) palloc(sizeof(show_partition_list_cxt));
 
 		/* Open PATHMAN_CONFIG with latest snapshot available */
-		usercxt->pathman_config = heap_open(get_pathman_config_relid(false),
+		usercxt->pathman_config = heap_open_compat(get_pathman_config_relid(false),
 											AccessShareLock);
 		usercxt->snapshot = RegisterSnapshot(GetLatestSnapshot());
 #if PG_VERSION_NUM >= 120000
@@ -433,7 +436,12 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 		tuptable->tuptabcxt = tuptab_mcxt;
 
 		/* Set up initial allocations */
+#if PG_VERSION_NUM >= 130000
+		tuptable->alloced = PART_RELS_SIZE * CHILD_FACTOR;
+		tuptable->numvals = 0;
+#else
 		tuptable->alloced = tuptable->free = PART_RELS_SIZE * CHILD_FACTOR;
+#endif
 		tuptable->vals = (HeapTuple *) palloc(tuptable->alloced * sizeof(HeapTuple));
 
 		MemoryContextSwitchTo(old_mcxt);
@@ -549,20 +557,34 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 			/* Form output tuple */
 			htup = heap_form_tuple(funccxt->tuple_desc, values, isnull);
 
+#if PG_VERSION_NUM >= 130000
+			if (tuptable->numvals == tuptable->alloced)
+#else
 			if (tuptable->free == 0)
+#endif
 			{
 				/* Double the size of the pointer array */
+#if PG_VERSION_NUM >= 130000
+				tuptable->alloced += tuptable->alloced;
+#else
 				tuptable->free = tuptable->alloced;
 				tuptable->alloced += tuptable->free;
+#endif
 
 				tuptable->vals = (HeapTuple *)
 						repalloc_huge(tuptable->vals,
 									  tuptable->alloced * sizeof(HeapTuple));
 			}
 
+#if PG_VERSION_NUM >= 130000
+			/* Add tuple to table and increase 'numvals' */
+			tuptable->vals[tuptable->numvals] = htup;
+			(tuptable->numvals)++;
+#else
 			/* Add tuple to table and decrement 'free' */
 			tuptable->vals[tuptable->alloced - tuptable->free] = htup;
 			(tuptable->free)--;
+#endif
 
 			MemoryContextSwitchTo(old_mcxt);
 
@@ -577,7 +599,7 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 		heap_endscan(usercxt->pathman_config_scan);
 #endif
 		UnregisterSnapshot(usercxt->snapshot);
-		heap_close(usercxt->pathman_config, AccessShareLock);
+		heap_close_compat(usercxt->pathman_config, AccessShareLock);
 
 		usercxt->child_number = 0;
 	}
@@ -587,7 +609,11 @@ show_partition_list_internal(PG_FUNCTION_ARGS)
 	tuptable = usercxt->tuptable;
 
 	/* Iterate through used slots */
+#if PG_VERSION_NUM >= 130000
+	if (usercxt->child_number < tuptable->numvals)
+#else
 	if (usercxt->child_number < (tuptable->alloced - tuptable->free))
+#endif
 	{
 		HeapTuple htup = usercxt->tuptable->vals[usercxt->child_number++];
 
@@ -647,6 +673,7 @@ validate_expression(PG_FUNCTION_ARGS)
 	if (!PG_ARGISNULL(0))
 	{
 		relid = PG_GETARG_OID(0);
+		check_relation_oid(relid);
 	}
 	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("'relid' should not be NULL")));
@@ -662,7 +689,7 @@ validate_expression(PG_FUNCTION_ARGS)
 
 	if (!PG_ARGISNULL(1))
 	{
-		expression = TextDatumGetCString(PG_GETARG_TEXT_P(1));
+		expression = TextDatumGetCString(PG_GETARG_DATUM(1));
 	}
 	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("'expression' should not be NULL")));
@@ -689,21 +716,37 @@ is_tuple_convertible(PG_FUNCTION_ARGS)
 {
 	Relation	rel1,
 				rel2;
+#if PG_VERSION_NUM >= 130000
+	AttrMap *map; /* we don't actually need it */
+#else
 	void *map; /* we don't actually need it */
+#endif
 
-	rel1 = heap_open(PG_GETARG_OID(0), AccessShareLock);
-	rel2 = heap_open(PG_GETARG_OID(1), AccessShareLock);
+	rel1 = heap_open_compat(PG_GETARG_OID(0), AccessShareLock);
+	rel2 = heap_open_compat(PG_GETARG_OID(1), AccessShareLock);
 
 	/* Try to build a conversion map */
+#if PG_VERSION_NUM >= 160000 /* for commit ad86d159b6ab */
+	map = build_attrmap_by_name(RelationGetDescr(rel1),
+									 RelationGetDescr(rel2), false);
+#elif PG_VERSION_NUM >= 130000
+	map = build_attrmap_by_name(RelationGetDescr(rel1),
+									 RelationGetDescr(rel2));
+#else
 	map = convert_tuples_by_name_map(RelationGetDescr(rel1),
 									 RelationGetDescr(rel2),
 									 ERR_PART_DESC_CONVERT);
+#endif
 
 	/* Now free map */
+#if PG_VERSION_NUM >= 130000
+	free_attrmap(map);
+#else
 	pfree(map);
+#endif
 
-	heap_close(rel1, AccessShareLock);
-	heap_close(rel2, AccessShareLock);
+	heap_close_compat(rel1, AccessShareLock);
+	heap_close_compat(rel2, AccessShareLock);
 
 	/* still return true to avoid changing tests */
 	PG_RETURN_BOOL(true);
@@ -757,7 +800,7 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 
 	Oid					expr_type;
 
-	PathmanInitState	init_state;
+	volatile PathmanInitState	init_state;
 
 	if (!IsPathmanReady())
 		elog(ERROR, "pg_pathman is disabled");
@@ -765,6 +808,7 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	if (!PG_ARGISNULL(0))
 	{
 		relid = PG_GETARG_OID(0);
+		check_relation_oid(relid);
 	}
 	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("'parent_relid' should not be NULL")));
@@ -779,7 +823,7 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 
 	if (!PG_ARGISNULL(1))
 	{
-		expression = TextDatumGetCString(PG_GETARG_TEXT_P(1));
+		expression = TextDatumGetCString(PG_GETARG_DATUM(1));
 	}
 	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("'expression' should not be NULL")));
@@ -860,12 +904,12 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	isnull[Natts_pathman_config_historic - 1]	= true;
 
 	/* Insert new row into PATHMAN_CONFIG */
-	pathman_config = heap_open(get_pathman_config_relid(false), RowExclusiveLock);
+	pathman_config = heap_open_compat(get_pathman_config_relid(false), RowExclusiveLock);
 
 	htup = heap_form_tuple(RelationGetDescr(pathman_config), values, isnull);
 	CatalogTupleInsert(pathman_config, htup);
 
-	heap_close(pathman_config, RowExclusiveLock);
+	heap_close_compat(pathman_config, RowExclusiveLock);
 
 	/* Make changes visible */
 	CommandCounterIncrement();
@@ -1003,6 +1047,8 @@ prevent_part_modification(PG_FUNCTION_ARGS)
 {
 	Oid relid = PG_GETARG_OID(0);
 
+	check_relation_oid(relid);
+
 	/* Lock partitioned relation till transaction's end */
 	LockRelationOid(relid, ShareUpdateExclusiveLock);
 
@@ -1016,6 +1062,8 @@ Datum
 prevent_data_modification(PG_FUNCTION_ARGS)
 {
 	Oid relid = PG_GETARG_OID(0);
+
+	check_relation_oid(relid);
 
 	/*
 	 * Check that isolation level is READ COMMITTED.
@@ -1172,7 +1220,7 @@ is_operator_supported(PG_FUNCTION_ARGS)
 {
 	Oid		opid,
 			typid	= PG_GETARG_OID(0);
-	char   *opname	= TextDatumGetCString(PG_GETARG_TEXT_P(1));
+	char   *opname	= TextDatumGetCString(PG_GETARG_DATUM(1));
 
 	opid = compatible_oper_opid(list_make1(makeString(opname)),
 								typid, typid, true);

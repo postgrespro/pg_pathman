@@ -4,6 +4,9 @@
  *   ERROR:  invalid input syntax for type integer: "abc"
  * instead of
  *   ERROR:  invalid input syntax for integer: "15.6"
+ *
+ * Since 55a1954da16 and 6ef77cf46e8 (>= 13) output of EXPLAIN was changed,
+ * now it includes aliases for inherited tables.
  */
 \set VERBOSITY terse
 SET search_path = 'public';
@@ -20,7 +23,7 @@ SELECT debug_capture();
 SELECT pathman_version();
  pathman_version 
 -----------------
- 1.5.11
+ 1.5.12
 (1 row)
 
 set client_min_messages = NOTICE;
@@ -317,7 +320,7 @@ SELECT validate_relname(NULL);
 ERROR:  relation should not be NULL
 /* check function validate_expression() */
 SELECT validate_expression(1::regclass, NULL);					/* not ok */
-ERROR:  relation "1" does not exist
+ERROR:  identifier "1" must be normal Oid
 SELECT validate_expression(NULL::regclass, NULL);				/* not ok */
 ERROR:  'relid' should not be NULL
 SELECT validate_expression('calamity.part_test', NULL);			/* not ok */
@@ -423,19 +426,19 @@ SELECT build_sequence_name(NULL) IS NULL;
 
 /* check function partition_table_concurrently() */
 SELECT partition_table_concurrently(1::REGCLASS);				/* not ok */
-ERROR:  relation "1" has no partitions
+ERROR:  identifier "1" must be normal Oid
 SELECT partition_table_concurrently('pg_class', 0);				/* not ok */
 ERROR:  'batch_size' should not be less than 1 or greater than 10000
 SELECT partition_table_concurrently('pg_class', 1, 1E-5);		/* not ok */
 ERROR:  'sleep_time' should not be less than 0.5
 SELECT partition_table_concurrently('pg_class');				/* not ok */
-ERROR:  relation "pg_class" has no partitions
+ERROR:  identifier "1259" must be normal Oid
 /* check function stop_concurrent_part_task() */
 SELECT stop_concurrent_part_task(1::REGCLASS);					/* not ok */
 ERROR:  cannot find worker for relation "1"
 /* check function drop_range_partition_expand_next() */
 SELECT drop_range_partition_expand_next('pg_class');			/* not ok */
-ERROR:  relation "pg_class" is not a partition
+ERROR:  identifier "1259" must be normal Oid
 SELECT drop_range_partition_expand_next(NULL) IS NULL;
  ?column? 
 ----------
@@ -557,7 +560,7 @@ DROP FUNCTION calamity.dummy_cb(arg jsonb);
 SELECT add_to_pathman_config(NULL, 'val');						/* no table */
 ERROR:  'parent_relid' should not be NULL
 SELECT add_to_pathman_config(0::REGCLASS, 'val');				/* no table (oid) */
-ERROR:  relation "0" does not exist
+ERROR:  identifier "0" must be normal Oid
 SELECT add_to_pathman_config('calamity.part_test', NULL);		/* no expr */
 ERROR:  'expression' should not be NULL
 SELECT add_to_pathman_config('calamity.part_test', 'V_A_L');	/* wrong expr */
@@ -776,8 +779,16 @@ SELECT merge_range_partitions('calamity.merge_test_a_1',
 ERROR:  cannot merge partitions
 DROP TABLE calamity.merge_test_a,calamity.merge_test_b CASCADE;
 NOTICE:  drop cascades to 6 other objects
-DROP SCHEMA calamity CASCADE;
-NOTICE:  drop cascades to 15 other objects
+DROP DOMAIN calamity.test_domain;
+DROP TABLE calamity.part_test CASCADE;
+NOTICE:  drop cascades to table calamity.wrong_partition
+DROP TABLE calamity.part_ok CASCADE;
+NOTICE:  drop cascades to 4 other objects
+DROP TABLE calamity.hash_two_times CASCADE;
+NOTICE:  drop cascades to 2 other objects
+DROP TABLE calamity.to_be_disabled CASCADE;
+NOTICE:  drop cascades to 3 other objects
+DROP SCHEMA calamity;
 DROP EXTENSION pg_pathman;
 /*
  * -------------------------------
@@ -813,25 +824,25 @@ SELECT create_range_partitions('calamity.test_pathman_cache_stats', 'val', 1, 10
                       10
 (1 row)
 
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
          context         | entries 
 -------------------------+---------
  maintenance             |       0
  partition bounds cache  |       0
  partition parents cache |       0
- partition status cache  |       2
-(4 rows)
+(3 rows)
 
 DROP TABLE calamity.test_pathman_cache_stats CASCADE;
 NOTICE:  drop cascades to 11 other objects
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
          context         | entries 
 -------------------------+---------
  maintenance             |       0
  partition bounds cache  |       0
  partition parents cache |       0
- partition status cache  |       2
-(4 rows)
+(3 rows)
 
 /* Change this setting for code coverage */
 SET pg_pathman.enable_bounds_cache = false;
@@ -859,25 +870,25 @@ EXPLAIN (COSTS OFF) SELECT * FROM calamity.test_pathman_cache_stats;
    ->  Seq Scan on test_pathman_cache_stats_10
 (11 rows)
 
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
          context         | entries 
 -------------------------+---------
  maintenance             |       0
  partition bounds cache  |       0
  partition parents cache |      10
- partition status cache  |       3
-(4 rows)
+(3 rows)
 
 DROP TABLE calamity.test_pathman_cache_stats CASCADE;
 NOTICE:  drop cascades to 11 other objects
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
          context         | entries 
 -------------------------+---------
  maintenance             |       0
  partition bounds cache  |       0
  partition parents cache |       0
- partition status cache  |       2
-(4 rows)
+(3 rows)
 
 /* Restore this GUC */
 SET pg_pathman.enable_bounds_cache = true;
@@ -905,25 +916,25 @@ EXPLAIN (COSTS OFF) SELECT * FROM calamity.test_pathman_cache_stats;
    ->  Seq Scan on test_pathman_cache_stats_10
 (11 rows)
 
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
          context         | entries 
 -------------------------+---------
  maintenance             |       0
  partition bounds cache  |      10
  partition parents cache |      10
- partition status cache  |       3
-(4 rows)
+(3 rows)
 
 DROP TABLE calamity.test_pathman_cache_stats CASCADE;
 NOTICE:  drop cascades to 11 other objects
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
          context         | entries 
 -------------------------+---------
  maintenance             |       0
  partition bounds cache  |       0
  partition parents cache |       0
- partition status cache  |       2
-(4 rows)
+(3 rows)
 
 /* check that parents cache has been flushed after partition was dropped */
 CREATE TABLE calamity.test_pathman_cache_stats(val NUMERIC NOT NULL);
@@ -949,14 +960,14 @@ EXPLAIN (COSTS OFF) SELECT * FROM calamity.test_pathman_cache_stats;
    ->  Seq Scan on test_pathman_cache_stats_10
 (11 rows)
 
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
          context         | entries 
 -------------------------+---------
  maintenance             |       0
  partition bounds cache  |      10
  partition parents cache |      10
- partition status cache  |       3
-(4 rows)
+(3 rows)
 
 SELECT drop_range_partition('calamity.test_pathman_cache_stats_1');
         drop_range_partition         
@@ -964,27 +975,27 @@ SELECT drop_range_partition('calamity.test_pathman_cache_stats_1');
  calamity.test_pathman_cache_stats_1
 (1 row)
 
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
          context         | entries 
 -------------------------+---------
  maintenance             |       0
  partition bounds cache  |       9
  partition parents cache |       9
- partition status cache  |       2
-(4 rows)
+(3 rows)
 
 DROP TABLE calamity.test_pathman_cache_stats CASCADE;
 NOTICE:  drop cascades to 10 other objects
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
          context         | entries 
 -------------------------+---------
  maintenance             |       0
  partition bounds cache  |       0
  partition parents cache |       0
- partition status cache  |       2
-(4 rows)
+(3 rows)
 
-DROP SCHEMA calamity CASCADE;
+DROP SCHEMA calamity;
 DROP EXTENSION pg_pathman;
 /*
  * ------------------------------------------
@@ -1057,5 +1068,5 @@ EXPLAIN (COSTS OFF) SELECT * FROM calamity.survivor;			/* OK */
 
 DROP TABLE calamity.survivor CASCADE;
 NOTICE:  drop cascades to 3 other objects
-DROP SCHEMA calamity CASCADE;
+DROP SCHEMA calamity;
 DROP EXTENSION pg_pathman;

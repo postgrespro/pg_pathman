@@ -57,8 +57,8 @@ extern PGDLLEXPORT void bgw_main_concurrent_part(Datum main_arg);
 
 static void handle_sigterm(SIGNAL_ARGS);
 static void bg_worker_load_config(const char *bgw_name);
-static bool start_bgworker(const char bgworker_name[BGW_MAXLEN],
-							const char bgworker_proc[BGW_MAXLEN],
+static bool start_bgworker(const char *bgworker_name,
+							const char *bgworker_proc,
 							Datum bgw_arg, bool wait_for_shutdown);
 
 
@@ -166,8 +166,8 @@ bg_worker_load_config(const char *bgw_name)
  * Common function to start background worker.
  */
 static bool
-start_bgworker(const char bgworker_name[BGW_MAXLEN],
-				const char bgworker_proc[BGW_MAXLEN],
+start_bgworker(const char *bgworker_name,
+				const char *bgworker_proc,
 				Datum bgw_arg, bool wait_for_shutdown)
 {
 #define HandleError(condition, new_state) \
@@ -195,6 +195,9 @@ start_bgworker(const char bgworker_name[BGW_MAXLEN],
 	snprintf(worker.bgw_library_name, BGW_MAXLEN, "pg_pathman");
 
 	worker.bgw_flags			= BGWORKER_SHMEM_ACCESS |
+#if defined(PGPRO_EE) && PG_VERSION_NUM >= 130000 && PG_VERSION_NUM < 140000 /* FIXME: need to remove last condition in future */
+									BGWORKER_CLASS_PERSISTENT |
+#endif
 									BGWORKER_BACKEND_DATABASE_CONNECTION;
 	worker.bgw_start_time		= BgWorkerStart_RecoveryFinished;
 	worker.bgw_restart_time		= BGW_NEVER_RESTART;
@@ -455,8 +458,8 @@ bgw_main_concurrent_part(Datum main_arg)
 	ConcurrentPartSlot *part_slot;
 	char			   *sql = NULL;
 	int64				rows;
-	bool				failed;
-	int					failures_count = 0;
+	volatile bool		failed;
+	volatile int		failures_count = 0;
 	LOCKMODE			lockmode = RowExclusiveLock;
 
 	/* Update concurrent part slot */
@@ -494,7 +497,7 @@ bgw_main_concurrent_part(Datum main_arg)
 		Oid		types[2]	= { OIDOID,				INT4OID };
 		Datum	vals[2]		= { part_slot->relid,	part_slot->batch_size };
 
-		bool	rel_locked = false;
+		volatile bool	rel_locked = false;
 
 		/* Reset loop variables */
 		failed = false;
@@ -517,14 +520,19 @@ bgw_main_concurrent_part(Datum main_arg)
 		if (sql == NULL)
 		{
 			MemoryContext	current_mcxt;
+			char		   *pathman_schema;
+
+			pathman_schema = get_namespace_name(get_pathman_schema());
+			if (pathman_schema == NULL)
+				elog(ERROR, "pg_pathman schema not initialized");
 
 			/*
 			 * Allocate SQL query in TopPathmanContext because current
 			 * context will be destroyed after transaction finishes
 			 */
 			current_mcxt = MemoryContextSwitchTo(TopPathmanContext);
-			sql = psprintf("SELECT %s._partition_data_concurrent($1::oid, p_limit:=$2)",
-						   get_namespace_name(get_pathman_schema()));
+			sql = psprintf("SELECT %s._partition_data_concurrent($1::regclass, NULL::text, NULL::text, p_limit:=$2)",
+						   pathman_schema);
 			MemoryContextSwitchTo(current_mcxt);
 		}
 
@@ -542,14 +550,12 @@ bgw_main_concurrent_part(Datum main_arg)
 
 			/* Great, now relation is locked */
 			rel_locked = true;
-			(void) rel_locked; /* mute clang analyzer */
 
 			/* Make sure that relation exists */
 			if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(part_slot->relid)))
 			{
 				/* Exit after we raise ERROR */
 				failures_count = PART_WORKER_MAX_ATTEMPTS;
-				(void) failures_count; /* mute clang analyzer */
 
 				elog(ERROR, "relation %u does not exist", part_slot->relid);
 			}
@@ -559,7 +565,6 @@ bgw_main_concurrent_part(Datum main_arg)
 			{
 				/* Exit after we raise ERROR */
 				failures_count = PART_WORKER_MAX_ATTEMPTS;
-				(void) failures_count; /* mute clang analyzer */
 
 				elog(ERROR, "relation \"%s\" is not partitioned",
 					 get_rel_name(part_slot->relid));
@@ -700,6 +705,7 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 					i;
 	TransactionId	rel_xmin;
 	LOCKMODE		lockmode = ShareUpdateExclusiveLock;
+	char		   *pathman_schema;
 
 	/* Check batch_size */
 	if (batch_size < 1 || batch_size > 10000)
@@ -711,6 +717,8 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 	if (sleep_time < 0.5)
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("'sleep_time' should not be less than 0.5")));
+
+	check_relation_oid(relid);
 
 	/* Prevent concurrent function calls */
 	LockRelationOid(relid, lockmode);
@@ -798,11 +806,15 @@ partition_table_concurrently(PG_FUNCTION_ARGS)
 		start_bgworker_errmsg(concurrent_part_bgw);
 	}
 
+	pathman_schema = get_namespace_name(get_pathman_schema());
+	if (pathman_schema == NULL)
+		elog(ERROR, "pg_pathman schema not initialized");
+
 	/* Tell user everything's fine */
 	elog(NOTICE,
 		 "worker started, you can stop it "
 		 "with the following command: select %s.%s('%s');",
-		 get_namespace_name(get_pathman_schema()),
+		 pathman_schema,
 		 CppAsString(stop_concurrent_part_task),
 		 get_rel_name(relid));
 

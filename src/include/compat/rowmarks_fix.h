@@ -45,5 +45,17 @@ void append_tle_for_rowmark(PlannerInfo *root, PlanRowMark *rc);
 
 #endif
 
+/*
+ * add_vars_to_targetlist()
+ * In >=16 last argument was removed (b3ff6c742f6c)
+ */
+#if PG_VERSION_NUM >= 160000
+#define add_vars_to_targetlist_compat(root, vars, where_needed) \
+	add_vars_to_targetlist((root), (vars), (where_needed));
+#else
+#define add_vars_to_targetlist_compat(root, vars, where_needed) \
+	add_vars_to_targetlist((root), (vars), (where_needed), true);
+#endif
+
 
 #endif /* ROWMARKS_FIX_H */

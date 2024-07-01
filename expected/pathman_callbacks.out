@@ -411,6 +411,8 @@ ORDER BY range_min::INT4;
 
 DROP TABLE callbacks.abc CASCADE;
 NOTICE:  drop cascades to 5 other objects
-DROP SCHEMA callbacks CASCADE;
-NOTICE:  drop cascades to 2 other objects
+DROP FUNCTION callbacks.abc_on_part_created_callback(jsonb);
+DROP FUNCTION public.dummy_cb(jsonb);
+DROP FUNCTION callbacks.rotation_callback(jsonb);
+DROP SCHEMA callbacks;
 DROP EXTENSION pg_pathman CASCADE;

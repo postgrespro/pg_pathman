@@ -271,6 +271,7 @@ SELECT * FROM test;
  
 (4 rows)
 
-DROP SCHEMA test_cte CASCADE;
-NOTICE:  drop cascades to 3 other objects
+DROP TABLE test_cte.recursive_cte_test_tbl CASCADE;
+NOTICE:  drop cascades to 2 other objects
+DROP SCHEMA test_cte;
 DROP EXTENSION pg_pathman;

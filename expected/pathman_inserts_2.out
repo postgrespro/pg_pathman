@@ -1,0 +1,1075 @@
+/*
+ * Since 55a1954da16 and 6ef77cf46e8 (>= 13) output of EXPLAIN was changed,
+ * now it includes aliases for inherited tables.
+ */
+\set VERBOSITY terse
+SET search_path = 'public';
+CREATE EXTENSION pg_pathman;
+CREATE SCHEMA test_inserts;
+/* create a partitioned table */
+CREATE TABLE test_inserts.storage(a INT4, b INT4 NOT NULL, c NUMERIC, d TEXT);
+INSERT INTO test_inserts.storage SELECT i * 2, i, i, i::text FROM generate_series(1, 100) i;
+CREATE UNIQUE INDEX ON test_inserts.storage(a);
+SELECT create_range_partitions('test_inserts.storage', 'b', 1, 10);
+ create_range_partitions 
+-------------------------
+                      10
+(1 row)
+
+/* attach before and after insertion triggers to partitioned table */
+CREATE OR REPLACE FUNCTION test_inserts.print_cols_before_change() RETURNS TRIGGER AS $$
+BEGIN
+	RAISE NOTICE 'BEFORE INSERTION TRIGGER ON TABLE % HAS EXPIRED. INSERTED ROW: %', tg_table_name, new;
+	RETURN new;
+END;
+$$ LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION test_inserts.print_cols_after_change() RETURNS TRIGGER AS $$
+BEGIN
+	RAISE NOTICE 'AFTER INSERTION TRIGGER ON TABLE % HAS EXPIRED. INSERTED ROW: %', tg_table_name, new;
+	RETURN new;
+END;
+$$ LANGUAGE plpgsql;
+/* set triggers on existing first partition and new generated partitions */
+CREATE TRIGGER print_new_row_before_insert BEFORE INSERT ON test_inserts.storage_1
+	FOR EACH ROW EXECUTE PROCEDURE test_inserts.print_cols_before_change();
+CREATE TRIGGER print_new_row_after_insert AFTER INSERT ON test_inserts.storage_1
+	FOR EACH ROW EXECUTE PROCEDURE test_inserts.print_cols_after_change();
+/* set partition init callback that will add triggers to partitions */
+CREATE OR REPLACE FUNCTION test_inserts.set_triggers(args jsonb) RETURNS VOID AS $$
+BEGIN
+	EXECUTE format('create trigger print_new_row_before_insert before insert on %s.%s
+						for each row execute procedure test_inserts.print_cols_before_change();',
+				   args->>'partition_schema', args->>'partition');
+	EXECUTE format('create trigger print_new_row_after_insert after insert on %s.%s
+						for each row execute procedure test_inserts.print_cols_after_change();',
+				   args->>'partition_schema', args->>'partition');
+END;
+$$ LANGUAGE plpgsql;
+SELECT set_init_callback('test_inserts.storage', 'test_inserts.set_triggers(jsonb)');
+ set_init_callback 
+-------------------
+ 
+(1 row)
+
+/* we don't support ON CONLICT */
+INSERT INTO test_inserts.storage VALUES(0, 0, 0, 'UNSUPPORTED_1')
+ON CONFLICT (a) DO UPDATE SET a = 3;
+ERROR:  ON CONFLICT clause is not supported with partitioned tables
+INSERT INTO test_inserts.storage VALUES(0, 0, 0, 'UNSUPPORTED_2')
+ON CONFLICT (a) DO NOTHING;
+ERROR:  ON CONFLICT clause is not supported with partitioned tables
+/* implicitly prepend a partition (no columns have been dropped yet) */
+INSERT INTO test_inserts.storage VALUES(0, 0, 0, 'PREPEND.') RETURNING *;
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_11 HAS EXPIRED. INSERTED ROW: (0,0,0,PREPEND.)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_11 HAS EXPIRED. INSERTED ROW: (0,0,0,PREPEND.)
+ a | b | c |    d     
+---+---+---+----------
+ 0 | 0 | 0 | PREPEND.
+(1 row)
+
+SELECT * FROM test_inserts.storage_11;
+ a | b | c |    d     
+---+---+---+----------
+ 0 | 0 | 0 | PREPEND.
+(1 row)
+
+INSERT INTO test_inserts.storage VALUES(1, 0, 0, 'PREPEND..') RETURNING tableoid::regclass;
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_11 HAS EXPIRED. INSERTED ROW: (1,0,0,PREPEND..)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_11 HAS EXPIRED. INSERTED ROW: (1,0,0,PREPEND..)
+        tableoid         
+-------------------------
+ test_inserts.storage_11
+(1 row)
+
+SELECT * FROM test_inserts.storage_11;
+ a | b | c |     d     
+---+---+---+-----------
+ 0 | 0 | 0 | PREPEND.
+ 1 | 0 | 0 | PREPEND..
+(2 rows)
+
+INSERT INTO test_inserts.storage VALUES(3, 0, 0, 'PREPEND...') RETURNING a + b / 3;
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_11 HAS EXPIRED. INSERTED ROW: (3,0,0,PREPEND...)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_11 HAS EXPIRED. INSERTED ROW: (3,0,0,PREPEND...)
+ ?column? 
+----------
+        3
+(1 row)
+
+SELECT * FROM test_inserts.storage_11;
+ a | b | c |     d      
+---+---+---+------------
+ 0 | 0 | 0 | PREPEND.
+ 1 | 0 | 0 | PREPEND..
+ 3 | 0 | 0 | PREPEND...
+(3 rows)
+
+/* cause an unique index conflict (a = 0) */
+INSERT INTO test_inserts.storage VALUES(0, 0, 0, 'CONFLICT') RETURNING *;
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_11 HAS EXPIRED. INSERTED ROW: (0,0,0,CONFLICT)
+ERROR:  duplicate key value violates unique constraint "storage_11_a_idx"
+/* drop first column */
+ALTER TABLE test_inserts.storage DROP COLUMN a CASCADE;
+/* will have 3 columns (b, c, d) */
+SELECT append_range_partition('test_inserts.storage');
+ append_range_partition  
+-------------------------
+ test_inserts.storage_12
+(1 row)
+
+INSERT INTO test_inserts.storage (b, c, d) VALUES (101, 17, '3 cols!');
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (101,17,"3 cols!")
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (101,17,"3 cols!")
+SELECT * FROM test_inserts.storage_12; /* direct access */
+  b  | c  |    d    
+-----+----+---------
+ 101 | 17 | 3 cols!
+(1 row)
+
+SELECT * FROM test_inserts.storage WHERE b > 100; /* via parent */
+  b  | c  |    d    
+-----+----+---------
+ 101 | 17 | 3 cols!
+(1 row)
+
+/* spawn a new partition (b, c, d) */
+INSERT INTO test_inserts.storage (b, c, d) VALUES (111, 17, '3 cols as well!');
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (111,17,"3 cols as well!")
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (111,17,"3 cols as well!")
+SELECT * FROM test_inserts.storage_13; /* direct access */
+  b  | c  |        d        
+-----+----+-----------------
+ 111 | 17 | 3 cols as well!
+(1 row)
+
+SELECT * FROM test_inserts.storage WHERE b > 110; /* via parent */
+  b  | c  |        d        
+-----+----+-----------------
+ 111 | 17 | 3 cols as well!
+(1 row)
+
+/* column 'a' has been dropped */
+INSERT INTO test_inserts.storage VALUES(111, 0, 'DROP_COL_1.') RETURNING *, 17;
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (111,0,DROP_COL_1.)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (111,0,DROP_COL_1.)
+  b  | c |      d      | ?column? 
+-----+---+-------------+----------
+ 111 | 0 | DROP_COL_1. |       17
+(1 row)
+
+INSERT INTO test_inserts.storage VALUES(111, 0, 'DROP_COL_1..') RETURNING tableoid::regclass;
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (111,0,DROP_COL_1..)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (111,0,DROP_COL_1..)
+        tableoid         
+-------------------------
+ test_inserts.storage_13
+(1 row)
+
+INSERT INTO test_inserts.storage VALUES(111, 0, 'DROP_COL_1...') RETURNING b * 2, b;
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (111,0,DROP_COL_1...)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (111,0,DROP_COL_1...)
+ ?column? |  b  
+----------+-----
+      222 | 111
+(1 row)
+
+/* drop third column */
+ALTER TABLE test_inserts.storage DROP COLUMN c CASCADE;
+/* will have 2 columns (b, d) */
+SELECT append_range_partition('test_inserts.storage');
+ append_range_partition  
+-------------------------
+ test_inserts.storage_14
+(1 row)
+
+INSERT INTO test_inserts.storage (b, d) VALUES (121, '2 cols!');
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_14 HAS EXPIRED. INSERTED ROW: (121,"2 cols!")
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_14 HAS EXPIRED. INSERTED ROW: (121,"2 cols!")
+SELECT * FROM test_inserts.storage_14; /* direct access */
+  b  |    d    
+-----+---------
+ 121 | 2 cols!
+(1 row)
+
+SELECT * FROM test_inserts.storage WHERE b > 120; /* via parent */
+  b  |    d    
+-----+---------
+ 121 | 2 cols!
+(1 row)
+
+/* column 'c' has been dropped */
+INSERT INTO test_inserts.storage VALUES(121, 'DROP_COL_2.') RETURNING *;
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_14 HAS EXPIRED. INSERTED ROW: (121,DROP_COL_2.)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_14 HAS EXPIRED. INSERTED ROW: (121,DROP_COL_2.)
+  b  |      d      
+-----+-------------
+ 121 | DROP_COL_2.
+(1 row)
+
+INSERT INTO test_inserts.storage VALUES(121, 'DROP_COL_2..') RETURNING tableoid::regclass;
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_14 HAS EXPIRED. INSERTED ROW: (121,DROP_COL_2..)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_14 HAS EXPIRED. INSERTED ROW: (121,DROP_COL_2..)
+        tableoid         
+-------------------------
+ test_inserts.storage_14
+(1 row)
+
+INSERT INTO test_inserts.storage VALUES(121, 'DROP_COL_2...') RETURNING d || '0_0', b * 3;
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_14 HAS EXPIRED. INSERTED ROW: (121,DROP_COL_2...)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_14 HAS EXPIRED. INSERTED ROW: (121,DROP_COL_2...)
+     ?column?     | ?column? 
+------------------+----------
+ DROP_COL_2...0_0 |      363
+(1 row)
+
+INSERT INTO test_inserts.storage VALUES(121, 'query_1')
+RETURNING (SELECT 1);
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_14 HAS EXPIRED. INSERTED ROW: (121,query_1)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_14 HAS EXPIRED. INSERTED ROW: (121,query_1)
+ ?column? 
+----------
+        1
+(1 row)
+
+INSERT INTO test_inserts.storage VALUES(121, 'query_2')
+RETURNING (SELECT generate_series(1, 10) LIMIT 1);
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_14 HAS EXPIRED. INSERTED ROW: (121,query_2)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_14 HAS EXPIRED. INSERTED ROW: (121,query_2)
+ generate_series 
+-----------------
+               1
+(1 row)
+
+INSERT INTO test_inserts.storage VALUES(121, 'query_3')
+RETURNING (SELECT get_partition_key('test_inserts.storage'));
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_14 HAS EXPIRED. INSERTED ROW: (121,query_3)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_14 HAS EXPIRED. INSERTED ROW: (121,query_3)
+ get_partition_key 
+-------------------
+ b
+(1 row)
+
+INSERT INTO test_inserts.storage VALUES(121, 'query_4')
+RETURNING 1, 2, 3, 4;
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_14 HAS EXPIRED. INSERTED ROW: (121,query_4)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_14 HAS EXPIRED. INSERTED ROW: (121,query_4)
+ ?column? | ?column? | ?column? | ?column? 
+----------+----------+----------+----------
+        1 |        2 |        3 |        4
+(1 row)
+
+/* show number of columns in each partition */
+SELECT partition, range_min, range_max, count(partition)
+FROM pathman_partition_list JOIN pg_attribute ON partition = attrelid
+WHERE attnum > 0
+GROUP BY partition, range_min, range_max
+ORDER BY range_min::INT4;
+        partition        | range_min | range_max | count 
+-------------------------+-----------+-----------+-------
+ test_inserts.storage_11 | -9        | 1         |     4
+ test_inserts.storage_1  | 1         | 11        |     4
+ test_inserts.storage_2  | 11        | 21        |     4
+ test_inserts.storage_3  | 21        | 31        |     4
+ test_inserts.storage_4  | 31        | 41        |     4
+ test_inserts.storage_5  | 41        | 51        |     4
+ test_inserts.storage_6  | 51        | 61        |     4
+ test_inserts.storage_7  | 61        | 71        |     4
+ test_inserts.storage_8  | 71        | 81        |     4
+ test_inserts.storage_9  | 81        | 91        |     4
+ test_inserts.storage_10 | 91        | 101       |     4
+ test_inserts.storage_12 | 101       | 111       |     3
+ test_inserts.storage_13 | 111       | 121       |     3
+ test_inserts.storage_14 | 121       | 131       |     2
+(14 rows)
+
+/* check the data */
+SELECT *, tableoid::regclass FROM test_inserts.storage ORDER BY b, d;
+  b  |        d        |        tableoid         
+-----+-----------------+-------------------------
+   0 | PREPEND.        | test_inserts.storage_11
+   0 | PREPEND..       | test_inserts.storage_11
+   0 | PREPEND...      | test_inserts.storage_11
+   1 | 1               | test_inserts.storage_1
+   2 | 2               | test_inserts.storage_1
+   3 | 3               | test_inserts.storage_1
+   4 | 4               | test_inserts.storage_1
+   5 | 5               | test_inserts.storage_1
+   6 | 6               | test_inserts.storage_1
+   7 | 7               | test_inserts.storage_1
+   8 | 8               | test_inserts.storage_1
+   9 | 9               | test_inserts.storage_1
+  10 | 10              | test_inserts.storage_1
+  11 | 11              | test_inserts.storage_2
+  12 | 12              | test_inserts.storage_2
+  13 | 13              | test_inserts.storage_2
+  14 | 14              | test_inserts.storage_2
+  15 | 15              | test_inserts.storage_2
+  16 | 16              | test_inserts.storage_2
+  17 | 17              | test_inserts.storage_2
+  18 | 18              | test_inserts.storage_2
+  19 | 19              | test_inserts.storage_2
+  20 | 20              | test_inserts.storage_2
+  21 | 21              | test_inserts.storage_3
+  22 | 22              | test_inserts.storage_3
+  23 | 23              | test_inserts.storage_3
+  24 | 24              | test_inserts.storage_3
+  25 | 25              | test_inserts.storage_3
+  26 | 26              | test_inserts.storage_3
+  27 | 27              | test_inserts.storage_3
+  28 | 28              | test_inserts.storage_3
+  29 | 29              | test_inserts.storage_3
+  30 | 30              | test_inserts.storage_3
+  31 | 31              | test_inserts.storage_4
+  32 | 32              | test_inserts.storage_4
+  33 | 33              | test_inserts.storage_4
+  34 | 34              | test_inserts.storage_4
+  35 | 35              | test_inserts.storage_4
+  36 | 36              | test_inserts.storage_4
+  37 | 37              | test_inserts.storage_4
+  38 | 38              | test_inserts.storage_4
+  39 | 39              | test_inserts.storage_4
+  40 | 40              | test_inserts.storage_4
+  41 | 41              | test_inserts.storage_5
+  42 | 42              | test_inserts.storage_5
+  43 | 43              | test_inserts.storage_5
+  44 | 44              | test_inserts.storage_5
+  45 | 45              | test_inserts.storage_5
+  46 | 46              | test_inserts.storage_5
+  47 | 47              | test_inserts.storage_5
+  48 | 48              | test_inserts.storage_5
+  49 | 49              | test_inserts.storage_5
+  50 | 50              | test_inserts.storage_5
+  51 | 51              | test_inserts.storage_6
+  52 | 52              | test_inserts.storage_6
+  53 | 53              | test_inserts.storage_6
+  54 | 54              | test_inserts.storage_6
+  55 | 55              | test_inserts.storage_6
+  56 | 56              | test_inserts.storage_6
+  57 | 57              | test_inserts.storage_6
+  58 | 58              | test_inserts.storage_6
+  59 | 59              | test_inserts.storage_6
+  60 | 60              | test_inserts.storage_6
+  61 | 61              | test_inserts.storage_7
+  62 | 62              | test_inserts.storage_7
+  63 | 63              | test_inserts.storage_7
+  64 | 64              | test_inserts.storage_7
+  65 | 65              | test_inserts.storage_7
+  66 | 66              | test_inserts.storage_7
+  67 | 67              | test_inserts.storage_7
+  68 | 68              | test_inserts.storage_7
+  69 | 69              | test_inserts.storage_7
+  70 | 70              | test_inserts.storage_7
+  71 | 71              | test_inserts.storage_8
+  72 | 72              | test_inserts.storage_8
+  73 | 73              | test_inserts.storage_8
+  74 | 74              | test_inserts.storage_8
+  75 | 75              | test_inserts.storage_8
+  76 | 76              | test_inserts.storage_8
+  77 | 77              | test_inserts.storage_8
+  78 | 78              | test_inserts.storage_8
+  79 | 79              | test_inserts.storage_8
+  80 | 80              | test_inserts.storage_8
+  81 | 81              | test_inserts.storage_9
+  82 | 82              | test_inserts.storage_9
+  83 | 83              | test_inserts.storage_9
+  84 | 84              | test_inserts.storage_9
+  85 | 85              | test_inserts.storage_9
+  86 | 86              | test_inserts.storage_9
+  87 | 87              | test_inserts.storage_9
+  88 | 88              | test_inserts.storage_9
+  89 | 89              | test_inserts.storage_9
+  90 | 90              | test_inserts.storage_9
+  91 | 91              | test_inserts.storage_10
+  92 | 92              | test_inserts.storage_10
+  93 | 93              | test_inserts.storage_10
+  94 | 94              | test_inserts.storage_10
+  95 | 95              | test_inserts.storage_10
+  96 | 96              | test_inserts.storage_10
+  97 | 97              | test_inserts.storage_10
+  98 | 98              | test_inserts.storage_10
+  99 | 99              | test_inserts.storage_10
+ 100 | 100             | test_inserts.storage_10
+ 101 | 3 cols!         | test_inserts.storage_12
+ 111 | 3 cols as well! | test_inserts.storage_13
+ 111 | DROP_COL_1.     | test_inserts.storage_13
+ 111 | DROP_COL_1..    | test_inserts.storage_13
+ 111 | DROP_COL_1...   | test_inserts.storage_13
+ 121 | 2 cols!         | test_inserts.storage_14
+ 121 | DROP_COL_2.     | test_inserts.storage_14
+ 121 | DROP_COL_2..    | test_inserts.storage_14
+ 121 | DROP_COL_2...   | test_inserts.storage_14
+ 121 | query_1         | test_inserts.storage_14
+ 121 | query_2         | test_inserts.storage_14
+ 121 | query_3         | test_inserts.storage_14
+ 121 | query_4         | test_inserts.storage_14
+(116 rows)
+
+/* drop data */
+TRUNCATE test_inserts.storage;
+/* one more time! */
+INSERT INTO test_inserts.storage (b, d) SELECT i, i FROM generate_series(-2, 120) i;
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_11 HAS EXPIRED. INSERTED ROW: (-2,-2)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_11 HAS EXPIRED. INSERTED ROW: (-1,-1)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_11 HAS EXPIRED. INSERTED ROW: (0,0)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (1,1)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (2,2)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (3,3)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (4,4)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (5,5)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (6,6)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (7,7)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (8,8)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (9,9)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (10,10)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (101,101)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (102,102)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (103,103)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (104,104)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (105,105)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (106,106)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (107,107)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (108,108)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (109,109)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (110,110)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (111,111)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (112,112)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (113,113)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (114,114)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (115,115)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (116,116)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (117,117)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (118,118)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (119,119)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (120,120)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_11 HAS EXPIRED. INSERTED ROW: (-2,-2)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_11 HAS EXPIRED. INSERTED ROW: (-1,-1)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_11 HAS EXPIRED. INSERTED ROW: (0,0)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (1,1)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (2,2)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (3,3)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (4,4)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (5,5)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (6,6)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (7,7)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (8,8)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (9,9)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (10,10)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (101,101)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (102,102)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (103,103)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (104,104)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (105,105)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (106,106)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (107,107)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (108,108)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (109,109)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (110,110)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (111,111)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (112,112)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (113,113)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (114,114)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (115,115)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (116,116)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (117,117)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (118,118)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (119,119)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (120,120)
+SELECT *, tableoid::regclass FROM test_inserts.storage ORDER BY b, d;
+  b  |  d  |        tableoid         
+-----+-----+-------------------------
+  -2 | -2  | test_inserts.storage_11
+  -1 | -1  | test_inserts.storage_11
+   0 | 0   | test_inserts.storage_11
+   1 | 1   | test_inserts.storage_1
+   2 | 2   | test_inserts.storage_1
+   3 | 3   | test_inserts.storage_1
+   4 | 4   | test_inserts.storage_1
+   5 | 5   | test_inserts.storage_1
+   6 | 6   | test_inserts.storage_1
+   7 | 7   | test_inserts.storage_1
+   8 | 8   | test_inserts.storage_1
+   9 | 9   | test_inserts.storage_1
+  10 | 10  | test_inserts.storage_1
+  11 | 11  | test_inserts.storage_2
+  12 | 12  | test_inserts.storage_2
+  13 | 13  | test_inserts.storage_2
+  14 | 14  | test_inserts.storage_2
+  15 | 15  | test_inserts.storage_2
+  16 | 16  | test_inserts.storage_2
+  17 | 17  | test_inserts.storage_2
+  18 | 18  | test_inserts.storage_2
+  19 | 19  | test_inserts.storage_2
+  20 | 20  | test_inserts.storage_2
+  21 | 21  | test_inserts.storage_3
+  22 | 22  | test_inserts.storage_3
+  23 | 23  | test_inserts.storage_3
+  24 | 24  | test_inserts.storage_3
+  25 | 25  | test_inserts.storage_3
+  26 | 26  | test_inserts.storage_3
+  27 | 27  | test_inserts.storage_3
+  28 | 28  | test_inserts.storage_3
+  29 | 29  | test_inserts.storage_3
+  30 | 30  | test_inserts.storage_3
+  31 | 31  | test_inserts.storage_4
+  32 | 32  | test_inserts.storage_4
+  33 | 33  | test_inserts.storage_4
+  34 | 34  | test_inserts.storage_4
+  35 | 35  | test_inserts.storage_4
+  36 | 36  | test_inserts.storage_4
+  37 | 37  | test_inserts.storage_4
+  38 | 38  | test_inserts.storage_4
+  39 | 39  | test_inserts.storage_4
+  40 | 40  | test_inserts.storage_4
+  41 | 41  | test_inserts.storage_5
+  42 | 42  | test_inserts.storage_5
+  43 | 43  | test_inserts.storage_5
+  44 | 44  | test_inserts.storage_5
+  45 | 45  | test_inserts.storage_5
+  46 | 46  | test_inserts.storage_5
+  47 | 47  | test_inserts.storage_5
+  48 | 48  | test_inserts.storage_5
+  49 | 49  | test_inserts.storage_5
+  50 | 50  | test_inserts.storage_5
+  51 | 51  | test_inserts.storage_6
+  52 | 52  | test_inserts.storage_6
+  53 | 53  | test_inserts.storage_6
+  54 | 54  | test_inserts.storage_6
+  55 | 55  | test_inserts.storage_6
+  56 | 56  | test_inserts.storage_6
+  57 | 57  | test_inserts.storage_6
+  58 | 58  | test_inserts.storage_6
+  59 | 59  | test_inserts.storage_6
+  60 | 60  | test_inserts.storage_6
+  61 | 61  | test_inserts.storage_7
+  62 | 62  | test_inserts.storage_7
+  63 | 63  | test_inserts.storage_7
+  64 | 64  | test_inserts.storage_7
+  65 | 65  | test_inserts.storage_7
+  66 | 66  | test_inserts.storage_7
+  67 | 67  | test_inserts.storage_7
+  68 | 68  | test_inserts.storage_7
+  69 | 69  | test_inserts.storage_7
+  70 | 70  | test_inserts.storage_7
+  71 | 71  | test_inserts.storage_8
+  72 | 72  | test_inserts.storage_8
+  73 | 73  | test_inserts.storage_8
+  74 | 74  | test_inserts.storage_8
+  75 | 75  | test_inserts.storage_8
+  76 | 76  | test_inserts.storage_8
+  77 | 77  | test_inserts.storage_8
+  78 | 78  | test_inserts.storage_8
+  79 | 79  | test_inserts.storage_8
+  80 | 80  | test_inserts.storage_8
+  81 | 81  | test_inserts.storage_9
+  82 | 82  | test_inserts.storage_9
+  83 | 83  | test_inserts.storage_9
+  84 | 84  | test_inserts.storage_9
+  85 | 85  | test_inserts.storage_9
+  86 | 86  | test_inserts.storage_9
+  87 | 87  | test_inserts.storage_9
+  88 | 88  | test_inserts.storage_9
+  89 | 89  | test_inserts.storage_9
+  90 | 90  | test_inserts.storage_9
+  91 | 91  | test_inserts.storage_10
+  92 | 92  | test_inserts.storage_10
+  93 | 93  | test_inserts.storage_10
+  94 | 94  | test_inserts.storage_10
+  95 | 95  | test_inserts.storage_10
+  96 | 96  | test_inserts.storage_10
+  97 | 97  | test_inserts.storage_10
+  98 | 98  | test_inserts.storage_10
+  99 | 99  | test_inserts.storage_10
+ 100 | 100 | test_inserts.storage_10
+ 101 | 101 | test_inserts.storage_12
+ 102 | 102 | test_inserts.storage_12
+ 103 | 103 | test_inserts.storage_12
+ 104 | 104 | test_inserts.storage_12
+ 105 | 105 | test_inserts.storage_12
+ 106 | 106 | test_inserts.storage_12
+ 107 | 107 | test_inserts.storage_12
+ 108 | 108 | test_inserts.storage_12
+ 109 | 109 | test_inserts.storage_12
+ 110 | 110 | test_inserts.storage_12
+ 111 | 111 | test_inserts.storage_13
+ 112 | 112 | test_inserts.storage_13
+ 113 | 113 | test_inserts.storage_13
+ 114 | 114 | test_inserts.storage_13
+ 115 | 115 | test_inserts.storage_13
+ 116 | 116 | test_inserts.storage_13
+ 117 | 117 | test_inserts.storage_13
+ 118 | 118 | test_inserts.storage_13
+ 119 | 119 | test_inserts.storage_13
+ 120 | 120 | test_inserts.storage_13
+(123 rows)
+
+/* drop data */
+TRUNCATE test_inserts.storage;
+/* add new column */
+ALTER TABLE test_inserts.storage ADD COLUMN e INT8 NOT NULL;
+/* one more time! x2 */
+INSERT INTO test_inserts.storage (b, d, e) SELECT i, i, i FROM generate_series(-2, 120) i;
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_11 HAS EXPIRED. INSERTED ROW: (-2,-2,-2)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_11 HAS EXPIRED. INSERTED ROW: (-1,-1,-1)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_11 HAS EXPIRED. INSERTED ROW: (0,0,0)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (1,1,1)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (2,2,2)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (3,3,3)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (4,4,4)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (5,5,5)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (6,6,6)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (7,7,7)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (8,8,8)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (9,9,9)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (10,10,10)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (101,101,101)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (102,102,102)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (103,103,103)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (104,104,104)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (105,105,105)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (106,106,106)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (107,107,107)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (108,108,108)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (109,109,109)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (110,110,110)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (111,111,111)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (112,112,112)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (113,113,113)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (114,114,114)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (115,115,115)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (116,116,116)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (117,117,117)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (118,118,118)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (119,119,119)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (120,120,120)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_11 HAS EXPIRED. INSERTED ROW: (-2,-2,-2)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_11 HAS EXPIRED. INSERTED ROW: (-1,-1,-1)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_11 HAS EXPIRED. INSERTED ROW: (0,0,0)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (1,1,1)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (2,2,2)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (3,3,3)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (4,4,4)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (5,5,5)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (6,6,6)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (7,7,7)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (8,8,8)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (9,9,9)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (10,10,10)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (101,101,101)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (102,102,102)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (103,103,103)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (104,104,104)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (105,105,105)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (106,106,106)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (107,107,107)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (108,108,108)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (109,109,109)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (110,110,110)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (111,111,111)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (112,112,112)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (113,113,113)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (114,114,114)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (115,115,115)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (116,116,116)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (117,117,117)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (118,118,118)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (119,119,119)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (120,120,120)
+SELECT *, tableoid::regclass FROM test_inserts.storage ORDER BY b, d;
+  b  |  d  |  e  |        tableoid         
+-----+-----+-----+-------------------------
+  -2 | -2  |  -2 | test_inserts.storage_11
+  -1 | -1  |  -1 | test_inserts.storage_11
+   0 | 0   |   0 | test_inserts.storage_11
+   1 | 1   |   1 | test_inserts.storage_1
+   2 | 2   |   2 | test_inserts.storage_1
+   3 | 3   |   3 | test_inserts.storage_1
+   4 | 4   |   4 | test_inserts.storage_1
+   5 | 5   |   5 | test_inserts.storage_1
+   6 | 6   |   6 | test_inserts.storage_1
+   7 | 7   |   7 | test_inserts.storage_1
+   8 | 8   |   8 | test_inserts.storage_1
+   9 | 9   |   9 | test_inserts.storage_1
+  10 | 10  |  10 | test_inserts.storage_1
+  11 | 11  |  11 | test_inserts.storage_2
+  12 | 12  |  12 | test_inserts.storage_2
+  13 | 13  |  13 | test_inserts.storage_2
+  14 | 14  |  14 | test_inserts.storage_2
+  15 | 15  |  15 | test_inserts.storage_2
+  16 | 16  |  16 | test_inserts.storage_2
+  17 | 17  |  17 | test_inserts.storage_2
+  18 | 18  |  18 | test_inserts.storage_2
+  19 | 19  |  19 | test_inserts.storage_2
+  20 | 20  |  20 | test_inserts.storage_2
+  21 | 21  |  21 | test_inserts.storage_3
+  22 | 22  |  22 | test_inserts.storage_3
+  23 | 23  |  23 | test_inserts.storage_3
+  24 | 24  |  24 | test_inserts.storage_3
+  25 | 25  |  25 | test_inserts.storage_3
+  26 | 26  |  26 | test_inserts.storage_3
+  27 | 27  |  27 | test_inserts.storage_3
+  28 | 28  |  28 | test_inserts.storage_3
+  29 | 29  |  29 | test_inserts.storage_3
+  30 | 30  |  30 | test_inserts.storage_3
+  31 | 31  |  31 | test_inserts.storage_4
+  32 | 32  |  32 | test_inserts.storage_4
+  33 | 33  |  33 | test_inserts.storage_4
+  34 | 34  |  34 | test_inserts.storage_4
+  35 | 35  |  35 | test_inserts.storage_4
+  36 | 36  |  36 | test_inserts.storage_4
+  37 | 37  |  37 | test_inserts.storage_4
+  38 | 38  |  38 | test_inserts.storage_4
+  39 | 39  |  39 | test_inserts.storage_4
+  40 | 40  |  40 | test_inserts.storage_4
+  41 | 41  |  41 | test_inserts.storage_5
+  42 | 42  |  42 | test_inserts.storage_5
+  43 | 43  |  43 | test_inserts.storage_5
+  44 | 44  |  44 | test_inserts.storage_5
+  45 | 45  |  45 | test_inserts.storage_5
+  46 | 46  |  46 | test_inserts.storage_5
+  47 | 47  |  47 | test_inserts.storage_5
+  48 | 48  |  48 | test_inserts.storage_5
+  49 | 49  |  49 | test_inserts.storage_5
+  50 | 50  |  50 | test_inserts.storage_5
+  51 | 51  |  51 | test_inserts.storage_6
+  52 | 52  |  52 | test_inserts.storage_6
+  53 | 53  |  53 | test_inserts.storage_6
+  54 | 54  |  54 | test_inserts.storage_6
+  55 | 55  |  55 | test_inserts.storage_6
+  56 | 56  |  56 | test_inserts.storage_6
+  57 | 57  |  57 | test_inserts.storage_6
+  58 | 58  |  58 | test_inserts.storage_6
+  59 | 59  |  59 | test_inserts.storage_6
+  60 | 60  |  60 | test_inserts.storage_6
+  61 | 61  |  61 | test_inserts.storage_7
+  62 | 62  |  62 | test_inserts.storage_7
+  63 | 63  |  63 | test_inserts.storage_7
+  64 | 64  |  64 | test_inserts.storage_7
+  65 | 65  |  65 | test_inserts.storage_7
+  66 | 66  |  66 | test_inserts.storage_7
+  67 | 67  |  67 | test_inserts.storage_7
+  68 | 68  |  68 | test_inserts.storage_7
+  69 | 69  |  69 | test_inserts.storage_7
+  70 | 70  |  70 | test_inserts.storage_7
+  71 | 71  |  71 | test_inserts.storage_8
+  72 | 72  |  72 | test_inserts.storage_8
+  73 | 73  |  73 | test_inserts.storage_8
+  74 | 74  |  74 | test_inserts.storage_8
+  75 | 75  |  75 | test_inserts.storage_8
+  76 | 76  |  76 | test_inserts.storage_8
+  77 | 77  |  77 | test_inserts.storage_8
+  78 | 78  |  78 | test_inserts.storage_8
+  79 | 79  |  79 | test_inserts.storage_8
+  80 | 80  |  80 | test_inserts.storage_8
+  81 | 81  |  81 | test_inserts.storage_9
+  82 | 82  |  82 | test_inserts.storage_9
+  83 | 83  |  83 | test_inserts.storage_9
+  84 | 84  |  84 | test_inserts.storage_9
+  85 | 85  |  85 | test_inserts.storage_9
+  86 | 86  |  86 | test_inserts.storage_9
+  87 | 87  |  87 | test_inserts.storage_9
+  88 | 88  |  88 | test_inserts.storage_9
+  89 | 89  |  89 | test_inserts.storage_9
+  90 | 90  |  90 | test_inserts.storage_9
+  91 | 91  |  91 | test_inserts.storage_10
+  92 | 92  |  92 | test_inserts.storage_10
+  93 | 93  |  93 | test_inserts.storage_10
+  94 | 94  |  94 | test_inserts.storage_10
+  95 | 95  |  95 | test_inserts.storage_10
+  96 | 96  |  96 | test_inserts.storage_10
+  97 | 97  |  97 | test_inserts.storage_10
+  98 | 98  |  98 | test_inserts.storage_10
+  99 | 99  |  99 | test_inserts.storage_10
+ 100 | 100 | 100 | test_inserts.storage_10
+ 101 | 101 | 101 | test_inserts.storage_12
+ 102 | 102 | 102 | test_inserts.storage_12
+ 103 | 103 | 103 | test_inserts.storage_12
+ 104 | 104 | 104 | test_inserts.storage_12
+ 105 | 105 | 105 | test_inserts.storage_12
+ 106 | 106 | 106 | test_inserts.storage_12
+ 107 | 107 | 107 | test_inserts.storage_12
+ 108 | 108 | 108 | test_inserts.storage_12
+ 109 | 109 | 109 | test_inserts.storage_12
+ 110 | 110 | 110 | test_inserts.storage_12
+ 111 | 111 | 111 | test_inserts.storage_13
+ 112 | 112 | 112 | test_inserts.storage_13
+ 113 | 113 | 113 | test_inserts.storage_13
+ 114 | 114 | 114 | test_inserts.storage_13
+ 115 | 115 | 115 | test_inserts.storage_13
+ 116 | 116 | 116 | test_inserts.storage_13
+ 117 | 117 | 117 | test_inserts.storage_13
+ 118 | 118 | 118 | test_inserts.storage_13
+ 119 | 119 | 119 | test_inserts.storage_13
+ 120 | 120 | 120 | test_inserts.storage_13
+(123 rows)
+
+/* drop data */
+TRUNCATE test_inserts.storage;
+/* now test RETURNING list using our new column 'e' */
+INSERT INTO test_inserts.storage (b, d, e) SELECT i, i, i
+FROM generate_series(-2, 130, 5) i
+RETURNING e * 2, b, tableoid::regclass;
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_11 HAS EXPIRED. INSERTED ROW: (-2,-2,-2)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (3,3,3)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (8,8,8)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (103,103,103)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (108,108,108)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (113,113,113)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (118,118,118)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_14 HAS EXPIRED. INSERTED ROW: (123,123,123)
+NOTICE:  BEFORE INSERTION TRIGGER ON TABLE storage_14 HAS EXPIRED. INSERTED ROW: (128,128,128)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_11 HAS EXPIRED. INSERTED ROW: (-2,-2,-2)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (3,3,3)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_1 HAS EXPIRED. INSERTED ROW: (8,8,8)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (103,103,103)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_12 HAS EXPIRED. INSERTED ROW: (108,108,108)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (113,113,113)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_13 HAS EXPIRED. INSERTED ROW: (118,118,118)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_14 HAS EXPIRED. INSERTED ROW: (123,123,123)
+NOTICE:  AFTER INSERTION TRIGGER ON TABLE storage_14 HAS EXPIRED. INSERTED ROW: (128,128,128)
+ ?column? |  b  |        tableoid         
+----------+-----+-------------------------
+       -4 |  -2 | test_inserts.storage_11
+        6 |   3 | test_inserts.storage_1
+       16 |   8 | test_inserts.storage_1
+       26 |  13 | test_inserts.storage_2
+       36 |  18 | test_inserts.storage_2
+       46 |  23 | test_inserts.storage_3
+       56 |  28 | test_inserts.storage_3
+       66 |  33 | test_inserts.storage_4
+       76 |  38 | test_inserts.storage_4
+       86 |  43 | test_inserts.storage_5
+       96 |  48 | test_inserts.storage_5
+      106 |  53 | test_inserts.storage_6
+      116 |  58 | test_inserts.storage_6
+      126 |  63 | test_inserts.storage_7
+      136 |  68 | test_inserts.storage_7
+      146 |  73 | test_inserts.storage_8
+      156 |  78 | test_inserts.storage_8
+      166 |  83 | test_inserts.storage_9
+      176 |  88 | test_inserts.storage_9
+      186 |  93 | test_inserts.storage_10
+      196 |  98 | test_inserts.storage_10
+      206 | 103 | test_inserts.storage_12
+      216 | 108 | test_inserts.storage_12
+      226 | 113 | test_inserts.storage_13
+      236 | 118 | test_inserts.storage_13
+      246 | 123 | test_inserts.storage_14
+      256 | 128 | test_inserts.storage_14
+(27 rows)
+
+/* test EXPLAIN (VERBOSE) - for PartitionFilter's targetlists */
+EXPLAIN (VERBOSE, COSTS OFF)
+INSERT INTO test_inserts.storage (b, d, e) SELECT i, i, i
+FROM generate_series(1, 10) i
+RETURNING e * 2, b, tableoid::regclass;
+                                  QUERY PLAN                                   
+-------------------------------------------------------------------------------
+ Insert on test_inserts.storage
+   Output: (storage.e * 2), storage.b, (storage.tableoid)::regclass
+   ->  Custom Scan (PartitionFilter)
+         Output: NULL::integer, storage.b, NULL::integer, storage.d, storage.e
+         ->  Function Scan on pg_catalog.generate_series i
+               Output: NULL::integer, i.i, NULL::integer, i.i, i.i
+               Function Call: generate_series(1, 10)
+(7 rows)
+
+EXPLAIN (VERBOSE, COSTS OFF)
+INSERT INTO test_inserts.storage (d, e) SELECT i, i
+FROM generate_series(1, 10) i;
+                                    QUERY PLAN                                     
+-----------------------------------------------------------------------------------
+ Insert on test_inserts.storage
+   ->  Custom Scan (PartitionFilter)
+         Output: NULL::integer, NULL::integer, NULL::integer, storage.d, storage.e
+         ->  Function Scan on pg_catalog.generate_series i
+               Output: NULL::integer, NULL::integer, NULL::integer, i.i, i.i
+               Function Call: generate_series(1, 10)
+(6 rows)
+
+EXPLAIN (VERBOSE, COSTS OFF)
+INSERT INTO test_inserts.storage (b) SELECT i
+FROM generate_series(1, 10) i;
+                                    QUERY PLAN                                     
+-----------------------------------------------------------------------------------
+ Insert on test_inserts.storage
+   ->  Custom Scan (PartitionFilter)
+         Output: NULL::integer, storage.b, NULL::integer, NULL::text, NULL::bigint
+         ->  Function Scan on pg_catalog.generate_series i
+               Output: NULL::integer, i.i, NULL::integer, NULL::text, NULL::bigint
+               Function Call: generate_series(1, 10)
+(6 rows)
+
+EXPLAIN (VERBOSE, COSTS OFF)
+INSERT INTO test_inserts.storage (b, d, e) SELECT b, d, e
+FROM test_inserts.storage;
+                                        QUERY PLAN                                         
+-------------------------------------------------------------------------------------------
+ Insert on test_inserts.storage
+   ->  Custom Scan (PartitionFilter)
+         Output: NULL::integer, storage.b, NULL::integer, storage.d, storage.e
+         ->  Result
+               Output: NULL::integer, storage_1.b, NULL::integer, storage_1.d, storage_1.e
+               ->  Append
+                     ->  Seq Scan on test_inserts.storage_11 storage_2
+                           Output: storage_2.b, storage_2.d, storage_2.e
+                     ->  Seq Scan on test_inserts.storage_1 storage_3
+                           Output: storage_3.b, storage_3.d, storage_3.e
+                     ->  Seq Scan on test_inserts.storage_2 storage_4
+                           Output: storage_4.b, storage_4.d, storage_4.e
+                     ->  Seq Scan on test_inserts.storage_3 storage_5
+                           Output: storage_5.b, storage_5.d, storage_5.e
+                     ->  Seq Scan on test_inserts.storage_4 storage_6
+                           Output: storage_6.b, storage_6.d, storage_6.e
+                     ->  Seq Scan on test_inserts.storage_5 storage_7
+                           Output: storage_7.b, storage_7.d, storage_7.e
+                     ->  Seq Scan on test_inserts.storage_6 storage_8
+                           Output: storage_8.b, storage_8.d, storage_8.e
+                     ->  Seq Scan on test_inserts.storage_7 storage_9
+                           Output: storage_9.b, storage_9.d, storage_9.e
+                     ->  Seq Scan on test_inserts.storage_8 storage_10
+                           Output: storage_10.b, storage_10.d, storage_10.e
+                     ->  Seq Scan on test_inserts.storage_9 storage_11
+                           Output: storage_11.b, storage_11.d, storage_11.e
+                     ->  Seq Scan on test_inserts.storage_10 storage_12
+                           Output: storage_12.b, storage_12.d, storage_12.e
+                     ->  Seq Scan on test_inserts.storage_12 storage_13
+                           Output: storage_13.b, storage_13.d, storage_13.e
+                     ->  Seq Scan on test_inserts.storage_13 storage_14
+                           Output: storage_14.b, storage_14.d, storage_14.e
+                     ->  Seq Scan on test_inserts.storage_14 storage_15
+                           Output: storage_15.b, storage_15.d, storage_15.e
+(34 rows)
+
+EXPLAIN (VERBOSE, COSTS OFF)
+INSERT INTO test_inserts.storage (b, d) SELECT b, d
+FROM test_inserts.storage;
+                                         QUERY PLAN                                         
+--------------------------------------------------------------------------------------------
+ Insert on test_inserts.storage
+   ->  Custom Scan (PartitionFilter)
+         Output: NULL::integer, storage.b, NULL::integer, storage.d, NULL::bigint
+         ->  Result
+               Output: NULL::integer, storage_1.b, NULL::integer, storage_1.d, NULL::bigint
+               ->  Append
+                     ->  Seq Scan on test_inserts.storage_11 storage_2
+                           Output: storage_2.b, storage_2.d
+                     ->  Seq Scan on test_inserts.storage_1 storage_3
+                           Output: storage_3.b, storage_3.d
+                     ->  Seq Scan on test_inserts.storage_2 storage_4
+                           Output: storage_4.b, storage_4.d
+                     ->  Seq Scan on test_inserts.storage_3 storage_5
+                           Output: storage_5.b, storage_5.d
+                     ->  Seq Scan on test_inserts.storage_4 storage_6
+                           Output: storage_6.b, storage_6.d
+                     ->  Seq Scan on test_inserts.storage_5 storage_7
+                           Output: storage_7.b, storage_7.d
+                     ->  Seq Scan on test_inserts.storage_6 storage_8
+                           Output: storage_8.b, storage_8.d
+                     ->  Seq Scan on test_inserts.storage_7 storage_9
+                           Output: storage_9.b, storage_9.d
+                     ->  Seq Scan on test_inserts.storage_8 storage_10
+                           Output: storage_10.b, storage_10.d
+                     ->  Seq Scan on test_inserts.storage_9 storage_11
+                           Output: storage_11.b, storage_11.d
+                     ->  Seq Scan on test_inserts.storage_10 storage_12
+                           Output: storage_12.b, storage_12.d
+                     ->  Seq Scan on test_inserts.storage_12 storage_13
+                           Output: storage_13.b, storage_13.d
+                     ->  Seq Scan on test_inserts.storage_13 storage_14
+                           Output: storage_14.b, storage_14.d
+                     ->  Seq Scan on test_inserts.storage_14 storage_15
+                           Output: storage_15.b, storage_15.d
+(34 rows)
+
+EXPLAIN (VERBOSE, COSTS OFF)
+INSERT INTO test_inserts.storage (b) SELECT b
+FROM test_inserts.storage;
+                                        QUERY PLAN                                         
+-------------------------------------------------------------------------------------------
+ Insert on test_inserts.storage
+   ->  Custom Scan (PartitionFilter)
+         Output: NULL::integer, storage.b, NULL::integer, NULL::text, NULL::bigint
+         ->  Result
+               Output: NULL::integer, storage_1.b, NULL::integer, NULL::text, NULL::bigint
+               ->  Append
+                     ->  Seq Scan on test_inserts.storage_11 storage_2
+                           Output: storage_2.b
+                     ->  Seq Scan on test_inserts.storage_1 storage_3
+                           Output: storage_3.b
+                     ->  Seq Scan on test_inserts.storage_2 storage_4
+                           Output: storage_4.b
+                     ->  Seq Scan on test_inserts.storage_3 storage_5
+                           Output: storage_5.b
+                     ->  Seq Scan on test_inserts.storage_4 storage_6
+                           Output: storage_6.b
+                     ->  Seq Scan on test_inserts.storage_5 storage_7
+                           Output: storage_7.b
+                     ->  Seq Scan on test_inserts.storage_6 storage_8
+                           Output: storage_8.b
+                     ->  Seq Scan on test_inserts.storage_7 storage_9
+                           Output: storage_9.b
+                     ->  Seq Scan on test_inserts.storage_8 storage_10
+                           Output: storage_10.b
+                     ->  Seq Scan on test_inserts.storage_9 storage_11
+                           Output: storage_11.b
+                     ->  Seq Scan on test_inserts.storage_10 storage_12
+                           Output: storage_12.b
+                     ->  Seq Scan on test_inserts.storage_12 storage_13
+                           Output: storage_13.b
+                     ->  Seq Scan on test_inserts.storage_13 storage_14
+                           Output: storage_14.b
+                     ->  Seq Scan on test_inserts.storage_14 storage_15
+                           Output: storage_15.b
+(34 rows)
+
+/* test gap case (missing partition in between) */
+CREATE TABLE test_inserts.test_gap(val INT NOT NULL);
+INSERT INTO test_inserts.test_gap SELECT generate_series(1, 30);
+SELECT create_range_partitions('test_inserts.test_gap', 'val', 1, 10);
+ create_range_partitions 
+-------------------------
+                       3
+(1 row)
+
+DROP TABLE test_inserts.test_gap_2; /* make a gap */
+INSERT INTO test_inserts.test_gap VALUES(15); /* not ok */
+ERROR:  cannot spawn a partition
+DROP TABLE test_inserts.test_gap CASCADE;
+NOTICE:  drop cascades to 3 other objects
+/* test a few "special" ONLY queries used in pg_repack */
+CREATE TABLE test_inserts.test_special_only(val INT NOT NULL);
+INSERT INTO test_inserts.test_special_only SELECT generate_series(1, 30);
+SELECT create_hash_partitions('test_inserts.test_special_only', 'val', 4);
+ create_hash_partitions 
+------------------------
+                      4
+(1 row)
+
+/* create table as select only */
+CREATE TABLE test_inserts.special_1 AS SELECT * FROM ONLY test_inserts.test_special_only;
+SELECT count(*) FROM test_inserts.special_1;
+ count 
+-------
+     0
+(1 row)
+
+DROP TABLE test_inserts.special_1;
+/* insert into ... select only */
+CREATE TABLE test_inserts.special_2 AS SELECT * FROM ONLY test_inserts.test_special_only WITH NO DATA;
+INSERT INTO test_inserts.special_2 SELECT * FROM ONLY test_inserts.test_special_only;
+SELECT count(*) FROM test_inserts.special_2;
+ count 
+-------
+     0
+(1 row)
+
+DROP TABLE test_inserts.special_2;
+DROP TABLE test_inserts.test_special_only CASCADE;
+NOTICE:  drop cascades to 4 other objects
+DROP TABLE test_inserts.storage CASCADE;
+NOTICE:  drop cascades to 15 other objects
+DROP FUNCTION test_inserts.set_triggers(jsonb);
+DROP FUNCTION test_inserts.print_cols_before_change();
+DROP FUNCTION test_inserts.print_cols_after_change();
+DROP SCHEMA test_inserts;
+DROP EXTENSION pg_pathman CASCADE;

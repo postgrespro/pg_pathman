@@ -3,7 +3,7 @@
  * hash.sql
  *		HASH partitioning functions
  *
- * Copyright (c) 2015-2016, Postgres Professional
+ * Copyright (c) 2015-2020, Postgres Professional
  *
  * ------------------------------------------------------------------------
  */
@@ -11,7 +11,7 @@
 /*
  * Creates hash partitions for specified relation
  */
-CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions(
+CREATE FUNCTION @extschema@.create_hash_partitions(
 	parent_relid		REGCLASS,
 	expression			TEXT,
 	partitions_count	INT4,
@@ -53,7 +53,7 @@ SET client_min_messages = WARNING;
  *
  * lock_parent - should we take an exclusive lock?
  */
-CREATE OR REPLACE FUNCTION @extschema@.replace_hash_partition(
+CREATE FUNCTION @extschema@.replace_hash_partition(
 	old_partition		REGCLASS,
 	new_partition		REGCLASS,
 	lock_parent			BOOL DEFAULT TRUE)
@@ -110,18 +110,18 @@ BEGIN
 
 	/* Fetch definition of old_partition's HASH constraint */
 	SELECT pg_catalog.pg_get_constraintdef(oid) FROM pg_catalog.pg_constraint
-	WHERE conrelid = old_partition AND quote_ident(conname) = old_constr_name
+	WHERE conrelid = old_partition AND pg_catalog.quote_ident(conname) = old_constr_name
 	INTO old_constr_def;
 
 	/* Detach old partition */
-	EXECUTE format('ALTER TABLE %s NO INHERIT %s', old_partition, parent_relid);
-	EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %s',
+	EXECUTE pg_catalog.format('ALTER TABLE %s NO INHERIT %s', old_partition, parent_relid);
+	EXECUTE pg_catalog.format('ALTER TABLE %s DROP CONSTRAINT %s',
 				   old_partition,
 				   old_constr_name);
 
 	/* Attach the new one */
-	EXECUTE format('ALTER TABLE %s INHERIT %s', new_partition, parent_relid);
-	EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %s %s',
+	EXECUTE pg_catalog.format('ALTER TABLE %s INHERIT %s', new_partition, parent_relid);
+	EXECUTE pg_catalog.format('ALTER TABLE %s ADD CONSTRAINT %s %s',
 				   new_partition,
 				   @extschema@.build_check_constraint_name(new_partition::REGCLASS),
 				   old_constr_def);
@@ -146,7 +146,7 @@ $$ LANGUAGE plpgsql;
 /*
  * Just create HASH partitions, called by create_hash_partitions().
  */
-CREATE OR REPLACE FUNCTION @extschema@.create_hash_partitions_internal(
+CREATE FUNCTION @extschema@.create_hash_partitions_internal(
 	parent_relid		REGCLASS,
 	attribute			TEXT,
 	partitions_count	INT4,
@@ -158,14 +158,14 @@ LANGUAGE C;
 /*
  * Calculates hash for integer value
  */
-CREATE OR REPLACE FUNCTION @extschema@.get_hash_part_idx(INT4, INT4)
+CREATE FUNCTION @extschema@.get_hash_part_idx(INT4, INT4)
 RETURNS INTEGER AS 'pg_pathman', 'get_hash_part_idx'
 LANGUAGE C STRICT;
 
 /*
  * Build hash condition for a CHECK CONSTRAINT
  */
-CREATE OR REPLACE FUNCTION @extschema@.build_hash_condition(
+CREATE FUNCTION @extschema@.build_hash_condition(
 	attribute_type		REGTYPE,
 	attribute			TEXT,
 	partitions_count	INT4,

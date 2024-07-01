@@ -19,8 +19,6 @@ step "s1_r"				{ rollback; }
 step "s1_update"		{ update test_tbl set id = 2 where id = 1; }
 
 session "s2"
-step "s2_b"				{ begin; }
-step "s2_c"				{ commit; }
 step "s2_select_locked"	{ select * from test_tbl where id = 1 for share; }
 step "s2_select"		{ select * from test_tbl where id = 1; }
 

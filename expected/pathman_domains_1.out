@@ -1,0 +1,131 @@
+\set VERBOSITY terse
+SET search_path = 'public';
+CREATE EXTENSION pg_pathman;
+CREATE SCHEMA domains;
+CREATE DOMAIN domains.dom_test AS numeric CHECK (value < 1200);
+CREATE TABLE domains.dom_table(val domains.dom_test NOT NULL);
+INSERT INTO domains.dom_table SELECT generate_series(1, 999);
+SELECT create_range_partitions('domains.dom_table', 'val', 1, 100);
+ create_range_partitions 
+-------------------------
+                      10
+(1 row)
+
+EXPLAIN (COSTS OFF)
+SELECT * FROM domains.dom_table
+WHERE val < 250;
+                    QUERY PLAN                     
+---------------------------------------------------
+ Append
+   ->  Seq Scan on dom_table_1
+   ->  Seq Scan on dom_table_2
+   ->  Seq Scan on dom_table_3
+         Filter: ((val)::numeric < '250'::numeric)
+(5 rows)
+
+INSERT INTO domains.dom_table VALUES(1500);
+ERROR:  value for domain domains.dom_test violates check constraint "dom_test_check"
+INSERT INTO domains.dom_table VALUES(-10);
+SELECT append_range_partition('domains.dom_table');
+ append_range_partition 
+------------------------
+ domains.dom_table_12
+(1 row)
+
+SELECT prepend_range_partition('domains.dom_table');
+ prepend_range_partition 
+-------------------------
+ domains.dom_table_13
+(1 row)
+
+SELECT merge_range_partitions('domains.dom_table_1', 'domains.dom_table_2');
+ merge_range_partitions 
+------------------------
+ domains.dom_table_1
+(1 row)
+
+SELECT split_range_partition('domains.dom_table_1', 50);
+ split_range_partition 
+-----------------------
+ domains.dom_table_14
+(1 row)
+
+INSERT INTO domains.dom_table VALUES(1101);
+EXPLAIN (COSTS OFF)
+SELECT * FROM domains.dom_table
+WHERE val < 450;
+                    QUERY PLAN                     
+---------------------------------------------------
+ Append
+   ->  Seq Scan on dom_table_13 dom_table_1
+   ->  Seq Scan on dom_table_11 dom_table_2
+   ->  Seq Scan on dom_table_1 dom_table_3
+   ->  Seq Scan on dom_table_14 dom_table_4
+   ->  Seq Scan on dom_table_3 dom_table_5
+   ->  Seq Scan on dom_table_4 dom_table_6
+   ->  Seq Scan on dom_table_5 dom_table_7
+         Filter: ((val)::numeric < '450'::numeric)
+(9 rows)
+
+SELECT * FROM pathman_partition_list
+ORDER BY range_min::INT, range_max::INT;
+      parent       |      partition       | parttype | expr | range_min | range_max 
+-------------------+----------------------+----------+------+-----------+-----------
+ domains.dom_table | domains.dom_table_13 |        2 | val  | -199      | -99
+ domains.dom_table | domains.dom_table_11 |        2 | val  | -99       | 1
+ domains.dom_table | domains.dom_table_1  |        2 | val  | 1         | 50
+ domains.dom_table | domains.dom_table_14 |        2 | val  | 50        | 201
+ domains.dom_table | domains.dom_table_3  |        2 | val  | 201       | 301
+ domains.dom_table | domains.dom_table_4  |        2 | val  | 301       | 401
+ domains.dom_table | domains.dom_table_5  |        2 | val  | 401       | 501
+ domains.dom_table | domains.dom_table_6  |        2 | val  | 501       | 601
+ domains.dom_table | domains.dom_table_7  |        2 | val  | 601       | 701
+ domains.dom_table | domains.dom_table_8  |        2 | val  | 701       | 801
+ domains.dom_table | domains.dom_table_9  |        2 | val  | 801       | 901
+ domains.dom_table | domains.dom_table_10 |        2 | val  | 901       | 1001
+ domains.dom_table | domains.dom_table_12 |        2 | val  | 1001      | 1101
+ domains.dom_table | domains.dom_table_15 |        2 | val  | 1101      | 1201
+(14 rows)
+
+SELECT drop_partitions('domains.dom_table');
+NOTICE:  49 rows copied from domains.dom_table_1
+NOTICE:  100 rows copied from domains.dom_table_3
+NOTICE:  100 rows copied from domains.dom_table_4
+NOTICE:  100 rows copied from domains.dom_table_5
+NOTICE:  100 rows copied from domains.dom_table_6
+NOTICE:  100 rows copied from domains.dom_table_7
+NOTICE:  100 rows copied from domains.dom_table_8
+NOTICE:  100 rows copied from domains.dom_table_9
+NOTICE:  99 rows copied from domains.dom_table_10
+NOTICE:  1 rows copied from domains.dom_table_11
+NOTICE:  0 rows copied from domains.dom_table_12
+NOTICE:  0 rows copied from domains.dom_table_13
+NOTICE:  151 rows copied from domains.dom_table_14
+NOTICE:  1 rows copied from domains.dom_table_15
+ drop_partitions 
+-----------------
+              14
+(1 row)
+
+SELECT create_hash_partitions('domains.dom_table', 'val', 5);
+ create_hash_partitions 
+------------------------
+                      5
+(1 row)
+
+SELECT * FROM pathman_partition_list
+ORDER BY "partition"::TEXT;
+      parent       |      partition      | parttype | expr | range_min | range_max 
+-------------------+---------------------+----------+------+-----------+-----------
+ domains.dom_table | domains.dom_table_0 |        1 | val  |           | 
+ domains.dom_table | domains.dom_table_1 |        1 | val  |           | 
+ domains.dom_table | domains.dom_table_2 |        1 | val  |           | 
+ domains.dom_table | domains.dom_table_3 |        1 | val  |           | 
+ domains.dom_table | domains.dom_table_4 |        1 | val  |           | 
+(5 rows)
+
+DROP TABLE domains.dom_table CASCADE;
+NOTICE:  drop cascades to 5 other objects
+DROP DOMAIN domains.dom_test CASCADE;
+DROP SCHEMA domains;
+DROP EXTENSION pg_pathman CASCADE;

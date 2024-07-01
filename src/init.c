@@ -3,7 +3,7 @@
  * init.c
  *		Initialization functions
  *
- * Copyright (c) 2015-2016, Postgres Professional
+ * Copyright (c) 2015-2020, Postgres Professional
  *
  * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -134,13 +134,13 @@ pathman_cache_search_relid(HTAB *cache_table,
  */
 
 void
-save_pathman_init_state(PathmanInitState *temp_init_state)
+save_pathman_init_state(volatile PathmanInitState *temp_init_state)
 {
 	*temp_init_state = pathman_init_state;
 }
 
 void
-restore_pathman_init_state(const PathmanInitState *temp_init_state)
+restore_pathman_init_state(const volatile PathmanInitState *temp_init_state)
 {
  	/*
 	 * initialization_needed is not restored: it is not just a setting but
@@ -166,7 +166,7 @@ init_main_pathman_toggles(void)
 							 DEFAULT_PATHMAN_ENABLE,
 							 PGC_SUSET,
 							 0,
-							 NULL,
+							 pathman_enable_check_hook,
 							 pathman_enable_assign_hook,
 							 NULL);
 
@@ -273,7 +273,8 @@ static bool
 init_pathman_relation_oids(void)
 {
 	Oid schema = get_pathman_schema();
-	Assert(schema != InvalidOid);
+	if (schema == InvalidOid)
+		return false;		/* extension can be dropped by another backend */
 
 	/* Cache PATHMAN_CONFIG relation's Oid */
 	pathman_config_relid = get_relname_relid(PATHMAN_CONFIG, schema);
@@ -470,7 +471,7 @@ find_inheritance_children_array(Oid parent_relid,
 	 */
 	ArrayAlloc(oidarr, maxoids, numoids, 32);
 
-	relation = heap_open(InheritsRelationId, AccessShareLock);
+	relation = heap_open_compat(InheritsRelationId, AccessShareLock);
 
 	ScanKeyInit(&key[0],
 				Anum_pg_inherits_inhparent,
@@ -490,7 +491,7 @@ find_inheritance_children_array(Oid parent_relid,
 
 	systable_endscan(scan);
 
-	heap_close(relation, AccessShareLock);
+	heap_close_compat(relation, AccessShareLock);
 
 	/*
 	 * If we found more than one child, sort them by OID.  This ensures
@@ -569,7 +570,7 @@ find_inheritance_children_array(Oid parent_relid,
 char *
 build_check_constraint_name_relid_internal(Oid relid)
 {
-	AssertArg(OidIsValid(relid));
+	Assert(OidIsValid(relid));
 	return build_check_constraint_name_relname_internal(get_rel_name(relid));
 }
 
@@ -580,7 +581,7 @@ build_check_constraint_name_relid_internal(Oid relid)
 char *
 build_check_constraint_name_relname_internal(const char *relname)
 {
-	AssertArg(relname != NULL);
+	Assert(relname != NULL);
 	return psprintf("pathman_%s_check", relname);
 }
 
@@ -591,7 +592,7 @@ build_check_constraint_name_relname_internal(const char *relname)
 char *
 build_sequence_name_relid_internal(Oid relid)
 {
-	AssertArg(OidIsValid(relid));
+	Assert(OidIsValid(relid));
 	return build_sequence_name_relname_internal(get_rel_name(relid));
 }
 
@@ -602,7 +603,7 @@ build_sequence_name_relid_internal(Oid relid)
 char *
 build_sequence_name_relname_internal(const char *relname)
 {
-	AssertArg(relname != NULL);
+	Assert(relname != NULL);
 	return psprintf("%s_seq", relname);
 }
 
@@ -613,7 +614,7 @@ build_sequence_name_relname_internal(const char *relname)
 char *
 build_update_trigger_name_internal(Oid relid)
 {
-	AssertArg(OidIsValid(relid));
+	Assert(OidIsValid(relid));
 	return psprintf("%s_upd_trig", get_rel_name(relid));
 }
 
@@ -624,7 +625,7 @@ build_update_trigger_name_internal(Oid relid)
 char *
 build_update_trigger_func_name_internal(Oid relid)
 {
-	AssertArg(OidIsValid(relid));
+	Assert(OidIsValid(relid));
 	return psprintf("%s_upd_trig_func", get_rel_name(relid));
 }
 
@@ -656,7 +657,7 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 				ObjectIdGetDatum(relid));
 
 	/* Open PATHMAN_CONFIG with latest snapshot available */
-	rel = heap_open(get_pathman_config_relid(false), AccessShareLock);
+	rel = heap_open_compat(get_pathman_config_relid(false), AccessShareLock);
 	tupleDescr = RelationGetDescr(rel);
 
 	/* Check that 'partrel' column is of regclass type */
@@ -706,7 +707,7 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 	heap_endscan(scan);
 #endif
 	UnregisterSnapshot(snapshot);
-	heap_close(rel, AccessShareLock);
+	heap_close_compat(rel, AccessShareLock);
 
 	elog(DEBUG2, "PATHMAN_CONFIG %s relation %u",
 		 (contains_rel ? "contains" : "doesn't contain"), relid);
@@ -737,7 +738,7 @@ read_pathman_params(Oid relid, Datum *values, bool *isnull)
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(relid));
 
-	rel = heap_open(get_pathman_config_params_relid(false), AccessShareLock);
+	rel = heap_open_compat(get_pathman_config_params_relid(false), AccessShareLock);
 	snapshot = RegisterSnapshot(GetLatestSnapshot());
 #if PG_VERSION_NUM >= 120000
 	scan = table_beginscan(rel, snapshot, 1, key);
@@ -767,7 +768,7 @@ read_pathman_params(Oid relid, Datum *values, bool *isnull)
 	heap_endscan(scan);
 #endif
 	UnregisterSnapshot(snapshot);
-	heap_close(rel, AccessShareLock);
+	heap_close_compat(rel, AccessShareLock);
 
 	return row_found;
 }
@@ -933,7 +934,7 @@ read_opexpr_const(const OpExpr *opexpr,
 				/* Update RIGHT */
 				right = (Node *) constant;
 			}
-			/* FALL THROUGH (no break) */
+			/* FALLTHROUGH */
 
 		case T_Const:
 			{
@@ -1121,7 +1122,7 @@ get_plpgsql_frontend_version(void)
 	char		   *version_cstr;
 
 	/* Look up the extension */
-	pg_extension_rel = heap_open(ExtensionRelationId, AccessShareLock);
+	pg_extension_rel = heap_open_compat(ExtensionRelationId, AccessShareLock);
 
 	ScanKeyInit(&skey,
 				Anum_pg_extension_extname,
@@ -1146,7 +1147,7 @@ get_plpgsql_frontend_version(void)
 	version_cstr = text_to_cstring(DatumGetTextPP(datum));
 
 	systable_endscan(scan);
-	heap_close(pg_extension_rel, AccessShareLock);
+	heap_close_compat(pg_extension_rel, AccessShareLock);
 
 	return build_semver_uint32(version_cstr);
 }

@@ -3,7 +3,7 @@
  * pl_range_funcs.c
  *		Utility C functions for stored RANGE procedures
  *
- * Copyright (c) 2016, Postgres Professional
+ * Copyright (c) 2016-2020, Postgres Professional
  *
  * ------------------------------------------------------------------------
  */
@@ -156,7 +156,7 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 	/* Fetch 'tablespace' */
 	if (!PG_ARGISNULL(4))
 	{
-		tablespace = TextDatumGetCString(PG_GETARG_TEXT_P(4));
+		tablespace = TextDatumGetCString(PG_GETARG_DATUM(4));
 	}
 	else tablespace = NULL; /* default */
 
@@ -429,7 +429,7 @@ validate_interval_value(PG_FUNCTION_ARGS)
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("'expression' should not be NULL")));
 	}
-	else expr_cstr = TextDatumGetCString(PG_GETARG_TEXT_P(ARG_EXPRESSION));
+	else expr_cstr = TextDatumGetCString(PG_GETARG_DATUM(ARG_EXPRESSION));
 
 	if (PG_ARGISNULL(ARG_PARTTYPE))
 	{
@@ -499,6 +499,7 @@ split_range_partition(PG_FUNCTION_ARGS)
 	if (!PG_ARGISNULL(0))
 	{
 		partition1 = PG_GETARG_OID(0);
+		check_relation_oid(partition1);
 	}
 	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("'partition1' should not be NULL")));
@@ -683,9 +684,6 @@ merge_range_partitions(PG_FUNCTION_ARGS)
 		/* Extract partition Oids from array */
 		parts[i] = DatumGetObjectId(datums[i]);
 
-		/* Prevent modification of partitions */
-		LockRelationOid(parts[i], AccessExclusiveLock);
-
 		/* Check if all partitions are from the same parent */
 		cur_parent = get_parent_of_partition(parts[i]);
 
@@ -707,6 +705,10 @@ merge_range_partitions(PG_FUNCTION_ARGS)
 
 	/* Prevent changes in partitioning scheme */
 	LockRelationOid(parent, ShareUpdateExclusiveLock);
+
+	/* Prevent modification of partitions */
+	for (i = 0; i < nparts; i++)
+		LockRelationOid(parts[i], AccessExclusiveLock);
 
 	/* Emit an error if it is not partitioned by RANGE */
 	prel = get_pathman_relation_info(parent);
@@ -833,6 +835,8 @@ drop_range_partition_expand_next(PG_FUNCTION_ARGS)
 	ObjectAddress		object;
 	RangeEntry		   *ranges;
 	int					i;
+
+	check_relation_oid(partition);
 
 	/* Lock the partition we're going to drop */
 	LockRelationOid(partition, AccessExclusiveLock);
@@ -1085,7 +1089,7 @@ build_range_condition(PG_FUNCTION_ARGS)
 
 	if (!PG_ARGISNULL(1))
 	{
-		expression = TextDatumGetCString(PG_GETARG_TEXT_P(1));
+		expression = TextDatumGetCString(PG_GETARG_DATUM(1));
 	}
 	else ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("'expression' should not be NULL")));;
@@ -1320,12 +1324,18 @@ modify_range_constraint(Oid partition_relid,
 
 /*
  * Transform constraint into cstring
+ *
+ * In >=13 (5815696bc66) result type of addRangeTableEntryForRelationCompat() was changed
  */
 static char *
 deparse_constraint(Oid relid, Node *expr)
 {
 	Relation		rel;
+#if PG_VERSION_NUM >= 130000
+	ParseNamespaceItem *nsitem;
+#else
 	RangeTblEntry  *rte;
+#endif
 	Node		   *cooked_expr;
 	ParseState	   *pstate;
 	List		   *context;
@@ -1333,12 +1343,17 @@ deparse_constraint(Oid relid, Node *expr)
 
 	context = deparse_context_for(get_rel_name(relid), relid);
 
-	rel = heap_open(relid, NoLock);
+	rel = heap_open_compat(relid, NoLock);
 
 	/* Initialize parse state */
 	pstate = make_parsestate(NULL);
+#if PG_VERSION_NUM >= 130000
+	nsitem = addRangeTableEntryForRelationCompat(pstate, rel, AccessShareLock, NULL, false, true);
+	addNSItemToQuery(pstate, nsitem, true, true, true);
+#else
 	rte = addRangeTableEntryForRelationCompat(pstate, rel, AccessShareLock, NULL, false, true);
 	addRTEtoQuery(pstate, rte, true, true, true);
+#endif
 
 	/* Transform constraint into executable expression (i.e. cook it) */
 	cooked_expr = transformExpr(pstate, expr, EXPR_KIND_CHECK_CONSTRAINT);
@@ -1346,7 +1361,7 @@ deparse_constraint(Oid relid, Node *expr)
 	/* Transform expression into string */
 	result = deparse_expression(cooked_expr, context, false, false);
 
-	heap_close(rel, NoLock);
+	heap_close_compat(rel, NoLock);
 
 	return result;
 }

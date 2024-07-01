@@ -22,7 +22,7 @@ step "rollback_a"			{ ROLLBACK TO SAVEPOINT a; }
 step "savepoint_b"			{ SAVEPOINT b; }
 step "rollback_b"			{ ROLLBACK TO SAVEPOINT b; }
 step "savepoint_c"			{ SAVEPOINT c; }
-step "show_rel"				{ EXPLAIN (COSTS OFF) SELECT * FROM range_rel; }
+step "show_rel"				{ SELECT l.parent, l.partition FROM pathman_partition_list l WHERE l.parent = 'range_rel'::regclass; }
 
 permutation "begin" "insert_data" "create_partitions" "show_rel" "rollback" "show_rel"
 

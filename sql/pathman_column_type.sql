@@ -1,3 +1,8 @@
+/*
+ * In 9ce77d75c5a (>= 13) struct Var was changed, which caused the output
+ * of get_partition_cooked_key to change.
+ */
+
 \set VERBOSITY terse
 
 SET search_path = 'public';
@@ -15,7 +20,8 @@ SELECT create_range_partitions('test_column_type.test', 'val', 1, 10, 10);
 
 /* make sure that bounds and dispatch info has been cached */
 SELECT * FROM test_column_type.test;
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;
 
 /*
  * Get parsed and analyzed expression.
@@ -40,7 +46,8 @@ DROP FUNCTION get_cached_partition_cooked_key(REGCLASS);
 /* make sure that everything works properly */
 SELECT * FROM test_column_type.test;
 
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;
 
 /* check insert dispatching */
 INSERT INTO test_column_type.test VALUES (1);
@@ -60,21 +67,24 @@ SELECT create_hash_partitions('test_column_type.test', 'id', 5);
 
 /* make sure that bounds and dispatch info has been cached */
 SELECT * FROM test_column_type.test;
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;
 
 /* change column's type (should NOT work) */
 ALTER TABLE test_column_type.test ALTER id TYPE NUMERIC;
 
 /* make sure that everything works properly */
 SELECT * FROM test_column_type.test;
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;
 
 /* change column's type (should flush caches) */
 ALTER TABLE test_column_type.test ALTER val TYPE NUMERIC;
 
 /* make sure that everything works properly */
 SELECT * FROM test_column_type.test;
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;
 
 /* check insert dispatching */
 INSERT INTO test_column_type.test VALUES (1);
@@ -84,5 +94,5 @@ SELECT drop_partitions('test_column_type.test');
 DROP TABLE test_column_type.test CASCADE;
 
 
-DROP SCHEMA test_column_type CASCADE;
+DROP SCHEMA test_column_type;
 DROP EXTENSION pg_pathman;

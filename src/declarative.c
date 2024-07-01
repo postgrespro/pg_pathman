@@ -75,7 +75,11 @@ is_pathman_related_partitioning_cmd(Node *parsetree, Oid *parent_relid)
 		AlterTableStmt *stmt = (AlterTableStmt *) parsetree;
 		int				cnt = 0;
 
-		*parent_relid = RangeVarGetRelid(stmt->relation, NoLock, false);
+		*parent_relid = RangeVarGetRelid(stmt->relation, NoLock, stmt->missing_ok);
+
+		if (stmt->missing_ok && *parent_relid == InvalidOid)
+			return false;
+
 		if ((prel = get_pathman_relation_info(*parent_relid)) == NULL)
 			return false;
 
@@ -233,6 +237,8 @@ handle_attach_partition(Oid parent_relid, AlterTableCmd *cmd)
 
 	/* Fetch pg_pathman's schema */
 	pathman_schema = get_namespace_name(get_pathman_schema());
+	if (pathman_schema == NULL)
+		elog(ERROR, "pg_pathman schema not initialized");
 
 	/* Build function's name */
 	proc_name = list_make2(makeString(pathman_schema),
@@ -292,6 +298,8 @@ handle_detach_partition(AlterTableCmd *cmd)
 
 	/* Fetch pg_pathman's schema */
 	pathman_schema = get_namespace_name(get_pathman_schema());
+	if (pathman_schema == NULL)
+		elog(ERROR, "pg_pathman schema not initialized");
 
 	/* Build function's name */
 	proc_name = list_make2(makeString(pathman_schema),

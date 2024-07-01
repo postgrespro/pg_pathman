@@ -2,6 +2,9 @@
  * Since 8edd0e794 (>= 12) Append nodes with single subplan are eliminated,
  * causing different output. Also, EXPLAIN now always shows key first in quals
  * ('test commutator' queries).
+ *
+ * Since 55a1954da16 and 6ef77cf46e8 (>= 13) output of EXPLAIN was changed,
+ * now it includes aliases for inherited tables.
  */
 
 \set VERBOSITY terse
@@ -560,6 +563,17 @@ INSERT  INTO test.mixinh_child1 VALUES (1);
 SELECT * FROM test.mixinh_child1;
 SELECT * FROM test.mixinh_parent;
 
-DROP SCHEMA test CASCADE;
+DROP TABLE test.hash_rel CASCADE;
+DROP TABLE test.index_on_childs CASCADE;
+DROP TABLE test.mixinh_child1 CASCADE;
+DROP TABLE test.mixinh_parent CASCADE;
+DROP TABLE test.num_range_rel CASCADE;
+DROP TABLE test.hash_rel_wrong CASCADE;
+DROP TABLE test.range_rel CASCADE;
+DROP TABLE test.range_rel_archive CASCADE;
+DROP TABLE test.special_case_1_ind_o_s CASCADE;
+DROP TABLE test.range_rel_test1 CASCADE;
+DROP TABLE test.range_rel_test2 CASCADE;
+DROP SCHEMA test;
 DROP EXTENSION pg_pathman CASCADE;
-DROP SCHEMA pathman CASCADE;
+DROP SCHEMA pathman;

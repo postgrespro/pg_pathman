@@ -76,5 +76,155 @@ ERROR:  can't partition table "part_test" with existing children
 DROP TABLE part_test CASCADE;
 NOTICE:  drop cascades to 302 other objects
 --
+--
+-- PGPRO-7870
+-- Added error for case executing prepared query after DROP/CREATE EXTENSION.
+-- 
+-- DROP/CREATE extension
+CREATE TABLE part_test(a INT4 NOT NULL, b INT4);
+PREPARE q(int4) AS SELECT * FROM part_test WHERE a > ALL (array[$1, 898]);
+SELECT create_range_partitions('part_test', 'a', 1, 100, 10);
+ create_range_partitions 
+-------------------------
+                      10
+(1 row)
+
+EXECUTE q(1);
+ a | b 
+---+---
+(0 rows)
+
+EXECUTE q(1);
+ a | b 
+---+---
+(0 rows)
+
+EXECUTE q(1);
+ a | b 
+---+---
+(0 rows)
+
+EXECUTE q(1);
+ a | b 
+---+---
+(0 rows)
+
+EXECUTE q(1);
+ a | b 
+---+---
+(0 rows)
+
+EXECUTE q(1);
+ a | b 
+---+---
+(0 rows)
+
+DROP EXTENSION pg_pathman;
+CREATE EXTENSION pg_pathman;
+EXECUTE q(1);
+ERROR:  table "part_test" is not partitioned
+DEALLOCATE q;
+DROP TABLE part_test CASCADE;
+NOTICE:  drop cascades to 11 other objects
+-- DROP/CREATE disabled extension
+CREATE TABLE part_test(a INT4 NOT NULL, b INT4);
+PREPARE q(int4) AS SELECT * FROM part_test WHERE a > ALL (array[$1, 898]);
+SELECT create_range_partitions('part_test', 'a', 1, 100, 10);
+ create_range_partitions 
+-------------------------
+                      10
+(1 row)
+
+EXECUTE q(1);
+ a | b 
+---+---
+(0 rows)
+
+EXECUTE q(1);
+ a | b 
+---+---
+(0 rows)
+
+EXECUTE q(1);
+ a | b 
+---+---
+(0 rows)
+
+EXECUTE q(1);
+ a | b 
+---+---
+(0 rows)
+
+EXECUTE q(1);
+ a | b 
+---+---
+(0 rows)
+
+EXECUTE q(1);
+ a | b 
+---+---
+(0 rows)
+
+SET pg_pathman.enable = f;
+NOTICE:  RuntimeAppend, RuntimeMergeAppend and PartitionFilter nodes and some other options have been disabled
+DROP EXTENSION pg_pathman;
+CREATE EXTENSION pg_pathman;
+SET pg_pathman.enable = t;
+NOTICE:  RuntimeAppend, RuntimeMergeAppend and PartitionFilter nodes and some other options have been enabled
+EXECUTE q(1);
+ERROR:  table "part_test" is not partitioned
+DEALLOCATE q;
+DROP TABLE part_test CASCADE;
+NOTICE:  drop cascades to 11 other objects
+-- DROP/CREATE extension in autonomous transaction
+CREATE TABLE part_test(a INT4 NOT NULL, b INT4);
+PREPARE q(int4) AS SELECT * FROM part_test WHERE a > ALL (array[$1, 198]);
+SELECT create_range_partitions('part_test', 'a', 1, 100, 2);
+ create_range_partitions 
+-------------------------
+                       2
+(1 row)
+
+EXECUTE q(1);
+ a | b 
+---+---
+(0 rows)
+
+EXECUTE q(1);
+ a | b 
+---+---
+(0 rows)
+
+EXECUTE q(1);
+ a | b 
+---+---
+(0 rows)
+
+EXECUTE q(1);
+ a | b 
+---+---
+(0 rows)
+
+EXECUTE q(1);
+ a | b 
+---+---
+(0 rows)
+
+EXECUTE q(1);
+ a | b 
+---+---
+(0 rows)
+
+BEGIN;
+	BEGIN AUTONOMOUS;
+		DROP EXTENSION pg_pathman;
+		CREATE EXTENSION pg_pathman;
+	COMMIT;
+COMMIT;
+EXECUTE q(1);
+ERROR:  table "part_test" is not partitioned
+DEALLOCATE q;
+DROP TABLE part_test CASCADE;
+NOTICE:  drop cascades to 3 other objects
 -- finalize
 DROP EXTENSION pg_pathman;

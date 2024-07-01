@@ -1,3 +1,8 @@
+/*
+ * Since 55a1954da16 and 6ef77cf46e8 (>= 13) output of EXPLAIN was changed,
+ * now it includes aliases for inherited tables.
+ */
+
 \set VERBOSITY terse
 
 SET search_path = 'public';
@@ -218,5 +223,9 @@ DROP TABLE test_inserts.special_2;
 DROP TABLE test_inserts.test_special_only CASCADE;
 
 
-DROP SCHEMA test_inserts CASCADE;
+DROP TABLE test_inserts.storage CASCADE;
+DROP FUNCTION test_inserts.set_triggers(jsonb);
+DROP FUNCTION test_inserts.print_cols_before_change();
+DROP FUNCTION test_inserts.print_cols_after_change();
+DROP SCHEMA test_inserts;
 DROP EXTENSION pg_pathman CASCADE;

@@ -96,9 +96,9 @@ EXECUTE getbyroot(2);
 -- errors usually start here
 EXECUTE getbyroot(2);
 EXECUTE getbyroot(2);
-EXPLAIN EXECUTE getbyroot(2);
+EXPLAIN (COSTS OFF) EXECUTE getbyroot(2);
 
 DEALLOCATE getbyroot;
 DROP TABLE root_dict CASCADE;
-DROP SCHEMA dropped_cols CASCADE;
+DROP SCHEMA dropped_cols;
 DROP EXTENSION pg_pathman;

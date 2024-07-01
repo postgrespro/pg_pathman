@@ -242,5 +242,5 @@ SELECT count(*) FROM test_bgw.conc_part;
 
 DROP TABLE test_bgw.conc_part CASCADE;
 NOTICE:  drop cascades to 5 other objects
-DROP SCHEMA test_bgw CASCADE;
+DROP SCHEMA test_bgw;
 DROP EXTENSION pg_pathman;

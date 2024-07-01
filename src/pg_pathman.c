@@ -4,7 +4,7 @@
  *		This module sets planner hooks, handles SELECT queries and produces
  *		paths for partitioned tables
  *
- * Copyright (c) 2015-2016, Postgres Professional
+ * Copyright (c) 2015-2021, Postgres Professional
  *
  * ------------------------------------------------------------------------
  */
@@ -281,12 +281,43 @@ estimate_paramsel_using_prel(const PartRelationInfo *prel, int strategy)
 	else return 1.0;
 }
 
+#if defined(PGPRO_EE) && PG_VERSION_NUM >= 100000
+/*
+ * Reset cache at start and at finish ATX transaction
+ */
+static void
+pathman_xact_cb(XactEvent event, void *arg)
+{
+	if (getNestLevelATX() > 0)
+	{
+		/*
+		 * For each ATX transaction start/finish: need to reset pg_pathman
+		 * cache because we shouldn't see uncommitted data in autonomous
+		 * transaction and data of autonomous transaction in main transaction
+		 */
+		if ((event == XACT_EVENT_START /* start */) ||
+			(event == XACT_EVENT_ABORT ||
+			 event == XACT_EVENT_PARALLEL_ABORT ||
+			 event == XACT_EVENT_COMMIT ||
+			 event == XACT_EVENT_PARALLEL_COMMIT ||
+			 event == XACT_EVENT_PREPARE /* finish */))
+		{
+			pathman_relcache_hook(PointerGetDatum(NULL), InvalidOid);
+		}
+	}
+}
+#endif
 
 /*
  * -------------------
  *  General functions
  * -------------------
  */
+
+#if PG_VERSION_NUM >= 150000 /* for commit 4f2400cb3f10 */
+static shmem_request_hook_type prev_shmem_request_hook = NULL;
+static void pg_pathman_shmem_request(void);
+#endif
 
 /* Set initial values for all Postmaster's forks */
 void
@@ -300,7 +331,12 @@ _PG_init(void)
 	}
 
 	/* Request additional shared resources */
+#if PG_VERSION_NUM >= 150000 /* for commit 4f2400cb3f10 */
+	prev_shmem_request_hook = shmem_request_hook;
+	shmem_request_hook = pg_pathman_shmem_request;
+#else
 	RequestAddinShmemSpace(estimate_pathman_shmem_size());
+#endif
 
 	/* Assign pg_pathman's initial state */
 	pathman_init_state.pg_pathman_enable		= DEFAULT_PATHMAN_ENABLE;
@@ -321,6 +357,8 @@ _PG_init(void)
 	planner_hook							= pathman_planner_hook;
 	pathman_process_utility_hook_next		= ProcessUtility_hook;
 	ProcessUtility_hook						= pathman_process_utility_hook;
+	pathman_executor_start_hook_prev		= ExecutorStart_hook;
+	ExecutorStart_hook						= pathman_executor_start_hook;
 
 	/* Initialize static data for all subsystems */
 	init_main_pathman_toggles();
@@ -330,7 +368,23 @@ _PG_init(void)
 	init_partition_filter_static_data();
 	init_partition_router_static_data();
 	init_partition_overseer_static_data();
+
+#ifdef PGPRO_EE
+	/* Callbacks for reload relcache for ATX transactions */
+	PgproRegisterXactCallback(pathman_xact_cb, NULL, XACT_EVENT_KIND_VANILLA | XACT_EVENT_KIND_ATX);
+#endif
 }
+
+#if PG_VERSION_NUM >= 150000 /* for commit 4f2400cb3f10 */
+static void
+pg_pathman_shmem_request(void)
+{
+	if (prev_shmem_request_hook)
+		prev_shmem_request_hook();
+
+	RequestAddinShmemSpace(estimate_pathman_shmem_size());
+}
+#endif
 
 /* Get cached PATHMAN_CONFIG relation Oid */
 Oid
@@ -400,7 +454,7 @@ get_pathman_schema(void)
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(ext_oid));
 
-	rel = heap_open(ExtensionRelationId, AccessShareLock);
+	rel = heap_open_compat(ExtensionRelationId, AccessShareLock);
 	scandesc = systable_beginscan(rel, ExtensionOidIndexId, true,
 								  NULL, 1, entry);
 
@@ -414,7 +468,7 @@ get_pathman_schema(void)
 
 	systable_endscan(scandesc);
 
-	heap_close(rel, AccessShareLock);
+	heap_close_compat(rel, AccessShareLock);
 
 	return result;
 }
@@ -455,6 +509,11 @@ append_child_relation(PlannerInfo *root,
 	ListCell	   *lc1,
 				   *lc2;
 	LOCKMODE		lockmode;
+#if PG_VERSION_NUM >= 130000 /* see commit 55a1954d */
+	TupleDesc		child_tupdesc;
+	List		   *parent_colnames;
+	List		   *child_colnames;
+#endif
 
 	/* Choose a correct lock mode */
 	if (parent_rti == root->parse->resultRelation)
@@ -483,13 +542,23 @@ append_child_relation(PlannerInfo *root,
 	parent_rte = root->simple_rte_array[parent_rti];
 
 	/* Open child relation (we've just locked it) */
-	child_relation = heap_open(child_oid, NoLock);
+	child_relation = heap_open_compat(child_oid, NoLock);
 
 	/* Create RangeTblEntry for child relation */
+#if PG_VERSION_NUM >= 130000 /* see commit 55a1954d */
+	child_rte = makeNode(RangeTblEntry);
+	memcpy(child_rte, parent_rte, sizeof(RangeTblEntry));
+#else
 	child_rte = copyObject(parent_rte);
+#endif
 	child_rte->relid			= child_oid;
 	child_rte->relkind			= child_relation->rd_rel->relkind;
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+	/* No permission checking for the child RTE */
+	child_rte->perminfoindex = 0;
+#else
 	child_rte->requiredPerms	= 0; /* perform all checks on parent */
+#endif
 	child_rte->inh				= false;
 
 	/* Add 'child_rte' to rtable and 'root->simple_rte_array' */
@@ -508,7 +577,56 @@ append_child_relation(PlannerInfo *root,
 	appinfo->child_reltype  = RelationGetDescr(child_relation)->tdtypeid;
 
 	make_inh_translation_list(parent_relation, child_relation, child_rti,
-							  &appinfo->translated_vars);
+							  &appinfo->translated_vars, appinfo);
+
+#if PG_VERSION_NUM >= 130000 /* see commit 55a1954d */
+	/* tablesample is probably null, but copy it */
+	child_rte->tablesample = copyObject(parent_rte->tablesample);
+
+	/*
+	 * Construct an alias clause for the child, which we can also use as eref.
+	 * This is important so that EXPLAIN will print the right column aliases
+	 * for child-table columns.  (Since ruleutils.c doesn't have any easy way
+	 * to reassociate parent and child columns, we must get the child column
+	 * aliases right to start with.  Note that setting childrte->alias forces
+	 * ruleutils.c to use these column names, which it otherwise would not.)
+	 */
+	child_tupdesc = RelationGetDescr(child_relation);
+	parent_colnames = parent_rte->eref->colnames;
+	child_colnames = NIL;
+	for (int cattno = 0; cattno < child_tupdesc->natts; cattno++)
+	{
+		Form_pg_attribute att = TupleDescAttr(child_tupdesc, cattno);
+		const char *attname;
+
+		if (att->attisdropped)
+		{
+			/* Always insert an empty string for a dropped column */
+			attname = "";
+		}
+		else if (appinfo->parent_colnos[cattno] > 0 &&
+				 appinfo->parent_colnos[cattno] <= list_length(parent_colnames))
+		{
+			/* Duplicate the query-assigned name for the parent column */
+			attname = strVal(list_nth(parent_colnames,
+									  appinfo->parent_colnos[cattno] - 1));
+		}
+		else
+		{
+			/* New column, just use its real name */
+			attname = NameStr(att->attname);
+		}
+		child_colnames = lappend(child_colnames, makeString(pstrdup(attname)));
+	}
+
+	/*
+	 * We just duplicate the parent's table alias name for each child.  If the
+	 * plan gets printed, ruleutils.c has to sort out unique table aliases to
+	 * use, which it can handle.
+	 */
+	child_rte->alias = child_rte->eref = makeAlias(parent_rte->eref->aliasname,
+												   child_colnames);
+#endif
 
 	/* Now append 'appinfo' to 'root->append_rel_list' */
 	root->append_rel_list = lappend(root->append_rel_list, appinfo);
@@ -565,6 +683,7 @@ append_child_relation(PlannerInfo *root,
 	}
 
 
+#if PG_VERSION_NUM < 160000 /* for commit a61b1f74823c */
 	/* Translate column privileges for this child */
 	if (parent_rte->relid != child_oid)
 	{
@@ -575,9 +694,18 @@ append_child_relation(PlannerInfo *root,
 		child_rte->updatedCols = translate_col_privs(parent_rte->updatedCols,
 													 appinfo->translated_vars);
 	}
+#if PG_VERSION_NUM >= 130000 /* see commit 55a1954d */
+	else
+	{
+		child_rte->selectedCols = bms_copy(parent_rte->selectedCols);
+		child_rte->insertedCols = bms_copy(parent_rte->insertedCols);
+		child_rte->updatedCols = bms_copy(parent_rte->updatedCols);
+	}
+#endif
+#endif /* PG_VERSION_NUM < 160000 */
 
 	/* Here and below we assume that parent RelOptInfo exists */
-	AssertState(parent_rel);
+	Assert(parent_rel);
 
 	/* Adjust join quals for this child */
 	child_rel->joininfo = (List *) adjust_appendrel_attrs_compat(root,
@@ -678,7 +806,7 @@ append_child_relation(PlannerInfo *root,
 	}
 
 	/* Close child relations, but keep locks */
-	heap_close(child_relation, NoLock);
+	heap_close_compat(child_relation, NoLock);
 
 	return child_rti;
 }
@@ -1159,8 +1287,14 @@ handle_array(ArrayType *array,
 	bool		elem_byval;
 	char		elem_align;
 
-	/* Check if we can work with this strategy */
-	if (strategy == 0)
+	/*
+	 * Check if we can work with this strategy
+	 * We can work only with BTLessStrategyNumber, BTLessEqualStrategyNumber,
+	 * BTEqualStrategyNumber, BTGreaterEqualStrategyNumber and BTGreaterStrategyNumber.
+	 * If new search strategies appear in the future, then access optimizations from
+	 * this function will not work, and the default behavior (handle_array_return:) will work.
+	 */
+	if (strategy == InvalidStrategy || strategy > BTGreaterStrategyNumber)
 		goto handle_array_return;
 
 	/* Get element's properties */
@@ -1177,8 +1311,12 @@ handle_array(ArrayType *array,
 		List   *ranges;
 		int		i;
 
-		/* This is only for paranoia's sake */
-		Assert(BTMaxStrategyNumber == 5 && BTEqualStrategyNumber == 3);
+		/* This is only for paranoia's sake (checking correctness of following take_min calculation) */
+		Assert(BTEqualStrategyNumber == 3
+			&& BTLessStrategyNumber < BTEqualStrategyNumber
+			&& BTLessEqualStrategyNumber < BTEqualStrategyNumber
+			&& BTGreaterEqualStrategyNumber > BTEqualStrategyNumber
+			&& BTGreaterStrategyNumber > BTEqualStrategyNumber);
 
 		/* Optimizations for <, <=, >=, > */
 		if (strategy != BTEqualStrategyNumber)
@@ -1883,7 +2021,8 @@ translate_col_privs(const Bitmapset *parent_privs,
  */
 void
 make_inh_translation_list(Relation oldrelation, Relation newrelation,
-						  Index newvarno, List **translated_vars)
+						  Index newvarno, List **translated_vars,
+						  AppendRelInfo *appinfo)
 {
 	List	   *vars = NIL;
 	TupleDesc	old_tupdesc = RelationGetDescr(oldrelation);
@@ -1891,6 +2030,17 @@ make_inh_translation_list(Relation oldrelation, Relation newrelation,
 	int			oldnatts = old_tupdesc->natts;
 	int			newnatts = new_tupdesc->natts;
 	int			old_attno;
+#if PG_VERSION_NUM >= 130000 /* see commit ce76c0ba */
+	AttrNumber *pcolnos = NULL;
+
+	if (appinfo)
+	{
+		/* Initialize reverse-translation array with all entries zero */
+		appinfo->num_child_cols = newnatts;
+		appinfo->parent_colnos = pcolnos =
+			(AttrNumber *) palloc0(newnatts * sizeof(AttrNumber));
+	}
+#endif
 
 	for (old_attno = 0; old_attno < oldnatts; old_attno++)
 	{
@@ -1925,6 +2075,10 @@ make_inh_translation_list(Relation oldrelation, Relation newrelation,
 										 atttypmod,
 										 attcollation,
 										 0));
+#if PG_VERSION_NUM >= 130000
+			if (pcolnos)
+				pcolnos[old_attno] = old_attno + 1;
+#endif
 			continue;
 		}
 
@@ -1982,6 +2136,10 @@ make_inh_translation_list(Relation oldrelation, Relation newrelation,
 									 atttypmod,
 									 attcollation,
 									 0));
+#if PG_VERSION_NUM >= 130000
+		if (pcolnos)
+			pcolnos[new_attno] = old_attno + 1;
+#endif
 	}
 
 	*translated_vars = vars;

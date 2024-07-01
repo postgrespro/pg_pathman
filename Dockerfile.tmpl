@@ -2,14 +2,14 @@ FROM postgres:${PG_VERSION}-alpine
 
 # Install dependencies
 RUN apk add --no-cache \
-	openssl curl \
+	openssl curl git patch \
 	cmocka-dev \
 	perl perl-ipc-run \
 	python3 python3-dev py3-virtualenv \
 	coreutils linux-headers \
 	make musl-dev gcc bison flex \
 	zlib-dev libedit-dev \
-	clang clang-analyzer;
+	pkgconf icu-dev clang clang15 clang-analyzer;
 
 # Install fresh valgrind
 RUN apk add valgrind \
@@ -29,8 +29,8 @@ ADD . /pg/testdir
 # Grant privileges
 RUN	chown -R postgres:postgres ${PGDATA} && \
 	chown -R postgres:postgres /pg/testdir && \
-	chmod a+rwx /usr/local/lib/postgresql && \
-	chmod a+rwx /usr/local/share/postgresql/extension
+	chmod a+rwx /usr/local/share/postgresql/extension && \
+	find /usr/local/lib/postgresql -type d -print0 | xargs -0 chmod a+rwx
 
 COPY run_tests.sh /run.sh
 RUN chmod 755 /run.sh

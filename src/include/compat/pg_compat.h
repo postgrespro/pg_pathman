@@ -3,7 +3,7 @@
  * pg_compat.h
  *		Compatibility tools for PostgreSQL API
  *
- * Copyright (c) 2016, Postgres Professional
+ * Copyright (c) 2016-2020, Postgres Professional
  *
  * ------------------------------------------------------------------------
  */
@@ -65,11 +65,11 @@
  */
 #if PG_VERSION_NUM >= 110000
 #define calc_nestloop_required_outer_compat(outer, inner) \
-	calc_nestloop_required_outer((outer)->parent->relids, PATH_REQ_OUTER(outer), \
+		calc_nestloop_required_outer((outer)->parent->relids, PATH_REQ_OUTER(outer), \
 								 (inner)->parent->relids, PATH_REQ_OUTER(inner))
 #else
 #define calc_nestloop_required_outer_compat(outer, inner) \
-	calc_nestloop_required_outer((outer), (inner))
+		calc_nestloop_required_outer((outer), (inner))
 #endif
 
 
@@ -119,18 +119,26 @@
 /*
  * CheckValidResultRel()
  */
-#if PG_VERSION_NUM >= 100000
-#define CheckValidResultRelCompat(rri, cmd) \
-               CheckValidResultRel((rri), (cmd))
+#if PG_VERSION_NUM >= 170000
+#define	CheckValidResultRelCompat(rri, cmd) \
+		CheckValidResultRel((rri), (cmd), NIL)
+#elif PG_VERSION_NUM >= 100000
+#define	CheckValidResultRelCompat(rri, cmd) \
+		CheckValidResultRel((rri), (cmd))
 #elif PG_VERSION_NUM >= 90500
-#define CheckValidResultRelCompat(rri, cmd) \
-               CheckValidResultRel((rri)->ri_RelationDesc, (cmd))
+#define	CheckValidResultRelCompat(rri, cmd) \
+		CheckValidResultRel((rri)->ri_RelationDesc, (cmd))
 #endif
 
 /*
  * BeginCopyFrom()
  */
-#if PG_VERSION_NUM >= 100000
+#if PG_VERSION_NUM >= 140000
+#define BeginCopyFromCompat(pstate, rel, filename, is_program, data_source_cb, \
+							attnamelist, options) \
+		BeginCopyFrom((pstate), (rel), NULL, (filename), (is_program), \
+					  (data_source_cb), (attnamelist), (options))
+#elif PG_VERSION_NUM >= 100000
 #define BeginCopyFromCompat(pstate, rel, filename, is_program, data_source_cb, \
 							attnamelist, options) \
 		BeginCopyFrom((pstate), (rel), (filename), (is_program), \
@@ -174,7 +182,14 @@
  * 	- in pg 10 PlannedStmt object
  * 	- in pg 9.6 and lower Node parsetree
  */
-#if PG_VERSION_NUM >= 100000
+#if PG_VERSION_NUM >= 140000
+#define call_process_utility_compat(process_utility, first_arg, query_string, \
+									readOnlyTree, context, params, query_env, \
+									dest, completion_tag) \
+		(process_utility)((first_arg), (query_string), readOnlyTree, \
+						  (context), (params), \
+						  (query_env), (dest), (completion_tag))
+#elif PG_VERSION_NUM >= 100000
 #define call_process_utility_compat(process_utility, first_arg, query_string, \
 									context, params, query_env, dest, \
 									completion_tag) \
@@ -226,21 +241,20 @@
 
 
 /*
- * CheckValidResultRel()
- */
-#if PG_VERSION_NUM >= 100000
-#define CheckValidResultRelCompat(rri, cmd) \
-		CheckValidResultRel((rri), (cmd))
-#elif PG_VERSION_NUM >= 90500
-#define CheckValidResultRelCompat(rri, cmd) \
-		CheckValidResultRel((rri)->ri_RelationDesc, (cmd))
-#endif
-
-
-/*
  * create_append_path()
  */
-#if PG_VERSION_NUM >= 120000
+#if PG_VERSION_NUM >= 140000
+#define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
+	create_append_path(NULL, (rel), (subpaths), NIL, NIL, (required_outer), \
+					   (parallel_workers), false, -1)
+#elif PG_VERSION_NUM >= 130000
+/*
+ * PGPRO-3938 made create_append_path compatible with vanilla again
+ */
+#define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
+	create_append_path(NULL, (rel), (subpaths), NIL, NIL, (required_outer), \
+					   (parallel_workers), false, NIL, -1)
+#elif PG_VERSION_NUM >= 120000
 
 #ifndef PGPRO_VERSION
 #define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
@@ -251,7 +265,7 @@
 #define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
 	create_append_path(NULL, (rel), (subpaths), NIL, NIL, (required_outer), \
 					   (parallel_workers), false, NIL, -1, false)
-#endif /* PGPRO_VERSION */
+#endif							/* PGPRO_VERSION */
 
 #elif PG_VERSION_NUM >= 110000
 
@@ -263,7 +277,7 @@
 #define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
 	create_append_path(NULL, (rel), (subpaths), NIL, (required_outer), \
 					   (parallel_workers), false, NIL, -1, false, NIL)
-#endif /* PGPRO_VERSION */
+#endif							/* PGPRO_VERSION */
 
 #elif PG_VERSION_NUM >= 100000
 
@@ -274,7 +288,7 @@
 #define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
 		create_append_path((rel), (subpaths), (required_outer), (parallel_workers), NIL, \
 						   false, NIL)
-#endif /* PGPRO_VERSION */
+#endif							/* PGPRO_VERSION */
 
 #elif PG_VERSION_NUM >= 90600
 
@@ -285,18 +299,23 @@
 #define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
 		create_append_path((rel), (subpaths), (required_outer), \
 						   false, NIL, (parallel_workers))
-#endif /* PGPRO_VERSION */
+#endif							/* PGPRO_VERSION */
 
 #elif PG_VERSION_NUM >= 90500
 #define create_append_path_compat(rel, subpaths, required_outer, parallel_workers) \
 		create_append_path((rel), (subpaths), (required_outer))
-#endif /* PG_VERSION_NUM */
+#endif							/* PG_VERSION_NUM */
 
 
 /*
  * create_merge_append_path()
  */
-#if PG_VERSION_NUM >= 100000
+#if PG_VERSION_NUM >= 140000
+#define create_merge_append_path_compat(root, rel, subpaths, pathkeys, \
+										required_outer) \
+		create_merge_append_path((root), (rel), (subpaths), (pathkeys), \
+								 (required_outer))
+#elif PG_VERSION_NUM >= 100000
 #define create_merge_append_path_compat(root, rel, subpaths, pathkeys, \
 										required_outer) \
 		create_merge_append_path((root), (rel), (subpaths), (pathkeys), \
@@ -395,8 +414,8 @@ extern void create_plain_partial_paths(PlannerInfo *root,
 static inline Datum
 ExecEvalExprCompat(ExprState *expr, ExprContext *econtext, bool *isnull)
 {
-	ExprDoneCond	isdone;
-	Datum			result = ExecEvalExpr(expr, econtext, isnull, &isdone);
+	ExprDoneCond isdone;
+	Datum		result = ExecEvalExpr(expr, econtext, isnull, &isdone);
 
 	if (isdone != ExprSingleResult)
 		elog(ERROR, "expression should return single value");
@@ -413,9 +432,9 @@ ExecEvalExprCompat(ExprState *expr, ExprContext *econtext, bool *isnull)
 static inline bool
 ExecCheck(ExprState *state, ExprContext *econtext)
 {
-	Datum			ret;
-	bool			isnull;
-	MemoryContext	old_mcxt;
+	Datum		ret;
+	bool		isnull;
+	MemoryContext old_mcxt;
 
 	/* short-circuit (here and in ExecInitCheck) for empty restriction list */
 	if (state == NULL)
@@ -511,7 +530,7 @@ extern List *get_all_actual_clauses(List *restrictinfo_list);
  * get_rel_persistence()
  */
 #if PG_VERSION_NUM >= 90500 && PG_VERSION_NUM < 90600
-char get_rel_persistence(Oid relid);
+char		get_rel_persistence(Oid relid);
 #endif
 
 
@@ -564,8 +583,8 @@ char get_rel_persistence(Oid relid);
  * make_restrictinfo()
  */
 #if PG_VERSION_NUM >= 100000
-extern List * make_restrictinfos_from_actual_clauses(PlannerInfo *root,
-													 List *clause_list);
+extern List *make_restrictinfos_from_actual_clauses(PlannerInfo *root,
+													List *clause_list);
 #endif
 
 
@@ -588,9 +607,9 @@ extern Result *make_result(List *tlist,
  * McxtStatsInternal()
  */
 #if PG_VERSION_NUM >= 90600
-void McxtStatsInternal(MemoryContext context, int level,
-					   bool examine_children,
-					   MemoryContextCounters *totals);
+void		McxtStatsInternal(MemoryContext context, int level,
+							  bool examine_children,
+							  MemoryContextCounters *totals);
 #endif
 
 
@@ -598,7 +617,7 @@ void McxtStatsInternal(MemoryContext context, int level,
  * oid_cmp()
  */
 #if PG_VERSION_NUM >=90500 && PG_VERSION_NUM < 100000
-extern int oid_cmp(const void *p1, const void *p2);
+extern int	oid_cmp(const void *p1, const void *p2);
 #endif
 
 
@@ -607,7 +626,12 @@ extern int oid_cmp(const void *p1, const void *p2);
  *
  * for v10 cast first arg to RawStmt type
  */
-#if PG_VERSION_NUM >= 100000
+#if PG_VERSION_NUM >= 150000	/* for commit 791b1b71da35 */
+#define parse_analyze_compat(parse_tree, query_string, param_types, nparams, \
+							 query_env) \
+		parse_analyze_fixedparams((RawStmt *) (parse_tree), (query_string), (param_types), \
+					  (nparams), (query_env))
+#elif PG_VERSION_NUM >= 100000
 #define parse_analyze_compat(parse_tree, query_string, param_types, nparams, \
 							 query_env) \
 		parse_analyze((RawStmt *) (parse_tree), (query_string), (param_types), \
@@ -625,7 +649,12 @@ extern int oid_cmp(const void *p1, const void *p2);
  *
  * for v10 cast first arg to RawStmt type
  */
-#if PG_VERSION_NUM >= 100000
+#if PG_VERSION_NUM >= 150000	/* for commit 791b1b71da35 */
+#define pg_analyze_and_rewrite_compat(parsetree, query_string, param_types, \
+									  nparams, query_env) \
+		pg_analyze_and_rewrite_fixedparams((RawStmt *) (parsetree), (query_string), \
+							   (param_types), (nparams), (query_env))
+#elif PG_VERSION_NUM >= 100000
 #define pg_analyze_and_rewrite_compat(parsetree, query_string, param_types, \
 									  nparams, query_env) \
 		pg_analyze_and_rewrite((RawStmt *) (parsetree), (query_string), \
@@ -643,7 +672,20 @@ extern int oid_cmp(const void *p1, const void *p2);
  *
  * for v10 set NULL into 'queryEnv' argument
  */
-#if PG_VERSION_NUM >= 100000
+#if PG_VERSION_NUM >= 140000
+#define ProcessUtilityCompat(parsetree, queryString, context, params, dest, \
+							 completionTag) \
+		do { \
+			PlannedStmt *stmt = makeNode(PlannedStmt); \
+			stmt->commandType	= CMD_UTILITY; \
+			stmt->canSetTag		= true; \
+			stmt->utilityStmt	= (parsetree); \
+			stmt->stmt_location	= -1; \
+			stmt->stmt_len		= 0; \
+			ProcessUtility(stmt, (queryString), false, (context), (params), NULL, \
+						   (dest), (completionTag)); \
+		} while (0)
+#elif PG_VERSION_NUM >= 100000
 #define ProcessUtilityCompat(parsetree, queryString, context, params, dest, \
 							 completionTag) \
 		do { \
@@ -680,7 +722,7 @@ extern int oid_cmp(const void *p1, const void *p2);
  * set_dummy_rel_pathlist()
  */
 #if PG_VERSION_NUM >= 90500 && PG_VERSION_NUM < 90600
-void set_dummy_rel_pathlist(RelOptInfo *rel);
+void		set_dummy_rel_pathlist(RelOptInfo *rel);
 #endif
 
 
@@ -702,6 +744,10 @@ extern void set_rel_consider_parallel(PlannerInfo *root,
  * in compat version the type of first argument is (Expr *)
  */
 #if PG_VERSION_NUM >= 100000
+#if PG_VERSION_NUM >= 140000	/* function removed in
+								 * 375398244168add84a884347625d14581a421e71 */
+extern TargetEntry *tlist_member_ignore_relabel(Expr *node, List *targetlist);
+#endif
 #define tlist_member_ignore_relabel_compat(expr, targetlist) \
 		tlist_member_ignore_relabel((expr), (targetlist))
 #elif PG_VERSION_NUM >= 90500
@@ -722,6 +768,25 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 #include "access/tupconvert.h"
 #endif
 
+/*
+ * ExecBRUpdateTriggers()
+ */
+#if PG_VERSION_NUM >= 160000
+#define ExecBRUpdateTriggersCompat(estate, epqstate, relinfo, \
+					 tupleid, fdw_trigtuple, newslot) \
+	ExecBRUpdateTriggers((estate), (epqstate), (relinfo), (tupleid), \
+						 (fdw_trigtuple), (newslot), NULL, NULL)
+#elif PG_VERSION_NUM >= 150000	/* for commit 7103ebb7aae8 */
+#define ExecBRUpdateTriggersCompat(estate, epqstate, relinfo, \
+					 tupleid, fdw_trigtuple, newslot) \
+	ExecBRUpdateTriggers((estate), (epqstate), (relinfo), (tupleid), \
+						 (fdw_trigtuple), (newslot), NULL)
+#else
+#define ExecBRUpdateTriggersCompat(estate, epqstate, relinfo, \
+					 tupleid, fdw_trigtuple, newslot) \
+	ExecBRUpdateTriggers((estate), (epqstate), (relinfo), (tupleid), \
+						 (fdw_trigtuple), (newslot))
+#endif
 
 /*
  * ExecARInsertTriggers()
@@ -741,7 +806,12 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 /*
  * ExecBRDeleteTriggers()
  */
-#if PG_VERSION_NUM >= 110000
+#if PG_VERSION_NUM >= 160000
+#define ExecBRDeleteTriggersCompat(estate, epqstate, relinfo, tupleid, \
+								   fdw_trigtuple, epqslot) \
+	ExecBRDeleteTriggers((estate), (epqstate), (relinfo), (tupleid), \
+						 (fdw_trigtuple), (epqslot), NULL, NULL)
+#elif PG_VERSION_NUM >= 110000
 #define ExecBRDeleteTriggersCompat(estate, epqstate, relinfo, tupleid, \
 								   fdw_trigtuple, epqslot) \
 	ExecBRDeleteTriggers((estate), (epqstate), (relinfo), (tupleid), \
@@ -757,7 +827,12 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 /*
  * ExecARDeleteTriggers()
  */
-#if PG_VERSION_NUM >= 100000
+#if PG_VERSION_NUM >= 150000	/* for commit ba9a7e392171 */
+#define ExecARDeleteTriggersCompat(estate, relinfo, tupleid, \
+								   fdw_trigtuple, transition_capture) \
+	ExecARDeleteTriggers((estate), (relinfo), (tupleid), \
+						 (fdw_trigtuple), (transition_capture), false)
+#elif PG_VERSION_NUM >= 100000
 #define ExecARDeleteTriggersCompat(estate, relinfo, tupleid, \
 								   fdw_trigtuple, transition_capture) \
 	ExecARDeleteTriggers((estate), (relinfo), (tupleid), \
@@ -896,9 +971,9 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
  * we need access to entire tuple, not just its header.
  */
 #ifdef XID_IS_64BIT
-# define HeapTupleGetXminCompat(htup) HeapTupleGetXmin(htup)
+#define HeapTupleGetXminCompat(htup) HeapTupleGetXmin(htup)
 #else
-# define HeapTupleGetXminCompat(htup) HeapTupleHeaderGetXmin((htup)->t_data)
+#define HeapTupleGetXminCompat(htup) HeapTupleHeaderGetXmin((htup)->t_data)
 #endif
 
 /*
@@ -954,12 +1029,20 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 
 /*
  * ExecInsertIndexTuples. Since 12 slot contains tupleid.
+ * Since 14: new fields "resultRelInfo", "update".
+ * Since 16: new bool field "onlySummarizing".
  */
-#if PG_VERSION_NUM >= 120000
-#define ExecInsertIndexTuplesCompat(slot, tupleid, estate, noDupError, specConflict, arbiterIndexes) \
+#if PG_VERSION_NUM >= 160000
+#define ExecInsertIndexTuplesCompat(resultRelInfo, slot, tupleid, estate, update, noDupError, specConflict, arbiterIndexes, onlySummarizing) \
+	ExecInsertIndexTuples((resultRelInfo), (slot), (estate), (update), (noDupError), (specConflict), (arbiterIndexes), (onlySummarizing))
+#elif PG_VERSION_NUM >= 140000
+#define ExecInsertIndexTuplesCompat(resultRelInfo, slot, tupleid, estate, update, noDupError, specConflict, arbiterIndexes, onlySummarizing) \
+	ExecInsertIndexTuples((resultRelInfo), (slot), (estate), (update), (noDupError), (specConflict), (arbiterIndexes))
+#elif PG_VERSION_NUM >= 120000
+#define ExecInsertIndexTuplesCompat(resultRelInfo, slot, tupleid, estate, update, noDupError, specConflict, arbiterIndexes, onlySummarizing) \
 	ExecInsertIndexTuples((slot), (estate), (noDupError), (specConflict), (arbiterIndexes))
 #else
-#define ExecInsertIndexTuplesCompat(slot, tupleid, estate, noDupError, specConflict, arbiterIndexes) \
+#define ExecInsertIndexTuplesCompat(resultRelInfo, slot, tupleid, estate, update, noDupError, specConflict, arbiterIndexes, onlySummarizing) \
 	ExecInsertIndexTuples((slot), (tupleid), (estate), (noDupError), (specConflict), (arbiterIndexes))
 #endif
 
@@ -999,12 +1082,23 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
  * macro (and never will be, for old versions), so distinguish via macro added
  * by the commit.
  */
-#ifdef QTW_DONT_COPY_DEFAULT
+#if defined(QTW_DONT_COPY_DEFAULT) && (PG_VERSION_NUM < 140000)
 #define expression_tree_mutator_compat(node, mutator, context) \
 	expression_tree_mutator((node), (mutator), (context), 0)
 #else
 #define expression_tree_mutator_compat(node, mutator, context) \
 	expression_tree_mutator((node), (mutator), (context))
+#endif
+
+/*
+ * stringToQualifiedNameList
+ */
+#if PG_VERSION_NUM >= 160000
+#define stringToQualifiedNameListCompat(string) \
+	stringToQualifiedNameList((string), NULL)
+#else
+#define stringToQualifiedNameListCompat(string) \
+	stringToQualifiedNameList((string))
 #endif
 
 /*
@@ -1022,9 +1116,10 @@ static inline TupleTableSlot *
 ExecInitExtraTupleSlotCompatHorse(EState *s, TupleDesc t)
 {
 #if PG_VERSION_NUM >= 110000
-	return ExecInitExtraTupleSlot(s,t);
+	return ExecInitExtraTupleSlot(s, t);
 #else
-	TupleTableSlot	*res = ExecInitExtraTupleSlot(s);
+	TupleTableSlot *res = ExecInitExtraTupleSlot(s);
+
 	if (t)
 		ExecSetSlotDescriptor(res, t);
 
@@ -1056,7 +1151,98 @@ CustomEvalParamExternCompat(Param *param,
 	return prm;
 }
 
-void set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel, Index rti);
+void		set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel, Index rti);
 
+/*
+ * lnext()
+ * In >=13 list implementation was reworked (1cff1b95ab6)
+ */
+#if PG_VERSION_NUM >= 130000
+#define lnext_compat(l, lc)                                    lnext((l), (lc))
+#else
+#define lnext_compat(l, lc)                                    lnext((lc))
+#endif
 
-#endif /* PG_COMPAT_H */
+/*
+ * heap_open()
+ * heap_openrv()
+ * heap_close()
+ * In >=13 heap_* was replaced with table_* (e0c4ec07284)
+ */
+#if PG_VERSION_NUM >= 130000
+#define heap_open_compat(r, l)                                 table_open((r), (l))
+#define heap_openrv_compat(r, l)                               table_openrv((r), (l))
+#define heap_close_compat(r, l)                                table_close((r), (l))
+#else
+#define heap_open_compat(r, l)                                 heap_open((r), (l))
+#define heap_openrv_compat(r, l)                               heap_openrv((r), (l))
+#define heap_close_compat(r, l)                                heap_close((r), (l))
+#endif
+
+/*
+ * convert_tuples_by_name()
+ * In >=13 msg parameter in convert_tuples_by_name function was removed (fe66125974c)
+ */
+#if PG_VERSION_NUM >= 130000
+#define convert_tuples_by_name_compat(i, o, m)                 convert_tuples_by_name((i), (o))
+#else
+#define convert_tuples_by_name_compat(i, o, m)                 convert_tuples_by_name((i), (o), (m))
+#endif
+
+/*
+ * raw_parser()
+ * In 14 new argument was added (844fe9f159a)
+ */
+#if PG_VERSION_NUM >= 140000
+#define raw_parser_compat(s)                                   raw_parser((s), RAW_PARSE_DEFAULT)
+#else
+#define raw_parser_compat(s)                                   raw_parser(s)
+#endif
+
+/*
+ * make_restrictinfo()
+ * In >=16 4th, 5th and 9th arguments were added (991a3df227e)
+ * In >=16 3th and 9th arguments were removed (b448f1c8d83)
+ * In >=14 new argument was added (55dc86eca70)
+ */
+#if PG_VERSION_NUM >= 160000
+#define make_restrictinfo_compat(r, c, ipd, od, p, sl, rr, or, nr)  make_restrictinfo((r), (c), (ipd), false, false, (p), (sl), (rr), NULL, (or))
+#else
+#if PG_VERSION_NUM >= 140000
+#define make_restrictinfo_compat(r, c, ipd, od, p, sl, rr, or, nr)  make_restrictinfo((r), (c), (ipd), (od), (p), (sl), (rr), (or), (nr))
+#else
+#define make_restrictinfo_compat(r, c, ipd, od, p, sl, rr, or, nr)  make_restrictinfo((c), (ipd), (od), (p), (sl), (rr), (or), (nr))
+#endif							/* #if PG_VERSION_NUM >= 140000 */
+#endif							/* #if PG_VERSION_NUM >= 160000 */
+
+/*
+ * pull_varnos()
+ * In >=14 new argument was added (55dc86eca70)
+ */
+#if PG_VERSION_NUM >= 140000
+#define pull_varnos_compat(r, n)                               pull_varnos((r), (n))
+#else
+#define pull_varnos_compat(r, n)                               pull_varnos(n)
+#endif
+
+/*
+ * build_expression_pathkey()
+ * In >=16 argument was removed (b448f1c8d83)
+ */
+#if PG_VERSION_NUM >= 160000
+#define build_expression_pathkey_compat(root, expr, nullable_relids, opno, rel, create_it)   build_expression_pathkey(root, expr, opno, rel, create_it)
+#else
+#define build_expression_pathkey_compat(root, expr, nullable_relids, opno, rel, create_it)   build_expression_pathkey(root, expr, nullable_relids, opno, rel, create_it)
+#endif
+
+/*
+ * EvalPlanQualInit()
+ * In >=16 argument was added (70b42f27902)
+ */
+#if PG_VERSION_NUM >= 160000
+#define EvalPlanQualInit_compat(epqstate, parentestate, subplan, auxrowmarks, epqParam)    EvalPlanQualInit(epqstate, parentestate, subplan, auxrowmarks, epqParam, NIL)
+#else
+#define EvalPlanQualInit_compat(epqstate, parentestate, subplan, auxrowmarks, epqParam)    EvalPlanQualInit(epqstate, parentestate, subplan, auxrowmarks, epqParam)
+#endif
+
+#endif							/* PG_COMPAT_H */

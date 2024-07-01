@@ -411,7 +411,8 @@ SELECT tableoid::regclass, * FROM subpartitions.abc ORDER BY id1, id2, val;
 (4 rows)
 
 SET pg_pathman.enable_partitionrouter = ON;
-UPDATE subpartitions.abc SET id1 = -1, id2 = -1 RETURNING tableoid::regclass, *;
+WITH updated AS (UPDATE subpartitions.abc SET id1 = -1, id2 = -1 RETURNING tableoid::regclass, *)
+SELECT * FROM updated ORDER BY val ASC;
        tableoid        | id1 | id2 | val 
 -----------------------+-----+-----+-----
  subpartitions.abc_3_4 |  -1 |  -1 |   1
@@ -455,6 +456,6 @@ SELECT a2.* FROM subpartitions.a1 JOIN subpartitions.a2 ON a2.n1=a1.n1 FOR UPDAT
 DROP TABLE subpartitions.a2 CASCADE;
 NOTICE:  drop cascades to 4 other objects
 DROP TABLE subpartitions.a1;
-DROP SCHEMA subpartitions CASCADE;
-NOTICE:  drop cascades to function subpartitions.partitions_tree(regclass,text)
+DROP FUNCTION subpartitions.partitions_tree(regclass, text);
+DROP SCHEMA subpartitions;
 DROP EXTENSION pg_pathman;

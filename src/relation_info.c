@@ -3,7 +3,7 @@
  * relation_info.c
  *		Data structures describing partitioned relations
  *
- * Copyright (c) 2016, Postgres Professional
+ * Copyright (c) 2016-2020, Postgres Professional
  *
  * ------------------------------------------------------------------------
  */
@@ -71,34 +71,34 @@ int				prel_resowner_line = 0;
 
 #define LeakTrackerAdd(prel) \
 	do { \
-		MemoryContext old_mcxt = MemoryContextSwitchTo((prel)->mcxt); \
+		MemoryContext leak_tracker_add_old_mcxt = MemoryContextSwitchTo((prel)->mcxt); \
 		(prel)->owners = \
 				list_append_unique( \
 						(prel)->owners, \
 						list_make2(makeString((char *) prel_resowner_function), \
 								   makeInteger(prel_resowner_line))); \
-		MemoryContextSwitchTo(old_mcxt); \
+		MemoryContextSwitchTo(leak_tracker_add_old_mcxt); \
 		\
 		(prel)->access_total++; \
 	} while (0)
 
 #define LeakTrackerPrint(prel) \
 	do { \
-		ListCell *lc; \
-		foreach (lc, (prel)->owners) \
+		ListCell *leak_tracker_print_lc; \
+		foreach (leak_tracker_print_lc, (prel)->owners) \
 		{ \
-			char   *fun = strVal(linitial(lfirst(lc))); \
-			int		line = intVal(lsecond(lfirst(lc))); \
+			char   *fun = strVal(linitial(lfirst(leak_tracker_print_lc))); \
+			int		line = intVal(lsecond(lfirst(leak_tracker_print_lc))); \
 			elog(WARNING, "PartRelationInfo referenced in %s:%d", fun, line); \
 		} \
 	} while (0)
 
 #define LeakTrackerFree(prel) \
 	do { \
-		ListCell *lc; \
-		foreach (lc, (prel)->owners) \
+		ListCell *leak_tracker_free_lc; \
+		foreach (leak_tracker_free_lc, (prel)->owners) \
 		{ \
-			list_free_deep(lfirst(lc)); \
+			list_free_deep(lfirst(leak_tracker_free_lc)); \
 		} \
 		list_free((prel)->owners); \
 		(prel)->owners = NIL; \
@@ -304,7 +304,7 @@ invalidate_psin_entry(PartStatusInfo *psin)
 void
 close_pathman_relation_info(PartRelationInfo *prel)
 {
-	AssertArg(prel);
+	Assert(prel);
 
 	(void) resowner_prel_del(prel);
 }
@@ -925,16 +925,26 @@ shout_if_prel_is_invalid(const Oid parent_oid,
  * This is a simplified version of functions that return TupleConversionMap.
  * It should be faster if expression uses a few fields of relation.
  */
+#if PG_VERSION_NUM >= 130000
+AttrMap *
+PrelExpressionAttributesMap(const PartRelationInfo *prel,
+							TupleDesc source_tupdesc)
+#else
 AttrNumber *
 PrelExpressionAttributesMap(const PartRelationInfo *prel,
 							TupleDesc source_tupdesc,
 							int *map_length)
+#endif
 {
 	Oid			parent_relid = PrelParentRelid(prel);
 	int			source_natts = source_tupdesc->natts,
 				expr_natts = 0;
-	AttrNumber *result,
-				i;
+#if PG_VERSION_NUM >= 130000
+	AttrMap *result;
+#else
+	AttrNumber	*result;
+#endif
+	AttrNumber	i;
 	bool		is_trivial = true;
 
 	/* Get largest attribute number used in expression */
@@ -942,8 +952,12 @@ PrelExpressionAttributesMap(const PartRelationInfo *prel,
 	while ((i = bms_next_member(prel->expr_atts, i)) >= 0)
 		expr_natts = i;
 
+#if PG_VERSION_NUM >= 130000
+	result = make_attrmap(expr_natts);
+#else
 	/* Allocate array for map */
 	result = (AttrNumber *) palloc0(expr_natts * sizeof(AttrNumber));
+#endif
 
 	/* Find a match for each attribute */
 	i = -1;
@@ -964,26 +978,44 @@ PrelExpressionAttributesMap(const PartRelationInfo *prel,
 
 			if (strcmp(NameStr(att->attname), attname) == 0)
 			{
+#if PG_VERSION_NUM >= 130000
+				result->attnums[attnum - 1] = (AttrNumber) (j + 1);
+#else
 				result[attnum - 1] = (AttrNumber) (j + 1);
+#endif
 				break;
 			}
 		}
 
+#if PG_VERSION_NUM >= 130000
+		if (result->attnums[attnum - 1] == 0)
+#else
 		if (result[attnum - 1] == 0)
+#endif
 			elog(ERROR, "cannot find column \"%s\" in child relation", attname);
 
+#if PG_VERSION_NUM >= 130000
+		if (result->attnums[attnum - 1] != attnum)
+#else
 		if (result[attnum - 1] != attnum)
+#endif
 			is_trivial = false;
 	}
 
 	/* Check if map is trivial */
 	if (is_trivial)
 	{
+#if PG_VERSION_NUM >= 130000
+		free_attrmap(result);
+#else
 		pfree(result);
+#endif
 		return NULL;
 	}
 
+#if PG_VERSION_NUM < 130000
 	*map_length = expr_natts;
+#endif
 	return result;
 }
 
@@ -1135,7 +1167,7 @@ invalidate_bounds_cache(void)
 /*
  * Get constraint expression tree of a partition.
  *
- * build_check_constraint_name_internal() is used to build conname.
+ * build_check_constraint_name_relid_internal() is used to build conname.
  */
 Expr *
 get_partition_constraint_expr(Oid partition, bool raise_error)
@@ -1161,6 +1193,16 @@ get_partition_constraint_expr(Oid partition, bool raise_error)
 	}
 
 	con_tuple = SearchSysCache1(CONSTROID, ObjectIdGetDatum(conid));
+	if (!HeapTupleIsValid(con_tuple))
+	{
+		if (!raise_error)
+			return NULL;
+
+		ereport(ERROR,
+				(errmsg("cache lookup failed for constraint \"%s\" of partition \"%s\"",
+						conname, get_rel_name_or_relid(partition))));
+	}
+
 	conbin_datum = SysCacheGetAttr(CONSTROID, con_tuple,
 								   Anum_pg_constraint_conbin,
 								   &conbin_isnull);
@@ -1172,9 +1214,6 @@ get_partition_constraint_expr(Oid partition, bool raise_error)
 		ereport(ERROR,
 				(errmsg("constraint \"%s\" of partition \"%s\" has NULL conbin",
 						conname, get_rel_name_or_relid(partition))));
-		pfree(conname);
-
-		return NULL; /* could not parse */
 	}
 	pfree(conname);
 
@@ -1330,7 +1369,7 @@ get_parent_of_partition(Oid partition)
 		HeapTuple		htup;
 		Oid				parent = InvalidOid;
 
-		relation = heap_open(InheritsRelationId, AccessShareLock);
+		relation = heap_open_compat(InheritsRelationId, AccessShareLock);
 
 		ScanKeyInit(&key[0],
 					Anum_pg_inherits_inhrelid,
@@ -1359,7 +1398,7 @@ get_parent_of_partition(Oid partition)
 		}
 
 		systable_endscan(scan);
-		heap_close(relation, AccessShareLock);
+		heap_close_compat(relation, AccessShareLock);
 
 		return parent;
 	}
@@ -1412,7 +1451,7 @@ parse_partitioning_expression(const Oid relid,
 
 	PG_TRY();
 	{
-		parsetree_list = raw_parser(query_string);
+		parsetree_list = raw_parser_compat(query_string);
 	}
 	PG_CATCH();
 	{
@@ -1523,7 +1562,7 @@ cook_partitioning_expression(const Oid relid,
 							" must be marked IMMUTABLE")));
 
 		/* Sanity check #5 */
-		expr_varnos = pull_varnos(expr);
+		expr_varnos = pull_varnos_compat(NULL, expr);
 		if (bms_num_members(expr_varnos) != 1 ||
 			relid != ((RangeTblEntry *) linitial(query->rtable))->relid)
 		{

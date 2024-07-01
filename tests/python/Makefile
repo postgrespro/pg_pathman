@@ -1,6 +1,6 @@
 partitioning_tests:
 ifneq ($(CASE),)
-	python partitioning_test.py Tests.$(CASE)
+	python3 -u partitioning_test.py Tests.$(CASE)
 else
-	python partitioning_test.py
+	python3 -u partitioning_test.py
 endif

@@ -1,11 +1,11 @@
-[![Build Status](https://travis-ci.org/postgrespro/pg_pathman.svg?branch=master)](https://travis-ci.org/postgrespro/pg_pathman)
+[![Build Status](https://travis-ci.com/postgrespro/pg_pathman.svg?branch=master)](https://travis-ci.com/postgrespro/pg_pathman)
 [![PGXN version](https://badge.fury.io/pg/pg_pathman.svg)](https://badge.fury.io/pg/pg_pathman)
 [![codecov](https://codecov.io/gh/postgrespro/pg_pathman/branch/master/graph/badge.svg)](https://codecov.io/gh/postgrespro/pg_pathman)
 [![GitHub license](https://img.shields.io/badge/license-PostgreSQL-blue.svg)](https://raw.githubusercontent.com/postgrespro/pg_pathman/master/LICENSE)
 
 ### NOTE: this project is not under development anymore
 
-`pg_pathman` supports Postgres versions [9.5..12], but most probably it won't be ported to 13 and later releases. [Native partitioning](https://www.postgresql.org/docs/current/ddl-partitioning.html) is pretty mature now and has almost everything implemented in `pg_pathman`'; we encourage users switching to it. We are still maintaining the project (fixing bugs in supported versions), but no new development is going to happen here.
+`pg_pathman` supports Postgres versions [11..15], but most probably it won't be ported to later releases. [Native partitioning](https://www.postgresql.org/docs/current/ddl-partitioning.html) is pretty mature now and has almost everything implemented in `pg_pathman`'; we encourage users switching to it. We are still maintaining the project (fixing bugs in supported versions), but no new development is going to happen here.
 
 # pg_pathman
 
@@ -13,8 +13,9 @@ The `pg_pathman` module provides optimized partitioning mechanism and functions 
 
 The extension is compatible with:
 
- * PostgreSQL 9.5, 9.6, 10, 11, 12;
- * Postgres Pro Standard 9.5, 9.6, 10, 11, 12;
+ * PostgreSQL 12, 13;
+ * PostgreSQL with core-patch: 11, 14, 15;
+ * Postgres Pro Standard 11, 12, 13, 14, 15;
  * Postgres Pro Enterprise;
 
 Take a look at our Wiki [out there](https://github.com/postgrespro/pg_pathman/wiki).
@@ -95,10 +96,18 @@ shared_preload_libraries = 'pg_pathman'
 
 It is essential to restart the PostgreSQL instance. After that, execute the following query in psql:
 ```plpgsql
-CREATE EXTENSION pg_pathman;
+CREATE SCHEMA pathman;
+GRANT USAGE ON SCHEMA pathman TO PUBLIC;
+CREATE EXTENSION pg_pathman WITH SCHEMA pathman;
 ```
 
 Done! Now it's time to setup your partitioning schemes.
+
+> **Security notice**: pg_pathman is believed to be secure against
+search-path-based attacks mentioned in Postgres
+[documentation](https://www.postgresql.org/docs/current/sql-createextension.html). However,
+if *your* calls of pathman's functions doesn't exactly match the signature, they
+might be vulnerable to malicious overloading. If in doubt, install pathman to clean schema where nobody except superusers have CREATE object permission to avoid problems.
 
 > **Windows-specific**: pg_pathman imports several symbols (e.g. None_Receiver, InvalidObjectAddress) from PostgreSQL, which is fine by itself, but requires that those symbols are marked as `PGDLLIMPORT`. Unfortunately, some of them are not exported from vanilla PostgreSQL, which means that you have to either use Postgres Pro Standard/Enterprise (which includes all necessary patches), or patch and build your own distribution of PostgreSQL.
 
@@ -611,7 +620,7 @@ SELECT tableoid::regclass AS partition, * FROM partitioned_table;
 - All running concurrent partitioning tasks can be listed using the `pathman_concurrent_part_tasks` view:
 ```plpgsql
 SELECT * FROM pathman_concurrent_part_tasks;
- userid | pid  | dbid  | relid | processed | status  
+ userid | pid  | dbid  | relid | processed | status
 --------+------+-------+-------+-----------+---------
  dmitry | 7367 | 16384 | test  |    472000 | working
 (1 row)
@@ -625,7 +634,7 @@ WHERE parent = 'part_test'::regclass AND range_min::int < 500;
 NOTICE:  1 rows copied from part_test_11
 NOTICE:  100 rows copied from part_test_1
 NOTICE:  100 rows copied from part_test_2
- drop_range_partition 
+ drop_range_partition
 ----------------------
  dummy_test_11
  dummy_test_1
@@ -780,8 +789,8 @@ All sections and data will remain unchanged and will be handled by the standard 
 Do not hesitate to post your issues, questions and new ideas at the [issues](https://github.com/postgrespro/pg_pathman/issues) page.
 
 ## Authors
-[Ildar Musin](https://github.com/zilder)  
-Alexander Korotkov <a.korotkov(at)postgrespro.ru> Postgres Professional Ltd., Russia  
-[Dmitry Ivanov](https://github.com/funbringer)  
-Maksim Milyutin <m.milyutin(at)postgrespro.ru> Postgres Professional Ltd., Russia  
+[Ildar Musin](https://github.com/zilder)
+[Alexander Korotkov](https://github.com/akorotkov)
+[Dmitry Ivanov](https://github.com/funbringer)
+[Maksim Milyutin](https://github.com/maksm90)
 [Ildus Kurbangaliev](https://github.com/ildus)

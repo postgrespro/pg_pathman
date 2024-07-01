@@ -3,7 +3,7 @@
  * nodes_common.c
  *		Common code for custom nodes
  *
- * Copyright (c) 2016, Postgres Professional
+ * Copyright (c) 2016-2020, Postgres Professional
  *
  * ------------------------------------------------------------------------
  */
@@ -59,7 +59,7 @@ transform_plans_into_states(RuntimeAppendState *scan_state,
 		ChildScanCommon		child;
 		PlanState		   *ps;
 
-		AssertArg(selected_plans);
+		Assert(selected_plans);
 		child = selected_plans[i];
 
 		/* Create new node since this plan hasn't been used yet */
@@ -183,6 +183,42 @@ build_parent_tlist(List *tlist, AppendRelInfo *appinfo)
 
 	return temp_tlist;
 }
+
+#if PG_VERSION_NUM >= 140000
+/*
+ * Function "tlist_member_ignore_relabel" was removed in vanilla (375398244168)
+ * Function moved to pg_pathman.
+ */
+/*
+ * tlist_member_ignore_relabel
+ *	  Finds the (first) member of the given tlist whose expression is
+ *	  equal() to the given expression.  Result is NULL if no such member.
+ *	  We ignore top-level RelabelType nodes
+ *	  while checking for a match.  This is needed for some scenarios
+ *	  involving binary-compatible sort operations.
+ */
+TargetEntry *
+tlist_member_ignore_relabel(Expr *node, List *targetlist)
+{
+	ListCell   *temp;
+
+	while (node && IsA(node, RelabelType))
+		node = ((RelabelType *) node)->arg;
+
+	foreach(temp, targetlist)
+	{
+		TargetEntry *tlentry = (TargetEntry *) lfirst(temp);
+		Expr	   *tlexpr = tlentry->expr;
+
+		while (tlexpr && IsA(tlexpr, RelabelType))
+			tlexpr = ((RelabelType *) tlexpr)->arg;
+
+		if (equal(node, tlexpr))
+			return tlentry;
+	}
+	return NULL;
+}
+#endif
 
 /* Is tlist 'a' subset of tlist 'b'? (in terms of Vars) */
 static bool
@@ -364,11 +400,19 @@ canonicalize_custom_exprs_mutator(Node *node, void *cxt)
 		Var *var = palloc(sizeof(Var));
 		*var = *(Var *) node;
 
+#if PG_VERSION_NUM >= 130000
+/*
+ * In >=13 (9ce77d75c5) varnoold and varoattno were changed to varnosyn and
+ * varattnosyn, and they are not consulted in _equalVar anymore.
+ */
+		var->varattno = var->varattnosyn;
+#else
 		/* Replace original 'varnoold' */
 		var->varnoold = INDEX_VAR;
 
 		/* Restore original 'varattno' */
 		var->varattno = var->varoattno;
+#endif
 
 		return (Node *) var;
 	}
@@ -557,7 +601,10 @@ create_append_plan_common(PlannerInfo *root, RelOptInfo *rel,
 	CustomScan		   *cscan;
 
 	prel = get_pathman_relation_info(rpath->relid);
-	Assert(prel);
+	if (!prel)
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("table \"%s\" is not partitioned",
+							   get_rel_name_or_relid(rpath->relid))));
 
 	cscan = makeNode(CustomScan);
 	cscan->custom_scan_tlist = NIL; /* initial value (empty list) */
@@ -665,7 +712,15 @@ begin_append_common(CustomScanState *node, EState *estate, int eflags)
 #endif
 
 	scan_state->prel = get_pathman_relation_info(scan_state->relid);
-	Assert(scan_state->prel);
+	/*
+	 * scan_state->prel can be NULL in case execution of prepared query that
+	 * was prepared before DROP/CREATE EXTENSION pg_pathman or after
+	 * pathman_config table truncation etc.
+	 */
+	if (!scan_state->prel)
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("table \"%s\" is not partitioned",
+							   get_rel_name_or_relid(scan_state->relid))));
 
 	/* Prepare expression according to set_set_customscan_references() */
 	scan_state->prel_expr = PrelExpressionForRelid(scan_state->prel, INDEX_VAR);
@@ -822,9 +877,18 @@ explain_append_common(CustomScanState *node,
 	char *exprstr;
 
 	/* Set up deparsing context */
+#if PG_VERSION_NUM >= 130000
+/*
+ * Since 6ef77cf46e8
+ */
+	deparse_context = set_deparse_context_plan(es->deparse_cxt,
+													node->ss.ps.plan,
+													ancestors);
+#else
 	deparse_context = set_deparse_context_planstate(es->deparse_cxt,
 													(Node *) node,
 													ancestors);
+#endif
 
 	/* Deparse the expression */
 	exprstr = deparse_expression((Node *) make_ands_explicit(custom_exprs),

@@ -3,7 +3,7 @@
  * partition_filter.h
  *		Select partition for INSERT operation
  *
- * Copyright (c) 2016, Postgres Professional
+ * Copyright (c) 2016-2020, Postgres Professional
  *
  * ------------------------------------------------------------------------
  */
@@ -31,7 +31,13 @@
 #define ERR_PART_ATTR_NULL				"partitioning expression's value should not be NULL"
 #define ERR_PART_ATTR_NO_PART			"no suitable partition for key '%s'"
 #define ERR_PART_ATTR_MULTIPLE			INSERT_NODE_NAME " selected more than one partition"
+#if PG_VERSION_NUM < 130000
+/*
+ * In >=13 msg parameter in convert_tuples_by_name function was removed (fe66125974c)
+ * and ERR_PART_DESC_CONVERT become unusable
+ */
 #define ERR_PART_DESC_CONVERT			"could not convert row type for partition"
+#endif
 
 
 /*
@@ -42,6 +48,7 @@ typedef struct
 	Oid					partid;					/* partition's relid */
 	ResultRelInfo	   *result_rel_info;		/* cached ResultRelInfo */
 	TupleConversionMap *tuple_map;				/* tuple mapping (parent => child) */
+	TupleConversionMap *tuple_map_child;		/* tuple mapping (child => child), for exclude 'ctid' */
 
 	PartRelationInfo   *prel;					/* this child might be a parent... */
 	ExprState		   *prel_expr_state;		/* and have its own part. expression */
@@ -94,6 +101,9 @@ struct ResultPartsStorage
 	PartRelationInfo   *prel;
 	ExprState		   *prel_expr_state;
 	ExprContext		   *prel_econtext;
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+	ResultRelInfo	   *init_rri;				/* first initialized ResultRelInfo */
+#endif
 };
 
 typedef struct
@@ -109,6 +119,11 @@ typedef struct
 	CmdType				command_type;
 
 	TupleTableSlot	   *tup_convert_slot;		/* slot for rebuilt tuples */
+
+#if PG_VERSION_NUM >= 160000 /* for commit 178ee1d858 */
+	Index				parent_rti;				/* Parent RT index for use of EXPLAIN,
+												   see "ModifyTable::nominalRelation" */
+#endif
 } PartitionFilterState;
 
 
@@ -160,22 +175,26 @@ void init_result_parts_storage(ResultPartsStorage *parts_storage,
 void fini_result_parts_storage(ResultPartsStorage *parts_storage);
 
 /* Find ResultRelInfo holder in storage */
-ResultRelInfoHolder * scan_result_parts_storage(ResultPartsStorage *storage, Oid partid);
+ResultRelInfoHolder * scan_result_parts_storage(EState *estate, ResultPartsStorage *storage, Oid partid);
 
 /* Refresh PartRelationInfo in storage */
 PartRelationInfo * refresh_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid);
 
 TupleConversionMap * build_part_tuple_map(Relation parent_rel, Relation child_rel);
 
-List * pfilter_build_tlist(Plan *subplan);
+TupleConversionMap * build_part_tuple_map_child(Relation child_rel);
 
+void destroy_tuple_map(TupleConversionMap *tuple_map);
+
+List * pfilter_build_tlist(Plan *subplan, Index varno);
 
 /* Find suitable partition using 'value' */
 Oid * find_partitions_for_value(Datum value, Oid value_type,
 								const PartRelationInfo *prel,
 								int *nparts);
 
-ResultRelInfoHolder *select_partition_for_insert(ResultPartsStorage *parts_storage,
+ResultRelInfoHolder *select_partition_for_insert(EState *estate,
+												 ResultPartsStorage *parts_storage,
 												 TupleTableSlot *slot);
 
 Plan * make_partition_filter(Plan *subplan,

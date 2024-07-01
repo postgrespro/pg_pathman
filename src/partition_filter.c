@@ -3,7 +3,7 @@
  * partition_filter.c
  *		Select partition for INSERT operation
  *
- * Copyright (c) 2016, Postgres Professional
+ * Copyright (c) 2016-2020, Postgres Professional
  *
  * ------------------------------------------------------------------------
  */
@@ -14,6 +14,7 @@
 #include "pathman.h"
 #include "partition_creation.h"
 #include "partition_filter.h"
+#include "partition_router.h"
 #include "utils.h"
 
 #include "access/htup_details.h"
@@ -26,6 +27,9 @@
 #include "foreign/fdwapi.h"
 #include "foreign/foreign.h"
 #include "nodes/nodeFuncs.h"
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+#include "parser/parse_relation.h"
+#endif
 #include "rewrite/rewriteManip.h"
 #include "utils/guc.h"
 #include "utils/memutils.h"
@@ -233,18 +237,14 @@ fini_result_parts_storage(ResultPartsStorage *parts_storage)
 		{
 			ExecCloseIndices(rri_holder->result_rel_info);
 			/* And relation itself */
-			heap_close(rri_holder->result_rel_info->ri_RelationDesc,
+			heap_close_compat(rri_holder->result_rel_info->ri_RelationDesc,
 				   NoLock);
 		}
 
 		/* Free conversion-related stuff */
-		if (rri_holder->tuple_map)
-		{
-			FreeTupleDesc(rri_holder->tuple_map->indesc);
-			FreeTupleDesc(rri_holder->tuple_map->outdesc);
+		destroy_tuple_map(rri_holder->tuple_map);
 
-			free_conversion_map(rri_holder->tuple_map);
-		}
+		destroy_tuple_map(rri_holder->tuple_map_child);
 
 		/* Don't forget to close 'prel'! */
 		if (rri_holder->prel)
@@ -260,7 +260,8 @@ fini_result_parts_storage(ResultPartsStorage *parts_storage)
 
 /* Find a ResultRelInfo for the partition using ResultPartsStorage */
 ResultRelInfoHolder *
-scan_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid)
+scan_result_parts_storage(EState *estate, ResultPartsStorage *parts_storage,
+						  Oid partid)
 {
 #define CopyToResultRelInfo(field_name) \
 	( child_result_rel_info->field_name = parts_storage->base_rri->field_name )
@@ -283,6 +284,12 @@ scan_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid)
 		ResultRelInfo  *child_result_rel_info;
 		List		   *translated_vars;
 		MemoryContext	old_mcxt;
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+		RTEPermissionInfo *parent_perminfo,
+						  *child_perminfo;
+		/* ResultRelInfo of partitioned table. */
+		RangeTblEntry  *init_rte;
+#endif
 
 		/* Lock partition and check if it exists */
 		LockRelationOid(partid, parts_storage->head_open_lock_mode);
@@ -307,10 +314,7 @@ scan_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid)
 		base_rel = parts_storage->base_rri->ri_RelationDesc;
 
 		/* Open child relation and check if it is a valid target */
-		child_rel = heap_open(partid, NoLock);
-
-		/* Build Var translation list for 'inserted_cols' */
-		make_inh_translation_list(base_rel, child_rel, 0, &translated_vars);
+		child_rel = heap_open_compat(partid, NoLock);
 
 		/* Create RangeTblEntry for partition */
 		child_rte = makeNode(RangeTblEntry);
@@ -318,6 +322,35 @@ scan_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid)
 		child_rte->relid			= partid;
 		child_rte->relkind			= child_rel->rd_rel->relkind;
 		child_rte->eref				= parent_rte->eref;
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+		/* Build Var translation list for 'inserted_cols' */
+		make_inh_translation_list(parts_storage->init_rri->ri_RelationDesc,
+								  child_rel, 0, &translated_vars, NULL);
+
+		/*
+		 * Need to use ResultRelInfo of partitioned table 'init_rri' because
+		 * 'base_rri' can be ResultRelInfo of partition without any
+		 * ResultRelInfo, see expand_single_inheritance_child().
+		 */
+		init_rte = rt_fetch(parts_storage->init_rri->ri_RangeTableIndex,
+							parts_storage->estate->es_range_table);
+		parent_perminfo = getRTEPermissionInfo(estate->es_rteperminfos, init_rte);
+
+		child_rte->perminfoindex = 0;	/* expected by addRTEPermissionInfo() */
+		child_perminfo = addRTEPermissionInfo(&estate->es_rteperminfos, child_rte);
+		child_perminfo->requiredPerms	= parent_perminfo->requiredPerms;
+		child_perminfo->checkAsUser		= parent_perminfo->checkAsUser;
+		child_perminfo->insertedCols	= translate_col_privs(parent_perminfo->insertedCols,
+															  translated_vars);
+		child_perminfo->updatedCols		= translate_col_privs(parent_perminfo->updatedCols,
+															  translated_vars);
+
+		/* Check permissions for one partition */
+		ExecCheckOneRtePermissions(child_rte, child_perminfo, true);
+#else
+		/* Build Var translation list for 'inserted_cols' */
+		make_inh_translation_list(base_rel, child_rel, 0, &translated_vars, NULL);
+
 		child_rte->requiredPerms	= parent_rte->requiredPerms;
 		child_rte->checkAsUser		= parent_rte->checkAsUser;
 		child_rte->insertedCols		= translate_col_privs(parent_rte->insertedCols,
@@ -327,6 +360,7 @@ scan_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid)
 
 		/* Check permissions for partition */
 		ExecCheckRTPerms(list_make1(child_rte), true);
+#endif
 
 		/* Append RangeTblEntry to estate->es_range_table */
 		child_rte_idx = append_rte_to_estate(parts_storage->estate, child_rte, child_rel);
@@ -353,10 +387,13 @@ scan_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid)
 		CopyToResultRelInfo(ri_onConflictSetWhere);
 #endif
 
+#if PG_VERSION_NUM < 140000
+		/* field "ri_junkFilter" removed in 86dc90056dfd */
 		if (parts_storage->command_type != CMD_UPDATE)
 			CopyToResultRelInfo(ri_junkFilter);
 		else
 			child_result_rel_info->ri_junkFilter = NULL;
+#endif
 
 		/* ri_ConstraintExprs will be initialized by ExecRelCheck() */
 		child_result_rel_info->ri_ConstraintExprs = NULL;
@@ -376,6 +413,13 @@ scan_result_parts_storage(ResultPartsStorage *parts_storage, Oid partid)
 		 * the drop.
 		 */
 		rri_holder->tuple_map = build_part_tuple_map(base_rel, child_rel);
+
+		/*
+		 * Field for child->child tuple transformation map. We need to
+		 * convert tuples because child TupleDesc might have extra
+		 * columns ('ctid' etc.) and need remove them.
+		 */
+		rri_holder->tuple_map_child = NULL;
 
 		/* Default values */
 		rri_holder->prel = NULL;
@@ -450,7 +494,7 @@ build_part_tuple_map(Relation base_rel, Relation child_rel)
 	parent_tupdesc->tdtypeid = InvalidOid;
 
 	/* Generate tuple transformation map and some other stuff */
-	tuple_map = convert_tuples_by_name(parent_tupdesc,
+	tuple_map = convert_tuples_by_name_compat(parent_tupdesc,
 									   child_tupdesc,
 									   ERR_PART_DESC_CONVERT);
 
@@ -464,6 +508,75 @@ build_part_tuple_map(Relation base_rel, Relation child_rel)
 	return tuple_map;
 }
 
+/*
+ * Build tuple conversion map (e.g. partition tuple has extra column(s)).
+ * We create a special tuple map (tuple_map_child), which, when applied to the
+ * tuple of partition, translates the tuple attributes into the tuple
+ * attributes of the same partition, discarding service attributes like "ctid"
+ * (i.e. working like junkFilter).
+ */
+TupleConversionMap *
+build_part_tuple_map_child(Relation child_rel)
+{
+	TupleConversionMap *tuple_map;
+	TupleDesc           child_tupdesc1;
+	TupleDesc           child_tupdesc2;
+	int                 n;
+#if PG_VERSION_NUM >= 130000
+	AttrMap            *attrMap;
+#else
+	AttrNumber         *attrMap;
+#endif
+
+	child_tupdesc1 = CreateTupleDescCopy(RelationGetDescr(child_rel));
+	child_tupdesc1->tdtypeid = InvalidOid;
+
+	child_tupdesc2 = CreateTupleDescCopy(RelationGetDescr(child_rel));
+	child_tupdesc2->tdtypeid = InvalidOid;
+
+	/* Generate tuple transformation map */
+#if PG_VERSION_NUM >= 160000 /* for commit ad86d159b6ab */
+	attrMap = build_attrmap_by_name(child_tupdesc1, child_tupdesc2, false);
+#elif PG_VERSION_NUM >= 130000
+	attrMap = build_attrmap_by_name(child_tupdesc1, child_tupdesc2);
+#else
+	attrMap = convert_tuples_by_name_map(child_tupdesc1, child_tupdesc2,
+										 ERR_PART_DESC_CONVERT);
+#endif
+
+	/* Prepare the map structure */
+	tuple_map = (TupleConversionMap *) palloc(sizeof(TupleConversionMap));
+	tuple_map->indesc = child_tupdesc1;
+	tuple_map->outdesc = child_tupdesc2;
+	tuple_map->attrMap = attrMap;
+
+	/* preallocate workspace for Datum arrays */
+	n = child_tupdesc1->natts;
+	tuple_map->outvalues = (Datum *) palloc(n * sizeof(Datum));
+	tuple_map->outisnull = (bool *) palloc(n * sizeof(bool));
+
+	n = child_tupdesc1->natts + 1; /* +1 for NULL */
+	tuple_map->invalues = (Datum *) palloc(n * sizeof(Datum));
+	tuple_map->inisnull = (bool *) palloc(n * sizeof(bool));
+
+	tuple_map->invalues[0] = (Datum) 0; /* set up the NULL entry */
+	tuple_map->inisnull[0] = true;
+
+	return tuple_map;
+}
+
+/* Destroy tuple conversion map */
+void
+destroy_tuple_map(TupleConversionMap *tuple_map)
+{
+	if (tuple_map)
+	{
+		FreeTupleDesc(tuple_map->indesc);
+		FreeTupleDesc(tuple_map->outdesc);
+
+		free_conversion_map(tuple_map);
+	}
+}
 
 /*
  * -----------------------------------
@@ -512,7 +625,8 @@ find_partitions_for_value(Datum value, Oid value_type,
  * Smart wrapper for scan_result_parts_storage().
  */
 ResultRelInfoHolder *
-select_partition_for_insert(ResultPartsStorage *parts_storage,
+select_partition_for_insert(EState *estate,
+							ResultPartsStorage *parts_storage,
 							TupleTableSlot *slot)
 {
 	PartRelationInfo	   *prel = parts_storage->prel;
@@ -563,7 +677,7 @@ select_partition_for_insert(ResultPartsStorage *parts_storage,
 		else partition_relid = parts[0];
 
 		/* Get ResultRelationInfo holder for the selected partition */
-		result = scan_result_parts_storage(parts_storage, partition_relid);
+		result = scan_result_parts_storage(estate, parts_storage, partition_relid);
 
 		/* Somebody has dropped or created partitions */
 		if ((nparts == 0 || result == NULL) && !PrelIsFresh(prel))
@@ -592,6 +706,10 @@ select_partition_for_insert(ResultPartsStorage *parts_storage,
 	return result;
 }
 
+/*
+ * Since 13 (e1551f96e64) AttrNumber[] and map_length was combined
+ * into one struct AttrMap
+ */
 static ExprState *
 prepare_expr_state(const PartRelationInfo *prel,
 				   Relation source_rel,
@@ -610,26 +728,44 @@ prepare_expr_state(const PartRelationInfo *prel,
 	/* Should we try using map? */
 	if (PrelParentRelid(prel) != RelationGetRelid(source_rel))
 	{
+#if PG_VERSION_NUM >= 130000
+		AttrMap	   *map;
+#else
 		AttrNumber	   *map;
 		int				map_length;
+#endif
 		TupleDesc		source_tupdesc = RelationGetDescr(source_rel);
 
 		/* Remap expression attributes for source relation */
+#if PG_VERSION_NUM >= 130000
+		map = PrelExpressionAttributesMap(prel, source_tupdesc);
+#else
 		map = PrelExpressionAttributesMap(prel, source_tupdesc, &map_length);
+#endif
 
 		if (map)
 		{
 			bool found_whole_row;
 
+#if PG_VERSION_NUM >= 130000
+			expr = map_variable_attnos(expr, PART_EXPR_VARNO, 0, map,
+											  InvalidOid,
+											  &found_whole_row);
+#else
 			expr = map_variable_attnos_compat(expr, PART_EXPR_VARNO, 0, map,
 											  map_length, InvalidOid,
 											  &found_whole_row);
+#endif
 
 			if (found_whole_row)
 				elog(ERROR, "unexpected whole-row reference"
 							" found in partition key");
 
+#if PG_VERSION_NUM >= 130000
+			free_attrmap(map);
+#else
 			pfree(map);
+#endif
 		}
 	}
 
@@ -676,17 +812,21 @@ make_partition_filter(Plan *subplan,
 	cscan->scan.scanrelid = 0;
 
 	/* Build an appropriate target list */
-	cscan->scan.plan.targetlist = pfilter_build_tlist(subplan);
-
-	/* Prepare 'custom_scan_tlist' for EXPLAIN (VERBOSE) */
-	cscan->custom_scan_tlist = copyObject(cscan->scan.plan.targetlist);
-	ChangeVarNodes((Node *) cscan->custom_scan_tlist, INDEX_VAR, parent_rti, 0);
+	cscan->scan.plan.targetlist = pfilter_build_tlist(subplan, parent_rti);
 
 	/* Pack partitioned table's Oid and conflict_action */
+#if PG_VERSION_NUM >= 160000 /* for commit 178ee1d858 */
+	cscan->custom_private = list_make5(makeInteger(parent_relid),
+									   makeInteger(conflict_action),
+									   returning_list,
+									   makeInteger(command_type),
+									   makeInteger(parent_rti));
+#else
 	cscan->custom_private = list_make4(makeInteger(parent_relid),
 									   makeInteger(conflict_action),
 									   returning_list,
 									   makeInteger(command_type));
+#endif
 
 	return &cscan->scan.plan;
 }
@@ -709,6 +849,9 @@ partition_filter_create_scan_state(CustomScan *node)
 	state->on_conflict_action	= intVal(lsecond(node->custom_private));
 	state->returning_list		= (List *) lthird(node->custom_private);
 	state->command_type			= (CmdType) intVal(lfourth(node->custom_private));
+#if PG_VERSION_NUM >= 160000 /* for commit 178ee1d858 */
+	state->parent_rti			= (Index) intVal(lfirst(list_nth_cell(node->custom_private, 4)));
+#endif
 
 	/* Check boundaries */
 	Assert(state->on_conflict_action >= ONCONFLICT_NONE ||
@@ -741,7 +884,54 @@ partition_filter_begin(CustomScanState *node, EState *estate, int eflags)
 							  state->on_conflict_action != ONCONFLICT_NONE,
 							  RPS_RRI_CB(prepare_rri_for_insert, state),
 							  RPS_RRI_CB(NULL, NULL));
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+	/* ResultRelInfo of partitioned table. */
+	{
+		RangeTblEntry *rte = rt_fetch(current_rri->ri_RangeTableIndex,	estate->es_range_table);
+
+		if (rte->perminfoindex > 0)
+			state->result_parts.init_rri = current_rri;
+		else
+		{
+			/*
+			 * Additional changes for 178ee1d858d: we cannot use current_rri
+			 * because RTE for this ResultRelInfo has perminfoindex = 0. Need
+			 * to use parent_rti (modify_table->nominalRelation) instead.
+			 */
+			Assert(state->parent_rti > 0);
+			state->result_parts.init_rri = estate->es_result_relations[state->parent_rti - 1];
+			if (!state->result_parts.init_rri)
+				elog(ERROR, "cannot determine result info for partitioned table");
+		}
+	}
+#endif
 }
+
+#if PG_VERSION_NUM >= 140000
+/*
+ * Re-initialization of PartitionFilterState for using new partition with new
+ * "current_rri"
+ */
+static void
+reint_partition_filter_state(PartitionFilterState *state, ResultRelInfo *current_rri)
+{
+	Oid     parent_relid = state->partitioned_table;
+	EState *estate = state->result_parts.estate;
+
+	fini_result_parts_storage(&state->result_parts);
+
+	state->returning_list = current_rri->ri_returningList;
+
+	/* Init ResultRelInfo cache */
+	init_result_parts_storage(&state->result_parts,
+							  parent_relid, current_rri,
+							  estate, state->command_type,
+							  RPS_SKIP_RELATIONS,
+							  state->on_conflict_action != ONCONFLICT_NONE,
+							  RPS_RRI_CB(prepare_rri_for_insert, state),
+							  RPS_RRI_CB(NULL, NULL));
+}
+#endif
 
 TupleTableSlot *
 partition_filter_exec(CustomScanState *node)
@@ -760,12 +950,31 @@ partition_filter_exec(CustomScanState *node)
 		MemoryContext			old_mcxt;
 		ResultRelInfoHolder	   *rri_holder;
 		ResultRelInfo		   *rri;
+		JunkFilter			   *junkfilter = NULL;
+#if PG_VERSION_NUM >= 140000
+		PartitionRouterState   *pr_state = linitial(node->custom_ps);
+
+		/*
+		 * For 14: in case UPDATE command, we can scanning several partitions
+		 * in one plan. Need to switch context each time partition is switched.
+		 */
+		if (IsPartitionRouterState(pr_state) &&
+			state->result_parts.base_rri != pr_state->current_rri)
+		{	/*
+			 * Slot switched to new partition: need to
+			 * reinitialize some PartitionFilterState variables
+			 */
+			reint_partition_filter_state(state, pr_state->current_rri);
+		}
+#else
+		junkfilter = estate->es_result_relation_info->ri_junkFilter;
+#endif
 
 		/* Switch to per-tuple context */
 		old_mcxt = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 
 		/* Search for a matching partition */
-		rri_holder = select_partition_for_insert(&state->result_parts, slot);
+		rri_holder = select_partition_for_insert(estate, &state->result_parts, slot);
 
 		/* Switch back and clean up per-tuple context */
 		MemoryContextSwitchTo(old_mcxt);
@@ -776,18 +985,58 @@ partition_filter_exec(CustomScanState *node)
 		/* Magic: replace parent's ResultRelInfo with ours */
 		estate->es_result_relation_info = rri;
 
+		/*
+		 * Besides 'transform map' we should process two cases:
+		 * 1) CMD_UPDATE, row moved to other partition, junkfilter == NULL
+		 *    (filled in router_set_slot() for SELECT + INSERT);
+		 *    we should clear attribute 'ctid' (do not insert it into database);
+		 * 2) CMD_INSERT/CMD_UPDATE operations for partitions with deleted column(s),
+		 *    junkfilter == NULL.
+		 */
 		/* If there's a transform map, rebuild the tuple */
-		if (rri_holder->tuple_map)
+		if (rri_holder->tuple_map ||
+			(!junkfilter &&
+			 (state->command_type == CMD_INSERT || state->command_type == CMD_UPDATE) &&
+			 (slot->tts_tupleDescriptor->natts > rri->ri_RelationDesc->rd_att->natts /* extra fields */
+#if PG_VERSION_NUM < 120000
+				/*
+				 * If we have a regular physical tuple 'slot->tts_tuple' and
+				 * it's locally palloc'd => we will use this tuple in
+				 * ExecMaterializeSlot() instead of materialize the slot, so
+				 * need to check number of attributes for this tuple:
+				 */
+				|| (slot->tts_tuple && slot->tts_shouldFree &&
+					HeapTupleHeaderGetNatts(slot->tts_tuple->t_data) >
+						rri->ri_RelationDesc->rd_att->natts /* extra fields */)
+#endif
+				 )))
 		{
-			Relation	child_rel = rri->ri_RelationDesc;
-
-			/* xxx why old code decided to materialize it? */
 #if PG_VERSION_NUM < 120000
 			HeapTuple	htup_old,
 						htup_new;
+#endif
+			Relation	child_rel = rri->ri_RelationDesc;
+			TupleConversionMap *tuple_map;
 
+			if (rri_holder->tuple_map)
+				tuple_map = rri_holder->tuple_map;
+			else
+			{
+				if (!rri_holder->tuple_map_child)
+				{	/*
+					 * Generate child->child tuple transformation map. We need to
+					 * convert tuples because child TupleDesc has extra
+					 * columns ('ctid' etc.) and need remove them.
+					 */
+					rri_holder->tuple_map_child = build_part_tuple_map_child(child_rel);
+				}
+				tuple_map = rri_holder->tuple_map_child;
+			}
+
+			/* xxx why old code decided to materialize it? */
+#if PG_VERSION_NUM < 120000
 			htup_old = ExecMaterializeSlot(slot);
-			htup_new = do_convert_tuple(htup_old, rri_holder->tuple_map);
+			htup_new = do_convert_tuple(htup_old, tuple_map);
 			ExecClearTuple(slot);
 #endif
 
@@ -804,7 +1053,7 @@ partition_filter_exec(CustomScanState *node)
 			/* TODO: why should we *always* set a new slot descriptor? */
 			ExecSetSlotDescriptor(state->tup_convert_slot, RelationGetDescr(child_rel));
 #if PG_VERSION_NUM >= 120000
-			slot = execute_attr_map_slot(rri_holder->tuple_map->attrMap, slot, state->tup_convert_slot);
+			slot = execute_attr_map_slot(tuple_map->attrMap, slot, state->tup_convert_slot);
 #else
 			slot = ExecStoreTuple(htup_new, state->tup_convert_slot, InvalidBuffer, true);
 #endif
@@ -850,7 +1099,7 @@ partition_filter_explain(CustomScanState *node, List *ancestors, ExplainState *e
  * Build partition filter's target list pointing to subplan tuple's elements.
  */
 List *
-pfilter_build_tlist(Plan *subplan)
+pfilter_build_tlist(Plan *subplan, Index varno)
 {
 	List	   *result_tlist = NIL;
 	ListCell   *lc;
@@ -870,7 +1119,7 @@ pfilter_build_tlist(Plan *subplan)
 		}
 		else
 		{
-			Var *var = makeVar(INDEX_VAR,	/* point to subplan's elements */
+			Var *var = makeVar(varno,	/* point to subplan's elements */
 							   tle->resno,
 							   exprType((Node *) tle->expr),
 							   exprTypmod((Node *) tle->expr),
@@ -994,6 +1243,7 @@ prepare_rri_fdw_for_insert(ResultRelInfoHolder *rri_holder,
 							elog(ERROR,
 								 "FDWs other than postgres_fdw are restricted");
 
+							break;
 						case PF_FDW_INSERT_ANY_FDW:
 							elog(WARNING,
 								 "unrestricted FDW mode may lead to crashes");
@@ -1041,6 +1291,14 @@ prepare_rri_fdw_for_insert(ResultRelInfoHolder *rri_holder,
 		query.targetList		= NIL;
 		query.returningList		= NIL;
 
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+		/*
+		 * Copy the RTEPermissionInfos into query as well, so that
+		 * add_rte_to_flat_rtable() will work correctly.
+		 */
+		query.rteperminfos = estate->es_rteperminfos;
+#endif
+
 		/* Generate 'query.targetList' using 'tupdesc' */
 		target_attr = 1;
 		for (i = 0; i < tupdesc->natts; i++)
@@ -1073,7 +1331,11 @@ prepare_rri_fdw_for_insert(ResultRelInfoHolder *rri_holder,
 
 		/* HACK: plan a fake query for FDW access to be planned as well */
 		elog(DEBUG1, "FDW(%u): plan fake query for fdw_private", partid);
+#if PG_VERSION_NUM >= 130000
+		plan = standard_planner(&query, NULL, 0, NULL);
+#else
 		plan = standard_planner(&query, 0, NULL);
+#endif
 
 		/* HACK: create a fake PlanState */
 		memset(&pstate, 0, sizeof(PlanState));
@@ -1085,9 +1347,18 @@ prepare_rri_fdw_for_insert(ResultRelInfoHolder *rri_holder,
 		NodeSetTag(&mtstate, T_ModifyTableState);
 		mtstate.ps.state = estate;
 		mtstate.operation = CMD_INSERT;
+#if PG_VERSION_NUM >= 140000
+		/*
+		 * Some fields ("mt_plans", "mt_nplans", "mt_whichplan") removed
+		 * in 86dc90056dfd
+		 */
+		outerPlanState(&mtstate.ps) = pstate_ptr;
+		mtstate.mt_nrels = 1;
+#else
 		mtstate.mt_plans = &pstate_ptr;
 		mtstate.mt_nplans = 1;
 		mtstate.mt_whichplan = 0;
+#endif
 		mtstate.resultRelInfo = rri;
 #if PG_VERSION_NUM < 110000
 		mtstate.mt_onconflict = ONCONFLICT_NONE;
@@ -1147,7 +1418,11 @@ fix_returning_list_mutator(Node *node, void *state)
 			for (i = 0; i < rri_holder->tuple_map->outdesc->natts; i++)
 			{
 				/* Good, 'varattno' of parent is child's 'i+1' */
+#if PG_VERSION_NUM >= 130000
+				if (var->varattno == rri_holder->tuple_map->attrMap->attnums[i])
+#else
 				if (var->varattno == rri_holder->tuple_map->attrMap[i])
+#endif
 				{
 					var->varattno = i + 1; /* attnos begin with 1 */
 					found_mapping = true;
@@ -1189,19 +1464,25 @@ append_rte_to_estate(EState *estate, RangeTblEntry *rte, Relation child_rel)
 	/* Update estate_mod_data */
 	emd_struct->estate_not_modified = false;
 
-	/*
-	 * On PG >= 12, also add rte to es_range_table_array. This is horribly
-	 * inefficient, yes.
-	 * At least in 12 es_range_table_array ptr is not saved anywhere in
-	 * core, so it is safe to repalloc.
-	 */
 #if PG_VERSION_NUM >= 120000
 	estate->es_range_table_size = list_length(estate->es_range_table);
+#endif
+#if PG_VERSION_NUM >= 120000 && PG_VERSION_NUM < 130000
+	/*
+	 * On PG = 12, also add rte to es_range_table_array. This is horribly
+	 * inefficient, yes.
+	 * In 12 es_range_table_array ptr is not saved anywhere in
+	 * core, so it is safe to repalloc.
+	 *
+	 * In >= 13 (3c92658) es_range_table_array was removed
+	 */
 	estate->es_range_table_array = (RangeTblEntry **)
 		repalloc(estate->es_range_table_array,
 				 estate->es_range_table_size * sizeof(RangeTblEntry *));
 	estate->es_range_table_array[estate->es_range_table_size - 1] = rte;
+#endif
 
+#if PG_VERSION_NUM >= 120000
 	/*
 	 * Also reallocate es_relations, because es_range_table_size defines its
 	 * len. This also ensures ExecEndPlan will close the rel.
@@ -1218,9 +1499,40 @@ append_rte_to_estate(EState *estate, RangeTblEntry *rte, Relation child_rel)
 static int
 append_rri_to_estate(EState *estate, ResultRelInfo *rri)
 {
-	estate_mod_data	   *emd_struct = fetch_estate_mod_data(estate);
-	int					result_rels_allocated = emd_struct->estate_alloc_result_rels;
+	estate_mod_data *emd_struct = fetch_estate_mod_data(estate);
+	int	result_rels_allocated = emd_struct->estate_alloc_result_rels;
+#if PG_VERSION_NUM >= 140000 /* reworked in commit a04daa97a433 */
+	ResultRelInfo **rri_array = estate->es_result_relations;
 
+	/*
+	 * We already increased variable "estate->es_range_table_size" in previous
+	 * call append_rte_to_estate(): see
+	 * "estate->es_range_table_size = list_length(estate->es_range_table)"
+	 * after "lappend(estate->es_range_table, rte)". So we should append
+	 * new value in "estate->es_result_relations" only.
+	 */
+
+	/* Reallocate estate->es_result_relations if needed */
+	if (result_rels_allocated < estate->es_range_table_size)
+	{
+		result_rels_allocated = result_rels_allocated * ALLOC_EXP + 1;
+		estate->es_result_relations = palloc(result_rels_allocated *
+											 sizeof(ResultRelInfo *));
+		memcpy(estate->es_result_relations,
+			   rri_array,
+			   (estate->es_range_table_size - 1) * sizeof(ResultRelInfo *));
+	}
+
+	estate->es_result_relations[estate->es_range_table_size - 1] = rri;
+
+	estate->es_opened_result_relations = lappend(estate->es_opened_result_relations, rri);
+
+	/* Update estate_mod_data */
+	emd_struct->estate_alloc_result_rels = result_rels_allocated;
+	emd_struct->estate_not_modified = false;
+
+	return estate->es_range_table_size;
+#else
 	/* Reallocate estate->es_result_relations if needed */
 	if (result_rels_allocated <= estate->es_num_result_relations)
 	{
@@ -1247,6 +1559,7 @@ append_rri_to_estate(EState *estate, ResultRelInfo *rri)
 	emd_struct->estate_not_modified = false;
 
 	return estate->es_num_result_relations++;
+#endif
 }
 
 
@@ -1281,7 +1594,15 @@ fetch_estate_mod_data(EState *estate)
 	/* Have to create a new one */
 	emd_struct = MemoryContextAlloc(estate_mcxt, sizeof(estate_mod_data));
 	emd_struct->estate_not_modified = true;
+#if PG_VERSION_NUM >= 140000
+	/*
+	 * Reworked in commit a04daa97a433: field "es_num_result_relations"
+	 * removed
+	 */
+	emd_struct->estate_alloc_result_rels = estate->es_range_table_size;
+#else
 	emd_struct->estate_alloc_result_rels = estate->es_num_result_relations;
+#endif
 
 	cb = MemoryContextAlloc(estate_mcxt, sizeof(MemoryContextCallback));
 	cb->func = pf_memcxt_callback;

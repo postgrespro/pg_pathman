@@ -157,5 +157,6 @@ SELECT * FROM test;
 
 
 
-DROP SCHEMA test_cte CASCADE;
+DROP TABLE test_cte.recursive_cte_test_tbl CASCADE;
+DROP SCHEMA test_cte;
 DROP EXTENSION pg_pathman;

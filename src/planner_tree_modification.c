@@ -3,7 +3,7 @@
  * planner_tree_modification.c
  *		Functions for query- and plan- tree modification
  *
- * Copyright (c) 2016, Postgres Professional
+ * Copyright (c) 2016-2020, Postgres Professional
  * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -27,6 +27,9 @@
 #include "foreign/fdwapi.h"
 #include "miscadmin.h"
 #include "optimizer/clauses.h"
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+#include "parser/parse_relation.h"
+#endif
 #include "storage/lmgr.h"
 #include "utils/syscache.h"
 
@@ -119,8 +122,8 @@ static void handle_modification_query(Query *parse, transform_query_cxt *context
 static Plan *partition_filter_visitor(Plan *plan, void *context);
 static Plan *partition_router_visitor(Plan *plan, void *context);
 
-static void state_visit_subplans(List *plans, void (*visitor) (), void *context);
-static void state_visit_members(PlanState **planstates, int nplans, void (*visitor) (), void *context);
+static void state_visit_subplans(List *plans, void (*visitor) (PlanState *plan, void *context), void *context);
+static void state_visit_members(PlanState **planstates, int nplans, void (*visitor) (PlanState *plan, void *context), void *context);
 
 static Oid find_deepest_partition(Oid relid, Index rti, Expr *quals);
 static Node *eval_extern_params_mutator(Node *node, ParamListInfo params);
@@ -134,13 +137,13 @@ static bool modifytable_contains_fdw(List *rtable, ModifyTable *node);
  * id in order to recognize them properly.
  */
 #define QUERY_ID_INITIAL 0
-static uint32 latest_query_id = QUERY_ID_INITIAL;
+static uint64 latest_query_id = QUERY_ID_INITIAL;
 
 
 void
 assign_query_id(Query *query)
 {
-	uint32	prev_id = latest_query_id++;
+	uint64	prev_id = latest_query_id++;
 
 	if (prev_id > latest_query_id)
 		elog(WARNING, "assign_query_id(): queryId overflow");
@@ -184,10 +187,12 @@ plan_tree_visitor(Plan *plan,
 				plan_tree_visitor((Plan *) lfirst(l), visitor, context);
 			break;
 
+#if PG_VERSION_NUM < 140000 /* reworked in commit 86dc90056dfd */
 		case T_ModifyTable:
 			foreach (l, ((ModifyTable *) plan)->plans)
 				plan_tree_visitor((Plan *) lfirst(l), visitor, context);
 			break;
+#endif
 
 		case T_Append:
 			foreach (l, ((Append *) plan)->appendplans)
@@ -247,11 +252,13 @@ state_tree_visitor(PlanState *state,
 				state_tree_visitor((PlanState *) lfirst(lc), visitor, context);
 			break;
 
+#if PG_VERSION_NUM < 140000 /* reworked in commit 86dc90056dfd */
 		case T_ModifyTable:
 			state_visit_members(((ModifyTableState *) state)->mt_plans,
 								((ModifyTableState *) state)->mt_nplans,
 								visitor, context);
 			break;
+#endif
 
 		case T_Append:
 			state_visit_members(((AppendState *) state)->appendplans,
@@ -296,7 +303,7 @@ state_tree_visitor(PlanState *state,
  */
 static void
 state_visit_subplans(List *plans,
-					 void (*visitor) (),
+					 void (*visitor) (PlanState *plan, void *context),
 					 void *context)
 {
 	ListCell *lc;
@@ -304,7 +311,7 @@ state_visit_subplans(List *plans,
 	foreach (lc, plans)
 	{
 		SubPlanState *sps = lfirst_node(SubPlanState, lc);
-		visitor(sps->planstate, context);
+		state_tree_visitor(sps->planstate, visitor, context);
 	}
 }
 
@@ -314,12 +321,12 @@ state_visit_subplans(List *plans,
  */
 static void
 state_visit_members(PlanState **planstates, int nplans,
-					void (*visitor) (), void *context)
+					void (*visitor) (PlanState *plan, void *context), void *context)
 {
 	int i;
 
 	for (i = 0; i < nplans; i++)
-		visitor(planstates[i], context);
+		state_tree_visitor(planstates[i], visitor, context);
 }
 
 
@@ -487,7 +494,17 @@ disable_standard_inheritance(Query *parse, transform_query_cxt *context)
 		if (rte->rtekind != RTE_RELATION ||
 			rte->relkind != RELKIND_RELATION ||
 			parse->resultRelation == current_rti) /* is it a result relation? */
+		{
+#if PG_VERSION_NUM >= 150000 /* for commit 7103ebb7aae8 */
+			if (parse->commandType == CMD_MERGE &&
+				(rte->rtekind == RTE_RELATION ||
+				 rte->relkind == RELKIND_RELATION) &&
+				rte->inh && has_pathman_relation_info(rte->relid))
+				elog(ERROR, "pg_pathman doesn't support MERGE command yet");
+#endif
+
 			continue;
+		}
 
 		/* Table may be partitioned */
 		if (rte->inh)
@@ -560,6 +577,10 @@ handle_modification_query(Query *parse, transform_query_cxt *context)
 
 		List	   *translated_vars;
 		adjust_appendrel_varnos_cxt aav_cxt;
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+		RTEPermissionInfo *parent_perminfo,
+						  *child_perminfo;
+#endif
 
 		/* Lock 'child' table */
 		LockRelationOid(child, lockmode);
@@ -580,18 +601,32 @@ handle_modification_query(Query *parse, transform_query_cxt *context)
 			return; /* nothing to do here */
 		}
 
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+		parent_perminfo = getRTEPermissionInfo(parse->rteperminfos, rte);
+#endif
 		/* Update RTE's relid and relkind (for FDW) */
 		rte->relid   = child;
 		rte->relkind = child_relkind;
+
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+		/* Copy parent RTEPermissionInfo. */
+		rte->perminfoindex = 0;	/* expected by addRTEPermissionInfo() */
+		child_perminfo = addRTEPermissionInfo(&parse->rteperminfos, rte);
+		memcpy(child_perminfo, parent_perminfo, sizeof(RTEPermissionInfo));
+
+		/* Correct RTEPermissionInfo for child. */
+		child_perminfo->relid = child;
+		child_perminfo->inh = false;
+#endif
 
 		/* HACK: unset the 'inh' flag (no children) */
 		rte->inh = false;
 
 		/* Both tables are already locked */
-		child_rel  = heap_open(child,  NoLock);
-		parent_rel = heap_open(parent, NoLock);
+		child_rel  = heap_open_compat(child,  NoLock);
+		parent_rel = heap_open_compat(parent, NoLock);
 
-		make_inh_translation_list(parent_rel, child_rel, 0, &translated_vars);
+		make_inh_translation_list(parent_rel, child_rel, 0, &translated_vars, NULL);
 
 		/* Perform some additional adjustments */
 		if (!inh_translation_list_is_trivial(translated_vars))
@@ -604,15 +639,21 @@ handle_modification_query(Query *parse, transform_query_cxt *context)
 			aav_cxt.translated_vars	= translated_vars;
 			adjust_appendrel_varnos((Node *) parse, &aav_cxt);
 
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+			child_perminfo->selectedCols = translate_col_privs(parent_perminfo->selectedCols, translated_vars);
+			child_perminfo->insertedCols = translate_col_privs(parent_perminfo->insertedCols, translated_vars);
+			child_perminfo->updatedCols = translate_col_privs(parent_perminfo->updatedCols, translated_vars);
+#else
 			/* Translate column privileges for this child */
 			rte->selectedCols = translate_col_privs(rte->selectedCols, translated_vars);
 			rte->insertedCols = translate_col_privs(rte->insertedCols, translated_vars);
 			rte->updatedCols = translate_col_privs(rte->updatedCols, translated_vars);
+#endif
 		}
 
 		/* Close relations (should remain locked, though) */
-		heap_close(child_rel,  NoLock);
-		heap_close(parent_rel, NoLock);
+		heap_close_compat(child_rel,  NoLock);
+		heap_close_compat(parent_rel, NoLock);
 	}
 }
 
@@ -757,9 +798,19 @@ partition_filter_visitor(Plan *plan, void *context)
 {
 	List		   *rtable = (List *) context;
 	ModifyTable	   *modify_table = (ModifyTable *) plan;
+#if PG_VERSION_NUM >= 140000 /* for changes 86dc90056dfd */
+	/*
+	 * We have only one subplan for 14: need to modify it without
+	 * using any cycle
+	 */
+	Plan		   *subplan = outerPlan(modify_table);
+	ListCell	   *lc2,
+				   *lc3;
+#else
 	ListCell	   *lc1,
 				   *lc2,
 				   *lc3;
+#endif
 
 	/* Skip if not ModifyTable with 'INSERT' command */
 	if (!IsA(modify_table, ModifyTable) || modify_table->operation != CMD_INSERT)
@@ -768,8 +819,12 @@ partition_filter_visitor(Plan *plan, void *context)
 	Assert(rtable && IsA(rtable, List));
 
 	lc3 = list_head(modify_table->returningLists);
+#if PG_VERSION_NUM >= 140000 /* for changes 86dc90056dfd */
+	lc2 = list_head(modify_table->resultRelations);
+#else
 	forboth (lc1, modify_table->plans,
 			 lc2, modify_table->resultRelations)
+#endif
 	{
 		Index	rindex = lfirst_int(lc2);
 		Oid		relid = getrelid(rindex, rtable);
@@ -783,14 +838,24 @@ partition_filter_visitor(Plan *plan, void *context)
 			if (lc3)
 			{
 				returning_list = lfirst(lc3);
-				lc3 = lnext(lc3);
+#if PG_VERSION_NUM < 140000
+				lc3 = lnext_compat(modify_table->returningLists, lc3);
+#endif
 			}
 
+#if PG_VERSION_NUM >= 140000 /* for changes 86dc90056dfd */
+			outerPlan(modify_table) = make_partition_filter(subplan, relid,
+															modify_table->nominalRelation,
+															modify_table->onConflictAction,
+															modify_table->operation,
+															returning_list);
+#else
 			lfirst(lc1) = make_partition_filter((Plan *) lfirst(lc1), relid,
 												modify_table->nominalRelation,
 												modify_table->onConflictAction,
 												modify_table->operation,
 												returning_list);
+#endif
 		}
 	}
 
@@ -807,9 +872,19 @@ partition_router_visitor(Plan *plan, void *context)
 {
 	List		   *rtable = (List *) context;
 	ModifyTable	   *modify_table = (ModifyTable *) plan;
+#if PG_VERSION_NUM >= 140000 /* for changes 86dc90056dfd */
+	/*
+	 * We have only one subplan for 14: need to modify it without
+	 * using any cycle
+	 */
+	Plan		   *subplan = outerPlan(modify_table);
+	ListCell	   *lc2,
+				   *lc3;
+#else
 	ListCell	   *lc1,
 				   *lc2,
 				   *lc3;
+#endif
 	bool			changed = false;
 
 	/* Skip if not ModifyTable with 'UPDATE' command */
@@ -827,8 +902,12 @@ partition_router_visitor(Plan *plan, void *context)
 	}
 
 	lc3 = list_head(modify_table->returningLists);
+#if PG_VERSION_NUM >= 140000 /* for changes 86dc90056dfd */
+	lc2 = list_head(modify_table->resultRelations);
+#else
 	forboth (lc1, modify_table->plans,
 			 lc2, modify_table->resultRelations)
+#endif
 	{
 		Index	rindex = lfirst_int(lc2);
 		Oid		relid = getrelid(rindex, rtable),
@@ -849,11 +928,20 @@ partition_router_visitor(Plan *plan, void *context)
 			if (lc3)
 			{
 				returning_list = lfirst(lc3);
-				lc3 = lnext(lc3);
+#if PG_VERSION_NUM < 140000
+				lc3 = lnext_compat(modify_table->returningLists, lc3);
+#endif
 			}
 
+#if PG_VERSION_NUM >= 140000 /* for changes 86dc90056dfd */
+			prouter = make_partition_router(subplan,
+											modify_table->epqParam,
+											modify_table->nominalRelation);
+#else
 			prouter = make_partition_router((Plan *) lfirst(lc1),
-											modify_table->epqParam);
+											modify_table->epqParam,
+											modify_table->nominalRelation);
+#endif
 
 			pfilter = make_partition_filter((Plan *) prouter, relid,
 											modify_table->nominalRelation,
@@ -861,7 +949,11 @@ partition_router_visitor(Plan *plan, void *context)
 											CMD_UPDATE,
 											returning_list);
 
+#if PG_VERSION_NUM >= 140000 /* for changes in 86dc90056dfd */
+			outerPlan(modify_table) = pfilter;
+#else
 			lfirst(lc1) = pfilter;
+#endif
 			changed = true;
 		}
 	}

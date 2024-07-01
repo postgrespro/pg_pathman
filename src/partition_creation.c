@@ -3,7 +3,7 @@
  * partition_creation.c
  *		Various functions for partition creation.
  *
- * Copyright (c) 2016, Postgres Professional
+ * Copyright (c) 2016-2020, Postgres Professional
  *
  *-------------------------------------------------------------------------
  */
@@ -42,6 +42,9 @@
 #include "parser/parse_utilcmd.h"
 #include "parser/parse_relation.h"
 #include "tcop/utility.h"
+#if PG_VERSION_NUM >= 130000
+#include "utils/acl.h"
+#endif
 #include "utils/builtins.h"
 #include "utils/datum.h"
 #include "utils/fmgroids.h"
@@ -89,8 +92,13 @@ static void postprocess_child_table_and_atts(Oid parent_relid, Oid partition_rel
 static Oid text_to_regprocedure(text *proname_args);
 
 static Constraint *make_constraint_common(char *name, Node *raw_expr);
-static Value make_string_value_struct(char *str);
+#if PG_VERSION_NUM >= 150000 /* for commit 639a86e36aae */
+static String make_string_value_struct(char *str);
+static Integer make_int_value_struct(int int_val);
+#else
+static Value make_string_value_struct(char* str);
 static Value make_int_value_struct(int int_val);
+#endif
 
 static Node *build_partitioning_expression(Oid parent_relid,
 										   Oid *expr_type,
@@ -247,11 +255,11 @@ create_single_partition_common(Oid parent_relid,
 	Relation	 child_relation;
 
 	/* Open the relation and add new check constraint & fkeys */
-	child_relation = heap_open(partition_relid, AccessExclusiveLock);
+	child_relation = heap_open_compat(partition_relid, AccessExclusiveLock);
 	AddRelationNewConstraintsCompat(child_relation, NIL,
 									list_make1(check_constraint),
 									false, true, true);
-	heap_close(child_relation, NoLock);
+	heap_close_compat(child_relation, NoLock);
 
 	/* Make constraint visible */
 	CommandCounterIncrement();
@@ -577,6 +585,7 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 		Oid			parent_nsp = get_rel_namespace(parent_relid);
 		char	   *parent_nsp_name = get_namespace_name(parent_nsp);
 		char	   *partition_name = choose_range_partition_name(parent_relid, parent_nsp);
+		char	   *pathman_schema;
 
 		/* Assign the 'following' boundary to current 'leading' value */
 		cur_following_bound = cur_leading_bound;
@@ -598,14 +607,19 @@ spawn_partitions_val(Oid parent_relid,				/* parent's Oid */
 
 		/* Get typname of range_bound_type to perform cast */
 		typeTuple = SearchSysCache1(TYPEOID, ObjectIdGetDatum(range_bound_type));
-		Assert(HeapTupleIsValid(typeTuple));
+		if (!HeapTupleIsValid(typeTuple))
+			elog(ERROR, "cache lookup failed for type %u", range_bound_type);
 		typname = pstrdup(NameStr(((Form_pg_type) GETSTRUCT(typeTuple))->typname));
 		ReleaseSysCache(typeTuple);
 
+		pathman_schema = get_namespace_name(get_pathman_schema());
+		if (pathman_schema == NULL)
+			elog(ERROR, "pg_pathman schema not initialized");
+
 		/* Construct call to create_single_range_partition() */
 		create_sql = psprintf(
-			"select %s.create_single_range_partition('%s.%s', '%s'::%s, '%s'::%s, '%s.%s')",
-			quote_identifier(get_namespace_name(get_pathman_schema())),
+			"select %s.create_single_range_partition('%s.%s'::regclass, '%s'::%s, '%s'::%s, '%s.%s', NULL::text)",
+			quote_identifier(pathman_schema),
 			quote_identifier(parent_nsp_name),
 			quote_identifier(get_rel_name(parent_relid)),
 			IsInfinite(&bounds[0]) ? "NULL" : datum_to_cstring(bounds[0].value, range_bound_type),
@@ -854,6 +868,37 @@ create_single_partition_internal(Oid parent_relid,
 		{
 			elog(ERROR, "FDW partition creation is not implemented yet");
 		}
+		/*
+		 * 3737965249cd fix (since 12.5, 11.10, etc) reworked LIKE handling
+		 * to process it after DefineRelation.
+		 */
+#if (PG_VERSION_NUM >= 130000) || \
+	((PG_VERSION_NUM < 130000) && (PG_VERSION_NUM >= 120005)) || \
+	((PG_VERSION_NUM < 120000) && (PG_VERSION_NUM >= 110010)) || \
+	((PG_VERSION_NUM < 110000) && (PG_VERSION_NUM >= 100015)) || \
+	((PG_VERSION_NUM < 100000) && (PG_VERSION_NUM >= 90620)) || \
+	((PG_VERSION_NUM < 90600) && (PG_VERSION_NUM >= 90524))
+		else if (IsA(cur_stmt, TableLikeClause))
+		{
+			/*
+			 * Do delayed processing of LIKE options.  This
+			 * will result in additional sub-statements for us
+			 * to process.	We can just tack those onto the
+			 * to-do list.
+			 */
+			TableLikeClause *like = (TableLikeClause *) cur_stmt;
+			RangeVar   *rv = create_stmt.relation;
+			List	   *morestmts;
+
+			morestmts = expandTableLikeClause(rv, like);
+			create_stmts = list_concat(create_stmts, morestmts);
+
+			/*
+			 * We don't need a CCI now
+			 */
+			continue;
+		}
+#endif
 		else
 		{
 			/*
@@ -953,17 +998,17 @@ postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid)
 	Snapshot		snapshot;
 
 	/* Both parent & partition have already been locked */
-	parent_rel = heap_open(parent_relid, NoLock);
-	partition_rel = heap_open(partition_relid, NoLock);
+	parent_rel = heap_open_compat(parent_relid, NoLock);
+	partition_rel = heap_open_compat(partition_relid, NoLock);
 
-	make_inh_translation_list(parent_rel, partition_rel, 0, &translated_vars);
+	make_inh_translation_list(parent_rel, partition_rel, 0, &translated_vars, NULL);
 
-	heap_close(parent_rel, NoLock);
-	heap_close(partition_rel, NoLock);
+	heap_close_compat(parent_rel, NoLock);
+	heap_close_compat(partition_rel, NoLock);
 
 	/* Open catalog's relations */
-	pg_class_rel = heap_open(RelationRelationId, RowExclusiveLock);
-	pg_attribute_rel = heap_open(AttributeRelationId, RowExclusiveLock);
+	pg_class_rel = heap_open_compat(RelationRelationId, RowExclusiveLock);
+	pg_attribute_rel = heap_open_compat(AttributeRelationId, RowExclusiveLock);
 
 	/* Get most recent snapshot */
 	snapshot = RegisterSnapshot(GetLatestSnapshot());
@@ -1134,8 +1179,8 @@ postprocess_child_table_and_atts(Oid parent_relid, Oid partition_relid)
 	/* Don't forget to free snapshot */
 	UnregisterSnapshot(snapshot);
 
-	heap_close(pg_class_rel, RowExclusiveLock);
-	heap_close(pg_attribute_rel, RowExclusiveLock);
+	heap_close_compat(pg_class_rel, RowExclusiveLock);
+	heap_close_compat(pg_attribute_rel, RowExclusiveLock);
 }
 
 /* Copy foreign keys of parent table (updates pg_class) */
@@ -1155,6 +1200,8 @@ copy_foreign_keys(Oid parent_relid, Oid partition_oid)
 
 	/* Fetch pg_pathman's schema */
 	pathman_schema = get_namespace_name(get_pathman_schema());
+	if (pathman_schema == NULL)
+		elog(ERROR, "pg_pathman schema not initialized");
 
 	/* Build function's name */
 	copy_fkeys_proc_name = list_make2(makeString(pathman_schema),
@@ -1204,7 +1251,7 @@ copy_rel_options(Oid parent_relid, Oid partition_relid)
 	bool		isnull[Natts_pg_class],
 				replace[Natts_pg_class] = { false };
 
-	pg_class_rel = heap_open(RelationRelationId, RowExclusiveLock);
+	pg_class_rel = heap_open_compat(RelationRelationId, RowExclusiveLock);
 
 	parent_htup		= SearchSysCache1(RELOID, ObjectIdGetDatum(parent_relid));
 	partition_htup	= SearchSysCache1(RELOID, ObjectIdGetDatum(partition_relid));
@@ -1242,7 +1289,7 @@ copy_rel_options(Oid parent_relid, Oid partition_relid)
 	ReleaseSysCache(parent_htup);
 	ReleaseSysCache(partition_htup);
 
-	heap_close(pg_class_rel, RowExclusiveLock);
+	heap_close_compat(pg_class_rel, RowExclusiveLock);
 
 	/* Make changes visible */
 	CommandCounterIncrement();
@@ -1260,15 +1307,21 @@ void
 drop_pathman_check_constraint(Oid relid)
 {
 	char		   *constr_name;
+#if PG_VERSION_NUM >= 130000
+	List		*cmds;
+#else
 	AlterTableStmt *stmt;
+#endif
 	AlterTableCmd  *cmd;
 
 	/* Build a correct name for this constraint */
 	constr_name = build_check_constraint_name_relid_internal(relid);
 
+#if PG_VERSION_NUM < 130000
 	stmt = makeNode(AlterTableStmt);
 	stmt->relation	= makeRangeVarFromRelid(relid);
 	stmt->relkind	= OBJECT_TABLE;
+#endif
 
 	cmd = makeNode(AlterTableCmd);
 	cmd->subtype	= AT_DropConstraint;
@@ -1276,23 +1329,35 @@ drop_pathman_check_constraint(Oid relid)
 	cmd->behavior	= DROP_RESTRICT;
 	cmd->missing_ok	= true;
 
+#if PG_VERSION_NUM >= 130000
+	cmds = list_make1(cmd);
+
+	/*
+         * Since 1281a5c907b AlterTable() was changed.
+         * recurse = true (see stmt->relation->inh makeRangeVarFromRelid() makeRangeVar())
+		 * Dropping constraint won't do parse analyze, so AlterTableInternal
+		 * is enough.
+         */
+	AlterTableInternal(relid, cmds, true);
+#else
 	stmt->cmds = list_make1(cmd);
 
 	/* See function AlterTableGetLockLevel() */
 	AlterTable(relid, AccessExclusiveLock, stmt);
+#endif
 }
 
 /* Add pg_pathman's check constraint using 'relid' */
 void
 add_pathman_check_constraint(Oid relid, Constraint *constraint)
 {
-	Relation part_rel = heap_open(relid, AccessExclusiveLock);
+	Relation part_rel = heap_open_compat(relid, AccessExclusiveLock);
 
 	AddRelationNewConstraintsCompat(part_rel, NIL,
 									list_make1(constraint),
 									false, true, true);
 
-	heap_close(part_rel, NoLock);
+	heap_close_compat(part_rel, NoLock);
 }
 
 
@@ -1304,12 +1369,21 @@ build_raw_range_check_tree(Node *raw_expression,
 						   const Bound *end_value,
 						   Oid value_type)
 {
+#if PG_VERSION_NUM >= 150000 /* for commit 639a86e36aae */
+#define BuildConstExpr(node, value, value_type) \
+	do { \
+		(node)->val.sval = make_string_value_struct( \
+							datum_to_cstring((value), (value_type))); \
+		(node)->location = -1; \
+	} while (0)
+#else
 #define BuildConstExpr(node, value, value_type) \
 	do { \
 		(node)->val = make_string_value_struct( \
 							datum_to_cstring((value), (value_type))); \
 		(node)->location = -1; \
 	} while (0)
+#endif
 
 #define BuildCmpExpr(node, opname, expr, c) \
 	do { \
@@ -1497,16 +1571,25 @@ build_raw_hash_check_tree(Node *raw_expression,
 
 	Oid				hash_proc;
 	TypeCacheEntry *tce;
+	char		   *pathman_schema;
 
 	tce = lookup_type_cache(value_type, TYPECACHE_HASH_PROC);
 	hash_proc = tce->hash_proc;
 
 	/* Total amount of partitions */
+#if PG_VERSION_NUM >= 150000 /* for commit 639a86e36aae */
+	part_count_c->val.ival = make_int_value_struct(part_count);
+#else
 	part_count_c->val = make_int_value_struct(part_count);
+#endif
 	part_count_c->location = -1;
 
 	/* Index of this partition (hash % total amount) */
+#if PG_VERSION_NUM >= 150000 /* for commit 639a86e36aae */
+	part_idx_c->val.ival = make_int_value_struct(part_idx);
+#else
 	part_idx_c->val = make_int_value_struct(part_idx);
+#endif
 	part_idx_c->location = -1;
 
 	/* Call hash_proc() */
@@ -1521,9 +1604,13 @@ build_raw_hash_check_tree(Node *raw_expression,
 	hash_call->over				= NULL;
 	hash_call->location			= -1;
 
+	pathman_schema = get_namespace_name(get_pathman_schema());
+	if (pathman_schema == NULL)
+		elog(ERROR, "pg_pathman schema not initialized");
+
 	/* Build schema-qualified name of function get_hash_part_idx() */
 	get_hash_part_idx_proc =
-			list_make2(makeString(get_namespace_name(get_pathman_schema())),
+			list_make2(makeString(pathman_schema),
 					   makeString("get_hash_part_idx"));
 
 	/* Call get_hash_part_idx() */
@@ -1597,6 +1684,29 @@ make_constraint_common(char *name, Node *raw_expr)
 	return constraint;
 }
 
+#if PG_VERSION_NUM >= 150000 /* for commits 639a86e36aae, c4cc2850f4d1 */
+static String
+make_string_value_struct(char* str)
+{
+	String val;
+
+	val.type = T_String;
+	val.sval = str;
+
+	return val;
+}
+
+static Integer
+make_int_value_struct(int int_val)
+{
+	Integer val;
+
+	val.type = T_Integer;
+	val.ival = int_val;
+
+	return val;
+}
+#else
 static Value
 make_string_value_struct(char *str)
 {
@@ -1618,7 +1728,7 @@ make_int_value_struct(int int_val)
 
 	return val;
 }
-
+#endif /* PG_VERSION_NUM >= 150000 */
 
 /*
  * ---------------------
@@ -1930,17 +2040,15 @@ build_partitioning_expression(Oid parent_relid,
 	/* We need expression type for hash functions */
 	if (expr_type)
 	{
-		Node	*expr;
-		expr = cook_partitioning_expression(parent_relid, expr_cstr, NULL);
-
 		/* Finally return expression type */
-		*expr_type = exprType(expr);
+		*expr_type = exprType(
+			cook_partitioning_expression(parent_relid, expr_cstr, NULL));
 	}
 
 	if (columns)
 	{
 		/* Column list should be empty */
-		AssertArg(*columns == NIL);
+		Assert(*columns == NIL);
 		extract_column_names(expr, columns);
 	}
 

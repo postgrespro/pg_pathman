@@ -3,7 +3,7 @@
  * hooks.h
  *		prototypes of rel_pathlist and join_pathlist hooks
  *
- * Copyright (c) 2016, Postgres Professional
+ * Copyright (c) 2016-2020, Postgres Professional
  *
  * ------------------------------------------------------------------------
  */
@@ -28,6 +28,7 @@ extern post_parse_analyze_hook_type		pathman_post_parse_analyze_hook_next;
 extern shmem_startup_hook_type			pathman_shmem_startup_hook_next;
 extern ProcessUtility_hook_type			pathman_process_utility_hook_next;
 extern ExecutorRun_hook_type			pathman_executor_run_hook_next;
+extern ExecutorStart_hook_type			pathman_executor_start_hook_prev;
 
 
 void pathman_join_pathlist_hook(PlannerInfo *root,
@@ -43,19 +44,46 @@ void pathman_rel_pathlist_hook(PlannerInfo *root,
 							   RangeTblEntry *rte);
 
 void pathman_enable_assign_hook(bool newval, void *extra);
+bool pathman_enable_check_hook(bool *newval, void **extra, GucSource source);
 
 PlannedStmt * pathman_planner_hook(Query *parse,
+#if PG_VERSION_NUM >= 130000
+								   const char *query_string,
+#endif
 								   int cursorOptions,
 								   ParamListInfo boundParams);
 
+#if PG_VERSION_NUM >= 140000
+void pathman_post_parse_analyze_hook(ParseState *pstate,
+									  Query *query,
+									  JumbleState *jstate);
+#else
 void pathman_post_parse_analyze_hook(ParseState *pstate,
 									  Query *query);
+#endif
 
 void pathman_shmem_startup_hook(void);
 
 void pathman_relcache_hook(Datum arg, Oid relid);
 
-#if PG_VERSION_NUM >= 100000
+#if PG_VERSION_NUM >= 140000
+void pathman_process_utility_hook(PlannedStmt *pstmt,
+								  const char *queryString,
+								  bool readOnlyTree,
+								  ProcessUtilityContext context,
+								  ParamListInfo params,
+								  QueryEnvironment *queryEnv,
+								  DestReceiver *dest,
+								  QueryCompletion *qc);
+#elif PG_VERSION_NUM >= 130000
+void pathman_process_utility_hook(PlannedStmt *pstmt,
+								  const char *queryString,
+								  ProcessUtilityContext context,
+								  ParamListInfo params,
+								  QueryEnvironment *queryEnv,
+								  DestReceiver *dest,
+								  QueryCompletion *qc);
+#elif PG_VERSION_NUM >= 100000
 void pathman_process_utility_hook(PlannedStmt *pstmt,
 								  const char *queryString,
 								  ProcessUtilityContext context,
@@ -89,4 +117,6 @@ void pathman_executor_hook(QueryDesc *queryDesc,
 						   ExecutorRun_CountArgType count);
 #endif
 
+void pathman_executor_start_hook(QueryDesc *queryDescc,
+								 int eflags);
 #endif /* PATHMAN_HOOKS_H */

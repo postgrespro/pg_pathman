@@ -16,23 +16,37 @@ repalloc(void *pointer, Size size)
 	return realloc(pointer, size);
 }
 
+void
+pfree(void *pointer)
+{
+	free(pointer);
+}
 
 void
 ExceptionalCondition(const char *conditionName,
+#if PG_VERSION_NUM < 160000
 					 const char *errorType,
+#endif
 					 const char *fileName,
 					 int lineNumber)
 {
-	if (!PointerIsValid(conditionName) ||
-		!PointerIsValid(fileName) ||
-		!PointerIsValid(errorType))
+	if (!PointerIsValid(conditionName) || !PointerIsValid(fileName)
+#if PG_VERSION_NUM < 160000
+		|| !PointerIsValid(errorType)
+#endif
+		)
 	{
 		printf("TRAP: ExceptionalCondition: bad arguments\n");
 	}
 	else
 	{
 		printf("TRAP: %s(\"%s\", File: \"%s\", Line: %d)\n",
-			   errorType, conditionName,
+#if PG_VERSION_NUM < 160000
+			   errorType,
+#else
+			   "",
+#endif
+			   conditionName,
 			   fileName, lineNumber);
 
 	}

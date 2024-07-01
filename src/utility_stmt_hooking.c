@@ -4,7 +4,7 @@
  *		Override COPY TO/FROM and ALTER TABLE ... RENAME statements
  *		for partitioned tables
  *
- * Copyright (c) 2016, Postgres Professional
+ * Copyright (c) 2016-2020, Postgres Professional
  * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -26,12 +26,18 @@
 #include "access/xact.h"
 #include "catalog/namespace.h"
 #include "commands/copy.h"
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+#include "commands/copyfrom_internal.h"
+#endif
 #include "commands/defrem.h"
 #include "commands/trigger.h"
 #include "commands/tablecmds.h"
 #include "foreign/fdwapi.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+#include "parser/parse_relation.h"
+#endif
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
@@ -67,7 +73,12 @@ ProtocolVersion		FrontendProtocol = (ProtocolVersion) 0;
 #define PATHMAN_COPY_WRITE_LOCK		RowExclusiveLock
 
 
-static uint64 PathmanCopyFrom(CopyState cstate,
+static uint64 PathmanCopyFrom(
+#if PG_VERSION_NUM >= 140000 /* Structure changed in c532d15dddff */
+							  CopyFromState cstate,
+#else
+							  CopyState cstate,
+#endif
 							  Relation parent_rel,
 							  List *range_table,
 							  bool old_protocol);
@@ -109,7 +120,11 @@ is_pathman_related_copy(Node *parsetree)
 									(copy_stmt->is_from ?
 										PATHMAN_COPY_WRITE_LOCK :
 										PATHMAN_COPY_READ_LOCK),
-									false);
+									true);
+
+	/* Skip relation if it does not exist (for Citus compatibility) */
+	if (!OidIsValid(parent_relid))
+		return false;
 
 	/* Check that relation is partitioned */
 	if (has_pathman_relation_info(parent_relid))
@@ -175,7 +190,11 @@ is_pathman_related_table_rename(Node *parsetree,
 	/* Fetch Oid of this relation */
 	relation_oid = RangeVarGetRelid(rename_stmt->relation,
 									AccessShareLock,
-									false);
+									rename_stmt->missing_ok);
+
+	/* Check ALTER TABLE ... IF EXISTS of nonexistent table */
+	if (rename_stmt->missing_ok && relation_oid == InvalidOid)
+		return false;
 
 	/* Assume it's a parent */
 	if (has_pathman_relation_info(relation_oid))
@@ -226,13 +245,21 @@ is_pathman_related_alter_column_type(Node *parsetree,
 		return false;
 
 	/* Are we going to modify some table? */
+#if PG_VERSION_NUM >= 140000
+	if (alter_table_stmt->objtype != OBJECT_TABLE)
+#else
 	if (alter_table_stmt->relkind != OBJECT_TABLE)
+#endif
 		return false;
 
 	/* Assume it's a parent, fetch its Oid */
 	parent_relid = RangeVarGetRelid(alter_table_stmt->relation,
 									AccessShareLock,
-									false);
+									alter_table_stmt->missing_ok);
+
+	/* Check ALTER TABLE ... IF EXISTS of nonexistent table */
+	if (alter_table_stmt->missing_ok && parent_relid == InvalidOid)
+		return false;
 
 	/* Is parent partitioned? */
 	if ((prel = get_pathman_relation_info(parent_relid)) != NULL)
@@ -276,7 +303,7 @@ is_pathman_related_alter_column_type(Node *parsetree,
 }
 
 /*
- * CopyGetAttnums - build an integer list of attnums to be copied
+ * PathmanCopyGetAttnums - build an integer list of attnums to be copied
  *
  * The input attnamelist is either the user-specified column list,
  * or NIL if there was none (in which case we want all the non-dropped
@@ -285,7 +312,7 @@ is_pathman_related_alter_column_type(Node *parsetree,
  * rel can be NULL ... it's only used for error reports.
  */
 static List *
-CopyGetAttnums(TupleDesc tupDesc, Relation rel, List *attnamelist)
+PathmanCopyGetAttnums(TupleDesc tupDesc, Relation rel, List *attnamelist)
 {
 	List	   *attnums = NIL;
 
@@ -364,7 +391,11 @@ PathmanDoCopy(const CopyStmt *stmt,
 			  int stmt_len,
 			  uint64 *processed)
 {
+#if PG_VERSION_NUM >= 140000 /* Structure changed in c532d15dddff */
+	CopyFromState cstate;
+#else
 	CopyState	cstate;
+#endif
 	ParseState *pstate;
 	Relation	rel;
 	List	   *range_table = NIL;
@@ -389,6 +420,9 @@ PathmanDoCopy(const CopyStmt *stmt,
 						   "psql's \\copy command also works for anyone.")));
 	}
 
+	pstate = make_parsestate(NULL);
+	pstate->p_sourcetext = queryString;
+
 	/* Check that we have a relation */
 	if (stmt->relation)
 	{
@@ -397,21 +431,43 @@ PathmanDoCopy(const CopyStmt *stmt,
 		List		   *attnums;
 		ListCell	   *cur;
 		RangeTblEntry  *rte;
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+		RTEPermissionInfo *perminfo;
+#endif
 
 		Assert(!stmt->query);
 
 		/* Open the relation (we've locked it in is_pathman_related_copy()) */
-		rel = heap_openrv(stmt->relation, NoLock);
+		rel = heap_openrv_compat(stmt->relation, NoLock);
 
 		rte = makeNode(RangeTblEntry);
 		rte->rtekind = RTE_RELATION;
 		rte->relid = RelationGetRelid(rel);
 		rte->relkind = rel->rd_rel->relkind;
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+		pstate->p_rtable = lappend(pstate->p_rtable, rte);
+		perminfo = addRTEPermissionInfo(&pstate->p_rteperminfos, rte);
+		perminfo->requiredPerms = required_access;
+#else
 		rte->requiredPerms = required_access;
+#endif
 		range_table = list_make1(rte);
 
 		tupDesc = RelationGetDescr(rel);
-		attnums = CopyGetAttnums(tupDesc, rel, stmt->attlist);
+		attnums = PathmanCopyGetAttnums(tupDesc, rel, stmt->attlist);
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+		foreach(cur, attnums)
+		{
+			int attno;
+			Bitmapset **bms;
+
+			attno = lfirst_int(cur) - FirstLowInvalidHeapAttributeNumber;
+			bms = is_from ? &perminfo->insertedCols : &perminfo->selectedCols;
+
+			*bms = bms_add_member(*bms, attno);
+		}
+		ExecCheckPermissions(pstate->p_rtable, list_make1(perminfo), true);
+#else
 		foreach(cur, attnums)
 		{
 			int attnum = lfirst_int(cur) - FirstLowInvalidHeapAttributeNumber;
@@ -422,6 +478,7 @@ PathmanDoCopy(const CopyStmt *stmt,
 				rte->selectedCols = bms_add_member(rte->selectedCols, attnum);
 		}
 		ExecCheckRTPerms(range_table, true);
+#endif
 
 		/* Disable COPY FROM if table has RLS */
 		if (is_from && check_enable_rls(rte->relid, InvalidOid, false) == RLS_ENABLED)
@@ -445,9 +502,6 @@ PathmanDoCopy(const CopyStmt *stmt,
 	/* This should never happen (see is_pathman_related_copy()) */
 	else elog(ERROR, "error in function " CppAsString(PathmanDoCopy));
 
-	pstate = make_parsestate(NULL);
-	pstate->p_sourcetext = queryString;
-
 	if (is_from)
 	{
 		/* check read-only transaction and parallel mode */
@@ -463,19 +517,33 @@ PathmanDoCopy(const CopyStmt *stmt,
 	}
 	else
 	{
+#if PG_VERSION_NUM >= 160000 /* for commit f75cec4fff87 */
+		/*
+		 * Forget current RangeTblEntries and RTEPermissionInfos.
+		 * Standard DoCopy will create new ones.
+		 */
+		pstate->p_rtable = NULL;
+		pstate->p_rteperminfos = NULL;
+#endif
 		/* Call standard DoCopy using a new CopyStmt */
 		DoCopyCompat(pstate, stmt, stmt_location, stmt_len, processed);
 	}
 
 	/* Close the relation, but keep it locked */
-	heap_close(rel, (is_from ? NoLock : PATHMAN_COPY_READ_LOCK));
+	heap_close_compat(rel, (is_from ? NoLock : PATHMAN_COPY_READ_LOCK));
 }
 
 /*
  * Copy FROM file to relation.
  */
 static uint64
-PathmanCopyFrom(CopyState cstate, Relation parent_rel,
+PathmanCopyFrom(
+#if PG_VERSION_NUM >= 140000 /* Structure changed in c532d15dddff */
+				CopyFromState cstate,
+#else
+				CopyState cstate,
+#endif
+				Relation parent_rel,
 				List *range_table, bool old_protocol)
 {
 	HeapTuple			tuple;
@@ -502,6 +570,27 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 							0);
 	ExecOpenIndices(parent_rri, false);
 
+#if PG_VERSION_NUM >= 140000  /* reworked in 1375422c7826 */
+	/*
+	 * Call ExecInitRangeTable() should be first because in 14+ it initializes
+	 * field "estate->es_result_relations":
+	 */
+#if PG_VERSION_NUM >= 160000
+	ExecInitRangeTable(estate, range_table, cstate->rteperminfos);
+#else
+	ExecInitRangeTable(estate, range_table);
+#endif
+	estate->es_result_relations =
+		(ResultRelInfo **) palloc0(list_length(range_table) * sizeof(ResultRelInfo *));
+	estate->es_result_relations[0] = parent_rri;
+	/*
+	 * Saving in the list allows to avoid needlessly traversing the whole
+	 * array when only a few of its entries are possibly non-NULL.
+	 */
+	estate->es_opened_result_relations =
+		lappend(estate->es_opened_result_relations, parent_rri);
+	estate->es_result_relation_info = parent_rri;
+#else
 	estate->es_result_relations = parent_rri;
 	estate->es_num_result_relations = 1;
 	estate->es_result_relation_info = parent_rri;
@@ -510,7 +599,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 #else
 	estate->es_range_table = range_table;
 #endif
-
+#endif
 	/* Initialize ResultPartsStorage */
 	init_result_parts_storage(&parts_storage,
 							  parent_relid, parent_rri,
@@ -519,6 +608,16 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 							  RPS_DEFAULT_SPECULATIVE,
 							  RPS_RRI_CB(prepare_rri_for_copy, cstate),
 							  RPS_RRI_CB(finish_rri_for_copy, NULL));
+#if PG_VERSION_NUM >= 160000 /* for commit a61b1f74823c */
+	/* ResultRelInfo of partitioned table. */
+	parts_storage.init_rri = parent_rri;
+
+	/*
+	 * Copy the RTEPermissionInfos into estate as well, so that
+	 * scan_result_parts_storage() et al will work correctly.
+	 */
+	estate->es_rteperminfos = cstate->rteperminfos;
+#endif
 
 	/* Set up a tuple slot too */
 	myslot = ExecInitExtraTupleSlotCompat(estate, NULL, &TTSOpsHeapTuple);
@@ -581,7 +680,7 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 #endif
 
 		/* Search for a matching partition */
-		rri_holder = select_partition_for_insert(&parts_storage, slot);
+		rri_holder = select_partition_for_insert(estate, &parts_storage, slot);
 		child_rri = rri_holder->result_rel_info;
 
 		/* Magic: replace parent's ResultRelInfo with ours */
@@ -661,8 +760,8 @@ PathmanCopyFrom(CopyState cstate, Relation parent_rel,
 
 				/* ... and create index entries for it */
 				if (child_rri->ri_NumIndices > 0)
-					recheckIndexes = ExecInsertIndexTuplesCompat(slot, &(tuple->t_self),
-																 estate, false, NULL, NIL);
+					recheckIndexes = ExecInsertIndexTuplesCompat(estate->es_result_relation_info,
+										slot, &(tuple->t_self), estate, false, false, NULL, NIL, false);
 			}
 #ifdef PG_SHARDMAN
 			/* Handle foreign tables */

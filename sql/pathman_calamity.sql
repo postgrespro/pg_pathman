@@ -4,6 +4,9 @@
  *   ERROR:  invalid input syntax for type integer: "abc"
  * instead of
  *   ERROR:  invalid input syntax for integer: "15.6"
+ *
+ * Since 55a1954da16 and 6ef77cf46e8 (>= 13) output of EXPLAIN was changed,
+ * now it includes aliases for inherited tables.
  */
 
 \set VERBOSITY terse
@@ -342,7 +345,12 @@ SELECT merge_range_partitions('calamity.merge_test_a_1',
 
 DROP TABLE calamity.merge_test_a,calamity.merge_test_b CASCADE;
 
-DROP SCHEMA calamity CASCADE;
+DROP DOMAIN calamity.test_domain;
+DROP TABLE calamity.part_test CASCADE;
+DROP TABLE calamity.part_ok CASCADE;
+DROP TABLE calamity.hash_two_times CASCADE;
+DROP TABLE calamity.to_be_disabled CASCADE;
+DROP SCHEMA calamity;
 DROP EXTENSION pg_pathman;
 
 
@@ -380,9 +388,11 @@ CREATE EXTENSION pg_pathman;
 /* check that cache loading is lazy */
 CREATE TABLE calamity.test_pathman_cache_stats(val NUMERIC NOT NULL);
 SELECT create_range_partitions('calamity.test_pathman_cache_stats', 'val', 1, 10, 10);
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
 DROP TABLE calamity.test_pathman_cache_stats CASCADE;
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
 
 /* Change this setting for code coverage */
 SET pg_pathman.enable_bounds_cache = false;
@@ -391,9 +401,11 @@ SET pg_pathman.enable_bounds_cache = false;
 CREATE TABLE calamity.test_pathman_cache_stats(val NUMERIC NOT NULL);
 SELECT create_range_partitions('calamity.test_pathman_cache_stats', 'val', 1, 10, 10);
 EXPLAIN (COSTS OFF) SELECT * FROM calamity.test_pathman_cache_stats;
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
 DROP TABLE calamity.test_pathman_cache_stats CASCADE;
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
 
 /* Restore this GUC */
 SET pg_pathman.enable_bounds_cache = true;
@@ -402,21 +414,26 @@ SET pg_pathman.enable_bounds_cache = true;
 CREATE TABLE calamity.test_pathman_cache_stats(val NUMERIC NOT NULL);
 SELECT create_range_partitions('calamity.test_pathman_cache_stats', 'val', 1, 10, 10);
 EXPLAIN (COSTS OFF) SELECT * FROM calamity.test_pathman_cache_stats;
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
 DROP TABLE calamity.test_pathman_cache_stats CASCADE;
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
 
 /* check that parents cache has been flushed after partition was dropped */
 CREATE TABLE calamity.test_pathman_cache_stats(val NUMERIC NOT NULL);
 SELECT create_range_partitions('calamity.test_pathman_cache_stats', 'val', 1, 10, 10);
 EXPLAIN (COSTS OFF) SELECT * FROM calamity.test_pathman_cache_stats;
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
 SELECT drop_range_partition('calamity.test_pathman_cache_stats_1');
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
 DROP TABLE calamity.test_pathman_cache_stats CASCADE;
-SELECT context, entries FROM pathman_cache_stats ORDER BY context;	/* OK */
+SELECT context, entries FROM pathman_cache_stats
+  WHERE context != 'partition status cache' ORDER BY context;	/* OK */
 
-DROP SCHEMA calamity CASCADE;
+DROP SCHEMA calamity;
 DROP EXTENSION pg_pathman;
 
 
@@ -455,5 +472,5 @@ EXPLAIN (COSTS OFF) SELECT * FROM calamity.survivor;			/* OK */
 DROP TABLE calamity.survivor CASCADE;
 
 
-DROP SCHEMA calamity CASCADE;
+DROP SCHEMA calamity;
 DROP EXTENSION pg_pathman;
