@@ -59,19 +59,18 @@ SELECT * FROM rowmarks.second ORDER BY id FOR UPDATE;
 /* Simple case (plan) */
 EXPLAIN (COSTS OFF)
 SELECT * FROM rowmarks.first ORDER BY id FOR UPDATE;
-              QUERY PLAN               
----------------------------------------
+                  QUERY PLAN                   
+-----------------------------------------------
  LockRows
    ->  Sort
          Sort Key: first.id
          ->  Append
-               ->  Seq Scan on first
-               ->  Seq Scan on first_0
-               ->  Seq Scan on first_1
-               ->  Seq Scan on first_2
-               ->  Seq Scan on first_3
-               ->  Seq Scan on first_4
-(10 rows)
+               ->  Seq Scan on first_0 first_1
+               ->  Seq Scan on first_1 first_2
+               ->  Seq Scan on first_2 first_3
+               ->  Seq Scan on first_3 first_4
+               ->  Seq Scan on first_4 first_5
+(9 rows)
 
 /* Simple case (execution) */
 SELECT * FROM rowmarks.first ORDER BY id FOR UPDATE;
@@ -116,35 +115,33 @@ WHERE id = (SELECT id FROM rowmarks.first
 			OFFSET 10 LIMIT 1
 			FOR UPDATE)
 FOR SHARE;
-                          QUERY PLAN                           
----------------------------------------------------------------
+                         QUERY PLAN                          
+-------------------------------------------------------------
  LockRows
-   InitPlan 1 (returns $1)
+   InitPlan 1
      ->  Limit
            ->  LockRows
                  ->  Sort
-                       Sort Key: first_5.id
+                       Sort Key: first_1.id
                        ->  Append
-                             ->  Seq Scan on first first_5
-                             ->  Seq Scan on first_0 first_0_1
-                             ->  Seq Scan on first_1 first_1_1
-                             ->  Seq Scan on first_2 first_2_1
-                             ->  Seq Scan on first_3 first_3_1
-                             ->  Seq Scan on first_4 first_4_1
-   ->  Append
-         ->  Seq Scan on first
-               Filter: (id = $1)
-         ->  Seq Scan on first_0
-               Filter: (id = $1)
-         ->  Seq Scan on first_1
-               Filter: (id = $1)
-         ->  Seq Scan on first_2
-               Filter: (id = $1)
-         ->  Seq Scan on first_3
-               Filter: (id = $1)
-         ->  Seq Scan on first_4
-               Filter: (id = $1)
-(26 rows)
+                             ->  Seq Scan on first_0 first_2
+                             ->  Seq Scan on first_1 first_3
+                             ->  Seq Scan on first_2 first_4
+                             ->  Seq Scan on first_3 first_5
+                             ->  Seq Scan on first_4 first_6
+   ->  Custom Scan (RuntimeAppend)
+         Prune by: (first.id = (InitPlan 1).col1)
+         ->  Seq Scan on first_0 first
+               Filter: (id = (InitPlan 1).col1)
+         ->  Seq Scan on first_1 first
+               Filter: (id = (InitPlan 1).col1)
+         ->  Seq Scan on first_2 first
+               Filter: (id = (InitPlan 1).col1)
+         ->  Seq Scan on first_3 first
+               Filter: (id = (InitPlan 1).col1)
+         ->  Seq Scan on first_4 first
+               Filter: (id = (InitPlan 1).col1)
+(24 rows)
 
 /* A little harder (execution) */
 SELECT * FROM rowmarks.first
@@ -166,29 +163,28 @@ WHERE id = (SELECT id FROM rowmarks.second
 			OFFSET 5 LIMIT 1
 			FOR UPDATE)
 FOR SHARE;
-                  QUERY PLAN                  
-----------------------------------------------
+                    QUERY PLAN                    
+--------------------------------------------------
  LockRows
-   InitPlan 1 (returns $1)
+   InitPlan 1
      ->  Limit
            ->  LockRows
                  ->  Sort
                        Sort Key: second.id
                        ->  Seq Scan on second
-   ->  Append
-         ->  Seq Scan on first
-               Filter: (id = $1)
-         ->  Seq Scan on first_0
-               Filter: (id = $1)
-         ->  Seq Scan on first_1
-               Filter: (id = $1)
-         ->  Seq Scan on first_2
-               Filter: (id = $1)
-         ->  Seq Scan on first_3
-               Filter: (id = $1)
-         ->  Seq Scan on first_4
-               Filter: (id = $1)
-(20 rows)
+   ->  Custom Scan (RuntimeAppend)
+         Prune by: (first.id = (InitPlan 1).col1)
+         ->  Seq Scan on first_0 first
+               Filter: (id = (InitPlan 1).col1)
+         ->  Seq Scan on first_1 first
+               Filter: (id = (InitPlan 1).col1)
+         ->  Seq Scan on first_2 first
+               Filter: (id = (InitPlan 1).col1)
+         ->  Seq Scan on first_3 first
+               Filter: (id = (InitPlan 1).col1)
+         ->  Seq Scan on first_4 first
+               Filter: (id = (InitPlan 1).col1)
+(19 rows)
 
 /* Two tables (execution) */
 SELECT * FROM rowmarks.first
@@ -208,23 +204,22 @@ SELECT * FROM rowmarks.first
 JOIN rowmarks.second USING(id)
 ORDER BY id
 FOR UPDATE;
-                   QUERY PLAN                    
--------------------------------------------------
+                     QUERY PLAN                      
+-----------------------------------------------------
  LockRows
    ->  Sort
          Sort Key: first.id
          ->  Hash Join
                Hash Cond: (first.id = second.id)
                ->  Append
-                     ->  Seq Scan on first
-                     ->  Seq Scan on first_0
-                     ->  Seq Scan on first_1
-                     ->  Seq Scan on first_2
-                     ->  Seq Scan on first_3
-                     ->  Seq Scan on first_4
+                     ->  Seq Scan on first_0 first_1
+                     ->  Seq Scan on first_1 first_2
+                     ->  Seq Scan on first_2 first_3
+                     ->  Seq Scan on first_3 first_4
+                     ->  Seq Scan on first_4 first_5
                ->  Hash
                      ->  Seq Scan on second
-(14 rows)
+(13 rows)
 
 /* JOIN (execution) */
 SELECT * FROM rowmarks.first
@@ -272,70 +267,49 @@ WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id = 1);
    ->  Nested Loop Semi Join
          ->  Seq Scan on second
                Filter: (id = 1)
-         ->  Append
-               ->  Seq Scan on first
-                     Filter: (id = 1)
-               ->  Seq Scan on first_0
-                     Filter: (id = 1)
-               ->  Seq Scan on first_1
-                     Filter: (id = 1)
-               ->  Seq Scan on first_2
-                     Filter: (id = 1)
-               ->  Seq Scan on first_3
-                     Filter: (id = 1)
-               ->  Seq Scan on first_4
-                     Filter: (id = 1)
-(17 rows)
+         ->  Seq Scan on first_0 first
+               Filter: (id = 1)
+(6 rows)
 
 EXPLAIN (COSTS OFF)
 UPDATE rowmarks.second SET id = 2
 WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id < 1);
-                 QUERY PLAN                  
----------------------------------------------
+                     QUERY PLAN                      
+-----------------------------------------------------
  Update on second
    ->  Nested Loop Semi Join
          Join Filter: (second.id = first.id)
          ->  Seq Scan on second
          ->  Materialize
                ->  Append
-                     ->  Seq Scan on first
+                     ->  Seq Scan on first_0 first_1
                            Filter: (id < 1)
-                     ->  Seq Scan on first_0
+                     ->  Seq Scan on first_1 first_2
                            Filter: (id < 1)
-                     ->  Seq Scan on first_1
+                     ->  Seq Scan on first_2 first_3
                            Filter: (id < 1)
-                     ->  Seq Scan on first_2
+                     ->  Seq Scan on first_3 first_4
                            Filter: (id < 1)
-                     ->  Seq Scan on first_3
+                     ->  Seq Scan on first_4 first_5
                            Filter: (id < 1)
-                     ->  Seq Scan on first_4
-                           Filter: (id < 1)
-(18 rows)
+(16 rows)
 
 EXPLAIN (COSTS OFF)
 UPDATE rowmarks.second SET id = 2
 WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id = 1 OR id = 2);
-                        QUERY PLAN                        
-----------------------------------------------------------
+                     QUERY PLAN                      
+-----------------------------------------------------
  Update on second
    ->  Nested Loop Semi Join
          Join Filter: (second.id = first.id)
          ->  Seq Scan on second
          ->  Materialize
                ->  Append
-                     ->  Seq Scan on first
-                           Filter: ((id = 1) OR (id = 2))
-                     ->  Seq Scan on first_0
-                           Filter: ((id = 1) OR (id = 2))
-                     ->  Seq Scan on first_1
-                           Filter: ((id = 1) OR (id = 2))
-                     ->  Seq Scan on first_2
-                           Filter: ((id = 1) OR (id = 2))
-                     ->  Seq Scan on first_3
-                           Filter: ((id = 1) OR (id = 2))
-                     ->  Seq Scan on first_4
-                           Filter: ((id = 1) OR (id = 2))
-(18 rows)
+                     ->  Seq Scan on first_0 first_1
+                           Filter: (id = 1)
+                     ->  Seq Scan on first_1 first_2
+                           Filter: (id = 2)
+(10 rows)
 
 EXPLAIN (COSTS OFF)
 UPDATE rowmarks.second SET id = 2
@@ -347,20 +321,9 @@ RETURNING *, tableoid::regclass;
    ->  Nested Loop Semi Join
          ->  Seq Scan on second
                Filter: (id = 1)
-         ->  Append
-               ->  Seq Scan on first
-                     Filter: (id = 1)
-               ->  Seq Scan on first_0
-                     Filter: (id = 1)
-               ->  Seq Scan on first_1
-                     Filter: (id = 1)
-               ->  Seq Scan on first_2
-                     Filter: (id = 1)
-               ->  Seq Scan on first_3
-                     Filter: (id = 1)
-               ->  Seq Scan on first_4
-                     Filter: (id = 1)
-(17 rows)
+         ->  Seq Scan on first_0 first
+               Filter: (id = 1)
+(6 rows)
 
 SET enable_hashjoin = t;
 SET enable_mergejoin = t;
@@ -386,70 +349,49 @@ WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id = 1);
    ->  Nested Loop Semi Join
          ->  Seq Scan on second
                Filter: (id = 1)
-         ->  Append
-               ->  Seq Scan on first
-                     Filter: (id = 1)
-               ->  Seq Scan on first_0
-                     Filter: (id = 1)
-               ->  Seq Scan on first_1
-                     Filter: (id = 1)
-               ->  Seq Scan on first_2
-                     Filter: (id = 1)
-               ->  Seq Scan on first_3
-                     Filter: (id = 1)
-               ->  Seq Scan on first_4
-                     Filter: (id = 1)
-(17 rows)
+         ->  Seq Scan on first_0 first
+               Filter: (id = 1)
+(6 rows)
 
 EXPLAIN (COSTS OFF)
 DELETE FROM rowmarks.second
 WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id < 1);
-                 QUERY PLAN                  
----------------------------------------------
+                     QUERY PLAN                      
+-----------------------------------------------------
  Delete on second
    ->  Nested Loop Semi Join
          Join Filter: (second.id = first.id)
          ->  Seq Scan on second
          ->  Materialize
                ->  Append
-                     ->  Seq Scan on first
+                     ->  Seq Scan on first_0 first_1
                            Filter: (id < 1)
-                     ->  Seq Scan on first_0
+                     ->  Seq Scan on first_1 first_2
                            Filter: (id < 1)
-                     ->  Seq Scan on first_1
+                     ->  Seq Scan on first_2 first_3
                            Filter: (id < 1)
-                     ->  Seq Scan on first_2
+                     ->  Seq Scan on first_3 first_4
                            Filter: (id < 1)
-                     ->  Seq Scan on first_3
+                     ->  Seq Scan on first_4 first_5
                            Filter: (id < 1)
-                     ->  Seq Scan on first_4
-                           Filter: (id < 1)
-(18 rows)
+(16 rows)
 
 EXPLAIN (COSTS OFF)
 DELETE FROM rowmarks.second
 WHERE rowmarks.second.id IN (SELECT id FROM rowmarks.first WHERE id = 1 OR id = 2);
-                        QUERY PLAN                        
-----------------------------------------------------------
+                     QUERY PLAN                      
+-----------------------------------------------------
  Delete on second
    ->  Nested Loop Semi Join
          Join Filter: (second.id = first.id)
          ->  Seq Scan on second
          ->  Materialize
                ->  Append
-                     ->  Seq Scan on first
-                           Filter: ((id = 1) OR (id = 2))
-                     ->  Seq Scan on first_0
-                           Filter: ((id = 1) OR (id = 2))
-                     ->  Seq Scan on first_1
-                           Filter: ((id = 1) OR (id = 2))
-                     ->  Seq Scan on first_2
-                           Filter: ((id = 1) OR (id = 2))
-                     ->  Seq Scan on first_3
-                           Filter: ((id = 1) OR (id = 2))
-                     ->  Seq Scan on first_4
-                           Filter: ((id = 1) OR (id = 2))
-(18 rows)
+                     ->  Seq Scan on first_0 first_1
+                           Filter: (id = 1)
+                     ->  Seq Scan on first_1 first_2
+                           Filter: (id = 2)
+(10 rows)
 
 SET enable_hashjoin = t;
 SET enable_mergejoin = t;

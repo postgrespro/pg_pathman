@@ -265,32 +265,32 @@ WHERE val = (SELECT val FROM ONLY test_only.from_only_test
                            QUERY PLAN                            
 -----------------------------------------------------------------
  Custom Scan (RuntimeAppend)
-   Prune by: (from_only_test.val = $0)
-   InitPlan 1 (returns $0)
+   Prune by: (from_only_test.val = (InitPlan 1).col1)
+   InitPlan 1
      ->  Limit
            ->  Sort
                  Sort Key: from_only_test_1.val
                  ->  Seq Scan on from_only_test from_only_test_1
    ->  Seq Scan on from_only_test_1 from_only_test
-         Filter: (val = $0)
+         Filter: (val = (InitPlan 1).col1)
    ->  Seq Scan on from_only_test_2 from_only_test
-         Filter: (val = $0)
+         Filter: (val = (InitPlan 1).col1)
    ->  Seq Scan on from_only_test_3 from_only_test
-         Filter: (val = $0)
+         Filter: (val = (InitPlan 1).col1)
    ->  Seq Scan on from_only_test_4 from_only_test
-         Filter: (val = $0)
+         Filter: (val = (InitPlan 1).col1)
    ->  Seq Scan on from_only_test_5 from_only_test
-         Filter: (val = $0)
+         Filter: (val = (InitPlan 1).col1)
    ->  Seq Scan on from_only_test_6 from_only_test
-         Filter: (val = $0)
+         Filter: (val = (InitPlan 1).col1)
    ->  Seq Scan on from_only_test_7 from_only_test
-         Filter: (val = $0)
+         Filter: (val = (InitPlan 1).col1)
    ->  Seq Scan on from_only_test_8 from_only_test
-         Filter: (val = $0)
+         Filter: (val = (InitPlan 1).col1)
    ->  Seq Scan on from_only_test_9 from_only_test
-         Filter: (val = $0)
+         Filter: (val = (InitPlan 1).col1)
    ->  Seq Scan on from_only_test_10 from_only_test
-         Filter: (val = $0)
+         Filter: (val = (InitPlan 1).col1)
 (27 rows)
 
 DROP TABLE test_only.from_only_test CASCADE;

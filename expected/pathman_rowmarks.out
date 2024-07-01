@@ -1,13 +1,30 @@
 /*
  * -------------------------------------------
- *  NOTE: This test behaves differenly on 9.5
+ *  NOTE: This test behaves differenly on PgPro
  * -------------------------------------------
  *
- * Also since 8edd0e794 (>= 12) Append nodes with single subplan are eliminated,
- * causing different output; pathman_rowmarks_2.out is the updated version.
+ * ------------------------
+ *  pathman_rowmarks_1.sql
+ * ------------------------
+ * Since PostgreSQL 9.5, output of EXPLAIN was changed.
  *
- * Since 55a1954da16 and 6ef77cf46e8 (>= 13) output of EXPLAIN was changed,
- * now it includes aliases for inherited tables.
+ * ------------------------
+ *  pathman_rowmarks_2.sql
+ * ------------------------
+ * Since 8edd0e794 in PostgreSQL 12, append nodes with single subplan are
+ * eliminated, causing different output.
+ *
+ * ------------------------
+ *  pathman_rowmarks_3.sql
+ * ------------------------
+ * Since 55a1954da16 and 6ef77cf46e8 in PostgreSQL 13 output of EXPLAIN was
+ * changed, now it includes aliases for inherited tables.
+ *
+ * ------------------------
+ *  pathman_rowmarks_3.sql
+ * ------------------------
+ * Since fd0398fcb09 in PostgreSQL 17, output of EXPLAIN was
+ * changed, now it displays SubPlan nodes and output parameters.
  */
 SET search_path = 'public';
 CREATE EXTENSION pg_pathman;

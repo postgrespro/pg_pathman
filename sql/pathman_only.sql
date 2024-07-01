@@ -3,13 +3,31 @@
  *  NOTE: This test behaves differenly on PgPro
  * ---------------------------------------------
  *
- * Since 12 (608b167f9f), CTEs which are scanned once are no longer an
- * optimization fence, which changes practically all plans here. There is
+ * --------------------
+ *  pathman_only_1.sql
+ * --------------------
+ * Since 608b167f9f in PostgreSQL 12, CTEs which are scanned once are no longer
+ * an optimization fence, which changes practically all plans here. There is
  * an option to forcibly make them MATERIALIZED, but we also need to run tests
  * on older versions, so create pathman_only_1.out instead.
  *
- * Since 55a1954da16 and 6ef77cf46e8 (>= 13) output of EXPLAIN was changed,
- * now it includes aliases for inherited tables.
+ * --------------------
+ *  pathman_only_2.sql
+ * --------------------
+ * Since 55a1954da16 and 6ef77cf46e8 in PostgreSQL 13, output of EXPLAIN was
+ * changed, now it includes aliases for inherited tables.
+ *
+ * --------------------
+ *  pathman_only_3.sql
+ * --------------------
+ * Since a5fc46414de in PostgreSQL 16, the order of the operands was changed,
+ * which affected the output of the "Prune by" in EXPLAIN.
+ *
+ * --------------------
+ *  pathman_only_4.sql
+ * --------------------
+ * Since fd0398fcb09 in PostgreSQL 17, output of EXPLAIN was
+ * changed, now it displays SubPlan nodes and output parameters.
  */
 
 \set VERBOSITY terse

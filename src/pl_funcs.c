@@ -174,7 +174,12 @@ get_partition_cooked_key_pl(PG_FUNCTION_ARGS)
 
 	expr_cstr = TextDatumGetCString(values[Anum_pathman_config_expr - 1]);
 	expr = cook_partitioning_expression(relid, expr_cstr, NULL);
+
+#if PG_VERSION_NUM >= 170000 /* for commit d20d8fbd3e4d */
+	cooked_cstr = nodeToStringWithLocations(expr);
+#else
 	cooked_cstr = nodeToString(expr);
+#endif
 
 	pfree(expr_cstr);
 	pfree(expr);
@@ -196,7 +201,13 @@ get_cached_partition_cooked_key_pl(PG_FUNCTION_ARGS)
 
 	prel = get_pathman_relation_info(relid);
 	shout_if_prel_is_invalid(relid, prel, PT_ANY);
+
+#if PG_VERSION_NUM >= 170000 /* for commit d20d8fbd3e4d */
+	res = CStringGetTextDatum(nodeToStringWithLocations(prel->expr));
+#else
 	res = CStringGetTextDatum(nodeToString(prel->expr));
+#endif
+
 	close_pathman_relation_info(prel);
 
 	PG_RETURN_DATUM(res);
