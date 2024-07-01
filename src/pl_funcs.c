@@ -896,8 +896,8 @@ add_to_pathman_config(PG_FUNCTION_ARGS)
 	isnull[Anum_pathman_config_expr - 1]		= false;
 
 	/*
-	 * In case of 1.5 update before 10e6c71 there is acutlly 5 attributes in
-	 * pathman_config description (inclusing cooked expression). To avoid
+	 * In case of 1.5 update before 10e6c71 there are actually 5 attributes in
+	 * pathman_config description (including cooked expression). To avoid
 	 * potential problems we allocate 5th attribute and initialize it with null.
 	 */
 	values[Natts_pathman_config_historic - 1]	= (Datum) 0;
