@@ -1491,7 +1491,8 @@ parse_partitioning_expression(const Oid relid,
 	return ((ResTarget *) linitial(select_stmt->targetList))->val;
 }
 
-/* Parse partitioning expression and return its type and nodeToString() as TEXT */
+/* Parse partitioning expression and return its type and nodeToString()
+ * (or nodeToStringWithLocations() in version 17 and higher) as TEXT */
 Node *
 cook_partitioning_expression(const Oid relid,
 							 const char *expr_cstr,
