@@ -126,6 +126,11 @@ pathman_join_pathlist_hook(PlannerInfo *root,
 		jointype == JOIN_UNIQUE_INNER)
 		return;
 
+#if PG_VERSION_NUM >= 170000
+	if (jointype == JOIN_RIGHT_SEMI)
+		return;
+#endif
+
 	/* Skip if inner table is not allowed to act as parent (e.g. FROM ONLY) */
 	if (PARENTHOOD_DISALLOWED == get_rel_parenthood_status(inner_rte))
 		return;
