@@ -958,7 +958,7 @@ create_table_using_stmt(CreateStmt *create_stmt, Oid relowner)
 	CommandCounterIncrement();
 
 	/* Parse and validate reloptions for the toast table */
-	toast_options = transformRelOptions((Datum) 0, create_stmt->options,
+	toast_options = transformRelOptions_compat((Datum) 0, create_stmt->options,
 										"toast", validnsps, true, false);
 
 	/* Parse options for a new toast table */

@@ -533,7 +533,7 @@ make_sort(PlannerInfo *root, Plan *lefttree, int numCols,
 	Path		sort_path;		/* dummy for result of cost_sort */
 
 	copy_plan_costsize(plan, lefttree); /* only care about copying size */
-	cost_sort(&sort_path, root, NIL,
+	cost_sort_compat(&sort_path, root, NIL, 0,
 			  lefttree->total_cost,
 			  lefttree->plan_rows,
 			  lefttree->plan_width,

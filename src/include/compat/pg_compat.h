@@ -1245,4 +1245,28 @@ void		set_append_rel_size_compat(PlannerInfo *root, RelOptInfo *rel, Index rti);
 #define EvalPlanQualInit_compat(epqstate, parentestate, subplan, auxrowmarks, epqParam)    EvalPlanQualInit(epqstate, parentestate, subplan, auxrowmarks, epqParam)
 #endif
 
+/*
+* cost_sort()
+* In >=18 an arg was added
+*/
+#if PG_VERSION_NUM >= 180000
+#define cost_sort_compat(path, root, pathkeys, disabled_nodes, input_cost, tuples, width, comparison_cost, sort_mem, limit_tuples) \
+		cost_sort((path), (root), (pathkeys), (disabled_nodes), (input_cost), (tuples), (width), (comparison_cost), (sort_mem), (limit_tuples))
+#else
+#define cost_sort_compat(path, root, pathkeys, disabled_nodes, input_cost, tuples, width, comparison_cost, sort_mem, limit_tuples) \
+		cost_sort((path), (root), (pathkeys), (input_cost), (tuples), (width), (comparison_cost), (sort_mem), (limit_tuples))
+#endif
+
+/*
+* transformRelOptions()
+* In >=18 the type of an arg was changed
+*/
+#if PG_VERSION_NUM >= 180000
+#define transformRelOptions_compat(oldOptions, defList, namspace, validnsps, acceptOidsOff, isReset) \
+		transformRelOptions((oldOptions), (defList), (namspace), (const char *const *)(validnsps), (acceptOidsOff), (isReset))
+#else
+#define transformRelOptions_compat(oldOptions, defList, namspace, validnsps, acceptOidsOff, isReset) \
+		transformRelOptions((oldOptions), (defList), (namspace), (validnsps), (acceptOidsOff), (isReset))
+#endif
+
 #endif							/* PG_COMPAT_H */
