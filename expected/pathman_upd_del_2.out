@@ -23,7 +23,7 @@ INSERT INTO test.tmp VALUES (1, 1), (2, 2);
 CREATE TABLE test.tmp2 (id INTEGER NOT NULL, value INTEGER NOT NULL);
 INSERT INTO test.tmp2 SELECT i % 10 + 1, i FROM generate_series(1, 100) i;
 SELECT pathman.create_range_partitions('test.tmp2', 'id', 1, 1, 10);
- create_range_partitions
+ create_range_partitions 
 -------------------------
                       10
 (1 row)
@@ -38,7 +38,7 @@ FROM generate_series('2010-01-01'::date, '2010-12-31'::date, '1 day') AS g;
 SELECT pathman.create_range_partitions('test.range_rel', 'dt',
 									   '2010-01-01'::date, '1 month'::interval,
 									   12);
- create_range_partitions
+ create_range_partitions 
 -------------------------
                       12
 (1 row)
@@ -49,7 +49,7 @@ VACUUM ANALYZE;
  */
 /* have partitions for this 'dt' */
 EXPLAIN (COSTS OFF) UPDATE test.range_rel SET value = 111 WHERE dt = '2010-06-15';
-                                   QUERY PLAN
+                                   QUERY PLAN                                   
 --------------------------------------------------------------------------------
  Update on range_rel_6
    ->  Seq Scan on range_rel_6
@@ -59,7 +59,7 @@ EXPLAIN (COSTS OFF) UPDATE test.range_rel SET value = 111 WHERE dt = '2010-06-15
 BEGIN;
 UPDATE test.range_rel SET value = 111 WHERE dt = '2010-06-15';
 SELECT * FROM test.range_rel WHERE dt = '2010-06-15';
- id  |            dt            | value
+ id  |            dt            | value 
 -----+--------------------------+-------
  166 | Tue Jun 15 00:00:00 2010 |   111
 (1 row)
@@ -67,7 +67,7 @@ SELECT * FROM test.range_rel WHERE dt = '2010-06-15';
 ROLLBACK;
 /* have partitions for this 'dt' */
 EXPLAIN (COSTS OFF) DELETE FROM test.range_rel WHERE dt = '2010-06-15';
-                                   QUERY PLAN
+                                   QUERY PLAN                                   
 --------------------------------------------------------------------------------
  Delete on range_rel_6
    ->  Seq Scan on range_rel_6
@@ -77,14 +77,14 @@ EXPLAIN (COSTS OFF) DELETE FROM test.range_rel WHERE dt = '2010-06-15';
 BEGIN;
 DELETE FROM test.range_rel WHERE dt = '2010-06-15';
 SELECT * FROM test.range_rel WHERE dt = '2010-06-15';
- id | dt | value
+ id | dt | value 
 ----+----+-------
 (0 rows)
 
 ROLLBACK;
 /* no partitions for this 'dt' */
 EXPLAIN (COSTS OFF) UPDATE test.range_rel SET value = 222 WHERE dt = '1990-01-01';
-                                   QUERY PLAN
+                                   QUERY PLAN                                   
 --------------------------------------------------------------------------------
  Update on range_rel
    ->  Seq Scan on range_rel
@@ -94,14 +94,14 @@ EXPLAIN (COSTS OFF) UPDATE test.range_rel SET value = 222 WHERE dt = '1990-01-01
 BEGIN;
 UPDATE test.range_rel SET value = 111 WHERE dt = '1990-01-01';
 SELECT * FROM test.range_rel WHERE dt = '1990-01-01';
- id | dt | value
+ id | dt | value 
 ----+----+-------
 (0 rows)
 
 ROLLBACK;
 /* no partitions for this 'dt' */
 EXPLAIN (COSTS OFF) DELETE FROM test.range_rel WHERE dt < '1990-01-01';
-                                   QUERY PLAN
+                                   QUERY PLAN                                   
 --------------------------------------------------------------------------------
  Delete on range_rel
    ->  Seq Scan on range_rel
@@ -111,7 +111,7 @@ EXPLAIN (COSTS OFF) DELETE FROM test.range_rel WHERE dt < '1990-01-01';
 BEGIN;
 DELETE FROM test.range_rel WHERE dt < '1990-01-01';
 SELECT * FROM test.range_rel WHERE dt < '1990-01-01';
- id | dt | value
+ id | dt | value 
 ----+----+-------
 (0 rows)
 
@@ -120,7 +120,7 @@ ROLLBACK;
 EXPLAIN (COSTS OFF)
 UPDATE test.range_rel r SET value = t.value
 FROM test.tmp t WHERE r.dt = '2010-01-01' AND r.id = t.id;
-                                      QUERY PLAN
+                                      QUERY PLAN                                      
 --------------------------------------------------------------------------------------
  Update on range_rel_1 r
    ->  Nested Loop
@@ -138,7 +138,7 @@ ROLLBACK;
 EXPLAIN (COSTS OFF)
 UPDATE test.tmp t SET value = r.value
 FROM test.range_rel r WHERE r.dt = '2010-01-01' AND r.id = t.id;
-                                      QUERY PLAN
+                                      QUERY PLAN                                      
 --------------------------------------------------------------------------------------
  Update on tmp t
    ->  Nested Loop
@@ -156,7 +156,7 @@ ROLLBACK;
 EXPLAIN (COSTS OFF)
 DELETE FROM test.range_rel r USING test.tmp t
 WHERE r.dt = '2010-01-02' AND r.id = t.id;
-                                      QUERY PLAN
+                                      QUERY PLAN                                      
 --------------------------------------------------------------------------------------
  Delete on range_rel_1 r
    ->  Nested Loop
@@ -174,7 +174,7 @@ ROLLBACK;
 EXPLAIN (COSTS OFF)
 DELETE FROM test.tmp t USING test.range_rel r
 WHERE r.dt = '2010-01-02' AND r.id = t.id;
-                                      QUERY PLAN
+                                      QUERY PLAN                                      
 --------------------------------------------------------------------------------------
  Delete on tmp t
    ->  Nested Loop
@@ -224,7 +224,7 @@ USING (SELECT *
 	   JOIN test.tmp2 a2
 	   USING(id)) t
 WHERE t.id = r.id;
-                   QUERY PLAN
+                   QUERY PLAN                   
 ------------------------------------------------
  Delete on tmp r
    ->  Nested Loop
@@ -303,7 +303,7 @@ UPDATE test.tmp t SET value = 2
 WHERE t.id IN (SELECT id
 			   FROM test.tmp2 t2
 			   WHERE id = t.id);
-                 QUERY PLAN
+                 QUERY PLAN                 
 --------------------------------------------
  Update on tmp t
    ->  Seq Scan on tmp t
@@ -338,7 +338,7 @@ EXPLAIN (COSTS OFF)
 WITH q AS (SELECT * FROM test.range_rel r
 		   WHERE r.dt = '2010-01-02')
 DELETE FROM test.tmp USING q;
-                                         QUERY PLAN
+                                         QUERY PLAN                                         
 --------------------------------------------------------------------------------------------
  Delete on tmp
    ->  Nested Loop
@@ -359,7 +359,7 @@ WITH q AS (DELETE FROM test.range_rel r
 		   WHERE r.dt = '2010-01-02'
 		   RETURNING *)
 DELETE FROM test.tmp USING q;
-                                       QUERY PLAN
+                                       QUERY PLAN                                       
 ----------------------------------------------------------------------------------------
  Delete on tmp
    CTE q
@@ -384,7 +384,7 @@ WITH q AS (DELETE FROM test.tmp t
 		   WHERE r.dt = '2010-01-02' AND r.id = t.id
 		   RETURNING *)
 DELETE FROM test.tmp USING q;
-                                          QUERY PLAN
+                                          QUERY PLAN                                          
 ----------------------------------------------------------------------------------------------
  Delete on tmp
    CTE q
@@ -414,15 +414,15 @@ WITH q AS (WITH n AS (SELECT id FROM test.tmp2 WHERE id = 2)
 		   WHERE t.id = n.id
 		   RETURNING *)
 DELETE FROM test.tmp USING q;
-                 QUERY PLAN
----------------------------------------------
+               QUERY PLAN               
+----------------------------------------
  Delete on tmp
    CTE q
      ->  Delete on tmp t
            ->  Nested Loop
                  ->  Seq Scan on tmp t
                        Filter: (id = 2)
-                 ->  Seq Scan on tmp2_2 tmp2
+                 ->  Seq Scan on tmp2_2
                        Filter: (id = 2)
    ->  Nested Loop
          ->  Seq Scan on tmp
@@ -434,7 +434,7 @@ EXPLAIN (COSTS OFF)
 WITH q AS (SELECT id FROM test.tmp2
 		   WHERE id < 3)
 DELETE FROM test.tmp t WHERE t.id in (SELECT id FROM q);
-                          QUERY PLAN
+                          QUERY PLAN                          
 --------------------------------------------------------------
  Delete on tmp t
    ->  Nested Loop Semi Join
