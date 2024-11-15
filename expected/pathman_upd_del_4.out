@@ -306,35 +306,34 @@ UPDATE test.tmp t SET value = 2
 WHERE t.id IN (SELECT id
 			   FROM test.tmp2 t2
 			   WHERE id = t.id);
-                 QUERY PLAN                 
---------------------------------------------
+                QUERY PLAN                
+------------------------------------------
  Update on tmp t
-   ->  Seq Scan on tmp t
-         Filter: (SubPlan 1)
-         SubPlan 1
-           ->  Custom Scan (RuntimeAppend)
-                 Prune by: (t2.id = t.id)
-                 ->  Seq Scan on tmp2_1 t2
-                       Filter: (id = t.id)
-                 ->  Seq Scan on tmp2_2 t2
-                       Filter: (id = t.id)
-                 ->  Seq Scan on tmp2_3 t2
-                       Filter: (id = t.id)
-                 ->  Seq Scan on tmp2_4 t2
-                       Filter: (id = t.id)
-                 ->  Seq Scan on tmp2_5 t2
-                       Filter: (id = t.id)
-                 ->  Seq Scan on tmp2_6 t2
-                       Filter: (id = t.id)
-                 ->  Seq Scan on tmp2_7 t2
-                       Filter: (id = t.id)
-                 ->  Seq Scan on tmp2_8 t2
-                       Filter: (id = t.id)
-                 ->  Seq Scan on tmp2_9 t2
-                       Filter: (id = t.id)
-                 ->  Seq Scan on tmp2_10 t2
-                       Filter: (id = t.id)
-(26 rows)
+   ->  Nested Loop Semi Join
+         ->  Seq Scan on tmp t
+         ->  Custom Scan (RuntimeAppend)
+               Prune by: (t.id = t2.id)
+               ->  Seq Scan on tmp2_1 t2
+                     Filter: (t.id = id)
+               ->  Seq Scan on tmp2_2 t2
+                     Filter: (t.id = id)
+               ->  Seq Scan on tmp2_3 t2
+                     Filter: (t.id = id)
+               ->  Seq Scan on tmp2_4 t2
+                     Filter: (t.id = id)
+               ->  Seq Scan on tmp2_5 t2
+                     Filter: (t.id = id)
+               ->  Seq Scan on tmp2_6 t2
+                     Filter: (t.id = id)
+               ->  Seq Scan on tmp2_7 t2
+                     Filter: (t.id = id)
+               ->  Seq Scan on tmp2_8 t2
+                     Filter: (t.id = id)
+               ->  Seq Scan on tmp2_9 t2
+                     Filter: (t.id = id)
+               ->  Seq Scan on tmp2_10 t2
+                     Filter: (t.id = id)
+(25 rows)
 
 /* Test special rule for CTE; SELECT (PostgreSQL 9.5) */
 EXPLAIN (COSTS OFF)
@@ -417,15 +416,15 @@ WITH q AS (WITH n AS (SELECT id FROM test.tmp2 WHERE id = 2)
 		   WHERE t.id = n.id
 		   RETURNING *)
 DELETE FROM test.tmp USING q;
-               QUERY PLAN               
-----------------------------------------
+                 QUERY PLAN                  
+---------------------------------------------
  Delete on tmp
    CTE q
      ->  Delete on tmp t
            ->  Nested Loop
                  ->  Seq Scan on tmp t
                        Filter: (id = 2)
-                 ->  Seq Scan on tmp2_2
+                 ->  Seq Scan on tmp2_2 tmp2
                        Filter: (id = 2)
    ->  Nested Loop
          ->  Seq Scan on tmp

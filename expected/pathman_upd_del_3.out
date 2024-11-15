@@ -9,6 +9,9 @@
  * plans here. There is an option to forcibly make them MATERIALIZED, but we
  * also need to run tests on older versions, so put updated plans in
  * pathman_upd_del_2.out instead.
+ *
+ * In Postgres Pro Standard/Enterprise 15+ the EXPLAIN output has changed so put
+ * the updated plan in pathman_upd_del_4.out.
  */
 \set VERBOSITY terse
 SET search_path = 'public';
