@@ -79,10 +79,6 @@ BEGIN
 		EXECUTE pg_catalog.format('SELECT count(*), max(%s) FROM %s', expression, parent_relid)
 		INTO rows_count, max_value;
 
-		IF rows_count = 0 THEN
-			RAISE EXCEPTION 'cannot determine partitions count for empty table';
-		END IF;
-
 		p_count := 0;
 		WHILE cur_value <= max_value
 		LOOP
@@ -171,10 +167,6 @@ BEGIN
 	IF p_count IS NULL THEN
 		EXECUTE pg_catalog.format('SELECT count(*), max(%s) FROM %s', expression, parent_relid)
 		INTO rows_count, max_value;
-
-		IF rows_count = 0 THEN
-			RAISE EXCEPTION 'cannot determine partitions count for empty table';
-		END IF;
 
 		IF max_value IS NULL THEN
 			RAISE EXCEPTION 'expression "%" can return NULL values', expression;
