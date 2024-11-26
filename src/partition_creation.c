@@ -124,8 +124,8 @@ create_single_range_partition_internal(Oid parent_relid,
 	init_callback_params	callback_params;
 	List				   *trigger_columns = NIL;
 	Node				   *expr;
-	Datum		values[Natts_pathman_config];
-	bool		isnull[Natts_pathman_config];
+	Datum		values[Natts_pathman_config_historic];
+	bool		isnull[Natts_pathman_config_historic];
 
 
 	/*
@@ -361,8 +361,8 @@ Oid
 create_partitions_for_value_internal(Oid relid, Datum value, Oid value_type)
 {
 	Oid				partid = InvalidOid; /* last created partition (or InvalidOid) */
-	Datum				values[Natts_pathman_config];
-	bool				isnull[Natts_pathman_config];
+	Datum				values[Natts_pathman_config_historic];
+	bool				isnull[Natts_pathman_config_historic];
 
 	/* Get both PartRelationInfo & PATHMAN_CONFIG contents for this relation */
 	if (pathman_config_contains_relation(relid, values, isnull, NULL, NULL))
@@ -2024,8 +2024,8 @@ build_partitioning_expression(Oid parent_relid,
 							  List **columns)		/* ret val #2 */
 {
 	/* Values extracted from PATHMAN_CONFIG */
-	Datum		values[Natts_pathman_config];
-	bool		isnull[Natts_pathman_config];
+	Datum		values[Natts_pathman_config_historic];
+	bool		isnull[Natts_pathman_config_historic];
 	char	   *expr_cstr;
 	Node	   *expr;
 
