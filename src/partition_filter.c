@@ -51,6 +51,9 @@ typedef struct
 {
 	int		estate_alloc_result_rels;	/* number of allocated result rels */
 	bool	estate_not_modified;		/* did we modify EState somehow? */
+#if PG_VERSION_NUM >= 160000
+	bool	perminfo_not_modified;		/* did we change the estate->es_rteperminfos field? */
+#endif
 } estate_mod_data;
 
 /*
@@ -95,6 +98,9 @@ static Node *fix_returning_list_mutator(Node *node, void *state);
 
 static Index append_rte_to_estate(EState *estate, RangeTblEntry *rte, Relation child_rel);
 static int append_rri_to_estate(EState *estate, ResultRelInfo *rri);
+#if PG_VERSION_NUM >= 160000
+static void prepare_estate_for_append_perminfo(EState *estate);
+#endif
 
 static void pf_memcxt_callback(void *arg);
 static estate_mod_data * fetch_estate_mod_data(EState *estate);
@@ -337,6 +343,7 @@ scan_result_parts_storage(EState *estate, ResultPartsStorage *parts_storage,
 		parent_perminfo = getRTEPermissionInfo(estate->es_rteperminfos, init_rte);
 
 		child_rte->perminfoindex = 0;	/* expected by addRTEPermissionInfo() */
+		prepare_estate_for_append_perminfo(estate);
 		child_perminfo = addRTEPermissionInfo(&estate->es_rteperminfos, child_rte);
 		child_perminfo->requiredPerms	= parent_perminfo->requiredPerms;
 		child_perminfo->checkAsUser		= parent_perminfo->checkAsUser;
@@ -1449,6 +1456,22 @@ fix_returning_list_mutator(Node *node, void *state)
  * -------------------------------------
  */
 
+#if PG_VERSION_NUM >= 160000
+/* Prepare estate->es_rteperminfos for append RTEPermissionInfo */
+static void
+prepare_estate_for_append_perminfo(EState *estate)
+{
+	estate_mod_data	   *emd_struct = fetch_estate_mod_data(estate);
+
+	/* Copy estate->es_rteperminfos if it's first time expansion. */
+	if (emd_struct->perminfo_not_modified)
+		estate->es_rteperminfos = list_copy(estate->es_rteperminfos);
+
+	/* Update estate_mod_data. */
+	emd_struct->perminfo_not_modified = false;
+}
+#endif
+
 /* Append RangeTblEntry 'rte' to estate->es_range_table */
 static Index
 append_rte_to_estate(EState *estate, RangeTblEntry *rte, Relation child_rel)
@@ -1594,6 +1617,9 @@ fetch_estate_mod_data(EState *estate)
 	/* Have to create a new one */
 	emd_struct = MemoryContextAlloc(estate_mcxt, sizeof(estate_mod_data));
 	emd_struct->estate_not_modified = true;
+#if PG_VERSION_NUM >= 160000
+	emd_struct->perminfo_not_modified = true;
+#endif
 #if PG_VERSION_NUM >= 140000
 	/*
 	 * Reworked in commit a04daa97a433: field "es_num_result_relations"
