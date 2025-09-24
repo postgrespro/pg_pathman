@@ -1,5 +1,5 @@
 diff --git a/contrib/Makefile b/contrib/Makefile
-index bbf220407b..9a82a2db04 100644
+index bbf220407b0..9a82a2db046 100644
 --- a/contrib/Makefile
 +++ b/contrib/Makefile
 @@ -34,6 +34,7 @@ SUBDIRS = \
@@ -11,7 +11,7 @@ index bbf220407b..9a82a2db04 100644
  		pg_stat_statements \
  		pg_surgery	\
 diff --git a/src/backend/access/transam/xact.c b/src/backend/access/transam/xact.c
-index 4a2ea4adba..7cadde5499 100644
+index 4a2ea4adbaf..7cadde5499b 100644
 --- a/src/backend/access/transam/xact.c
 +++ b/src/backend/access/transam/xact.c
 @@ -79,7 +79,7 @@ int			DefaultXactIsoLevel = XACT_READ_COMMITTED;
@@ -24,10 +24,10 @@ index 4a2ea4adba..7cadde5499 100644
  bool		DefaultXactDeferrable = false;
  bool		XactDeferrable;
 diff --git a/src/backend/executor/execExprInterp.c b/src/backend/executor/execExprInterp.c
-index 6b7997465d..5e9e878d3b 100644
+index 30ea9627c75..8aca4d3a86b 100644
 --- a/src/backend/executor/execExprInterp.c
 +++ b/src/backend/executor/execExprInterp.c
-@@ -1845,6 +1845,16 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
+@@ -1857,6 +1857,16 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
  	}
  
  out:
@@ -45,10 +45,10 @@ index 6b7997465d..5e9e878d3b 100644
  	return state->resvalue;
  }
 diff --git a/src/backend/executor/execMain.c b/src/backend/executor/execMain.c
-index 4c5a7bbf62..7d638aa22d 100644
+index 7ec4d14f66b..52952ed3dd8 100644
 --- a/src/backend/executor/execMain.c
 +++ b/src/backend/executor/execMain.c
-@@ -561,6 +561,39 @@ ExecutorRewind(QueryDesc *queryDesc)
+@@ -554,6 +554,39 @@ ExecutorRewind(QueryDesc *queryDesc)
  }
  
  
@@ -88,7 +88,7 @@ index 4c5a7bbf62..7d638aa22d 100644
  /*
   * ExecCheckPermissions
   *		Check access permissions of relations mentioned in a query
-@@ -856,6 +889,13 @@ InitPlan(QueryDesc *queryDesc, int eflags)
+@@ -849,6 +882,13 @@ InitPlan(QueryDesc *queryDesc, int eflags)
  
  	estate->es_plannedstmt = plannedstmt;
  
@@ -102,7 +102,7 @@ index 4c5a7bbf62..7d638aa22d 100644
  	/*
  	 * Next, build the ExecRowMark array from the PlanRowMark(s), if any.
  	 */
-@@ -2873,6 +2913,13 @@ EvalPlanQualStart(EPQState *epqstate, Plan *planTree)
+@@ -2919,6 +2959,13 @@ EvalPlanQualStart(EPQState *epqstate, Plan *planTree)
  	rcestate->es_output_cid = parentestate->es_output_cid;
  	rcestate->es_queryEnv = parentestate->es_queryEnv;
  
@@ -117,10 +117,10 @@ index 4c5a7bbf62..7d638aa22d 100644
  	 * ResultRelInfos needed by subplans are initialized from scratch when the
  	 * subplans themselves are initialized.
 diff --git a/src/backend/executor/nodeModifyTable.c b/src/backend/executor/nodeModifyTable.c
-index c84caeeaee..2a355607e9 100644
+index 6597356c018..aaabca83e48 100644
 --- a/src/backend/executor/nodeModifyTable.c
 +++ b/src/backend/executor/nodeModifyTable.c
-@@ -660,6 +660,13 @@ ExecInitUpdateProjection(ModifyTableState *mtstate,
+@@ -689,6 +689,13 @@ ExecInitUpdateProjection(ModifyTableState *mtstate,
  	resultRelInfo->ri_projectNewInfoValid = true;
  }
  
@@ -134,15 +134,15 @@ index c84caeeaee..2a355607e9 100644
  /*
   * ExecGetInsertNewTuple
   *		This prepares a "new" tuple ready to be inserted into given result
-@@ -3570,6 +3577,7 @@ ExecModifyTable(PlanState *pstate)
- 	HeapTupleData oldtupdata;
+@@ -3770,6 +3777,7 @@ ExecModifyTable(PlanState *pstate)
  	HeapTuple	oldtuple;
  	ItemPointer tupleid;
+ 	bool		tuplock;
 +	ResultRelInfo *saved_resultRelInfo;
  
  	CHECK_FOR_INTERRUPTS();
  
-@@ -3611,6 +3619,8 @@ ExecModifyTable(PlanState *pstate)
+@@ -3811,6 +3819,8 @@ ExecModifyTable(PlanState *pstate)
  	context.mtstate = node;
  	context.epqstate = &node->mt_epqstate;
  	context.estate = estate;
@@ -151,7 +151,7 @@ index c84caeeaee..2a355607e9 100644
  
  	/*
  	 * Fetch rows from subplan, and execute the required table modification
-@@ -3618,6 +3628,14 @@ ExecModifyTable(PlanState *pstate)
+@@ -3818,6 +3828,14 @@ ExecModifyTable(PlanState *pstate)
  	 */
  	for (;;)
  	{
@@ -166,7 +166,7 @@ index c84caeeaee..2a355607e9 100644
  		/*
  		 * Reset the per-output-tuple exprcontext.  This is needed because
  		 * triggers expect to use that context as workspace.  It's a bit ugly
-@@ -3651,7 +3669,9 @@ ExecModifyTable(PlanState *pstate)
+@@ -3851,7 +3869,9 @@ ExecModifyTable(PlanState *pstate)
  			bool		isNull;
  			Oid			resultoid;
  
@@ -177,7 +177,7 @@ index c84caeeaee..2a355607e9 100644
  										 &isNull);
  			if (isNull)
  			{
-@@ -3688,6 +3708,8 @@ ExecModifyTable(PlanState *pstate)
+@@ -3888,6 +3908,8 @@ ExecModifyTable(PlanState *pstate)
  		if (resultRelInfo->ri_usesFdwDirectModify)
  		{
  			Assert(resultRelInfo->ri_projectReturning);
@@ -186,7 +186,7 @@ index c84caeeaee..2a355607e9 100644
  
  			/*
  			 * A scan slot containing the data that was actually inserted,
-@@ -3697,6 +3719,7 @@ ExecModifyTable(PlanState *pstate)
+@@ -3897,6 +3919,7 @@ ExecModifyTable(PlanState *pstate)
  			 */
  			slot = ExecProcessReturning(resultRelInfo, NULL, context.planSlot);
  
@@ -194,7 +194,7 @@ index c84caeeaee..2a355607e9 100644
  			return slot;
  		}
  
-@@ -3727,7 +3750,8 @@ ExecModifyTable(PlanState *pstate)
+@@ -3927,7 +3950,8 @@ ExecModifyTable(PlanState *pstate)
  			{
  				/* ri_RowIdAttNo refers to a ctid attribute */
  				Assert(AttributeNumberIsValid(resultRelInfo->ri_RowIdAttNo));
@@ -204,7 +204,7 @@ index c84caeeaee..2a355607e9 100644
  											 resultRelInfo->ri_RowIdAttNo,
  											 &isNull);
  
-@@ -3775,7 +3799,8 @@ ExecModifyTable(PlanState *pstate)
+@@ -3975,7 +3999,8 @@ ExecModifyTable(PlanState *pstate)
  			 */
  			else if (AttributeNumberIsValid(resultRelInfo->ri_RowIdAttNo))
  			{
@@ -214,7 +214,7 @@ index c84caeeaee..2a355607e9 100644
  											 resultRelInfo->ri_RowIdAttNo,
  											 &isNull);
  				/* shouldn't ever get a null result... */
-@@ -3806,9 +3831,12 @@ ExecModifyTable(PlanState *pstate)
+@@ -4006,9 +4031,12 @@ ExecModifyTable(PlanState *pstate)
  				/* Initialize projection info if first time for this table */
  				if (unlikely(!resultRelInfo->ri_projectNewInfoValid))
  					ExecInitInsertProjection(node, resultRelInfo);
@@ -230,7 +230,7 @@ index c84caeeaee..2a355607e9 100644
  				break;
  
  			case CMD_UPDATE:
-@@ -3816,6 +3844,13 @@ ExecModifyTable(PlanState *pstate)
+@@ -4018,6 +4046,13 @@ ExecModifyTable(PlanState *pstate)
  				if (unlikely(!resultRelInfo->ri_projectNewInfoValid))
  					ExecInitUpdateProjection(node, resultRelInfo);
  
@@ -244,7 +244,7 @@ index c84caeeaee..2a355607e9 100644
  				/*
  				 * Make the new tuple by combining plan's output tuple with
  				 * the old tuple being updated.
-@@ -3839,14 +3874,19 @@ ExecModifyTable(PlanState *pstate)
+@@ -4047,9 +4082,12 @@ ExecModifyTable(PlanState *pstate)
  				slot = ExecGetUpdateNewTuple(resultRelInfo, context.planSlot,
  											 oldSlot);
  				context.relaction = NULL;
@@ -256,6 +256,9 @@ index c84caeeaee..2a355607e9 100644
 +									estate->es_result_relation_info : resultRelInfo,
 +								  tupleid, oldtuple,
  								  slot, node->canSetTag);
+ 				if (tuplock)
+ 					UnlockTuple(resultRelInfo->ri_RelationDesc, tupleid,
+@@ -4057,7 +4095,9 @@ ExecModifyTable(PlanState *pstate)
  				break;
  
  			case CMD_DELETE:
@@ -266,7 +269,7 @@ index c84caeeaee..2a355607e9 100644
  								  true, false, node->canSetTag, NULL, NULL, NULL);
  				break;
  
-@@ -3864,7 +3904,10 @@ ExecModifyTable(PlanState *pstate)
+@@ -4075,7 +4115,10 @@ ExecModifyTable(PlanState *pstate)
  		 * the work on next call.
  		 */
  		if (slot)
@@ -277,7 +280,7 @@ index c84caeeaee..2a355607e9 100644
  	}
  
  	/*
-@@ -3880,6 +3923,7 @@ ExecModifyTable(PlanState *pstate)
+@@ -4091,6 +4134,7 @@ ExecModifyTable(PlanState *pstate)
  
  	node->mt_done = true;
  
@@ -285,7 +288,7 @@ index c84caeeaee..2a355607e9 100644
  	return NULL;
  }
  
-@@ -3954,6 +3998,7 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
+@@ -4165,6 +4209,7 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
  	ListCell   *l;
  	int			i;
  	Relation	rel;
@@ -293,7 +296,7 @@ index c84caeeaee..2a355607e9 100644
  
  	/* check for unsupported flags */
  	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
-@@ -4056,6 +4101,13 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
+@@ -4272,6 +4317,13 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
  		i++;
  	}
  
@@ -307,7 +310,7 @@ index c84caeeaee..2a355607e9 100644
  	/*
  	 * Now we may initialize the subplan.
  	 */
-@@ -4138,6 +4190,8 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
+@@ -4354,6 +4406,8 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
  		}
  	}
  
@@ -317,7 +320,7 @@ index c84caeeaee..2a355607e9 100644
  	 * If this is an inherited update/delete/merge, there will be a junk
  	 * attribute named "tableoid" present in the subplan's targetlist.  It
 diff --git a/src/backend/utils/init/globals.c b/src/backend/utils/init/globals.c
-index 011ec18015..7b4fcb2807 100644
+index 011ec18015a..7b4fcb2807c 100644
 --- a/src/backend/utils/init/globals.c
 +++ b/src/backend/utils/init/globals.c
 @@ -25,7 +25,7 @@
@@ -330,7 +333,7 @@ index 011ec18015..7b4fcb2807 100644
  volatile sig_atomic_t InterruptPending = false;
  volatile sig_atomic_t QueryCancelPending = false;
 diff --git a/src/include/access/xact.h b/src/include/access/xact.h
-index 7d3b9446e6..20030111f4 100644
+index 7d3b9446e62..20030111f4d 100644
 --- a/src/include/access/xact.h
 +++ b/src/include/access/xact.h
 @@ -53,6 +53,8 @@ extern PGDLLIMPORT int XactIsoLevel;
@@ -343,7 +346,7 @@ index 7d3b9446e6..20030111f4 100644
  
  /* flag for logging statements in this transaction */
 diff --git a/src/include/executor/executor.h b/src/include/executor/executor.h
-index ac02247947..c39ae13a8e 100644
+index baef7e031ee..d1ad369dac5 100644
 --- a/src/include/executor/executor.h
 +++ b/src/include/executor/executor.h
 @@ -208,6 +208,9 @@ extern void standard_ExecutorFinish(QueryDesc *queryDesc);
@@ -355,8 +358,8 @@ index ac02247947..c39ae13a8e 100644
 +									   bool ereport_on_violation);
  extern bool ExecCheckPermissions(List *rangeTable,
  								 List *rteperminfos, bool ereport_on_violation);
- extern void CheckValidResultRel(ResultRelInfo *resultRelInfo, CmdType operation);
-@@ -676,5 +679,17 @@ extern ResultRelInfo *ExecLookupResultRelByOid(ModifyTableState *node,
+ extern bool ExecCheckOneRelPerms(RTEPermissionInfo *perminfo);
+@@ -680,5 +683,17 @@ extern ResultRelInfo *ExecLookupResultRelByOid(ModifyTableState *node,
  											   Oid resultoid,
  											   bool missing_ok,
  											   bool update_cache);
@@ -375,10 +378,10 @@ index ac02247947..c39ae13a8e 100644
  
  #endif							/* EXECUTOR_H  */
 diff --git a/src/include/nodes/execnodes.h b/src/include/nodes/execnodes.h
-index 869465d6f8..6bdde351d7 100644
+index 74718fa256d..a524e7310c6 100644
 --- a/src/include/nodes/execnodes.h
 +++ b/src/include/nodes/execnodes.h
-@@ -638,6 +638,12 @@ typedef struct EState
+@@ -640,6 +640,12 @@ typedef struct EState
  											 * es_result_relations in no
  											 * specific order */
  
@@ -392,7 +395,7 @@ index 869465d6f8..6bdde351d7 100644
  
  	/*
 diff --git a/src/tools/msvc/Install.pm b/src/tools/msvc/Install.pm
-index 05548d7c0a..37754370e0 100644
+index 05548d7c0aa..37754370e0c 100644
 --- a/src/tools/msvc/Install.pm
 +++ b/src/tools/msvc/Install.pm
 @@ -30,6 +30,22 @@ my @client_program_files = (
@@ -428,7 +431,7 @@ index 05548d7c0a..37754370e0 100644
  
  sub CopyIncludeFiles
 diff --git a/src/tools/msvc/Mkvcbuild.pm b/src/tools/msvc/Mkvcbuild.pm
-index 6a79a0e037..93696f53ae 100644
+index e224f8d7480..4cfe9cf9d93 100644
 --- a/src/tools/msvc/Mkvcbuild.pm
 +++ b/src/tools/msvc/Mkvcbuild.pm
 @@ -40,7 +40,7 @@ my @contrib_uselibpq = ();
@@ -440,7 +443,7 @@ index 6a79a0e037..93696f53ae 100644
  my $contrib_extrasource = {};
  my @contrib_excludes = (
  	'bool_plperl', 'commit_ts',
-@@ -980,6 +980,7 @@ sub AddContrib
+@@ -981,6 +981,7 @@ sub AddContrib
  		my $dn = $1;
  		my $proj = $solution->AddProject($dn, 'dll', 'contrib', "$subdir/$n");
  		$proj->AddReference($postgres);
@@ -448,7 +451,7 @@ index 6a79a0e037..93696f53ae 100644
  		AdjustContribProj($proj);
  		push @projects, $proj;
  	}
-@@ -1083,6 +1084,22 @@ sub AddContrib
+@@ -1084,6 +1085,22 @@ sub AddContrib
  	return;
  }
  
@@ -471,7 +474,7 @@ index 6a79a0e037..93696f53ae 100644
  sub GenerateContribSqlFiles
  {
  	my $n = shift;
-@@ -1107,23 +1124,59 @@ sub GenerateContribSqlFiles
+@@ -1108,23 +1125,59 @@ sub GenerateContribSqlFiles
  			  substr($l, 0, index($l, '$(addsuffix ')) . substr($l, $i + 1);
  		}
  
