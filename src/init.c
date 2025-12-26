@@ -649,6 +649,7 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 	Snapshot		snapshot;
 	HeapTuple		htup;
 	bool			contains_rel = false;
+	TupleDesc		tupleDescr;
 
 	ScanKeyInit(&key[0],
 				Anum_pathman_config_partrel,
@@ -657,13 +658,15 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 
 	/* Open PATHMAN_CONFIG with latest snapshot available */
 	rel = heap_open_compat(get_pathman_config_relid(false), AccessShareLock);
+	tupleDescr = RelationGetDescr(rel);
 
 	/* Check that 'partrel' column is of regclass type */
-	Assert(TupleDescAttr(RelationGetDescr(rel),
+	Assert(TupleDescAttr(tupleDescr,
 				Anum_pathman_config_partrel - 1)->atttypid == REGCLASSOID);
 
 	/* Check that number of columns == Natts_pathman_config */
-	Assert(RelationGetDescr(rel)->natts == Natts_pathman_config);
+	Assert(tupleDescr->natts == Natts_pathman_config
+			|| tupleDescr->natts == Natts_pathman_config_historic);
 
 	snapshot = RegisterSnapshot(GetLatestSnapshot());
 #if PG_VERSION_NUM >= 120000
@@ -680,7 +683,7 @@ pathman_config_contains_relation(Oid relid, Datum *values, bool *isnull,
 		if (values && isnull)
 		{
 			htup = heap_copytuple(htup);
-			heap_deform_tuple(htup, RelationGetDescr(rel), values, isnull);
+			heap_deform_tuple(htup, tupleDescr, values, isnull);
 
 			/* Perform checks for non-NULL columns */
 			Assert(!isnull[Anum_pathman_config_partrel - 1]);
