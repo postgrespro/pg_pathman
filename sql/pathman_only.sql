@@ -37,6 +37,14 @@ CREATE EXTENSION pg_pathman;
 CREATE SCHEMA test_only;
 
 
+-- Prevent Ent-specific changes in query plans. Equivalent to
+-- "SET enable_extra_transformations = off" but output is
+-- edition-independent.
+SELECT count(*) >= 0 AS success
+FROM (
+	SELECT set_config(name, 'off', false) FROM pg_settings
+	WHERE name = 'enable_extra_transformations'
+) tmp;
 
 /* Test special case: ONLY statement with not-ONLY for partitioned table */
 CREATE TABLE test_only.from_only_test(val INT NOT NULL);
@@ -95,3 +103,10 @@ WHERE val = (SELECT val FROM ONLY test_only.from_only_test
 DROP TABLE test_only.from_only_test CASCADE;
 DROP SCHEMA test_only;
 DROP EXTENSION pg_pathman;
+
+-- RESET enable_extra_transformations
+SELECT count(*) >= 0 AS success
+FROM (
+	SELECT set_config(name, NULL, false) FROM pg_settings
+	WHERE name = 'enable_extra_transformations'
+) tmp;

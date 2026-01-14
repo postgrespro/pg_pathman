@@ -31,6 +31,14 @@ CREATE EXTENSION pg_pathman;
 CREATE SCHEMA rowmarks;
 
 
+-- Prevent Ent-specific changes in query plans. Equivalent to
+-- "SET enable_extra_transformations = off" but output is
+-- edition-independent.
+SELECT count(*) >= 0 AS success
+FROM (
+	SELECT set_config(name, 'off', false) FROM pg_settings
+	WHERE name = 'enable_extra_transformations'
+) tmp;
 
 CREATE TABLE rowmarks.first(id int NOT NULL);
 CREATE TABLE rowmarks.second(id int NOT NULL);
@@ -156,3 +164,10 @@ DROP TABLE rowmarks.first CASCADE;
 DROP TABLE rowmarks.second CASCADE;
 DROP SCHEMA rowmarks;
 DROP EXTENSION pg_pathman;
+
+-- RESET enable_extra_transformations
+SELECT count(*) >= 0 AS success
+FROM (
+	SELECT set_config(name, NULL, false) FROM pg_settings
+	WHERE name = 'enable_extra_transformations'
+) tmp;

@@ -4,6 +4,15 @@ CREATE SCHEMA pathman;
 CREATE EXTENSION pg_pathman SCHEMA pathman;
 CREATE SCHEMA test;
 
+-- Prevent Ent-specific changes in query plans. Equivalent to
+-- "SET enable_extra_transformations = off" but output is
+-- edition-independent.
+SELECT count(*) >= 0 AS success
+FROM (
+	SELECT set_config(name, 'off', false) FROM pg_settings
+	WHERE name = 'enable_extra_transformations'
+) tmp;
+
 /*
  * Test RuntimeAppend
  */
@@ -370,3 +379,10 @@ DROP FUNCTION part_test_trigger();
 
 DROP EXTENSION pg_pathman CASCADE;
 DROP SCHEMA pathman;
+
+-- RESET enable_extra_transformations
+SELECT count(*) >= 0 AS success
+FROM (
+	SELECT set_config(name, NULL, false) FROM pg_settings
+	WHERE name = 'enable_extra_transformations'
+) tmp;
