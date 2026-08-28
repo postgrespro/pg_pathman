@@ -46,6 +46,7 @@
  */
 #define PATHMAN_CONFIG						"pathman_config"
 #define Natts_pathman_config				4
+#define Natts_pathman_config_historic		5
 #define Anum_pathman_config_partrel			1	/* partitioned relation (regclass) */
 #define Anum_pathman_config_expr			2	/* partition expression (original) */
 #define Anum_pathman_config_parttype		3	/* partitioning type (1|2) */

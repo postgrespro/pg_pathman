@@ -350,8 +350,8 @@ get_pathman_relation_info(Oid relid)
 	{
 		PartRelationInfo   *prel = NULL;
 		ItemPointerData		iptr;
-		Datum				values[Natts_pathman_config];
-		bool				isnull[Natts_pathman_config];
+		Datum				values[Natts_pathman_config_historic];
+		bool				isnull[Natts_pathman_config_historic];
 		bool				found;
 
 		/*

@@ -110,8 +110,8 @@ create_single_range_partition_pl(PG_FUNCTION_ARGS)
 	RangeVar   *partition_name_rv;
 	char	   *tablespace;
 
-	Datum		values[Natts_pathman_config];
-	bool		isnull[Natts_pathman_config];
+	Datum		values[Natts_pathman_config_historic];
+	bool		isnull[Natts_pathman_config_historic];
 
 
 	/* Handle 'parent_relid' */
