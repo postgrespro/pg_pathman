@@ -1,0 +1,116 @@
+Parsed test spec with 2 sessions
+
+starting permutation: s1s s1 s1u s2 s2epr s2u s1c s2c s1s
+step s1s: SELECT tableoid::regclass, * FROM test_schema.t ORDER BY tableoid::regclass::text COLLATE "C", id;
+tableoid       |id|        dt|t1|t2|t3
+---------------+--+----------+--+--+--
+test_schema.t_1| 1|01-30-2026|t1|t2|t3
+(1 row)
+
+step s1: BEGIN;
+step s1u: UPDATE test_schema.t SET dt = dt + '1 day'::INTERVAL WHERE id = 1;
+step s2: BEGIN;
+step s2epr: SET pg_pathman.enable_partitionrouter = ON;
+step s2u: UPDATE test_schema.t SET dt  = dt + '1 day'::INTERVAL, t1 = 't1_new', t2 = 't2_new' WHERE id = 1; <waiting ...>
+step s1c: COMMIT; <waiting ...>
+step s1c: <... completed>
+step s2u: <... completed>
+step s2c: COMMIT;
+step s1s: SELECT tableoid::regclass, * FROM test_schema.t ORDER BY tableoid::regclass::text COLLATE "C", id;
+tableoid       |id|        dt|t1    |t2    |t3    
+---------------+--+----------+------+------+------
+test_schema.t_2| 1|02-01-2026|t1_new|t2_new|t3_new
+(1 row)
+
+
+starting permutation: s1s s1epr s1 s1u2 s2 s2u s1c s2c s1s
+step s1s: SELECT tableoid::regclass, * FROM test_schema.t ORDER BY tableoid::regclass::text COLLATE "C", id;
+tableoid       |id|        dt|t1|t2|t3
+---------------+--+----------+--+--+--
+test_schema.t_1| 1|01-30-2026|t1|t2|t3
+(1 row)
+
+step s1epr: SET pg_pathman.enable_partitionrouter = ON;
+step s1: BEGIN;
+step s1u2: UPDATE test_schema.t SET dt = dt + '2 day'::INTERVAL WHERE id = 1;
+step s2: BEGIN;
+step s2u: UPDATE test_schema.t SET dt  = dt + '1 day'::INTERVAL, t1 = 't1_new', t2 = 't2_new' WHERE id = 1; <waiting ...>
+step s1c: COMMIT; <waiting ...>
+step s1c: <... completed>
+step s2u: <... completed>
+ERROR:  tuple to be locked was already moved to another partition due to concurrent update
+step s2c: COMMIT;
+step s1s: SELECT tableoid::regclass, * FROM test_schema.t ORDER BY tableoid::regclass::text COLLATE "C", id;
+tableoid       |id|        dt|t1|t2|t3    
+---------------+--+----------+--+--+------
+test_schema.t_2| 1|02-01-2026|t1|t2|t3_new
+(1 row)
+
+
+starting permutation: s1s s1 s1u s2 s2u2 s1c s2c s1s
+step s1s: SELECT tableoid::regclass, * FROM test_schema.t ORDER BY tableoid::regclass::text COLLATE "C", id;
+tableoid       |id|        dt|t1|t2|t3
+---------------+--+----------+--+--+--
+test_schema.t_1| 1|01-30-2026|t1|t2|t3
+(1 row)
+
+step s1: BEGIN;
+step s1u: UPDATE test_schema.t SET dt = dt + '1 day'::INTERVAL WHERE id = 1;
+step s2: BEGIN;
+step s2u2: UPDATE test_schema.t SET dt  = dt - '2 day'::INTERVAL, t1 = 't1_new', t2 = 't2_new' WHERE id = 1; <waiting ...>
+step s1c: COMMIT; <waiting ...>
+step s1c: <... completed>
+step s2u2: <... completed>
+step s2c: COMMIT;
+step s1s: SELECT tableoid::regclass, * FROM test_schema.t ORDER BY tableoid::regclass::text COLLATE "C", id;
+tableoid       |id|        dt|t1    |t2    |t3    
+---------------+--+----------+------+------+------
+test_schema.t_1| 1|01-29-2026|t1_new|t2_new|t3_new
+(1 row)
+
+
+starting permutation: s1s s1epr s1 s1u2 s2 s2u3 s1r s2c s1s
+step s1s: SELECT tableoid::regclass, * FROM test_schema.t ORDER BY tableoid::regclass::text COLLATE "C", id;
+tableoid       |id|        dt|t1|t2|t3
+---------------+--+----------+--+--+--
+test_schema.t_1| 1|01-30-2026|t1|t2|t3
+(1 row)
+
+step s1epr: SET pg_pathman.enable_partitionrouter = ON;
+step s1: BEGIN;
+step s1u2: UPDATE test_schema.t SET dt = dt + '2 day'::INTERVAL WHERE id = 1;
+step s2: BEGIN;
+step s2u3: UPDATE test_schema.t SET dt  = dt + '2 day'::INTERVAL, t1 = 't1_new', t2 = 't2_new' WHERE id = 1; <waiting ...>
+step s1r: ROLLBACK; <waiting ...>
+step s1r: <... completed>
+step s2u3: <... completed>
+step s2c: COMMIT;
+step s1s: SELECT tableoid::regclass, * FROM test_schema.t ORDER BY tableoid::regclass::text COLLATE "C", id;
+tableoid       |id|        dt|t1    |t2    |t3    
+---------------+--+----------+------+------+------
+test_schema.t_2| 1|02-01-2026|t1_new|t2_new|t3_new
+(1 row)
+
+
+starting permutation: s1s s1 s1u s2 s2epr s2u s1c s2r s1s
+step s1s: SELECT tableoid::regclass, * FROM test_schema.t ORDER BY tableoid::regclass::text COLLATE "C", id;
+tableoid       |id|        dt|t1|t2|t3
+---------------+--+----------+--+--+--
+test_schema.t_1| 1|01-30-2026|t1|t2|t3
+(1 row)
+
+step s1: BEGIN;
+step s1u: UPDATE test_schema.t SET dt = dt + '1 day'::INTERVAL WHERE id = 1;
+step s2: BEGIN;
+step s2epr: SET pg_pathman.enable_partitionrouter = ON;
+step s2u: UPDATE test_schema.t SET dt  = dt + '1 day'::INTERVAL, t1 = 't1_new', t2 = 't2_new' WHERE id = 1; <waiting ...>
+step s1c: COMMIT; <waiting ...>
+step s1c: <... completed>
+step s2u: <... completed>
+step s2r: ROLLBACK;
+step s1s: SELECT tableoid::regclass, * FROM test_schema.t ORDER BY tableoid::regclass::text COLLATE "C", id;
+tableoid       |id|        dt|t1|t2|t3    
+---------------+--+----------+--+--+------
+test_schema.t_1| 1|01-31-2026|t1|t2|t3_new
+(1 row)
+

@@ -39,6 +39,7 @@ typedef struct PartitionRouterState
 
 	/* Machinery required for EvalPlanQual */
 	EPQState			epqstate;
+	int					relsubs_slot_size;
 	int					epqparam;
 
 	/* Preserved slot from last call */

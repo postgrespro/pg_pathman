@@ -66,7 +66,7 @@ REGRESS = pathman_array_qual \
 		  pathman_CVE-2020-14350
 endif
 
-ISOLATION = insert_nodes for_update rollback_on_create_partitions
+ISOLATION = insert_nodes for_update rollback_on_create_partitions parallel_modify
 
 REGRESS_OPTS = --temp-config $(top_srcdir)/$(subdir)/conf.add
 ISOLATION_OPTS = --temp-config $(top_srcdir)/$(subdir)/conf.add

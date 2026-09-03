@@ -83,7 +83,8 @@ static ItemPointerData router_extract_ctid(PartitionRouterState *state,
 static TupleTableSlot *router_lock_or_delete_tuple(PartitionRouterState *state,
 												   TupleTableSlot *slot,
 												   ItemPointer tupleid,
-												   bool *deleted);
+												   bool *deleted,
+												   TupleTableSlot **retry_slot);
 
 void
 init_partition_router_static_data(void)
@@ -165,6 +166,8 @@ partition_router_begin(CustomScanState *node, EState *estate, int eflags)
 	/* Remember current relation we're going to delete from */
 	state->current_rri = estate->es_result_relation_info;
 
+	state->relsubs_slot_size = estate->es_range_table_size;
+
 	EvalPlanQualInit_compat(&state->epqstate, estate,
 							state->subplan, NIL,
 							state->epqparam);
@@ -179,6 +182,7 @@ partition_router_exec(CustomScanState *node)
 	EState				   *estate = node->ss.ps.state;
 	PartitionRouterState   *state = (PartitionRouterState *) node;
 	TupleTableSlot		   *slot;
+	TupleTableSlot		   *retry_slot;
 	bool					should_process;
 	Oid						resultoid = InvalidOid;
 
@@ -197,8 +201,12 @@ take_next_tuple:
 		ResultRelInfo	   *rri;
 #endif
 		TupleTableSlot	   *full_slot;
-		bool				partition_changed = false;
+		bool				partition_changed;
 
+#if PG_VERSION_NUM >= 140000 /* after 86dc90056dfd */
+retry:
+#endif
+		partition_changed = false;
 		ItemPointerSetInvalid(&ctid);
 
 #if PG_VERSION_NUM < 140000
@@ -294,7 +302,16 @@ take_next_tuple:
 
 		/* Lock or delete tuple from old partition */
 		full_slot = router_lock_or_delete_tuple(state, full_slot,
-											  &ctid, &deleted);
+											  &ctid, &deleted, &retry_slot);
+
+#if PG_VERSION_NUM >= 140000 /* after 86dc90056dfd */
+		if (retry_slot)
+		{
+			/* Slot was changed after EPQ, reprocess it. */
+			ExecCopySlot(slot, retry_slot);
+			goto retry;
+		}
+#endif
 
 		/* We require a tuple (previous one has vanished) */
 		if (TupIsNull(full_slot))
@@ -310,6 +327,51 @@ take_next_tuple:
 	return slot;
 }
 
+#if PG_VERSION_NUM < 160000
+/*
+ * repalloc0
+ *		Adjust the size of a previously allocated chunk and zero out the added
+ *		space.
+ */
+static void *
+repalloc0(void *pointer, Size oldsize, Size size)
+{
+	void	   *ret;
+
+	/* catch wrong argument order */
+	if (unlikely(oldsize > size))
+		elog(ERROR, "invalid repalloc0 call: oldsize %zu, new size %zu",
+			 oldsize, size);
+
+	ret = repalloc(pointer, size);
+	memset((char *) ret + oldsize, 0, (size - oldsize));
+	return ret;
+}
+#endif
+
+/*
+ * Correction for relsubs_slot/relsubs_slot_size in case of es_range_table_size
+ * was changed (see append_rte_to_estate function).
+ */
+static void
+router_correct_epqstate_relsubs_slot_size(PartitionRouterState *state)
+{
+	EPQState   *epqstate = &state->epqstate;
+	EState	   *estate = epqstate->parentestate;
+
+	if (state->relsubs_slot_size < estate->es_range_table_size)
+	{
+		Assert(epqstate->relsubs_slot);
+
+		epqstate->relsubs_slot = (TupleTableSlot **)
+			repalloc0(epqstate->relsubs_slot,
+					  state->relsubs_slot_size * sizeof(TupleTableSlot *),
+					  estate->es_range_table_size * sizeof(TupleTableSlot *));
+
+		state->relsubs_slot_size = estate->es_range_table_size;
+	}
+}
+
 void
 partition_router_end(CustomScanState *node)
 {
@@ -317,6 +379,9 @@ partition_router_end(CustomScanState *node)
 
 	Assert(list_length(node->custom_ps) == 1);
 	ExecEndNode((PlanState *) linitial(node->custom_ps));
+
+	/* Correction for relsubs_slot before using. */
+	router_correct_epqstate_relsubs_slot_size(state);
 
 	EvalPlanQualEnd(&state->epqstate);
 }
@@ -506,7 +571,8 @@ static TupleTableSlot *
 router_lock_or_delete_tuple(PartitionRouterState *state,
 							TupleTableSlot *slot,
 							ItemPointer tupleid,
-							bool *deleted	/* return value #1 */)
+							bool *deleted,	/* return value #1 */
+							TupleTableSlot **retry_slot)
 {
 	ResultRelInfo		   *rri;
 	Relation				rel;
@@ -530,8 +596,13 @@ router_lock_or_delete_tuple(PartitionRouterState *state,
 	bool					try_delete;
 
 	*deleted = false;
+	*retry_slot = NULL;
 
 	EvalPlanQualSetSlot(epqstate, slot);
+
+	/* Correction for relsubs_slot before using. */
+	Assert(epqstate->parentestate == estate);
+	router_correct_epqstate_relsubs_slot_size(state);
 
 	/* Get information on the (current) result relation */
 	rri = estate->es_result_relation_info;
@@ -651,9 +722,21 @@ recheck:
 							/* Tuple not passing quals anymore, exiting... */
 							return NULL;
 
+#if PG_VERSION_NUM >= 140000 /* after 86dc90056dfd */
+						/*
+						 * We should retry processing of epqslot after EPQ
+						 * because epqslot is slot of partitioned table
+						 * (TTSOpsVirtual) and we should convert it to slot of
+						 * partition (TTSOpsBufferHeapTuple) outside of this
+						 * function.
+						 */
+						*retry_slot = epqslot;
+						return NULL;
+#else
 						/* just copied from below, ha */
 						*tupleid = tmfd.ctid;
 						slot = epqslot;
+#endif
 						goto recheck;
 
 					case TM_SelfModified:
