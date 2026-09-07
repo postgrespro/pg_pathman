@@ -361,14 +361,43 @@ router_correct_epqstate_relsubs_slot_size(PartitionRouterState *state)
 
 	if (state->relsubs_slot_size < estate->es_range_table_size)
 	{
+		Index		new_rtsize = estate->es_range_table_size;
+		Index		old_rtsize = state->relsubs_slot_size;
+
 		Assert(epqstate->relsubs_slot);
 
 		epqstate->relsubs_slot = (TupleTableSlot **)
 			repalloc0(epqstate->relsubs_slot,
-					  state->relsubs_slot_size * sizeof(TupleTableSlot *),
-					  estate->es_range_table_size * sizeof(TupleTableSlot *));
+					  old_rtsize * sizeof(TupleTableSlot *),
+					  new_rtsize * sizeof(TupleTableSlot *));
 
-		state->relsubs_slot_size = estate->es_range_table_size;
+		/* Update relsubs_done array too ... */
+		if (epqstate->relsubs_done)
+			epqstate->relsubs_done = repalloc0(epqstate->relsubs_done,
+											   old_rtsize * sizeof(bool),
+											   new_rtsize * sizeof(bool));
+
+		/* Update relsubs_blocked array too ... */
+#if PG_VERSION_NUM < 160000
+		if (epqstate->epqExtra && epqstate->epqExtra->relsubs_blocked)
+			epqstate->epqExtra->relsubs_blocked = repalloc0(epqstate->epqExtra->relsubs_blocked,
+												  old_rtsize * sizeof(bool),
+												  new_rtsize * sizeof(bool));
+#else
+		if (epqstate->relsubs_blocked)
+			epqstate->relsubs_blocked = repalloc0(epqstate->relsubs_blocked,
+												  old_rtsize * sizeof(bool),
+												  new_rtsize * sizeof(bool));
+#endif
+
+		/* Update relsubs_rowmark array too ... */
+		if (epqstate->relsubs_rowmark)
+			epqstate->relsubs_rowmark = (ExecAuxRowMark **)
+				repalloc0(epqstate->relsubs_rowmark,
+						  old_rtsize * sizeof(ExecAuxRowMark *),
+						  new_rtsize * sizeof(ExecAuxRowMark *));
+
+		state->relsubs_slot_size = new_rtsize;
 	}
 }
 
