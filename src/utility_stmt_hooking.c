@@ -664,6 +664,9 @@ PathmanCopyFrom(
 
 		/* We can form the input tuple */
 		tuple = heap_form_tuple(tupDesc, values, nulls);
+#if PG_VERSION_NUM >= 140000
+		HeapTupleHeaderClearDatum(tuple->t_data);
+#endif
 
 #if PG_VERSION_NUM < 120000
 		if (tuple_oid != InvalidOid)
@@ -704,6 +707,9 @@ PathmanCopyFrom(
 			tuple = do_convert_tuple(tuple, rri_holder->tuple_map);
 #endif
 			heap_freetuple(tuple_old);
+#if PG_VERSION_NUM >= 140000
+			HeapTupleHeaderClearDatum(tuple->t_data);
+#endif
 		}
 
 		/* Now we can set proper tuple descriptor according to child relation */

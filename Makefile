@@ -61,6 +61,7 @@ REGRESS = pathman_array_qual \
 		  pathman_update_node \
 		  pathman_update_triggers \
 		  pathman_upd_del \
+		  pathman_utility_stmt \
 		  pathman_views \
 		  pathman_CVE-2020-14350
 endif
